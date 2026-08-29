@@ -329,7 +329,9 @@
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 59,
+              "maxLength": 59,
+              "pattern": "^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$"
             },
             "description": "一次性 Browser Launch code；GET 不消费该 code。"
           }
@@ -6202,12 +6204,19 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/BrowserLaunchWriteResult"
                 }
               }
             }
@@ -6270,11 +6279,11 @@
             "description": "Successful response.",
             "headers": {
               "Set-Cookie": {
-                "required": true,
+                "required": false,
                 "schema": {
                   "type": "string"
                 },
-                "description": "Sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body."
+                "description": "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body."
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
@@ -6290,7 +6299,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/WebSessionExchangeWriteResult"
                 }
               }
             }
@@ -6357,13 +6366,19 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/WebSessionView"
                 }
               }
             }
@@ -6435,7 +6450,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/WebSessionRevocationWriteResult"
                 }
               }
             }
@@ -6473,16 +6488,13 @@
           "web"
         ],
         "summary": "Create Passkey Registration Options",
-        "description": "A current Cookie Session whose source is an active Bearer Credential Browser Launch. Atomic cfKanban csrf-idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "A current Cookie Session whose source is an active Bearer Credential Browser Launch. Atomic cfKanban csrf operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "WebSession": []
           }
         ],
         "parameters": [
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          },
           {
             "$ref": "#/components/parameters/CsrfToken"
           }
@@ -6493,12 +6505,19 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PasskeyRegistrationOptions"
                 }
               }
             }
@@ -6528,7 +6547,7 @@
             "$ref": "#/components/responses/PlatformUnavailable"
           }
         },
-        "x-cfkanban-write-contract": "csrf-idempotent",
+        "x-cfkanban-write-contract": "csrf",
         "x-cfkanban-permission": "agent_launch_session",
         "requestBody": {
           "required": true,
@@ -6562,12 +6581,19 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/PasskeyListResult"
                 }
               }
             }
@@ -6623,12 +6649,19 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PasskeyWriteResult"
                 }
               }
             }
@@ -6705,14 +6738,28 @@
           "200": {
             "description": "Successful response.",
             "headers": {
+              "Set-Cookie": {
+                "required": false,
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Expires the current Session and CSRF cookies when the revoked Passkey is this Session's source."
+              },
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PasskeyWriteResult"
                 }
               }
             }
@@ -6781,12 +6828,19 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PasskeyWriteResult"
                 }
               }
             }
@@ -6824,25 +6878,28 @@
           "web"
         ],
         "summary": "Create Web Authentication Options",
-        "description": "A valid single-use WebAuthn challenge and assertion ceremony. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Public creation of a short-lived, single-use discoverable WebAuthn authentication challenge. Atomic cfKanban write operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [],
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/IdempotencyKey"
-          }
-        ],
+        "parameters": [],
         "responses": {
           "200": {
             "description": "Successful response.",
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PasskeyAuthenticationOptions"
                 }
               }
             }
@@ -6872,8 +6929,8 @@
             "$ref": "#/components/responses/PlatformUnavailable"
           }
         },
-        "x-cfkanban-write-contract": "idempotent",
-        "x-cfkanban-permission": "webauthn_capability",
+        "x-cfkanban-write-contract": "write",
+        "x-cfkanban-permission": "webauthn_options",
         "requestBody": {
           "required": true,
           "content": {
@@ -6905,11 +6962,11 @@
             "description": "Successful response.",
             "headers": {
               "Set-Cookie": {
-                "required": true,
+                "required": false,
                 "schema": {
                   "type": "string"
                 },
-                "description": "Sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body."
+                "description": "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body."
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
@@ -6925,7 +6982,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/WebSessionExchangeWriteResult"
                 }
               }
             }
@@ -7794,6 +7851,48 @@
         "type": "string",
         "format": "date-time"
       },
+      "WebAuthnCredentialId": {
+        "type": "string",
+        "minLength": 22,
+        "maxLength": 1366,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "WebAuthnChallenge": {
+        "type": "string",
+        "minLength": 43,
+        "maxLength": 43,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "WebAuthnClientData": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 10923,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "WebAuthnAttestation": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 87382,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "WebAuthnAuthenticatorData": {
+        "type": "string",
+        "minLength": 50,
+        "maxLength": 10923,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "WebAuthnSignature": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2731,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
+      "WebAuthnUserHandle": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 86,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      },
       "Version": {
         "type": "integer",
         "format": "int64",
@@ -8588,11 +8687,111 @@
         "properties": {
           "launch_code": {
             "type": "string",
-            "minLength": 1,
+            "minLength": 59,
+            "maxLength": 59,
+            "pattern": "^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$",
             "writeOnly": true
           }
         },
         "additionalProperties": false
+      },
+      "WebAuthnRegistrationCredential": {
+        "type": "object",
+        "required": [
+          "id",
+          "rawId",
+          "response",
+          "type"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/WebAuthnCredentialId"
+          },
+          "rawId": {
+            "$ref": "#/components/schemas/WebAuthnCredentialId"
+          },
+          "type": {
+            "const": "public-key"
+          },
+          "response": {
+            "type": "object",
+            "required": [
+              "attestationObject",
+              "clientDataJSON"
+            ],
+            "properties": {
+              "attestationObject": {
+                "$ref": "#/components/schemas/WebAuthnAttestation"
+              },
+              "clientDataJSON": {
+                "$ref": "#/components/schemas/WebAuthnClientData"
+              },
+              "transports": {
+                "type": "array",
+                "maxItems": 8,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "ble",
+                    "hybrid",
+                    "internal",
+                    "nfc",
+                    "smart-card",
+                    "usb"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "WebAuthnAuthenticationCredential": {
+        "type": "object",
+        "required": [
+          "id",
+          "rawId",
+          "response",
+          "type"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/WebAuthnCredentialId"
+          },
+          "rawId": {
+            "$ref": "#/components/schemas/WebAuthnCredentialId"
+          },
+          "type": {
+            "const": "public-key"
+          },
+          "response": {
+            "type": "object",
+            "required": [
+              "authenticatorData",
+              "clientDataJSON",
+              "signature",
+              "userHandle"
+            ],
+            "properties": {
+              "authenticatorData": {
+                "$ref": "#/components/schemas/WebAuthnAuthenticatorData"
+              },
+              "clientDataJSON": {
+                "$ref": "#/components/schemas/WebAuthnClientData"
+              },
+              "signature": {
+                "$ref": "#/components/schemas/WebAuthnSignature"
+              },
+              "userHandle": {
+                "$ref": "#/components/schemas/WebAuthnUserHandle"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
       },
       "RegisterPasskeyRequest": {
         "type": "object",
@@ -8605,8 +8804,7 @@
             "$ref": "#/components/schemas/Uuid"
           },
           "credential": {
-            "type": "object",
-            "additionalProperties": true
+            "$ref": "#/components/schemas/WebAuthnRegistrationCredential"
           }
         },
         "additionalProperties": false
@@ -8622,8 +8820,7 @@
             "$ref": "#/components/schemas/Uuid"
           },
           "credential": {
-            "type": "object",
-            "additionalProperties": true
+            "$ref": "#/components/schemas/WebAuthnAuthenticationCredential"
           }
         },
         "additionalProperties": false
@@ -12430,7 +12627,9 @@
               "project_grant",
               "public_join",
               "invitation",
+              "browser_launch",
               "web_session",
+              "webauthn",
               "deployment_recovery"
             ]
           },
@@ -12651,6 +12850,808 @@
           },
           "next_cursor": {
             "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserLaunchTarget": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "entry_path",
+              "kind",
+              "project_id",
+              "project_key",
+              "workspace_key"
+            ],
+            "properties": {
+              "entry_path": {
+                "type": "string",
+                "pattern": "^/app/"
+              },
+              "kind": {
+                "const": "project"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "project_key": {
+                "type": "string"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "entry_path",
+              "identifier",
+              "issue_id",
+              "kind",
+              "project_id",
+              "project_key",
+              "workspace_key"
+            ],
+            "properties": {
+              "entry_path": {
+                "type": "string",
+                "pattern": "^/app/issues/"
+              },
+              "identifier": {
+                "type": "string",
+                "pattern": "^CFK-[1-9][0-9]*$"
+              },
+              "issue_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "kind": {
+                "const": "issue"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "project_key": {
+                "type": "string"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "entry_path",
+              "kind",
+              "section"
+            ],
+            "properties": {
+              "entry_path": {
+                "const": "/app/admin"
+              },
+              "kind": {
+                "const": "admin"
+              },
+              "section": {
+                "type": "string",
+                "enum": [
+                  "overview",
+                  "workspaces-projects",
+                  "access",
+                  "audit"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "BrowserLaunchResource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "created_at",
+              "expires_at",
+              "id",
+              "launch_url",
+              "secret_available",
+              "target"
+            ],
+            "properties": {
+              "created_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "expires_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "launch_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "secret_available": {
+                "const": true
+              },
+              "target": {
+                "$ref": "#/components/schemas/BrowserLaunchTarget"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "created_at",
+              "expires_at",
+              "id",
+              "secret_available",
+              "target"
+            ],
+            "properties": {
+              "created_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "expires_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "secret_available": {
+                "const": false
+              },
+              "target": {
+                "$ref": "#/components/schemas/BrowserLaunchTarget"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "BrowserLaunchWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/BrowserLaunchResource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionProjectScopeItem": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_key",
+          "role",
+          "workspace_key"
+        ],
+        "properties": {
+          "project_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "project_key": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "reader",
+              "writer"
+            ]
+          },
+          "workspace_key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionAllowedScope": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "instance"
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WebSessionProjectScopeItem"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "project_selection"
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WebSessionProjectScopeItem"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "project_id"
+            ],
+            "properties": {
+              "kind": {
+                "const": "project"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "projects"
+            ],
+            "properties": {
+              "kind": {
+                "const": "project"
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WebSessionProjectScopeItem"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "WebSessionPrincipal": {
+        "type": "object",
+        "required": [
+          "display_name",
+          "id",
+          "is_owner"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionSource": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "credential",
+              "web_authenticator"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionTarget": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/BrowserLaunchTarget"
+          },
+          {
+            "type": "object",
+            "required": [
+              "entry_path",
+              "kind"
+            ],
+            "properties": {
+              "entry_path": {
+                "const": "/app"
+              },
+              "kind": {
+                "const": "project_selection"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "WebSessionExchangeResource": {
+        "type": "object",
+        "required": [
+          "allowed_scope",
+          "cookie_available",
+          "entry_path",
+          "expires_at",
+          "principal",
+          "session_id",
+          "source",
+          "target"
+        ],
+        "properties": {
+          "allowed_scope": {
+            "$ref": "#/components/schemas/WebSessionAllowedScope"
+          },
+          "cookie_available": {
+            "type": "boolean"
+          },
+          "entry_path": {
+            "type": "string",
+            "pattern": "^/app(?:/.*)?$"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "principal": {
+            "$ref": "#/components/schemas/WebSessionPrincipal"
+          },
+          "session_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "source": {
+            "$ref": "#/components/schemas/WebSessionSource"
+          },
+          "target": {
+            "$ref": "#/components/schemas/WebSessionTarget"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionExchangeWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/WebSessionExchangeResource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionView": {
+        "type": "object",
+        "required": [
+          "allowed_scope",
+          "expires_at",
+          "principal",
+          "session_id",
+          "source",
+          "target"
+        ],
+        "properties": {
+          "allowed_scope": {
+            "$ref": "#/components/schemas/WebSessionAllowedScope"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "principal": {
+            "$ref": "#/components/schemas/WebSessionPrincipal"
+          },
+          "session_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "source": {
+            "$ref": "#/components/schemas/WebSessionSource"
+          },
+          "target": {
+            "$ref": "#/components/schemas/WebSessionTarget"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionRevocationWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "type": "object",
+            "required": [
+              "id",
+              "revoked_at",
+              "source"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "revoked_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "source": {
+                "$ref": "#/components/schemas/WebSessionSource"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "Passkey": {
+        "type": "object",
+        "required": [
+          "algorithm",
+          "backup_eligible",
+          "backup_state",
+          "created_at",
+          "id",
+          "last_used_at",
+          "revoked_at",
+          "rp_id",
+          "transports",
+          "version"
+        ],
+        "properties": {
+          "algorithm": {
+            "type": "integer",
+            "format": "int64",
+            "enum": [
+              -7,
+              -257
+            ]
+          },
+          "backup_eligible": {
+            "type": "boolean"
+          },
+          "backup_state": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rp_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "transports": {
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "ble",
+                "hybrid",
+                "internal",
+                "nfc",
+                "smart-card",
+                "usb"
+              ]
+            }
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasskeyListResult": {
+        "type": "object",
+        "required": [
+          "items",
+          "truncated"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/Passkey"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasskeyWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/Passkey"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasskeyRegistrationOptions": {
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "expires_at",
+          "public_key"
+        ],
+        "properties": {
+          "challenge_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "public_key": {
+            "type": "object",
+            "required": [
+              "attestation",
+              "authenticatorSelection",
+              "challenge",
+              "excludeCredentials",
+              "pubKeyCredParams",
+              "rp",
+              "timeout",
+              "user"
+            ],
+            "properties": {
+              "attestation": {
+                "const": "none"
+              },
+              "authenticatorSelection": {
+                "type": "object",
+                "required": [
+                  "requireResidentKey",
+                  "residentKey",
+                  "userVerification"
+                ],
+                "properties": {
+                  "requireResidentKey": {
+                    "const": true
+                  },
+                  "residentKey": {
+                    "const": "required"
+                  },
+                  "userVerification": {
+                    "const": "required"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "challenge": {
+                "$ref": "#/components/schemas/WebAuthnChallenge"
+              },
+              "excludeCredentials": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "transports",
+                    "type"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/components/schemas/WebAuthnCredentialId"
+                    },
+                    "transports": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "type": {
+                      "const": "public-key"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "pubKeyCredParams": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "alg",
+                    "type"
+                  ],
+                  "properties": {
+                    "alg": {
+                      "type": "integer",
+                      "format": "int64",
+                      "enum": [
+                        -7,
+                        -257
+                      ]
+                    },
+                    "type": {
+                      "const": "public-key"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "rp": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "timeout": {
+                "type": "integer",
+                "format": "int64",
+                "const": 300000
+              },
+              "user": {
+                "type": "object",
+                "required": [
+                  "displayName",
+                  "id",
+                  "name"
+                ],
+                "properties": {
+                  "displayName": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 48,
+                    "maxLength": 48,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "PasskeyAuthenticationOptions": {
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "expires_at",
+          "public_key"
+        ],
+        "properties": {
+          "challenge_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "public_key": {
+            "type": "object",
+            "required": [
+              "challenge",
+              "rpId",
+              "timeout",
+              "userVerification"
+            ],
+            "properties": {
+              "challenge": {
+                "$ref": "#/components/schemas/WebAuthnChallenge"
+              },
+              "rpId": {
+                "type": "string"
+              },
+              "timeout": {
+                "type": "integer",
+                "format": "int64",
+                "const": 300000
+              },
+              "userVerification": {
+                "const": "required"
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

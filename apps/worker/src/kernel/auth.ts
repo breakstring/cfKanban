@@ -18,6 +18,7 @@ interface SessionRow {
   owner_principal_id: string;
   principal_id: string;
   principal_version: number;
+  session_expires_at: number;
   session_id: string;
   source_id: string;
   source_kind: "credential" | "web_authenticator";
@@ -104,7 +105,8 @@ export async function authenticateCookieSession(
   try {
     row = await db.prepare(
       `SELECT ws.id AS session_id, ws.principal_id, ws.source_kind, ws.source_id,
-              ws.target_kind, ws.target_json, p.display_name,
+              ws.target_kind, ws.target_json, ws.expires_at AS session_expires_at,
+              p.display_name,
               p.version AS principal_version, im.owner_principal_id
        FROM web_sessions AS ws
        JOIN principals AS p ON p.id = ws.principal_id
@@ -149,6 +151,7 @@ export async function authenticateCookieSession(
     kind: "cookie",
     principalId: row.principal_id,
     principalVersion: row.principal_version,
+    sessionExpiresAt: row.session_expires_at,
     sessionId: row.session_id,
     sourceId: row.source_id,
     sourceKind: row.source_kind,

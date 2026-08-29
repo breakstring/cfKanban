@@ -192,3 +192,45 @@ test("OpenAPI exposes concrete Issue contracts and reserves done for complete", 
     "#/components/schemas/IssueContext",
   );
 });
+
+test("OpenAPI exposes concrete Browser Launch, Session, and WebAuthn contracts", async () => {
+  const document = JSON.parse(await readFile(
+    new URL("../../contracts/openapi.json", import.meta.url),
+    "utf8",
+  ));
+  assert.equal(
+    document.paths["/api/v1/web-launches"].post.responses["200"]
+      .content["application/json"].schema.$ref,
+    "#/components/schemas/BrowserLaunchWriteResult",
+  );
+  assert.equal(
+    document.paths["/api/v1/web-sessions/redeem"].post.responses["200"]
+      .content["application/json"].schema.$ref,
+    "#/components/schemas/WebSessionExchangeWriteResult",
+  );
+  assert.equal(
+    document.paths["/api/v1/web-authentication/options"].post["x-cfkanban-permission"],
+    "webauthn_options",
+  );
+  assert.equal(
+    document.paths["/api/v1/web-authentication/verify"].post["x-cfkanban-permission"],
+    "webauthn_capability",
+  );
+  assert.equal(document.components.schemas.WebAuthnChallenge.minLength, 43);
+  assert.equal(document.components.schemas.WebAuthnChallenge.maxLength, 43);
+  assert.equal(document.components.schemas.WebAuthnAttestation.maxLength, 87382);
+  assert.equal(document.components.schemas.WebAuthnSignature.maxLength, 2731);
+  assert.deepEqual(
+    document.components.schemas.Event.properties.authorized_via.enum,
+    ["deployment_owner", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"],
+  );
+  assert.deepEqual(
+    document.components.schemas.PasskeyRegistrationOptions.properties.public_key.properties
+      .pubKeyCredParams.items.properties.alg.enum,
+    [-7, -257],
+  );
+  const launchQuery = document.paths["/app/launch"].get.parameters
+    .find((parameter) => parameter.name === "code").schema;
+  assert.equal(launchQuery.minLength, 59);
+  assert.equal(launchQuery.maxLength, 59);
+});

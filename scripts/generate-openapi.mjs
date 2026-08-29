@@ -129,12 +129,12 @@ const operations = [
   ["post", "/api/v1/web-sessions/redeem", "redeemWebLaunch", "web", publicAccess, "idempotent", "RedeemWebLaunchRequest"],
   ["get", "/api/v1/web-session", "getWebSession", "web", cookie, "read"],
   ["delete", "/api/v1/web-session", "revokeWebSession", "web", cookie, "csrf"],
-  ["post", "/api/v1/me/passkeys/registration-options", "createPasskeyRegistrationOptions", "web", cookie, "csrf-idempotent", "EmptyRequest"],
+  ["post", "/api/v1/me/passkeys/registration-options", "createPasskeyRegistrationOptions", "web", cookie, "csrf", "EmptyRequest"],
   ["get", "/api/v1/me/passkeys", "listMyPasskeys", "web", cookie, "read"],
   ["post", "/api/v1/me/passkeys", "registerPasskey", "web", cookie, "csrf-idempotent", "RegisterPasskeyRequest"],
   ["delete", "/api/v1/me/passkeys/{passkey_id}", "revokeMyPasskey", "web", cookie, "csrf-cas-delete"],
   ["delete", "/api/v1/admin/passkeys/{passkey_id}", "revokePrincipalPasskey", "admin", authenticated, "csrf-cas-delete"],
-  ["post", "/api/v1/web-authentication/options", "createWebAuthenticationOptions", "web", publicAccess, "idempotent", "EmptyRequest"],
+  ["post", "/api/v1/web-authentication/options", "createWebAuthenticationOptions", "web", publicAccess, "write", "EmptyRequest"],
   ["post", "/api/v1/web-authentication/verify", "verifyWebAuthentication", "web", publicAccess, "idempotent", "VerifyWebAuthenticationRequest"],
   ["get", "/api/v1/public-projects", "listPublicProjects", "public-join", publicAccess, "read", "CursorQuery"],
   ["get", "/api/v1/admin/projects/{project_id}/public-join", "getPublicJoinPolicy", "public-join", authenticated, "read"],
@@ -296,6 +296,7 @@ const permissionDescriptions = {
   agent_launch_session: "A current Cookie Session whose source is an active Bearer Credential Browser Launch.",
   invitation_capability: "A valid one-time Invitation capability, with conditional current-Credential authentication required by redeem_as.",
   browser_launch_capability: "A valid one-time Browser Launch capability.",
+  webauthn_options: "Public creation of a short-lived, single-use discoverable WebAuthn authentication challenge.",
   webauthn_capability: "A valid single-use WebAuthn challenge and assertion ceremony.",
   public_join_capability: "An enabled single-Project Public Join policy, with conditional authentication required by redeem_as.",
 };
@@ -332,7 +333,8 @@ const permissionGroups = {
   agent_launch_session: ["createPasskeyRegistrationOptions", "registerPasskey"],
   invitation_capability: ["redeemInvitation"],
   browser_launch_capability: ["redeemWebLaunch"],
-  webauthn_capability: ["createWebAuthenticationOptions", "verifyWebAuthentication"],
+  webauthn_options: ["createWebAuthenticationOptions"],
+  webauthn_capability: ["verifyWebAuthentication"],
   public_join_capability: ["redeemPublicJoin"],
 };
 
@@ -344,6 +346,13 @@ for (const [permission, operationIds] of Object.entries(permissionGroups)) {
 const schemas = {
   Uuid: string({ format: "uuid" }),
   Timestamp: string({ format: "date-time" }),
+  WebAuthnCredentialId: string({ minLength: 22, maxLength: 1366, pattern: "^[A-Za-z0-9_-]+$" }),
+  WebAuthnChallenge: string({ minLength: 43, maxLength: 43, pattern: "^[A-Za-z0-9_-]+$" }),
+  WebAuthnClientData: string({ minLength: 1, maxLength: 10923, pattern: "^[A-Za-z0-9_-]+$" }),
+  WebAuthnAttestation: string({ minLength: 1, maxLength: 87382, pattern: "^[A-Za-z0-9_-]+$" }),
+  WebAuthnAuthenticatorData: string({ minLength: 50, maxLength: 10923, pattern: "^[A-Za-z0-9_-]+$" }),
+  WebAuthnSignature: string({ minLength: 1, maxLength: 2731, pattern: "^[A-Za-z0-9_-]+$" }),
+  WebAuthnUserHandle: string({ minLength: 1, maxLength: 86, pattern: "^[A-Za-z0-9_-]+$" }),
   Version: integer({ minimum: 1 }),
   StatusKey: string({ enum: ["backlog", "todo", "in_progress", "done", "canceled"], description: "稳定状态：待整理、待办、进行中、完成、取消。" }),
   NonDoneStatusKey: string({ enum: ["backlog", "todo", "in_progress", "canceled"], description: "普通创建或 PATCH 可使用的状态；进入 done 必须调用 complete 命令。" }),
@@ -385,9 +394,50 @@ const schemas = {
   CreateGrantRequest: { type: "object", required: ["principal_id", "role"], properties: { principal_id: ref("Uuid"), role: ref("ProjectRole") }, additionalProperties: false },
   UpdateGrantRequest: { type: "object", required: ["expected_version", "role"], properties: { expected_version: ref("Version"), role: ref("ProjectRole") }, additionalProperties: false },
   CreateWebLaunchRequest: { type: "object", required: ["target"], properties: { target: { oneOf: [{ type: "object", required: ["kind", "workspace_key", "project_key"], properties: { kind: { const: "project" }, workspace_key: string(), project_key: string() }, additionalProperties: false }, { type: "object", required: ["kind", "identifier"], properties: { kind: { const: "issue" }, identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }) }, additionalProperties: false }, { type: "object", required: ["kind", "section"], properties: { kind: { const: "admin" }, section: string({ enum: ["overview", "workspaces-projects", "access", "audit"] }) }, additionalProperties: false }] } }, additionalProperties: false },
-  RedeemWebLaunchRequest: { type: "object", required: ["launch_code"], properties: { launch_code: string({ minLength: 1, writeOnly: true }) }, additionalProperties: false },
-  RegisterPasskeyRequest: { type: "object", required: ["challenge_id", "credential"], properties: { challenge_id: ref("Uuid"), credential: { type: "object", additionalProperties: true } }, additionalProperties: false },
-  VerifyWebAuthenticationRequest: { type: "object", required: ["challenge_id", "credential"], properties: { challenge_id: ref("Uuid"), credential: { type: "object", additionalProperties: true } }, additionalProperties: false },
+  RedeemWebLaunchRequest: { type: "object", required: ["launch_code"], properties: { launch_code: string({ minLength: 59, maxLength: 59, pattern: "^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$", writeOnly: true }) }, additionalProperties: false },
+  WebAuthnRegistrationCredential: {
+    type: "object",
+    required: ["id", "rawId", "response", "type"],
+    properties: {
+      id: ref("WebAuthnCredentialId"),
+      rawId: ref("WebAuthnCredentialId"),
+      type: { const: "public-key" },
+      response: {
+        type: "object",
+        required: ["attestationObject", "clientDataJSON"],
+        properties: {
+          attestationObject: ref("WebAuthnAttestation"),
+          clientDataJSON: ref("WebAuthnClientData"),
+          transports: { type: "array", maxItems: 8, uniqueItems: true, items: string({ enum: ["ble", "hybrid", "internal", "nfc", "smart-card", "usb"] }) },
+        },
+        additionalProperties: true,
+      },
+    },
+    additionalProperties: true,
+  },
+  WebAuthnAuthenticationCredential: {
+    type: "object",
+    required: ["id", "rawId", "response", "type"],
+    properties: {
+      id: ref("WebAuthnCredentialId"),
+      rawId: ref("WebAuthnCredentialId"),
+      type: { const: "public-key" },
+      response: {
+        type: "object",
+        required: ["authenticatorData", "clientDataJSON", "signature", "userHandle"],
+        properties: {
+          authenticatorData: ref("WebAuthnAuthenticatorData"),
+          clientDataJSON: ref("WebAuthnClientData"),
+          signature: ref("WebAuthnSignature"),
+          userHandle: ref("WebAuthnUserHandle"),
+        },
+        additionalProperties: true,
+      },
+    },
+    additionalProperties: true,
+  },
+  RegisterPasskeyRequest: { type: "object", required: ["challenge_id", "credential"], properties: { challenge_id: ref("Uuid"), credential: ref("WebAuthnRegistrationCredential") }, additionalProperties: false },
+  VerifyWebAuthenticationRequest: { type: "object", required: ["challenge_id", "credential"], properties: { challenge_id: ref("Uuid"), credential: ref("WebAuthnAuthenticationCredential") }, additionalProperties: false },
   EnablePublicJoinRequest: { type: "object", required: ["expected_version", "public_summary", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: ref("Version"), public_summary: string({ minLength: 1, maxLength: 512 }), issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
   UpdateResourceLimitsRequest: { type: "object", required: ["expected_version", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: ref("Version"), issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
   RedeemPublicJoinRequest: { type: "object", required: ["role", "redeem_as"], properties: { role: ref("ProjectRole"), redeem_as: string({ enum: ["new_principal", "current_principal"] }), display_name: string({ minLength: 1, maxLength: 128 }), new_credential_token: credentialToken() }, additionalProperties: false },
@@ -1043,7 +1093,7 @@ const schemas = {
           { type: "null" },
         ],
       },
-      authorized_via: string({ enum: ["deployment_owner", "project_grant", "public_join", "invitation", "web_session", "deployment_recovery"] }),
+      authorized_via: string({ enum: ["deployment_owner", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"] }),
       created_at: ref("Timestamp"),
       event_index: integer({ minimum: 0 }),
       grant_id: { anyOf: [ref("Uuid"), { type: "null" }] },
@@ -1116,6 +1166,292 @@ const schemas = {
     },
     additionalProperties: false,
   },
+  BrowserLaunchTarget: {
+    oneOf: [
+      {
+        type: "object",
+        required: ["entry_path", "kind", "project_id", "project_key", "workspace_key"],
+        properties: {
+          entry_path: string({ pattern: "^/app/" }),
+          kind: { const: "project" },
+          project_id: ref("Uuid"),
+          project_key: string(),
+          workspace_key: string(),
+        },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        required: ["entry_path", "identifier", "issue_id", "kind", "project_id", "project_key", "workspace_key"],
+        properties: {
+          entry_path: string({ pattern: "^/app/issues/" }),
+          identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }),
+          issue_id: ref("Uuid"),
+          kind: { const: "issue" },
+          project_id: ref("Uuid"),
+          project_key: string(),
+          workspace_key: string(),
+        },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        required: ["entry_path", "kind", "section"],
+        properties: {
+          entry_path: { const: "/app/admin" },
+          kind: { const: "admin" },
+          section: string({ enum: ["overview", "workspaces-projects", "access", "audit"] }),
+        },
+        additionalProperties: false,
+      },
+    ],
+  },
+  BrowserLaunchResource: {
+    oneOf: [
+      {
+        type: "object",
+        required: ["created_at", "expires_at", "id", "launch_url", "secret_available", "target"],
+        properties: {
+          created_at: ref("Timestamp"),
+          expires_at: ref("Timestamp"),
+          id: ref("Uuid"),
+          launch_url: string({ format: "uri" }),
+          secret_available: { const: true },
+          target: ref("BrowserLaunchTarget"),
+        },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        required: ["created_at", "expires_at", "id", "secret_available", "target"],
+        properties: {
+          created_at: ref("Timestamp"),
+          expires_at: ref("Timestamp"),
+          id: ref("Uuid"),
+          secret_available: { const: false },
+          target: ref("BrowserLaunchTarget"),
+        },
+        additionalProperties: false,
+      },
+    ],
+  },
+  BrowserLaunchWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: {
+      event_cursor: string(),
+      idempotent_replay: { type: "boolean" },
+      resource: ref("BrowserLaunchResource"),
+    },
+    additionalProperties: false,
+  },
+  WebSessionProjectScopeItem: {
+    type: "object",
+    required: ["project_id", "project_key", "role", "workspace_key"],
+    properties: {
+      project_id: ref("Uuid"),
+      project_key: string(),
+      role: string({ enum: ["owner", "reader", "writer"] }),
+      workspace_key: string(),
+    },
+    additionalProperties: false,
+  },
+  WebSessionAllowedScope: {
+    oneOf: [
+      {
+        type: "object",
+        required: ["kind"],
+        properties: { kind: { const: "instance" }, projects: { type: "array", items: ref("WebSessionProjectScopeItem") } },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        required: ["kind"],
+        properties: { kind: { const: "project_selection" }, projects: { type: "array", items: ref("WebSessionProjectScopeItem") } },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        required: ["kind", "project_id"],
+        properties: { kind: { const: "project" }, project_id: ref("Uuid") },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        required: ["kind", "projects"],
+        properties: { kind: { const: "project" }, projects: { type: "array", items: ref("WebSessionProjectScopeItem") } },
+        additionalProperties: false,
+      },
+    ],
+  },
+  WebSessionPrincipal: {
+    type: "object",
+    required: ["display_name", "id", "is_owner"],
+    properties: {
+      display_name: string(),
+      id: ref("Uuid"),
+      is_owner: { type: "boolean" },
+      version: ref("Version"),
+    },
+    additionalProperties: false,
+  },
+  WebSessionSource: {
+    type: "object",
+    required: ["id", "kind"],
+    properties: { id: ref("Uuid"), kind: string({ enum: ["credential", "web_authenticator"] }) },
+    additionalProperties: false,
+  },
+  WebSessionTarget: {
+    oneOf: [
+      ref("BrowserLaunchTarget"),
+      {
+        type: "object",
+        required: ["entry_path", "kind"],
+        properties: { entry_path: { const: "/app" }, kind: { const: "project_selection" } },
+        additionalProperties: false,
+      },
+    ],
+  },
+  WebSessionExchangeResource: {
+    type: "object",
+    required: ["allowed_scope", "cookie_available", "entry_path", "expires_at", "principal", "session_id", "source", "target"],
+    properties: {
+      allowed_scope: ref("WebSessionAllowedScope"),
+      cookie_available: { type: "boolean" },
+      entry_path: string({ pattern: "^/app(?:/.*)?$" }),
+      expires_at: ref("Timestamp"),
+      principal: ref("WebSessionPrincipal"),
+      session_id: ref("Uuid"),
+      source: ref("WebSessionSource"),
+      target: ref("WebSessionTarget"),
+    },
+    additionalProperties: false,
+  },
+  WebSessionExchangeWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: {
+      event_cursor: string(),
+      idempotent_replay: { type: "boolean" },
+      resource: ref("WebSessionExchangeResource"),
+    },
+    additionalProperties: false,
+  },
+  WebSessionView: {
+    type: "object",
+    required: ["allowed_scope", "expires_at", "principal", "session_id", "source", "target"],
+    properties: {
+      allowed_scope: ref("WebSessionAllowedScope"),
+      expires_at: ref("Timestamp"),
+      principal: ref("WebSessionPrincipal"),
+      session_id: ref("Uuid"),
+      source: ref("WebSessionSource"),
+      target: ref("WebSessionTarget"),
+    },
+    additionalProperties: false,
+  },
+  WebSessionRevocationWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: {
+      event_cursor: string(),
+      idempotent_replay: { type: "boolean" },
+      resource: {
+        type: "object",
+        required: ["id", "revoked_at", "source"],
+        properties: { id: ref("Uuid"), revoked_at: ref("Timestamp"), source: ref("WebSessionSource") },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  Passkey: {
+    type: "object",
+    required: ["algorithm", "backup_eligible", "backup_state", "created_at", "id", "last_used_at", "revoked_at", "rp_id", "transports", "version"],
+    properties: {
+      algorithm: integer({ enum: [-7, -257] }),
+      backup_eligible: { type: "boolean" },
+      backup_state: { type: "boolean" },
+      created_at: ref("Timestamp"),
+      id: ref("Uuid"),
+      last_used_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      revoked_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      rp_id: string({ minLength: 1 }),
+      transports: { type: "array", maxItems: 8, uniqueItems: true, items: string({ enum: ["ble", "hybrid", "internal", "nfc", "smart-card", "usb"] }) },
+      version: ref("Version"),
+    },
+    additionalProperties: false,
+  },
+  PasskeyListResult: {
+    type: "object",
+    required: ["items", "truncated"],
+    properties: { items: { type: "array", maxItems: 100, items: ref("Passkey") }, truncated: { type: "boolean" } },
+    additionalProperties: false,
+  },
+  PasskeyWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("Passkey") },
+    additionalProperties: false,
+  },
+  PasskeyRegistrationOptions: {
+    type: "object",
+    required: ["challenge_id", "expires_at", "public_key"],
+    properties: {
+      challenge_id: ref("Uuid"),
+      expires_at: ref("Timestamp"),
+      public_key: {
+        type: "object",
+        required: ["attestation", "authenticatorSelection", "challenge", "excludeCredentials", "pubKeyCredParams", "rp", "timeout", "user"],
+        properties: {
+          attestation: { const: "none" },
+          authenticatorSelection: {
+            type: "object",
+            required: ["requireResidentKey", "residentKey", "userVerification"],
+            properties: { requireResidentKey: { const: true }, residentKey: { const: "required" }, userVerification: { const: "required" } },
+            additionalProperties: false,
+          },
+          challenge: ref("WebAuthnChallenge"),
+          excludeCredentials: {
+            type: "array",
+            maxItems: 100,
+            items: {
+              type: "object",
+              required: ["id", "transports", "type"],
+              properties: { id: ref("WebAuthnCredentialId"), transports: { type: "array", items: string() }, type: { const: "public-key" } },
+              additionalProperties: false,
+            },
+          },
+          pubKeyCredParams: {
+            type: "array",
+            minItems: 2,
+            maxItems: 2,
+            items: { type: "object", required: ["alg", "type"], properties: { alg: integer({ enum: [-7, -257] }), type: { const: "public-key" } }, additionalProperties: false },
+          },
+          rp: { type: "object", required: ["id", "name"], properties: { id: string(), name: string() }, additionalProperties: false },
+          timeout: integer({ const: 300000 }),
+          user: { type: "object", required: ["displayName", "id", "name"], properties: { displayName: string(), id: string({ minLength: 48, maxLength: 48, pattern: "^[A-Za-z0-9_-]+$" }), name: string() }, additionalProperties: false },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  PasskeyAuthenticationOptions: {
+    type: "object",
+    required: ["challenge_id", "expires_at", "public_key"],
+    properties: {
+      challenge_id: ref("Uuid"),
+      expires_at: ref("Timestamp"),
+      public_key: {
+        type: "object",
+        required: ["challenge", "rpId", "timeout", "userVerification"],
+        properties: { challenge: ref("WebAuthnChallenge"), rpId: string(), timeout: integer({ const: 300000 }), userVerification: { const: "required" } },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   ResourceSummary: { type: "object", required: ["id", "version", "created_at", "updated_at", "deleted_at"], properties: { id: ref("Uuid"), version: ref("Version"), created_at: ref("Timestamp"), updated_at: ref("Timestamp"), deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] } }, additionalProperties: true },
   WriteResult: { type: "object", required: ["resource", "event_cursor", "idempotent_replay"], properties: { resource: ref("ResourceSummary"), event_cursor: string(), idempotent_replay: { type: "boolean" } }, additionalProperties: false },
   ListResult: { type: "object", required: ["items", "next_cursor", "has_more"], properties: { items: { type: "array", items: { type: "object", additionalProperties: true } }, next_cursor: nullableString(), has_more: { type: "boolean" }, resolved_scope: { type: "object", additionalProperties: true } }, additionalProperties: false },
@@ -1124,7 +1460,7 @@ const schemas = {
 
 const querySets = {
   InviteCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 1 }), description: "一次性 Invite code。" }],
-  LaunchCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 1 }), description: "一次性 Browser Launch code；GET 不消费该 code。" }],
+  LaunchCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 59, maxLength: 59, pattern: "^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$" }), description: "一次性 Browser Launch code；GET 不消费该 code。" }],
   EventQuery: [
     { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true },
     { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true },
@@ -1145,6 +1481,17 @@ const querySets = {
 };
 
 const operationResponseSchemas = {
+  createWebLaunch: ref("BrowserLaunchWriteResult"),
+  redeemWebLaunch: ref("WebSessionExchangeWriteResult"),
+  getWebSession: ref("WebSessionView"),
+  revokeWebSession: ref("WebSessionRevocationWriteResult"),
+  createPasskeyRegistrationOptions: ref("PasskeyRegistrationOptions"),
+  listMyPasskeys: ref("PasskeyListResult"),
+  registerPasskey: ref("PasskeyWriteResult"),
+  revokeMyPasskey: ref("PasskeyWriteResult"),
+  revokePrincipalPasskey: ref("PasskeyWriteResult"),
+  createWebAuthenticationOptions: ref("PasskeyAuthenticationOptions"),
+  verifyWebAuthentication: ref("WebSessionExchangeWriteResult"),
   redeemInvitation: ref("InvitationRedemptionWriteResult"),
   listInvitations: ref("InvitationListResult"),
   createInvitation: ref("InvitationCreateWriteResult"),
@@ -1272,12 +1619,28 @@ for (const [path, method] of [
   ["/api/v1/web-authentication/verify", "post"],
 ]) {
   paths[path][method].responses["200"].headers = {
-    "Set-Cookie": { required: true, schema: string(), description: "Sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body." },
+    "Set-Cookie": { required: false, schema: string(), description: "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body." },
     ...noStoreHeader,
   };
 }
 paths["/api/v1/web-session"].delete.responses["200"].headers = {
   "Set-Cookie": { required: true, schema: string(), description: "Expires the current Session and CSRF cookies." },
+  ...noStoreHeader,
+};
+for (const [path, method] of [
+  ["/api/v1/web-launches", "post"],
+  ["/api/v1/web-session", "get"],
+  ["/api/v1/me/passkeys/registration-options", "post"],
+  ["/api/v1/me/passkeys", "get"],
+  ["/api/v1/me/passkeys", "post"],
+  ["/api/v1/me/passkeys/{passkey_id}", "delete"],
+  ["/api/v1/admin/passkeys/{passkey_id}", "delete"],
+  ["/api/v1/web-authentication/options", "post"],
+]) {
+  paths[path][method].responses["200"].headers = noStoreHeader;
+}
+paths["/api/v1/me/passkeys/{passkey_id}"].delete.responses["200"].headers = {
+  "Set-Cookie": { required: false, schema: string(), description: "Expires the current Session and CSRF cookies when the revoked Passkey is this Session's source." },
   ...noStoreHeader,
 };
 

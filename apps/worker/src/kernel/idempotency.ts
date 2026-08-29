@@ -5,7 +5,7 @@ import type { JsonValue } from "./types.ts";
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000;
 const IDEMPOTENCY_CLEANUP_BATCH_SIZE = 64;
-const secretTokenPattern = /(?:cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}|cfi_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43})/;
+const secretTokenPattern = /(?:cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}|cfi_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}|cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43})/;
 
 interface IdempotencyRow {
   operation_id: string;

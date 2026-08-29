@@ -15,7 +15,23 @@ const get = (sql, values = []) => db.prepare(sql).get(...values);
 
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES ('owner', 'Lin', ?, ?)", [now, now]);
 run("INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id) VALUES ('credential', 'owner', 'owner', ?, ?, 'op-credential')", [digest("credential-secret"), now]);
-run("INSERT INTO browser_launches (id, code_prefix, code_digest, principal_id, source_credential_id, target_kind, target_json, expires_at, created_at, created_operation_id) VALUES ('launch', 'launch', ?, 'owner', 'credential', 'admin', ?, ?, ?, 'op-launch')", [digest(launchSecret), JSON.stringify({ section: "overview" }), now + 300_000, now]);
+const adminLaunchTarget = JSON.stringify({ entry_path: "/app/admin", kind: "admin", section: "overview" });
+assert.throws(
+  () => run("INSERT INTO browser_launches (id, code_prefix, code_digest, principal_id, source_credential_id, target_kind, target_json, expires_at, created_at, created_operation_id) VALUES ('invalid-launch', 'invalid', ?, 'owner', 'credential', 'admin', ?, ?, ?, 'op-invalid-launch')", [digest("invalid-launch"), JSON.stringify({ section: "overview" }), now + 300_000, now]),
+  /CHECK constraint failed/,
+  "Browser Launch target shape must fail closed in D1",
+);
+for (const [id, target] of [
+  ["invalid-launch-entry", { entry_path: "/evil", kind: "admin", section: "overview" }],
+  ["invalid-launch-section", { entry_path: "/app/admin", kind: "admin", section: "unknown" }],
+]) {
+  assert.throws(
+    () => run("INSERT INTO browser_launches (id, code_prefix, code_digest, principal_id, source_credential_id, target_kind, target_json, expires_at, created_at, created_operation_id) VALUES (?, 'invalid', ?, 'owner', 'credential', 'admin', ?, ?, ?, ?)", [id, digest(id), JSON.stringify(target), now + 300_000, now, `op-${id}`]),
+    /CHECK constraint failed/,
+    "Browser Launch target values must fail closed in D1",
+  );
+}
+run("INSERT INTO browser_launches (id, code_prefix, code_digest, principal_id, source_credential_id, target_kind, target_json, expires_at, created_at, created_operation_id) VALUES ('launch', 'launch', ?, 'owner', 'credential', 'admin', ?, ?, ?, 'op-launch')", [digest(launchSecret), adminLaunchTarget, now + 300_000, now]);
 
 // Rendering GET /app/launch is a read: selecting the capability must not consume it.
 assert.equal(get("SELECT redeemed_at FROM browser_launches WHERE code_digest = ?", [digest(launchSecret)]).redeemed_at, null);

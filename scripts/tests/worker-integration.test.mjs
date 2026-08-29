@@ -72,6 +72,13 @@ async function seedDatabase() {
   const sessionDigest = await sha256Hex(sessionToken);
   const expiredSessionDigest = await sha256Hex(expiredSessionToken);
   const revokedSourceSessionDigest = await sha256Hex(revokedSourceSessionToken);
+  const projectTarget = JSON.stringify({
+    entry_path: "/app/w/validation/p/CORE",
+    kind: "project",
+    project_id: ids.project,
+    project_key: "CORE",
+    workspace_key: "validation",
+  });
   await db.batch([
     db.prepare(
       "INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?1, 'Owner', ?2, ?2)",
@@ -114,21 +121,21 @@ async function seedDatabase() {
          target_json, expires_at, created_at)
        VALUES ('session-active', ?1, ?2, 'credential', 'credential-active',
                'project', ?3, ?4, ?5)`,
-    ).bind(sessionDigest, ids.owner, JSON.stringify({ project_id: ids.project }), now + 60_000, now),
+    ).bind(sessionDigest, ids.owner, projectTarget, now + 60_000, now),
     db.prepare(
       `INSERT INTO web_sessions
         (id, token_digest, principal_id, source_kind, source_id, target_kind,
          target_json, expires_at, created_at)
        VALUES ('session-expired', ?1, ?2, 'credential', 'credential-active',
                'project', ?3, ?4, ?5)`,
-    ).bind(expiredSessionDigest, ids.owner, JSON.stringify({ project_id: ids.project }), now - 1, now - 60_000),
+    ).bind(expiredSessionDigest, ids.owner, projectTarget, now - 1, now - 60_000),
     db.prepare(
       `INSERT INTO web_sessions
         (id, token_digest, principal_id, source_kind, source_id, target_kind,
          target_json, expires_at, created_at)
        VALUES ('session-revoked-source', ?1, ?2, 'credential', 'credential-revoked',
                'project', ?3, ?4, ?5)`,
-    ).bind(revokedSourceSessionDigest, ids.owner, JSON.stringify({ project_id: ids.project }), now + 60_000, now),
+    ).bind(revokedSourceSessionDigest, ids.owner, projectTarget, now + 60_000, now),
   ]);
 }
 

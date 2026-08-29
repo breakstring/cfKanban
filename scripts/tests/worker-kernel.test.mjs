@@ -86,6 +86,7 @@ test("malformed JSON, unknown fields, and schema failures share validation error
 test("error envelope keeps Retry-After aligned and redacts unsafe details", async () => {
   const requestId = crypto.randomUUID();
   const secret = `cfk_v1_test_${"z".repeat(43)}`;
+  const browserLaunch = `cfl_v1_${"L".repeat(8)}_${"B".repeat(43)}`;
   const error = new ApiError({
     category: "rate_limit",
     code: "RATE_LIMITED",
@@ -94,6 +95,7 @@ test("error envelope keeps Retry-After aligned and redacts unsafe details", asyn
       raw_error: "SELECT token_digest FROM credentials",
       scope: "principal",
       unsafe_value: secret,
+      unsafe_launch_value: browserLaunch,
     },
     message: "Too many requests.",
     recovery: "retry_after",
@@ -110,7 +112,8 @@ test("error envelope keeps Retry-After aligned and redacts unsafe details", asyn
   assert.equal(body.retry_after_seconds, 7);
   assert.equal(body.details.scope, "principal");
   assert.equal(body.details.unsafe_value, "[REDACTED]");
-  assert.doesNotMatch(JSON.stringify(body), /token_digest|credentials|cfk_v1_/i);
+  assert.equal(body.details.unsafe_launch_value, "[REDACTED]");
+  assert.doesNotMatch(JSON.stringify(body), /token_digest|credentials|cf[kl]_v1_/i);
 });
 
 test("cookie write protection enforces same-origin and double-submit while Bearer wins", () => {
@@ -160,7 +163,8 @@ test("cookie write protection enforces same-origin and double-submit while Beare
     method: "POST",
   });
   assert.doesNotThrow(() => enforceCookieWriteProtection(bearerWithCookie, bearerAuth));
-  assert.match(serializeSessionCookie("value"), /HttpOnly; Secure; SameSite=Strict; Path=\/$/);
+  assert.match(serializeSessionCookie("value"), /HttpOnly; Secure; SameSite=Strict; Path=\/; Max-Age=28800$/);
+  assert.match(serializeCsrfCookie("value"), /Secure; SameSite=Strict; Path=\/; Max-Age=28800$/);
   assert.doesNotMatch(serializeCsrfCookie("value"), /HttpOnly/);
 });
 
@@ -215,9 +219,11 @@ test("canonical request hashing is stable and idempotency keys are bounded", asy
 
   const credential = `cfk_v1_live_${"A".repeat(43)}`;
   const invitation = `cfi_v1_${"P".repeat(8)}_${"I".repeat(43)}`;
+  const browserLaunch = `cfl_v1_${"L".repeat(8)}_${"B".repeat(43)}`;
   const sessionSecret = "S".repeat(43);
   assert.throws(() => validateIdempotencyKey(credential), (error) => error.code === "VALIDATION_ERROR");
   assert.throws(() => validateIdempotencyKey(invitation), (error) => error.code === "VALIDATION_ERROR");
+  assert.throws(() => validateIdempotencyKey(browserLaunch), (error) => error.code === "VALIDATION_ERROR");
   assert.throws(
     () => validateIdempotencyKey(`request-${sessionSecret}`, [sessionSecret]),
     (error) => error.code === "VALIDATION_ERROR",
