@@ -5,6 +5,10 @@ import { DatabaseSync } from "node:sqlite";
 import { sha256NormalizedText } from "./lib/generated-artifacts.mjs";
 
 const migration = await readFile(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
+const eventServiceSource = await readFile(
+  new URL("../apps/worker/src/services/events.ts", import.meta.url),
+  "utf8",
+);
 const manifest = JSON.parse(await readFile(new URL("../migrations/manifest.json", import.meta.url), "utf8"));
 assert.equal(
   manifest.migrations[0].sha256,
@@ -37,6 +41,18 @@ const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' 
 for (const index of manifest.migrations[0].expected_artifacts.indexes) {
   assert.ok(indexes.some((row) => row.name === index), `missing manifest index ${index}`);
 }
+const indexColumns = (name) => db.prepare(`PRAGMA index_info(${name})`).all()
+  .map((row) => row.name);
+assert.deepEqual(
+  indexColumns("idx_events_project_nonrelation_sequence"),
+  ["project_id", "stream", "sequence"],
+  "non-Relation Event index column order drifted",
+);
+assert.deepEqual(
+  indexColumns("idx_events_project_relation_sequence"),
+  ["project_id", "stream", "sequence", "relation_other_project_id"],
+  "Relation Event index must page by selected Project and sequence before checking the other endpoint",
+);
 
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["owner", "Lin", now, now]);
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["writer", "Chen", now, now]);
@@ -153,6 +169,16 @@ assert.doesNotMatch(
   participantEventPlan,
   /SCAN events(?:\s|$)/,
   `participant events unexpectedly scan the global Event stream: ${participantEventPlan}`,
+);
+assert.match(
+  eventServiceSource,
+  /FROM events INDEXED BY idx_events_project_relation_sequence[\s\S]*?project_id IN \(SELECT id FROM current_result_projects\)[\s\S]*?EXISTS \([\s\S]*?FROM current_visible_projects visible_relation_project[\s\S]*?visible_relation_project\.id = relation_other_project_id/,
+  "runtime Relation Event query must page by result Projects and check the other endpoint with EXISTS",
+);
+assert.doesNotMatch(
+  eventServiceSource,
+  /relation_other_project_id\s+IN\s*\(SELECT[^)]*json_each/i,
+  "runtime Relation Event query regressed to selected Projects x visible Projects expansion",
 );
 
 console.log(`D1 schema checks passed for ${tables.length} tables, core constraints, tombstone uniqueness, and ${planChecks.length + 1} indexed query shapes.`);

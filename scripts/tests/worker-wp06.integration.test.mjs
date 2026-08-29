@@ -169,6 +169,7 @@ function commentQuotaPreviewFailureDatabase(database) {
 
 function eventScopeBarrierDatabase(database) {
   let paused = false;
+  let rawEventRows = null;
   let releaseRead;
   let signalReached;
   const reached = new Promise((resolve) => {
@@ -177,15 +178,19 @@ function eventScopeBarrierDatabase(database) {
   const released = new Promise((resolve) => {
     releaseRead = resolve;
   });
-  const wrapStatement = (statement, matches) => new Proxy(statement, {
+  const wrapStatement = (statement, sql) => new Proxy(statement, {
     get(target, property) {
       if (property === "bind") {
-        return (...values) => wrapStatement(target.bind(...values), matches);
+        return (...values) => wrapStatement(target.bind(...values), sql);
       }
-      if (property === "all" && matches) {
+      if (property === "all") {
         return async (...args) => {
           const result = await target.all(...args);
-          if (!paused) {
+          if (sql.includes("candidate_events AS") && sql.includes("current_visible_projects")) {
+            rawEventRows = result.results;
+          }
+          if (!paused && sql.includes("FROM project_grants AS pg")
+              && sql.includes("ORDER BY w.key, p.key")) {
             paused = true;
             signalReached();
             await released;
@@ -201,16 +206,16 @@ function eventScopeBarrierDatabase(database) {
     db: new Proxy(database, {
       get(target, property) {
         if (property === "prepare") {
-          return (sql) => wrapStatement(
-            target.prepare(sql),
-            sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.key, p.key"),
-          );
+          return (sql) => wrapStatement(target.prepare(sql), sql);
         }
         const value = Reflect.get(target, property, target);
         return typeof value === "function" ? value.bind(target) : value;
       },
     }),
     reached,
+    get rawEventRows() {
+      return rawEventRows;
+    },
     release() {
       releaseRead();
     },
@@ -316,6 +321,7 @@ function finalQueryBarrierDatabase(database, predicate) {
 
 function queryExecutionBarrierDatabase(database, predicate) {
   let paused = false;
+  let rawRows = null;
   let releaseRead;
   let signalReached;
   const reached = new Promise((resolve) => {
@@ -336,7 +342,9 @@ function queryExecutionBarrierDatabase(database, predicate) {
             signalReached();
             await released;
           }
-          return target.all(...args);
+          const result = await target.all(...args);
+          rawRows = result.results;
+          return result;
         };
       }
       const value = Reflect.get(target, property, target);
@@ -354,6 +362,9 @@ function queryExecutionBarrierDatabase(database, predicate) {
       },
     }),
     reached,
+    get rawRows() {
+      return rawRows;
+    },
     release() {
       releaseRead();
     },
@@ -964,6 +975,12 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     racedEvents,
     (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
   );
+  assert.equal(
+    eventScopeBarrier.rawEventRows.some((row) => row.project_id === projectBId
+      || row.relation_other_project_id === projectBId),
+    false,
+    "the final Event SQL must filter the revoked Project before response-level scope checks",
+  );
   await db.prepare(
     "UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
   ).bind("60000000-0000-4000-8000-000000000012").run();
@@ -1036,6 +1053,11 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   auditBarrier.release();
   try {
     await assert.rejects(revokedOwnerAudit, (error) => error?.status === 401);
+    assert.deepEqual(
+      auditBarrier.rawRows,
+      [],
+      "the Audit SQL must return no rows after the Owner Credential is revoked",
+    );
   } finally {
     await db.prepare(
       "UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
@@ -1044,7 +1066,8 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
 
   const auditSessionSourceCredential = "60000000-0000-4000-8000-000000000124";
   const auditSessionId = "60000000-0000-4000-8000-000000000125";
-  const auditSessionExpiresAt = Date.now() + 8 * 60 * 60 * 1_000;
+  const auditSessionCreatedAt = Date.now();
+  const auditSessionExpiresAt = auditSessionCreatedAt + 8 * 60 * 60 * 1_000;
   await db.batch([
     db.prepare(
       `INSERT INTO credentials
@@ -1069,7 +1092,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
       auditSessionSourceCredential,
       JSON.stringify({ entry_path: "/app/admin", kind: "admin", section: "audit" }),
       auditSessionExpiresAt,
-      Date.now(),
+      auditSessionCreatedAt,
     ),
   ]);
   const auditSessionAuth = {
@@ -1115,6 +1138,11 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   revokedSessionBarrier.release();
   try {
     await assert.rejects(revokedSessionAudit, (error) => error?.status === 401);
+    assert.deepEqual(
+      revokedSessionBarrier.rawRows,
+      [],
+      "the Audit SQL must return no rows after the Web Session is revoked",
+    );
   } finally {
     await db.prepare("UPDATE web_sessions SET revoked_at = NULL WHERE id = ?1")
       .bind(auditSessionId).run();
@@ -1149,6 +1177,104 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   ).run();
   revokedSourceBarrier.release();
   await assert.rejects(revokedSourceAudit, (error) => error?.status === 401);
+  assert.deepEqual(
+    revokedSourceBarrier.rawRows,
+    [],
+    "the Audit SQL must return no rows after the Session source Credential is revoked",
+  );
+  await db.prepare(
+    "UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
+  ).bind(auditSessionSourceCredential).run();
+
+  const auditExpiryStartedAt = auditSessionCreatedAt + 1;
+  const expiredSessionBarrier = queryExecutionBarrierDatabase(
+    db,
+    (sql) => sql.includes("WHERE event.sequence > ?1") && sql.includes("auth_session.expires_at"),
+  );
+  const expiredSessionAudit = listAuditEventsService(
+    expiredSessionBarrier.db,
+    auditSessionAuth,
+    new URL("https://kanban.example.test/api/v1/admin/audit-events?limit=1"),
+    auditExpiryStartedAt,
+  );
+  await expiredSessionBarrier.reached;
+  await db.prepare("UPDATE web_sessions SET expires_at = ?1 WHERE id = ?2")
+    .bind(auditExpiryStartedAt, auditSessionId).run();
+  expiredSessionBarrier.release();
+  try {
+    await assert.rejects(expiredSessionAudit, (error) => error?.status === 401);
+    assert.deepEqual(
+      expiredSessionBarrier.rawRows,
+      [],
+      "the Audit SQL must return no rows when the Web Session expires during the request",
+    );
+  } finally {
+    await db.prepare("UPDATE web_sessions SET expires_at = ?1 WHERE id = ?2")
+      .bind(auditSessionExpiresAt, auditSessionId).run();
+  }
+
+  const auditPasskeyId = "60000000-0000-4000-8000-000000000130";
+  const auditPasskeySessionId = "60000000-0000-4000-8000-000000000131";
+  const auditPasskeySessionExpiresAt = Date.now() + 8 * 60 * 60 * 1_000;
+  await db.batch([
+    db.prepare(
+      `INSERT INTO web_authenticators
+        (id, principal_id, credential_id, public_key_cose, algorithm, user_handle,
+         backup_eligible, backup_state, rp_id, created_at, created_operation_id)
+       VALUES (?1, ?2, ?3, ?4, -7, ?2, 0, 0, 'kanban.example.test', ?5, ?6)`,
+    ).bind(
+      auditPasskeyId,
+      ids.ownerPrincipal,
+      "YXVkaXQtcGFzc2tleQ",
+      "pQECAyYgASFYIA",
+      Date.now(),
+      "wp06-audit-source-passkey",
+    ),
+    db.prepare(
+      `INSERT INTO web_sessions
+        (id, token_digest, principal_id, source_kind, source_id, target_kind,
+         target_json, expires_at, created_at)
+       VALUES (?1, ?2, ?3, 'web_authenticator', ?4, 'admin', ?5, ?6, ?7)`,
+    ).bind(
+      auditPasskeySessionId,
+      await sha256Hex("wp06-audit-passkey-session-cookie"),
+      ids.ownerPrincipal,
+      auditPasskeyId,
+      JSON.stringify({ entry_path: "/app/admin", kind: "admin", section: "audit" }),
+      auditPasskeySessionExpiresAt,
+      Date.now(),
+    ),
+  ]);
+  const auditPasskeySessionAuth = {
+    ...auditSessionAuth,
+    sessionExpiresAt: auditPasskeySessionExpiresAt,
+    sessionId: auditPasskeySessionId,
+    sourceId: auditPasskeyId,
+    sourceKind: "web_authenticator",
+  };
+  const revokedPasskeyBarrier = queryExecutionBarrierDatabase(
+    db,
+    (sql) => sql.includes("WHERE event.sequence > ?1") && sql.includes("auth_source_passkey"),
+  );
+  const revokedPasskeyAudit = listAuditEventsService(
+    revokedPasskeyBarrier.db,
+    auditPasskeySessionAuth,
+    new URL("https://kanban.example.test/api/v1/admin/audit-events?limit=1"),
+    Date.now(),
+  );
+  await revokedPasskeyBarrier.reached;
+  await db.prepare(
+    `UPDATE web_authenticators
+     SET revoked_at = ?1, revoked_by_principal_id = ?2, version = version + 1
+     WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, auditPasskeyId).run();
+  revokedPasskeyBarrier.release();
+  await assert.rejects(revokedPasskeyAudit, (error) => error?.status === 401);
+  assert.deepEqual(
+    revokedPasskeyBarrier.rawRows,
+    [],
+    "the Audit SQL must return no rows after the Session source Passkey is revoked",
+  );
 
   const hiddenTailBaseline = await jsonRequest(
     `/api/v1/events?after=${encodeURIComponent(scopedEvents.body.next_cursor)}&limit=1`,
