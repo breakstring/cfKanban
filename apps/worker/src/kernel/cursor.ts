@@ -67,11 +67,12 @@ export async function createCursorContext(
   kind: string,
   filter: JsonValue,
   scopeProjectIds: readonly string[],
+  principalId: string,
 ): Promise<CursorContext> {
   const normalizedScope = [...new Set(scopeProjectIds)].sort();
   const [filterHash, scopeHash] = await Promise.all([
     sha256Hex(canonicalJson(filter)),
-    sha256Hex(canonicalJson(normalizedScope)),
+    sha256Hex(canonicalJson({ principal_id: principalId, project_ids: normalizedScope })),
   ]);
   return { filterHash, kind, scopeHash };
 }

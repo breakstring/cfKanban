@@ -8,7 +8,11 @@ import {
 } from "../kernel/authorization.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
 import { ApiError, notFound, platformUnavailable, versionConflict } from "../kernel/errors.ts";
-import { runIdempotentOperation } from "../kernel/idempotency.ts";
+import {
+  operationSnapshotStatement,
+  readOperationSnapshot,
+  runIdempotentOperation,
+} from "../kernel/idempotency.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import { actorCredentialId, authorizedVia, requireIdempotencyKey, writeResult } from "./shared.ts";
 
@@ -50,21 +54,6 @@ async function readInstance(db: D1Database): Promise<InstanceRow> {
     return row;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
-  }
-}
-
-async function readOriginObservedForOperation(db: D1Database, operationId: string): Promise<string> {
-  try {
-    const row = await db.prepare(
-      `SELECT json_extract(payload_json, '$.observed_origin') AS observed_origin
-       FROM events
-       WHERE operation_id = ?1 AND type = 'instance.preferred-origin-updated'
-       LIMIT 1`,
-    ).bind(operationId).first<{ observed_origin: string | null }>();
-    if (row === null || typeof row.observed_origin !== "string") throw new Error();
-    return row.observed_origin;
-  } catch {
     throw platformUnavailable("d1");
   }
 }
@@ -206,6 +195,14 @@ export async function updateMe(
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   const normalizedName = requireDisplayName(displayName);
+  const current = await readPrincipal(db, auth.principalId);
+  if (current === null) throw notFound();
+  const updated: PrincipalRow = {
+    ...current,
+    display_name: normalizedName,
+    updated_at: now,
+    version: current.version + 1,
+  };
   const operationId = crypto.randomUUID();
   const eventId = crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 6);
@@ -258,8 +255,6 @@ export async function updateMe(
     }
     throw error;
   }
-  const updated = await readPrincipal(db, auth.principalId);
-  if (updated === null) throw platformUnavailable("d1");
   return writeResult(principalResource(updated, { principal_id: updated.id }), commit.lastEventSequence, false);
 }
 
@@ -291,6 +286,15 @@ export async function updateInstanceOrigin(
     },
     db,
     execute: async (operationId) => {
+      const current = await readInstance(db);
+      const updated: InstanceRow = {
+        ...current,
+        origin_last_operation_id: operationId,
+        origin_updated_at: now,
+        origin_updated_by_principal_id: auth.principalId,
+        origin_version: current.origin_version + 1,
+        preferred_api_origin: preferredApiOrigin,
+      };
       const eventId = crypto.randomUUID();
       const guard = buildCurrentAuthGuard(auth, now, 6, true);
       const statements = [
@@ -299,13 +303,9 @@ export async function updateInstanceOrigin(
            SET preferred_api_origin = ?1, version = version + 1, updated_at = ?2,
                updated_by_principal_id = ?3, last_operation_id = ?4
            WHERE singleton = 1 AND version = ?5
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = instance_origin_settings.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND ${guard.sql}`,
         ).bind(preferredApiOrigin, now, auth.principalId, operationId, expectedVersion, ...guard.values),
+        operationSnapshotStatement(db, operationId, instanceOriginResource(updated, observedOrigin)),
         db.prepare(
           `INSERT INTO events
             (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -333,8 +333,9 @@ export async function updateInstanceOrigin(
             || await authGuardRejected(db, auth, now, true),
           expectedEventCount: 1,
           operationId,
-          primarySubjectId: (await readInstance(db)).instance_id,
+          primarySubjectId: current.instance_id,
           primarySubjectType: "instance",
+          requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
@@ -349,11 +350,12 @@ export async function updateInstanceOrigin(
     normalizedResourceScope: "instance-origin",
     now,
     readback: async (operationId, commit) => {
-      const instance = await readInstance(db);
-      if (instance.origin_last_operation_id !== operationId) throw platformUnavailable("d1");
-      const operationObservedOrigin = await readOriginObservedForOperation(db, operationId);
       return {
-        body: writeResult(instanceOriginResource(instance, operationObservedOrigin), commit.lastEventSequence, false),
+        body: writeResult(
+          await readOperationSnapshot<{ [key: string]: JsonValue }>(db, operationId),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },

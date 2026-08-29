@@ -36,7 +36,7 @@ import {
   validationError,
   versionConflict,
 } from "../kernel/errors.ts";
-import { runIdempotentOperation } from "../kernel/idempotency.ts";
+import { readOperationSnapshot, runIdempotentOperation } from "../kernel/idempotency.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import {
   actorCredentialId,
@@ -63,6 +63,7 @@ interface IssueRow {
   priority_key: PriorityKey;
   priority_rank: number;
   project_context: string | null;
+  project_deleted_at: number | null;
   project_display_name: string;
   project_id: string;
   project_key: string;
@@ -72,6 +73,7 @@ interface IssueRow {
   updated_at: number;
   version: number;
   workspace_display_name: string;
+  workspace_deleted_at: number | null;
   workspace_id: string;
   workspace_key: string;
 }
@@ -93,14 +95,25 @@ interface CommentRow {
   version: number;
 }
 
+interface CountedCommentRow extends CommentRow {
+  total_count: number;
+}
+
 interface RelationRow {
+  created_at: number;
   id: string;
   kind: "blocks" | "duplicate" | "parent" | "related";
   source_number: number;
   source_project_id: string;
   target_number: number;
   target_project_id: string;
+  total_count: number;
   version: number;
+}
+
+interface BoundedSection<T> {
+  items: T[];
+  totalCount: number;
 }
 
 interface IssueScope {
@@ -111,6 +124,21 @@ interface IssueScope {
   unresolvedProjectTargets: string[];
   unresolvedWorkspaceTargets: string[];
   workspaceTargets: string[];
+}
+
+interface IssueOperationSnapshot {
+  labels: LabelRow[];
+  row: IssueRow;
+}
+
+interface TombstoneQuotaRow {
+  active_comment_count: number | null;
+  active_issue_count: number | null;
+  comment_limit: number | null;
+  issue_id: string;
+  issue_limit: number | null;
+  public_join_enabled: number;
+  restoring_comment_count: number;
 }
 
 interface SearchFilter {
@@ -125,14 +153,21 @@ interface CandidateFilter {
   blocked: "exclude" | "include";
 }
 
+interface IssueListFilter {
+  assignees: string[];
+  statuses: StatusKey[];
+}
+
 const ISSUE_SELECT = `
   SELECT i.id, i.number, i.project_id, i.title, i.body, i.status_key,
          i.priority_key, i.priority_rank, i.assignee_principal_id,
          i.blocked_reason, i.version, i.deleted_at, i.created_at, i.updated_at,
          i.deleted_by_principal_id,
          p.key AS project_key, p.display_name AS project_display_name,
+         p.deleted_at AS project_deleted_at,
          p.context AS project_context, w.id AS workspace_id,
          w.key AS workspace_key, w.display_name AS workspace_display_name,
+         w.deleted_at AS workspace_deleted_at,
          assignee.display_name AS assignee_display_name,
          COALESCE(status_name.display_name,
            CASE i.status_key
@@ -153,18 +188,7 @@ const ISSUE_SELECT = `
                AND eligible_grant.revoked_at IS NULL
            ) THEN 1 ELSE 0
          END AS assignee_available,
-         CASE WHEN i.blocked_reason IS NOT NULL OR EXISTS (
-           SELECT 1
-           FROM issue_relations blocked_relation
-           JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
-           JOIN projects blocker_project ON blocker_project.id = blocker.project_id
-           JOIN workspaces blocker_workspace ON blocker_workspace.id = blocker_project.workspace_id
-           WHERE blocked_relation.target_issue_id = i.id
-             AND blocked_relation.kind = 'blocks'
-             AND blocked_relation.deleted_at IS NULL
-             AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
-             AND blocker_project.deleted_at IS NULL AND blocker_workspace.deleted_at IS NULL
-         ) THEN 1 ELSE 0 END AS is_blocked
+         CASE WHEN i.blocked_reason IS NOT NULL THEN 1 ELSE 0 END AS is_blocked
   FROM issues i
   JOIN projects p ON p.id = i.project_id
   JOIN workspaces w ON w.id = p.workspace_id
@@ -189,19 +213,11 @@ function cookieTargetAllowsProject(auth: AuthContext, workspaceKey: string, proj
   if (auth.kind === "bearer") return true;
   if (auth.targetKind === "admin") return auth.isOwner;
   if (auth.targetKind === "project_selection") return true;
-  if (auth.targetKind === "issue") return false;
+  // An Issue launch fixes the Session to the Issue's owning Project. The
+  // project membership is resolved by resolveVisibleProjects; the identifier
+  // only selects the initial Web page and is not a single-resource ACL.
+  if (auth.targetKind === "issue") return true;
   return auth.target.workspace_key === workspaceKey && auth.target.project_key === projectKey;
-}
-
-function cookieTargetAllowsIssue(
-  auth: AuthContext,
-  identifier: string,
-  workspaceKey: string,
-  projectKey: string,
-): boolean {
-  if (auth.kind === "bearer") return true;
-  if (auth.targetKind === "issue") return auth.target.identifier === identifier;
-  return cookieTargetAllowsProject(auth, workspaceKey, projectKey);
 }
 
 function roleCanWrite(role: ProjectAccessRole): boolean {
@@ -234,7 +250,7 @@ async function resolveIssueScope(
   auth: AuthContext,
   url: URL,
   forcedProject: VisibleProject | null = null,
-  includeDeletedTarget = false,
+  recoveryView = false,
 ): Promise<IssueScope> {
   const projectTargets = repeatedTargets(url, "project");
   const workspaceTargets = repeatedTargets(url, "workspace");
@@ -243,25 +259,10 @@ async function resolveIssueScope(
     target,
     workspaceKey: requireWorkspaceKey(target, "workspace"),
   }));
-  let projects = await resolveVisibleProjects(db, auth);
+  let projects = recoveryView
+    ? await resolveIssueRecoveryProjects(db, auth)
+    : await resolveVisibleProjects(db, auth);
   const targetIdentifier = issueTarget(auth);
-  if (targetIdentifier !== null) {
-    const targetNumber = targetIdentifier === "invalid" ? -1 : issueNumber(targetIdentifier);
-    let projectId: string | null = null;
-    try {
-      const row = await db.prepare(
-        `SELECT i.project_id FROM issues i
-         JOIN projects p ON p.id = i.project_id
-         JOIN workspaces w ON w.id = p.workspace_id
-         WHERE i.number = ?1 ${includeDeletedTarget ? "" : "AND i.deleted_at IS NULL"}
-           AND p.deleted_at IS NULL AND w.deleted_at IS NULL`,
-      ).bind(targetNumber).first<{ project_id: string }>();
-      projectId = row?.project_id ?? null;
-    } catch {
-      throw platformUnavailable("d1");
-    }
-    projects = projects.filter((project) => project.projectId === projectId);
-  }
   if (forcedProject !== null) projects = projects.filter((project) => project.projectId === forcedProject.projectId);
   const visibleBeforeQueryFilters = projects;
   if (parsedProjects.length > 0) {
@@ -314,19 +315,144 @@ function issueDeletionView(url: URL): "exclude" | "only" {
   return value;
 }
 
+async function resolveIssueRecoveryProjects(
+  db: D1Database,
+  auth: AuthContext,
+  onlyProjectId: string | null = null,
+): Promise<VisibleProject[]> {
+  let targetProjectId: string | null = null;
+  let targetWorkspaceKey: string | null = null;
+  let targetProjectKey: string | null = null;
+  let targetIssueNumber: number | null = null;
+  if (auth.kind === "cookie") {
+    if (auth.targetKind === "admin" && !auth.isOwner) return [];
+    if (auth.targetKind === "project") {
+      targetProjectId = typeof auth.target.project_id === "string" ? auth.target.project_id : null;
+      targetWorkspaceKey = typeof auth.target.workspace_key === "string" ? auth.target.workspace_key : null;
+      targetProjectKey = typeof auth.target.project_key === "string" ? auth.target.project_key : null;
+      if (targetProjectId === null && (targetWorkspaceKey === null || targetProjectKey === null)) return [];
+    }
+    if (auth.targetKind === "issue") {
+      const identifier = issueTarget(auth);
+      if (identifier === null || identifier === "invalid") return [];
+      targetIssueNumber = issueNumber(identifier);
+    }
+  }
+  const select = `
+    SELECT p.id AS project_id, p.key AS project_key, p.display_name AS project_name,
+           p.version AS project_version, w.id AS workspace_id, w.key AS workspace_key,
+           w.display_name AS workspace_name, ?1 AS role
+    FROM projects p
+    JOIN workspaces w ON w.id = p.workspace_id
+    WHERE (?2 IS NULL OR p.id = ?2)
+      AND (?3 IS NULL OR p.id = ?3)
+      AND (?4 IS NULL OR w.key = ?4)
+      AND (?5 IS NULL OR p.key = ?5)
+      AND (?6 IS NULL OR EXISTS (
+        SELECT 1 FROM issues target_issue
+        WHERE target_issue.number = ?6 AND target_issue.project_id = p.id
+      ))`;
+  try {
+    if (auth.isOwner) {
+      const result = await db.prepare(`${select} ORDER BY w.key, p.key`).bind(
+        "owner",
+        onlyProjectId,
+        targetProjectId,
+        targetWorkspaceKey,
+        targetProjectKey,
+        targetIssueNumber,
+      ).all<{
+        project_id: string;
+        project_key: string;
+        project_name: string;
+        project_version: number;
+        role: ProjectAccessRole;
+        workspace_id: string;
+        workspace_key: string;
+        workspace_name: string;
+      }>();
+      return result.results.map((row) => ({
+        projectId: row.project_id,
+        projectKey: row.project_key,
+        projectName: row.project_name,
+        projectVersion: row.project_version,
+        role: row.role,
+        workspaceId: row.workspace_id,
+        workspaceKey: row.workspace_key,
+        workspaceName: row.workspace_name,
+      }));
+    }
+    const result = await db.prepare(
+      `${select}
+       AND EXISTS (
+         SELECT 1 FROM project_grants recovery_grant
+         WHERE recovery_grant.project_id = p.id
+           AND recovery_grant.principal_id = ?7
+           AND recovery_grant.role = 'writer' AND recovery_grant.revoked_at IS NULL
+       )
+       ORDER BY w.key, p.key`,
+    ).bind(
+      "writer",
+      onlyProjectId,
+      targetProjectId,
+      targetWorkspaceKey,
+      targetProjectKey,
+      targetIssueNumber,
+      auth.principalId,
+    ).all<{
+      project_id: string;
+      project_key: string;
+      project_name: string;
+      project_version: number;
+      role: ProjectAccessRole;
+      workspace_id: string;
+      workspace_key: string;
+      workspace_name: string;
+    }>();
+    return result.results.map((row) => ({
+      projectId: row.project_id,
+      projectKey: row.project_key,
+      projectName: row.project_name,
+      projectVersion: row.project_version,
+      role: row.role,
+      workspaceId: row.workspace_id,
+      workspaceKey: row.workspace_key,
+      workspaceName: row.workspace_name,
+    }));
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
 function parseOrdinaryCursor(value: JsonValue[] | null): [number, number] | null {
+  if (value === null) return null;
   if (
-    value === null
-    || (value.length === 2 && typeof value[0] === "number" && typeof value[1] === "number")
-  ) return value as [number, number] | null;
+    value.length === 2
+    && typeof value[0] === "number"
+    && Number.isSafeInteger(value[0])
+    && value[0] >= 0
+    && typeof value[1] === "number"
+    && Number.isSafeInteger(value[1])
+    && value[1] >= 1
+  ) return value as [number, number];
   throw invalidCursor();
 }
 
 function parseCandidateCursor(value: JsonValue[] | null): [number, number, number] | null {
+  if (value === null) return null;
   if (
-    value === null
-    || (value.length === 3 && value.every((entry) => typeof entry === "number"))
-  ) return value as [number, number, number] | null;
+    value.length === 3
+    && typeof value[0] === "number"
+    && Number.isSafeInteger(value[0])
+    && value[0] >= 0
+    && value[0] < 5
+    && typeof value[1] === "number"
+    && Number.isSafeInteger(value[1])
+    && value[1] >= 0
+    && typeof value[2] === "number"
+    && Number.isSafeInteger(value[2])
+    && value[2] >= 1
+  ) return value as [number, number, number];
   throw invalidCursor();
 }
 
@@ -365,6 +491,142 @@ async function labelsForIssues(db: D1Database, issueIds: readonly string[]): Pro
   } catch {
     throw platformUnavailable("d1");
   }
+}
+
+async function applyVisibleBlockedState(
+  db: D1Database,
+  rows: readonly IssueRow[],
+  visibleProjectIds: readonly string[],
+): Promise<void> {
+  for (const row of rows) row.is_blocked = row.blocked_reason === null ? 0 : 1;
+  if (rows.length === 0 || visibleProjectIds.length === 0) return;
+  try {
+    const result = await db.prepare(
+      `SELECT DISTINCT blocked_relation.target_issue_id
+       FROM issue_relations blocked_relation
+       JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
+       JOIN issues target ON target.id = blocked_relation.target_issue_id
+       JOIN projects blocker_project ON blocker_project.id = blocker.project_id
+       JOIN workspaces blocker_workspace ON blocker_workspace.id = blocker_project.workspace_id
+       JOIN projects target_project ON target_project.id = target.project_id
+       JOIN workspaces target_workspace ON target_workspace.id = target_project.workspace_id
+       WHERE blocked_relation.target_issue_id IN (SELECT value FROM json_each(?1))
+         AND blocker.project_id IN (SELECT value FROM json_each(?2))
+         AND target.project_id IN (SELECT value FROM json_each(?2))
+         AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
+         AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
+         AND target.deleted_at IS NULL
+         AND blocker_project.deleted_at IS NULL AND blocker_workspace.deleted_at IS NULL
+         AND target_project.deleted_at IS NULL AND target_workspace.deleted_at IS NULL`,
+    ).bind(
+      JSON.stringify(rows.map((row) => row.id)),
+      JSON.stringify(visibleProjectIds),
+    ).all<{ target_issue_id: string }>();
+    const blockedIds = new Set(result.results.map((row) => row.target_issue_id));
+    for (const row of rows) {
+      if (blockedIds.has(row.id)) row.is_blocked = 1;
+    }
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
+function issueOperationSnapshotStatement(
+  db: D1Database,
+  operationId: string,
+  issueId: string,
+  role: ProjectAccessRole,
+  visibleProjectIds: readonly string[],
+): D1PreparedStatement {
+  return db.prepare(
+    `UPDATE idempotency_records
+     SET operation_snapshot_json = (
+       SELECT json_object(
+         'row', json_object(
+           'assignee_available', CASE
+             WHEN i.assignee_principal_id IS NULL THEN 0
+             WHEN i.assignee_principal_id = instance.owner_principal_id THEN 1
+             WHEN EXISTS (
+               SELECT 1 FROM project_grants eligible_grant
+               WHERE eligible_grant.project_id = i.project_id
+                 AND eligible_grant.principal_id = i.assignee_principal_id
+                 AND eligible_grant.role = 'writer' AND eligible_grant.revoked_at IS NULL
+             ) THEN 1 ELSE 0 END,
+           'assignee_display_name', assignee.display_name,
+           'assignee_principal_id', i.assignee_principal_id,
+           'blocked_reason', i.blocked_reason,
+           'body', i.body,
+           'created_at', i.created_at,
+           'deleted_at', i.deleted_at,
+           'deleted_by_principal_id', i.deleted_by_principal_id,
+           'id', i.id,
+           'is_blocked', CASE WHEN i.blocked_reason IS NOT NULL OR EXISTS (
+             SELECT 1 FROM issue_relations blocked_relation
+             JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
+             JOIN projects blocker_project ON blocker_project.id = blocker.project_id
+             JOIN workspaces blocker_workspace ON blocker_workspace.id = blocker_project.workspace_id
+             WHERE blocked_relation.target_issue_id = i.id
+               AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
+               AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
+               AND blocker.project_id IN (SELECT value FROM json_each(?4))
+               AND blocker_project.deleted_at IS NULL AND blocker_workspace.deleted_at IS NULL
+           ) THEN 1 ELSE 0 END,
+           'number', i.number,
+           'priority_key', i.priority_key,
+           'priority_rank', i.priority_rank,
+           'project_context', p.context,
+           'project_deleted_at', p.deleted_at,
+           'project_display_name', p.display_name,
+           'project_id', p.id,
+           'project_key', p.key,
+           'status_display_name', COALESCE(status_name.display_name,
+             CASE i.status_key
+               WHEN 'backlog' THEN 'Backlog' WHEN 'todo' THEN 'Todo'
+               WHEN 'in_progress' THEN 'In Progress' WHEN 'done' THEN 'Done'
+               ELSE 'Canceled' END),
+           'status_key', i.status_key,
+           'title', i.title,
+           'updated_at', i.updated_at,
+           'version', i.version,
+           'workspace_deleted_at', w.deleted_at,
+           'workspace_display_name', w.display_name,
+           'workspace_id', w.id,
+           'workspace_key', w.key
+         ),
+         'labels', json(COALESCE((
+           SELECT json_group_array(json_object(
+             'color', ordered_label.color,
+             'id', ordered_label.id,
+             'issue_id', ordered_label.issue_id,
+             'name', ordered_label.name
+           ))
+           FROM (
+             SELECT l.color, l.id, il.issue_id, l.name
+             FROM issue_labels il JOIN labels l ON l.id = il.label_id
+             WHERE il.issue_id = i.id AND l.deleted_at IS NULL
+             ORDER BY lower(l.name), l.id
+           ) ordered_label
+         ), '[]')),
+         'role', ?3
+       )
+       FROM issues i
+       JOIN projects p ON p.id = i.project_id
+       JOIN workspaces w ON w.id = p.workspace_id
+       JOIN instance_meta instance ON instance.singleton = 1
+       LEFT JOIN principals assignee ON assignee.id = i.assignee_principal_id
+       LEFT JOIN project_status_names status_name
+         ON status_name.project_id = i.project_id AND status_name.status_key = i.status_key
+       WHERE i.id = ?2
+     )
+     WHERE operation_id = ?1 AND state = 'pending'`,
+  ).bind(operationId, issueId, role, JSON.stringify(visibleProjectIds));
+}
+
+async function readIssueOperationSnapshot(
+  db: D1Database,
+  operationId: string,
+): Promise<IssueOperationSnapshot & { role: ProjectAccessRole }> {
+  return readOperationSnapshot<IssueOperationSnapshot & { role: ProjectAccessRole }>(db, operationId);
 }
 
 function allowedIssueActions(role: ProjectAccessRole, deleted: boolean): string[] {
@@ -422,18 +684,118 @@ function issueResource(
 function issueTombstoneResource(
   row: IssueRow,
   role: ProjectAccessRole,
+  quota: TombstoneQuotaRow | null = null,
 ): { [key: string]: JsonValue } {
+  const projectActive = row.project_deleted_at === null;
+  const workspaceActive = row.workspace_deleted_at === null;
+  let unavailabilityReason: JsonValue = !workspaceActive
+    ? { code: "PARENT_WORKSPACE_DELETED", recovery: "restore_parent" }
+    : !projectActive
+      ? { code: "PARENT_PROJECT_DELETED", recovery: "restore_parent" }
+      : null;
+  if (unavailabilityReason === null && roleCanWrite(role) && quota?.public_join_enabled === 1) {
+    if (
+      quota.active_issue_count === null
+      || quota.issue_limit === null
+      || quota.active_comment_count === null
+      || (quota.restoring_comment_count > 0 && quota.comment_limit === null)
+    ) {
+      throw platformUnavailable("d1");
+    }
+    if (quota.active_issue_count + 1 > quota.issue_limit) {
+      unavailabilityReason = {
+        code: "PROJECT_ISSUE_LIMIT_REACHED",
+        current_usage: quota.active_issue_count,
+        limit: quota.issue_limit,
+        recovery: "free_capacity_or_request_owner",
+        resource_kind: "issues",
+      };
+    } else if (
+      quota.restoring_comment_count > 0
+      && quota.active_comment_count + quota.restoring_comment_count > (quota.comment_limit ?? -1)
+    ) {
+      unavailabilityReason = {
+        code: "PROJECT_COMMENT_LIMIT_REACHED",
+        current_usage: quota.active_comment_count,
+        limit: quota.comment_limit,
+        recovery: "free_capacity_or_request_owner",
+        resource_kind: "comments",
+      };
+    }
+  }
+  const restorable = roleCanWrite(role) && projectActive && workspaceActive && unavailabilityReason === null;
   return {
     ...issueResource(row, [], role),
-    allowed_actions: roleCanWrite(role) ? ["restore"] : [],
+    allowed_actions: restorable ? ["restore"] : [],
     deleted_by_principal_id: row.deleted_by_principal_id,
     parent_status: {
-      project: "active",
-      workspace: "active",
+      project: projectActive ? "active" : "deleted",
+      workspace: workspaceActive ? "active" : "deleted",
     },
-    restorable: roleCanWrite(role),
-    unavailability_reason: null,
+    restorable,
+    unavailability_reason: unavailabilityReason,
   };
+}
+
+async function tombstoneQuotaRows(
+  db: D1Database,
+  issueIds: readonly string[],
+): Promise<Map<string, TombstoneQuotaRow>> {
+  const byIssue = new Map<string, TombstoneQuotaRow>();
+  if (issueIds.length === 0) return byIssue;
+  try {
+    const result = await db.prepare(
+      `SELECT issue.id AS issue_id,
+              CASE WHEN policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
+                   THEN 1 ELSE 0 END AS public_join_enabled,
+              project.issue_limit, project.comment_limit,
+              usage.active_issue_count, usage.active_comment_count,
+              (SELECT COUNT(*) FROM comments active_comment
+               WHERE active_comment.issue_id = issue.id
+                 AND active_comment.deleted_at IS NULL) AS restoring_comment_count
+       FROM issues issue
+       JOIN projects project ON project.id = issue.project_id
+       LEFT JOIN public_join_policies policy ON policy.project_id = project.id
+       LEFT JOIN project_usage usage ON usage.project_id = project.id
+       WHERE issue.id IN (SELECT value FROM json_each(?1))`,
+    ).bind(JSON.stringify(issueIds)).all<TombstoneQuotaRow>();
+    for (const row of result.results) byIssue.set(row.issue_id, row);
+    return byIssue;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw platformUnavailable("d1");
+  }
+}
+
+async function requireIssueRecoveryAccess(
+  db: D1Database,
+  auth: AuthContext,
+  identifierValue: JsonValue,
+  requireDeleted = false,
+): Promise<{ project: VisibleProject; row: IssueRow }> {
+  const identifier = requireIssueIdentifier(identifierValue);
+  let row: IssueRow | null;
+  try {
+    row = await db.prepare(
+      `${ISSUE_SELECT} WHERE i.number = ?1 LIMIT 1`,
+    ).bind(issueNumber(identifier)).first<IssueRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+  if (row === null || (requireDeleted && row.deleted_at === null)) throw notFound();
+  const projects = await resolveIssueRecoveryProjects(db, auth, row.project_id);
+  const project = projects.find((candidate) => candidate.projectId === row.project_id);
+  if (project === undefined) throw notFound();
+  return { project, row };
+}
+
+function requireActiveIssueParents(row: IssueRow): void {
+  if (row.workspace_deleted_at !== null) {
+    throw conflict("PARENT_WORKSPACE_DELETED", "restore_parent", { parent_kind: "workspace" });
+  }
+  if (row.project_deleted_at !== null) {
+    throw conflict("PARENT_PROJECT_DELETED", "restore_parent", { parent_kind: "project" });
+  }
 }
 
 async function requireIssueAccess(
@@ -445,7 +807,7 @@ async function requireIssueAccess(
 ): Promise<{ project: VisibleProject; row: IssueRow }> {
   const identifier = requireIssueIdentifier(identifierValue);
   const row = await readIssueRow(db, issueNumber(identifier), includeDeleted);
-  if (row === null || !cookieTargetAllowsIssue(auth, identifier, row.workspace_key, row.project_key)) throw notFound();
+  if (row === null || !cookieTargetAllowsProject(auth, row.workspace_key, row.project_key)) throw notFound();
   const visible = await resolveVisibleProjects(db, auth);
   const project = visible.find((candidate) => candidate.projectId === row.project_id);
   if (project === undefined) throw notFound();
@@ -465,10 +827,26 @@ function requireCandidateFilter(url: URL): CandidateFilter {
   return { assignment, blocked };
 }
 
+function requireIssueListFilter(url: URL): IssueListFilter {
+  const rawStatuses = url.searchParams.getAll("status");
+  const rawAssignees = url.searchParams.getAll("assignee");
+  if (rawStatuses.length > 5) throw validationError("too_many_issue_filters", { field: "status" });
+  if (rawAssignees.length > 20) throw validationError("too_many_issue_filters", { field: "assignee" });
+  const statuses = [...new Set(rawStatuses)].map((status) => {
+    if (!WORKFLOW_STATUSES.some((definition) => definition.key === status)) {
+      throw validationError("schema_validation_failed", { field: "status" });
+    }
+    return status as StatusKey;
+  }).sort();
+  const assignees = [...new Set(rawAssignees.map((assignee) => requireUuid(assignee, "assignee")))].sort();
+  return { assignees, statuses };
+}
+
 function resolvedScope(
   scope: IssueScope,
   search: SearchFilter,
   candidate: CandidateFilter | null,
+  issueFilter: IssueListFilter,
 ): { [key: string]: JsonValue } {
   return {
     broad_search: scope.broad && search.normalized !== null,
@@ -482,6 +860,10 @@ function resolvedScope(
     ...(candidate !== null ? {
       candidate_policy: { ...candidate, status_category: "unstarted" },
     } : {}),
+    filters: {
+      assignees: issueFilter.assignees,
+      statuses: issueFilter.statuses,
+    },
     target_identifier: scope.targetIdentifier,
     unresolved_project_targets: scope.unresolvedProjectTargets,
     unresolved_workspace_targets: scope.unresolvedWorkspaceTargets,
@@ -495,6 +877,7 @@ async function listIssueRows(
   search: SearchFilter,
   url: URL,
   candidate: CandidateFilter | null,
+  issueFilter: IssueListFilter,
   principalId: string,
   deletionView: "exclude" | "only",
 ): Promise<{ hasMore: boolean; rows: IssueRow[]; nextCursor: string | null }> {
@@ -505,19 +888,24 @@ async function listIssueRows(
     candidate_assignment: candidate?.assignment ?? null,
     candidate_blocked: candidate?.blocked ?? null,
     deleted: deletionView,
+    assignees: issueFilter.assignees,
     project_targets: [...scope.projectTargets].sort(),
     q: search.normalized,
-    target_identifier: scope.targetIdentifier,
+    statuses: issueFilter.statuses,
     workspace_targets: [...scope.workspaceTargets].sort(),
   };
   const cursorContext = await createCursorContext(
     candidates ? "issue-candidates" : "issues",
     filter,
     scope.projects.map((project) => project.projectId),
+    principalId,
   );
   const projectIds = scope.projects.map((project) => project.projectId);
+  const decodedCursor = decodeCursor(url.searchParams.get("cursor"), cursorContext);
+  const parsedCursor = candidates
+    ? parseCandidateCursor(decodedCursor)
+    : parseOrdinaryCursor(decodedCursor);
   if (projectIds.length === 0) {
-    decodeCursor(url.searchParams.get("cursor"), cursorContext);
     return { hasMore: false, nextCursor: null, rows: [] };
   }
   if (scope.broad && search.normalized !== null && search.number === null && projectIds.length > 20) {
@@ -530,13 +918,12 @@ async function listIssueRows(
       status: 400,
     });
   }
-  const targetNumber = scope.targetIdentifier === null ? null : issueNumber(scope.targetIdentifier);
   let rows: IssueRow[];
   let hasMore: boolean;
   let nextCursor: string | null = null;
   try {
     if (candidates) {
-      const cursor = parseCandidateCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
+      const cursor = parsedCursor as [number, number, number] | null;
       const result = await db.prepare(
         `${ISSUE_SELECT}
          WHERE i.project_id IN (SELECT value FROM json_each(?1))
@@ -551,12 +938,13 @@ async function listIssueRows(
              WHERE blocked_relation.target_issue_id = i.id
                AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
                AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
+               AND blocker.project_id IN (SELECT value FROM json_each(?1))
                AND blocker_project.deleted_at IS NULL AND blocker_workspace.deleted_at IS NULL
            )` : ""}
            AND (
-             (?8 = 'unassigned' AND i.assignee_principal_id IS NULL)
-             OR (?8 = 'mine' AND i.assignee_principal_id = ?9)
-             OR (?8 = 'needs_reassignment'
+             (?7 = 'unassigned' AND i.assignee_principal_id IS NULL)
+             OR (?7 = 'mine' AND i.assignee_principal_id = ?8)
+             OR (?7 = 'needs_reassignment'
                  AND i.assignee_principal_id IS NOT NULL
                  AND i.assignee_principal_id != (SELECT owner_principal_id FROM instance_meta WHERE singleton = 1)
                  AND NOT EXISTS (
@@ -567,15 +955,14 @@ async function listIssueRows(
                      AND candidate_grant.revoked_at IS NULL
                  ))
            )
-           AND (?2 IS NULL OR i.number = ?2)
-           AND (?4 IS NULL OR (?3 IS NOT NULL AND i.number = ?3) OR instr(i.title_search, ?4) > 0)
-           AND (?5 IS NULL OR i.priority_rank > ?5
-                OR (i.priority_rank = ?5 AND i.created_at > ?6)
-                OR (i.priority_rank = ?5 AND i.created_at = ?6 AND i.number > ?7))
+           AND (?3 IS NULL OR (?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)
+           AND (?4 IS NULL OR i.priority_rank > ?4
+                OR (i.priority_rank = ?4 AND i.created_at > ?5)
+                OR (i.priority_rank = ?4 AND i.created_at = ?5 AND i.number > ?6))
          ORDER BY i.priority_rank ASC, i.created_at ASC, i.number ASC
-         LIMIT ?10`,
+         LIMIT ?9`,
       ).bind(
-        JSON.stringify(projectIds), targetNumber, search.number, search.normalized,
+        JSON.stringify(projectIds), search.number, search.normalized,
         cursor?.[0] ?? null, cursor?.[1] ?? null, cursor?.[2] ?? null,
         candidate.assignment, principalId, limit + 1,
       ).all<IssueRow>();
@@ -587,21 +974,25 @@ async function listIssueRows(
         nextCursor = encodeCursor(cursorContext, [tail.priority_rank, tail.created_at, tail.number]);
       }
     } else {
-      const cursor = parseOrdinaryCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
+      const cursor = parsedCursor as [number, number] | null;
       const result = await db.prepare(
         `${ISSUE_SELECT}
          WHERE i.project_id IN (SELECT value FROM json_each(?1))
            AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
-           AND p.deleted_at IS NULL AND w.deleted_at IS NULL
-           AND (?2 IS NULL OR i.number = ?2)
-           AND (?4 IS NULL OR (?3 IS NOT NULL AND i.number = ?3) OR instr(i.title_search, ?4) > 0)
-           AND (?5 IS NULL OR ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} < ?5
-                OR (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} = ?5 AND i.number < ?6))
+           ${deletionView === "only" ? "" : "AND p.deleted_at IS NULL AND w.deleted_at IS NULL"}
+           AND (?3 IS NULL OR (?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)
+           AND (?6 IS NULL OR i.status_key IN (SELECT value FROM json_each(?6)))
+           AND (?7 IS NULL OR i.assignee_principal_id IN (SELECT value FROM json_each(?7)))
+           AND (?4 IS NULL OR ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} < ?4
+                OR (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} = ?4 AND i.number < ?5))
          ORDER BY ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} DESC, i.number DESC
-         LIMIT ?7`,
+         LIMIT ?8`,
       ).bind(
-        JSON.stringify(projectIds), targetNumber, search.number, search.normalized,
-        cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1,
+        JSON.stringify(projectIds), search.number, search.normalized,
+        cursor?.[0] ?? null, cursor?.[1] ?? null,
+        issueFilter.statuses.length === 0 ? null : JSON.stringify(issueFilter.statuses),
+        issueFilter.assignees.length === 0 ? null : JSON.stringify(issueFilter.assignees),
+        limit + 1,
       ).all<IssueRow>();
       rows = result.results;
       hasMore = rows.length > limit;
@@ -636,26 +1027,38 @@ async function listIssuesInternal(
   }
   const search = searchFilter(url);
   const candidate = candidates ? requireCandidateFilter(url) : null;
+  const issueFilter = candidates ? { assignees: [], statuses: [] } : requireIssueListFilter(url);
   const page = await listIssueRows(
     db,
     scope,
     search,
     url,
     candidate,
+    issueFilter,
     auth.principalId,
     deletionView,
   );
   const labels = deletionView === "only"
     ? new Map<string, LabelRow[]>()
     : await labelsForIssues(db, page.rows.map((row) => row.id));
+  const tombstoneQuotas = deletionView === "only"
+    ? await tombstoneQuotaRows(db, page.rows.map((row) => row.id))
+    : new Map<string, TombstoneQuotaRow>();
+  if (deletionView !== "only") {
+    await applyVisibleBlockedState(db, page.rows, scope.projects.map((project) => project.projectId));
+  }
   const roles = new Map(scope.projects.map((project) => [project.projectId, project.role]));
   return {
     has_more: page.hasMore,
     items: page.rows.map((row) => deletionView === "only"
-      ? issueTombstoneResource(row, roles.get(row.project_id) ?? "reader")
+      ? issueTombstoneResource(
+          row,
+          roles.get(row.project_id) ?? "reader",
+          tombstoneQuotas.get(row.id) ?? null,
+        )
       : issueResource(row, labels.get(row.id) ?? [], roles.get(row.project_id) ?? "reader")),
     next_cursor: page.nextCursor,
-    resolved_scope: resolvedScope(scope, search, candidate),
+    resolved_scope: resolvedScope(scope, search, candidate, issueFilter),
   };
 }
 
@@ -684,13 +1087,13 @@ export async function listProjectIssues(
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const projectKey = requireProjectKey(projectKeyValue, "project_key");
-  const project = await requireVisibleProject(db, auth, workspaceKey, projectKey);
-  const targetIdentifier = issueTarget(auth);
-  if (!cookieTargetAllowsProject(auth, workspaceKey, projectKey)) {
-    if (targetIdentifier === null || targetIdentifier === "invalid") throw notFound();
-    const target = await readIssueRow(db, issueNumber(targetIdentifier));
-    if (target === null || target.project_id !== project.projectId) throw notFound();
-  }
+  const deletionView = issueDeletionView(url);
+  const project = deletionView === "only"
+    ? (await resolveIssueRecoveryProjects(db, auth)).find(
+      (candidate) => candidate.workspaceKey === workspaceKey && candidate.projectKey === projectKey,
+    )
+    : await requireVisibleProject(db, auth, workspaceKey, projectKey);
+  if (project === undefined) throw notFound();
   return listIssuesInternal(db, auth, url, false, project);
 }
 
@@ -698,43 +1101,61 @@ async function visibleRelations(
   db: D1Database,
   issueId: string,
   visibleProjectIds: ReadonlySet<string>,
-): Promise<{ [key: string]: JsonValue }[]> {
+  limit = 100,
+): Promise<BoundedSection<{ [key: string]: JsonValue }>> {
+  if (visibleProjectIds.size === 0) return { items: [], totalCount: 0 };
   try {
     const result = await db.prepare(
-      `SELECT r.id, r.kind, source.project_id AS source_project_id,
+      `SELECT r.id, r.kind, r.created_at,
+              source.project_id AS source_project_id,
               source.number AS source_number, target.project_id AS target_project_id,
-              target.number AS target_number, r.version
+              target.number AS target_number, r.version,
+              COUNT(*) OVER () AS total_count
        FROM issue_relations r
        JOIN issues source ON source.id = r.source_issue_id
        JOIN issues target ON target.id = r.target_issue_id
        WHERE (r.source_issue_id = ?1 OR r.target_issue_id = ?1)
          AND r.deleted_at IS NULL AND source.deleted_at IS NULL AND target.deleted_at IS NULL
-       ORDER BY r.created_at, r.id`,
-    ).bind(issueId).all<RelationRow>();
-    return result.results
-      .filter((row) => visibleProjectIds.has(row.source_project_id) && visibleProjectIds.has(row.target_project_id))
-      .map((row) => ({
+         AND source.project_id IN (SELECT value FROM json_each(?2))
+         AND target.project_id IN (SELECT value FROM json_each(?2))
+       ORDER BY CASE
+         WHEN r.kind = 'blocks' AND r.target_issue_id = ?1 AND source.status_key != 'done' THEN 0
+         WHEN r.kind = 'parent' THEN 1
+         WHEN r.kind = 'blocks' THEN 2
+         WHEN r.kind = 'duplicate' THEN 3
+         ELSE 4
+       END, r.created_at DESC, r.id
+       LIMIT ?3`,
+    ).bind(issueId, JSON.stringify([...visibleProjectIds].sort()), limit).all<RelationRow>();
+    return {
+      items: result.results.map((row) => ({
         id: row.id,
         kind: row.kind,
         source_identifier: `CFK-${row.source_number}`,
         target_identifier: `CFK-${row.target_number}`,
         version: row.version,
-      }));
+      })),
+      totalCount: result.results[0]?.total_count ?? 0,
+    };
   } catch {
     throw platformUnavailable("d1");
   }
 }
 
-async function recentComments(db: D1Database, issueId: string): Promise<{ hasMore: boolean; rows: CommentRow[] }> {
+async function recentComments(db: D1Database, issueId: string): Promise<BoundedSection<CommentRow>> {
   try {
     const result = await db.prepare(
       `SELECT c.id, c.kind, c.body, c.author_principal_id,
-              author.display_name AS author_display_name, c.version, c.created_at
+              author.display_name AS author_display_name, c.version, c.created_at,
+              COUNT(*) OVER () AS total_count
        FROM comments c JOIN principals author ON author.id = c.author_principal_id
        WHERE c.issue_id = ?1 AND c.deleted_at IS NULL
-       ORDER BY c.created_at DESC, c.id DESC LIMIT 11`,
-    ).bind(issueId).all<CommentRow>();
-    return { hasMore: result.results.length > 10, rows: result.results.slice(0, 10).reverse() };
+       ORDER BY c.created_at DESC, c.id DESC LIMIT 10`,
+    ).bind(issueId).all<CountedCommentRow>();
+    return {
+      items: result.results.map(({ total_count: _totalCount, ...row }) => row).reverse(),
+      totalCount: result.results[0]?.total_count ?? 0,
+    };
   } catch {
     throw platformUnavailable("d1");
   }
@@ -758,32 +1179,29 @@ export async function getIssue(
   url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
   const deletionView = issueDeletionView(url);
-  const { project, row } = await requireIssueAccess(
-    db,
-    auth,
-    identifierValue,
-    deletionView === "only" ? "writer" : "reader",
-    deletionView === "only",
-  );
   if (deletionView === "only") {
-    if (row.deleted_at === null) throw notFound();
-    return issueTombstoneResource(row, project.role);
+    const { project, row } = await requireIssueRecoveryAccess(db, auth, identifierValue, true);
+    const quotas = await tombstoneQuotaRows(db, [row.id]);
+    return issueTombstoneResource(row, project.role, quotas.get(row.id) ?? null);
   }
-  const [labels, relations, comments, visible] = await Promise.all([
+  const { project, row } = await requireIssueAccess(db, auth, identifierValue);
+  const visibleProjects = await resolveVisibleProjects(db, auth);
+  const [labels, relations, comments] = await Promise.all([
     labelsForIssues(db, [row.id]),
-    resolveVisibleProjects(db, auth).then((projects) => visibleRelations(
-      db,
-      row.id,
-      new Set(projects.map((candidate) => candidate.projectId)),
-    )),
+    visibleRelations(db, row.id, new Set(visibleProjects.map((candidate) => candidate.projectId))),
     recentComments(db, row.id),
-    Promise.resolve(project),
+    applyVisibleBlockedState(db, [row], visibleProjects.map((candidate) => candidate.projectId)),
   ]);
   return {
-    ...issueResource(row, labels.get(row.id) ?? [], visible.role, true),
-    comment_continuation: comments.hasMore ? `/api/v1/issues/CFK-${row.number}/comments` : null,
-    comments: comments.rows.map(commentResource),
-    relations,
+    ...issueResource(row, labels.get(row.id) ?? [], project.role, true),
+    comment_continuation: comments.totalCount > comments.items.length
+      ? `/api/v1/issues/CFK-${row.number}/comments`
+      : null,
+    comments: comments.items.map(commentResource),
+    relation_continuation: relations.totalCount > relations.items.length
+      ? `/api/v1/issues/CFK-${row.number}/relations`
+      : null,
+    relations: relations.items,
   };
 }
 
@@ -817,14 +1235,22 @@ export async function getIssueContext(
     recentComments(db, row.id),
     resolveVisibleProjects(db, auth),
   ]);
-  let relations = await visibleRelations(db, row.id, new Set(visibleProjects.map((item) => item.projectId)));
-  let commentItems = comments.rows.map(commentResource);
-  let body = utf8Excerpt(row.body, 16 * 1_024);
-  let projectContext = utf8Excerpt(row.project_context ?? "", 12 * 1_024);
+  await applyVisibleBlockedState(db, [row], visibleProjects.map((item) => item.projectId));
+  const relationSection = await visibleRelations(
+    db,
+    row.id,
+    new Set(visibleProjects.map((item) => item.projectId)),
+    50,
+  );
+  let relations = relationSection.items;
+  let commentItems = comments.items.map(commentResource);
+  const bodyBytes = new TextEncoder().encode(row.body).byteLength;
+  const projectContextValue = row.project_context ?? "";
+  const projectContextBytes = new TextEncoder().encode(projectContextValue).byteLength;
+  let body = utf8Excerpt(row.body, bodyBytes);
+  let projectContext = utf8Excerpt(projectContextValue, projectContextBytes);
   const core = issueResource(row, labels.get(row.id) ?? [], project.role, true);
   delete core.body;
-  const originalRelationCount = relations.length;
-  const originalCommentCount = commentItems.length;
   const build = (): { [key: string]: JsonValue } => ({
     issue: core,
     sections: {
@@ -835,11 +1261,11 @@ export async function getIssueContext(
         truncated: body.truncated,
       },
       comments: {
-        continuation: comments.hasMore || commentItems.length < comments.rows.length
+        continuation: comments.totalCount > commentItems.length
           ? `/api/v1/issues/CFK-${row.number}/comments`
           : null,
         items: commentItems,
-        omitted_count: originalCommentCount - commentItems.length + (comments.hasMore ? 1 : 0),
+        omitted_count: comments.totalCount - commentItems.length,
       },
       project_context: {
         content: projectContext.content,
@@ -850,32 +1276,55 @@ export async function getIssueContext(
         truncated: projectContext.truncated,
       },
       relations: {
-        continuation: originalRelationCount > relations.length
+        continuation: relationSection.totalCount > relations.length
           ? `/api/v1/issues/CFK-${row.number}/relations`
           : null,
         items: relations,
-        omitted_count: originalRelationCount - relations.length,
+        omitted_count: relationSection.totalCount - relations.length,
       },
     },
-    truncated: body.truncated || projectContext.truncated || comments.hasMore
-      || originalCommentCount > commentItems.length || originalRelationCount > relations.length,
+    truncated: body.truncated || projectContext.truncated
+      || comments.totalCount > commentItems.length
+      || relationSection.totalCount > relations.length,
   });
   let context = build();
-  const size = () => new TextEncoder().encode(JSON.stringify(context)).byteLength;
-  while (size() > 64 * 1_024 && commentItems.length > 0) {
+  const contextSize = () => new TextEncoder().encode(JSON.stringify(context)).byteLength;
+  const maxContextBytes = 64 * 1_024;
+  while (contextSize() > maxContextBytes && commentItems.length > 0) {
+    // Comments are chronological here, so the oldest entry is removed first.
     commentItems = commentItems.slice(1);
     context = build();
   }
-  while (size() > 64 * 1_024 && relations.length > 0) {
+  while (contextSize() > maxContextBytes && relations.length > 0) {
+    // visibleRelations orders active blockers and parent relations first.
     relations = relations.slice(0, -1);
     context = build();
   }
-  if (size() > 64 * 1_024) {
-    body = utf8Excerpt(row.body, 4 * 1_024);
-    projectContext = utf8Excerpt(row.project_context ?? "", 4 * 1_024);
+  if (contextSize() > maxContextBytes) {
+    body = utf8Excerpt(row.body, 0);
+    projectContext = utf8Excerpt(projectContextValue, 0);
     context = build();
+    const fixedBytes = contextSize();
+    let available = Math.max(0, maxContextBytes - fixedBytes - 512);
+    const combinedBytes = bodyBytes + projectContextBytes;
+    let bodyBudget = combinedBytes === 0 ? 0 : Math.floor(available * bodyBytes / combinedBytes);
+    let projectBudget = Math.max(0, available - bodyBudget);
+    body = utf8Excerpt(row.body, bodyBudget);
+    projectContext = utf8Excerpt(projectContextValue, projectBudget);
+    context = build();
+    while (contextSize() > maxContextBytes && (bodyBudget > 0 || projectBudget > 0)) {
+      const excess = contextSize() - maxContextBytes;
+      if (bodyBudget >= projectBudget && bodyBudget > 0) {
+        bodyBudget = Math.max(0, bodyBudget - Math.max(256, excess));
+        body = utf8Excerpt(row.body, bodyBudget);
+      } else {
+        projectBudget = Math.max(0, projectBudget - Math.max(256, excess));
+        projectContext = utf8Excerpt(projectContextValue, projectBudget);
+      }
+      context = build();
+    }
   }
-  if (size() > 64 * 1_024) throw platformUnavailable();
+  if (contextSize() > maxContextBytes) throw platformUnavailable();
   return context;
 }
 
@@ -921,6 +1370,34 @@ async function assigneeEligible(db: D1Database, projectId: string, principalId: 
        )`,
     ).bind(principalId, projectId).first();
     return row !== null;
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
+async function principalDisplayName(db: D1Database, principalId: string): Promise<string> {
+  try {
+    const row = await db.prepare(
+      "SELECT display_name FROM principals WHERE id = ?1",
+    ).bind(principalId).first<{ display_name: string }>();
+    if (row === null) throw assigneeNotEligible();
+    return row.display_name;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw platformUnavailable("d1");
+  }
+}
+
+async function projectStatusDisplayName(
+  db: D1Database,
+  projectId: string,
+  statusKey: StatusKey,
+): Promise<string> {
+  try {
+    const row = await db.prepare(
+      "SELECT display_name FROM project_status_names WHERE project_id = ?1 AND status_key = ?2",
+    ).bind(projectId, statusKey).first<{ display_name: string }>();
+    return row?.display_name ?? statusDefinition(statusKey).displayName;
   } catch {
     throw platformUnavailable("d1");
   }
@@ -977,9 +1454,11 @@ async function issueQuotaExceeded(db: D1Database, projectId: string, restoringCo
     const activeCommentCount = row.active_comment_count ?? 0;
     const activeIssueCount = row.active_issue_count ?? 0;
     return {
-      comments: row.active_comment_count === null
+      comments: restoringCommentCount > 0 && (
+        row.active_comment_count === null
         || row.comment_limit === null
-        || activeCommentCount + restoringCommentCount > row.comment_limit,
+        || activeCommentCount + restoringCommentCount > row.comment_limit
+      ),
       commentCurrent: activeCommentCount,
       commentLimit: row.comment_limit ?? undefined,
       issues: row.active_issue_count === null
@@ -1001,7 +1480,11 @@ function issueEvent(
   type: string,
   payload: JsonValue,
   now: number,
-  options: { expectedLabelCount?: number; requireUsageCommit?: boolean } = {},
+  options: {
+    expectedLabelCount?: number;
+    includeActiveCommentCount?: boolean;
+    requireUsageCommit?: boolean;
+  } = {},
 ): D1PreparedStatement {
   return db.prepare(
     `INSERT INTO events
@@ -1016,7 +1499,14 @@ function issueEvent(
                 AND grant_row.role = 'writer' AND grant_row.revoked_at IS NULL
               LIMIT 1
             ) END,
-            p.workspace_id, i.project_id, 'issue', i.id, ?8, ?9
+            p.workspace_id, i.project_id, 'issue', i.id,
+            CASE WHEN ?13 = 1 THEN json_set(
+              ?8,
+              '$.released_or_restored_comments',
+              (SELECT COUNT(*) FROM comments event_comment
+               WHERE event_comment.issue_id = i.id AND event_comment.deleted_at IS NULL)
+            ) ELSE ?8 END,
+            ?9
      FROM issues i
      JOIN projects p ON p.id = i.project_id
      LEFT JOIN project_usage usage ON usage.project_id = i.project_id
@@ -1038,37 +1528,8 @@ function issueEvent(
     issueId,
     options.expectedLabelCount ?? -1,
     options.requireUsageCommit ? 1 : 0,
+    options.includeActiveCommentCount ? 1 : 0,
   );
-}
-
-async function readIssueCreatedByOperation(db: D1Database, operationId: string): Promise<IssueRow | null> {
-  try {
-    return await db.prepare(
-      `${ISSUE_SELECT}
-       WHERE i.created_operation_id = ?1
-         AND p.deleted_at IS NULL AND w.deleted_at IS NULL
-       LIMIT 1`,
-    ).bind(operationId).first<IssueRow>();
-  } catch {
-    throw platformUnavailable("d1");
-  }
-}
-
-async function readIssueForOperation(
-  db: D1Database,
-  number: number,
-  operationId: string,
-): Promise<IssueRow | null> {
-  try {
-    return await db.prepare(
-      `${ISSUE_SELECT}
-       WHERE i.number = ?1 AND i.last_operation_id = ?2
-         AND p.deleted_at IS NULL AND w.deleted_at IS NULL
-       LIMIT 1`,
-    ).bind(number, operationId).first<IssueRow>();
-  } catch {
-    throw platformUnavailable("d1");
-  }
 }
 
 async function authorizeProjectWrite(
@@ -1136,14 +1597,12 @@ export async function createIssue(
   const priorityKey = value.priority_key === undefined ? "none" : requirePriorityKey(value.priority_key);
   const assigneeId = requireAssignee(value.assignee_principal_id);
   const labelIds = requireLabelIds(value.label_ids);
-  if (!(await assigneeEligible(db, project.projectId, assigneeId))) throw assigneeNotEligible();
-  if (!(await activeLabelsExist(db, project.projectId, labelIds))) throw notFound();
-  const quota = await issueQuotaExceeded(db, project.projectId);
-  if (quota.issues) throw businessQuotaExceeded("issues", quota.issueCurrent, quota.issueLimit);
   const issueId = crypto.randomUUID();
-  const associationIds = labelIds.map(() => crypto.randomUUID());
   const idempotencyKey = requireIdempotencyKey(request);
   const targetAllowed = cookieTargetAllowsProject(auth, workspaceKey, projectKey) ? 1 : 0;
+  const snapshotVisibleProjectIds = (await resolveVisibleProjects(db, auth)).map(
+    (visibleProject) => visibleProject.projectId,
+  );
   const result = await runIdempotentOperation({
     authorize: async () => {
       const latest = await authorizeProjectWrite(db, auth, workspaceKey, projectKey);
@@ -1151,6 +1610,10 @@ export async function createIssue(
     },
     db,
     execute: async (operationId) => {
+      if (!(await assigneeEligible(db, project.projectId, assigneeId))) throw assigneeNotEligible();
+      if (!(await activeLabelsExist(db, project.projectId, labelIds))) throw notFound();
+      const quota = await issueQuotaExceeded(db, project.projectId);
+      if (quota.issues) throw businessQuotaExceeded("issues", quota.issueCurrent, quota.issueLimit);
       const guard = buildProjectWriterGuard(auth, now, 16, "p.id");
       const insert = db.prepare(
         `INSERT INTO issues
@@ -1183,14 +1646,18 @@ export async function createIssue(
         project.projectId, JSON.stringify(labelIds), labelIds.length, targetAllowed,
         ...guard.values,
       );
-      const labels = labelIds.map((labelId, index) => db.prepare(
+      const labels = db.prepare(
         `INSERT INTO issue_labels
           (issue_id, label_id, added_at, added_by_principal_id, created_operation_id)
          SELECT issue.id, label_row.id, ?1, ?2, ?3
          FROM issues issue
-         JOIN labels label_row ON label_row.id = ?4 AND label_row.project_id = issue.project_id
-         WHERE issue.id = ?5 AND issue.last_operation_id = ?6 AND label_row.deleted_at IS NULL`,
-      ).bind(now, auth.principalId, associationIds[index], labelId, issueId, operationId));
+         JOIN json_each(?4) requested_label
+         JOIN labels label_row
+           ON label_row.id = requested_label.value
+          AND label_row.project_id = issue.project_id
+         WHERE issue.id = ?5 AND issue.last_operation_id = ?3
+           AND label_row.deleted_at IS NULL`,
+      ).bind(now, auth.principalId, operationId, JSON.stringify(labelIds), issueId);
       const usage = db.prepare(
         `UPDATE project_usage SET active_issue_count = active_issue_count + 1,
                 updated_at = ?1, last_operation_id = ?2
@@ -1204,8 +1671,15 @@ export async function createIssue(
         await executeAtomicBatch(db, {
           businessStatements: [
             insert,
-            ...labels,
+            labels,
             usage,
+            issueOperationSnapshotStatement(
+              db,
+              operationId,
+              issueId,
+              project.role,
+              snapshotVisibleProjectIds,
+            ),
             issueEvent(db, auth, operationId, issueId, "issue.created", {
               identifier_pending: true,
               project_key: projectKey,
@@ -1225,6 +1699,7 @@ export async function createIssue(
           operationId,
           primarySubjectId: issueId,
           primarySubjectType: "issue",
+          requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
@@ -1237,12 +1712,14 @@ export async function createIssue(
     method: "POST",
     normalizedResourceScope: `workspace:${workspaceKey}:project:${projectKey}:issue`,
     now,
-    readback: async (_operationId, commit) => {
-      const row = await readIssueCreatedByOperation(db, commit.operationId);
-      if (row === null) throw platformUnavailable("d1");
-      const labels = await labelsForIssues(db, [row.id]);
+    readback: async (operationId, commit) => {
+      const snapshot = await readIssueOperationSnapshot(db, operationId);
       return {
-        body: writeResult(issueResource(row, labels.get(row.id) ?? [], project.role, true), commit.lastEventSequence, false),
+        body: writeResult(
+          issueResource(snapshot.row, snapshot.labels, snapshot.role, true),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },
@@ -1270,11 +1747,14 @@ async function diagnoseIssueCas(
   assigneeId?: string | null,
 ): Promise<never> {
   await verifyCurrentAuth(db, auth, now);
-  const { row } = await requireIssueAccess(db, auth, identifier, "writer", true);
+  const { row } = expectedDeleted
+    ? await requireIssueRecoveryAccess(db, auth, identifier)
+    : await requireIssueAccess(db, auth, identifier, "writer", true);
   if ((row.deleted_at !== null) !== expectedDeleted) {
     throw conflict(expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED");
   }
   if (row.version !== expectedVersion) throw versionConflict(row.version);
+  if (expectedDeleted) requireActiveIssueParents(row);
   if (assigneeId !== undefined && !(await assigneeEligible(db, row.project_id, assigneeId))) {
     throw assigneeNotEligible();
   }
@@ -1312,8 +1792,19 @@ export async function updateIssue(
   const priorityKey = hasPriority ? requirePriorityKey(value.priority_key as JsonValue) : row.priority_key;
   const assigneeId = hasAssignee ? requireAssignee(value.assignee_principal_id) : row.assignee_principal_id;
   if (hasAssignee && !(await assigneeEligible(db, row.project_id, assigneeId))) throw assigneeNotEligible();
+  const [labels, visibleProjects, assigneeDisplayName, statusDisplayName] = await Promise.all([
+    labelsForIssues(db, [row.id]),
+    resolveVisibleProjects(db, auth),
+    hasAssignee && assigneeId !== null
+      ? principalDisplayName(db, assigneeId)
+      : Promise.resolve(row.assignee_display_name),
+    hasStatus
+      ? projectStatusDisplayName(db, row.project_id, statusKey)
+      : Promise.resolve(row.status_display_name),
+  ]);
+  await applyVisibleBlockedState(db, [row], visibleProjects.map((visibleProject) => visibleProject.projectId));
   const operationId = crypto.randomUUID();
-  const targetAllowed = cookieTargetAllowsIssue(auth, identifier, row.workspace_key, row.project_key) ? 1 : 0;
+  const targetAllowed = cookieTargetAllowsProject(auth, row.workspace_key, row.project_key) ? 1 : 0;
   const guard = buildProjectWriterGuard(auth, now, 19, "issues.project_id");
   let commit: OperationCommit;
   try {
@@ -1331,11 +1822,6 @@ export async function updateIssue(
              version = version + 1, updated_at = ?13,
              updated_by_principal_id = ?14, last_operation_id = ?15
            WHERE id = ?16 AND version = ?17 AND deleted_at IS NULL AND ?18 = 1
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = issues.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND EXISTS (SELECT 1 FROM projects p JOIN workspaces w ON w.id = p.workspace_id
                          WHERE p.id = issues.project_id AND p.deleted_at IS NULL AND w.deleted_at IS NULL)
              AND ${guard.sql}
@@ -1360,6 +1846,10 @@ export async function updateIssue(
           body_changed: hasBody,
           priority_changed: hasPriority,
           status_changed: hasStatus,
+          ...(hasStatus ? {
+            new_status_key: statusKey,
+            old_status_key: row.status_key,
+          } : {}),
           title_changed: hasTitle,
         }, now),
       ],
@@ -1383,10 +1873,25 @@ export async function updateIssue(
     }
     throw error;
   }
-  const updated = await readIssueRow(db, row.number);
-  if (updated === null) throw platformUnavailable("d1");
-  const labels = await labelsForIssues(db, [updated.id]);
-  return writeResult(issueResource(updated, labels.get(updated.id) ?? [], project.role, true), commit.lastEventSequence, false);
+  const updated: IssueRow = {
+    ...row,
+    assignee_available: assigneeId === null ? 0 : 1,
+    assignee_display_name: assigneeId === null ? null : assigneeDisplayName,
+    assignee_principal_id: assigneeId,
+    body,
+    priority_key: priorityKey,
+    priority_rank: priorityRank(priorityKey),
+    status_display_name: statusDisplayName,
+    status_key: statusKey,
+    title,
+    updated_at: now,
+    version: expectedVersion + 1,
+  };
+  return writeResult(
+    issueResource(updated, labels.get(updated.id) ?? [], project.role, true),
+    commit.lastEventSequence,
+    false,
+  );
 }
 
 async function activeCommentCount(db: D1Database, issueId: string): Promise<number> {
@@ -1408,11 +1913,13 @@ async function setIssueDeleted(
   now: number,
   deleted: boolean,
   operationId: string,
+  snapshot: { role: ProjectAccessRole; visibleProjectIds: readonly string[] } | null = null,
 ): Promise<OperationCommit> {
-  const { row } = await requireIssueAccess(db, auth, identifier, "writer", true);
-  const targetAllowed = cookieTargetAllowsIssue(auth, identifier, row.workspace_key, row.project_key) ? 1 : 0;
+  const { row } = deleted
+    ? await requireIssueAccess(db, auth, identifier, "writer", true)
+    : await requireIssueRecoveryAccess(db, auth, identifier);
+  const targetAllowed = cookieTargetAllowsProject(auth, row.workspace_key, row.project_key) ? 1 : 0;
   const guard = buildProjectWriterGuard(auth, now, 9, "issues.project_id");
-  const commentCount = await activeCommentCount(db, row.id);
   try {
     const { commit } = await executeAtomicBatch(db, {
       businessStatements: [
@@ -1422,11 +1929,6 @@ async function setIssueDeleted(
                   updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7 AND ?8 = 1
              AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = issues.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND EXISTS (SELECT 1 FROM projects p JOIN workspaces w ON w.id = p.workspace_id
                          WHERE p.id = issues.project_id AND p.deleted_at IS NULL AND w.deleted_at IS NULL)
              AND ${guard.sql}
@@ -1438,10 +1940,17 @@ async function setIssueDeleted(
                  AND (policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL OR (
                    quota_project.issue_limit IS NOT NULL
                    AND usage.active_issue_count < quota_project.issue_limit
-                   AND quota_project.comment_limit IS NOT NULL
-                   AND usage.active_comment_count +
-                     (SELECT COUNT(*) FROM comments c WHERE c.issue_id = issues.id AND c.deleted_at IS NULL)
-                     <= quota_project.comment_limit
+                   AND (
+                     (SELECT COUNT(*) FROM comments c
+                      WHERE c.issue_id = issues.id AND c.deleted_at IS NULL) = 0
+                     OR (
+                       quota_project.comment_limit IS NOT NULL
+                       AND usage.active_comment_count +
+                         (SELECT COUNT(*) FROM comments c
+                          WHERE c.issue_id = issues.id AND c.deleted_at IS NULL)
+                         <= quota_project.comment_limit
+                     )
+                   )
                  ))
              )`}`,
         ).bind(
@@ -1461,8 +1970,14 @@ async function setIssueDeleted(
                ? "CASE WHEN active_issue_count > 0 THEN active_issue_count - 1 ELSE 0 END"
                : "active_issue_count + 1"},
              active_comment_count = ${deleted
-               ? "CASE WHEN active_comment_count >= ?1 THEN active_comment_count - ?1 ELSE 0 END"
-               : "active_comment_count + ?1"},
+               ? `active_comment_count - (
+                   SELECT COUNT(*) FROM comments usage_comment
+                   WHERE usage_comment.issue_id = ?1 AND usage_comment.deleted_at IS NULL
+                 )`
+               : `active_comment_count + (
+                   SELECT COUNT(*) FROM comments usage_comment
+                   WHERE usage_comment.issue_id = ?1 AND usage_comment.deleted_at IS NULL
+                 )`},
              updated_at = ?2, last_operation_id = ?3
            WHERE project_id = ?4
              AND EXISTS (SELECT 1 FROM issues issue_row
@@ -1470,16 +1985,23 @@ async function setIssueDeleted(
              AND EXISTS (SELECT 1 FROM public_join_policies policy
                          WHERE policy.project_id = ?4
                            AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL)`,
-        ).bind(commentCount, now, operationId, row.project_id, row.id),
+        ).bind(row.id, now, operationId, row.project_id, row.id),
+        ...(snapshot === null ? [] : [issueOperationSnapshotStatement(
+          db,
+          operationId,
+          row.id,
+          snapshot.role,
+          snapshot.visibleProjectIds,
+        )]),
         issueEvent(
           db,
           auth,
           operationId,
           row.id,
           deleted ? "issue.deleted" : "issue.restored",
-          { identifier, released_or_restored_comments: commentCount },
+          { identifier },
           now,
-          { requireUsageCommit: true },
+          { includeActiveCommentCount: true, requireUsageCommit: true },
         ),
       ],
       committedAt: now,
@@ -1490,7 +2012,7 @@ async function setIssueDeleted(
         } catch (error) {
           if (error instanceof ApiError && error.code !== "PLATFORM_UNAVAILABLE") return true;
           if (!deleted) {
-            const quota = await issueQuotaExceeded(db, row.project_id, commentCount);
+            const quota = await issueQuotaExceeded(db, row.project_id, await activeCommentCount(db, row.id));
             if (quota.issues || quota.comments) return true;
           }
           return false;
@@ -1500,17 +2022,21 @@ async function setIssueDeleted(
       operationId,
       primarySubjectId: row.id,
       primarySubjectType: "issue",
+      requireIdempotencySnapshot: snapshot !== null,
     });
     return commit;
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
       await verifyCurrentAuth(db, auth, now);
-      const latest = await requireIssueAccess(db, auth, identifier, "writer", true);
+      const latest = deleted
+        ? await requireIssueAccess(db, auth, identifier, "writer", true)
+        : await requireIssueRecoveryAccess(db, auth, identifier);
       if ((latest.row.deleted_at !== null) !== (!deleted)) {
         throw conflict(deleted ? "RESOURCE_DELETED" : "RESOURCE_NOT_DELETED");
       }
       if (latest.row.version !== expectedVersion) throw versionConflict(latest.row.version);
       if (!deleted) {
+        requireActiveIssueParents(latest.row);
         const quota = await issueQuotaExceeded(db, latest.row.project_id, await activeCommentCount(db, latest.row.id));
         if (quota.issues) throw businessQuotaExceeded("issues", quota.issueCurrent, quota.issueLimit);
         if (quota.comments) throw businessQuotaExceeded("comments", quota.commentCurrent, quota.commentLimit);
@@ -1529,12 +2055,26 @@ export async function deleteIssue(
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   const identifier = requireIssueIdentifier(identifierValue);
-  const { project } = await requireIssueAccess(db, auth, identifier, "writer", true);
+  const { project, row } = await requireIssueAccess(db, auth, identifier, "writer", true);
+  const [labels, visibleProjects] = await Promise.all([
+    labelsForIssues(db, [row.id]),
+    resolveVisibleProjects(db, auth),
+  ]);
+  await applyVisibleBlockedState(db, [row], visibleProjects.map((visibleProject) => visibleProject.projectId));
   const commit = await setIssueDeleted(db, auth, identifier, expectedVersion, now, true, crypto.randomUUID());
-  const row = await readIssueRow(db, issueNumber(identifier), true);
-  if (row === null) throw platformUnavailable("d1");
-  const labels = await labelsForIssues(db, [row.id]);
-  return writeResult(issueResource(row, labels.get(row.id) ?? [], project.role, true), commit.lastEventSequence, false);
+  const deleted: IssueRow = {
+    ...row,
+    deleted_at: now,
+    deleted_by_principal_id: auth.principalId,
+    updated_at: now,
+    version: expectedVersion + 1,
+  };
+  const quotas = await tombstoneQuotaRows(db, [deleted.id]);
+  return writeResult(
+    issueTombstoneResource(deleted, project.role, quotas.get(deleted.id) ?? null),
+    commit.lastEventSequence,
+    false,
+  );
 }
 
 export async function restoreIssue(
@@ -1546,27 +2086,35 @@ export async function restoreIssue(
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   const identifier = requireIssueIdentifier(identifierValue);
-  const initial = await requireIssueAccess(db, auth, identifier, "writer", true);
+  const initial = await requireIssueRecoveryAccess(db, auth, identifier);
   const idempotencyKey = requireIdempotencyKey(request);
   const result = await runIdempotentOperation({
     authorize: async () => {
-      const latest = await requireIssueAccess(db, auth, identifier, "writer", true);
+      const latest = await requireIssueRecoveryAccess(db, auth, identifier);
       if (latest.row.project_id !== initial.row.project_id) throw notFound();
     },
     db,
     execute: async (operationId) => {
-      await setIssueDeleted(db, auth, identifier, expectedVersion, now, false, operationId);
+      const visibleProjectIds = (await resolveVisibleProjects(db, auth)).map(
+        (visibleProject) => visibleProject.projectId,
+      );
+      await setIssueDeleted(db, auth, identifier, expectedVersion, now, false, operationId, {
+        role: initial.project.role,
+        visibleProjectIds,
+      });
     },
     idempotencyKey,
     method: "POST",
     normalizedResourceScope: `issue:${identifier}:restore`,
     now,
     readback: async (operationId, commit) => {
-      const row = await readIssueForOperation(db, issueNumber(identifier), operationId);
-      if (row === null) throw platformUnavailable("d1");
-      const labels = await labelsForIssues(db, [row.id]);
+      const snapshot = await readIssueOperationSnapshot(db, operationId);
       return {
-        body: writeResult(issueResource(row, labels.get(row.id) ?? [], initial.project.role, true), commit.lastEventSequence, false),
+        body: writeResult(
+          issueResource(snapshot.row, snapshot.labels, snapshot.role, true),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },
@@ -1595,19 +2143,21 @@ async function runIssueCommand(
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   const identifier = requireIssueIdentifier(identifierValue);
-  const initial = await requireIssueAccess(db, auth, identifier, "writer");
+  const initial = await requireIssueAccess(db, auth, identifier, "writer", true);
   const assigneeChanged = input.assignToPrincipalId !== undefined;
   const blockedChanged = input.blockedReason !== undefined;
   const idempotencyKey = requireIdempotencyKey(request);
-  const targetAllowed = cookieTargetAllowsIssue(
+  const targetAllowed = cookieTargetAllowsProject(
     auth,
-    identifier,
     initial.row.workspace_key,
     initial.row.project_key,
   ) ? 1 : 0;
+  const snapshotVisibleProjectIds = (await resolveVisibleProjects(db, auth)).map(
+    (visibleProject) => visibleProject.projectId,
+  );
   const result = await runIdempotentOperation({
     authorize: async () => {
-      const latest = await requireIssueAccess(db, auth, identifier, "writer");
+      const latest = await requireIssueAccess(db, auth, identifier, "writer", true);
       if (latest.row.project_id !== initial.row.project_id) throw notFound();
     },
     db,
@@ -1623,11 +2173,6 @@ async function runIssueCommand(
                  version = version + 1, updated_at = ?5,
                  updated_by_principal_id = ?6, last_operation_id = ?7
                WHERE id = ?8 AND version = ?9 AND deleted_at IS NULL AND ?10 = 1
-                 AND NOT EXISTS (
-                   SELECT 1 FROM idempotency_records AS pending_operation
-                   WHERE pending_operation.operation_id = issues.last_operation_id
-                     AND pending_operation.state = 'pending'
-                 )
                  AND EXISTS (SELECT 1 FROM projects p JOIN workspaces w ON w.id = p.workspace_id
                              WHERE p.id = issues.project_id AND p.deleted_at IS NULL AND w.deleted_at IS NULL)
                  AND ${guard.sql}
@@ -1637,7 +2182,7 @@ async function runIssueCommand(
                                    AND eligible_grant.principal_id = ?2
                                    AND eligible_grant.role = 'writer'
                                    AND eligible_grant.revoked_at IS NULL))`,
-            ).bind(
+              ).bind(
               assigneeChanged ? 1 : 0,
               input.assignToPrincipalId ?? null,
               blockedChanged ? 1 : 0,
@@ -1648,9 +2193,16 @@ async function runIssueCommand(
               initial.row.id,
               expectedVersion,
               targetAllowed,
-              ...guard.values,
-            ),
-            issueEvent(db, auth, operationId, initial.row.id, input.eventType, {
+                ...guard.values,
+              ),
+              issueOperationSnapshotStatement(
+                db,
+                operationId,
+                initial.row.id,
+                initial.project.role,
+                snapshotVisibleProjectIds,
+              ),
+              issueEvent(db, auth, operationId, initial.row.id, input.eventType, {
               assignee_changed: assigneeChanged,
               blocked_reason_changed: blockedChanged,
               identifier,
@@ -1677,6 +2229,7 @@ async function runIssueCommand(
           operationId,
           primarySubjectId: initial.row.id,
           primarySubjectType: "issue",
+          requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
@@ -1698,11 +2251,13 @@ async function runIssueCommand(
     normalizedResourceScope: `issue:${identifier}:${input.eventType}`,
     now,
     readback: async (operationId, commit) => {
-      const row = await readIssueForOperation(db, initial.row.number, operationId);
-      if (row === null) throw platformUnavailable("d1");
-      const labels = await labelsForIssues(db, [row.id]);
+      const snapshot = await readIssueOperationSnapshot(db, operationId);
       return {
-        body: writeResult(issueResource(row, labels.get(row.id) ?? [], initial.project.role, true), commit.lastEventSequence, false),
+        body: writeResult(
+          issueResource(snapshot.row, snapshot.labels, snapshot.role, true),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },

@@ -104,7 +104,7 @@ CREATE TABLE project_grants (
   version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  created_operation_id TEXT NOT NULL UNIQUE,
+  created_operation_id TEXT NOT NULL,
   last_operation_id TEXT,
   UNIQUE (principal_id, project_id),
   CHECK ((revoked_at IS NULL AND revoked_by_principal_id IS NULL) OR (revoked_at IS NOT NULL AND revoked_by_principal_id IS NOT NULL))
@@ -202,7 +202,7 @@ CREATE TABLE issue_labels (
   label_id TEXT NOT NULL REFERENCES labels(id),
   added_at INTEGER NOT NULL,
   added_by_principal_id TEXT NOT NULL REFERENCES principals(id),
-  created_operation_id TEXT NOT NULL UNIQUE,
+  created_operation_id TEXT NOT NULL,
   PRIMARY KEY (issue_id, label_id)
 );
 
@@ -391,6 +391,7 @@ CREATE TABLE idempotency_records (
   request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
   operation_id TEXT NOT NULL UNIQUE,
   state TEXT NOT NULL CHECK (state IN ('pending', 'committed')),
+  operation_snapshot_json TEXT CHECK (operation_snapshot_json IS NULL OR json_valid(operation_snapshot_json)),
   response_status INTEGER,
   response_json TEXT CHECK (response_json IS NULL OR json_valid(response_json)),
   created_at INTEGER NOT NULL,
@@ -399,7 +400,8 @@ CREATE TABLE idempotency_records (
   CHECK (expires_at > created_at),
   CHECK (
     (state = 'pending' AND response_status IS NULL AND response_json IS NULL)
-    OR (state = 'committed' AND response_status IS NOT NULL AND response_json IS NOT NULL)
+    OR (state = 'committed' AND operation_snapshot_json IS NULL
+        AND response_status IS NOT NULL AND response_json IS NOT NULL)
   )
 );
 

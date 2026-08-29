@@ -159,6 +159,49 @@ function assertPersistenceSafe(value: JsonValue, forbiddenValues: readonly strin
   }
 }
 
+export function operationSnapshotStatement(
+  db: D1Database,
+  operationId: string,
+  snapshot: JsonValue,
+): D1PreparedStatement {
+  assertPersistenceSafe(snapshot, []);
+  const snapshotJson = canonicalJson(snapshot);
+  if (new TextEncoder().encode(snapshotJson).byteLength > 128 * 1_024) {
+    throw new Error("Operation snapshot exceeds the persistence limit.");
+  }
+  return db.prepare(
+    `UPDATE idempotency_records
+     SET operation_snapshot_json = ?1
+     WHERE operation_id = ?2 AND state = 'pending'`,
+  ).bind(snapshotJson, operationId);
+}
+
+export async function readOperationSnapshot<T>(
+  db: D1Database,
+  operationId: string,
+): Promise<T> {
+  let row: { operation_snapshot_json: string | null } | null;
+  try {
+    row = await db.prepare(
+      `SELECT operation_snapshot_json FROM idempotency_records
+       WHERE operation_id = ?1
+         AND EXISTS (SELECT 1 FROM operation_commits WHERE operation_id = ?1)
+       LIMIT 1`,
+    ).bind(operationId).first<{ operation_snapshot_json: string | null }>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+  if (row?.operation_snapshot_json === null || row === null) throw new AtomicBatchRejectedError();
+  let snapshot: unknown;
+  try {
+    snapshot = JSON.parse(row.operation_snapshot_json);
+  } catch {
+    throw new AtomicBatchRejectedError();
+  }
+  if (!safeJson(snapshot)) throw new AtomicBatchRejectedError();
+  return snapshot as T;
+}
+
 export async function claimIdempotency(
   db: D1Database,
   identity: IdempotencyIdentity,
@@ -286,7 +329,7 @@ export async function finalizeIdempotency<T extends JsonValue>(
     await db.prepare(
       `UPDATE idempotency_records
        SET state = 'committed', response_status = ?1, response_json = ?2,
-           expires_at = ?4
+           operation_snapshot_json = NULL, expires_at = ?4
        WHERE operation_id = ?3 AND state = 'pending'
          AND EXISTS (SELECT 1 FROM operation_commits WHERE operation_id = ?3)`,
     ).bind(response.status, responseJson, operationId, finalizedAt + IDEMPOTENCY_TTL_MS).run();

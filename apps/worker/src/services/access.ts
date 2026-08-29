@@ -13,7 +13,7 @@ import {
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
 import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
-import { sha256Hex } from "../kernel/crypto.ts";
+import { isUuid, sha256Hex } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
 import {
   businessQuotaExceeded,
@@ -25,7 +25,11 @@ import {
   validationError,
   versionConflict,
 } from "../kernel/errors.ts";
-import { runIdempotentOperation } from "../kernel/idempotency.ts";
+import {
+  operationSnapshotStatement,
+  readOperationSnapshot,
+  runIdempotentOperation,
+} from "../kernel/idempotency.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import {
   actorCredentialId,
@@ -147,6 +151,46 @@ function principalResource(row: PrincipalRow): { [key: string]: JsonValue } {
   };
 }
 
+function grantOperationSnapshotStatement(
+  db: D1Database,
+  operationId: string,
+  grantId: string,
+): D1PreparedStatement {
+  return db.prepare(
+    `UPDATE idempotency_records
+     SET operation_snapshot_json = (
+       SELECT json_object('row', json_object(
+         'created_at', g.created_at,
+         'id', g.id,
+         'principal_display_name', principal.display_name,
+         'principal_id', g.principal_id,
+         'project_display_name', project.display_name,
+         'project_id', g.project_id,
+         'project_key', project.key,
+         'revoked_at', g.revoked_at,
+         'role', g.role,
+         'updated_at', g.updated_at,
+         'version', g.version,
+         'workspace_key', workspace.key
+       ))
+       FROM project_grants g
+       JOIN principals principal ON principal.id = g.principal_id
+       JOIN projects project ON project.id = g.project_id
+       JOIN workspaces workspace ON workspace.id = project.workspace_id
+       WHERE g.id = ?2 AND g.last_operation_id = ?1
+     )
+     WHERE operation_id = ?1 AND state = 'pending'`,
+  ).bind(operationId, grantId);
+}
+
+async function readGrantOperationSnapshot(
+  db: D1Database,
+  operationId: string,
+): Promise<GrantRow> {
+  const snapshot = await readOperationSnapshot<{ row: GrantRow }>(db, operationId);
+  return snapshot.row;
+}
+
 async function readCredential(db: D1Database, credentialId: string): Promise<CredentialRow | null> {
   try {
     return await db.prepare(
@@ -156,37 +200,6 @@ async function readCredential(db: D1Database, credentialId: string): Promise<Cre
        JOIN principals AS p ON p.id = c.principal_id
        WHERE c.id = ?1 LIMIT 1`,
     ).bind(credentialId).first<CredentialRow>();
-  } catch {
-    throw platformUnavailable("d1");
-  }
-}
-
-async function readCredentialByOperation(db: D1Database, operationId: string): Promise<CredentialRow | null> {
-  try {
-    return await db.prepare(
-      `SELECT c.id, c.principal_id, c.token_prefix, c.issued_at, c.last_used_at,
-              c.revoked_at, c.revoke_reason, p.display_name AS principal_display_name
-       FROM credentials AS c
-       JOIN principals AS p ON p.id = c.principal_id
-       WHERE c.created_operation_id = ?1 LIMIT 1`,
-    ).bind(operationId).first<CredentialRow>();
-  } catch {
-    throw platformUnavailable("d1");
-  }
-}
-
-async function readRevokedCredentialIdByOperation(
-  db: D1Database,
-  operationId: string,
-): Promise<string | null> {
-  try {
-    const row = await db.prepare(
-      `SELECT id FROM credentials
-       WHERE last_operation_id = ?1 AND revoked_at IS NOT NULL
-         AND revoke_reason = 'owner_rotation'
-       LIMIT 1`,
-    ).bind(operationId).first<{ id: string }>();
-    return row?.id ?? null;
   } catch {
     throw platformUnavailable("d1");
   }
@@ -286,7 +299,14 @@ async function ownerGuardRejected(db: D1Database, auth: AuthContext, now: number
 
 function parseTimestampIdCursor(cursor: JsonValue[] | null): [number, string] | null {
   if (cursor === null) return null;
-  if (cursor.length !== 2 || typeof cursor[0] !== "number" || typeof cursor[1] !== "string") {
+  if (
+    cursor.length !== 2
+    || typeof cursor[0] !== "number"
+    || !Number.isSafeInteger(cursor[0])
+    || cursor[0] < 0
+    || typeof cursor[1] !== "string"
+    || !isUuid(cursor[1])
+  ) {
     throw invalidCursor();
   }
   return [cursor[0], cursor[1]];
@@ -303,7 +323,12 @@ export async function listPrincipals(
   const projectIdRaw = url.searchParams.get("project_id");
   const projectId = projectIdRaw === null ? null : requireUuid(projectIdRaw, "project_id");
   const limit = requireLimit(url);
-  const cursorContext = await createCursorContext("principals", { project_id: projectId, q }, [`owner:${auth.principalId}`]);
+  const cursorContext = await createCursorContext(
+    "principals",
+    { project_id: projectId, q },
+    [`owner:${auth.principalId}`],
+    auth.principalId,
+  );
   const position = parseTimestampIdCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
   let rows: PrincipalRow[];
   try {
@@ -400,7 +425,12 @@ export async function listPrincipalCredentials(
   const principal = await readPrincipal(db, principalId);
   if (principal === null) throw notFound();
   const limit = requireLimit(url);
-  const cursorContext = await createCursorContext("principal-credentials", { principal_id: principalId }, [`owner:${auth.principalId}`]);
+  const cursorContext = await createCursorContext(
+    "principal-credentials",
+    { principal_id: principalId },
+    [`owner:${auth.principalId}`],
+    auth.principalId,
+  );
   const position = parseTimestampIdCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
   let rows: CredentialRow[];
   try {
@@ -442,6 +472,11 @@ export async function revokeCredential(
   const owner = await readPrincipal(db, current.principal_id);
   if (owner?.is_owner === 1) throw forbidden();
   if (current.revoked_at !== null || expectedVersion !== 1) throw versionConflict(credentialVersion(current));
+  const updated: CredentialRow = {
+    ...current,
+    revoke_reason: "owner_revoke",
+    revoked_at: now,
+  };
   const operationId = crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 5, true);
   let commit: OperationCommit;
@@ -496,8 +531,6 @@ export async function revokeCredential(
     }
     throw error;
   }
-  const updated = await readCredential(db, credentialId);
-  if (updated === null) throw platformUnavailable("d1");
   return writeResult(credentialResource(updated, false), commit.lastEventSequence, false);
 }
 
@@ -530,6 +563,20 @@ export async function rotateOwnerCredential(
   const initialAuth = await authenticateRotationRequest(db, request, replacement.token);
   const replacementDigest = await sha256Hex(replacement.token);
   const replacementCredentialId = crypto.randomUUID();
+  const replacementRow: CredentialRow = {
+    id: replacementCredentialId,
+    issued_at: now,
+    last_used_at: null,
+    principal_display_name: initialAuth.displayName,
+    principal_id: initialAuth.principalId,
+    revoked_at: null,
+    revoke_reason: null,
+    token_prefix: replacement.prefix,
+  };
+  const rotationResource = {
+    ...credentialResource(replacementRow, false),
+    revoked_credential_id: initialAuth.credentialId,
+  };
   const result = await runIdempotentOperation({
     authorize: async () => {
       const current = await authenticateRotationRequest(db, request, replacement.token);
@@ -564,6 +611,7 @@ export async function rotateOwnerCredential(
                  AND EXISTS (SELECT 1 FROM credentials replacement
                              WHERE replacement.created_operation_id = ?3)`,
             ).bind(now, initialAuth.principalId, operationId, initialAuth.credentialId),
+            operationSnapshotStatement(db, operationId, rotationResource),
             db.prepare(
               `INSERT INTO events
                 (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -595,6 +643,7 @@ export async function rotateOwnerCredential(
           operationId,
           primarySubjectId: replacementCredentialId,
           primarySubjectType: "credential",
+          requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
@@ -613,16 +662,12 @@ export async function rotateOwnerCredential(
     normalizedResourceScope: "owner-credential-rotation",
     now,
     readback: async (operationId, commit) => {
-      const [row, revokedCredentialId] = await Promise.all([
-        readCredentialByOperation(db, operationId),
-        readRevokedCredentialIdByOperation(db, operationId),
-      ]);
-      if (row === null || revokedCredentialId === null) throw platformUnavailable("d1");
       return {
-        body: writeResult({
-          ...credentialResource(row, false),
-          revoked_credential_id: revokedCredentialId,
-        }, commit.lastEventSequence, false),
+        body: writeResult(
+          await readOperationSnapshot<{ [key: string]: JsonValue }>(db, operationId),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },
@@ -643,7 +688,12 @@ export async function listProjectGrants(
   const projectId = requireUuid(projectIdValue, "project_id");
   if (await readProjectControl(db, projectId) === null) throw notFound();
   const limit = requireLimit(url);
-  const cursorContext = await createCursorContext("project-grants", { project_id: projectId }, [`owner:${auth.principalId}`]);
+  const cursorContext = await createCursorContext(
+    "project-grants",
+    { project_id: projectId },
+    [`owner:${auth.principalId}`],
+    auth.principalId,
+  );
   const position = parseTimestampIdCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
   let rows: GrantRow[];
   try {
@@ -776,11 +826,7 @@ export async function createProjectGrant(
   const projectId = requireUuid(projectIdValue, "project_id");
   const principalId = requireUuid(principalIdValue, "principal_id");
   const role = requireProjectRole(roleValue);
-  const principal = await readPrincipal(db, principalId);
-  if (principal === null || await readProjectControl(db, projectId) === null) throw notFound();
-  if (principal.is_owner === 1) throw forbidden();
-  const existing = await readGrantForPrincipalProject(db, principalId, projectId);
-  const grantId = existing?.id ?? crypto.randomUUID();
+  const proposedGrantId = crypto.randomUUID();
   const idempotencyKey = requireIdempotencyKey(request);
   const result = await runIdempotentOperation({
     authorize: async () => {
@@ -789,6 +835,14 @@ export async function createProjectGrant(
     },
     db,
     execute: async (operationId) => {
+      const [principal, project, existing] = await Promise.all([
+        readPrincipal(db, principalId),
+        readProjectControl(db, projectId),
+        readGrantForPrincipalProject(db, principalId, projectId),
+      ]);
+      if (principal === null || project === null) throw notFound();
+      if (principal.is_owner === 1) throw forbidden();
+      const grantId = existing?.id ?? proposedGrantId;
       const guard = buildCurrentAuthGuard(auth, now, 8, true);
       try {
         await executeAtomicBatch(db, {
@@ -816,12 +870,7 @@ export async function createProjectGrant(
                  version = project_grants.version + 1,
                  updated_at = excluded.updated_at,
                  last_operation_id = excluded.last_operation_id
-               WHERE project_grants.revoked_at IS NOT NULL
-                 AND NOT EXISTS (
-                   SELECT 1 FROM idempotency_records AS pending_operation
-                   WHERE pending_operation.operation_id = project_grants.last_operation_id
-                     AND pending_operation.state = 'pending'
-                 )`,
+               WHERE project_grants.revoked_at IS NOT NULL`,
             ).bind(grantId, principalId, projectId, role, now, auth.principalId, operationId, ...guard.values),
             db.prepare(
               `UPDATE project_usage
@@ -837,6 +886,7 @@ export async function createProjectGrant(
                    AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
                )`,
             ).bind(now, operationId, projectId, principalId),
+            grantOperationSnapshotStatement(db, operationId, grantId),
             grantEvent(db, auth, operationId, grantId, null, { role }, now, true),
           ],
           committedAt: now,
@@ -852,6 +902,7 @@ export async function createProjectGrant(
           operationId,
           primarySubjectId: grantId,
           primarySubjectType: "project_grant",
+          requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
@@ -873,8 +924,7 @@ export async function createProjectGrant(
     normalizedResourceScope: `project:${projectId}:principal:${principalId}`,
     now,
     readback: async (operationId, commit) => {
-      const row = await readGrantForPrincipalProject(db, principalId, projectId, operationId);
-      if (row === null) throw platformUnavailable("d1");
+      const row = await readGrantOperationSnapshot(db, operationId);
       return { body: writeResult(grantResource(row), commit.lastEventSequence, false), status: 200 };
     },
     requestBody: { principal_id: principalId, role },
@@ -897,6 +947,12 @@ export async function updateProjectGrant(
   const role = requireProjectRole(roleValue);
   const current = await readGrant(db, grantId);
   if (current === null || await readProjectControl(db, current.project_id) === null) throw notFound();
+  const updated: GrantRow = {
+    ...current,
+    role,
+    updated_at: now,
+    version: current.version + 1,
+  };
   const operationId = crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 7, true);
   let commit: OperationCommit;
@@ -908,11 +964,6 @@ export async function updateProjectGrant(
            SET role = ?1, version = version + 1, updated_at = ?2,
                last_operation_id = ?3
            WHERE id = ?4 AND version = ?5 AND revoked_at IS NULL
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = project_grants.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND EXISTS (
                SELECT 1 FROM projects p JOIN workspaces w ON w.id = p.workspace_id
                WHERE p.id = project_grants.project_id
@@ -943,8 +994,6 @@ export async function updateProjectGrant(
     }
     throw error;
   }
-  const updated = await readGrant(db, grantId);
-  if (updated === null) throw platformUnavailable("d1");
   return writeResult(grantResource(updated), commit.lastEventSequence, false);
 }
 
@@ -959,6 +1008,12 @@ export async function revokeProjectGrant(
   const grantId = requireUuid(grantIdValue, "grant_id");
   const current = await readGrant(db, grantId);
   if (current === null) throw notFound();
+  const updated: GrantRow = {
+    ...current,
+    revoked_at: now,
+    updated_at: now,
+    version: current.version + 1,
+  };
   const operationId = crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 7, true);
   let commit: OperationCommit;
@@ -971,11 +1026,6 @@ export async function revokeProjectGrant(
                version = version + 1, updated_at = ?1,
                last_operation_id = ?3
            WHERE id = ?4 AND version = ?5 AND revoked_at IS NULL
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = project_grants.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND ${guard.sql}`,
         ).bind(now, auth.principalId, operationId, grantId, expectedVersion, auth.principalId, ...guard.values),
         db.prepare(
@@ -1015,7 +1065,5 @@ export async function revokeProjectGrant(
     }
     throw error;
   }
-  const updated = await readGrant(db, grantId);
-  if (updated === null) throw platformUnavailable("d1");
   return writeResult(grantResource(updated), commit.lastEventSequence, false);
 }

@@ -21,7 +21,7 @@ import {
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
 import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
-import { sha256Hex } from "../kernel/crypto.ts";
+import { isUuid, sha256Hex } from "../kernel/crypto.ts";
 import {
   AtomicBatchRejectedError,
   executeAtomicBatch,
@@ -45,6 +45,7 @@ import {
   claimIdempotency,
   finalizeIdempotency,
   readIdempotencyResponse,
+  readOperationSnapshot,
   type IdempotencyClaim,
 } from "../kernel/idempotency.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
@@ -102,6 +103,123 @@ interface RedemptionCredentialRow {
   token_prefix: string;
 }
 
+interface InvitationOperationSnapshot {
+  grants: InvitationGrantRow[];
+  row: InvitationRow;
+}
+
+interface RedemptionOperationSnapshot extends InvitationOperationSnapshot {
+  credential: RedemptionCredentialRow | null;
+  principal: { display_name: string; id: string };
+  results: RedemptionItemRow[];
+}
+
+function invitationSnapshotJsonSql(extraFields = ""): string {
+  return `json_object(
+    'row', json_object(
+      'bound_display_name', bound.display_name,
+      'bound_principal_id', invitation.bound_principal_id,
+      'code_digest', invitation.code_digest,
+      'code_prefix', invitation.code_prefix,
+      'created_at', invitation.created_at,
+      'created_by_owner_principal_id', invitation.created_by_owner_principal_id,
+      'expires_at', invitation.expires_at,
+      'id', invitation.id,
+      'kind', invitation.kind,
+      'last_operation_id', invitation.last_operation_id,
+      'recovery_mode', invitation.recovery_mode,
+      'redeemed_at', invitation.redeemed_at,
+      'redeemed_by_principal_id', invitation.redeemed_by_principal_id,
+      'revoked_at', invitation.revoked_at
+    ),
+    'grants', json(COALESCE((
+      SELECT json_group_array(json_object(
+        'display_name', ordered_grant.display_name,
+        'project_id', ordered_grant.project_id,
+        'project_key', ordered_grant.project_key,
+        'role', ordered_grant.role,
+        'workspace_key', ordered_grant.workspace_key
+      ))
+      FROM (
+        SELECT project.display_name, grant_row.project_id,
+               project.key AS project_key, grant_row.role,
+               workspace.key AS workspace_key
+        FROM invitation_project_grants grant_row
+        JOIN projects project ON project.id = grant_row.project_id
+        JOIN workspaces workspace ON workspace.id = project.workspace_id
+        WHERE grant_row.invitation_id = invitation.id
+        ORDER BY workspace.key, project.key, project.id
+      ) ordered_grant
+    ), '[]'))${extraFields}
+  )`;
+}
+
+function invitationOperationSnapshotStatement(
+  db: D1Database,
+  operationId: string,
+  invitationId: string,
+): D1PreparedStatement {
+  return db.prepare(
+    `UPDATE idempotency_records
+     SET operation_snapshot_json = (
+       SELECT ${invitationSnapshotJsonSql()}
+       FROM invitations invitation
+       LEFT JOIN principals bound ON bound.id = invitation.bound_principal_id
+       WHERE invitation.id = ?2 AND invitation.last_operation_id = ?1
+     )
+     WHERE operation_id = ?1 AND state = 'pending'`,
+  ).bind(operationId, invitationId);
+}
+
+function redemptionOperationSnapshotStatement(
+  db: D1Database,
+  operationId: string,
+  invitationId: string,
+): D1PreparedStatement {
+  const extras = `,
+    'credential', json((
+      SELECT json_object(
+        'id', credential.id,
+        'issued_at', credential.issued_at,
+        'principal_display_name', credential_principal.display_name,
+        'principal_id', credential.principal_id,
+        'token_prefix', credential.token_prefix
+      )
+      FROM credentials credential
+      JOIN principals credential_principal ON credential_principal.id = credential.principal_id
+      WHERE credential.created_operation_id = ?1
+      LIMIT 1
+    )),
+    'principal', json_object(
+      'display_name', redeemed_principal.display_name,
+      'id', redeemed_principal.id
+    ),
+    'results', json(COALESCE((
+      SELECT json_group_array(json_object(
+        'effective_role', ordered_item.effective_role,
+        'outcome', ordered_item.outcome,
+        'project_id', ordered_item.project_id
+      ))
+      FROM (
+        SELECT effective_role, outcome, project_id
+        FROM invitation_redemption_items
+        WHERE invitation_id = invitation.id AND operation_id = ?1
+        ORDER BY project_id
+      ) ordered_item
+    ), '[]'))`;
+  return db.prepare(
+    `UPDATE idempotency_records
+     SET operation_snapshot_json = (
+       SELECT ${invitationSnapshotJsonSql(extras)}
+       FROM invitations invitation
+       LEFT JOIN principals bound ON bound.id = invitation.bound_principal_id
+       JOIN principals redeemed_principal ON redeemed_principal.id = invitation.redeemed_by_principal_id
+       WHERE invitation.id = ?2 AND invitation.last_operation_id = ?1
+     )
+     WHERE operation_id = ?1 AND state = 'pending'`,
+  ).bind(operationId, invitationId);
+}
+
 function invitationVersion(row: InvitationRow): number {
   return row.revoked_at === null && row.redeemed_at === null ? 1 : 2;
 }
@@ -142,23 +260,6 @@ async function readInvitationByDigest(db: D1Database, digest: string): Promise<I
        LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
        WHERE i.code_digest = ?1 LIMIT 1`,
     ).bind(digest).first<InvitationRow>();
-  } catch {
-    throw platformUnavailable("d1");
-  }
-}
-
-async function readInvitationByOperation(db: D1Database, operationId: string): Promise<InvitationRow | null> {
-  try {
-    return await db.prepare(
-      `SELECT i.id, i.kind, i.code_prefix, i.code_digest, i.bound_principal_id,
-              bound.display_name AS bound_display_name, i.recovery_mode,
-              i.expires_at, i.revoked_at, i.redeemed_at,
-              i.redeemed_by_principal_id, i.created_at,
-              i.created_by_owner_principal_id, i.last_operation_id
-       FROM invitations AS i
-       LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
-       WHERE i.created_operation_id = ?1 LIMIT 1`,
-    ).bind(operationId).first<InvitationRow>();
   } catch {
     throw platformUnavailable("d1");
   }
@@ -253,7 +354,14 @@ async function ownerGuardRejected(db: D1Database, auth: AuthContext, now: number
 
 function parseCursor(cursor: JsonValue[] | null): [number, string] | null {
   if (cursor === null) return null;
-  if (cursor.length !== 2 || typeof cursor[0] !== "number" || typeof cursor[1] !== "string") {
+  if (
+    cursor.length !== 2
+    || typeof cursor[0] !== "number"
+    || !Number.isSafeInteger(cursor[0])
+    || cursor[0] < 0
+    || typeof cursor[1] !== "string"
+    || !isUuid(cursor[1])
+  ) {
     throw invalidCursor();
   }
   return [cursor[0], cursor[1]];
@@ -267,7 +375,12 @@ export async function listInvitations(
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
   const limit = requireLimit(url);
-  const cursorContext = await createCursorContext("invitations", {}, [`owner:${auth.principalId}`]);
+  const cursorContext = await createCursorContext(
+    "invitations",
+    {},
+    [`owner:${auth.principalId}`],
+    auth.principalId,
+  );
   const position = parseCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
   let rows: InvitationRow[];
   try {
@@ -405,6 +518,7 @@ async function createInvitationBatch(
          AND p.deleted_at IS NULL AND w.deleted_at IS NULL`,
     ).bind(grant.role, grant.projectId, invitationId, operationId));
   }
+  statements.push(invitationOperationSnapshotStatement(db, operationId, invitationId));
   statements.push(db.prepare(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -457,6 +571,7 @@ async function createInvitationBatch(
       operationId,
       primarySubjectId: invitationId,
       primarySubjectType: "invitation",
+      requireIdempotencySnapshot: true,
     });
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
@@ -550,10 +665,9 @@ export async function createInvitation(
   }
   if (commit === null) throw new AtomicBatchRejectedError();
   await reauthenticateOwner(db, request, now);
-  const row = await readInvitationByOperation(db, claim.operationId);
-  if (row === null) throw platformUnavailable("d1");
+  const snapshot = await readOperationSnapshot<InvitationOperationSnapshot>(db, claim.operationId);
   const safeBody = writeResult({
-    ...(await invitationResource(db, row, now)),
+    ...(await invitationResource(db, snapshot.row, now, snapshot.grants)),
     secret_available: false,
   }, commit.lastEventSequence, false);
   const finalized = await finalizeIdempotency(
@@ -563,7 +677,7 @@ export async function createInvitation(
     generatedCode === null ? [] : [generatedCode],
     now,
   );
-  if (generatedCode === null || generatedDigest !== row.code_digest) {
+  if (generatedCode === null || generatedDigest !== snapshot.row.code_digest) {
     return { ...finalized.body, idempotent_replay: true };
   }
   const origin = await preferredOrigin(db);
@@ -594,6 +708,7 @@ export async function revokeInvitation(
   if (invitationVersion(current) !== expectedVersion || current.redeemed_at !== null || current.revoked_at !== null) {
     throw versionConflict(invitationVersion(current));
   }
+  const grants = await readInvitationGrants(db, invitationId);
   const operationId = crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 6, true);
   let commit: OperationCommit;
@@ -637,9 +752,16 @@ export async function revokeInvitation(
     }
     throw error;
   }
-  const updated = await readInvitationById(db, invitationId);
-  if (updated === null) throw platformUnavailable("d1");
-  return writeResult(await invitationResource(db, updated, now), commit.lastEventSequence, false);
+  const updated: InvitationRow = {
+    ...current,
+    last_operation_id: operationId,
+    revoked_at: now,
+  };
+  return writeResult(
+    await invitationResource(db, updated, now, grants),
+    commit.lastEventSequence,
+    false,
+  );
 }
 
 function escapeHtml(value: string): string {
@@ -652,6 +774,25 @@ function assertInvitationUsable(row: InvitationRow, now: number): void {
   if (status === "revoked") throw gone("INVITATION_REVOKED");
   if (status === "redeemed") throw conflict("INVITATION_ALREADY_REDEEMED", "request_new_invitation");
   if (status === "expired") throw gone("INVITATION_EXPIRED");
+}
+
+function preferredInvitationLocale(acceptLanguage: string | null): "en" | "zh-CN" {
+  const preferences = (acceptLanguage ?? "").split(",").map((entry, index) => {
+    const [tagPart, ...parameters] = entry.trim().split(";");
+    const qParameter = parameters.find((parameter) => parameter.trim().toLowerCase().startsWith("q="));
+    const quality = qParameter === undefined ? 1 : Number(qParameter.trim().slice(2));
+    return {
+      index,
+      quality: Number.isFinite(quality) && quality >= 0 && quality <= 1 ? quality : 0,
+      tag: tagPart?.toLowerCase() ?? "",
+    };
+  }).filter((entry) => entry.quality > 0)
+    .sort((left, right) => right.quality - left.quality || left.index - right.index);
+  for (const preference of preferences) {
+    if (/^zh(?:-cn|-hans)?$/u.test(preference.tag)) return "zh-CN";
+    if (/^en(?:-[a-z0-9]+)*$/u.test(preference.tag)) return "en";
+  }
+  return "en";
 }
 
 export async function getInvitationBootstrapHtml(
@@ -667,16 +808,17 @@ export async function getInvitationBootstrapHtml(
   if (row === null) throw notFound();
   assertInvitationUsable(row, now);
   const grants = await readInvitationGrants(db, row.id);
-  const locale = /(?:^|,)\s*zh(?:-CN|-Hans)?(?:\s*;|\s*,|\s*$)/iu.test(acceptLanguage ?? "") ? "zh-CN" : "en";
-  const isChinese = locale === "zh-CN";
-  const roleLabel = (role: ProjectRole) => isChinese
-    ? role === "writer" ? "可写 writer" : "只读 reader"
-    : role === "writer" ? "writer (read/write)" : "reader (read-only)";
-  const details = row.kind === "project_grant"
-    ? `<h2>${isChinese ? "目标 Project" : "Target Projects"}</h2><ul>${grants.map((grant) => `<li><strong>${escapeHtml(grant.workspace_key)}/${escapeHtml(grant.project_key)}</strong> — ${escapeHtml(grant.display_name)} — ${roleLabel(grant.role)}<br><small>project_id: ${escapeHtml(grant.project_id)}</small></li>`).join("")}</ul>`
-    : `<h2>${isChinese ? "身份恢复警告" : "Identity recovery warning"}</h2><p>${isChinese
-      ? `此邀请绑定 Principal ${escapeHtml(row.bound_principal_id ?? "")}（${escapeHtml(row.bound_display_name ?? "")}）。兑换者将继承该身份的全部现有 Grants、assignment 与历史。${row.recovery_mode === "rotation" ? "rotation 成功后只撤销本次用于认证的旧 Credential，其他 active Credential 保持有效。" : "full_recovery 成功后撤销该 Principal 的全部先前 active Credentials。"}`
-      : `This Invitation is bound to Principal ${escapeHtml(row.bound_principal_id ?? "")} (${escapeHtml(row.bound_display_name ?? "")}). The redeemer inherits all existing Grants, assignments, and history. ${row.recovery_mode === "rotation" ? "A successful rotation revokes only the old Credential used to authenticate this redemption; other active Credentials remain valid." : "A successful full recovery revokes every previously active Credential for this Principal."}`}</p>`;
+  const locale = preferredInvitationLocale(acceptLanguage);
+  const renderDetails = (isChinese: boolean) => {
+    const roleLabel = (role: ProjectRole) => isChinese
+      ? role === "writer" ? "可写 writer" : "只读 reader"
+      : role === "writer" ? "writer (read/write)" : "reader (read-only)";
+    return row.kind === "project_grant"
+      ? `<h2>${isChinese ? "目标 Project" : "Target Projects"}</h2><ul>${grants.map((grant) => `<li><strong>${escapeHtml(grant.workspace_key)}/${escapeHtml(grant.project_key)}</strong> — ${escapeHtml(grant.display_name)} — ${roleLabel(grant.role)}<br><small>project_id: ${escapeHtml(grant.project_id)}</small></li>`).join("")}</ul>`
+      : `<h2>${isChinese ? "身份恢复警告" : "Identity recovery warning"}</h2><p>${isChinese
+        ? `此邀请绑定 Principal ${escapeHtml(row.bound_principal_id ?? "")}（${escapeHtml(row.bound_display_name ?? "")}）。兑换者将继承该身份的全部现有 Grants、assignment 与历史。${row.recovery_mode === "rotation" ? "rotation 成功后只撤销本次用于认证的旧 Credential，其他 active Credential 保持有效。" : "full_recovery 成功后撤销该 Principal 的全部先前 active Credentials。"}`
+        : `This Invitation is bound to Principal ${escapeHtml(row.bound_principal_id ?? "")} (${escapeHtml(row.bound_display_name ?? "")}). The redeemer inherits all existing Grants, assignments, and history. ${row.recovery_mode === "rotation" ? "A successful rotation revokes only the old Credential used to authenticate this redemption; other active Credentials remain valid." : "A successful full recovery revokes every previously active Credential for this Principal."}`}</p>`;
+  };
   const metadata = JSON.stringify({
     bound_principal_id: row.bound_principal_id,
     expires_at: timestamp(row.expires_at),
@@ -690,10 +832,14 @@ export async function getInvitationBootstrapHtml(
     recovery_mode: row.recovery_mode,
     schema_version: 1,
   }).replaceAll("<", "\\u003c");
-  const intro = isChinese
-    ? "此页面只读，尚未消费邀请。请让 Agent 使用已从项目声明的 canonical publisher 验证过的 cfKanban Skill，核对发行来源、版本、完整性与下列目标后再执行兑换；不要运行页面中的远程脚本。"
-    : "This page is read-only and has not consumed the Invitation. Ask your Agent to use a cfKanban Skill already verified against the project-declared canonical publisher, then check its source, version, integrity, and the targets below before redeeming. Do not run remote scripts from this page.";
-  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><h1>cfKanban Invitation</h1><p>${intro}</p>${details}<p>${isChinese ? "有效期至" : "Expires at"} ${escapeHtml(timestamp(row.expires_at) ?? "")}.</p><script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>history.replaceState({},document.title,"/invite")</script></body></html>`;
+  const section = (sectionLocale: "en" | "zh-CN") => {
+    const isChinese = sectionLocale === "zh-CN";
+    const intro = isChinese
+      ? "此页面只读，尚未消费邀请。请让 Agent 使用已从项目声明的 canonical publisher 验证过的 cfKanban Skill，核对发行来源、版本、完整性与下列目标后再执行兑换；不要运行页面中的远程脚本。"
+      : "This page is read-only and has not consumed the Invitation. Ask your Agent to use a cfKanban Skill already verified against the project-declared canonical publisher, then check its source, version, integrity, and the targets below before redeeming. Do not run remote scripts from this page.";
+    return `<section data-invitation-locale="${sectionLocale}"${locale === sectionLocale ? "" : " hidden"}><p>${intro}</p>${renderDetails(isChinese)}<p>${isChinese ? "有效期至" : "Expires at"} ${escapeHtml(timestamp(row.expires_at) ?? "")}.</p></section>`;
+  };
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><nav aria-label="Language"><button type="button" data-select-locale="en">English</button> <button type="button" data-select-locale="zh-CN">简体中文</button></nav><h1>cfKanban Invitation</h1>${section("en")}${section("zh-CN")}<script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>(()=>{const apply=(locale)=>{const selected=locale==="zh-CN"?"zh-CN":"en";document.documentElement.lang=selected;document.querySelectorAll("[data-invitation-locale]").forEach((section)=>{section.hidden=section.dataset.invitationLocale!==selected});try{localStorage.setItem("cfkanban.locale",selected)}catch{}};document.querySelectorAll("[data-select-locale]").forEach((button)=>button.addEventListener("click",()=>apply(button.dataset.selectLocale)));try{const saved=localStorage.getItem("cfkanban.locale");if(saved)apply(saved)}catch{}history.replaceState({},document.title,"/invite")})()</script></body></html>`;
 }
 
 async function optionalRedeemAuth(
@@ -755,10 +901,21 @@ async function credentialDigestExists(db: D1Database, digest: string): Promise<b
   }
 }
 
-async function projectQuotaExceeded(db: D1Database, invitationId: string, principalId: string): Promise<boolean> {
+interface InvitationQuotaExceeded {
+  currentUsage: number;
+  limit: number;
+  projectId: string;
+}
+
+async function projectQuotaExceeded(
+  db: D1Database,
+  invitationId: string,
+  principalId: string,
+): Promise<InvitationQuotaExceeded | null> {
   try {
     const row = await db.prepare(
-      `SELECT 1 AS exceeded
+      `SELECT p.id AS project_id, usage.active_principal_count AS current_usage,
+              p.principal_limit AS quota_limit
        FROM invitation_project_grants ipg
        JOIN projects p ON p.id = ipg.project_id
        JOIN workspaces w ON w.id = p.workspace_id
@@ -772,9 +929,18 @@ async function projectQuotaExceeded(db: D1Database, invitationId: string, princi
          AND p.principal_limit IS NOT NULL
          AND usage.active_principal_count >= p.principal_limit
          AND (existing.id IS NULL OR existing.revoked_at IS NOT NULL)
+       ORDER BY p.id
        LIMIT 1`,
-    ).bind(invitationId, principalId).first();
-    return row !== null;
+    ).bind(invitationId, principalId).first<{
+      current_usage: number;
+      project_id: string;
+      quota_limit: number;
+    }>();
+    return row === null ? null : {
+      currentUsage: row.current_usage,
+      limit: row.quota_limit,
+      projectId: row.project_id,
+    };
   } catch {
     throw platformUnavailable("d1");
   }
@@ -818,7 +984,6 @@ async function executeProjectInviteRedeem(
   if (grants.length < 1 || grants.length > 20) throw platformUnavailable("d1");
   const principalId = auth?.principalId ?? crypto.randomUUID();
   const plan = grants.map((grant, eventIndex) => ({
-    created_operation_id: crypto.randomUUID(),
     event_id: crypto.randomUUID(),
     event_index: eventIndex,
     grant_id: crypto.randomUUID(),
@@ -849,7 +1014,7 @@ async function executeProjectInviteRedeem(
        updated_at, created_operation_id, last_operation_id)
      SELECT json_extract(item.value, '$.grant_id'), target.id, p.id,
             json_extract(item.value, '$.role'), 1, ?3, ?3,
-            json_extract(item.value, '$.created_operation_id'), ?4
+            ?4, ?4
      FROM json_each(?1) AS item
      JOIN invitation_project_grants ipg
        ON ipg.invitation_id = ?5
@@ -881,12 +1046,7 @@ async function executeProjectInviteRedeem(
        version = project_grants.version + 1,
        updated_at = excluded.updated_at,
        last_operation_id = excluded.last_operation_id
-     WHERE project_grants.revoked_at IS NOT NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM idempotency_records AS pending_operation
-         WHERE pending_operation.operation_id = project_grants.last_operation_id
-           AND pending_operation.state = 'pending'
-       )`,
+     WHERE project_grants.revoked_at IS NOT NULL`,
   ).bind(
     planJson,
     principalId,
@@ -901,7 +1061,7 @@ async function executeProjectInviteRedeem(
     `INSERT INTO invitation_redemption_items
       (invitation_id, project_id, operation_id, outcome, effective_role)
      SELECT ?1, g.project_id, ?2,
-            CASE WHEN g.created_operation_id = json_extract(item.value, '$.created_operation_id') THEN 'created'
+            CASE WHEN g.created_operation_id = ?2 THEN 'created'
                  WHEN g.last_operation_id = ?2 THEN 'regranted'
                  ELSE 'already_has_access' END,
             g.role
@@ -957,6 +1117,7 @@ async function executeProjectInviteRedeem(
        AND (?7 = 0 OR EXISTS (SELECT 1 FROM credentials c
                              WHERE c.principal_id = ?2 AND c.created_operation_id = ?3))`,
   ).bind(now, principalId, claim.operationId, invitation.id, invitation.code_digest, grants.length, auth === null ? 1 : 0));
+  statements.push(redemptionOperationSnapshotStatement(db, claim.operationId, invitation.id));
   statements.push(db.prepare(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -1027,12 +1188,13 @@ async function executeProjectInviteRedeem(
           || !(await invitationTargetsActive(db, invitation.id))
           || (auth !== null && await currentAuthRejected(db, auth, now))
           || (replacement !== null && await credentialDigestExists(db, replacement.digest))
-          || await projectQuotaExceeded(db, invitation.id, principalId);
+          || await projectQuotaExceeded(db, invitation.id, principalId) !== null;
       },
       expectedEventCount: grants.length + 1,
       operationId: claim.operationId,
       primarySubjectId: invitation.id,
       primarySubjectType: "invitation",
+      requireIdempotencySnapshot: true,
     });
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
@@ -1044,7 +1206,8 @@ async function executeProjectInviteRedeem(
       if (replacement !== null && await credentialDigestExists(db, replacement.digest)) {
         throw conflict("CREDENTIAL_TOKEN_CONFLICT", "generate_new_credential");
       }
-      if (await projectQuotaExceeded(db, invitation.id, principalId)) throw businessQuotaExceeded("principals");
+      const quota = await projectQuotaExceeded(db, invitation.id, principalId);
+      if (quota !== null) throw businessQuotaExceeded("principals", quota.currentUsage, quota.limit);
       throw notFound();
     }
     throw error;
@@ -1119,24 +1282,33 @@ async function executeRecoveryRedeem(
              WHERE old.principal_id = ?2 AND old.last_operation_id = ?3
                AND old.revoked_at IS NOT NULL) = 1)`,
   ).bind(now, principalId, claim.operationId, invitation.id, invitation.code_digest, invitation.recovery_mode));
+  statements.push(redemptionOperationSnapshotStatement(db, claim.operationId, invitation.id));
   statements.push(db.prepare(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
        actor_credential_id, authorized_via, subject_type, subject_id,
        payload_json, created_at)
      SELECT ?1, 'security', 'principal.credential-recovered', ?2, 0,
-            ?3, replacement.id, 'invitation', 'principal', ?3,
+            ?3, ?4, 'invitation', 'principal', ?3,
             json_object(
               'mode', i.recovery_mode,
+              'replacement_credential_id', replacement.id,
               'revoked_count', (SELECT COUNT(*) FROM credentials old
                                 WHERE old.principal_id = ?3
                                   AND old.last_operation_id = ?2
                                   AND old.revoked_at IS NOT NULL)
-            ), ?4
+            ), ?5
      FROM invitations i
      JOIN credentials replacement ON replacement.created_operation_id = ?2
-     WHERE i.id = ?5 AND i.last_operation_id = ?2`,
-  ).bind(crypto.randomUUID(), claim.operationId, principalId, now, invitation.id));
+     WHERE i.id = ?6 AND i.last_operation_id = ?2`,
+  ).bind(
+    crypto.randomUUID(),
+    claim.operationId,
+    principalId,
+    invitation.recovery_mode === "rotation" ? auth?.credentialId ?? null : null,
+    now,
+    invitation.id,
+  ));
   try {
     await executeAtomicBatch(db, {
       businessStatements: statements,
@@ -1152,6 +1324,7 @@ async function executeRecoveryRedeem(
       operationId: claim.operationId,
       primarySubjectId: invitation.id,
       primarySubjectType: "invitation",
+      requireIdempotencySnapshot: true,
     });
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
@@ -1173,54 +1346,22 @@ async function executeRecoveryRedeem(
 
 async function redemptionReadback(
   db: D1Database,
-  invitation: InvitationRow,
   commit: OperationCommit,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const current = await readInvitationById(db, invitation.id);
-  if (current === null || current.last_operation_id !== commit.operationId) throw platformUnavailable("d1");
-  let credential: RedemptionCredentialRow | null = null;
-  let items: RedemptionItemRow[] = [];
-  let principal: { display_name: string; id: string } | null = null;
-  try {
-    const [credentialRow, itemResult, principalRow] = await Promise.all([
-      db.prepare(
-        `SELECT c.id, c.principal_id, c.token_prefix, c.issued_at,
-                p.display_name AS principal_display_name
-         FROM credentials c JOIN principals p ON p.id = c.principal_id
-         WHERE c.created_operation_id = ?1 LIMIT 1`,
-      ).bind(commit.operationId).first<RedemptionCredentialRow>(),
-      db.prepare(
-        `SELECT project_id, outcome, effective_role
-         FROM invitation_redemption_items
-         WHERE invitation_id = ?1 AND operation_id = ?2 ORDER BY project_id`,
-      ).bind(invitation.id, commit.operationId).all<RedemptionItemRow>(),
-      db.prepare(
-        `SELECT p.id, p.display_name
-         FROM invitations i JOIN principals p ON p.id = i.redeemed_by_principal_id
-         WHERE i.id = ?1 AND i.last_operation_id = ?2 LIMIT 1`,
-      ).bind(invitation.id, commit.operationId).first<{ display_name: string; id: string }>(),
-    ]);
-    credential = credentialRow;
-    const result = itemResult;
-    items = result.results;
-    principal = principalRow;
-  } catch {
-    throw platformUnavailable("d1");
-  }
-  if (principal === null) throw platformUnavailable("d1");
+  const snapshot = await readOperationSnapshot<RedemptionOperationSnapshot>(db, commit.operationId);
   const resource = {
-    ...(await invitationResource(db, current, now)),
-    credential: credential === null ? null : {
-      fingerprint: `cfk_v1_${credential.token_prefix}_…`,
-      id: credential.id,
-      issued_at: timestamp(credential.issued_at),
+    ...(await invitationResource(db, snapshot.row, now, snapshot.grants)),
+    credential: snapshot.credential === null ? null : {
+      fingerprint: `cfk_v1_${snapshot.credential.token_prefix}_…`,
+      id: snapshot.credential.id,
+      issued_at: timestamp(snapshot.credential.issued_at),
     },
     principal: {
-      display_name: principal.display_name,
-      principal_id: principal.id,
+      display_name: snapshot.principal.display_name,
+      principal_id: snapshot.principal.id,
     },
-    results: items.map((item) => ({
+    results: snapshot.results.map((item) => ({
       effective_role: item.effective_role,
       outcome: item.outcome,
       project_id: item.project_id,
@@ -1315,7 +1456,7 @@ export async function redeemInvitation(
     commit = await probeOperationCommit(db, claim.operationId);
   }
   if (commit === null) throw new AtomicBatchRejectedError();
-  const body = await redemptionReadback(db, invitation, commit, now);
+  const body = await redemptionReadback(db, commit, now);
   const finalized = await finalizeIdempotency(
     db,
     claim.operationId,

@@ -16,9 +16,14 @@ import {
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
 import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
+import { isUuid } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
 import { conflict, forbidden, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
-import { runIdempotentOperation } from "../kernel/idempotency.ts";
+import {
+  operationSnapshotStatement,
+  readOperationSnapshot,
+  runIdempotentOperation,
+} from "../kernel/idempotency.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import {
   actorCredentialId,
@@ -116,6 +121,39 @@ function projectResource(row: ProjectRow, auth: AuthContext): { [key: string]: J
   };
 }
 
+async function readResourceSnapshot(
+  db: D1Database,
+  operationId: string,
+): Promise<{ [key: string]: JsonValue }> {
+  return readOperationSnapshot<{ [key: string]: JsonValue }>(db, operationId);
+}
+
+function updatedWorkspaceRow(
+  row: WorkspaceRow,
+  changes: Partial<Pick<WorkspaceRow, "deleted_at" | "display_name">>,
+  now: number,
+): WorkspaceRow {
+  return {
+    ...row,
+    ...changes,
+    updated_at: now,
+    version: row.version + 1,
+  };
+}
+
+function updatedProjectRow(
+  row: ProjectRow,
+  changes: Partial<Pick<ProjectRow, "context" | "deleted_at" | "display_name">>,
+  now: number,
+): ProjectRow {
+  return {
+    ...row,
+    ...changes,
+    updated_at: now,
+    version: row.version + 1,
+  };
+}
+
 async function readWorkspace(
   db: D1Database,
   key: string,
@@ -128,24 +166,6 @@ async function readWorkspace(
        WHERE key = ?1 ${includeDeleted ? "" : "AND deleted_at IS NULL"}
        LIMIT 1`,
     ).bind(key).first<WorkspaceRow>();
-  } catch {
-    throw platformUnavailable("d1");
-  }
-}
-
-async function readWorkspaceForOperation(
-  db: D1Database,
-  key: string,
-  operationId: string,
-  created: boolean,
-): Promise<WorkspaceRow | null> {
-  try {
-    return await db.prepare(
-      `SELECT id, key, display_name, version, deleted_at, created_at, updated_at
-       FROM workspaces
-       WHERE key = ?1 AND ${created ? "created_operation_id" : "last_operation_id"} = ?2
-       LIMIT 1`,
-    ).bind(key, operationId).first<WorkspaceRow>();
   } catch {
     throw platformUnavailable("d1");
   }
@@ -174,35 +194,6 @@ async function readProject(
          ${includeDeleted ? "" : "AND w.deleted_at IS NULL AND p.deleted_at IS NULL"}
        LIMIT 1`,
     ).bind(workspaceKey, projectKey).first<ProjectRow>();
-  } catch {
-    throw platformUnavailable("d1");
-  }
-}
-
-async function readProjectForOperation(
-  db: D1Database,
-  workspaceKey: string,
-  projectKey: string,
-  operationId: string,
-  created: boolean,
-): Promise<ProjectRow | null> {
-  try {
-    return await db.prepare(
-      `SELECT p.id, p.workspace_id, w.key AS workspace_key, p.key, p.display_name,
-              p.context, p.issue_limit, p.comment_limit, p.principal_limit,
-              p.version, p.deleted_at, p.created_at, p.updated_at,
-              COALESCE(pu.active_issue_count, 0) AS active_issue_count,
-              COALESCE(pu.active_comment_count, 0) AS active_comment_count,
-              COALESCE(pu.active_principal_count, 0) AS active_principal_count,
-              CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
-       FROM projects AS p
-       JOIN workspaces AS w ON w.id = p.workspace_id
-       LEFT JOIN project_usage AS pu ON pu.project_id = p.id
-       LEFT JOIN public_join_policies AS pjp ON pjp.project_id = p.id
-       WHERE w.key = ?1 AND p.key = ?2
-         AND p.${created ? "created_operation_id" : "last_operation_id"} = ?3
-       LIMIT 1`,
-    ).bind(workspaceKey, projectKey, operationId).first<ProjectRow>();
   } catch {
     throw platformUnavailable("d1");
   }
@@ -292,10 +283,15 @@ async function readProjectPage(
 function parseCursorPosition(
   cursor: JsonValue[] | null,
   deleted: "exclude" | "only",
+  keyKind: "project" | "workspace",
 ): [string, string] | [number, string] | null {
   if (cursor === null) return null;
-  const firstValid = deleted === "only" ? typeof cursor[0] === "number" : typeof cursor[0] === "string";
-  if (cursor.length !== 2 || !firstValid || typeof cursor[1] !== "string") {
+  const firstValid = deleted === "only"
+    ? typeof cursor[0] === "number" && Number.isSafeInteger(cursor[0]) && cursor[0] >= 0
+    : typeof cursor[0] === "string" && (keyKind === "workspace"
+      ? /^[a-z][a-z0-9-]{1,31}$/.test(cursor[0])
+      : /^[A-Z][A-Z0-9-]{1,15}$/.test(cursor[0]));
+  if (cursor.length !== 2 || !firstValid || typeof cursor[1] !== "string" || !isUuid(cursor[1])) {
     throw invalidCursor();
   }
   return cursor as [string, string] | [number, string];
@@ -318,8 +314,13 @@ export async function listWorkspaces(
     "workspaces",
     { deleted },
     scopeIds(auth, visibleProjects.map((project) => project.projectId)),
+    auth.principalId,
   );
-  const position = parseCursorPosition(decodeCursor(url.searchParams.get("cursor"), cursorContext), deleted);
+  const position = parseCursorPosition(
+    decodeCursor(url.searchParams.get("cursor"), cursorContext),
+    deleted,
+    "workspace",
+  );
   const rows = await readWorkspacePage(
     db,
     deleted,
@@ -374,8 +375,13 @@ export async function listProjects(
     "projects",
     { deleted, workspace_key: workspaceKey },
     scopeIds(auth, visibleProjects.map((project) => project.projectId)),
+    auth.principalId,
   );
-  const position = parseCursorPosition(decodeCursor(url.searchParams.get("cursor"), cursorContext), deleted);
+  const position = parseCursorPosition(
+    decodeCursor(url.searchParams.get("cursor"), cursorContext),
+    deleted,
+    "project",
+  );
   const rows = await readProjectPage(
     db,
     workspaceKey,
@@ -531,6 +537,15 @@ export async function createWorkspace(
   const displayName = requireDisplayName(displayNameValue);
   const idempotencyKey = requireIdempotencyKey(request);
   const workspaceId = crypto.randomUUID();
+  const createdRow: WorkspaceRow = {
+    created_at: now,
+    deleted_at: null,
+    display_name: displayName,
+    id: workspaceId,
+    key,
+    updated_at: now,
+    version: 1,
+  };
   const result = await runIdempotentOperation({
     authorize: async () => {
       const current = await reauthenticateOwner(db, request, now, true);
@@ -550,6 +565,7 @@ export async function createWorkspace(
                SELECT ?1, ?2, ?3, 1, ?4, ?4, ?5, ?5, ?6, ?6
                WHERE ${guard.sql}`,
             ).bind(workspaceId, key, displayName, now, auth.principalId, operationId, ...guard.values),
+            operationSnapshotStatement(db, operationId, workspaceResource(createdRow, auth)),
             workspaceEvent(db, auth, crypto.randomUUID(), operationId, "workspace.created", workspaceId, { key }, now),
           ],
           committedAt: now,
@@ -559,6 +575,7 @@ export async function createWorkspace(
           operationId,
           primarySubjectId: workspaceId,
           primarySubjectType: "workspace",
+          requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
@@ -573,9 +590,10 @@ export async function createWorkspace(
     normalizedResourceScope: `workspace:${key}`,
     now,
     readback: async (operationId, commit) => {
-      const row = await readWorkspaceForOperation(db, key, operationId, true);
-      if (row === null) throw platformUnavailable("d1");
-      return { body: writeResult(workspaceResource(row, auth), commit.lastEventSequence, false), status: 200 };
+      return {
+        body: writeResult(await readResourceSnapshot(db, operationId), commit.lastEventSequence, false),
+        status: 200,
+      };
     },
     requestBody: { display_name: displayName, key },
     routeTemplate: "/api/v1/workspaces",
@@ -597,6 +615,7 @@ export async function updateWorkspace(
   const displayName = requireDisplayName(displayNameValue);
   const current = await readWorkspace(db, key);
   if (current === null) throw notFound();
+  const updated = updatedWorkspaceRow(current, { display_name: displayName }, now);
   const operationId = crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 7, true);
   let commit: OperationCommit;
@@ -607,11 +626,6 @@ export async function updateWorkspace(
           `UPDATE workspaces SET display_name = ?1, version = version + 1,
                   updated_at = ?2, updated_by_principal_id = ?3, last_operation_id = ?4
            WHERE id = ?5 AND version = ?6 AND deleted_at IS NULL
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = workspaces.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND ${guard.sql}`,
         ).bind(displayName, now, auth.principalId, operationId, current.id, expectedVersion, ...guard.values),
         workspaceEvent(db, auth, crypto.randomUUID(), operationId, "workspace.updated", current.id, { display_name: displayName }, now),
@@ -631,8 +645,6 @@ export async function updateWorkspace(
     if (error instanceof AtomicBatchRejectedError) return diagnoseWorkspaceCas(db, auth, key, expectedVersion, now, false);
     throw error;
   }
-  const updated = await readWorkspace(db, key);
-  if (updated === null) throw platformUnavailable("d1");
   return writeResult(workspaceResource(updated, auth), commit.lastEventSequence, false);
 }
 
@@ -644,9 +656,17 @@ async function setWorkspaceDeleted(
   now: number,
   deleted: boolean,
   operationId: string,
-): Promise<OperationCommit> {
+  persistSnapshot = false,
+): Promise<{ commit: OperationCommit; row: WorkspaceRow }> {
   const current = await readWorkspace(db, key, true);
   if (current === null) throw notFound();
+  const row = updatedWorkspaceRow(current, { deleted_at: deleted ? now : null }, now);
+  const snapshot = persistSnapshot
+    ? {
+        ...workspaceResource(row, auth),
+        resumed_public_projects: await resumedPublicProjects(db, current.id),
+      }
+    : null;
   const guard = buildCurrentAuthGuard(auth, now, 8, true);
   try {
     const { commit } = await executeAtomicBatch(db, {
@@ -658,11 +678,6 @@ async function setWorkspaceDeleted(
                updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7
              AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = workspaces.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND ${guard.sql}`,
         ).bind(
           deleted ? now : null,
@@ -684,6 +699,7 @@ async function setWorkspaceDeleted(
           { key },
           now,
         ),
+        ...(snapshot === null ? [] : [operationSnapshotStatement(db, operationId, snapshot)]),
       ],
       committedAt: now,
       confirmBusinessRejection: async () => {
@@ -695,8 +711,9 @@ async function setWorkspaceDeleted(
       operationId,
       primarySubjectId: current.id,
       primarySubjectType: "workspace",
+      requireIdempotencySnapshot: persistSnapshot,
     });
-    return commit;
+    return { commit, row };
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
       return diagnoseWorkspaceCas(db, auth, key, expectedVersion, now, !deleted);
@@ -733,9 +750,15 @@ export async function deleteWorkspace(
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
   const key = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
-  const commit = await setWorkspaceDeleted(db, auth, key, expectedVersion, now, true, crypto.randomUUID());
-  const row = await readWorkspace(db, key, true);
-  if (row === null) throw platformUnavailable("d1");
+  const { commit, row } = await setWorkspaceDeleted(
+    db,
+    auth,
+    key,
+    expectedVersion,
+    now,
+    true,
+    crypto.randomUUID(),
+  );
   return writeResult(workspaceResource(row, auth), commit.lastEventSequence, false);
 }
 
@@ -757,20 +780,17 @@ export async function restoreWorkspace(
     },
     db,
     execute: async (operationId) => {
-      await setWorkspaceDeleted(db, auth, key, expectedVersion, now, false, operationId);
+      await setWorkspaceDeleted(db, auth, key, expectedVersion, now, false, operationId, true);
     },
     idempotencyKey,
     method: "POST",
     normalizedResourceScope: `workspace:${key}:restore`,
     now,
     readback: async (operationId, commit) => {
-      const row = await readWorkspaceForOperation(db, key, operationId, false);
-      if (row === null) throw platformUnavailable("d1");
-      const resource = {
-        ...workspaceResource(row, auth),
-        resumed_public_projects: await resumedPublicProjects(db, row.id),
+      return {
+        body: writeResult(await readResourceSnapshot(db, operationId), commit.lastEventSequence, false),
+        status: 200,
       };
-      return { body: writeResult(resource, commit.lastEventSequence, false), status: 200 };
     },
     requestBody: { expected_version: expectedVersion },
     routeTemplate: "/api/v1/workspaces/{workspace_key}/commands/restore",
@@ -803,6 +823,27 @@ export async function createProject(
     },
     db,
     execute: async (operationId) => {
+      const workspace = await readWorkspace(db, workspaceKey);
+      if (workspace === null) throw notFound();
+      const createdRow: ProjectRow = {
+        active_comment_count: 0,
+        active_issue_count: 0,
+        active_principal_count: 0,
+        comment_limit: null,
+        context,
+        created_at: now,
+        deleted_at: null,
+        display_name: displayName,
+        id: projectId,
+        issue_limit: null,
+        key,
+        principal_limit: null,
+        public_join_enabled: 0,
+        updated_at: now,
+        version: 1,
+        workspace_id: workspace.id,
+        workspace_key: workspaceKey,
+      };
       const guard = buildCurrentAuthGuard(auth, now, 9, true);
       try {
         await executeAtomicBatch(db, {
@@ -816,6 +857,7 @@ export async function createProject(
                FROM workspaces AS w
                WHERE w.key = ?8 AND w.deleted_at IS NULL AND ${guard.sql}`,
             ).bind(projectId, key, displayName, context, now, auth.principalId, operationId, workspaceKey, ...guard.values),
+            operationSnapshotStatement(db, operationId, projectResource(createdRow, auth)),
             projectEvent(db, auth, crypto.randomUUID(), operationId, "project.created", projectId, { key, workspace_key: workspaceKey }, now),
           ],
           committedAt: now,
@@ -826,6 +868,7 @@ export async function createProject(
           operationId,
           primarySubjectId: projectId,
           primarySubjectType: "project",
+          requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
@@ -841,9 +884,10 @@ export async function createProject(
     normalizedResourceScope: `workspace:${workspaceKey}:project:${key}`,
     now,
     readback: async (operationId, commit) => {
-      const row = await readProjectForOperation(db, workspaceKey, key, operationId, true);
-      if (row === null) throw platformUnavailable("d1");
-      return { body: writeResult(projectResource(row, auth), commit.lastEventSequence, false), status: 200 };
+      return {
+        body: writeResult(await readResourceSnapshot(db, operationId), commit.lastEventSequence, false),
+        status: 200,
+      };
     },
     requestBody: { context, display_name: displayName, key },
     routeTemplate: "/api/v1/workspaces/{workspace_key}/projects",
@@ -870,6 +914,10 @@ export async function updateProject(
   const context = requireContext(contextValue);
   const current = await readProject(db, workspaceKey, projectKey);
   if (current === null) throw notFound();
+  const updated = updatedProjectRow(current, {
+    ...(contextValue === undefined ? {} : { context: context ?? null }),
+    ...(displayNameValue === undefined ? {} : { display_name: displayName ?? current.display_name }),
+  }, now);
   const operationId = crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 11, true);
   let commit: OperationCommit;
@@ -884,11 +932,6 @@ export async function updateProject(
                updated_by_principal_id = ?6, last_operation_id = ?7
            WHERE id = ?8 AND workspace_id = ?9 AND version = ?10
              AND deleted_at IS NULL
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = projects.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND ${guard.sql}`,
         ).bind(
           displayNameValue === undefined ? 0 : 1,
@@ -931,8 +974,6 @@ export async function updateProject(
     }
     throw error;
   }
-  const updated = await readProject(db, workspaceKey, projectKey);
-  if (updated === null) throw platformUnavailable("d1");
   return writeResult(projectResource(updated, auth), commit.lastEventSequence, false);
 }
 
@@ -945,11 +986,21 @@ async function setProjectDeleted(
   now: number,
   deleted: boolean,
   operationId: string,
-): Promise<OperationCommit> {
+  persistSnapshot = false,
+): Promise<{ commit: OperationCommit; row: ProjectRow }> {
   const current = await readProject(db, workspaceKey, projectKey, true);
   if (current === null) throw notFound();
   const workspace = await readWorkspace(db, workspaceKey, true);
   if (workspace === null || workspace.deleted_at !== null) throw notFound();
+  const row = updatedProjectRow(current, { deleted_at: deleted ? now : null }, now);
+  const snapshot = persistSnapshot
+    ? {
+        ...projectResource(row, auth),
+        resumed_public_projects: row.public_join_enabled
+          ? { has_more: false, projects: [{ id: row.id, key: row.key }] }
+          : { has_more: false, projects: [] },
+      }
+    : null;
   const guard = buildCurrentAuthGuard(auth, now, 9, true);
   try {
     const { commit } = await executeAtomicBatch(db, {
@@ -961,11 +1012,6 @@ async function setProjectDeleted(
                updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7
              AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = projects.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND EXISTS (
                SELECT 1 FROM workspaces AS parent_workspace
                WHERE parent_workspace.id = projects.workspace_id
@@ -994,6 +1040,7 @@ async function setProjectDeleted(
           { project_key: projectKey, workspace_key: workspaceKey },
           now,
         ),
+        ...(snapshot === null ? [] : [operationSnapshotStatement(db, operationId, snapshot)]),
       ],
       committedAt: now,
       confirmBusinessRejection: async () => {
@@ -1007,8 +1054,9 @@ async function setProjectDeleted(
       operationId,
       primarySubjectId: current.id,
       primarySubjectType: "project",
+      requireIdempotencySnapshot: persistSnapshot,
     });
-    return commit;
+    return { commit, row };
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
       return diagnoseProjectCas(db, auth, workspaceKey, projectKey, expectedVersion, now, !deleted);
@@ -1028,9 +1076,16 @@ export async function deleteProject(
   requireOwnerControl(auth);
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const projectKey = requireProjectKey(projectKeyValue, "project_key");
-  const commit = await setProjectDeleted(db, auth, workspaceKey, projectKey, expectedVersion, now, true, crypto.randomUUID());
-  const row = await readProject(db, workspaceKey, projectKey, true);
-  if (row === null) throw platformUnavailable("d1");
+  const { commit, row } = await setProjectDeleted(
+    db,
+    auth,
+    workspaceKey,
+    projectKey,
+    expectedVersion,
+    now,
+    true,
+    crypto.randomUUID(),
+  );
   return writeResult(projectResource(row, auth), commit.lastEventSequence, false);
 }
 
@@ -1056,22 +1111,17 @@ export async function restoreProject(
     execute: async (operationId) => {
       const workspace = await readWorkspace(db, workspaceKey);
       if (workspace === null) throw conflict("PARENT_WORKSPACE_DELETED", "restore_parent");
-      await setProjectDeleted(db, auth, workspaceKey, projectKey, expectedVersion, now, false, operationId);
+      await setProjectDeleted(db, auth, workspaceKey, projectKey, expectedVersion, now, false, operationId, true);
     },
     idempotencyKey,
     method: "POST",
     normalizedResourceScope: `workspace:${workspaceKey}:project:${projectKey}:restore`,
     now,
     readback: async (operationId, commit) => {
-      const row = await readProjectForOperation(db, workspaceKey, projectKey, operationId, false);
-      if (row === null) throw platformUnavailable("d1");
-      const resource = {
-        ...projectResource(row, auth),
-        resumed_public_projects: row.public_join_enabled
-          ? { has_more: false, projects: [{ id: row.id, key: row.key }] }
-          : { has_more: false, projects: [] },
+      return {
+        body: writeResult(await readResourceSnapshot(db, operationId), commit.lastEventSequence, false),
+        status: 200,
       };
-      return { body: writeResult(resource, commit.lastEventSequence, false), status: 200 };
     },
     requestBody: { expected_version: expectedVersion },
     routeTemplate: "/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore",
@@ -1135,6 +1185,7 @@ export async function updateStatusName(
   const displayName = requireDisplayName(displayNameValue);
   const project = await readProject(db, workspaceKey, projectKey);
   if (project === null) throw notFound();
+  const updated = updatedProjectRow(project, {}, now);
   const operationId = crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 6, true);
   let commit: OperationCommit;
@@ -1146,11 +1197,6 @@ export async function updateStatusName(
            SET version = version + 1, updated_at = ?1,
                updated_by_principal_id = ?2, last_operation_id = ?3
            WHERE id = ?4 AND version = ?5 AND deleted_at IS NULL
-             AND NOT EXISTS (
-               SELECT 1 FROM idempotency_records AS pending_operation
-               WHERE pending_operation.operation_id = projects.last_operation_id
-                 AND pending_operation.state = 'pending'
-             )
              AND ${guard.sql}`,
         ).bind(now, auth.principalId, operationId, project.id, expectedVersion, ...guard.values),
         db.prepare(
@@ -1184,8 +1230,6 @@ export async function updateStatusName(
     }
     throw error;
   }
-  const updated = await readProject(db, workspaceKey, projectKey);
-  if (updated === null) throw platformUnavailable("d1");
   const definition = WORKFLOW_STATUSES.find((status) => status.key === statusKey);
   if (definition === undefined) throw platformUnavailable();
   return writeResult({
