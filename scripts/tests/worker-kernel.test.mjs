@@ -206,15 +206,60 @@ test("Passkey authentication equalizes ES256 and RS256 verification paths", asyn
     rpId,
     userHandle: wrongUserHandle,
   };
+  const importCalls = [];
   const verifyCalls = [];
-  const originalVerify = crypto.subtle.verify;
-  crypto.subtle.verify = async function instrumentedVerify(algorithm, ...args) {
-    verifyCalls.push(typeof algorithm === "string" ? algorithm : algorithm.name);
-    return originalVerify.call(this, algorithm, ...args);
+  const keyProfile = (key) => ({
+    modulusLength: key.algorithm.modulusLength ?? null,
+    name: key.algorithm.name,
+    namedCurve: key.algorithm.namedCurve ?? null,
+    publicExponent: key.algorithm.publicExponent
+      ? Array.from(key.algorithm.publicExponent)
+      : null,
+  });
+  const expectedProfiles = [
+    {
+      modulusLength: null,
+      name: "ECDSA",
+      namedCurve: "P-256",
+      publicExponent: null,
+    },
+    {
+      modulusLength: 2048,
+      name: "RSASSA-PKCS1-v1_5",
+      namedCurve: null,
+      publicExponent: [1, 0, 1],
+    },
+  ];
+  const sortedProfiles = (profiles) => profiles.toSorted((left, right) => left.name.localeCompare(right.name));
+  const assertFixedWorkload = () => {
+    assert.deepEqual(sortedProfiles(importCalls), expectedProfiles);
+    assert.deepEqual(sortedProfiles(verifyCalls), expectedProfiles);
+    importCalls.length = 0;
+    verifyCalls.length = 0;
   };
-  const expectedAlgorithms = ["ECDSA", "RSASSA-PKCS1-v1_5"];
+  const originalImportKey = crypto.subtle.importKey;
+  const originalVerify = crypto.subtle.verify;
+  crypto.subtle.importKey = async function instrumentedImportKey(...args) {
+    const key = await originalImportKey.call(this, ...args);
+    importCalls.push(keyProfile(key));
+    return key;
+  };
+  crypto.subtle.verify = async function instrumentedVerify(algorithm, key, ...args) {
+    verifyCalls.push(keyProfile(key));
+    return originalVerify.call(this, algorithm, key, ...args);
+  };
   try {
     const es256 = await createRegistrationFixture({ algorithm: -7, challenge, origin: expectedOrigin, rpId });
+    const es256Expectation = {
+      algorithm: -7,
+      backupEligible: false,
+      challengeDigest,
+      credentialId: es256.credentialId,
+      expectedOrigin,
+      publicKeyCose: es256.publicKeyCose,
+      rpId,
+      userHandle: expectedUserHandle,
+    };
     const wrongHandleAssertion = await createAssertionCredential({
       algorithm: -7,
       challenge,
@@ -228,32 +273,64 @@ test("Passkey authentication equalizes ES256 and RS256 verification paths", asyn
     await assert.rejects(
       verifyAuthenticationCredentialEqualized(
         wrongHandleAssertion,
-        {
-          algorithm: -7,
-          backupEligible: false,
-          challengeDigest,
-          credentialId: es256.credentialId,
-          expectedOrigin,
-          publicKeyCose: es256.publicKeyCose,
-          rpId,
-          userHandle: expectedUserHandle,
-        },
+        es256Expectation,
         { ...fallback, credentialId: es256.credentialId },
       ),
       WebAuthnVerificationError,
     );
-    assert.deepEqual(verifyCalls.sort(), expectedAlgorithms);
+    assertFixedWorkload();
 
-    verifyCalls.length = 0;
     const unknown = await verifyAuthenticationCredentialEqualized(
       wrongHandleAssertion,
       null,
       { ...fallback, credentialId: es256.credentialId },
     );
     assert.equal(unknown, null);
-    assert.deepEqual(verifyCalls.sort(), expectedAlgorithms);
+    assertFixedWorkload();
 
-    verifyCalls.length = 0;
+    for (const assertion of [
+      await createAssertionCredential({
+        algorithm: -7,
+        challenge: base64UrlEncode(new Uint8Array(32).fill(0x6c)),
+        credentialId: es256.credentialId,
+        origin: expectedOrigin,
+        privateKey: es256.privateKey,
+        rpId,
+        signCount: 1,
+        userHandle: expectedUserHandle,
+      }),
+      await createAssertionCredential({
+        algorithm: -7,
+        challenge,
+        credentialId: es256.credentialId,
+        origin: "https://other.example.test",
+        privateKey: es256.privateKey,
+        rpId,
+        signCount: 1,
+        userHandle: expectedUserHandle,
+      }),
+      await createAssertionCredential({
+        algorithm: -7,
+        challenge,
+        credentialId: es256.credentialId,
+        origin: expectedOrigin,
+        privateKey: es256.privateKey,
+        rpId: "other.example.test",
+        signCount: 1,
+        userHandle: expectedUserHandle,
+      }),
+    ]) {
+      await assert.rejects(
+        verifyAuthenticationCredentialEqualized(
+          assertion,
+          es256Expectation,
+          { ...fallback, credentialId: es256.credentialId },
+        ),
+        WebAuthnVerificationError,
+      );
+      assertFixedWorkload();
+    }
+
     const rs256 = await createRegistrationFixture({ algorithm: -257, challenge, origin: expectedOrigin, rpId });
     const invalidRsaAssertion = await createAssertionCredential({
       algorithm: -257,
@@ -283,8 +360,9 @@ test("Passkey authentication equalizes ES256 and RS256 verification paths", asyn
       ),
       WebAuthnVerificationError,
     );
-    assert.deepEqual(verifyCalls.sort(), expectedAlgorithms);
+    assertFixedWorkload();
   } finally {
+    crypto.subtle.importKey = originalImportKey;
     crypto.subtle.verify = originalVerify;
   }
 });

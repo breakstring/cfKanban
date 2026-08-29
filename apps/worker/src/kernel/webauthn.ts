@@ -388,20 +388,21 @@ function validatedCoseAlgorithm(publicKeyCose: Uint8Array): -257 | -7 {
   if (algorithm === -257) {
     // RSA registrations may contain only kty, alg, modulus and exponent.
     // Private CRT factors and extension labels must stay in the authenticator.
+    // v0 deliberately accepts one RS256 public-key profile (2048-bit,
+    // e=65537), matching the failure-equalization key so key parameters do
+    // not become a credential-existence timing signal.
     requireExactCoseLabels(cose, [1, 3, -1, -2]);
     const modulus = bytes(cose.get(-1));
     const exponent = bytes(cose.get(-2));
     if (
       keyType !== 3
-      || modulus.length < 256
-      || modulus.length > 512
+      || modulus.length !== 256
       || (modulus[0]! & 0x80) === 0
       || (modulus[modulus.length - 1]! & 1) === 0
-      || exponent.length < 1
-      || exponent.length > 8
-      || exponent[0] === 0
-      || (exponent.length === 1 && exponent[0]! < 3)
-      || (exponent[exponent.length - 1]! & 1) === 0
+      || exponent.length !== 3
+      || exponent[0] !== 0x01
+      || exponent[1] !== 0x00
+      || exponent[2] !== 0x01
     ) fail();
     return -257;
   }
@@ -565,31 +566,99 @@ export async function verifyAuthenticationCredential(
     "signature",
     "userHandle",
   ]);
-  if (credential.id !== expectation.credentialId) fail();
-  const clientData = await verifyClientData(
-    response.clientDataJSON,
-    "webauthn.get",
-    expectation,
+  let ceremonyValid = credential.id === expectation.credentialId;
+
+  // Keep client-data validation on the same digest/import/verify path even
+  // when challenge, origin or type is invalid. Structurally valid public
+  // verification failures must not reveal whether a credential was found.
+  let clientData = textEncoder.encode("{}");
+  let clientDataObject: Record<string, unknown> = {};
+  if (typeof response.clientDataJSON === "string") {
+    try {
+      clientData = base64UrlDecode(response.clientDataJSON, MAX_CLIENT_DATA_BYTES);
+      const parsed = JSON.parse(textDecoder.decode(clientData)) as unknown;
+      if (parsed !== null && !Array.isArray(parsed) && typeof parsed === "object") {
+        clientDataObject = parsed as Record<string, unknown>;
+      } else {
+        ceremonyValid = false;
+      }
+    } catch {
+      ceremonyValid = false;
+    }
+  } else {
+    ceremonyValid = false;
+  }
+  const challenge = typeof clientDataObject.challenge === "string"
+    ? clientDataObject.challenge
+    : "";
+  let challengeEncodingValid = true;
+  try {
+    base64UrlDecode(challenge, 64);
+  } catch {
+    challengeEncodingValid = false;
+  }
+  const challengeMatches = timingSafeEqual(
+    await sha256Hex(challenge),
+    expectation.challengeDigest,
   );
-  if (
-    typeof response.authenticatorData !== "string"
-    || typeof response.signature !== "string"
-    || typeof response.userHandle !== "string"
-  ) fail();
-  const authenticatorDataBytes = base64UrlDecode(
-    response.authenticatorData,
-    MAX_AUTHENTICATOR_DATA_BYTES,
-  );
-  const authenticatorData = parseAuthenticatorData(authenticatorDataBytes, false);
-  await verifyRpIdHash(authenticatorData.rpIdHash, expectation.rpId);
-  const userHandle = response.userHandle;
-  base64UrlDecode(userHandle, 64);
-  const signature = base64UrlDecode(response.signature, MAX_SIGNATURE_BYTES);
+  ceremonyValid = ceremonyValid
+    && clientDataObject.type === "webauthn.get"
+    && clientDataObject.origin === expectation.expectedOrigin
+    && clientDataObject.crossOrigin !== true
+    && challengeEncodingValid
+    && challengeMatches;
+
+  let authenticatorDataBytes: Uint8Array = new Uint8Array(37);
+  let authenticatorData: ParsedAuthenticatorData = {
+    backupEligible: false,
+    backupState: false,
+    credentialId: null,
+    flags: 0,
+    publicKeyCose: null,
+    rpIdHash: new Uint8Array(32),
+    signCount: 0,
+  };
+  if (typeof response.authenticatorData === "string") {
+    try {
+      authenticatorDataBytes = base64UrlDecode(
+        response.authenticatorData,
+        MAX_AUTHENTICATOR_DATA_BYTES,
+      );
+      authenticatorData = parseAuthenticatorData(authenticatorDataBytes, false);
+    } catch {
+      ceremonyValid = false;
+    }
+  } else {
+    ceremonyValid = false;
+  }
+  ceremonyValid = equalBytes(
+    authenticatorData.rpIdHash,
+    await sha256Bytes(textEncoder.encode(expectation.rpId)),
+  ) && ceremonyValid;
+
+  const userHandle = typeof response.userHandle === "string" ? response.userHandle : "";
+  try {
+    base64UrlDecode(userHandle, 64);
+  } catch {
+    ceremonyValid = false;
+  }
+  let signature: Uint8Array = expectation.algorithm === -7
+    ? new Uint8Array(64)
+    : new Uint8Array(256);
+  if (typeof response.signature === "string") {
+    try {
+      signature = base64UrlDecode(response.signature, MAX_SIGNATURE_BYTES);
+    } catch {
+      ceremonyValid = false;
+    }
+  } else {
+    ceremonyValid = false;
+  }
   const signed = concatenate(authenticatorDataBytes, await sha256Bytes(clientData));
   const publicKey = await importCosePublicKey(expectation.publicKeyCose, expectation.algorithm);
   let verified = false;
   let signatureEncodingValid = true;
-  let signatureForVerification = signature;
+  let signatureForVerification: Uint8Array = signature;
   if (expectation.algorithm === -7) {
     try {
       signatureForVerification = ecdsaDerToP1363(signature);
@@ -608,11 +677,17 @@ export async function verifyAuthenticationCredential(
       )
       : await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, signed);
   } catch {
-    fail();
+    verified = false;
   }
-  if (!signatureEncodingValid || !verified) fail();
-  if (!timingSafeEqual(userHandle, expectation.userHandle)) fail();
-  if (authenticatorData.backupEligible !== expectation.backupEligible) fail();
+  const userHandleMatches = timingSafeEqual(userHandle, expectation.userHandle);
+  const backupEligibilityMatches = authenticatorData.backupEligible === expectation.backupEligible;
+  if (
+    !ceremonyValid
+    || !signatureEncodingValid
+    || !verified
+    || !userHandleMatches
+    || !backupEligibilityMatches
+  ) fail();
   return {
     backupEligible: authenticatorData.backupEligible,
     backupState: authenticatorData.backupState,
