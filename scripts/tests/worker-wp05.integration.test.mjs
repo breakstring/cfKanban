@@ -1322,7 +1322,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   try {
     await assert.rejects(
       racedGlobalTombstones,
-      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+      cursorScopeMismatchError,
     );
     assert.deepEqual(globalRecoveryBarrier.rawRows, []);
   } finally {
@@ -1346,13 +1346,35 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(Date.now(), ids.ownerPrincipal, privateProject.body.resource.id).run();
   projectRecoveryBarrier.release();
   try {
-    await assert.rejects(racedProjectTombstones, (error) => error?.status === 404);
+    await assert.rejects(racedProjectTombstones, notFoundError);
     assert.deepEqual(projectRecoveryBarrier.rawRows, []);
   } finally {
     await db.prepare(
       "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
     )
       .bind(privateProject.body.resource.id).run();
+  }
+
+  const workspaceRecoveryBarrier = issueRecoveryScopeBarrierDatabase(db, 1);
+  const racedWorkspaceTombstones = listIssuesService(
+    workspaceRecoveryBarrier.db,
+    recoveryRaceAuth,
+    new URL("https://kanban.example.test/api/v1/issues?deleted=only"),
+    Date.now(),
+  );
+  await workspaceRecoveryBarrier.reached;
+  await db.prepare(
+    "UPDATE workspaces SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, privateProject.body.resource.workspace_id).run();
+  workspaceRecoveryBarrier.release();
+  try {
+    await assert.rejects(racedWorkspaceTombstones, cursorScopeMismatchError);
+    assert.deepEqual(workspaceRecoveryBarrier.rawRows, []);
+  } finally {
+    await db.prepare(
+      "UPDATE workspaces SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    )
+      .bind(privateProject.body.resource.workspace_id).run();
   }
 
   const privateProjectCurrent = await jsonRequest(
