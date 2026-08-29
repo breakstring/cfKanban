@@ -173,10 +173,11 @@ function mapVisibleProject(row: VisibleProjectRow): VisibleProject {
   };
 }
 
-export async function resolveVisibleProjects(
+async function queryVisibleProjects(
   db: D1Database,
   auth: AuthContext,
   includeEffectiveDeleted = false,
+  currentAuthAt: number | null = null,
 ): Promise<VisibleProject[]> {
   const target = fixedTarget(auth);
   if (target?.invalid === true) return [];
@@ -186,6 +187,7 @@ export async function resolveVisibleProjects(
   const targetIssueNumber = target?.issueNumber ?? null;
   try {
     if (auth.isOwner) {
+      const currentAuth = currentAuthAt === null ? null : buildCurrentAuthGuard(auth, currentAuthAt, 5);
       const result = await db.prepare(
         `SELECT p.id AS project_id, p.key AS project_key, p.display_name AS project_name,
                 p.version AS project_version, w.id AS workspace_id, w.key AS workspace_key,
@@ -200,11 +202,22 @@ export async function resolveVisibleProjects(
              SELECT 1 FROM issues AS target_issue
              WHERE target_issue.number = ?4 AND target_issue.project_id = p.id
            ))
+           ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
          ORDER BY w.key, p.key`,
-      ).bind(targetProjectId, targetWorkspaceKey, targetProjectKey, targetIssueNumber).all<VisibleProjectRow>();
+      ).bind(
+        targetProjectId,
+        targetWorkspaceKey,
+        targetProjectKey,
+        targetIssueNumber,
+        ...(currentAuth?.values ?? []),
+      ).all<VisibleProjectRow>();
+      if (currentAuthAt !== null && result.results.length === 0) {
+        await verifyCurrentAuth(db, auth, currentAuthAt);
+      }
       return result.results.map(mapVisibleProject);
     }
 
+    const currentAuth = currentAuthAt === null ? null : buildCurrentAuthGuard(auth, currentAuthAt, 6);
     const result = await db.prepare(
       `SELECT p.id AS project_id, p.key AS project_key, p.display_name AS project_name,
               p.version AS project_version, w.id AS workspace_id, w.key AS workspace_key,
@@ -221,12 +234,41 @@ export async function resolveVisibleProjects(
            SELECT 1 FROM issues AS target_issue
            WHERE target_issue.number = ?5 AND target_issue.project_id = p.id
          ))
+         ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        ORDER BY w.key, p.key`,
-    ).bind(auth.principalId, targetProjectId, targetWorkspaceKey, targetProjectKey, targetIssueNumber).all<VisibleProjectRow>();
+    ).bind(
+      auth.principalId,
+      targetProjectId,
+      targetWorkspaceKey,
+      targetProjectKey,
+      targetIssueNumber,
+      ...(currentAuth?.values ?? []),
+    ).all<VisibleProjectRow>();
+    if (currentAuthAt !== null && result.results.length === 0) {
+      await verifyCurrentAuth(db, auth, currentAuthAt);
+    }
     return result.results.map(mapVisibleProject);
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw platformUnavailable("d1");
   }
+}
+
+export async function resolveVisibleProjects(
+  db: D1Database,
+  auth: AuthContext,
+  includeEffectiveDeleted = false,
+): Promise<VisibleProject[]> {
+  return queryVisibleProjects(db, auth, includeEffectiveDeleted);
+}
+
+export async function resolveCurrentVisibleProjects(
+  db: D1Database,
+  auth: AuthContext,
+  now: number,
+  includeEffectiveDeleted = false,
+): Promise<VisibleProject[]> {
+  return queryVisibleProjects(db, auth, includeEffectiveDeleted, now);
 }
 
 export async function requireProjectAuthorization(

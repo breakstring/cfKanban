@@ -4,11 +4,15 @@ import { fileURLToPath } from "node:url";
 
 import { createTestHarness } from "wrangler";
 
+import { authenticateRequest } from "../../apps/worker/src/kernel/auth.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { principalUserHandle } from "../../apps/worker/src/kernel/webauthn.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { verifyWebAuthentication as verifyWebAuthenticationService } from "../../apps/worker/src/services/passkeys.ts";
-import { redeemWebLaunch as redeemWebLaunchService } from "../../apps/worker/src/services/web-auth.ts";
+import {
+  getWebSession as getWebSessionService,
+  redeemWebLaunch as redeemWebLaunchService,
+} from "../../apps/worker/src/services/web-auth.ts";
 import {
   base64UrlEncode,
   createAssertionCredential,
@@ -194,6 +198,53 @@ function browserLaunchRedemptionBarrierDatabase(database) {
   };
 }
 
+function webSessionScopeBarrierDatabase(database) {
+  let releaseQuery;
+  let signalReached;
+  let guardedSql = null;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseQuery = resolve;
+  });
+  const wrapStatement = (statement, sql) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), sql);
+      }
+      if (property === "all" && sql.includes("FROM project_grants AS pg")) {
+        return async (...values) => {
+          guardedSql = sql;
+          signalReached();
+          await released;
+          return target.all(...values);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(target.prepare(sql), sql);
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    get guardedSql() {
+      return guardedSql;
+    },
+    reached,
+    release() {
+      releaseQuery();
+    },
+  };
+}
+
 function codeFromLaunchUrl(value) {
   const code = new URL(value).searchParams.get("code");
   assert.match(code, /^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$/u);
@@ -275,6 +326,34 @@ async function assertRacedRedemptionUnavailable({ idempotencyKey, launch, mutate
   });
 }
 
+async function assertRacedWebSessionScope({ cookies, expectedRole = null, mutate, restore }) {
+  const now = Date.now();
+  const auth = await authenticateRequest(
+    db,
+    new Request(`${origin}/api/v1/web-session`, { headers: { cookie: cookieHeader(cookies) } }),
+    now,
+  );
+  const barrier = webSessionScopeBarrierDatabase(db);
+  const view = getWebSessionService(barrier.db, auth, now);
+  await barrier.reached;
+  try {
+    assert.match(barrier.guardedSql, /FROM web_sessions AS auth_session/u);
+    assert.match(barrier.guardedSql, /pg\.revoked_at IS NULL/u);
+    assert.match(barrier.guardedSql, /p\.deleted_at IS NULL AND w\.deleted_at IS NULL/u);
+    await mutate();
+    barrier.release();
+    if (expectedRole === null) {
+      await assert.rejects(view, (error) => error?.status === 404);
+    } else {
+      const resource = await view;
+      assert.deepEqual(resource.allowed_scope.projects.map((project) => project.role), [expectedRole]);
+    }
+  } finally {
+    barrier.release();
+    await restore();
+  }
+}
+
 async function registrationOptions(cookies) {
   const result = await request("/api/v1/me/passkeys/registration-options", {
     body: {},
@@ -321,6 +400,59 @@ async function registerFixture(cookies, options, algorithm, key) {
   assert.equal(registered.body.resource.algorithm, algorithm);
   assert.equal(registered.body.resource.version, 1);
   return { fixture, registered };
+}
+
+async function rejectRegistrationWithExtraCose(cookies, algorithm, extraCoseEntries, key) {
+  const options = await registrationOptions(cookies);
+  const fixture = await createRegistrationFixture({
+    algorithm,
+    challenge: options.body.public_key.challenge,
+    extraCoseEntries,
+    origin,
+    rpId,
+  });
+  const before = await db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM web_authenticators) AS authenticators,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits`,
+  ).first();
+  const rejected = await request("/api/v1/me/passkeys", {
+    body: {
+      challenge_id: options.body.challenge_id,
+      credential: fixture.registrationCredential,
+    },
+    headers: cookieWriteHeaders(cookies, { "idempotency-key": key }),
+    method: "POST",
+  });
+  assert.equal(rejected.response.status, 409, JSON.stringify(rejected.body));
+  assert.equal(rejected.body.code, "PASSKEY_CHALLENGE_INVALID");
+  const after = await db.prepare(
+    `SELECT
+       (SELECT consumed_at FROM webauthn_challenges WHERE id = ?1) AS consumed_at,
+       (SELECT COUNT(*) FROM web_authenticators) AS authenticators,
+       (SELECT COUNT(*) FROM web_authenticators WHERE credential_id = ?2 OR public_key_cose = ?3) AS injected,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits,
+       (SELECT COUNT(*) FROM idempotency_records WHERE idempotency_key = ?4) AS idempotency_records`,
+  ).bind(
+    options.body.challenge_id,
+    fixture.credentialId,
+    fixture.publicKeyCose,
+    await sha256Hex(key),
+  ).first();
+  assert.equal(typeof after.consumed_at, "number");
+  assert.deepEqual(
+    {
+      authenticators: after.authenticators,
+      commits: after.commits,
+      events: after.events,
+      idempotency_records: after.idempotency_records,
+      injected: after.injected,
+    },
+    { ...before, idempotency_records: 0, injected: 0 },
+  );
+  return { fixture, options };
 }
 
 async function authenticateFixture(fixture, options, signCount, key, userHandle = principalUserHandle(ids.participantPrincipal), assertionOrigin = origin) {
@@ -611,6 +743,45 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(sessionView.response.status, 200);
   assert.equal(sessionView.body.allowed_scope.kind, "project");
   assert.deepEqual(sessionView.body.allowed_scope.projects.map((project) => project.project_id), [ids.projectA]);
+  await assertRacedWebSessionScope({
+    cookies: projectSession.cookies,
+    expectedRole: "reader",
+    mutate: () => db.prepare(
+      "UPDATE project_grants SET role = 'reader', version = version + 1 WHERE id = ?1",
+    ).bind(ids.participantGrantA).run(),
+    restore: () => db.prepare(
+      "UPDATE project_grants SET role = 'writer', version = version + 1 WHERE id = ?1",
+    ).bind(ids.participantGrantA).run(),
+  });
+  await assertRacedWebSessionScope({
+    cookies: projectSession.cookies,
+    mutate: () => db.prepare(
+      `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+         version = version + 1 WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, ids.participantGrantA).run(),
+    restore: () => db.prepare(
+      `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         version = version + 1 WHERE id = ?1`,
+    ).bind(ids.participantGrantA).run(),
+  });
+  await assertRacedWebSessionScope({
+    cookies: projectSession.cookies,
+    mutate: () => db.prepare(
+      "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+    ).bind(Date.now(), ids.ownerPrincipal, ids.projectA).run(),
+    restore: () => db.prepare(
+      "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.projectA).run(),
+  });
+  await assertRacedWebSessionScope({
+    cookies: projectSession.cookies,
+    mutate: () => db.prepare(
+      "UPDATE workspaces SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+    ).bind(Date.now(), ids.ownerPrincipal, ids.workspace).run(),
+    restore: () => db.prepare(
+      "UPDATE workspaces SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.workspace).run(),
+  });
   const outsideFixedScope = await request("/api/v1/workspaces/web/projects/OPS", {
     headers: { cookie: cookieHeader(projectSession.cookies) },
   });
@@ -693,6 +864,21 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     headers: { cookie: cookieHeader(registrationSession.cookies) },
   });
   assert.equal(preRegistrationView.response.status, 200, JSON.stringify(preRegistrationView.body));
+
+  const ecPrivateLabel = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -7,
+    [[-4, new Uint8Array(32).fill(0x5a)]],
+    "wp07-reject-ec-private-cose-label",
+  );
+  secrets.push(ecPrivateLabel.options.body.public_key.challenge, ecPrivateLabel.fixture.publicKeyCose);
+  const rsaPrivateLabel = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -257,
+    [[-3, new Uint8Array(128).fill(0x6b)]],
+    "wp07-reject-rsa-private-cose-label",
+  );
+  secrets.push(rsaPrivateLabel.options.body.public_key.challenge, rsaPrivateLabel.fixture.publicKeyCose);
 
   const esOptions = await registrationOptions(registrationSession.cookies);
   secrets.push(esOptions.body.public_key.challenge);
