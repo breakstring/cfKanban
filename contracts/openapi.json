@@ -1876,6 +1876,19 @@
         ],
         "parameters": [
           {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
+            }
+          },
+          {
             "name": "project",
             "in": "query",
             "required": false,
@@ -1993,6 +2006,32 @@
           }
         ],
         "parameters": [
+          {
+            "name": "assignment",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unassigned",
+                "mine",
+                "needs_reassignment"
+              ]
+            }
+          },
+          {
+            "name": "blocked",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "include"
+              ],
+              "default": "exclude"
+            }
+          },
           {
             "name": "project",
             "in": "query",
@@ -2127,6 +2166,19 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
             }
           },
           {
@@ -2349,6 +2401,19 @@
             "schema": {
               "type": "string",
               "pattern": "^CFK-[1-9][0-9]*$"
+            }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
             }
           }
         ],
@@ -5002,6 +5067,18 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
             }
           }
         ],
@@ -8073,85 +8150,145 @@
         "additionalProperties": false
       },
       "RedeemInvitationRequest": {
-        "type": "object",
-        "required": [
-          "invite_code",
-          "redeem_as"
-        ],
-        "properties": {
-          "invite_code": {
-            "type": "string",
-            "minLength": 1,
-            "writeOnly": true
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "invite_code",
+              "redeem_as",
+              "display_name",
+              "new_credential_token"
+            ],
+            "properties": {
+              "invite_code": {
+                "type": "string",
+                "minLength": 1,
+                "writeOnly": true
+              },
+              "redeem_as": {
+                "const": "new_principal"
+              },
+              "display_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "new_credential_token": {
+                "type": "string",
+                "pattern": "^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+$",
+                "writeOnly": true
+              }
+            },
+            "additionalProperties": false
           },
-          "redeem_as": {
-            "type": "string",
-            "enum": [
-              "new_principal",
-              "current_principal",
-              "recovery"
-            ]
+          {
+            "type": "object",
+            "required": [
+              "invite_code",
+              "redeem_as"
+            ],
+            "properties": {
+              "invite_code": {
+                "type": "string",
+                "minLength": 1,
+                "writeOnly": true
+              },
+              "redeem_as": {
+                "const": "current_principal"
+              }
+            },
+            "additionalProperties": false
           },
-          "display_name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 128
-          },
-          "new_credential_token": {
-            "type": "string",
-            "pattern": "^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+$",
-            "writeOnly": true
+          {
+            "type": "object",
+            "required": [
+              "invite_code",
+              "redeem_as",
+              "new_credential_token"
+            ],
+            "properties": {
+              "invite_code": {
+                "type": "string",
+                "minLength": 1,
+                "writeOnly": true
+              },
+              "redeem_as": {
+                "const": "recovery"
+              },
+              "new_credential_token": {
+                "type": "string",
+                "pattern": "^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+$",
+                "writeOnly": true
+              }
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "CreateInvitationRequest": {
-        "type": "object",
-        "required": [
-          "kind"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "project_grant",
-              "principal_recovery"
-            ]
-          },
-          "grants": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 20,
-            "uniqueItems": true,
-            "items": {
-              "type": "object",
-              "required": [
-                "project_id",
-                "role"
-              ],
-              "properties": {
-                "project_id": {
-                  "$ref": "#/components/schemas/Uuid"
-                },
-                "role": {
-                  "$ref": "#/components/schemas/ProjectRole"
-                }
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "grants"
+            ],
+            "properties": {
+              "kind": {
+                "const": "project_grant"
               },
-              "additionalProperties": false
-            }
+              "grants": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "uniqueItems": true,
+                "description": "Project IDs MUST be unique within this array.",
+                "x-cfkanban-unique-by": "project_id",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "project_id",
+                    "role"
+                  ],
+                  "properties": {
+                    "project_id": {
+                      "$ref": "#/components/schemas/Uuid"
+                    },
+                    "role": {
+                      "$ref": "#/components/schemas/ProjectRole"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
           },
-          "principal_id": {
-            "$ref": "#/components/schemas/Uuid"
-          },
-          "recovery_mode": {
-            "type": "string",
-            "enum": [
-              "rotation",
-              "full_recovery"
-            ]
+          {
+            "type": "object",
+            "required": [
+              "kind",
+              "principal_id",
+              "recovery_mode"
+            ],
+            "properties": {
+              "kind": {
+                "const": "principal_recovery"
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "recovery_mode": {
+                "type": "string",
+                "enum": [
+                  "rotation",
+                  "full_recovery"
+                ]
+              }
+            },
+            "additionalProperties": false
           }
-        },
-        "additionalProperties": false
+        ]
       },
       "RotateOwnerCredentialRequest": {
         "type": "object",

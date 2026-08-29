@@ -139,8 +139,7 @@ function safeJson(value: unknown): value is JsonValue {
 function assertPersistenceSafe(value: JsonValue, forbiddenValues: readonly string[]): void {
   if (typeof value === "string") {
     if (
-      secretTokenPattern.test(value)
-      || forbiddenValues.some((secret) => secret.length >= 8 && value.includes(secret))
+      forbiddenValues.some((secret) => secret.length >= 8 && value.includes(secret))
     ) {
       throw new Error("Idempotency response rejected by secret policy.");
     }
@@ -310,6 +309,24 @@ export async function finalizeIdempotency<T extends JsonValue>(
   });
 }
 
+async function abandonOwnedPendingClaim(
+  db: D1Database,
+  claim: IdempotencyClaim,
+): Promise<void> {
+  if (!claim.owned) return;
+  try {
+    await db.prepare(
+      `DELETE FROM idempotency_records
+       WHERE operation_id = ?1 AND request_hash = ?2 AND state = 'pending'
+         AND NOT EXISTS (
+           SELECT 1 FROM operation_commits WHERE operation_id = ?1
+         )`,
+    ).bind(claim.operationId, claim.requestHash).run();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
 export async function runIdempotentOperation<T extends JsonValue>(
   options: RunIdempotentOperationOptions<T>,
 ): Promise<IdempotentOperationResult<T>> {
@@ -337,7 +354,12 @@ export async function runIdempotentOperation<T extends JsonValue>(
       await options.execute(claim.operationId);
     } catch (error) {
       commit = await probeOperationCommit(options.db, claim.operationId);
-      if (commit === null) throw error;
+      if (commit === null) {
+        if (error instanceof ApiError && !error.retryable) {
+          await abandonOwnedPendingClaim(options.db, claim);
+        }
+        throw error;
+      }
     }
     commit = await probeOperationCommit(options.db, claim.operationId);
   }

@@ -39,25 +39,39 @@ interface BootstrapRow {
   preferred_api_origin: string;
   schema_version: number;
   service_version: string;
+  token_matches: number;
   token_prefix: string;
 }
 
-async function readBootstrapResult(db: D1Database): Promise<BootstrapRow | null> {
+async function readBootstrapResult(
+  db: D1Database,
+  operationId: string,
+  tokenDigest: string,
+): Promise<BootstrapRow | null> {
   try {
     return await db.prepare(
       `SELECT im.instance_id, im.owner_principal_id, im.service_version, im.schema_version,
-              im.created_at, p.display_name AS owner_display_name,
-              ios.preferred_api_origin, ios.version AS origin_version,
-              c.id AS credential_id, c.token_prefix
+              im.created_at,
+              json_extract(e.payload_json, '$.owner_display_name') AS owner_display_name,
+              json_extract(e.payload_json, '$.preferred_api_origin') AS preferred_api_origin,
+              json_extract(e.payload_json, '$.origin_version') AS origin_version,
+              c.id AS credential_id, c.token_prefix,
+              CASE WHEN c.token_digest = ?2 THEN 1 ELSE 0 END AS token_matches
        FROM instance_meta AS im
-       JOIN principals AS p ON p.id = im.owner_principal_id
-       JOIN instance_origin_settings AS ios ON ios.singleton = 1
-       JOIN credentials AS c ON c.principal_id = im.owner_principal_id
-         AND c.revoked_at IS NULL
-       WHERE im.singleton = 1
-       ORDER BY c.issued_at, c.id
+       JOIN events AS e ON e.operation_id = ?1 AND e.type = 'instance.bootstrapped'
+       JOIN credentials AS c ON c.created_operation_id = ?1
+       WHERE im.singleton = 1 AND e.subject_id = im.instance_id
        LIMIT 1`,
-    ).first<BootstrapRow>();
+    ).bind(operationId, tokenDigest).first<BootstrapRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
+async function instanceAlreadyInitialized(db: D1Database): Promise<boolean> {
+  try {
+    return await db.prepare("SELECT 1 AS initialized FROM instance_meta WHERE singleton = 1")
+      .first() !== null;
   } catch {
     throw platformUnavailable("d1");
   }
@@ -97,16 +111,27 @@ export async function bootstrapInstance(
     throw validationError("invalid_bootstrap_version");
   }
 
+  const tokenDigest = await sha256Hex(credential.token);
   const priorCommit = await probeOperationCommit(db, operationId);
   if (priorCommit !== null) {
-    const existing = await readBootstrapResult(db);
-    if (existing === null || existing.instance_id !== instanceId || existing.owner_principal_id !== ownerPrincipalId) {
+    const existing = await readBootstrapResult(db, operationId, tokenDigest);
+    if (
+      existing === null
+      || existing.instance_id !== instanceId
+      || existing.owner_principal_id !== ownerPrincipalId
+      || existing.credential_id !== ownerCredentialId
+      || existing.owner_display_name !== ownerDisplayName
+      || existing.preferred_api_origin !== preferredApiOrigin
+      || existing.schema_version !== schemaVersion
+      || existing.service_version !== serviceVersion
+      || existing.token_prefix !== credential.prefix
+      || existing.token_matches !== 1
+    ) {
       throw conflict("INSTANCE_ALREADY_INITIALIZED", "request_owner");
     }
     return mapBootstrap(existing, true);
   }
 
-  const tokenDigest = await sha256Hex(credential.token);
   const eventId = crypto.randomUUID();
   const statements = [
     db.prepare(
@@ -152,7 +177,13 @@ export async function bootstrapInstance(
       ownerPrincipalId,
       ownerCredentialId,
       instanceId,
-      JSON.stringify({ origin_version: 1, schema_version: schemaVersion, service_version: serviceVersion }),
+      JSON.stringify({
+        origin_version: 1,
+        owner_display_name: ownerDisplayName,
+        preferred_api_origin: preferredApiOrigin,
+        schema_version: schemaVersion,
+        service_version: serviceVersion,
+      }),
       now,
     ),
   ];
@@ -161,7 +192,7 @@ export async function bootstrapInstance(
     await executeAtomicBatch(db, {
       businessStatements: statements,
       committedAt: now,
-      confirmBusinessRejection: async () => (await readBootstrapResult(db)) !== null,
+      confirmBusinessRejection: async () => instanceAlreadyInitialized(db),
       expectedEventCount: 1,
       operationId,
       primarySubjectId: instanceId,
@@ -174,7 +205,7 @@ export async function bootstrapInstance(
     throw error;
   }
 
-  const row = await readBootstrapResult(db);
+  const row = await readBootstrapResult(db, operationId, tokenDigest);
   if (row === null) throw platformUnavailable("d1");
   return mapBootstrap(row, false);
 }

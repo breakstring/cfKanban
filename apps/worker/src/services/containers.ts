@@ -15,7 +15,7 @@ import {
   resolveVisibleProjects,
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
-import { createCursorContext, decodeCursor, encodeCursor } from "../kernel/cursor.ts";
+import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
 import { conflict, forbidden, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
 import { runIdempotentOperation } from "../kernel/idempotency.ts";
@@ -133,6 +133,24 @@ async function readWorkspace(
   }
 }
 
+async function readWorkspaceForOperation(
+  db: D1Database,
+  key: string,
+  operationId: string,
+  created: boolean,
+): Promise<WorkspaceRow | null> {
+  try {
+    return await db.prepare(
+      `SELECT id, key, display_name, version, deleted_at, created_at, updated_at
+       FROM workspaces
+       WHERE key = ?1 AND ${created ? "created_operation_id" : "last_operation_id"} = ?2
+       LIMIT 1`,
+    ).bind(key, operationId).first<WorkspaceRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
 async function readProject(
   db: D1Database,
   workspaceKey: string,
@@ -144,16 +162,47 @@ async function readProject(
       `SELECT p.id, p.workspace_id, w.key AS workspace_key, p.key, p.display_name,
               p.context, p.issue_limit, p.comment_limit, p.principal_limit,
               p.version, p.deleted_at, p.created_at, p.updated_at,
-              pu.active_issue_count, pu.active_comment_count, pu.active_principal_count,
+              COALESCE(pu.active_issue_count, 0) AS active_issue_count,
+              COALESCE(pu.active_comment_count, 0) AS active_comment_count,
+              COALESCE(pu.active_principal_count, 0) AS active_principal_count,
               CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
        FROM projects AS p
        JOIN workspaces AS w ON w.id = p.workspace_id
-       JOIN project_usage AS pu ON pu.project_id = p.id
+       LEFT JOIN project_usage AS pu ON pu.project_id = p.id
        LEFT JOIN public_join_policies AS pjp ON pjp.project_id = p.id
        WHERE w.key = ?1 AND p.key = ?2
          ${includeDeleted ? "" : "AND w.deleted_at IS NULL AND p.deleted_at IS NULL"}
        LIMIT 1`,
     ).bind(workspaceKey, projectKey).first<ProjectRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
+async function readProjectForOperation(
+  db: D1Database,
+  workspaceKey: string,
+  projectKey: string,
+  operationId: string,
+  created: boolean,
+): Promise<ProjectRow | null> {
+  try {
+    return await db.prepare(
+      `SELECT p.id, p.workspace_id, w.key AS workspace_key, p.key, p.display_name,
+              p.context, p.issue_limit, p.comment_limit, p.principal_limit,
+              p.version, p.deleted_at, p.created_at, p.updated_at,
+              COALESCE(pu.active_issue_count, 0) AS active_issue_count,
+              COALESCE(pu.active_comment_count, 0) AS active_comment_count,
+              COALESCE(pu.active_principal_count, 0) AS active_principal_count,
+              CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
+       FROM projects AS p
+       JOIN workspaces AS w ON w.id = p.workspace_id
+       LEFT JOIN project_usage AS pu ON pu.project_id = p.id
+       LEFT JOIN public_join_policies AS pjp ON pjp.project_id = p.id
+       WHERE w.key = ?1 AND p.key = ?2
+         AND p.${created ? "created_operation_id" : "last_operation_id"} = ?3
+       LIMIT 1`,
+    ).bind(workspaceKey, projectKey, operationId).first<ProjectRow>();
   } catch {
     throw platformUnavailable("d1");
   }
@@ -169,63 +218,87 @@ async function projectIsVisible(db: D1Database, auth: AuthContext, projectId: st
   return (await resolveVisibleProjects(db, auth)).some((project) => project.projectId === projectId);
 }
 
-async function readAllWorkspaces(db: D1Database, deleted: "exclude" | "only"): Promise<WorkspaceRow[]> {
+async function readWorkspacePage(
+  db: D1Database,
+  deleted: "exclude" | "only",
+  visibleProjectIds: readonly string[] | null,
+  position: [string, string] | [number, string] | null,
+  limit: number,
+): Promise<WorkspaceRow[]> {
   try {
+    const visible = visibleProjectIds === null ? null : JSON.stringify(visibleProjectIds);
+    const first = position?.[0] ?? null;
+    const stableId = position?.[1] ?? null;
     const result = await db.prepare(
       `SELECT id, key, display_name, version, deleted_at, created_at, updated_at
        FROM workspaces
        WHERE deleted_at IS ${deleted === "only" ? "NOT NULL" : "NULL"}
-       ORDER BY key, id`,
-    ).all<WorkspaceRow>();
+         AND (?1 IS NULL OR id IN (
+           SELECT DISTINCT project_row.workspace_id
+           FROM projects AS project_row
+           WHERE project_row.id IN (SELECT value FROM json_each(?1))
+         ))
+         AND (?2 IS NULL OR ${deleted === "only"
+           ? "deleted_at < ?2 OR (deleted_at = ?2 AND id < ?3)"
+           : "key > ?2 OR (key = ?2 AND id > ?3)"})
+       ORDER BY ${deleted === "only" ? "deleted_at DESC, id DESC" : "key, id"}
+       LIMIT ?4`,
+    ).bind(visible, first, stableId, limit + 1).all<WorkspaceRow>();
     return result.results;
   } catch {
     throw platformUnavailable("d1");
   }
 }
 
-async function readAllProjects(
+async function readProjectPage(
   db: D1Database,
   workspaceKey: string,
   deleted: "exclude" | "only",
+  visibleProjectIds: readonly string[] | null,
+  position: [string, string] | [number, string] | null,
+  limit: number,
 ): Promise<ProjectRow[]> {
   try {
+    const visible = visibleProjectIds === null ? null : JSON.stringify(visibleProjectIds);
+    const first = position?.[0] ?? null;
+    const stableId = position?.[1] ?? null;
     const result = await db.prepare(
       `SELECT p.id, p.workspace_id, w.key AS workspace_key, p.key, p.display_name,
               p.context, p.issue_limit, p.comment_limit, p.principal_limit,
               p.version, p.deleted_at, p.created_at, p.updated_at,
-              pu.active_issue_count, pu.active_comment_count, pu.active_principal_count,
+              COALESCE(pu.active_issue_count, 0) AS active_issue_count,
+              COALESCE(pu.active_comment_count, 0) AS active_comment_count,
+              COALESCE(pu.active_principal_count, 0) AS active_principal_count,
               CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
        FROM projects AS p
        JOIN workspaces AS w ON w.id = p.workspace_id
-       JOIN project_usage AS pu ON pu.project_id = p.id
+       LEFT JOIN project_usage AS pu ON pu.project_id = p.id
        LEFT JOIN public_join_policies AS pjp ON pjp.project_id = p.id
        WHERE w.key = ?1 AND p.deleted_at IS ${deleted === "only" ? "NOT NULL" : "NULL"}
          ${deleted === "only" ? "" : "AND w.deleted_at IS NULL"}
-       ORDER BY p.key, p.id`,
-    ).bind(workspaceKey).all<ProjectRow>();
+         AND (?2 IS NULL OR p.id IN (SELECT value FROM json_each(?2)))
+         AND (?3 IS NULL OR ${deleted === "only"
+           ? "p.deleted_at < ?3 OR (p.deleted_at = ?3 AND p.id < ?4)"
+           : "p.key > ?3 OR (p.key = ?3 AND p.id > ?4)"})
+       ORDER BY ${deleted === "only" ? "p.deleted_at DESC, p.id DESC" : "p.key, p.id"}
+       LIMIT ?5`,
+    ).bind(workspaceKey, visible, first, stableId, limit + 1).all<ProjectRow>();
     return result.results;
   } catch {
     throw platformUnavailable("d1");
   }
 }
 
-function parseCursorPosition(cursor: JsonValue[] | null): [string, string] | null {
+function parseCursorPosition(
+  cursor: JsonValue[] | null,
+  deleted: "exclude" | "only",
+): [string, string] | [number, string] | null {
   if (cursor === null) return null;
-  if (cursor.length !== 2 || typeof cursor[0] !== "string" || typeof cursor[1] !== "string") {
-    throw validationError("invalid_cursor");
+  const firstValid = deleted === "only" ? typeof cursor[0] === "number" : typeof cursor[0] === "string";
+  if (cursor.length !== 2 || !firstValid || typeof cursor[1] !== "string") {
+    throw invalidCursor();
   }
-  return [cursor[0], cursor[1]];
-}
-
-function pageRows<T extends { id: string; key: string }>(
-  rows: readonly T[],
-  limit: number,
-  position: [string, string] | null,
-): { hasMore: boolean; items: T[] } {
-  const after = position === null
-    ? rows
-    : rows.filter((row) => row.key > position[0] || (row.key === position[0] && row.id > position[1]));
-  return { hasMore: after.length > limit, items: after.slice(0, limit) };
+  return cursor as [string, string] | [number, string];
 }
 
 function scopeIds(auth: AuthContext, visibleProjectIds: readonly string[]): string[] {
@@ -241,21 +314,28 @@ export async function listWorkspaces(
   const limit = requireLimit(url);
   if (deleted === "only") requireOwnerControl(auth);
   const visibleProjects = await resolveVisibleProjects(db, auth);
-  const visibleWorkspaceIds = new Set(visibleProjects.map((project) => project.workspaceId));
-  let rows = await readAllWorkspaces(db, deleted);
-  if (!canManageContainers(auth)) rows = rows.filter((row) => visibleWorkspaceIds.has(row.id));
   const cursorContext = await createCursorContext(
     "workspaces",
     { deleted },
     scopeIds(auth, visibleProjects.map((project) => project.projectId)),
   );
-  const position = parseCursorPosition(decodeCursor(url.searchParams.get("cursor"), cursorContext));
-  const page = pageRows(rows, limit, position);
-  const tail = page.items.at(-1);
+  const position = parseCursorPosition(decodeCursor(url.searchParams.get("cursor"), cursorContext), deleted);
+  const rows = await readWorkspacePage(
+    db,
+    deleted,
+    canManageContainers(auth) ? null : visibleProjects.map((project) => project.projectId),
+    position,
+    limit,
+  );
+  const hasMore = rows.length > limit;
+  const items = rows.slice(0, limit);
+  const tail = items.at(-1);
   return {
-    has_more: page.hasMore,
-    items: page.items.map((row) => workspaceResource(row, auth)),
-    next_cursor: page.hasMore && tail !== undefined ? encodeCursor(cursorContext, [tail.key, tail.id]) : null,
+    has_more: hasMore,
+    items: items.map((row) => workspaceResource(row, auth)),
+    next_cursor: hasMore && tail !== undefined
+      ? encodeCursor(cursorContext, deleted === "only" ? [tail.deleted_at, tail.id] : [tail.key, tail.id])
+      : null,
     resolved_scope: {
       deleted,
       project_ids: visibleProjects.map((project) => project.projectId),
@@ -287,24 +367,32 @@ export async function listProjects(
   const workspace = await readWorkspace(db, workspaceKey, deleted === "only");
   if (workspace === null) throw notFound();
   const visibleProjects = await resolveVisibleProjects(db, auth);
-  const visibleProjectIds = new Set(visibleProjects.map((project) => project.projectId));
   if (deleted === "exclude" && !canManageContainers(auth) && !visibleProjects.some((p) => p.workspaceId === workspace.id)) {
     throw notFound();
   }
-  let rows = await readAllProjects(db, workspaceKey, deleted);
-  if (!canManageContainers(auth)) rows = rows.filter((row) => visibleProjectIds.has(row.id));
   const cursorContext = await createCursorContext(
     "projects",
     { deleted, workspace_key: workspaceKey },
     scopeIds(auth, visibleProjects.map((project) => project.projectId)),
   );
-  const position = parseCursorPosition(decodeCursor(url.searchParams.get("cursor"), cursorContext));
-  const page = pageRows(rows, limit, position);
-  const tail = page.items.at(-1);
+  const position = parseCursorPosition(decodeCursor(url.searchParams.get("cursor"), cursorContext), deleted);
+  const rows = await readProjectPage(
+    db,
+    workspaceKey,
+    deleted,
+    canManageContainers(auth) ? null : visibleProjects.map((project) => project.projectId),
+    position,
+    limit,
+  );
+  const hasMore = rows.length > limit;
+  const items = rows.slice(0, limit);
+  const tail = items.at(-1);
   return {
-    has_more: page.hasMore,
-    items: page.items.map((row) => projectResource(row, auth)),
-    next_cursor: page.hasMore && tail !== undefined ? encodeCursor(cursorContext, [tail.key, tail.id]) : null,
+    has_more: hasMore,
+    items: items.map((row) => projectResource(row, auth)),
+    next_cursor: hasMore && tail !== undefined
+      ? encodeCursor(cursorContext, deleted === "only" ? [tail.deleted_at, tail.id] : [tail.key, tail.id])
+      : null,
     resolved_scope: { deleted, workspace_key: workspaceKey },
   };
 }
@@ -420,6 +508,8 @@ async function diagnoseProjectCas(
   expectedDeleted: boolean,
 ): Promise<never> {
   await verifyCurrentAuth(db, auth, now);
+  const workspace = await readWorkspace(db, workspaceKey, true);
+  if (workspace === null || workspace.deleted_at !== null) throw notFound();
   const current = await readProject(db, workspaceKey, projectKey, true);
   if (current === null) throw notFound();
   if ((current.deleted_at !== null) !== expectedDeleted) {
@@ -482,8 +572,8 @@ export async function createWorkspace(
     method: "POST",
     normalizedResourceScope: `workspace:${key}`,
     now,
-    readback: async (_operationId, commit) => {
-      const row = await readWorkspace(db, key, true);
+    readback: async (operationId, commit) => {
+      const row = await readWorkspaceForOperation(db, key, operationId, true);
       if (row === null) throw platformUnavailable("d1");
       return { body: writeResult(workspaceResource(row, auth), commit.lastEventSequence, false), status: 200 };
     },
@@ -516,7 +606,13 @@ export async function updateWorkspace(
         db.prepare(
           `UPDATE workspaces SET display_name = ?1, version = version + 1,
                   updated_at = ?2, updated_by_principal_id = ?3, last_operation_id = ?4
-           WHERE id = ?5 AND version = ?6 AND deleted_at IS NULL AND ${guard.sql}`,
+           WHERE id = ?5 AND version = ?6 AND deleted_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM idempotency_records AS pending_operation
+               WHERE pending_operation.operation_id = workspaces.last_operation_id
+                 AND pending_operation.state = 'pending'
+             )
+             AND ${guard.sql}`,
         ).bind(displayName, now, auth.principalId, operationId, current.id, expectedVersion, ...guard.values),
         workspaceEvent(db, auth, crypto.randomUUID(), operationId, "workspace.updated", current.id, { display_name: displayName }, now),
       ],
@@ -562,6 +658,11 @@ async function setWorkspaceDeleted(
                updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7
              AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
+             AND NOT EXISTS (
+               SELECT 1 FROM idempotency_records AS pending_operation
+               WHERE pending_operation.operation_id = workspaces.last_operation_id
+                 AND pending_operation.state = 'pending'
+             )
              AND ${guard.sql}`,
         ).bind(
           deleted ? now : null,
@@ -587,7 +688,7 @@ async function setWorkspaceDeleted(
       committedAt: now,
       confirmBusinessRejection: async () => {
         const latest = await readWorkspace(db, key, true);
-        return latest === null || (latest.deleted_at !== null) !== deleted || latest.version !== expectedVersion
+        return latest === null || (latest.deleted_at !== null) !== !deleted || latest.version !== expectedVersion
           || await ownerGuardRejected(db, auth, now);
       },
       expectedEventCount: 1,
@@ -662,8 +763,8 @@ export async function restoreWorkspace(
     method: "POST",
     normalizedResourceScope: `workspace:${key}:restore`,
     now,
-    readback: async (_operationId, commit) => {
-      const row = await readWorkspace(db, key);
+    readback: async (operationId, commit) => {
+      const row = await readWorkspaceForOperation(db, key, operationId, false);
       if (row === null) throw platformUnavailable("d1");
       const resource = {
         ...workspaceResource(row, auth),
@@ -715,13 +816,6 @@ export async function createProject(
                FROM workspaces AS w
                WHERE w.key = ?8 AND w.deleted_at IS NULL AND ${guard.sql}`,
             ).bind(projectId, key, displayName, context, now, auth.principalId, operationId, workspaceKey, ...guard.values),
-            db.prepare(
-              `INSERT INTO project_usage
-                (project_id, active_issue_count, active_comment_count,
-                 active_principal_count, updated_at, last_operation_id)
-               SELECT id, 0, 0, 0, ?1, ?2 FROM projects
-               WHERE id = ?3 AND last_operation_id = ?2`,
-            ).bind(now, operationId, projectId),
             projectEvent(db, auth, crypto.randomUUID(), operationId, "project.created", projectId, { key, workspace_key: workspaceKey }, now),
           ],
           committedAt: now,
@@ -746,8 +840,8 @@ export async function createProject(
     method: "POST",
     normalizedResourceScope: `workspace:${workspaceKey}:project:${key}`,
     now,
-    readback: async (_operationId, commit) => {
-      const row = await readProject(db, workspaceKey, key, true);
+    readback: async (operationId, commit) => {
+      const row = await readProjectForOperation(db, workspaceKey, key, operationId, true);
       if (row === null) throw platformUnavailable("d1");
       return { body: writeResult(projectResource(row, auth), commit.lastEventSequence, false), status: 200 };
     },
@@ -789,7 +883,13 @@ export async function updateProject(
                version = version + 1, updated_at = ?5,
                updated_by_principal_id = ?6, last_operation_id = ?7
            WHERE id = ?8 AND workspace_id = ?9 AND version = ?10
-             AND deleted_at IS NULL AND ${guard.sql}`,
+             AND deleted_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM idempotency_records AS pending_operation
+               WHERE pending_operation.operation_id = projects.last_operation_id
+                 AND pending_operation.state = 'pending'
+             )
+             AND ${guard.sql}`,
         ).bind(
           displayNameValue === undefined ? 0 : 1,
           displayName,
@@ -848,7 +948,9 @@ async function setProjectDeleted(
 ): Promise<OperationCommit> {
   const current = await readProject(db, workspaceKey, projectKey, true);
   if (current === null) throw notFound();
-  const guard = buildCurrentAuthGuard(auth, now, 8, true);
+  const workspace = await readWorkspace(db, workspaceKey, true);
+  if (workspace === null || workspace.deleted_at !== null) throw notFound();
+  const guard = buildCurrentAuthGuard(auth, now, 9, true);
   try {
     const { commit } = await executeAtomicBatch(db, {
       businessStatements: [
@@ -859,6 +961,17 @@ async function setProjectDeleted(
                updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7
              AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
+             AND NOT EXISTS (
+               SELECT 1 FROM idempotency_records AS pending_operation
+               WHERE pending_operation.operation_id = projects.last_operation_id
+                 AND pending_operation.state = 'pending'
+             )
+             AND EXISTS (
+               SELECT 1 FROM workspaces AS parent_workspace
+               WHERE parent_workspace.id = projects.workspace_id
+                 AND parent_workspace.key = ?8
+                 AND parent_workspace.deleted_at IS NULL
+             )
              AND ${guard.sql}`,
         ).bind(
           deleted ? now : null,
@@ -868,6 +981,7 @@ async function setProjectDeleted(
           operationId,
           current.id,
           expectedVersion,
+          workspaceKey,
           ...guard.values,
         ),
         projectEvent(
@@ -884,7 +998,9 @@ async function setProjectDeleted(
       committedAt: now,
       confirmBusinessRejection: async () => {
         const latest = await readProject(db, workspaceKey, projectKey, true);
-        return latest === null || (latest.deleted_at !== null) !== deleted || latest.version !== expectedVersion
+        const latestWorkspace = await readWorkspace(db, workspaceKey, true);
+        return latestWorkspace === null || latestWorkspace.deleted_at !== null
+          || latest === null || (latest.deleted_at !== null) !== !deleted || latest.version !== expectedVersion
           || await ownerGuardRejected(db, auth, now);
       },
       expectedEventCount: 1,
@@ -946,8 +1062,8 @@ export async function restoreProject(
     method: "POST",
     normalizedResourceScope: `workspace:${workspaceKey}:project:${projectKey}:restore`,
     now,
-    readback: async (_operationId, commit) => {
-      const row = await readProject(db, workspaceKey, projectKey);
+    readback: async (operationId, commit) => {
+      const row = await readProjectForOperation(db, workspaceKey, projectKey, operationId, false);
       if (row === null) throw platformUnavailable("d1");
       const resource = {
         ...projectResource(row, auth),
@@ -1029,7 +1145,13 @@ export async function updateStatusName(
           `UPDATE projects
            SET version = version + 1, updated_at = ?1,
                updated_by_principal_id = ?2, last_operation_id = ?3
-           WHERE id = ?4 AND version = ?5 AND deleted_at IS NULL AND ${guard.sql}`,
+           WHERE id = ?4 AND version = ?5 AND deleted_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM idempotency_records AS pending_operation
+               WHERE pending_operation.operation_id = projects.last_operation_id
+                 AND pending_operation.state = 'pending'
+             )
+             AND ${guard.sql}`,
         ).bind(now, auth.principalId, operationId, project.id, expectedVersion, ...guard.values),
         db.prepare(
           `INSERT INTO project_status_names

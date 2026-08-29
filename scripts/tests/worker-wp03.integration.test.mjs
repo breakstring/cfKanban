@@ -11,6 +11,8 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const ownerToken = `cfk_v1_owner_${"A".repeat(43)}`;
 const participantToken = `cfk_v1_member_${"B".repeat(43)}`;
 const ownerSessionToken = "S".repeat(43);
+const issueSessionToken = "T".repeat(43);
+const malformedSessionToken = "M".repeat(43);
 const csrfToken = "C".repeat(43);
 const ids = {
   instance: "10000000-0000-4000-8000-000000000001",
@@ -20,6 +22,8 @@ const ids = {
   participantGrant: "10000000-0000-4000-8000-000000000005",
   participantPrincipal: "10000000-0000-4000-8000-000000000006",
   bootstrapOperation: "10000000-0000-4000-8000-000000000007",
+  participantSecondGrant: "10000000-0000-4000-8000-000000000008",
+  targetIssue: "10000000-0000-4000-8000-000000000009",
 };
 
 const server = createTestHarness({
@@ -83,6 +87,14 @@ test("WP-03 bootstraps one Owner without exposing its secret", async () => {
 
   const recovered = await bootstrapInstance(db, input);
   assert.equal(recovered.recovered, true);
+  await assert.rejects(
+    bootstrapInstance(db, { ...input, ownerDisplayName: "Drifted Owner" }),
+    (error) => error.code === "INSTANCE_ALREADY_INITIALIZED",
+  );
+  await assert.rejects(
+    bootstrapInstance(db, { ...input, ownerCredentialToken: `cfk_v1_owner_${"Z".repeat(43)}` }),
+    (error) => error.code === "INSTANCE_ALREADY_INITIALIZED",
+  );
   await assert.rejects(
     bootstrapInstance(db, {
       ...input,
@@ -180,6 +192,18 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assertWriteResult(createdProject.body);
   assert.equal(createdProject.body.resource.workspace_key, "engineering");
   const projectId = createdProject.body.resource.id;
+  const ordinaryUsage = await db.prepare(
+    "SELECT COUNT(*) AS count FROM project_usage WHERE project_id = ?1",
+  ).bind(projectId).first();
+  assert.equal(ordinaryUsage.count, 0);
+
+  const createdSecondProject = await jsonRequest("/api/v1/workspaces/operations/projects", {
+    body: { display_name: "Operations Board", key: "OPS" },
+    headers: ownerHeaders({ "idempotency-key": "wp03-create-second-project" }),
+    method: "POST",
+  });
+  assert.equal(createdSecondProject.response.status, 200);
+  const secondProjectId = createdSecondProject.body.resource.id;
 
   const statuses = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/statuses", {
     headers: ownerHeaders(),
@@ -212,6 +236,8 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(updatedProject.body.resource.context, null);
 
   const participantDigest = await sha256Hex(participantToken);
+  const issueSessionDigest = await sha256Hex(issueSessionToken);
+  const malformedSessionDigest = await sha256Hex(malformedSessionToken);
   await db.batch([
     db.prepare(
       `INSERT INTO principals (id, display_name, created_at, updated_at)
@@ -227,11 +253,73 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
         (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
        VALUES (?1, ?2, ?3, 'reader', ?4, ?4, 'wp03-seed-participant-grant')`,
     ).bind(ids.participantGrant, ids.participantPrincipal, projectId, Date.now()),
+    db.prepare(
+      `INSERT INTO project_grants
+        (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
+       VALUES (?1, ?2, ?3, 'reader', ?4, ?4, 'wp03-seed-participant-second-grant')`,
+    ).bind(ids.participantSecondGrant, ids.participantPrincipal, secondProjectId, Date.now()),
+    db.prepare(
+      `INSERT INTO issues
+        (id, project_id, title, title_search, body, status_key, priority_key,
+         priority_rank, version, created_at, updated_at, created_by_principal_id,
+         updated_by_principal_id, created_operation_id)
+       VALUES (?1, ?2, 'Target issue', 'target issue', '', 'backlog', 'none',
+               4, 1, ?3, ?3, ?4, ?4, 'wp03-seed-target-issue')`,
+    ).bind(ids.targetIssue, projectId, Date.now(), ids.ownerPrincipal),
+  ]);
+  const targetIssue = await db.prepare("SELECT number FROM issues WHERE id = ?1")
+    .bind(ids.targetIssue).first();
+  await db.batch([
+    db.prepare(
+      `INSERT INTO web_sessions
+        (id, token_digest, principal_id, source_kind, source_id, target_kind,
+         target_json, expires_at, created_at)
+       VALUES ('wp03-issue-target-session', ?1, ?2, 'credential', ?3, 'issue',
+               ?4, ?5, ?6)`,
+    ).bind(
+      issueSessionDigest,
+      ids.participantPrincipal,
+      ids.participantCredential,
+      JSON.stringify({ identifier: `CFK-${targetIssue.number}` }),
+      Date.now() + 60_000,
+      Date.now(),
+    ),
+    db.prepare(
+      `INSERT INTO web_sessions
+        (id, token_digest, principal_id, source_kind, source_id, target_kind,
+         target_json, expires_at, created_at)
+       VALUES ('wp03-malformed-target-session', ?1, ?2, 'credential', ?3, 'project',
+               '{}', ?4, ?5)`,
+    ).bind(
+      malformedSessionDigest,
+      ids.participantPrincipal,
+      ids.participantCredential,
+      Date.now() + 60_000,
+      Date.now(),
+    ),
   ]);
   const participantProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
     headers: participantHeaders(),
   });
   assert.equal(participantProject.response.status, 200);
+  const participantWorkspaces = await jsonRequest("/api/v1/workspaces", {
+    headers: participantHeaders(),
+  });
+  assert.deepEqual(participantWorkspaces.body.items.map((workspace) => workspace.key), ["engineering", "operations"]);
+  const issueTargetWorkspaces = await jsonRequest("/api/v1/workspaces", {
+    headers: { cookie: `cfkanban_session=${issueSessionToken}` },
+  });
+  assert.equal(issueTargetWorkspaces.response.status, 200);
+  assert.deepEqual(issueTargetWorkspaces.body.items.map((workspace) => workspace.key), ["engineering"]);
+  const issueTargetOtherProject = await jsonRequest("/api/v1/workspaces/operations/projects", {
+    headers: { cookie: `cfkanban_session=${issueSessionToken}` },
+  });
+  assert.equal(issueTargetOtherProject.response.status, 404);
+  const malformedTargetWorkspaces = await jsonRequest("/api/v1/workspaces", {
+    headers: { cookie: `cfkanban_session=${malformedSessionToken}` },
+  });
+  assert.equal(malformedTargetWorkspaces.response.status, 200);
+  assert.deepEqual(malformedTargetWorkspaces.body.items, []);
   const participantCreate = await jsonRequest("/api/v1/workspaces", {
     body: { display_name: "Forbidden", key: "forbidden" },
     headers: participantHeaders({ "idempotency-key": "wp03-participant-create" }),
@@ -248,6 +336,12 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   );
   assert.equal(mismatchedCursor.response.status, 409);
   assert.equal(mismatchedCursor.body.code, "CURSOR_SCOPE_MISMATCH");
+  const malformedCursor = await jsonRequest("/api/v1/workspaces?cursor=%25", {
+    headers: ownerHeaders(),
+  });
+  assert.equal(malformedCursor.response.status, 400);
+  assert.equal(malformedCursor.body.code, "INVALID_CURSOR");
+  assert.equal(malformedCursor.body.recovery, "refresh_cursor");
 
   const deletedProject = await jsonRequest(
     "/api/v1/workspaces/engineering/projects/CORE?expected_version=3",
@@ -255,6 +349,12 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   );
   assert.equal(deletedProject.body.resource.deleted_at !== null, true);
   assert.equal(deletedProject.body.resource.version, 4);
+  const repeatedDeleteProject = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/CORE?expected_version=4",
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(repeatedDeleteProject.response.status, 409);
+  assert.equal(repeatedDeleteProject.body.code, "RESOURCE_DELETED");
   const hiddenProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
     headers: ownerHeaders(),
   });
@@ -274,18 +374,58 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   );
   assert.equal(restoredProject.body.resource.version, 5);
   assert.deepEqual(restoredProject.body.resource.resumed_public_projects.projects, []);
+  const repeatedRestoreProject = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
+    {
+      body: { expected_version: 5 },
+      headers: ownerHeaders({ "idempotency-key": "wp03-repeat-restore-project" }),
+      method: "POST",
+    },
+  );
+  assert.equal(repeatedRestoreProject.response.status, 409);
+  assert.equal(repeatedRestoreProject.body.code, "RESOURCE_NOT_DELETED");
+  const abandonedRestore = await db.prepare(
+    `SELECT COUNT(*) AS count FROM idempotency_records
+     WHERE state = 'pending' AND route_template = '/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore'`,
+  ).first();
+  assert.equal(abandonedRestore.count, 0);
+
+  const deletedProjectBeforeParent = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/CORE?expected_version=5",
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(deletedProjectBeforeParent.body.resource.version, 6);
 
   const deletedWorkspace = await jsonRequest("/api/v1/workspaces/engineering?expected_version=2", {
     headers: ownerHeaders(),
     method: "DELETE",
   });
   assert.equal(deletedWorkspace.body.resource.version, 3);
+  const childRestoreWhileParentDeleted = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
+    {
+      body: { expected_version: 6 },
+      headers: ownerHeaders({ "idempotency-key": "wp03-restore-child-under-deleted-parent" }),
+      method: "POST",
+    },
+  );
+  assert.equal(childRestoreWhileParentDeleted.response.status, 409);
+  assert.equal(childRestoreWhileParentDeleted.body.code, "PARENT_WORKSPACE_DELETED");
   const restoredWorkspace = await jsonRequest("/api/v1/workspaces/engineering/commands/restore", {
     body: { expected_version: 3 },
     headers: ownerHeaders({ "idempotency-key": "wp03-restore-workspace" }),
     method: "POST",
   });
   assert.equal(restoredWorkspace.body.resource.version, 4);
+  const restoredChildAfterParent = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
+    {
+      body: { expected_version: 6 },
+      headers: ownerHeaders({ "idempotency-key": "wp03-restore-child-after-parent" }),
+      method: "POST",
+    },
+  );
+  assert.equal(restoredChildAfterParent.body.resource.version, 7);
 
   const ownerSessionDigest = await sha256Hex(ownerSessionToken);
   await db.prepare(
@@ -322,6 +462,20 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   });
   assert.equal(updatedOrigin.body.resource.preferred_api_origin, "https://new.example.test");
   assert.equal(updatedOrigin.body.resource.version, 2);
+
+  const bootstrapAfterLaterMutations = await bootstrapInstance(db, {
+    instanceId: ids.instance,
+    operationId: ids.bootstrapOperation,
+    ownerCredentialId: ids.ownerCredential,
+    ownerCredentialToken: ownerToken,
+    ownerDisplayName: "Deployment Owner",
+    ownerPrincipalId: ids.ownerPrincipal,
+    preferredApiOrigin: "https://kanban.example.test",
+  });
+  assert.equal(bootstrapAfterLaterMutations.recovered, true);
+  assert.equal(bootstrapAfterLaterMutations.ownerDisplayName, "Deployment Owner");
+  assert.equal(bootstrapAfterLaterMutations.preferredApiOrigin, "https://kanban.example.test");
+  assert.equal(bootstrapAfterLaterMutations.credentialId, ids.ownerCredential);
 
   const credential = await db.prepare(
     "SELECT token_digest FROM credentials WHERE id = ?1",

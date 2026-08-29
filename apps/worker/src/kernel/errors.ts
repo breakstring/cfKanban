@@ -164,6 +164,28 @@ export function versionConflict(currentVersion?: number): ApiError {
   });
 }
 
+export function invalidTransition(): ApiError {
+  return new ApiError({
+    category: "conflict",
+    code: "INVALID_TRANSITION",
+    message: "The requested status transition must use its dedicated command.",
+    recovery: "refresh_resource",
+    retryable: false,
+    status: 409,
+  });
+}
+
+export function assigneeNotEligible(): ApiError {
+  return new ApiError({
+    category: "conflict",
+    code: "ASSIGNEE_NOT_ELIGIBLE",
+    message: "The selected Principal is not eligible for assignment in this Project.",
+    recovery: "refresh_resource",
+    retryable: false,
+    status: 409,
+  });
+}
+
 export function conflict(
   code: string,
   recovery = "refresh_resource",
@@ -215,6 +237,8 @@ export function recoveryPrincipalMismatch(): ApiError {
 
 export function businessQuotaExceeded(
   dimension: "comments" | "issues" | "principals",
+  currentUsage?: number,
+  limit?: number,
 ): ApiError {
   const resourceKind = dimension === "comments" ? "comment" : dimension === "issues" ? "issue" : "principal";
   const code = dimension === "comments"
@@ -225,7 +249,11 @@ export function businessQuotaExceeded(
   return new ApiError({
     category: "business_quota",
     code,
-    details: { resource_kind: resourceKind },
+    details: {
+      resource_kind: resourceKind,
+      ...(currentUsage === undefined ? {} : { current_usage: currentUsage }),
+      ...(limit === undefined ? {} : { limit }),
+    },
     message: "The Project active quota does not allow this operation.",
     recovery: "free_capacity_or_request_owner",
     retryable: false,
