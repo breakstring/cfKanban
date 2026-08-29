@@ -12,6 +12,7 @@ import {
   listPrincipalCredentials,
   listPrincipals,
   listProjectGrants,
+  preauthenticateOwnerRotationRequest,
   revokeCredential,
   revokeProjectGrant,
   rotateOwnerCredential,
@@ -167,6 +168,8 @@ export function registerWp04Routes(router: Router): Router {
       ), context.requestId);
     })
     .post("/api/v1/admin/owner-credentials/rotate", async (request, env, context) => {
+      const preauthenticated = await preauthenticateOwnerRotationRequest(env.DB, request);
+      if (preauthenticated !== null) await enforcePrincipalRateLimit(env, preauthenticated);
       const value = await body(request, ["new_credential_token"], ["new_credential_token"]);
       return jsonResponse(await rotateOwnerCredential(
         env.DB,
@@ -174,6 +177,7 @@ export function registerWp04Routes(router: Router): Router {
         value.new_credential_token as JsonValue,
         context.startedAt,
         (auth) => enforcePrincipalRateLimit(env, auth),
+        preauthenticated,
       ), context.requestId);
     })
     .get("/api/v1/admin/projects/{project_id}/grants", async (request, env, context) => {

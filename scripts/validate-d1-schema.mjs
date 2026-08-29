@@ -8,6 +8,10 @@ import {
   EXPIRED_WEB_AUTHN_CHALLENGE_CLEANUP_SQL,
   WEB_SESSION_CLEANUP_SQL,
 } from "../apps/worker/src/services/web-state.ts";
+import {
+  PUBLIC_PROJECTS_CONTINUATION_SQL,
+  PUBLIC_PROJECTS_FIRST_PAGE_SQL,
+} from "../apps/worker/src/services/public-join-sql.ts";
 import { sha256NormalizedText } from "./lib/generated-artifacts.mjs";
 
 const migration = await readFile(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
@@ -124,6 +128,8 @@ const planChecks = [
   ["visible source relation tombstone continuation", "SELECT id FROM issue_relations WHERE source_issue_id = ? AND target_project_id = ? AND deleted_at IS NOT NULL AND (deleted_at, id) < (?, ?) ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1", "project", now + 1, "relation-z"], /idx_issue_relations_source_tombstones_visible/],
   ["visible target relation tombstone continuation", "SELECT id FROM issue_relations WHERE target_issue_id = ? AND source_project_id = ? AND deleted_at IS NOT NULL AND (deleted_at, id) < (?, ?) ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1", "project", now + 1, "relation-z"], /idx_issue_relations_target_tombstones_visible/],
   ["invitation redeem", "SELECT id FROM invitations WHERE code_digest = ?", [digest("b")], /idx_invitations_code_digest|sqlite_autoindex_invitations/],
+  ["public Projects first page", PUBLIC_PROJECTS_FIRST_PAGE_SQL, [21], /idx_public_join_enabled \(disabled_at=\?\)/],
+  ["public Projects continuation", PUBLIC_PROJECTS_CONTINUATION_SQL, ["00000000-0000-4000-8000-000000000000", 21], /idx_public_join_enabled \(disabled_at=\? AND public_id>\?\)/],
   ["browser launch cleanup", BROWSER_LAUNCH_CLEANUP_SQL, [now, 100], /idx_browser_launches_cleanup/],
   ["web session cleanup", WEB_SESSION_CLEANUP_SQL, [now, 100], /idx_web_sessions_cleanup/],
   ["expired WebAuthn challenge cleanup", EXPIRED_WEB_AUTHN_CHALLENGE_CLEANUP_SQL, [now, 100], /idx_webauthn_challenges_expiry/],
@@ -133,7 +139,7 @@ const planChecks = [
 for (const [label, sql, values, expectedIndex] of planChecks) {
   const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map((row) => row.detail).join(" | ");
   assert.match(plan, expectedIndex, `${label}: ${plan}`);
-  assert.doesNotMatch(plan, /SCAN (credentials|issues|project_grants|comments|invitations|events|browser_launches|web_sessions|webauthn_challenges)(?:\s|$)/, `${label} unexpectedly scans: ${plan}`);
+  assert.doesNotMatch(plan, /SCAN (credentials|issues|project_grants|comments|invitations|public_join_policies|events|browser_launches|web_sessions|webauthn_challenges)(?:\s|$)/, `${label} unexpectedly scans: ${plan}`);
   assert.doesNotMatch(plan, /USE TEMP B-TREE FOR ORDER BY/, `${label} unexpectedly sorts: ${plan}`);
 }
 

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+import { parseRateLimitPolicy } from "../apps/worker/src/kernel/rate-limit-policy.ts";
+
 const workflow = await readFile(new URL("../.github/workflows/verify.yml", import.meta.url), "utf8");
 const workerBuild = await readFile(new URL("./build-worker.mjs", import.meta.url), "utf8");
 const workerConfig = JSON.parse(await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
@@ -54,16 +56,15 @@ const rateLimitRuntimeVars = {
 for (const config of [workerConfig, workerTestConfig]) {
   for (const binding of config.ratelimits) {
     const [limitVar, periodVar] = rateLimitRuntimeVars[binding.name];
-    assert.equal(
-      Number(config.vars?.[limitVar]),
-      binding.simple.limit,
-      `${binding.name} runtime limit must match its native binding`,
+    const runtimePolicy = parseRateLimitPolicy(
+      config.vars?.[limitVar],
+      config.vars?.[periodVar],
     );
-    assert.equal(
-      Number(config.vars?.[periodVar]),
-      binding.simple.period,
-      `${binding.name} runtime period must match its native binding`,
-    );
+    assert.notEqual(runtimePolicy, null, `${binding.name} runtime policy must use canonical integers`);
+    assert.deepEqual(runtimePolicy, {
+      limit: binding.simple.limit,
+      periodSeconds: binding.simple.period,
+    }, `${binding.name} runtime policy must match its native binding`);
   }
 }
 

@@ -18,6 +18,7 @@ import {
   isUnauthenticatedSensitivePath,
   recentRateLimitSummary,
 } from "../../apps/worker/src/kernel/rate-limit.ts";
+import { parseRateLimitPolicy } from "../../apps/worker/src/kernel/rate-limit-policy.ts";
 import {
   verifyAuthenticationCredentialEqualized,
   verifyRegistrationCredential,
@@ -170,6 +171,19 @@ test("native rate-limit rejection maps to the stable machine error and bounded s
   assert.equal(after.observation_scope, "worker_isolate_best_effort");
   assert.equal(after.window_seconds, 300);
   assert.ok(after.total <= 128);
+});
+
+test("rate-limit policy parsing rejects values that deployment validation cannot safely coerce", () => {
+  assert.deepEqual(parseRateLimitPolicy("120", "60"), {
+    limit: 120,
+    periodSeconds: 60,
+  });
+  for (const value of ["120.0", " 120", "120 ", "1.2e2", "0", "", 120]) {
+    assert.equal(parseRateLimitPolicy(value, "60"), null, String(value));
+  }
+  for (const period of ["30", "60.0", " 60", "60 ", 60]) {
+    assert.equal(parseRateLimitPolicy("120", period), null, String(period));
+  }
 });
 
 test("rate-limit routing covers every Worker-owned dynamic surface and bypasses static assets", () => {

@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 
 import { createTestHarness } from "wrangler";
 
+import { authenticateBearer, authenticateCookieSession } from "../../apps/worker/src/kernel/auth.ts";
+import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
+import { redeemPublicJoin } from "../../apps/worker/src/services/public-join.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const origin = "https://kanban.example.test";
@@ -13,6 +16,10 @@ const joinTokenA = `cfk_v1_publica_${"B".repeat(43)}`;
 const joinTokenB = `cfk_v1_publicb_${"C".repeat(43)}`;
 const joinTokenC = `cfk_v1_publicc_${"D".repeat(43)}`;
 const joinTokenD = `cfk_v1_publicd_${"E".repeat(43)}`;
+const joinTokenE = `cfk_v1_publice_${"F".repeat(43)}`;
+const joinTokenF = `cfk_v1_publicf_${"G".repeat(43)}`;
+const joinTokenG = `cfk_v1_publicg_${"H".repeat(43)}`;
+const publicJoinSessionToken = "I".repeat(43);
 const ids = {
   bootstrapOperation: "80000000-0000-4000-8000-000000000004",
   instance: "80000000-0000-4000-8000-000000000001",
@@ -47,6 +54,80 @@ async function tableCount(table, where = "1 = 1", ...values) {
   const row = await db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`)
     .bind(...values).first();
   return row.count;
+}
+
+async function assertSecretsAbsentFromPersistence(secrets) {
+  const tables = await db.prepare(
+    `SELECT name FROM sqlite_master
+     WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND substr(name, 1, 1) <> '_'`,
+  ).all();
+  const persisted = [];
+  for (const { name } of tables.results) {
+    const safeTable = `"${String(name).replaceAll('"', '""')}"`;
+    persisted.push((await db.prepare(`SELECT * FROM ${safeTable}`).all()).results);
+  }
+  const persistedText = JSON.stringify(persisted);
+  const logs = JSON.stringify(server.getLogs());
+  for (const secret of secrets) {
+    assert.equal(persistedText.includes(secret), false, "secret persisted in D1");
+    assert.equal(logs.includes(secret), false, "secret persisted in Worker logs");
+  }
+}
+
+function withOneFinalizeFailure(database) {
+  let capturedResponse = null;
+  let failed = false;
+  const proxy = new Proxy(database, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (sql) => {
+          const statement = target.prepare(sql);
+          if (!sql.includes("SET state = 'committed'")) return statement;
+          return {
+            bind(...values) {
+              const bound = statement.bind(...values);
+              capturedResponse = {
+                body: JSON.parse(values[1]),
+                status: values[0],
+              };
+              return {
+                async run() {
+                  if (!failed) {
+                    failed = true;
+                    throw new Error("injected finalize interruption");
+                  }
+                  return bound.run();
+                },
+              };
+            },
+          };
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    capturedResponse: () => capturedResponse,
+    database: proxy,
+  };
+}
+
+function beforeBusinessBatchDatabase(database, beforeBusinessBatch) {
+  let batchCount = 0;
+  return new Proxy(database, {
+    get(target, property) {
+      if (property === "batch") {
+        return async (statements) => {
+          batchCount += 1;
+          if (batchCount === 2) await beforeBusinessBatch();
+          return target.batch(statements);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 before(async () => {
@@ -239,6 +320,332 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.equal(await tableCount("credentials", "token_prefix = 'publicd'"), 1);
   assert.equal(await tableCount("project_grants", "project_id = ?1", secondProjectId), 1);
   assert.equal(await tableCount("project_usage", "project_id = ?1 AND active_principal_count = 1", secondProjectId), 1);
+
+  const responseLossKey = "wp08-response-loss-join";
+  const responseLossBody = {
+    display_name: "Response Loss Public Member",
+    new_credential_token: joinTokenE,
+    redeem_as: "new_principal",
+    role: "reader",
+  };
+  const responseLossRequest = new Request(
+    `${origin}/api/v1/public-joins/${secondPublicId}/redeem`,
+    {
+      body: JSON.stringify(responseLossBody),
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": responseLossKey,
+      },
+      method: "POST",
+    },
+  );
+  const interrupted = withOneFinalizeFailure(db);
+  await assert.rejects(
+    redeemPublicJoin(
+      interrupted.database,
+      responseLossRequest,
+      null,
+      secondPublicId,
+      responseLossBody.redeem_as,
+      responseLossBody.role,
+      responseLossBody.display_name,
+      responseLossBody.new_credential_token,
+      Date.now(),
+    ),
+    (error) => error?.code === "PLATFORM_UNAVAILABLE",
+  );
+  const pendingResponseLoss = await db.prepare(
+    `SELECT operation_id, operation_snapshot_json, state
+     FROM idempotency_records WHERE idempotency_key = ?1`,
+  ).bind(await sha256Hex(responseLossKey)).first();
+  assert.equal(pendingResponseLoss.state, "pending");
+  assert.equal(typeof pendingResponseLoss.operation_snapshot_json, "string");
+  assert.equal(await tableCount("operation_commits", "operation_id = ?1", pendingResponseLoss.operation_id), 1);
+  assert.equal(await tableCount("events", "operation_id = ?1", pendingResponseLoss.operation_id), 2);
+  assert.equal(await tableCount("credentials", "token_prefix = 'publice'"), 1);
+  assert.equal(await tableCount("project_usage", "project_id = ?1 AND active_principal_count = 2", secondProjectId), 1);
+
+  const resumedResponseLoss = await request(`/api/v1/public-joins/${secondPublicId}/redeem`, {
+    body: responseLossBody,
+    headers: { "idempotency-key": responseLossKey },
+    method: "POST",
+  });
+  assert.equal(resumedResponseLoss.response.status, interrupted.capturedResponse().status);
+  assert.equal(resumedResponseLoss.body.idempotent_replay, true);
+  const { idempotent_replay: _replay, ...resumedStoredBody } = resumedResponseLoss.body;
+  assert.equal(interrupted.capturedResponse().body.idempotent_replay, false);
+  const { idempotent_replay: _initialReplay, ...initialStoredBody } = interrupted.capturedResponse().body;
+  assert.deepEqual(resumedStoredBody, initialStoredBody);
+  assert.equal(await tableCount("operation_commits", "operation_id = ?1", pendingResponseLoss.operation_id), 1);
+  assert.equal(await tableCount("events", "operation_id = ?1", pendingResponseLoss.operation_id), 2);
+  assert.equal(await tableCount("credentials", "token_prefix = 'publice'"), 1);
+  assert.equal(await tableCount("project_usage", "project_id = ?1 AND active_principal_count = 2", secondProjectId), 1);
+  const mismatchedResponseLoss = await request(`/api/v1/public-joins/${secondPublicId}/redeem`, {
+    body: { ...responseLossBody, role: "writer" },
+    headers: { "idempotency-key": responseLossKey },
+    method: "POST",
+  });
+  assert.equal(mismatchedResponseLoss.response.status, 409);
+  assert.equal(await tableCount("events", "operation_id = ?1", pendingResponseLoss.operation_id), 2);
+
+  const policyRaceKey = "wp08-policy-race-join";
+  const policyRaceBefore = {
+    credentials: await tableCount("credentials"),
+    events: await tableCount("events"),
+    grants: await tableCount("project_grants"),
+    operations: await tableCount("operation_commits"),
+    principals: await tableCount("principals"),
+  };
+  const policyRaceRequest = new Request(
+    `${origin}/api/v1/public-joins/${secondPublicId}/redeem`,
+    {
+      body: JSON.stringify({
+        display_name: "Policy Race Public Member",
+        new_credential_token: joinTokenF,
+        redeem_as: "new_principal",
+        role: "reader",
+      }),
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": policyRaceKey,
+      },
+      method: "POST",
+    },
+  );
+  const policyRaceDb = beforeBusinessBatchDatabase(db, async () => {
+    await db.prepare(
+      `UPDATE public_join_policies
+       SET disabled_at = ?1, disabled_by_principal_id = ?2, version = version + 1
+       WHERE public_id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, secondPublicId).run();
+  });
+  await assert.rejects(
+    redeemPublicJoin(
+      policyRaceDb,
+      policyRaceRequest,
+      null,
+      secondPublicId,
+      "new_principal",
+      "reader",
+      "Policy Race Public Member",
+      joinTokenF,
+      Date.now(),
+    ),
+    (error) => error?.code === "NOT_FOUND",
+  );
+  assert.deepEqual({
+    credentials: await tableCount("credentials"),
+    events: await tableCount("events"),
+    grants: await tableCount("project_grants"),
+    operations: await tableCount("operation_commits"),
+    principals: await tableCount("principals"),
+  }, policyRaceBefore);
+  assert.equal(await tableCount("idempotency_records", "idempotency_key = ?1", await sha256Hex(policyRaceKey)), 0);
+  await db.prepare(
+    `UPDATE public_join_policies
+     SET disabled_at = NULL, disabled_by_principal_id = NULL, version = version + 1
+     WHERE public_id = ?1`,
+  ).bind(secondPublicId).run();
+
+  const parentRaceKey = "wp08-parent-race-join";
+  const parentRaceBefore = {
+    credentials: await tableCount("credentials"),
+    events: await tableCount("events"),
+    grants: await tableCount("project_grants"),
+    operations: await tableCount("operation_commits"),
+    principals: await tableCount("principals"),
+  };
+  const parentRaceDb = beforeBusinessBatchDatabase(db, async () => {
+    await db.prepare(
+      "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+    ).bind(Date.now(), ids.ownerPrincipal, secondProjectId).run();
+  });
+  await assert.rejects(
+    redeemPublicJoin(
+      parentRaceDb,
+      new Request(`${origin}/api/v1/public-joins/${secondPublicId}/redeem`, {
+        body: JSON.stringify({
+          display_name: "Parent Race Public Member",
+          new_credential_token: joinTokenG,
+          redeem_as: "new_principal",
+          role: "reader",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": parentRaceKey,
+        },
+        method: "POST",
+      }),
+      null,
+      secondPublicId,
+      "new_principal",
+      "reader",
+      "Parent Race Public Member",
+      joinTokenG,
+      Date.now(),
+    ),
+    (error) => error?.code === "NOT_FOUND",
+  );
+  assert.deepEqual({
+    credentials: await tableCount("credentials"),
+    events: await tableCount("events"),
+    grants: await tableCount("project_grants"),
+    operations: await tableCount("operation_commits"),
+    principals: await tableCount("principals"),
+  }, parentRaceBefore);
+  assert.equal(await tableCount("idempotency_records", "idempotency_key = ?1", await sha256Hex(parentRaceKey)), 0);
+  await db.prepare(
+    "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+  ).bind(secondProjectId).run();
+
+  const revokedAuth = await authenticateBearer(db, `Bearer ${joinTokenD}`);
+  const authRaceKey = "wp08-current-auth-race-join";
+  const authRaceEvents = await tableCount("events");
+  const authRaceOperations = await tableCount("operation_commits");
+  const authRaceRequest = new Request(
+    `${origin}/api/v1/public-joins/${secondPublicId}/redeem`,
+    {
+      body: JSON.stringify({ redeem_as: "current_principal", role: "reader" }),
+      headers: {
+        authorization: `Bearer ${joinTokenD}`,
+        "content-type": "application/json",
+        "idempotency-key": authRaceKey,
+      },
+      method: "POST",
+    },
+  );
+  const authRaceDb = beforeBusinessBatchDatabase(db, async () => {
+    await db.prepare(
+      `UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2
+       WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, revokedAuth.credentialId).run();
+  });
+  await assert.rejects(
+    redeemPublicJoin(
+      authRaceDb,
+      authRaceRequest,
+      revokedAuth,
+      secondPublicId,
+      "current_principal",
+      "reader",
+      undefined,
+      undefined,
+      Date.now(),
+    ),
+    (error) => error?.code === "UNAUTHORIZED",
+  );
+  assert.equal(await tableCount("events"), authRaceEvents);
+  assert.equal(await tableCount("operation_commits"), authRaceOperations);
+  assert.equal(await tableCount("idempotency_records", "idempotency_key = ?1", await sha256Hex(authRaceKey)), 0);
+  await db.prepare(
+    `UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL
+     WHERE id = ?1`,
+  ).bind(revokedAuth.credentialId).run();
+
+  const cookiePrincipalId = crypto.randomUUID();
+  const cookiePasskeyId = crypto.randomUUID();
+  const cookieSessionId = crypto.randomUUID();
+  const cookieNow = Date.now();
+  await db.batch([
+    db.prepare(
+      `INSERT INTO principals (id, display_name, created_at, updated_at)
+       VALUES (?1, 'Passkey Public Member', ?2, ?2)`,
+    ).bind(cookiePrincipalId, cookieNow),
+    db.prepare(
+      `INSERT INTO web_authenticators
+        (id, principal_id, credential_id, public_key_cose, algorithm,
+         user_handle, backup_eligible, backup_state, rp_id, created_at,
+         created_operation_id)
+       VALUES (?1, ?2, ?3, 'test-public-key', -7, ?4, 0, 0,
+               'kanban.example.test', ?5, ?6)`,
+    ).bind(
+      cookiePasskeyId,
+      cookiePrincipalId,
+      `passkey-${cookiePasskeyId}`,
+      `handle-${cookiePrincipalId}`,
+      cookieNow,
+      crypto.randomUUID(),
+    ),
+    db.prepare(
+      `INSERT INTO web_sessions
+        (id, token_digest, principal_id, source_kind, source_id,
+         target_kind, target_json, expires_at, created_at, created_operation_id)
+       VALUES (?1, ?2, ?3, 'web_authenticator', ?4, 'project_selection',
+               ?5, ?6, ?7, ?8)`,
+    ).bind(
+      cookieSessionId,
+      await sha256Hex(publicJoinSessionToken),
+      cookiePrincipalId,
+      cookiePasskeyId,
+      JSON.stringify({ entry_path: "/app", kind: "project_selection" }),
+      cookieNow + 8 * 60 * 60 * 1_000,
+      cookieNow,
+      crypto.randomUUID(),
+    ),
+  ]);
+  const cookieAuthRequest = new Request(`${origin}/api/v1/web-session`, {
+    headers: { cookie: `cfkanban_session=${publicJoinSessionToken}` },
+  });
+  const cookieAuth = await authenticateCookieSession(db, cookieAuthRequest, cookieNow);
+  const cookieJoin = await redeemPublicJoin(
+    db,
+    new Request(`${origin}/api/v1/public-joins/${secondPublicId}/redeem`, {
+      body: JSON.stringify({ redeem_as: "current_principal", role: "reader" }),
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "wp08-cookie-created-join",
+      },
+      method: "POST",
+    }),
+    cookieAuth,
+    secondPublicId,
+    "current_principal",
+    "reader",
+    undefined,
+    undefined,
+    cookieNow,
+  );
+  assert.equal(cookieJoin.resource.outcome, "created");
+  assert.equal(await tableCount(
+    "project_grants",
+    "principal_id = ?1 AND project_id = ?2 AND revoked_at IS NULL",
+    cookiePrincipalId,
+    secondProjectId,
+  ), 1);
+
+  const cookieRaceKey = "wp08-cookie-auth-race-join";
+  const cookieRaceEvents = await tableCount("events");
+  const cookieRaceOperations = await tableCount("operation_commits");
+  const cookieRaceDb = beforeBusinessBatchDatabase(db, async () => {
+    await db.prepare("UPDATE web_sessions SET revoked_at = ?1 WHERE id = ?2")
+      .bind(Date.now(), cookieSessionId).run();
+  });
+  await assert.rejects(
+    redeemPublicJoin(
+      cookieRaceDb,
+      new Request(`${origin}/api/v1/public-joins/${secondPublicId}/redeem`, {
+        body: JSON.stringify({ redeem_as: "current_principal", role: "reader" }),
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": cookieRaceKey,
+        },
+        method: "POST",
+      }),
+      cookieAuth,
+      secondPublicId,
+      "current_principal",
+      "reader",
+      undefined,
+      undefined,
+      Date.now(),
+    ),
+    (error) => error?.code === "UNAUTHORIZED",
+  );
+  assert.equal(await tableCount("events"), cookieRaceEvents);
+  assert.equal(await tableCount("operation_commits"), cookieRaceOperations);
+  assert.equal(await tableCount("idempotency_records", "idempotency_key = ?1", await sha256Hex(cookieRaceKey)), 0);
+  await db.prepare("UPDATE web_sessions SET revoked_at = NULL WHERE id = ?1")
+    .bind(cookieSessionId).run();
 
   const firstJoinRequest = {
     body: {
@@ -497,6 +904,57 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.equal(reenabled.body.resource.active_usage.issues, 3);
   assert.equal(reenabled.body.resource.active_usage.comments, 3);
   assert.equal(reenabled.body.resource.project.version, 5);
+
+  const usageInvariantTombstone = await request(
+    `/api/v1/issues/${enabledIssue.body.resource.identifier}?expected_version=${enabledIssue.body.resource.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(usageInvariantTombstone.response.status, 200);
+  await db.prepare("DELETE FROM project_usage WHERE project_id = ?1").bind(projectId).run();
+  const missingUsageCreate = await request("/api/v1/workspaces/public-space/projects/PUB/issues", {
+    body: { title: "Must fail as an invariant error" },
+    headers: ownerHeaders({ "idempotency-key": "wp08-missing-usage-create" }),
+    method: "POST",
+  });
+  assert.equal(missingUsageCreate.response.status, 503);
+  assert.equal(missingUsageCreate.body.code, "PLATFORM_UNAVAILABLE");
+  const missingUsageRestore = await request(
+    `/api/v1/issues/${enabledIssue.body.resource.identifier}/commands/restore`,
+    {
+      body: { expected_version: usageInvariantTombstone.body.resource.version },
+      headers: ownerHeaders({ "idempotency-key": "wp08-missing-usage-restore" }),
+      method: "POST",
+    },
+  );
+  assert.equal(missingUsageRestore.response.status, 503);
+  assert.equal(missingUsageRestore.body.code, "PLATFORM_UNAVAILABLE");
+  assert.equal(await tableCount("project_usage", "project_id = ?1", projectId), 0);
+  await db.prepare(
+    `INSERT INTO project_usage
+      (project_id, active_issue_count, active_comment_count,
+       active_principal_count, updated_at, last_operation_id)
+     SELECT project.id,
+            (SELECT COUNT(*) FROM issues issue
+             WHERE issue.project_id = project.id AND issue.deleted_at IS NULL),
+            (SELECT COUNT(*) FROM comments comment
+             JOIN issues issue ON issue.id = comment.issue_id
+             WHERE issue.project_id = project.id AND issue.deleted_at IS NULL
+               AND comment.deleted_at IS NULL),
+            (SELECT COUNT(*) FROM project_grants grant_row
+             WHERE grant_row.project_id = project.id AND grant_row.revoked_at IS NULL),
+            ?2, NULL
+     FROM projects project WHERE project.id = ?1`,
+  ).bind(projectId, Date.now()).run();
+  const restoredAfterUsageRepair = await request(
+    `/api/v1/issues/${enabledIssue.body.resource.identifier}/commands/restore`,
+    {
+      body: { expected_version: usageInvariantTombstone.body.resource.version },
+      headers: ownerHeaders({ "idempotency-key": "wp08-repaired-usage-restore" }),
+      method: "POST",
+    },
+  );
+  assert.equal(restoredAfterUsageRepair.response.status, 200);
+
   const publicJoinEventTypes = await db.prepare(
     `SELECT type FROM events
      WHERE project_id = ?1 AND type LIKE 'project.public-join-%'
@@ -542,4 +1000,14 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     restoredByWorkspace.body.items.map((item) => item.public_id).sort(),
     [publicId, secondPublicId].sort(),
   );
+  await assertSecretsAbsentFromPersistence([
+    joinTokenA,
+    joinTokenB,
+    joinTokenC,
+    joinTokenD,
+    joinTokenE,
+    joinTokenF,
+    joinTokenG,
+    publicJoinSessionToken,
+  ]);
 });

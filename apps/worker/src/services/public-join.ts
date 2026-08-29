@@ -42,6 +42,10 @@ import {
   requireLimit,
   writeResult,
 } from "./shared.ts";
+import {
+  PUBLIC_PROJECTS_CONTINUATION_SQL,
+  PUBLIC_PROJECTS_FIRST_PAGE_SQL,
+} from "./public-join-sql.ts";
 
 interface PublicProjectRow {
   display_name: string;
@@ -255,21 +259,11 @@ export async function listPublicProjects(
   const afterPublicId = parsePublicCursor(decodeCursor(url.searchParams.get("cursor"), context));
   let rows: PublicProjectRow[];
   try {
-    const result = await db.prepare(
-      `SELECT policy.public_id, project.display_name, policy.public_summary
-       FROM public_join_policies policy INDEXED BY idx_public_join_enabled
-       JOIN projects project ON project.id = policy.project_id
-       JOIN workspaces workspace ON workspace.id = project.workspace_id
-       JOIN project_usage usage ON usage.project_id = project.id
-       WHERE policy.disabled_at IS NULL AND policy.enabled_at IS NOT NULL
-         AND project.deleted_at IS NULL AND workspace.deleted_at IS NULL
-         AND project.issue_limit IS NOT NULL
-         AND project.comment_limit IS NOT NULL
-         AND project.principal_limit IS NOT NULL
-         AND (?1 IS NULL OR policy.public_id > ?1)
-       ORDER BY policy.public_id
-       LIMIT ?2`,
-    ).bind(afterPublicId, limit + 1).all<PublicProjectRow>();
+    const result = afterPublicId === null
+      ? await db.prepare(PUBLIC_PROJECTS_FIRST_PAGE_SQL)
+        .bind(limit + 1).all<PublicProjectRow>()
+      : await db.prepare(PUBLIC_PROJECTS_CONTINUATION_SQL)
+        .bind(afterPublicId, limit + 1).all<PublicProjectRow>();
     rows = result.results;
   } catch (error) {
     throw platformUnavailable("d1", error);

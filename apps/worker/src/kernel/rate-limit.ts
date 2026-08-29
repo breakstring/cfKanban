@@ -1,33 +1,19 @@
 import { platformUnavailable, rateLimited } from "./errors.ts";
+import {
+  parseRateLimitPolicy,
+  type RateLimitPolicies,
+  type RateLimitPolicy,
+} from "./rate-limit-policy.ts";
 import type { AuthContext, WorkerEnv } from "./types.ts";
 
-export interface RateLimitPolicy {
-  limit: number;
-  periodSeconds: 10 | 60;
-}
-
-export interface RateLimitPolicies {
-  instance: RateLimitPolicy;
-  principal: RateLimitPolicy;
-  unauthenticated_sensitive: RateLimitPolicy;
-}
+export type { RateLimitPolicies, RateLimitPolicy } from "./rate-limit-policy.ts";
 
 type RateLimitScope = keyof RateLimitPolicies;
 
-function positiveInteger(value: string, allowed?: readonly number[]): number {
-  if (!/^[1-9][0-9]*$/u.test(value)) throw platformUnavailable("worker");
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || (allowed !== undefined && !allowed.includes(parsed))) {
-    throw platformUnavailable("worker");
-  }
-  return parsed;
-}
-
 function policy(limit: string, periodSeconds: string): RateLimitPolicy {
-  return {
-    limit: positiveInteger(limit),
-    periodSeconds: positiveInteger(periodSeconds, [10, 60]) as 10 | 60,
-  };
+  const parsed = parseRateLimitPolicy(limit, periodSeconds);
+  if (parsed === null) throw platformUnavailable("worker");
+  return parsed;
 }
 
 export function rateLimitPolicies(env: WorkerEnv): RateLimitPolicies {
