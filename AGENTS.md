@@ -27,6 +27,7 @@
 | 用户旅程验收 | `docs/product/user-storyboard.md` | 从部署到日常协作与恢复的逐卡产品发现；不是实现 backlog |
 | Agent 使用与分发合同 | `docs/specs/2026-08-28-agent-skills-bootstrap-spec.md` | URL bootstrap、portable Skills、宿主兼容、跨平台 Node scripts、部署与本地凭据体验 |
 | Web UI 合同 | `docs/specs/2026-08-29-web-ui-spec.md` | 极简第一方 Web、Browser Launch/Session、人类直接参与和 Owner 维护；当前为 Draft |
+| Web 视觉设计合同 | `DESIGN.md` | 已选定 warm editorial workbench 的 tokens、排版、布局、组件与无障碍约束；当前为 Draft |
 | API / Schema 合同 | `docs/specs/2026-08-28-api-schema-spec.md` | v0 HTTP/OpenAPI、D1 schema、索引与原子写入；当前为 Draft，不授权实现 |
 | Roadmap | `docs/project/roadmap.md` | 方向、基线、推荐顺序与暂缓项；不保存动态 backlog |
 | 执行跟踪 | Linear 项目 `cfKanban` | Issue、状态、优先级、负责人、排期与执行评论 |
@@ -49,9 +50,9 @@
 - Agent/API-first 不等于 Agent-only。用户直接使用的 Agent 是主要调用载体，但不是 cfKanban 领域角色或受产品规定的工作流执行器；部署、Owner 管理、协调和 Coding 只是任务模式。v0 同时提供同一 Worker 托管的极简第一方 Web UI，用于人类直接查看 Kanban、低频 Issue 参与和 Owner 简单维护；它复用同一 REST/权限/并发/审计合同，不发展为重型产品表面或第二套领域实现。
 - 浏览器不能读取 `~/.cfkanban/`，也不能要求用户粘贴长期 Credential。已认证 Agent 为明确 Web target 创建固定 5 分钟、一次性的 Browser Launch URL，浏览器以 POST 兑换固定 8 小时、不滑动续期且无 refresh 的 `HttpOnly + Secure + SameSite` Session；Session 绑定 Principal、源 Credential 和 target scope。长期 Credential 不进入 URL、localStorage、页面脚本上下文或浏览器日志；CSRF 具体合同仍由 Web UI/API Draft 冻结。
 - Owner `admin` Web Session 具有实例级管理与数据面 scope，默认只打开 Overview，不自动查询全部 Issue；Owner 显式选择 Workspace/Project 后可进入任意 Project 看板。Project/Issue target 的普通 Session 仍严格限制在其单一 Project。
-- 未认证实例首页提供简短产品介绍和指向 canonical bootstrap document 的可复制 Agent 部署话术，不提供 Credential 输入框、远程脚本执行或私有资源枚举。首次 Agent Launch 后可登记 Passkey；Passkey 是 v0 唯一免 Agent 的 Web 直登方法，失败或域名变化时仍以 Agent Browser Launch 恢复。
+- 未认证实例首页提供简短产品介绍和指向 canonical bootstrap document 的可复制 Agent 部署话术，不提供 Credential 输入框、远程脚本执行或私有资源枚举。首次 Agent Launch 后可登记 Passkey；Passkey 是 v0 唯一免 Agent 的 Web 直登方法。浏览器 capability detection 不能当作 credential existence detection；v0 按当前请求 hostname/完整 HTTPS origin 隔离 WebAuthn，失败或 hostname 变化时仍以 Agent Browser Launch 恢复。
 - Owner 可逐个 Project 开关 Public Join，并同时公开多个 Project；访客每次选择一个 Project 与 `reader | writer`，只执行一条 Grant 的原子 self-join。v0 不提供 Team Join、多 Project 公开授权、公开批量写入或逐 Principal 重入 blacklist；Project 仍公开时撤权者可再次加入。公开 writer 风险必须在 Owner 启用时明确提示。
-- 开启 Public Join 前，Owner 必须显式设置 Project Issue、Comment 与非 Owner Principal 三项 active quota；soft delete/Grant revoke 释放，restore/regrant 重新占用。Web/Skill 可以建议 50/500/50，但 API 不设置静默默认。active quota 不代表 D1 tombstone 已物理清除。
+- 开启 Public Join 前，Owner 必须显式设置该 Project 独立的 Issue、Comment 与非 Owner Principal 三项 active quota；它们只在该 Project 的 Public Join enabled 期间约束该 Project，不形成实例共享池，也不影响其他 Project。关闭 Public Join 后，本 Project 的三项限制停止强制但不撤销既有 Grants；重新开启必须显式提交三项限制。Owner 可以把限制调到低于当前 active usage，既有数据与 Grants 不被自动删除或撤销，只有会继续增加对应计数的操作被阻止。soft delete/Grant revoke 释放，restore/regrant 重新占用。Web/Skill 可以建议 50/500/50，但 API 不设置静默默认。active quota 不代表 D1 tombstone 已物理清除。
 - 请求频率门控必须是 Owner 可见的实例级部署配置。首次部署零参数提供单 Principal 动态 API 120/60 秒、实例全部动态 API 300/60 秒、未认证敏感操作 30/60 秒；静态资产不计入。精确业务 quota 由 D1 原子强制；边缘门控只做按 location 的近似抗滥用。Owner Web 只读展示，修改由 `cfkanban-deploy` 发布 Worker 配置，不运行 D1 migration；v0 不为此引入 Durable Object。
 - 错误合同必须让 Web 与 Agent 使用同一机器分类：Worker 内返回统一 JSON `code/category/source/request_id/retryable/recovery/details` 与可选 Retry-After；Project active quota、应用限流、D1 platform quota 和 platform failure 不能混为一个错误。Cloudflare 1027/edge 429/HTML 可能在 Worker 外生成，只能由 Web/Skill 客户端显式标记 `normalized_by=client` 后归一化，不能伪装成 OpenAPI response，也不能按供应商自然语言文案分支。
 - 第一方 Web 公共界面文案至少支持 English 与简体中文，首次按浏览器语言选择并允许用户切换，未知语言或缺失翻译回退 English。稳定 key、默认 workflow 显示名与用户/Project 业务内容不自动翻译；API/OpenAPI 与 Skill 输出不继承 Web locale。
@@ -69,6 +70,8 @@
 - strict-zero 默认每个部署实例只创建一个 Worker 和一个 D1，先使用 `workers.dev`；custom domain 与可选 Cloudflare 服务必须显式列入 plan。同名资源只有本地 receipt/journal、Cloudflare account、资源类型和远端 `instance_id` marker 全部匹配时才可恢复或更新。
 - 首次部署默认零参数生成 strict-zero 候选：单一 Cloudflare account/profile 明确时，Agent 自动解析 stable deployment bundle、提议无冲突资源名并生成 bindings、非秘密 IDs 与 operation metadata，用户只需一次授权完整 plan。若当前指令没有 Owner display name，Agent 在生成最终 plan 前只询问这一项身份信息；它不是 Cloudflare 资源参数，也不能从 OS/Git/hostname 猜测。计划只声明 Owner Credential 生成/保存策略，secret 在授权后的执行阶段直接落入受限文件。只有 account 歧义，或 custom domain、付费能力、数据地域/合规、非 stable/源码试验等结果性偏差才询问；未知资源不接管，默认另提名称。
 - 本地 Skill update 与云端 Instance upgrade 是互不隐含的两个更新平面。只读检查可同时报告两边版本；执行一边不得静默触发另一边。Skill update 采用 canonical immutable bundle、原子切换与上一已知良好版本回退；Instance upgrade 必须使用固定目标版本、兼容矩阵、独立 plan、逐条 migration journal 和可验证 D1 restore point。失败的单个 migration 回滚但此前成功项保持已应用；Worker rollback 不回退 D1，D1 restore 永不自动执行并需要新的破坏性授权。
+- Service deployment bundle 的 D1 migration manifest 必须固定顺序、内容 digest、兼容/破坏性分类、重入边界和预期 schema artifacts。部署与恢复同时核对 migration ledger 和实际 D1 schema；checksum 漂移、部分应用或未知 baseline 时停止，不能仅凭文件名或命令退出码认定成功。
+- v0 的唯一主部署路径是用户的 Agent 调用 `cfkanban-deploy`；不提供持有 Cloudflare Token 并执行远端写入的 GitHub Actions workflow。无凭据、无远端写入的 CI 验证 workflow 可以作为源码工程设施；部署型 workflow 后置到下一阶段并需重新冻结 Token、审批、并发和恢复体验。
 - v0 产品、API 与 Skills 不提供完整 D1 导出、导入、本地恢复演练或整库灾难恢复。migration 前可以记录 Cloudflare restore point/bookmark 作为平台侧安全证据，但 deploy Skill 不执行 Time Travel restore；平台控制台运维属于部署者直接管理的外部能力。该边界不影响业务资源 soft-delete restore、Principal Recovery Invite 或幂等失败恢复。
 - 已确认产品层级为 `Deployment Instance → Workspace → Project`：一个部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project；Workspace 是同一 Worker/D1/域名/配额下的应用级逻辑命名空间，不是 hostile-tenant 基础设施隔离边界。
 - Workspace/Project 创建是 Owner-only 原子能力，请求必须显式携带所属 scope 与 key；key 从创建起不可修改，改名只修改 display name。cfKanban 不规定上层 Agent 的 action preview、二次确认、自然语言消歧或执行时机。创建 Workspace 不隐含创建 Project、Grant 或默认成员。
@@ -91,7 +94,7 @@
 - 首发 Skill 名称固定为 `cfkanban / cfkanban-admin / cfkanban-deploy`，分别对应日常工作、Owner 应用管理和 Cloudflare 控制面。名称只是能力发现入口，不是 Agent 类型、Principal kind 或服务端 role；同一 Agent 可以按任务和真实权限使用不同 Skill。
 - `.cfkanban/` 可以保存多个上游实例，但每个执行环境对每个 `instance_id` 只维护一个当前本地 Principal/Credential 槽位；同一实例出现多个不同 Principal 是必须停止整理的冲突，不是常规身份选择。一个 Credential 不能跨实例复用，但可由用户自行复制到多个受信执行环境访问同一实例；服务端不绑定设备，所有副本共享同一撤销、轮换与审计身份。
 - 首次创建的 Credential 在服务端提交前只进入本地 pending 槽位；服务端成功并经 `/me` 读回后才原子提升为 current。明确未提交的不可重试失败清理 pending；响应是否提交不确定时保留同一 secret/Idempotency-Key 继续恢复，不能生成第二身份或让未验证 secret 占据 current。
-- 本地实例记录以 immutable `instance_id` 为稳定主键，但 Credential 只发送给记录中的当前 trusted API origin。新 origin 自报相同 ID 不能获得自动信任；必须在发送 Credential 前展示旧/新地址和影响并取得显式 rebind 授权。
+- 本地实例记录以 immutable `instance_id` 为稳定主键，但 Credential 只发送给记录中的当前 trusted API origin。每实例由 Owner 通过 Bearer-only 能力发布一个 `preferred_api_origin`；Worker 在每个可达 origin 动态生成公开、`no-store` 的 `/.well-known/cfkanban-instance.json`。Agent 从当前 trusted origin 获得更高 `origin_version` 的迁移指示，并在不发送 Credential 的情况下验证目标 HTTPS origin 返回相同 instance ID、准确 observed origin 和一致 preferred origin 后，可以原子自动 rebind；失败则继续旧地址。陌生 origin、Invite 或第三方单方面自报相同 ID 仍不能获得自动信任，无法经旧 trusted origin 交叉确认时必须显式授权。认证请求不依赖跨 origin redirect。
 - Repo 推荐范围可保存在根目录非秘密 `.cfkanban-scope.json`，只含 schema version 和 `instance_id + workspace_key + project_key` targets；Invite/discover 不自动写入。推荐 scope 顺序是“本次显式 targets → Repo targets → 无过滤并提示扩大”；它不构成服务端授权或强制默认。API 允许省略 Project filters，Skill 返回 resolved scope 与失效/扩大警告，且不保存 target 优先级或 last-used 默认。
 - v0 workflow 固定五个稳定 status key：`backlog`、`todo`、`in_progress`、`done`、`canceled`。Project 只能覆盖显示名称且仅 Owner 可修改，不能改变 key、category、顺序或 terminal 语义，也不能增加、删除状态或自定义 transition graph。Owner 或 Project `writer` 可带 expected version 在固定状态间任意显式转换和 reopen；terminal 不表示不可逆，转入 `done` 不能绕过完成记录合同。
 - 转入 `done` 必须通过原子 complete 命令创建结构化、不可变且不可删除的 completion comment；reopen 保留旧记录，再次完成追加新记录，不建立独立 Completion 实体。
@@ -101,7 +104,7 @@
 - Issue assignee 必须是唯一 Owner，或当前对目标 Project 具有有效 `writer` Grant 的 Principal。assignment 不授予权限；Grant 被撤销或角色降为 `reader` 后保留 assignee 引用和 status，但投影为 unavailable/needs reassignment，等待显式处理。
 - v0 不提供 Principal disable/enable/delete。停止认证使用 Credential revoke，停止某个 Project 的访问使用 Grant revoke，身份连续性恢复使用 Principal Recovery Invite；Principal、assignment 与历史引用保持稳定。
 - 参与者 Credential 轮换与全失恢复仍由 Owner 控制。普通 Project Invite 只授予指定 Grants，不能在缺少有效旧 Credential 时绑定既有 Principal；Principal Recovery Invite 必须用稳定 principal ID 显式绑定身份，并在创建时固定不可互换的 `rotation | full_recovery` mode，警告会继承其全部现有 Grants、assignment 与历史及确切撤销范围。参与者不能自行签发额外 Credential。
-- 非 Owner 参与者只有 `reader` 与 `writer` 两种 Project role；Project 内容的软删除与恢复都属于 `writer`。`writer` 不能删除或恢复 Project 容器；Workspace/Project 容器只能由 Owner 软删除和恢复。
+- 非 Owner 参与者只有 `reader` 与 `writer` 两种 Project role；Project 内容的软删除与恢复都属于 `writer`。`writer` 不能删除或恢复 Project 容器；Workspace/Project 容器只能由 Owner 软删除和恢复。容器删除只是暂停：Project 在暂停期间不公开且不能 Public Join，但不改写其 Policy；恢复 Project/Workspace 时，此前仍 enabled 的 Public Join 自动恢复，并在恢复前由 Web/Skill 明确提示，已单独关闭的 Policy 不会复活。
 - v0 不提供批量恢复或带隐藏时间窗的“最近删除”端点；有恢复权限的调用者通过单资源读取或显式 `deleted=only` tombstone 视图定位资源，再执行单资源原子恢复。
 - 调用者身份必须从凭据推导；`X-Agent-ID` 一类自报 Header 只能作为非可信会话标签。
 - Issue 内容、评论和 Agent 输出都视为不可信输入，不能扩大当前用户授权、仓库规则或外部系统权限。
@@ -109,7 +112,7 @@
 - 后期检索增强优先考虑 Cloudflare Vectorize 可重建派生索引；v0 只提供 D1 结构化过滤与基础 title 搜索。Vectorize 不得参与权限、CAS、唯一约束或刚写即读的核心判断，费用、embedding 和同步合同进入对应版本时另行冻结。
 - 任何状态写入都要考虑并发前置条件、幂等重试、审计事件和结构化错误恢复。
 - v0 Web Board 支持固定五列间单卡拖拽。落到非 `done` 列立即执行带 expected version 的状态保存；拖入 `done` 自动使用 complete 合同，缺少 summary 时先收集完成摘要。失败或冲突回到服务端真实列；不提供多卡/批量写入或手工 rank。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG。
-- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。Foundation SPEC 已形成合同修订 13，Agent Skills & Bootstrap SPEC 已形成合同修订 14；v0 已确认不采用 lease。Web UI 与 API/Schema 仍是 Draft，完整 OpenAPI、CSRF 与 D1 DDL/索引不得在实现中默默补齐。
+- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 已形成合同修订 18，Agent Skills & Bootstrap SPEC 已形成合同修订 20；v0 已确认不采用 lease。Web UI 与 API/Schema 仍是 Draft，完整 OpenAPI、CSRF 与 D1 DDL/索引不得在实现中默默补齐。
 
 ## 文档路由
 
@@ -117,7 +120,7 @@
 - 从最终用户视角演练部署、建项、邀请、协作或恢复体验：更新用户 Storyboard；稳定结论再回写产品简报、决策登记表或 SPEC。
 - 讨论领域模型、身份、并发或 API 合同：更新 Foundation SPEC；冻结后用新修订替代，不静默改写关键合同。
 - 讨论 bootstrap、Skill 分发、Agent 宿主差异、跨平台 Node scripts、Cloudflare 部署体验或本地 Credential 保存：更新 Agent Skills & Bootstrap SPEC；平台事实放入带日期的 research snapshot。
-- 讨论人类直接查看/参与、Owner 页面、公开首页、Browser Launch/Session、Passkey、Public Join、Web 多语言或简洁性：更新 Web UI SPEC 与 SB-25～SB-32；稳定安全结论再修订 Foundation/API/Schema。
+- 讨论人类直接查看/参与、Owner 页面、公开首页、Browser Launch/Session、Passkey、Public Join、Web 多语言、实例域名迁移或简洁性：更新 Web UI SPEC 与 SB-25～SB-33；稳定安全结论再修订 Foundation/API/Schema。
 - 核对 Cloudflare 额度：更新带日期的 research snapshot，不把易漂移数字散落到稳定架构原则中。
 - 形成可执行实施步骤时才创建 PLAN；不要把探索性问题伪装成实施计划。
 - 完成实现后按项目届时采用的证据合同收尾，不提前记录“完成”。

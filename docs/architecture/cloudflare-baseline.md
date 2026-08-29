@@ -3,17 +3,33 @@
 - 文档状态：Draft
 - 适用范围：cfKanban v0 候选架构
 - 事实快照：[2026-08-28 Cloudflare 平台快照](../research/cloudflare-platform-snapshot-2026-08-28.md)
+- 外部工程参考：[2026-08-29 Edgechat 架构与部署工程快照](../research/edgechat-architecture-snapshot-2026-08-29.md)
 
 ## 1. 结论
 
 v0 推荐只把 Workers 和 D1 设为必要持久运行组件：
 
 - Workers 提供 REST API、OpenAPI、鉴权、业务校验、Invite bootstrap，以及同实例极简 Web UI 与 Browser Launch/Session 入口。
-- D1 是 Workspace、Project、Project Usage、Issue（含 assignment）、Principal、Credential、Project Grant、Invitation、Public Join Policy、Browser Launch、Web Authenticator、Web Session、Comment、Event 等核心事实的唯一权威来源。
+- D1 是实例 preferred origin 设置、Workspace、Project、Project Usage、Issue（含 assignment）、Principal、Credential、Project Grant、Invitation、Public Join Policy、Browser Launch、Web Authenticator、Web Session、Comment、Event 等核心事实的唯一权威来源。
 
 KV、Durable Objects、Queues、R2、Vectorize 和 Workers AI 都不应为了“充分利用 Cloudflare”而提前加入。
 
 Workers Rate Limiting binding 可以作为 Worker 的近似边缘请求门控，不成为事实源或额外持久数据服务。精确的 Issue/Comment/Principal active quota 仍由 D1 原子强制。
+
+### 源码、发行包与云端资源是三个层级
+
+- canonical source 采用 monorepo，逻辑上容纳 Web、Worker/API、公共 contracts、D1 migrations、三个 Skills 与文档；Web 已按 D-248 选择 Vue 3 + TypeScript + Vite，具体目录、package manager 与配套测试/状态管理依赖在实现阶段确定。
+- stable Service deployment bundle 固定 Worker 代码/配置、预构建 Web assets、D1 migrations 与兼容元数据。普通部署消费 bundle，不在部署者机器上重新选择依赖或现场构建 Web。
+- 云端实例仍只创建一个 Worker 和一个 D1。Web 由该 Worker 的 Workers Static Assets 发布，与 API 同 origin、同 deployment version；v0 不创建 Pages project 或 KV namespace。
+- 源码开发和 CI 可以使用 lockfile 中的 repo-local Wrangler。它与普通部署者由 `cfkanban-deploy` 管理、独立于任意业务 Repo 的用户级 Tool Runtime 是两个场景，不能互相推导安装位置。
+
+### 可重现构建与 migration 证据
+
+- monorepo 必须提供锁文件约束下的根级验证/构建入口，一次确定性生成 Worker 与预构建 Web assets；具体 package manager、脚本名和 workspace 机制在实现阶段确定。
+- D1 migrations 由 bundle 内的有序 manifest 描述，而不是在运行时按目录名称猜测顺序。每条记录固定稳定 ID、内容 digest、兼容/破坏性分类、重入边界与预期 schema artifacts。
+- migration 完成需要 ledger 与实际 D1 schema 双重 readback；checksum 漂移、部分 artifacts 或未知 baseline 必须停止并形成 repair plan。命令退出成功不能单独构成完成证据。
+- checksum 规范化必须跨目标操作系统稳定，避免 CRLF/LF 等非语义差异制造错误 migration 漂移。
+- 无 Cloudflare 凭据、无远端写入的 CI workflow 可以复用根级入口做验证。持有 Cloudflare Token 并执行部署的 GitHub Actions workflow 不属于 v0；下一阶段如引入，必须复用 `cfkanban-deploy` 的 plan、journal、marker 与 readback，不能形成第二套部署合同。
 
 ## 2. 逻辑结构
 
@@ -83,6 +99,14 @@ assign-to-me、report-blocked、clear-blocked、complete 等命令可能同时�
 3. 浏览器后续仍通过同一 REST 服务读取和执行单资源原子操作。Session 固定 8 小时、不滑动续期且无 refresh；每次请求按 D1 当前 Session、Principal、源 Credential、Grant、容器状态与 target scope 授权。
 4. cookie-auth 写入执行同源和 CSRF 校验。Session 不进入 KV，不从页面脚本读取，也不形成第二套权限缓存。
 
+### 实例域名发现与迁移
+
+1. 域名绑定是 Cloudflare 或第三方控制面事实；线上 Worker 不保存 Cloudflare Token，也不能枚举第三方 alias。`cfkanban-deploy` 可以使用部署者现有控制面身份只读 reconcile Cloudflare-native domains/routes。
+2. D1 保存一个 Owner 推荐的 `preferred_api_origin` 与递增版本。首次 strict-zero 部署把实际 `workers.dev` HTTPS origin 初始化为推荐入口；后续修改由 `cfkanban-admin` 使用 Owner Bearer Credential 与 expected version 原子发布，不要求重新部署。
+3. Worker 在每个可达 origin 动态返回公开、非秘密、`no-store` 的 `/.well-known/cfkanban-instance.json`，其中 `observed_origin` 从本次 `Request.url` 推导；响应不列举 aliases，不接受 forwarded host 覆盖，也不做跨 origin redirect。
+4. 已有 Agent 只信任本地当前 trusted origin 给出的更高版本指示。它先不携带 Credential、不跟随 redirect 地探测新 origin，并交叉验证 instance ID、observed/preferred origin 与版本；全部一致后才原子更新本地记录。陌生入口不能靠自报同一 instance ID 获得信任，旧 origin 已失联时需要用户显式 rebind。
+5. API Credential 的本地 origin 迁移不搬运浏览器状态。Web Session cookie 按 origin 建立；cfKanban v0 的 Passkey RP ID 固定为当前请求 hostname、expected origin 固定为当次完整 HTTPS origin，不启用跨 hostname 共享。新 hostname 通过 Agent Browser Launch 恢复并重新登记。
+
 ## 4. 组件职责
 
 ### Workers
@@ -95,6 +119,7 @@ assign-to-me、report-blocked、clear-blocked、complete 等命令可能同时�
 - D1 transaction/batch 编排。
 - 调用三个 Workers Rate Limiting bindings，以单 Principal 120/60 秒、实例动态 API 300/60 秒和未认证敏感操作 30/60 秒做近似门控；返回 429 与 `Retry-After`。首次部署自动生成，后续由 deploy Skill 发布配置修改。
 - Invite bootstrap 文档、极简 Web 静态资产、Browser Launch/Session 与同源 CSRF 入口。
+- 动态实例发现文档，以及 Owner Bearer-only preferred origin 配置端点；不负责创建、删除或枚举外部域名。
 
 不承担：
 
@@ -113,7 +138,8 @@ assign-to-me、report-blocked、clear-blocked、complete 等命令可能同时�
 - Project Invite 与 Principal Recovery Invite 的类型约束、bound principal 和旧 Credential 撤销顺序。
 - CAS、唯一约束、关系完整性。
 - Event cursor 和可恢复增量读取。
-- Project 三项 active quota 及其可重算 usage；soft delete/revoke 释放，restore/regrant 重新占用，并与领域写入原子提交。
+- Public Join enabled Project 独立的三项 active quota 及其可重算 usage；不形成实例共享池，关闭 Public Join 后不再强制或维护 counters。重新开启从权威表原子重算；enabled 期间 soft delete/revoke 释放、restore/regrant 重新占用，并与领域写入原子提交。limit 低于 usage 时只阻止计数继续增长。
+- 单例 preferred origin、递增 version、更新 actor/time 与审计依据；它只是应用推荐入口，不代表 Cloudflare/第三方实际域名清单。
 
 设计约束：
 
@@ -203,6 +229,7 @@ Queue 是至少一次投递通道，消费者必须按 event ID 幂等。Queue �
 - 对不同 Agent 的配置差异做适配；
 - 按需调用 bundle 内 Node.js/TypeScript scripts 完成凭据、重试、部署 journal 等确定性操作；
 - 为明确 Project/Issue/Owner 管理 target 创建一次性 Browser Launch；宿主支持时打开 IAB，否则返回普通浏览器 URL。
+- 低频读取当前 trusted origin 的实例发现文档；只有更高版本指示与无 Credential 目标探测完全一致时自动更新本地 trusted origin，否则保留旧记录并请求显式 rebind。
 
 Skill 是客户端分发包，不是云端状态或人类页面。v0 不发布独立 cfKanban CLI；Node scripts 只是 Skill 内部执行资源。人类直接表面由同一 Worker 托管的极简 Web UI 提供，并复用同一 REST 业务合同。
 
@@ -244,9 +271,9 @@ Invite URL 是唯一允许 URL 携带 Bearer secret 的 bootstrap 例外，且�
 
 - Workers Free
 - D1 Free
-- Invite bootstrap 页面（可由 Worker 直接响应，不要求独立静态站点）
+- Workers Static Assets（Web、Invite/bootstrap 与 API 由同一个 Worker deployment 发布，不创建 Pages project）
 - 应用内 per-Agent Credential
-- 无 KV、R2、Queue、DO、Vectorize、AI
+- 无 KV namespace、R2、Queue、DO、Vectorize、AI
 
 超限时以明确失败和退避为主，不产生意外账单。
 
