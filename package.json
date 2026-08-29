@@ -15,7 +15,7 @@
     "contracts:check": "npm run contracts:verify-generated && node scripts/validate-openapi.mjs && node scripts/validate-error-contract.mjs && redocly lint contracts/openapi.json",
     "migrations:generate": "node scripts/generate-migration-manifest.mjs",
     "migrations:verify-generated": "node scripts/generate-migration-manifest.mjs --check",
-    "worker:test:integration": "node --experimental-strip-types --test scripts/tests/worker-integration.test.mjs",
+    "worker:test:integration": "node --experimental-strip-types --test scripts/tests/worker-integration.test.mjs && node --experimental-strip-types --test scripts/tests/worker-wp03.integration.test.mjs",
     "d1:check": "npm run migrations:verify-generated && node scripts/validate-d1-schema.mjs && node scripts/validate-d1-operations.mjs && node scripts/validate-web-security.mjs && node scripts/validate-d1-wrangler.mjs && npm run worker:test:integration",
     "ci:check": "node scripts/validate-ci-policy.mjs",
     "clean": "node scripts/clean-build-output.mjs",
