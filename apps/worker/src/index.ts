@@ -7,12 +7,13 @@ import type { WorkerEnv } from "./kernel/types.ts";
 import { registerWp03Routes } from "./routes/wp03.ts";
 import { registerWp04Routes } from "./routes/wp04.ts";
 import { registerWp05Routes } from "./routes/wp05.ts";
+import { registerWp06Routes } from "./routes/wp06.ts";
 
 const SERVICE_VERSION = "0.1.0";
 const SCHEMA_VERSION = 1;
 const openApiBody = JSON.stringify(openApiDocument);
 
-const router = registerWp05Routes(registerWp04Routes(registerWp03Routes(new Router()
+const router = registerWp06Routes(registerWp05Routes(registerWp04Routes(registerWp03Routes(new Router()
   .get("/healthz", async (_request, env, context) => {
     try {
       await env.DB.prepare("SELECT 1 AS reachable").first();
@@ -31,7 +32,7 @@ const router = registerWp05Routes(registerWp04Routes(registerWp03Routes(new Rout
       "content-type": "application/json; charset=utf-8",
       "x-request-id": context.requestId,
     },
-  })))));
+  }))))));
 
 function isWorkerOwnedPath(pathname: string): boolean {
   return pathname.startsWith("/api/")

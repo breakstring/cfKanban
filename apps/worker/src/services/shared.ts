@@ -1,5 +1,16 @@
-import { validationError } from "../kernel/errors.ts";
+import { resolveVisibleProjects } from "../kernel/authorization.ts";
+import { createCursorContext, encodeCursor } from "../kernel/cursor.ts";
+import { platformUnavailable, validationError } from "../kernel/errors.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
+
+export interface EventCursorPrincipal {
+  principalId: string;
+}
+
+export const DEFAULT_EVENT_CURSOR_FILTER: JsonValue = {
+  project_targets: [],
+  workspace_targets: [],
+};
 
 export function actorCredentialId(auth: AuthContext): string | null {
   if (auth.kind === "bearer") return auth.credentialId;
@@ -11,21 +22,60 @@ export function authorizedVia(auth: AuthContext, ownerAction = false): string {
   return auth.kind === "cookie" ? "web_session" : "project_grant";
 }
 
-export function opaqueEventCursor(sequence: number): string {
-  const json = JSON.stringify({ sequence, v: 1 });
-  const bytes = new TextEncoder().encode(json);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+async function eventCursorProjectIds(
+  db: D1Database,
+  identity: AuthContext | EventCursorPrincipal,
+): Promise<string[]> {
+  if ("kind" in identity) {
+    return (await resolveVisibleProjects(db, identity)).map((project) => project.projectId);
+  }
+  try {
+    const result = await db.prepare(
+      `SELECT project.id
+       FROM projects project
+       JOIN workspaces workspace ON workspace.id = project.workspace_id
+       JOIN instance_meta instance ON instance.singleton = 1
+       WHERE project.deleted_at IS NULL AND workspace.deleted_at IS NULL
+         AND (
+           instance.owner_principal_id = ?1
+           OR EXISTS (
+             SELECT 1 FROM project_grants grant_row
+             WHERE grant_row.project_id = project.id
+               AND grant_row.principal_id = ?1
+               AND grant_row.revoked_at IS NULL
+           )
+         )
+       ORDER BY project.id`,
+    ).bind(identity.principalId).all<{ id: string }>();
+    return result.results.map((row) => row.id);
+  } catch {
+    throw platformUnavailable("d1");
+  }
 }
 
-export function writeResult(
+export async function eventCursor(
+  db: D1Database,
+  identity: AuthContext | EventCursorPrincipal,
+  lastEventSequence: number,
+): Promise<string> {
+  const context = await createCursorContext(
+    "events",
+    DEFAULT_EVENT_CURSOR_FILTER,
+    await eventCursorProjectIds(db, identity),
+    identity.principalId,
+  );
+  return encodeCursor(context, [lastEventSequence]);
+}
+
+export async function writeResult(
+  db: D1Database,
+  identity: AuthContext | EventCursorPrincipal,
   resource: { [key: string]: JsonValue },
   lastEventSequence: number,
   idempotentReplay: boolean,
-): { [key: string]: JsonValue } {
+): Promise<{ [key: string]: JsonValue }> {
   return {
-    event_cursor: opaqueEventCursor(lastEventSequence),
+    event_cursor: await eventCursor(db, identity, lastEventSequence),
     idempotent_replay: idempotentReplay,
     resource,
   };

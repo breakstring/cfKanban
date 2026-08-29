@@ -42,6 +42,7 @@ import {
   versionConflict,
 } from "../kernel/errors.ts";
 import {
+  abandonOwnedPendingClaim,
   claimIdempotency,
   finalizeIdempotency,
   readIdempotencyResponse,
@@ -91,7 +92,7 @@ interface InvitationGrantRow {
 
 interface RedemptionItemRow {
   effective_role: ProjectRole;
-  outcome: "already_has_access" | "created" | "promoted" | "regranted";
+  outcome: "already_has_access" | "created" | "regranted";
   project_id: string;
 }
 
@@ -175,7 +176,9 @@ function redemptionOperationSnapshotStatement(
   db: D1Database,
   operationId: string,
   invitationId: string,
+  forbiddenValues: readonly string[],
 ): D1PreparedStatement {
+  const [firstForbidden = "", secondForbidden = ""] = forbiddenValues;
   const extras = `,
     'credential', json((
       SELECT json_object(
@@ -215,9 +218,35 @@ function redemptionOperationSnapshotStatement(
        LEFT JOIN principals bound ON bound.id = invitation.bound_principal_id
        JOIN principals redeemed_principal ON redeemed_principal.id = invitation.redeemed_by_principal_id
        WHERE invitation.id = ?2 AND invitation.last_operation_id = ?1
+         AND (?3 = '' OR (
+           instr(redeemed_principal.display_name, ?3) = 0
+           AND instr(COALESCE(bound.display_name, ''), ?3) = 0
+           AND NOT EXISTS (
+             SELECT 1 FROM invitation_project_grants forbidden_grant
+             JOIN projects forbidden_project ON forbidden_project.id = forbidden_grant.project_id
+             JOIN workspaces forbidden_workspace ON forbidden_workspace.id = forbidden_project.workspace_id
+             WHERE forbidden_grant.invitation_id = invitation.id
+               AND (instr(forbidden_project.display_name, ?3) > 0
+                    OR instr(forbidden_project.key, ?3) > 0
+                    OR instr(forbidden_workspace.key, ?3) > 0)
+           )
+         ))
+         AND (?4 = '' OR (
+           instr(redeemed_principal.display_name, ?4) = 0
+           AND instr(COALESCE(bound.display_name, ''), ?4) = 0
+           AND NOT EXISTS (
+             SELECT 1 FROM invitation_project_grants forbidden_grant
+             JOIN projects forbidden_project ON forbidden_project.id = forbidden_grant.project_id
+             JOIN workspaces forbidden_workspace ON forbidden_workspace.id = forbidden_project.workspace_id
+             WHERE forbidden_grant.invitation_id = invitation.id
+               AND (instr(forbidden_project.display_name, ?4) > 0
+                    OR instr(forbidden_project.key, ?4) > 0
+                    OR instr(forbidden_workspace.key, ?4) > 0)
+           )
+         ))
      )
      WHERE operation_id = ?1 AND state = 'pending'`,
-  ).bind(operationId, invitationId);
+  ).bind(operationId, invitationId, firstForbidden, secondForbidden);
 }
 
 function invitationVersion(row: InvitationRow): number {
@@ -279,6 +308,35 @@ async function readInvitationGrants(db: D1Database, invitationId: string): Promi
     return result.results;
   } catch {
     throw platformUnavailable("d1");
+  }
+}
+
+function assertSecretNotInBusinessText(
+  value: string | null,
+  field: string,
+  forbiddenValues: readonly string[],
+): void {
+  if (
+    value !== null
+    && forbiddenValues.some((secret) => secret.length >= 8 && value.includes(secret))
+  ) {
+    throw validationError("secret_value_reused", { field });
+  }
+}
+
+async function assertRedemptionSnapshotInputsSafe(
+  db: D1Database,
+  invitation: InvitationRow,
+  principalDisplayName: string | null,
+  forbiddenValues: readonly string[],
+): Promise<void> {
+  assertSecretNotInBusinessText(principalDisplayName, "display_name", forbiddenValues);
+  assertSecretNotInBusinessText(invitation.bound_display_name, "display_name", forbiddenValues);
+  const grants = await readInvitationGrants(db, invitation.id);
+  for (const grant of grants) {
+    assertSecretNotInBusinessText(grant.display_name, "project_display_name", forbiddenValues);
+    assertSecretNotInBusinessText(grant.project_key, "project_key", forbiddenValues);
+    assertSecretNotInBusinessText(grant.workspace_key, "workspace_key", forbiddenValues);
   }
 }
 
@@ -475,6 +533,10 @@ async function createInvitationBatch(
   now: number,
 ): Promise<void> {
   const guard = buildCurrentAuthGuard(auth, now, 11, true);
+  const grantsJson = JSON.stringify(grants.map((grant) => ({
+    project_id: grant.projectId,
+    role: grant.role,
+  })));
   const statements: D1PreparedStatement[] = [
     db.prepare(
       `INSERT INTO invitations
@@ -505,19 +567,20 @@ async function createInvitationBatch(
       operationId,
       ...guard.values,
     ),
-  ];
-  for (const grant of grants) {
-    statements.push(db.prepare(
+    db.prepare(
       `INSERT INTO invitation_project_grants (invitation_id, project_id, role)
-       SELECT i.id, p.id, ?1
-       FROM invitations AS i
-       JOIN projects AS p ON p.id = ?2
-       JOIN workspaces AS w ON w.id = p.workspace_id
-       WHERE i.id = ?3 AND i.created_operation_id = ?4
-         AND i.kind = 'project_grant'
-         AND p.deleted_at IS NULL AND w.deleted_at IS NULL`,
-    ).bind(grant.role, grant.projectId, invitationId, operationId));
-  }
+       SELECT invitation.id, project.id,
+              json_extract(requested.value, '$.role')
+       FROM invitations AS invitation
+       CROSS JOIN json_each(?1) AS requested
+       JOIN projects AS project
+         ON project.id = json_extract(requested.value, '$.project_id')
+       JOIN workspaces AS workspace ON workspace.id = project.workspace_id
+       WHERE invitation.id = ?2 AND invitation.created_operation_id = ?3
+         AND invitation.kind = 'project_grant'
+         AND project.deleted_at IS NULL AND workspace.deleted_at IS NULL`,
+    ).bind(grantsJson, invitationId, operationId),
+  ];
   statements.push(invitationOperationSnapshotStatement(db, operationId, invitationId));
   statements.push(db.prepare(
     `INSERT INTO events
@@ -558,13 +621,25 @@ async function createInvitationBatch(
           ).bind(principalId).first();
           return principal === null || await ownerGuardRejected(db, auth, now);
         }
-        for (const grant of grants) {
-          const project = await db.prepare(
-            `SELECT p.id FROM projects p JOIN workspaces w ON w.id = p.workspace_id
-             WHERE p.id = ?1 AND p.deleted_at IS NULL AND w.deleted_at IS NULL`,
-          ).bind(grant.projectId).first();
-          if (project === null) return true;
-        }
+        const projectSet = await db.prepare(
+          `SELECT COUNT(*) AS requested_count,
+                  SUM(CASE
+                    WHEN project.id IS NOT NULL
+                     AND project.deleted_at IS NULL
+                     AND workspace.id IS NOT NULL
+                     AND workspace.deleted_at IS NULL
+                    THEN 1 ELSE 0
+                  END) AS active_count
+           FROM json_each(?1) AS requested
+           LEFT JOIN projects AS project
+             ON project.id = json_extract(requested.value, '$.project_id')
+           LEFT JOIN workspaces AS workspace ON workspace.id = project.workspace_id`,
+        ).bind(grantsJson).first<{ active_count: number | null; requested_count: number }>();
+        if (
+          projectSet === null
+          || projectSet.requested_count !== grants.length
+          || projectSet.active_count !== grants.length
+        ) return true;
         return ownerGuardRejected(db, auth, now);
       },
       expectedEventCount: 1,
@@ -659,14 +734,17 @@ export async function createInvitation(
       );
     } catch (error) {
       commit = await probeOperationCommit(db, claim.operationId);
-      if (commit === null) throw error;
+      if (commit === null) {
+        await abandonOwnedPendingClaim(db, claim);
+        throw error;
+      }
     }
     commit = await probeOperationCommit(db, claim.operationId);
   }
   if (commit === null) throw new AtomicBatchRejectedError();
   await reauthenticateOwner(db, request, now);
   const snapshot = await readOperationSnapshot<InvitationOperationSnapshot>(db, claim.operationId);
-  const safeBody = writeResult({
+  const safeBody = await writeResult(db, auth, {
     ...(await invitationResource(db, snapshot.row, now, snapshot.grants)),
     secret_available: false,
   }, commit.lastEventSequence, false);
@@ -758,6 +836,8 @@ export async function revokeInvitation(
     revoked_at: now,
   };
   return writeResult(
+    db,
+    auth,
     await invitationResource(db, updated, now, grants),
     commit.lastEventSequence,
     false,
@@ -1008,6 +1088,7 @@ async function executeProjectInviteRedeem(
   auth: (AuthContext & { kind: "bearer" }) | null,
   displayName: string | null,
   replacement: { digest: string; id: string; prefix: string } | null,
+  forbiddenValues: readonly string[],
   now: number,
 ): Promise<void> {
   const grants = await readInvitationGrants(db, invitation.id);
@@ -1147,7 +1228,12 @@ async function executeProjectInviteRedeem(
        AND (?7 = 0 OR EXISTS (SELECT 1 FROM credentials c
                              WHERE c.principal_id = ?2 AND c.created_operation_id = ?3))`,
   ).bind(now, principalId, claim.operationId, invitation.id, invitation.code_digest, grants.length, auth === null ? 1 : 0));
-  statements.push(redemptionOperationSnapshotStatement(db, claim.operationId, invitation.id));
+  statements.push(redemptionOperationSnapshotStatement(
+    db,
+    claim.operationId,
+    invitation.id,
+    forbiddenValues,
+  ));
   statements.push(db.prepare(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -1186,7 +1272,7 @@ async function executeProjectInviteRedeem(
     planJson,
     claim.operationId,
     principalId,
-    auth?.credentialId ?? replacement?.id ?? null,
+    auth?.credentialId ?? null,
     now,
     invitation.id,
   ));
@@ -1204,7 +1290,7 @@ async function executeProjectInviteRedeem(
     claim.operationId,
     grants.length,
     principalId,
-    auth?.credentialId ?? replacement?.id ?? null,
+    auth?.credentialId ?? null,
     now,
     invitation.id,
   ));
@@ -1228,6 +1314,12 @@ async function executeProjectInviteRedeem(
     });
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
+      await assertRedemptionSnapshotInputsSafe(
+        db,
+        invitation,
+        displayName ?? auth?.displayName ?? null,
+        forbiddenValues,
+      );
       const latest = await readInvitationById(db, invitation.id);
       if (latest === null) throw notFound();
       if (invitationStatus(latest, now) !== "active") assertInvitationUsable(latest, now);
@@ -1250,6 +1342,7 @@ async function executeRecoveryRedeem(
   claim: IdempotencyClaim,
   auth: (AuthContext & { kind: "bearer" }) | null,
   replacement: { digest: string; id: string; prefix: string },
+  forbiddenValues: readonly string[],
   now: number,
 ): Promise<void> {
   const principalId = invitation.bound_principal_id;
@@ -1312,7 +1405,12 @@ async function executeRecoveryRedeem(
              WHERE old.principal_id = ?2 AND old.last_operation_id = ?3
                AND old.revoked_at IS NOT NULL) = 1)`,
   ).bind(now, principalId, claim.operationId, invitation.id, invitation.code_digest, invitation.recovery_mode));
-  statements.push(redemptionOperationSnapshotStatement(db, claim.operationId, invitation.id));
+  statements.push(redemptionOperationSnapshotStatement(
+    db,
+    claim.operationId,
+    invitation.id,
+    forbiddenValues,
+  ));
   statements.push(db.prepare(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -1358,6 +1456,12 @@ async function executeRecoveryRedeem(
     });
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
+      await assertRedemptionSnapshotInputsSafe(
+        db,
+        invitation,
+        invitation.bound_display_name,
+        forbiddenValues,
+      );
       const latest = await readInvitationById(db, invitation.id);
       if (latest === null) throw notFound();
       if (invitationStatus(latest, now) !== "active") assertInvitationUsable(latest, now);
@@ -1397,7 +1501,13 @@ async function redemptionReadback(
       project_id: item.project_id,
     })),
   };
-  return writeResult(resource, commit.lastEventSequence, false);
+  return writeResult(
+    db,
+    { principalId: snapshot.principal.id },
+    resource,
+    commit.lastEventSequence,
+    false,
+  );
 }
 
 export async function redeemInvitation(
@@ -1428,6 +1538,18 @@ export async function redeemInvitation(
     prefix: mode.replacement.prefix,
     token: mode.replacement.token,
   };
+  const persistenceForbiddenValues = [
+    inviteCode,
+    ...(mode.replacement === null ? [] : [mode.replacement.token]),
+  ];
+  const redeemedPrincipalDisplayName = mode.displayName
+    ?? auth?.displayName
+    ?? invitation.bound_display_name;
+  assertSecretNotInBusinessText(
+    redeemedPrincipalDisplayName,
+    "display_name",
+    persistenceForbiddenValues,
+  );
   const idempotencyKey = requireIdempotencyKey(request);
   const scopeKey = redeemAs === "new_principal" || invitation.recovery_mode === "full_recovery"
     ? `invitation:${invitation.id}`
@@ -1449,7 +1571,7 @@ export async function redeemInvitation(
     db,
     identity,
     now,
-    [inviteCode, ...(mode.replacement === null ? [] : [mode.replacement.token])],
+    persistenceForbiddenValues,
   );
   const status = invitationStatus(invitation, now);
   if (status === "revoked") throw gone("INVITATION_REVOKED");
@@ -1464,6 +1586,12 @@ export async function redeemInvitation(
   let commit = await probeOperationCommit(db, claim.operationId);
   const resumed = commit !== null;
   if (commit === null) {
+    await assertRedemptionSnapshotInputsSafe(
+      db,
+      invitation,
+      redeemedPrincipalDisplayName,
+      persistenceForbiddenValues,
+    );
     try {
       if (invitation.kind === "project_grant") {
         await executeProjectInviteRedeem(
@@ -1473,11 +1601,20 @@ export async function redeemInvitation(
           auth,
           mode.displayName,
           replacement,
+          persistenceForbiddenValues,
           now,
         );
       } else {
         if (replacement === null) throw validationError("new_credential_token_required");
-        await executeRecoveryRedeem(db, invitation, claim, auth, replacement, now);
+        await executeRecoveryRedeem(
+          db,
+          invitation,
+          claim,
+          auth,
+          replacement,
+          persistenceForbiddenValues,
+          now,
+        );
       }
     } catch (error) {
       commit = await probeOperationCommit(db, claim.operationId);
@@ -1491,7 +1628,7 @@ export async function redeemInvitation(
     db,
     claim.operationId,
     { body, status: 200 },
-    [inviteCode, ...(mode.replacement === null ? [] : [mode.replacement.token])],
+    persistenceForbiddenValues,
     now,
   );
   return {

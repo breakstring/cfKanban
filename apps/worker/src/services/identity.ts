@@ -255,7 +255,13 @@ export async function updateMe(
     }
     throw error;
   }
-  return writeResult(principalResource(updated, { principal_id: updated.id }), commit.lastEventSequence, false);
+  return writeResult(
+    db,
+    auth,
+    principalResource(updated, { principal_id: updated.id }),
+    commit.lastEventSequence,
+    false,
+  );
 }
 
 export async function getInstanceOrigin(
@@ -351,7 +357,9 @@ export async function updateInstanceOrigin(
     now,
     readback: async (operationId, commit) => {
       return {
-        body: writeResult(
+        body: await writeResult(
+          db,
+          auth,
           await readOperationSnapshot<{ [key: string]: JsonValue }>(db, operationId),
           commit.lastEventSequence,
           false,

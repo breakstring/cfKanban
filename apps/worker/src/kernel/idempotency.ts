@@ -46,6 +46,7 @@ export interface RunIdempotentOperationOptions<T extends JsonValue> extends Idem
   forbiddenPersistenceValues?: readonly string[];
   now?: number;
   readback: (operationId: string, commit: OperationCommit) => Promise<IdempotentReadback<T>>;
+  replay?: (stored: IdempotentReadback<T>) => Promise<IdempotentReadback<T>>;
 }
 
 export interface IdempotentOperationResult<T extends JsonValue> extends IdempotentReadback<T> {
@@ -305,6 +306,32 @@ function parseStoredResponse<T extends JsonValue>(claim: IdempotencyClaim): Idem
   return { body: body as T, status: claim.responseStatus };
 }
 
+async function readFinalizedOperationResponse<T extends JsonValue>(
+  db: D1Database,
+  operationId: string,
+): Promise<IdempotentReadback<T> | null> {
+  let row: IdempotencyRow | null;
+  try {
+    row = await db.prepare(
+      `SELECT request_hash, operation_id, state, response_status, response_json
+       FROM idempotency_records
+       WHERE operation_id = ?1 AND state = 'committed'
+       LIMIT 1`,
+    ).bind(operationId).first<IdempotencyRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+  return row === null ? null : parseStoredResponse<T>({
+    operationId: row.operation_id,
+    owned: false,
+    requestHash: row.request_hash,
+    resourceScopeHash: "",
+    responseJson: row.response_json,
+    responseStatus: row.response_status,
+    state: row.state,
+  });
+}
+
 export function readIdempotencyResponse<T extends JsonValue>(
   claim: IdempotencyClaim,
 ): IdempotentReadback<T> {
@@ -352,7 +379,7 @@ export async function finalizeIdempotency<T extends JsonValue>(
   });
 }
 
-async function abandonOwnedPendingClaim(
+export async function abandonOwnedPendingClaim(
   db: D1Database,
   claim: IdempotencyClaim,
 ): Promise<void> {
@@ -383,8 +410,9 @@ export async function runIdempotentOperation<T extends JsonValue>(
 
   if (claim.state === "committed") {
     await options.authorize();
+    const stored = parseStoredResponse<T>(claim);
     return {
-      ...parseStoredResponse<T>(claim),
+      ...(options.replay === undefined ? stored : await options.replay(stored)),
       idempotentReplay: true,
       operationId: claim.operationId,
     };
@@ -409,7 +437,24 @@ export async function runIdempotentOperation<T extends JsonValue>(
   if (commit === null) throw new AtomicBatchRejectedError();
 
   await options.authorize();
-  const readback = await options.readback(claim.operationId, commit);
+  let readback: IdempotentReadback<T>;
+  try {
+    readback = await options.readback(claim.operationId, commit);
+  } catch (error) {
+    if (error instanceof AtomicBatchRejectedError) {
+      const finalizedByPeer = await readFinalizedOperationResponse<T>(options.db, claim.operationId);
+      if (finalizedByPeer !== null) {
+        return {
+          ...(options.replay === undefined
+            ? finalizedByPeer
+            : await options.replay(finalizedByPeer)),
+          idempotentReplay: true,
+          operationId: claim.operationId,
+        };
+      }
+    }
+    throw error;
+  }
   const finalized = await finalizeIdempotency(
     options.db,
     claim.operationId,

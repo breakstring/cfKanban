@@ -1,0 +1,884 @@
+import { requireUuid, timestamp } from "../domain/model.ts";
+import { resolveVisibleProjects, verifyCurrentAuth, type VisibleProject } from "../kernel/authorization.ts";
+import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
+import { isUuid } from "../kernel/crypto.ts";
+import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
+import { ApiError, conflict, forbidden, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
+import { readOperationSnapshot, runIdempotentOperation } from "../kernel/idempotency.ts";
+import type { AuthContext, JsonValue } from "../kernel/types.ts";
+import {
+  buildTwoProjectWriterGuard,
+  requireCollaborationIssue,
+  requireRelationKind,
+  roleCanWrite,
+  type CollaborationIssue,
+  type RelationKind,
+} from "./collaboration-shared.ts";
+import {
+  actorCredentialId,
+  authorizedVia,
+  requireIdempotencyKey,
+  requireLimit,
+  writeResult,
+} from "./shared.ts";
+
+interface RelationRow {
+  created_at: number;
+  created_by_principal_id: string;
+  deleted_at: number | null;
+  deleted_by_principal_id: string | null;
+  id: string;
+  kind: RelationKind;
+  last_operation_id: string | null;
+  source_id: string;
+  source_number: number;
+  source_project_id: string;
+  source_project_key: string;
+  source_project_name: string;
+  source_title: string;
+  source_version: number;
+  target_id: string;
+  target_number: number;
+  target_project_id: string;
+  target_project_key: string;
+  target_project_name: string;
+  target_title: string;
+  target_version: number;
+  version: number;
+  workspace_id: string;
+  workspace_key: string;
+  workspace_name: string;
+}
+
+interface RelationAccess {
+  canWrite: boolean;
+  row: RelationRow;
+}
+
+function endpointResource(row: RelationRow, source: boolean): { [key: string]: JsonValue } {
+  return source ? {
+    id: row.source_id,
+    identifier: `CFK-${row.source_number}`,
+    project: {
+      id: row.source_project_id,
+      key: row.source_project_key,
+      workspace_key: row.workspace_key,
+    },
+    title: row.source_title,
+    version: row.source_version,
+  } : {
+    id: row.target_id,
+    identifier: `CFK-${row.target_number}`,
+    project: {
+      id: row.target_project_id,
+      key: row.target_project_key,
+      workspace_key: row.workspace_key,
+    },
+    title: row.target_title,
+    version: row.target_version,
+  };
+}
+
+function relationResource(row: RelationRow, canWrite: boolean): { [key: string]: JsonValue } {
+  return {
+    allowed_actions: canWrite
+      ? row.deleted_at === null ? ["read", "delete"] : ["read", "restore"]
+      : ["read"],
+    created_at: timestamp(row.created_at),
+    created_by_principal_id: row.created_by_principal_id,
+    deleted_at: timestamp(row.deleted_at),
+    deleted_by_principal_id: row.deleted_by_principal_id,
+    id: row.id,
+    kind: row.kind,
+    source: endpointResource(row, true),
+    target: endpointResource(row, false),
+    version: row.version,
+    workspace: {
+      id: row.workspace_id,
+      key: row.workspace_key,
+    },
+  };
+}
+
+const RELATION_SELECT = `
+  SELECT relation.id, relation.workspace_id, relation.kind,
+         relation.version, relation.deleted_at, relation.deleted_by_principal_id,
+         relation.created_at, relation.created_by_principal_id,
+         relation.last_operation_id,
+         workspace.key AS workspace_key, workspace.display_name AS workspace_name,
+         source.id AS source_id, source.number AS source_number,
+         source.title AS source_title, source.version AS source_version,
+         source.project_id AS source_project_id,
+         source_project.key AS source_project_key,
+         source_project.display_name AS source_project_name,
+         target.id AS target_id, target.number AS target_number,
+         target.title AS target_title, target.version AS target_version,
+         target.project_id AS target_project_id,
+         target_project.key AS target_project_key,
+         target_project.display_name AS target_project_name
+  FROM issue_relations relation
+  JOIN workspaces workspace ON workspace.id = relation.workspace_id
+  JOIN issues source ON source.id = relation.source_issue_id
+  JOIN projects source_project ON source_project.id = source.project_id
+  JOIN issues target ON target.id = relation.target_issue_id
+  JOIN projects target_project ON target_project.id = target.project_id`;
+
+async function readRelation(db: D1Database, relationId: string): Promise<RelationRow | null> {
+  try {
+    return await db.prepare(
+      `${RELATION_SELECT}
+       WHERE relation.id = ?1
+         AND workspace.deleted_at IS NULL
+         AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+         AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
+       LIMIT 1`,
+    ).bind(relationId).first<RelationRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
+async function requireRelationAccess(
+  db: D1Database,
+  auth: AuthContext,
+  relationIdValue: JsonValue,
+  requiredRole: "reader" | "writer" = "reader",
+): Promise<RelationAccess> {
+  const relationId = requireUuid(relationIdValue, "relation_id");
+  const [row, projects] = await Promise.all([
+    readRelation(db, relationId),
+    resolveVisibleProjects(db, auth),
+  ]);
+  if (row === null) throw notFound();
+  const sourceRole = projects.find((project) => project.projectId === row.source_project_id)?.role;
+  const targetRole = projects.find((project) => project.projectId === row.target_project_id)?.role;
+  if (sourceRole === undefined || targetRole === undefined) throw notFound();
+  const canWrite = roleCanWrite(sourceRole) && roleCanWrite(targetRole);
+  if (requiredRole === "writer" && !canWrite) throw forbidden();
+  return { canWrite, row };
+}
+
+function parseRelationCursor(last: JsonValue[] | null): [number, string] | null {
+  if (last === null) return null;
+  if (
+    last.length !== 2
+    || typeof last[0] !== "number"
+    || !Number.isSafeInteger(last[0])
+    || last[0] < 0
+    || typeof last[1] !== "string"
+    || !isUuid(last[1])
+  ) throw invalidCursor();
+  return [last[0], last[1]];
+}
+
+function relationSnapshotStatement(
+  db: D1Database,
+  operationId: string,
+  relationId: string,
+): D1PreparedStatement {
+  return db.prepare(
+    `UPDATE idempotency_records
+     SET operation_snapshot_json = (
+       SELECT json_object(
+         'created_at', relation.created_at,
+         'created_by_principal_id', relation.created_by_principal_id,
+         'deleted_at', relation.deleted_at,
+         'deleted_by_principal_id', relation.deleted_by_principal_id,
+         'id', relation.id,
+         'kind', relation.kind,
+         'last_operation_id', relation.last_operation_id,
+         'source_id', source.id,
+         'source_number', source.number,
+         'source_project_id', source.project_id,
+         'source_project_key', source_project.key,
+         'source_project_name', source_project.display_name,
+         'source_title', source.title,
+         'source_version', source.version,
+         'target_id', target.id,
+         'target_number', target.number,
+         'target_project_id', target.project_id,
+         'target_project_key', target_project.key,
+         'target_project_name', target_project.display_name,
+         'target_title', target.title,
+         'target_version', target.version,
+         'version', relation.version,
+         'workspace_id', workspace.id,
+         'workspace_key', workspace.key,
+         'workspace_name', workspace.display_name
+       )
+       FROM issue_relations relation
+       JOIN workspaces workspace ON workspace.id = relation.workspace_id
+       JOIN issues source ON source.id = relation.source_issue_id
+       JOIN projects source_project ON source_project.id = source.project_id
+       JOIN issues target ON target.id = relation.target_issue_id
+       JOIN projects target_project ON target_project.id = target.project_id
+       WHERE relation.id = ?2 AND relation.last_operation_id = ?1
+         AND source.last_operation_id = ?1 AND target.last_operation_id = ?1
+     )
+     WHERE operation_id = ?1 AND state = 'pending'`,
+  ).bind(operationId, relationId);
+}
+
+function relationEvent(
+  db: D1Database,
+  auth: AuthContext,
+  operationId: string,
+  relationId: string,
+  projectId: string,
+  eventIndex: number,
+  type: string,
+  now: number,
+): D1PreparedStatement {
+  return db.prepare(
+    `INSERT INTO events
+      (id, stream, type, operation_id, event_index, actor_principal_id,
+       actor_credential_id, authorized_via, grant_id, workspace_id,
+       project_id, subject_type, subject_id, payload_json, created_at)
+     SELECT ?1, 'domain', ?2, ?3, ?4, ?5, ?6, ?7,
+            CASE WHEN ?8 = 1 THEN NULL ELSE (
+              SELECT grant_row.id FROM project_grants grant_row
+              WHERE grant_row.project_id = ?9
+                AND grant_row.principal_id = ?5
+                AND grant_row.role = 'writer' AND grant_row.revoked_at IS NULL
+              LIMIT 1
+            ) END,
+            relation.workspace_id, ?9, 'relation', relation.id,
+            json_object(
+              'kind', relation.kind,
+              'lifecycle', ?10,
+              'relation_version', relation.version,
+              'source_identifier', 'CFK-' || source.number,
+              'source_version', source.version,
+              'target_identifier', 'CFK-' || target.number,
+              'target_version', target.version
+            ), ?11
+     FROM issue_relations relation
+     JOIN issues source ON source.id = relation.source_issue_id
+     JOIN issues target ON target.id = relation.target_issue_id
+     WHERE relation.id = ?12 AND relation.last_operation_id = ?3
+       AND source.last_operation_id = ?3 AND target.last_operation_id = ?3
+       AND ?9 IN (source.project_id, target.project_id)`,
+  ).bind(
+    crypto.randomUUID(),
+    type,
+    operationId,
+    eventIndex,
+    auth.principalId,
+    actorCredentialId(auth),
+    authorizedVia(auth),
+    auth.isOwner ? 1 : 0,
+    projectId,
+    type.endsWith("created") ? "created" : type.endsWith("deleted") ? "deleted" : "restored",
+    now,
+    relationId,
+  );
+}
+
+function relationEvents(
+  db: D1Database,
+  auth: AuthContext,
+  operationId: string,
+  relationId: string,
+  sourceProjectId: string,
+  targetProjectId: string,
+  type: string,
+  now: number,
+): D1PreparedStatement[] {
+  const projectIds = sourceProjectId === targetProjectId
+    ? [sourceProjectId]
+    : [sourceProjectId, targetProjectId].sort();
+  return projectIds.map((projectId, index) => relationEvent(
+    db,
+    auth,
+    operationId,
+    relationId,
+    projectId,
+    index,
+    type,
+    now,
+  ));
+}
+
+async function deterministicRejection(check: () => Promise<never>): Promise<boolean> {
+  try {
+    await check();
+  } catch (error) {
+    if (error instanceof ApiError && error.code !== "PLATFORM_UNAVAILABLE") return true;
+    throw error;
+  }
+  return false;
+}
+
+function validateRelationEndpoints(source: CollaborationIssue, target: CollaborationIssue): void {
+  if (source.id === target.id) throw validationError("relation_self_reference");
+  if (source.workspaceId !== target.workspaceId) throw validationError("relation_cross_workspace");
+}
+
+function canonicalRelation(
+  kind: RelationKind,
+  source: CollaborationIssue,
+  target: CollaborationIssue,
+  sourceExpectedVersion: number,
+  targetExpectedVersion: number,
+): {
+  source: CollaborationIssue;
+  sourceExpectedVersion: number;
+  target: CollaborationIssue;
+  targetExpectedVersion: number;
+} {
+  if (kind !== "related" || source.id < target.id) {
+    return { source, sourceExpectedVersion, target, targetExpectedVersion };
+  }
+  return {
+    source: target,
+    sourceExpectedVersion: targetExpectedVersion,
+    target: source,
+    targetExpectedVersion: sourceExpectedVersion,
+  };
+}
+
+async function existingRelation(
+  db: D1Database,
+  kind: RelationKind,
+  sourceId: string,
+  targetId: string,
+): Promise<{ deleted_at: number | null; id: string } | null> {
+  try {
+    return await db.prepare(
+      `SELECT id, deleted_at FROM issue_relations
+       WHERE kind = ?1 AND source_issue_id = ?2 AND target_issue_id = ?3
+       LIMIT 1`,
+    ).bind(kind, sourceId, targetId).first();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
+export async function listIssueRelations(
+  db: D1Database,
+  auth: AuthContext,
+  identifierValue: JsonValue,
+  url: URL,
+): Promise<{ [key: string]: JsonValue }> {
+  const issue = await requireCollaborationIssue(db, auth, identifierValue);
+  const visibleProjects = await resolveVisibleProjects(db, auth);
+  const visibleIds = visibleProjects.map((project) => project.projectId);
+  const context = await createCursorContext(
+    "relations",
+    { issue_id: issue.id },
+    visibleIds,
+    auth.principalId,
+  );
+  const cursor = parseRelationCursor(decodeCursor(url.searchParams.get("cursor"), context));
+  const limit = requireLimit(url);
+  let rows: RelationRow[];
+  try {
+    const result = await db.prepare(
+      `${RELATION_SELECT}
+       WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
+         AND relation.deleted_at IS NULL
+         AND workspace.deleted_at IS NULL
+         AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+         AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
+         AND source.project_id IN (SELECT value FROM json_each(?2))
+         AND target.project_id IN (SELECT value FROM json_each(?2))
+         AND (?3 IS NULL OR relation.created_at > ?3
+              OR (relation.created_at = ?3 AND relation.id > ?4))
+       ORDER BY relation.created_at ASC, relation.id ASC
+       LIMIT ?5`,
+    ).bind(
+      issue.id,
+      JSON.stringify(visibleIds),
+      cursor?.[0] ?? null,
+      cursor?.[1] ?? null,
+      limit + 1,
+    ).all<RelationRow>();
+    rows = result.results;
+  } catch {
+    throw platformUnavailable("d1");
+  }
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const tail = page.at(-1);
+  const roles = new Map(visibleProjects.map((project) => [project.projectId, project.role]));
+  return {
+    has_more: hasMore,
+    items: page.map((row) => relationResource(
+      row,
+      roleCanWrite(roles.get(row.source_project_id) ?? "reader")
+        && roleCanWrite(roles.get(row.target_project_id) ?? "reader"),
+    )),
+    next_cursor: hasMore && tail !== undefined
+      ? encodeCursor(context, [tail.created_at, tail.id])
+      : null,
+    resolved_scope: {
+      issue_id: issue.id,
+      issue_identifier: issue.identifier,
+      visible_project_ids: visibleIds,
+    },
+  };
+}
+
+export async function getRelation(
+  db: D1Database,
+  auth: AuthContext,
+  relationIdValue: JsonValue,
+): Promise<{ [key: string]: JsonValue }> {
+  const access = await requireRelationAccess(db, auth, relationIdValue);
+  return relationResource(access.row, access.canWrite);
+}
+
+async function diagnoseRelationCreate(
+  db: D1Database,
+  auth: AuthContext,
+  sourceIdentifier: string,
+  targetIdentifier: string,
+  kind: RelationKind,
+  sourceExpectedVersion: number,
+  targetExpectedVersion: number,
+  now: number,
+): Promise<never> {
+  await verifyCurrentAuth(db, auth, now);
+  const [source, target] = await Promise.all([
+    requireCollaborationIssue(db, auth, sourceIdentifier, "writer"),
+    requireCollaborationIssue(db, auth, targetIdentifier, "writer"),
+  ]);
+  validateRelationEndpoints(source, target);
+  if (source.version !== sourceExpectedVersion) throw versionConflict(source.version);
+  if (target.version !== targetExpectedVersion) throw versionConflict(target.version);
+  const canonical = canonicalRelation(kind, source, target, sourceExpectedVersion, targetExpectedVersion);
+  const existing = await existingRelation(db, kind, canonical.source.id, canonical.target.id);
+  if (existing !== null) {
+    throw conflict(
+      existing.deleted_at === null ? "RELATION_ALREADY_EXISTS" : "RELATION_DELETED",
+      existing.deleted_at === null ? "none" : "restore_relation",
+    );
+  }
+  throw platformUnavailable("d1");
+}
+
+export async function createIssueRelation(
+  db: D1Database,
+  request: Request,
+  auth: AuthContext,
+  sourceIdentifierValue: JsonValue,
+  targetIdentifierValue: JsonValue,
+  kindValue: JsonValue,
+  sourceExpectedVersion: number,
+  targetExpectedVersion: number,
+  now: number,
+): Promise<{ [key: string]: JsonValue }> {
+  const kind = requireRelationKind(kindValue);
+  const [pathSource, pathTarget] = await Promise.all([
+    requireCollaborationIssue(db, auth, sourceIdentifierValue, "writer"),
+    requireCollaborationIssue(db, auth, targetIdentifierValue, "writer"),
+  ]);
+  validateRelationEndpoints(pathSource, pathTarget);
+  const canonical = canonicalRelation(
+    kind,
+    pathSource,
+    pathTarget,
+    sourceExpectedVersion,
+    targetExpectedVersion,
+  );
+  const relationId = crypto.randomUUID();
+  const idempotencyKey = requireIdempotencyKey(request);
+  const result = await runIdempotentOperation({
+    authorize: async () => {
+      await verifyCurrentAuth(db, auth, now);
+      await Promise.all([
+        requireCollaborationIssue(db, auth, pathSource.identifier, "writer"),
+        requireCollaborationIssue(db, auth, pathTarget.identifier, "writer"),
+      ]);
+    },
+    db,
+    execute: async (operationId) => {
+      const guard = buildTwoProjectWriterGuard(
+        auth,
+        now,
+        10,
+        "source.project_id",
+        "target.project_id",
+      );
+      const eventStatements = relationEvents(
+        db,
+        auth,
+        operationId,
+        relationId,
+        canonical.source.projectId,
+        canonical.target.projectId,
+        "issue-relation.created",
+        now,
+      );
+      try {
+        await executeAtomicBatch(db, {
+          businessStatements: [
+            db.prepare(
+              `INSERT INTO issue_relations
+                (id, workspace_id, kind, source_issue_id, target_issue_id,
+                 version, created_at, created_by_principal_id,
+                 created_operation_id, last_operation_id)
+               SELECT ?1, source_workspace.id, ?2, source.id, target.id,
+                      1, ?7, ?8, ?9, ?9
+               FROM issues source
+               JOIN projects source_project ON source_project.id = source.project_id
+               JOIN workspaces source_workspace ON source_workspace.id = source_project.workspace_id
+               JOIN issues target ON target.id = ?4
+               JOIN projects target_project ON target_project.id = target.project_id
+               JOIN workspaces target_workspace ON target_workspace.id = target_project.workspace_id
+               WHERE source.id = ?3 AND source.version = ?5 AND target.version = ?6
+                 AND source.id != target.id
+                 AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+                 AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
+                 AND source_workspace.deleted_at IS NULL AND target_workspace.deleted_at IS NULL
+                 AND source_workspace.id = target_workspace.id
+                 AND ${guard.sql}`,
+            ).bind(
+              relationId,
+              kind,
+              canonical.source.id,
+              canonical.target.id,
+              canonical.sourceExpectedVersion,
+              canonical.targetExpectedVersion,
+              now,
+              auth.principalId,
+              operationId,
+              ...guard.values,
+            ),
+            db.prepare(
+              `UPDATE issues
+               SET version = version + 1, updated_at = ?1,
+                   updated_by_principal_id = ?2, last_operation_id = ?3
+               WHERE id = ?4 AND version = ?5 AND deleted_at IS NULL
+                 AND EXISTS (
+                   SELECT 1 FROM issue_relations relation
+                   WHERE relation.id = ?6 AND relation.created_operation_id = ?3
+                 )`,
+            ).bind(
+              now,
+              auth.principalId,
+              operationId,
+              canonical.source.id,
+              canonical.sourceExpectedVersion,
+              relationId,
+            ),
+            db.prepare(
+              `UPDATE issues
+               SET version = version + 1, updated_at = ?1,
+                   updated_by_principal_id = ?2, last_operation_id = ?3
+               WHERE id = ?4 AND version = ?5 AND deleted_at IS NULL
+                 AND EXISTS (
+                   SELECT 1 FROM issue_relations relation
+                   WHERE relation.id = ?6 AND relation.created_operation_id = ?3
+                 )`,
+            ).bind(
+              now,
+              auth.principalId,
+              operationId,
+              canonical.target.id,
+              canonical.targetExpectedVersion,
+              relationId,
+            ),
+            relationSnapshotStatement(db, operationId, relationId),
+            ...eventStatements,
+          ],
+          committedAt: now,
+          confirmBusinessRejection: () => deterministicRejection(
+            () => diagnoseRelationCreate(
+              db,
+              auth,
+              pathSource.identifier,
+              pathTarget.identifier,
+              kind,
+              sourceExpectedVersion,
+              targetExpectedVersion,
+              now,
+            ),
+          ),
+          expectedEventCount: eventStatements.length,
+          operationId,
+          primarySubjectId: relationId,
+          primarySubjectType: "relation",
+          requireIdempotencySnapshot: true,
+        });
+      } catch (error) {
+        if (error instanceof AtomicBatchRejectedError) {
+          return diagnoseRelationCreate(
+            db,
+            auth,
+            pathSource.identifier,
+            pathTarget.identifier,
+            kind,
+            sourceExpectedVersion,
+            targetExpectedVersion,
+            now,
+          );
+        }
+        throw error;
+      }
+    },
+    idempotencyKey,
+    method: "POST",
+    normalizedResourceScope: `relation:${kind}:${canonical.source.id}:${canonical.target.id}`,
+    now,
+    readback: async (operationId, commit) => {
+      const snapshot = await readOperationSnapshot<RelationRow>(db, operationId);
+      return {
+        body: await writeResult(
+          db,
+          auth,
+          relationResource(snapshot, true),
+          commit.lastEventSequence,
+          false,
+        ),
+        status: 200,
+      };
+    },
+    requestBody: {
+      kind,
+      source_expected_version: sourceExpectedVersion,
+      target_expected_version: targetExpectedVersion,
+      target_identifier: pathTarget.identifier,
+    },
+    routeTemplate: "/api/v1/issues/{identifier}/relations",
+    scopeKey: `principal:${auth.principalId}`,
+  });
+  return { ...(result.body as { [key: string]: JsonValue }), idempotent_replay: result.idempotentReplay };
+}
+
+async function diagnoseRelationCas(
+  db: D1Database,
+  auth: AuthContext,
+  relationId: string,
+  expectedVersion: number,
+  sourceExpectedVersion: number,
+  targetExpectedVersion: number,
+  expectedDeleted: boolean,
+  now: number,
+): Promise<never> {
+  await verifyCurrentAuth(db, auth, now);
+  const { row } = await requireRelationAccess(db, auth, relationId, "writer");
+  if ((row.deleted_at !== null) !== expectedDeleted) {
+    throw conflict(expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED");
+  }
+  if (row.version !== expectedVersion) throw versionConflict(row.version);
+  if (row.source_version !== sourceExpectedVersion) throw versionConflict(row.source_version);
+  if (row.target_version !== targetExpectedVersion) throw versionConflict(row.target_version);
+  throw platformUnavailable("d1");
+}
+
+async function setRelationDeleted(
+  db: D1Database,
+  auth: AuthContext,
+  access: RelationAccess,
+  expectedVersion: number,
+  sourceExpectedVersion: number,
+  targetExpectedVersion: number,
+  now: number,
+  deleted: boolean,
+  operationId: string,
+  persistSnapshot: boolean,
+): Promise<OperationCommit> {
+  const { row } = access;
+  const guard = buildTwoProjectWriterGuard(
+    auth,
+    now,
+    8,
+    "source.project_id",
+    "target.project_id",
+  );
+  const eventStatements = relationEvents(
+    db,
+    auth,
+    operationId,
+    row.id,
+    row.source_project_id,
+    row.target_project_id,
+    deleted ? "issue-relation.deleted" : "issue-relation.restored",
+    now,
+  );
+  try {
+    const { commit } = await executeAtomicBatch(db, {
+      businessStatements: [
+        db.prepare(
+          `UPDATE issue_relations AS relation
+           SET deleted_at = ?1, deleted_by_principal_id = ?2,
+               version = version + 1, last_operation_id = ?3
+           WHERE relation.id = ?4 AND relation.version = ?5
+             AND ${deleted ? "relation.deleted_at IS NULL" : "relation.deleted_at IS NOT NULL"}
+             AND EXISTS (
+               SELECT 1 FROM issues source
+               JOIN projects source_project ON source_project.id = source.project_id
+               JOIN workspaces workspace ON workspace.id = source_project.workspace_id
+               JOIN issues target ON target.id = relation.target_issue_id
+               JOIN projects target_project ON target_project.id = target.project_id
+               WHERE source.id = relation.source_issue_id
+                 AND source.version = ?6 AND target.version = ?7
+                 AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+                 AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
+                 AND workspace.deleted_at IS NULL
+                 AND source_project.workspace_id = target_project.workspace_id
+                 AND ${guard.sql}
+             )`,
+        ).bind(
+          deleted ? now : null,
+          deleted ? auth.principalId : null,
+          operationId,
+          row.id,
+          expectedVersion,
+          sourceExpectedVersion,
+          targetExpectedVersion,
+          ...guard.values,
+        ),
+        db.prepare(
+          `UPDATE issues
+           SET version = version + 1, updated_at = ?1,
+               updated_by_principal_id = ?2, last_operation_id = ?3
+           WHERE id = ?4 AND version = ?5 AND deleted_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM issue_relations relation
+               WHERE relation.id = ?6 AND relation.last_operation_id = ?3
+             )`,
+        ).bind(now, auth.principalId, operationId, row.source_id, sourceExpectedVersion, row.id),
+        db.prepare(
+          `UPDATE issues
+           SET version = version + 1, updated_at = ?1,
+               updated_by_principal_id = ?2, last_operation_id = ?3
+           WHERE id = ?4 AND version = ?5 AND deleted_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM issue_relations relation
+               WHERE relation.id = ?6 AND relation.last_operation_id = ?3
+             )`,
+        ).bind(now, auth.principalId, operationId, row.target_id, targetExpectedVersion, row.id),
+        ...(persistSnapshot ? [relationSnapshotStatement(db, operationId, row.id)] : []),
+        ...eventStatements,
+      ],
+      committedAt: now,
+      confirmBusinessRejection: () => deterministicRejection(
+        () => diagnoseRelationCas(
+          db,
+          auth,
+          row.id,
+          expectedVersion,
+          sourceExpectedVersion,
+          targetExpectedVersion,
+          !deleted,
+          now,
+        ),
+      ),
+      expectedEventCount: eventStatements.length,
+      operationId,
+      primarySubjectId: row.id,
+      primarySubjectType: "relation",
+      requireIdempotencySnapshot: persistSnapshot,
+    });
+    return commit;
+  } catch (error) {
+    if (error instanceof AtomicBatchRejectedError) {
+      return diagnoseRelationCas(
+        db,
+        auth,
+        row.id,
+        expectedVersion,
+        sourceExpectedVersion,
+        targetExpectedVersion,
+        !deleted,
+        now,
+      );
+    }
+    throw error;
+  }
+}
+
+export async function deleteRelation(
+  db: D1Database,
+  auth: AuthContext,
+  relationIdValue: JsonValue,
+  expectedVersion: number,
+  sourceExpectedVersion: number,
+  targetExpectedVersion: number,
+  now: number,
+): Promise<{ [key: string]: JsonValue }> {
+  const access = await requireRelationAccess(db, auth, relationIdValue, "writer");
+  const operationId = crypto.randomUUID();
+  const commit = await setRelationDeleted(
+    db,
+    auth,
+    access,
+    expectedVersion,
+    sourceExpectedVersion,
+    targetExpectedVersion,
+    now,
+    true,
+    operationId,
+    false,
+  );
+  const deletedRow: RelationRow = {
+    ...access.row,
+    deleted_at: now,
+    deleted_by_principal_id: auth.principalId,
+    last_operation_id: operationId,
+    source_version: sourceExpectedVersion + 1,
+    target_version: targetExpectedVersion + 1,
+    version: expectedVersion + 1,
+  };
+  return writeResult(db, auth, relationResource(deletedRow, true), commit.lastEventSequence, false);
+}
+
+export async function restoreRelation(
+  db: D1Database,
+  request: Request,
+  auth: AuthContext,
+  relationIdValue: JsonValue,
+  expectedVersion: number,
+  sourceExpectedVersion: number,
+  targetExpectedVersion: number,
+  now: number,
+): Promise<{ [key: string]: JsonValue }> {
+  const access = await requireRelationAccess(db, auth, relationIdValue, "writer");
+  const idempotencyKey = requireIdempotencyKey(request);
+  const result = await runIdempotentOperation({
+    authorize: async () => {
+      await verifyCurrentAuth(db, auth, now);
+      await requireRelationAccess(db, auth, access.row.id, "writer");
+    },
+    db,
+    execute: (operationId) => setRelationDeleted(
+      db,
+      auth,
+      access,
+      expectedVersion,
+      sourceExpectedVersion,
+      targetExpectedVersion,
+      now,
+      false,
+      operationId,
+      true,
+    ).then(() => undefined),
+    idempotencyKey,
+    method: "POST",
+    normalizedResourceScope: `relation:${access.row.id}:restore`,
+    now,
+    readback: async (operationId, commit) => {
+      const snapshot = await readOperationSnapshot<RelationRow>(db, operationId);
+      return {
+        body: await writeResult(
+          db,
+          auth,
+          relationResource(snapshot, true),
+          commit.lastEventSequence,
+          false,
+        ),
+        status: 200,
+      };
+    },
+    requestBody: {
+      expected_version: expectedVersion,
+      source_expected_version: sourceExpectedVersion,
+      target_expected_version: targetExpectedVersion,
+    },
+    routeTemplate: "/api/v1/relations/{relation_id}/commands/restore",
+    scopeKey: `principal:${auth.principalId}`,
+  });
+  return { ...(result.body as { [key: string]: JsonValue }), idempotent_replay: result.idempotentReplay };
+}
