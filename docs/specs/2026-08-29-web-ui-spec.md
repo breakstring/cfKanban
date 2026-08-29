@@ -28,6 +28,8 @@
 - Codex App 的应用内浏览器（IAB）只是一个使用示例。宿主支持时 Agent 可以直接打开；否则返回同一 URL 供用户在普通浏览器打开。服务端不依赖任何宿主专有协议。
 - v0 不提供公开 batch/bulk 写入；Web 的拖拽一次只移动一张卡，不能通过多选、拖拽多卡或隐藏循环制造批量写接口。
 - 公开首页与认证后 Web UI 公共文案至少支持 English 与简体中文，并允许用户随时切换；这不引入业务内容自动翻译或 Skill/API locale。
+- 同一 Worker 可以通过多个有效域名访问，但实例只发布一个 preferred API/Web origin。页面不替 Cloudflare 管理域名，也不把跨域 Session/Passkey 迁移伪装成普通导航。
+- Web 客户端技术栈固定为 Vue 3 + TypeScript + Vite；视觉实现遵循仓库根目录 `DESIGN.md` 的 warm editorial workbench 基线。该选择不改变同 Worker Static Assets 的部署拓扑，也不授权开始实现。
 
 ## 3. 产品表面
 
@@ -36,6 +38,8 @@
 任何人直接打开实例根地址时先看到一个极简公开首页，而不是 Credential 输入框或空白错误页。首页说明 cfKanban 是 Agent-first Kanban、当前地址是一个独立部署实例，并在视觉中心提供一段可以直接复制给 Agent 的短话术；话术只指向 canonical HTTPS bootstrap document，由 Agent 按已冻结的来源、版本和授权合同安装 Skills 或部署新实例，不在页面内嵌 shell 命令、远程脚本或 secret。
 
 首页可以显示 Owner 明确开启 Public Join 的多个 Project 卡片，每张只包含 Project 显示名称、有界公开摘要与 `reader | writer` 选择，不得枚举未公开 Workspace/Project、内部 context、成员、Issue 数量或其他实例事实。canonical 项目站点可以复用产品介绍和部署话术，但没有某个部署实例的登录状态或 Public Join。
+
+若当前请求 origin 与实例发布的 preferred origin 不同，未认证首页可以显示一个清楚标注的“推荐地址”链接；页面仍可在当前有效 alias 上工作，不把这个差异显示成实例错误。它不得自动携带 URL 中的 capability、长期 Credential 或已有 cookie 跳转到新 origin。
 
 ### 3.1 Project Kanban
 
@@ -64,6 +68,7 @@ SB-26 的 v0 交互进一步固定为：
 - 每次保存只提交一个资源的显式改动，并等待服务端成功后更新页面。`VERSION_CONFLICT` 保留尚未提交的当前页草稿，展示远端新 version 与刷新/复制草稿选项，不做自动 merge 或自动重放。
 - 普通 Comment 只有追加、软删除和恢复，没有编辑；completion Comment 只读。评论输入使用普通 Markdown textarea，不做 WYSIWYG。
 - Issue soft delete 只需一次带 identifier/title 的明确确认，因为它可恢复；Project 内提供显式 `deleted=only` 入口定位单个 tombstone 并逐项恢复，不提供多选或批量恢复。
+- Project/Workspace 恢复确认必须列出会随容器恢复而重新公开的 Public Join Projects，并显示其公开 role 选择与三项 quota 摘要。确认恢复后这些仍 enabled 的 Policy 自动恢复；已单独关闭的 Policy 保持关闭，UI 不增加“恢复但保持暂时隐藏”的第二套状态。
 - Label 与 Relation 都是单项操作。跨 Project Relation 的目标选择必须同时显示 `workspace/project + CFK identifier + title`，并继续受同 Workspace/两端权限合同约束。
 - report/clear blocked、assign/unassign、complete/reopen 都是各自独立的显式动作。UI 可以相邻展示，但不能把它们捆绑成隐藏复合写入或失败后自动补偿。
 - 任何写入按钮或拖拽保存，在请求进行中都防止同资源重复提交；超时后先 readback，不把“请求已发送”显示为成功。
@@ -82,7 +87,7 @@ v0 已按 D-219 移除 Principal disable/enable/delete。Owner 通过 Credential
 
 Web 只允许撤销参与者 Credential。Owner Credential 在 Web 中只显示 ID、fingerprint、issued/last-used/revoked 等非秘密摘要，不显示 revoke/rotate 操作。Owner 正常轮换由 `cfkanban-admin` 使用本地受限文件与 Bearer-only 原子 rotation 完成；全部丢失时才由 `cfkanban-deploy` 做部署外恢复。Cookie Session 不能调用 Owner Credential lifecycle API，因此当前 Session 来源和最后一个有效 Owner Credential 都不存在 Web 自锁路径。
 
-Owner 管理面按四个简单分区组织：Overview、Workspaces/Projects、Access、Audit。它不做可配置 Dashboard；Overview 只展示实例自身能够读取的健康、版本、资源计数与近期错误摘要。Web 不保存 Cloudflare API token，也不声称提供权威 account quota/usage；这类控制面检查属于 `cfkanban-deploy`。
+Owner 管理面按四个简单分区组织：Overview、Workspaces/Projects、Access、Audit。它不做可配置 Dashboard；Overview 只展示实例自身能够读取的健康、版本、资源计数、preferred/current observed origin 与近期错误摘要。preferred origin 在 Web 中只读，页面提供一段让 Owner 交给 `cfkanban-admin` 的简短话术；修改只能使用 Owner Bearer Credential，避免一个被劫持的 Cookie Session 把后续 Agent Credential 导向攻击者地址。Web 不保存 Cloudflare API token，也不声称提供权威 account quota/usage 或域名清单；Cloudflare-native domain reconcile 属于 `cfkanban-deploy`，第三方 alias 由 Owner 明确提供。
 
 Owner `admin` Session 默认落在 Overview，不自动读取全部 Project 或 Issue。Owner 显式选择 Workspace/Project 后可以在同一 Session 进入任意 Project Board/Issue 数据面，再返回管理区；这是 Owner 已有隐式数据面权限的 Web 呈现，不创建 Grant。普通 Project/Issue Session 仍不能导航到其他 Project 或管理区。
 
@@ -97,6 +102,14 @@ Web 不提供 Owner transfer、第二管理员、直接 D1 浏览、完整导出
 - Web 只根据稳定 `code/category/recovery` 选择本地化错误与操作提示；API/OpenAPI 字段、枚举和机器错误不因 `Accept-Language` 或 Web locale 改变。Skill 输出由上层 Agent 语言环境决定。
 - 每个页面设置与当前 locale 一致的 HTML `lang`；日期/时间可按 locale 展示，但 wire 值仍保持已冻结的 UTC/RFC 3339 合同。
 - 缺少翻译时逐条回退 English，不显示裸 translation key，也不阻断核心读写。更多语言是后置扩展，不影响 v0 对 English/简体中文的承诺。
+
+### 3.5 多域名与推荐入口
+
+- 根页面、静态资源和 API 都以本次请求 origin 同源工作；服务端不把认证请求 30x 到 preferred origin，也不跨 origin 复制 cookie、CSRF token、launch code 或页面状态。
+- `/.well-known/cfkanban-instance.json` 是公开、动态、`no-store` 的机器发现入口，Web 只把其中的 preferred origin 当作展示和生成未来链接的提示，不把任意新 origin 的自报当作信任迁移证据。
+- Agent 新建 Browser Launch、Invite 话术与后续可复制链接时优先使用已经安全绑定的 preferred origin。已经生成的旧 URL 不在后台改写；只要旧 alias 仍绑定同一 Worker，就按原 origin 完成其一次性交换。
+- Web Session cookie 是 origin-specific；换域名后用户需要在新 origin 重新建立 Session。cfKanban v0 主动把 Passkey RP ID 固定为当前 hostname，不启用跨 hostname 共享；换 hostname 后 Agent Browser Launch 是重新进入和登记的恢复路径。
+- 已认证页面只显示非干扰性的推荐地址提示，不自动重定向。这样可以避免正在编辑的内容丢失，也不会把旧 origin 的 Session 或 capability 错误地当作能跨域继承。
 
 ## 4. Browser Launch 与 Web Session
 
@@ -139,7 +152,16 @@ v0 固定使用 Passkey：用户先通过一次 Agent Browser Launch 建立已�
 
 Passkey 是 Web authentication method，不是 Project Grant，也不能调用 Agent Bearer API。一个 Principal 可以登记多个 Passkey；当前 Principal 可以列举/撤销自己的 Passkey，Owner 可以撤销参与者的 Passkey。Passkey 撤销立即使其来源 Sessions 失效，但不撤销 API Credential 或 Grants。所有登记、成功认证和撤销都写安全 Audit。
 
-Passkey 登录后的 Session 不继承某个旧 Browser Launch 的单 Project target：参与者进入当前有权 Project 的选择页，之后每个请求仍按实时 Grant 校验；Owner 进入 Overview，并可显式进入任意 Project。两者都不自动执行无 Project filter 的 Issue 聚合查询。WebAuthn credential 受 Relying Party ID/domain 限制，实例 API/Web 域名变化时不能假定旧 Passkey 自动迁移；Agent Browser Launch 始终作为兼容与恢复入口。
+Passkey 登录后的 Session 不继承某个旧 Browser Launch 的单 Project target：参与者进入当前有权 Project 的选择页，之后每个请求仍按实时 Grant 校验；Owner 进入 Overview，并可显式进入任意 Project。两者都不自动执行无 Project filter 的 Issue 聚合查询。
+
+未认证首页按以下渐进增强规则呈现登录：
+
+- 没有 `PublicKeyCredential` 时隐藏或禁用 Passkey 登录，并醒目提供 Agent Browser Launch 话术；
+- WebAuthn 可用时显示由用户主动点击的“使用 Passkey”按钮；`isUserVerifyingPlatformAuthenticatorAvailable()` 只用于调整帮助文案，返回 `false` 不能隐藏按钮，因为外接安全密钥、手机或 credential manager 仍可能可用；
+- `isConditionalMediationAvailable()` 只决定是否可增加 autofill/conditional mediation 体验，不是 v0 必需路径，也不能被解释为 credential 存在；
+- 页面不尝试静默枚举或探测“当前设备/当前域名是否已有 Passkey”。只有用户主动发起并成功完成 WebAuthn ceremony 才证明本次可用；取消、超时、无匹配 credential、认证器不可用或策略拒绝统一显示“Passkey 登录未完成”，并提供 Agent Browser Launch，不断言“没有 Passkey”。
+
+已认证页面的列表标题固定表达为“为你的 cfKanban 身份登记的 Passkeys”，因为它展示的是服务端记录，而不是当前设备 inventory。cfKanban v0 的 RP ID 固定为登记/认证请求的当前 hostname，expected origin 固定为当次规范化完整 HTTPS origin，不启用跨 hostname credential 共享或 Related Origin Requests。preferred origin 换成另一个 hostname 后，用户通过 Agent Browser Launch 在新地址建立 Session并重新登记；旧地址仍可达时，其旧 Passkey 仍只服务旧地址。这是 v0 的简化与安全选择，不是 WebAuthn 标准的一般限制。
 
 长时“记住此浏览器”的 bearer refresh cookie 虽然实现更直观，但会重新引入长期可重放 secret、轮换和盗用恢复；Cloudflare Access/企业 IdP 则需要额外账户配置与外部身份映射。二者只作为后续可选部署 profile，不作为 strict-zero v0 默认。
 
@@ -155,11 +177,11 @@ Public Join 每次最多建立或恢复一条 Project Grant，不提供批量入
 
 Owner 开启 Public Join 时必须明确接受公开 `writer` 的后果：未知互联网参与者可以修改、评论、移动、完成和软删除 Project 内容并制造 D1 写入。公开卡片只包含显示名称、有界公开摘要和 role 选择，不泄露内部 Project context、Issue、成员或未公开资源。
 
-开启表单必须要求 Owner 显式填写 Project Issue、Comment 与 Principal 三项 active quota；UI 可以预填建议值 50/500/50，但必须由 Owner 提交。当前 active usage 和新上限同时显示，调低值不能小于当前 active usage。
+开启表单必须要求 Owner 显式填写该 Project 独立的 Issue、Comment 与 Principal 三项 active quota；UI 可以预填建议值 50/500/50，但必须由 Owner 提交。页面必须说明三项限制不与其他 Project 共享，只在本 Project 的 Public Join enabled 期间生效。当前 active usage 和新上限同时显示，但允许把上限调到低于 usage；提交前提示既有资源与 Grants 不会被自动删除或撤销，只有继续增加相应计数的操作会被阻止。
 
 Issue/Comment soft delete 与 Grant revoke 释放 slot，restore/regrant 重新占用。soft-delete Issue 还会让其当前有效 Comments 暂时不占 Comment quota；restore 时必须同时容纳 Issue 与这些 Comments，任一不足都整体失败。completion comment 不可删除，所属 Issue active 时持续计数。页面必须区分“active quota 已释放”和“tombstone 仍保留在 D1”，不能暗示已回收物理存储。
 
-Public Join 不建立逐 Principal blacklist。Project 仍公开时，被撤销 Grant 的 Principal 可以重新加入并重新占用 Principal slot；要停止新的 self-join，Owner 关闭 Public Join。关闭入口不撤销既有 Grants。
+Public Join 不建立逐 Principal blacklist。Project 仍公开时，被撤销 Grant 的 Principal 可以重新加入并重新占用 Principal slot；要停止新的 self-join，Owner 关闭 Public Join。关闭入口不撤销既有 Grants，同时停止本 Project 三项 quota 的强制，不影响其他 Project。重新开启表单可以预填上次使用的 limits，但 Owner 必须显式提交；服务端不能静默沿用。
 
 Owner Overview 必须只读展示实例当前的单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒门槛、配置来源，以及有界的近期 429 摘要。它们是近似频率门控，不是精确业务 quota；Web 不提供编辑或“保存”按钮。需要调整时，页面给出调用 `cfkanban-deploy` 的简短 Agent 话术；实际动作是显式 Worker 配置部署，不运行 D1 migration。
 
@@ -173,15 +195,28 @@ v0 不包含：自定义列/工作流、手工 rank、批量选择/编辑、复�
 
 ### 5.2 技术克制
 
-- Web 静态资源优先由同一 Worker 的 Static Assets 提供，复用同一 origin、部署版本和 API；v0 不因此新增独立 Pages 项目、KV、R2、Durable Objects 或第三方认证服务。
+- Web 预构建资产由同一 Worker 的 Workers Static Assets 提供，复用同一 origin、部署版本和 API；它们随固定 Service deployment bundle 一起发布，普通部署者不需要现场构建前端。v0 不新增独立 Pages project、KV namespace、R2、Durable Objects 或第三方认证服务。
+- API、Invite/bootstrap、Web auth/session 与 `/.well-known/` discovery 等动态/协议路径必须优先进入 Worker；普通 UI navigation 可以使用 SPA fallback。带内容指纹的不可变 assets 可以长期缓存，包含身份、邀请、实例发现或动态业务数据的响应沿用各自安全缓存合同，不能被 SPA fallback 或静态缓存吞掉。
 - 前端只调用公开或同合同的 REST 能力；不出现直接 SQL、隐藏管理员后门或仅 Web 可用的第二套业务动作。
-- 可以使用少量构建工具，但产物、依赖和运行时代码应保持可审计。是否采用具体框架属于实现阶段的可逆技术选择，不在本 SPEC 冻结。
+- 前端固定使用 Vue 3 + TypeScript + Vite。具体 minor/patch 版本、依赖管理器、测试库、状态管理和目录结构仍由实现计划在兼容范围内选择；不得为框架便利引入第二套 API、服务端渲染、常驻 Node 服务或额外云资源。
+- 产物、依赖和运行时代码应保持可审计。优先使用 CSS tokens、平台能力和少量可替换组件，不引入需要远端运行时、遥测或完整重型组件平台的视觉依赖。
 - 页面必须支持窄窗口和普通桌面浏览器；IAB 与系统浏览器使用同一响应式页面，不维护两套 UI。
+
+### 5.3 视觉克制
+
+仓库根目录 [`DESIGN.md`](../../DESIGN.md) 是第一方 Web 的视觉与交互设计真相源；本文继续负责产品、安全和行为合同。已确认方向是温暖浅色、纸张般安静、以单一蓝色主操作色组织的工作台，而不是此前仅靠命名描述的抽象风格。
+
+- 默认 Board 不设置持久重型侧栏；Workspace/Project、搜索、语言、身份/Session 与一个主要创建动作收敛在紧凑顶部区域。
+- 五列依靠排版、间距、细分隔线和轻微表面差异组织；普通卡片无阴影，不使用玻璃、渐变、霓虹、装饰插画或 cards-inside-cards。
+- 拉丁 Project 页面标题可以使用克制的系统 serif 建立编辑感；高频控件、中文界面、卡片和正文保持系统 sans，Issue identifier 使用系统 monospace。v0 不加载第三方字体。
+- 选定视觉稿只固定气质、信息层级与可见密度。图中的日期页脚、重复 Add issue、装饰头像或其他未进入产品合同的生成式偶然细节不得被实现。
+- 精确颜色、间距、圆角、组件状态、无障碍和响应式规则由 `DESIGN.md` 明确；任何有意偏离必须同时更新设计合同与视觉证据，不能在代码中静默漂移。
 
 ## 6. 错误与恢复体验
 
 - Launch 已用、过期、撤销或无效：显示不泄露实例内容的统一失败页，建议回到 Agent 重新创建 URL。
-- Session 过期或被撤销：清除 cookie，保留不敏感 target 提示；已登记 Passkey 时可以重新认证，否则引导用户让 Agent 重新打开，始终不要求粘贴 Credential。
+- Session 过期或被撤销：清除 cookie，保留不敏感 target 提示；浏览器支持 WebAuthn 时允许用户主动尝试 Passkey，是否已有可用 credential 只能由成功 ceremony 证明；同时始终提供 Agent 重新打开的路径，不要求粘贴 Credential。
+- Passkey 认证未完成：使用不泄露 credential 是否存在的统一提示，允许用户再次主动尝试或改用 Agent Browser Launch；前端可以按浏览器本地错误改善操作提示，但不得把取消、超时或 `NotAllowedError` 映射成“没有 Passkey”。
 - version 冲突：展示远端当前事实和本地未提交输入，允许用户刷新后重新决定；不得自动覆盖或无限重试。
 - Grant 被撤销或降级：立即隐藏/禁用不再允许的动作；后续服务端拒绝仍是最终事实。
 - Project active quota：使用 `business_quota` 显示“释放容量或请求 Owner 调高”的明确动作；只有已授权用户看到 usage/limit，Public Join 访客只看到容量已满。
@@ -199,6 +234,7 @@ v0 不包含：自定义列/工作流、手工 rank、批量选择/编辑、复�
 - SB-30：已建立身份的人类不粘贴 API Credential，也能通过可恢复的 Web authentication method 再次登录。
 - SB-31：Owner 可以同时公开多个 Project，访客每次选择一个 Project 与 `reader|writer` 后原子加入；不提供 Team Join 或多 Project 公开授权。
 - SB-32：人类可以在 English 与简体中文间切换 Web UI，但稳定 key、默认 workflow 显示名和业务内容不自动翻译。
+- SB-33：Owner 发布新 preferred origin 后，Web 在 alias 上保持可访问并提示推荐地址；Session 不跨 origin 自动迁移，v0 Passkey 不跨 hostname 共享，Agent 负责安全重绑长期 API origin。
 
 ## 8. 已确认生命周期与可后置问题
 
@@ -220,8 +256,9 @@ Agent Launch Session 同时按 launch target 限定 Web scope：Project target �
 
 1. Q-WEB-01 已按 D-217 确认并回写 Foundation、Agent Skills 和 API/Schema。
 2. API/Schema SPEC 定义 Browser Launch、Session、cookie/CSRF、撤销和所需 D1 事实。
-3. SB-25～SB-32 的主要产品方向逐卡验收通过；Q-232 已固定原生限流部署配置与初始档位，只剩 API/DDL 绝对边界待冻结。
+3. SB-25～SB-33 的主要产品方向逐卡验收通过；Q-232 已固定原生限流部署配置与初始档位，D-243 已固定推荐域名的 Web 边界，D-244 已固定 Passkey capability/credential 区分与精确 hostname 选择，D-245 已固定同 Worker Static Assets 与无 Pages/KV 的部署拓扑；只剩 API/DDL 绝对边界待冻结。
 4. reader/writer/Owner 的 Web 能力不超出既有权限，也不存在仅 Web 可用的领域后门。
 5. 明确验证在 Codex IAB 与普通浏览器中使用同一页面的实现计划，但不要求绑定某个宿主专有 API。
+6. 根目录 `DESIGN.md` 的视觉 token、主要组件状态与选定参考图已经过实现前复核，且 Vue 3 + TypeScript + Vite 的构建边界进入实施计划。
 
 冻结本文仍不授权实现、创建 Linear 实现 Issue、部署、迁移、提交或推送。

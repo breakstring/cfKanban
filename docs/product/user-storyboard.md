@@ -48,7 +48,7 @@
 | D. 日常 Issue 协作 | SB-12～SB-17 | Agent 能发现、分配、推进、阻塞、交接和完成工作 |
 | E. 跨项目工作 | SB-18～SB-20 | 多 Project/Repo 场景保持低噪声，关系与增量同步可恢复 |
 | F. 运维与恢复 | SB-21～SB-24 | Owner 能撤权、恢复身份、恢复误删并查看健康、配额与审计 |
-| G. 人类 Web 参与 | SB-25～SB-32 | Agent 安全打开明确目标；人类查看、轻量参与、维护、再次登录、自助加入或切换语言 |
+| G. 人类 Web 参与 | SB-25～SB-33 | Agent 安全打开明确目标；人类查看、轻量参与、维护、再次登录、自助加入、切换语言或迁移实例入口 |
 
 ## 4. 故事卡
 
@@ -179,7 +179,7 @@
 - **成功反馈**：逐 Project 返回 `created | regranted | already_has_access`；已有有效 role 不被邀请静默改变。
 - **失败恢复**：Credential 明确被撤销时进入恢复/新身份分支，不能按名字接管旧身份；网络或服务错误导致状态 unknown 时停止，不能当作失效。若手工复制、导入或中断操作造成同一实例出现多个不同 Principal，视为本地冲突并停止，引导用户整理而不是猜测选择。同一 Principal 轮换中短暂存在的新旧 Credential 由脚本作为恢复状态处理，不算多个身份。
 - **已确认**：本地状态根可以承载多个 cfKanban 上游实例，但每个 `instance_id` 正常只有一个当前 Principal/Credential 槽位；一个 Credential 不能跨实例复用。
-- **已确认（地址变化）**：`instance_id` 作为稳定主键，trusted API origin 是可变安全 metadata。新域名声称同一 ID 时，Agent 在发送 Credential 前展示旧/新地址与权限影响并取得显式 rebind 授权；只改变 Invite/展示域名而 canonical API origin 未变时无需 rebind。
+- **已确认（地址变化）**：`instance_id` 作为稳定主键，trusted API origin 是可变安全 metadata。陌生新域名只声称同一 ID 时，Agent 在发送 Credential 前展示旧/新地址与权限影响并取得显式 rebind 授权；D-243 另允许由当前 trusted origin 发布更高版本迁移指示、再经无 Credential 目标探测验证后自动 rebind。只改变 Invite/展示域名而 API origin 未变时无需 rebind。
 
 ### SB-11：参与者第一次发现自己的工作范围
 
@@ -308,9 +308,9 @@
 - **起点**：资源只是软删除，尚未执行未来可能存在的受控 purge。
 - **Agent 行动**：用户的 Agent 先只读定位 tombstone 与父容器状态；持有 writer 权限时可恢复 Project 内容，只有使用 Owner Credential 的林的 Agent 才能恢复 Project/Workspace 容器。
 - **能力与安全边界**：恢复是单资源显式写能力；服务不提供批量恢复端点。恢复候选通过现有单资源读取或列表上的显式 `deleted=only` 视图获得，只对有恢复权限的调用者开放，不新增带隐含时间窗的“最近删除”端点。恢复容器只解除父容器暂停，不复活已单独删除内容或已撤销 Grants；上层若要恢复多个资源，只能自行组合多个原子调用。
-- **成功反馈**：容器恢复后，未单独删除的子资源和未撤销 Grants 自动恢复；completion Comment 仍不可删除。
+- **成功反馈**：容器恢复后，未单独删除的子资源和未撤销 Grants 自动恢复；此前仍 enabled 的 Public Join Policy 也以同一 public ID、summary 与 limits 自动恢复，已由 Owner 单独关闭的 Policy 不会复活。completion Comment 仍不可删除。
 - **失败恢复**：恢复视图只列出资源自身的 tombstone，不把父容器暂停下的全部子资源伪装成“已删除”。摘要返回稳定标识、删除者/时间、version、父级状态和结构化 `restorable` 原因；父容器仍暂停时，子资源恢复请求说明必须先恢复父级；key/identifier 不被复用。
-- **已确认**：既支持已知稳定标识直接定位，也支持有权限的 Agent 分页列出 tombstone；默认按删除时间倒序，但不存在服务端定义的“最近”期限。查询只是恢复入口，是否恢复仍由上层决定。
+- **已确认**：既支持已知稳定标识直接定位，也支持有权限的 Agent 分页列出 tombstone；默认按删除时间倒序，但不存在服务端定义的“最近”期限。查询只是恢复入口，是否恢复仍由上层决定。恢复 Project 或 Workspace 前，Agent 必须列出会随容器恢复而重新公开的 Project；用户确认恢复即同时接受这些仍 enabled 的 Public Join 恢复，不增加隐藏的第二个状态开关。
 
 ### SB-24：健康、配额与审计
 
@@ -378,11 +378,13 @@
 
 - **任务触发**：陈此前已通过 Agent Browser Launch 进入过实例，现在直接访问首页，希望不用再次唤起 Agent，也不想复制长期 API Credential。
 - **确认行动**：陈只能在一次由 Agent Browser Launch 建立的已认证 Session 内显式注册 Passkey。浏览器/OS authenticator 保存私钥，服务只保存与同一 Principal 绑定的 public key metadata；以后陈从首页完成 WebAuthn challenge 后获得新的固定 8 小时 Web Session。
+- **页面判断**：页面可以判断浏览器是否提供 WebAuthn、平台认证器或 conditional mediation，但这些都不等于“当前设备已有本站 Passkey”。WebAuthn 可用时显示由陈主动点击的“使用 Passkey”；平台认证器探测为否时仍保留按钮，因为安全密钥、手机或 credential manager 可能可用。WebAuthn 不可用时直接突出 Agent Browser Launch。
 - **能力边界**：Passkey 只认证 Web Principal，不是 API Credential、Project Grant 或 Owner role，不能被 Agent Bearer API 使用。Passkey Session 按当前 Principal 的实时权限工作：参与者先选择其当前有权 Project，Owner 先进入 Overview 并可显式选择任意 Project；页面不自动发起无 Project filter 的全量 Issue 查询。页面永远不提供粘贴、上传或持久化 `.cfkanban/` Credential 的登录框。
 - **生命周期**：一个 Principal 可以登记多个 Passkey，便于多设备与更换设备；当前 Principal 可以列举并撤销自己的 Passkey，Owner 可以撤销参与者的 Passkey，所有登记、认证与撤销都写安全 Audit。Passkey 撤销会使由它签发且尚未到期的 Web Sessions 立即失效，但不撤销 API Credential 或 Project Grants。
-- **恢复边界**：Passkey 丢失、浏览器不支持或 RP ID/domain 变化时，陈仍可让 Agent 创建 Browser Launch 并重新注册；不能按 display name 恢复身份。首次登记和补充登记都要求 Agent-launch Session，避免已经取得一个 Web 登录方法后静默扩散新的认证器。
+- **失败与恢复**：只有陈主动发起并成功完成认证才能证明 Passkey 本次可用；取消、超时、无匹配 credential、认证器不可用或策略拒绝都只显示“Passkey 登录未完成”，不声称当前设备没有 Passkey。陈可以重试或让 Agent 创建 Browser Launch；不能按 display name 恢复身份。首次登记和补充登记都要求 Agent-launch Session，避免已经取得一个 Web 登录方法后静默扩散新的认证器。
+- **设备与域名边界**：已认证页面列举的是“为你的 cfKanban 身份登记的 Passkeys”，不是当前设备清单。v0 主动令 RP ID 等于当前请求 hostname、expected origin 等于当次完整 HTTPS origin，不启用跨 hostname 共享；hostname 变化时陈通过 Agent Launch 在新地址重新登记。
 - **候选比较**：长期“记住浏览器”cookie 会引入可重放 bearer secret 与 refresh rotation；Cloudflare Access/企业 IdP 会引入外部身份映射和额外部署配置。二者不作为 strict-zero 默认候选。
-- **状态**：D-224/Q-228 已确认；Passkey 是 v0 唯一不依赖 Agent 的直接登录方式，精确 wire schema 继续由 Draft API/Schema 收敛。
+- **状态**：D-224/Q-228 已确认直登方向；D-244 已固定 capability/credential 区分与精确 hostname 边界，精确 wire schema 继续由 Draft API/Schema 收敛。
 
 ### SB-31：公开访客自助选择并加入 Project
 
@@ -393,10 +395,10 @@
 - **能力边界**：Public Join 不是 7 天一次性 Invitation，不把长期 Credential 放进 URL，也不暴露未公开 Workspace/Project、内部 Project context、Issue 或成员。每次调用最多创建或恢复一条明确 Project Grant，不能批量加入；公开 Project 的 Grant 同样不自动过期。
 - **公开 writer 风险**：访客可以自行选择 `writer`，因此 Owner 开启 Public Join 时必须看到并明确接受：未知互联网参与者可以修改、评论、移动、完成以及软删除该 Project 内容，并产生 D1 写入。系统不把公开 role 静默收窄为 `reader`。
 - **幂等与已有权限**：无 Grant 时按所选 role 建立 Grant；已有同等或更高权限时返回当前访问且不重复建行；已有 `reader` 选择 `writer` 时可以按公开策略提升；已有 `writer` 选择 `reader` 不自动降权。
-- **必填成本上限**：Owner 开启前必须显式设置 Project 的 Issue、Comment 与 Principal 三项 active quota；页面可以建议 50/500/50，但不代替 Owner 提交。Issue/Comment soft delete 与 Grant revoke 释放 slot，restore/regrant 重新占用并在满额时原子失败。删除只释放 active quota，不声称清除了 D1 tombstone。
+- **必填成本上限**：Owner 开启前必须显式设置该 Project 独立的 Issue、Comment 与 Principal 三项 active quota；页面可以建议 50/500/50，但不代替 Owner 提交。这三项只在本 Project 的 Public Join 开启期间生效，不与其他 Project 共享或互相影响；关闭后不再约束本 Project 的普通协作，也不撤销既有 Grants，重新开启时须显式重交。Owner 可以把限制调到低于当前 usage，系统保留现有数据，只阻止继续增加相应计数；随后可通过软删除/撤权降低 usage 或调高限制。Issue/Comment soft delete 与 Grant revoke 释放 slot，restore/regrant 重新占用并在无容量时原子失败。删除只释放 active quota，不声称清除了 D1 tombstone。
 - **简单重入**：不建立逐 Principal blacklist。Project 仍公开时，被 Owner 撤销 Grant 的 Principal 可以再次加入并复用同一 Grant 行；要停止所有公开加入，Owner 关闭 Public Join。
 - **频率门控**：首次部署自动提供单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒的原生边缘门控。Owner 查看当前值、来源和近期 429 摘要；修改时让 Agent 使用 `cfkanban-deploy` 发布 Worker 配置，不触发 D1 migration。它只降低突发滥用，不能替代 D1 精确 quota。
-- **状态**：D-225 原 Team/Public 拆分已否决；D-226/D-227/D-229～D-232 已确认单 Project Public Join、简单重入、三项 active quota、透明限流、部署配置载体与初始档位。
+- **状态**：D-225 原 Team/Public 拆分已否决；D-226/D-227/D-229～D-232/D-240～D-242 已确认单 Project Public Join、简单重入、Project 隔离且只在公开期间生效的三项 active quota、允许非破坏性 over-limit、容器恢复时恢复未关闭 Policy、透明限流、部署配置载体与初始档位。
 
 ### SB-32：人类切换 Web UI 语言
 
@@ -408,6 +410,17 @@
 - **失败恢复**：缺少某条翻译时只回退 English，不显示裸翻译 key、不改变领域数据，也不因为语言包失败阻止核心读写。
 - **状态**：用户于 2026-08-29 明确要求最少支持 English/简体中文与自行切换；按 D-235 进入 Draft Web UI 合同。
 
+### SB-33：Owner 发布新推荐域名，已有 Agent 安全迁移
+
+- **任务触发**：林首次部署时使用 `workers.dev`，后来在 Cloudflare 控制台为同一 Worker 添加 Custom Domain，或在第三方系统中增加一个可以到达同一 Worker 的 HTTPS 域名，希望已有参与者今后优先使用新地址。
+- **控制面行动**：域名绑定本身仍由 Cloudflare 或第三方控制面完成。林让 Agent 使用 `cfkanban-deploy` 只读列举 Cloudflare-native domains/routes，或明确提供第三方候选；Agent 对候选执行不携带 Credential、不跟随 redirect 的发现探测。候选确实返回同一 `instance_id` 后，林再让 `cfkanban-admin` 使用 Owner Bearer Credential 发布唯一 `preferred_api_origin`。这个应用设置不需要重新部署，也不会替 Owner 创建或删除域名。
+- **服务行动**：实例在所有能到达该 Worker 的地址动态提供 `/.well-known/cfkanban-instance.json`，返回同一 `instance_id`、本次请求的 `observed_origin`、唯一 preferred origin、递增 `origin_version`、service version 与更新时间；响应不含 secret、alias 清单或 Cloudflare Token，并使用 `no-store`。认证 API 不用跨 origin redirect 搬运请求。
+- **参与者 Agent 行动**：陈的 Agent 只从本地当前 trusted origin 低频读取发现文档。发现更高 `origin_version` 时，它先不带 Credential 探测 preferred origin，并要求目标的 instance ID、observed/preferred origin 与 version 全部匹配；验证成功后可以原子更新 `.cfkanban/` 中该实例的 trusted origin，无需再次打断陈。下一次 API 请求才把 Credential 发送到新地址。
+- **失败与陌生入口**：目标探测失败、发生 redirect、version 未增加或回退、instance ID 不同、目标不能证明自己就是该 preferred origin 时，本地记录保持不变并给出恢复提示。Agent 若先从 Invite、第三方说明或任意陌生地址看到同一个 instance ID，不能靠该地址自报自动取得信任；只有仍可访问的旧 trusted origin 能给出上述迁移证据，否则必须由用户显式 rebind。
+- **Web 边界**：任一仍绑定到 Worker 的域名都可以打开页面，但 Web Session cookie 不随 Agent Credential 配置迁移。WebAuthn 标准可以支持部分相关域名共享；cfKanban v0 主动按精确 hostname 隔离，因此换到任何新 hostname 都要通过 Agent Browser Launch 重新建立 Session并重新登记 Passkey。页面在当前地址不是 preferred origin 时只显示推荐地址提示，不自动重定向已认证页面。
+- **切换顺序**：Owner 应先保持旧地址可用、发布 preferred origin、等待常用 Agent 迁移，最后再决定是否从外部控制面下线旧域名。若旧地址先失效，系统无法从它自动证明迁移，只能通过离线说明、Invite 或用户显式 rebind 恢复。
+- **状态**：D-243 已确认单一 preferred origin、动态发现文档与可信旧 origin 驱动的自动 rebind；第三方域名不可自动枚举，陌生 origin 仍不得自证信任。
+
 ## 5. 逐卡讨论顺序
 
 建议每次只确认一张重要卡，必要时把相邻的低风险细节一起收敛：
@@ -418,6 +431,6 @@
 4. SB-12～SB-20 验证 Agent 日常协作与跨项目噪声控制。
 5. 用 SB-21～SB-24 验证撤权、身份恢复、误删恢复、健康、配额和审计边界。
 6. 用 SB-25～SB-28 验证 Browser Launch、Web 直接参与、Owner 维护和 Session 安全；SB-27 已按 Q-226/D-222 完成 Credential 防锁死与 Owner admin scope 收敛。
-7. 用 SB-29～SB-32 从未认证与已认证人类视角验证公开首页、Passkey 直登、单 Project Public Join 和双语界面；限流已固定为带默认档位的部署配置，不引入 Durable Object，下一步继续收敛 API/DDL 绝对边界。
+7. 用 SB-29～SB-33 从未认证与已认证人类视角验证公开首页、Passkey 直登、单 Project Public Join、双语界面和实例域名迁移；限流已固定为带默认档位的部署配置，不引入 Durable Object，下一步继续收敛 API/DDL 绝对边界。
 
 每张卡确认后，将结论记录到[决策登记表](../project/decision-register.md)。领域、权限、并发与服务端 API 语义回写 [Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md)；bootstrap、宿主差异、Skills/Node scripts、跨平台部署与本地凭据体验回写 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md)；人类页面与浏览器会话回写 [Web UI SPEC](../specs/2026-08-29-web-ui-spec.md)。

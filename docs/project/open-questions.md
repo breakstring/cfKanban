@@ -63,7 +63,7 @@
 - Q-214 已于 2026-08-28 确认并由 Q-225 修订：v0 Principal 不区分 human/agent kind；服务端保存 immutable principal ID、非唯一 display name 和 version，不设置 disabled 状态轴。ID 用于授权、assignee、审计和引用，名称仅展示且不能用于恢复。首次创建缺少名称时 Agent 只询问这一项，不静默读取 OS/Git/hostname/Agent account，也不按 Agent 宿主重复创建身份。
 - Q-215 已于 2026-08-28 确认并由 D-208 更新命名：不新增 profile Skill；默认日常 Skill `cfkanban` 通过 `GET /api/v1/me` 查看身份，通过带 expected version 的 `PATCH /api/v1/me` 只修改自己的非空 display name。改名写 Audit/Event，不改变 ID、Credential、Grants、assignment 或历史；Owner 不能代改，本地非秘密 metadata 以服务端为准。
 - Q-216 已于 2026-08-28 确认并由 D-234 补充：`.cfkanban/` 可以保存多个上游实例，但每个执行环境对每个 `instance_id` 只维护一个当前本地 Principal/Credential 槽位。同一实例出现多个不同 Principal 是冲突；同一 Credential 在多个环境的副本不是多个身份，并共享撤销/轮换后果。
-- Q-217 已于 2026-08-28 确认：本地实例记录以 immutable `instance_id` 为稳定主键，trusted API origin 是可变安全 metadata。Credential 只发送给当前已信任 origin；新 origin 声称同一 ID 时，必须在认证前展示旧/新地址与影响并取得显式 rebind 授权。仅 Invite/展示域名变化而 API origin 未变时无需 rebind。
+- Q-217 已于 2026-08-28 确认：本地实例记录以 immutable `instance_id` 为稳定主键，trusted API origin 是可变安全 metadata。Credential 只发送给当前已信任 origin；陌生新 origin 只声称同一 ID 时，必须在认证前展示旧/新地址与影响并取得显式 rebind 授权。D-243 后续增加了可信旧 origin 发布更高版本指示、再经无 Credential 目标探测验证后的自动 rebind 例外。仅 Invite/展示域名变化而 API origin 未变时无需 rebind。
 - Q-218 已于 2026-08-28 确认并按 D-195 修订：Invite/discover 不自动修改 Repo；Skill 另行提供显式创建/合并 `.cfkanban-scope.json` 的本地能力。它只保存 schema version 与 `instance_id + workspace_key + project_key` targets，不保存 Credential、API origin、路径、Git metadata、role 或权限快照；何时调用和是否提交 Git 由上层决定。
 - SB-12 已依据用户此前对 Project filter 的强烈推荐并按 D-195 修订：API 允许一个、多个或省略 Project filters，并返回 resolved scope；Skill 在已知工作上下文中强烈推荐 filters，暴露失效 target 与范围扩大警告，但不替上层选择 Project 或规定何时查询全部授权范围。多个 Repo target 平级，不保存优先级/last-used。
 - Q-219 的自然语言意图映射已被后续边界修订：候选读取、assign-to-me 与状态转换仍是独立能力，但 cfKanban 不规定“找工作”“开始”“接手”等话术应触发哪些调用；由上层 Agent 按用户意图、宿主审批和 Repo 规则协调。
@@ -91,7 +91,7 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 - **用户问题**：固定 8 小时 Session 到期后，每次都让 Agent 重新创建 Browser Launch 有摩擦；但把 `.cfkanban/` 的长期 Bearer Credential 粘贴进网页会扩大剪贴板、页面脚本、扩展和误填风险。
 - **已确认**：用户于 2026-08-29 同意 SB-30。首次通过 Agent Launch 建立 Session 后，用户显式注册仅用于 Web 的 Passkey；以后 Passkey 认证只签发新的固定 8 小时 Session，不创建 API Credential、Grant 或 refresh token。网页始终不接受长期 Credential。
 - **生命周期**：首次和补充登记都要求 Agent-launch Session；同一 Principal 可以有多个 Passkey，本人可以列举/撤销，Owner 可以撤销参与者 Passkey，全部写安全 Audit。撤销 Passkey 只使其来源 Sessions 失效，不撤销 API Credential 或 Grants。
-- **恢复边界**：Passkey 受实例 RP ID/domain 约束；丢失、不兼容或域名变化时继续以 Agent Browser Launch 恢复。不能按 display name 绑定或恢复身份。
+- **恢复边界**：D-244 后 v0 明确按当前 hostname 建立 RP ID，不启用跨 hostname credential 共享；丢失、不兼容或 hostname 变化时继续以 Agent Browser Launch 恢复。不能按 display name 绑定或恢复身份。
 
 ### Q-229：公开自助加入
 
@@ -106,10 +106,12 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 
 ### Q-231：Public Project 成本上限
 
-- **已确认**：开启 Public Join 前，Owner 必须显式设置 Project 的 Issue、Comment、Principal 三项 active quota。Web 可以预填建议值，例如 50/500/50，但 API 没有静默默认。
+- **已确认**：开启 Public Join 前，Owner 必须显式设置该 Project 独立的 Issue、Comment、Principal 三项 active quota。Web 可以预填建议值，例如 50/500/50，但 API 没有静默默认。三项限制不形成实例共享池，任一 Project 的开关、usage 与 limits 都不影响其他 Project。
 - **Issue/Comment 语义**：只计算当前 active 工作集。Issue soft delete 释放一个 Issue slot，并使其当前有效 Comments 不再占用 Comment quota；单独 soft delete Comment 释放一个 Comment slot。restore Issue 时需要同时容纳该 Issue 与随之重新有效的 Comments，任何一项不足都整体失败。completion comment 不可删除，所属 Issue active 时持续占用。
 - **Principal 语义**：统计 Project 当前 active 非 Owner Grants，不区分定向 Invitation、Owner 手工授予或 Public Join 来源。Grant revoke 释放 slot；regrant/self-join 重新占用；reader/writer 变化不改变数量。新 Principal/Credential/Grant 必须与 quota 检查原子提交，满额不能遗留孤立身份。
-- **边界**：active quota 解决“Project 满了无法继续”的体验并限制当前可用规模，但 soft-deleted rows 仍保留在 D1，不能宣称释放物理存储。反复创建/删除的长期增长由频率门控减缓；物理 retention/purge 仍是后置决策。
+- **生效周期**：三项限制只在该 Project 的 Public Join enabled 期间强制。关闭后不再约束本 Project 的普通协作，也不撤销既有 Grants；重新开启时必须由 Owner 显式提交三项限制，不能静默沿用旧值。
+- **调低限制**：Owner 可以把限制保存为低于当前 active usage。服务端不自动删除数据或撤销 Grant，只把对应维度视为 over-limit；此时读取、编辑、软删除、撤权、role change 等不增加计数的动作仍允许，创建、恢复、regrant 等增加计数的动作被阻止，直到 usage 降低或 limit 调高。
+- **边界**：active quota 限制公开期间的当前可用规模，但 soft-deleted rows 仍保留在 D1，不能宣称释放物理存储。反复创建/删除的长期增长由频率门控减缓；物理 retention/purge 仍是后置决策。
 
 ### Q-232：实例级请求频率门控如何配置（已确认）
 
@@ -123,6 +125,21 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 
 - **已确认**：用户于 2026-08-29 要求 v0 第一方 Web UI 至少支持 English 与简体中文，并允许人类随时切换。首次按浏览器语言选择，无法匹配或缺失翻译时回退 English。
 - **不翻译的内容**：稳定 API/workflow key、默认五状态显示名和 Workspace/Project/Issue/Comment/Label/context 等业务内容保持原文。API/OpenAPI 与 Skill 输出不随 Web locale 变化。
+
+### Q-234：实例新域名如何被已有 Agent 感知（已确认）
+
+- **Cloudflare 事实**：Owner 可以在首次 `workers.dev` 部署后，从 Dashboard、Wrangler 或 API 为同一 Worker 添加多个 Custom Domains。账户级 Workers Domains API 可以按 service 枚举这些 Cloudflare-native 域名，但需要 Cloudflare 控制面权限；Worker 运行时没有文档化的域名清单 binding，一次请求只能观察本次使用的 origin。详见 [域名与实例发现能力快照](../research/cloudflare-worker-domain-discovery-snapshot-2026-08-29.md)。
+- **第三方边界**：第三方反向代理或 CDN 别名不会进入 Cloudflare Workers Domains 清单，Worker 也不能主动枚举。新地址只返回同一 `instance_id` 仍不足以自证可信；它必须由当前 trusted origin 的更高版本迁移指示交叉证明，或由用户显式 rebind。
+- **已确认方案**：发行 manifest 继续只管不可变发布工件；部署实例另提供公开、非秘密、动态且 `no-store` 的 `/.well-known/cfkanban-instance.json`。每实例只保存一个 Owner 发布的 `preferred_api_origin` 和递增 `origin_version`，其他 Cloudflare/第三方域名只作为外部 aliases/candidates。Cloudflare-native candidate 由 `cfkanban-deploy` 在显式只读 reconcile 时发现，第三方 candidate 由 Owner 明确提供；应用内发布由 `cfkanban-admin` 使用 Owner Bearer Credential 完成，不要求重新部署。
+- **自动迁移边界**：参与者 Agent 只从本地当前 trusted origin 接受更高 `origin_version` 的迁移指示，并在不发送 Credential、不跟随 redirect 的情况下验证目标 discovery 的 `instance_id`、observed/preferred origin 与 version。全部一致时可以原子修改 `.cfkanban/`，无需再次询问；任一不一致、版本未增加/回退、旧地址已失联或入口来自陌生地址时保持原记录并要求用户显式 rebind。
+- **Web/控制面边界**：服务不在认证 API 上跨 origin redirect，也不把 Cloudflare 管理 Token 放入 Worker。迁移期间应保留旧 origin；若先关闭旧地址，只能通过 Invite/离线说明与显式 rebind 告知。Web Session cookie 按 origin 隔离；cfKanban v0 的 Passkey 按精确 hostname 隔离，需要在新 hostname 通过 Agent Browser Launch 重新建立和登记，不随本地 API origin 自动迁移。详见 D-243、D-244 与 SB-33。
+
+### Q-235：页面能否判断当前设备已经存有本站 Passkey（已确认）
+
+- **浏览器能力**：页面可以探测 WebAuthn API、可执行用户验证的平台认证器和 conditional mediation，但这些结果都不证明本站 credential 存在。平台认证器探测为否也不能排除安全密钥、手机或 credential manager。
+- **隐私边界**：页面不能静默枚举 Passkeys；只有用户主动发起并成功完成认证才能证明本次可用。取消、超时、无匹配 credential、认证器不可用或策略拒绝不得显示为“没有 Passkey”。
+- **服务端事实**：已认证后的 Passkey 列表只是当前 Principal 的服务端登记记录，不是当前设备 inventory，也不能证明私钥仍在设备或可用。
+- **v0 选择**：未认证页在 WebAuthn 可用时显示显式登录按钮，不支持时突出 Agent Browser Launch。v0 以当前 hostname 作为 RP ID、当次完整 HTTPS origin 作为 expected origin，不配置跨 hostname 共享；换 hostname 后在新地址重新登记。详见 D-244 与 SB-30。
 
 ## P2：有真实用量后再讨论
 
@@ -139,4 +156,4 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 
 ## 推荐下一轮讨论
 
-D-236～D-239 已固定首次 Owner 名称输入、首次加入的一份计划/一次确认、所有 Principal 的 Skill/Web 自助 display name，以及 pending Credential 恢复边界。下一轮继续从公开 Project 选择、加入后首次使用和 Web/API 交互角度检查用户旅程；CSRF、OpenAPI、DDL/索引等 wire 细节仍留在对应 Draft SPEC 收敛，不授权实现或 Linear 写入。
+D-243 已固定单一 preferred origin、动态 discovery document 与可信旧 origin 驱动的自动 rebind，D-244 已固定 Passkey 可检测性和精确 hostname 边界，SB-30/SB-33 已走通相关用户场景。当前不再有需要先向用户确认的明显产品方向分歧；下一轮优先继续收敛 CSRF、OpenAPI、DDL/索引等 Draft wire 细节，并在冻结前用本地 D1/OpenAPI 原型验证技术假设。该结论不授权实现、Linear 写入、部署或提交。

@@ -35,11 +35,13 @@
 - 已确认完成结果使用结构化、不可变且不可删除的 completion comment；complete 原子追加记录并转为 done，reopen 后再次完成会追加新记录。
 - 已确认 Issue Relation 支持 blocks、parent、related、duplicate 四类语义，允许同一 Workspace 内跨 Project、禁止跨 Workspace；跨 Project 写入要求同时拥有两端 writer。
 - 已确认 v0 不首发 assign-next，也不发布独立 cfKanban CLI。v0 必须提供同一 Worker 托管的极简第一方 Web UI，服务 Owner 简单维护和参与者直接 Kanban 查看/轻量参与。
+- 已确认 canonical source 使用 monorepo 组织 Web、Worker/API、contracts、migrations、三个 Skills 与文档；v0 云端仍只有一个 Worker + 一个 D1。预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace；Web 已选择 Vue 3 + TypeScript + Vite，具体目录、package manager 与配套依赖留给实现阶段。
 - 已确认浏览器不读取或接收本地长期 Credential；用户的 Agent 创建短期一次性 Browser Launch URL，浏览器兑换 HttpOnly Session 后按同一 Principal/Project 权限访问。
-- 已确认首次 Agent Launch 后可登记 Passkey，作为 v0 唯一免 Agent Web 直登方式；Owner 可以同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer` 原子加入，Team Join 不进入 v0。
-- 已确认 Public Join 不建立逐 Principal 重入 blacklist；开启前 Owner 必须显式设置 Project Issue、Comment、非 Owner Principal 三项 active quota。soft delete/Grant revoke 释放，restore/regrant 重新占用；active quota 不声称清除 D1 tombstone。
+- 已确认首次 Agent Launch 后可登记 Passkey，作为 v0 唯一免 Agent Web 直登方式；浏览器能力探测不等于 credential 存在，v0 按精确 hostname 隔离 Passkey。Owner 可以同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer` 原子加入，Team Join 不进入 v0。
+- 已确认 Public Join 不建立逐 Principal 重入 blacklist；开启前 Owner 必须显式设置该 Project 独立的 Issue、Comment、非 Owner Principal 三项 active quota。三项限制只在本 Project 公开期间生效，不与其他 Project 共享；关闭后停止强制但保留既有 Grants。限制允许低于当前 usage，既有资源不自动改变，只阻止继续增长。容器软删除只暂停公开，恢复 Project/Workspace 时此前仍 enabled 的 Policy 在明确警告后自动恢复。soft delete/Grant revoke 释放，restore/regrant 重新占用；active quota 不声称清除 D1 tombstone。
 - 已确认实例请求门控使用原生 Workers Rate Limiting 部署配置：首次部署自动提供单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒；Owner Web 只读展示，修改由 deploy Skill 发布配置且不运行 D1 migration，不引入 Durable Object。
 - 已确认 Web/Agent 使用统一机器错误分类；Worker 内返回统一 JSON，D1 quota 安全映射，Cloudflare edge 1027/429/HTML 则由客户端显式归一化并保留来源。
+- 已确认实例只发布一个 Owner 推荐的 preferred API origin，并动态提供公开、非秘密、`no-store` 的 well-known discovery。已有 Agent 只在当前 trusted origin 发布更高版本且无 Credential 目标探测一致时自动 rebind；陌生或已失联 origin 仍需用户显式确认。域名绑定继续由 Cloudflare/第三方控制面负责；Web Session 按 origin 隔离，v0 Passkey 按精确 hostname 隔离。
 - 已确认 v0 提供部署级授权过滤的跨 Workspace/Project Issue 聚合读取；Project filter 可省略，但 Skill 在已知上下文时强烈推荐限定一个或多个明确 Project。
 - 已确认 Project Grant 不设置失效日期；每个 Principal/Project 只有一条当前记录，由 Owner 显式变更角色、撤销或重新授予；普通邀请不改写已有有效 Grant。
 - 已确认 Event 使用部署级单调 sequence，opaque cursor 绑定 Principal、过滤与可读 Project 集合；scope 变化要求重新获取快照。
@@ -50,11 +52,13 @@
 - 已确认 Credential 不自动过期，只通过显式撤销、轮换或 full recovery 中的撤销失效；last_used_at 仅作低频运维提示。v0 不提供 Principal disable/enable/delete。
 - 已确认 Credential 不做设备绑定；用户可以手工把同一 Credential 复制到多个受信执行环境，所有副本共享身份、审计、撤销和轮换后果；Skill 不自动搬运，v0 不增加设备 Invite/API。
 - 已确认小而明确的应用级资源上限：请求 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB、列表默认 20/最大 100、context 64 KiB。
-- Foundation SPEC 与 Agent Skills & Bootstrap SPEC 已于 2026-08-28 按 D-212 冻结；Foundation 当前为修订 13，Agent Skills & Bootstrap 已按 D-236/D-237/D-239 修订到 14。冻结不授权实现；Web“我的资料”、CSRF 与具体 API/Schema 仍在 Draft 收敛。
+- 已确认源码/发行工程采用锁文件约束的根级验证/构建入口，以及包含顺序、checksum、分类、重入边界和预期 schema artifacts 的 D1 migration manifest；deploy Skill 以 ledger + 实际 schema 双重 readback，不把文件名或退出码当成应用完成。
+- 已确认 v0 不提供持有 Cloudflare Token 的 GitHub Actions 部署路径，继续由用户的 Agent 通过 `cfkanban-deploy` 完成唯一主部署流程。无 Cloudflare 凭据的 CI 验证 workflow 可以作为正常工程设施；远端部署 workflow 后置到下一阶段重新冻结授权与恢复体验。
+- Foundation SPEC 与 Agent Skills & Bootstrap SPEC 已于 2026-08-28 按 D-212 冻结；Foundation 当前已按 D-245 修订到 18，Agent Skills & Bootstrap 已按 D-246/D-247 修订到 20。冻结不授权实现；Web“我的资料”、CSRF 与具体 API/Schema 仍在 Draft 收敛。
 - 已确认 SB-01：canonical 官网 bootstrap document 把 stable pointer 解析到 immutable release manifest，由 manifest 分别固定 Skill bundle 与 Service deployment bundle；manifest 逐工件限制来源并记录 SHA-256 文件指纹，本地更新校验来源连续性。marketplace/plugin 只作便捷入口，宿主差异由安装规则和 Skill 内置 scripts 吸收，不建 Host Adapter 角色。
 - 已确认 SB-02 环境准备和 SB-03 首次部署：strict-zero 默认每实例一个 Worker + 一个 D1、先使用 `workers.dev`，同名资源只有本地/远端 marker 一致时才恢复。更新拆成 SB-03A 本地 Skill update 与 SB-03B 云端 Instance upgrade；前者采用 immutable bundle/原子切换，后者采用固定目标、兼容矩阵、逐条 migration journal 和可验证 restore point，且 deploy Skill 不执行 D1 restore。SB-04～SB-24 已按三层边界复核：Service/安全脚本强制 MUST，Skills 提供可覆盖 SHOULD，上层最终 DECIDES。cfKanban 保持原子合同，同时通过相关 `SKILL.md` 告知本地状态位置、Invite 未指定 role 时推荐 writer、已知上下文中强烈推荐 Project filters、幂等/readback 组合范式、Recovery Invite 固定 mode 与 `deleted=only` tombstone 入口。D-213 已取消原 SB-24 的完整导出/整库恢复产品能力；Storyboard 已完成一轮。
 - 已形成 [Draft API & D1 Schema SPEC](../specs/2026-08-28-api-schema-spec.md)，正在收敛完整 OpenAPI、单操作合同、D1 DDL/索引和原子写入配方；它仍不授权实现。
-- 已形成 [Draft Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与 SB-25～SB-32；Browser Launch/Session、人类轻量参与、Owner 维护、公开首页、Passkey、单 Project Public Join、三项 active quota、限流部署体验与 English/简体中文界面的主要方向已收敛，当前只剩 wire/DDL 细节。推荐 MVP 持久技术主干仍是 Workers + D1，其他 Cloudflare 数据服务暂不成为核心依赖。
+- 已形成 [Draft Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与 SB-25～SB-33；Browser Launch/Session、人类轻量参与、Owner 维护、公开首页、Passkey、单 Project Public Join、Project 隔离 quota、限流部署体验、English/简体中文界面和实例域名迁移的主要方向已收敛。其余主要剩余项为 wire/DDL 细节。推荐 MVP 持久技术主干仍是 Workers + D1，其他 Cloudflare 数据服务暂不成为核心依赖。
 
 ## 方向
 
@@ -107,8 +111,10 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 目标：
 
 - portable Skill bundle、共享 Node.js/TypeScript modules/scripts 与可复用 API schema。
+- 锁文件约束的根级验证/构建入口，以及不持有 Cloudflare 凭据、不产生远端写入的 CI verification workflow。
 - Codex、Claude Code、小龙虾、Workbuddy 等用户 Agent 的宿主兼容规则，处理安装、发现、刷新和权限差异，但不形成独立 adapter 角色。
 - canonical URL bootstrap 文档、immutable release 与可信 Skill 安装/更新指引。
+- preferred origin 的 Owner 发布、动态实例发现、Cloudflare-native domain reconcile 与可信旧 origin 驱动的安全本地 rebind。
 - macOS、Windows、Linux 的 capability detection、Wrangler 登录/部署和 credential storage 验证。
 - context pack 渲染和错误恢复 playbook。
 - 同一 Worker Static Assets 承载的固定五列 Project Board、Issue 详情/常用原子写入和 Owner 简单维护页。
@@ -128,6 +134,7 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 - 健康、审计、配额提示和平台错误解释；不提供完整 D1 导出、导入或整库恢复能力。
 - Web Session 过期、来源 Credential 撤销、Grant 变化和 CSRF 的安全验证。
 - 免费层超限与降级行为验证。
+- 在 Agent-first 部署路径经过真实使用验证后，评估可选的 GitHub Actions 远端部署 profile；另行设计最小权限 Token/GitHub Secrets、人工审批、串行 concurrency、migration 中断和恢复，且必须复用同一 deployment bundle、plan、journal、marker 与 readback。
 
 安全和恢复合同必须在 R1/R2 设计中提前考虑；R4 表示产品化收口，不表示此前可以忽略。
 
@@ -164,3 +171,4 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 - 把 Roadmap 逐条复制成 Linear backlog。
 - 在 v0 或没有对应版本的已冻结设计前引入 KV、DO、Queues、R2、Vectorize 和 AI。
 - 在 Web UI 与 API/Schema 合同未冻结、也没有明确实现授权前做 UI 原型、前端脚手架或部署演示。
+- 在下一阶段合同冻结前引入持有 Cloudflare Token、由 push 或 workflow_dispatch 执行远端写入的 GitHub Actions 部署 workflow。

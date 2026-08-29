@@ -44,6 +44,7 @@ cfKanban 是面向 Coding Agents 的轻量工作协调账本：用稳定、低�
 13. 人类让 Agent 在 IAB 或普通浏览器中打开明确 Project/Issue；Agent 创建一次性 Browser Launch URL，浏览器兑换短期 Session 后直接展示对应 Kanban。
 14. `reader` 直接查看看板与详情，`writer` 进行常用原子 Issue 操作，Owner 通过简洁管理页维护 Workspace/Project、Invite、Grant、Principal/Credential、健康与审计。
 15. Owner 可以同时公开多个 Project；访客从首页每次选择一个 Project 和 `reader | writer` 后原子加入，不引入 Team 或多 Project 公开授权。
+16. Owner 在外部为 Worker 添加新域名后，通过 Agent 发布一个 preferred API origin；已有 Agent 从当前 trusted origin 获得版本化迁移指示、无凭据验证目标后自动更新本地入口，而陌生地址不能靠自报同一 instance ID 获得信任。
 
 ## 产品原则
 
@@ -132,11 +133,12 @@ MVP 优先 Workers + D1。只有真实需求和验证证据证明收益时，才
 - 所有已认证 Principal 都可以通过 `cfkanban` Skill 或 Web“我的资料”查看稳定 principal ID/current display name，并只修改自己的非空 display name；v0 不建立头像、邮箱、简介等完整用户档案。
 - Web 公共界面文案至少支持 English 与简体中文，并允许用户切换；稳定 key、默认 workflow 显示名和业务内容不随 UI 语言自动翻译，Skill/API 也不继承该设置。
 - Agent 通过固定 5 分钟、一次性的 Browser Launch URL 打开明确 Web target；浏览器兑换固定 8 小时、无滑动续期/refresh、绑定源 Credential 与 target scope 的 HttpOnly Session，不读取本地 Credential，也不要求人类粘贴长期 secret。
-- 首次 Agent Launch 后可登记多个 Web-only Passkey；Passkey 登录只签发固定 8 小时 Session，不能调用 Bearer API，丢失或域名变化时仍用 Agent Launch 恢复。
+- 首次 Agent Launch 后可登记多个 Web-only Passkey；Passkey 登录只签发固定 8 小时 Session，不能调用 Bearer API。浏览器 capability detection 不证明 credential 存在；v0 按精确 hostname/完整 HTTPS origin 隔离，丢失或换 hostname 时仍用 Agent Launch 恢复并登记。
 - 单 Project Public Join：Owner 可同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer`；每次只建立或提升一条 Grant，不提供 Team Join 或公开批量授权。
-- Public Join 保持简单重入，不建立逐 Principal blacklist；开启前 Owner 必须显式设置 Project Issue、Comment、非 Owner Principal 三项 active quota。soft delete/Grant revoke 释放，restore/regrant 重新占用；active quota 不等于物理清除 tombstone。
+- Public Join 保持简单重入，不建立逐 Principal blacklist；开启前 Owner 必须显式设置该 Project 独立的 Issue、Comment、非 Owner Principal 三项 active quota。三项限制只在本 Project 的 Public Join 开启期间生效，不形成实例共享池，也不影响其他 Project；关闭不撤销既有 Grants，重新开启须显式重交限制。限制可以低于当前 usage，既有数据不自动改变，只阻止继续增加对应计数的操作。容器软删除只暂停公开，恢复 Project/Workspace 时此前仍 enabled 的 Policy 在明确警告后自动恢复。soft delete/Grant revoke 释放，restore/regrant 重新占用；active quota 不等于物理清除 tombstone。
 - 实例请求门控必须对 Owner 可见，首次部署自动提供单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒的默认档位。修改由 deploy Skill 发布 Worker 配置而非 D1 migration；它只做近似抗滥用，不能替代 D1 精确业务 quota。
 - Web 与 Agent 共享稳定机器错误分类和恢复动作；Project quota、应用 rate limit、D1 platform quota 与 platform failure 分别表达。Cloudflare 在 Worker 外生成的 1027/429/HTML 由客户端显式归一化并保留来源，不伪装成服务端 JSON。
+- 实例公开一个动态、非秘密、`no-store` 的 well-known discovery document，并保存唯一 `preferred_api_origin` 与递增版本。Owner 只能使用 Bearer Credential 修改推荐入口；服务不创建域名、不在认证 API 上跨域 redirect，也不自动迁移 Web Session/Passkey。Agent 只在当前 trusted origin 发布更高版本且无 Credential 目标探测完全一致时自动 rebind。
 - portable Skill bundle 按需携带共享 Node.js/TypeScript scripts；宿主安装、发现和刷新差异属于 bundle 的兼容逻辑，不形成独立 Host Adapter 角色或 cfKanban CLI。远程 MCP adapter 后置。
 
 ## 明确非目标
@@ -191,4 +193,4 @@ Skill 可携带调用约定、references 和经过验证的 helper，但不能�
 
 ## 当前产品讨论入口
 
-[Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md) 当前为合同修订 13；[Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 已通过修订 14 固定首次 Owner 名称输入、首次加入合并确认与 pending Credential 恢复。极简 Web、Browser Launch/Session、Passkey、Public Join、active quota、限流和错误归一化合同继续有效；[Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 正收敛 English/简体中文与所有 Principal 的轻量“我的资料”入口，并与 API/Schema Draft 一起冻结交互和 wire/DDL，均不授权实现。
+[Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md) 当前为合同修订 18；[Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 已修订到 20，最新固定可重现根级构建、migration manifest/checksum/schema readback，并将部署型 GitHub Actions 后置，保持 v0 的 `cfkanban-deploy` Agent-first 唯一主路径。monorepo、同 Worker Static Assets、无 Pages/KV、Passkey、preferred origin、Public Join、Project quota、Browser Launch/Session、Credential 恢复、限流和错误归一化合同继续有效；[Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与 API/Schema Draft 正收敛交互和 wire/DDL，均不授权实现。
