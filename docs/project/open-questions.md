@@ -40,7 +40,7 @@
 - 资源上限已依据 2026-08-28 的常规 API 规则授权确认：JSON 请求最大 128 KiB，Issue body 最大 64 KiB，普通 Comment 和 completion payload 最大 32 KiB；列表默认 20、最大 100，Agent context 最大 64 KiB 并通过 `truncated`/cursor 续读。大日志与附件使用外部 artifact 引用。
 - Q-201 已于 2026-08-28 随 SB-01 确认并由 Q-221/D-209 完善：canonical 项目站点提供只读 bootstrap document，把 stable pointer 解析为 immutable release manifest；manifest 分别固定可校验的 Skill bundle 与 Service deployment bundle。marketplace/plugin 可以作为便捷入口但不是唯一真相源，不执行远程 pipe-to-shell。
 - Q-221 已于 2026-08-28 确认：bootstrap 的 stable pointer 只用于发现；解析后的 immutable release manifest 是具体版本真相源，并分别固定 Skill bundle 与 Service deployment bundle 的 source/version/digest 和兼容关系。已安装 Skill 与用户级缓存只是可验证副本，repo clone 只用于明确的非 canonical 源码试验；普通 stable 部署不从当前工作树或业务 Repo 隐式取材。
-- Q-222 已于 2026-08-28 确认：首次部署默认零参数生成 strict-zero 计划。单一 Cloudflare account/profile 明确时，Agent 自动解析 stable bundle、提议无冲突资源名并生成非人类决策参数；用户只对完整 plan 做一次授权。只有 account 歧义，或 custom domain、付费能力、数据地域/合规、非 stable/源码试验等结果性偏差才询问；未知资源不能接管，默认另提名称。
+- Q-222 已于 2026-08-28 确认并由 D-236 补充：首次部署默认零参数生成 strict-zero 计划。单一 Cloudflare account/profile 明确时，Agent 自动解析 stable bundle、提议无冲突资源名并生成非人类决策参数；缺少 Owner display name 时只询问这一项身份信息，用户只对完整 plan 做一次授权。只有 account 歧义，或 custom domain、付费能力、数据地域/合规、非 stable/源码试验等结果性偏差才再询问；未知资源不能接管，默认另提名称。
 - Q-223 已于 2026-08-28 确认：v0 首次安装信任官方 canonical HTTPS；immutable manifest 逐工件限制允许来源并记录 SHA-256 文件指纹，本地 receipt 保存发布来源与摘要，更新或降级必须验证来源连续性。marketplace/plugin 不能覆盖 canonical 来源，安装、更新和降级均需展示精确目标并取得授权。该机制不防官方发布系统整体失陷；独立数字签名、密钥轮换和撤销等到公共分发、自动更新或托管分离出现时再评估。
 - Q-224 已于 2026-08-29 确认并由 Q-225/Q-227 修订：Browser Launch 固定 5 分钟、一次性；Web Session 固定 8 小时、不滑动续期且无 refresh，绑定 Principal、源 Credential 与 target scope。源 Credential revoke、Session revoke 或 expiry 立即失效，Grant/容器逐请求校验；Project/Issue launch 只访问对应 Project，Owner admin launch 进入实例级管理与数据面，但默认不自动查询全部 Issue。过期后由 Agent 重新创建 launch，不接受网页 Credential。
 - Q-225 已于 2026-08-29 确认：v0 移除 Principal disable/enable/delete。Credential revoke 停止认证，Project Grant revoke 停止具体 Project 权限，Principal Recovery Invite 恢复同一身份；Principal、assignment 与历史稳定保留，不引入重新启用旧 Credential 的安全歧义。
@@ -49,8 +49,8 @@
 - Agent 主体与执行载体已于 2026-08-28 确认：只建模“林的 Agent”“陈的 Agent”这类用户直接使用的 Agent；部署、Owner 管理、Coding 和协调只是任务模式。v0 不发布独立 cfKanban CLI，确定性逻辑使用 Skill bundle 内少量 Node.js/TypeScript scripts；Host Adapter 不作为独立角色。
 - SB-02 的 Node 环境所有权已于 2026-08-28 确认：Skill 可以探测和引导，但 Node 的 version manager、安装方法、路径和全局默认版本由用户决定；已有兼容版本优先复用，stable Skill release 只声明经验证的 semver range。
 - Q-206 已于 2026-08-28 确认：用户选定 Node 安装方式后，Agent 先展示精确计划；获得授权后可以执行并在新 shell/session 中读回验证。授权不隐含新增 package source/version manager、提权、修改 PATH/shell profile、改变全局默认 Node 或卸载旧版本；这些变化必须另行确认。
-- Q-203 已于 2026-08-28 确认：v0 同时支持 Windows 原生和 WSL2，但将其视为互不混用的独立执行环境。Agent 只解析当前环境内的工具、Skills、Cloudflare auth 与 cfKanban Credential，不跨边界自动发现、调用或共享。
-- Q-204 已于 2026-08-28 确认：v0 不依赖 OS secure store；cfKanban Credential 默认保存到当前执行环境用户主目录下的 `.cfkanban/` 私有目录，依赖 ownership/ACL 与最小权限保护。它是权限受限的明文 secret，写入前和使用前必须验证；不能进入 Repo、同步/临时目录、日志、环境配置或 Agent 正常上下文。
+- Q-203 已于 2026-08-28 确认并由 D-234 校正：v0 同时支持 Windows 原生和 WSL2，但将其视为互不混用的独立执行环境。Agent 只解析当前环境内的工具与本地状态，不跨边界自动发现、调用或搬运；这不禁止用户手工复制同一 Credential。
+- Q-204 已于 2026-08-28 确认并由 D-234 补充：v0 不依赖 OS secure store；cfKanban Credential 默认保存到当前执行环境用户主目录下的 `.cfkanban/` 私有目录，依赖 ownership/ACL 与最小权限保护。它是权限受限的明文 secret，用户可在自行承担安全性的前提下复制到其他受信环境；但不能进入 Repo、同步/临时目录、日志、环境配置或 Agent 正常上下文。
 - Q-205 已于 2026-08-28 确认：一次部署授权绑定当前 Agent 任务、规范化 plan digest 与 operation ID，覆盖计划内 Worker/D1、bindings、非破坏性 migration、服务部署、Owner bootstrap、验证和无漂移恢复，不逐步重复确认；新任务/会话或计划外付费、DNS/domain、删除/覆盖、破坏性 migration、未知资源接管、账户/权限变化和其他 plan delta 必须重新确认。
 - Q-207 已于 2026-08-28 确认：strict-zero 默认每实例一个 Worker + 一个 D1，先使用 `workers.dev`；custom domain 和其他 Cloudflare 服务显式启用。同名资源只有本地 receipt/journal、Cloudflare account、资源类型与远端 `instance_id` marker 全部匹配才恢复，否则停止并建议新名称。
 - 更新平面已于 2026-08-28 确认：本地 Skill update 与云端 Instance upgrade 是互不隐含的独立动作；只读检查可同时报告两边版本，执行一边不能静默触发另一边。Skill update 使用 canonical immutable bundle、原子切换和上一已知良好版本回退。
@@ -62,7 +62,7 @@
 - Q-213 已由 D-198/D-203/D-204 分层修订：Project Invite 是 Owner-only 原子能力，API 必须逐项显式携带 `reader | writer`；`cfkanban-admin` 在上层未指定 role 时推荐 `writer`，明确只读时使用 `reader`，更具体规则可覆盖。preview/确认属于上层策略；完整 Bearer URL 只进入必要的可复制话术，不写日志/receipt，cfKanban 不负责外部发送。
 - Q-214 已于 2026-08-28 确认并由 Q-225 修订：v0 Principal 不区分 human/agent kind；服务端保存 immutable principal ID、非唯一 display name 和 version，不设置 disabled 状态轴。ID 用于授权、assignee、审计和引用，名称仅展示且不能用于恢复。首次创建缺少名称时 Agent 只询问这一项，不静默读取 OS/Git/hostname/Agent account，也不按 Agent 宿主重复创建身份。
 - Q-215 已于 2026-08-28 确认并由 D-208 更新命名：不新增 profile Skill；默认日常 Skill `cfkanban` 通过 `GET /api/v1/me` 查看身份，通过带 expected version 的 `PATCH /api/v1/me` 只修改自己的非空 display name。改名写 Audit/Event，不改变 ID、Credential、Grants、assignment 或历史；Owner 不能代改，本地非秘密 metadata 以服务端为准。
-- Q-216 已于 2026-08-28 确认：`.cfkanban/` 可以保存多个上游实例，但每个执行环境对每个 `instance_id` 只维护一个当前本地 Principal/Credential 槽位。同一实例出现多个不同 Principal 是冲突，必须停止并整理，不建立日常身份选择器；同一 Principal 的 Credential 轮换过渡不算多个身份。
+- Q-216 已于 2026-08-28 确认并由 D-234 补充：`.cfkanban/` 可以保存多个上游实例，但每个执行环境对每个 `instance_id` 只维护一个当前本地 Principal/Credential 槽位。同一实例出现多个不同 Principal 是冲突；同一 Credential 在多个环境的副本不是多个身份，并共享撤销/轮换后果。
 - Q-217 已于 2026-08-28 确认：本地实例记录以 immutable `instance_id` 为稳定主键，trusted API origin 是可变安全 metadata。Credential 只发送给当前已信任 origin；新 origin 声称同一 ID 时，必须在认证前展示旧/新地址与影响并取得显式 rebind 授权。仅 Invite/展示域名变化而 API origin 未变时无需 rebind。
 - Q-218 已于 2026-08-28 确认并按 D-195 修订：Invite/discover 不自动修改 Repo；Skill 另行提供显式创建/合并 `.cfkanban-scope.json` 的本地能力。它只保存 schema version 与 `instance_id + workspace_key + project_key` targets，不保存 Credential、API origin、路径、Git metadata、role 或权限快照；何时调用和是否提交 Git 由上层决定。
 - SB-12 已依据用户此前对 Project filter 的强烈推荐并按 D-195 修订：API 允许一个、多个或省略 Project filters，并返回 resolved scope；Skill 在已知工作上下文中强烈推荐 filters，暴露失效 target 与范围扩大警告，但不替上层选择 Project 或规定何时查询全部授权范围。多个 Repo target 平级，不保存优先级/last-used。
@@ -119,6 +119,11 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 - **首次部署默认档位**：单 Principal 动态 API 为 120 次/60 秒；实例全部动态 API 为 300 次/60 秒；未认证敏感操作为 30 次/60 秒。静态资产绕过应用限流；普通公开读取只受实例门控，Public Join redeem、WebAuthn challenge/verify 等未认证敏感操作同时受第三道门控。每个请求叠加适用门控，任一失败即返回 429 与 Retry-After。
 - **边界**：三个数字是可通过重新部署覆盖的产品初始值，不是 Cloudflare 平台上限。原生计数按 location 近似维护，不能防止分布式低速滥用，也不能替代 D1 active quota；若未来要求 Web 即时修改或严格全球计数，再以新版本评估 Durable Object。
 
+### Q-233：Web UI 多语言边界（已确认）
+
+- **已确认**：用户于 2026-08-29 要求 v0 第一方 Web UI 至少支持 English 与简体中文，并允许人类随时切换。首次按浏览器语言选择，无法匹配或缺失翻译时回退 English。
+- **不翻译的内容**：稳定 API/workflow key、默认五状态显示名和 Workspace/Project/Issue/Comment/Label/context 等业务内容保持原文。API/OpenAPI 与 Skill 输出不随 Web locale 变化。
+
 ## P2：有真实用量后再讨论
 
 - 软删除数据的长期物理保留和受控 purge 策略；v0 不提供公开 hard-delete API。
@@ -134,4 +139,4 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 
 ## 推荐下一轮讨论
 
-SB-30/SB-31 已确认；D-229～D-231 形成合同修订 10，D-232 形成修订 11，D-233 又形成修订 12，固定原生限流部署配置、零参数档位与统一错误归一化。下一轮继续收敛 Web UI 与 API/Schema 的 CSRF、OpenAPI、DDL/索引等 wire 细节；仍不授权实现或 Linear 写入。
+D-236～D-239 已固定首次 Owner 名称输入、首次加入的一份计划/一次确认、所有 Principal 的 Skill/Web 自助 display name，以及 pending Credential 恢复边界。下一轮继续从公开 Project 选择、加入后首次使用和 Web/API 交互角度检查用户旅程；CSRF、OpenAPI、DDL/索引等 wire 细节仍留在对应 Draft SPEC 收敛，不授权实现或 Linear 写入。

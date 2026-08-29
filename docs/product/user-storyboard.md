@@ -48,7 +48,7 @@
 | D. 日常 Issue 协作 | SB-12～SB-17 | Agent 能发现、分配、推进、阻塞、交接和完成工作 |
 | E. 跨项目工作 | SB-18～SB-20 | 多 Project/Repo 场景保持低噪声，关系与增量同步可恢复 |
 | F. 运维与恢复 | SB-21～SB-24 | Owner 能撤权、恢复身份、恢复误删并查看健康、配额与审计 |
-| G. 人类 Web 参与 | SB-25～SB-31 | Agent 安全打开明确目标；人类查看、轻量参与、维护、再次登录或自助加入 |
+| G. 人类 Web 参与 | SB-25～SB-32 | Agent 安全打开明确目标；人类查看、轻量参与、维护、再次登录、自助加入或切换语言 |
 
 ## 4. 故事卡
 
@@ -72,18 +72,19 @@
 - **失败恢复**：Node 安装方式未选择、版本不兼容、unsupported OS、Credential 目录 ownership/ACL 不安全、device code 过期、权限不足或账户歧义都保留明确状态并停止；不擅自换安装器、改变用户默认 Node，或把 secret 写到其他位置绕过检查。
 - **已确认**：Skill 可以引导 Node/Wrangler 准备，但不能替用户决定 Node 的版本管理习惯、安装路径或全局版本。Wrangler 优先复用用户系统中已存在且兼容的版本；否则使用独立于 Codex/Claude 和任意用户 Repo 的“用户级 cfKanban Tool Runtime”，由同一 OS 用户下的所有 Agent 宿主和 Repo 共用并锁定受控版本。林选定 Node 安装方式后，Agent 先展示精确计划；获得授权后可以执行并读回验证。新增 package source/version manager、提权、修改 PATH/shell profile、改变全局默认 Node 或卸载旧版本必须另行授权，GUI、UAC 或管理员交互由林亲自完成。Windows 原生与 WSL2 都支持但互不混用，每次执行只使用当前环境内的工具与本地状态。
 - **已确认（Credential 存储）**：cfKanban Credential 默认保存在当前执行环境用户主目录下的 `~/.cfkanban/` 私有目录；Windows 使用当前用户 home 下的等价目录。它依赖 POSIX ownership/最小权限或 Windows 用户专属 ACL，是“权限受限的明文 secret”，不依赖 OS secure store，也不声称已加密。Agent 必须在云端部署、Owner Credential 创建或 Invite 消费前先验证目录可持久写入且权限有效；失败则不继续产生不可恢复副作用。目录不能位于 Repo、同步盘、临时目录、Skill 或 Agent 宿主目录。
-- **已确认**：SB-02 的环境与 Credential 准备口径已经收敛；部署授权范围和新增副作用已在 SB-03 进一步确认。
+- **已确认（跨环境复用）**：Credential 不绑定设备。用户可以自行把同一 Credential 复制到其他受信执行环境并分别保存到各自 `.cfkanban/`；API 不区分这些副本，也不创建新 Principal。Skill 不自动跨环境寻找或搬运 secret，但不阻止用户明确发起的复制。撤销或轮换该 Credential 会同时影响全部副本。
+- **已确认**：SB-02 的环境与 Credential 准备口径已按 D-234 校正；不增加“添加设备”Invite/API，部署授权范围和新增副作用仍由 SB-03 约束。
 
 ### SB-03：Agent 展示部署计划、执行并交付 Owner 身份
 
 - **任务触发**：林审阅 Agent 给出的资源计划后说“按这个计划部署”。
 - **起点**：Cloudflare account 已确认，林的 Agent 已通过 deploy Skill 和 immutable release manifest 固定 Service deployment bundle，并生成 Worker、D1、bindings、migration、公开地址和 strict-zero 成本计划。
-- **Agent 行动**：取得云端写入授权后，林的 Agent 校验 deployment bundle source/version/digest，再调用 Skill 内置 Node 脚本，以 operation ID/journal 分阶段部署；每步先读回再创建或更新。服务就绪后，脚本在本地生成 Owner Credential，直接写入已通过 preflight 的 `.cfkanban/` 受限 Credential 文件，云端只保存 hash/prefix；随后由 Agent 验证 health、instance metadata 和 `/api/v1/me`。
+- **Agent 行动**：生成最终 deploy plan 前，当前指令若没有提供 Owner display name，林的 Agent 只询问这一项身份信息，不从 OS username、Git identity、hostname 或 Agent account 猜测；已有明确名称则直接使用。取得云端写入授权后，Agent 校验 deployment bundle source/version/digest，再调用 Skill 内置 Node 脚本，以 operation ID/journal 分阶段部署；每步先读回再创建或更新。服务就绪后，脚本在本地生成 Owner Credential，直接写入已通过 preflight 的 `.cfkanban/` 受限 Credential 文件，云端只保存 hash/prefix；随后由 Agent 验证 health、instance metadata 和 `/api/v1/me`。
 - **授权边界**：一次部署授权绑定规范化 plan digest 与 operation ID，覆盖同一 Agent 任务内计划明确列出的 Worker/D1 创建、bindings、非破坏性 migration、服务部署、Owner bootstrap 和验证，不在每一步重复确认。新增付费服务、DNS/custom domain、删除/覆盖既有资源、破坏性 migration、未知资源接管、Cloudflare account 变化或其他 plan delta 必须停止并单独确认。Owner Credential 不进入 Agent 正常上下文。
 - **成功反馈**：Agent 返回去敏 receipt：instance URL/ID、Cloudflare resource IDs、Owner Principal 与 credential fingerprint、Skill bundle/Service versions、验证结果、journal ID，以及“创建第一个 Workspace”的下一句建议。
 - **失败恢复**：任一步失败后保留 journal；同一 Agent 任务内先读回真实云端状态，实际状态仍匹配已授权 plan 时可以 resume/repair。新任务、新会话无法可靠证明原授权，或 readback 出现 plan drift 时，先展示当前状态与剩余 delta 并重新确认。不得重复建 D1、重复 migration、创建第二 Owner或把部分成功说成全部完成。
 - **已确认**：cfKanban Credential 使用用户 home 下的 `.cfkanban/` 受限文件；OS secure store 不是部署前置条件。采用“计划级一次授权”，而不是逐 Cloudflare 命令确认；计划外高风险副作用和无法证明仍处于原任务/原计划的恢复必须重新授权。
-- **已确认（默认零参数部署画像）**：strict-zero profile 每个部署实例只创建一个 Worker 和一个 D1，先使用 `workers.dev` 公开地址，不启用 custom domain、KV、R2、Queue、DO、Vectorize 或 Workers AI。单一 Cloudflare account/profile 明确时直接采用；Agent 自动提议 instance label 和无冲突资源名，并生成 binding、instance/operation IDs、journal 等非秘密值，林只需在完整 plan 中一次接受，不先填写表单或逐字段确认。计划只声明 Owner Credential 的生成/保存策略，secret 在授权后的执行阶段才直接写入受限文件。只有 account 歧义，或 custom domain、付费能力、数据地域/合规、非 stable 版本、源码试验等偏差才询问。未知同名资源绝不接管或覆盖，默认改提新名称；坚持精确名称时退出默认流程。
+- **已确认（默认零参数部署画像）**：strict-zero profile 每个部署实例只创建一个 Worker 和一个 D1，先使用 `workers.dev` 公开地址，不启用 custom domain、KV、R2、Queue、DO、Vectorize 或 Workers AI。单一 Cloudflare account/profile 明确时直接采用；Agent 自动提议 instance label 和无冲突资源名，并生成 binding、instance/operation IDs、journal 等非秘密值，林只需在完整 plan 中一次接受，不先填写资源配置表或逐字段确认。若指令没有 Owner display name，Agent 只询问这一项必要身份信息；“零参数”指无需手工填写 Cloudflare 资源参数，不表示用猜测值创建身份。计划只声明 Owner Credential 的生成/保存策略，secret 在授权后的执行阶段才直接写入受限文件。只有 account 歧义，或 custom domain、付费能力、数据地域/合规、非 stable 版本、源码试验等偏差才询问。未知同名资源绝不接管或覆盖，默认改提新名称；坚持精确名称时退出默认流程。
 
 ### SB-03A：Agent 更新本地 cfKanban Skills
 
@@ -161,11 +162,12 @@
 - **任务触发**：陈把邀请话术交给自己的 Coding Agent，并要求它完成加入流程。
 - **起点**：本机没有该 `instance_id` 的 Credential，邀请未过期且未兑换。
 - **Agent 行动**：陈的 Agent GET 邀请说明，核对服务域名和目标授权，安装/更新可信 Skills；没有现有 Credential 时，先取得一个非秘密 display name，再由 Skill 内置 Node 脚本在本地生成并保存 Credential secret，发起幂等 POST 兑换。Agent 不读取并上传 OS username、Git user、hostname 或 Agent 账户名来静默命名身份。
-- **授权边界**：读取邀请无副作用；安装本地能力、创建长期身份和兑换 Grants 前分别说明来源与目标 scope。Agent 不能因持有 URL 就假定获得任意本机写入许可。
-- **成功反馈**：返回服务端保存的 principal ID、display name、Credential fingerprint、逐 Project 的 `created` Grant 结果和推荐 scope；后续跨用户 Principal/assignee 摘要同时显示稳定 ID 与当前名称，明文 secret 不被服务端再次返回。
-- **失败恢复**：本地 secret 保存失败则不兑换；兑换响应丢失时用同一 secret 与 Idempotency-Key 重试，不创建重复身份。
+- **授权边界**：读取邀请和只读探测无副作用。Agent 在一份简短的加入计划中分别列出可信 Skill 来源/版本及本地写入、将创建的长期 Principal/Credential、secret 保存位置和全部目标 Project/role；陈一次确认后可以连续完成计划内动作，不要求为三个紧密相连的阶段重复机械确认。来源、目标、role、保存位置或权限影响变化时必须重新展示计划；Agent 宿主或 OS 自身的权限提示仍照常生效，不能因持有 URL 或这次应用层确认而绕过。
+- **成功反馈**：返回服务端保存的 principal ID、display name、Credential fingerprint、逐 Project 的 `created` Grant 结果和推荐 scope；同时给出“打开明确 Project 看板”和“为当前 Repo 添加明确 Project scope”两个可选下一步，但不自动打开页面或写 `.cfkanban-scope.json`。后续跨用户 Principal/assignee 摘要同时显示稳定 ID 与当前名称，明文 secret 不被服务端再次返回。
+- **失败恢复**：本地生成的新 secret 先写入该实例的 pending 槽位，不占用 current 身份。服务端成功并经 `/me` 读回后才原子提升为 current；本地保存失败则不兑换，明确未提交的不可重试失败清理 pending。兑换响应丢失或提交结果不确定时保留同一 secret 与 Idempotency-Key 重试，不创建重复身份；不能生成第二个 secret 猜测恢复。
 - **已确认**：v0 删除 `Principal.kind=human|agent`；服务端 Principal 保存稳定 immutable ID、非唯一 display name 和 version。principal ID 用于授权、assignee、审计和引用；display name 仅用于展示，允许重名，不能用于认证、去重或恢复。接收方已在当前指令给出名称时直接预览使用，否则 Agent 只询问一次名称。Skill 仍优先复用该实例唯一有效的现有 Credential，不主动为不同 Agent 宿主重复创建 Principal。
 - **已确认（自助改名）**：不新增独立 profile Skill；默认日常入口 `cfkanban` 公开“查看我的身份”和“修改我的显示名称”两项能力，分别调用 `GET /api/v1/me` 与带 `expected_version` 的 `PATCH /api/v1/me`。改名只更新当前 Principal 的非空 display name 并写 Audit/Event，不改变 principal ID、Credential、Grants、assignment 或历史；v0 不允许 Owner 代改其他 Principal 的名称。
+- **已确认（统一个人资料入口）**：Owner 与参与者都可以在已认证 Web 的轻量“我的资料”入口查看稳定 principal ID、当前 display name 与身份摘要，并修改自己的 display name；Web 与 Skill 调用同一 `/me` 合同。v0 的可编辑个人信息仅此一项，不增加头像、邮箱、简介或独立用户档案。
 - **失败恢复**：version 冲突时重新读取 `/me`，不盲目覆盖。服务端改名成功但本地非秘密 metadata 更新失败时，以服务端为准；下次 `/me` 刷新本地显示信息，不回滚远端名称。
 
 ### SB-10：已有身份接受新的 Project 邀请
@@ -335,6 +337,7 @@
 - **任务触发**：陈在网页中浏览看板；若拥有 writer 权限，也可能新建 Issue、改状态、追加 Comment、调整 assignee/label/relation 或完成工作。
 - **起点**：浏览器已有有效 Session，Project Grant 可能是 `reader` 或 `writer`。
 - **页面行动**：reader 只能读取；writer 只对单个资源执行服务已有的原子动作。看板固定五列且不保存手工 rank；writer 可以拖拽一张卡，落列后立即用 expected version 自动保存状态。拖入 `done` 自动改走 complete；没有 summary 时先弹出极简完成框，提交后落列，取消则回原列。菜单/selector 保留为非拖拽等价入口。
+- **个人资料**：任何已认证 Principal 都可以从页面身份摘要进入“我的资料”，查看只读 principal ID 和当前 display name，并原子修改自己的非空 display name。它不受 Project `reader | writer` 差异影响，也不允许修改他人资料；Passkey 管理仍是独立的认证设置。
 - **能力边界**：页面按服务端 `allowed_actions` 展示操作，但服务端仍逐请求校验真实权限、expected version、幂等与软删除规则。Web 不提供多选、批量编辑、隐藏批量循环或第二套业务写入。
 - **成功反馈**：读取与 Agent API 看到相同事实；写入返回新 version/Event，并即时反映 assignee、blocked 与 completion 结果。
 - **失败恢复**：拖拽期间卡片显示 saving，服务确认前不宣称成功；version 冲突、无权或失败时按 readback 回到服务端真实列。文本字段仍显式 Save，冲突时只在当前页面内存保留未提交输入、显示远端当前事实，不自动 merge/replay。Grant 被撤销或降级后，下一请求立即按新权限处理。
@@ -386,6 +389,7 @@
 - **任务触发**：林不想逐人创建离线 Invitation，或者希望公开若干 Project 供公司成员或外部访客自行选择体验。
 - **Owner 行动**：林逐个 Project 开启或关闭 Public Join，并为公开卡片填写一段有界公开摘要。一个实例可以同时公开多个 Project，但不提供 Team Join Link，也不创建一次授予多个 Project 的公开入口。
 - **访客行动**：访客在首页先选择一个公开 Project，再明确选择 `reader` 或 `writer`。未登录时页面生成一段只指向该 Project 与所选 role 的 Agent 话术；访客的 Agent 复用该实例已有 Principal/Credential，或按现有规则创建并安全保存新身份，然后执行一次原子 self-join。已经用 Passkey 登录的 Principal 可以在网页完成同一个单 Project 原子动作。
+- **成功反馈**：Agent 路径返回 Project、实际 role、Principal/Credential fingerprint 与 resolved scope，并建议但不自动执行“打开看板”或“写入当前 Repo scope”；Passkey Web 路径成功后直接进入刚加入的 Project 看板。
 - **能力边界**：Public Join 不是 7 天一次性 Invitation，不把长期 Credential 放进 URL，也不暴露未公开 Workspace/Project、内部 Project context、Issue 或成员。每次调用最多创建或恢复一条明确 Project Grant，不能批量加入；公开 Project 的 Grant 同样不自动过期。
 - **公开 writer 风险**：访客可以自行选择 `writer`，因此 Owner 开启 Public Join 时必须看到并明确接受：未知互联网参与者可以修改、评论、移动、完成以及软删除该 Project 内容，并产生 D1 写入。系统不把公开 role 静默收窄为 `reader`。
 - **幂等与已有权限**：无 Grant 时按所选 role 建立 Grant；已有同等或更高权限时返回当前访问且不重复建行；已有 `reader` 选择 `writer` 时可以按公开策略提升；已有 `writer` 选择 `reader` 不自动降权。
@@ -393,6 +397,16 @@
 - **简单重入**：不建立逐 Principal blacklist。Project 仍公开时，被 Owner 撤销 Grant 的 Principal 可以再次加入并复用同一 Grant 行；要停止所有公开加入，Owner 关闭 Public Join。
 - **频率门控**：首次部署自动提供单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒的原生边缘门控。Owner 查看当前值、来源和近期 429 摘要；修改时让 Agent 使用 `cfkanban-deploy` 发布 Worker 配置，不触发 D1 migration。它只降低突发滥用，不能替代 D1 精确 quota。
 - **状态**：D-225 原 Team/Public 拆分已否决；D-226/D-227/D-229～D-232 已确认单 Project Public Join、简单重入、三项 active quota、透明限流、部署配置载体与初始档位。
+
+### SB-32：人类切换 Web UI 语言
+
+- **任务触发**：周第一次打开公开首页，或陈已经进入 Project 看板，希望界面使用自己更熟悉的语言。
+- **页面行动**：公开首页、登录、Project 看板、Issue 详情、Owner 管理、错误与恢复提示等第一方 Web 公共文案至少提供 English 与简体中文，并在所有页面提供明确语言切换入口。
+- **默认与持久化**：首次访问按浏览器首选语言选择简体中文或 English，无法识别时回退 English；用户显式选择后保存为非秘密浏览器偏好，不与 Principal、Credential、Grant 或 Web Session 绑定。
+- **内容边界**：`backlog / todo / in_progress / done / canceled` 等稳定 key 永远是英文；Project 未设置显示名称覆盖时，五列默认显示名也保持英文。Workspace/Project 名称、Issue 标题与 Markdown、Comment、Label、Project context、状态显示名称覆盖等业务内容按原文展示，不自动翻译。
+- **协议边界**：API/OpenAPI 的字段、枚举、机器错误 code/category/recovery 不随 UI 语言变化。Web 依据稳定机器字段选择本地化提示；Skill 输出继续由上层 Agent 的语言环境决定，cfKanban 不增加 Skill locale 合同。
+- **失败恢复**：缺少某条翻译时只回退 English，不显示裸翻译 key、不改变领域数据，也不因为语言包失败阻止核心读写。
+- **状态**：用户于 2026-08-29 明确要求最少支持 English/简体中文与自行切换；按 D-235 进入 Draft Web UI 合同。
 
 ## 5. 逐卡讨论顺序
 
@@ -404,6 +418,6 @@
 4. SB-12～SB-20 验证 Agent 日常协作与跨项目噪声控制。
 5. 用 SB-21～SB-24 验证撤权、身份恢复、误删恢复、健康、配额和审计边界。
 6. 用 SB-25～SB-28 验证 Browser Launch、Web 直接参与、Owner 维护和 Session 安全；SB-27 已按 Q-226/D-222 完成 Credential 防锁死与 Owner admin scope 收敛。
-7. 用 SB-29～SB-31 从未认证人类访客视角验证公开首页、Passkey 直登和单 Project Public Join；限流已固定为带默认档位的部署配置，不引入 Durable Object，下一步继续收敛 API/DDL 绝对边界。
+7. 用 SB-29～SB-32 从未认证与已认证人类视角验证公开首页、Passkey 直登、单 Project Public Join 和双语界面；限流已固定为带默认档位的部署配置，不引入 Durable Object，下一步继续收敛 API/DDL 绝对边界。
 
 每张卡确认后，将结论记录到[决策登记表](../project/decision-register.md)。领域、权限、并发与服务端 API 语义回写 [Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md)；bootstrap、宿主差异、Skills/Node scripts、跨平台部署与本地凭据体验回写 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md)；人类页面与浏览器会话回写 [Web UI SPEC](../specs/2026-08-29-web-ui-spec.md)。

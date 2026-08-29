@@ -4,7 +4,7 @@
 
 面向 Coding Agents 的极简、API-first Cloudflare Kanban。它更接近一个“可靠的 Agent 工作协调账本”，而不是去掉 UI 的传统项目管理工具。
 
-> 当前状态：Foundation 与 Agent Skills 合同已冻结到修订 12；极简 Web UI 和 API / D1 Schema 合同仍在 Draft 收敛。仓库里只有文档，没有业务代码，也没有已授权的实现计划。
+> 当前状态：Foundation 合同已冻结到修订 13，Agent Skills 合同已冻结到修订 14；极简 Web UI 和 API / D1 Schema 合同仍在 Draft 收敛。仓库里只有文档，没有业务代码，也没有已授权的实现计划。
 
 ## 产品原则
 
@@ -22,12 +22,14 @@
 - 实例不设置第二管理员，Owner 身份不支持转移；Credential 轮换或恢复不能改变 Owner Principal。
 - 首次部署只展示一次 bootstrap Credential；Owner Credential 全部丢失时，仅允许掌握 Cloudflare 部署权限的人通过部署外受控 Skill 脚本为同一 Owner Principal 重新签发。
 - Credential 只认证一个 Principal 身份；同一 Principal 可以通过多个 Project Grants 访问分布在不同 Workspace 的多个 Project。
+- Credential 不绑定设备。用户可以自行把同一 Credential 复制到多个受信执行环境；所有副本在服务端仍是同一 Credential，共享身份、审计、撤销和轮换后果。Skill 不自动跨环境搬运 secret。
 - 非 Owner 参与者在每个 Project 上只有 `reader` 或 `writer`；权限不从 Workspace 继承，`writer` 包含 Project 内容的创建、修改、软删除和恢复，不设置独立 delete role。
 - `writer` 的删除与恢复范围只包含 Project 内容；Workspace/Project 容器只能由 Owner 软删除和恢复。
 - Project 是工作协调命名空间，不等同于代码仓库；同一 Repo 可以关联多个 Project，一个 Project 也可以涉及多个 Repo。
 - Issue 可以分配给一个 Agent 或人类 Principal；assignee 只表示当前负责人，不产生独占执行权或额外权限，其他 `writer` 仍可协作修改。
 - blocked 与 status 正交：Issue 保留原工作阶段，通过未完成依赖或人工原因形成 `is_blocked` 投影。
 - Owner 通过一条可复制的短期一次性 Invite URL 邀请参与者；普通 Project Invite 固定有效 7 天，Principal Recovery Invite 固定有效 1 小时。接收方把 URL 交给自己的 Agent，Skill 复用本地身份或通过内置脚本创建新 Principal/Credential，并原子兑换对应 Project Grants。
+- 首次部署指令没有 Owner display name 时，Agent 在最终计划前只询问这一项身份信息；“零参数”只指无需填写 Cloudflare 资源配置，不表示可以猜测身份。首次加入把 Skill 安装、本地 Credential 创建和目标 Project Grants 合并成一份计划与一次应用层确认。
 - v0 workflow 固定为 `backlog / todo / in_progress / done / canceled`；Project 只能覆盖显示名称且仅 Owner 可修改。Owner 或 Project `writer` 可在固定状态间任意显式转换和 reopen，写入使用 version/CAS 并记录 Event。
 - Issue 只能分配给 Owner 或目标 Project 的有效 `writer`；撤权后保留原 assignee 引用，并通过 `assignee_available=false`、`needs_reassignment=true` 提示显式重新分配。
 - Invitation 明确分为普通 Project Invite 与绑定既有 Principal 的 Recovery Invite；只有 Owner 能创建，参与者不能自行签发额外 Credential。
@@ -35,7 +37,9 @@
 - v0 Issue 关系固定支持 `blocks / parent / related / duplicate`，允许同一 Workspace 内跨 Project、禁止跨 Workspace；跨 Project 写入要求同时拥有两端 `writer`，关系不自动改变状态或权限。
 - v0 先提供确定性候选列表和显式 assign/assign-to-me，不首发原子 assign-next；上层 Agent 可以按用户意图与本地规则组合这些原子能力。
 - v0 包含由同一实例托管的极简第一方 Web UI，复用 REST 权限、version、幂等和审计合同，提供 Project 看板、常用 Issue 轻量操作和 Owner 简单维护；仍不发布独立 cfKanban CLI。
+- 所有已认证 Principal 都可以通过 `cfkanban` Skill 或 Web“我的资料”查看稳定 ID/current display name，并只修改自己的非空 display name；v0 不增加头像、邮箱、简介或完整用户档案系统。
 - Web 看板支持在固定五列间拖拽单张卡片并以乐观并发控制立即保存状态；拖入 `done` 自动使用原子 complete 合同。正文和 Comment 使用 Markdown 源码编辑与安全渲染，不提供多卡拖拽、手工 rank 或 WYSIWYG。
+- 公开首页与登录后的 Web UI 公共文案至少支持 English 和简体中文，并允许显式切换。稳定 key 与默认 workflow 显示名继续使用英文，用户/Project 内容不自动翻译；该语言设置不影响 API/OpenAPI 或 Skill 输出。
 - 已认证 Agent 为明确 Project、Issue 或 Owner target 创建固定 5 分钟、一次性的 Browser Launch URL；浏览器兑换固定 8 小时、target-scoped、无滑动续期和 refresh token 的 HttpOnly Session，源 Credential 撤销时同步失效。长期 Credential 不进入 URL、页面脚本、localStorage 或 sessionStorage；应用内浏览器只是宿主便利能力，不是协议依赖。
 - 首次 Agent Launch 后，Principal 可以登记 Passkey 供后续直接登录 Web。Passkey 只认证 Web，不是 API Credential 或 Grant；Agent Launch 始终保留为恢复入口。
 - Owner 可以通过 Public Join 同时公开多个 Project；访客每次选择一个 Project 和 `reader | writer` 后原子加入。v0 不提供 Team Join 或多 Project 公开授权。
@@ -52,7 +56,7 @@ Credential 与 Project Grant 都不自动过期。Credential 只通过显式撤�
 
 v0 使用有界资源合同：请求最大 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB；列表默认 20、最大 100，Agent context 最大 64 KiB。大日志和附件使用外部 artifact 引用。
 
-Foundation SPEC 与 Agent Skills & Bootstrap SPEC 已冻结到合同修订 12，包含极简 Web、Browser Launch/Session、Owner Credential 防锁死、Owner admin Session 范围、Passkey 直登、单 Project Public Join、简单重入、三项 active quota、带默认档位的透明限流部署配置和分层错误归一化；冻结仍不授权实现。CSRF 细节，以及完整 HTTP/OpenAPI 字段、D1 DDL、索引和原子写入配方仍在 Draft 收敛。软删除数据的长期物理保留策略继续延后；v0 不提供公开硬删除 API，也不提供完整 D1 导出、导入或整库灾难恢复能力。
+Foundation SPEC 当前冻结在合同修订 13；Agent Skills & Bootstrap SPEC 已冻结到修订 14，新增首次 Owner 名称输入、首次加入合并确认与 Credential 从 pending 到 current 的恢复边界。此前极简 Web、Browser Launch/Session、Owner Credential 防锁死、Owner admin Session 范围、Passkey 直登、单 Project Public Join、三项 active quota、透明限流和分层错误归一化继续有效。冻结仍不授权实现。Web 双语与“我的资料”表面、CSRF 细节，以及完整 HTTP/OpenAPI 字段、D1 DDL、索引和原子写入配方仍在 Draft 收敛。软删除数据的长期物理保留策略继续延后；v0 不提供公开硬删除 API，也不提供完整 D1 导出、导入或整库灾难恢复能力。
 
 ## 文档入口
 

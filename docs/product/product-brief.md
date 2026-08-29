@@ -75,6 +75,8 @@ Agent 名称可以帮助人类理解，但身份和审计主体必须从独立 C
 
 Credential 只回答“调用者是谁”：它认证一个稳定 Principal，不直接编码 Workspace、Project 或角色。授权单独回答“这个身份可以访问什么”。v0 按 Project 显式授权；同一 Principal 可以拥有多个 Project Grants，这些 Project 可以分布在不同 Workspace。轮换 Credential 不应重建这些授权。
 
+Credential 不绑定设备或 Agent 宿主。用户可以自行把同一 Credential 复制到多个受信执行环境；服务端把所有副本视为同一 Credential，撤销或轮换会同时影响全部副本。cfKanban 不为此建立设备实体或额外邀请流程，Skills 也不自动跨环境搬运 secret。
+
 ### Project 不等于代码仓库
 
 Project 是工作协调命名空间，不是 Repo 的镜像。系统不强制一 Repo 一 Project：同一 Repo 的工作可以分布在多个 Project，一个 Project 也可以协调多个 Repo。Repo 只作为 Issue、Project 或外部链接中的上下文，不成为身份或授权边界。
@@ -127,6 +129,8 @@ MVP 优先 Workers + D1。只有真实需求和验证证据证明收益时，才
 - OpenAPI、健康检查、能力发现。
 - 有界资源合同：请求最大 128 KiB，Issue body 最大 64 KiB，Comment/completion 最大 32 KiB；列表默认 20、最大 100，Agent context 最大 64 KiB 并支持截断续读。
 - 同一 Worker 托管的极简第一方 Web UI：Project Kanban、Issue 详情/常用写操作和 Owner 简单维护；全部调用同一 REST API 并执行同一权限、CAS、幂等与审计合同。
+- 所有已认证 Principal 都可以通过 `cfkanban` Skill 或 Web“我的资料”查看稳定 principal ID/current display name，并只修改自己的非空 display name；v0 不建立头像、邮箱、简介等完整用户档案。
+- Web 公共界面文案至少支持 English 与简体中文，并允许用户切换；稳定 key、默认 workflow 显示名和业务内容不随 UI 语言自动翻译，Skill/API 也不继承该设置。
 - Agent 通过固定 5 分钟、一次性的 Browser Launch URL 打开明确 Web target；浏览器兑换固定 8 小时、无滑动续期/refresh、绑定源 Credential 与 target scope 的 HttpOnly Session，不读取本地 Credential，也不要求人类粘贴长期 secret。
 - 首次 Agent Launch 后可登记多个 Web-only Passkey；Passkey 登录只签发固定 8 小时 Session，不能调用 Bearer API，丢失或域名变化时仍用 Agent Launch 恢复。
 - 单 Project Public Join：Owner 可同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer`；每次只建立或提升一条 Grant，不提供 Team Join 或公开批量授权。
@@ -161,7 +165,7 @@ Skill 可携带调用约定、references 和经过验证的 helper，但不能�
 - Web UI：通过 Agent 创建的一次性 Browser Launch URL 建立短期浏览器 Session；按当前 Principal 权限提供 Project 看板、Issue 轻量参与和 Owner 简单维护，不直接访问 D1。
 - Agent Skills bootstrap：从 canonical URL 的 stable pointer 发现 immutable release manifest，由 manifest 分别固定 portable Skill bundle 与 Service deployment bundle、宿主安装规则和兼容关系；任何本地写入前先展示来源、版本、digest、scope 和回滚边界。已安装副本/缓存不是版本真相，repo clone 只用于明确的源码试验。
 - 发行信任：首次安装信任官方 canonical HTTPS；不可覆盖的版本清单逐工件固定允许来源与 SHA-256 文件指纹，本地 receipt 用于后续来源连续性校验。marketplace/plugin 不能改写官方来源，安装、更新和降级不得自动执行。v0 明确不解决官方发布系统整体失陷，独立数字签名按公共分发或自动更新需求后置。
-- 首次部署默认无需参数表：在单一 Cloudflare account/profile 和 strict-zero 前提下，Agent 自动生成完整候选计划与安全/确定性参数；只有会改变账户、费用、域名、数据地域/合规或 release 来源的偏差才询问，用户通过一次计划授权接受最终值。
+- 首次部署默认无需 Cloudflare 资源参数表：在单一 Cloudflare account/profile 和 strict-zero 前提下，Agent 自动生成完整候选计划与安全/确定性参数；缺少 Owner display name 时只询问这一项身份信息，只有会改变账户、费用、域名、数据地域/合规或 release 来源的偏差才再询问，用户通过一次计划授权接受最终值。
 - Worker Invite bootstrap：只提供邀请说明和 Invitation 兑换入口；它与受认证的日常 Web/Owner 管理面职责分开。
 - REST API：两者共同依赖的唯一业务合同。
 
@@ -187,4 +191,4 @@ Skill 可携带调用约定、references 和经过验证的 helper，但不能�
 
 ## 当前产品讨论入口
 
-[Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md) 与 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 已通过合同修订 12 固定极简 Web、Browser Launch/Session、Owner Credential 防锁死、Owner admin scope、Passkey 直登、单 Project Public Join、简单重入、三项 active quota、带首次默认档位的透明限流部署配置和统一错误归一化。下一步由 [Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与 API/Schema Draft 收敛交互和 wire/DDL；均不授权实现。
+[Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md) 当前为合同修订 13；[Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 已通过修订 14 固定首次 Owner 名称输入、首次加入合并确认与 pending Credential 恢复。极简 Web、Browser Launch/Session、Passkey、Public Join、active quota、限流和错误归一化合同继续有效；[Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 正收敛 English/简体中文与所有 Principal 的轻量“我的资料”入口，并与 API/Schema Draft 一起冻结交互和 wire/DDL，均不授权实现。

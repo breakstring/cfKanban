@@ -69,6 +69,7 @@
 - 业务 API 固定前缀为 `/api/v1`；`/healthz`、`/openapi.json` 和 `/invite` 是例外公共入口。
 - 请求与响应使用 `application/json; charset=utf-8`；Invite 浏览器说明可以返回 HTML，但其机器可读入口仍为 JSON。
 - JSON 字段使用 `snake_case`；枚举使用稳定小写 key；显示名称另行返回，不能代替稳定 key。
+- `Accept-Language` 或 Web locale 不改变 API/OpenAPI 字段、枚举、机器错误或业务内容；English/简体中文只是第一方 Web 的展示合同。
 - v1 内可以增加可选响应字段、可选查询参数和新端点；删除字段、改变字段含义、增加请求必填字段或改变权限语义需要新的 Frozen 修订或新的 path major。
 - 请求对象拒绝未知字段，避免 Agent 拼错字段后被静默忽略；调用方必须容忍响应中新增的未知字段。
 
@@ -90,6 +91,8 @@
 - `GET /api/v1/public-projects`：只返回 Owner 已开启 Public Join 的有界公开卡片。
 
 Credential 格式固定为版本化 opaque token：`cfk_v1_<prefix>_<secret>`。`secret` 至少 256 bit 随机熵；D1 只保存完整 token 的 SHA-256 hex digest、用于日志安全识别的短 prefix/fingerprint 和元数据。高熵随机 token 不使用面向低熵密码的慢 hash；v0 不使用部署 pepper，避免增加第二份必需 secret 及其轮换合同。鉴权只做 digest 精确查询并统一返回不泄露原因的认证失败，任何日志只允许 fingerprint。
+
+API 不绑定或登记设备。同一 Credential 从多个执行环境发起的请求使用同一 digest 鉴权，映射同一 Principal 并共享 revoke/rotation 生命周期；IP、User-Agent 或自报 session label 都不能把某个副本提升为可靠设备身份。
 
 Invitation 与 Browser Launch code 同样至少 256 bit 随机熵，D1 只保存 SHA-256 hex digest。WebAuthn challenge 使用不可预测随机值、短期单次消费且只保存 digest。Invite/launch code、challenge、Credential、Authorization Header、Web Session secret 和请求中的新 Credential secret 禁止进入日志、错误、Event payload、Audit payload、receipt 或 tracing attribute。
 
