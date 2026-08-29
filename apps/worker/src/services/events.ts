@@ -63,9 +63,31 @@ function eventSelect(eventsSource: string): string {
 }
 
 const EVENT_SELECT = eventSelect("events event");
-const PROJECT_EVENT_SELECT = eventSelect(
-  "events event INDEXED BY idx_events_project_stream_sequence",
-);
+
+async function visibleRelationIds(
+  db: D1Database,
+  relationIds: readonly string[],
+  visibleProjectIds: readonly string[],
+): Promise<Set<string>> {
+  if (relationIds.length === 0 || visibleProjectIds.length === 0) return new Set();
+  try {
+    const result = await db.prepare(
+      `SELECT relation.id
+       FROM issue_relations relation
+       JOIN issues source ON source.id = relation.source_issue_id
+       JOIN issues target ON target.id = relation.target_issue_id
+       WHERE relation.id IN (SELECT value FROM json_each(?1))
+         AND source.project_id IN (SELECT value FROM json_each(?2))
+         AND target.project_id IN (SELECT value FROM json_each(?2))`,
+    ).bind(
+      JSON.stringify(relationIds),
+      JSON.stringify(visibleProjectIds),
+    ).all<{ id: string }>();
+    return new Set(result.results.map((row) => row.id));
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
 
 function repeatedTargets(url: URL, name: "project" | "workspace"): string[] {
   const values = url.searchParams.getAll(name);
@@ -208,39 +230,44 @@ export async function listEvents(
   const afterValue = url.searchParams.get("after");
   const afterSequence = parseEventCursor(decodeCursor(afterValue, context));
   const limit = requireLimit(url);
-  let rows: EventRow[];
+  let candidates: EventRow[];
   try {
     const result = await db.prepare(
-      `${PROJECT_EVENT_SELECT}
-       WHERE event.stream = 'domain' AND event.sequence > ?1
-         AND event.project_id IN (SELECT value FROM json_each(?2))
-         AND (
-           event.subject_type != 'relation'
-           OR EXISTS (
-             SELECT 1
-             FROM issue_relations relation
-             JOIN issues source ON source.id = relation.source_issue_id
-             JOIN issues target ON target.id = relation.target_issue_id
-             WHERE relation.id = event.subject_id
-               AND source.project_id IN (SELECT value FROM json_each(?3))
-               AND target.project_id IN (SELECT value FROM json_each(?3))
-           )
-         )
-       ORDER BY event.sequence ASC
-       LIMIT ?4`,
+      `WITH candidate_events AS (
+         SELECT *
+         FROM events INDEXED BY idx_events_project_stream_sequence
+         WHERE stream = 'domain' AND sequence > ?1
+           AND project_id IN (SELECT value FROM json_each(?2))
+         ORDER BY sequence ASC
+         LIMIT ?3
+       )
+       ${eventSelect("candidate_events event")}
+       ORDER BY event.sequence ASC`,
     ).bind(
       afterSequence,
       JSON.stringify(scope.projects.map((project) => project.projectId)),
-      JSON.stringify(scope.visibleProjects.map((project) => project.projectId)),
       limit + 1,
     ).all<EventRow>();
-    rows = result.results;
+    candidates = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
-  const hasMore = rows.length > limit;
-  const page = rows.slice(0, limit);
-  const lastSequence = page.at(-1)?.sequence ?? afterSequence;
+  const hasMore = candidates.length > limit;
+  const scanned = candidates.slice(0, limit);
+  const relationIds = [...new Set(scanned
+    .filter((row) => row.subject_type === "relation")
+    .map((row) => row.subject_id))];
+  const readableRelations = await visibleRelationIds(
+    db,
+    relationIds,
+    scope.visibleProjects.map((project) => project.projectId),
+  );
+  const page = scanned.filter(
+    (row) => row.subject_type !== "relation" || readableRelations.has(row.subject_id),
+  );
+  // Advance by the bounded raw scan window, including when every candidate was
+  // hidden by current cross-Project Relation authorization.
+  const lastSequence = scanned.at(-1)?.sequence ?? afterSequence;
   return {
     has_more: hasMore,
     items: page.map((row) => eventResource(row)),
