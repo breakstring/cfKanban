@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { createTestHarness } from "wrangler";
 
-import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
+import { authenticateBearer, authenticateCookieSession } from "../../apps/worker/src/kernel/auth.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { createCursorContext, encodeCursor } from "../../apps/worker/src/kernel/cursor.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
@@ -1686,6 +1686,96 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     method: "POST",
   });
 
+  const raceSessionId = "50000000-0000-4000-8000-000000000093";
+  const raceSessionToken = "T".repeat(43);
+  const raceSessionCreatedAt = Date.now();
+  const raceSessionExpiresAt = raceSessionCreatedAt + 8 * 60 * 60 * 1_000;
+  await db.prepare(
+    `INSERT INTO web_sessions
+      (id, token_digest, principal_id, source_kind, source_id, target_kind,
+       target_json, expires_at, created_at)
+     VALUES (?1, ?2, ?3, 'credential', ?4, 'project', ?5, ?6, ?7)`,
+  ).bind(
+    raceSessionId,
+    await sha256Hex(raceSessionToken),
+    ids.writerPrincipal,
+    ids.writerCredential,
+    JSON.stringify({
+      entry_path: "/app/w/auth-races/p/RA",
+      kind: "project",
+      project_id: raceProjectA.body.resource.id,
+      project_key: "RA",
+      workspace_key: "auth-races",
+    }),
+    raceSessionExpiresAt,
+    raceSessionCreatedAt,
+  ).run();
+  const raceSessionRequest = new Request("https://kanban.example.test/api/v1/issues", {
+    headers: { cookie: `cfkanban_session=${raceSessionToken}` },
+  });
+  const raceSessionAuth = await authenticateCookieSession(
+    db,
+    raceSessionRequest,
+    raceSessionCreatedAt + 1,
+  );
+
+  const revokedSessionBarrier = issueActiveScopeBarrierDatabase(db);
+  const revokedSessionList = listIssuesService(
+    revokedSessionBarrier.db,
+    raceSessionAuth,
+    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    raceSessionCreatedAt + 1,
+  );
+  await revokedSessionBarrier.reached;
+  await db.prepare("UPDATE web_sessions SET revoked_at = ?1 WHERE id = ?2")
+    .bind(Date.now(), raceSessionId).run();
+  revokedSessionBarrier.release();
+  try {
+    await assert.rejects(revokedSessionList, (error) => error?.status === 401);
+  } finally {
+    await db.prepare("UPDATE web_sessions SET revoked_at = NULL WHERE id = ?1")
+      .bind(raceSessionId).run();
+  }
+
+  const revokedSessionSourceBarrier = issueActiveScopeBarrierDatabase(db);
+  const revokedSessionSourceList = listIssuesService(
+    revokedSessionSourceBarrier.db,
+    raceSessionAuth,
+    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    raceSessionCreatedAt + 1,
+  );
+  await revokedSessionSourceBarrier.reached;
+  await db.prepare(
+    "UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, ids.writerCredential).run();
+  revokedSessionSourceBarrier.release();
+  try {
+    await assert.rejects(revokedSessionSourceList, (error) => error?.status === 401);
+  } finally {
+    await db.prepare(
+      "UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.writerCredential).run();
+  }
+
+  const expiredSessionStartedAt = raceSessionCreatedAt + 2;
+  const expiredSessionBarrier = issueActiveScopeBarrierDatabase(db);
+  const expiredSessionList = listIssuesService(
+    expiredSessionBarrier.db,
+    raceSessionAuth,
+    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    expiredSessionStartedAt,
+  );
+  await expiredSessionBarrier.reached;
+  await db.prepare("UPDATE web_sessions SET expires_at = ?1 WHERE id = ?2")
+    .bind(expiredSessionStartedAt, raceSessionId).run();
+  expiredSessionBarrier.release();
+  try {
+    await assert.rejects(expiredSessionList, (error) => error?.status === 401);
+  } finally {
+    await db.prepare("UPDATE web_sessions SET expires_at = ?1 WHERE id = ?2")
+      .bind(raceSessionExpiresAt, raceSessionId).run();
+  }
+
   const activeListAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
   const credentialRaceBarrier = issueActiveScopeBarrierDatabase(db);
   const credentialRacedList = listIssuesService(
@@ -1739,6 +1829,89 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     await db.prepare(
       `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
          version = version + 1 WHERE id = ?1`,
+    ).bind(raceGrantA).run();
+  }
+
+  const pausedProjectAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const pausedProjectBarrier = issueActiveScopeBarrierDatabase(db);
+  const pausedProjectList = listIssuesService(
+    pausedProjectBarrier.db,
+    pausedProjectAuth,
+    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    Date.now(),
+  );
+  await pausedProjectBarrier.reached;
+  await db.prepare(
+    "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, raceProjectA.body.resource.id).run();
+  pausedProjectBarrier.release();
+  try {
+    await assert.rejects(
+      pausedProjectList,
+      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    );
+  } finally {
+    await db.prepare(
+      "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    ).bind(raceProjectA.body.resource.id).run();
+  }
+
+  const raceWorkspace = await db.prepare(
+    "SELECT id FROM workspaces WHERE key = 'auth-races'",
+  ).first();
+  const pausedWorkspaceAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const pausedWorkspaceBarrier = issueActiveScopeBarrierDatabase(db, 2);
+  const pausedWorkspaceProjectList = listProjectIssuesService(
+    pausedWorkspaceBarrier.db,
+    pausedWorkspaceAuth,
+    "auth-races",
+    "RA",
+    new URL("https://kanban.example.test/api/v1/workspaces/auth-races/projects/RA/issues"),
+    Date.now(),
+  );
+  await pausedWorkspaceBarrier.reached;
+  await db.prepare(
+    "UPDATE workspaces SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, raceWorkspace.id).run();
+  pausedWorkspaceBarrier.release();
+  try {
+    await assert.rejects(pausedWorkspaceProjectList, (error) => error?.status === 404);
+  } finally {
+    await db.prepare(
+      "UPDATE workspaces SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    ).bind(raceWorkspace.id).run();
+  }
+
+  const raceDeletedIssue = await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+    body: { title: "Race tombstone" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-tombstone" }),
+    method: "POST",
+  });
+  await jsonRequest(
+    `/api/v1/issues/${raceDeletedIssue.body.resource.identifier}?expected_version=${raceDeletedIssue.body.resource.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  const downgradedRecoveryAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const downgradedRecoveryBarrier = issueRecoveryScopeBarrierDatabase(db, 1);
+  const downgradedRecoveryList = listIssuesService(
+    downgradedRecoveryBarrier.db,
+    downgradedRecoveryAuth,
+    new URL("https://kanban.example.test/api/v1/issues?deleted=only&project=auth-races%2FRA"),
+    Date.now(),
+  );
+  await downgradedRecoveryBarrier.reached;
+  await db.prepare(
+    "UPDATE project_grants SET role = 'reader', version = version + 1 WHERE id = ?1",
+  ).bind(raceGrantA).run();
+  downgradedRecoveryBarrier.release();
+  try {
+    await assert.rejects(
+      downgradedRecoveryList,
+      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    );
+  } finally {
+    await db.prepare(
+      "UPDATE project_grants SET role = 'writer', version = version + 1 WHERE id = ?1",
     ).bind(raceGrantA).run();
   }
 
@@ -1807,6 +1980,37 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
          version = version + 1 WHERE id = ?3`,
     ).bind(Date.now(), ids.ownerPrincipal, raceGrantB).run();
   }
+
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+       version = version + 1 WHERE id = ?1`,
+  ).bind(raceGrantB).run();
+  const continuationSeed = await jsonRequest(
+    "/api/v1/issues?project=auth-races%2FRA&limit=1",
+    { headers: writerHeaders() },
+  );
+  assert.equal(continuationSeed.response.status, 200, JSON.stringify(continuationSeed.body));
+  assert.equal(continuationSeed.body.has_more, true);
+  const continuationAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const continuationBarrier = issueFinalQueryBarrierDatabase(db);
+  const shrunkContinuation = listIssuesService(
+    continuationBarrier.db,
+    continuationAuth,
+    new URL(
+      `https://kanban.example.test/api/v1/issues?project=auth-races%2FRA&limit=1&cursor=${encodeURIComponent(continuationSeed.body.next_cursor)}`,
+    ),
+    Date.now(),
+  );
+  await continuationBarrier.reached;
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, raceGrantB).run();
+  continuationBarrier.release();
+  await assert.rejects(
+    shrunkContinuation,
+    (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+  );
 
   const duplicateEvents = await db.prepare(
     `SELECT operation_id, COUNT(*) AS count FROM events
