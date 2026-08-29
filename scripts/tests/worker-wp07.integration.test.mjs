@@ -1477,6 +1477,48 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     "wp07-reject-invalid-rsa-public-key",
   );
   secrets.push(invalidRsaKey.options.body.public_key.challenge, invalidRsaKey.fixture.publicKeyCose);
+  for (const [name, exponent] of [
+    ["zero", Uint8Array.of(0)],
+    ["one", Uint8Array.of(1)],
+    ["two", Uint8Array.of(2)],
+    ["four", Uint8Array.of(4)],
+  ]) {
+    const rejectedExponent = await rejectRegistrationWithExtraCose(
+      registrationSession.cookies,
+      -257,
+      [[-2, exponent]],
+      `wp07-reject-rsa-${name}-exponent`,
+    );
+    secrets.push(
+      rejectedExponent.options.body.public_key.challenge,
+      rejectedExponent.fixture.publicKeyCose,
+    );
+  }
+  const shortRsaModulus = new Uint8Array(256).fill(0xff);
+  shortRsaModulus[0] = 0x7f;
+  const invalidRsaBitLength = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -257,
+    [[-1, shortRsaModulus]],
+    "wp07-reject-short-rsa-modulus",
+  );
+  secrets.push(
+    invalidRsaBitLength.options.body.public_key.challenge,
+    invalidRsaBitLength.fixture.publicKeyCose,
+  );
+  const evenRsaModulus = new Uint8Array(256).fill(0xff);
+  evenRsaModulus[0] = 0x80;
+  evenRsaModulus[evenRsaModulus.length - 1] = 0xfe;
+  const invalidEvenRsaModulus = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -257,
+    [[-1, evenRsaModulus]],
+    "wp07-reject-even-rsa-modulus",
+  );
+  secrets.push(
+    invalidEvenRsaModulus.options.body.public_key.challenge,
+    invalidEvenRsaModulus.fixture.publicKeyCose,
+  );
   const unknownRegistrationField = "wp07-unknown-registration-response-field";
   const unknownRegistration = await rejectRegistrationWithCredentialMutation(
     registrationSession.cookies,
@@ -1805,7 +1847,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   } finally {
     crypto.subtle.verify = originalVerify;
   }
-  assert.equal(unknownCredentialVerifyCalls, 1);
+  assert.equal(unknownCredentialVerifyCalls, 2);
   const equalizedUnknownState = await db.prepare(
     `SELECT
        (SELECT consumed_at FROM webauthn_challenges WHERE id = ?1) AS consumed_at,
