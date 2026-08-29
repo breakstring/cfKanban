@@ -8,7 +8,11 @@ import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { createCursorContext, encodeCursor } from "../../apps/worker/src/kernel/cursor.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
-import { reportIssueBlocked } from "../../apps/worker/src/services/issues.ts";
+import {
+  listIssues as listIssuesService,
+  listProjectIssues as listProjectIssuesService,
+  reportIssueBlocked,
+} from "../../apps/worker/src/services/issues.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
@@ -111,6 +115,56 @@ function withOneFinalizeFailure(database) {
       return typeof value === "function" ? value.bind(target) : value;
     },
   });
+}
+
+function issueRecoveryScopeBarrierDatabase(database, pauseAtRead) {
+  let matchingReads = 0;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "all" && matches) {
+        return async (...args) => {
+          const result = await target.all(...args);
+          matchingReads += 1;
+          if (matchingReads === pauseAtRead) {
+            signalReached();
+            await released;
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("recovery_grant") && sql.includes("ORDER BY w.key, p.key"),
+          );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
 }
 
 async function seedParticipant({ credentialId, grantId, principalId, role, tokenValue, projectId }) {
@@ -1087,6 +1141,63 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     `/api/v1/issues/CFK-3?expected_version=${privateIssueCurrent.body.version}`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
+
+  const recoveryRaceAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const globalRecoveryBarrier = issueRecoveryScopeBarrierDatabase(db, 1);
+  const racedGlobalTombstones = listIssuesService(
+    globalRecoveryBarrier.db,
+    recoveryRaceAuth,
+    new URL("https://kanban.example.test/api/v1/issues?deleted=only"),
+    Date.now(),
+  );
+  await globalRecoveryBarrier.reached;
+  await db.prepare(
+    "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, privateProject.body.resource.id).run();
+  globalRecoveryBarrier.release();
+  let racedGlobalTombstoneResult;
+  try {
+    racedGlobalTombstoneResult = await racedGlobalTombstones;
+  } finally {
+    await db.prepare(
+      "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    )
+      .bind(privateProject.body.resource.id).run();
+  }
+  assert.equal(
+    racedGlobalTombstoneResult.items.some((issue) => issue.identifier === "CFK-3"),
+    false,
+  );
+  assert.equal(
+    racedGlobalTombstoneResult.resolved_scope.projects.some(
+      (project) => project.project_id === privateProject.body.resource.id,
+    ),
+    false,
+  );
+
+  const projectRecoveryBarrier = issueRecoveryScopeBarrierDatabase(db, 2);
+  const racedProjectTombstones = listProjectIssuesService(
+    projectRecoveryBarrier.db,
+    recoveryRaceAuth,
+    "engineering",
+    "PRIVATE",
+    new URL("https://kanban.example.test/api/v1/workspaces/engineering/projects/PRIVATE/issues?deleted=only"),
+    Date.now(),
+  );
+  await projectRecoveryBarrier.reached;
+  await db.prepare(
+    "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, privateProject.body.resource.id).run();
+  projectRecoveryBarrier.release();
+  try {
+    await assert.rejects(racedProjectTombstones, (error) => error?.status === 404);
+  } finally {
+    await db.prepare(
+      "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    )
+      .bind(privateProject.body.resource.id).run();
+  }
+
   const privateProjectCurrent = await jsonRequest(
     "/api/v1/workspaces/engineering/projects/PRIVATE",
     { headers: ownerHeaders() },

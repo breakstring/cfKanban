@@ -718,17 +718,23 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     "UPDATE projects SET display_name = ?1 WHERE id = ?2",
   ).bind(`Unsafe ${unsafeSnapshotCode}`, firstProjectId).run();
   const unsafeSnapshotKey = "wp04-snapshot-secret-preflight-redeem";
+  const unsafeSnapshotToken = token("snapshotsafe", "Z");
+  const unsafeSnapshotSideEffectsBefore = await redemptionSideEffects();
   const unsafeSnapshotRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
       display_name: "Snapshot Safety Probe",
       invite_code: unsafeSnapshotCode,
-      new_credential_token: token("snapshotsafe", "Z"),
+      new_credential_token: unsafeSnapshotToken,
       redeem_as: "new_principal",
     },
     headers: { "idempotency-key": unsafeSnapshotKey },
     method: "POST",
   });
   assert.equal(unsafeSnapshotRedeem.response.status, 400, JSON.stringify(unsafeSnapshotRedeem.body));
+  assert.equal(unsafeSnapshotRedeem.body.code, "VALIDATION_ERROR");
+  assert.equal(unsafeSnapshotRedeem.body.details.reason, "secret_value_reused");
+  assert.equal(unsafeSnapshotRedeem.body.details.field, "project_display_name");
+  assert.deepEqual(await redemptionSideEffects(), unsafeSnapshotSideEffectsBefore);
   const unsafeSnapshotKeyDigest = await sha256Hex(unsafeSnapshotKey);
   const unsafeSnapshotPending = await db.prepare(
     `SELECT COUNT(*) AS count FROM idempotency_records
@@ -1340,6 +1346,8 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     bulkNewCode,
     bulkCurrentCode,
     rotatedOwnerToken,
+    unsafeSnapshotCode,
+    unsafeSnapshotToken,
   ]);
 
   const activeGrants = await db.prepare(
