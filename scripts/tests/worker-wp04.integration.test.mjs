@@ -168,12 +168,22 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.equal(invitationHtml.includes(projectInviteCode), false);
   assert.match(invitationHtml, /history\.replaceState/);
   assert.match(invitationHtml, /<html lang="en">/);
+  assert.match(invitationHtml, /data-select-locale="en"/);
+  assert.match(invitationHtml, /data-select-locale="zh-CN"/);
   assert.match(invitationHtml, /engineering\/CORE/);
   assert.match(invitationHtml, new RegExp(firstProjectId));
   const chineseInvitationPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
     headers: { "accept-language": "zh-CN,zh;q=0.9" },
   });
   assert.match(await chineseInvitationPage.text(), /<html lang="zh-CN">[\s\S]*目标 Project/);
+  const weightedEnglishPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
+    headers: { "accept-language": "en-US,en;q=0.9,zh-CN;q=0.1" },
+  });
+  assert.match(await weightedEnglishPage.text(), /<html lang="en">/);
+  const zeroQualityChinesePage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
+    headers: { "accept-language": "zh-CN;q=0,en;q=0.5" },
+  });
+  assert.match(await zeroQualityChinesePage.text(), /<html lang="en">/);
   const unknownLocalePage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
     headers: { "accept-language": "fr-FR" },
   });
@@ -566,6 +576,15 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   });
   assert.equal(rotatedParticipant.response.status, 200);
   assert.equal(JSON.stringify(rotatedParticipant.body).includes(participantRotatedToken), false);
+  const rotationSecurityEvent = await db.prepare(
+    `SELECT actor_credential_id, payload_json FROM events
+     WHERE type = 'principal.credential-recovered' ORDER BY sequence DESC LIMIT 1`,
+  ).first();
+  assert.equal(rotationSecurityEvent.actor_credential_id, participantCredentialId);
+  assert.equal(
+    JSON.parse(rotationSecurityEvent.payload_json).replacement_credential_id,
+    rotatedParticipant.body.resource.credential.id,
+  );
   const replayedParticipantRotation = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
       invite_code: rotationCode,
@@ -604,6 +623,15 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     method: "POST",
   });
   assert.equal(fullyRecovered.response.status, 200);
+  const fullRecoverySecurityEvent = await db.prepare(
+    `SELECT actor_credential_id, payload_json FROM events
+     WHERE type = 'principal.credential-recovered' ORDER BY sequence DESC LIMIT 1`,
+  ).first();
+  assert.equal(fullRecoverySecurityEvent.actor_credential_id, null);
+  assert.equal(
+    JSON.parse(fullRecoverySecurityEvent.payload_json).replacement_credential_id,
+    fullyRecovered.body.resource.credential.id,
+  );
   const replayedFullRecovery = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
       invite_code: fullRecoveryCode,
@@ -700,6 +728,8 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   });
   assert.equal(quotaRedeem.response.status, 409);
   assert.equal(quotaRedeem.body.code, "PROJECT_PRINCIPAL_LIMIT_REACHED");
+  assert.equal(quotaRedeem.body.details.current_usage, 1);
+  assert.equal(quotaRedeem.body.details.limit, 1);
   const afterQuotaPrincipals = await db.prepare("SELECT COUNT(*) AS count FROM principals").first();
   assert.equal(afterQuotaPrincipals.count, beforeQuotaPrincipals.count);
 

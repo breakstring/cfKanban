@@ -4,8 +4,11 @@ import { fileURLToPath } from "node:url";
 
 import { createTestHarness } from "wrangler";
 
+import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
+import { createCursorContext, encodeCursor } from "../../apps/worker/src/kernel/cursor.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
+import { reportIssueBlocked } from "../../apps/worker/src/services/issues.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
@@ -61,6 +64,48 @@ function assertWriteResult(value, replay = false) {
   assert.equal(value.idempotent_replay, replay);
   assert.equal(typeof value.event_cursor, "string");
   assert.equal(typeof value.resource, "object");
+}
+
+const ordinaryCursorFilter = (projectTargets = []) => ({
+  assignees: [],
+  candidate: false,
+  candidate_assignment: null,
+  candidate_blocked: null,
+  deleted: "exclude",
+  project_targets: projectTargets,
+  q: null,
+  statuses: [],
+  workspace_targets: [],
+});
+
+function withOneFinalizeFailure(database) {
+  let failed = false;
+  return new Proxy(database, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (sql) => {
+          const statement = target.prepare(sql);
+          if (!sql.includes("SET state = 'committed'")) return statement;
+          return {
+            bind(...values) {
+              const bound = statement.bind(...values);
+              return {
+                async run() {
+                  if (!failed) {
+                    failed = true;
+                    throw new Error("injected finalize interruption");
+                  }
+                  return bound.run();
+                },
+              };
+            },
+          };
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 async function seedParticipant({ credentialId, grantId, principalId, role, tokenValue, projectId }) {
@@ -191,9 +236,27 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     method: "POST",
   });
   assert.equal(privateIssue.body.resource.identifier, "CFK-3");
+  const privateProjectScope = await db.prepare(
+    "SELECT workspace_id FROM projects WHERE id = ?1",
+  ).bind(privateProject.body.resource.id).first();
+  await db.prepare(
+    `INSERT INTO issue_relations
+      (id, workspace_id, kind, source_issue_id, target_issue_id, created_at,
+       created_by_principal_id, created_operation_id)
+     VALUES (?1, ?2, 'blocks', ?3, ?4, ?5, ?6, ?7)`,
+  ).bind(
+    "50000000-0000-4000-8000-000000000015",
+    privateProjectScope.workspace_id,
+    privateIssue.body.resource.id,
+    second.body.resource.id,
+    Date.now(),
+    ids.ownerPrincipal,
+    "wp05-seed-hidden-blocker",
+  ).run();
 
   const writerList = await jsonRequest("/api/v1/issues", { headers: writerHeaders() });
   assert.deepEqual(writerList.body.items.map((issue) => issue.identifier), ["CFK-2", "CFK-1"]);
+  assert.equal(writerList.body.items.find((issue) => issue.identifier === "CFK-2").is_blocked, false);
   assert.equal(writerList.body.resolved_scope.expanded_to_all_authorized_projects, true);
   assert.equal(writerList.body.resolved_scope.projects.length, 1);
   const firstPage = await jsonRequest("/api/v1/issues?limit=1", { headers: writerHeaders() });
@@ -204,6 +267,56 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     { headers: writerHeaders() },
   );
   assert.deepEqual(secondPage.body.items.map((issue) => issue.identifier), ["CFK-1"]);
+  const sameScopeDifferentPrincipalCursor = await jsonRequest(
+    `/api/v1/issues?limit=1&cursor=${encodeURIComponent(firstPage.body.next_cursor)}`,
+    { headers: readerHeaders() },
+  );
+  assert.equal(sameScopeDifferentPrincipalCursor.response.status, 409);
+  assert.equal(sameScopeDifferentPrincipalCursor.body.code, "CURSOR_SCOPE_MISMATCH");
+  const ordinaryCursorContext = await createCursorContext(
+    "issues",
+    ordinaryCursorFilter(),
+    [coreProjectId],
+    ids.writerPrincipal,
+  );
+  const invalidOrdinaryCursor = encodeCursor(ordinaryCursorContext, [-1, 1]);
+  const invalidOrdinaryPage = await jsonRequest(
+    `/api/v1/issues?cursor=${encodeURIComponent(invalidOrdinaryCursor)}`,
+    { headers: writerHeaders() },
+  );
+  assert.equal(invalidOrdinaryPage.response.status, 400);
+  assert.equal(invalidOrdinaryPage.body.code, "INVALID_CURSOR");
+  const candidateCursorContext = await createCursorContext(
+    "issue-candidates",
+    {
+      ...ordinaryCursorFilter(),
+      candidate: true,
+      candidate_assignment: "unassigned",
+      candidate_blocked: "exclude",
+    },
+    [coreProjectId],
+    ids.writerPrincipal,
+  );
+  const invalidCandidateCursor = encodeCursor(candidateCursorContext, [5, 0, 1]);
+  const invalidCandidatePage = await jsonRequest(
+    `/api/v1/issues/candidates?assignment=unassigned&cursor=${encodeURIComponent(invalidCandidateCursor)}`,
+    { headers: writerHeaders() },
+  );
+  assert.equal(invalidCandidatePage.response.status, 400);
+  assert.equal(invalidCandidatePage.body.code, "INVALID_CURSOR");
+  const emptyScopeCursorContext = await createCursorContext(
+    "issues",
+    ordinaryCursorFilter(["engineering/MISSING"]),
+    [],
+    ids.writerPrincipal,
+  );
+  const invalidEmptyScopeCursor = encodeCursor(emptyScopeCursorContext, [0, 1.5]);
+  const invalidEmptyScopePage = await jsonRequest(
+    `/api/v1/issues?project=engineering%2FMISSING&cursor=${encodeURIComponent(invalidEmptyScopeCursor)}`,
+    { headers: writerHeaders() },
+  );
+  assert.equal(invalidEmptyScopePage.response.status, 400);
+  assert.equal(invalidEmptyScopePage.body.code, "INVALID_CURSOR");
   const ownerPage = await jsonRequest("/api/v1/issues?limit=1", { headers: ownerHeaders() });
   const mismatchedCursor = await jsonRequest(
     `/api/v1/issues?limit=1&cursor=${encodeURIComponent(ownerPage.body.next_cursor)}`,
@@ -261,6 +374,16 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   });
   assert.equal(updated.response.status, 200);
   assert.equal(updated.body.resource.status.key, "todo");
+  const statusEvent = await db.prepare(
+    "SELECT payload_json FROM events WHERE type = 'issue.updated' AND subject_id = ?1 ORDER BY sequence DESC LIMIT 1",
+  ).bind(first.body.resource.id).first();
+  assert.deepEqual(
+    {
+      new_status_key: JSON.parse(statusEvent.payload_json).new_status_key,
+      old_status_key: JSON.parse(statusEvent.payload_json).old_status_key,
+    },
+    { new_status_key: "todo", old_status_key: "backlog" },
+  );
   const assigned = await jsonRequest("/api/v1/issues/CFK-1/commands/assign-to-me", {
     body: { expected_version: updated.body.resource.version },
     headers: writerHeaders({ "idempotency-key": "wp05-assign-self" }),
@@ -268,6 +391,25 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   });
   assert.equal(assigned.response.status, 200);
   assert.equal(assigned.body.resource.assignee.principal_id, ids.writerPrincipal);
+  const filteredByStatusAndAssignee = await jsonRequest(
+    `/api/v1/issues?status=todo&assignee=${encodeURIComponent(ids.writerPrincipal)}`,
+    { headers: writerHeaders() },
+  );
+  assert.deepEqual(filteredByStatusAndAssignee.body.items.map((issue) => issue.identifier), ["CFK-1"]);
+  assert.deepEqual(filteredByStatusAndAssignee.body.resolved_scope.filters, {
+    assignees: [ids.writerPrincipal],
+    statuses: ["todo"],
+  });
+  const statusPage = await jsonRequest("/api/v1/issues?status=todo&limit=1", {
+    headers: writerHeaders(),
+  });
+  assert.equal(statusPage.body.has_more, true);
+  const reusedWithDifferentFilter = await jsonRequest(
+    `/api/v1/issues?status=backlog&limit=1&cursor=${encodeURIComponent(statusPage.body.next_cursor)}`,
+    { headers: writerHeaders() },
+  );
+  assert.equal(reusedWithDifferentFilter.response.status, 409);
+  assert.equal(reusedWithDifferentFilter.body.code, "CURSOR_SCOPE_MISMATCH");
   const staleAssign = await jsonRequest("/api/v1/issues/CFK-1/commands/assign-to-me", {
     body: { expected_version: updated.body.resource.version },
     headers: ownerHeaders({ "idempotency-key": "wp05-stale-assign" }),
@@ -321,6 +463,113 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     { headers: writerHeaders() },
   );
   assert.deepEqual(newlyAvailableCandidate.body.items.map((issue) => issue.identifier), ["CFK-2"]);
+  const hiddenBlockerProjection = await jsonRequest("/api/v1/issues/CFK-2", { headers: writerHeaders() });
+  assert.equal(hiddenBlockerProjection.body.is_blocked, false);
+  const crossProjectGrantId = "50000000-0000-4000-8000-000000000016";
+  await db.prepare(
+    `INSERT INTO project_grants
+      (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
+     VALUES (?1, ?2, ?3, 'writer', ?4, ?4, ?5)`,
+  ).bind(
+    crossProjectGrantId,
+    ids.writerPrincipal,
+    privateProject.body.resource.id,
+    Date.now(),
+    "wp05-seed-cross-project-grant",
+  ).run();
+  const visibleBlockerProjection = await jsonRequest("/api/v1/issues/CFK-2", { headers: writerHeaders() });
+  assert.equal(visibleBlockerProjection.body.is_blocked, true);
+  const visibleBlockerCandidates = await jsonRequest(
+    "/api/v1/issues/candidates?assignment=unassigned",
+    { headers: writerHeaders() },
+  );
+  assert.equal(visibleBlockerCandidates.body.items.some((issue) => issue.identifier === "CFK-2"), false);
+  await db.prepare(
+    "UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2, version = version + 1 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, crossProjectGrantId).run();
+  const revokedBlockerProjection = await jsonRequest("/api/v1/issues/CFK-2", { headers: writerHeaders() });
+  assert.equal(revokedBlockerProjection.body.is_blocked, false);
+  const revokedBlockerCandidates = await jsonRequest(
+    "/api/v1/issues/candidates?assignment=unassigned",
+    { headers: writerHeaders() },
+  );
+  assert.equal(revokedBlockerCandidates.body.items.some((issue) => issue.identifier === "CFK-2"), true);
+
+  const maximumLabels = Array.from({ length: 20 }, (_, index) => ({
+    id: `51000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    name: `maximum-${String(index + 1).padStart(2, "0")}`,
+    operation: `wp05-seed-maximum-label-${index + 1}`,
+  }));
+  await db.prepare(
+    `INSERT INTO labels
+      (id, project_id, name, color, created_at, updated_at,
+       created_by_principal_id, updated_by_principal_id, created_operation_id)
+     SELECT json_extract(value, '$.id'), ?1, json_extract(value, '$.name'), NULL,
+            ?2, ?2, ?3, ?3, json_extract(value, '$.operation')
+     FROM json_each(?4)`,
+  ).bind(coreProjectId, Date.now(), ids.ownerPrincipal, JSON.stringify(maximumLabels)).run();
+  const maximumLabelIssue = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    body: { label_ids: maximumLabels.map((label) => label.id), title: "Maximum label association" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-maximum-label-create" }),
+    method: "POST",
+  });
+  assert.equal(maximumLabelIssue.response.status, 200);
+  assert.equal(maximumLabelIssue.body.resource.labels.length, 20);
+  const maximumLabelOperation = await db.prepare(
+    "SELECT operation_id FROM events WHERE type = 'issue.created' AND subject_id = ?1",
+  ).bind(maximumLabelIssue.body.resource.id).first();
+  const maximumLabelProvenance = await db.prepare(
+    `SELECT COUNT(*) AS association_count,
+            COUNT(DISTINCT created_operation_id) AS operation_count,
+            MIN(created_operation_id) AS operation_id
+     FROM issue_labels WHERE issue_id = ?1`,
+  ).bind(maximumLabelIssue.body.resource.id).first();
+  assert.deepEqual(maximumLabelProvenance, {
+    association_count: 20,
+    operation_count: 1,
+    operation_id: maximumLabelOperation.operation_id,
+  });
+
+  const contextProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
+    body: { context: "p".repeat(20 * 1024), display_name: "Context", key: "CONTEXT" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-context-project" }),
+    method: "POST",
+  });
+  const contextIssue = await jsonRequest("/api/v1/workspaces/engineering/projects/CONTEXT/issues", {
+    body: { body: "b".repeat(20 * 1024), title: "Context remains complete below the envelope limit" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-context-issue" }),
+    method: "POST",
+  });
+  const completeContext = await jsonRequest(
+    `/api/v1/issues/${contextIssue.body.resource.identifier}/context`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(completeContext.response.status, 200);
+  assert.equal(completeContext.body.truncated, false);
+  assert.equal(completeContext.body.sections.body.content.length, 20 * 1024);
+  assert.equal(completeContext.body.sections.project_context.content.length, 20 * 1024);
+  const contextComments = Array.from({ length: 101 }, (_, index) => ({
+    created_at: Date.now() + index,
+    id: `52000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    operation: `wp05-seed-context-comment-${index + 1}`,
+  }));
+  await db.prepare(
+    `INSERT INTO comments
+      (id, issue_id, kind, author_principal_id, body, created_at, created_operation_id)
+     SELECT json_extract(value, '$.id'), ?1, 'standard', ?2, 'bounded context comment',
+            json_extract(value, '$.created_at'), json_extract(value, '$.operation')
+     FROM json_each(?3)`,
+  ).bind(contextIssue.body.resource.id, ids.ownerPrincipal, JSON.stringify(contextComments)).run();
+  const boundedCommentContext = await jsonRequest(
+    `/api/v1/issues/${contextIssue.body.resource.identifier}/context`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(boundedCommentContext.body.sections.comments.items.length, 10);
+  assert.equal(boundedCommentContext.body.sections.comments.omitted_count, 91);
+  assert.equal(
+    boundedCommentContext.body.sections.comments.continuation,
+    `/api/v1/issues/${contextIssue.body.resource.identifier}/comments`,
+  );
 
   const beforeLargeBody = await jsonRequest("/api/v1/issues/CFK-1", { headers: writerHeaders() });
   const largeBodyUpdate = await jsonRequest("/api/v1/issues/CFK-1", {
@@ -383,6 +632,43 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     method: "POST",
   });
   assert.equal(quotaOne.response.status, 200);
+  const quotaOneReplayAtLimit = await jsonRequest("/api/v1/workspaces/engineering/projects/QUOTA/issues", {
+    body: { title: "Quota one" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-quota-one" }),
+    method: "POST",
+  });
+  assert.equal(quotaOneReplayAtLimit.response.status, 200);
+  assert.deepEqual(quotaOneReplayAtLimit.body.resource, quotaOne.body.resource);
+  assert.equal(quotaOneReplayAtLimit.body.idempotent_replay, true);
+  await db.batch([
+    db.prepare(
+      `INSERT INTO comments
+        (id, issue_id, kind, author_principal_id, body, created_at, created_operation_id)
+       VALUES (?1, ?2, 'standard', ?3, ?4, ?5, ?6)`,
+    ).bind(
+      "50000000-0000-4000-8000-000000000013",
+      quotaOne.body.resource.id,
+      ids.ownerPrincipal,
+      "First active quota comment",
+      Date.now(),
+      "wp05-seed-comment-one",
+    ),
+    db.prepare(
+      `INSERT INTO comments
+        (id, issue_id, kind, author_principal_id, body, created_at, created_operation_id)
+       VALUES (?1, ?2, 'standard', ?3, ?4, ?5, ?6)`,
+    ).bind(
+      "50000000-0000-4000-8000-000000000014",
+      quotaOne.body.resource.id,
+      ids.ownerPrincipal,
+      "Second active quota comment",
+      Date.now(),
+      "wp05-seed-comment-two",
+    ),
+    db.prepare(
+      "UPDATE project_usage SET active_comment_count = 2 WHERE project_id = ?1",
+    ).bind(quotaProjectId),
+  ]);
   const quotaTwoRejected = await jsonRequest("/api/v1/workspaces/engineering/projects/QUOTA/issues", {
     body: { title: "Quota two" },
     headers: ownerHeaders({ "idempotency-key": "wp05-quota-two" }),
@@ -399,6 +685,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(deleted.body.resource.deleted_at !== null, true);
+  assert.equal(deleted.body.resource.deleted_by_principal_id, ids.ownerPrincipal);
+  assert.deepEqual(deleted.body.resource.parent_status, { project: "active", workspace: "active" });
+  assert.equal(deleted.body.resource.restorable, true);
+  const usageAfterIssueDelete = await db.prepare(
+    "SELECT active_issue_count, active_comment_count FROM project_usage WHERE project_id = ?1",
+  ).bind(quotaProjectId).first();
+  assert.deepEqual(usageAfterIssueDelete, { active_comment_count: 0, active_issue_count: 0 });
+  const deletedEvent = await db.prepare(
+    "SELECT payload_json FROM events WHERE type = 'issue.deleted' AND subject_id = ?1 ORDER BY sequence DESC LIMIT 1",
+  ).bind(quotaOne.body.resource.id).first();
+  assert.equal(JSON.parse(deletedEvent.payload_json).released_or_restored_comments, 2);
   const repeatedDelete = await jsonRequest(
     `/api/v1/issues/${quotaOne.body.resource.identifier}?expected_version=${deleted.body.resource.version}`,
     { headers: ownerHeaders(), method: "DELETE" },
@@ -428,6 +725,19 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     method: "POST",
   });
   assert.equal(quotaTwo.response.status, 200);
+  const issueQuotaBlockedTombstone = await jsonRequest(
+    `/api/v1/issues/${quotaOne.body.resource.identifier}?deleted=only`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(issueQuotaBlockedTombstone.body.restorable, false);
+  assert.equal(issueQuotaBlockedTombstone.body.unavailability_reason.code, "PROJECT_ISSUE_LIMIT_REACHED");
+  assert.deepEqual(
+    {
+      current_usage: issueQuotaBlockedTombstone.body.unavailability_reason.current_usage,
+      limit: issueQuotaBlockedTombstone.body.unavailability_reason.limit,
+    },
+    { current_usage: 1, limit: 1 },
+  );
   const restoreOverLimit = await jsonRequest(
     `/api/v1/issues/${quotaOne.body.resource.identifier}/commands/restore`,
     {
@@ -438,7 +748,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   );
   assert.equal(restoreOverLimit.response.status, 409);
   assert.equal(restoreOverLimit.body.code, "PROJECT_ISSUE_LIMIT_REACHED");
-  await jsonRequest(
+  const quotaTwoDeleted = await jsonRequest(
     `/api/v1/issues/${quotaTwo.body.resource.identifier}?expected_version=${quotaTwo.body.resource.version}`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
@@ -463,6 +773,33 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     method: "POST",
   });
   assert.equal(restored.response.status, 200);
+  const usageAfterIssueRestore = await db.prepare(
+    "SELECT active_issue_count, active_comment_count FROM project_usage WHERE project_id = ?1",
+  ).bind(quotaProjectId).first();
+  assert.deepEqual(usageAfterIssueRestore, { active_comment_count: 2, active_issue_count: 1 });
+  await db.prepare(
+    "UPDATE projects SET issue_limit = 3, comment_limit = 1 WHERE id = ?1",
+  ).bind(quotaProjectId).run();
+  const zeroCommentRestoreWhileCommentOverLimit = await jsonRequest(
+    `/api/v1/issues/${quotaTwo.body.resource.identifier}/commands/restore`,
+    {
+      body: { expected_version: quotaTwoDeleted.body.resource.version },
+      headers: ownerHeaders({ "idempotency-key": "wp05-zero-comment-restore-over-limit" }),
+      method: "POST",
+    },
+  );
+  assert.equal(zeroCommentRestoreWhileCommentOverLimit.response.status, 200);
+  const usageAfterZeroCommentRestore = await db.prepare(
+    "SELECT active_issue_count, active_comment_count FROM project_usage WHERE project_id = ?1",
+  ).bind(quotaProjectId).first();
+  assert.deepEqual(usageAfterZeroCommentRestore, { active_comment_count: 2, active_issue_count: 2 });
+  await jsonRequest(
+    `/api/v1/issues/${quotaTwo.body.resource.identifier}?expected_version=${zeroCommentRestoreWhileCommentOverLimit.body.resource.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  await db.prepare(
+    "UPDATE projects SET issue_limit = 1, comment_limit = 10 WHERE id = ?1",
+  ).bind(quotaProjectId).run();
   const repeatedRestore = await jsonRequest(`/api/v1/issues/${quotaOne.body.resource.identifier}/commands/restore`, {
     body: { expected_version: restored.body.resource.version },
     headers: ownerHeaders({ "idempotency-key": "wp05-repeated-restore" }),
@@ -470,6 +807,27 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   });
   assert.equal(repeatedRestore.response.status, 409);
   assert.equal(repeatedRestore.body.code, "RESOURCE_NOT_DELETED");
+  await db.prepare(
+    "UPDATE projects SET issue_limit = 3, comment_limit = 1 WHERE id = ?1",
+  ).bind(quotaProjectId).run();
+  const quotaOneDeletedForCommentProjection = await jsonRequest(
+    `/api/v1/issues/${quotaOne.body.resource.identifier}?expected_version=${restored.body.resource.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(quotaOneDeletedForCommentProjection.response.status, 200);
+  const commentQuotaBlockedTombstone = await jsonRequest(
+    `/api/v1/issues/${quotaOne.body.resource.identifier}?deleted=only`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(commentQuotaBlockedTombstone.body.restorable, false);
+  assert.equal(commentQuotaBlockedTombstone.body.unavailability_reason.code, "PROJECT_COMMENT_LIMIT_REACHED");
+  assert.deepEqual(
+    {
+      current_usage: commentQuotaBlockedTombstone.body.unavailability_reason.current_usage,
+      limit: commentQuotaBlockedTombstone.body.unavailability_reason.limit,
+    },
+    { current_usage: 0, limit: 1 },
+  );
 
   const sessionToken = "S".repeat(43);
   const csrfToken = "C".repeat(43);
@@ -483,7 +841,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     await sha256Hex(sessionToken),
     ids.ownerPrincipal,
     ids.ownerCredential,
-    JSON.stringify({ identifier: quotaOne.body.resource.identifier }),
+    JSON.stringify({ identifier: first.body.resource.identifier }),
     Date.now() + 60_000,
     Date.now(),
   ).run();
@@ -491,12 +849,30 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     cookie: `cfkanban_session=${sessionToken}; cfkanban_csrf=${csrfToken}`,
   };
   const issueTargetList = await jsonRequest("/api/v1/issues", { headers: cookieHeaders });
-  assert.deepEqual(issueTargetList.body.items.map((issue) => issue.identifier), [quotaOne.body.resource.identifier]);
-  const issueTargetLeak = await jsonRequest("/api/v1/issues/CFK-1", { headers: cookieHeaders });
+  const issueTargetIdentifiers = new Set(issueTargetList.body.items.map((issue) => issue.identifier));
+  assert.equal(issueTargetIdentifiers.has("CFK-1"), true);
+  assert.equal(issueTargetIdentifiers.has("CFK-2"), true);
+  assert.equal(issueTargetIdentifiers.has("CFK-3"), false);
+  assert.equal(issueTargetIdentifiers.has(quotaOne.body.resource.identifier), false);
+  const issueTargetProjectList = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/CORE/issues",
+    { headers: cookieHeaders },
+  );
+  assert.equal(issueTargetProjectList.response.status, 200);
+  assert.equal(issueTargetProjectList.body.items.some((issue) => issue.identifier === "CFK-2"), true);
+  const issueTargetCandidateList = await jsonRequest(
+    "/api/v1/issues/candidates?assignment=unassigned",
+    { headers: cookieHeaders },
+  );
+  assert.deepEqual(issueTargetCandidateList.body.items.map((issue) => issue.identifier), ["CFK-2"]);
+  const issueTargetSibling = await jsonRequest("/api/v1/issues/CFK-2", { headers: cookieHeaders });
+  assert.equal(issueTargetSibling.response.status, 200);
+  const issueTargetLeak = await jsonRequest("/api/v1/issues/CFK-3", { headers: cookieHeaders });
   assert.equal(issueTargetLeak.response.status, 404);
   const discovery = await jsonRequest("/.well-known/cfkanban-instance.json");
-  const issueTargetWrite = await jsonRequest(`/api/v1/issues/${quotaOne.body.resource.identifier}`, {
-    body: { expected_version: restored.body.resource.version, title: "Quota one via scoped session" },
+  const issueTargetCurrent = await jsonRequest("/api/v1/issues/CFK-1", { headers: cookieHeaders });
+  const issueTargetWrite = await jsonRequest("/api/v1/issues/CFK-1", {
+    body: { expected_version: issueTargetCurrent.body.version, title: "Initial issue via project-scoped session" },
     headers: {
       ...cookieHeaders,
       origin: discovery.body.observed_origin,
@@ -506,7 +882,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   });
   assert.equal(issueTargetWrite.response.status, 200);
   const issueTargetDelete = await jsonRequest(
-    `/api/v1/issues/${quotaOne.body.resource.identifier}?expected_version=${issueTargetWrite.body.resource.version}`,
+    `/api/v1/issues/CFK-1?expected_version=${issueTargetWrite.body.resource.version}`,
     {
       headers: {
         ...cookieHeaders,
@@ -517,13 +893,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     },
   );
   assert.equal(issueTargetDelete.response.status, 200);
+  const issueTargetListAfterDelete = await jsonRequest("/api/v1/issues", { headers: cookieHeaders });
+  assert.equal(issueTargetListAfterDelete.body.items.some((issue) => issue.identifier === "CFK-2"), true);
   const issueTargetTombstone = await jsonRequest(
-    `/api/v1/issues/${quotaOne.body.resource.identifier}?deleted=only`,
+    "/api/v1/issues/CFK-1?deleted=only",
     { headers: cookieHeaders },
   );
   assert.equal(issueTargetTombstone.response.status, 200);
+  const issueTargetTombstones = await jsonRequest("/api/v1/issues?deleted=only", { headers: cookieHeaders });
+  assert.deepEqual(issueTargetTombstones.body.items.map((issue) => issue.identifier), ["CFK-1"]);
   const issueTargetRestore = await jsonRequest(
-    `/api/v1/issues/${quotaOne.body.resource.identifier}/commands/restore`,
+    "/api/v1/issues/CFK-1/commands/restore",
     {
       body: { expected_version: issueTargetDelete.body.resource.version },
       headers: {
@@ -538,13 +918,342 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(issueTargetRestore.response.status, 200);
 
   await db.prepare(
+    "UPDATE labels SET deleted_at = ?1, deleted_by_principal_id = ?2, version = version + 1 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, ids.label).run();
+  const labelDriftReplay = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    body: createBody,
+    headers: ownerHeaders({ "idempotency-key": "wp05-first-issue" }),
+    method: "POST",
+  });
+  assert.equal(labelDriftReplay.response.status, 200);
+  assert.deepEqual(labelDriftReplay.body.resource, first.body.resource);
+  assert.equal(labelDriftReplay.body.idempotent_replay, true);
+  await db.prepare(
+    "UPDATE labels SET deleted_at = NULL, deleted_by_principal_id = NULL, version = version + 1 WHERE id = ?1",
+  ).bind(ids.label).run();
+
+  const commandReplayCases = [
+    {
+      command: "assign-to-me",
+      createKey: "wp05-command-replay-assign-create",
+      commandBody: (version) => ({ expected_version: version }),
+      commandKey: "wp05-command-replay-assign",
+      title: "Assign replay after delete",
+    },
+    {
+      command: "report-blocked",
+      createKey: "wp05-command-replay-block-create",
+      commandBody: (version) => ({ expected_version: version, reason: "Transient dependency" }),
+      commandKey: "wp05-command-replay-block",
+      title: "Blocked replay after delete",
+    },
+  ];
+  for (const replayCase of commandReplayCases) {
+    const created = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+      body: { title: replayCase.title },
+      headers: writerHeaders({ "idempotency-key": replayCase.createKey }),
+      method: "POST",
+    });
+    const commandBody = replayCase.commandBody(created.body.resource.version);
+    const commanded = await jsonRequest(
+      `/api/v1/issues/${created.body.resource.identifier}/commands/${replayCase.command}`,
+      {
+        body: commandBody,
+        headers: writerHeaders({ "idempotency-key": replayCase.commandKey }),
+        method: "POST",
+      },
+    );
+    assert.equal(commanded.response.status, 200);
+    await jsonRequest(
+      `/api/v1/issues/${created.body.resource.identifier}?expected_version=${commanded.body.resource.version}`,
+      { headers: ownerHeaders(), method: "DELETE" },
+    );
+    const replayed = await jsonRequest(
+      `/api/v1/issues/${created.body.resource.identifier}/commands/${replayCase.command}`,
+      {
+        body: commandBody,
+        headers: writerHeaders({ "idempotency-key": replayCase.commandKey }),
+        method: "POST",
+      },
+    );
+    assert.equal(replayed.response.status, 200);
+    assert.deepEqual(replayed.body.resource, commanded.body.resource);
+    assert.equal(replayed.body.idempotent_replay, true);
+  }
+  const clearReplayIssue = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    body: { title: "Clear blocked replay after delete" },
+    headers: writerHeaders({ "idempotency-key": "wp05-command-replay-clear-create" }),
+    method: "POST",
+  });
+  const clearReplayBlocked = await jsonRequest(
+    `/api/v1/issues/${clearReplayIssue.body.resource.identifier}/commands/report-blocked`,
+    {
+      body: { expected_version: clearReplayIssue.body.resource.version, reason: "Clear me" },
+      headers: writerHeaders({ "idempotency-key": "wp05-command-replay-clear-setup" }),
+      method: "POST",
+    },
+  );
+  const clearRequestBody = { expected_version: clearReplayBlocked.body.resource.version };
+  const clearCommand = await jsonRequest(
+    `/api/v1/issues/${clearReplayIssue.body.resource.identifier}/commands/clear-blocked`,
+    {
+      body: clearRequestBody,
+      headers: writerHeaders({ "idempotency-key": "wp05-command-replay-clear" }),
+      method: "POST",
+    },
+  );
+  await jsonRequest(
+    `/api/v1/issues/${clearReplayIssue.body.resource.identifier}?expected_version=${clearCommand.body.resource.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  const clearCommandReplay = await jsonRequest(
+    `/api/v1/issues/${clearReplayIssue.body.resource.identifier}/commands/clear-blocked`,
+    {
+      body: clearRequestBody,
+      headers: writerHeaders({ "idempotency-key": "wp05-command-replay-clear" }),
+      method: "POST",
+    },
+  );
+  assert.equal(clearCommandReplay.response.status, 200);
+  assert.deepEqual(clearCommandReplay.body.resource, clearCommand.body.resource);
+  assert.equal(clearCommandReplay.body.idempotent_replay, true);
+
+  const assignedCreateBody = {
+    assignee_principal_id: ids.writerPrincipal,
+    title: "Assignee replay remains exact",
+  };
+  const assignedCreate = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    body: assignedCreateBody,
+    headers: ownerHeaders({ "idempotency-key": "wp05-assignee-replay" }),
+    method: "POST",
+  });
+  assert.equal(assignedCreate.response.status, 200);
+
+  await db.prepare(
     "UPDATE project_grants SET role = 'reader', version = version + 1 WHERE id = ?1",
   ).bind(ids.writerGrant).run();
+  const assigneeDriftReplay = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    body: assignedCreateBody,
+    headers: ownerHeaders({ "idempotency-key": "wp05-assignee-replay" }),
+    method: "POST",
+  });
+  assert.equal(assigneeDriftReplay.response.status, 200);
+  assert.deepEqual(assigneeDriftReplay.body.resource, assignedCreate.body.resource);
+  assert.equal(assigneeDriftReplay.body.idempotent_replay, true);
+  const callerDowngradedReplay = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    body: { priority_key: "high", status_key: "todo", title: "Second candidate" },
+    headers: writerHeaders({ "idempotency-key": "wp05-second-issue" }),
+    method: "POST",
+  });
+  assert.equal(callerDowngradedReplay.response.status, 403);
   const reassignmentCandidates = await jsonRequest(
     "/api/v1/issues/candidates?assignment=needs_reassignment",
     { headers: ownerHeaders() },
   );
   assert.deepEqual(reassignmentCandidates.body.items.map((issue) => issue.identifier), ["CFK-1"]);
+
+  const privateActive = await jsonRequest("/api/v1/workspaces/engineering/projects/PRIVATE/issues", {
+    body: { title: "Active child must not become a tombstone" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-private-active-child" }),
+    method: "POST",
+  });
+  await db.prepare(
+    `UPDATE project_grants SET role = 'writer', revoked_at = NULL,
+       revoked_by_principal_id = NULL, version = version + 1
+     WHERE id = ?1`,
+  ).bind(crossProjectGrantId).run();
+  const privateIssueCurrent = await jsonRequest("/api/v1/issues/CFK-3", { headers: ownerHeaders() });
+  const privateIssueDeleted = await jsonRequest(
+    `/api/v1/issues/CFK-3?expected_version=${privateIssueCurrent.body.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  const privateProjectCurrent = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/PRIVATE",
+    { headers: ownerHeaders() },
+  );
+  const privateProjectDeleted = await jsonRequest(
+    `/api/v1/workspaces/engineering/projects/PRIVATE?expected_version=${privateProjectCurrent.body.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(privateProjectDeleted.response.status, 200);
+  const pausedProjectTombstone = await jsonRequest("/api/v1/issues/CFK-3?deleted=only", {
+    headers: ownerHeaders(),
+  });
+  assert.equal(pausedProjectTombstone.response.status, 200);
+  assert.deepEqual(pausedProjectTombstone.body.parent_status, { project: "deleted", workspace: "active" });
+  assert.equal(pausedProjectTombstone.body.restorable, false);
+  assert.equal(pausedProjectTombstone.body.unavailability_reason.code, "PARENT_PROJECT_DELETED");
+  const participantPausedProjectTombstone = await jsonRequest("/api/v1/issues/CFK-3?deleted=only", {
+    headers: writerHeaders(),
+  });
+  assert.equal(participantPausedProjectTombstone.response.status, 200);
+  const activeChildIsNotTombstone = await jsonRequest(
+    `/api/v1/issues/${privateActive.body.resource.identifier}?deleted=only`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(activeChildIsNotTombstone.response.status, 404);
+  const pausedProjectTombstoneList = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/PRIVATE/issues?deleted=only",
+    { headers: ownerHeaders() },
+  );
+  assert.deepEqual(pausedProjectTombstoneList.body.items.map((issue) => issue.identifier), ["CFK-3"]);
+  const restoreUnderDeletedProject = await jsonRequest("/api/v1/issues/CFK-3/commands/restore", {
+    body: { expected_version: privateIssueDeleted.body.resource.version },
+    headers: ownerHeaders({ "idempotency-key": "wp05-restore-under-deleted-project" }),
+    method: "POST",
+  });
+  assert.equal(restoreUnderDeletedProject.response.status, 409);
+  assert.equal(restoreUnderDeletedProject.body.code, "PARENT_PROJECT_DELETED");
+  assert.equal(restoreUnderDeletedProject.body.recovery, "restore_parent");
+  const privateProjectRestored = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/PRIVATE/commands/restore",
+    {
+      body: { expected_version: privateProjectDeleted.body.resource.version },
+      headers: ownerHeaders({ "idempotency-key": "wp05-restore-private-project" }),
+      method: "POST",
+    },
+  );
+  assert.equal(privateProjectRestored.response.status, 200);
+  const privateIssueRestored = await jsonRequest("/api/v1/issues/CFK-3/commands/restore", {
+    body: { expected_version: privateIssueDeleted.body.resource.version },
+    headers: ownerHeaders({ "idempotency-key": "wp05-restore-private-issue-after-project" }),
+    method: "POST",
+  });
+  assert.equal(privateIssueRestored.response.status, 200);
+
+  const privateIssueDeletedAgain = await jsonRequest(
+    `/api/v1/issues/CFK-3?expected_version=${privateIssueRestored.body.resource.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  const engineeringCurrent = await jsonRequest("/api/v1/workspaces/engineering", {
+    headers: ownerHeaders(),
+  });
+  const engineeringDeleted = await jsonRequest(
+    `/api/v1/workspaces/engineering?expected_version=${engineeringCurrent.body.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(engineeringDeleted.response.status, 200);
+  const pausedWorkspaceTombstone = await jsonRequest("/api/v1/issues/CFK-3?deleted=only", {
+    headers: writerHeaders(),
+  });
+  assert.equal(pausedWorkspaceTombstone.response.status, 200);
+  assert.deepEqual(pausedWorkspaceTombstone.body.parent_status, { project: "active", workspace: "deleted" });
+  assert.equal(pausedWorkspaceTombstone.body.unavailability_reason.code, "PARENT_WORKSPACE_DELETED");
+  const restoreUnderDeletedWorkspace = await jsonRequest("/api/v1/issues/CFK-3/commands/restore", {
+    body: { expected_version: privateIssueDeletedAgain.body.resource.version },
+    headers: ownerHeaders({ "idempotency-key": "wp05-restore-under-deleted-workspace" }),
+    method: "POST",
+  });
+  assert.equal(restoreUnderDeletedWorkspace.response.status, 409);
+  assert.equal(restoreUnderDeletedWorkspace.body.code, "PARENT_WORKSPACE_DELETED");
+  const engineeringRestored = await jsonRequest("/api/v1/workspaces/engineering/commands/restore", {
+    body: { expected_version: engineeringDeleted.body.resource.version },
+    headers: ownerHeaders({ "idempotency-key": "wp05-restore-engineering-workspace" }),
+    method: "POST",
+  });
+  assert.equal(engineeringRestored.response.status, 200);
+  const privateIssueRestoredAfterWorkspace = await jsonRequest("/api/v1/issues/CFK-3/commands/restore", {
+    body: { expected_version: privateIssueDeletedAgain.body.resource.version },
+    headers: ownerHeaders({ "idempotency-key": "wp05-restore-private-issue-after-workspace" }),
+    method: "POST",
+  });
+  assert.equal(privateIssueRestoredAfterWorkspace.response.status, 200);
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, crossProjectGrantId).run();
+
+  const finalizeInterruptionIssue = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/CORE/issues",
+    {
+      body: { title: "Finalize interruption must not become a write lock" },
+      headers: ownerHeaders({ "idempotency-key": "wp05-finalize-interruption-create" }),
+      method: "POST",
+    },
+  );
+  const finalizeRequestBody = {
+    expected_version: finalizeInterruptionIssue.body.resource.version,
+    reason: "Business commit survives response interruption",
+  };
+  const ownerAuth = await authenticateBearer(db, `Bearer ${ownerToken}`);
+  const finalizeRequest = new Request(
+    `https://kanban.example.test/api/v1/issues/${finalizeInterruptionIssue.body.resource.identifier}/commands/report-blocked`,
+    {
+      body: JSON.stringify(finalizeRequestBody),
+      headers: {
+        authorization: `Bearer ${ownerToken}`,
+        "content-type": "application/json",
+        "idempotency-key": "wp05-finalize-interruption-command",
+      },
+      method: "POST",
+    },
+  );
+  await assert.rejects(
+    reportIssueBlocked(
+      withOneFinalizeFailure(db),
+      finalizeRequest,
+      ownerAuth,
+      finalizeInterruptionIssue.body.resource.identifier,
+      finalizeRequestBody.expected_version,
+      finalizeRequestBody.reason,
+      Date.now(),
+    ),
+    (error) => error?.code === "PLATFORM_UNAVAILABLE",
+  );
+  const pendingAfterBusinessCommit = await db.prepare(
+    `SELECT record.state, record.operation_snapshot_json,
+            EXISTS (SELECT 1 FROM operation_commits commit_row
+                    WHERE commit_row.operation_id = record.operation_id) AS committed
+     FROM idempotency_records record
+     WHERE record.route_template = '/api/v1/issues/{identifier}/commands/report-blocked'
+       AND record.state = 'pending'
+     ORDER BY record.created_at DESC LIMIT 1`,
+  ).first();
+  assert.equal(pendingAfterBusinessCommit.state, "pending");
+  assert.equal(pendingAfterBusinessCommit.committed, 1);
+  assert.equal(typeof pendingAfterBusinessCommit.operation_snapshot_json, "string");
+  const committedCommandState = await jsonRequest(
+    `/api/v1/issues/${finalizeInterruptionIssue.body.resource.identifier}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(committedCommandState.body.blocked_reason, finalizeRequestBody.reason);
+  const laterMutation = await jsonRequest(
+    `/api/v1/issues/${finalizeInterruptionIssue.body.resource.identifier}`,
+    {
+      body: {
+        expected_version: committedCommandState.body.version,
+        title: "A later writer mutation remains allowed",
+      },
+      headers: ownerHeaders(),
+      method: "PATCH",
+    },
+  );
+  assert.equal(laterMutation.response.status, 200);
+  const resumedOriginalCommand = await jsonRequest(
+    `/api/v1/issues/${finalizeInterruptionIssue.body.resource.identifier}/commands/report-blocked`,
+    {
+      body: finalizeRequestBody,
+      headers: ownerHeaders({ "idempotency-key": "wp05-finalize-interruption-command" }),
+      method: "POST",
+    },
+  );
+  assert.equal(resumedOriginalCommand.response.status, 200);
+  assert.equal(resumedOriginalCommand.body.idempotent_replay, true);
+  assert.equal(resumedOriginalCommand.body.resource.version, committedCommandState.body.version);
+  assert.equal(resumedOriginalCommand.body.resource.title, finalizeInterruptionIssue.body.resource.title);
+  assert.equal(resumedOriginalCommand.body.resource.blocked_reason, finalizeRequestBody.reason);
+  const currentAfterResume = await jsonRequest(
+    `/api/v1/issues/${finalizeInterruptionIssue.body.resource.identifier}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(currentAfterResume.body.title, "A later writer mutation remains allowed");
+  assert.equal(currentAfterResume.body.version, laterMutation.body.resource.version);
+  const finalizedRecord = await db.prepare(
+    `SELECT state, operation_snapshot_json FROM idempotency_records
+     WHERE route_template = '/api/v1/issues/{identifier}/commands/report-blocked'
+     ORDER BY created_at DESC LIMIT 1`,
+  ).first();
+  assert.deepEqual(finalizedRecord, { operation_snapshot_json: null, state: "committed" });
 
   const duplicateEvents = await db.prepare(
     `SELECT operation_id, COUNT(*) AS count FROM events

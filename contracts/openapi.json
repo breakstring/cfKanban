@@ -1917,6 +1917,34 @@
             "explode": true
           },
           {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 5,
+              "items": {
+                "$ref": "#/components/schemas/StatusKey"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "assignee",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -1958,7 +1986,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/IssueListResult"
                 }
               }
             }
@@ -2102,7 +2130,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/IssueListResult"
                 }
               }
             }
@@ -2210,6 +2238,34 @@
             "explode": true
           },
           {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 5,
+              "items": {
+                "$ref": "#/components/schemas/StatusKey"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "assignee",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -2251,7 +2307,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/IssueListResult"
                 }
               }
             }
@@ -2333,7 +2389,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -2428,8 +2484,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/IssueFullDetail"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IssueTombstone"
+                    }
+                  ]
                 }
               }
             }
@@ -2499,7 +2561,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -2585,7 +2647,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -2660,7 +2722,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -2742,8 +2804,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/IssueContext"
                 }
               }
             }
@@ -2818,7 +2879,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -2906,7 +2967,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -2994,7 +3055,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -3082,7 +3143,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -3170,7 +3231,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -3258,7 +3319,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/IssueWriteResult"
                 }
               }
             }
@@ -7683,6 +7744,16 @@
         ],
         "description": "稳定状态：待整理、待办、进行中、完成、取消。"
       },
+      "NonDoneStatusKey": {
+        "type": "string",
+        "enum": [
+          "backlog",
+          "todo",
+          "in_progress",
+          "canceled"
+        ],
+        "description": "普通创建或 PATCH 可使用的状态；进入 done 必须调用 complete 命令。"
+      },
       "PriorityKey": {
         "type": "string",
         "enum": [
@@ -7858,7 +7929,7 @@
             "default": ""
           },
           "status_key": {
-            "$ref": "#/components/schemas/StatusKey",
+            "$ref": "#/components/schemas/NonDoneStatusKey",
             "default": "backlog"
           },
           "priority_key": {
@@ -7908,7 +7979,7 @@
             "maxLength": 65536
           },
           "status_key": {
-            "$ref": "#/components/schemas/StatusKey"
+            "$ref": "#/components/schemas/NonDoneStatusKey"
           },
           "priority_key": {
             "$ref": "#/components/schemas/PriorityKey"
@@ -8635,6 +8706,1498 @@
           },
           "updated_at": {
             "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueLabelSummary": {
+        "type": "object",
+        "required": [
+          "color",
+          "id",
+          "name"
+        ],
+        "properties": {
+          "color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9A-Fa-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueSummary": {
+        "type": "object",
+        "required": [
+          "assignee",
+          "created_at",
+          "deleted_at",
+          "id",
+          "identifier",
+          "is_blocked",
+          "labels",
+          "needs_reassignment",
+          "number",
+          "priority",
+          "project",
+          "status",
+          "title",
+          "updated_at",
+          "version",
+          "workspace"
+        ],
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "available",
+                  "display_name",
+                  "principal_id"
+                ],
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "is_blocked": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueLabelSummary"
+            }
+          },
+          "needs_reassignment": {
+            "type": "boolean"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "priority": {
+            "$ref": "#/components/schemas/PriorityKey"
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "id",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "status": {
+            "type": "object",
+            "required": [
+              "category",
+              "display_name",
+              "key",
+              "terminal"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "backlog",
+                  "unstarted",
+                  "started",
+                  "completed",
+                  "canceled"
+                ]
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "$ref": "#/components/schemas/StatusKey"
+              },
+              "terminal": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueDetail": {
+        "type": "object",
+        "required": [
+          "assignee",
+          "created_at",
+          "deleted_at",
+          "id",
+          "identifier",
+          "is_blocked",
+          "labels",
+          "needs_reassignment",
+          "number",
+          "priority",
+          "project",
+          "status",
+          "title",
+          "updated_at",
+          "version",
+          "workspace",
+          "allowed_actions",
+          "blocked_reason",
+          "body"
+        ],
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "available",
+                  "display_name",
+                  "principal_id"
+                ],
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "is_blocked": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueLabelSummary"
+            }
+          },
+          "needs_reassignment": {
+            "type": "boolean"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "priority": {
+            "$ref": "#/components/schemas/PriorityKey"
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "id",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "status": {
+            "type": "object",
+            "required": [
+              "category",
+              "display_name",
+              "key",
+              "terminal"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "backlog",
+                  "unstarted",
+                  "started",
+                  "completed",
+                  "canceled"
+                ]
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "$ref": "#/components/schemas/StatusKey"
+              },
+              "terminal": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueRelationSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "source_identifier",
+          "target_identifier",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationKind"
+          },
+          "source_identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "target_identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueCommentSummary": {
+        "type": "object",
+        "required": [
+          "author",
+          "body",
+          "created_at",
+          "id",
+          "kind",
+          "version"
+        ],
+        "properties": {
+          "author": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "principal_id"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "completion"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueFullDetail": {
+        "type": "object",
+        "required": [
+          "assignee",
+          "created_at",
+          "deleted_at",
+          "id",
+          "identifier",
+          "is_blocked",
+          "labels",
+          "needs_reassignment",
+          "number",
+          "priority",
+          "project",
+          "status",
+          "title",
+          "updated_at",
+          "version",
+          "workspace",
+          "allowed_actions",
+          "blocked_reason",
+          "body",
+          "comment_continuation",
+          "comments",
+          "relation_continuation",
+          "relations"
+        ],
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "available",
+                  "display_name",
+                  "principal_id"
+                ],
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "is_blocked": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueLabelSummary"
+            }
+          },
+          "needs_reassignment": {
+            "type": "boolean"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "priority": {
+            "$ref": "#/components/schemas/PriorityKey"
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "id",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "status": {
+            "type": "object",
+            "required": [
+              "category",
+              "display_name",
+              "key",
+              "terminal"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "backlog",
+                  "unstarted",
+                  "started",
+                  "completed",
+                  "canceled"
+                ]
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "$ref": "#/components/schemas/StatusKey"
+              },
+              "terminal": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "comment_continuation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueCommentSummary"
+            }
+          },
+          "relation_continuation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueRelationSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueTombstone": {
+        "type": "object",
+        "required": [
+          "assignee",
+          "created_at",
+          "deleted_at",
+          "id",
+          "identifier",
+          "is_blocked",
+          "labels",
+          "needs_reassignment",
+          "number",
+          "priority",
+          "project",
+          "status",
+          "title",
+          "updated_at",
+          "version",
+          "workspace",
+          "allowed_actions",
+          "deleted_by_principal_id",
+          "parent_status",
+          "restorable",
+          "unavailability_reason"
+        ],
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "available",
+                  "display_name",
+                  "principal_id"
+                ],
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "is_blocked": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueLabelSummary"
+            }
+          },
+          "needs_reassignment": {
+            "type": "boolean"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "priority": {
+            "$ref": "#/components/schemas/PriorityKey"
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "id",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "status": {
+            "type": "object",
+            "required": [
+              "category",
+              "display_name",
+              "key",
+              "terminal"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "backlog",
+                  "unstarted",
+                  "started",
+                  "completed",
+                  "canceled"
+                ]
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "$ref": "#/components/schemas/StatusKey"
+              },
+              "terminal": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "restore"
+              ]
+            },
+            "maxItems": 1
+          },
+          "deleted_by_principal_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parent_status": {
+            "type": "object",
+            "required": [
+              "project",
+              "workspace"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              },
+              "workspace": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "restorable": {
+            "type": "boolean"
+          },
+          "unavailability_reason": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "recovery"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "current_usage": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  "recovery": {
+                    "type": "string"
+                  },
+                  "resource_kind": {
+                    "type": "string",
+                    "enum": [
+                      "issues",
+                      "comments"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueResolvedScope": {
+        "type": "object",
+        "required": [
+          "broad_search",
+          "expanded_to_all_authorized_projects",
+          "filters",
+          "project_targets",
+          "projects",
+          "target_identifier",
+          "unresolved_project_targets",
+          "unresolved_workspace_targets",
+          "workspace_targets"
+        ],
+        "properties": {
+          "broad_search": {
+            "type": "boolean"
+          },
+          "candidate_policy": {
+            "type": "object",
+            "required": [
+              "assignment",
+              "blocked",
+              "status_category"
+            ],
+            "properties": {
+              "assignment": {
+                "type": "string",
+                "enum": [
+                  "unassigned",
+                  "mine",
+                  "needs_reassignment"
+                ]
+              },
+              "blocked": {
+                "type": "string",
+                "enum": [
+                  "exclude",
+                  "include"
+                ]
+              },
+              "status_category": {
+                "const": "unstarted"
+              }
+            },
+            "additionalProperties": false
+          },
+          "expanded_to_all_authorized_projects": {
+            "type": "boolean"
+          },
+          "filters": {
+            "type": "object",
+            "required": [
+              "assignees",
+              "statuses"
+            ],
+            "properties": {
+              "assignees": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                  "$ref": "#/components/schemas/Uuid"
+                }
+              },
+              "statuses": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                  "$ref": "#/components/schemas/StatusKey"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "project_targets": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "project_id",
+                "project_key",
+                "workspace_key"
+              ],
+              "properties": {
+                "project_id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "project_key": {
+                  "type": "string"
+                },
+                "workspace_key": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "target_identifier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^CFK-[1-9][0-9]*$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unresolved_project_targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unresolved_workspace_targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "workspace_targets": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/IssueSummary"
+                },
+                {
+                  "$ref": "#/components/schemas/IssueTombstone"
+                }
+              ]
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "$ref": "#/components/schemas/IssueResolvedScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IssueDetail"
+              },
+              {
+                "$ref": "#/components/schemas/IssueTombstone"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueContext": {
+        "type": "object",
+        "required": [
+          "issue",
+          "sections",
+          "truncated"
+        ],
+        "properties": {
+          "issue": {
+            "type": "object",
+            "required": [
+              "assignee",
+              "created_at",
+              "deleted_at",
+              "id",
+              "identifier",
+              "is_blocked",
+              "labels",
+              "needs_reassignment",
+              "number",
+              "priority",
+              "project",
+              "status",
+              "title",
+              "updated_at",
+              "version",
+              "workspace",
+              "allowed_actions",
+              "blocked_reason"
+            ],
+            "properties": {
+              "assignee": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "available",
+                      "display_name",
+                      "principal_id"
+                    ],
+                    "properties": {
+                      "available": {
+                        "type": "boolean"
+                      },
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "principal_id": {
+                        "$ref": "#/components/schemas/Uuid"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "deleted_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "identifier": {
+                "type": "string",
+                "pattern": "^CFK-[1-9][0-9]*$"
+              },
+              "is_blocked": {
+                "type": "boolean"
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/IssueLabelSummary"
+                }
+              },
+              "needs_reassignment": {
+                "type": "boolean"
+              },
+              "number": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1
+              },
+              "priority": {
+                "$ref": "#/components/schemas/PriorityKey"
+              },
+              "project": {
+                "type": "object",
+                "required": [
+                  "display_name",
+                  "id",
+                  "key"
+                ],
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "status": {
+                "type": "object",
+                "required": [
+                  "category",
+                  "display_name",
+                  "key",
+                  "terminal"
+                ],
+                "properties": {
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "backlog",
+                      "unstarted",
+                      "started",
+                      "completed",
+                      "canceled"
+                    ]
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "$ref": "#/components/schemas/StatusKey"
+                  },
+                  "terminal": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "title": {
+                "type": "string"
+              },
+              "updated_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "version": {
+                "$ref": "#/components/schemas/Version"
+              },
+              "workspace": {
+                "type": "object",
+                "required": [
+                  "display_name",
+                  "key"
+                ],
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "allowed_actions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "blocked_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "sections": {
+            "type": "object",
+            "required": [
+              "body",
+              "comments",
+              "project_context",
+              "relations"
+            ],
+            "properties": {
+              "body": {
+                "type": "object",
+                "required": [
+                  "content",
+                  "continuation",
+                  "omitted_bytes",
+                  "truncated"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  },
+                  "continuation": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "omitted_bytes": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "comments": {
+                "type": "object",
+                "required": [
+                  "continuation",
+                  "items",
+                  "omitted_count"
+                ],
+                "properties": {
+                  "continuation": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/IssueCommentSummary"
+                    }
+                  },
+                  "omitted_count": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              },
+              "project_context": {
+                "type": "object",
+                "required": [
+                  "content",
+                  "continuation",
+                  "omitted_bytes",
+                  "truncated"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  },
+                  "continuation": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "omitted_bytes": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "relations": {
+                "type": "object",
+                "required": [
+                  "continuation",
+                  "items",
+                  "omitted_count"
+                ],
+                "properties": {
+                  "continuation": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/IssueRelationSummary"
+                    }
+                  },
+                  "omitted_count": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "truncated": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false

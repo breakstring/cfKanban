@@ -26,6 +26,7 @@ export interface AtomicOperationPlan {
   operationId: string;
   primarySubjectId: string;
   primarySubjectType: string;
+  requireIdempotencySnapshot?: boolean;
 }
 
 export interface AtomicOperationResult {
@@ -118,7 +119,14 @@ export async function executeAtomicBatch(
     `INSERT INTO operation_commits
       (operation_id, primary_subject_type, primary_subject_id, last_event_sequence, committed_at)
      VALUES (?1, ?2, ?3, (
-       SELECT CASE WHEN COUNT(*) = ?4 THEN MAX(sequence) END
+       SELECT CASE WHEN COUNT(*) = ?4 AND (
+         ?6 = 0 OR EXISTS (
+           SELECT 1 FROM idempotency_records snapshot_record
+           WHERE snapshot_record.operation_id = ?1
+             AND snapshot_record.state = 'pending'
+             AND snapshot_record.operation_snapshot_json IS NOT NULL
+         )
+       ) THEN MAX(sequence) END
        FROM events
        WHERE operation_id = ?1
      ), ?5)`,
@@ -128,6 +136,7 @@ export async function executeAtomicBatch(
     plan.primarySubjectId,
     plan.expectedEventCount,
     plan.committedAt,
+    plan.requireIdempotencySnapshot ? 1 : 0,
   );
 
   try {

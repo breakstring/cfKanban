@@ -151,6 +151,67 @@ const string = (extra = {}) => ({ type: "string", ...extra });
 const integer = (extra = {}) => ({ type: "integer", format: "int64", ...extra });
 const nullableString = (extra = {}) => ({ anyOf: [string(extra), { type: "null" }] });
 
+const issueSummaryProperties = {
+  assignee: {
+    anyOf: [
+      {
+        type: "object",
+        required: ["available", "display_name", "principal_id"],
+        properties: {
+          available: { type: "boolean" },
+          display_name: string(),
+          principal_id: ref("Uuid"),
+        },
+        additionalProperties: false,
+      },
+      { type: "null" },
+    ],
+  },
+  created_at: ref("Timestamp"),
+  deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+  id: ref("Uuid"),
+  identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }),
+  is_blocked: { type: "boolean" },
+  labels: { type: "array", items: ref("IssueLabelSummary") },
+  needs_reassignment: { type: "boolean" },
+  number: integer({ minimum: 1 }),
+  priority: ref("PriorityKey"),
+  project: {
+    type: "object",
+    required: ["display_name", "id", "key"],
+    properties: { display_name: string(), id: ref("Uuid"), key: string() },
+    additionalProperties: false,
+  },
+  status: {
+    type: "object",
+    required: ["category", "display_name", "key", "terminal"],
+    properties: {
+      category: string({ enum: ["backlog", "unstarted", "started", "completed", "canceled"] }),
+      display_name: string(),
+      key: ref("StatusKey"),
+      terminal: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  title: string(),
+  updated_at: ref("Timestamp"),
+  version: ref("Version"),
+  workspace: {
+    type: "object",
+    required: ["display_name", "key"],
+    properties: { display_name: string(), key: string() },
+    additionalProperties: false,
+  },
+};
+const issueSummaryRequired = Object.keys(issueSummaryProperties);
+const issueDetailProperties = {
+  ...issueSummaryProperties,
+  allowed_actions: { type: "array", items: string() },
+  blocked_reason: nullableString(),
+  body: string(),
+};
+const issueDetailRequired = [...issueSummaryRequired, "allowed_actions", "blocked_reason", "body"];
+
 const permissionDescriptions = {
   public: "Public, non-secret read.",
   authenticated_principal: "Any authenticated Principal; returned data is filtered to current effective authorization.",
@@ -210,6 +271,7 @@ const schemas = {
   Timestamp: string({ format: "date-time" }),
   Version: integer({ minimum: 1 }),
   StatusKey: string({ enum: ["backlog", "todo", "in_progress", "done", "canceled"], description: "稳定状态：待整理、待办、进行中、完成、取消。" }),
+  NonDoneStatusKey: string({ enum: ["backlog", "todo", "in_progress", "canceled"], description: "普通创建或 PATCH 可使用的状态；进入 done 必须调用 complete 命令。" }),
   PriorityKey: string({ enum: ["urgent", "high", "medium", "low", "none"], description: "稳定优先级：紧急、高、中、低、无。" }),
   ProjectRole: string({ enum: ["reader", "writer"], description: "项目角色：只读或可写。" }),
   RelationKind: string({ enum: ["blocks", "parent", "related", "duplicate"] }),
@@ -220,8 +282,8 @@ const schemas = {
   CreateProjectRequest: { type: "object", required: ["key", "display_name"], properties: { key: string({ pattern: "^[A-Z][A-Z0-9-]{1,15}$" }), display_name: string({ minLength: 1, maxLength: 128 }), context: nullableString({ maxLength: 32768 }) }, additionalProperties: false },
   UpdateProjectRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }), context: nullableString({ maxLength: 32768 }) }, additionalProperties: false },
   UpdateStatusNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
-  CreateIssueRequest: { type: "object", required: ["title"], properties: { title: string({ minLength: 1, maxLength: 256 }), body: string({ maxLength: 65536, default: "" }), status_key: { ...ref("StatusKey"), default: "backlog" }, priority_key: { ...ref("PriorityKey"), default: "none" }, assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }], default: null }, label_ids: { type: "array", items: ref("Uuid"), maxItems: 20, uniqueItems: true, default: [] } }, additionalProperties: false },
-  UpdateIssueRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), title: string({ minLength: 1, maxLength: 256 }), body: string({ maxLength: 65536 }), status_key: ref("StatusKey"), priority_key: ref("PriorityKey"), assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
+  CreateIssueRequest: { type: "object", required: ["title"], properties: { title: string({ minLength: 1, maxLength: 256 }), body: string({ maxLength: 65536, default: "" }), status_key: { ...ref("NonDoneStatusKey"), default: "backlog" }, priority_key: { ...ref("PriorityKey"), default: "none" }, assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }], default: null }, label_ids: { type: "array", items: ref("Uuid"), maxItems: 20, uniqueItems: true, default: [] } }, additionalProperties: false },
+  UpdateIssueRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), title: string({ minLength: 1, maxLength: 256 }), body: string({ maxLength: 65536 }), status_key: ref("NonDoneStatusKey"), priority_key: ref("PriorityKey"), assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
   ReportBlockedRequest: { type: "object", required: ["expected_version", "reason"], properties: { expected_version: ref("Version"), reason: string({ minLength: 1, maxLength: 4096 }) }, additionalProperties: false },
   CompleteIssueRequest: { type: "object", required: ["expected_version", "summary"], properties: { expected_version: ref("Version"), summary: string({ minLength: 1, maxLength: 8192 }), verification: { type: "array", items: string({ maxLength: 1024 }), maxItems: 50, default: [] }, artifacts: { type: "array", items: { type: "object", required: ["kind", "value"], properties: { kind: string({ enum: ["url", "path", "commit", "other"] }), value: string({ minLength: 1, maxLength: 2048 }) }, additionalProperties: false }, maxItems: 50, default: [] }, follow_ups: { type: "array", items: string({ maxLength: 2048 }), maxItems: 50, default: [] } }, additionalProperties: false },
   IssueLabelRequest: { type: "object", required: ["expected_version", "label_id"], properties: { expected_version: ref("Version"), label_id: ref("Uuid") }, additionalProperties: false },
@@ -256,6 +318,208 @@ const schemas = {
   RedeemPublicJoinRequest: { type: "object", required: ["role", "redeem_as"], properties: { role: ref("ProjectRole"), redeem_as: string({ enum: ["new_principal", "current_principal"] }), display_name: string({ minLength: 1, maxLength: 128 }), new_credential_token: string({ pattern: "^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+$", writeOnly: true }) }, additionalProperties: false },
   Health: { type: "object", required: ["service_version", "schema_version", "d1"], properties: { service_version: string(), schema_version: integer({ minimum: 1 }), d1: string({ enum: ["reachable", "unavailable"] }) }, additionalProperties: false },
   InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
+  IssueLabelSummary: {
+    type: "object",
+    required: ["color", "id", "name"],
+    properties: { color: nullableString({ pattern: "^#[0-9A-Fa-f]{6}$" }), id: ref("Uuid"), name: string() },
+    additionalProperties: false,
+  },
+  IssueSummary: {
+    type: "object",
+    required: issueSummaryRequired,
+    properties: issueSummaryProperties,
+    additionalProperties: false,
+  },
+  IssueDetail: {
+    type: "object",
+    required: issueDetailRequired,
+    properties: issueDetailProperties,
+    additionalProperties: false,
+  },
+  IssueRelationSummary: {
+    type: "object",
+    required: ["id", "kind", "source_identifier", "target_identifier", "version"],
+    properties: {
+      id: ref("Uuid"),
+      kind: ref("RelationKind"),
+      source_identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }),
+      target_identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }),
+      version: ref("Version"),
+    },
+    additionalProperties: false,
+  },
+  IssueCommentSummary: {
+    type: "object",
+    required: ["author", "body", "created_at", "id", "kind", "version"],
+    properties: {
+      author: {
+        type: "object",
+        required: ["display_name", "principal_id"],
+        properties: { display_name: string(), principal_id: ref("Uuid") },
+        additionalProperties: false,
+      },
+      body: string(),
+      created_at: ref("Timestamp"),
+      id: ref("Uuid"),
+      kind: string({ enum: ["standard", "completion"] }),
+      version: ref("Version"),
+    },
+    additionalProperties: false,
+  },
+  IssueFullDetail: {
+    type: "object",
+    required: [...issueDetailRequired, "comment_continuation", "comments", "relation_continuation", "relations"],
+    properties: {
+      ...issueDetailProperties,
+      comment_continuation: nullableString(),
+      comments: { type: "array", items: ref("IssueCommentSummary") },
+      relation_continuation: nullableString(),
+      relations: { type: "array", items: ref("IssueRelationSummary") },
+    },
+    additionalProperties: false,
+  },
+  IssueTombstone: {
+    type: "object",
+    required: [...issueSummaryRequired, "allowed_actions", "deleted_by_principal_id", "parent_status", "restorable", "unavailability_reason"],
+    properties: {
+      ...issueSummaryProperties,
+      allowed_actions: { type: "array", items: string({ enum: ["restore"] }), maxItems: 1 },
+      deleted_by_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+      parent_status: {
+        type: "object",
+        required: ["project", "workspace"],
+        properties: { project: string({ enum: ["active", "deleted"] }), workspace: string({ enum: ["active", "deleted"] }) },
+        additionalProperties: false,
+      },
+      restorable: { type: "boolean" },
+      unavailability_reason: {
+        anyOf: [
+          {
+            type: "object",
+            required: ["code", "recovery"],
+            properties: {
+              code: string(),
+              current_usage: integer({ minimum: 0 }),
+              limit: integer({ minimum: 0 }),
+              recovery: string(),
+              resource_kind: string({ enum: ["issues", "comments"] }),
+            },
+            additionalProperties: false,
+          },
+          { type: "null" },
+        ],
+      },
+    },
+    additionalProperties: false,
+  },
+  IssueResolvedScope: {
+    type: "object",
+    required: ["broad_search", "expanded_to_all_authorized_projects", "filters", "project_targets", "projects", "target_identifier", "unresolved_project_targets", "unresolved_workspace_targets", "workspace_targets"],
+    properties: {
+      broad_search: { type: "boolean" },
+      candidate_policy: {
+        type: "object",
+        required: ["assignment", "blocked", "status_category"],
+        properties: {
+          assignment: string({ enum: ["unassigned", "mine", "needs_reassignment"] }),
+          blocked: string({ enum: ["exclude", "include"] }),
+          status_category: { const: "unstarted" },
+        },
+        additionalProperties: false,
+      },
+      expanded_to_all_authorized_projects: { type: "boolean" },
+      filters: {
+        type: "object",
+        required: ["assignees", "statuses"],
+        properties: {
+          assignees: { type: "array", maxItems: 20, items: ref("Uuid") },
+          statuses: { type: "array", maxItems: 5, items: ref("StatusKey") },
+        },
+        additionalProperties: false,
+      },
+      project_targets: { type: "array", maxItems: 20, items: string() },
+      projects: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["project_id", "project_key", "workspace_key"],
+          properties: { project_id: ref("Uuid"), project_key: string(), workspace_key: string() },
+          additionalProperties: false,
+        },
+      },
+      target_identifier: { anyOf: [string({ pattern: "^CFK-[1-9][0-9]*$" }), { type: "null" }] },
+      unresolved_project_targets: { type: "array", items: string() },
+      unresolved_workspace_targets: { type: "array", items: string() },
+      workspace_targets: { type: "array", maxItems: 20, items: string() },
+    },
+    additionalProperties: false,
+  },
+  IssueListResult: {
+    type: "object",
+    required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    properties: {
+      has_more: { type: "boolean" },
+      items: { type: "array", items: { oneOf: [ref("IssueSummary"), ref("IssueTombstone")] } },
+      next_cursor: nullableString(),
+      resolved_scope: ref("IssueResolvedScope"),
+    },
+    additionalProperties: false,
+  },
+  IssueWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: {
+      event_cursor: string(),
+      idempotent_replay: { type: "boolean" },
+      resource: { oneOf: [ref("IssueDetail"), ref("IssueTombstone")] },
+    },
+    additionalProperties: false,
+  },
+  IssueContext: {
+    type: "object",
+    required: ["issue", "sections", "truncated"],
+    properties: {
+      issue: {
+        type: "object",
+        required: [...issueSummaryRequired, "allowed_actions", "blocked_reason"],
+        properties: { ...issueSummaryProperties, allowed_actions: { type: "array", items: string() }, blocked_reason: nullableString() },
+        additionalProperties: false,
+      },
+      sections: {
+        type: "object",
+        required: ["body", "comments", "project_context", "relations"],
+        properties: {
+          body: {
+            type: "object",
+            required: ["content", "continuation", "omitted_bytes", "truncated"],
+            properties: { content: string(), continuation: nullableString(), omitted_bytes: integer({ minimum: 0 }), truncated: { type: "boolean" } },
+            additionalProperties: false,
+          },
+          comments: {
+            type: "object",
+            required: ["continuation", "items", "omitted_count"],
+            properties: { continuation: nullableString(), items: { type: "array", items: ref("IssueCommentSummary") }, omitted_count: integer({ minimum: 0 }) },
+            additionalProperties: false,
+          },
+          project_context: {
+            type: "object",
+            required: ["content", "continuation", "omitted_bytes", "truncated"],
+            properties: { content: string(), continuation: nullableString(), omitted_bytes: integer({ minimum: 0 }), truncated: { type: "boolean" } },
+            additionalProperties: false,
+          },
+          relations: {
+            type: "object",
+            required: ["continuation", "items", "omitted_count"],
+            properties: { continuation: nullableString(), items: { type: "array", items: ref("IssueRelationSummary") }, omitted_count: integer({ minimum: 0 }) },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
+      truncated: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
   ResourceSummary: { type: "object", required: ["id", "version", "created_at", "updated_at", "deleted_at"], properties: { id: ref("Uuid"), version: ref("Version"), created_at: ref("Timestamp"), updated_at: ref("Timestamp"), deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] } }, additionalProperties: true },
   WriteResult: { type: "object", required: ["resource", "event_cursor", "idempotent_replay"], properties: { resource: ref("ResourceSummary"), event_cursor: string(), idempotent_replay: { type: "boolean" } }, additionalProperties: false },
   ListResult: { type: "object", required: ["items", "next_cursor", "has_more"], properties: { items: { type: "array", items: { type: "object", additionalProperties: true } }, next_cursor: nullableString(), has_more: { type: "boolean" }, resolved_scope: { type: "object", additionalProperties: true } }, additionalProperties: false },
@@ -267,11 +531,29 @@ const querySets = {
   LaunchCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 1 }), description: "一次性 Browser Launch code；GET 不消费该 code。" }],
   CursorQuery: [{ name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   DeletedCursorQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
-  IssueListQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: string({ minLength: 1, maxLength: 128 }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
+  IssueListQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "status", in: "query", required: false, schema: { type: "array", maxItems: 5, items: ref("StatusKey") }, style: "form", explode: true }, { name: "assignee", in: "query", required: false, schema: { type: "array", maxItems: 20, items: ref("Uuid") }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: string({ minLength: 1, maxLength: 128 }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   IssueDetailQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],
   CandidateListQuery: [{ name: "assignment", in: "query", required: true, schema: string({ enum: ["unassigned", "mine", "needs_reassignment"] }) }, { name: "blocked", in: "query", required: false, schema: string({ enum: ["exclude", "include"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: string({ minLength: 1, maxLength: 128 }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   PrincipalListQuery: [{ name: "q", in: "query", required: false, schema: string({ maxLength: 128 }) }, { name: "project_id", in: "query", required: false, schema: ref("Uuid") }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   RelationDeleteQuery: [],
+};
+
+const operationResponseSchemas = {
+  listIssues: ref("IssueListResult"),
+  listIssueCandidates: ref("IssueListResult"),
+  listProjectIssues: ref("IssueListResult"),
+  getIssue: { oneOf: [ref("IssueFullDetail"), ref("IssueTombstone")] },
+  getIssueContext: ref("IssueContext"),
+  createIssue: ref("IssueWriteResult"),
+  updateIssue: ref("IssueWriteResult"),
+  deleteIssue: ref("IssueWriteResult"),
+  restoreIssue: ref("IssueWriteResult"),
+  assignIssueToMe: ref("IssueWriteResult"),
+  reportIssueBlocked: ref("IssueWriteResult"),
+  clearIssueBlocked: ref("IssueWriteResult"),
+  completeIssue: ref("IssueWriteResult"),
+  addIssueLabel: ref("IssueWriteResult"),
+  removeIssueLabel: ref("IssueWriteResult"),
 };
 
 const pathParameter = (name) => ({
@@ -300,6 +582,12 @@ function buildOperation([method, path, operationId, tag, security, mode, request
     parameters.push({ name: "target_expected_version", in: "query", required: true, schema: ref("Version") });
   }
 
+  const responseSchema = operationResponseSchemas[operationId]
+    ?? (method === "get" && operationId.startsWith("list")
+      ? ref("ListResult")
+      : mode === "read"
+        ? { type: "object", additionalProperties: true }
+        : ref("WriteResult"));
   const operation = {
     operationId,
     tags: [tag],
@@ -308,7 +596,7 @@ function buildOperation([method, path, operationId, tag, security, mode, request
     security,
     parameters,
     responses: {
-      "200": { description: "Successful response.", headers: { "X-Request-ID": { $ref: "#/components/headers/RequestId" } }, content: { "application/json": { schema: method === "get" && operationId.startsWith("list") ? ref("ListResult") : mode === "read" ? { type: "object", additionalProperties: true } : ref("WriteResult") } } },
+      "200": { description: "Successful response.", headers: { "X-Request-ID": { $ref: "#/components/headers/RequestId" } }, content: { "application/json": { schema: responseSchema } } },
       "400": { $ref: "#/components/responses/BadRequest" },
       "401": { $ref: "#/components/responses/Unauthorized" },
       "403": { $ref: "#/components/responses/Forbidden" },

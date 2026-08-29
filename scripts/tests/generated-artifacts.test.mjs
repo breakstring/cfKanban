@@ -59,3 +59,43 @@ test("OpenAPI models Invitation create and redeem requests as discriminated unio
   ]);
   assert.equal(redeemBranches.every((branch) => branch.additionalProperties === false), true);
 });
+
+test("OpenAPI exposes concrete Issue contracts and reserves done for complete", async () => {
+  const document = JSON.parse(await readFile(
+    new URL("../../contracts/openapi.json", import.meta.url),
+    "utf8",
+  ));
+  assert.deepEqual(document.components.schemas.NonDoneStatusKey.enum, [
+    "backlog",
+    "todo",
+    "in_progress",
+    "canceled",
+  ]);
+  assert.equal(
+    document.components.schemas.CreateIssueRequest.properties.status_key.$ref,
+    "#/components/schemas/NonDoneStatusKey",
+  );
+  assert.equal(
+    document.components.schemas.UpdateIssueRequest.properties.status_key.$ref,
+    "#/components/schemas/NonDoneStatusKey",
+  );
+  assert.equal(document.components.schemas.IssueSummary.additionalProperties, false);
+  assert.equal(document.components.schemas.IssueTombstone.additionalProperties, false);
+  assert.equal(document.components.schemas.IssueContext.additionalProperties, false);
+
+  const listOperation = document.paths["/api/v1/issues"].get;
+  assert.deepEqual(
+    listOperation.parameters.filter((parameter) => parameter.in === "query")
+      .map((parameter) => parameter.name),
+    ["deleted", "project", "workspace", "status", "assignee", "q", "cursor", "limit"],
+  );
+  assert.equal(
+    listOperation.responses["200"].content["application/json"].schema.$ref,
+    "#/components/schemas/IssueListResult",
+  );
+  assert.equal(
+    document.paths["/api/v1/issues/{identifier}/context"].get
+      .responses["200"].content["application/json"].schema.$ref,
+    "#/components/schemas/IssueContext",
+  );
+});
