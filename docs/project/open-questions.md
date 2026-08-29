@@ -74,7 +74,7 @@
 - SB-04/SB-05/SB-07/SB-08 也已按同一边界回查：Workspace、Project、单项 Issue/Relation 与 Invite 的服务端只定义原子能力；Skill 仍应提供 key/role 推荐、原子组合和恢复范式。action preview、二次确认与最终复合目标拆分属于上层决策。
 - SB-18～SB-21 已收敛：`updated_before` 是普通查询过滤；单项写入 wire request 携带一个明确 Project；cursor 是否持久化属于上层；撤权影响可由现有读取能力按需查询，不增加确认界面协议。
 
-Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation、Event cursor、查询排序、资源上限、错误与幂等合同也已收敛。Foundation SPEC 只冻结基础领域与 HTTP 语义；完整 OpenAPI/DDL 由后续独立 API/Schema SPEC 冻结。
+Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation、Event cursor、查询排序、资源上限、错误与幂等合同也已收敛；完整 OpenAPI/DDL、Web UI 与视觉合同已经于 2026-08-29 冻结。
 
 用户在 SB-01 复核中指出：原 Storyboard 虽然面向 Agent，操作主体仍然是人；随后进一步明确 cfKanban 不应成为上层 Agent 的最终工作流协调器，但必须为上层提供足够的默认建议和全局约定。Storyboard 因此用人/Agent 场景同时验收原子能力、Agent Guidance 和安全协议。独立的 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 负责能力暴露、可覆盖建议以及部署/凭据安全协议，不替上层决定日常 Issue 自主策略。
 
@@ -156,4 +156,4 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 
 ## 推荐下一轮讨论
 
-D-243 已固定单一 preferred origin、动态 discovery document 与可信旧 origin 驱动的自动 rebind，D-244 已固定 Passkey 可检测性和精确 hostname 边界，SB-30/SB-33 已走通相关用户场景。当前不再有需要先向用户确认的明显产品方向分歧；下一轮优先继续收敛 CSRF、OpenAPI、DDL/索引等 Draft wire 细节，并在冻结前用本地 D1/OpenAPI 原型验证技术假设。该结论不授权实现、Linear 写入、部署或提交。
+D-252 已完成最后一项 Passkey 安全/可用性确认，API/Schema、Web UI 与 `DESIGN.md` 已冻结；当前没有阻塞 v0 开始实施的产品问题。下一步只在用户明确开始实现后按 [v0 Implementation Plan](../plans/2026-08-29-v0-implementation-plan.md) 从 WP-01 推进。后续真实实现证据若触发停止条件，再回到合同层讨论；部署、远端 migration、提交和推送仍各自遵循授权边界。

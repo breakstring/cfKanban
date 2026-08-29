@@ -512,7 +512,7 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 30. 已确认：D-246 要求源码提供锁文件约束下的根级验证/构建入口，Service deployment bundle 的 migration manifest 固定顺序、checksum、分类、重入属性和预期 schema artifacts；deploy Skill 以 ledger + 实际 schema 双重 readback 判断 migration，不把文件名或退出码当成完成事实。
 31. 已确认：D-247 将持有 Cloudflare Token、执行远端写入的 GitHub Actions 部署 workflow 后置到下一阶段。v0 只有 `cfkanban-deploy` Agent-first 主部署路径；无凭据的 CI 验证 workflow 不属于第二套部署合同。
 
-SB-01～SB-33 的主要产品体验与安全边界已经确认；合同修订 20 又固定确定性根级构建、migration manifest/checksum/schema readback，并将部署型 GitHub Actions 后置，保持 v0 的 `cfkanban-deploy` Agent-first 唯一主部署路径。此前 monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节仍在 Draft SPEC 中收敛。本文仍不构成实现、安装、部署或发布授权。
+SB-01～SB-33 的主要产品体验与安全边界已经确认；合同修订 20 又固定确定性根级构建、migration manifest/checksum/schema readback，并将部署型 GitHub Actions 后置，保持 v0 的 `cfkanban-deploy` Agent-first 唯一主部署路径。此前 monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
 
 ## 12. 冻结范围与完成依据
 

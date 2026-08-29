@@ -1,0 +1,15 @@
+{
+  "service_cases": [
+    {"name":"project quota","http_status":409,"code":"PROJECT_ISSUE_LIMIT_REACHED","category":"business_quota","source":"service","retryable":false,"recovery":"free_capacity_or_request_owner"},
+    {"name":"application rate limit","http_status":429,"code":"RATE_LIMITED","category":"rate_limit","source":"service","retryable":true,"recovery":"retry_after","retry_after_seconds":60},
+    {"name":"D1 daily quota","http_status":503,"code":"PLATFORM_QUOTA_EXCEEDED","category":"platform_quota","source":"cloudflare_platform","retryable":true,"recovery":"wait_for_platform_reset","retry_after_seconds":3600},
+    {"name":"D1 storage quota","http_status":503,"code":"PLATFORM_QUOTA_EXCEEDED","category":"platform_quota","source":"cloudflare_platform","retryable":false,"recovery":"request_owner"},
+    {"name":"D1 unavailable","http_status":503,"code":"PLATFORM_UNAVAILABLE","category":"platform_failure","source":"cloudflare_platform","retryable":false,"recovery":"request_owner"}
+  ],
+  "client_normalized_cases": [
+    {"name":"Workers 1027 HTML","observed":"cloudflare_error_1027","http_status":503,"code":"PLATFORM_QUOTA_EXCEEDED","category":"platform_quota","source":"cloudflare_platform","retryable":true,"recovery":"wait_for_platform_reset","normalized_by":"client"},
+    {"name":"edge 429","observed":"non_json_429","http_status":429,"code":"RATE_LIMITED","category":"rate_limit","source":"cloudflare_platform","retryable":true,"recovery":"retry_after","normalized_by":"client"},
+    {"name":"unknown non-JSON 5xx","observed":"non_json_5xx","http_status":503,"code":"PLATFORM_UNAVAILABLE","category":"platform_failure","source":"cloudflare_platform","retryable":false,"recovery":"retry_or_request_owner","normalized_by":"client"},
+    {"name":"network failure","observed":"network_error","http_status":null,"code":"PLATFORM_UNAVAILABLE","category":"platform_failure","source":"client_transport","retryable":true,"recovery":"retry_or_request_owner","normalized_by":"client"}
+  ]
+}

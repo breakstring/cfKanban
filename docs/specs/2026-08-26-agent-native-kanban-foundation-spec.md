@@ -1,12 +1,12 @@
 # Agent-native Kanban Foundation SPEC
 
 - 文档状态：Frozen
-- 合同修订：18
+- 合同修订：19
 - Roadmap：R0
 - Linear：[cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f)
 - 最近更新：2026-08-29
 - 冻结日期：2026-08-28
-- 最近修订：2026-08-29（D-245）
+- 最近修订：2026-08-29（D-250）
 - 替代文档：无
 
 ## 1. 目的
@@ -583,7 +583,6 @@ Cloudflare 可能在 Worker 执行前直接返回 Error 1027、平台 429 或 HT
 - `PROJECT_ISSUE_LIMIT_REACHED`
 - `PROJECT_COMMENT_LIMIT_REACHED`
 - `PROJECT_PRINCIPAL_LIMIT_REACHED`
-- `PROJECT_LIMIT_BELOW_USAGE`
 - `RATE_LIMITED`
 - `PLATFORM_QUOTA_EXCEEDED`
 - `PLATFORM_UNAVAILABLE`
@@ -670,7 +669,7 @@ Invite bootstrap 页面是公开说明与 Invitation 兑换入口，不是日常
 4. REST/JSON 是权威业务合同，OpenAPI 是机器描述，Skills 是 Agent 使用层，远程 MCP 只是后置适配。
 5. §6.4 已覆盖同时 self-assign、非 assignee 基于旧 version 完成、complete 响应丢失和首次 Invitation 兑换响应丢失四个并发/重试验例。
 6. Free tier 超限返回明确错误并禁止无限快速重试；Vectorize、Workers AI、Queues、R2 与 Durable Objects 关闭时，核心 Kanban 仍完整工作。
-7. D-215/D-216 已通过合同修订 3 固定极简第一方 Web UI 与 Browser Launch/HttpOnly Session 的方向；D-217 通过修订 4 固定 5 分钟 launch、8 小时固定 Session、源 Credential 失效联动与 target scope。具体 CSRF/schema 仍由 Draft Web UI 与 API/Schema SPEC 冻结，不能在实现中默补。
+7. D-215/D-216 已通过合同修订 3 固定极简第一方 Web UI 与 Browser Launch/HttpOnly Session 的方向；D-217 通过修订 4 固定 5 分钟 launch、8 小时固定 Session、源 Credential 失效联动与 target scope。具体 CSRF/schema 已由 2026-08-29 Frozen Web UI 与 API/Schema SPEC 固定，不能在实现中默补。
 8. D-219 通过合同修订 5 移除 v0 Principal disable/enable/delete；Credential revoke、Grant revoke 与 Recovery Invite 分别承担认证停止、Project 撤权和身份连续性恢复。
 9. D-221 通过合同修订 6 固定 Owner Credential 的防锁死边界：Web 不撤销或轮换 Owner Credential，正常轮换由 `cfkanban-admin` 先安全落盘替代 secret 后执行 Bearer-only 原子 rotation，全部丢失才走 `cfkanban-deploy` 部署外恢复。
 10. D-222 通过合同修订 7 固定 Owner admin Session 的范围：默认不加载全部数据，但可在显式选择后进入实例内任意 Project；Project/Issue Session 仍严格限制在单一 Project。
@@ -685,5 +684,6 @@ Invite bootstrap 页面是公开说明与 Invitation 兑换入口，不是日常
 19. D-243 通过合同修订 16 修订 D-188 的 rebind 边界：每实例发布一个 preferred API origin 和动态公开 discovery；由当前 trusted origin 指示、并经无 Credential 目标探测验证的迁移可以自动完成，陌生地址自报相同 ID 仍不得自动获得 Credential。设置 preferred origin 只接受 Owner Bearer Credential，认证 API 不跨 origin redirect；Cookie/Passkey 精确迁移语义随后由合同修订 17 的 D-244 补充。
 20. D-244 通过合同修订 17 固定 Passkey 可检测性与 hostname 边界：浏览器能力探测不等于 credential 存在探测，服务端登记清单不等于设备清单；v0 使用当前请求 hostname 作为 RP ID、当前完整 HTTPS origin 作为 expected origin，不启用跨 hostname 共享。hostname 变化后使用 Agent Browser Launch 在新地址重新登记。
 21. D-245 通过合同修订 18 固定源码与云端拓扑：canonical source 使用 monorepo 组织，v0 实例仍只有一个 Worker 和一个 D1；Web 预构建资产通过同一 Worker 的 Static Assets 随 Service deployment bundle 发布，不创建 Pages project 或 KV namespace。具体目录、前端框架与 package manager 不在本次冻结范围。
+22. D-250 通过合同修订 19 删除与 D-241 冲突的 `PROJECT_LIMIT_BELOW_USAGE` 遗留错误码。Owner 保存低于当前 active usage 的限制必须成功；既有数据不变，后续会增加该维度计数的原子操作使用对应 `PROJECT_*_LIMIT_REACHED` 拒绝。
 
 本次冻结只固定 Foundation 级领域、权限、并发、资源层级与 HTTP 语义，不固定完整 OpenAPI 字段清单、D1 DDL/索引或实现代码。完整 API/Schema 必须进入后续独立 SPEC；冻结本身不授权实现、创建 Linear 实现 Issue、部署、迁移、提交或推送。

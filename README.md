@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A minimal, API-first Cloudflare Kanban system for coding agents. It is closer to a reliable work coordination ledger for agents than a traditional project management product with its UI removed.
 
-> Current status: the Foundation contract is Frozen at revision 18 and the Agent Skills contract at revision 20. The minimal Web UI and API/D1 Schema contracts are still Drafts. The repository contains documentation only; there is no application code or authorized implementation plan yet.
+> Current status: all v0 implementation contracts are Frozen. The Foundation contract is at revision 19 and the Agent Skills contract at revision 20; the API/D1 Schema, minimal Web UI, and visual design contracts are also Frozen. The repository has an implementation plan and validated contract prototypes, but no application code yet.
 
 ## Product principles
 
@@ -58,7 +58,7 @@ Credentials and Project Grants do not expire automatically. Credentials change o
 
 v0 uses bounded resource contracts: requests up to 128 KiB, Issue bodies up to 64 KiB, Comment/completion payloads up to 32 KiB, lists defaulting to 20 and capped at 100 items, and Agent context capped at 64 KiB. Large logs and attachments use external artifact references.
 
-The Foundation SPEC is Frozen at revision 18 and the Agent Skills & Bootstrap SPEC at revision 20. The latest revision adds reproducible root-level build verification, migration manifest/checksum/schema readback, and keeps Cloudflare-writing GitHub Actions deployment workflows out of v0. The only primary v0 deployment path remains an agent using `cfkanban-deploy`; credential-free CI verification is ordinary source engineering. The monorepo, one Worker plus one D1, same-Worker Static Assets, Passkey, preferred-origin, Public Join, quota, recovery, rate-limit, and error-normalization contracts remain frozen. Freezing does not authorize implementation. The Web UI, CSRF details, exact HTTP/OpenAPI fields, D1 DDL, indexes, and atomic write recipes remain Draft.
+The Foundation SPEC is Frozen at revision 19 and the Agent Skills & Bootstrap SPEC at revision 20. The API/D1 Schema and Web UI SPECs, together with `DESIGN.md`, were Frozen on 2026-08-29 after validating a 91-operation OpenAPI prototype, a 25-table/28-index D1 schema, critical atomic operations, Browser Launch/Session, CSRF, and Passkey constraints. The only primary v0 deployment path remains an agent using `cfkanban-deploy`; credential-free CI verification is ordinary source engineering. Work is organized by the [v0 implementation plan](docs/plans/2026-08-29-v0-implementation-plan.md) and Linear, but no business implementation has started.
 
 ## Documentation
 
@@ -68,6 +68,7 @@ The Foundation SPEC is Frozen at revision 18 and the Agent Skills & Bootstrap SP
 - [Foundation SPEC](docs/specs/2026-08-26-agent-native-kanban-foundation-spec.md)
 - [Agent Skills & Bootstrap SPEC](docs/specs/2026-08-28-agent-skills-bootstrap-spec.md)
 - [Minimal Web UI SPEC](docs/specs/2026-08-29-web-ui-spec.md)
+- [v0 Implementation Plan](docs/plans/2026-08-29-v0-implementation-plan.md)
 - [API & D1 Schema SPEC](docs/specs/2026-08-28-api-schema-spec.md)
 - [Cloudflare architecture baseline](docs/architecture/cloudflare-baseline.md)
 - [Cloudflare platform snapshot](docs/research/cloudflare-platform-snapshot-2026-08-28.md)

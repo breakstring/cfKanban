@@ -1,7 +1,7 @@
 # Linear 协作约定
 
 - 采用模式：Linear 已启用
-- 在线核验日期：2026-08-26
+- 在线核验日期：2026-08-29
 - 机器绑定：[`.linear/project.json`](../../.linear/project.json)
 
 ## 已验证绑定
@@ -16,7 +16,7 @@
 | Project status | Planned |
 | Project lead | Kenn Zhang |
 
-创建前已经按 `cfKanban` 和 `Agent Native Kanban` 查重，没有找到现有项目；创建后已按 Project ID 在线读回。
+项目创建前已经按 `cfKanban` 和 `Agent Native Kanban` 查重。2026-08-29 在建立实现 backlog 前再次按固定 Workspace/Team/Project ID 读回，并确认当时 Milestone 与 Issue 均为 0。
 
 ## 真相边界
 
@@ -30,17 +30,18 @@
 
 ## 当前在线快照
 
-截至 2026-08-26 创建并读回时：
+截至 2026-08-29 冻结合同并建立执行范围后：
 
 - Project status：Planned；
-- Milestones：0；
-- 实现 Issues：0。
+- Milestone：`v0 可部署闭环`；
+- 实现 Issues：KENN-317～KENN-327 中属于本项目的 11 个 WP，全部为 Backlog、未分配、无排期；
+- 依赖关系按 [v0 Implementation Plan](../plans/2026-08-29-v0-implementation-plan.md) 建立。
 
 这是核验快照，不是长期状态真相。后续状态必须在线读回，不能仅凭本段判断。
 
 ## Roadmap 映射
 
-当前不把 R0–R6 自动创建成 Milestone。等 Foundation SPEC 冻结并确认真实交付阶段后，再决定哪些 Roadmap 方向需要 Linear Milestone。
+R0～R6 不逐项复制成 Milestone。首个实现阶段只使用一个 `v0 可部署闭环` Milestone，承载由 Frozen 合同推导的 WP-01～WP-11；后续版本是否增加 Milestone 以真实交付证据决定。
 
 Roadmap ID 只提供稳定方向锚点，不等于优先级或 Issue 编号。
 
