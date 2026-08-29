@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "workspace": {
+    "url": "https://linear.app/kennzhang"
+  },
+  "team": {
+    "id": "e0caa5d5-8cba-4fe1-b97b-dc0247e3312f",
+    "key": "KENN"
+  },
+  "project": {
+    "id": "f530afb1-f9ce-4e67-9690-302cac532aa7",
+    "name": "cfKanban",
+    "url": "https://linear.app/kennzhang/project/cfkanban-567c4995296f"
+  },
+  "verified_at": "2026-08-26"
+}
