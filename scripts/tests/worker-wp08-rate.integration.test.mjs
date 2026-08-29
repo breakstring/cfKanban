@@ -34,9 +34,9 @@ after(async () => {
   await server.close();
 });
 
-test("WP-08 non-default native binding, settings, and 429 envelope share one policy", async () => {
+test("WP-08 non-default native bindings expose and enforce every scope", async () => {
   const worker = server.getWorker();
-  for (let index = 0; index < 7; index += 1) {
+  for (let index = 0; index < 3; index += 1) {
     const response = await worker.fetch(`${origin}/api/v1/web-authentication/options`, {
       body: "{}",
       headers: { "content-type": "application/json" },
@@ -58,7 +58,7 @@ test("WP-08 non-default native binding, settings, and 429 envelope share one pol
   assert.equal(body.retryable, true);
   assert.equal(body.recovery, "retry_after");
   assert.deepEqual(body.details, {
-    limit: 7,
+    limit: 3,
     period_seconds: 60,
     scope: "unauthenticated_sensitive",
   });
@@ -69,13 +69,57 @@ test("WP-08 non-default native binding, settings, and 429 envelope share one pol
   assert.equal(settings.status, 200);
   const settingsBody = await settings.json();
   assert.deepEqual(settingsBody.policies, {
-    instance: { limit: 80, period_seconds: 60 },
-    principal: { limit: 60, period_seconds: 60 },
-    unauthenticated_sensitive: { limit: 7, period_seconds: 60 },
+    instance: { limit: 12, period_seconds: 60 },
+    principal: { limit: 4, period_seconds: 60 },
+    unauthenticated_sensitive: { limit: 3, period_seconds: 60 },
   });
 
-  const openApi = await worker.fetch(`${origin}/openapi.json`);
-  assert.equal(openApi.status, 200);
+  for (let index = 0; index < 3; index += 1) {
+    const malformedRotation = await worker.fetch(
+      `${origin}/api/v1/admin/owner-credentials/rotate`,
+      {
+        body: "{}",
+        headers: {
+          authorization: `Bearer ${ownerToken}`,
+          "content-type": "application/json",
+        },
+        method: "POST",
+      },
+    );
+    assert.equal(malformedRotation.status, 400, `malformed rotation ${index + 1}`);
+  }
+  const principalLimited = await worker.fetch(
+    `${origin}/api/v1/admin/owner-credentials/rotate`,
+    {
+      body: "{}",
+      headers: {
+        authorization: `Bearer ${ownerToken}`,
+        "content-type": "application/json",
+      },
+      method: "POST",
+    },
+  );
+  assert.equal(principalLimited.status, 429);
+  assert.equal(principalLimited.headers.get("retry-after"), "60");
+  assert.deepEqual((await principalLimited.json()).details, {
+    limit: 4,
+    period_seconds: 60,
+    scope: "principal",
+  });
+
+  for (let index = 0; index < 3; index += 1) {
+    const health = await worker.fetch(`${origin}/healthz`);
+    assert.equal(health.status, 200, `instance request ${index + 1}`);
+  }
+  const instanceLimited = await worker.fetch(`${origin}/healthz`);
+  assert.equal(instanceLimited.status, 429);
+  assert.equal(instanceLimited.headers.get("retry-after"), "60");
+  assert.deepEqual((await instanceLimited.json()).details, {
+    limit: 12,
+    period_seconds: 60,
+    scope: "instance",
+  });
+
   const staticAsset = await worker.fetch(`${origin}/`);
   assert.equal(staticAsset.status, 200);
 });

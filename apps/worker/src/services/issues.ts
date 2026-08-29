@@ -1621,8 +1621,9 @@ async function issueQuotaExceeded(db: D1Database, projectId: string, restoringCo
 }> {
   try {
     const row = await db.prepare(
-      `SELECT p.issue_limit, p.comment_limit, usage.active_issue_count,
-              usage.active_comment_count,
+      `SELECT p.issue_limit, p.comment_limit, p.principal_limit,
+              usage.active_issue_count, usage.active_comment_count,
+              usage.active_principal_count,
               CASE WHEN policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL THEN 1 ELSE 0 END AS enabled
        FROM projects p
        LEFT JOIN project_usage usage ON usage.project_id = p.id
@@ -1631,9 +1632,11 @@ async function issueQuotaExceeded(db: D1Database, projectId: string, restoringCo
     ).bind(projectId).first<{
       active_comment_count: number | null;
       active_issue_count: number | null;
+      active_principal_count: number | null;
       comment_limit: number | null;
       enabled: number;
       issue_limit: number | null;
+      principal_limit: number | null;
     }>();
     if (row === null || row.enabled !== 1) {
       return {
@@ -1645,23 +1648,28 @@ async function issueQuotaExceeded(db: D1Database, projectId: string, restoringCo
         issueLimit: row?.issue_limit ?? undefined,
       };
     }
-    const activeCommentCount = row.active_comment_count ?? 0;
-    const activeIssueCount = row.active_issue_count ?? 0;
+    if (
+      row.active_comment_count === null
+      || row.active_issue_count === null
+      || row.active_principal_count === null
+      || row.comment_limit === null
+      || row.issue_limit === null
+      || row.principal_limit === null
+    ) throw platformUnavailable("d1");
+    const activeCommentCount = row.active_comment_count;
+    const activeIssueCount = row.active_issue_count;
     return {
       comments: restoringCommentCount > 0 && (
-        row.active_comment_count === null
-        || row.comment_limit === null
-        || activeCommentCount + restoringCommentCount > row.comment_limit
+        activeCommentCount + restoringCommentCount > row.comment_limit
       ),
       commentCurrent: activeCommentCount,
-      commentLimit: row.comment_limit ?? undefined,
-      issues: row.active_issue_count === null
-        || row.issue_limit === null
-        || activeIssueCount + 1 > row.issue_limit,
+      commentLimit: row.comment_limit,
+      issues: activeIssueCount + 1 > row.issue_limit,
       issueCurrent: activeIssueCount,
-      issueLimit: row.issue_limit ?? undefined,
+      issueLimit: row.issue_limit,
     };
   } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw platformUnavailable("d1", error);
   }
 }

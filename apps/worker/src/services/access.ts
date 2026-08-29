@@ -16,6 +16,7 @@ import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "
 import { isUuid, sha256Hex } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
 import {
+  ApiError,
   businessQuotaExceeded,
   conflict,
   forbidden,
@@ -30,7 +31,7 @@ import {
   readOperationSnapshot,
   runIdempotentOperation,
 } from "../kernel/idempotency.ts";
-import type { AuthContext, JsonValue } from "../kernel/types.ts";
+import type { AuthContext, BearerAuthContext, JsonValue } from "../kernel/types.ts";
 import {
   actorCredentialId,
   requireIdempotencyKey,
@@ -552,17 +553,36 @@ async function authenticateRotationRequest(
   }
 }
 
+export async function preauthenticateOwnerRotationRequest(
+  db: D1Database,
+  request: Request,
+): Promise<BearerAuthContext | null> {
+  const header = request.headers.get("authorization");
+  if (parseBearerCredential(header) === null) return null;
+  try {
+    return await authenticateBearer(db, header);
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "UNAUTHORIZED") return null;
+    throw error;
+  }
+}
+
 export async function rotateOwnerCredential(
   db: D1Database,
   request: Request,
   tokenValue: JsonValue,
   now: number,
   onAuthenticated?: (auth: AuthContext) => Promise<void>,
+  preauthenticated?: BearerAuthContext | null,
 ): Promise<{ [key: string]: JsonValue }> {
   const replacement = requireCredentialToken(tokenValue, "new_credential_token");
   const idempotencyKey = requireIdempotencyKey(request);
-  const initialAuth = await authenticateRotationRequest(db, request, replacement.token);
-  await onAuthenticated?.(initialAuth);
+  const initialAuth = preauthenticated
+    ?? await authenticateRotationRequest(db, request, replacement.token);
+  if (preauthenticated === null || preauthenticated === undefined) {
+    await onAuthenticated?.(initialAuth);
+  }
+  requireOwnerControl(initialAuth, true);
   if (initialAuth.displayName.includes(replacement.token)) {
     throw validationError("secret_value_reused", { field: "new_credential_token" });
   }
