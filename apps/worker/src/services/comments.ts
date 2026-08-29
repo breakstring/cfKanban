@@ -19,7 +19,9 @@ import {
   buildProjectRoleGuard,
   issueReference,
   requireCollaborationIssue,
+  requireCollaborationIssueAuthorization,
   requireCollaborationIssueById,
+  requireCollaborationIssueByIdAuthorization,
   requireCommentBody,
   requireCompletionPayload,
   roleCanWrite,
@@ -34,6 +36,7 @@ import {
 import {
   actorCredentialId,
   authorizedVia,
+  requireDeletedMode,
   requireIdempotencyKey,
   requireLimit,
   writeResult,
@@ -71,10 +74,24 @@ function completionPayload(value: string | null): JsonValue {
 
 function commentAllowedActions(row: CommentRow, issue: CollaborationIssue): string[] {
   if (!roleCanWrite(issue.role) || row.kind === "completion") return ["read"];
-  return row.deleted_at === null ? ["read", "delete"] : ["read", "restore"];
+  if (row.deleted_at === null) return ["read", "delete"];
+  return issue.deletedAt === null && issue.projectDeletedAt === null && issue.workspaceDeletedAt === null
+    ? ["read", "restore"]
+    : ["read"];
 }
 
 function commentResource(row: CommentRow, issue: CollaborationIssue): { [key: string]: JsonValue } {
+  const unavailabilityReason = issue.workspaceDeletedAt !== null
+    ? { code: "PARENT_WORKSPACE_DELETED", recovery: "restore_parent" }
+    : issue.projectDeletedAt !== null
+      ? { code: "PARENT_PROJECT_DELETED", recovery: "restore_parent" }
+      : issue.deletedAt !== null
+        ? { code: "PARENT_ISSUE_DELETED", recovery: "restore_parent" }
+        : null;
+  const restorable = row.deleted_at !== null
+    && row.kind === "standard"
+    && roleCanWrite(issue.role)
+    && unavailabilityReason === null;
   return {
     allowed_actions: commentAllowedActions(row, issue),
     author: {
@@ -91,6 +108,15 @@ function commentResource(row: CommentRow, issue: CollaborationIssue): { [key: st
     kind: row.kind,
     reply_to_comment_id: row.reply_to_comment_id,
     version: row.version,
+    ...(row.deleted_at === null ? {} : {
+      parent_status: {
+        issue: issue.deletedAt === null ? "active" : "deleted",
+        project: issue.projectDeletedAt === null ? "active" : "deleted",
+        workspace: issue.workspaceDeletedAt === null ? "active" : "deleted",
+      },
+      restorable,
+      unavailability_reason: unavailabilityReason,
+    }),
   };
 }
 
@@ -117,11 +143,14 @@ async function requireCommentAccess(
   auth: AuthContext,
   commentIdValue: JsonValue,
   requiredRole: "reader" | "writer" = "reader",
+  includeEffectiveDeleted = false,
 ): Promise<CommentAccess> {
   const commentId = requireUuid(commentIdValue, "comment_id");
   const row = await readComment(db, commentId);
   if (row === null) throw notFound();
-  const issue = await requireCollaborationIssueById(db, auth, row.issue_id, requiredRole);
+  const issue = includeEffectiveDeleted
+    ? await requireCollaborationIssueByIdAuthorization(db, auth, row.issue_id, requiredRole)
+    : await requireCollaborationIssueById(db, auth, row.issue_id, requiredRole);
   return { issue, row };
 }
 
@@ -263,10 +292,13 @@ export async function listComments(
   identifierValue: JsonValue,
   url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
-  const issue = await requireCollaborationIssue(db, auth, identifierValue);
+  const deletedMode = requireDeletedMode(url);
+  const issue = deletedMode === "only"
+    ? await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer")
+    : await requireCollaborationIssue(db, auth, identifierValue, "reader");
   const context = await createCursorContext(
     "comments",
-    { issue_id: issue.id },
+    { deleted: deletedMode, issue_id: issue.id },
     [issue.projectId],
     auth.principalId,
   );
@@ -274,20 +306,35 @@ export async function listComments(
   const limit = requireLimit(url);
   let rows: CommentRow[];
   try {
-    const result = await db.prepare(
-      `SELECT comment.id, comment.issue_id, comment.kind,
-              comment.author_principal_id, author.display_name AS author_display_name,
-              comment.body, comment.completion_json, comment.reply_to_comment_id,
-              comment.version, comment.deleted_at, comment.deleted_by_principal_id,
-              comment.created_at, comment.last_operation_id
-       FROM comments comment
-       JOIN principals author ON author.id = comment.author_principal_id
-       WHERE comment.issue_id = ?1
-         AND (?2 IS NULL OR comment.created_at > ?2
-              OR (comment.created_at = ?2 AND comment.id > ?3))
-       ORDER BY comment.created_at ASC, comment.id ASC
-       LIMIT ?4`,
-    ).bind(issue.id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<CommentRow>();
+    const result = deletedMode === "only"
+      ? await db.prepare(
+        `SELECT comment.id, comment.issue_id, comment.kind,
+                comment.author_principal_id, author.display_name AS author_display_name,
+                comment.body, comment.completion_json, comment.reply_to_comment_id,
+                comment.version, comment.deleted_at, comment.deleted_by_principal_id,
+                comment.created_at, comment.last_operation_id
+         FROM comments comment
+         JOIN principals author ON author.id = comment.author_principal_id
+         WHERE comment.issue_id = ?1 AND comment.deleted_at IS NOT NULL
+           AND (?2 IS NULL OR comment.deleted_at < ?2
+                OR (comment.deleted_at = ?2 AND comment.id < ?3))
+         ORDER BY comment.deleted_at DESC, comment.id DESC
+         LIMIT ?4`,
+      ).bind(issue.id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<CommentRow>()
+      : await db.prepare(
+        `SELECT comment.id, comment.issue_id, comment.kind,
+                comment.author_principal_id, author.display_name AS author_display_name,
+                comment.body, comment.completion_json, comment.reply_to_comment_id,
+                comment.version, comment.deleted_at, comment.deleted_by_principal_id,
+                comment.created_at, comment.last_operation_id
+         FROM comments comment
+         JOIN principals author ON author.id = comment.author_principal_id
+         WHERE comment.issue_id = ?1 AND comment.deleted_at IS NULL
+           AND (?2 IS NULL OR comment.created_at > ?2
+                OR (comment.created_at = ?2 AND comment.id > ?3))
+         ORDER BY comment.created_at ASC, comment.id ASC
+         LIMIT ?4`,
+      ).bind(issue.id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<CommentRow>();
     rows = result.results;
   } catch {
     throw platformUnavailable("d1");
@@ -299,7 +346,7 @@ export async function listComments(
     has_more: hasMore,
     items: page.map((row) => commentResource(row, issue)),
     next_cursor: hasMore && tail !== undefined
-      ? encodeCursor(context, [tail.created_at, tail.id])
+      ? encodeCursor(context, [deletedMode === "only" ? tail.deleted_at ?? 0 : tail.created_at, tail.id])
       : null,
     resolved_scope: { issue: issueReference(issue) },
   };
@@ -309,8 +356,17 @@ export async function getComment(
   db: D1Database,
   auth: AuthContext,
   commentIdValue: JsonValue,
+  url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
-  const { issue, row } = await requireCommentAccess(db, auth, commentIdValue);
+  const deletedMode = requireDeletedMode(url);
+  const { issue, row } = await requireCommentAccess(
+    db,
+    auth,
+    commentIdValue,
+    deletedMode === "only" ? "writer" : "reader",
+    deletedMode === "only",
+  );
+  if ((row.deleted_at !== null) !== (deletedMode === "only")) throw notFound();
   return commentResource(row, issue);
 }
 
@@ -323,7 +379,7 @@ export async function createComment(
   replyToCommentIdValue: JsonValue | undefined,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const issue = await requireCollaborationIssue(db, auth, identifierValue, "writer");
+  const issue = await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer");
   const body = requireCommentBody(bodyValue);
   const replyToCommentId = replyToCommentIdValue === undefined || replyToCommentIdValue === null
     ? null
@@ -333,10 +389,12 @@ export async function createComment(
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      await requireCollaborationIssue(db, auth, issue.identifier, "writer");
+      const latest = await requireCollaborationIssueAuthorization(db, auth, issue.identifier, "writer");
+      if (latest.projectId !== issue.projectId) throw notFound();
     },
     db,
     execute: async (operationId) => {
+      const activeIssue = await requireCollaborationIssue(db, auth, issue.identifier, "writer");
       const guard = buildProjectRoleGuard(auth, now, 8, "issue.project_id");
       try {
         await executeAtomicBatch(db, {
@@ -353,7 +411,7 @@ export async function createComment(
                    WHERE project.id = project_usage.project_id
                      AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
                  )`,
-            ).bind(now, operationId, issue.projectId),
+            ).bind(now, operationId, activeIssue.projectId),
             db.prepare(
               `INSERT INTO comments
                 (id, issue_id, kind, author_principal_id, body,
@@ -378,7 +436,7 @@ export async function createComment(
                           AND usage.last_operation_id = ?7))`,
             ).bind(
               commentId,
-              issue.id,
+              activeIssue.id,
               auth.principalId,
               body,
               replyToCommentId,
@@ -389,14 +447,14 @@ export async function createComment(
             commentSnapshotStatement(db, operationId, commentId),
             await commentEvent(db, auth, operationId, commentId, "comment.created", {
               comment_version: 1,
-              issue_identifier: issue.identifier,
+              issue_identifier: activeIssue.identifier,
               kind: "standard",
               reply_to_comment_id: replyToCommentId,
             }, now),
           ],
           committedAt: now,
           confirmBusinessRejection: () => deterministicRejection(
-            () => diagnoseCommentCreate(db, auth, issue.identifier, replyToCommentId, now),
+            () => diagnoseCommentCreate(db, auth, activeIssue.identifier, replyToCommentId, now),
           ),
           expectedEventCount: 1,
           operationId,
@@ -406,7 +464,7 @@ export async function createComment(
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          return diagnoseCommentCreate(db, auth, issue.identifier, replyToCommentId, now);
+          return diagnoseCommentCreate(db, auth, activeIssue.identifier, replyToCommentId, now);
         }
         throw error;
       }
@@ -574,17 +632,20 @@ export async function restoreComment(
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const access = await requireCommentAccess(db, auth, commentIdValue, "writer");
+  const access = await requireCommentAccess(db, auth, commentIdValue, "writer", true);
   if (access.row.kind === "completion") throw forbidden();
   const idempotencyKey = requireIdempotencyKey(request);
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      await requireCommentAccess(db, auth, access.row.id, "writer");
+      const latest = await requireCommentAccess(db, auth, access.row.id, "writer", true);
+      if (latest.issue.projectId !== access.issue.projectId) throw notFound();
     },
     db,
     execute: async (operationId) => {
-      await setCommentDeleted(db, auth, access, expectedVersion, now, false, operationId, true);
+      const activeAccess = await requireCommentAccess(db, auth, access.row.id, "writer");
+      if (activeAccess.row.kind === "completion") throw forbidden();
+      await setCommentDeleted(db, auth, activeAccess, expectedVersion, now, false, operationId, true);
     },
     idempotencyKey,
     method: "POST",
@@ -634,17 +695,19 @@ export async function completeIssue(
   value: { [key: string]: JsonValue },
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const issue = await requireCollaborationIssue(db, auth, identifierValue, "writer");
+  const issue = await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer");
   const payload: CompletionPayload = requireCompletionPayload(value);
   const commentId = crypto.randomUUID();
   const idempotencyKey = requireIdempotencyKey(request);
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      await requireCollaborationIssue(db, auth, issue.identifier, "writer");
+      const latest = await requireCollaborationIssueAuthorization(db, auth, issue.identifier, "writer");
+      if (latest.projectId !== issue.projectId) throw notFound();
     },
     db,
     execute: async (operationId) => {
+      const activeIssue = await requireCollaborationIssue(db, auth, issue.identifier, "writer");
       const guard = buildProjectRoleGuard(auth, now, 6, "issue.project_id");
       try {
         await executeAtomicBatch(db, {
@@ -661,7 +724,7 @@ export async function completeIssue(
                    WHERE project.id = project_usage.project_id
                      AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
                  )`,
-            ).bind(now, operationId, issue.projectId),
+            ).bind(now, operationId, activeIssue.projectId),
             db.prepare(
               `UPDATE issues AS issue
                SET status_key = 'done', version = version + 1,
@@ -680,7 +743,7 @@ export async function completeIssue(
                      AND (policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL
                           OR usage.last_operation_id = ?3)
                  )`,
-            ).bind(now, auth.principalId, operationId, issue.id, expectedVersion, ...guard.values),
+            ).bind(now, auth.principalId, operationId, activeIssue.id, expectedVersion, ...guard.values),
             db.prepare(
               `INSERT INTO comments
                 (id, issue_id, kind, author_principal_id, body,
@@ -697,10 +760,10 @@ export async function completeIssue(
               JSON.stringify(payload),
               now,
               operationId,
-              issue.id,
+              activeIssue.id,
               expectedVersion + 1,
             ),
-            issueWriteSnapshotStatement(db, operationId, issue.id, issue.role),
+            issueWriteSnapshotStatement(db, operationId, activeIssue.id, activeIssue.role),
             db.prepare(
               `INSERT INTO events
                 (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -732,26 +795,26 @@ export async function completeIssue(
               JSON.stringify({
                 completion_comment_id: commentId,
                 new_status_key: "done",
-                old_status_key: issue.statusKey,
+                old_status_key: activeIssue.statusKey,
               }),
               now,
-              issue.id,
+              activeIssue.id,
               commentId,
             ),
           ],
           committedAt: now,
           confirmBusinessRejection: () => deterministicRejection(
-            () => diagnoseComplete(db, auth, issue.identifier, expectedVersion, now),
+            () => diagnoseComplete(db, auth, activeIssue.identifier, expectedVersion, now),
           ),
           expectedEventCount: 1,
           operationId,
-          primarySubjectId: issue.id,
+          primarySubjectId: activeIssue.id,
           primarySubjectType: "issue",
           requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          return diagnoseComplete(db, auth, issue.identifier, expectedVersion, now);
+          return diagnoseComplete(db, auth, activeIssue.identifier, expectedVersion, now);
         }
         throw error;
       }

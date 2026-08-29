@@ -9,6 +9,7 @@ import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import {
   buildTwoProjectWriterGuard,
   requireCollaborationIssue,
+  requireCollaborationIssueAuthorization,
   requireRelationKind,
   roleCanWrite,
   type CollaborationIssue,
@@ -17,6 +18,7 @@ import {
 import {
   actorCredentialId,
   authorizedVia,
+  requireDeletedMode,
   requireIdempotencyKey,
   requireLimit,
   writeResult,
@@ -31,21 +33,26 @@ interface RelationRow {
   kind: RelationKind;
   last_operation_id: string | null;
   source_id: string;
+  source_deleted_at: number | null;
   source_number: number;
   source_project_id: string;
+  source_project_deleted_at: number | null;
   source_project_key: string;
   source_project_name: string;
   source_title: string;
   source_version: number;
   target_id: string;
+  target_deleted_at: number | null;
   target_number: number;
   target_project_id: string;
+  target_project_deleted_at: number | null;
   target_project_key: string;
   target_project_name: string;
   target_title: string;
   target_version: number;
   version: number;
   workspace_id: string;
+  workspace_deleted_at: number | null;
   workspace_key: string;
   workspace_name: string;
 }
@@ -80,9 +87,17 @@ function endpointResource(row: RelationRow, source: boolean): { [key: string]: J
 }
 
 function relationResource(row: RelationRow, canWrite: boolean): { [key: string]: JsonValue } {
+  const unavailabilityReason = row.workspace_deleted_at !== null
+    ? { code: "PARENT_WORKSPACE_DELETED", recovery: "restore_parent" }
+    : row.source_project_deleted_at !== null || row.target_project_deleted_at !== null
+      ? { code: "PARENT_PROJECT_DELETED", recovery: "restore_parent" }
+      : row.source_deleted_at !== null || row.target_deleted_at !== null
+        ? { code: "RELATION_ENDPOINT_DELETED", recovery: "restore_endpoint" }
+        : null;
+  const restorable = row.deleted_at !== null && canWrite && unavailabilityReason === null;
   return {
     allowed_actions: canWrite
-      ? row.deleted_at === null ? ["read", "delete"] : ["read", "restore"]
+      ? row.deleted_at === null ? ["read", "delete"] : restorable ? ["read", "restore"] : ["read"]
       : ["read"],
     created_at: timestamp(row.created_at),
     created_by_principal_id: row.created_by_principal_id,
@@ -97,6 +112,17 @@ function relationResource(row: RelationRow, canWrite: boolean): { [key: string]:
       id: row.workspace_id,
       key: row.workspace_key,
     },
+    ...(row.deleted_at === null ? {} : {
+      parent_status: {
+        source_issue: row.source_deleted_at === null ? "active" : "deleted",
+        source_project: row.source_project_deleted_at === null ? "active" : "deleted",
+        target_issue: row.target_deleted_at === null ? "active" : "deleted",
+        target_project: row.target_project_deleted_at === null ? "active" : "deleted",
+        workspace: row.workspace_deleted_at === null ? "active" : "deleted",
+      },
+      restorable,
+      unavailability_reason: unavailabilityReason,
+    }),
   };
 }
 
@@ -106,14 +132,19 @@ const RELATION_SELECT = `
          relation.created_at, relation.created_by_principal_id,
          relation.last_operation_id,
          workspace.key AS workspace_key, workspace.display_name AS workspace_name,
+         workspace.deleted_at AS workspace_deleted_at,
          source.id AS source_id, source.number AS source_number,
+         source.deleted_at AS source_deleted_at,
          source.title AS source_title, source.version AS source_version,
          source.project_id AS source_project_id,
+         source_project.deleted_at AS source_project_deleted_at,
          source_project.key AS source_project_key,
          source_project.display_name AS source_project_name,
          target.id AS target_id, target.number AS target_number,
+         target.deleted_at AS target_deleted_at,
          target.title AS target_title, target.version AS target_version,
          target.project_id AS target_project_id,
+         target_project.deleted_at AS target_project_deleted_at,
          target_project.key AS target_project_key,
          target_project.display_name AS target_project_name
   FROM issue_relations relation
@@ -123,14 +154,18 @@ const RELATION_SELECT = `
   JOIN issues target ON target.id = relation.target_issue_id
   JOIN projects target_project ON target_project.id = target.project_id`;
 
-async function readRelation(db: D1Database, relationId: string): Promise<RelationRow | null> {
+async function readRelation(
+  db: D1Database,
+  relationId: string,
+  includeEffectiveDeleted = false,
+): Promise<RelationRow | null> {
   try {
     return await db.prepare(
       `${RELATION_SELECT}
        WHERE relation.id = ?1
-         AND workspace.deleted_at IS NULL
+         ${includeEffectiveDeleted ? "" : `AND workspace.deleted_at IS NULL
          AND source.deleted_at IS NULL AND target.deleted_at IS NULL
-         AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
+         AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL`}
        LIMIT 1`,
     ).bind(relationId).first<RelationRow>();
   } catch {
@@ -143,11 +178,12 @@ async function requireRelationAccess(
   auth: AuthContext,
   relationIdValue: JsonValue,
   requiredRole: "reader" | "writer" = "reader",
+  includeEffectiveDeleted = false,
 ): Promise<RelationAccess> {
   const relationId = requireUuid(relationIdValue, "relation_id");
   const [row, projects] = await Promise.all([
-    readRelation(db, relationId),
-    resolveVisibleProjects(db, auth),
+    readRelation(db, relationId, includeEffectiveDeleted),
+    resolveVisibleProjects(db, auth, includeEffectiveDeleted),
   ]);
   if (row === null) throw notFound();
   const sourceRole = projects.find((project) => project.projectId === row.source_project_id)?.role;
@@ -188,21 +224,26 @@ function relationSnapshotStatement(
          'kind', relation.kind,
          'last_operation_id', relation.last_operation_id,
          'source_id', source.id,
+         'source_deleted_at', source.deleted_at,
          'source_number', source.number,
          'source_project_id', source.project_id,
+         'source_project_deleted_at', source_project.deleted_at,
          'source_project_key', source_project.key,
          'source_project_name', source_project.display_name,
          'source_title', source.title,
          'source_version', source.version,
          'target_id', target.id,
+         'target_deleted_at', target.deleted_at,
          'target_number', target.number,
          'target_project_id', target.project_id,
+         'target_project_deleted_at', target_project.deleted_at,
          'target_project_key', target_project.key,
          'target_project_name', target_project.display_name,
          'target_title', target.title,
          'target_version', target.version,
          'version', relation.version,
          'workspace_id', workspace.id,
+         'workspace_deleted_at', workspace.deleted_at,
          'workspace_key', workspace.key,
          'workspace_name', workspace.display_name
        )
@@ -360,12 +401,17 @@ export async function listIssueRelations(
   identifierValue: JsonValue,
   url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
-  const issue = await requireCollaborationIssue(db, auth, identifierValue);
-  const visibleProjects = await resolveVisibleProjects(db, auth);
+  const deletedMode = requireDeletedMode(url);
+  const issue = deletedMode === "only"
+    ? await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer")
+    : await requireCollaborationIssue(db, auth, identifierValue, "reader");
+  const visibleProjects = await resolveVisibleProjects(db, auth, deletedMode === "only");
   const visibleIds = visibleProjects.map((project) => project.projectId);
+  const writerIds = visibleProjects.filter((project) => roleCanWrite(project.role))
+    .map((project) => project.projectId);
   const context = await createCursorContext(
     "relations",
-    { issue_id: issue.id },
+    { deleted: deletedMode, issue_id: issue.id },
     visibleIds,
     auth.principalId,
   );
@@ -373,26 +419,44 @@ export async function listIssueRelations(
   const limit = requireLimit(url);
   let rows: RelationRow[];
   try {
-    const result = await db.prepare(
-      `${RELATION_SELECT}
-       WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
-         AND relation.deleted_at IS NULL
-         AND workspace.deleted_at IS NULL
-         AND source.deleted_at IS NULL AND target.deleted_at IS NULL
-         AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
-         AND source.project_id IN (SELECT value FROM json_each(?2))
-         AND target.project_id IN (SELECT value FROM json_each(?2))
-         AND (?3 IS NULL OR relation.created_at > ?3
-              OR (relation.created_at = ?3 AND relation.id > ?4))
-       ORDER BY relation.created_at ASC, relation.id ASC
-       LIMIT ?5`,
-    ).bind(
-      issue.id,
-      JSON.stringify(visibleIds),
-      cursor?.[0] ?? null,
-      cursor?.[1] ?? null,
-      limit + 1,
-    ).all<RelationRow>();
+    const result = deletedMode === "only"
+      ? await db.prepare(
+        `${RELATION_SELECT}
+         WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
+           AND relation.deleted_at IS NOT NULL
+           AND source.project_id IN (SELECT value FROM json_each(?2))
+           AND target.project_id IN (SELECT value FROM json_each(?2))
+           AND (?3 IS NULL OR relation.deleted_at < ?3
+                OR (relation.deleted_at = ?3 AND relation.id < ?4))
+         ORDER BY relation.deleted_at DESC, relation.id DESC
+         LIMIT ?5`,
+      ).bind(
+        issue.id,
+        JSON.stringify(writerIds),
+        cursor?.[0] ?? null,
+        cursor?.[1] ?? null,
+        limit + 1,
+      ).all<RelationRow>()
+      : await db.prepare(
+        `${RELATION_SELECT}
+         WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
+           AND relation.deleted_at IS NULL
+           AND workspace.deleted_at IS NULL
+           AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+           AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
+           AND source.project_id IN (SELECT value FROM json_each(?2))
+           AND target.project_id IN (SELECT value FROM json_each(?2))
+           AND (?3 IS NULL OR relation.created_at > ?3
+                OR (relation.created_at = ?3 AND relation.id > ?4))
+         ORDER BY relation.created_at ASC, relation.id ASC
+         LIMIT ?5`,
+      ).bind(
+        issue.id,
+        JSON.stringify(visibleIds),
+        cursor?.[0] ?? null,
+        cursor?.[1] ?? null,
+        limit + 1,
+      ).all<RelationRow>();
     rows = result.results;
   } catch {
     throw platformUnavailable("d1");
@@ -409,7 +473,7 @@ export async function listIssueRelations(
         && roleCanWrite(roles.get(row.target_project_id) ?? "reader"),
     )),
     next_cursor: hasMore && tail !== undefined
-      ? encodeCursor(context, [tail.created_at, tail.id])
+      ? encodeCursor(context, [deletedMode === "only" ? tail.deleted_at ?? 0 : tail.created_at, tail.id])
       : null,
     resolved_scope: {
       issue_id: issue.id,
@@ -423,8 +487,17 @@ export async function getRelation(
   db: D1Database,
   auth: AuthContext,
   relationIdValue: JsonValue,
+  url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
-  const access = await requireRelationAccess(db, auth, relationIdValue);
+  const deletedMode = requireDeletedMode(url);
+  const access = await requireRelationAccess(
+    db,
+    auth,
+    relationIdValue,
+    deletedMode === "only" ? "writer" : "reader",
+    deletedMode === "only",
+  );
+  if ((access.row.deleted_at !== null) !== (deletedMode === "only")) throw notFound();
   return relationResource(access.row, access.canWrite);
 }
 
@@ -470,8 +543,8 @@ export async function createIssueRelation(
 ): Promise<{ [key: string]: JsonValue }> {
   const kind = requireRelationKind(kindValue);
   const [pathSource, pathTarget] = await Promise.all([
-    requireCollaborationIssue(db, auth, sourceIdentifierValue, "writer"),
-    requireCollaborationIssue(db, auth, targetIdentifierValue, "writer"),
+    requireCollaborationIssueAuthorization(db, auth, sourceIdentifierValue, "writer"),
+    requireCollaborationIssueAuthorization(db, auth, targetIdentifierValue, "writer"),
   ]);
   validateRelationEndpoints(pathSource, pathTarget);
   const canonical = canonicalRelation(
@@ -486,13 +559,28 @@ export async function createIssueRelation(
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      await Promise.all([
-        requireCollaborationIssue(db, auth, pathSource.identifier, "writer"),
-        requireCollaborationIssue(db, auth, pathTarget.identifier, "writer"),
+      const [latestSource, latestTarget] = await Promise.all([
+        requireCollaborationIssueAuthorization(db, auth, pathSource.identifier, "writer"),
+        requireCollaborationIssueAuthorization(db, auth, pathTarget.identifier, "writer"),
       ]);
+      if (latestSource.projectId !== pathSource.projectId || latestTarget.projectId !== pathTarget.projectId) {
+        throw notFound();
+      }
     },
     db,
     execute: async (operationId) => {
+      const [activeSource, activeTarget] = await Promise.all([
+        requireCollaborationIssue(db, auth, pathSource.identifier, "writer"),
+        requireCollaborationIssue(db, auth, pathTarget.identifier, "writer"),
+      ]);
+      validateRelationEndpoints(activeSource, activeTarget);
+      const activeCanonical = canonicalRelation(
+        kind,
+        activeSource,
+        activeTarget,
+        sourceExpectedVersion,
+        targetExpectedVersion,
+      );
       const guard = buildTwoProjectWriterGuard(
         auth,
         now,
@@ -505,8 +593,8 @@ export async function createIssueRelation(
         auth,
         operationId,
         relationId,
-        canonical.source.projectId,
-        canonical.target.projectId,
+        activeCanonical.source.projectId,
+        activeCanonical.target.projectId,
         "issue-relation.created",
         now,
       );
@@ -536,10 +624,10 @@ export async function createIssueRelation(
             ).bind(
               relationId,
               kind,
-              canonical.source.id,
-              canonical.target.id,
-              canonical.sourceExpectedVersion,
-              canonical.targetExpectedVersion,
+              activeCanonical.source.id,
+              activeCanonical.target.id,
+              activeCanonical.sourceExpectedVersion,
+              activeCanonical.targetExpectedVersion,
               now,
               auth.principalId,
               operationId,
@@ -558,8 +646,8 @@ export async function createIssueRelation(
               now,
               auth.principalId,
               operationId,
-              canonical.source.id,
-              canonical.sourceExpectedVersion,
+              activeCanonical.source.id,
+              activeCanonical.sourceExpectedVersion,
               relationId,
             ),
             db.prepare(
@@ -575,8 +663,8 @@ export async function createIssueRelation(
               now,
               auth.principalId,
               operationId,
-              canonical.target.id,
-              canonical.targetExpectedVersion,
+              activeCanonical.target.id,
+              activeCanonical.targetExpectedVersion,
               relationId,
             ),
             relationSnapshotStatement(db, operationId, relationId),
@@ -835,26 +923,33 @@ export async function restoreRelation(
   targetExpectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const access = await requireRelationAccess(db, auth, relationIdValue, "writer");
+  const access = await requireRelationAccess(db, auth, relationIdValue, "writer", true);
   const idempotencyKey = requireIdempotencyKey(request);
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      await requireRelationAccess(db, auth, access.row.id, "writer");
+      const latest = await requireRelationAccess(db, auth, access.row.id, "writer", true);
+      if (
+        latest.row.source_project_id !== access.row.source_project_id
+        || latest.row.target_project_id !== access.row.target_project_id
+      ) throw notFound();
     },
     db,
-    execute: (operationId) => setRelationDeleted(
-      db,
-      auth,
-      access,
-      expectedVersion,
-      sourceExpectedVersion,
-      targetExpectedVersion,
-      now,
-      false,
-      operationId,
-      true,
-    ).then(() => undefined),
+    execute: async (operationId) => {
+      const activeAccess = await requireRelationAccess(db, auth, access.row.id, "writer");
+      await setRelationDeleted(
+        db,
+        auth,
+        activeAccess,
+        expectedVersion,
+        sourceExpectedVersion,
+        targetExpectedVersion,
+        now,
+        false,
+        operationId,
+        true,
+      );
+    },
     idempotencyKey,
     method: "POST",
     normalizedResourceScope: `relation:${access.row.id}:restore`,

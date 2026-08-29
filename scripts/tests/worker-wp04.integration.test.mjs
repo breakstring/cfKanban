@@ -14,6 +14,7 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
 const initialOwnerToken = token("owner", "A");
 const rotatedOwnerToken = token("owner2", "O");
+const exposedOwnerToken = token("exposed", "X");
 const participantToken = token("member", "B");
 const participantSpareToken = token("spare", "S");
 const participantRotatedToken = token("member2", "R");
@@ -209,6 +210,22 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.equal(replayedInvite.body.resource.secret_available, false);
   assert.equal(JSON.stringify(replayedInvite.body).includes(projectInviteCode), false);
 
+  const [concurrentInviteLeft, concurrentInviteRight] = await Promise.all([
+    createInvitation(projectInviteBody, "wp04-concurrent-invite-create"),
+    createInvitation(projectInviteBody, "wp04-concurrent-invite-create"),
+  ]);
+  assert.equal(concurrentInviteLeft.response.status, 200, JSON.stringify(concurrentInviteLeft.body));
+  assert.equal(concurrentInviteRight.response.status, 200, JSON.stringify(concurrentInviteRight.body));
+  assert.equal(concurrentInviteLeft.body.resource.id, concurrentInviteRight.body.resource.id);
+  assert.deepEqual(
+    new Set([concurrentInviteLeft.body.idempotent_replay, concurrentInviteRight.body.idempotent_replay]),
+    new Set([false, true]),
+  );
+  assert.equal(
+    [concurrentInviteLeft, concurrentInviteRight].filter((result) => result.body.resource.secret_available).length,
+    1,
+  );
+
   const invitationPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`);
   assert.equal(invitationPage.status, 200);
   assert.equal(invitationPage.headers.get("cache-control"), "no-store");
@@ -282,12 +299,25 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     new_credential_token: participantToken,
     redeem_as: "new_principal",
   };
-  const redeemed = await jsonRequest("/api/v1/invitations/redeem", {
-    body: redeemBody,
-    headers: { "idempotency-key": "wp04-project-redeem" },
-    method: "POST",
-  });
+  const [redeemed, concurrentRedeem] = await Promise.all([
+    jsonRequest("/api/v1/invitations/redeem", {
+      body: redeemBody,
+      headers: { "idempotency-key": "wp04-project-redeem" },
+      method: "POST",
+    }),
+    jsonRequest("/api/v1/invitations/redeem", {
+      body: redeemBody,
+      headers: { "idempotency-key": "wp04-project-redeem" },
+      method: "POST",
+    }),
+  ]);
   assert.equal(redeemed.response.status, 200);
+  assert.equal(concurrentRedeem.response.status, 200, JSON.stringify(concurrentRedeem.body));
+  assert.equal(redeemed.body.resource.principal.principal_id, concurrentRedeem.body.resource.principal.principal_id);
+  assert.deepEqual(
+    new Set([redeemed.body.idempotent_replay, concurrentRedeem.body.idempotent_replay]),
+    new Set([false, true]),
+  );
   assertWriteResult(redeemed.body);
   assert.deepEqual(
     redeemed.body.resource.results.map((item) => item.outcome),
@@ -879,6 +909,44 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const expiredInvitePage = await jsonRequest(`/invite?code=${encodeURIComponent(expiringCode)}`);
   assert.equal(expiredInvitePage.response.status, 410);
   assert.equal(expiredInvitePage.body.code, "INVITATION_EXPIRED");
+
+  const ownerBeforeSecretOverlap = await jsonRequest("/api/v1/me", { headers: ownerHeaders() });
+  const exposedOwnerName = await jsonRequest("/api/v1/me", {
+    body: {
+      display_name: exposedOwnerToken,
+      expected_version: ownerBeforeSecretOverlap.body.version,
+    },
+    headers: ownerHeaders(),
+    method: "PATCH",
+  });
+  assert.equal(exposedOwnerName.response.status, 200, JSON.stringify(exposedOwnerName.body));
+  const ownerRotationSideEffects = async () => db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM credentials) AS credentials,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits,
+       (SELECT COUNT(*) FROM idempotency_records) AS idempotency_records,
+       (SELECT COUNT(*) FROM idempotency_records
+        WHERE operation_snapshot_json IS NOT NULL) AS snapshots`,
+  ).first();
+  const exposedRotationBefore = await ownerRotationSideEffects();
+  const exposedOwnerRotation = await jsonRequest("/api/v1/admin/owner-credentials/rotate", {
+    body: { new_credential_token: exposedOwnerToken },
+    headers: ownerHeaders({ "idempotency-key": "wp04-owner-secret-overlap" }),
+    method: "POST",
+  });
+  assert.equal(exposedOwnerRotation.response.status, 400, JSON.stringify(exposedOwnerRotation.body));
+  assert.equal(exposedOwnerRotation.body.details.reason, "secret_value_reused");
+  assert.deepEqual(await ownerRotationSideEffects(), exposedRotationBefore);
+  const restoredOwnerName = await jsonRequest("/api/v1/me", {
+    body: {
+      display_name: "Deployment Owner",
+      expected_version: exposedOwnerName.body.resource.version,
+    },
+    headers: ownerHeaders(),
+    method: "PATCH",
+  });
+  assert.equal(restoredOwnerName.response.status, 200, JSON.stringify(restoredOwnerName.body));
 
   const rotatedOwner = await jsonRequest("/api/v1/admin/owner-credentials/rotate", {
     body: { new_credential_token: rotatedOwnerToken },

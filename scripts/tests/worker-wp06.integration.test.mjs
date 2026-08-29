@@ -12,6 +12,7 @@ const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
 const ownerToken = token("owner", "A");
 const dualWriterToken = token("dual", "D");
 const scopedWriterToken = token("scoped", "S");
+const dualReaderToken = token("reader", "R");
 
 const ids = {
   bootstrapOperation: "60000000-0000-4000-8000-000000000004",
@@ -22,6 +23,8 @@ const ids = {
   dualPrincipal: "60000000-0000-4000-8000-000000000006",
   scopedCredential: "60000000-0000-4000-8000-000000000007",
   scopedPrincipal: "60000000-0000-4000-8000-000000000008",
+  readerCredential: "60000000-0000-4000-8000-000000000009",
+  readerPrincipal: "60000000-0000-4000-8000-000000000010",
 };
 
 const server = createTestHarness({
@@ -43,6 +46,10 @@ function scopedHeaders(extra = {}) {
   return { authorization: `Bearer ${scopedWriterToken}`, ...extra };
 }
 
+function readerHeaders(extra = {}) {
+  return { authorization: `Bearer ${dualReaderToken}`, ...extra };
+}
+
 async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
   const response = await server.fetch(path, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -61,12 +68,18 @@ function assertWriteResult(value, replay = false) {
   assert.equal(typeof value.resource, "object");
 }
 
-async function seedPrincipal({ credentialId, principalId, tokenValue, grants }) {
+async function seedPrincipal({ credentialId, principalId, tokenValue, grants, role = "writer" }) {
   const now = Date.now();
   await db.batch([
     db.prepare(
       "INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-    ).bind(principalId, principalId === ids.dualPrincipal ? "Dual Writer" : "Scoped Writer", now),
+    ).bind(
+      principalId,
+      principalId === ids.dualPrincipal
+        ? "Dual Writer"
+        : principalId === ids.readerPrincipal ? "Dual Reader" : "Scoped Writer",
+      now,
+    ),
     db.prepare(
       `INSERT INTO credentials
         (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id)
@@ -74,7 +87,7 @@ async function seedPrincipal({ credentialId, principalId, tokenValue, grants }) 
     ).bind(
       credentialId,
       principalId,
-      principalId === ids.dualPrincipal ? "dual" : "scoped",
+      principalId === ids.dualPrincipal ? "dual" : principalId === ids.readerPrincipal ? "reader" : "scoped",
       await sha256Hex(tokenValue),
       now,
       `wp06-${principalId}-credential`,
@@ -82,8 +95,8 @@ async function seedPrincipal({ credentialId, principalId, tokenValue, grants }) 
     ...grants.map(({ grantId, projectId }) => db.prepare(
       `INSERT INTO project_grants
         (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
-       VALUES (?1, ?2, ?3, 'writer', ?4, ?4, ?5)`,
-    ).bind(grantId, principalId, projectId, now, `wp06-${grantId}-grant`)),
+       VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6)`,
+    ).bind(grantId, principalId, projectId, role, now, `wp06-${grantId}-grant`)),
   ]);
 }
 
@@ -167,6 +180,16 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     principalId: ids.scopedPrincipal,
     tokenValue: scopedWriterToken,
   });
+  await seedPrincipal({
+    credentialId: ids.readerCredential,
+    grants: [
+      { grantId: "60000000-0000-4000-8000-000000000014", projectId: projectAId },
+      { grantId: "60000000-0000-4000-8000-000000000015", projectId: projectBId },
+    ],
+    principalId: ids.readerPrincipal,
+    role: "reader",
+    tokenValue: dualReaderToken,
+  });
 
   const issueA = await createIssue("engineering", "APP", "Application task", "wp06-issue-a", dualHeaders());
   const issueA2 = await createIssue("engineering", "APP", "Quota completion task", "wp06-issue-a2", dualHeaders());
@@ -194,8 +217,9 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(updatedLabel.response.status, 200, JSON.stringify(updatedLabel.body));
   assert.equal(updatedLabel.body.resource.version, 2);
 
+  const addLabelExpectedVersion = issueAVersion;
   const addLabel = await jsonRequest(`/api/v1/issues/${issueA.body.resource.identifier}/commands/add-label`, {
-    body: { expected_version: issueAVersion, label_id: labelId },
+    body: { expected_version: addLabelExpectedVersion, label_id: labelId },
     headers: dualHeaders({ "idempotency-key": "wp06-label-add" }),
     method: "POST",
   });
@@ -203,8 +227,9 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   issueAVersion = addLabel.body.resource.version;
   assert.deepEqual(addLabel.body.resource.labels.map((item) => item.id), [labelId]);
 
+  const removeLabelExpectedVersion = issueAVersion;
   const removeLabel = await jsonRequest(`/api/v1/issues/${issueA.body.resource.identifier}/commands/remove-label`, {
-    body: { expected_version: issueAVersion, label_id: labelId },
+    body: { expected_version: removeLabelExpectedVersion, label_id: labelId },
     headers: dualHeaders({ "idempotency-key": "wp06-label-remove" }),
     method: "POST",
   });
@@ -219,6 +244,19 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(deletedLabel.response.status, 200, JSON.stringify(deletedLabel.body));
   assert.equal(deletedLabel.body.resource.version, 3);
   assert.notEqual(deletedLabel.body.resource.deleted_at, null);
+  const hiddenDeletedLabel = await jsonRequest(`/api/v1/labels/${labelId}`, {
+    headers: dualHeaders(),
+  });
+  assert.equal(hiddenDeletedLabel.response.status, 404);
+  const readerDeletedLabel = await jsonRequest(`/api/v1/labels/${labelId}?deleted=only`, {
+    headers: readerHeaders(),
+  });
+  assert.equal(readerDeletedLabel.response.status, 403);
+  const deletedLabelList = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/APP/labels?deleted=only",
+    { headers: dualHeaders() },
+  );
+  assert.deepEqual(deletedLabelList.body.items.map((item) => item.id), [labelId]);
   const restoredLabel = await jsonRequest(`/api/v1/labels/${labelId}/commands/restore`, {
     body: { expected_version: 3 },
     headers: dualHeaders({ "idempotency-key": "wp06-label-restore" }),
@@ -226,6 +264,39 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   });
   assert.equal(restoredLabel.response.status, 200, JSON.stringify(restoredLabel.body));
   assert.equal(restoredLabel.body.resource.version, 4);
+
+  const replayTombstonedLabel = await jsonRequest(`/api/v1/labels/${labelId}?expected_version=4`, {
+    headers: dualHeaders(),
+    method: "DELETE",
+  });
+  assert.equal(replayTombstonedLabel.response.status, 200, JSON.stringify(replayTombstonedLabel.body));
+  const replayedAddAfterLabelDelete = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/commands/add-label`,
+    {
+      body: { expected_version: addLabelExpectedVersion, label_id: labelId },
+      headers: dualHeaders({ "idempotency-key": "wp06-label-add" }),
+      method: "POST",
+    },
+  );
+  assert.equal(replayedAddAfterLabelDelete.response.status, 200, JSON.stringify(replayedAddAfterLabelDelete.body));
+  assertWriteResult(replayedAddAfterLabelDelete.body, true);
+  const replayedRemoveAfterLabelDelete = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/commands/remove-label`,
+    {
+      body: { expected_version: removeLabelExpectedVersion, label_id: labelId },
+      headers: dualHeaders({ "idempotency-key": "wp06-label-remove" }),
+      method: "POST",
+    },
+  );
+  assert.equal(replayedRemoveAfterLabelDelete.response.status, 200, JSON.stringify(replayedRemoveAfterLabelDelete.body));
+  assertWriteResult(replayedRemoveAfterLabelDelete.body, true);
+  const restoredReplayLabel = await jsonRequest(`/api/v1/labels/${labelId}/commands/restore`, {
+    body: { expected_version: 5 },
+    headers: dualHeaders({ "idempotency-key": "wp06-label-restore-after-replay" }),
+    method: "POST",
+  });
+  assert.equal(restoredReplayLabel.response.status, 200, JSON.stringify(restoredReplayLabel.body));
+  assert.equal(restoredReplayLabel.body.resource.version, 6);
 
   const comment = await jsonRequest(`/api/v1/issues/${issueA.body.resource.identifier}/comments`, {
     body: { body: "Initial implementation note" },
@@ -271,6 +342,24 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   });
   assert.equal(deletedComment.response.status, 200, JSON.stringify(deletedComment.body));
   assert.equal(deletedComment.body.resource.body, null);
+  const activeCommentsAfterDelete = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/comments`,
+    { headers: dualHeaders() },
+  );
+  assert.equal(activeCommentsAfterDelete.body.items.some((item) => item.id === commentId), false);
+  const hiddenDeletedComment = await jsonRequest(`/api/v1/comments/${commentId}`, {
+    headers: dualHeaders(),
+  });
+  assert.equal(hiddenDeletedComment.response.status, 404);
+  const readerDeletedComment = await jsonRequest(`/api/v1/comments/${commentId}?deleted=only`, {
+    headers: readerHeaders(),
+  });
+  assert.equal(readerDeletedComment.response.status, 403);
+  const deletedCommentList = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/comments?deleted=only`,
+    { headers: dualHeaders() },
+  );
+  assert.deepEqual(deletedCommentList.body.items.map((item) => item.id), [commentId]);
   const restoredComment = await jsonRequest(`/api/v1/comments/${commentId}/commands/restore`, {
     body: { expected_version: 2 },
     headers: dualHeaders({ "idempotency-key": "wp06-comment-restore" }),
@@ -390,6 +479,15 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     dualEvents.body.items.filter((event) => event.subject.id === relationId).length,
     2,
   );
+  const projectFilteredRelationEvents = await jsonRequest(
+    "/api/v1/events?project=engineering%2FAPP&limit=100",
+    { headers: dualHeaders() },
+  );
+  assert.equal(projectFilteredRelationEvents.response.status, 200, JSON.stringify(projectFilteredRelationEvents.body));
+  assert.equal(
+    projectFilteredRelationEvents.body.items.filter((event) => event.subject.id === relationId).length,
+    1,
+  );
 
   const deletedRelation = await jsonRequest(
     `/api/v1/relations/${relationId}?expected_version=1&source_expected_version=${issueBVersion}&target_expected_version=${issueAVersion}`,
@@ -399,6 +497,19 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(deletedRelation.body.resource.version, 2);
   issueBVersion = deletedRelation.body.resource.source.version;
   issueAVersion = deletedRelation.body.resource.target.version;
+  const hiddenDeletedRelation = await jsonRequest(`/api/v1/relations/${relationId}`, {
+    headers: dualHeaders(),
+  });
+  assert.equal(hiddenDeletedRelation.response.status, 404);
+  const readerDeletedRelation = await jsonRequest(`/api/v1/relations/${relationId}?deleted=only`, {
+    headers: readerHeaders(),
+  });
+  assert.equal(readerDeletedRelation.response.status, 403);
+  const deletedRelationList = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only`,
+    { headers: dualHeaders() },
+  );
+  assert.deepEqual(deletedRelationList.body.items.map((item) => item.id), [relationId]);
 
   const restoredRelation = await jsonRequest(`/api/v1/relations/${relationId}/commands/restore`, {
     body: {
@@ -446,6 +557,208 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     new Set([concurrentLeft.body.idempotent_replay, concurrentRight.body.idempotent_replay]),
     new Set([false, true]),
   );
+
+  const replayProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
+    body: { display_name: "Replay Scope", key: "REPLAY" },
+    headers: ownerHeaders({ "idempotency-key": "wp06-replay-project" }),
+    method: "POST",
+  });
+  assert.equal(replayProject.response.status, 200, JSON.stringify(replayProject.body));
+  const replayLabelBody = { color: "#334455", name: "Replay Label" };
+  const replayLabel = await jsonRequest("/api/v1/workspaces/engineering/projects/REPLAY/labels", {
+    body: replayLabelBody,
+    headers: ownerHeaders({ "idempotency-key": "wp06-replay-label-create" }),
+    method: "POST",
+  });
+  assert.equal(replayLabel.response.status, 200, JSON.stringify(replayLabel.body));
+  const deletedReplayLabel = await jsonRequest(
+    `/api/v1/labels/${replayLabel.body.resource.id}?expected_version=1`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(deletedReplayLabel.response.status, 200, JSON.stringify(deletedReplayLabel.body));
+  const pausedReplayProject = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/REPLAY?expected_version=1",
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(pausedReplayProject.response.status, 200, JSON.stringify(pausedReplayProject.body));
+  const pausedReplayLabelTombstone = await jsonRequest(
+    `/api/v1/labels/${replayLabel.body.resource.id}?deleted=only`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(pausedReplayLabelTombstone.response.status, 200, JSON.stringify(pausedReplayLabelTombstone.body));
+  assert.equal(pausedReplayLabelTombstone.body.restorable, false);
+  assert.equal(pausedReplayLabelTombstone.body.parent_status.project, "deleted");
+  const replayedLabelAfterProjectDelete = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/REPLAY/labels",
+    {
+      body: replayLabelBody,
+      headers: ownerHeaders({ "idempotency-key": "wp06-replay-label-create" }),
+      method: "POST",
+    },
+  );
+  assert.equal(replayedLabelAfterProjectDelete.response.status, 200, JSON.stringify(replayedLabelAfterProjectDelete.body));
+  assertWriteResult(replayedLabelAfterProjectDelete.body, true);
+  assert.equal(replayedLabelAfterProjectDelete.body.resource.id, replayLabel.body.resource.id);
+
+  const commentReplayIssue = await createIssue(
+    "engineering",
+    "APP",
+    "Comment replay tombstone",
+    "wp06-comment-replay-issue",
+    dualHeaders(),
+  );
+  const commentReplayBody = { body: "Committed before Issue deletion" };
+  const commentBeforeIssueDelete = await jsonRequest(
+    `/api/v1/issues/${commentReplayIssue.body.resource.identifier}/comments`,
+    {
+      body: commentReplayBody,
+      headers: dualHeaders({ "idempotency-key": "wp06-comment-replay-after-issue-delete" }),
+      method: "POST",
+    },
+  );
+  assert.equal(commentBeforeIssueDelete.response.status, 200, JSON.stringify(commentBeforeIssueDelete.body));
+  const deletedReplayComment = await jsonRequest(
+    `/api/v1/comments/${commentBeforeIssueDelete.body.resource.id}?expected_version=1`,
+    { headers: dualHeaders(), method: "DELETE" },
+  );
+  assert.equal(deletedReplayComment.response.status, 200, JSON.stringify(deletedReplayComment.body));
+  const deletedCommentReplayIssue = await jsonRequest(
+    `/api/v1/issues/${commentReplayIssue.body.resource.identifier}?expected_version=1`,
+    { headers: dualHeaders(), method: "DELETE" },
+  );
+  assert.equal(deletedCommentReplayIssue.response.status, 200, JSON.stringify(deletedCommentReplayIssue.body));
+  const pausedReplayCommentTombstone = await jsonRequest(
+    `/api/v1/comments/${commentBeforeIssueDelete.body.resource.id}?deleted=only`,
+    { headers: dualHeaders() },
+  );
+  assert.equal(pausedReplayCommentTombstone.response.status, 200, JSON.stringify(pausedReplayCommentTombstone.body));
+  assert.equal(pausedReplayCommentTombstone.body.restorable, false);
+  assert.equal(pausedReplayCommentTombstone.body.parent_status.issue, "deleted");
+  const replayedCommentAfterIssueDelete = await jsonRequest(
+    `/api/v1/issues/${commentReplayIssue.body.resource.identifier}/comments`,
+    {
+      body: commentReplayBody,
+      headers: dualHeaders({ "idempotency-key": "wp06-comment-replay-after-issue-delete" }),
+      method: "POST",
+    },
+  );
+  assert.equal(replayedCommentAfterIssueDelete.response.status, 200, JSON.stringify(replayedCommentAfterIssueDelete.body));
+  assertWriteResult(replayedCommentAfterIssueDelete.body, true);
+  assert.equal(replayedCommentAfterIssueDelete.body.resource.id, commentBeforeIssueDelete.body.resource.id);
+
+  const completeReplayIssue = await createIssue(
+    "engineering",
+    "APP",
+    "Complete replay tombstone",
+    "wp06-complete-replay-issue",
+    dualHeaders(),
+  );
+  const completeReplayBody = { expected_version: 1, summary: "Completed before Issue deletion" };
+  const completedBeforeIssueDelete = await jsonRequest(
+    `/api/v1/issues/${completeReplayIssue.body.resource.identifier}/commands/complete`,
+    {
+      body: completeReplayBody,
+      headers: dualHeaders({ "idempotency-key": "wp06-complete-replay-after-issue-delete" }),
+      method: "POST",
+    },
+  );
+  assert.equal(completedBeforeIssueDelete.response.status, 200, JSON.stringify(completedBeforeIssueDelete.body));
+  const deletedCompleteReplayIssue = await jsonRequest(
+    `/api/v1/issues/${completeReplayIssue.body.resource.identifier}?expected_version=2`,
+    { headers: dualHeaders(), method: "DELETE" },
+  );
+  assert.equal(deletedCompleteReplayIssue.response.status, 200, JSON.stringify(deletedCompleteReplayIssue.body));
+  const replayedCompleteAfterIssueDelete = await jsonRequest(
+    `/api/v1/issues/${completeReplayIssue.body.resource.identifier}/commands/complete`,
+    {
+      body: completeReplayBody,
+      headers: dualHeaders({ "idempotency-key": "wp06-complete-replay-after-issue-delete" }),
+      method: "POST",
+    },
+  );
+  assert.equal(replayedCompleteAfterIssueDelete.response.status, 200, JSON.stringify(replayedCompleteAfterIssueDelete.body));
+  assertWriteResult(replayedCompleteAfterIssueDelete.body, true);
+  assert.equal(
+    replayedCompleteAfterIssueDelete.body.resource.completion_comment_id,
+    completedBeforeIssueDelete.body.resource.completion_comment_id,
+  );
+
+  const relationReplaySource = await createIssue(
+    "engineering",
+    "APP",
+    "Relation replay source",
+    "wp06-relation-replay-source",
+    dualHeaders(),
+  );
+  const relationReplayTarget = await createIssue(
+    "engineering",
+    "BACK",
+    "Relation replay target",
+    "wp06-relation-replay-target",
+    dualHeaders(),
+  );
+  const relationReplayBody = {
+    kind: "related",
+    source_expected_version: 1,
+    target_expected_version: 1,
+    target_identifier: relationReplayTarget.body.resource.identifier,
+  };
+  const relationBeforeIssueDelete = await jsonRequest(
+    `/api/v1/issues/${relationReplaySource.body.resource.identifier}/relations`,
+    {
+      body: relationReplayBody,
+      headers: dualHeaders({ "idempotency-key": "wp06-relation-replay-after-issue-delete" }),
+      method: "POST",
+    },
+  );
+  assert.equal(relationBeforeIssueDelete.response.status, 200, JSON.stringify(relationBeforeIssueDelete.body));
+  const deletedReplayRelation = await jsonRequest(
+    `/api/v1/relations/${relationBeforeIssueDelete.body.resource.id}`
+      + "?expected_version=1&source_expected_version=2&target_expected_version=2",
+    { headers: dualHeaders(), method: "DELETE" },
+  );
+  assert.equal(deletedReplayRelation.response.status, 200, JSON.stringify(deletedReplayRelation.body));
+  const deletedRelationReplaySource = await jsonRequest(
+    `/api/v1/issues/${relationReplaySource.body.resource.identifier}?expected_version=3`,
+    { headers: dualHeaders(), method: "DELETE" },
+  );
+  assert.equal(deletedRelationReplaySource.response.status, 200, JSON.stringify(deletedRelationReplaySource.body));
+  const pausedReplayRelationTombstone = await jsonRequest(
+    `/api/v1/relations/${relationBeforeIssueDelete.body.resource.id}?deleted=only`,
+    { headers: dualHeaders() },
+  );
+  assert.equal(pausedReplayRelationTombstone.response.status, 200, JSON.stringify(pausedReplayRelationTombstone.body));
+  assert.equal(pausedReplayRelationTombstone.body.restorable, false);
+  assert.equal(
+    [
+      pausedReplayRelationTombstone.body.parent_status.source_issue,
+      pausedReplayRelationTombstone.body.parent_status.target_issue,
+    ].includes("deleted"),
+    true,
+  );
+  const replayedRelationAfterIssueDelete = await jsonRequest(
+    `/api/v1/issues/${relationReplaySource.body.resource.identifier}/relations`,
+    {
+      body: relationReplayBody,
+      headers: dualHeaders({ "idempotency-key": "wp06-relation-replay-after-issue-delete" }),
+      method: "POST",
+    },
+  );
+  assert.equal(replayedRelationAfterIssueDelete.response.status, 200, JSON.stringify(replayedRelationAfterIssueDelete.body));
+  assertWriteResult(replayedRelationAfterIssueDelete.body, true);
+  assert.equal(replayedRelationAfterIssueDelete.body.resource.id, relationBeforeIssueDelete.body.resource.id);
+
+  await db.prepare(
+    `UPDATE project_grants
+     SET revoked_at = ?1, revoked_by_principal_id = ?2
+     WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, "60000000-0000-4000-8000-000000000012").run();
+  const filteredCursorAfterRelationGrantRevoke = await jsonRequest(
+    `/api/v1/events?project=engineering%2FAPP&after=${encodeURIComponent(projectFilteredRelationEvents.body.next_cursor)}`,
+    { headers: dualHeaders() },
+  );
+  assert.equal(filteredCursorAfterRelationGrantRevoke.response.status, 409);
+  assert.equal(filteredCursorAfterRelationGrantRevoke.body.code, "CURSOR_SCOPE_MISMATCH");
 
   const crossedCursor = await jsonRequest(
     `/api/v1/events?after=${encodeURIComponent(afterRelationCursor)}`,

@@ -3422,6 +3422,19 @@
             }
           },
           {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
+            }
+          },
+          {
             "name": "cursor",
             "in": "query",
             "required": false,
@@ -3593,6 +3606,19 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
             }
           }
         ],
@@ -4027,6 +4053,19 @@
             "schema": {
               "$ref": "#/components/schemas/Uuid"
             }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
+            }
           }
         ],
         "responses": {
@@ -4339,6 +4378,19 @@
             }
           },
           {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
+            }
+          },
+          {
             "name": "cursor",
             "in": "query",
             "required": false,
@@ -4510,6 +4562,19 @@
             "required": true,
             "schema": {
               "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
             }
           }
         ],
@@ -10682,10 +10747,68 @@
               "completion"
             ]
           },
+          "parent_status": {
+            "type": "object",
+            "required": [
+              "issue",
+              "project",
+              "workspace"
+            ],
+            "properties": {
+              "issue": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              },
+              "project": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              },
+              "workspace": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
           "reply_to_comment_id": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "restorable": {
+            "type": "boolean"
+          },
+          "unavailability_reason": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "recovery"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "recovery": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
               },
               {
                 "type": "null"
@@ -10830,6 +10953,30 @@
             "minLength": 1,
             "maxLength": 64
           },
+          "parent_status": {
+            "type": "object",
+            "required": [
+              "project",
+              "workspace"
+            ],
+            "properties": {
+              "project": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              },
+              "workspace": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
           "project": {
             "type": "object",
             "required": [
@@ -10852,6 +10999,32 @@
           },
           "updated_at": {
             "$ref": "#/components/schemas/Timestamp"
+          },
+          "restorable": {
+            "type": "boolean"
+          },
+          "unavailability_reason": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "recovery"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "recovery": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
             "$ref": "#/components/schemas/Version"
@@ -11035,11 +11208,85 @@
           "kind": {
             "$ref": "#/components/schemas/RelationKind"
           },
+          "parent_status": {
+            "type": "object",
+            "required": [
+              "source_issue",
+              "source_project",
+              "target_issue",
+              "target_project",
+              "workspace"
+            ],
+            "properties": {
+              "source_issue": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              },
+              "source_project": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              },
+              "target_issue": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              },
+              "target_project": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              },
+              "workspace": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "restorable": {
+            "type": "boolean"
+          },
           "source": {
             "$ref": "#/components/schemas/RelationEndpoint"
           },
           "target": {
             "$ref": "#/components/schemas/RelationEndpoint"
+          },
+          "unavailability_reason": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "recovery"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "recovery": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "version": {
             "$ref": "#/components/schemas/Version"
