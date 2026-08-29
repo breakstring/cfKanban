@@ -33,7 +33,8 @@ import {
   readOperationSnapshot,
   runIdempotentOperation,
 } from "../kernel/idempotency.ts";
-import { RATE_LIMIT_POLICIES, recentRateLimitSummary } from "../kernel/rate-limit.ts";
+import { recentRateLimitSummary } from "../kernel/rate-limit.ts";
+import type { RateLimitPolicies } from "../kernel/rate-limit.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import {
   actorCredentialId,
@@ -923,6 +924,7 @@ export async function getRateLimitSettings(
   db: D1Database,
   auth: AuthContext,
   now: number,
+  policies: RateLimitPolicies,
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
   await verifyCurrentAuth(db, auth, now);
@@ -932,16 +934,16 @@ export async function getRateLimitSettings(
     editable_via_api: false,
     policies: {
       instance: {
-        limit: RATE_LIMIT_POLICIES.instance.limit,
-        period_seconds: RATE_LIMIT_POLICIES.instance.periodSeconds,
+        limit: policies.instance.limit,
+        period_seconds: policies.instance.periodSeconds,
       },
       principal: {
-        limit: RATE_LIMIT_POLICIES.principal.limit,
-        period_seconds: RATE_LIMIT_POLICIES.principal.periodSeconds,
+        limit: policies.principal.limit,
+        period_seconds: policies.principal.periodSeconds,
       },
       unauthenticated_sensitive: {
-        limit: RATE_LIMIT_POLICIES.unauthenticated_sensitive.limit,
-        period_seconds: RATE_LIMIT_POLICIES.unauthenticated_sensitive.periodSeconds,
+        limit: policies.unauthenticated_sensitive.limit,
+        period_seconds: policies.unauthenticated_sensitive.periodSeconds,
       },
     },
     recent_429_summary: {

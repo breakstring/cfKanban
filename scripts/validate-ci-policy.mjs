@@ -43,6 +43,30 @@ assert.deepEqual(
   "source Worker config must preserve the Frozen zero-parameter rate-limit profile",
 );
 
+const rateLimitRuntimeVars = {
+  INSTANCE_RATE_LIMITER: ["RATE_LIMIT_INSTANCE_LIMIT", "RATE_LIMIT_INSTANCE_PERIOD_SECONDS"],
+  PRINCIPAL_RATE_LIMITER: ["RATE_LIMIT_PRINCIPAL_LIMIT", "RATE_LIMIT_PRINCIPAL_PERIOD_SECONDS"],
+  UNAUTHENTICATED_RATE_LIMITER: [
+    "RATE_LIMIT_UNAUTHENTICATED_SENSITIVE_LIMIT",
+    "RATE_LIMIT_UNAUTHENTICATED_SENSITIVE_PERIOD_SECONDS",
+  ],
+};
+for (const config of [workerConfig, workerTestConfig]) {
+  for (const binding of config.ratelimits) {
+    const [limitVar, periodVar] = rateLimitRuntimeVars[binding.name];
+    assert.equal(
+      Number(config.vars?.[limitVar]),
+      binding.simple.limit,
+      `${binding.name} runtime limit must match its native binding`,
+    );
+    assert.equal(
+      Number(config.vars?.[periodVar]),
+      binding.simple.period,
+      `${binding.name} runtime period must match its native binding`,
+    );
+  }
+}
+
 assert.equal(workerTestConfig.main, "apps/worker/src/index.ts", "WP-02 tests must exercise the production Worker entrypoint");
 assert.equal(workerTestConfig.account_id, undefined, "local test config must not pin a Cloudflare account");
 assert.equal(workerTestConfig.routes, undefined, "local test config must not create routes");

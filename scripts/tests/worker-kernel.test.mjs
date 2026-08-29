@@ -142,6 +142,12 @@ test("native rate-limit rejection maps to the stable machine error and bounded s
         return { success: false };
       },
     },
+    RATE_LIMIT_INSTANCE_LIMIT: "73",
+    RATE_LIMIT_INSTANCE_PERIOD_SECONDS: "10",
+    RATE_LIMIT_PRINCIPAL_LIMIT: "61",
+    RATE_LIMIT_PRINCIPAL_PERIOD_SECONDS: "60",
+    RATE_LIMIT_UNAUTHENTICATED_SENSITIVE_LIMIT: "17",
+    RATE_LIMIT_UNAUTHENTICATED_SENSITIVE_PERIOD_SECONDS: "10",
   };
 
   await assert.rejects(enforceInstanceRateLimit(env), (error) => {
@@ -151,10 +157,10 @@ test("native rate-limit rejection maps to the stable machine error and bounded s
     assert.equal(error.source, "service");
     assert.equal(error.retryable, true);
     assert.equal(error.recovery, "retry_after");
-    assert.equal(error.retryAfterSeconds, 60);
+    assert.equal(error.retryAfterSeconds, 10);
     assert.deepEqual(error.details, {
-      limit: 300,
-      period_seconds: 60,
+      limit: 73,
+      period_seconds: 10,
       scope: "instance",
     });
     return true;

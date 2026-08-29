@@ -512,7 +512,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     headers: ownerHeaders(),
   });
   assert.equal(rateSettings.response.status, 200);
-  assert.deepEqual(rateSettings.body.policies.principal, { limit: 120, period_seconds: 60 });
+  assert.deepEqual(rateSettings.body.policies.principal, { limit: 10000, period_seconds: 60 });
   assert.equal(rateSettings.body.editable_via_api, false);
   assert.equal(rateSettings.body.recent_429_summary.observation_scope, "worker_isolate_best_effort");
   assert.equal(rateSettings.body.recent_429_summary.window_seconds, 300);

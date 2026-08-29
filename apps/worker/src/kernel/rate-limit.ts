@@ -1,13 +1,45 @@
 import { platformUnavailable, rateLimited } from "./errors.ts";
 import type { AuthContext, WorkerEnv } from "./types.ts";
 
-export const RATE_LIMIT_POLICIES = {
-  instance: { limit: 300, periodSeconds: 60 },
-  principal: { limit: 120, periodSeconds: 60 },
-  unauthenticated_sensitive: { limit: 30, periodSeconds: 60 },
-} as const;
+export interface RateLimitPolicy {
+  limit: number;
+  periodSeconds: 10 | 60;
+}
 
-type RateLimitScope = keyof typeof RATE_LIMIT_POLICIES;
+export interface RateLimitPolicies {
+  instance: RateLimitPolicy;
+  principal: RateLimitPolicy;
+  unauthenticated_sensitive: RateLimitPolicy;
+}
+
+type RateLimitScope = keyof RateLimitPolicies;
+
+function positiveInteger(value: string, allowed?: readonly number[]): number {
+  if (!/^[1-9][0-9]*$/u.test(value)) throw platformUnavailable("worker");
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || (allowed !== undefined && !allowed.includes(parsed))) {
+    throw platformUnavailable("worker");
+  }
+  return parsed;
+}
+
+function policy(limit: string, periodSeconds: string): RateLimitPolicy {
+  return {
+    limit: positiveInteger(limit),
+    periodSeconds: positiveInteger(periodSeconds, [10, 60]) as 10 | 60,
+  };
+}
+
+export function rateLimitPolicies(env: WorkerEnv): RateLimitPolicies {
+  return {
+    instance: policy(env.RATE_LIMIT_INSTANCE_LIMIT, env.RATE_LIMIT_INSTANCE_PERIOD_SECONDS),
+    principal: policy(env.RATE_LIMIT_PRINCIPAL_LIMIT, env.RATE_LIMIT_PRINCIPAL_PERIOD_SECONDS),
+    unauthenticated_sensitive: policy(
+      env.RATE_LIMIT_UNAUTHENTICATED_SENSITIVE_LIMIT,
+      env.RATE_LIMIT_UNAUTHENTICATED_SENSITIVE_PERIOD_SECONDS,
+    ),
+  };
+}
 
 const RECENT_429_WINDOW_SECONDS = 300;
 const MAX_RECENT_429S = 128;
@@ -50,7 +82,8 @@ export function recentRateLimitSummary(now: number): {
 async function enforce(
   binding: RateLimit,
   key: string,
-  scope: keyof typeof RATE_LIMIT_POLICIES,
+  scope: RateLimitScope,
+  policy: RateLimitPolicy,
 ): Promise<void> {
   let success: boolean;
   try {
@@ -60,16 +93,25 @@ async function enforce(
   }
   if (success) return;
   recordRateLimit(scope);
-  const policy = RATE_LIMIT_POLICIES[scope];
   throw rateLimited(scope, policy.limit, policy.periodSeconds);
 }
 
 export async function enforceInstanceRateLimit(env: WorkerEnv): Promise<void> {
-  await enforce(env.INSTANCE_RATE_LIMITER, "dynamic-api", "instance");
+  await enforce(
+    env.INSTANCE_RATE_LIMITER,
+    "dynamic-api",
+    "instance",
+    rateLimitPolicies(env).instance,
+  );
 }
 
 export async function enforcePrincipalRateLimit(env: WorkerEnv, auth: AuthContext): Promise<void> {
-  await enforce(env.PRINCIPAL_RATE_LIMITER, auth.principalId, "principal");
+  await enforce(
+    env.PRINCIPAL_RATE_LIMITER,
+    auth.principalId,
+    "principal",
+    rateLimitPolicies(env).principal,
+  );
 }
 
 export async function enforceUnauthenticatedSensitiveRateLimit(env: WorkerEnv): Promise<void> {
@@ -77,6 +119,7 @@ export async function enforceUnauthenticatedSensitiveRateLimit(env: WorkerEnv): 
     env.UNAUTHENTICATED_RATE_LIMITER,
     "unauthenticated-sensitive",
     "unauthenticated_sensitive",
+    rateLimitPolicies(env).unauthenticated_sensitive,
   );
 }
 
