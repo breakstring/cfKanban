@@ -580,6 +580,29 @@ function launchIsActive(row: BrowserLaunchRow | null, now: number): row is Brows
     && row.expires_at > now;
 }
 
+async function launchCanRedeem(
+  db: D1Database,
+  launch: BrowserLaunchRow,
+  now: number,
+): Promise<boolean> {
+  const row = await db.prepare(
+    `SELECT 1 AS redeemable
+     FROM browser_launches AS launch
+     WHERE launch.id = ?1 AND launch.code_digest = ?2
+       AND launch.redeemed_at IS NULL AND launch.revoked_at IS NULL
+       AND launch.expires_at > ?3
+       AND EXISTS (
+         SELECT 1 FROM credentials source
+         WHERE source.id = launch.source_credential_id
+           AND source.principal_id = launch.principal_id
+           AND source.revoked_at IS NULL
+       )
+       AND ${launchTargetGuardSql}
+     LIMIT 1`,
+  ).bind(launch.id, launch.code_digest, now).first();
+  return row !== null;
+}
+
 export async function assertWebLaunchPageAvailable(
   db: D1Database,
   codeValue: JsonValue,
@@ -707,8 +730,7 @@ async function redeemLaunchBatch(
       ],
       committedAt: now,
       confirmBusinessRejection: async () => {
-        const current = await readLaunchByDigest(db, launch.code_digest);
-        return !launchIsActive(current, now);
+        return !(await launchCanRedeem(db, launch, now));
       },
       expectedEventCount: 1,
       operationId,
