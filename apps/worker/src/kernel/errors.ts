@@ -15,6 +15,7 @@ export type ErrorSource = "cloudflare_platform" | "service";
 
 interface ApiErrorOptions {
   category: ErrorCategory;
+  clearSessionCookies?: boolean;
   code: string;
   details?: Record<string, unknown>;
   message: string;
@@ -39,6 +40,7 @@ const secretStringPatterns = [
 
 export class ApiError extends Error {
   readonly category: ErrorCategory;
+  readonly clearSessionCookies: boolean;
   readonly code: string;
   readonly details: Record<string, JsonValue>;
   readonly recovery: string;
@@ -51,6 +53,7 @@ export class ApiError extends Error {
     super(options.message);
     this.name = "ApiError";
     this.category = options.category;
+    this.clearSessionCookies = options.clearSessionCookies ?? false;
     this.code = options.code;
     this.details = sanitizeDetails(options.details ?? {});
     this.recovery = options.recovery;
@@ -120,9 +123,10 @@ export function payloadTooLarge(): ApiError {
   });
 }
 
-export function unauthorized(): ApiError {
+export function unauthorized(clearSessionCookies = false): ApiError {
   return new ApiError({
     category: "authentication",
+    clearSessionCookies,
     code: "UNAUTHORIZED",
     message: "Authentication is required.",
     recovery: "reauthenticate",

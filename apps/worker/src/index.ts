@@ -1,6 +1,7 @@
 import openApiDocument from "../../../contracts/openapi.json";
 
-import { errorResponse, notFound, platformUnavailable } from "./kernel/errors.ts";
+import { clearCsrfCookie, clearSessionCookie } from "./kernel/csrf.ts";
+import { ApiError, errorResponse, notFound, platformUnavailable } from "./kernel/errors.ts";
 import { createRequestContext, jsonResponse, readJsonBody, withRequestId } from "./kernel/http.ts";
 import { Router } from "./kernel/router.ts";
 import type { WorkerEnv } from "./kernel/types.ts";
@@ -61,7 +62,16 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
 
     return withRequestId(await env.ASSETS.fetch(request), context.requestId);
   } catch (error) {
-    return errorResponse(error, context.requestId);
+    const response = errorResponse(error, context.requestId);
+    if (!(error instanceof ApiError) || !error.clearSessionCookies) return response;
+    const headers = new Headers(response.headers);
+    headers.append("set-cookie", clearSessionCookie());
+    headers.append("set-cookie", clearCsrfCookie());
+    return new Response(response.body, {
+      headers,
+      status: response.status,
+      statusText: response.statusText,
+    });
   }
 }
 

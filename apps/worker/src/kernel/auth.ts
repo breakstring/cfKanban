@@ -98,7 +98,7 @@ export async function authenticateCookieSession(
   now = Date.now(),
 ): Promise<CookieAuthContext> {
   const token = readCookie(request, SESSION_COOKIE_NAME);
-  if (token === null || !/^[A-Za-z0-9_-]{43,512}$/.test(token)) throw unauthorized();
+  if (token === null || !/^[A-Za-z0-9_-]{43,512}$/.test(token)) throw unauthorized(token !== null);
   const digest = await sha256Hex(token);
 
   let row: SessionRow | null;
@@ -135,14 +135,14 @@ export async function authenticateCookieSession(
     throw platformUnavailable("d1");
   }
 
-  if (row === null) throw unauthorized();
+  if (row === null) throw unauthorized(true);
   let target: { [key: string]: JsonValue };
   try {
     const parsed = JSON.parse(row.target_json) as JsonValue;
     if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") throw new Error();
     target = parsed;
   } catch {
-    throw unauthorized();
+    throw unauthorized(true);
   }
 
   return {

@@ -9,7 +9,7 @@
     {
       "sequence": 1,
       "name": "0001_initial.sql",
-      "sha256": "63aee72593dece2836456a78073a0be1104a1c89384be3a280ad8c7ff4702cd3",
+      "sha256": "183707d9beb62de7a47b650148f423d49a9b7b9336f1b39a56f359a1f2ae536e",
       "classification": "bootstrap",
       "destructive": false,
       "reentry": "wrangler_migration_ledger_only",
@@ -46,9 +46,11 @@
           "idx_credentials_principal_active",
           "idx_browser_launches_code_digest",
           "idx_browser_launches_expiry",
+          "idx_browser_launches_cleanup",
           "idx_web_sessions_token_digest",
           "idx_web_sessions_principal_active",
           "idx_web_sessions_source_active",
+          "idx_web_sessions_cleanup",
           "idx_workspaces_key",
           "idx_projects_workspace_key",
           "idx_projects_list",
@@ -76,6 +78,7 @@
           "idx_events_stream_sequence",
           "idx_idempotency_expiry",
           "idx_webauthn_challenges_expiry",
+          "idx_webauthn_challenges_consumed",
           "idx_web_authenticators_principal_active",
           "idx_public_join_enabled"
         ]

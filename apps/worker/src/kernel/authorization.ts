@@ -114,7 +114,7 @@ export async function verifyCurrentAuth(db: D1Database, auth: AuthContext, now: 
   const guard = buildCurrentAuthGuard(auth, now, 1);
   try {
     const row = await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first();
-    if (row === null) throw unauthorized();
+    if (row === null) throw unauthorized(auth.kind === "cookie");
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw platformUnavailable("d1");
@@ -201,6 +201,7 @@ async function queryVisibleProjects(
            AND (?4 IS NULL OR EXISTS (
              SELECT 1 FROM issues AS target_issue
              WHERE target_issue.number = ?4 AND target_issue.project_id = p.id
+               AND target_issue.deleted_at IS NULL
            ))
            ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
          ORDER BY w.key, p.key`,
@@ -233,6 +234,7 @@ async function queryVisibleProjects(
          AND (?5 IS NULL OR EXISTS (
            SELECT 1 FROM issues AS target_issue
            WHERE target_issue.number = ?5 AND target_issue.project_id = p.id
+             AND target_issue.deleted_at IS NULL
          ))
          ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        ORDER BY w.key, p.key`,

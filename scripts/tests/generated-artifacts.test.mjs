@@ -220,6 +220,18 @@ test("OpenAPI exposes concrete Browser Launch, Session, and WebAuthn contracts",
   assert.equal(document.components.schemas.WebAuthnChallenge.maxLength, 43);
   assert.equal(document.components.schemas.WebAuthnAttestation.maxLength, 87382);
   assert.equal(document.components.schemas.WebAuthnSignature.maxLength, 2731);
+  const registrationCredential = document.components.schemas.WebAuthnRegistrationCredential;
+  const authenticationCredential = document.components.schemas.WebAuthnAuthenticationCredential;
+  assert.equal(registrationCredential.additionalProperties, false);
+  assert.equal(registrationCredential.properties.response.additionalProperties, false);
+  assert.equal(authenticationCredential.additionalProperties, false);
+  assert.equal(authenticationCredential.properties.response.additionalProperties, false);
+  assert.deepEqual(
+    registrationCredential.properties.authenticatorAttachment.anyOf[0].enum,
+    ["platform", "cross-platform"],
+  );
+  assert.equal(registrationCredential.properties.clientExtensionResults.maxProperties, 0);
+  assert.equal(authenticationCredential.properties.clientExtensionResults.maxProperties, 0);
   assert.deepEqual(
     document.components.schemas.Event.properties.authorized_via.enum,
     ["deployment_owner", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"],
