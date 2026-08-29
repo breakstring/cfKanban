@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 const workflow = await readFile(new URL("../.github/workflows/verify.yml", import.meta.url), "utf8");
 const workerBuild = await readFile(new URL("./build-worker.mjs", import.meta.url), "utf8");
 const workerConfig = JSON.parse(await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
+const workerTestConfig = JSON.parse(await readFile(new URL("../wrangler.wp02-test.jsonc", import.meta.url), "utf8"));
 
 assert.match(workflow, /^permissions:\n  contents: read$/m, "CI permissions must remain read-only");
 assert.match(workflow, /run: npm ci/, "CI must install from the root lockfile");
@@ -41,5 +42,11 @@ assert.deepEqual(
   ],
   "source Worker config must preserve the Frozen zero-parameter rate-limit profile",
 );
+
+assert.equal(workerTestConfig.main, "apps/worker/src/index.ts", "WP-02 tests must exercise the production Worker entrypoint");
+assert.equal(workerTestConfig.account_id, undefined, "local test config must not pin a Cloudflare account");
+assert.equal(workerTestConfig.routes, undefined, "local test config must not create routes");
+assert.equal(workerTestConfig.d1_databases?.[0]?.remote, undefined, "local test D1 must not enable remote bindings");
+assert.match(workerTestConfig.d1_databases?.[0]?.database_id ?? "", /^0{8}-0{4}-0{4}-0{4}-0{12}$/);
 
 console.log("Credential-free CI and same-Worker Static Assets configuration checks passed.");

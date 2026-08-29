@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cfkanban-wp02-test",
+  "main": "apps/worker/src/index.ts",
+  "compatibility_date": "2026-08-29",
+  "assets": {
+    "directory": "./apps/web",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+      "/healthz",
+      "/openapi.json",
+      "/invite",
+      "/app/launch",
+      "/.well-known/*"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cfkanban-wp02-test",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
