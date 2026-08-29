@@ -246,14 +246,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(privateProject.body.resource.id).first();
   await db.prepare(
     `INSERT INTO issue_relations
-      (id, workspace_id, kind, source_issue_id, target_issue_id, created_at,
+      (id, workspace_id, kind, source_issue_id, target_issue_id,
+       source_project_id, target_project_id, created_at,
        created_by_principal_id, created_operation_id)
-     VALUES (?1, ?2, 'blocks', ?3, ?4, ?5, ?6, ?7)`,
+     VALUES (?1, ?2, 'blocks', ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
   ).bind(
     "50000000-0000-4000-8000-000000000015",
     privateProjectScope.workspace_id,
     privateIssue.body.resource.id,
     second.body.resource.id,
+    privateProject.body.resource.id,
+    coreProjectId,
     Date.now(),
     ids.ownerPrincipal,
     "wp05-seed-hidden-blocker",
@@ -1103,7 +1106,20 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const participantPausedProjectTombstone = await jsonRequest("/api/v1/issues/CFK-3?deleted=only", {
     headers: writerHeaders(),
   });
-  assert.equal(participantPausedProjectTombstone.response.status, 200);
+  assert.equal(participantPausedProjectTombstone.response.status, 404);
+  const participantPausedProjectTombstones = await jsonRequest("/api/v1/issues?deleted=only", {
+    headers: writerHeaders(),
+  });
+  assert.equal(participantPausedProjectTombstones.response.status, 200);
+  assert.equal(
+    participantPausedProjectTombstones.body.items.some((issue) => issue.identifier === "CFK-3"),
+    false,
+  );
+  const participantPausedProjectPath = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/PRIVATE/issues?deleted=only",
+    { headers: writerHeaders() },
+  );
+  assert.equal(participantPausedProjectPath.response.status, 404);
   const activeChildIsNotTombstone = await jsonRequest(
     `/api/v1/issues/${privateActive.body.resource.identifier}?deleted=only`,
     { headers: ownerHeaders() },
@@ -1153,9 +1169,20 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const pausedWorkspaceTombstone = await jsonRequest("/api/v1/issues/CFK-3?deleted=only", {
     headers: writerHeaders(),
   });
-  assert.equal(pausedWorkspaceTombstone.response.status, 200);
-  assert.deepEqual(pausedWorkspaceTombstone.body.parent_status, { project: "active", workspace: "deleted" });
-  assert.equal(pausedWorkspaceTombstone.body.unavailability_reason.code, "PARENT_WORKSPACE_DELETED");
+  assert.equal(pausedWorkspaceTombstone.response.status, 404);
+  const participantPausedWorkspaceTombstones = await jsonRequest("/api/v1/issues?deleted=only", {
+    headers: writerHeaders(),
+  });
+  assert.equal(participantPausedWorkspaceTombstones.response.status, 200);
+  assert.equal(
+    participantPausedWorkspaceTombstones.body.items.some((issue) => issue.identifier === "CFK-3"),
+    false,
+  );
+  const participantPausedWorkspacePath = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/PRIVATE/issues?deleted=only",
+    { headers: writerHeaders() },
+  );
+  assert.equal(participantPausedWorkspacePath.response.status, 404);
   const restoreUnderDeletedWorkspace = await jsonRequest("/api/v1/issues/CFK-3/commands/restore", {
     body: { expected_version: privateIssueDeletedAgain.body.resource.version },
     headers: ownerHeaders({ "idempotency-key": "wp05-restore-under-deleted-workspace" }),
@@ -1241,14 +1268,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(relationProjectA.body.resource.id).first();
   await db.prepare(
     `INSERT INTO issue_relations
-      (id, workspace_id, kind, source_issue_id, target_issue_id, created_at,
+      (id, workspace_id, kind, source_issue_id, target_issue_id,
+       source_project_id, target_project_id, created_at,
        created_by_principal_id, created_operation_id)
-     VALUES (?1, ?2, 'blocks', ?3, ?4, ?5, ?6, ?7)`,
+     VALUES (?1, ?2, 'blocks', ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
   ).bind(
     "50000000-0000-4000-8000-000000000022",
     relationWorkspace.workspace_id,
     relationBlocker.body.resource.id,
     relationTarget.body.resource.id,
+    relationProjectB.body.resource.id,
+    relationProjectA.body.resource.id,
     Date.now(),
     ids.writerPrincipal,
     "wp05-relation-scope-blocker",

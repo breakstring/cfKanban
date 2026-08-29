@@ -674,13 +674,19 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     projectFilteredRelationEvents.body.items.filter((event) => event.subject.id === relationId).length,
     1,
   );
+  const hiddenTailBaseline = await jsonRequest(
+    `/api/v1/events?after=${encodeURIComponent(scopedEvents.body.next_cursor)}&limit=1`,
+    { headers: scopedHeaders() },
+  );
+  assert.equal(hiddenTailBaseline.response.status, 200, JSON.stringify(hiddenTailBaseline.body));
+  assert.deepEqual(hiddenTailBaseline.body.items, []);
   await db.prepare(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
        actor_credential_id, authorized_via, workspace_id, project_id,
-       subject_type, subject_id, payload_json, created_at)
+       relation_other_project_id, subject_type, subject_id, payload_json, created_at)
      VALUES (?1, 'domain', 'relation.hidden-tail-probe', ?2, 0, ?3,
-             ?4, 'project_grant', ?5, ?6, 'relation', ?7, '{}', ?8)`,
+             ?4, 'project_grant', ?5, ?6, ?7, 'relation', ?8, '{}', ?9)`,
   ).bind(
     "60000000-0000-4000-8000-000000000101",
     "60000000-0000-4000-8000-000000000102",
@@ -688,6 +694,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     ids.dualCredential,
     engineering.body.resource.id,
     projectAId,
+    projectBId,
     relationId,
     Date.now(),
   ).run();
@@ -696,15 +703,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     { headers: scopedHeaders() },
   );
   assert.equal(hiddenTail.response.status, 200, JSON.stringify(hiddenTail.body));
-  assert.deepEqual(hiddenTail.body.items, []);
-  assert.notEqual(hiddenTail.body.next_cursor, scopedEvents.body.next_cursor);
-  const afterHiddenTail = await jsonRequest(
-    `/api/v1/events?after=${encodeURIComponent(hiddenTail.body.next_cursor)}&limit=1`,
-    { headers: scopedHeaders() },
-  );
-  assert.equal(afterHiddenTail.response.status, 200, JSON.stringify(afterHiddenTail.body));
-  assert.deepEqual(afterHiddenTail.body.items, []);
-  assert.equal(afterHiddenTail.body.next_cursor, hiddenTail.body.next_cursor);
+  assert.deepEqual(hiddenTail.body, hiddenTailBaseline.body);
 
   const deletedRelation = await jsonRequest(
     `/api/v1/relations/${relationId}?expected_version=1&source_expected_version=${issueBVersion}&target_expected_version=${issueAVersion}`,
@@ -728,6 +727,13 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
   assert.deepEqual(deletedRelationList.body.items.map((item) => item.id), [relationId]);
 
+  const hiddenRelationBaseline = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only&limit=1`,
+    { headers: scopedHeaders() },
+  );
+  assert.equal(hiddenRelationBaseline.response.status, 200, JSON.stringify(hiddenRelationBaseline.body));
+  assert.deepEqual(hiddenRelationBaseline.body.items, []);
+
   const hiddenRelations = [
     { id: "60000000-0000-4000-8000-000000000111", kind: "related" },
     { id: "60000000-0000-4000-8000-000000000112", kind: "duplicate" },
@@ -735,16 +741,19 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   const hiddenRelationAt = Date.now();
   await db.batch(hiddenRelations.map(({ id, kind }, index) => db.prepare(
     `INSERT INTO issue_relations
-      (id, workspace_id, kind, source_issue_id, target_issue_id, version,
+      (id, workspace_id, kind, source_issue_id, target_issue_id,
+       source_project_id, target_project_id, version,
        deleted_at, deleted_by_principal_id, created_at, created_by_principal_id,
        created_operation_id, last_operation_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, 2, ?6, ?7, ?6, ?7, ?8, ?8)`,
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 2, ?8, ?9, ?8, ?9, ?10, ?10)`,
   ).bind(
     id,
     engineering.body.resource.id,
     kind,
     issueA.body.resource.id,
     issueB.body.resource.id,
+    projectAId,
+    projectBId,
     hiddenRelationAt - index,
     ids.ownerPrincipal,
     `wp06-hidden-relation-${index}`,
@@ -754,16 +763,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     { headers: scopedHeaders() },
   );
   assert.equal(hiddenRelationPage.response.status, 200, JSON.stringify(hiddenRelationPage.body));
-  assert.deepEqual(hiddenRelationPage.body.items, []);
-  assert.equal(hiddenRelationPage.body.has_more, true);
-  assert.equal(typeof hiddenRelationPage.body.next_cursor, "string");
-  const nextHiddenRelationPage = await jsonRequest(
-    `/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only&limit=1&cursor=${encodeURIComponent(hiddenRelationPage.body.next_cursor)}`,
-    { headers: scopedHeaders() },
-  );
-  assert.equal(nextHiddenRelationPage.response.status, 200, JSON.stringify(nextHiddenRelationPage.body));
-  assert.deepEqual(nextHiddenRelationPage.body.items, []);
-  assert.notEqual(nextHiddenRelationPage.body.next_cursor, hiddenRelationPage.body.next_cursor);
+  assert.deepEqual(hiddenRelationPage.body, hiddenRelationBaseline.body);
 
   await db.prepare(
     "UPDATE project_grants SET role = 'writer' WHERE principal_id = ?1 AND project_id = ?2",

@@ -9,7 +9,8 @@ import {
   type VisibleProject,
 } from "../kernel/authorization.ts";
 import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
-import { platformUnavailable, validationError } from "../kernel/errors.ts";
+import { isUuid } from "../kernel/crypto.ts";
+import { ApiError, platformUnavailable, validationError } from "../kernel/errors.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import { DEFAULT_EVENT_CURSOR_FILTER, requireLimit } from "./shared.ts";
 
@@ -64,30 +65,10 @@ function eventSelect(eventsSource: string): string {
 
 const EVENT_SELECT = eventSelect("events event");
 
-async function visibleRelationIds(
-  db: D1Database,
-  relationIds: readonly string[],
-  visibleProjectIds: readonly string[],
-): Promise<Set<string>> {
-  if (relationIds.length === 0 || visibleProjectIds.length === 0) return new Set();
-  try {
-    const result = await db.prepare(
-      `SELECT relation.id
-       FROM issue_relations relation
-       JOIN issues source ON source.id = relation.source_issue_id
-       JOIN issues target ON target.id = relation.target_issue_id
-       WHERE relation.id IN (SELECT value FROM json_each(?1))
-         AND source.project_id IN (SELECT value FROM json_each(?2))
-         AND target.project_id IN (SELECT value FROM json_each(?2))`,
-    ).bind(
-      JSON.stringify(relationIds),
-      JSON.stringify(visibleProjectIds),
-    ).all<{ id: string }>();
-    return new Set(result.results.map((row) => row.id));
-  } catch {
-    throw platformUnavailable("d1");
-  }
-}
+const EVENT_CANDIDATE_COLUMNS = `
+  sequence, id, stream, type, operation_id, event_index,
+  actor_principal_id, actor_credential_id, authorized_via, grant_id,
+  workspace_id, project_id, subject_type, subject_id, payload_json, created_at`;
 
 function repeatedTargets(url: URL, name: "project" | "workspace"): string[] {
   const values = url.searchParams.getAll(name);
@@ -144,17 +125,40 @@ async function resolveEventScope(
   };
 }
 
-function parseEventCursor(last: JsonValue[] | null): number {
+function parseDomainEventCursor(last: JsonValue[] | null): string | null {
+  if (last === null) return null;
+  if (
+    last.length !== 1
+    || (last[0] !== null && (typeof last[0] !== "string" || !isUuid(last[0])))
+  ) {
+    throw invalidCursor();
+  }
+  return last[0];
+}
+
+function parseAuditEventCursor(last: JsonValue[] | null): number {
   if (last === null) return 0;
   if (
     last.length !== 1
     || typeof last[0] !== "number"
     || !Number.isSafeInteger(last[0])
     || last[0] < 0
-  ) {
-    throw invalidCursor();
-  }
+  ) throw invalidCursor();
   return last[0];
+}
+
+async function eventSequenceForAnchor(db: D1Database, eventId: string | null): Promise<number> {
+  if (eventId === null) return 0;
+  try {
+    const row = await db.prepare(
+      "SELECT sequence FROM events WHERE id = ?1 LIMIT 1",
+    ).bind(eventId).first<{ sequence: number }>();
+    if (row === null || !Number.isSafeInteger(row.sequence) || row.sequence < 1) throw invalidCursor();
+    return row.sequence;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw platformUnavailable("d1");
+  }
 }
 
 function eventPayload(value: string): JsonValue {
@@ -228,50 +232,52 @@ export async function listEvents(
     auth.principalId,
   );
   const afterValue = url.searchParams.get("after");
-  const afterSequence = parseEventCursor(decodeCursor(afterValue, context));
+  const afterEventId = parseDomainEventCursor(decodeCursor(afterValue, context));
+  const afterSequence = await eventSequenceForAnchor(db, afterEventId);
   const limit = requireLimit(url);
-  let candidates: EventRow[];
+  let rows: EventRow[];
   try {
     const result = await db.prepare(
-      `WITH candidate_events AS (
-         SELECT *
-         FROM events INDEXED BY idx_events_project_stream_sequence
+      `WITH non_relation_events AS (
+         SELECT ${EVENT_CANDIDATE_COLUMNS}
+         FROM events INDEXED BY idx_events_project_nonrelation_sequence
          WHERE stream = 'domain' AND sequence > ?1
            AND project_id IN (SELECT value FROM json_each(?2))
-         ORDER BY sequence ASC
-         LIMIT ?3
+           AND relation_other_project_id IS NULL
+         ORDER BY sequence ASC LIMIT ?4
+       ), relation_events AS (
+         SELECT ${EVENT_CANDIDATE_COLUMNS}
+         FROM events INDEXED BY idx_events_project_relation_sequence
+         WHERE stream = 'domain' AND sequence > ?1
+           AND project_id IN (SELECT value FROM json_each(?2))
+           AND relation_other_project_id IN (SELECT value FROM json_each(?3))
+           AND relation_other_project_id IS NOT NULL
+         ORDER BY sequence ASC LIMIT ?4
+       ), candidate_events AS (
+         SELECT ${EVENT_CANDIDATE_COLUMNS} FROM non_relation_events
+         UNION ALL
+         SELECT ${EVENT_CANDIDATE_COLUMNS} FROM relation_events
+         ORDER BY sequence ASC LIMIT ?4
        )
        ${eventSelect("candidate_events event")}
        ORDER BY event.sequence ASC`,
     ).bind(
       afterSequence,
       JSON.stringify(scope.projects.map((project) => project.projectId)),
+      JSON.stringify(scope.visibleProjects.map((project) => project.projectId)),
       limit + 1,
     ).all<EventRow>();
-    candidates = result.results;
+    rows = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
-  const hasMore = candidates.length > limit;
-  const scanned = candidates.slice(0, limit);
-  const relationIds = [...new Set(scanned
-    .filter((row) => row.subject_type === "relation")
-    .map((row) => row.subject_id))];
-  const readableRelations = await visibleRelationIds(
-    db,
-    relationIds,
-    scope.visibleProjects.map((project) => project.projectId),
-  );
-  const page = scanned.filter(
-    (row) => row.subject_type !== "relation" || readableRelations.has(row.subject_id),
-  );
-  // Advance by the bounded raw scan window, including when every candidate was
-  // hidden by current cross-Project Relation authorization.
-  const lastSequence = scanned.at(-1)?.sequence ?? afterSequence;
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const lastEventId = page.at(-1)?.id ?? afterEventId;
   return {
     has_more: hasMore,
     items: page.map((row) => eventResource(row)),
-    next_cursor: encodeCursor(context, [lastSequence]),
+    next_cursor: encodeCursor(context, [lastEventId]),
     resolved_scope: resolvedEventScope(scope),
   };
 }
@@ -289,7 +295,7 @@ export async function listAuditEvents(
     auth.principalId,
   );
   const afterValue = url.searchParams.get("after");
-  const afterSequence = parseEventCursor(decodeCursor(afterValue, context));
+  const afterSequence = parseAuditEventCursor(decodeCursor(afterValue, context));
   const limit = requireLimit(url);
   let rows: EventRow[];
   try {

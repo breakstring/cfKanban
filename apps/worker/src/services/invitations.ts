@@ -1621,13 +1621,13 @@ export async function redeemInvitation(
   let commit = await probeOperationCommit(db, claim.operationId);
   const resumed = commit !== null;
   if (commit === null) {
-    await assertRedemptionSnapshotInputsSafe(
-      db,
-      invitation,
-      redeemedPrincipalDisplayName,
-      persistenceForbiddenValues,
-    );
     try {
+      await assertRedemptionSnapshotInputsSafe(
+        db,
+        invitation,
+        redeemedPrincipalDisplayName,
+        persistenceForbiddenValues,
+      );
       if (invitation.kind === "project_grant") {
         await executeProjectInviteRedeem(
           db,

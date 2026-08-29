@@ -216,6 +216,8 @@ CREATE TABLE issue_relations (
   kind TEXT NOT NULL CHECK (kind IN ('blocks', 'parent', 'related', 'duplicate')),
   source_issue_id TEXT NOT NULL REFERENCES issues(id),
   target_issue_id TEXT NOT NULL REFERENCES issues(id),
+  source_project_id TEXT NOT NULL REFERENCES projects(id),
+  target_project_id TEXT NOT NULL REFERENCES projects(id),
   version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
   deleted_at INTEGER,
   deleted_by_principal_id TEXT REFERENCES principals(id),
@@ -383,12 +385,17 @@ CREATE TABLE events (
   grant_id TEXT REFERENCES project_grants(id),
   workspace_id TEXT REFERENCES workspaces(id),
   project_id TEXT REFERENCES projects(id),
+  relation_other_project_id TEXT REFERENCES projects(id),
   subject_type TEXT NOT NULL,
   subject_id TEXT NOT NULL,
   payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
   created_at INTEGER NOT NULL,
   UNIQUE (operation_id, event_index),
-  CHECK ((stream = 'domain' AND project_id IS NOT NULL) OR stream = 'security')
+  CHECK ((stream = 'domain' AND project_id IS NOT NULL) OR stream = 'security'),
+  CHECK (
+    (subject_type = 'relation' AND relation_other_project_id IS NOT NULL)
+    OR (subject_type <> 'relation' AND relation_other_project_id IS NULL)
+  )
 );
 
 CREATE TABLE idempotency_records (
@@ -439,9 +446,13 @@ CREATE INDEX idx_issue_relations_source ON issue_relations(source_issue_id, dele
 CREATE INDEX idx_issue_relations_target ON issue_relations(target_issue_id, deleted_at, kind);
 CREATE INDEX idx_issue_relations_source_tombstones ON issue_relations(source_issue_id, deleted_at DESC, id DESC);
 CREATE INDEX idx_issue_relations_target_tombstones ON issue_relations(target_issue_id, deleted_at DESC, id DESC);
+CREATE INDEX idx_issue_relations_source_tombstones_visible ON issue_relations(source_issue_id, target_project_id, deleted_at DESC, id DESC) WHERE deleted_at IS NOT NULL;
+CREATE INDEX idx_issue_relations_target_tombstones_visible ON issue_relations(target_issue_id, source_project_id, deleted_at DESC, id DESC) WHERE deleted_at IS NOT NULL;
 CREATE UNIQUE INDEX idx_invitations_code_digest ON invitations(code_digest);
 CREATE INDEX idx_invitations_owner_list ON invitations(created_at DESC, id);
 CREATE INDEX idx_events_project_stream_sequence ON events(project_id, stream, sequence);
+CREATE INDEX idx_events_project_nonrelation_sequence ON events(project_id, stream, sequence) WHERE relation_other_project_id IS NULL;
+CREATE INDEX idx_events_project_relation_sequence ON events(project_id, relation_other_project_id, stream, sequence) WHERE relation_other_project_id IS NOT NULL;
 CREATE INDEX idx_events_stream_sequence ON events(stream, sequence);
 CREATE INDEX idx_idempotency_expiry ON idempotency_records(expires_at, id);
 CREATE INDEX idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at, consumed_at);
