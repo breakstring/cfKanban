@@ -323,6 +323,7 @@ function prepareAtomicIssue({ operationId, issueId, stateGuard = 1, title }) {
   return {
     businessStatements: statements,
     committedAt: now,
+    confirmBusinessRejection: async () => stateGuard === 0,
     expectedEventCount: 1,
     operationId,
     primarySubjectId: issueId,
@@ -365,6 +366,26 @@ test("real env.DB.batch commits resource/Event/sentinel and rolls back an earlie
   );
   const afterRejected = await countsForOperation(rejectedOperation);
   assert.deepEqual(afterRejected, beforeRejected);
+});
+
+test("atomic batch reports an unconfirmed D1 write failure as a platform failure", async () => {
+  const operationId = crypto.randomUUID();
+  const plan = prepareAtomicIssue({
+    issueId: crypto.randomUUID(),
+    operationId,
+    title: "Unknown D1 failure",
+  });
+  plan.businessStatements = [
+    db.prepare("INSERT INTO missing_kernel_table (id) VALUES (?1)").bind(crypto.randomUUID()),
+  ];
+  plan.confirmBusinessRejection = async () => false;
+
+  await assert.rejects(
+    executeAtomicBatch(db, plan),
+    (error) => error.code === "PLATFORM_UNAVAILABLE"
+      && error.category === "platform_failure"
+      && error.source === "cloudflare_platform",
+  );
 });
 
 async function readbackCreatedIssue(operationId, commit) {
@@ -480,6 +501,34 @@ test("pending response-loss retry probes commit, readbacks, finalizes, and reaut
   assert.equal(replay.idempotentReplay, true);
   assert.equal(replayAuthorizationCalls, 2);
   assert.deepEqual(replay.body, recovered.body);
+});
+
+test("idempotency claim hashes stored keys and performs bounded global expiry cleanup", async () => {
+  const expiredNow = now - (25 * 60 * 60 * 1_000);
+  for (let index = 0; index < 3; index += 1) {
+    await claimIdempotency(
+      db,
+      idempotencyIdentity(`expired-${index}-${crypto.randomUUID()}`, { title: `Expired ${index}` }),
+      expiredNow,
+    );
+  }
+  const expiredBefore = await db.prepare(
+    "SELECT COUNT(*) AS count FROM idempotency_records WHERE expires_at <= ?1",
+  ).bind(now).first();
+  assert.ok(expiredBefore.count >= 3);
+
+  const rawKey = `fresh-${crypto.randomUUID()}`;
+  const claim = await claimIdempotency(db, idempotencyIdentity(rawKey, { title: "Fresh" }), now);
+  const stored = await db.prepare(
+    "SELECT idempotency_key FROM idempotency_records WHERE operation_id = ?1",
+  ).bind(claim.operationId).first();
+  assert.equal(stored.idempotency_key, await sha256Hex(rawKey));
+  assert.notEqual(stored.idempotency_key, rawKey);
+
+  const expiredAfter = await db.prepare(
+    "SELECT COUNT(*) AS count FROM idempotency_records WHERE expires_at <= ?1",
+  ).bind(now).first();
+  assert.equal(expiredAfter.count, 0);
 });
 
 test("Event, errors, logs, and idempotency responses contain no request secrets or full digests", async () => {

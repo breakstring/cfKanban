@@ -20,6 +20,8 @@ interface OperationCommitRow {
 export interface AtomicOperationPlan {
   businessStatements: D1PreparedStatement[];
   committedAt: number;
+  /** Return true only after authoritative readback proves a business guard rejected the batch. */
+  confirmBusinessRejection: () => Promise<boolean>;
   expectedEventCount: number;
   operationId: string;
   primarySubjectId: string;
@@ -101,7 +103,11 @@ export async function executeAtomicBatch(
   db: D1Database,
   plan: AtomicOperationPlan,
 ): Promise<AtomicOperationResult> {
-  if (!isUuid(plan.operationId) || plan.businessStatements.length === 0) {
+  if (
+    !isUuid(plan.operationId)
+    || plan.businessStatements.length === 0
+    || typeof plan.confirmBusinessRejection !== "function"
+  ) {
     throw validationError("invalid_atomic_operation_plan");
   }
   if (!Number.isSafeInteger(plan.expectedEventCount) || plan.expectedEventCount < 1) {
@@ -129,7 +135,15 @@ export async function executeAtomicBatch(
   } catch {
     const recovered = await probeOperationCommit(db, plan.operationId);
     if (recovered !== null) return { commit: recovered, recovered: true };
-    throw new AtomicBatchRejectedError();
+
+    let businessRejected: boolean;
+    try {
+      businessRejected = await plan.confirmBusinessRejection();
+    } catch {
+      throw platformUnavailable("d1");
+    }
+    if (businessRejected) throw new AtomicBatchRejectedError();
+    throw platformUnavailable("d1");
   }
 
   const commit = await probeOperationCommit(db, plan.operationId);
