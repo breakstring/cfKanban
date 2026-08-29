@@ -1,5 +1,5 @@
 import { sha256Hex } from "./crypto.ts";
-import { ApiError, validationError } from "./errors.ts";
+import { ApiError } from "./errors.ts";
 import { canonicalJson } from "./idempotency.ts";
 import type { JsonValue } from "./types.ts";
 
@@ -25,23 +25,23 @@ function base64UrlEncode(value: string): string {
 }
 
 function base64UrlDecode(value: string): string {
-  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw validationError("invalid_cursor");
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("invalid cursor encoding");
   const base64 = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
   let binary: string;
   try {
     binary = atob(base64);
   } catch {
-    throw validationError("invalid_cursor");
+    throw new Error("invalid cursor encoding");
   }
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   try {
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
   } catch {
-    throw validationError("invalid_cursor");
+    throw new Error("invalid cursor encoding");
   }
 }
 
-function invalidCursor(): ApiError {
+export function invalidCursor(): ApiError {
   return new ApiError({
     category: "validation",
     code: "INVALID_CURSOR",
@@ -92,8 +92,7 @@ export function decodeCursor(value: string | null, context: CursorContext): Json
   let parsed: unknown;
   try {
     parsed = JSON.parse(base64UrlDecode(value));
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
+  } catch {
     throw invalidCursor();
   }
   if (

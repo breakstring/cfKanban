@@ -10,6 +10,8 @@ export const WORKFLOW_STATUSES = [
 ] as const;
 
 export type StatusKey = typeof WORKFLOW_STATUSES[number]["key"];
+export const ISSUE_PRIORITIES = ["urgent", "high", "medium", "low", "none"] as const;
+export type PriorityKey = typeof ISSUE_PRIORITIES[number];
 export type ProjectRole = "reader" | "writer";
 export type InvitationKind = "principal_recovery" | "project_grant";
 export type RecoveryMode = "full_recovery" | "rotation";
@@ -17,6 +19,63 @@ export type InvitationRedeemAs = "current_principal" | "new_principal" | "recove
 
 export function isStatusKey(value: JsonValue): value is StatusKey {
   return typeof value === "string" && WORKFLOW_STATUSES.some((status) => status.key === value);
+}
+
+export function requirePriorityKey(value: JsonValue, field = "priority_key"): PriorityKey {
+  if (typeof value !== "string" || !ISSUE_PRIORITIES.includes(value as PriorityKey)) {
+    throw validationError("schema_validation_failed", { field });
+  }
+  return value as PriorityKey;
+}
+
+export function priorityRank(value: PriorityKey): number {
+  return ISSUE_PRIORITIES.indexOf(value);
+}
+
+export function requireIssueIdentifier(value: JsonValue, field = "identifier"): string {
+  if (typeof value !== "string" || !/^CFK-[1-9][0-9]*$/.test(value)) {
+    throw validationError("schema_validation_failed", { field });
+  }
+  const number = Number(value.slice(4));
+  if (!Number.isSafeInteger(number)) throw validationError("schema_validation_failed", { field });
+  return value;
+}
+
+export function issueNumber(identifier: string): number {
+  return Number(identifier.slice(4));
+}
+
+export function requireIssueTitle(value: JsonValue, field = "title"): string {
+  if (typeof value !== "string") throw validationError("schema_validation_failed", { field });
+  const title = value.trim();
+  if (title.length === 0 || codePointLength(title) > 256) {
+    throw validationError("schema_validation_failed", { field });
+  }
+  const search = title.normalize("NFKC").toLowerCase();
+  if (search.length === 0 || codePointLength(search) > 256) {
+    throw validationError("schema_validation_failed", { field });
+  }
+  return title;
+}
+
+export function issueTitleSearch(title: string): string {
+  return title.normalize("NFKC").toLowerCase();
+}
+
+export function requireIssueBody(value: JsonValue, field = "body"): string {
+  if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > 64 * 1_024) {
+    throw validationError("schema_validation_failed", { field });
+  }
+  return value;
+}
+
+export function requireBlockedReason(value: JsonValue, field = "reason"): string {
+  if (typeof value !== "string") throw validationError("schema_validation_failed", { field });
+  const reason = value.trim();
+  if (reason.length === 0 || codePointLength(reason) > 4_096) {
+    throw validationError("schema_validation_failed", { field });
+  }
+  return reason;
 }
 
 export function requireUuid(value: JsonValue, field: string): string {

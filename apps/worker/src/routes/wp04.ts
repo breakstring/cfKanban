@@ -63,8 +63,13 @@ async function authenticated(request: Request, env: WorkerEnv, context: RequestC
 
 export function registerWp04Routes(router: Router): Router {
   router
-    .get("/invite", async (_request, env, context) => new Response(
-      await getInvitationBootstrapHtml(env.DB, context.url.searchParams.get("code"), context.startedAt),
+    .get("/invite", async (request, env, context) => new Response(
+      await getInvitationBootstrapHtml(
+        env.DB,
+        context.url.searchParams.get("code"),
+        context.startedAt,
+        request.headers.get("accept-language"),
+      ),
       {
         headers: {
           "cache-control": "no-store",

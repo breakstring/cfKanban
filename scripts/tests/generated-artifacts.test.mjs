@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,4 +31,31 @@ test("accepts line-ending-only differences while rejecting generated drift", asy
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("OpenAPI models Invitation create and redeem requests as discriminated unions", async () => {
+  const document = JSON.parse(await readFile(
+    new URL("../../contracts/openapi.json", import.meta.url),
+    "utf8",
+  ));
+  const createBranches = document.components.schemas.CreateInvitationRequest.oneOf;
+  assert.equal(createBranches.length, 2);
+  assert.deepEqual(createBranches.map((branch) => branch.properties.kind.const), [
+    "project_grant",
+    "principal_recovery",
+  ]);
+  assert.deepEqual(createBranches.map((branch) => branch.required), [
+    ["kind", "grants"],
+    ["kind", "principal_id", "recovery_mode"],
+  ]);
+  assert.equal(createBranches[0].properties.grants["x-cfkanban-unique-by"], "project_id");
+
+  const redeemBranches = document.components.schemas.RedeemInvitationRequest.oneOf;
+  assert.equal(redeemBranches.length, 3);
+  assert.deepEqual(redeemBranches.map((branch) => branch.properties.redeem_as.const), [
+    "new_principal",
+    "current_principal",
+    "recovery",
+  ]);
+  assert.equal(redeemBranches.every((branch) => branch.additionalProperties === false), true);
 });

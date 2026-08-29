@@ -17,6 +17,7 @@ interface InstanceRow {
   instance_id: string;
   origin_updated_at: number;
   origin_updated_by_principal_id: string;
+  origin_last_operation_id: string | null;
   origin_version: number;
   owner_principal_id: string;
   preferred_api_origin: string;
@@ -38,7 +39,8 @@ async function readInstance(db: D1Database): Promise<InstanceRow> {
       `SELECT im.instance_id, im.owner_principal_id, im.service_version, im.schema_version,
               im.created_at, ios.preferred_api_origin, ios.version AS origin_version,
               ios.updated_at AS origin_updated_at,
-              ios.updated_by_principal_id AS origin_updated_by_principal_id
+              ios.updated_by_principal_id AS origin_updated_by_principal_id,
+              ios.last_operation_id AS origin_last_operation_id
        FROM instance_meta AS im
        JOIN instance_origin_settings AS ios ON ios.singleton = 1
        WHERE im.singleton = 1
@@ -48,6 +50,21 @@ async function readInstance(db: D1Database): Promise<InstanceRow> {
     return row;
   } catch (error) {
     if (error instanceof ApiError) throw error;
+    throw platformUnavailable("d1");
+  }
+}
+
+async function readOriginObservedForOperation(db: D1Database, operationId: string): Promise<string> {
+  try {
+    const row = await db.prepare(
+      `SELECT json_extract(payload_json, '$.observed_origin') AS observed_origin
+       FROM events
+       WHERE operation_id = ?1 AND type = 'instance.preferred-origin-updated'
+       LIMIT 1`,
+    ).bind(operationId).first<{ observed_origin: string | null }>();
+    if (row === null || typeof row.observed_origin !== "string") throw new Error();
+    return row.observed_origin;
+  } catch {
     throw platformUnavailable("d1");
   }
 }
@@ -281,7 +298,13 @@ export async function updateInstanceOrigin(
           `UPDATE instance_origin_settings
            SET preferred_api_origin = ?1, version = version + 1, updated_at = ?2,
                updated_by_principal_id = ?3, last_operation_id = ?4
-           WHERE singleton = 1 AND version = ?5 AND ${guard.sql}`,
+           WHERE singleton = 1 AND version = ?5
+             AND NOT EXISTS (
+               SELECT 1 FROM idempotency_records AS pending_operation
+               WHERE pending_operation.operation_id = instance_origin_settings.last_operation_id
+                 AND pending_operation.state = 'pending'
+             )
+             AND ${guard.sql}`,
         ).bind(preferredApiOrigin, now, auth.principalId, operationId, expectedVersion, ...guard.values),
         db.prepare(
           `INSERT INTO events
@@ -298,7 +321,7 @@ export async function updateInstanceOrigin(
           operationId,
           auth.principalId,
           actorCredentialId(auth),
-          JSON.stringify({ preferred_api_origin: preferredApiOrigin }),
+          JSON.stringify({ observed_origin: observedOrigin, preferred_api_origin: preferredApiOrigin }),
           now,
         ),
       ];
@@ -325,10 +348,15 @@ export async function updateInstanceOrigin(
     method: "PUT",
     normalizedResourceScope: "instance-origin",
     now,
-    readback: async (_operationId, commit) => ({
-      body: writeResult(instanceOriginResource(await readInstance(db), observedOrigin), commit.lastEventSequence, false),
-      status: 200,
-    }),
+    readback: async (operationId, commit) => {
+      const instance = await readInstance(db);
+      if (instance.origin_last_operation_id !== operationId) throw platformUnavailable("d1");
+      const operationObservedOrigin = await readOriginObservedForOperation(db, operationId);
+      return {
+        body: writeResult(instanceOriginResource(instance, operationObservedOrigin), commit.lastEventSequence, false),
+        status: 200,
+      };
+    },
     requestBody: {
       expected_version: expectedVersion,
       preferred_api_origin: preferredApiOrigin,

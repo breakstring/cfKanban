@@ -121,19 +121,43 @@ export async function verifyCurrentAuth(db: D1Database, auth: AuthContext, now: 
   }
 }
 
-function fixedTarget(auth: AuthContext): {
-  projectId?: string;
-  projectKey?: string;
-  workspaceKey?: string;
-} | null {
+interface FixedTarget {
+  invalid: boolean;
+  issueNumber: number | null;
+  projectId: string | null;
+  projectKey: string | null;
+  workspaceKey: string | null;
+}
+
+function fixedTarget(auth: AuthContext): FixedTarget | null {
   if (auth.kind !== "cookie" || (auth.targetKind !== "project" && auth.targetKind !== "issue")) {
     return null;
   }
-  const target: { projectId?: string; projectKey?: string; workspaceKey?: string } = {};
-  if (typeof auth.target.project_id === "string") target.projectId = auth.target.project_id;
-  if (typeof auth.target.project_key === "string") target.projectKey = auth.target.project_key;
-  if (typeof auth.target.workspace_key === "string") target.workspaceKey = auth.target.workspace_key;
-  return target;
+  if (auth.targetKind === "issue") {
+    const identifier = auth.target.identifier;
+    const match = typeof identifier === "string" ? /^CFK-([1-9][0-9]*)$/.exec(identifier) : null;
+    const issueNumber = match?.[1] === undefined ? Number.NaN : Number(match[1]);
+    return {
+      invalid: !Number.isSafeInteger(issueNumber),
+      issueNumber: Number.isSafeInteger(issueNumber) ? issueNumber : null,
+      projectId: null,
+      projectKey: null,
+      workspaceKey: null,
+    };
+  }
+
+  const projectId = typeof auth.target.project_id === "string" ? auth.target.project_id : null;
+  const projectKey = typeof auth.target.project_key === "string" ? auth.target.project_key : null;
+  const workspaceKey = typeof auth.target.workspace_key === "string" ? auth.target.workspace_key : null;
+  const hasProjectId = projectId !== null && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(projectId);
+  const hasKeyPair = projectKey !== null && projectKey.length > 0 && workspaceKey !== null && workspaceKey.length > 0;
+  return {
+    invalid: !hasProjectId && !hasKeyPair,
+    issueNumber: null,
+    projectId: hasProjectId ? projectId : null,
+    projectKey: hasKeyPair ? projectKey : null,
+    workspaceKey: hasKeyPair ? workspaceKey : null,
+  };
 }
 
 function mapVisibleProject(row: VisibleProjectRow): VisibleProject {
@@ -151,9 +175,11 @@ function mapVisibleProject(row: VisibleProjectRow): VisibleProject {
 
 export async function resolveVisibleProjects(db: D1Database, auth: AuthContext): Promise<VisibleProject[]> {
   const target = fixedTarget(auth);
+  if (target?.invalid === true) return [];
   const targetProjectId = target?.projectId ?? null;
   const targetWorkspaceKey = target?.workspaceKey ?? null;
   const targetProjectKey = target?.projectKey ?? null;
+  const targetIssueNumber = target?.issueNumber ?? null;
   try {
     if (auth.isOwner) {
       const result = await db.prepare(
@@ -166,8 +192,12 @@ export async function resolveVisibleProjects(db: D1Database, auth: AuthContext):
            AND (?1 IS NULL OR p.id = ?1)
            AND (?2 IS NULL OR w.key = ?2)
            AND (?3 IS NULL OR p.key = ?3)
+           AND (?4 IS NULL OR EXISTS (
+             SELECT 1 FROM issues AS target_issue
+             WHERE target_issue.number = ?4 AND target_issue.project_id = p.id
+           ))
          ORDER BY w.key, p.key`,
-      ).bind(targetProjectId, targetWorkspaceKey, targetProjectKey).all<VisibleProjectRow>();
+      ).bind(targetProjectId, targetWorkspaceKey, targetProjectKey, targetIssueNumber).all<VisibleProjectRow>();
       return result.results.map(mapVisibleProject);
     }
 
@@ -183,8 +213,12 @@ export async function resolveVisibleProjects(db: D1Database, auth: AuthContext):
          AND (?2 IS NULL OR p.id = ?2)
          AND (?3 IS NULL OR w.key = ?3)
          AND (?4 IS NULL OR p.key = ?4)
+         AND (?5 IS NULL OR EXISTS (
+           SELECT 1 FROM issues AS target_issue
+           WHERE target_issue.number = ?5 AND target_issue.project_id = p.id
+         ))
        ORDER BY w.key, p.key`,
-    ).bind(auth.principalId, targetProjectId, targetWorkspaceKey, targetProjectKey).all<VisibleProjectRow>();
+    ).bind(auth.principalId, targetProjectId, targetWorkspaceKey, targetProjectKey, targetIssueNumber).all<VisibleProjectRow>();
     return result.results.map(mapVisibleProject);
   } catch {
     throw platformUnavailable("d1");

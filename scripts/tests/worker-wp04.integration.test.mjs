@@ -17,6 +17,7 @@ const participantRotatedToken = token("member2", "R");
 const participantRecoveredToken = token("member3", "F");
 const conflictToken = initialOwnerToken;
 const quotaToken = token("quota", "Q");
+const bulkNewToken = token("bulk", "W");
 const ids = {
   bootstrapOperation: "40000000-0000-4000-8000-000000000004",
   instance: "40000000-0000-4000-8000-000000000001",
@@ -166,6 +167,17 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const invitationHtml = await invitationPage.text();
   assert.equal(invitationHtml.includes(projectInviteCode), false);
   assert.match(invitationHtml, /history\.replaceState/);
+  assert.match(invitationHtml, /<html lang="en">/);
+  assert.match(invitationHtml, /engineering\/CORE/);
+  assert.match(invitationHtml, new RegExp(firstProjectId));
+  const chineseInvitationPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
+    headers: { "accept-language": "zh-CN,zh;q=0.9" },
+  });
+  assert.match(await chineseInvitationPage.text(), /<html lang="zh-CN">[\s\S]*目标 Project/);
+  const unknownLocalePage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
+    headers: { "accept-language": "fr-FR" },
+  });
+  assert.match(await unknownLocalePage.text(), /<html lang="en">/);
   const inviteBeforeRedeem = await db.prepare(
     "SELECT redeemed_at FROM invitations WHERE code_digest = ?1",
   ).bind(await sha256Hex(projectInviteCode)).first();
@@ -192,6 +204,112 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.equal(JSON.stringify(redeemed.body).includes(participantToken), false);
   const participantId = redeemed.body.resource.principal.principal_id;
   const participantCredentialId = redeemed.body.resource.credential.id;
+
+  const bulkProjectIds = Array.from({ length: 20 }, () => crypto.randomUUID());
+  const bulkCreatedAt = Date.now();
+  await db.batch(bulkProjectIds.map((projectId, index) => db.prepare(
+    `INSERT INTO projects
+      (id, workspace_id, key, display_name, version, created_at, updated_at,
+       created_by_principal_id, updated_by_principal_id, created_operation_id)
+     VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5, ?6, ?6, ?7)`,
+  ).bind(
+    projectId,
+    workspace.body.resource.id,
+    `B${String(index + 1).padStart(2, "0")}`,
+    index === 0 ? `cfk_v1_demo_${"X".repeat(43)}` : `Bulk ${index + 1}`,
+    bulkCreatedAt,
+    ids.ownerPrincipal,
+    crypto.randomUUID(),
+  )));
+  const bulkGrants = bulkProjectIds.map((projectId, index) => ({
+    project_id: projectId,
+    role: index % 2 === 0 ? "reader" : "writer",
+  }));
+  const bulkNewInvite = await createInvitation(
+    { grants: bulkGrants, kind: "project_grant" },
+    "wp04-bulk-new-invite",
+  );
+  assert.equal(bulkNewInvite.response.status, 200);
+  assert.equal(bulkNewInvite.body.resource.grants.length, 20);
+  const bulkNewCode = invitationCode(bulkNewInvite.body);
+  const bulkNewRedeem = await jsonRequest("/api/v1/invitations/redeem", {
+    body: {
+      display_name: "Bulk New Principal",
+      invite_code: bulkNewCode,
+      new_credential_token: bulkNewToken,
+      redeem_as: "new_principal",
+    },
+    headers: { "idempotency-key": "wp04-bulk-new-redeem" },
+    method: "POST",
+  });
+  assert.equal(bulkNewRedeem.response.status, 200);
+  assert.equal(bulkNewRedeem.body.resource.results.length, 20);
+  assert.ok(bulkNewRedeem.body.resource.results.every((result) => result.outcome === "created"));
+  const bulkNewPrincipalId = bulkNewRedeem.body.resource.principal.principal_id;
+
+  const bulkCurrentInvite = await createInvitation(
+    { grants: bulkGrants, kind: "project_grant" },
+    "wp04-bulk-current-invite",
+  );
+  const bulkCurrentCode = invitationCode(bulkCurrentInvite.body);
+  const bulkCurrentRedeem = await jsonRequest("/api/v1/invitations/redeem", {
+    body: { invite_code: bulkCurrentCode, redeem_as: "current_principal" },
+    headers: participantHeaders(participantToken, { "idempotency-key": "wp04-bulk-current-redeem" }),
+    method: "POST",
+  });
+  assert.equal(bulkCurrentRedeem.response.status, 200);
+  assert.equal(bulkCurrentRedeem.body.resource.results.length, 20);
+  assert.ok(bulkCurrentRedeem.body.resource.results.every((result) => result.outcome === "created"));
+
+  const invitationPageOne = await jsonRequest("/api/v1/admin/invitations?limit=2", {
+    headers: ownerHeaders(),
+  });
+  assert.equal(invitationPageOne.response.status, 200);
+  assert.equal(invitationPageOne.body.items.length, 2);
+  assert.equal(invitationPageOne.body.has_more, true);
+  assert.equal(typeof invitationPageOne.body.next_cursor, "string");
+  const invitationPageTwo = await jsonRequest(
+    `/api/v1/admin/invitations?limit=2&cursor=${encodeURIComponent(invitationPageOne.body.next_cursor)}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(invitationPageTwo.response.status, 200);
+  assert.ok(invitationPageTwo.body.items.length >= 1);
+  assert.notEqual(invitationPageTwo.body.items[0].id, invitationPageOne.body.items[0].id);
+  const invalidInvitationCursor = await jsonRequest("/api/v1/admin/invitations?cursor=%", {
+    headers: ownerHeaders(),
+  });
+  assert.equal(invalidInvitationCursor.response.status, 400);
+  assert.equal(invalidInvitationCursor.body.code, "INVALID_CURSOR");
+  assert.equal(invalidInvitationCursor.body.recovery, "refresh_cursor");
+
+  const principalPageOne = await jsonRequest("/api/v1/admin/principals?limit=1", {
+    headers: ownerHeaders(),
+  });
+  assert.equal(principalPageOne.response.status, 200);
+  assert.equal(principalPageOne.body.items.length, 1);
+  assert.equal(principalPageOne.body.has_more, true);
+  const principalPageTwo = await jsonRequest(
+    `/api/v1/admin/principals?limit=1&cursor=${encodeURIComponent(principalPageOne.body.next_cursor)}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(principalPageTwo.response.status, 200);
+  assert.equal(principalPageTwo.body.items.length, 1);
+  assert.notEqual(principalPageTwo.body.items[0].id, principalPageOne.body.items[0].id);
+
+  const bulkGrantPageOne = await jsonRequest(
+    `/api/v1/admin/projects/${bulkProjectIds[0]}/grants?limit=1`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(bulkGrantPageOne.response.status, 200);
+  assert.equal(bulkGrantPageOne.body.items.length, 1);
+  assert.equal(bulkGrantPageOne.body.has_more, true);
+  const bulkGrantPageTwo = await jsonRequest(
+    `/api/v1/admin/projects/${bulkProjectIds[0]}/grants?limit=1&cursor=${encodeURIComponent(bulkGrantPageOne.body.next_cursor)}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(bulkGrantPageTwo.response.status, 200);
+  assert.equal(bulkGrantPageTwo.body.items.length, 1);
+  assert.notEqual(bulkGrantPageTwo.body.items[0].id, bulkGrantPageOne.body.items[0].id);
 
   const replayedRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: redeemBody,
@@ -221,7 +339,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     headers: ownerHeaders(),
   });
   assert.equal(principalDetail.response.status, 200);
-  assert.equal(principalDetail.body.grants.length, 2);
+  assert.equal(principalDetail.body.grants.length, 22);
   assert.equal(principalDetail.body.credentials.length, 1);
   assert.equal(JSON.stringify(principalDetail.body).includes(participantToken), false);
 
@@ -264,6 +382,21 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     kind: "project_grant",
   }, "wp04-role-required");
   assert.equal(roleRequired.response.status, 400);
+  const duplicateProjectIds = await createInvitation({
+    grants: [
+      { project_id: firstProjectId, role: "reader" },
+      { project_id: firstProjectId, role: "writer" },
+    ],
+    kind: "project_grant",
+  }, "wp04-duplicate-project-ids");
+  assert.equal(duplicateProjectIds.response.status, 400);
+  const mixedInvitationFields = await createInvitation({
+    grants: [{ project_id: firstProjectId, role: "reader" }],
+    kind: "principal_recovery",
+    principal_id: participantId,
+    recovery_mode: "rotation",
+  }, "wp04-mixed-invitation-fields");
+  assert.equal(mixedInvitationFields.response.status, 400);
 
   const existingGrantInvite = await createInvitation({
     grants: [{ project_id: secondProjectId, role: "reader" }],
@@ -299,6 +432,40 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.equal(regrantRedeem.response.status, 200);
   assert.equal(regrantRedeem.body.resource.results[0].outcome, "regranted");
   assert.equal(regrantRedeem.body.resource.results[0].effective_role, "writer");
+
+  const directCreatedGrant = await jsonRequest(`/api/v1/admin/projects/${firstProjectId}/grants`, {
+    body: { principal_id: bulkNewPrincipalId, role: "reader" },
+    headers: ownerHeaders({ "idempotency-key": "wp04-direct-created-grant" }),
+    method: "POST",
+  });
+  assert.equal(directCreatedGrant.response.status, 200);
+  const lifecycleEvents = await db.prepare(
+    `SELECT type, payload_json FROM events
+     WHERE grant_id = ?1 ORDER BY sequence`,
+  ).bind(firstGrant.id).all();
+  const lifecycle = lifecycleEvents.results.map((event) => ({
+    payload: JSON.parse(event.payload_json),
+    type: event.type,
+  }));
+  assert.deepEqual(
+    lifecycle.map((event) => event.type),
+    [
+      "invitation.project-grant-redeemed",
+      "project-grant.role-updated",
+      "project-grant.revoked",
+      "project-grant.regranted",
+      "project-grant.revoked",
+      "invitation.project-grant-redeemed",
+    ],
+  );
+  assert.deepEqual(lifecycle.map((event) => event.payload.grant_version), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(lifecycle[2].payload.effective_capabilities, { read: false, write: false });
+  assert.equal(lifecycle[3].payload.lifecycle, "regranted");
+  const directCreatedEvent = await db.prepare(
+    "SELECT type, payload_json FROM events WHERE grant_id = ?1 LIMIT 1",
+  ).bind(directCreatedGrant.body.resource.id).first();
+  assert.equal(directCreatedEvent.type, "project-grant.created");
+  assert.equal(JSON.parse(directCreatedEvent.payload_json).grant_version, 1);
 
   const invitationCount = await db.prepare("SELECT COUNT(*) AS count FROM invitations").first();
   const invalidInvite = await createInvitation({
@@ -370,6 +537,13 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     60 * 60 * 1_000,
   );
   const rotationCode = invitationCode(rotationInvite.body);
+  const rotationPage = await request(`/invite?code=${encodeURIComponent(rotationCode)}`, {
+    headers: { "accept-language": "en-US" },
+  });
+  assert.match(
+    await rotationPage.text(),
+    /revokes only the old Credential used to authenticate this redemption/,
+  );
   const principalMismatch = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
       invite_code: rotationCode,
@@ -416,6 +590,10 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     recovery_mode: "full_recovery",
   }, "wp04-full-recovery-invite");
   const fullRecoveryCode = invitationCode(fullRecoveryInvite.body);
+  const fullRecoveryPage = await request(`/invite?code=${encodeURIComponent(fullRecoveryCode)}`, {
+    headers: { "accept-language": "en" },
+  });
+  assert.match(await fullRecoveryPage.text(), /revokes every previously active Credential/);
   const fullyRecovered = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
       invite_code: fullRecoveryCode,
@@ -444,6 +622,21 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const recoveredParticipant = await jsonRequest("/api/v1/me", { headers: participantHeaders(participantRecoveredToken) });
   assert.equal(recoveredParticipant.response.status, 200);
 
+  const credentialPageOne = await jsonRequest(
+    `/api/v1/admin/principals/${participantId}/credentials?limit=1`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(credentialPageOne.response.status, 200);
+  assert.equal(credentialPageOne.body.items.length, 1);
+  assert.equal(credentialPageOne.body.has_more, true);
+  const credentialPageTwo = await jsonRequest(
+    `/api/v1/admin/principals/${participantId}/credentials?limit=1&cursor=${encodeURIComponent(credentialPageOne.body.next_cursor)}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(credentialPageTwo.response.status, 200);
+  assert.equal(credentialPageTwo.body.items.length, 1);
+  assert.notEqual(credentialPageTwo.body.items[0].id, credentialPageOne.body.items[0].id);
+
   const recoveredCredentialId = fullyRecovered.body.resource.credential.id;
   const revokedCredential = await jsonRequest(
     `/api/v1/admin/credentials/${recoveredCredentialId}?expected_version=1`,
@@ -462,11 +655,33 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     `UPDATE projects SET principal_limit = 1 WHERE id = ?1`,
   ).bind(secondProjectId).run();
   await db.prepare(
+    `INSERT INTO project_usage
+      (project_id, active_issue_count, active_comment_count, active_principal_count,
+       updated_at, last_operation_id)
+     VALUES (?1, 0, 0, 1, ?2, 'wp04-policy')`,
+  ).bind(secondProjectId, Date.now()).run();
+  await db.prepare(
     `INSERT INTO public_join_policies
       (project_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
        version, created_at, updated_at, last_operation_id)
      VALUES (?1, 'wp04-public', 'Quota test', ?2, ?3, 1, ?2, ?2, 'wp04-policy')`,
   ).bind(secondProjectId, Date.now(), ids.ownerPrincipal).run();
+  const activeDuplicateAtQuota = await jsonRequest(`/api/v1/admin/projects/${secondProjectId}/grants`, {
+    body: { principal_id: participantId, role: "reader" },
+    headers: ownerHeaders({ "idempotency-key": "wp04-active-duplicate-at-quota" }),
+    method: "POST",
+  });
+  assert.equal(activeDuplicateAtQuota.response.status, 409);
+  assert.equal(activeDuplicateAtQuota.body.code, "GRANT_ALREADY_EXISTS");
+  const newGrantAtQuota = await jsonRequest(`/api/v1/admin/projects/${secondProjectId}/grants`, {
+    body: { principal_id: bulkNewPrincipalId, role: "reader" },
+    headers: ownerHeaders({ "idempotency-key": "wp04-new-grant-at-quota" }),
+    method: "POST",
+  });
+  assert.equal(newGrantAtQuota.response.status, 409);
+  assert.equal(newGrantAtQuota.body.code, "PROJECT_PRINCIPAL_LIMIT_REACHED");
+  assert.equal(newGrantAtQuota.body.details.current_usage, 1);
+  assert.equal(newGrantAtQuota.body.details.limit, 1);
   const quotaInvite = await createInvitation({
     grants: [{ project_id: secondProjectId, role: "reader" }],
     kind: "project_grant",
@@ -561,16 +776,19 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     participantRotatedToken,
     participantRecoveredToken,
     quotaToken,
+    bulkNewToken,
+    bulkNewCode,
+    bulkCurrentCode,
     rotatedOwnerToken,
   ]);
 
   const activeGrants = await db.prepare(
     "SELECT COUNT(*) AS count FROM project_grants WHERE principal_id = ?1 AND revoked_at IS NULL",
   ).bind(participantId).first();
-  assert.equal(activeGrants.count, 2);
+  assert.equal(activeGrants.count, 22);
   const firstUsage = await db.prepare(
     "SELECT active_principal_count FROM project_usage WHERE project_id = ?1",
   ).bind(firstProjectId).first();
-  assert.equal(firstUsage.active_principal_count, 1);
+  assert.equal(firstUsage, null);
   assert.notEqual(participantCredentialId, recoveredCredentialId);
 });

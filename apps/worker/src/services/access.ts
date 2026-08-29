@@ -12,7 +12,7 @@ import {
   requireOwnerControl,
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
-import { createCursorContext, decodeCursor, encodeCursor } from "../kernel/cursor.ts";
+import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
 import { sha256Hex } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
 import {
@@ -77,6 +77,7 @@ interface ProjectControlRow {
   id: string;
   principal_limit: number | null;
   public_join_enabled: number;
+  usage_present: number;
   workspace_id: string;
 }
 
@@ -213,6 +214,7 @@ async function readGrantForPrincipalProject(
   db: D1Database,
   principalId: string,
   projectId: string,
+  operationId: string | null = null,
 ): Promise<GrantRow | null> {
   try {
     return await db.prepare(
@@ -224,8 +226,10 @@ async function readGrantForPrincipalProject(
        JOIN principals AS pr ON pr.id = g.principal_id
        JOIN projects AS p ON p.id = g.project_id
        JOIN workspaces AS w ON w.id = p.workspace_id
-       WHERE g.principal_id = ?1 AND g.project_id = ?2 LIMIT 1`,
-    ).bind(principalId, projectId).first<GrantRow>();
+       WHERE g.principal_id = ?1 AND g.project_id = ?2
+         AND (?3 IS NULL OR g.created_operation_id = ?3 OR g.last_operation_id = ?3)
+       LIMIT 1`,
+    ).bind(principalId, projectId, operationId).first<GrantRow>();
   } catch {
     throw platformUnavailable("d1");
   }
@@ -254,12 +258,14 @@ async function readPrincipal(db: D1Database, principalId: string): Promise<Princ
 async function readProjectControl(db: D1Database, projectId: string): Promise<ProjectControlRow | null> {
   try {
     return await db.prepare(
-      `SELECT p.id, p.workspace_id, p.principal_limit, pu.active_principal_count,
+      `SELECT p.id, p.workspace_id, p.principal_limit,
+              COALESCE(pu.active_principal_count, 0) AS active_principal_count,
+              CASE WHEN pu.project_id IS NULL THEN 0 ELSE 1 END AS usage_present,
               CASE WHEN policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
                    THEN 1 ELSE 0 END AS public_join_enabled
        FROM projects AS p
        JOIN workspaces AS w ON w.id = p.workspace_id
-       JOIN project_usage AS pu ON pu.project_id = p.id
+       LEFT JOIN project_usage AS pu ON pu.project_id = p.id
        LEFT JOIN public_join_policies AS policy ON policy.project_id = p.id
        WHERE p.id = ?1 AND p.deleted_at IS NULL AND w.deleted_at IS NULL
        LIMIT 1`,
@@ -278,20 +284,12 @@ async function ownerGuardRejected(db: D1Database, auth: AuthContext, now: number
   }
 }
 
-function pageAfterId<T extends { id: string }>(
-  rows: readonly T[],
-  cursor: JsonValue[] | null,
-  limit: number,
-): { hasMore: boolean; items: T[] } {
-  let start = 0;
-  if (cursor !== null) {
-    if (cursor.length !== 1 || typeof cursor[0] !== "string") throw validationError("invalid_cursor");
-    const index = rows.findIndex((row) => row.id === cursor[0]);
-    if (index < 0) throw validationError("invalid_cursor");
-    start = index + 1;
+function parseTimestampIdCursor(cursor: JsonValue[] | null): [number, string] | null {
+  if (cursor === null) return null;
+  if (cursor.length !== 2 || typeof cursor[0] !== "number" || typeof cursor[1] !== "string") {
+    throw invalidCursor();
   }
-  const remaining = rows.slice(start);
-  return { hasMore: remaining.length > limit, items: remaining.slice(0, limit) };
+  return [cursor[0], cursor[1]];
 }
 
 export async function listPrincipals(
@@ -304,6 +302,9 @@ export async function listPrincipals(
   if (Array.from(q).length > 128) throw validationError("schema_validation_failed", { field: "q" });
   const projectIdRaw = url.searchParams.get("project_id");
   const projectId = projectIdRaw === null ? null : requireUuid(projectIdRaw, "project_id");
+  const limit = requireLimit(url);
+  const cursorContext = await createCursorContext("principals", { project_id: projectId, q }, [`owner:${auth.principalId}`]);
+  const position = parseTimestampIdCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
   let rows: PrincipalRow[];
   try {
     const result = await db.prepare(
@@ -323,22 +324,22 @@ export async function listPrincipals(
            AND filter_grant.project_id = ?1
            AND filter_grant.revoked_at IS NULL
        ))
-       ORDER BY p.created_at, p.id`,
-    ).bind(projectId).all<PrincipalRow>();
-    const normalizedQ = q.toLocaleLowerCase();
-    rows = result.results.filter((row) => q === ""
-      || row.id === q
-      || row.display_name.toLocaleLowerCase().includes(normalizedQ));
+         AND (?2 = '' OR p.id = ?2 OR instr(lower(p.display_name), ?3) > 0)
+         AND (?4 IS NULL OR p.created_at > ?4 OR (p.created_at = ?4 AND p.id > ?5))
+       ORDER BY p.created_at, p.id
+       LIMIT ?6`,
+    ).bind(projectId, q, q.toLocaleLowerCase(), position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<PrincipalRow>();
+    rows = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
-  const cursorContext = await createCursorContext("principals", { project_id: projectId, q }, [`owner:${auth.principalId}`]);
-  const page = pageAfterId(rows, decodeCursor(url.searchParams.get("cursor"), cursorContext), 20);
-  const tail = page.items.at(-1);
+  const page = rows.slice(0, limit);
+  const hasMore = rows.length > limit;
+  const tail = page.at(-1);
   return {
-    has_more: page.hasMore,
-    items: page.items.map(principalResource),
-    next_cursor: page.hasMore && tail ? encodeCursor(cursorContext, [tail.id]) : null,
+    has_more: hasMore,
+    items: page.map(principalResource),
+    next_cursor: hasMore && tail ? encodeCursor(cursorContext, [tail.created_at, tail.id]) : null,
     resolved_scope: { project_id: projectId, q },
   };
 }
@@ -365,13 +366,13 @@ export async function getPrincipal(
          JOIN principals AS pr ON pr.id = g.principal_id
          JOIN projects AS p ON p.id = g.project_id
          JOIN workspaces AS w ON w.id = p.workspace_id
-         WHERE g.principal_id = ?1 ORDER BY g.created_at, g.id`,
+         WHERE g.principal_id = ?1 ORDER BY g.created_at, g.id LIMIT 101`,
       ).bind(principalId).all<GrantRow>(),
       db.prepare(
         `SELECT c.id, c.principal_id, c.token_prefix, c.issued_at, c.last_used_at,
                 c.revoked_at, c.revoke_reason, p.display_name AS principal_display_name
          FROM credentials AS c JOIN principals AS p ON p.id = c.principal_id
-         WHERE c.principal_id = ?1 ORDER BY c.issued_at, c.id`,
+         WHERE c.principal_id = ?1 ORDER BY c.issued_at DESC, c.id DESC LIMIT 101`,
       ).bind(principalId).all<CredentialRow>(),
     ]);
     grants = grantResult.results;
@@ -381,8 +382,10 @@ export async function getPrincipal(
   }
   return {
     ...principalResource(principal),
-    credentials: credentials.map((row) => credentialResource(row, principal.is_owner !== 1)),
-    grants: grants.map(grantResource),
+    credentials: credentials.slice(0, 100).map((row) => credentialResource(row, principal.is_owner !== 1)),
+    credentials_has_more: credentials.length > 100,
+    grants: grants.slice(0, 100).map(grantResource),
+    grants_has_more: grants.length > 100,
   };
 }
 
@@ -396,26 +399,31 @@ export async function listPrincipalCredentials(
   const principalId = requireUuid(principalIdValue, "principal_id");
   const principal = await readPrincipal(db, principalId);
   if (principal === null) throw notFound();
+  const limit = requireLimit(url);
+  const cursorContext = await createCursorContext("principal-credentials", { principal_id: principalId }, [`owner:${auth.principalId}`]);
+  const position = parseTimestampIdCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
   let rows: CredentialRow[];
   try {
     const result = await db.prepare(
       `SELECT c.id, c.principal_id, c.token_prefix, c.issued_at, c.last_used_at,
               c.revoked_at, c.revoke_reason, p.display_name AS principal_display_name
        FROM credentials AS c JOIN principals AS p ON p.id = c.principal_id
-       WHERE c.principal_id = ?1 ORDER BY c.issued_at DESC, c.id`,
-    ).bind(principalId).all<CredentialRow>();
+       WHERE c.principal_id = ?1
+         AND (?2 IS NULL OR c.issued_at < ?2 OR (c.issued_at = ?2 AND c.id < ?3))
+       ORDER BY c.issued_at DESC, c.id DESC
+       LIMIT ?4`,
+    ).bind(principalId, position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<CredentialRow>();
     rows = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
-  const limit = requireLimit(url);
-  const cursorContext = await createCursorContext("principal-credentials", { principal_id: principalId }, [`owner:${auth.principalId}`]);
-  const page = pageAfterId(rows, decodeCursor(url.searchParams.get("cursor"), cursorContext), limit);
-  const tail = page.items.at(-1);
+  const page = rows.slice(0, limit);
+  const hasMore = rows.length > limit;
+  const tail = page.at(-1);
   return {
-    has_more: page.hasMore,
-    items: page.items.map((row) => credentialResource(row, principal.is_owner !== 1)),
-    next_cursor: page.hasMore && tail ? encodeCursor(cursorContext, [tail.id]) : null,
+    has_more: hasMore,
+    items: page.map((row) => credentialResource(row, principal.is_owner !== 1)),
+    next_cursor: hasMore && tail ? encodeCursor(cursorContext, [tail.issued_at, tail.id]) : null,
     resolved_scope: { principal_id: principalId },
   };
 }
@@ -634,6 +642,9 @@ export async function listProjectGrants(
   requireOwnerControl(auth);
   const projectId = requireUuid(projectIdValue, "project_id");
   if (await readProjectControl(db, projectId) === null) throw notFound();
+  const limit = requireLimit(url);
+  const cursorContext = await createCursorContext("project-grants", { project_id: projectId }, [`owner:${auth.principalId}`]);
+  const position = parseTimestampIdCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
   let rows: GrantRow[];
   try {
     const result = await db.prepare(
@@ -645,20 +656,22 @@ export async function listProjectGrants(
        JOIN principals AS pr ON pr.id = g.principal_id
        JOIN projects AS p ON p.id = g.project_id
        JOIN workspaces AS w ON w.id = p.workspace_id
-       WHERE g.project_id = ?1 ORDER BY g.created_at, g.id`,
-    ).bind(projectId).all<GrantRow>();
+       WHERE g.project_id = ?1
+         AND (?2 IS NULL OR g.created_at > ?2 OR (g.created_at = ?2 AND g.id > ?3))
+       ORDER BY g.created_at, g.id
+       LIMIT ?4`,
+    ).bind(projectId, position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<GrantRow>();
     rows = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
-  const limit = requireLimit(url);
-  const cursorContext = await createCursorContext("project-grants", { project_id: projectId }, [`owner:${auth.principalId}`]);
-  const page = pageAfterId(rows, decodeCursor(url.searchParams.get("cursor"), cursorContext), limit);
-  const tail = page.items.at(-1);
+  const page = rows.slice(0, limit);
+  const hasMore = rows.length > limit;
+  const tail = page.at(-1);
   return {
-    has_more: page.hasMore,
-    items: page.items.map(grantResource),
-    next_cursor: page.hasMore && tail ? encodeCursor(cursorContext, [tail.id]) : null,
+    has_more: hasMore,
+    items: page.map(grantResource),
+    next_cursor: hasMore && tail ? encodeCursor(cursorContext, [tail.created_at, tail.id]) : null,
     resolved_scope: { project_id: projectId },
   };
 }
@@ -675,12 +688,21 @@ export async function getProjectGrant(
   return grantResource(row);
 }
 
-async function grantCapacityExceeded(db: D1Database, projectId: string): Promise<boolean> {
+interface GrantCapacity {
+  currentUsage: number;
+  exceeded: boolean;
+  limit: number;
+}
+
+async function grantCapacity(db: D1Database, projectId: string): Promise<GrantCapacity | null> {
   const project = await readProjectControl(db, projectId);
-  return project !== null
-    && project.public_join_enabled === 1
-    && project.principal_limit !== null
-    && project.active_principal_count >= project.principal_limit;
+  if (project === null || project.public_join_enabled !== 1) return null;
+  if (project.usage_present !== 1 || project.principal_limit === null) throw platformUnavailable("d1");
+  return {
+    currentUsage: project.active_principal_count,
+    exceeded: project.active_principal_count >= project.principal_limit,
+    limit: project.principal_limit,
+  };
 }
 
 function grantEvent(
@@ -688,7 +710,7 @@ function grantEvent(
   auth: AuthContext,
   operationId: string,
   grantId: string,
-  type: string,
+  type: string | null,
   payload: JsonValue,
   now: number,
   requireUsageCommit = false,
@@ -698,13 +720,37 @@ function grantEvent(
       (id, stream, type, operation_id, event_index, actor_principal_id,
        actor_credential_id, authorized_via, grant_id, workspace_id,
        project_id, subject_type, subject_id, payload_json, created_at)
-     SELECT ?1, 'domain', ?2, ?3, 0, ?4, ?5, 'deployment_owner',
-            g.id, p.workspace_id, g.project_id, 'project_grant', g.id, ?6, ?7
+     SELECT ?1, 'domain',
+            COALESCE(?2, CASE WHEN g.created_operation_id = ?3
+                             THEN 'project-grant.created'
+                             ELSE 'project-grant.regranted' END),
+            ?3, 0, ?4, ?5, 'deployment_owner',
+            g.id, p.workspace_id, g.project_id, 'project_grant', g.id,
+            json_set(
+              json(?6),
+              '$.grant_version', g.version,
+              '$.effective_role', CASE WHEN g.revoked_at IS NULL THEN g.role ELSE NULL END,
+              '$.effective_capabilities', json_object(
+                'read', json(CASE WHEN g.revoked_at IS NULL THEN 'true' ELSE 'false' END),
+                'write', json(CASE WHEN g.revoked_at IS NULL AND g.role = 'writer' THEN 'true' ELSE 'false' END)
+              ),
+              '$.lifecycle', CASE
+                WHEN ?2 IS NULL AND g.created_operation_id = ?3 THEN 'created'
+                WHEN ?2 IS NULL THEN 'regranted'
+                WHEN ?2 = 'project-grant.role-updated' THEN 'role_updated'
+                WHEN ?2 = 'project-grant.revoked' THEN 'revoked'
+                ELSE ?2
+              END
+            ), ?7
      FROM project_grants AS g
      JOIN projects AS p ON p.id = g.project_id
-     JOIN project_usage AS usage ON usage.project_id = g.project_id
+     LEFT JOIN project_usage AS usage ON usage.project_id = g.project_id
+     LEFT JOIN public_join_policies AS policy ON policy.project_id = g.project_id
      WHERE g.id = ?8 AND g.last_operation_id = ?3
-       ${requireUsageCommit ? "AND usage.last_operation_id = ?3" : ""}`,
+       ${requireUsageCommit
+         ? `AND (policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL
+                 OR usage.last_operation_id = ?3)`
+         : ""}`,
   ).bind(
     crypto.randomUUID(),
     type,
@@ -755,7 +801,7 @@ export async function createProjectGrant(
                FROM principals AS target_principal
                JOIN projects AS p ON p.id = ?3
                JOIN workspaces AS w ON w.id = p.workspace_id
-               JOIN project_usage AS usage ON usage.project_id = p.id
+               LEFT JOIN project_usage AS usage ON usage.project_id = p.id
                LEFT JOIN public_join_policies AS policy ON policy.project_id = p.id
                JOIN instance_meta AS im ON im.singleton = 1
                WHERE target_principal.id = ?2 AND target_principal.id != im.owner_principal_id
@@ -770,7 +816,12 @@ export async function createProjectGrant(
                  version = project_grants.version + 1,
                  updated_at = excluded.updated_at,
                  last_operation_id = excluded.last_operation_id
-               WHERE project_grants.revoked_at IS NOT NULL`,
+               WHERE project_grants.revoked_at IS NOT NULL
+                 AND NOT EXISTS (
+                   SELECT 1 FROM idempotency_records AS pending_operation
+                   WHERE pending_operation.operation_id = project_grants.last_operation_id
+                     AND pending_operation.state = 'pending'
+                 )`,
             ).bind(grantId, principalId, projectId, role, now, auth.principalId, operationId, ...guard.values),
             db.prepare(
               `UPDATE project_usage
@@ -780,9 +831,13 @@ export async function createProjectGrant(
                  SELECT 1 FROM project_grants g
                  WHERE g.project_id = ?3 AND g.principal_id = ?4
                    AND g.last_operation_id = ?2 AND g.revoked_at IS NULL
+               ) AND EXISTS (
+                 SELECT 1 FROM public_join_policies policy
+                 WHERE policy.project_id = ?3
+                   AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
                )`,
             ).bind(now, operationId, projectId, principalId),
-            grantEvent(db, auth, operationId, grantId, "project-grant.granted", { role }, now, true),
+            grantEvent(db, auth, operationId, grantId, null, { role }, now, true),
           ],
           committedAt: now,
           confirmBusinessRejection: async () => {
@@ -790,7 +845,7 @@ export async function createProjectGrant(
             return latest?.revoked_at === null
               || await readProjectControl(db, projectId) === null
               || (await readPrincipal(db, principalId))?.is_owner === 1
-              || await grantCapacityExceeded(db, projectId)
+              || (await grantCapacity(db, projectId))?.exceeded === true
               || await ownerGuardRejected(db, auth, now);
           },
           expectedEventCount: 1,
@@ -803,9 +858,12 @@ export async function createProjectGrant(
           await reauthenticateOwner(db, request, now);
           if (await readProjectControl(db, projectId) === null || await readPrincipal(db, principalId) === null) throw notFound();
           if ((await readPrincipal(db, principalId))?.is_owner === 1) throw forbidden();
-          if (await grantCapacityExceeded(db, projectId)) throw businessQuotaExceeded("principals");
           const latest = await readGrantForPrincipalProject(db, principalId, projectId);
           if (latest?.revoked_at === null) throw conflict("GRANT_ALREADY_EXISTS", "update_existing_grant");
+          const capacity = await grantCapacity(db, projectId);
+          if (capacity?.exceeded === true) {
+            throw businessQuotaExceeded("principals", capacity.currentUsage, capacity.limit);
+          }
         }
         throw error;
       }
@@ -814,8 +872,8 @@ export async function createProjectGrant(
     method: "POST",
     normalizedResourceScope: `project:${projectId}:principal:${principalId}`,
     now,
-    readback: async (_operationId, commit) => {
-      const row = await readGrantForPrincipalProject(db, principalId, projectId);
+    readback: async (operationId, commit) => {
+      const row = await readGrantForPrincipalProject(db, principalId, projectId, operationId);
       if (row === null) throw platformUnavailable("d1");
       return { body: writeResult(grantResource(row), commit.lastEventSequence, false), status: 200 };
     },
@@ -850,6 +908,11 @@ export async function updateProjectGrant(
            SET role = ?1, version = version + 1, updated_at = ?2,
                last_operation_id = ?3
            WHERE id = ?4 AND version = ?5 AND revoked_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM idempotency_records AS pending_operation
+               WHERE pending_operation.operation_id = project_grants.last_operation_id
+                 AND pending_operation.state = 'pending'
+             )
              AND EXISTS (
                SELECT 1 FROM projects p JOIN workspaces w ON w.id = p.workspace_id
                WHERE p.id = project_grants.project_id
@@ -908,6 +971,11 @@ export async function revokeProjectGrant(
                version = version + 1, updated_at = ?1,
                last_operation_id = ?3
            WHERE id = ?4 AND version = ?5 AND revoked_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM idempotency_records AS pending_operation
+               WHERE pending_operation.operation_id = project_grants.last_operation_id
+                 AND pending_operation.state = 'pending'
+             )
              AND ${guard.sql}`,
         ).bind(now, auth.principalId, operationId, grantId, expectedVersion, auth.principalId, ...guard.values),
         db.prepare(
@@ -917,7 +985,12 @@ export async function revokeProjectGrant(
            WHERE project_id = ?3 AND active_principal_count > 0
              AND EXISTS (SELECT 1 FROM project_grants g
                          WHERE g.id = ?4 AND g.last_operation_id = ?2
-                           AND g.revoked_at IS NOT NULL)`,
+                           AND g.revoked_at IS NOT NULL)
+             AND EXISTS (
+               SELECT 1 FROM public_join_policies policy
+               WHERE policy.project_id = ?3
+                 AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
+             )`,
         ).bind(now, operationId, current.project_id, grantId),
         grantEvent(db, auth, operationId, grantId, "project-grant.revoked", { role: current.role }, now, true),
       ],

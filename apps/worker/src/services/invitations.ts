@@ -20,7 +20,7 @@ import {
   requireOwnerControl,
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
-import { createCursorContext, decodeCursor, encodeCursor } from "../kernel/cursor.ts";
+import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
 import { sha256Hex } from "../kernel/crypto.ts";
 import {
   AtomicBatchRejectedError,
@@ -181,10 +181,35 @@ async function readInvitationGrants(db: D1Database, invitationId: string): Promi
   }
 }
 
+async function readInvitationGrantPages(
+  db: D1Database,
+  invitationIds: readonly string[],
+): Promise<Map<string, InvitationGrantRow[]>> {
+  const grouped = new Map<string, InvitationGrantRow[]>();
+  for (const invitationId of invitationIds) grouped.set(invitationId, []);
+  if (invitationIds.length === 0) return grouped;
+  try {
+    const result = await db.prepare(
+      `SELECT ipg.invitation_id, ipg.project_id, ipg.role, p.key AS project_key,
+              p.display_name, w.key AS workspace_key
+       FROM invitation_project_grants AS ipg
+       JOIN projects AS p ON p.id = ipg.project_id
+       JOIN workspaces AS w ON w.id = p.workspace_id
+       WHERE ipg.invitation_id IN (SELECT value FROM json_each(?1))
+       ORDER BY ipg.invitation_id, w.key, p.key, p.id`,
+    ).bind(JSON.stringify(invitationIds)).all<InvitationGrantRow & { invitation_id: string }>();
+    for (const row of result.results) grouped.get(row.invitation_id)?.push(row);
+    return grouped;
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
 async function invitationResource(
   db: D1Database,
   row: InvitationRow,
   now: number,
+  providedGrants?: readonly InvitationGrantRow[],
 ): Promise<{ [key: string]: JsonValue }> {
   const status = invitationStatus(row, now);
   const lifecycleAt = row.revoked_at ?? row.redeemed_at ?? row.created_at;
@@ -198,7 +223,7 @@ async function invitationResource(
     created_at: timestamp(row.created_at),
     deleted_at: timestamp(row.revoked_at),
     expires_at: timestamp(row.expires_at),
-    grants: (await readInvitationGrants(db, row.id)).map((grant) => ({
+    grants: (providedGrants ?? await readInvitationGrants(db, row.id)).map((grant) => ({
       display_name: grant.display_name,
       project_id: grant.project_id,
       project_key: grant.project_key,
@@ -226,12 +251,12 @@ async function ownerGuardRejected(db: D1Database, auth: AuthContext, now: number
   }
 }
 
-function parseCursor(cursor: JsonValue[] | null, rows: readonly InvitationRow[]): number {
-  if (cursor === null) return 0;
-  if (cursor.length !== 1 || typeof cursor[0] !== "string") throw validationError("invalid_cursor");
-  const index = rows.findIndex((row) => row.id === cursor[0]);
-  if (index < 0) throw validationError("invalid_cursor");
-  return index + 1;
+function parseCursor(cursor: JsonValue[] | null): [number, string] | null {
+  if (cursor === null) return null;
+  if (cursor.length !== 2 || typeof cursor[0] !== "number" || typeof cursor[1] !== "string") {
+    throw invalidCursor();
+  }
+  return [cursor[0], cursor[1]];
 }
 
 export async function listInvitations(
@@ -241,6 +266,9 @@ export async function listInvitations(
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
+  const limit = requireLimit(url);
+  const cursorContext = await createCursorContext("invitations", {}, [`owner:${auth.principalId}`]);
+  const position = parseCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
   let rows: InvitationRow[];
   try {
     const result = await db.prepare(
@@ -251,23 +279,22 @@ export async function listInvitations(
               i.created_by_owner_principal_id, i.last_operation_id
        FROM invitations AS i
        LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
-       ORDER BY i.created_at DESC, i.id`,
-    ).all<InvitationRow>();
+       WHERE (?1 IS NULL OR i.created_at < ?1 OR (i.created_at = ?1 AND i.id < ?2))
+       ORDER BY i.created_at DESC, i.id DESC
+       LIMIT ?3`,
+    ).bind(position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<InvitationRow>();
     rows = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
-  const limit = requireLimit(url);
-  const cursorContext = await createCursorContext("invitations", {}, [`owner:${auth.principalId}`]);
-  const start = parseCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext), rows);
-  const remaining = rows.slice(start);
-  const page = remaining.slice(0, limit);
-  const hasMore = remaining.length > limit;
+  const page = rows.slice(0, limit);
+  const hasMore = rows.length > limit;
   const tail = page.at(-1);
+  const grants = await readInvitationGrantPages(db, page.map((row) => row.id));
   return {
     has_more: hasMore,
-    items: await Promise.all(page.map((row) => invitationResource(db, row, now))),
-    next_cursor: hasMore && tail ? encodeCursor(cursorContext, [tail.id]) : null,
+    items: await Promise.all(page.map((row) => invitationResource(db, row, now, grants.get(row.id) ?? []))),
+    next_cursor: hasMore && tail ? encodeCursor(cursorContext, [tail.created_at, tail.id]) : null,
     resolved_scope: { owner_principal_id: auth.principalId },
   };
 }
@@ -631,6 +658,7 @@ export async function getInvitationBootstrapHtml(
   db: D1Database,
   codeValue: string | null,
   now: number,
+  acceptLanguage: string | null = null,
 ): Promise<string> {
   if (codeValue === null || codeValue.length < 1 || codeValue.length > 1_024) {
     throw validationError("invalid_invitation_code");
@@ -639,10 +667,33 @@ export async function getInvitationBootstrapHtml(
   if (row === null) throw notFound();
   assertInvitationUsable(row, now);
   const grants = await readInvitationGrants(db, row.id);
+  const locale = /(?:^|,)\s*zh(?:-CN|-Hans)?(?:\s*;|\s*,|\s*$)/iu.test(acceptLanguage ?? "") ? "zh-CN" : "en";
+  const isChinese = locale === "zh-CN";
+  const roleLabel = (role: ProjectRole) => isChinese
+    ? role === "writer" ? "可写 writer" : "只读 reader"
+    : role === "writer" ? "writer (read/write)" : "reader (read-only)";
   const details = row.kind === "project_grant"
-    ? `<ul>${grants.map((grant) => `<li>${escapeHtml(grant.display_name)} — ${grant.role}</li>`).join("")}</ul>`
-    : `<p><strong>身份恢复警告：</strong>此邀请绑定 Principal ${escapeHtml(row.bound_principal_id ?? "")}（${escapeHtml(row.bound_display_name ?? "")}），模式为 ${escapeHtml(row.recovery_mode ?? "")}。兑换者将继承该身份的现有授权、assignment 与历史。</p>`;
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><h1>cfKanban Invitation</h1><p>此页面只读，尚未消费邀请。请使用受信任的 cfKanban Skill 检查来源、目标权限并执行兑换；不要运行页面提供的远程脚本。</p>${details}<p>有效期至 ${escapeHtml(timestamp(row.expires_at) ?? "")}。</p></main><script>history.replaceState({},document.title,"/invite")</script></body></html>`;
+    ? `<h2>${isChinese ? "目标 Project" : "Target Projects"}</h2><ul>${grants.map((grant) => `<li><strong>${escapeHtml(grant.workspace_key)}/${escapeHtml(grant.project_key)}</strong> — ${escapeHtml(grant.display_name)} — ${roleLabel(grant.role)}<br><small>project_id: ${escapeHtml(grant.project_id)}</small></li>`).join("")}</ul>`
+    : `<h2>${isChinese ? "身份恢复警告" : "Identity recovery warning"}</h2><p>${isChinese
+      ? `此邀请绑定 Principal ${escapeHtml(row.bound_principal_id ?? "")}（${escapeHtml(row.bound_display_name ?? "")}）。兑换者将继承该身份的全部现有 Grants、assignment 与历史。${row.recovery_mode === "rotation" ? "rotation 成功后只撤销本次用于认证的旧 Credential，其他 active Credential 保持有效。" : "full_recovery 成功后撤销该 Principal 的全部先前 active Credentials。"}`
+      : `This Invitation is bound to Principal ${escapeHtml(row.bound_principal_id ?? "")} (${escapeHtml(row.bound_display_name ?? "")}). The redeemer inherits all existing Grants, assignments, and history. ${row.recovery_mode === "rotation" ? "A successful rotation revokes only the old Credential used to authenticate this redemption; other active Credentials remain valid." : "A successful full recovery revokes every previously active Credential for this Principal."}`}</p>`;
+  const metadata = JSON.stringify({
+    bound_principal_id: row.bound_principal_id,
+    expires_at: timestamp(row.expires_at),
+    grants: grants.map((grant) => ({
+      project_id: grant.project_id,
+      project_key: grant.project_key,
+      role: grant.role,
+      workspace_key: grant.workspace_key,
+    })),
+    kind: row.kind,
+    recovery_mode: row.recovery_mode,
+    schema_version: 1,
+  }).replaceAll("<", "\\u003c");
+  const intro = isChinese
+    ? "此页面只读，尚未消费邀请。请让 Agent 使用已从项目声明的 canonical publisher 验证过的 cfKanban Skill，核对发行来源、版本、完整性与下列目标后再执行兑换；不要运行页面中的远程脚本。"
+    : "This page is read-only and has not consumed the Invitation. Ask your Agent to use a cfKanban Skill already verified against the project-declared canonical publisher, then check its source, version, integrity, and the targets below before redeeming. Do not run remote scripts from this page.";
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><h1>cfKanban Invitation</h1><p>${intro}</p>${details}<p>${isChinese ? "有效期至" : "Expires at"} ${escapeHtml(timestamp(row.expires_at) ?? "")}.</p><script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>history.replaceState({},document.title,"/invite")</script></body></html>`;
 }
 
 async function optionalRedeemAuth(
@@ -711,7 +762,7 @@ async function projectQuotaExceeded(db: D1Database, invitationId: string, princi
        FROM invitation_project_grants ipg
        JOIN projects p ON p.id = ipg.project_id
        JOIN workspaces w ON w.id = p.workspace_id
-       JOIN project_usage usage ON usage.project_id = p.id
+       LEFT JOIN project_usage usage ON usage.project_id = p.id
        JOIN public_join_policies policy ON policy.project_id = p.id
        LEFT JOIN project_grants existing
          ON existing.project_id = p.id AND existing.principal_id = ?2
@@ -729,6 +780,31 @@ async function projectQuotaExceeded(db: D1Database, invitationId: string, princi
   }
 }
 
+async function invitationTargetsActive(db: D1Database, invitationId: string): Promise<boolean> {
+  try {
+    const row = await db.prepare(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN p.deleted_at IS NULL AND w.deleted_at IS NULL THEN 1 ELSE 0 END) AS active
+       FROM invitation_project_grants ipg
+       JOIN projects p ON p.id = ipg.project_id
+       JOIN workspaces w ON w.id = p.workspace_id
+       WHERE ipg.invitation_id = ?1`,
+    ).bind(invitationId).first<{ active: number | null; total: number }>();
+    return row !== null && row.total > 0 && row.active === row.total;
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
+async function currentAuthRejected(db: D1Database, auth: AuthContext, now: number): Promise<boolean> {
+  const guard = buildCurrentAuthGuard(auth, now, 1);
+  try {
+    return await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null;
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
 async function executeProjectInviteRedeem(
   db: D1Database,
   invitation: InvitationRow,
@@ -741,6 +817,15 @@ async function executeProjectInviteRedeem(
   const grants = await readInvitationGrants(db, invitation.id);
   if (grants.length < 1 || grants.length > 20) throw platformUnavailable("d1");
   const principalId = auth?.principalId ?? crypto.randomUUID();
+  const plan = grants.map((grant, eventIndex) => ({
+    created_operation_id: crypto.randomUUID(),
+    event_id: crypto.randomUUID(),
+    event_index: eventIndex,
+    grant_id: crypto.randomUUID(),
+    project_id: grant.project_id,
+    role: grant.role,
+  }));
+  const planJson = JSON.stringify(plan);
   const statements: D1PreparedStatement[] = [];
   if (auth === null) {
     statements.push(db.prepare(
@@ -757,83 +842,111 @@ async function executeProjectInviteRedeem(
        WHERE p.id = ?6 AND p.last_operation_id = ?5`,
     ).bind(replacement?.id, replacement?.prefix, replacement?.digest, now, claim.operationId, principalId));
   }
-  const authGuard = auth === null ? null : buildCurrentAuthGuard(auth, now, 9);
-  for (const grant of grants) {
-    const grantId = crypto.randomUUID();
-    const grantCreatedOperationId = crypto.randomUUID();
-    statements.push(db.prepare(
-      `INSERT INTO project_grants
-        (id, principal_id, project_id, role, version, created_at,
-         updated_at, created_operation_id, last_operation_id)
-       SELECT ?1, target.id, p.id, ?4, 1, ?5, ?5, ?8, ?6
-       FROM principals target
-       JOIN projects p ON p.id = ?3
-       JOIN workspaces w ON w.id = p.workspace_id
-       JOIN project_usage usage ON usage.project_id = p.id
-       LEFT JOIN public_join_policies policy ON policy.project_id = p.id
-       LEFT JOIN project_grants existing
-         ON existing.project_id = p.id AND existing.principal_id = target.id
-       JOIN instance_meta im ON im.singleton = 1
-       WHERE target.id = ?2 AND target.id != im.owner_principal_id
-         AND p.deleted_at IS NULL AND w.deleted_at IS NULL
-         AND EXISTS (SELECT 1 FROM invitation_project_grants ipg
-                     WHERE ipg.invitation_id = ?7 AND ipg.project_id = p.id
-                       AND ipg.role = ?4)
-         AND (existing.id IS NOT NULL AND existing.revoked_at IS NULL
-              OR policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL
-              OR p.principal_limit IS NULL
-              OR usage.active_principal_count < p.principal_limit)
-         ${authGuard === null
-           ? "AND EXISTS (SELECT 1 FROM principals created WHERE created.id = target.id AND created.last_operation_id = ?6)"
-           : `AND ${authGuard.sql}`}
-       ON CONFLICT(principal_id, project_id) DO UPDATE SET
-         role = CASE WHEN project_grants.revoked_at IS NOT NULL THEN excluded.role ELSE project_grants.role END,
-         revoked_at = CASE WHEN project_grants.revoked_at IS NOT NULL THEN NULL ELSE project_grants.revoked_at END,
-         revoked_by_principal_id = CASE WHEN project_grants.revoked_at IS NOT NULL THEN NULL ELSE project_grants.revoked_by_principal_id END,
-         version = CASE WHEN project_grants.revoked_at IS NOT NULL THEN project_grants.version + 1 ELSE project_grants.version END,
-         updated_at = CASE WHEN project_grants.revoked_at IS NOT NULL THEN excluded.updated_at ELSE project_grants.updated_at END,
-         last_operation_id = CASE WHEN project_grants.revoked_at IS NOT NULL THEN excluded.last_operation_id ELSE project_grants.last_operation_id END`,
-    ).bind(
-      grantId,
-      principalId,
-      grant.project_id,
-      grant.role,
-      now,
-      claim.operationId,
-      invitation.id,
-      grantCreatedOperationId,
-      ...(authGuard?.values ?? []),
-    ));
-    statements.push(db.prepare(
-      `INSERT INTO invitation_redemption_items
-        (invitation_id, project_id, operation_id, outcome, effective_role)
-       SELECT ?1, g.project_id, ?2,
-              CASE WHEN g.created_operation_id = ?5 THEN 'created'
-                   WHEN g.last_operation_id = ?2 THEN 'regranted'
-                   ELSE 'already_has_access' END,
-              g.role
-       FROM project_grants g
-       WHERE g.principal_id = ?3 AND g.project_id = ?4
-         AND g.revoked_at IS NULL`,
-    ).bind(
-      invitation.id,
-      claim.operationId,
-      principalId,
-      grant.project_id,
-      grantCreatedOperationId,
-    ));
-    statements.push(db.prepare(
-      `UPDATE project_usage
-       SET active_principal_count = active_principal_count + 1,
-           updated_at = ?1, last_operation_id = ?2
-       WHERE project_id = ?3 AND EXISTS (
-         SELECT 1 FROM project_grants g
-         WHERE g.principal_id = ?4 AND g.project_id = ?3
-           AND g.revoked_at IS NULL
-           AND (g.created_operation_id = ?2 OR g.last_operation_id = ?2)
+  const upsertAuthGuard = auth === null ? null : buildCurrentAuthGuard(auth, now, 6);
+  statements.push(db.prepare(
+    `INSERT INTO project_grants
+      (id, principal_id, project_id, role, version, created_at,
+       updated_at, created_operation_id, last_operation_id)
+     SELECT json_extract(item.value, '$.grant_id'), target.id, p.id,
+            json_extract(item.value, '$.role'), 1, ?3, ?3,
+            json_extract(item.value, '$.created_operation_id'), ?4
+     FROM json_each(?1) AS item
+     JOIN invitation_project_grants ipg
+       ON ipg.invitation_id = ?5
+      AND ipg.project_id = json_extract(item.value, '$.project_id')
+      AND ipg.role = json_extract(item.value, '$.role')
+     JOIN principals target ON target.id = ?2
+     JOIN projects p ON p.id = ipg.project_id
+     JOIN workspaces w ON w.id = p.workspace_id
+     LEFT JOIN project_usage usage ON usage.project_id = p.id
+     LEFT JOIN public_join_policies policy ON policy.project_id = p.id
+     LEFT JOIN project_grants existing
+       ON existing.project_id = p.id AND existing.principal_id = target.id
+     JOIN instance_meta im ON im.singleton = 1
+     WHERE target.id != im.owner_principal_id
+       AND p.deleted_at IS NULL AND w.deleted_at IS NULL
+       AND (
+         (existing.id IS NOT NULL AND existing.revoked_at IS NULL)
+         OR policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL
+         OR (p.principal_limit IS NOT NULL
+             AND usage.active_principal_count < p.principal_limit)
+       )
+       ${upsertAuthGuard === null
+         ? "AND EXISTS (SELECT 1 FROM principals created WHERE created.id = target.id AND created.last_operation_id = ?4)"
+         : `AND ${upsertAuthGuard.sql}`}
+     ON CONFLICT(principal_id, project_id) DO UPDATE SET
+       role = excluded.role,
+       revoked_at = NULL,
+       revoked_by_principal_id = NULL,
+       version = project_grants.version + 1,
+       updated_at = excluded.updated_at,
+       last_operation_id = excluded.last_operation_id
+     WHERE project_grants.revoked_at IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM idempotency_records AS pending_operation
+         WHERE pending_operation.operation_id = project_grants.last_operation_id
+           AND pending_operation.state = 'pending'
        )`,
-    ).bind(now, claim.operationId, grant.project_id, principalId));
-  }
+  ).bind(
+    planJson,
+    principalId,
+    now,
+    claim.operationId,
+    invitation.id,
+    ...(upsertAuthGuard?.values ?? []),
+  ));
+
+  const outcomeAuthGuard = auth === null ? null : buildCurrentAuthGuard(auth, now, 5);
+  statements.push(db.prepare(
+    `INSERT INTO invitation_redemption_items
+      (invitation_id, project_id, operation_id, outcome, effective_role)
+     SELECT ?1, g.project_id, ?2,
+            CASE WHEN g.created_operation_id = json_extract(item.value, '$.created_operation_id') THEN 'created'
+                 WHEN g.last_operation_id = ?2 THEN 'regranted'
+                 ELSE 'already_has_access' END,
+            g.role
+     FROM json_each(?4) AS item
+     JOIN invitation_project_grants ipg
+       ON ipg.invitation_id = ?1
+      AND ipg.project_id = json_extract(item.value, '$.project_id')
+      AND ipg.role = json_extract(item.value, '$.role')
+     JOIN projects p ON p.id = ipg.project_id
+     JOIN workspaces w ON w.id = p.workspace_id
+     JOIN project_grants g ON g.project_id = p.id AND g.principal_id = ?3
+     WHERE g.revoked_at IS NULL
+       AND p.deleted_at IS NULL AND w.deleted_at IS NULL
+       ${outcomeAuthGuard === null
+         ? `AND EXISTS (
+              SELECT 1 FROM principals created
+              JOIN credentials created_credential ON created_credential.principal_id = created.id
+              WHERE created.id = ?3 AND created.last_operation_id = ?2
+                AND created_credential.created_operation_id = ?2
+            )`
+         : `AND ${outcomeAuthGuard.sql}`}`,
+  ).bind(
+    invitation.id,
+    claim.operationId,
+    principalId,
+    planJson,
+    ...(outcomeAuthGuard?.values ?? []),
+  ));
+
+  statements.push(db.prepare(
+    `UPDATE project_usage
+     SET active_principal_count = active_principal_count + 1,
+         updated_at = ?1, last_operation_id = ?2
+     WHERE project_id IN (
+       SELECT iri.project_id
+       FROM invitation_redemption_items iri
+       WHERE iri.invitation_id = ?3 AND iri.operation_id = ?2
+         AND iri.outcome IN ('created', 'regranted')
+     )
+       AND EXISTS (
+         SELECT 1 FROM public_join_policies policy
+         WHERE policy.project_id = project_usage.project_id
+           AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
+       )`,
+  ).bind(now, claim.operationId, invitation.id));
   statements.push(db.prepare(
     `UPDATE invitations
      SET redeemed_at = ?1, redeemed_by_principal_id = ?2, last_operation_id = ?3
@@ -844,33 +957,48 @@ async function executeProjectInviteRedeem(
        AND (?7 = 0 OR EXISTS (SELECT 1 FROM credentials c
                              WHERE c.principal_id = ?2 AND c.created_operation_id = ?3))`,
   ).bind(now, principalId, claim.operationId, invitation.id, invitation.code_digest, grants.length, auth === null ? 1 : 0));
-  grants.forEach((grant, index) => {
-    statements.push(db.prepare(
-      `INSERT INTO events
-        (id, stream, type, operation_id, event_index, actor_principal_id,
-         actor_credential_id, authorized_via, grant_id, workspace_id,
-         project_id, subject_type, subject_id, payload_json, created_at)
-       SELECT ?1, 'domain', 'invitation.project-grant-redeemed', ?2, ?3,
-              ?4, ?5, 'invitation', g.id, p.workspace_id, g.project_id,
-              'project_grant', g.id,
-              json_object('outcome', iri.outcome, 'effective_role', iri.effective_role), ?6
-       FROM invitation_redemption_items iri
-       JOIN project_grants g ON g.project_id = iri.project_id AND g.principal_id = ?4
-       JOIN projects p ON p.id = g.project_id
-       JOIN invitations i ON i.id = iri.invitation_id
-       WHERE iri.invitation_id = ?7 AND iri.project_id = ?8
-         AND iri.operation_id = ?2 AND i.last_operation_id = ?2`,
-    ).bind(
-      crypto.randomUUID(),
-      claim.operationId,
-      index,
-      principalId,
-      auth?.credentialId ?? replacement?.id ?? null,
-      now,
-      invitation.id,
-      grant.project_id,
-    ));
-  });
+  statements.push(db.prepare(
+    `INSERT INTO events
+      (id, stream, type, operation_id, event_index, actor_principal_id,
+       actor_credential_id, authorized_via, grant_id, workspace_id,
+       project_id, subject_type, subject_id, payload_json, created_at)
+     SELECT json_extract(item.value, '$.event_id'), 'domain',
+            'invitation.project-grant-redeemed', ?2,
+            json_extract(item.value, '$.event_index'), ?3, ?4, 'invitation',
+            g.id, p.workspace_id, g.project_id, 'project_grant', g.id,
+            json_object(
+              'outcome', iri.outcome,
+              'effective_role', iri.effective_role,
+              'grant_version', g.version,
+              'effective_capabilities', json_object(
+                'read', json('true'),
+                'write', json(CASE WHEN g.role = 'writer' THEN 'true' ELSE 'false' END)
+              )
+            ), ?5
+     FROM json_each(?1) AS item
+     JOIN invitation_redemption_items iri
+       ON iri.invitation_id = ?6
+      AND iri.project_id = json_extract(item.value, '$.project_id')
+      AND iri.operation_id = ?2
+     JOIN project_grants g ON g.project_id = iri.project_id AND g.principal_id = ?3
+     JOIN projects p ON p.id = g.project_id
+     LEFT JOIN project_usage usage ON usage.project_id = g.project_id
+     LEFT JOIN public_join_policies policy ON policy.project_id = g.project_id
+     JOIN invitations i ON i.id = iri.invitation_id
+     WHERE i.last_operation_id = ?2
+       AND (
+         iri.outcome = 'already_has_access'
+         OR policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL
+         OR usage.last_operation_id = ?2
+       )`,
+  ).bind(
+    planJson,
+    claim.operationId,
+    principalId,
+    auth?.credentialId ?? replacement?.id ?? null,
+    now,
+    invitation.id,
+  ));
   statements.push(db.prepare(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -896,6 +1024,8 @@ async function executeProjectInviteRedeem(
       confirmBusinessRejection: async () => {
         const latest = await readInvitationById(db, invitation.id);
         return latest === null || invitationStatus(latest, now) !== "active"
+          || !(await invitationTargetsActive(db, invitation.id))
+          || (auth !== null && await currentAuthRejected(db, auth, now))
           || (replacement !== null && await credentialDigestExists(db, replacement.digest))
           || await projectQuotaExceeded(db, invitation.id, principalId);
       },
@@ -909,6 +1039,8 @@ async function executeProjectInviteRedeem(
       const latest = await readInvitationById(db, invitation.id);
       if (latest === null) throw notFound();
       if (invitationStatus(latest, now) !== "active") assertInvitationUsable(latest, now);
+      if (auth !== null) await verifyCurrentAuth(db, auth, now);
+      if (!(await invitationTargetsActive(db, invitation.id))) throw notFound();
       if (replacement !== null && await credentialDigestExists(db, replacement.digest)) {
         throw conflict("CREDENTIAL_TOKEN_CONFLICT", "generate_new_credential");
       }
@@ -1012,6 +1144,8 @@ async function executeRecoveryRedeem(
       confirmBusinessRejection: async () => {
         const latest = await readInvitationById(db, invitation.id);
         return latest === null || invitationStatus(latest, now) !== "active"
+          || (invitation.recovery_mode === "rotation"
+            && (auth === null || await currentAuthRejected(db, auth, now)))
           || await credentialDigestExists(db, replacement.digest);
       },
       expectedEventCount: 1,
@@ -1024,6 +1158,10 @@ async function executeRecoveryRedeem(
       const latest = await readInvitationById(db, invitation.id);
       if (latest === null) throw notFound();
       if (invitationStatus(latest, now) !== "active") assertInvitationUsable(latest, now);
+      if (invitation.recovery_mode === "rotation") {
+        if (auth === null) throw unauthorized();
+        await verifyCurrentAuth(db, auth, now);
+      }
       if (await credentialDigestExists(db, replacement.digest)) {
         throw conflict("CREDENTIAL_TOKEN_CONFLICT", "generate_new_credential");
       }
