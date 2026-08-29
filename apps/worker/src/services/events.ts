@@ -4,8 +4,10 @@ import {
   timestamp,
 } from "../domain/model.ts";
 import {
+  buildCurrentAuthGuard,
   requireOwnerControl,
   resolveVisibleProjects,
+  verifyCurrentAuth,
   type VisibleProject,
 } from "../kernel/authorization.ts";
 import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
@@ -28,6 +30,7 @@ interface EventRow {
   project_display_name: string | null;
   project_id: string | null;
   project_key: string | null;
+  relation_other_project_id: string | null;
   sequence: number;
   stream: "domain" | "security";
   subject_id: string;
@@ -56,6 +59,7 @@ function eventSelect(eventsSource: string): string {
          workspace.display_name AS workspace_display_name,
          event.project_id, project.key AS project_key,
          project.display_name AS project_display_name,
+         event.relation_other_project_id,
          event.subject_type, event.subject_id, event.payload_json, event.created_at
   FROM ${eventsSource}
   LEFT JOIN principals actor ON actor.id = event.actor_principal_id
@@ -68,7 +72,8 @@ const EVENT_SELECT = eventSelect("events event");
 const EVENT_CANDIDATE_COLUMNS = `
   sequence, id, stream, type, operation_id, event_index,
   actor_principal_id, actor_credential_id, authorized_via, grant_id,
-  workspace_id, project_id, subject_type, subject_id, payload_json, created_at`;
+  workspace_id, project_id, relation_other_project_id,
+  subject_type, subject_id, payload_json, created_at`;
 
 function repeatedTargets(url: URL, name: "project" | "workspace"): string[] {
   const values = url.searchParams.getAll(name);
@@ -217,6 +222,7 @@ export async function listEvents(
   db: D1Database,
   auth: AuthContext,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const scope = await resolveEventScope(db, auth, url);
   const filter: JsonValue = scope.projectTargets.length === 0 && scope.workspaceTargets.length === 0
@@ -235,22 +241,44 @@ export async function listEvents(
   const afterEventId = parseDomainEventCursor(decodeCursor(afterValue, context));
   const afterSequence = await eventSequenceForAnchor(db, afterEventId);
   const limit = requireLimit(url);
+  const authGuard = buildCurrentAuthGuard(auth, now, 6);
   let rows: EventRow[];
   try {
     const result = await db.prepare(
-      `WITH non_relation_events AS (
+      `WITH current_visible_projects(id) AS MATERIALIZED (
+         SELECT current_project.id
+         FROM projects current_project
+         JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+         JOIN instance_meta current_instance ON current_instance.singleton = 1
+         WHERE current_project.id IN (SELECT value FROM json_each(?3))
+           AND current_project.deleted_at IS NULL
+           AND current_workspace.deleted_at IS NULL
+           AND ${authGuard.sql}
+           AND (
+             current_instance.owner_principal_id = ?5
+             OR EXISTS (
+               SELECT 1 FROM project_grants current_grant
+               WHERE current_grant.project_id = current_project.id
+                 AND current_grant.principal_id = ?5
+                 AND current_grant.revoked_at IS NULL
+             )
+           )
+       ), current_result_projects(id) AS MATERIALIZED (
+         SELECT id FROM current_visible_projects
+         WHERE id IN (SELECT value FROM json_each(?2))
+       ), non_relation_events AS (
          SELECT ${EVENT_CANDIDATE_COLUMNS}
          FROM events INDEXED BY idx_events_project_nonrelation_sequence
          WHERE stream = 'domain' AND sequence > ?1
-           AND project_id IN (SELECT value FROM json_each(?2))
+           AND project_id IN (SELECT id FROM current_result_projects)
            AND relation_other_project_id IS NULL
          ORDER BY sequence ASC LIMIT ?4
        ), relation_events AS (
          SELECT ${EVENT_CANDIDATE_COLUMNS}
          FROM events INDEXED BY idx_events_project_relation_sequence
          WHERE stream = 'domain' AND sequence > ?1
-           AND project_id IN (SELECT value FROM json_each(?2))
-           AND relation_other_project_id IN (SELECT value FROM json_each(?3))
+           AND project_id IN (SELECT id FROM current_result_projects)
+           AND relation_other_project_id IN (SELECT id FROM current_visible_projects)
            AND relation_other_project_id IS NOT NULL
          ORDER BY sequence ASC LIMIT ?4
        ), candidate_events AS (
@@ -266,19 +294,34 @@ export async function listEvents(
       JSON.stringify(scope.projects.map((project) => project.projectId)),
       JSON.stringify(scope.visibleProjects.map((project) => project.projectId)),
       limit + 1,
+      auth.principalId,
+      ...authGuard.values,
     ).all<EventRow>();
     rows = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
-  const hasMore = rows.length > limit;
-  const page = rows.slice(0, limit);
+  await verifyCurrentAuth(db, auth, now);
+  const currentScope = await resolveEventScope(db, auth, url);
+  const currentVisibleIds = new Set(currentScope.visibleProjects.map((project) => project.projectId));
+  const currentResultIds = new Set(currentScope.projects.map((project) => project.projectId));
+  const authorizedRows = rows.filter((row) => row.project_id !== null
+    && currentResultIds.has(row.project_id)
+    && (row.relation_other_project_id === null || currentVisibleIds.has(row.relation_other_project_id)));
+  const responseContext = await createCursorContext(
+    "events",
+    filter,
+    currentScope.visibleProjects.map((project) => project.projectId),
+    auth.principalId,
+  );
+  const hasMore = authorizedRows.length > limit;
+  const page = authorizedRows.slice(0, limit);
   const lastEventId = page.at(-1)?.id ?? afterEventId;
   return {
     has_more: hasMore,
     items: page.map((row) => eventResource(row)),
-    next_cursor: encodeCursor(context, [lastEventId]),
-    resolved_scope: resolvedEventScope(scope),
+    next_cursor: encodeCursor(responseContext, [lastEventId]),
+    resolved_scope: resolvedEventScope(currentScope),
   };
 }
 

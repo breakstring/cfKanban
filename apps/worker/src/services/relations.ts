@@ -1,5 +1,10 @@
 import { requireUuid, timestamp } from "../domain/model.ts";
-import { resolveVisibleProjects, verifyCurrentAuth, type VisibleProject } from "../kernel/authorization.ts";
+import {
+  buildCurrentAuthGuard,
+  resolveVisibleProjects,
+  verifyCurrentAuth,
+  type VisibleProject,
+} from "../kernel/authorization.ts";
 import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
 import { isUuid } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
@@ -154,16 +159,38 @@ const RELATION_SELECT = `
   JOIN issues target ON target.id = relation.target_issue_id
   JOIN projects target_project ON target_project.id = target.project_id`;
 
-function deletedRelationListSql(withCursor: boolean): string {
+function deletedRelationListSql(withCursor: boolean, authGuardSql: string): string {
   const cursorPredicate = withCursor
     ? "AND (relation.deleted_at, relation.id) < (?3, ?4)"
     : "";
   const limitParameter = withCursor ? "?5" : "?3";
-  return `WITH source_candidates AS (
+  const principalParameter = withCursor ? "?6" : "?4";
+  return `WITH current_writer_projects(id) AS MATERIALIZED (
+           SELECT current_project.id
+           FROM projects current_project
+           JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+           JOIN instance_meta current_instance ON current_instance.singleton = 1
+           WHERE current_project.id IN (SELECT value FROM json_each(?2))
+             AND ${authGuardSql}
+             AND (
+               current_instance.owner_principal_id = ${principalParameter}
+               OR (
+                 current_project.deleted_at IS NULL
+                 AND current_workspace.deleted_at IS NULL
+                 AND EXISTS (
+                   SELECT 1 FROM project_grants current_grant
+                   WHERE current_grant.project_id = current_project.id
+                     AND current_grant.principal_id = ${principalParameter}
+                     AND current_grant.role = 'writer'
+                     AND current_grant.revoked_at IS NULL
+                 )
+               )
+             )
+         ), source_candidates AS (
            SELECT relation.id, relation.deleted_at
            FROM issue_relations relation INDEXED BY idx_issue_relations_source_tombstones_visible
            WHERE relation.source_issue_id = ?1 AND relation.deleted_at IS NOT NULL
-             AND relation.target_project_id IN (SELECT value FROM json_each(?2))
+             AND relation.target_project_id IN (SELECT id FROM current_writer_projects)
              ${cursorPredicate}
            ORDER BY relation.deleted_at DESC, relation.id DESC
            LIMIT ${limitParameter}
@@ -171,7 +198,7 @@ function deletedRelationListSql(withCursor: boolean): string {
            SELECT relation.id, relation.deleted_at
            FROM issue_relations relation INDEXED BY idx_issue_relations_target_tombstones_visible
            WHERE relation.target_issue_id = ?1 AND relation.deleted_at IS NOT NULL
-             AND relation.source_project_id IN (SELECT value FROM json_each(?2))
+             AND relation.source_project_id IN (SELECT id FROM current_writer_projects)
              ${cursorPredicate}
            ORDER BY relation.deleted_at DESC, relation.id DESC
            LIMIT ${limitParameter}
@@ -184,7 +211,47 @@ function deletedRelationListSql(withCursor: boolean): string {
          )
          ${RELATION_SELECT}
          JOIN candidate_relations candidate ON candidate.id = relation.id
+         WHERE relation.source_project_id = source.project_id
+           AND relation.target_project_id = target.project_id
+           AND source.project_id IN (SELECT id FROM current_writer_projects)
+           AND target.project_id IN (SELECT id FROM current_writer_projects)
          ORDER BY relation.deleted_at DESC, relation.id DESC`;
+}
+
+function activeRelationListSql(authGuardSql: string): string {
+  return `WITH current_visible_projects(id) AS MATERIALIZED (
+           SELECT current_project.id
+           FROM projects current_project
+           JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+           JOIN instance_meta current_instance ON current_instance.singleton = 1
+           WHERE current_project.id IN (SELECT value FROM json_each(?2))
+             AND current_project.deleted_at IS NULL
+             AND current_workspace.deleted_at IS NULL
+             AND ${authGuardSql}
+             AND (
+               current_instance.owner_principal_id = ?6
+               OR EXISTS (
+                 SELECT 1 FROM project_grants current_grant
+                 WHERE current_grant.project_id = current_project.id
+                   AND current_grant.principal_id = ?6
+                   AND current_grant.revoked_at IS NULL
+               )
+             )
+         )
+         ${RELATION_SELECT}
+         WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
+           AND relation.source_project_id = source.project_id
+           AND relation.target_project_id = target.project_id
+           AND relation.deleted_at IS NULL
+           AND workspace.deleted_at IS NULL
+           AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+           AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
+           AND source.project_id IN (SELECT id FROM current_visible_projects)
+           AND target.project_id IN (SELECT id FROM current_visible_projects)
+           AND (?3 IS NULL OR relation.created_at > ?3
+                OR (relation.created_at = ?3 AND relation.id > ?4))
+         ORDER BY relation.created_at ASC, relation.id ASC
+         LIMIT ?5`;
 }
 
 async function readRelation(
@@ -437,6 +504,7 @@ export async function listIssueRelations(
   auth: AuthContext,
   identifierValue: JsonValue,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const deletedMode = requireDeletedMode(url);
   const issue = deletedMode === "only"
@@ -455,49 +523,69 @@ export async function listIssueRelations(
   );
   const cursor = parseRelationCursor(decodeCursor(url.searchParams.get("cursor"), context));
   const limit = requireLimit(url);
+  const authGuard = buildCurrentAuthGuard(
+    auth,
+    now,
+    deletedMode === "only" && cursor === null ? 5 : 7,
+  );
   let rows: RelationRow[];
   try {
     const result = deletedMode === "only"
       ? cursor === null
-        ? await db.prepare(deletedRelationListSql(false)).bind(
+        ? await db.prepare(deletedRelationListSql(false, authGuard.sql)).bind(
           issue.id,
           JSON.stringify(writerIds),
           limit + 1,
+          auth.principalId,
+          ...authGuard.values,
         ).all<RelationRow>()
-        : await db.prepare(deletedRelationListSql(true)).bind(
+        : await db.prepare(deletedRelationListSql(true, authGuard.sql)).bind(
           issue.id,
           JSON.stringify(writerIds),
           cursor[0],
           cursor[1],
           limit + 1,
+          auth.principalId,
+          ...authGuard.values,
         ).all<RelationRow>()
-      : await db.prepare(
-        `${RELATION_SELECT}
-         WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
-           AND relation.deleted_at IS NULL
-           AND workspace.deleted_at IS NULL
-           AND source.deleted_at IS NULL AND target.deleted_at IS NULL
-           AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
-           AND source.project_id IN (SELECT value FROM json_each(?2))
-           AND target.project_id IN (SELECT value FROM json_each(?2))
-           AND (?3 IS NULL OR relation.created_at > ?3
-                OR (relation.created_at = ?3 AND relation.id > ?4))
-         ORDER BY relation.created_at ASC, relation.id ASC
-         LIMIT ?5`,
-      ).bind(
+      : await db.prepare(activeRelationListSql(authGuard.sql)).bind(
         issue.id,
         JSON.stringify(visibleIds),
         cursor?.[0] ?? null,
         cursor?.[1] ?? null,
         limit + 1,
+        auth.principalId,
+        ...authGuard.values,
       ).all<RelationRow>();
     rows = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
-  const roles = new Map(visibleProjects.map((project) => [project.projectId, project.role]));
-  const hasMore = rows.length > limit;
-  const page = rows.slice(0, limit);
+  await verifyCurrentAuth(db, auth, now);
+  const currentVisibleProjects = await resolveVisibleProjects(
+    db,
+    auth,
+    deletedMode === "only" && auth.isOwner,
+  );
+  const currentVisibleIds = currentVisibleProjects.map((project) => project.projectId);
+  const currentWriterIds = currentVisibleProjects.filter((project) => roleCanWrite(project.role))
+    .map((project) => project.projectId);
+  const currentProjectIds = deletedMode === "only" ? currentWriterIds : currentVisibleIds;
+  const currentProjectIdSet = new Set(currentProjectIds);
+  const currentIssueProject = currentVisibleProjects.find((project) => project.projectId === issue.projectId);
+  if (currentIssueProject === undefined) throw notFound();
+  if (deletedMode === "only" && !roleCanWrite(currentIssueProject.role)) throw forbidden();
+  const authorizedRows = rows.filter((row) => currentProjectIdSet.has(row.source_project_id)
+    && currentProjectIdSet.has(row.target_project_id));
+  const responseContext = await createCursorContext(
+    "relations",
+    { deleted: deletedMode, issue_id: issue.id },
+    currentProjectIds,
+    auth.principalId,
+  );
+  const roles = new Map(currentVisibleProjects.map((project) => [project.projectId, project.role]));
+  const hasMore = authorizedRows.length > limit;
+  const page = authorizedRows.slice(0, limit);
   const tail = page.at(-1);
   return {
     has_more: hasMore,
@@ -507,12 +595,12 @@ export async function listIssueRelations(
         && roleCanWrite(roles.get(row.target_project_id) ?? "reader"),
     )),
     next_cursor: hasMore && tail !== undefined
-      ? encodeCursor(context, [deletedMode === "only" ? tail.deleted_at ?? 0 : tail.created_at, tail.id])
+      ? encodeCursor(responseContext, [deletedMode === "only" ? tail.deleted_at ?? 0 : tail.created_at, tail.id])
       : null,
     resolved_scope: {
       issue_id: issue.id,
       issue_identifier: issue.identifier,
-      visible_project_ids: visibleIds,
+      visible_project_ids: currentVisibleIds,
     },
   };
 }

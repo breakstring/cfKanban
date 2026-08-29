@@ -12,6 +12,8 @@ import {
   createComment as createCommentService,
   deleteComment as deleteCommentService,
 } from "../../apps/worker/src/services/comments.ts";
+import { listEvents as listEventsService } from "../../apps/worker/src/services/events.ts";
+import { listIssueRelations as listIssueRelationsService } from "../../apps/worker/src/services/relations.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
@@ -155,6 +157,106 @@ function commentQuotaPreviewFailureDatabase(database) {
     }),
     get failureCount() {
       return failureCount;
+    },
+  };
+}
+
+function eventScopeBarrierDatabase(database) {
+  let paused = false;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "all" && matches) {
+        return async (...args) => {
+          const result = await target.all(...args);
+          if (!paused) {
+            paused = true;
+            signalReached();
+            await released;
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.key, p.key"),
+          );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
+}
+
+function relationScopeBarrierDatabase(database) {
+  let matchingReads = 0;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "all" && matches) {
+        return async (...args) => {
+          const result = await target.all(...args);
+          matchingReads += 1;
+          if (matchingReads === 2) {
+            signalReached();
+            await released;
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.key, p.key"),
+          );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
     },
   };
 }
@@ -674,6 +776,54 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     projectFilteredRelationEvents.body.items.filter((event) => event.subject.id === relationId).length,
     1,
   );
+
+  const eventScopeBarrier = eventScopeBarrierDatabase(db);
+  const eventScopeAuth = await authenticateBearer(db, `Bearer ${dualWriterToken}`);
+  const racedEvents = listEventsService(
+    eventScopeBarrier.db,
+    eventScopeAuth,
+    new URL("https://kanban.example.test/api/v1/events?limit=100"),
+    Date.now(),
+  );
+  await eventScopeBarrier.reached;
+  await db.prepare(
+    "UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, "60000000-0000-4000-8000-000000000012").run();
+  await db.prepare(
+    `INSERT INTO events
+      (id, stream, type, operation_id, event_index, actor_principal_id,
+       actor_credential_id, authorized_via, workspace_id, project_id,
+       subject_type, subject_id, payload_json, created_at)
+     VALUES (?1, 'domain', 'issue.after-revoke', ?2, 0, ?3,
+             ?4, 'project_grant', ?5, ?6, 'issue', ?7, '{}', ?8)`,
+  ).bind(
+    "60000000-0000-4000-8000-000000000103",
+    "60000000-0000-4000-8000-000000000104",
+    ids.dualPrincipal,
+    ids.dualCredential,
+    engineering.body.resource.id,
+    projectBId,
+    issueB.body.resource.id,
+    Date.now(),
+  ).run();
+  eventScopeBarrier.release();
+  const racedEventResult = await racedEvents;
+  assert.equal(
+    racedEventResult.items.some((event) => event.project?.id === projectBId),
+    false,
+  );
+  assert.equal(
+    racedEventResult.items.some((event) => event.subject.id === relationId),
+    false,
+  );
+  assert.deepEqual(
+    racedEventResult.resolved_scope.projects.map((project) => project.project_id),
+    [projectAId],
+  );
+  await db.prepare(
+    "UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
+  ).bind("60000000-0000-4000-8000-000000000012").run();
+
   const hiddenTailBaseline = await jsonRequest(
     `/api/v1/events?after=${encodeURIComponent(scopedEvents.body.next_cursor)}&limit=1`,
     { headers: scopedHeaders() },
@@ -726,6 +876,28 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     { headers: dualHeaders() },
   );
   assert.deepEqual(deletedRelationList.body.items.map((item) => item.id), [relationId]);
+
+  const relationScopeBarrier = relationScopeBarrierDatabase(db);
+  const relationScopeAuth = await authenticateBearer(db, `Bearer ${dualWriterToken}`);
+  const racedDeletedRelations = listIssueRelationsService(
+    relationScopeBarrier.db,
+    relationScopeAuth,
+    issueA.body.resource.identifier,
+    new URL(`https://kanban.example.test/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only`),
+    Date.now(),
+  );
+  await relationScopeBarrier.reached;
+  await db.prepare(
+    "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, projectBId).run();
+  relationScopeBarrier.release();
+  const racedDeletedRelationResult = await racedDeletedRelations;
+  assert.deepEqual(racedDeletedRelationResult.items, []);
+  assert.deepEqual(racedDeletedRelationResult.resolved_scope.visible_project_ids, [projectAId]);
+  await db.prepare(
+    "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+  )
+    .bind(projectBId).run();
 
   const hiddenRelationBaseline = await jsonRequest(
     `/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only&limit=1`,

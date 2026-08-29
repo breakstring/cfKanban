@@ -47,11 +47,16 @@ export function registerWp05Routes(router: Router): Router {
   router
     .get("/api/v1/issues", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await listIssues(env.DB, auth, context.url), context.requestId);
+      return jsonResponse(await listIssues(env.DB, auth, context.url, context.startedAt), context.requestId);
     })
     .get("/api/v1/issues/candidates", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await listIssueCandidates(env.DB, auth, context.url), context.requestId);
+      return jsonResponse(await listIssueCandidates(
+        env.DB,
+        auth,
+        context.url,
+        context.startedAt,
+      ), context.requestId);
     })
     .get("/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
@@ -61,6 +66,7 @@ export function registerWp05Routes(router: Router): Router {
         path(context, "workspace_key"),
         path(context, "project_key"),
         context.url,
+        context.startedAt,
       ), context.requestId);
     })
     .post("/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues", async (request, env, context) => {

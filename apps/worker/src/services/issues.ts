@@ -946,8 +946,9 @@ async function listIssueRows(
   url: URL,
   candidate: CandidateFilter | null,
   issueFilter: IssueListFilter,
-  principalId: string,
+  auth: AuthContext,
   deletionView: "exclude" | "only",
+  now: number,
 ): Promise<{ hasMore: boolean; rows: IssueRow[]; nextCursor: string | null }> {
   const candidates = candidate !== null;
   const limit = requireLimit(url);
@@ -969,7 +970,7 @@ async function listIssueRows(
       ...scope.projects.map((project) => `result:${project.projectId}`),
       ...scope.relationProjects.map((project) => `relation:${project.projectId}`),
     ],
-    principalId,
+    auth.principalId,
   );
   const projectIds = scope.projects.map((project) => project.projectId);
   const decodedCursor = decodeCursor(url.searchParams.get("cursor"), cursorContext);
@@ -1037,7 +1038,7 @@ async function listIssueRows(
         JSON.stringify(projectIds), search.number, search.normalized,
         cursor?.[0] ?? null, cursor?.[1] ?? null, cursor?.[2] ?? null,
         candidate.assignment,
-        principalId,
+        auth.principalId,
         limit + 1,
       ] as const;
       const boundCandidateStatement = candidate.blocked === "exclude"
@@ -1056,9 +1057,36 @@ async function listIssueRows(
       }
     } else {
       const cursor = parsedCursor as [number, number] | null;
-      const result = await db.prepare(
-        `${ISSUE_SELECT}
-         WHERE i.project_id IN (SELECT value FROM json_each(?1))
+      const recoveryAuthGuard = deletionView === "only"
+        ? buildCurrentAuthGuard(auth, now, 10)
+        : null;
+      const statement = db.prepare(
+        `${deletionView === "only" ? `WITH current_recovery_projects(id) AS MATERIALIZED (
+           SELECT current_project.id
+           FROM projects current_project
+           JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+           JOIN instance_meta current_instance ON current_instance.singleton = 1
+           WHERE current_project.id IN (SELECT value FROM json_each(?1))
+             AND ${recoveryAuthGuard?.sql ?? "0"}
+             AND (
+               current_instance.owner_principal_id = ?9
+               OR (
+                 current_project.deleted_at IS NULL
+                 AND current_workspace.deleted_at IS NULL
+                 AND EXISTS (
+                   SELECT 1 FROM project_grants current_grant
+                   WHERE current_grant.project_id = current_project.id
+                     AND current_grant.principal_id = ?9
+                     AND current_grant.role = 'writer'
+                     AND current_grant.revoked_at IS NULL
+                 )
+               )
+             )
+         )` : ""}
+         ${ISSUE_SELECT}
+         WHERE i.project_id IN (${deletionView === "only"
+           ? "SELECT id FROM current_recovery_projects"
+           : "SELECT value FROM json_each(?1)"})
            AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
            ${deletionView === "only" ? "" : "AND p.deleted_at IS NULL AND w.deleted_at IS NULL"}
            AND (?3 IS NULL OR (?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)
@@ -1068,13 +1096,21 @@ async function listIssueRows(
                 OR (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} = ?4 AND i.number < ?5))
          ORDER BY ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} DESC, i.number DESC
          LIMIT ?8`,
-      ).bind(
+      );
+      const bindings = [
         JSON.stringify(projectIds), search.number, search.normalized,
         cursor?.[0] ?? null, cursor?.[1] ?? null,
         issueFilter.statuses.length === 0 ? null : JSON.stringify(issueFilter.statuses),
         issueFilter.assignees.length === 0 ? null : JSON.stringify(issueFilter.assignees),
         limit + 1,
-      ).all<IssueRow>();
+      ] as const;
+      const result = deletionView === "only"
+        ? await statement.bind(
+          ...bindings,
+          auth.principalId,
+          ...(recoveryAuthGuard?.values ?? []),
+        ).all<IssueRow>()
+        : await statement.bind(...bindings).all<IssueRow>();
       rows = result.results;
       hasMore = rows.length > limit;
       rows = rows.slice(0, limit);
@@ -1099,6 +1135,7 @@ async function listIssuesInternal(
   url: URL,
   candidates: boolean,
   forcedProject: VisibleProject | null = null,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const deletionView = candidates ? "exclude" : issueDeletionView(url);
   let scope = await resolveIssueScope(db, auth, url, forcedProject, deletionView === "only");
@@ -1109,16 +1146,40 @@ async function listIssuesInternal(
   const search = searchFilter(url);
   const candidate = candidates ? requireCandidateFilter(url) : null;
   const issueFilter = candidates ? { assignees: [], statuses: [] } : requireIssueListFilter(url);
-  const page = await listIssueRows(
+  let page = await listIssueRows(
     db,
     scope,
     search,
     url,
     candidate,
     issueFilter,
-    auth.principalId,
+    auth,
     deletionView,
+    now,
   );
+  if (deletionView === "only") {
+    await verifyCurrentAuth(db, auth, now);
+    let currentScope = await resolveIssueScope(db, auth, url, forcedProject, true);
+    currentScope = {
+      ...currentScope,
+      projects: currentScope.projects.filter((project) => roleCanWrite(project.role)),
+    };
+    if (
+      forcedProject !== null
+      && !currentScope.projects.some((project) => project.projectId === forcedProject.projectId)
+    ) throw notFound();
+    const currentProjectIds = new Set(currentScope.projects.map((project) => project.projectId));
+    const previousProjectIds = scope.projects.map((project) => project.projectId).sort();
+    const nextProjectIds = currentScope.projects.map((project) => project.projectId).sort();
+    const scopeChanged = previousProjectIds.length !== nextProjectIds.length
+      || previousProjectIds.some((projectId, index) => projectId !== nextProjectIds[index]);
+    page = {
+      hasMore: scopeChanged ? false : page.hasMore,
+      nextCursor: scopeChanged ? null : page.nextCursor,
+      rows: page.rows.filter((row) => currentProjectIds.has(row.project_id)),
+    };
+    scope = currentScope;
+  }
   const labels = deletionView === "only"
     ? new Map<string, LabelRow[]>()
     : await labelsForIssues(db, page.rows.map((row) => row.id));
@@ -1151,16 +1212,18 @@ export async function listIssues(
   db: D1Database,
   auth: AuthContext,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
-  return listIssuesInternal(db, auth, url, false);
+  return listIssuesInternal(db, auth, url, false, null, now);
 }
 
 export async function listIssueCandidates(
   db: D1Database,
   auth: AuthContext,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
-  return listIssuesInternal(db, auth, url, true);
+  return listIssuesInternal(db, auth, url, true, null, now);
 }
 
 export async function listProjectIssues(
@@ -1169,6 +1232,7 @@ export async function listProjectIssues(
   workspaceKeyValue: JsonValue,
   projectKeyValue: JsonValue,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const projectKey = requireProjectKey(projectKeyValue, "project_key");
@@ -1179,7 +1243,7 @@ export async function listProjectIssues(
     )
     : await requireVisibleProject(db, auth, workspaceKey, projectKey);
   if (project === undefined) throw notFound();
-  return listIssuesInternal(db, auth, url, false, project);
+  return listIssuesInternal(db, auth, url, false, project, now);
 }
 
 async function visibleRelations(
