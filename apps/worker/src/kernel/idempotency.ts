@@ -5,7 +5,7 @@ import type { JsonValue } from "./types.ts";
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000;
 const IDEMPOTENCY_CLEANUP_BATCH_SIZE = 64;
-const credentialTokenPattern = /cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}/;
+const secretTokenPattern = /(?:cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}|cfi_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43})/;
 
 interface IdempotencyRow {
   operation_id: string;
@@ -86,7 +86,7 @@ export function validateIdempotencyKey(key: string, forbiddenValues: readonly st
     throw validationError("invalid_idempotency_key");
   }
   if (
-    credentialTokenPattern.test(key)
+    secretTokenPattern.test(key)
     || forbiddenValues.some((secret) => secret.length >= 8 && key.includes(secret))
   ) {
     throw validationError("invalid_idempotency_key");
@@ -138,7 +138,10 @@ function safeJson(value: unknown): value is JsonValue {
 
 function assertPersistenceSafe(value: JsonValue, forbiddenValues: readonly string[]): void {
   if (typeof value === "string") {
-    if (forbiddenValues.some((secret) => secret.length >= 8 && value.includes(secret))) {
+    if (
+      secretTokenPattern.test(value)
+      || forbiddenValues.some((secret) => secret.length >= 8 && value.includes(secret))
+    ) {
       throw new Error("Idempotency response rejected by secret policy.");
     }
     return;
@@ -258,6 +261,12 @@ function parseStoredResponse<T extends JsonValue>(claim: IdempotencyClaim): Idem
   }
   if (!safeJson(body)) throw new AtomicBatchRejectedError();
   return { body: body as T, status: claim.responseStatus };
+}
+
+export function readIdempotencyResponse<T extends JsonValue>(
+  claim: IdempotencyClaim,
+): IdempotentReadback<T> {
+  return parseStoredResponse<T>(claim);
 }
 
 export async function finalizeIdempotency<T extends JsonValue>(
