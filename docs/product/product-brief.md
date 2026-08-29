@@ -3,13 +3,13 @@
 - 文档状态：Draft
 - Roadmap：R0
 - Linear：[cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f)
-- 最近讨论：2026-08-28
+- 最近讨论：2026-08-29
 
 ## 一句话定位
 
 cfKanban 是面向 Coding Agents 的轻量工作协调账本：用稳定、低上下文、可恢复的 API，让多个 Agent 能够发现、分配、推进、交接和审计工作。
 
-“没有重型 UI”是结果，不是产品定义。真正的 Agent-native 还意味着用户的 Agent 是常见调用载体：cfKanban 用 Skill/API 提供稳定能力和结构化恢复信息，但不接管 Agent 的目标理解、动作组合与汇报策略。可靠的身份、并发、幂等、上下文裁剪和错误恢复共同支撑这条体验。
+“没有重型 UI”是克制范围的结果，不等于 Agent-only。用户的 Agent 仍是主要调用载体：cfKanban 用 Skill/API 提供稳定能力和结构化恢复信息，但不接管 Agent 的目标理解、动作组合与汇报策略。同时，v0 提供同一部署实例内的极简第一方 Web UI，让人类直接查看 Kanban、完成低频 Issue 参与和 Owner 维护；Web 复用同一 REST 权限与领域合同，不形成第二套产品。
 
 ## 目标用户
 
@@ -39,7 +39,11 @@ cfKanban 是面向 Coding Agents 的轻量工作协调账本：用稳定、低�
 8. 完成 Issue，并提交结构化结果、验证和后续事项。
 9. 从事件 cursor 增量获知变化，而不是反复全量轮询。
 10. 林让自己的 Agent 使用 Owner Credential 调整 Project Grants、发起参与者 Credential 轮换/恢复、处理候选维护操作，并读回 Project 内容、安全与管理历史。
-11. 林的 Agent 生成简短 Invite URL 话术；参与者把它交给自己的 Agent，后者读取页面、安装或更新可信 Skill，并自动复用或创建本地身份后兑换 Project 权限。
+11. 未认证访客直接打开实例时先理解产品并复制可信 Agent 部署话术；既有参与者首次通过 Agent Launch 登记 Passkey 后，可以直接登录 Web。
+12. 林的 Agent 生成简短 Invite URL 话术；参与者把它交给自己的 Agent，后者读取页面、安装或更新可信 Skill，并自动复用或创建本地身份后兑换 Project 权限。
+13. 人类让 Agent 在 IAB 或普通浏览器中打开明确 Project/Issue；Agent 创建一次性 Browser Launch URL，浏览器兑换短期 Session 后直接展示对应 Kanban。
+14. `reader` 直接查看看板与详情，`writer` 进行常用原子 Issue 操作，Owner 通过简洁管理页维护 Workspace/Project、Invite、Grant、Principal/Credential、健康与审计。
+15. Owner 可以同时公开多个 Project；访客从首页每次选择一个 Project 和 `reader | writer` 后原子加入，不引入 Team 或多 Project 公开授权。
 
 ## 产品原则
 
@@ -99,6 +103,7 @@ MVP 优先 Workers + D1。只有真实需求和验证证据证明收益时，才
 - Label、Comment，以及 `blocks / parent / related / duplicate` 四类稳定 Issue 关系语义；反向关系由读取投影派生，同一 Workspace 内允许跨 Project，禁止跨 Workspace。
 - blocked 不作为额外 workflow status；未完成依赖或人工原因形成统一 `is_blocked` 投影，设置或解除阻塞不自动改变 status。
 - Principal、Credential、Project Grant、Event 和 Idempotency Record。
+- 一次性 Browser Launch capability 与短期 Web Session；它们只把既有 Principal 权限安全带入浏览器，不建立新身份或新角色。
 - 一次性 Invitation：由 Owner 创建；普通类型绑定一个或多个初始 Project Grants，并固定有效 7 天；恢复类型显式绑定既有 Principal，并固定有效 1 小时。两者都支持过期、撤销、原子兑换和审计，v0 不允许自定义或延长时效。
 
 ### 核心行为
@@ -114,20 +119,26 @@ MVP 优先 Workers + D1。只有真实需求和验证证据证明收益时，才
 - 评论与不可变领域事件。
 - 普通 Comment 追加后不可原地编辑，可由 writer 软删除/恢复；纠错追加引用旧 Comment 的新记录。completion comment 不可编辑或删除。
 - 每个 Agent 独立、可吊销的 Credential，以及 Principal 到多个 Project 的显式 Project Grants。
-- Credential 不自动过期，只通过显式撤销、轮换或 Principal disable 失效；低频 `last_used_at` 仅供 Owner 运维判断。
+- Credential 不自动过期，只通过显式撤销、轮换或 full recovery 中的撤销失效；低频 `last_used_at` 仅供 Owner 运维判断。v0 不提供 Principal disable/enable/delete。
 - 面向 Agent 的 Invite URL bootstrap：已有该实例 Credential 时复用 Principal，没有时创建 Principal/Credential 并安全保存到本地。
 - 非 Owner 的 Project role 只有 `reader` 和 `writer`；只有 Owner 能创建或撤销 Project Grant。
 - Project Grant 不设置失效日期；每个 Principal/Project 只有一条当前记录，只有 Owner 能显式变更角色、撤销或重新授予。
 - `writer` 可以创建、修改、软删除和恢复 Project 内容，但不能删除或恢复 Workspace/Project 容器。
 - OpenAPI、健康检查、能力发现。
 - 有界资源合同：请求最大 128 KiB，Issue body 最大 64 KiB，Comment/completion 最大 32 KiB；列表默认 20、最大 100，Agent context 最大 64 KiB 并支持截断续读。
-- 管理 API + Agent Skills；不要求首发部署端人类维护网页，Invite bootstrap 页面除外。
+- 同一 Worker 托管的极简第一方 Web UI：Project Kanban、Issue 详情/常用写操作和 Owner 简单维护；全部调用同一 REST API 并执行同一权限、CAS、幂等与审计合同。
+- Agent 通过固定 5 分钟、一次性的 Browser Launch URL 打开明确 Web target；浏览器兑换固定 8 小时、无滑动续期/refresh、绑定源 Credential 与 target scope 的 HttpOnly Session，不读取本地 Credential，也不要求人类粘贴长期 secret。
+- 首次 Agent Launch 后可登记多个 Web-only Passkey；Passkey 登录只签发固定 8 小时 Session，不能调用 Bearer API，丢失或域名变化时仍用 Agent Launch 恢复。
+- 单 Project Public Join：Owner 可同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer`；每次只建立或提升一条 Grant，不提供 Team Join 或公开批量授权。
+- Public Join 保持简单重入，不建立逐 Principal blacklist；开启前 Owner 必须显式设置 Project Issue、Comment、非 Owner Principal 三项 active quota。soft delete/Grant revoke 释放，restore/regrant 重新占用；active quota 不等于物理清除 tombstone。
+- 实例请求门控必须对 Owner 可见，首次部署自动提供单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒的默认档位。修改由 deploy Skill 发布 Worker 配置而非 D1 migration；它只做近似抗滥用，不能替代 D1 精确业务 quota。
+- Web 与 Agent 共享稳定机器错误分类和恢复动作；Project quota、应用 rate limit、D1 platform quota 与 platform failure 分别表达。Cloudflare 在 Worker 外生成的 1027/429/HTML 由客户端显式归一化并保留来源，不伪装成服务端 JSON。
 - portable Skill bundle 按需携带共享 Node.js/TypeScript scripts；宿主安装、发现和刷新差异属于 bundle 的兼容逻辑，不形成独立 Host Adapter 角色或 cfKanban CLI。远程 MCP adapter 后置。
 
 ## 明确非目标
 
-- 替代 Linear/Jira 的人类项目管理体验。
-- 重型拖拽 Board、富文本编辑器、实时协同光标。
+- 替代 Linear/Jira 的完整人类项目管理体验。
+- 自定义 Board/列/工作流、手工 rank、批量编辑、复杂富文本、仪表盘、实时协同光标。
 - Organization、Team、Initiative、Cycle、Roadmap 多级建模。
 - 邮箱注册、社交登录、完整账号目录、组织成员与通用 RBAC/邀请平台；Owner 发起的 Project 级邀请仍属于核心。
 - 自定义报表、复杂通知、订阅、mention 和自动化市场。
@@ -140,17 +151,18 @@ MVP 优先 Workers + D1。只有真实需求和验证证据证明收益时，才
 
 人类或其他上游系统提出目标，用户的 Agent 是常见调用主体。Skill 是能力说明与可靠调用层；少量内置 Node scripts 只负责需要重复、确定性执行的工作；服务端是权限和领域合同的最终强制层。目标解释、调用时机、动作组合与自主程度属于上层 Agent/宿主/Repo 规则，不是 cfKanban 产品策略。部署、协调、Owner 管理和 Coding 都只是同一个 Agent 的任务模式。
 
-Skill 可携带调用约定、references、经过验证的 helper 和一个本地只读查看器，但不能复制第二套领域规则。Skill 本身不是云端管理面，也不能替代远程凭据吊销、审计和恢复入口。
+Skill 可携带调用约定、references 和经过验证的 helper，但不能复制第二套领域规则。v0 使用服务端同实例 Web UI 作为人类直接表面，不再把本地只读查看器作为首发要求；Skill 本身也不能替代远程凭据吊销、审计和恢复入口。
 
 邀请页面是轻量 bootstrap 文档入口，不是日常管理 UI。Owner 对外只需复制类似“请阅读此 Invite URL 以加入 Project”的短消息；页面可提供可信 Skill 的安装/更新入口、操作说明和机器可读邀请元数据。页面 GET 不得产生兑换副作用。
 
 已确认的分工：
 
-- Agent Skills：公开日常 Issue、Owner 管理、context pack 渲染、错误恢复和可选本地只读 HTML 视图等能力；确定性操作由 bundle 内 Node scripts 承担，不发布独立 cfKanban CLI，也不替上层 Agent 制定日常工作流。
+- Agent Skills：公开日常 Issue、Owner 管理、context pack 渲染、Browser Launch 与错误恢复等能力；确定性操作由 bundle 内 Node scripts 承担，不发布独立 cfKanban CLI，也不替上层 Agent 制定日常工作流。
+- Web UI：通过 Agent 创建的一次性 Browser Launch URL 建立短期浏览器 Session；按当前 Principal 权限提供 Project 看板、Issue 轻量参与和 Owner 简单维护，不直接访问 D1。
 - Agent Skills bootstrap：从 canonical URL 的 stable pointer 发现 immutable release manifest，由 manifest 分别固定 portable Skill bundle 与 Service deployment bundle、宿主安装规则和兼容关系；任何本地写入前先展示来源、版本、digest、scope 和回滚边界。已安装副本/缓存不是版本真相，repo clone 只用于明确的源码试验。
 - 发行信任：首次安装信任官方 canonical HTTPS；不可覆盖的版本清单逐工件固定允许来源与 SHA-256 文件指纹，本地 receipt 用于后续来源连续性校验。marketplace/plugin 不能改写官方来源，安装、更新和降级不得自动执行。v0 明确不解决官方发布系统整体失陷，独立数字签名按公共分发或自动更新需求后置。
 - 首次部署默认无需参数表：在单一 Cloudflare account/profile 和 strict-zero 前提下，Agent 自动生成完整候选计划与安全/确定性参数；只有会改变账户、费用、域名、数据地域/合规或 release 来源的偏差才询问，用户通过一次计划授权接受最终值。
-- Worker Invite bootstrap：只提供邀请说明和兑换入口；可动态响应或使用 Static Assets，但不是远程管理页。
+- Worker Invite bootstrap：只提供邀请说明和 Invitation 兑换入口；它与受认证的日常 Web/Owner 管理面职责分开。
 - REST API：两者共同依赖的唯一业务合同。
 
 ## 成功标准
@@ -175,4 +187,4 @@ Skill 可携带调用约定、references、经过验证的 helper 和一个本�
 
 ## 当前产品讨论入口
 
-Foundation SPEC 与 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 暂不冻结。下一步按 [Agent-first Storyboard](user-storyboard.md) 用具体场景逐卡验收 URL bootstrap、首次部署、Workspace/Project、邀请与身份复用、Issue 原子能力、跨 Project 读取和恢复运维；场景不定义上层 Agent 工作流。服务端结论回写 Foundation，宿主、Skills/Node scripts 与部署体验结论回写 Agent Skills SPEC。
+[Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md) 与 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 已通过合同修订 12 固定极简 Web、Browser Launch/Session、Owner Credential 防锁死、Owner admin scope、Passkey 直登、单 Project Public Join、简单重入、三项 active quota、带首次默认档位的透明限流部署配置和统一错误归一化。下一步由 [Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与 API/Schema Draft 收敛交互和 wire/DDL；均不授权实现。

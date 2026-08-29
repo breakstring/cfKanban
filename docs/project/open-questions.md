@@ -2,7 +2,7 @@
 
 - 文档状态：Draft
 - 目的：只记录会实质改变产品或公共合同的选择
-- 最近更新：2026-08-28
+- 最近更新：2026-08-29
 
 ## 已确认并移出 P0
 
@@ -20,13 +20,13 @@
 - Q-003 已于 2026-08-27 确认：blocked 不作为 workflow status，而是与 status 正交的条件，并通过统一 `is_blocked` 投影呈现。未完成 `blocked_by` 关系自动贡献阻塞；人工 `blocked_reason` 通过 `report-blocked` 设置、通过 `clear-blocked` 显式清除；这些变化都不自动修改 status。
 - Q-004 已于 2026-08-27 确认：Owner 创建短期、一次性的 Bearer Invite URL，并复制简短话术通过线下渠道发送。接收方 Agent 读取邀请页面并使用可信 Skill：本地已有该部署实例的有效 Credential 时复用其 Principal，否则通过内置 Node 脚本创建 Principal/Credential 并安全保存在本地；随后原子兑换邀请所绑定的一个或多个 `reader | writer` Project Grants。邀请页面可以提供 Skill 安装/更新和操作说明，但 GET 不得消费邀请。
 - Q-005 已于 2026-08-27 确认：v0 固定 `backlog / todo / in_progress / done / canceled` 五个 status key，以及对应 category、顺序和 terminal 语义。Project 只能覆盖显示名称；不能增加、删除或重排状态，也不能自定义 transition graph。Agent 必须依据稳定 key/category，而不是显示名称推理。
-- Q-107 已于 2026-08-27 确认：只有唯一 Owner，或当前对目标 Project 具有有效 `writer` Grant 的 Principal 可以成为 assignee；`reader` 和无权 Principal 不可分配，assignment 不创建或扩大 Grant。Principal 被禁用、Grant 撤销或角色降为 reader 后，保留原 assignee 引用和 Issue status，读取投影返回 `assignee_available=false`、`needs_reassignment=true`，由 Owner 或 `writer` 显式重新分配或取消分配。
+- Q-107 已于 2026-08-27 确认并由 Q-225 修订：只有唯一 Owner，或当前对目标 Project 具有有效 `writer` Grant 的 Principal 可以成为 assignee；`reader` 和无权 Principal 不可分配，assignment 不创建或扩大 Grant。Grant 撤销或角色降为 reader 后，保留原 assignee 引用和 Issue status，读取投影返回 `assignee_available=false`、`needs_reassignment=true`，由 Owner 或 `writer` 显式重新分配或取消分配。
 - Q-108 已于 2026-08-27 确认并由 D-205 补充：Invitation 分为普通 Project Invite 与 Principal Recovery Invite。普通邀请只授予指定 Project Grants；本地没有对应有效 Credential 时只能创建新 Principal，不能凭名称恢复既有身份。Recovery Invite 仅由 Owner 按稳定 principal ID 创建，并在创建时固定不可互换的 `rotation | full_recovery` mode。前者要求旧 Credential 证明且只撤销该凭据，后者以一小时 Bearer Invite 授权并撤销全部先前 Credential；页面必须警告身份连续性、全部现有 Grants/assignee/历史和确切撤销范围。Owner 无法确认身份映射时必须创建新 Principal 并重新授权；参与者不能自行签发额外 Credential。
 - Q-109 已于 2026-08-28 确认：status 显示名称属于 Project 设置，只有 Owner 能修改；Owner 或目标 Project 的任意 `writer` 可带 expected version 在五个固定状态间任意显式转换，包括从 terminal 状态 reopen。每次转换记录旧状态、新状态和 actor；状态变化不自动改变 assignee 或 blocked 条件，转入 `done` 不能绕过 Q-101 最终确定的原子完成合同。
 - Q-101 已于 2026-08-28 确认：完成结果保存为结构化、不可变且不可删除的 `kind=completion` Comment，不建立独立 Completion 实体。`summary` 必填，`verification`、`artifacts`、`follow_ups` 可为空；complete 在一个原子单元中校验 version、追加记录、转为 `done` 并写 Event。reopen 保留旧记录，再次完成追加新记录，普通状态更新不能绕过 complete 直接转入 `done`。
 - Q-102 已于 2026-08-28 确认：v0 支持 `blocks / parent / related / duplicate`，并允许同一 Workspace 内跨 Project 建立全部四类关系，但禁止跨 Workspace。跨 Project 创建、软删除或恢复要求调用者同时对两端 Project 有 `writer`；读取只返回调用者同时可读两端的关系，不泄露无权 Project 或 Issue 的存在。
 - Q-103 已依据 2026-08-28 的常规规则授权确认：v0 不首发原子 assign-next；候选列表、一般 assign 与 assign-to-me 是独立能力。上层调用方可以自行组合，cfKanban 不规定选择或重试策略。
-- Q-104 已依据用户最初的轻 UI 方向和 2026-08-28 的常规规则授权确认：v0 权威维护入口为管理 API + Agent Skills，不要求部署端人类维护网页。服务端 Invite bootstrap 页面不属于管理面；Skill 可带本地只读查看器，但不是紧急控制面的唯一入口。
+- Q-104 的“v0 不要求部署端人类维护网页”已于 2026-08-29 被 D-215 替代：v0 必须提供同实例极简第一方 Web UI，服务 Owner 简单维护和参与者直接查看/轻量参与；本地只读查看器不再是首发要求。
 - Q-105 的独立 CLI 方案已于 2026-08-28 被替代：v0 仍以 REST/OpenAPI 为权威合同，但不发布独立 cfKanban CLI；Agent Skills 直接调用 API，重复且需要确定性的逻辑进入 Skill 内置 Node.js/TypeScript scripts，远程 MCP 后置。
 - Q-106 已于 2026-08-28 确认并按 D-190/D-195 修订：v0 提供部署级、按当前 Principal 授权过滤的跨 Workspace/Project Issue 聚合读取；只读聚合不提供跨范围批量写入或 assign-next。Project filter 在 API 上可省略；Skill 在已知工作上下文时强烈推荐一个或多个 `workspace + project` scope，并呈现 resolved scope 与范围警告，但不规定上层何时省略过滤。
 - Project Grant expiry 的前一方案已于 2026-08-28 被替代：Project Grant 不设置失效日期；每个 `(principal_id, project_id)` 只有一条当前记录，通过 Owner 显式变更角色、撤销或重新授予。普通 Project Invite 不改写已有有效 Grant；已撤销 Grant 可按新邀请重新授予。Invitation 自身仍保持短期、一次性和可撤销。
@@ -35,13 +35,17 @@
 - Idempotency/error 已依据 2026-08-28 的常规技术规则授权确认：非天然幂等的创建和命令 POST 强制 `Idempotency-Key`，记录保留 24 小时，且鉴权先于响应重放。结构化错误提供稳定 `code`、`retryable` 和 `recovery`；无权发现的资源按 404 隐藏存在性，version/cursor 冲突要求刷新而非盲重试。
 - 普通 Comment 已依据 2026-08-28 的常规 Kanban 规则授权确认：追加后不可原地编辑，可由 writer 软删除/恢复；纠错通过带 `reply_to_comment_id` 的新 Comment 表达。completion comment 不可编辑、软删除或恢复。
 - assign-to-me 已依据 2026-08-28 的常规 Agent API 规则授权确认：v0 保留显式命令，由服务端从当前 Credential 推导 Principal，避免客户端复制自身 ID；它只设置 assignee，不产生 lease 或独占权。
-- Credential expiry 已于 2026-08-28 确认：v0 Credential 不设置自动失效日期，只能显式撤销、轮换或随 Principal disable 失效；Invitation 是唯一自动过期的 bootstrap 能力。`last_used_at` 可低频、滞后更新，仅供运维提示，不参与鉴权或自动撤销。
+- Credential expiry 已于 2026-08-28 确认并由 Q-225 修订：v0 Credential 不设置自动失效日期，只能显式撤销、轮换或 full recovery 中的撤销失效；Invitation 是唯一自动过期的 bootstrap 能力。`last_used_at` 可低频、滞后更新，仅供运维提示，不参与鉴权或自动撤销。
 - Invitation 时效已于 2026-08-28 确认：普通 Project Invite 固定有效 7 天，Principal Recovery Invite 固定有效 1 小时；v0 不支持自定义或延长，过期后由 Owner 重新创建。
 - 资源上限已依据 2026-08-28 的常规 API 规则授权确认：JSON 请求最大 128 KiB，Issue body 最大 64 KiB，普通 Comment 和 completion payload 最大 32 KiB；列表默认 20、最大 100，Agent context 最大 64 KiB 并通过 `truncated`/cursor 续读。大日志与附件使用外部 artifact 引用。
 - Q-201 已于 2026-08-28 随 SB-01 确认并由 Q-221/D-209 完善：canonical 项目站点提供只读 bootstrap document，把 stable pointer 解析为 immutable release manifest；manifest 分别固定可校验的 Skill bundle 与 Service deployment bundle。marketplace/plugin 可以作为便捷入口但不是唯一真相源，不执行远程 pipe-to-shell。
 - Q-221 已于 2026-08-28 确认：bootstrap 的 stable pointer 只用于发现；解析后的 immutable release manifest 是具体版本真相源，并分别固定 Skill bundle 与 Service deployment bundle 的 source/version/digest 和兼容关系。已安装 Skill 与用户级缓存只是可验证副本，repo clone 只用于明确的非 canonical 源码试验；普通 stable 部署不从当前工作树或业务 Repo 隐式取材。
 - Q-222 已于 2026-08-28 确认：首次部署默认零参数生成 strict-zero 计划。单一 Cloudflare account/profile 明确时，Agent 自动解析 stable bundle、提议无冲突资源名并生成非人类决策参数；用户只对完整 plan 做一次授权。只有 account 歧义，或 custom domain、付费能力、数据地域/合规、非 stable/源码试验等结果性偏差才询问；未知资源不能接管，默认另提名称。
 - Q-223 已于 2026-08-28 确认：v0 首次安装信任官方 canonical HTTPS；immutable manifest 逐工件限制允许来源并记录 SHA-256 文件指纹，本地 receipt 保存发布来源与摘要，更新或降级必须验证来源连续性。marketplace/plugin 不能覆盖 canonical 来源，安装、更新和降级均需展示精确目标并取得授权。该机制不防官方发布系统整体失陷；独立数字签名、密钥轮换和撤销等到公共分发、自动更新或托管分离出现时再评估。
+- Q-224 已于 2026-08-29 确认并由 Q-225/Q-227 修订：Browser Launch 固定 5 分钟、一次性；Web Session 固定 8 小时、不滑动续期且无 refresh，绑定 Principal、源 Credential 与 target scope。源 Credential revoke、Session revoke 或 expiry 立即失效，Grant/容器逐请求校验；Project/Issue launch 只访问对应 Project，Owner admin launch 进入实例级管理与数据面，但默认不自动查询全部 Issue。过期后由 Agent 重新创建 launch，不接受网页 Credential。
+- Q-225 已于 2026-08-29 确认：v0 移除 Principal disable/enable/delete。Credential revoke 停止认证，Project Grant revoke 停止具体 Project 权限，Principal Recovery Invite 恢复同一身份；Principal、assignment 与历史稳定保留，不引入重新启用旧 Credential 的安全歧义。
+- Q-226 已于 2026-08-29 确认：Web 只撤销参与者 Credential，不提供 Owner Credential revoke/rotation。Owner 正常轮换由 `cfkanban-admin` 先把替代 secret 安全写入本地，再执行 Bearer-only 原子 rotation；全部 Owner Credential 丢失仍只走 `cfkanban-deploy` 的部署外恢复，避免 Web 撤销当前或最后一个 Owner Credential。
+- Q-227 已于 2026-08-29 确认：Owner `admin` Session 默认进入 Overview 且不自动查询全部 Issue，但可在显式选择后进入实例内任意 Workspace/Project 数据面；普通 Project/Issue Session 继续限制单 Project。未认证实例首页提供产品介绍与指向 canonical bootstrap document 的可复制 Agent 部署话术，不接受长期 Credential。
 - Agent 主体与执行载体已于 2026-08-28 确认：只建模“林的 Agent”“陈的 Agent”这类用户直接使用的 Agent；部署、Owner 管理、Coding 和协调只是任务模式。v0 不发布独立 cfKanban CLI，确定性逻辑使用 Skill bundle 内少量 Node.js/TypeScript scripts；Host Adapter 不作为独立角色。
 - SB-02 的 Node 环境所有权已于 2026-08-28 确认：Skill 可以探测和引导，但 Node 的 version manager、安装方法、路径和全局默认版本由用户决定；已有兼容版本优先复用，stable Skill release 只声明经验证的 semver range。
 - Q-206 已于 2026-08-28 确认：用户选定 Node 安装方式后，Agent 先展示精确计划；获得授权后可以执行并在新 shell/session 中读回验证。授权不隐含新增 package source/version manager、提权、修改 PATH/shell profile、改变全局默认 Node 或卸载旧版本；这些变化必须另行确认。
@@ -56,7 +60,7 @@
 - Q-211 已于 2026-08-28 确认：Project 创建后凭默认五状态立即可用，不设初始化门槛且不默认创建 Labels。v0 只提供一个可选有界 context，由 Owner 修改、Project reader/writer 读取；它是与稳定合同、本地 Repo 规则和当前授权分层呈现的非可信背景，不提供 instruction/prompt 字段，也不能授权任何外部动作。
 - Q-212 已于 2026-08-28 确认并按 D-195 修订：v0 不提供公开 batch/bulk 写入，每次 API 调用只表达一个原子领域操作，并有独立幂等、readback 与结构化恢复合同。复合目标的拆分、顺序、停止、续做和汇报属于上层编排；服务不自动回滚或删除其他已成功操作。
 - Q-213 已由 D-198/D-203/D-204 分层修订：Project Invite 是 Owner-only 原子能力，API 必须逐项显式携带 `reader | writer`；`cfkanban-admin` 在上层未指定 role 时推荐 `writer`，明确只读时使用 `reader`，更具体规则可覆盖。preview/确认属于上层策略；完整 Bearer URL 只进入必要的可复制话术，不写日志/receipt，cfKanban 不负责外部发送。
-- Q-214 已于 2026-08-28 确认：v0 Principal 不区分 human/agent kind；服务端保存 immutable principal ID、非唯一 display name、version 和状态。ID 用于授权、assignee、审计和引用，名称仅展示且不能用于恢复。首次创建缺少名称时 Agent 只询问这一项，不静默读取 OS/Git/hostname/Agent account，也不按 Agent 宿主重复创建身份。
+- Q-214 已于 2026-08-28 确认并由 Q-225 修订：v0 Principal 不区分 human/agent kind；服务端保存 immutable principal ID、非唯一 display name 和 version，不设置 disabled 状态轴。ID 用于授权、assignee、审计和引用，名称仅展示且不能用于恢复。首次创建缺少名称时 Agent 只询问这一项，不静默读取 OS/Git/hostname/Agent account，也不按 Agent 宿主重复创建身份。
 - Q-215 已于 2026-08-28 确认并由 D-208 更新命名：不新增 profile Skill；默认日常 Skill `cfkanban` 通过 `GET /api/v1/me` 查看身份，通过带 expected version 的 `PATCH /api/v1/me` 只修改自己的非空 display name。改名写 Audit/Event，不改变 ID、Credential、Grants、assignment 或历史；Owner 不能代改，本地非秘密 metadata 以服务端为准。
 - Q-216 已于 2026-08-28 确认：`.cfkanban/` 可以保存多个上游实例，但每个执行环境对每个 `instance_id` 只维护一个当前本地 Principal/Credential 槽位。同一实例出现多个不同 Principal 是冲突，必须停止并整理，不建立日常身份选择器；同一 Principal 的 Credential 轮换过渡不算多个身份。
 - Q-217 已于 2026-08-28 确认：本地实例记录以 immutable `instance_id` 为稳定主键，trusted API origin 是可变安全 metadata。Credential 只发送给当前已信任 origin；新 origin 声称同一 ID 时，必须在认证前展示旧/新地址与影响并取得显式 rebind 授权。仅 Invite/展示域名变化而 API origin 未变时无需 rebind。
@@ -74,13 +78,46 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 
 用户在 SB-01 复核中指出：原 Storyboard 虽然面向 Agent，操作主体仍然是人；随后进一步明确 cfKanban 不应成为上层 Agent 的最终工作流协调器，但必须为上层提供足够的默认建议和全局约定。Storyboard 因此用人/Agent 场景同时验收原子能力、Agent Guidance 和安全协议。独立的 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 负责能力暴露、可覆盖建议以及部署/凭据安全协议，不替上层决定日常 Issue 自主策略。
 
-## P0：Agent-first Bootstrap 与 Skill 体验
+## P0：当前关键产品合同
 
 ### Q-202：Skill 套件边界
 
 - **已确认**：首发固定 `cfkanban / cfkanban-admin / cfkanban-deploy` 三个按工作场景发现的 Skill。`cfkanban` 是默认日常 Issue/身份/scope 入口；`-admin` 是 Owner 应用管理入口；`-deploy` 是 Cloudflare 部署、升级、检查和 migration 安全入口。
 - **命名边界**：三者不是 Agent 类型、Principal kind 或服务端 role。同一个用户的 Agent 可以按任务调用不同 Skill，真实权限始终由 Credential、Owner 身份和 Project Grants 决定。
 - **实现约束**：共享合同和确定性逻辑进入 bundle references/modules/scripts，不因拆成三个入口而复制；后续如需合并或重命名属于公共 Agent 体验变更，必须重新决策。
+
+### Q-228：人类后续直接登录方式
+
+- **用户问题**：固定 8 小时 Session 到期后，每次都让 Agent 重新创建 Browser Launch 有摩擦；但把 `.cfkanban/` 的长期 Bearer Credential 粘贴进网页会扩大剪贴板、页面脚本、扩展和误填风险。
+- **已确认**：用户于 2026-08-29 同意 SB-30。首次通过 Agent Launch 建立 Session 后，用户显式注册仅用于 Web 的 Passkey；以后 Passkey 认证只签发新的固定 8 小时 Session，不创建 API Credential、Grant 或 refresh token。网页始终不接受长期 Credential。
+- **生命周期**：首次和补充登记都要求 Agent-launch Session；同一 Principal 可以有多个 Passkey，本人可以列举/撤销，Owner 可以撤销参与者 Passkey，全部写安全 Audit。撤销 Passkey 只使其来源 Sessions 失效，不撤销 API Credential 或 Grants。
+- **恢复边界**：Passkey 受实例 RP ID/domain 约束；丢失、不兼容或域名变化时继续以 Agent Browser Launch 恢复。不能按 display name 绑定或恢复身份。
+
+### Q-229：公开自助加入
+
+- **已确认**：用户于 2026-08-29 否决 Team Join，只保留 Public Join。Owner 可以逐个 Project 公开并同时展示多个 Project；访客每次选择一个 Project 与 `reader|writer`，只执行一条 Project Grant 的原子 self-join。普通 7 天一次性 Invitation 继续用于定向邀请。
+- **权限边界**：公开 `writer` 由访客主动选择；Owner 开启 Public Join 时必须明确接受未知互联网参与者的写入、软删除和 D1 成本风险。已有同等或更高 Grant 幂等返回，`reader` 可提升为 `writer`，`writer` 选择 `reader` 不自动降权。
+- **公开边界**：首页只列 Owner 开启的 Project 显示名称、有界公开摘要与 role 选择，不暴露内部 context、Issue、成员或其他资源；Public Join 不携带长期 Credential，也不创建多 Project bundle。
+
+### Q-230：Public Join 撤权后重入（已确认）
+
+- **结论**：用户于 2026-08-29 否决逐 Principal 重入阻止，避免引入 blacklist/denylist。Project 仍公开时，被撤销 Grant 的 Principal 可以再次 self-join；同一身份复用唯一 Grant 行。
+- **Owner 操作**：如果不希望任何人继续公开加入，Owner 关闭该 Project 的 Public Join。关闭入口不撤销既有 Grants；单独撤销 Grant 也不改变公开 Policy。
+
+### Q-231：Public Project 成本上限
+
+- **已确认**：开启 Public Join 前，Owner 必须显式设置 Project 的 Issue、Comment、Principal 三项 active quota。Web 可以预填建议值，例如 50/500/50，但 API 没有静默默认。
+- **Issue/Comment 语义**：只计算当前 active 工作集。Issue soft delete 释放一个 Issue slot，并使其当前有效 Comments 不再占用 Comment quota；单独 soft delete Comment 释放一个 Comment slot。restore Issue 时需要同时容纳该 Issue 与随之重新有效的 Comments，任何一项不足都整体失败。completion comment 不可删除，所属 Issue active 时持续占用。
+- **Principal 语义**：统计 Project 当前 active 非 Owner Grants，不区分定向 Invitation、Owner 手工授予或 Public Join 来源。Grant revoke 释放 slot；regrant/self-join 重新占用；reader/writer 变化不改变数量。新 Principal/Credential/Grant 必须与 quota 检查原子提交，满额不能遗留孤立身份。
+- **边界**：active quota 解决“Project 满了无法继续”的体验并限制当前可用规模，但 soft-deleted rows 仍保留在 D1，不能宣称释放物理存储。反复创建/删除的长期增长由频率门控减缓；物理 retention/purge 仍是后置决策。
+
+### Q-232：实例级请求频率门控如何配置（已确认）
+
+- **已确认要求**：Owner 必须能查看当前生效的全局限流策略，并能通过一个明确入口修改。至少包含单 Principal、实例总请求和未认证/Public Join 路径三个门槛；触发时返回 429、Retry-After 与安全的策略摘要。
+- **平台事实**：Workers Rate Limiting binding 的 limit/period 位于 Wrangler 部署配置，period 只支持 10 或 60 秒；运行时可以按 Principal、route 或实例 key 调用。它按 Cloudflare location 计数、宽松且最终一致，适合抵御突发而不适合精确配额。
+- **已确认载体**：使用原生 Rate Limiting bindings；Owner 管理面只读展示生效值、配置来源与近期 429 摘要，修改由 `cfkanban-deploy` 生成并执行明确的 Worker 配置部署。它不修改 Project 三项 D1 quota，也不执行 D1 migration。
+- **首次部署默认档位**：单 Principal 动态 API 为 120 次/60 秒；实例全部动态 API 为 300 次/60 秒；未认证敏感操作为 30 次/60 秒。静态资产绕过应用限流；普通公开读取只受实例门控，Public Join redeem、WebAuthn challenge/verify 等未认证敏感操作同时受第三道门控。每个请求叠加适用门控，任一失败即返回 429 与 Retry-After。
+- **边界**：三个数字是可通过重新部署覆盖的产品初始值，不是 Cloudflare 平台上限。原生计数按 location 近似维护，不能防止分布式低速滥用，也不能替代 D1 active quota；若未来要求 Web 即时修改或严格全球计数，再以新版本评估 Durable Object。
 
 ## P2：有真实用量后再讨论
 
@@ -97,4 +134,4 @@ Foundation 领域合同的原 P0 问题已经确认。Project Grant、Invitation
 
 ## 推荐下一轮讨论
 
-SB-01～SB-23 与 SB-24 中保留的健康、配额和审计部分已经复核；原完整导出/整库恢复场景由 D-213 取消。Foundation SPEC 与 Agent Skills & Bootstrap SPEC 已按 D-212 冻结并形成修订 2。当前正在从 Frozen Foundation 推导 Draft API/Schema SPEC；这仍不授权实现或 Linear 写入。
+SB-30/SB-31 已确认；D-229～D-231 形成合同修订 10，D-232 形成修订 11，D-233 又形成修订 12，固定原生限流部署配置、零参数档位与统一错误归一化。下一轮继续收敛 Web UI 与 API/Schema 的 CSRF、OpenAPI、DDL/索引等 wire 细节；仍不授权实现或 Linear 写入。

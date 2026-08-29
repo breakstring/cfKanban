@@ -1,12 +1,12 @@
 # Agent-native Kanban Foundation SPEC
 
 - 文档状态：Frozen
-- 合同修订：2
+- 合同修订：12
 - Roadmap：R0
 - Linear：[cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f)
-- 最近更新：2026-08-28
+- 最近更新：2026-08-29
 - 冻结日期：2026-08-28
-- 最近修订：2026-08-28（D-213）
+- 最近修订：2026-08-29（D-233）
 - 替代文档：无
 
 ## 1. 目的
@@ -17,7 +17,7 @@
 
 ## 2. 已确认的产品约束
 
-- Agent 是主要使用者，人类 UI 不是核心产品表面。
+- Agent 是主要使用者，但 Agent-first 不等于 Agent-only；v0 同时提供极简第一方 Web UI，作为人类直接查看、轻量参与和 Owner 简单维护的必要表面。
 - 系统基于 Cloudflare，并优先在免费层内运行。
 - Project、Issue、Issue 状态、评论和标签属于核心能力。
 - 应借鉴 Linear 的清晰领域语义，但不照搬其完整组织层级和人类 UI。
@@ -33,6 +33,12 @@
 - v0 不采用 Lease、续租、fencing 或抢占机制；任何 Project `writer` 都可以协作写入，普通并发更新由 version/CAS 防止静默覆盖。
 - blocked 与 status 正交，并通过统一 `is_blocked` 投影呈现；依赖或人工原因的变化都不自动改变 status。
 - 参与者通过 Owner 创建的短期一次性 Bearer Invite URL bootstrap；普通 Project Invite 固定有效 7 天，Principal Recovery Invite 固定有效 1 小时。Agent 复用该实例的本地 Principal，或创建 Principal/Credential，再兑换邀请绑定的 Project Grants。
+- 人类首次通过 Agent Browser Launch 进入后可以登记 Passkey；Passkey 是 v0 唯一免 Agent 的直接 Web 登录方式，不是 API Credential 或 Project Grant。网页永远不接受长期 Credential 粘贴或上传。
+- Owner 可以逐个 Project 开启 Public Join 并同时公开多个 Project；访客每次选择一个 Project 与 `reader | writer`，只执行一条 Project Grant 的原子 self-join。v0 不提供 Team Join 或多 Project 公开授权。
+- Public Join 不建立逐 Principal 重入阻止。Project 仍公开时，被撤销 Grant 的 Principal 可以再次加入；Owner 通过关闭 Project 的 Public Join 停止新的自助加入。
+- 开启 Public Join 前，Owner 必须为 Project 显式设置 Issue、Comment 与 Principal 三项 active quota。Issue/Comment 软删除与 Grant revoke 释放额度；restore/regrant 重新占用并在额度不足时原子失败。
+- 实例必须具有 Owner 可见的请求频率策略，至少覆盖单 Principal、实例总请求与未认证/Public Join 路径。请求门控用于近似抗滥用，不能替代 D1 中的精确业务 quota。
+- 首次部署必须自带零参数限流档位：单 Principal 动态 API 120/60 秒、实例全部动态 API 300/60 秒、未认证敏感操作 30/60 秒。Owner Web 只读显示，修改通过 `cfkanban-deploy` 发布 Worker 配置，不触发 D1 migration。
 - 参与者 Credential 轮换/全失恢复使用 Owner 创建、按稳定 principal ID 绑定既有 Principal，并固定为 `rotation | full_recovery` 的 Recovery Invite；它与普通 Project Invite 严格分离，参与者不能自行签发额外 Credential。
 - v0 固定五个 workflow status key/category/order/terminal 语义；Project 只可覆盖显示名称且仅 Owner 可修改。Owner 或 Project `writer` 可带 expected version 在固定状态间任意显式转换和 reopen，Agent 不依赖显示名称推理。
 - assignee 只能是唯一 Owner，或当前对目标 Project 具有有效 `writer` Grant 的 Principal；资格失效后保留引用并投影为待重新分配。
@@ -71,6 +77,8 @@
 
 Owner bootstrap、轮换和恢复不创建新身份：明文 Credential 只在签发时展示一次，D1 只保存安全散列；正常轮换先签发替代 Credential 再撤销旧凭据。部署外恢复不复活旧 Credential，也不改变 `owner_principal_id`。
 
+Owner Credential 生命周期不能通过第一方 Web Session 管理。Web 只读展示 Owner Credential 非秘密摘要，且通用 Credential revoke 必须拒绝 Owner Principal 的 Credential。正常轮换由 `cfkanban-admin` 在替代 secret 已安全写入本地受限文件后，以当前 Owner Bearer Credential 调用原子 rotation；服务端在同一业务单元中建立替代 Credential 并撤销当前旧凭据，不产生“最后一个 Owner Credential 被先撤销”的窗口。全部 Owner Credential 丢失仍只允许部署外恢复。
+
 服务端 Principal 同时保存不可变 `principal_id` 与可变、非唯一的 `display_name`。前者是授权、assignee、Grant、Event/Audit 和跨用户引用的唯一稳定身份；后者只用于展示，允许重名且不能参与认证、授权、去重、恢复或本地 Credential 选择。任何跨用户的 Principal/assignee 摘要都必须同时返回 `principal_id` 与当前 `display_name`，不能只返回名称。v0 不保存 `human | agent` Principal kind；Codex、Claude Code 等 Agent 宿主不是 Principal 类型。
 
 ## 4. 领域模型
@@ -80,16 +88,20 @@ Owner bootstrap、轮换和恢复不创建新身份：明文 Credential 只在�
 | 实体 | 职责 | 关键字段或约束 |
 | --- | --- | --- |
 | Workspace | 部署实例内的显式命名空间与候选隔离边界 | immutable ID、稳定 key、display name、deleted_at、deleted_by_principal_id、version |
-| Project | Workspace 内的 Issue 命名空间与权限边界 | immutable ID、workspace ID、稳定 key、name、可选有界 context、deleted_at、deleted_by_principal_id、version |
+| Project | Workspace 内的 Issue 命名空间与权限边界 | immutable ID、workspace ID、稳定 key、name、可选有界 context、可选 Issue/Comment/Principal active limits、deleted_at、deleted_by_principal_id、version |
 | Workflow Status | Issue 所处工作阶段 | 固定五个 key/category/position/terminal；Project-scoped display name override |
 | Issue | 可追踪工作单元 | immutable ID、实例级全局 issue number 与 `CFK-<number>` identifier、project ID、title、body、status、priority (`none | low | medium | high | urgent`)、可空 assignee principal ID、deleted_at、deleted_by_principal_id、version |
 | Label | 正交分类 | project scope、name 唯一、color 可选 |
 | Issue Relation | 工作之间的语义关系 | parent、blocks、related、duplicate |
 | Comment | 协作者可读内容或结构化完成记录 | kind (`standard | completion`)、author、body/structured payload、可空 reply_to_comment_id、deleted_at/tombstone、created_at；全部 append-only |
-| Principal | 部署实例内的稳定调用主体 | immutable ID、非唯一 display name、version、disabled_at |
+| Principal | 部署实例内的稳定调用主体 | immutable ID、非唯一 display name、version；v0 不提供 disable/delete 生命周期 |
 | Credential | Principal 的可验证认证材料 | token prefix、hash、principal ID、issued_at、可滞后 last_used_at、revoked_at、revoked_by；无 expiry |
 | Project Grant | 非 Owner Principal 对 Project 的独立授权 | immutable ID、principal ID、project ID、role (`reader | writer`)、revoked_at、revoked_by、version、唯一 `(principal_id, project_id)` |
 | Invitation | Owner 发起的参与者 bootstrap 或恢复能力 | kind (`project_grant | principal_recovery`)、code hash、Project Grants 或 bound principal、Recovery mode (`rotation | full_recovery`，仅恢复邀请)、固定策略计算的 expires_at、revoked_at、redeemed_at、redeemed_by、created_by_owner |
+| Public Join Policy | Owner 对单个 Project 开放自助加入的当前策略 | project ID 唯一、公开 opaque ID、有界 public summary、enabled/disabled metadata、version；访客每次明确选择 `reader | writer` |
+| Browser Launch | 把已认证 Principal 的现有权限短时带入浏览器 | opaque code hash、source credential、明确 target、固定 expires_at、redeemed_at/revoked_at、created_at |
+| Web Authenticator | 同一 Principal 的 Passkey 公钥认证方法 | WebAuthn credential ID、公钥、RP metadata、counter/transport metadata、created/last-used/revoked；私钥不进入服务端 |
+| Web Session | 浏览器同源会话，不是新身份或新授权 | token hash、principal、source kind/id（Credential launch 或 Web Authenticator）、scope、expires_at、revoked_at、last_seen_at；权限逐请求读取当前事实 |
 | Event | 不可变领域事实 | 部署级单调 sequence、type、actor、subject、workspace/project scope、payload、created_at |
 | Idempotency Record | 写请求重放保护 | principal、key、request fingerprint、stored response、expiry |
 
@@ -213,11 +225,11 @@ Event 内部使用部署级严格单调 sequence，跨 Workspace/Project 共享�
 - 长期 Credential token 不进入任何 URL、Issue 正文、Skill 文档、日志或 Git。短期一次性 Invitation code 可以作为 Invite URL 的组成部分，但整个 URL 在兑换前都必须按 Bearer secret 处理。
 - 客户端本地以 immutable `instance_id` 定位实例记录，但 Credential 只能发送到该记录当前已信任的 API origin；远端自报相同 `instance_id` 不能自行扩大信任。已信任 origin 返回不同 ID 时停止，新 origin 声称已有 ID 时必须先由用户显式 rebind，不能在确认前发送认证材料。
 - D1 只保存 token 的安全散列和用于定位的非秘密 prefix；明文仅签发时展示一次。
-- v0 Credential 不设置自动失效日期；只有显式 revoke、正常 rotation 中撤销旧 Credential，或 Principal disable 才使其失效。未来强制定期轮换只能作为明确启用的部署 profile，不能默默改变 v0 核心合同。
+- v0 Credential 不设置自动失效日期；只有显式 revoke 或正常 rotation/full recovery 中撤销旧 Credential 才使其失效。未来强制定期轮换只能作为明确启用的部署 profile，不能默默改变 v0 核心合同。
 - `last_used_at` 只用于 Owner 运维判断，可以按最多每日一次的低频条件更新并允许滞后；它不能参与鉴权、自动撤销或自动轮换，避免把普通读取放大为每请求 D1 写入。
 - Principal 由验证后的 Credential 推导，客户端不能用 Header 覆盖。
 - Credential 的职责止于认证 Principal；非 Owner 的业务权限和角色从独立 Project Grant 读取，Owner 的部署级能力由唯一 Owner 身份推导。
-- 吊销一个 Credential 只使该认证材料失效；禁用 Principal 才会使其所有 Credential 和 grants 整体失效。
+- v0 不提供 Principal disable/enable/delete。全局停止某 Principal 的认证使用 Credential revoke；停止某个 Project 的访问使用 Grant revoke；身份、assignment 与历史引用保持稳定，恢复认证使用 Principal Recovery Invite。
 - 同一 Principal 的所有有效 Credential 共享同一套 effective permissions；需要不同权限的 Codex、Claude Code 或其他运行主体必须使用不同 Principal，而不只是同一 Principal 的不同 Token。
 - 任一 Credential 泄露都会暴露该 Principal 当前全部有效 grants，因此 Principal 粒度也是实际 blast-radius 边界。
 - `X-Agent-Session-ID` 可作为可选运行标签，但不参与权限、封禁或可靠审计。
@@ -234,7 +246,7 @@ Event 内部使用部署级严格单调 sequence，跨 Workspace/Project 共享�
 
 非 Owner 只使用这两个固定 role，不首发 maintainer、delete、任意 scope 或 policy expression。Project Grant 把一个 role 赋给 Principal 和一个明确 Project；同一 Principal 可以拥有任意多个 Project Grants，但每个 `(principal_id, project_id)` 只有一条当前记录。Grant 不设置失效日期；角色、撤销和重新授予使用 version/CAS 更新同一行并留下 Audit/Event，历史事件记录 grant ID、grant version 和当时的 effective capability 摘要。
 
-Grant 有效性只要求 Principal 未禁用、Project/Workspace 未暂停且 Grant 未撤销。只有 Owner 可以创建、变更角色、撤销或重新授予；参与者不能续期或自助改变 Grant，因为 v0 根本不存在 Grant expiry/renewal 概念。
+Grant 有效性只要求 Project/Workspace 未暂停且 Grant 未撤销。只有 Owner 可以创建、变更角色、撤销或重新授予；参与者不能续期或自助改变 Grant，因为 v0 根本不存在 Grant expiry/renewal 概念。
 
 鉴权流程必须先由 Credential 认证 Principal。若 Principal 是唯一 Owner，则无需查询 Project Grant，直接获得全部控制面和 Project 数据面能力，并以 `authorized_via=deployment_owner` 审计。其他 Principal 再用请求中的 Project 和 D1 中的有效 Project Grant 计算允许动作。Workspace 只通过 Project 归属参与寻址和隔离，不产生继承权限；参与者 API 只返回 Principal 已获 Project Grant 的资源。
 
@@ -242,15 +254,14 @@ v0 不支持 Workspace grant、向下继承、显式 deny 或多条规则叠加�
 
 只有 Owner 可以创建或撤销 Invitation，并创建、变更和撤销 Project Grant。首次参与者 bootstrap 和后续 Credential 轮换/全失恢复分别按 5.4、5.5 执行。`writer` 不能邀请其他参与者、签发额外 Credential、改变 grants，也不能创建、软删除或恢复 Workspace/Project 容器。
 
-### 5.3 三种撤销语义
+### 5.3 两种撤销语义
 
 | 操作 | 语义 |
 | --- | --- |
 | Revoke Credential | 只使这份认证材料失效；同 Principal 的其他 Credential 和 Project Grants 不变 |
-| Disable Principal | 停用整个身份；其全部 Credential 立即不可用，Project Grants 保留用于历史审计 |
 | Revoke Project Grant | 该 Principal 的所有 Credential 都失去目标 Project 的对应能力；其他 Project Grants 不受影响 |
 
-Credential 轮换不改变 Issue assignee、幂等记录和历史事件中的 Principal。Principal disable、Project Grant 撤销或角色降为 `reader` 不会自动改写历史 assignment 或 Issue status；读取时返回 `assignee_available=false`、`needs_reassignment=true`，等待 Owner 或目标 Project `writer` 显式重新分配或取消分配。
+Credential revoke/轮换不改变 Issue assignee、Project Grants、幂等记录和历史事件中的 Principal。Project Grant 撤销或角色降为 `reader` 不会自动改写历史 assignment 或 Issue status；读取时返回 `assignee_available=false`、`needs_reassignment=true`，等待 Owner 或目标 Project `writer` 显式重新分配或取消分配。
 
 ### 5.4 Project Invite URL bootstrap
 
@@ -282,7 +293,7 @@ v0 采用用户可直接复制的 `/invite?code=<opaque>` 形式。响应必须�
 Principal Recovery Invite 与普通 Project Invite 是不同的安全能力：
 
 - 只有 Owner 可以创建，`kind=principal_recovery`，必须用不可变 `principal_id` 显式绑定一个既有 Principal，并在创建时显式固定不可变的 `mode=rotation | full_recovery`；邀请不携带新的 Project Grants，两种模式不能在兑换时互换、降级或升级。
-- Owner 的只读 Principal 查找可以按精确 `principal_id`、display name 文本和 Project membership 过滤。候选摘要必须同时显示完整 `principal_id`、当前 display name、Principal 状态、创建时间、Project Grant 摘要、当前 assignee 数、active Credential 数，以及 Credential 的非秘密 fingerprint/last-used 摘要；display name 可重名且只能帮助查找，创建请求永远只接受 `principal_id`。
+- Owner 的只读 Principal 查找可以按精确 `principal_id`、display name 文本和 Project membership 过滤。候选摘要必须同时显示完整 `principal_id`、当前 display name、创建时间、Project Grant 摘要、当前 assignee 数、active Credential 数，以及 Credential 的非秘密 fingerprint/last-used 摘要；display name 可重名且只能帮助查找，创建请求永远只接受 `principal_id`。
 - 页面和 Agent 确认必须醒目标明：兑换者将取得该 Principal 的身份连续性，并继承其全部现有 Project Grants、assignee 关系和历史；不能把它伪装成普通“加入 Project”邀请。
 - `rotation` 要求接收方同时使用该 bound Principal 的一个 active Credential 认证；新 Credential 成功建立后，在同一业务原子单元中只撤销本次用于认证的旧 Credential，其他 active Credential 保持有效。缺少或身份不匹配时返回结构化错误，不消费邀请，也不能自动改走 `full_recovery`。
 - `full_recovery` 不要求旧 Credential 证明，固定有效 1 小时的一次性 Bearer Recovery Invite 本身就是 Owner 授予的恢复能力；新 Credential 成功建立后，在同一业务原子单元中撤销该 Principal 的全部先前 Credential。即使接收方现场又找到了旧 Credential，也不能把该邀请降级为只撤销一份的轮换。
@@ -295,6 +306,36 @@ Recovery Invite 使用与 Project Invite 相同的一次性、短期、hash-only
 两类 Invitation 都只在服务端当前时间严格早于 `expires_at` 时可兑换；`now >= expires_at` 返回 `INVITATION_EXPIRED`，不消费邀请，也不执行部分写入。
 
 共享 Master Token + `X-Agent-ID` 不作为默认安全模式。Cloudflare Access 可以作为未来部署外层增强，但不替代应用内 Principal、Invitation 和 Project Grant。
+
+### 5.5.1 Public Join
+
+Public Join 与一次性 Invitation 是两种不同能力。Owner 可以对多个 Project 分别开启或关闭 Public Join；公开发现只列出已开启 Project 的显示名称、有界 public summary、公开 opaque ID 和 `reader | writer` 选择，不泄露 Workspace/Project key、内部 context、Issue、成员或其他未公开事实。v0 不提供 Team Join、群组成员模型或一个动作授予多个 Project。
+
+一次 Public Join 请求只针对一个公开 Project 与一个显式 role。未认证的新参与者由可信 Agent 本地生成并保存 Principal/Credential 所需 secret，再执行原子 self-join；已有 Credential 或 Passkey Session 的 Principal 复用当前身份。服务端在一个业务原子单元内校验 Policy/Project 当前有效、认证或新身份材料、幂等键和现有 Grant，然后最多建立或更新一条 `(principal_id, project_id)` Grant 并写 Event/Audit。Public Join URL/话术不是 Bearer secret，Grant 不带 expiry。
+
+无 Grant 时按所选 role 建立；已有同等或更高权限时幂等返回当前权限；已有 `reader` 选择 `writer` 时允许提升；已有 `writer` 选择 `reader` 不自动降权。Owner 开启 Public Join 必须明确接受访客可选择 `writer`，即未知互联网参与者可以修改、评论、移动、完成和软删除 Project 内容并制造 D1 写入；服务端不能静默改为 `reader`。
+
+Owner 关闭 Public Join 只阻止新的 self-join，不自动撤销既有 Grants。Public Join 不建立逐 Principal blacklist/denylist：Project 仍公开时，被撤销 Grant 的 Principal 可以再次 self-join；相同 Principal 复用唯一 Grant 行，不创建重复 Principal、Credential 或 Grant。Owner 若要停止全部新加入，必须关闭该 Project 的 Public Join。
+
+Owner 开启 Public Join 前必须显式提交正整数 `issue_limit`、`comment_limit` 与 `principal_limit`；服务端不从缺失字段生成默认值。三者是 Project 级 active quota，并约束 Project 的全部 actor，而不只约束公开参与者：Issue 统计 `deleted_at IS NULL` 的有效 Issue；Comment 统计有效 Issue 下未软删除的 standard/completion comments；Principal 统计当前未撤销的非 Owner Project Grants，不区分 Invitation、Owner 直接授权或 Public Join 来源。
+
+Issue/Comment 软删除与 Grant revoke 必须释放对应 active quota。软删除一个 Issue 还会使其下未软删除 Comments 暂时不占 Comment quota；恢复该 Issue 时必须同时校验并重新占用一个 Issue slot 和其全部有效 Comments 所需的 Comment slots。Comment restore、Grant regrant 或再次 self-join 同样重新占用额度；不足时整个领域操作原子失败。completion comment 本身不可删除；在其 Issue 有效期间始终占用 Comment quota。active quota 不等于物理删除，也不声称释放 tombstone 的 D1 存储。
+
+Owner 可以用 expected version 调高或调低限制，但新值不得低于当前 active usage。Web/Skill 可以建议 50 Issues、500 Comments、50 Principals 作为可覆盖的起点，但 Owner 必须显式提交，建议值不是 API 默认。精确 quota check 与计数变化必须和相应领域写入位于同一个 D1 原子单元；Public Join 满额不能留下孤立 Principal、Credential 或 Grant。Label、Relation、正文大小与分页继续使用服务端固定安全上限，不扩展成 Owner 通用配额面板。
+
+### 5.6 Browser Launch 与 Web Session
+
+v0 的第一方 Web UI 不建立密码账号，也不允许把 `.cfkanban/` 中的长期 Credential 复制进浏览器。已认证 Agent 可以为一个明确的 Project、Issue 或 Owner 管理 target 创建短期、一次性的 Browser Launch capability；它只携带建立浏览器会话所需的 opaque code，不携带长期 Credential。
+
+Launch 页面 GET 只读且不消费 capability，避免链接预览或安全扫描造成副作用；必须由同源页面显式 POST 兑换。成功后服务设置 `HttpOnly + Secure + SameSite` cookie、立即使 code 失效，并跳转到不含 code 的 target URL。Web Session 认证回同一个 Principal，不产生新 Principal、Grant 或 role；每次请求仍按 D1 当前 Principal、Credential/Session、Grant 和容器状态授权。
+
+Browser Launch 固定在创建后 5 分钟内可兑换且只能成功一次。Web Session 固定有效 8 小时，不滑动续期且无 refresh token；它绑定 `principal_id + source_kind + source_id`。Agent Launch Session 的 source 是发起 launch 的 Credential，Passkey Session 的 source 是完成认证的 Web Authenticator；对应 source revoke、Session 显式 revoke 或固定 expiry 到达都使其立即失效。Project Grant 与容器状态始终逐请求读取当前事实。
+
+Session 还绑定 launch target scope：Project target 只访问该 Project；Issue target 只访问该 Issue 所属 Project，并以该 Issue 为初始页面；只有 Owner `admin` target 具有实例级管理与数据面 scope。Owner admin Session 默认进入 Overview，不自动读取全部 Issue，但可以在显式选择 Workspace/Project 后进入任意 Project 看板。普通 Project/Issue Session 的页面导航不能扩大 scope，切换范围时由 Agent 创建新的 Browser Launch。完整 launch URL、code、cookie、长期 Credential 及其 hash 不进入日志、Audit payload、analytics、错误或浏览器可读存储。cookie-auth 写入必须有 CSRF 防护，业务 Markdown 与外部链接仍按不可信输入处理。
+
+首次 Agent-launch Session 建立后，当前 Principal 可以显式登记一个或多个 Passkey。首次与补充登记都要求 Session 的来源是 Agent Browser Launch；D1 只保存 WebAuthn credential ID、公钥和验证 metadata，浏览器/OS authenticator 保存私钥。当前 Principal 可以列举并撤销自己的 Passkey，Owner 可以撤销参与者的 Passkey；登记、成功认证和撤销写安全 Audit。Passkey 撤销立即使以该 authenticator 为 source 的未过期 Sessions 失效，但不撤销 API Credential 或 Project Grants。
+
+Passkey 登录只签发相同固定 8 小时、无 refresh 的 Web Session。参与者 Passkey Session 先进入当前有权 Project 选择页，之后每个请求按实时 Grant 校验；Owner Passkey Session 先进入 Overview，并可显式进入任意 Project。两者都不自动执行无 Project filter 的 Issue 聚合查询。Passkey 不是 Bearer API Credential、Grant 或 role；丢失、不兼容或 RP ID/domain 变化时继续用 Agent Browser Launch 恢复，不能按 display name 绑定或恢复身份。
 
 ## 6. Assignment 与并发
 
@@ -309,9 +350,9 @@ assignee 不等于 actor，也不参与授权判断。Issue 分配给 A 后，�
 assignment 本身不授予 Project 访问权，也不代表代码仓、云环境或其他外部系统的执行授权。新的 assignee 必须满足以下任一条件：
 
 - 是唯一 Deployment Owner；或
-- 是未禁用且当前对目标 Project 具有有效 `writer` Grant 的 Principal。
+- 是当前对目标 Project 具有有效 `writer` Grant 的 Principal。
 
-`reader`、无目标 Project Grant、Grant 已撤销或 Principal 已禁用的身份都不能成为新 assignee。服务端必须在 assignment 条件更新的同一一致性边界内检查资格，避免授权刚被撤销却仍成功分配。
+`reader`、无目标 Project Grant 或 Grant 已撤销的身份都不能成为新 assignee。服务端必须在 assignment 条件更新的同一一致性边界内检查资格，避免授权刚被撤销却仍成功分配。
 
 assignee 后续失去资格时不自动清空引用、不改变 status，也不删除历史 Event。`assignee_available` 是按当前 Principal/Grant 推导的读取字段；`needs_reassignment` 在存在 assignee 且其当前不可用时为 true。候选读取可以显式过滤该投影，供 Owner 或其他 `writer` 处理。
 
@@ -463,12 +504,13 @@ Workspace/Project 容器、列表和 Issue 创建继续使用 workspace/project-
 - `POST /api/v1/issues/{identifier}/commands/report-blocked`
 - `POST /api/v1/issues/{identifier}/commands/clear-blocked`
 - `POST /api/v1/issues/{identifier}/commands/complete`
+- 创建一次性 Browser Launch、兑换 Web Session 和退出当前 Session 的原子能力；具体 path/schema 由 API/Schema SPEC 冻结
 
-v0 不提供 `assign-next` 端点。管理 API 由用户的 Agent 按 Skill 使用；除 Invite bootstrap 页面外，不要求首发部署端人类维护网页。Codex、Claude Code、小龙虾、Workbuddy 等都是同一种用户 Agent，部署、协调和 Coding 只是任务模式。portable Skills 可以直接调用 HTTP，也可以为凭据、重试或部署等确定性操作调用 bundle 内 Node scripts；不发布独立 cfKanban CLI，也不复制服务端领域规则。远程 MCP adapter 后置。
+v0 不提供 `assign-next` 端点。v0 必须提供同一实例托管的极简第一方 Web UI；它和 Agent Skills 都使用同一管理/业务 API 与权限合同，不形成第二套领域实现。Codex、Claude Code、小龙虾、Workbuddy 等都是同一种用户 Agent，部署、协调和 Coding 只是任务模式。portable Skills 可以直接调用 HTTP，也可以为凭据、重试、Browser Launch 或部署等确定性操作调用 bundle 内 Node scripts；不发布独立 cfKanban CLI，也不复制服务端领域规则。远程 MCP adapter 后置。
 
 动作端点只用于真正的跨实体业务命令。普通字段编辑仍使用资源更新，避免把 API 全部变成不可组合的 RPC。
 
-任何未禁用 Principal 都可以通过 `GET /api/v1/me` 读取自己的 `principal_id`、`display_name`、version 和当前 Credential 的非秘密 fingerprint，并通过带 `expected_version` 的 `PATCH /api/v1/me` 原子修改自己的非空 display name。成功修改写 Audit/Event，但不改变 principal ID、Credential、Grants、assignment 或历史引用；v0 不允许 Owner 代改其他 Principal 的名称。version 冲突返回当前 version；本地非秘密名称 metadata 只是缓存，始终以服务端 `/me` 为准。
+任何持有 active Credential 的 Principal 都可以通过 `GET /api/v1/me` 读取自己的 `principal_id`、`display_name`、version 和当前 Credential 的非秘密 fingerprint，并通过带 `expected_version` 的 `PATCH /api/v1/me` 原子修改自己的非空 display name。成功修改写 Audit/Event，但不改变 principal ID、Credential、Grants、assignment 或历史引用；v0 不允许 Owner 代改其他 Principal 的名称。version 冲突返回当前 version；本地非秘密名称 metadata 只是缓存，始终以服务端 `/me` 为准。
 
 v0 不提供公开 batch/bulk 写入端点。每次 API 调用只表达一个领域操作，并在服务端内部原子完成该操作需要的授权/version 校验、业务行、关联行、Event/Audit 和 Idempotency Record。例如一次 Issue 创建只能创建一个 Issue，但可以原子写入该 Issue 对既有 Labels 的关联；Relation 创建是之后的独立领域操作。一个 Project Invite 携带多个明确 Project Grant specifications 仍是既有 Invitation 领域操作，不形成通用批量授权端点。上层调用方可以自行组合多个调用，每个逻辑操作使用独立且可重试的 `Idempotency-Key`。某项失败不会自动补偿或删除其他已经成功的操作；服务提供逐项 readback 和结构化恢复信息，但不规定上层的拆分、顺序、停止或续做策略。
 
@@ -489,15 +531,24 @@ JSON 可以提供三类稳定视图：
 统一错误体至少包含：
 
 - `code`
+- `category`
+- `source`
 - `message`
 - `request_id`
 - `retryable`
+- 可选 `retry_after_seconds`
 - `recovery`
 - `details`
 
-`retryable=true` 只表示等待服务端建议时间后可以原样重放同一请求；`VERSION_CONFLICT`、`CURSOR_SCOPE_MISMATCH` 和业务校验失败都必须为 false，因为客户端需要先刷新状态或改变请求。`recovery` 使用稳定机器提示，例如 `reauthenticate`、`refresh_resource`、`refresh_cursor`、`choose_assignee`、`request_owner`、`retry_after` 或 `none`；`message` 只供人类理解，Skill 不能靠文案分支。
+`category` 是稳定机器分类，至少区分 `authentication | authorization | not_found | validation | conflict | business_quota | rate_limit | platform_quota | platform_failure`。Worker 生成的普通业务错误使用 `source=service`；Worker 捕获并安全映射的 D1 平台错误使用 `source=cloudflare_platform`。`retryable=true` 只表示等待服务端建议时间后可以原样重放同一请求；`VERSION_CONFLICT`、`CURSOR_SCOPE_MISMATCH` 和业务校验失败都必须为 false，因为客户端需要先刷新状态或改变请求。`recovery` 使用稳定机器提示，例如 `reauthenticate`、`refresh_resource`、`refresh_cursor`、`free_capacity_or_request_owner`、`retry_after`、`wait_for_platform_reset`、`request_owner` 或 `none`；`message` 只供人类理解，Skill/Web 不能靠文案分支。
 
-HTTP 映射保持简单：无效/缺失 Credential 为 401；调用者已认证但对可见资源缺少动作权限为 403；不存在、effective-deleted 或调用者无权发现的资源统一为 404；version、idempotency 和已消费 Invitation 冲突为 409；过期/撤销 Invitation 为 410；限流为 429；临时平台或 D1 故障为 503。错误体、日志和 `details` 都不能包含 Credential、Invitation code、hash 或无权资源摘要。
+HTTP 映射保持简单：无效/缺失 Credential 为 401；调用者已认证但对可见资源缺少动作权限为 403；不存在、effective-deleted 或调用者无权发现的资源统一为 404；version、idempotency、已消费 Invitation 和 Project active quota 冲突为 409；过期/撤销 Invitation 为 410；应用限流为 429；D1 quota、临时平台或 D1 故障为 503。429 必须同时返回整数秒 `Retry-After` header 与一致的 `retry_after_seconds`；503 只有在服务端知道安全重试时间时才返回两者。错误体、日志和 `details` 都不能包含 Credential、Invitation code、hash、供应商原始错误全文或无权资源摘要。
+
+Project active quota 使用 `PROJECT_ISSUE_LIMIT_REACHED | PROJECT_COMMENT_LIMIT_REACHED | PROJECT_PRINCIPAL_LIMIT_REACHED`、`category=business_quota`、`retryable=false` 与 `recovery=free_capacity_or_request_owner`；只有已授权调用者可以看到 current usage/limit，匿名 Public Join 满额不得泄露内部精确数量。应用门控使用 `RATE_LIMITED`、`category=rate_limit`、`retryable=true`、`recovery=retry_after`，并返回 `details.scope=principal|instance|unauthenticated_sensitive`、limit 与 period。
+
+Worker 能识别的 D1 日读/写或存储额度错误统一映射为 `PLATFORM_QUOTA_EXCEEDED`、`category=platform_quota`、`source=cloudflare_platform` 和 `details.component=d1`。日额度在已知重置时间时可以 `retryable=true`/`wait_for_platform_reset`；存储额度必须 `retryable=false`/`request_owner`。未知、过载或不稳定供应商错误使用 `PLATFORM_UNAVAILABLE`，不能通过模糊字符串把所有 5xx 都标成额度不足。
+
+Cloudflare 可能在 Worker 执行前直接返回 Error 1027、平台 429 或 HTML 错误页，此时 cfKanban 无法生成上述 JSON、request ID 或 recovery。Web 与 Skill 内置客户端必须把已知非 JSON 边缘响应转换为同字段的本地错误结果，使用 `source=cloudflare_platform` 与 `details.normalized_by=client`；网络失败使用 `source=client_transport`。客户端生成本地 correlation request ID，并把可用的 Cloudflare Ray ID 单独标记为 provider request ID，不能冒充服务端 request ID。归一化只依赖 HTTP 状态、标准 header 和已知稳定数字错误码，不依赖自然语言/本地化 HTML，也不能声称本地结果是 OpenAPI response。
 
 预期错误码包括：
 
@@ -515,8 +566,13 @@ HTTP 映射保持简单：无效/缺失 Credential 为 401；调用者已认证�
 - `IDEMPOTENCY_KEY_REQUIRED`
 - `IDEMPOTENCY_CONFLICT`
 - `CURSOR_SCOPE_MISMATCH`
+- `PROJECT_ISSUE_LIMIT_REACHED`
+- `PROJECT_COMMENT_LIMIT_REACHED`
+- `PROJECT_PRINCIPAL_LIMIT_REACHED`
+- `PROJECT_LIMIT_BELOW_USAGE`
 - `RATE_LIMITED`
-- `QUOTA_EXCEEDED`
+- `PLATFORM_QUOTA_EXCEEDED`
+- `PLATFORM_UNAVAILABLE`
 - `PAYLOAD_TOO_LARGE`
 
 冲突错误应返回恢复所需的当前 version 或 retry-after，而不是只返回自然语言。
@@ -536,7 +592,7 @@ v0 可以先只提供 pull-based events。实时推送和 webhook 后置。
 
 ## 10. 人类维护面
 
-系统至少需要以下维护能力；v0 通过管理 API + Agent Skills 提供，不要求部署端人类维护网页：
+系统至少需要以下维护能力；v0 通过同一管理 API 同时向 Agent Skills 与极简第一方 Web UI 提供：
 
 - 查看健康与 Cloudflare 配额提示；
 - 由唯一 Owner 创建、软删除和恢复 Workspace/Project；容器按暂停语义保留子资源与 Grants；
@@ -547,16 +603,17 @@ v0 可以先只提供 pull-based events。实时推送和 webhook 后置。
 - 查看 assignment、状态与最近操作，便于处理协作异常；
 - 查看安全相关事件；
 
-Invite bootstrap 页面是公开说明与一次性兑换入口，不是管理面；它可以由 Worker 动态返回，也可以使用同一 Worker 的 Static Assets。长期管理 Credential 不进入 URL，也不长期保存在浏览器 localStorage。Skill 可以带本地只读查看器或 API 调试器，但其存在与否不改变管理 API + Agent Skills 的权威性。
+Invite bootstrap 页面是公开说明与 Invitation 兑换入口，不是日常管理面。第一方 Web UI 是受认证的人类表面，优先由同一 Worker 的 Static Assets 托管，通过 Browser Launch 建立短期 HttpOnly Session；长期 Credential 不进入 URL、页面脚本或浏览器可读存储。Web 只能调用同一 REST 权限与领域合同，不得拥有直连 D1 或隐藏管理后门。
 
 完整 D1 导出、导入和整库灾难恢复不属于 v0 产品能力。健康与审计接口只解释当前服务事实和平台错误，不生成备份计划、恢复计划或可执行 Cloudflare 数据恢复指令。
 
 ## 11. Cloudflare 组件合同
 
-- Workers：HTTP、鉴权、业务编排、OpenAPI、可选静态资产。
+- Workers：HTTP、鉴权、业务编排、OpenAPI，以及 v0 必需的极简 Web 静态资产和同源 Session 入口。
 - D1：全部核心事实和并发条件。
+- Workers Rate Limiting binding：v0 用于近似的边缘请求门控；不是精确 quota、计费账本或新的事实源。阈值随首次部署提供默认档位，后续只通过 `cfkanban-deploy` 的显式 Worker 配置部署修改。
 - KV：v0 不使用；以后只缓存可容忍陈旧的数据。
-- Durable Objects：只有出现 D1 无法满足的实时协调或连接需求时再评估。
+- Durable Objects：只有出现 D1 无法满足的实时协调或连接需求时再评估；v0 不为了 Web 即时修改限流值而引入。
 - Queues：后续异步 webhook、索引和通知。
 - R2：后续附件和 Agent 产物。
 - Vectorize + Workers AI：后续语义检索和摘要，结果始终可重建。
@@ -565,12 +622,14 @@ Invite bootstrap 页面是公开说明与一次性兑换入口，不是管理面
 
 ## 12. 安全与滥用边界
 
-- 每个 Credential 有独立限流键；限流只是保护，不是精确计费账本。
+- 请求门控至少区分单 Principal、实例总请求与未认证/Public Join 路径；不能只依赖容易共享或漂移的客户端 IP。
+- Owner 管理面必须显示当前生效门槛、配置来源和安全的近期 429 摘要；429 返回稳定错误与 `Retry-After`。边缘限流只是近似保护，不是精确计费或业务 quota 账本。
+- 默认三个 binding 分别执行 120/60 秒、300/60 秒与 30/60 秒。全部动态 API 先受实例门控；认证请求再受 Principal 门控；Public Join redeem、WebAuthn challenge/verify 等未认证敏感操作再受第三道门控。静态资产不调用这些 bindings。
 - 服务端限制 page size、正文长度、评论长度和请求体。
 - 所有输入做 schema 校验；数据库使用参数化 SQL。
 - 不将 Credential、Invitation code、credential hash、完整 Invite URL 或 Authorization Header 写入日志。
 - 权限撤销以 D1 为准，不能只依赖最终一致 KV。
-- Free tier 超限时返回明确 `QUOTA_EXCEEDED` 或平台错误映射，不能无限快速重试。
+- Worker 内可识别的 Free tier 超限返回明确 `PLATFORM_QUOTA_EXCEEDED`；Worker 外 Cloudflare 错误由客户端显式归一化。两者都不能触发无限快速重试。
 - Skill 指导 Agent 使用指数退避和 jitter，并遵守宿主环境的用户授权。
 - Project context、Issue、Comment、Label 和 external reference 都是远端可变的非可信业务内容；Skill 必须与稳定服务合同、当前用户授权和本地 Repo 治理规则分层呈现，不能从这些内容获得执行命令、修改代码、访问外部资源或部署的授权。
 
@@ -581,6 +640,7 @@ Invite bootstrap 页面是公开说明与一次性兑换入口，不是管理面
 - 实时订阅/WebSocket。
 - 自动 AI 分派或自动执行。
 - 富附件、富文本、mention 和通知系统。
+- 重型人类项目管理前端、自定义看板、批量编辑、复杂报表与实时协同；极简第一方 Web UI 本身是 v0 必需能力，不属于非目标。
 - 跨 Workspace 移动 Project/Issue 或建立业务关系。
 - 将 D1、Durable Objects 和 KV 同时作为核心事实源。
 - 面向用户或 Agent Skills 的完整 D1 导出、导入、本地恢复演练与整库灾难恢复。
@@ -595,5 +655,14 @@ Invite bootstrap 页面是公开说明与一次性兑换入口，不是管理面
 4. REST/JSON 是权威业务合同，OpenAPI 是机器描述，Skills 是 Agent 使用层，远程 MCP 只是后置适配。
 5. §6.4 已覆盖同时 self-assign、非 assignee 基于旧 version 完成、complete 响应丢失和首次 Invitation 兑换响应丢失四个并发/重试验例。
 6. Free tier 超限返回明确错误并禁止无限快速重试；Vectorize、Workers AI、Queues、R2 与 Durable Objects 关闭时，核心 Kanban 仍完整工作。
+7. D-215/D-216 已通过合同修订 3 固定极简第一方 Web UI 与 Browser Launch/HttpOnly Session 的方向；D-217 通过修订 4 固定 5 分钟 launch、8 小时固定 Session、源 Credential 失效联动与 target scope。具体 CSRF/schema 仍由 Draft Web UI 与 API/Schema SPEC 冻结，不能在实现中默补。
+8. D-219 通过合同修订 5 移除 v0 Principal disable/enable/delete；Credential revoke、Grant revoke 与 Recovery Invite 分别承担认证停止、Project 撤权和身份连续性恢复。
+9. D-221 通过合同修订 6 固定 Owner Credential 的防锁死边界：Web 不撤销或轮换 Owner Credential，正常轮换由 `cfkanban-admin` 先安全落盘替代 secret 后执行 Bearer-only 原子 rotation，全部丢失才走 `cfkanban-deploy` 部署外恢复。
+10. D-222 通过合同修订 7 固定 Owner admin Session 的范围：默认不加载全部数据，但可在显式选择后进入实例内任意 Project；Project/Issue Session 仍严格限制在单一 Project。
+11. D-224/D-226 通过合同修订 8 固定 Passkey 为唯一免 Agent Web 直登方式，并固定单 Project Public Join：Owner 可同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer`；Team Join 与多 Project 公开授权不进入 v0。当时留出的 Q-230 重入问题已由合同修订 9 解决。
+12. D-227/D-228 通过合同修订 9 取消逐 Principal 重入阻止，并首次要求 Owner 开启 Public Join 前显式设置 Project Issue/Comment limits；其中“tombstone 永久占用、删除不释放”的旧语义已由合同修订 10 替代。
+13. D-229～D-231 通过合同修订 10 固定 Project Issue、Comment、Principal 三项 active quota，以及 Owner 可见的实例级请求门控。软删除/revoke 释放额度，restore/regrant 重新占用；精确 quota 由 D1 原子强制。当时未确定的限流修改载体已由合同修订 11 解决。
+14. D-232 通过合同修订 11 固定 Workers Rate Limiting deployment config 为 v0 载体，并提供 120/300/30 每 60 秒的零参数初始档位。调整限流只部署 Worker 配置，不改变 D1 Project quota 或触发 migration；严格全球计数与 Web 即时修改不属于 v0。
+15. D-233 通过合同修订 12 固定机器可操作的统一错误分类，以及“Worker 内统一 JSON、Worker 外由 Web/Skill 客户端显式归一化”的边界。业务 quota、应用限流、D1 quota 与 Cloudflare edge failure 不能再混用一个模糊 `QUOTA_EXCEEDED` 或靠 message 判断。
 
 本次冻结只固定 Foundation 级领域、权限、并发、资源层级与 HTTP 语义，不固定完整 OpenAPI 字段清单、D1 DDL/索引或实现代码。完整 API/Schema 必须进入后续独立 SPEC；冻结本身不授权实现、创建 Linear 实现 Issue、部署、迁移、提交或推送。

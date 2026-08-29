@@ -4,9 +4,10 @@
 - Roadmap：R1 / R2
 - 上游合同：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)（Frozen）
 - Agent 合同：[Agent Skills & Bootstrap SPEC](2026-08-28-agent-skills-bootstrap-spec.md)（Frozen）
+- Web 合同：[极简 Web UI SPEC](2026-08-29-web-ui-spec.md)（Draft）
 - 架构基线：[Cloudflare 架构基线](../architecture/cloudflare-baseline.md)
 - 平台快照：[2026-08-28 Cloudflare 平台快照](../research/cloudflare-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-08-28
+- 最近更新：2026-08-29
 - 冻结日期：待确认
 
 ## 1. 目的与边界
@@ -22,6 +23,8 @@
 - D1 表、字段、约束、索引和读取模型；
 - 适配 D1 `batch()`、查询限制和串行写入模型的原子操作方式；
 - 幂等、CAS、Event/Audit、cursor 与软删除的数据库落点；
+- Browser Launch、Passkey、cookie Web Session、CSRF 与撤销的 API/D1 落点；
+- 单 Project Public Join 的公开发现、原子 self-join 与 D1 Policy 落点；
 - Free profile 下避免全表扫描、N+1 和写放大的约束。
 
 本文不定义：
@@ -29,7 +32,7 @@
 - Worker 的具体框架、目录、ORM 或 query builder；
 - 完整 TypeScript 实现与生成后的 `openapi.json`；
 - Skill 文件、Node scripts 或部署 bundle 的具体代码；
-- Vectorize、Workers AI、Queues、R2、Durable Objects、远程 MCP 或重型 UI；
+- Vectorize、Workers AI、Queues、R2、Durable Objects、远程 MCP 或重型 UI；极简第一方 Web 属于 v0 范围；
 - 完整 D1 导出、导入、本地恢复演练或整库灾难恢复；
 - 物理 purge、公共多租户或 v1 之后的兼容策略。
 
@@ -71,19 +74,28 @@
 
 ### 3.2 认证与安全 Header
 
-除下列入口外，所有 `/api/v1` 请求都需要 `Authorization: Bearer <credential>`：
+除下列入口外，Agent/API 请求需要 `Authorization: Bearer <credential>`；第一方 Web 的同源请求可以使用 HttpOnly Web Session cookie，但不能同时接受浏览器脚本提交的长期 Bearer Credential：
 
 - `POST /api/v1/invitations/redeem`：Project Invite 首次创建 Principal 和 `full_recovery` 可以没有旧 Credential；复用身份与 `rotation` 仍按合同要求认证。
+- `POST /api/v1/web-sessions/redeem`：只接受短期一次性 Browser Launch code，并设置 HttpOnly cookie。
+- `POST /api/v1/web-authentication/options` 与 `POST /api/v1/web-authentication/verify`：使用短期单次 WebAuthn challenge 验证既有 Passkey并设置 HttpOnly cookie。
+- `POST /api/v1/public-joins/{public_id}/redeem`：首次创建 Principal 时可以没有旧 Credential；复用既有身份必须使用 Bearer Credential 或 Cookie Session。
 
 其他公共入口：
 
 - `GET /healthz`；
 - `GET /openapi.json`；
 - `GET /invite?code=<opaque>`。
+- `GET /app/launch?code=<opaque>`：只加载同源启动页，不消费 code。
+- `GET /api/v1/public-projects`：只返回 Owner 已开启 Public Join 的有界公开卡片。
 
 Credential 格式固定为版本化 opaque token：`cfk_v1_<prefix>_<secret>`。`secret` 至少 256 bit 随机熵；D1 只保存完整 token 的 SHA-256 hex digest、用于日志安全识别的短 prefix/fingerprint 和元数据。高熵随机 token 不使用面向低熵密码的慢 hash；v0 不使用部署 pepper，避免增加第二份必需 secret 及其轮换合同。鉴权只做 digest 精确查询并统一返回不泄露原因的认证失败，任何日志只允许 fingerprint。
 
-Invitation code 同样至少 256 bit 随机熵，D1 只保存 SHA-256 hex digest。Invite code、Credential、Authorization Header 和请求中的新 Credential secret 禁止进入日志、错误、Event payload、Audit payload、receipt 或 tracing attribute。
+Invitation 与 Browser Launch code 同样至少 256 bit 随机熵，D1 只保存 SHA-256 hex digest。WebAuthn challenge 使用不可预测随机值、短期单次消费且只保存 digest。Invite/launch code、challenge、Credential、Authorization Header、Web Session secret 和请求中的新 Credential secret 禁止进入日志、错误、Event payload、Audit payload、receipt 或 tracing attribute。
+
+Cookie-auth 写请求必须同时通过受支持 Origin/同源校验与 double-submit CSRF cookie/header；GET/HEAD 不产生业务写入。Web Session 只能由服务端 `Set-Cookie` 建立，使用 `HttpOnly; Secure; SameSite=Strict; Path=/`，页面脚本不能读取认证 token。第二个随机 CSRF cookie 不设 HttpOnly，前端只把它复制到自定义 header，不持久化到 Web Storage；服务端要求 header 与 cookie 定时安全相等。
+
+Browser Launch 的 `expires_at` 固定为 `created_at + 5 minutes`，只能兑换一次。Web Session 的 `expires_at` 固定为 `created_at + 8 hours`，不因 `last_seen` 或请求活动延长，也不签发 refresh token。鉴权必须同时校验 Session 未撤销/未过期、Principal 存在、`source_kind + source_id` 当前 active 和 Session scope；Grant 与容器状态逐请求查询。Project/Issue launch target 解析为一个固定 Project scope；Owner `admin` launch 与 Owner Passkey Session 解析为实例级管理与数据面 scope。参与者 Passkey Session 解析为当前 Principal 的授权 Project 选择 scope。所有入口默认页面都不自动发起无 Project filter 的 Issue 查询。
 
 响应总是带 `X-Request-ID`。429/503 中存在安全重试窗口时带 `Retry-After`；不暴露 D1 bookmark、内部 SQL、表名或 Cloudflare 原始错误详情。
 
@@ -110,7 +122,7 @@ Invitation code 同样至少 256 bit 随机熵，D1 只保存 SHA-256 hex digest
 - `Idempotency-Key` 为调用方生成的 1～128 个可打印 ASCII 字符，不得包含 secret。
 - 所有创建、命令和其他非天然幂等写入都要求 `Idempotency-Key`；纯读取和带 `expected_version` 的资源 PATCH/DELETE 不强制该 Header，但 Skill 可以统一提供。
 - request fingerprint 是 `method + route_template + normalized_resource_scope + RFC 8785 canonical JSON body` 的 SHA-256；query 中影响写入语义的参数必须进入 normalized scope。
-- 幂等记录保留 24 小时。重放前必须重新验证当前 Credential、Principal 状态和 effective authorization；授权失效时返回当前鉴权错误，不返回历史业务响应。
+- 幂等记录保留 24 小时。重放前必须重新验证当前 Credential 和 effective authorization；授权失效时返回当前鉴权错误，不返回历史业务响应。
 
 ### 3.6 并发前置条件
 
@@ -229,14 +241,53 @@ Relation 的方向固定：`blocks` 表示 source blocks target；`parent` 表�
 | GET/DELETE | `/api/v1/admin/invitations/{invitation_id}` | Owner | 读取；撤销未兑换 Invitation |
 | GET | `/api/v1/admin/principals` | Owner | 按 ID、名称文本、Project membership 查找 |
 | GET | `/api/v1/admin/principals/{principal_id}` | Owner | 身份、Grant、assignee、Credential 非秘密摘要 |
-| POST | `/api/v1/admin/principals/{principal_id}/commands/disable` | Owner | 禁用一个非 Owner Principal；v0 不提供 enable |
 | GET | `/api/v1/admin/principals/{principal_id}/credentials` | Owner | 只返回 ID、fingerprint、issued/last-used/revoked |
-| DELETE | `/api/v1/admin/credentials/{credential_id}` | Owner | 撤销一个参与者 Credential；Owner Credential 生命周期走 deploy Skill |
+| DELETE | `/api/v1/admin/credentials/{credential_id}` | Owner Bearer 或 Owner Web Session | 撤销一个参与者 Credential；目标属于 Owner Principal 时拒绝 |
+| POST | `/api/v1/admin/owner-credentials/rotate` | Owner Bearer only | 原子建立本地已安全保存的替代 Credential 并撤销当前认证 Credential；拒绝 Cookie Session |
 | GET/POST | `/api/v1/admin/projects/{project_id}/grants` | Owner | 列表；创建或重新授予一条明确 Grant |
 | GET/PATCH/DELETE | `/api/v1/admin/grants/{grant_id}` | Owner | 读取；改 reader/writer；撤销，均带 expected version |
 | GET | `/api/v1/admin/audit-events` | Owner | 按 sequence 增量读取安全与领域审计投影 |
 
 Project Invite 创建 body 必须逐项给出 Project immutable ID 与 `reader|writer`，1～20 项且去重。API 不采用 Skill 的默认 role 建议。Recovery Invite 必须给出 bound `principal_id` 和不可变 `rotation|full_recovery` mode，不能同时携带 Project grants。
+
+Owner Credential 不提供通用 DELETE。正常 rotation 请求携带由 `cfkanban-admin` 本地脚本预生成并已写入受限 pending 文件的新 token，服务端以一个幂等原子操作保存新 digest、撤销当前 Bearer Credential 并写 security Audit；响应不回传 secret。脚本再用新 Credential 验证 `/me` 并原子切换本地 current slot。全部 Owner Credential 丢失不走 HTTP 应用端点，只能使用既有部署外恢复合同。
+
+### 5.5 Browser Launch 与 Web Session
+
+| Method | Path | 权限 | 语义 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/web-launches` | Bearer Authenticated | 为一个明确 Project/Issue/Admin target 创建短期一次性 launch；需要 Idempotency-Key |
+| POST | `/api/v1/web-sessions/redeem` | Browser Launch capability | 原子消费 code、创建 Session 并设置 HttpOnly cookie；不接受长期 Credential |
+| GET | `/api/v1/web-session` | Cookie Session | 返回当前 Principal、target、expires_at 与 allowed scope，不返回 session token |
+| DELETE | `/api/v1/web-session` | Cookie Session + CSRF | 只撤销当前 Web Session 并清除 cookie，不撤销源 Credential |
+
+创建 launch 的 target 使用有辨识力的 tagged union：`project` 携带 workspace/project key，`issue` 携带 identifier，`admin` 携带固定允许的 section key。服务端创建前验证当前 Principal 对 target 可见；兑换与后续每次请求仍重新授权。`admin` 只允许 Deployment Owner 创建和兑换，其 Session 可以调用实例级管理端点，也可以在显式 Project scope 下调用 Owner 本来拥有的数据面端点；参与者 Session 不能升级为该范围。v0 不接受任意 redirect URL，避免 open redirect 和把 code 发送到外域。
+
+### 5.6 Passkey 与 Public Join
+
+| Method | Path | 权限 | 语义 |
+| --- | --- | --- | --- |
+| POST | `/api/v1/me/passkeys/registration-options` | Agent-launch Cookie Session + CSRF | 创建短期单次登记 challenge；Passkey 来源 Session 拒绝 |
+| GET/POST | `/api/v1/me/passkeys` | Cookie Session / Agent-launch Cookie Session + CSRF | 列举自己的非秘密 Passkey 摘要；验证登记结果并绑定当前 Principal |
+| DELETE | `/api/v1/me/passkeys/{passkey_id}` | Cookie Session + CSRF | 撤销自己的一个 Passkey，并撤销其来源 Sessions |
+| DELETE | `/api/v1/admin/passkeys/{passkey_id}` | Owner Bearer 或 Owner Cookie Session + CSRF | 撤销参与者 Passkey；目标属于 Owner 时拒绝并要求本人操作 |
+| POST | `/api/v1/web-authentication/options` | Public | 创建短期单次 discoverable-credential assertion challenge |
+| POST | `/api/v1/web-authentication/verify` | WebAuthn assertion capability | 验证 assertion、消费 challenge并建立固定 8 小时 Session |
+| GET | `/api/v1/public-projects` | Public | 分页列出已开启 Project 的 public ID、display name、public summary 与固定 role choices |
+| GET/PUT/DELETE | `/api/v1/admin/projects/{project_id}/public-join` | Owner | 读取、带 Project expected version 开启/更新或关闭一个 Project Policy；开启请求必填 Project Issue/Comment/Principal active limits |
+| GET/PATCH | `/api/v1/admin/projects/{project_id}/resource-limits` | Owner | 读取 active usage；带 expected version 修改三项 limits，新值不得低于当前 active usage |
+| GET | `/api/v1/admin/rate-limit-settings` | Owner | 读取当前生效的单 Principal、实例总请求和未认证敏感操作门槛、配置来源与安全的近期 429 摘要；v0 不提供修改端点 |
+| POST | `/api/v1/public-joins/{public_id}/redeem` | Public Join + conditional auth | 对一个公开 Project、一个显式 `reader|writer` 执行原子 self-join |
+
+Passkey 登记和 assertion 验证都必须验证 challenge purpose、RP ID、origin、expiry、单次消费、credential ID、公钥签名、user handle 与 Principal 绑定；具体 COSE algorithm allowlist、attestation policy 与 counter 异常处理在实现原型中验证后冻结。服务端不保存 authenticator 私钥，也不按 display name 查找身份。
+
+Passkey Session 的 source 为 `web_authenticator`。参与者登录后进入其当前可读 Project 选择页；Owner 进入 Overview。Passkey revoke 使所有 `source_kind=web_authenticator AND source_id=<id>` 的 Sessions 失效，但不改变 API Credential、Grant、assignment 或历史。
+
+Public Join redeem body 固定显式 `role=reader|writer` 与 `redeem_as=new_principal|current_principal`。`new_principal` 由 Agent 提供 display name 和已经安全落盘的新 token；`current_principal` 使用当前 Bearer 或 Cookie Session，不能提交新 token。每次请求只处理一个 public ID，不接受 Project 数组。无 Grant 时创建，reader 可提升为 writer，同等/更高权限幂等返回，writer 不因选择 reader 被降级。关闭 Policy 不撤销既有 Grant；Project 仍公开时，已撤销 Grant 可以再次激活，不查询或写入 reentry denylist。
+
+开启 Public Join 的 PUT body 必须同时显式携带正整数 `issue_limit`、`comment_limit` 与 `principal_limit`；缺失即拒绝，Web 的 50/500/50 建议值不进入 API 默认。三项限制保存为 Project 配置并对全部 actor 生效。Issue/Comment create 与 Grant create/regrant 在同一原子操作中校验 active usage 并增加 1；soft delete/revoke 减少对应 usage，restore/regrant 重新增加。软删除 Issue 同时从 Comment usage 中释放它下面全部未软删除 Comments；恢复时必须同时容纳 Issue 与这些 Comments。complete 使用 Comment quota，满额时整体失败且不改变 Issue status。修改限制要求 Project expected version 且新值不低于当前 active usage。
+
+请求频率门控不是上述精确业务 quota。v0 使用三个原生 Workers Rate Limiting bindings：认证 Principal 120 次/60 秒、实例全部动态 API 300 次/60 秒、未认证敏感操作 30 次/60 秒。全部动态请求检查实例门控；认证请求叠加 Principal 门控；Public Join redeem、WebAuthn challenge/verify 等未认证敏感操作叠加第三道门控；静态资产不调用 bindings。任一门控触发都返回 429、`Retry-After` 与不泄露敏感计数的策略摘要。计数按 Cloudflare location 近似维护；API 只读展示且不提供 PATCH，修改由 `cfkanban-deploy` 完成明确的 Worker 配置部署，不运行 D1 migration。
 
 ## 6. 核心请求与响应 Schema
 
@@ -341,6 +392,8 @@ Invitation redeem 使用由本地可信脚本预先生成并安全落盘的 Cred
 ```json
 {
   "code": "VERSION_CONFLICT",
+  "category": "conflict",
+  "source": "service",
   "message": "Issue version changed.",
   "request_id": "uuid",
   "retryable": false,
@@ -349,6 +402,20 @@ Invitation redeem 使用由本地可信脚本预先生成并安全落盘的 Cred
 }
 ```
 
+所有由 Worker 生成的错误响应使用 `application/json`，并同时在 `X-Request-ID` 返回与 body 一致的 request ID。公共 envelope 固定包含 `code/category/source/message/request_id/retryable/recovery/details`；只有存在安全等待时间时才增加非负整数 `retry_after_seconds`，并与整数秒 `Retry-After` header 完全一致。`category` 固定枚举为 `authentication | authorization | not_found | validation | conflict | business_quota | rate_limit | platform_quota | platform_failure`；API 响应中的 `source` 只允许 `service | cloudflare_platform`。
+
+关键限制/平台错误映射：
+
+| 情况 | HTTP / code | retry / recovery | 有权可见 details |
+| --- | --- | --- | --- |
+| Project Issue/Comment/Principal active quota 满 | 409 / 对应 `PROJECT_*_LIMIT_REACHED` | false / `free_capacity_or_request_owner` | resource_kind、current_usage、limit；匿名 Public Join 不返回精确数量 |
+| cfKanban Workers Rate Limiting binding 拒绝 | 429 / `RATE_LIMITED` | true / `retry_after` | scope (`principal|instance|unauthenticated_sensitive`)、limit、period_seconds；等待时间使用 envelope 顶层字段与 header |
+| D1 免费日读/写额度已满 | 503 / `PLATFORM_QUOTA_EXCEEDED` | 已知 UTC 重置时间时 true / `wait_for_platform_reset` | component=`d1`、quota_kind=`daily_reads|daily_writes`、可选 reset_at |
+| D1 account/database storage 已满 | 503 / `PLATFORM_QUOTA_EXCEEDED` | false / `request_owner` | component=`d1`、quota_kind=`storage` |
+| D1 overload 或未分类平台故障 | 503 / `PLATFORM_UNAVAILABLE` | 仅明确安全时 true / `retry_after|request_owner` | component 与有界 failure_class；不返回供应商原始错误全文 |
+
+Cloudflare 在 Worker 执行前生成的 Error 1027、平台 429 或 HTML 5xx 不属于 OpenAPI response，可能没有 cfKanban JSON/request ID。Web 与 Skill 客户端使用同一 local normalized error schema，并额外允许 `source=cloudflare_platform|client_transport` 与 `details.normalized_by=client`：客户端生成本地 correlation `request_id`，可用的 Cloudflare Ray ID 放入 `details.provider_request_id`，不能冒充服务端 request ID。1027 归一为 `PLATFORM_QUOTA_EXCEEDED`/component=`workers`，边缘 429 归一为 `RATE_LIMITED` 并复用可用的 `Retry-After`，其他未知非 JSON 5xx 归一为 `PLATFORM_UNAVAILABLE`。客户端只识别 HTTP、标准 header 与已知数字错误码，不按供应商自然语言 HTML 分支。
+
 除 Frozen Foundation 已列出的 code 外，本文增加：
 
 - `INVALID_CURSOR`；
@@ -356,8 +423,17 @@ Invitation redeem 使用由本地可信脚本预先生成并安全落盘的 Cred
 - `LABEL_LIMIT_EXCEEDED`；
 - `RELATION_SCOPE_MISMATCH`；
 - `INVITATION_MODE_MISMATCH`；
-- `PRINCIPAL_DISABLED`；
-- `QUERY_SCOPE_TOO_BROAD`（仅保护无法在应用预算内安全执行的查询，不替代正常分页）。
+- `QUERY_SCOPE_TOO_BROAD`（仅保护无法在应用预算内安全执行的查询，不替代正常分页）；
+- `PASSKEY_CHALLENGE_INVALID`；
+- `PASSKEY_NOT_FOUND`；
+- `PUBLIC_JOIN_DISABLED`；
+- `PROJECT_ISSUE_LIMIT_REACHED`；
+- `PROJECT_COMMENT_LIMIT_REACHED`；
+- `PROJECT_PRINCIPAL_LIMIT_REACHED`；
+- `PROJECT_LIMIT_BELOW_USAGE`；
+- `RATE_LIMITED`；
+- `PLATFORM_QUOTA_EXCEEDED`；
+- `PLATFORM_UNAVAILABLE`。
 
 ## 7. D1 Schema 通用规则
 
@@ -391,18 +467,24 @@ Invitation redeem 使用由本地可信脚本预先生成并安全落盘的 Cred
 | 表 | 关键列 | 约束 |
 | --- | --- | --- |
 | `instance_meta` | singleton=1, instance_id, owner_principal_id, service_version, schema_version, created_at | 恰好一行；owner 不可由应用 API 修改 |
-| `principals` | id, display_name, version, disabled_at, created_at, updated_at, last_operation_id | display name 非唯一；Owner Principal 不能 disable |
+| `principals` | id, display_name, version, created_at, updated_at, last_operation_id | display name 非唯一；v0 不提供 Principal disable/enable/delete |
 | `credentials` | id, principal_id, token_prefix, token_digest, issued_at, last_used_at, revoked_at, revoked_by_principal_id, revoke_reason, created_operation_id, last_operation_id | token_digest unique；无 expiry；secret 永不保存 |
 | `project_grants` | id, principal_id, project_id, role, revoked_at, revoked_by_principal_id, version, created_at, updated_at, last_operation_id | unique(principal_id, project_id)；role CHECK reader/writer；Owner 不建 Grant |
+| `browser_launches` | id, code_prefix, code_digest, principal_id, source_credential_id, target_kind, target_json, expires_at, redeemed_at, revoked_at, created_at, created_operation_id | code_digest unique；一次性；target kind/shape CHECK；明文 code 不保存 |
+| `web_authenticators` | id, principal_id, credential_id, public_key_cose, user_handle, sign_count, transports_json, rp_id, created_at, last_used_at, revoked_at/by, created_operation_id, last_operation_id | credential_id unique；私钥不保存；一个 Principal 可多行；transports JSON valid |
+| `webauthn_challenges` | id, challenge_digest, purpose, principal_id, expires_at, consumed_at, created_at | challenge_digest unique；登记时 principal 必填，认证时可空；短期单次使用并有界清理 |
+| `web_sessions` | id, token_digest, principal_id, source_kind, source_id, target_kind, target_json, expires_at, revoked_at, created_at | token_digest unique；source kind credential/web_authenticator；secret 不保存；固定 8 小时 expiry；scope shape CHECK |
 
-`last_used_at` 只允许按低频阈值更新，例如距离上次记录超过 24 小时；不能每次请求写 D1。鉴权逻辑只看 token digest、revoked_at 和 principal.disabled_at，不依赖 last-used。
+`last_used_at` 只允许按低频阈值更新，例如距离上次记录超过 24 小时；不能每次请求写 D1。鉴权逻辑只看 token digest 与 revoked_at，不依赖 last-used。v0 的身份停用由 Credential revoke 与 Project Grant revoke 表达，不在 Principal 上增加第三条状态轴。
 
 ### 8.2 Workspace、Project 与状态
 
 | 表 | 关键列 | 约束 |
 | --- | --- | --- |
 | `workspaces` | id, key, display_name, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | key unique，删除后不复用 |
-| `projects` | id, workspace_id, key, display_name, context, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | unique(workspace_id,key)，删除后不复用；context 最大 32 KiB UTF-8 bytes，由 CHECK 与 Worker 双重校验 |
+| `projects` | id, workspace_id, key, display_name, context, issue_limit, comment_limit, principal_limit, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | unique(workspace_id,key)，删除后不复用；context 最大 32 KiB；limits 为 null 或正整数，Public Join enabled 时三项必须非空 |
+| `project_usage` | project_id, active_issue_count, active_comment_count, active_principal_count, updated_at, last_operation_id | project_id PK；三个 counter 必须 >= 0；与 create/soft-delete/restore、grant/revoke/regrant 在同一 transaction 增减，并可由权威表重算校验 |
+| `public_join_policies` | project_id, public_id, public_summary, enabled_at/by, disabled_at/by, version, created_at, updated_at, last_operation_id | project_id PK、public_id unique；summary 有界；一 Project 一条当前 Policy；关闭后 public_id 不复用 |
 | `project_status_names` | project_id, status_key, display_name, updated_at/by, last_operation_id | PK(project_id,status_key)；status_key 固定五值；并发前置条件使用所属 Project version |
 
 固定状态 category/position/terminal 保存在 Worker 常量与 OpenAPI enum，不建可变 workflow 表。Project status name 没有 override 行时使用默认显示名。
@@ -451,6 +533,8 @@ Relation 唯一性：
 | 索引 | 服务查询 |
 | --- | --- |
 | unique `credentials(token_digest)`；`credentials(principal_id, revoked_at)` | 每请求鉴权；Owner Credential 摘要 |
+| unique `browser_launches(code_digest)`；`browser_launches(expires_at,redeemed_at,revoked_at)` | launch redeem 与有界清理 |
+| unique `web_sessions(token_digest)`；`web_sessions(principal_id,revoked_at,expires_at)`；`web_sessions(source_credential_id,revoked_at)` | cookie 鉴权、Principal/源 Credential 撤销联动 |
 | unique `workspaces(key)` | Workspace path lookup |
 | unique `projects(workspace_id,key)`；`projects(workspace_id,deleted_at,display_name,id)` | Project path/list/tombstone |
 | unique `project_grants(principal_id,project_id)`；`project_grants(project_id,revoked_at,role,principal_id)` | 授权与 Project 成员查找 |
@@ -478,7 +562,7 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 
 1. Worker 预生成 IDs、timestamp、operation ID 和规范化 request hash；
 2. 只读鉴权、schema 校验和幂等 preflight 用于快速失败，但不作为最终授权保证；
-3. business batch 中的第一条 INSERT/UPDATE 使用条件 SQL，同时复核 active Credential、Principal、Owner/Grant、容器状态和 expected version；
+3. business batch 中的第一条 INSERT/UPDATE 使用条件 SQL，同时复核 active Credential、Principal 存在性、Owner/Grant、容器状态和 expected version；
 4. 后续 Comment/Relation/Event 写入以相同 operation ID 和已成功业务行作为条件；任何真实 SQL/constraint 失败使整个 batch 回滚；
 5. batch 最后只有在该配方预期的业务变更与 Event 都存在时，才条件写入唯一 `operation_commits` 行；
 6. Worker 检查 `meta.changes`/operation readback，区分成功、version conflict、权限变化和状态冲突；
@@ -501,14 +585,22 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 
 | 操作 | 同一 transaction 必须包含 |
 | --- | --- |
-| Issue create | 最终授权 predicate、Issue INSERT、0～20 个既有 Label association、domain Event |
+| Issue create | 最终授权 predicate、active Issue usage < limit（配置时）、Issue INSERT、counter +1、0～20 个既有 Label association、domain Event |
+| Issue soft delete/restore | 最终授权 + expected version、Issue/Comment active usage 的减少或容量检查后增加、Issue CAS、domain Event；restore 容量不足时零副作用 |
 | Issue PATCH/assignment/status | 最终授权 + expected version 条件 UPDATE、domain Event |
-| complete | 最终授权 + expected version、Issue → done/version+1、immutable completion Comment、domain Event |
+| standard Comment create | 最终授权、active Comment usage < limit（配置时）、Comment INSERT、counter +1、domain Event |
+| standard Comment soft delete/restore | 最终授权、Comment CAS、active counter -1 或容量检查后 +1、domain Event；completion 不允许删除 |
+| complete | 最终授权 + expected version、active Comment usage < limit（配置时）、Issue → done/version+1、immutable completion Comment、counter +1、domain Event |
 | report-blocked | Issue CAS、人工 blocked reason、domain Event；不创建 Relation |
 | Relation cross-Project write | 两端可见/active、同 Workspace、两端 writer、两端 expected version、Relation、两端 version 更新、Event |
 | Project Invite redeem | Invite active/未过期/未消费、新或已认证 Principal、可选新 Credential、逐 Project Grant outcome、Invitation consume、redemption items、每 Project domain Event 与 security summary Event |
 | recovery redeem | Invite kind/mode/bound Principal、可选旧 Credential 证明、新 Credential、精确旧 Credential 撤销集合、Invitation consume、security Event |
-| Grant revoke/role/regrant | Owner Credential/Principal、Grant CAS、Event；assignee 不批量改写 |
+| Owner Credential rotation | 当前 Owner Bearer Credential、替代 Credential digest、旧 Credential revoke、security Event；不接受 Cookie Session，也不产生无 Credential 窗口 |
+| Browser Launch redeem | Launch active/未过期/未消费、Principal 与源 Credential active、target 当前可见、Launch consume、Web Session create、security Event |
+| Passkey registration | Agent-launch Session/Principal active、challenge purpose/expiry/consume、WebAuthn result verify、Authenticator create、security Event |
+| Passkey authentication | challenge purpose/expiry/consume、credential/public key/user handle verify、Authenticator active、Web Session create、security Event |
+| Public Join redeem | Policy/Project active、三项 limits 已配置、一个显式 role、active Principal usage 容量检查、现有或新 Principal/Credential、单条 Grant create/promote/regrant/idempotent outcome、usage 更新、domain + security Event；满额不留孤立身份，不写 reentry denylist |
+| Grant revoke/role/regrant | Owner Credential/Principal、Grant CAS、active Principal counter 按 revoke/regrant 减增、Event；role change 不改 counter，assignee 不批量改写 |
 | Container soft delete/restore | Owner、容器 CAS、Event；不更新子行/Grant |
 
 业务 batch 必须保持短小。公开 API 不暴露 batch；内部 `db.batch()` 只是实现一个领域原子操作。
@@ -517,8 +609,8 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 
 - Worker 可以依赖 D1 对只读查询的内建安全重试，但仍必须处理最终失败。
 - 写操作只有在 Idempotency-Key + operation probe 能证明安全时才由应用重试；不按字符串模糊匹配所有 D1 错误后盲重放。
-- 503 `retryable=true` 必须给出 `Retry-After` 和 `recovery=retry_after`；version/cursor/validation 冲突永不标为可原样重试。
-- D1 quota/overload/storage 错误映射为 `QUOTA_EXCEEDED` 或通用 503，保留 request ID，不回传 Cloudflare 内部错误文本。
+- 503 `retryable=true` 必须给出 `Retry-After`，并按原因使用 `recovery=retry_after|wait_for_platform_reset`；version/cursor/validation 冲突永不标为可原样重试。
+- D1 quota 根据日读、日写、storage 映射为 `PLATFORM_QUOTA_EXCEEDED`；overload/未知平台错误映射为 `PLATFORM_UNAVAILABLE`。实现只允许匹配 Cloudflare 官方记录的错误标识或精确模式，不做模糊自然语言判断。二者保留 request ID，不回传 Cloudflare 原始错误全文；只有日额度的已知重置时间或明确 transient failure 才允许自动退避重试。
 
 ## 11. Soft delete、恢复与不可变历史
 
@@ -535,11 +627,11 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 最终 `/openapi.json` 至少满足：
 
 - 每个 operation 有稳定 `operationId`，命名为 `verbResource`，例如 `listIssues`、`completeIssue`；
-- tag 固定为 `meta`、`identity`、`workspaces`、`projects`、`issues`、`comments`、`labels`、`relations`、`invitations`、`admin`、`events`；
+- tag 固定为 `meta`、`identity`、`workspaces`、`projects`、`issues`、`comments`、`labels`、`relations`、`invitations`、`public-join`、`web`、`admin`、`events`；
 - description 只解释能力、权限、参数、后果和恢复，不规定上层 Agent 何时调用；
 - 对每个写入明确 `Idempotency-Key`、`expected_version`、soft delete、Event 和可能错误；
 - enum 同时给稳定 key 及中文解释，示例不使用真实 token/code；
-- security scheme 只有 Bearer Credential；Invite redeem 的条件认证通过 operation 说明和 request schema 表达；
+- security schemes 包含 Agent/API 使用的 Bearer Credential 与第一方 Web 使用的 Cookie Session；Invite、Browser Launch、WebAuthn challenge 和 Public Join 的条件认证通过各 operation 说明和 request schema 表达；
 - 所有 list/cursor/error schema 复用公共 component，但不增加无意义通用响应外壳；
 - OpenAPI 自身不包含 canonical Skill 安装指令、secret、本地路径或上层编排 prompt。
 
@@ -563,10 +655,14 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 5. 验证 D1 `batch()` 对 complete、并发 assign-to-me、跨 Project Relation、Invite redeem 的 rollback 与 response-loss resume。
 6. 用 Free profile 应用预算审查最坏 query 次数、bound parameters、SQL/row size 和 Worker CPU 风险。
 7. 将真正改变业务体验、安全或恢复边界的差异集中提交用户确认；纯技术细节由本文按简单、可恢复、少写放大原则收敛。
+8. 固定 Browser Launch/Session 生命周期后，验证 launch GET 无副作用、一次兑换、CSRF、Credential/Session/Grant 撤销、无 open redirect 和 secret 不落日志。
+9. 验证 Passkey 的 challenge 单次消费、origin/RP ID、签名/user handle、revoke/session 联动与 Agent Launch 恢复；验证 Public Join 每次只产生一个 Project Grant、role 提升/不降级、撤权后简单重入、Policy 关闭和并发幂等。
+10. 验证三项 active counters 与资源/Grant 状态变化同事务提交，达到限制时零副作用；soft delete/revoke 释放、restore/regrant 重占，Issue restore 同时校验其有效 Comments；Comment 满额时 complete 不改变 Issue status，Principal 满额时不遗留孤立身份，Owner 不能把 limit 调到 active usage 以下。
+11. 对每类错误验证 HTTP、code/category/source、retryable/recovery、header/body Retry-After 和敏感信息裁剪一致；mock D1 daily/storage/overload、Cloudflare 1027 HTML、edge 429、未知非 JSON 5xx 与网络失败，证明 Web/Skill 得到一致但不伪造来源的 normalized result。
 
 ## 15. 当前 Draft 结论
 
-本轮没有发现必须修改两份 Frozen 上游 SPEC 的业务冲突。以下属于本文新增但可从现有原则推导的 Draft 技术合同，冻结前应重点复核：
+D-215/D-216 已要求对两份 Frozen 上游 SPEC 做合同修订 3；本文相应新增 Web 会话落点。以下 Draft 技术合同冻结前应重点复核：
 
 - Workspace key 小写 slug、Project key 大写短 key；
 - Invite 单次最多 20 个 Project grants；
@@ -575,5 +671,10 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 - canceled blocker 不自动视为完成；
 - 一个物理 Event 表通过 stream/权限形成参与者 Event 与 Owner Audit 两个逻辑读取面；
 - D1 条件 SQL + operation commit + pending/committed idempotency state machine 代替传统 callback transaction。
+- Browser Launch 与 Web Session 分表保存 hash-only secret；同源 Web 复用现有权限并用 CSRF 防护写入。
+- Passkey 使用独立 Web Authenticator 与短期 challenge 表；Session 以 source kind/id 统一表达 Credential launch 或 Passkey 来源。
+- Public Join 使用单 Project Policy 和单 Grant 原子兑换；Team Join、多 Project 数组与逐 Principal reentry denylist 不进入 v0。
+- Public Project 必须配置 Project-wide Issue/Comment/Principal 三项 active limits；soft delete/revoke 释放，restore/regrant 重新占用。请求门控另由三个 Workers Rate Limiting bindings 近似执行，采用 120/300/30 每 60 秒的首次部署档位，并只通过 deploy Skill 发布配置修改。
+- 所有 Worker 内错误使用统一 JSON envelope；Project quota、应用 rate limit、D1 platform quota 与 platform failure 使用不同机器类别。Cloudflare edge 在 Worker 外生成的错误只由 Web/Skill 客户端本地归一化，不能伪装成 OpenAPI response。
 
-这些选择没有增加新角色、权限或产品模块。若后续原型证明某项无法在 D1 上可靠实现，应先修订本文 Draft；不得通过引入 Durable Objects、KV 或隐藏批量 API绕过 Frozen Foundation。
+这些选择没有增加新角色、权限或产品模块。若后续原型证明某项无法在 D1 上可靠实现，应先修订本文 Draft；不得通过引入 Durable Objects、KV 或隐藏批量 API 绕过 Frozen Foundation。

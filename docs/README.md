@@ -15,6 +15,7 @@
 - [Agent-native Kanban Foundation SPEC](specs/2026-08-26-agent-native-kanban-foundation-spec.md)：已冻结的领域、身份、assignment、基础 API 语义和可靠性合同。
 - [Agent Skills & Bootstrap SPEC](specs/2026-08-28-agent-skills-bootstrap-spec.md)：已冻结的 Skill 能力暴露、可覆盖 Agent Guidance、宿主兼容、跨平台 Node scripts、部署与凭据安全体验合同；不替上层 Agent 作最终工作决策。
 - [API & D1 Schema SPEC](specs/2026-08-28-api-schema-spec.md)：仍在收敛的 v0 HTTP/OpenAPI、D1 schema、索引和原子写入 Draft 合同。
+- [Web UI SPEC](specs/2026-08-29-web-ui-spec.md)：极简第一方 Web、Browser Launch/Session、参与者轻量操作和 Owner 维护的 Draft 合同。
 - `docs/plans/`：目前尚未采用；只有形成明确实现授权和实施配方后才创建。
 
 ## 技术与研究
@@ -22,6 +23,8 @@
 - [Cloudflare 架构基线](architecture/cloudflare-baseline.md)：稳定组件职责和演进边界。
 - [Cloudflare 平台快照（2026-08-28）](research/cloudflare-platform-snapshot-2026-08-28.md)：易漂移的额度、定价和产品能力证据。
 - [Agent Skill 平台快照（2026-08-28）](research/agent-skill-platform-snapshot-2026-08-28.md)：Codex/Claude Skill、Wrangler 与跨平台运行差异。
+- [Web 认证与公开加入能力快照（2026-08-29）](research/web-auth-public-enrollment-snapshot-2026-08-29.md)：WebAuthn/Passkey、Cloudflare Access、Rate Limiting 与 Turnstile 的易漂移事实。
+- [Cloudflare 缓存、协调与限流能力快照（2026-08-29）](research/cloudflare-cache-rate-limit-snapshot-2026-08-29.md)：Workers KV、Cache API、Durable Objects 与 Rate Limiting 的适用边界。
 
 ## 项目治理
 

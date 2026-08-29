@@ -3,12 +3,12 @@
 - 文档状态：Draft
 - 方向真相：本文件
 - 执行真相：[Linear cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f)
-- 最近讨论：2026-08-28
+- 最近讨论：2026-08-29
 
 ## 当前基线
 
 - 产品定位为面向 Coding Agents 的轻量工作协调账本。
-- 已明确“用户的 Agent”是唯一操作主体；人类负责给出目标、提供不可安全推导的信息，并在重要副作用前授权。部署、Owner 管理、协调和 Coding 只是任务模式，不是不同 Agent 类型。
+- 已明确用户的 Agent 是主要调用载体，但不是唯一界面；人类也可以在极简第一方 Web 中直接查看、轻量参与和维护。部署、Owner 管理、协调和 Coding 只是 Agent 的任务模式，不是不同 Agent 类型。
 - 当前只有产品、技术、研究和治理文档，没有业务代码。
 - Linear 项目已经创建并读回，状态为 Planned；尚未创建 Milestone 或实现 Issue。
 - 已确认一个部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project。
@@ -34,7 +34,12 @@
 - 已确认 status 显示名称仅 Owner 可修改；Owner 或 Project writer 可带 expected version 在固定状态间任意显式转换和 reopen，terminal 不表示不可逆。
 - 已确认完成结果使用结构化、不可变且不可删除的 completion comment；complete 原子追加记录并转为 done，reopen 后再次完成会追加新记录。
 - 已确认 Issue Relation 支持 blocks、parent、related、duplicate 四类语义，允许同一 Workspace 内跨 Project、禁止跨 Workspace；跨 Project 写入要求同时拥有两端 writer。
-- 已确认 v0 不首发 assign-next；管理面采用 API + Agent Skills，不发布独立 cfKanban CLI。
+- 已确认 v0 不首发 assign-next，也不发布独立 cfKanban CLI。v0 必须提供同一 Worker 托管的极简第一方 Web UI，服务 Owner 简单维护和参与者直接 Kanban 查看/轻量参与。
+- 已确认浏览器不读取或接收本地长期 Credential；用户的 Agent 创建短期一次性 Browser Launch URL，浏览器兑换 HttpOnly Session 后按同一 Principal/Project 权限访问。
+- 已确认首次 Agent Launch 后可登记 Passkey，作为 v0 唯一免 Agent Web 直登方式；Owner 可以同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer` 原子加入，Team Join 不进入 v0。
+- 已确认 Public Join 不建立逐 Principal 重入 blacklist；开启前 Owner 必须显式设置 Project Issue、Comment、非 Owner Principal 三项 active quota。soft delete/Grant revoke 释放，restore/regrant 重新占用；active quota 不声称清除 D1 tombstone。
+- 已确认实例请求门控使用原生 Workers Rate Limiting 部署配置：首次部署自动提供单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒；Owner Web 只读展示，修改由 deploy Skill 发布配置且不运行 D1 migration，不引入 Durable Object。
+- 已确认 Web/Agent 使用统一机器错误分类；Worker 内返回统一 JSON，D1 quota 安全映射，Cloudflare edge 1027/429/HTML 则由客户端显式归一化并保留来源。
 - 已确认 v0 提供部署级授权过滤的跨 Workspace/Project Issue 聚合读取；Project filter 可省略，但 Skill 在已知上下文时强烈推荐限定一个或多个明确 Project。
 - 已确认 Project Grant 不设置失效日期；每个 Principal/Project 只有一条当前记录，由 Owner 显式变更角色、撤销或重新授予；普通邀请不改写已有有效 Grant。
 - 已确认 Event 使用部署级单调 sequence，opaque cursor 绑定 Principal、过滤与可读 Project 集合；scope 变化要求重新获取快照。
@@ -42,13 +47,13 @@
 - 已确认非幂等创建/命令强制 Idempotency-Key 并保留 24 小时；结构化错误提供 retryable 与 recovery hint。
 - 已确认普通 Comment 不可原地编辑，可软删除/恢复；纠错追加引用旧 Comment 的新记录，completion comment 不可删除。
 - 已确认保留显式 assign-to-me 命令，由服务端推导当前 Principal，且不产生 lease。
-- 已确认 Credential 不自动过期，只通过显式撤销、轮换或 Principal disable 失效；last_used_at 仅作低频运维提示。
+- 已确认 Credential 不自动过期，只通过显式撤销、轮换或 full recovery 中的撤销失效；last_used_at 仅作低频运维提示。v0 不提供 Principal disable/enable/delete。
 - 已确认小而明确的应用级资源上限：请求 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB、列表默认 20/最大 100、context 64 KiB。
-- Foundation SPEC 与 Agent Skills & Bootstrap SPEC 已于 2026-08-28 按 D-212 冻结，并于同日按 D-213 形成合同修订 2；前者固定基础领域与服务合同，后者固定 Agent 使用、分发、部署、凭据和恢复体验。冻结不授权实现。
+- Foundation SPEC 与 Agent Skills & Bootstrap SPEC 已于 2026-08-28 按 D-212 冻结，并在 D-213 后形成合同修订 2；2026-08-29 依次形成修订 3～11，又按 D-233 形成修订 12，固定统一错误分类与边缘归一化边界。冻结不授权实现；CSRF 与具体 API/Schema 仍在 Draft 收敛。
 - 已确认 SB-01：canonical 官网 bootstrap document 把 stable pointer 解析到 immutable release manifest，由 manifest 分别固定 Skill bundle 与 Service deployment bundle；manifest 逐工件限制来源并记录 SHA-256 文件指纹，本地更新校验来源连续性。marketplace/plugin 只作便捷入口，宿主差异由安装规则和 Skill 内置 scripts 吸收，不建 Host Adapter 角色。
 - 已确认 SB-02 环境准备和 SB-03 首次部署：strict-zero 默认每实例一个 Worker + 一个 D1、先使用 `workers.dev`，同名资源只有本地/远端 marker 一致时才恢复。更新拆成 SB-03A 本地 Skill update 与 SB-03B 云端 Instance upgrade；前者采用 immutable bundle/原子切换，后者采用固定目标、兼容矩阵、逐条 migration journal 和可验证 restore point，且 deploy Skill 不执行 D1 restore。SB-04～SB-24 已按三层边界复核：Service/安全脚本强制 MUST，Skills 提供可覆盖 SHOULD，上层最终 DECIDES。cfKanban 保持原子合同，同时通过相关 `SKILL.md` 告知本地状态位置、Invite 未指定 role 时推荐 writer、已知上下文中强烈推荐 Project filters、幂等/readback 组合范式、Recovery Invite 固定 mode 与 `deleted=only` tombstone 入口。D-213 已取消原 SB-24 的完整导出/整库恢复产品能力；Storyboard 已完成一轮。
 - 已形成 [Draft API & D1 Schema SPEC](../specs/2026-08-28-api-schema-spec.md)，正在收敛完整 OpenAPI、单操作合同、D1 DDL/索引和原子写入配方；它仍不授权实现。
-- 推荐 MVP 技术主干是 Workers + D1，其他 Cloudflare 服务暂不成为核心依赖。
+- 已形成 [Draft Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与 SB-25～SB-31；Browser Launch/Session、人类轻量参与、Owner 维护、公开首页、Passkey、单 Project Public Join、三项 active quota 与限流部署体验的主要方向已收敛，当前只剩 wire/DDL 细节。推荐 MVP 持久技术主干仍是 Workers + D1，其他 Cloudflare 数据服务暂不成为核心依赖。
 
 ## 方向
 
@@ -73,12 +78,12 @@ R0 已完成合同冻结。完整 OpenAPI 与 D1 Schema 仍需独立 SPEC 冻结
 
 目标：
 
-- Workers API 和 D1 schema。
+- Workers API、D1 schema、Browser Launch/Web Session 安全基础。
 - Workspace、Project、Issue、固定 workflow、priority、label、comment、dependency。
 - 独立 Agent Credential、Principal、Project Grant、一次性 Invitation 与最小角色。
 - OpenAPI、健康检查、结构化错误和基础管理命令。
 
-边界：不含向量、AI、附件、通知、实时推送和重型 UI。
+边界：包含极简第一方 Web UI 所需的会话与读取/原子写能力；不含向量、AI、附件、通知、实时推送和重型 UI。
 
 ### R2 多 Agent 可靠协作
 
@@ -94,7 +99,7 @@ R0 已完成合同冻结。完整 OpenAPI 与 D1 Schema 仍需独立 SPEC 冻结
 
 R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最小垂直切片重新评估；当前编号只表达方向，不表达必须串行。
 
-### R3 Agent 集成与分发
+### R3 Agent 集成、极简 Web UI 与分发
 
 状态：Proposed
 
@@ -105,6 +110,8 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 - canonical URL bootstrap 文档、immutable release 与可信 Skill 安装/更新指引。
 - macOS、Windows、Linux 的 capability detection、Wrangler 登录/部署和 credential storage 验证。
 - context pack 渲染和错误恢复 playbook。
+- 同一 Worker Static Assets 承载的固定五列 Project Board、Issue 详情/常用原子写入和 Owner 简单维护页。
+- Agent 创建一次性 Browser Launch URL，在 Codex IAB 或普通浏览器中打开明确 Project/Issue；不依赖宿主专有接口。
 - 在真实 Agent 上验证 discover → list → assign → complete 工作循环。
 - 根据实际需求决定是否提供远程 MCP 适配。
 
@@ -118,7 +125,7 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 - 普通 Project Invite 与高风险 Principal Recovery Invite 的运维、告警和审计。
 - assignment、状态与审计异常检查。
 - 健康、审计、配额提示和平台错误解释；不提供完整 D1 导出、导入或整库恢复能力。
-- 可选本地只读查看器是否有实际价值；部署端维护网页不属于 v0 必需能力。
+- Web Session 过期、来源 Credential 撤销、Grant 变化和 CSRF 的安全验证。
 - 免费层超限与降级行为验证。
 
 安全和恢复合同必须在 R1/R2 设计中提前考虑；R4 表示产品化收口，不表示此前可以忽略。
@@ -145,13 +152,14 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 
 ## 推荐顺序
 
-1. 从 Frozen Foundation 推导独立的 API/Schema SPEC，冻结完整 OpenAPI、单操作请求响应合同和 D1 DDL/索引。
-2. 从已冻结合同推导一个最小端到端实现切片，再按用户授权创建实施 PLAN、Linear Milestone 和 Issue。
-3. 用真实 Agent、OS 与并发场景验证后，才决定 R4/R5 的投入。
+1. 继续收敛 Web UI 与 API/Schema Draft 的 CSRF、OpenAPI 和 D1 DDL/索引等剩余 wire 细节，不重新打开已确认的 Public Join、quota 或限流部署合同。
+2. 再把 Web 所需的认证、读取与原子写入纳入 API/Schema SPEC，冻结 OpenAPI、D1 DDL/索引和会话安全合同。
+3. 从已冻结合同推导最小端到端实现切片，再按用户授权创建实施 PLAN、Linear Milestone 和 Issue。
+4. 用真实 Agent、IAB/浏览器、OS 与并发场景验证后，才决定 R4/R5 的投入。
 
 ## 明确暂缓
 
 - 为了看起来完整而照搬 Linear 全部概念。
 - 把 Roadmap 逐条复制成 Linear backlog。
 - 在 v0 或没有对应版本的已冻结设计前引入 KV、DO、Queues、R2、Vectorize 和 AI。
-- 在 API/Schema 合同未冻结、也没有明确实现授权前做 UI 或部署演示。
+- 在 Web UI 与 API/Schema 合同未冻结、也没有明确实现授权前做 UI 原型、前端脚手架或部署演示。
