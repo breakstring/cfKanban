@@ -386,23 +386,22 @@ function validatedCoseAlgorithm(publicKeyCose: Uint8Array): -257 | -7 {
     return -7;
   }
   if (algorithm === -257) {
-    // RSA registrations may contain only kty, alg, modulus and exponent.
+    // RSA public keys may contain only kty, alg, modulus and exponent.
     // Private CRT factors and extension labels must stay in the authenticator.
-    // v0 deliberately accepts one RS256 public-key profile (2048-bit,
-    // e=65537), matching the failure-equalization key so key parameters do
-    // not become a credential-existence timing signal.
     requireExactCoseLabels(cose, [1, 3, -1, -2]);
     const modulus = bytes(cose.get(-1));
     const exponent = bytes(cose.get(-2));
     if (
       keyType !== 3
-      || modulus.length !== 256
+      || modulus.length < 256
+      || modulus.length > 512
       || (modulus[0]! & 0x80) === 0
       || (modulus[modulus.length - 1]! & 1) === 0
-      || exponent.length !== 3
-      || exponent[0] !== 0x01
-      || exponent[1] !== 0x00
-      || exponent[2] !== 0x01
+      || exponent.length < 1
+      || exponent.length > 8
+      || exponent[0] === 0
+      || (exponent.length === 1 && exponent[0]! < 3)
+      || (exponent[exponent.length - 1]! & 1) === 0
     ) fail();
     return -257;
   }
