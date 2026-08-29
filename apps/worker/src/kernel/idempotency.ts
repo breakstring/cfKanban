@@ -1,0 +1,323 @@
+import { sha256Hex } from "./crypto.ts";
+import { ApiError, platformUnavailable, validationError } from "./errors.ts";
+import { AtomicBatchRejectedError, probeOperationCommit, type OperationCommit } from "./d1.ts";
+import type { JsonValue } from "./types.ts";
+
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000;
+
+interface IdempotencyRow {
+  operation_id: string;
+  request_hash: string;
+  response_json: string | null;
+  response_status: number | null;
+  state: "committed" | "pending";
+}
+
+export interface IdempotencyIdentity {
+  idempotencyKey: string;
+  method: string;
+  normalizedResourceScope: string;
+  requestBody: JsonValue;
+  routeTemplate: string;
+  scopeKey: string;
+}
+
+export interface IdempotencyClaim {
+  operationId: string;
+  owned: boolean;
+  requestHash: string;
+  resourceScopeHash: string;
+  responseJson: string | null;
+  responseStatus: number | null;
+  state: "committed" | "pending";
+}
+
+export interface IdempotentReadback<T extends JsonValue> {
+  body: T;
+  status: number;
+}
+
+export interface RunIdempotentOperationOptions<T extends JsonValue> extends IdempotencyIdentity {
+  authorize: () => Promise<void>;
+  db: D1Database;
+  execute: (operationId: string) => Promise<void>;
+  forbiddenPersistenceValues?: readonly string[];
+  now?: number;
+  readback: (operationId: string, commit: OperationCommit) => Promise<IdempotentReadback<T>>;
+}
+
+export interface IdempotentOperationResult<T extends JsonValue> extends IdempotentReadback<T> {
+  idempotentReplay: boolean;
+  operationId: string;
+}
+
+const sensitivePersistenceKeys = new Set([
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "credential_token",
+  "new_credential_token",
+  "session_secret",
+  "session_token",
+  "token_digest",
+  "code_digest",
+  "challenge_digest",
+  "invite_code",
+  "launch_code",
+  "sql",
+  "stack",
+  "bookmark",
+]);
+
+export function validateIdempotencyKey(key: string): void {
+  if (key.length === 0) {
+    throw new ApiError({
+      category: "validation",
+      code: "IDEMPOTENCY_KEY_REQUIRED",
+      message: "Idempotency-Key is required.",
+      recovery: "none",
+      retryable: false,
+      status: 400,
+    });
+  }
+  if (!/^[\x20-\x7E]{1,128}$/.test(key)) {
+    throw validationError("invalid_idempotency_key");
+  }
+}
+
+export function canonicalJson(value: JsonValue): string {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw validationError("non_finite_json_number");
+    return JSON.stringify(Object.is(value, -0) ? 0 : value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const entries = Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0);
+  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
+}
+
+export async function computeRequestHash(identity: IdempotencyIdentity): Promise<{
+  requestHash: string;
+  resourceScopeHash: string;
+}> {
+  const method = identity.method.toUpperCase();
+  const resourceScopeHash = await sha256Hex(identity.normalizedResourceScope);
+  const requestHash = await sha256Hex(
+    `${method}\n${identity.routeTemplate}\n${identity.normalizedResourceScope}\n${canonicalJson(identity.requestBody)}`,
+  );
+  return { requestHash, resourceScopeHash };
+}
+
+function idempotencyConflict(): ApiError {
+  return new ApiError({
+    category: "conflict",
+    code: "IDEMPOTENCY_CONFLICT",
+    message: "The Idempotency-Key was already used for a different request.",
+    recovery: "none",
+    retryable: false,
+    status: 409,
+  });
+}
+
+function safeJson(value: unknown): value is JsonValue {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(safeJson);
+  return typeof value === "object" && Object.values(value).every(safeJson);
+}
+
+function assertPersistenceSafe(value: JsonValue, forbiddenValues: readonly string[]): void {
+  if (typeof value === "string") {
+    if (forbiddenValues.some((secret) => secret.length >= 8 && value.includes(secret))) {
+      throw new Error("Idempotency response rejected by secret policy.");
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) assertPersistenceSafe(entry, forbiddenValues);
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const [key, entry] of Object.entries(value)) {
+      if (sensitivePersistenceKeys.has(key.toLowerCase()) || key.toLowerCase().endsWith("_digest")) {
+        throw new Error("Idempotency response rejected by secret policy.");
+      }
+      assertPersistenceSafe(entry, forbiddenValues);
+    }
+  }
+}
+
+export async function claimIdempotency(
+  db: D1Database,
+  identity: IdempotencyIdentity,
+  now = Date.now(),
+): Promise<IdempotencyClaim> {
+  validateIdempotencyKey(identity.idempotencyKey);
+  const { requestHash, resourceScopeHash } = await computeRequestHash(identity);
+  const proposedOperationId = crypto.randomUUID();
+  const recordId = crypto.randomUUID();
+
+  let row: IdempotencyRow | null;
+  try {
+    const deleteExpired = db.prepare(
+      `DELETE FROM idempotency_records
+       WHERE scope_key = ?1 AND method = ?2 AND route_template = ?3
+         AND resource_scope_hash = ?4 AND idempotency_key = ?5
+         AND expires_at <= ?6`,
+    ).bind(
+      identity.scopeKey,
+      identity.method.toUpperCase(),
+      identity.routeTemplate,
+      resourceScopeHash,
+      identity.idempotencyKey,
+      now,
+    );
+    const insertPending = db.prepare(
+      `INSERT OR IGNORE INTO idempotency_records
+        (id, scope_key, method, route_template, resource_scope_hash,
+         idempotency_key, request_hash, operation_id, state, created_at, expires_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', ?9, ?10)`,
+    ).bind(
+      recordId,
+      identity.scopeKey,
+      identity.method.toUpperCase(),
+      identity.routeTemplate,
+      resourceScopeHash,
+      identity.idempotencyKey,
+      requestHash,
+      proposedOperationId,
+      now,
+      now + IDEMPOTENCY_TTL_MS,
+    );
+    await db.batch([deleteExpired, insertPending]);
+
+    row = await db.prepare(
+      `SELECT request_hash, operation_id, state, response_status, response_json
+       FROM idempotency_records
+       WHERE scope_key = ?1 AND method = ?2 AND route_template = ?3
+         AND resource_scope_hash = ?4 AND idempotency_key = ?5
+       LIMIT 1`,
+    ).bind(
+      identity.scopeKey,
+      identity.method.toUpperCase(),
+      identity.routeTemplate,
+      resourceScopeHash,
+      identity.idempotencyKey,
+    ).first<IdempotencyRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+
+  if (row === null) throw platformUnavailable("d1");
+  if (row.request_hash !== requestHash) throw idempotencyConflict();
+  return {
+    operationId: row.operation_id,
+    owned: row.operation_id === proposedOperationId,
+    requestHash,
+    resourceScopeHash,
+    responseJson: row.response_json,
+    responseStatus: row.response_status,
+    state: row.state,
+  };
+}
+
+function parseStoredResponse<T extends JsonValue>(claim: IdempotencyClaim): IdempotentReadback<T> {
+  if (claim.state !== "committed" || claim.responseJson === null || claim.responseStatus === null) {
+    throw new AtomicBatchRejectedError();
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(claim.responseJson);
+  } catch {
+    throw new AtomicBatchRejectedError();
+  }
+  if (!safeJson(body)) throw new AtomicBatchRejectedError();
+  return { body: body as T, status: claim.responseStatus };
+}
+
+export async function finalizeIdempotency<T extends JsonValue>(
+  db: D1Database,
+  operationId: string,
+  response: IdempotentReadback<T>,
+  forbiddenValues: readonly string[] = [],
+  finalizedAt = Date.now(),
+): Promise<IdempotentReadback<T>> {
+  assertPersistenceSafe(response.body, forbiddenValues);
+  const responseJson = canonicalJson(response.body);
+  if (new TextEncoder().encode(responseJson).byteLength > 128 * 1_024) {
+    throw new Error("Idempotency response exceeds the persistence limit.");
+  }
+
+  let row: IdempotencyRow | null;
+  try {
+    await db.prepare(
+      `UPDATE idempotency_records
+       SET state = 'committed', response_status = ?1, response_json = ?2,
+           expires_at = ?4
+       WHERE operation_id = ?3 AND state = 'pending'
+         AND EXISTS (SELECT 1 FROM operation_commits WHERE operation_id = ?3)`,
+    ).bind(response.status, responseJson, operationId, finalizedAt + IDEMPOTENCY_TTL_MS).run();
+    row = await db.prepare(
+      `SELECT request_hash, operation_id, state, response_status, response_json
+       FROM idempotency_records WHERE operation_id = ?1 LIMIT 1`,
+    ).bind(operationId).first<IdempotencyRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+  if (row === null) throw new AtomicBatchRejectedError();
+  return parseStoredResponse<T>({
+    operationId: row.operation_id,
+    owned: false,
+    requestHash: row.request_hash,
+    resourceScopeHash: "",
+    responseJson: row.response_json,
+    responseStatus: row.response_status,
+    state: row.state,
+  });
+}
+
+export async function runIdempotentOperation<T extends JsonValue>(
+  options: RunIdempotentOperationOptions<T>,
+): Promise<IdempotentOperationResult<T>> {
+  await options.authorize();
+  const claim = await claimIdempotency(options.db, options, options.now);
+
+  if (claim.state === "committed") {
+    await options.authorize();
+    return {
+      ...parseStoredResponse<T>(claim),
+      idempotentReplay: true,
+      operationId: claim.operationId,
+    };
+  }
+
+  let commit = await probeOperationCommit(options.db, claim.operationId);
+  const resumedAfterCommit = commit !== null;
+  if (commit === null) {
+    try {
+      await options.execute(claim.operationId);
+    } catch (error) {
+      commit = await probeOperationCommit(options.db, claim.operationId);
+      if (commit === null) throw error;
+    }
+    commit = await probeOperationCommit(options.db, claim.operationId);
+  }
+  if (commit === null) throw new AtomicBatchRejectedError();
+
+  await options.authorize();
+  const readback = await options.readback(claim.operationId, commit);
+  const finalized = await finalizeIdempotency(
+    options.db,
+    claim.operationId,
+    readback,
+    options.forbiddenPersistenceValues ?? [],
+    options.now ?? Date.now(),
+  );
+  return {
+    ...finalized,
+    idempotentReplay: !claim.owned || resumedAfterCommit,
+    operationId: claim.operationId,
+  };
+}
