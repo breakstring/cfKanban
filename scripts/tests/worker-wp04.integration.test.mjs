@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -167,6 +168,13 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const invitationHtml = await invitationPage.text();
   assert.equal(invitationHtml.includes(projectInviteCode), false);
   assert.match(invitationHtml, /history\.replaceState/);
+  const executableScript = /<script>([\s\S]*?)<\/script>/.exec(invitationHtml)?.[1];
+  assert.equal(typeof executableScript, "string");
+  const executableScriptSource = `sha256-${createHash("sha256").update(executableScript).digest("base64")}`;
+  assert.match(
+    invitationPage.headers.get("content-security-policy") ?? "",
+    new RegExp(`script-src '${executableScriptSource.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`),
+  );
   assert.match(invitationHtml, /<html lang="en">/);
   assert.match(invitationHtml, /data-select-locale="en"/);
   assert.match(invitationHtml, /data-select-locale="zh-CN"/);
