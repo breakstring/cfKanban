@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A minimal, API-first Cloudflare Kanban system for coding agents. It is closer to a reliable work coordination ledger for agents than a traditional project management product with its UI removed.
 
-> Current status: the product and foundational architecture contracts are Frozen, while the API and D1 Schema contract is still being refined as a Draft. The repository contains documentation only; there is no application code or authorized implementation plan yet.
+> Current status: the Foundation and Agent Skills contracts are Frozen at revision 12. The minimal Web UI and API/D1 Schema contracts are still Drafts. The repository contains documentation only; there is no application code or authorized implementation plan yet.
 
 ## Product principles
 
@@ -12,7 +12,7 @@ A minimal, API-first Cloudflare Kanban system for coding agents. It is closer to
 - Preserve the Kanban core: projects, issues, statuses, priorities, labels, comments, dependencies, and history.
 - Run on Cloudflare's free tier by default. Paid services may enhance the product but must not become core dependencies.
 - Prefer fewer components. The MVP starts with Workers and D1; KV, Durable Objects, AI, and other services require demonstrated value.
-- Human-facing maintenance should be limited to credential management, soft-delete recovery, health checks, and auditing.
+- A minimal first-party Web UI is required for direct Kanban viewing, light Issue participation, and simple Owner maintenance; it must reuse the same API and stay deliberately small.
 
 ## Current product contract
 
@@ -34,18 +34,25 @@ A minimal, API-first Cloudflare Kanban system for coding agents. It is closer to
 - Completing an Issue atomically appends a structured, immutable, undeletable completion comment and moves the Issue to `done`. Reopening preserves previous completion records; completing again appends another record.
 - v0 relations are fixed to `blocks / parent / related / duplicate`. They may cross Projects in the same Workspace but cannot cross Workspaces. Cross-Project writes require `writer` on both Projects, and relations never change status or permission automatically.
 - v0 provides deterministic candidate listing plus explicit assign and assign-to-me operations; it does not initially provide atomic assign-next. An upstream agent may combine these atomic capabilities according to user intent and local rules.
-- The v0 management surface is API + Agent Skills. It does not require a deployed maintenance website and does not publish a standalone cfKanban CLI. Codex, Claude Code, Workbuddy, and similar tools are all user agents; deployment, coordination, and coding are task modes rather than product roles.
+- v0 includes a minimal first-party Web UI hosted by the same instance; it reuses the REST permission, version, idempotency, and audit contracts for Project boards, light Issue operations, and simple Owner maintenance. v0 still does not publish a standalone cfKanban CLI.
+- The Web board supports moving one card between the five fixed columns and immediately saves that status with optimistic concurrency. Moving to `done` routes through the atomic complete contract; Markdown bodies and comments are edited as source and rendered safely. There is no bulk drag, manual rank, or WYSIWYG editor.
+- An authenticated agent creates a five-minute, single-use Browser Launch URL for an explicit Project, Issue, or Owner target. The browser exchanges it for a fixed eight-hour, target-scoped HttpOnly session with no sliding renewal or refresh token. It becomes invalid when its source Credential is revoked; long-lived Credentials never enter the URL, page scripts, localStorage, or sessionStorage. An in-app browser is an optional host convenience, not a protocol dependency.
+- After an initial Agent Launch, a Principal may register Passkeys for direct Web login. Passkeys are Web-only authenticators, never API Credentials or Grants; the Agent Launch path remains the recovery route.
+- An Owner may expose multiple Projects through Public Join. A visitor chooses one Project and either `reader` or `writer` per atomic join. v0 has no Team Join or multi-Project public grant operation.
+- Enabling Public Join requires explicit Project-wide active limits for Issues, Comments, and non-Owner Principals. Soft delete or Grant revocation releases active capacity; restore or regrant consumes it again. The UI may suggest 50/500/50, but the API has no silent defaults.
+- Request-rate gates are Owner-visible deployment configuration. The zero-parameter deployment starts with 120 authenticated API requests per Principal, 300 dynamic API requests per instance, and 30 unauthenticated sensitive operations per 60 seconds. Changes use `cfkanban-deploy` to publish Worker configuration without a D1 migration. These are approximate per-location abuse controls; D1 remains responsible for exact business quotas.
+- Web and Agent clients share a machine-readable error model for business quotas, application rate limits, D1 platform quotas, and platform failures. Errors generated before the Worker runs are explicitly normalized by the client and never misrepresented as cfKanban/OpenAPI JSON.
 - v0 provides an authorization-filtered deployment-wide Issue query across Workspaces and Projects. Project filters are optional at the API layer, but Skills strongly recommend explicit Project scopes when context is known.
 - Project Grants do not expire. Each Principal/Project pair has one current record changed only by explicit Owner role change, revocation, or regrant. Invitations retain their own short expiry.
 - Issue priority is fixed to `none / low / medium / high / urgent`, defaulting to `none`. v0 stores no manual rank; candidate ordering is priority followed by FIFO.
 - Non-idempotent creates and commands require an `Idempotency-Key` retained for 24 hours. Structured errors expose stable `code`, `retryable`, and `recovery` fields.
 - Standard Comments are append-only: they cannot be edited in place, but may be soft-deleted and restored. Corrections append a new Comment that references the earlier one. Completion comments remain immutable and undeletable.
 
-Credentials and Project Grants do not expire automatically. They change only through explicit revocation, rotation/regrant, or Principal disablement. Invitations are the only authentication/authorization bootstrap capability with automatic expiry.
+Credentials and Project Grants do not expire automatically. Credentials change only through explicit revocation, rotation, or full-recovery revocation; Grants change only through explicit role changes, revocation, or regrant. Invitations are the only authentication/authorization bootstrap capability with automatic expiry. v0 has no Principal disable/enable/delete lifecycle.
 
 v0 uses bounded resource contracts: requests up to 128 KiB, Issue bodies up to 64 KiB, Comment/completion payloads up to 32 KiB, lists defaulting to 20 and capped at 100 items, and Agent context capped at 64 KiB. Large logs and attachments use external artifact references.
 
-The Foundation SPEC and Agent Skills & Bootstrap SPEC are Frozen, defining the foundational domain/API semantics and the agent usage, distribution, deployment, and credential experience. Freezing does not authorize implementation. Exact HTTP/OpenAPI fields, D1 DDL, indexes, and atomic write recipes remain in the Draft API & D1 Schema SPEC. Long-term physical retention of soft-deleted data remains deferred; v0 exposes no hard-delete API and no complete D1 export, import, or full-database disaster-recovery capability.
+The Foundation SPEC and Agent Skills & Bootstrap SPEC are Frozen at revision 12, including the minimal Web direction, Browser Launch/Session boundaries, Owner Credential anti-lockout, Owner admin Session scope, Passkey direct login, single-Project Public Join, simple re-entry, three mandatory active quotas, defaulted rate-limit deployment configuration, and layered error normalization. Freezing does not authorize implementation. CSRF details, exact HTTP/OpenAPI fields, D1 DDL, indexes, and atomic write recipes remain Draft. Long-term physical retention of soft-deleted data remains deferred; v0 exposes no hard-delete API and no complete D1 export, import, or full-database disaster-recovery capability.
 
 ## Documentation
 
@@ -54,6 +61,7 @@ The Foundation SPEC and Agent Skills & Bootstrap SPEC are Frozen, defining the f
 - [User storyboard](docs/product/user-storyboard.md)
 - [Foundation SPEC](docs/specs/2026-08-26-agent-native-kanban-foundation-spec.md)
 - [Agent Skills & Bootstrap SPEC](docs/specs/2026-08-28-agent-skills-bootstrap-spec.md)
+- [Minimal Web UI SPEC](docs/specs/2026-08-29-web-ui-spec.md)
 - [API & D1 Schema SPEC](docs/specs/2026-08-28-api-schema-spec.md)
 - [Cloudflare architecture baseline](docs/architecture/cloudflare-baseline.md)
 - [Cloudflare platform snapshot](docs/research/cloudflare-platform-snapshot-2026-08-28.md)

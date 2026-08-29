@@ -1,7 +1,7 @@
 # cfKanban 决策登记表
 
 - 文档状态：Draft
-- 最近更新：2026-08-28
+- 最近更新：2026-08-29
 
 ## 状态定义
 
@@ -17,7 +17,7 @@
 
 | ID | 决策 | 状态 | 依据与影响 |
 | --- | --- | --- | --- |
-| D-001 | 产品主要面向 Coding Agents，人类 UI 不是核心 | Confirmed | 用户初始方向；协议与恢复能力优先 |
+| D-001 | 产品主要面向 Coding Agents，人类 UI 不是核心 | Superseded | “Agent 是主要使用者、协议与恢复能力优先”仍成立，但“不把人类 UI 视为 v0 必需表面”的理解已由 D-215 修订 |
 | D-002 | 基于 Cloudflare，优先免费服务，付费能力做增强 | Confirmed | 用户初始方向；核心不能依赖 AI/Vector |
 | D-003 | 保留 Project、Issue、状态、评论、标签等 Kanban 核心 | Confirmed | 用户初始方向；借鉴 Linear 但不照搬全部层级 |
 | D-004 | 当前阶段只讨论并写文档，不进行实现 | Confirmed | 用户本轮明确要求 |
@@ -71,7 +71,7 @@
 | D-138 | v0 提供部署级、按当前 Principal 授权过滤的跨 Workspace/Project Issue 聚合读取 | Confirmed | 用户于 2026-08-28 明确同意；只聚合读取，不提供跨范围批量写入或 assign-next，详情和写入仍使用明确 Workspace/Project 上下文 |
 | D-139 | 聚合读取的 Project filter 在 API 上可省略，但 Skill 在已知上下文中强烈推荐一个或多个明确 Project | Confirmed | 用户于 2026-08-28 明确要求并按 D-190/D-195 修订；作用域使用无歧义的 workspace + project 组合，响应始终返回 resolved scope 与范围警告。何时省略过滤由上层决定，Skill 不拒绝合法的全授权范围读取 |
 | D-140 | Project Grant 支持可选 expires_at，默认不过期；只有 Owner 能延长、重新启用或撤销 | Superseded | 用户随后认为 Grant expiry 会显著复杂化授权判断；由 D-141 替代 |
-| D-141 | Project Grant 不设置失效日期，Invitation expiry 是唯一的邀请时效 | Confirmed | 用户于 2026-08-28 明确调整；授权只由 Principal 状态、容器状态、Grant role 和 revocation 决定，避免自动失权、续期与临时角色回退 |
+| D-141 | Project Grant 不设置失效日期，Invitation expiry 是唯一的邀请时效 | Confirmed | 用户于 2026-08-28 明确调整并由 D-219 修订；授权只由容器状态、Grant role 和 revocation 决定，避免自动失权、续期与临时角色回退 |
 | D-142 | 普通 Project Invite 不改写已有有效 Grant；已撤销 Grant 可按新邀请重新授予 | Confirmed | 用户于 2026-08-28 大体认可并要求简化 Grant；已有有效访问返回 already_has_access，角色变化走 Owner 显式操作，多 Project 邀请仍原子处理各项目结果 |
 | D-143 | Event 使用部署级单调序号；公开 opaque cursor 绑定 Principal、过滤条件和实际可读 Project 集合 | Confirmed | 依据 D-014 按 Agent 友好的增量恢复直接收敛；权限或 scope 变化返回 CURSOR_SCOPE_MISMATCH，客户端重新获取有界快照，Credential 轮换不使同 Principal cursor 失效 |
 | D-144 | Issue priority 固定为 none/low/medium/high/urgent，v0 不保存手工 rank | Confirmed | 依据 D-014 按简单和低写放大收敛；默认 none，候选按 priority 后 created_at/ID 稳定 FIFO，不为拖拽顺序制造批量写入 |
@@ -79,7 +79,7 @@
 | D-146 | 结构化错误提供稳定 code、retryable 与 recovery hint，并隐藏无权资源存在性 | Confirmed | 依据 D-014 按 Agent 可恢复性与最小信息泄露收敛；同请求可安全重试才标 retryable，版本/cursor 冲突要求刷新而非盲重试 |
 | D-147 | v0 普通 Comment 追加后不可原地编辑，可软删除/恢复；纠错使用引用旧 Comment 的新 Comment | Confirmed | 依据 D-014 按简单与可审计历史收敛；避免 Comment revision 子系统和静默改写，completion comment 仍不可编辑、删除或恢复 |
 | D-148 | v0 保留显式 assign-to-me 命令，不以通用 PATCH 作为唯一自分配入口 | Confirmed | 依据 D-014 按 Agent 友好收敛；服务端从当前 Credential 推导 Principal，避免客户端复制自身 ID，命令仍只设置 assignee 而不产生 lease |
-| D-149 | v0 Credential 不设置自动失效日期，只能显式撤销、轮换或随 Principal disable 失效 | Confirmed | 用户于 2026-08-28 明确确认；避免无人值守 Agent 周期性失权，Invitation 保持唯一自动过期能力，未来强制定期轮换可作为非核心部署 profile |
+| D-149 | v0 Credential 不设置自动失效日期，只能显式撤销、轮换或随 Principal disable 失效 | Superseded | “Credential 不自动过期”继续有效；Principal disable 已由 D-219 移除，Credential 只通过显式 revoke、rotation 或 full recovery 中的撤销失效 |
 | D-150 | v0 使用小而明确的应用级资源上限，并通过 cursor/truncated 引导 Agent 分批读取 | Confirmed | 依据 D-014 按上下文友好和 D1 成本收敛；请求 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB、列表默认 20/最大 100、context 最大 64 KiB，不接受大日志或附件内联 |
 | D-151 | 聚合读取用可重复的 `project=workspace_key/project_key` 表达最多 20 个明确 Project scope | Confirmed | 依据 D-014 按 Agent 可读性直接收敛；服务端去重并按内部 Project ID 规范化，同维度 OR、跨维度 AND，参数顺序不影响 cursor scope |
 | D-152 | v0 Invite URL 固定使用 `/invite?code=<opaque>`，并以 no-store/no-referrer/无第三方资源保护 Bearer code | Confirmed | 沿用用户提出的最简单离线话术形式并按 D-014 收敛编码；GET 永不兑换，完整 query 不进入应用日志，页面读取后尽快移除可见 code |
@@ -94,7 +94,7 @@
 | D-161 | 产品只建模“用户的 Agent”这一种操作主体，部署、Owner 管理、Coding 与协调只是任务模式 | Confirmed | 用户于 2026-08-28 明确指出林的 Agent、陈的 Agent才是真实使用关系；任务模式不得成为 Principal kind、权限、审计身份或独立 Agent 角色 |
 | D-162 | v0 不发布独立 cfKanban CLI；确定性逻辑放入 Skill bundle 内少量 Node.js/TypeScript scripts | Confirmed | 用户于 2026-08-28 明确要求简化；scripts 只由 Agent 按 Skill 调用，不形成独立用户界面或公共命令合同，Wrangler 固定为 bundle 验证版本 |
 | D-163 | Host Adapter 不作为独立角色或产品层，宿主差异由 bootstrap 安装规则与 Skill 内置 scripts 吸收 | Confirmed | Codex、Claude Code、小龙虾、Workbuddy 等仍是同类用户 Agent；安装路径、刷新和 metadata 属于实现细节，不能扩展权限或复制领域逻辑 |
-| D-164 | v0 权威维护入口为管理 API + Agent Skills，不要求部署端维护网页 | Confirmed | Invite bootstrap 页面不是管理面；Skill 可以带本地只读查看器，Node scripts 只是 Skill 内部执行资源 |
+| D-164 | v0 权威维护入口为管理 API + Agent Skills，不要求部署端维护网页 | Superseded | 原轻 UI 判断低估了人类直接查看 Kanban 和低频参与的价值；由 D-215 替代 |
 | D-165 | REST/JSON 与 OpenAPI 是权威服务合同，Agent Skills 是首要适配，远程 MCP 可选且后置 | Confirmed | Skills 可以直接调用 HTTP 或使用内置 scripts，但不复制服务端领域规则；不以独立 CLI 作为中间公共合同 |
 | D-166 | Node 是用户拥有的通用开发环境；Skill 可以探测和引导，但不能静默决定安装器、版本管理器、路径或全局默认版本 | Confirmed | 用户于 2026-08-28 明确担心跨 OS 安装方式、Node 版本与用户习惯冲突；已有兼容 Node 优先复用，任何安装或环境修改都先由用户选择并授权 |
 | D-167 | stable Skill release 用机器可读 semver range 声明已验证 Node 范围，稳定 SPEC 不写死具体 Node 版本 | Confirmed | Node LTS/Current 状态会变化；兼容合同随 release 验证，Agent 不为追逐最新版改变用户环境 |
@@ -145,7 +145,26 @@
 | D-212 | Foundation SPEC 与 Agent Skills & Bootstrap SPEC 同时冻结 | Confirmed | 用户于 2026-08-28 在冻结就绪度审查后明确同意。两份文档状态改为 Frozen：前者固定 Foundation 级领域、权限、并发、资源层级与 HTTP 语义，后者固定公共 Agent 体验、发行、部署、凭据与恢复安全边界。完整 OpenAPI 字段、D1 DDL/索引、具体 Skill/npm/路径及实现代码不在本次冻结范围；冻结不授权实现、Linear 写入、部署、迁移、提交或推送 |
 | D-213 | v0 取消完整 D1 导出、导入、本地恢复演练和整库灾难恢复产品能力 | Confirmed | 用户于 2026-08-28 从用户场景重新评估后明确要求移除。`cfkanban-deploy` 只负责部署、升级、检查和 migration 安全；migration 前仍可记录 Cloudflare restore point/bookmark 作为平台证据，但 Skill/API 不提供 export/import/Time Travel restore/SQL restore 能力或手册。业务资源的单项 soft-delete restore、Principal Recovery Invite 与失败后的幂等恢复不受影响 |
 | D-214 | 后期检索增强优先采用可选 Cloudflare Vectorize 派生索引 | Confirmed | 用户于 2026-08-28 明确这是长期计划。v0 不启用 Vectorize，也不把向量索引作为权限、CAS、唯一约束或核心事实源；后期可由已提交 Event 异步构建并允许重建，失败或关闭时回退到 D1 结构化过滤与基础 title 搜索。Workers AI embedding、费用、同步延迟和具体检索语义在进入对应版本时另行冻结 |
+| D-215 | v0 必须提供同实例托管的极简第一方 Web UI | Confirmed | 用户于 2026-08-29 明确指出 Agent-first 不等于 Agent-only。Web UI 面向 Owner 的简单维护和参与者的直接 Kanban 查看/轻量参与；`reader` 只读，`writer` 提供常用 Issue 增删改、状态、assignment、Comment、Label、Relation、complete/reopen 等与 API 权限一致的原子能力。UI 必须保持功能、视觉和代码简洁，不发展批量操作、自定义工作流、复杂报表、实时协同或第二套领域逻辑 |
+| D-216 | Web 登录采用 Agent 签发一次性 Browser Launch URL 并兑换 HttpOnly Session | Confirmed | 用户于 2026-08-29 明确认可。浏览器不读取 `~/.cfkanban/`，不要求粘贴长期 Credential，也不把长期 Credential 放入 URL、localStorage 或页面脚本可读存储。已认证 Agent 为明确 target 创建短期一次性 launch capability；浏览器 POST 兑换为 `HttpOnly + Secure + SameSite` Session。TTL、session 绑定/撤销与 scope 后由 D-217 固定；CSRF 仍在 Web/API Draft 收敛 |
+| D-217 | Browser Launch 固定 5 分钟一次性，Web Session 固定 8 小时并绑定源 Credential 与 target scope | Confirmed | 用户于 2026-08-29 在确认过期/刷新体验后同意继续，并由 D-219/D-222 修订。Session 不滑动续期且无 refresh token；源 Credential revoke 或 Session 显式 revoke 立即失效，Project Grant 逐请求校验。Project/Issue launch 只允许访问对应 Project；Owner `admin` launch 进入实例级管理与数据面但默认不自动查询全部 Issue。过期后页面不接受长期 Credential，只引导用户让 Agent 重新创建 launch |
+| D-218 | v0 Web Board 不做拖拽、autosave、富文本、乐观成功或批量操作 | Superseded | 用户重新评估后认为五列拖拽和落列即保存是常用 Kanban 能力；由 D-220 替代。无批量操作、无手工 rank、无 WYSIWYG 和不自动重放失败写入仍保留 |
+| D-219 | v0 移除 Principal disable/enable/delete | Confirmed | 用户于 2026-08-29 明确同意。Owner 使用 Credential revoke 停止认证、Grant revoke 停止某 Project 权限、Recovery Invite 恢复同一身份；Principal、assignment 与历史引用保持稳定。移除全局 disabled 状态轴，避免重新启用时旧 Credential 是否复活的复杂安全语义 |
+| D-220 | v0 Web Board 支持五列拖拽并在落列后立即保存状态 | Confirmed | 用户于 2026-08-29 明确要求保留常用拖拽能力。拖到非 done 列立即发起单 Issue CAS 状态写入；卡片显示 saving，服务确认后才算成功，失败或冲突回到服务端真实列。拖入 done 自动路由到 complete 合同；若没有必填 summary，先显示极简完成框，提交后才落列，取消则回原列。正文与评论支持安全 Markdown 渲染，但不引入 WYSIWYG |
+| D-221 | Web 不管理 Owner Credential 生命周期，Owner 正常轮换由 Agent 安全完成 | Confirmed | 用户于 2026-08-29 明确确认防锁死边界。Owner Web Session 可以查看 Owner Credential 非秘密摘要，但不能撤销或轮换任何 Owner Credential；Web 只允许 Owner 撤销参与者 Credential。`cfkanban-admin` 先在受限本地文件生成并保存替代 Owner Credential，再通过 Bearer-only 原子 rotation 建立新凭据并撤销当前旧凭据，最后验证并切换本地槽位；全部 Owner Credential 丢失仍只走 `cfkanban-deploy` 的部署外同 Principal 恢复。因此不存在从 Web 撤销当前或最后一个 Owner Credential 的路径 |
+| D-222 | Owner `admin` Web Session 可以显式进入实例内任意 Project 数据面 | Confirmed | 用户于 2026-08-29 明确同意。`admin` target 本来就是唯一 Owner 的实例级 scope，因此同一 Session 可以使用 Owner 的隐式数据面权限进入任意 Workspace/Project 看板；默认落在 Overview，不自动读取全部 Issue，必须显式选择 Project。普通 Project/Issue launch 仍限定单一 Project，参与者不能获得该范围 |
+| D-223 | 未认证实例首页提供产品介绍和可复制的 Agent 部署话术 | Confirmed | 用户于 2026-08-29 明确提出人类直接打开网站时的首页方向。页面中央提供指向 canonical bootstrap document 的短话术与复制按钮，不嵌入安装脚本或 secret；部署实例还清楚标识这是一个独立实例，并为后续登录和单 Project Public Join 保留入口。canonical 项目站点不显示任何实例私有数据 |
+| D-224 | 首次 Agent 登录后可注册 Passkey，供人类后续直接登录 | Confirmed | 用户于 2026-08-29 明确认可 SB-30。Passkey 是 v0 唯一免 Agent 直登方法：首次/补充登记要求 Agent-launch Session，后续认证只签发固定 8 小时 Web Session，不创建 API Credential、Grant 或 refresh token。允许同 Principal 多个认证器并支持本人列举/撤销、Owner 撤销参与者认证器；撤销只使其来源 Sessions 失效。RP ID/domain 变化或丢失时回到 Agent Browser Launch |
+| D-225 | 大团队加入与公开试用拆成 Team Join Link 与 Public Join Offer | Rejected | 用户于 2026-08-29 认为 Team Join 携带多个 Project 授权过重，明确不采用；不再保留 Team Link、群组入口或一次授予多个 Project 的公开能力 |
+| D-226 | 自助加入只保留单 Project Public Join，访客选择公开 Project 与 reader/writer | Confirmed | 用户于 2026-08-29 明确确认。Owner 可逐个 Project 开关 Public Join，并同时公开多个 Project；访客每次选择一个 Project 和一个 `reader|writer`，只执行一条 Project Grant 的原子 self-join。公开 writer 风险必须在 Owner 启用时明确提示，但系统不静默收窄为 reader。普通一次性 Invitation 保持不变；撤权后重入由 D-227 固定，资源上限由 D-228/D-229 分层收敛 |
+| D-227 | Public Join 不建立逐 Principal 重入阻止；公开期间撤权者可以再次加入 | Confirmed | 用户于 2026-08-29 明确认为重入阻止会把事情复杂化。Owner 若不希望任何人继续自助加入，应关闭该 Project 的 Public Join；单独撤销 Grant 只撤销当前授权，不创建 blacklist/denylist。相同 Principal 再加入复用同一 Grant 行，不创建重复身份或授权记录 |
+| D-228 | 开启 Public Join 前，Owner 必须显式设置 Project Issue 与 Comment 存储行数上限，删除不释放额度 | Superseded | “必须设置 Issue/Comment 上限”继续有效，但用户于 2026-08-29 明确否决 tombstone 永久占用额度；由 D-230 的 active resource quota 替代 |
+| D-229 | Public Join Project 必须同时设置 Principal 数量上限 | Confirmed | 用户于 2026-08-29 明确确认 Issue、Comment、Principal 三项都必填。Principal quota 统计 Project 当前 active 非 Owner Grants，不区分 Invitation/Public Join 来源；Grant revoke 释放、regrant/self-join 重新占用，role change 不改变数量。Public Join 创建新身份/Grant 与 quota 校验必须原子，满额不能留下孤立 Principal/Credential |
+| D-230 | Public Project 三项 quota 都按当前 active 资源计数，soft delete/revoke 释放、restore/regrant 重新占用 | Confirmed | 用户于 2026-08-29 明确认为删除不释放会让 Project 永久无法新增。Issue soft delete 释放一个 Issue slot，并释放其当前有效 Comments 对 Comment quota 的占用；Comment soft delete 释放一个 Comment slot；Grant revoke 释放一个 Principal slot。restore/regrant 必须重新校验并占用，满额时原子失败。completion comment 永不可删除，并在所属 Issue active 时占用；active quota 只限制当前工作集，不声称回收 D1 tombstone 存储 |
+| D-231 | 请求频率门控采用 Owner 可见、全局可设置的实例级配置 | Confirmed | 用户于 2026-08-29 明确要求限流不能对 Owner 完全不透明。至少呈现单 Principal 与实例总请求门槛，并补充未认证/Public Join 路径门槛；返回稳定 429、Retry-After 和当前生效策略摘要。精确业务 quota 仍由 D1 强制；边缘限流只抵御部分恶意请求。配置载体与默认档位已经由 D-232 进一步固定 |
+| D-232 | v0 使用原生 Workers Rate Limiting 部署配置，并随首次部署提供零参数默认档位 | Confirmed | 用户于 2026-08-29 接受限流通过 `cfkanban-deploy` 更新 Worker 配置，并要求首次部署已有正常业务可用值。初始档位固定为：单 Principal 动态 API 120 次/60 秒、实例全部动态 API 300 次/60 秒、未认证敏感操作 30 次/60 秒；静态资产不进入应用限流。每个请求按适用门控叠加检查，429 携带 Retry-After。Owner Web 只读展示实际部署值和配置来源；修改必须作为显式 deployment plan delta，发布配置但不执行 D1 migration。原生计数仍按 Cloudflare location 近似维护，不能承诺严格全球总量 |
+| D-233 | 服务端错误与 Cloudflare 边缘失败采用统一分类、分层归一化的错误合同 | Confirmed | 用户于 2026-08-29 指出限流、业务配额和 Cloudflare 配额错误必须让 Web 与 Agent 得到一致可操作提示。进入 Worker 的错误统一返回 JSON envelope、机器 code/category/source、request ID、retryable/recovery 和可选 Retry-After；Project active quota、应用限流、D1 平台 quota 分别使用稳定类别。Worker 免费日请求上限等可能在代码执行前由 Cloudflare 返回 1027/HTML，服务端无法包装；Web/Skill 客户端必须把已知边缘响应归一化为同一错误结果模型并标记 `source=cloudflare_platform`，不能把本地归一化伪装成 OpenAPI JSON 响应，也不能依赖供应商自然语言文案分支 |
 
 ## 需要显式修订的决策
 
-Foundation 的领域与服务端公共技术选择、Agent-first Storyboard 及首发 Skill/部署体验已经完成一轮收敛，两份 SPEC 已于 2026-08-28 按 D-212 冻结，并按 D-213 形成显式修订 2。完整 OpenAPI 与 D1 DDL/索引仍由后续专项 SPEC 冻结，不因 Foundation 冻结而自动确定，也不因冻结自动获得实现授权。
+Foundation 的领域与服务端公共技术选择、Agent-first Storyboard 及首发 Skill/部署体验已经完成第一轮收敛，两份 SPEC 已于 2026-08-28 按 D-212 冻结、按 D-213 形成修订 2，于 2026-08-29 依次形成修订 3～11，并按 D-233 形成修订 12，固定统一错误分类与 Cloudflare 边缘失败的客户端归一化边界。Web UI 和 API/Schema 仍为 Draft，不因此获得实现授权。

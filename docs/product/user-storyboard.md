@@ -3,7 +3,7 @@
 - 文档状态：Draft
 - Roadmap：R0
 - 讨论目的：借助具体的人/Agent 使用场景逐段验收 cfKanban 能力，发现 Foundation 与 Agent Skills SPEC 尚未暴露的体验断点；场景不定义上层工作流
-- 最近讨论：2026-08-28
+- 最近讨论：2026-08-29
 
 ## 1. 如何使用本文
 
@@ -48,6 +48,7 @@
 | D. 日常 Issue 协作 | SB-12～SB-17 | Agent 能发现、分配、推进、阻塞、交接和完成工作 |
 | E. 跨项目工作 | SB-18～SB-20 | 多 Project/Repo 场景保持低噪声，关系与增量同步可恢复 |
 | F. 运维与恢复 | SB-21～SB-24 | Owner 能撤权、恢复身份、恢复误删并查看健康、配额与审计 |
+| G. 人类 Web 参与 | SB-25～SB-31 | Agent 安全打开明确目标；人类查看、轻量参与、维护、再次登录或自助加入 |
 
 ## 4. 故事卡
 
@@ -163,7 +164,7 @@
 - **授权边界**：读取邀请无副作用；安装本地能力、创建长期身份和兑换 Grants 前分别说明来源与目标 scope。Agent 不能因持有 URL 就假定获得任意本机写入许可。
 - **成功反馈**：返回服务端保存的 principal ID、display name、Credential fingerprint、逐 Project 的 `created` Grant 结果和推荐 scope；后续跨用户 Principal/assignee 摘要同时显示稳定 ID 与当前名称，明文 secret 不被服务端再次返回。
 - **失败恢复**：本地 secret 保存失败则不兑换；兑换响应丢失时用同一 secret 与 Idempotency-Key 重试，不创建重复身份。
-- **已确认**：v0 删除 `Principal.kind=human|agent`；服务端 Principal 保存稳定 immutable ID、非唯一 display name、version 和状态。principal ID 用于授权、assignee、审计和引用；display name 仅用于展示，允许重名，不能用于认证、去重或恢复。接收方已在当前指令给出名称时直接预览使用，否则 Agent 只询问一次名称。Skill 仍优先复用该实例唯一有效的现有 Credential，不主动为不同 Agent 宿主重复创建 Principal。
+- **已确认**：v0 删除 `Principal.kind=human|agent`；服务端 Principal 保存稳定 immutable ID、非唯一 display name 和 version。principal ID 用于授权、assignee、审计和引用；display name 仅用于展示，允许重名，不能用于认证、去重或恢复。接收方已在当前指令给出名称时直接预览使用，否则 Agent 只询问一次名称。Skill 仍优先复用该实例唯一有效的现有 Credential，不主动为不同 Agent 宿主重复创建 Principal。
 - **已确认（自助改名）**：不新增独立 profile Skill；默认日常入口 `cfkanban` 公开“查看我的身份”和“修改我的显示名称”两项能力，分别调用 `GET /api/v1/me` 与带 `expected_version` 的 `PATCH /api/v1/me`。改名只更新当前 Principal 的非空 display name 并写 Audit/Event，不改变 principal ID、Credential、Grants、assignment 或历史；v0 不允许 Owner 代改其他 Principal 的名称。
 - **失败恢复**：version 冲突时重新读取 `/me`，不盲目覆盖。服务端改名成功但本地非秘密 metadata 更新失败时，以服务端为准；下次 `/me` 刷新本地显示信息，不回滚远端名称。
 
@@ -174,7 +175,7 @@
 - **Agent 行动**：陈的 Agent 按 Skill 验证并直接复用该 Credential 对应的稳定 Principal，只新增或重新授予邀请中的 Project Grants；不会因为换了 Repo、Agent 宿主或新增 Project 再创建身份。
 - **授权边界**：Credential secret 始终留在内置脚本内。`.cfkanban/` 可以保存多个上游实例，但每个执行环境对每个实例只维护一个当前本地 Principal；不提供日常身份切换器。
 - **成功反馈**：逐 Project 返回 `created | regranted | already_has_access`；已有有效 role 不被邀请静默改变。
-- **失败恢复**：Credential 明确被撤销或 Principal disabled 时进入恢复/新身份分支，不能按名字接管旧身份；网络或服务错误导致状态 unknown 时停止，不能当作失效。若手工复制、导入或中断操作造成同一实例出现多个不同 Principal，视为本地冲突并停止，引导用户整理而不是猜测选择。同一 Principal 轮换中短暂存在的新旧 Credential 由脚本作为恢复状态处理，不算多个身份。
+- **失败恢复**：Credential 明确被撤销时进入恢复/新身份分支，不能按名字接管旧身份；网络或服务错误导致状态 unknown 时停止，不能当作失效。若手工复制、导入或中断操作造成同一实例出现多个不同 Principal，视为本地冲突并停止，引导用户整理而不是猜测选择。同一 Principal 轮换中短暂存在的新旧 Credential 由脚本作为恢复状态处理，不算多个身份。
 - **已确认**：本地状态根可以承载多个 cfKanban 上游实例，但每个 `instance_id` 正常只有一个当前 Principal/Credential 槽位；一个 Credential 不能跨实例复用。
 - **已确认（地址变化）**：`instance_id` 作为稳定主键，trusted API origin 是可变安全 metadata。新域名声称同一 ID 时，Agent 在发送 Credential 前展示旧/新地址与权限影响并取得显式 rebind 授权；只改变 Invite/展示域名而 canonical API origin 未变时无需 rebind。
 
@@ -313,11 +314,85 @@
 
 - **任务触发**：林让自己的 Agent 检查服务健康、解释失败、查看近期安全事件或判断是否接近免费层限制。
 - **起点**：系统运行在 Cloudflare 免费层，可能遇到应用错误、读写额度或平台故障。
-- **Agent 行动**：林的 Agent 通过健康与管理读取能力查看 service/schema version、D1 reachability、近期安全事件和可理解的配额提示，并把平台错误转换成有界、可恢复的说明。
+- **Agent 行动**：林的 Agent 通过健康与管理读取能力查看 service/schema version、D1 reachability、近期安全事件和可理解的配额提示，并按机器 `category/source/recovery` 把平台错误转换成有界、可恢复的说明；不解析人类 message。
 - **授权边界**：健康与审计读取本身不修改 cfKanban 或 Cloudflare 状态。Owner Credential 重新签发、删除、停机或其他 Cloudflare 控制面写入仍必须在只读 preflight 后按对应能力单独授权。
-- **成功反馈**：可选 AI/Vectorize/Queues 关闭或超限不影响核心；核心超限返回结构化错误、request ID、可重试性和退避建议，不产生意外账单。
-- **失败恢复**：诊断结果区分已确认事实、未知状态和建议动作；普通 Issue 内容不能授权 Credential 或 Cloudflare 控制面写入，也不能触发无限快速重试。
+- **成功反馈**：可选 AI/Vectorize/Queues 关闭或超限不影响核心；Project quota、应用限流、D1 quota 和平台故障分别返回稳定分类、request ID、可重试性和恢复建议，不产生意外账单。
+- **失败恢复**：Cloudflare 1027/edge 429/HTML 可能在 Worker 外产生。Skill/Web 以 `normalized_by=client` 保留真实来源并给出同类提示，不声称它是 cfKanban JSON；诊断结果区分已确认事实、未知状态和建议动作，不能触发无限快速重试。
 - **合同修订**：D-213 已取消原 SB-24 的完整 D1 导出、导入、本地恢复演练和整库灾难恢复能力。Cloudflare 原生 Time Travel、控制台导出及其他数据运维由部署者直接在平台控制面管理，不包装为 cfKanban API、Skill 或用户故事。
+
+### SB-25：Agent 为人类打开明确的 Project 或 Issue
+
+- **任务触发**：陈说“把这个 Project 的看板打开给我看看”，或“打开 CFK-123”。
+- **起点**：陈的 Agent 已在当前执行环境中持有该实例的有效 Credential；目标可能来自本次明确指令、Issue 引用或 Repo scope。
+- **Agent 行动**：陈的 Agent 先解析明确实例与 target，再调用一次 Browser Launch 创建能力。宿主支持应用内浏览器时直接打开；否则返回同一短期 URL 供陈在普通浏览器打开。浏览器首次 GET 只加载启动页，显式 POST 才兑换为 HttpOnly Session，成功后立即移除地址中的 launch code 并进入目标。
+- **能力与安全边界**：Browser Launch 只把当前 Principal 已有权限安全带入浏览器，不授予新 Grant。长期 Credential 不进入 URL、浏览器脚本或存储。服务不能依赖 Codex IAB 等专有接口；IAB 只是更顺手的打开方式。
+- **成功反馈**：陈直接看到明确 Project 看板或 Issue；页面可见 scope 与身份摘要，不需要再与 Agent 往返询问当前状态，也不暴露 Credential。
+- **失败恢复**：target 不明确时上层 Agent自行决定怎样消歧；launch 已用、过期、撤销、资源无权或不存在时，页面不泄露目标详情，只建议回到 Agent 重新创建或选择目标。
+- **已确认**：launch 固定 5 分钟一次性；Session 固定 8 小时、不滑动续期且无 refresh，绑定源 Credential，并限制在 launch target 的 Project/admin scope。到期后只能让 Agent 重新创建 launch，不提供网页密码或 Credential 粘贴入口。
+
+### SB-26：reader 查看，writer 进行轻量 Issue 参与
+
+- **任务触发**：陈在网页中浏览看板；若拥有 writer 权限，也可能新建 Issue、改状态、追加 Comment、调整 assignee/label/relation 或完成工作。
+- **起点**：浏览器已有有效 Session，Project Grant 可能是 `reader` 或 `writer`。
+- **页面行动**：reader 只能读取；writer 只对单个资源执行服务已有的原子动作。看板固定五列且不保存手工 rank；writer 可以拖拽一张卡，落列后立即用 expected version 自动保存状态。拖入 `done` 自动改走 complete；没有 summary 时先弹出极简完成框，提交后落列，取消则回原列。菜单/selector 保留为非拖拽等价入口。
+- **能力边界**：页面按服务端 `allowed_actions` 展示操作，但服务端仍逐请求校验真实权限、expected version、幂等与软删除规则。Web 不提供多选、批量编辑、隐藏批量循环或第二套业务写入。
+- **成功反馈**：读取与 Agent API 看到相同事实；写入返回新 version/Event，并即时反映 assignee、blocked 与 completion 结果。
+- **失败恢复**：拖拽期间卡片显示 saving，服务确认前不宣称成功；version 冲突、无权或失败时按 readback 回到服务端真实列。文本字段仍显式 Save，冲突时只在当前页面内存保留未提交输入、显示远端当前事实，不自动 merge/replay。Grant 被撤销或降级后，下一请求立即按新权限处理。
+- **已确认**：reader/writer/Owner 不因使用 Web 获得新角色或新权限。v0 支持固定五列间的单卡拖拽和状态自动保存，但不保存手工 rank、不支持多卡/批量写入。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG；所有 Issue、Comment、Label、Relation、blocked、assignment、complete/reopen 与 tombstone 恢复仍是逐项能力。
+
+### SB-27：Owner 使用极简管理页做低频维护
+
+- **任务触发**：林让自己的 Agent 打开管理页，随后直接查看健康、创建 Project Invite、调整 Grant，或维护 Workspace/Project。
+- **起点**：林的 Agent 使用 Owner Credential 创建指向明确管理入口的 Browser Launch。
+- **页面行动**：管理页保持四个简单分区：Overview、Workspaces/Projects、Access、Audit。它提供已有 Owner-only 原子能力：Workspace/Project 创建、改名、软删除/恢复；Invite 创建/撤销与话术复制；Principal/Grant/参与者 Credential 的非秘密摘要与管理；服务健康、版本、应用资源计数和 Audit 查看。Project Invite 可以在一个既有邀请领域操作中明确选择多个 Project 并逐项指定 role，但其他写入仍逐资源执行。
+- **能力边界**：高风险动作仍展示明确目标与影响，但 Web 不新增 Owner transfer、第二管理员、直接 D1 操作、完整导出/导入、Time Travel restore、Cloudflare 资源删除、DNS 或计费设置。
+- **成功反馈**：林能在一个简洁页面完成低频维护，并可按稳定 ID 核对跨用户身份；所有结果与 Agent/API readback 一致。
+- **失败恢复**：Owner Session、源 Credential 失效或远端状态冲突时停止写入并提供结构化恢复提示；不能降级成在页面粘贴长期 Credential。Web 不持有 Cloudflare API 凭据，因此只显示应用可观察的健康与计数；Cloudflare account 的权威用量/配额检查仍由 `cfkanban-deploy` 执行。
+- **已确认方向**：Owner 管理是 Web 必需表面，但保持应用层维护，不包装 Cloudflare 数据控制面。
+- **已确认**：v0 移除 Principal disable/enable/delete。Owner 使用 Credential revoke、Project Grant revoke 与 Principal Recovery Invite 分别处理认证停止、Project 撤权和同一身份恢复；Principal、assignment 与历史稳定保留。
+- **已确认（Owner Credential 防锁死）**：Web 可以撤销参与者 Credential，但只读显示 Owner Credential 摘要，不提供任何 Owner Credential revoke/rotation。Owner 正常轮换由 `cfkanban-admin` 引导：本地先安全保存替代 secret，再用 Bearer-only 原子 rotation 建立新凭据并撤销当前旧凭据，验证后切换本地槽位；全失恢复仍只走 `cfkanban-deploy`。因此当前 Session 来源和最后一个 Owner Credential 都不能从 Web 被撤销。
+
+### SB-28：浏览器 Session 过期、撤销与攻击面收口
+
+- **任务触发**：陈长时间未操作、源 Credential 被撤销、Grant 改变，或攻击者尝试重放 launch URL/跨站提交写请求。
+- **起点**：浏览器可能仍开着旧页面或拥有旧 cookie。
+- **服务行动**：每次请求重新校验 Session、源 Credential 和当前 Project 权限；launch 只能兑换一次且短时失效。cookie-auth 写请求同时验证同源与 CSRF token，Markdown/URL 作为不可信输入安全渲染。
+- **安全边界**：Session 不能成为长期 Credential 的替代品，也不能因为页面曾经打开就缓存旧权限。日志、Referrer、第三方资源、Service Worker 和浏览器可读存储都不能泄露 launch code 或 secret。
+- **成功反馈**：正常过期只要求用户回到 Agent 重新打开；退出只撤销当前 Web Session，不影响本地长期 Credential。
+- **失败恢复**：重放、跨站请求或已撤销源 Credential 都被拒绝；页面清除无效 cookie，并保留不敏感的重新打开指引。
+- **已确认**：固定 8 小时、源 Credential/Session 显式撤销联动和 target scope 已按 D-217/D-219 收敛。到期时页面清除已渲染远端数据，刷新/下一请求清除失效 cookie；未提交表单不自动重放，也不持久化到 Web Storage。
+
+### SB-29：未认证访客第一次打开网站
+
+- **任务触发**：周直接打开 canonical 项目站点或某个 cfKanban 部署实例，但尚未登录，也不一定理解 Agent-first 产品如何开始使用。
+- **页面行动**：页面用很短的产品介绍说明“这是供用户的 Agent 使用的 Kanban”。视觉中心提供一段可复制话术，例如“请仔细阅读 `https://canonical.example/bootstrap` 的说明，帮我安装或更新 cfKanban Skills，并部署一个新实例”；页面只复制文字，不内嵌 shell 命令或执行远程脚本。
+- **实例差异**：canonical 项目站点只承担产品介绍和可信部署入口；独立部署实例还显示非秘密 instance label、登录入口，以及 Owner 明确开启 Public Join 的 Project 卡片。两者使用同一 canonical bootstrap 信任根，但部署实例不能伪装成官方发行站点。
+- **隐私边界**：未认证首页不枚举非公开 Workspace/Project、Principal、Issue 数量、健康细节或版本漏洞信息。没有公开 Project 时，访客不能从响应差异推断内部 Project。
+- **成功反馈**：周可以一次复制完整且短小的话术交给自己的 Agent，不需要先理解 Node、Wrangler、Skill 或 Cloudflare 资源。
+- **状态**：D-223 已确认公开首页和居中 Agent 话术方向；具体文案与视觉层级仍由 Draft Web UI SPEC 收敛。
+
+### SB-30：既有参与者不再依赖 Agent 重复打开网页
+
+- **任务触发**：陈此前已通过 Agent Browser Launch 进入过实例，现在直接访问首页，希望不用再次唤起 Agent，也不想复制长期 API Credential。
+- **确认行动**：陈只能在一次由 Agent Browser Launch 建立的已认证 Session 内显式注册 Passkey。浏览器/OS authenticator 保存私钥，服务只保存与同一 Principal 绑定的 public key metadata；以后陈从首页完成 WebAuthn challenge 后获得新的固定 8 小时 Web Session。
+- **能力边界**：Passkey 只认证 Web Principal，不是 API Credential、Project Grant 或 Owner role，不能被 Agent Bearer API 使用。Passkey Session 按当前 Principal 的实时权限工作：参与者先选择其当前有权 Project，Owner 先进入 Overview 并可显式选择任意 Project；页面不自动发起无 Project filter 的全量 Issue 查询。页面永远不提供粘贴、上传或持久化 `.cfkanban/` Credential 的登录框。
+- **生命周期**：一个 Principal 可以登记多个 Passkey，便于多设备与更换设备；当前 Principal 可以列举并撤销自己的 Passkey，Owner 可以撤销参与者的 Passkey，所有登记、认证与撤销都写安全 Audit。Passkey 撤销会使由它签发且尚未到期的 Web Sessions 立即失效，但不撤销 API Credential 或 Project Grants。
+- **恢复边界**：Passkey 丢失、浏览器不支持或 RP ID/domain 变化时，陈仍可让 Agent 创建 Browser Launch 并重新注册；不能按 display name 恢复身份。首次登记和补充登记都要求 Agent-launch Session，避免已经取得一个 Web 登录方法后静默扩散新的认证器。
+- **候选比较**：长期“记住浏览器”cookie 会引入可重放 bearer secret 与 refresh rotation；Cloudflare Access/企业 IdP 会引入外部身份映射和额外部署配置。二者不作为 strict-zero 默认候选。
+- **状态**：D-224/Q-228 已确认；Passkey 是 v0 唯一不依赖 Agent 的直接登录方式，精确 wire schema 继续由 Draft API/Schema 收敛。
+
+### SB-31：公开访客自助选择并加入 Project
+
+- **任务触发**：林不想逐人创建离线 Invitation，或者希望公开若干 Project 供公司成员或外部访客自行选择体验。
+- **Owner 行动**：林逐个 Project 开启或关闭 Public Join，并为公开卡片填写一段有界公开摘要。一个实例可以同时公开多个 Project，但不提供 Team Join Link，也不创建一次授予多个 Project 的公开入口。
+- **访客行动**：访客在首页先选择一个公开 Project，再明确选择 `reader` 或 `writer`。未登录时页面生成一段只指向该 Project 与所选 role 的 Agent 话术；访客的 Agent 复用该实例已有 Principal/Credential，或按现有规则创建并安全保存新身份，然后执行一次原子 self-join。已经用 Passkey 登录的 Principal 可以在网页完成同一个单 Project 原子动作。
+- **能力边界**：Public Join 不是 7 天一次性 Invitation，不把长期 Credential 放进 URL，也不暴露未公开 Workspace/Project、内部 Project context、Issue 或成员。每次调用最多创建或恢复一条明确 Project Grant，不能批量加入；公开 Project 的 Grant 同样不自动过期。
+- **公开 writer 风险**：访客可以自行选择 `writer`，因此 Owner 开启 Public Join 时必须看到并明确接受：未知互联网参与者可以修改、评论、移动、完成以及软删除该 Project 内容，并产生 D1 写入。系统不把公开 role 静默收窄为 `reader`。
+- **幂等与已有权限**：无 Grant 时按所选 role 建立 Grant；已有同等或更高权限时返回当前访问且不重复建行；已有 `reader` 选择 `writer` 时可以按公开策略提升；已有 `writer` 选择 `reader` 不自动降权。
+- **必填成本上限**：Owner 开启前必须显式设置 Project 的 Issue、Comment 与 Principal 三项 active quota；页面可以建议 50/500/50，但不代替 Owner 提交。Issue/Comment soft delete 与 Grant revoke 释放 slot，restore/regrant 重新占用并在满额时原子失败。删除只释放 active quota，不声称清除了 D1 tombstone。
+- **简单重入**：不建立逐 Principal blacklist。Project 仍公开时，被 Owner 撤销 Grant 的 Principal 可以再次加入并复用同一 Grant 行；要停止所有公开加入，Owner 关闭 Public Join。
+- **频率门控**：首次部署自动提供单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒的原生边缘门控。Owner 查看当前值、来源和近期 429 摘要；修改时让 Agent 使用 `cfkanban-deploy` 发布 Worker 配置，不触发 D1 migration。它只降低突发滥用，不能替代 D1 精确 quota。
+- **状态**：D-225 原 Team/Public 拆分已否决；D-226/D-227/D-229～D-232 已确认单 Project Public Join、简单重入、三项 active quota、透明限流、部署配置载体与初始档位。
 
 ## 5. 逐卡讨论顺序
 
@@ -327,6 +402,8 @@
 2. 再讨论 SB-04～SB-07，验证从空实例到可用 Project。
 3. 然后讨论 SB-08～SB-11，完整演练邀请和身份复用。
 4. SB-12～SB-20 验证 Agent 日常协作与跨项目噪声控制。
-5. 最后用 SB-21～SB-24 验证撤权、身份恢复、误删恢复、健康、配额和审计边界。
+5. 用 SB-21～SB-24 验证撤权、身份恢复、误删恢复、健康、配额和审计边界。
+6. 用 SB-25～SB-28 验证 Browser Launch、Web 直接参与、Owner 维护和 Session 安全；SB-27 已按 Q-226/D-222 完成 Credential 防锁死与 Owner admin scope 收敛。
+7. 用 SB-29～SB-31 从未认证人类访客视角验证公开首页、Passkey 直登和单 Project Public Join；限流已固定为带默认档位的部署配置，不引入 Durable Object，下一步继续收敛 API/DDL 绝对边界。
 
-每张卡确认后，将结论记录到[决策登记表](../project/decision-register.md)。领域、权限、并发与服务端 API 语义回写 [Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md)；bootstrap、宿主差异、Skills/Node scripts、跨平台部署与本地凭据体验回写 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md)。
+每张卡确认后，将结论记录到[决策登记表](../project/decision-register.md)。领域、权限、并发与服务端 API 语义回写 [Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md)；bootstrap、宿主差异、Skills/Node scripts、跨平台部署与本地凭据体验回写 [Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md)；人类页面与浏览器会话回写 [Web UI SPEC](../specs/2026-08-29-web-ui-spec.md)。

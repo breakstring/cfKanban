@@ -6,25 +6,26 @@
 
 ## 1. 结论
 
-v0 推荐只把 Workers 和 D1 设为必要运行组件：
+v0 推荐只把 Workers 和 D1 设为必要持久运行组件：
 
-- Workers 提供 REST API、OpenAPI、鉴权、业务校验和 Invite bootstrap 页面。
-- D1 是 Workspace、Project、Issue（含 assignment）、Principal、Credential、Project Grant、Invitation、Comment、Event 等核心事实的唯一权威来源。
+- Workers 提供 REST API、OpenAPI、鉴权、业务校验、Invite bootstrap，以及同实例极简 Web UI 与 Browser Launch/Session 入口。
+- D1 是 Workspace、Project、Project Usage、Issue（含 assignment）、Principal、Credential、Project Grant、Invitation、Public Join Policy、Browser Launch、Web Authenticator、Web Session、Comment、Event 等核心事实的唯一权威来源。
 
 KV、Durable Objects、Queues、R2、Vectorize 和 Workers AI 都不应为了“充分利用 Cloudflare”而提前加入。
+
+Workers Rate Limiting binding 可以作为 Worker 的近似边缘请求门控，不成为事实源或额外持久数据服务。精确的 Issue/Comment/Principal active quota 仍由 D1 原子强制。
 
 ## 2. 逻辑结构
 
 ```text
-User's Agent
-    |
-    | Agent Skills + optional Node scripts / MCP adapter
-    v
-Cloudflare Worker
+User's Agent -- Agent Skills / Node scripts --> Cloudflare Worker
+Human Browser / IAB -- one-time launch / HttpOnly session --> Cloudflare Worker
     |-- REST + JSON + OpenAPI
     |-- authentication / authorization
     |-- validation / idempotency / commands
+    |-- approximate rate gates (Workers Rate Limiting binding)
     |-- Invite bootstrap document
+    |-- minimal Web static assets
     |
     +--> D1  [authoritative state]
 
@@ -75,6 +76,13 @@ assign-to-me、report-blocked、clear-blocked、complete 等命令可能同时�
 
 首次 bootstrap 尚无 Principal，因此该兑换的幂等作用域使用 Invitation ID + endpoint + key，并把客户端 Credential fingerprint 纳入 request fingerprint；这是一条例外，不能推广成其他匿名写入能力。
 
+### Browser Launch
+
+1. 已认证 Agent 为明确 Project、Issue 或 Owner 管理 target 创建固定 5 分钟、一次性的 launch；D1 只保存 code hash、Principal、源 Credential、target 与状态。
+2. 浏览器 GET 只加载同源启动页，POST 才原子消费 code 并由 Worker 设置 HttpOnly Session cookie；地址随即移除 code。
+3. 浏览器后续仍通过同一 REST 服务读取和执行单资源原子操作。Session 固定 8 小时、不滑动续期且无 refresh；每次请求按 D1 当前 Session、Principal、源 Credential、Grant、容器状态与 target scope 授权。
+4. cookie-auth 写入执行同源和 CSRF 校验。Session 不进入 KV，不从页面脚本读取，也不形成第二套权限缓存。
+
 ## 4. 组件职责
 
 ### Workers
@@ -85,7 +93,8 @@ assign-to-me、report-blocked、clear-blocked、complete 等命令可能同时�
 - Credential 到 Principal 的认证、唯一 Owner 判断，以及非 Owner Principal Project Grants 的 `reader | writer` 授权。
 - 业务不变量、错误映射、请求大小限制。
 - D1 transaction/batch 编排。
-- Invite bootstrap 文档响应；v0 不承担部署端人类维护网页。
+- 调用三个 Workers Rate Limiting bindings，以单 Principal 120/60 秒、实例动态 API 300/60 秒和未认证敏感操作 30/60 秒做近似门控；返回 429 与 `Retry-After`。首次部署自动生成，后续由 deploy Skill 发布配置修改。
+- Invite bootstrap 文档、极简 Web 静态资产、Browser Launch/Session 与同源 CSRF 入口。
 
 不承担：
 
@@ -100,9 +109,11 @@ assign-to-me、report-blocked、clear-blocked、complete 等命令可能同时�
 - 所有核心业务表。
 - active Credential、Principal 与 Project Grant 的撤销判断。
 - Invitation 的过期、撤销、单次兑换和幂等结果。
+- Browser Launch 的短时单次兑换、Web Session 撤销、源 Credential 失效和 target scope 判断。
 - Project Invite 与 Principal Recovery Invite 的类型约束、bound principal 和旧 Credential 撤销顺序。
 - CAS、唯一约束、关系完整性。
 - Event cursor 和可恢复增量读取。
+- Project 三项 active quota 及其可重算 usage；soft delete/revoke 释放，restore/regrant 重新占用，并与领域写入原子提交。
 
 设计约束：
 
@@ -191,9 +202,9 @@ Queue 是至少一次投递通道，消费者必须按 event ID 幂等。Queue �
 - 裁剪/渲染 context pack；
 - 对不同 Agent 的配置差异做适配；
 - 按需调用 bundle 内 Node.js/TypeScript scripts 完成凭据、重试、部署 journal 等确定性操作；
-- 可附带本地只读 HTML 查看器。
+- 为明确 Project/Issue/Owner 管理 target 创建一次性 Browser Launch；宿主支持时打开 IAB，否则返回普通浏览器 URL。
 
-Skill 是客户端分发包，不是云端状态或紧急管理面。v0 不发布独立 cfKanban CLI；Node scripts 只是 Skill 内部执行资源。
+Skill 是客户端分发包，不是云端状态或人类页面。v0 不发布独立 cfKanban CLI；Node scripts 只是 Skill 内部执行资源。人类直接表面由同一 Worker 托管的极简 Web UI 提供，并复用同一 REST 业务合同。
 
 ### MCP
 
@@ -219,7 +230,7 @@ Skill 是客户端分发包，不是云端状态或紧急管理面。v0 不发�
 
 Issue 的 assignee 只表示负责人，不产生独占执行权或新的授权。任何具有目标 Project `writer` 权限的 Principal 都可以继续协作写入；D1 条件更新与 version/CAS 防止静默覆盖，Event 记录真实 actor。
 
-新 assignee 只能是唯一 Owner，或当前具有目标 Project 有效 `writer` Grant 的未禁用 Principal；资格检查与 assignment 更新处于同一一致性边界。资格后续失效不改写 Issue 行中的 assignee/status，读取时根据 Principal/Grant 投影 `assignee_available=false`、`needs_reassignment=true`，并支持定向过滤。
+新 assignee 只能是唯一 Owner，或当前具有目标 Project 有效 `writer` Grant 的 Principal；资格检查与 assignment 更新处于同一一致性边界。Grant 后续撤销或降级不改写 Issue 行中的 assignee/status，读取时根据当前 Grant 投影 `assignee_available=false`、`needs_reassignment=true`，并支持定向过滤。
 
 blocked 不占用 workflow status：D1 保存人工 `blocked_reason` 和 `blocked_by` 关系，读取时投影统一 `is_blocked`。依赖完成或关系移除会自动改变投影；人工原因只能由显式 `clear-blocked` 清除，两者都不隐式改写 status。
 
