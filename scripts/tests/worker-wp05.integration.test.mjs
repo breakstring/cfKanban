@@ -1324,6 +1324,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
       racedGlobalTombstones,
       (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
     );
+    assert.deepEqual(globalRecoveryBarrier.rawRows, []);
   } finally {
     await db.prepare(
       "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
@@ -1346,6 +1347,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   projectRecoveryBarrier.release();
   try {
     await assert.rejects(racedProjectTombstones, (error) => error?.status === 404);
+    assert.deepEqual(projectRecoveryBarrier.rawRows, []);
   } finally {
     await db.prepare(
       "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
