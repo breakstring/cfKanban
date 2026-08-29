@@ -226,6 +226,59 @@ const issueDetailProperties = {
 };
 const issueDetailRequired = [...issueSummaryRequired, "allowed_actions", "blocked_reason", "body"];
 
+const commentAuthorSchema = {
+  type: "object",
+  required: ["display_name", "principal_id"],
+  properties: { display_name: string(), principal_id: ref("Uuid") },
+  additionalProperties: false,
+};
+const commentCommonRequired = [
+  "allowed_actions", "author", "body", "completion", "created_at", "deleted_at",
+  "deleted_by_principal_id", "id", "issue", "kind", "reply_to_comment_id", "version",
+];
+const commentCommonProperties = {
+  allowed_actions: { type: "array", items: string({ enum: ["read", "delete", "restore"] }) },
+  author: commentAuthorSchema,
+  created_at: ref("Timestamp"),
+  id: ref("Uuid"),
+  issue: ref("IssueReference"),
+  version: ref("Version"),
+};
+
+const invitationRequired = [
+  "allowed_actions", "bound_principal", "code_fingerprint", "created_at", "deleted_at",
+  "expires_at", "grants", "id", "kind", "recovery_mode", "redeemed_at",
+  "redeemed_by_principal_id", "revoked_at", "status", "updated_at", "version",
+];
+const invitationProperties = {
+  allowed_actions: { type: "array", items: string({ enum: ["read", "revoke"] }) },
+  bound_principal: {
+    anyOf: [
+      {
+        type: "object",
+        required: ["display_name", "principal_id"],
+        properties: { display_name: string(), principal_id: ref("Uuid") },
+        additionalProperties: false,
+      },
+      { type: "null" },
+    ],
+  },
+  code_fingerprint: string({ pattern: "^cfi_v1_[A-Za-z0-9_-]{8}_…$" }),
+  created_at: ref("Timestamp"),
+  deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+  expires_at: ref("Timestamp"),
+  grants: { type: "array", items: ref("InvitationGrantSummary") },
+  id: ref("Uuid"),
+  kind: string({ enum: ["project_grant", "principal_recovery"] }),
+  recovery_mode: { anyOf: [string({ enum: ["rotation", "full_recovery"] }), { type: "null" }] },
+  redeemed_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+  redeemed_by_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+  revoked_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+  status: string({ enum: ["active", "expired", "redeemed", "revoked"] }),
+  updated_at: ref("Timestamp"),
+  version: ref("Version"),
+};
+
 const permissionDescriptions = {
   public: "Public, non-secret read.",
   authenticated_principal: "Any authenticated Principal; returned data is filtered to current effective authorization.",
@@ -234,6 +287,8 @@ const permissionDescriptions = {
   deployment_owner: "The single Deployment Owner. Project Grants never satisfy this permission.",
   project_reader: "Deployment Owner or an active reader/writer Grant for the resource Project.",
   project_writer: "Deployment Owner or an active writer Grant for the resource Project.",
+  relation_endpoints_reader: "Deployment Owner or active reader/writer Grants for both Relation endpoint Projects. List operations use the path Issue Project for scope and omit Relations whose other endpoint is not currently readable.",
+  relation_endpoints_writer: "Deployment Owner or active writer Grants for both Relation endpoint Projects.",
   credential_principal: "Any Principal authenticated with a current Bearer Credential; Cookie Session is intentionally insufficient.",
   agent_launch_session: "A current Cookie Session whose source is an active Bearer Credential Browser Launch.",
   invitation_capability: "A valid one-time Invitation capability, with conditional current-Credential authentication required by redeem_as.",
@@ -259,14 +314,15 @@ const permissionGroups = {
   ],
   project_reader: [
     "listProjectStatuses", "listIssues", "listIssueCandidates", "listProjectIssues", "getIssue", "getIssueContext",
-    "listComments", "getComment", "listLabels", "getLabel", "listIssueRelations", "getRelation",
+    "listComments", "getComment", "listLabels", "getLabel",
   ],
   project_writer: [
     "createIssue", "updateIssue", "deleteIssue", "restoreIssue", "assignIssueToMe", "reportIssueBlocked",
     "clearIssueBlocked", "completeIssue", "addIssueLabel", "removeIssueLabel", "createComment", "deleteComment",
-    "restoreComment", "createLabel", "updateLabel", "deleteLabel", "restoreLabel", "createIssueRelation",
-    "deleteRelation", "restoreRelation",
+    "restoreComment", "createLabel", "updateLabel", "deleteLabel", "restoreLabel",
   ],
+  relation_endpoints_reader: ["listIssueRelations", "getRelation"],
+  relation_endpoints_writer: ["createIssueRelation", "deleteRelation", "restoreRelation"],
   credential_principal: ["createWebLaunch"],
   agent_launch_session: ["createPasskeyRegistrationOptions", "registerPasskey"],
   invitation_capability: ["redeemInvitation"],
@@ -299,7 +355,7 @@ const schemas = {
   CreateIssueRequest: { type: "object", required: ["title"], properties: { title: string({ minLength: 1, maxLength: 256 }), body: utf8String(65536, { default: "", description: "Untrusted Markdown source." }), status_key: { ...ref("NonDoneStatusKey"), default: "backlog" }, priority_key: { ...ref("PriorityKey"), default: "none" }, assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }], default: null }, label_ids: { type: "array", items: ref("Uuid"), maxItems: 20, uniqueItems: true, default: [] } }, additionalProperties: false },
   UpdateIssueRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), title: string({ minLength: 1, maxLength: 256 }), body: utf8String(65536, { description: "Untrusted Markdown source." }), status_key: ref("NonDoneStatusKey"), priority_key: ref("PriorityKey"), assignee_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
   ReportBlockedRequest: { type: "object", required: ["expected_version", "reason"], properties: { expected_version: ref("Version"), reason: string({ minLength: 1, maxLength: 4096 }) }, additionalProperties: false },
-  CompleteIssueRequest: { type: "object", required: ["expected_version", "summary"], properties: { expected_version: ref("Version"), summary: string({ minLength: 1, maxLength: 8192 }), verification: { type: "array", items: string({ maxLength: 1024 }), maxItems: 50, default: [] }, artifacts: { type: "array", items: { type: "object", required: ["kind", "value"], properties: { kind: string({ enum: ["url", "path", "commit", "other"] }), value: string({ minLength: 1, maxLength: 2048 }) }, additionalProperties: false }, maxItems: 50, default: [] }, follow_ups: { type: "array", items: string({ maxLength: 2048 }), maxItems: 50, default: [] } }, additionalProperties: false, "x-cfkanban-max-utf8-bytes": 32768 },
+  CompleteIssueRequest: { type: "object", required: ["expected_version", "summary"], properties: { expected_version: ref("Version"), summary: string({ minLength: 1, maxLength: 8192 }), verification: { type: "array", items: string({ minLength: 1, maxLength: 1024 }), maxItems: 50, default: [] }, artifacts: { type: "array", items: { type: "object", required: ["kind", "value"], properties: { kind: string({ enum: ["url", "path", "commit", "other"] }), value: string({ minLength: 1, maxLength: 2048 }) }, additionalProperties: false }, maxItems: 50, default: [] }, follow_ups: { type: "array", items: string({ minLength: 1, maxLength: 2048 }), maxItems: 50, default: [] } }, additionalProperties: false, "x-cfkanban-max-utf8-bytes": 32768 },
   IssueLabelRequest: { type: "object", required: ["expected_version", "label_id"], properties: { expected_version: ref("Version"), label_id: ref("Uuid") }, additionalProperties: false },
   CreateCommentRequest: { type: "object", required: ["body"], properties: { body: utf8String(32768, { minLength: 1, description: "Append-only untrusted Comment body." }), reply_to_comment_id: { anyOf: [ref("Uuid"), { type: "null" }], default: null } }, additionalProperties: false },
   CreateLabelRequest: { type: "object", required: ["name"], properties: { name: string({ minLength: 1, maxLength: 64 }), color: nullableString({ pattern: "^#[0-9A-Fa-f]{6}$" }) }, additionalProperties: false },
@@ -586,35 +642,54 @@ const schemas = {
         items: {
           type: "object",
           required: ["kind", "value"],
-          properties: { kind: string({ enum: ["url", "path", "commit", "other"] }), value: string() },
+          properties: { kind: string({ enum: ["url", "path", "commit", "other"] }), value: string({ minLength: 1 }) },
           additionalProperties: false,
         },
       },
-      follow_ups: { type: "array", maxItems: 50, items: string() },
-      summary: string(),
-      verification: { type: "array", maxItems: 50, items: string() },
+      follow_ups: { type: "array", maxItems: 50, items: string({ minLength: 1 }) },
+      summary: string({ minLength: 1 }),
+      verification: { type: "array", maxItems: 50, items: string({ minLength: 1 }) },
     },
     additionalProperties: false,
   },
-  Comment: {
+  ActiveStandardComment: {
     type: "object",
-    required: ["allowed_actions", "author", "body", "completion", "created_at", "deleted_at", "deleted_by_principal_id", "id", "issue", "kind", "reply_to_comment_id", "version"],
+    required: commentCommonRequired,
     properties: {
-      allowed_actions: { type: "array", items: string({ enum: ["read", "delete", "restore"] }) },
-      author: {
-        type: "object",
-        required: ["display_name", "principal_id"],
-        properties: { display_name: string(), principal_id: ref("Uuid") },
-        additionalProperties: false,
-      },
-      body: nullableString(),
-      completion: { anyOf: [ref("CompletionPayload"), { type: "null" }] },
-      created_at: ref("Timestamp"),
-      deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
-      deleted_by_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] },
-      id: ref("Uuid"),
-      issue: ref("IssueReference"),
-      kind: string({ enum: ["standard", "completion"] }),
+      ...commentCommonProperties,
+      body: string({ minLength: 1 }),
+      completion: { type: "null" },
+      deleted_at: { type: "null" },
+      deleted_by_principal_id: { type: "null" },
+      kind: { const: "standard" },
+      reply_to_comment_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+    },
+    additionalProperties: false,
+  },
+  CompletionComment: {
+    type: "object",
+    required: commentCommonRequired,
+    properties: {
+      ...commentCommonProperties,
+      body: string({ minLength: 1 }),
+      completion: ref("CompletionPayload"),
+      deleted_at: { type: "null" },
+      deleted_by_principal_id: { type: "null" },
+      kind: { const: "completion" },
+      reply_to_comment_id: { type: "null" },
+    },
+    additionalProperties: false,
+  },
+  DeletedStandardComment: {
+    type: "object",
+    required: [...commentCommonRequired, "parent_status", "restorable", "unavailability_reason"],
+    properties: {
+      ...commentCommonProperties,
+      body: { type: "null" },
+      completion: { type: "null" },
+      deleted_at: ref("Timestamp"),
+      deleted_by_principal_id: ref("Uuid"),
+      kind: { const: "standard" },
       parent_status: {
         type: "object",
         required: ["issue", "project", "workspace"],
@@ -638,9 +713,11 @@ const schemas = {
           { type: "null" },
         ],
       },
-      version: ref("Version"),
     },
     additionalProperties: false,
+  },
+  Comment: {
+    oneOf: [ref("ActiveStandardComment"), ref("CompletionComment"), ref("DeletedStandardComment")],
   },
   CommentListResult: {
     type: "object",
@@ -819,6 +896,129 @@ const schemas = {
     properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("Relation") },
     additionalProperties: false,
   },
+  InvitationGrantSummary: {
+    type: "object",
+    required: ["display_name", "project_id", "project_key", "role", "workspace_key"],
+    properties: {
+      display_name: string(),
+      project_id: ref("Uuid"),
+      project_key: string(),
+      role: ref("ProjectRole"),
+      workspace_key: string(),
+    },
+    additionalProperties: false,
+  },
+  Invitation: {
+    type: "object",
+    required: invitationRequired,
+    properties: invitationProperties,
+    additionalProperties: false,
+  },
+  InvitationListResult: {
+    type: "object",
+    required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    properties: {
+      has_more: { type: "boolean" },
+      items: { type: "array", items: ref("Invitation") },
+      next_cursor: nullableString(),
+      resolved_scope: {
+        type: "object",
+        required: ["owner_principal_id"],
+        properties: { owner_principal_id: ref("Uuid") },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  InvitationCreateResource: {
+    oneOf: [
+      {
+        type: "object",
+        required: [...invitationRequired, "copy_text", "invite_url", "secret_available"],
+        properties: {
+          ...invitationProperties,
+          copy_text: string({ minLength: 1 }),
+          invite_url: string({ format: "uri" }),
+          secret_available: { const: true },
+        },
+        additionalProperties: false,
+      },
+      {
+        type: "object",
+        required: [...invitationRequired, "secret_available"],
+        properties: { ...invitationProperties, secret_available: { const: false } },
+        additionalProperties: false,
+      },
+    ],
+  },
+  InvitationCreateWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: {
+      event_cursor: string(),
+      idempotent_replay: { type: "boolean" },
+      resource: ref("InvitationCreateResource"),
+    },
+    additionalProperties: false,
+  },
+  InvitationWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: {
+      event_cursor: string(),
+      idempotent_replay: { type: "boolean" },
+      resource: ref("Invitation"),
+    },
+    additionalProperties: false,
+  },
+  InvitationRedemptionResource: {
+    type: "object",
+    required: [...invitationRequired, "credential", "principal", "results"],
+    properties: {
+      ...invitationProperties,
+      credential: {
+        anyOf: [
+          {
+            type: "object",
+            required: ["fingerprint", "id", "issued_at"],
+            properties: { fingerprint: string(), id: ref("Uuid"), issued_at: ref("Timestamp") },
+            additionalProperties: false,
+          },
+          { type: "null" },
+        ],
+      },
+      principal: {
+        type: "object",
+        required: ["display_name", "principal_id"],
+        properties: { display_name: string(), principal_id: ref("Uuid") },
+        additionalProperties: false,
+      },
+      results: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["effective_role", "outcome", "project_id"],
+          properties: {
+            effective_role: ref("ProjectRole"),
+            outcome: string({ enum: ["created", "regranted", "already_has_access"] }),
+            project_id: ref("Uuid"),
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    additionalProperties: false,
+  },
+  InvitationRedemptionWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: {
+      event_cursor: string(),
+      idempotent_replay: { type: "boolean" },
+      resource: ref("InvitationRedemptionResource"),
+    },
+    additionalProperties: false,
+  },
   Event: {
     type: "object",
     required: ["actor", "authorized_via", "created_at", "event_index", "grant_id", "id", "operation_id", "payload", "project", "subject", "type", "workspace"],
@@ -940,6 +1140,11 @@ const querySets = {
 };
 
 const operationResponseSchemas = {
+  redeemInvitation: ref("InvitationRedemptionWriteResult"),
+  listInvitations: ref("InvitationListResult"),
+  createInvitation: ref("InvitationCreateWriteResult"),
+  getInvitation: ref("Invitation"),
+  revokeInvitation: ref("InvitationWriteResult"),
   listEvents: ref("EventListResult"),
   listAuditEvents: ref("AuditEventListResult"),
   listIssues: ref("IssueListResult"),

@@ -4358,7 +4358,7 @@
           "relations"
         ],
         "summary": "List Issue Relations",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or active reader/writer Grants for both Relation endpoint Projects. List operations use the path Issue Project for scope and omit Relations whose other endpoint is not currently readable. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4450,7 +4450,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "project_reader"
+        "x-cfkanban-permission": "relation_endpoints_reader"
       },
       "post": {
         "operationId": "createIssueRelation",
@@ -4458,7 +4458,7 @@
           "relations"
         ],
         "summary": "Create Issue Relation",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or active writer Grants for both Relation endpoint Projects. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4526,7 +4526,7 @@
           }
         },
         "x-cfkanban-write-contract": "idempotent",
-        "x-cfkanban-permission": "project_writer",
+        "x-cfkanban-permission": "relation_endpoints_writer",
         "requestBody": {
           "required": true,
           "content": {
@@ -4546,7 +4546,7 @@
           "relations"
         ],
         "summary": "Get Relation",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or active reader/writer Grants for both Relation endpoint Projects. List operations use the path Issue Project for scope and omit Relations whose other endpoint is not currently readable. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4617,7 +4617,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "project_reader"
+        "x-cfkanban-permission": "relation_endpoints_reader"
       },
       "delete": {
         "operationId": "deleteRelation",
@@ -4625,7 +4625,7 @@
           "relations"
         ],
         "summary": "Delete Relation",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or active writer Grants for both Relation endpoint Projects. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4705,7 +4705,7 @@
           }
         },
         "x-cfkanban-write-contract": "cas-delete",
-        "x-cfkanban-permission": "project_writer"
+        "x-cfkanban-permission": "relation_endpoints_writer"
       }
     },
     "/api/v1/relations/{relation_id}/commands/restore": {
@@ -4715,7 +4715,7 @@
           "relations"
         ],
         "summary": "Restore Relation",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or active writer Grants for both Relation endpoint Projects. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4782,7 +4782,7 @@
           }
         },
         "x-cfkanban-write-contract": "idempotent-cas",
-        "x-cfkanban-permission": "project_writer",
+        "x-cfkanban-permission": "relation_endpoints_writer",
         "requestBody": {
           "required": true,
           "content": {
@@ -4825,7 +4825,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/InvitationRedemptionWriteResult"
                 }
               }
             }
@@ -4921,7 +4921,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/InvitationListResult"
                 }
               }
             }
@@ -4985,7 +4985,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/InvitationCreateWriteResult"
                 }
               }
             }
@@ -5066,8 +5066,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/Invitation"
                 }
               }
             }
@@ -5139,7 +5138,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/InvitationWriteResult"
                 }
               }
             }
@@ -8105,6 +8104,7 @@
             "type": "array",
             "items": {
               "type": "string",
+              "minLength": 1,
               "maxLength": 1024
             },
             "maxItems": 50,
@@ -8143,6 +8143,7 @@
             "type": "array",
             "items": {
               "type": "string",
+              "minLength": 1,
               "maxLength": 2048
             },
             "maxItems": 50,
@@ -10621,7 +10622,8 @@
                   ]
                 },
                 "value": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "additionalProperties": false
@@ -10631,23 +10633,26 @@
             "type": "array",
             "maxItems": 50,
             "items": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             }
           },
           "summary": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "verification": {
             "type": "array",
             "maxItems": 50,
             "items": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             }
           }
         },
         "additionalProperties": false
       },
-      "Comment": {
+      "ActiveStandardComment": {
         "type": "object",
         "required": [
           "allowed_actions",
@@ -10691,40 +10696,35 @@
             },
             "additionalProperties": false
           },
-          "body": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "completion": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/CompletionPayload"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
           },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueReference"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1
+          },
+          "completion": {
+            "type": "null"
+          },
           "deleted_at": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Timestamp"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "type": "null"
           },
           "deleted_by_principal_id": {
+            "type": "null"
+          },
+          "kind": {
+            "const": "standard"
+          },
+          "reply_to_comment_id": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Uuid"
@@ -10733,6 +10733,56 @@
                 "type": "null"
               }
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompletionComment": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "author",
+          "body",
+          "completion",
+          "created_at",
+          "deleted_at",
+          "deleted_by_principal_id",
+          "id",
+          "issue",
+          "kind",
+          "reply_to_comment_id",
+          "version"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "delete",
+                "restore"
+              ]
+            }
+          },
+          "author": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "principal_id"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -10740,12 +10790,104 @@
           "issue": {
             "$ref": "#/components/schemas/IssueReference"
           },
-          "kind": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "body": {
             "type": "string",
-            "enum": [
-              "standard",
-              "completion"
-            ]
+            "minLength": 1
+          },
+          "completion": {
+            "$ref": "#/components/schemas/CompletionPayload"
+          },
+          "deleted_at": {
+            "type": "null"
+          },
+          "deleted_by_principal_id": {
+            "type": "null"
+          },
+          "kind": {
+            "const": "completion"
+          },
+          "reply_to_comment_id": {
+            "type": "null"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeletedStandardComment": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "author",
+          "body",
+          "completion",
+          "created_at",
+          "deleted_at",
+          "deleted_by_principal_id",
+          "id",
+          "issue",
+          "kind",
+          "reply_to_comment_id",
+          "version",
+          "parent_status",
+          "restorable",
+          "unavailability_reason"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "delete",
+                "restore"
+              ]
+            }
+          },
+          "author": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "principal_id"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueReference"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "body": {
+            "type": "null"
+          },
+          "completion": {
+            "type": "null"
+          },
+          "deleted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_by_principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "const": "standard"
           },
           "parent_status": {
             "type": "object",
@@ -10814,12 +10956,22 @@
                 "type": "null"
               }
             ]
-          },
-          "version": {
-            "$ref": "#/components/schemas/Version"
           }
         },
         "additionalProperties": false
+      },
+      "Comment": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ActiveStandardComment"
+          },
+          {
+            "$ref": "#/components/schemas/CompletionComment"
+          },
+          {
+            "$ref": "#/components/schemas/DeletedStandardComment"
+          }
+        ]
       },
       "CommentListResult": {
         "type": "object",
@@ -11381,6 +11533,841 @@
           },
           "resource": {
             "$ref": "#/components/schemas/Relation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvitationGrantSummary": {
+        "type": "object",
+        "required": [
+          "display_name",
+          "project_id",
+          "project_key",
+          "role",
+          "workspace_key"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "project_key": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ProjectRole"
+          },
+          "workspace_key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Invitation": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "bound_principal",
+          "code_fingerprint",
+          "created_at",
+          "deleted_at",
+          "expires_at",
+          "grants",
+          "id",
+          "kind",
+          "recovery_mode",
+          "redeemed_at",
+          "redeemed_by_principal_id",
+          "revoked_at",
+          "status",
+          "updated_at",
+          "version"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "revoke"
+              ]
+            }
+          },
+          "bound_principal": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "display_name",
+                  "principal_id"
+                ],
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "code_fingerprint": {
+            "type": "string",
+            "pattern": "^cfi_v1_[A-Za-z0-9_-]{8}_…$"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvitationGrantSummary"
+            }
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "project_grant",
+              "principal_recovery"
+            ]
+          },
+          "recovery_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "rotation",
+                  "full_recovery"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "redeemed_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "redeemed_by_principal_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "expired",
+              "redeemed",
+              "revoked"
+            ]
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvitationListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Invitation"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "owner_principal_id"
+            ],
+            "properties": {
+              "owner_principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvitationCreateResource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "allowed_actions",
+              "bound_principal",
+              "code_fingerprint",
+              "created_at",
+              "deleted_at",
+              "expires_at",
+              "grants",
+              "id",
+              "kind",
+              "recovery_mode",
+              "redeemed_at",
+              "redeemed_by_principal_id",
+              "revoked_at",
+              "status",
+              "updated_at",
+              "version",
+              "copy_text",
+              "invite_url",
+              "secret_available"
+            ],
+            "properties": {
+              "allowed_actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "revoke"
+                  ]
+                }
+              },
+              "bound_principal": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "display_name",
+                      "principal_id"
+                    ],
+                    "properties": {
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "principal_id": {
+                        "$ref": "#/components/schemas/Uuid"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "code_fingerprint": {
+                "type": "string",
+                "pattern": "^cfi_v1_[A-Za-z0-9_-]{8}_…$"
+              },
+              "created_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "deleted_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expires_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "grants": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvitationGrantSummary"
+                }
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "project_grant",
+                  "principal_recovery"
+                ]
+              },
+              "recovery_mode": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "rotation",
+                      "full_recovery"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "redeemed_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "redeemed_by_principal_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "expired",
+                  "redeemed",
+                  "revoked"
+                ]
+              },
+              "updated_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "version": {
+                "$ref": "#/components/schemas/Version"
+              },
+              "copy_text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "invite_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "secret_available": {
+                "const": true
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "allowed_actions",
+              "bound_principal",
+              "code_fingerprint",
+              "created_at",
+              "deleted_at",
+              "expires_at",
+              "grants",
+              "id",
+              "kind",
+              "recovery_mode",
+              "redeemed_at",
+              "redeemed_by_principal_id",
+              "revoked_at",
+              "status",
+              "updated_at",
+              "version",
+              "secret_available"
+            ],
+            "properties": {
+              "allowed_actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "revoke"
+                  ]
+                }
+              },
+              "bound_principal": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "display_name",
+                      "principal_id"
+                    ],
+                    "properties": {
+                      "display_name": {
+                        "type": "string"
+                      },
+                      "principal_id": {
+                        "$ref": "#/components/schemas/Uuid"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "code_fingerprint": {
+                "type": "string",
+                "pattern": "^cfi_v1_[A-Za-z0-9_-]{8}_…$"
+              },
+              "created_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "deleted_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expires_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "grants": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/InvitationGrantSummary"
+                }
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "project_grant",
+                  "principal_recovery"
+                ]
+              },
+              "recovery_mode": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "rotation",
+                      "full_recovery"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "redeemed_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "redeemed_by_principal_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "revoked_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "expired",
+                  "redeemed",
+                  "revoked"
+                ]
+              },
+              "updated_at": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "version": {
+                "$ref": "#/components/schemas/Version"
+              },
+              "secret_available": {
+                "const": false
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "InvitationCreateWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/InvitationCreateResource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvitationWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/Invitation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvitationRedemptionResource": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "bound_principal",
+          "code_fingerprint",
+          "created_at",
+          "deleted_at",
+          "expires_at",
+          "grants",
+          "id",
+          "kind",
+          "recovery_mode",
+          "redeemed_at",
+          "redeemed_by_principal_id",
+          "revoked_at",
+          "status",
+          "updated_at",
+          "version",
+          "credential",
+          "principal",
+          "results"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "revoke"
+              ]
+            }
+          },
+          "bound_principal": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "display_name",
+                  "principal_id"
+                ],
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "code_fingerprint": {
+            "type": "string",
+            "pattern": "^cfi_v1_[A-Za-z0-9_-]{8}_…$"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvitationGrantSummary"
+            }
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "project_grant",
+              "principal_recovery"
+            ]
+          },
+          "recovery_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "rotation",
+                  "full_recovery"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "redeemed_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "redeemed_by_principal_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "expired",
+              "redeemed",
+              "revoked"
+            ]
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "fingerprint",
+                  "id",
+                  "issued_at"
+                ],
+                "properties": {
+                  "fingerprint": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  "issued_at": {
+                    "$ref": "#/components/schemas/Timestamp"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "principal": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "principal_id"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "effective_role",
+                "outcome",
+                "project_id"
+              ],
+              "properties": {
+                "effective_role": {
+                  "$ref": "#/components/schemas/ProjectRole"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "created",
+                    "regranted",
+                    "already_has_access"
+                  ]
+                },
+                "project_id": {
+                  "$ref": "#/components/schemas/Uuid"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "InvitationRedemptionWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/InvitationRedemptionResource"
           }
         },
         "additionalProperties": false

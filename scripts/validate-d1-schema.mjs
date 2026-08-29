@@ -60,6 +60,24 @@ run("UPDATE labels SET deleted_at = ?, deleted_by_principal_id = ?, version = ve
 expectConstraint("soft-deleted label identity", () => run("INSERT INTO labels (id, project_id, name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('label-duplicate', 'project', 'security', ?, ?, 'owner', 'owner', 'op-label-duplicate')", [now, now]));
 expectConstraint("self relation", () => run("INSERT INTO issue_relations (id, workspace_id, kind, source_issue_id, target_issue_id, created_at, created_by_principal_id, created_operation_id) VALUES ('relation-self', 'workspace', 'related', 'issue-1', 'issue-1', ?, 'owner', 'op-relation-self')", [now]));
 expectConstraint("completion payload", () => run("INSERT INTO comments (id, issue_id, kind, author_principal_id, body, created_at, created_operation_id) VALUES ('bad-completion', 'issue-1', 'completion', 'owner', 'Done', ?, 'op-bad-completion')", [now]));
+const markdownSource = "    indented code\n";
+run(
+  "INSERT INTO comments (id, issue_id, kind, author_principal_id, body, created_at, created_operation_id) VALUES ('markdown-comment', 'issue-1', 'standard', 'owner', ?, ?, 'op-markdown-comment')",
+  [markdownSource, now],
+);
+assert.equal(
+  get("SELECT body FROM comments WHERE id = 'markdown-comment'").body,
+  markdownSource,
+  "Comment Markdown source must round-trip without trimming",
+);
+expectConstraint("comment UTF-8 byte limit", () => run(
+  "INSERT INTO comments (id, issue_id, kind, author_principal_id, body, created_at, created_operation_id) VALUES ('oversized-comment', 'issue-1', 'standard', 'owner', ?, ?, 'op-oversized-comment')",
+  ["😀".repeat(8_193), now],
+));
+expectConstraint("completion JSON UTF-8 byte limit", () => run(
+  "INSERT INTO comments (id, issue_id, kind, author_principal_id, body, completion_json, created_at, created_operation_id) VALUES ('oversized-completion', 'issue-1', 'completion', 'owner', 'Done', ?, ?, 'op-oversized-completion')",
+  [JSON.stringify({ summary: "😀".repeat(8_193) }), now],
+));
 expectConstraint("recovery invite binding", () => run("INSERT INTO invitations (id, kind, code_prefix, code_digest, expires_at, created_at, created_by_owner_principal_id, created_operation_id) VALUES ('bad-invite', 'principal_recovery', 'bad', ?, ?, ?, 'owner', 'op-bad-invite')", [digest("b"), now + 3600000, now]));
 expectConstraint("usage counters", () => run("INSERT INTO project_usage VALUES ('project', -1, 0, 0, ?, 'op-bad-usage')", [now]));
 expectConstraint("passkey algorithm allowlist", () => run("INSERT INTO web_authenticators (id, principal_id, credential_id, public_key_cose, algorithm, user_handle, backup_eligible, backup_state, rp_id, created_at, created_operation_id) VALUES ('bad-passkey', 'owner', 'credential', 'cose', -8, 'owner', 0, 0, 'example.workers.dev', ?, 'op-bad-passkey')", [now]));
@@ -72,7 +90,6 @@ const planChecks = [
   ["project grants", "SELECT principal_id FROM project_grants WHERE project_id = ? AND revoked_at IS NULL AND role = ?", ["project", "writer"], /idx_project_grants_project_active/],
   ["comments", "SELECT id FROM comments WHERE issue_id = ? AND deleted_at IS NULL ORDER BY created_at, id LIMIT 21", ["issue-1"], /idx_comments_issue_list/],
   ["invitation redeem", "SELECT id FROM invitations WHERE code_digest = ?", [digest("b")], /idx_invitations_code_digest|sqlite_autoindex_invitations/],
-  ["events", "SELECT sequence FROM events WHERE project_id = ? AND stream = ? AND sequence > ? ORDER BY sequence LIMIT 21", ["project", "domain", 0], /idx_events_project_stream_sequence/],
 ];
 
 for (const [label, sql, values, expectedIndex] of planChecks) {
@@ -81,4 +98,38 @@ for (const [label, sql, values, expectedIndex] of planChecks) {
   assert.doesNotMatch(plan, /SCAN (credentials|issues|project_grants|comments|invitations|events)(?:\s|$)/, `${label} unexpectedly scans: ${plan}`);
 }
 
-console.log(`D1 schema checks passed for ${tables.length} tables, core constraints, tombstone uniqueness, and ${planChecks.length} indexed query shapes.`);
+const participantEventSql = `
+  SELECT event.sequence
+  FROM events event INDEXED BY idx_events_project_stream_sequence
+  WHERE event.stream = 'domain' AND event.sequence > ?1
+    AND event.project_id IN (SELECT value FROM json_each(?2))
+    AND (
+      event.subject_type != 'relation'
+      OR EXISTS (
+        SELECT 1
+        FROM issue_relations relation
+        JOIN issues source ON source.id = relation.source_issue_id
+        JOIN issues target ON target.id = relation.target_issue_id
+        WHERE relation.id = event.subject_id
+          AND source.project_id IN (SELECT value FROM json_each(?3))
+          AND target.project_id IN (SELECT value FROM json_each(?3))
+      )
+    )
+  ORDER BY event.sequence ASC
+  LIMIT ?4`;
+const participantEventPlan = db.prepare(`EXPLAIN QUERY PLAN ${participantEventSql}`)
+  .all(0, JSON.stringify(["project"]), JSON.stringify(["project"]), 21)
+  .map((row) => row.detail)
+  .join(" | ");
+assert.match(
+  participantEventPlan,
+  /idx_events_project_stream_sequence/,
+  `participant events: ${participantEventPlan}`,
+);
+assert.doesNotMatch(
+  participantEventPlan,
+  /SCAN events(?:\s|$)/,
+  `participant events unexpectedly scan the global Event stream: ${participantEventPlan}`,
+);
+
+console.log(`D1 schema checks passed for ${tables.length} tables, core constraints, tombstone uniqueness, and ${planChecks.length + 1} indexed query shapes.`);

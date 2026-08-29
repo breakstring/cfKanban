@@ -80,7 +80,11 @@ function commentAllowedActions(row: CommentRow, issue: CollaborationIssue): stri
     : ["read"];
 }
 
-function commentResource(row: CommentRow, issue: CollaborationIssue): { [key: string]: JsonValue } {
+function commentResource(
+  row: CommentRow,
+  issue: CollaborationIssue,
+  frozenIssueReference: JsonValue = issueReference(issue),
+): { [key: string]: JsonValue } {
   const unavailabilityReason = issue.workspaceDeletedAt !== null
     ? { code: "PARENT_WORKSPACE_DELETED", recovery: "restore_parent" }
     : issue.projectDeletedAt !== null
@@ -104,7 +108,7 @@ function commentResource(row: CommentRow, issue: CollaborationIssue): { [key: st
     deleted_at: timestamp(row.deleted_at),
     deleted_by_principal_id: row.deleted_by_principal_id,
     id: row.id,
-    issue: issueReference(issue),
+    issue: frozenIssueReference,
     kind: row.kind,
     reply_to_comment_id: row.reply_to_comment_id,
     version: row.version,
@@ -144,12 +148,19 @@ async function requireCommentAccess(
   commentIdValue: JsonValue,
   requiredRole: "reader" | "writer" = "reader",
   includeEffectiveDeleted = false,
+  includeDeletedParentsForRecoveryView = includeEffectiveDeleted,
 ): Promise<CommentAccess> {
   const commentId = requireUuid(commentIdValue, "comment_id");
   const row = await readComment(db, commentId);
   if (row === null) throw notFound();
   const issue = includeEffectiveDeleted
-    ? await requireCollaborationIssueByIdAuthorization(db, auth, row.issue_id, requiredRole)
+    ? await requireCollaborationIssueByIdAuthorization(
+      db,
+      auth,
+      row.issue_id,
+      requiredRole,
+      includeDeletedParentsForRecoveryView,
+    )
     : await requireCollaborationIssueById(db, auth, row.issue_id, requiredRole);
   return { issue, row };
 }
@@ -221,10 +232,26 @@ async function commentEvent(
               LIMIT 1
             ) END,
             project.workspace_id, issue.project_id,
-            'comment', comment.id, ?8, ?9
+            'comment', comment.id,
+            json_set(
+              ?8,
+              '$.issue_reference',
+              json_object(
+                'id', issue.id,
+                'identifier', 'CFK-' || issue.number,
+                'project', json_object(
+                  'id', project.id,
+                  'key', project.key,
+                  'workspace_key', workspace.key
+                ),
+                'title', issue.title,
+                'version', issue.version
+              )
+            ), ?9
      FROM comments comment
      JOIN issues issue ON issue.id = comment.issue_id
      JOIN projects project ON project.id = issue.project_id
+     JOIN workspaces workspace ON workspace.id = project.workspace_id
      LEFT JOIN public_join_policies policy ON policy.project_id = issue.project_id
      LEFT JOIN project_usage usage ON usage.project_id = issue.project_id
      WHERE comment.id = ?10 AND comment.last_operation_id = ?3
@@ -242,6 +269,53 @@ async function commentEvent(
     now,
     commentId,
   );
+}
+
+async function readCommentOperationIssueReference(
+  db: D1Database,
+  operationId: string,
+): Promise<{ [key: string]: JsonValue }> {
+  let row: { payload_json: string } | null;
+  try {
+    row = await db.prepare(
+      `SELECT payload_json
+       FROM events
+       WHERE operation_id = ?1 AND subject_type = 'comment'
+       ORDER BY event_index
+       LIMIT 1`,
+    ).bind(operationId).first<{ payload_json: string }>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+  if (row === null) throw new AtomicBatchRejectedError();
+  let payload: unknown;
+  try {
+    payload = JSON.parse(row.payload_json);
+  } catch {
+    throw new AtomicBatchRejectedError();
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new AtomicBatchRejectedError();
+  }
+  const reference = (payload as Record<string, unknown>).issue_reference;
+  if (reference === null || typeof reference !== "object" || Array.isArray(reference)) {
+    throw new AtomicBatchRejectedError();
+  }
+  const project = (reference as Record<string, unknown>).project;
+  if (
+    typeof (reference as Record<string, unknown>).id !== "string"
+    || typeof (reference as Record<string, unknown>).identifier !== "string"
+    || typeof (reference as Record<string, unknown>).title !== "string"
+    || typeof (reference as Record<string, unknown>).version !== "number"
+    || !Number.isSafeInteger((reference as Record<string, unknown>).version)
+    || project === null
+    || typeof project !== "object"
+    || Array.isArray(project)
+    || typeof (project as Record<string, unknown>).id !== "string"
+    || typeof (project as Record<string, unknown>).key !== "string"
+    || typeof (project as Record<string, unknown>).workspace_key !== "string"
+  ) throw new AtomicBatchRejectedError();
+  return reference as { [key: string]: JsonValue };
 }
 
 async function deterministicRejection(check: () => Promise<never>): Promise<boolean> {
@@ -294,7 +368,7 @@ export async function listComments(
 ): Promise<{ [key: string]: JsonValue }> {
   const deletedMode = requireDeletedMode(url);
   const issue = deletedMode === "only"
-    ? await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer")
+    ? await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer", true)
     : await requireCollaborationIssue(db, auth, identifierValue, "reader");
   const context = await createCursorContext(
     "comments",
@@ -474,12 +548,15 @@ export async function createComment(
     normalizedResourceScope: `issue:${issue.id}:comment`,
     now,
     readback: async (operationId, commit) => {
-      const snapshot = await readOperationSnapshot<CommentRow>(db, operationId);
+      const [snapshot, frozenIssueReference] = await Promise.all([
+        readOperationSnapshot<CommentRow>(db, operationId),
+        readCommentOperationIssueReference(db, operationId),
+      ]);
       return {
         body: await writeResult(
           db,
           auth,
-          commentResource(snapshot, issue),
+          commentResource(snapshot, issue, frozenIssueReference),
           commit.lastEventSequence,
           false,
         ),
@@ -621,7 +698,14 @@ export async function deleteComment(
     last_operation_id: operationId,
     version: expectedVersion + 1,
   };
-  return writeResult(db, auth, commentResource(deletedRow, access.issue), commit.lastEventSequence, false);
+  const frozenIssueReference = await readCommentOperationIssueReference(db, operationId);
+  return writeResult(
+    db,
+    auth,
+    commentResource(deletedRow, access.issue, frozenIssueReference),
+    commit.lastEventSequence,
+    false,
+  );
 }
 
 export async function restoreComment(
@@ -638,7 +722,7 @@ export async function restoreComment(
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      const latest = await requireCommentAccess(db, auth, access.row.id, "writer", true);
+      const latest = await requireCommentAccess(db, auth, access.row.id, "writer", true, false);
       if (latest.issue.projectId !== access.issue.projectId) throw notFound();
     },
     db,
@@ -652,12 +736,15 @@ export async function restoreComment(
     normalizedResourceScope: `comment:${access.row.id}:restore`,
     now,
     readback: async (operationId, commit) => {
-      const snapshot = await readOperationSnapshot<CommentRow>(db, operationId);
+      const [snapshot, frozenIssueReference] = await Promise.all([
+        readOperationSnapshot<CommentRow>(db, operationId),
+        readCommentOperationIssueReference(db, operationId),
+      ]);
       return {
         body: await writeResult(
           db,
           auth,
-          commentResource(snapshot, access.issue),
+          commentResource(snapshot, access.issue, frozenIssueReference),
           commit.lastEventSequence,
           false,
         ),

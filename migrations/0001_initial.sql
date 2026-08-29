@@ -233,8 +233,14 @@ CREATE TABLE comments (
   issue_id TEXT NOT NULL REFERENCES issues(id),
   kind TEXT NOT NULL CHECK (kind IN ('standard', 'completion')),
   author_principal_id TEXT NOT NULL REFERENCES principals(id),
-  body TEXT NOT NULL CHECK (length(trim(body)) BETWEEN 1 AND 32768),
-  completion_json TEXT CHECK (completion_json IS NULL OR json_valid(completion_json)),
+  body TEXT NOT NULL CHECK (
+    length(trim(body)) >= 1
+    AND length(CAST(body AS BLOB)) <= 32768
+  ),
+  completion_json TEXT CHECK (
+    completion_json IS NULL
+    OR (json_valid(completion_json) AND length(CAST(completion_json AS BLOB)) <= 32768)
+  ),
   reply_to_comment_id TEXT REFERENCES comments(id),
   version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
   deleted_at INTEGER,
