@@ -237,7 +237,6 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
 
   const participantDigest = await sha256Hex(participantToken);
   const issueSessionDigest = await sha256Hex(issueSessionToken);
-  const malformedSessionDigest = await sha256Hex(malformedSessionToken);
   await db.batch([
     db.prepare(
       `INSERT INTO principals (id, display_name, created_at, updated_at)
@@ -269,8 +268,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   ]);
   const targetIssue = await db.prepare("SELECT number FROM issues WHERE id = ?1")
     .bind(ids.targetIssue).first();
-  await db.batch([
-    db.prepare(
+  await db.prepare(
       `INSERT INTO web_sessions
         (id, token_digest, principal_id, source_kind, source_id, target_kind,
          target_json, expires_at, created_at)
@@ -280,10 +278,19 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
       issueSessionDigest,
       ids.participantPrincipal,
       ids.participantCredential,
-      JSON.stringify({ identifier: `CFK-${targetIssue.number}` }),
+      JSON.stringify({
+        entry_path: `/app/issues/CFK-${targetIssue.number}`,
+        identifier: `CFK-${targetIssue.number}`,
+        issue_id: ids.targetIssue,
+        kind: "issue",
+        project_id: projectId,
+        project_key: "CORE",
+        workspace_key: "engineering",
+      }),
       Date.now() + 60_000,
       Date.now(),
-    ),
+    ).run();
+  await assert.rejects(
     db.prepare(
       `INSERT INTO web_sessions
         (id, token_digest, principal_id, source_kind, source_id, target_kind,
@@ -291,13 +298,13 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
        VALUES ('wp03-malformed-target-session', ?1, ?2, 'credential', ?3, 'project',
                '{}', ?4, ?5)`,
     ).bind(
-      malformedSessionDigest,
+      await sha256Hex(malformedSessionToken),
       ids.participantPrincipal,
       ids.participantCredential,
       Date.now() + 60_000,
       Date.now(),
-    ),
-  ]);
+    ).run(),
+  );
   const participantProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
     headers: participantHeaders(),
   });
@@ -315,11 +322,6 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     headers: { cookie: `cfkanban_session=${issueSessionToken}` },
   });
   assert.equal(issueTargetOtherProject.response.status, 404);
-  const malformedTargetWorkspaces = await jsonRequest("/api/v1/workspaces", {
-    headers: { cookie: `cfkanban_session=${malformedSessionToken}` },
-  });
-  assert.equal(malformedTargetWorkspaces.response.status, 200);
-  assert.deepEqual(malformedTargetWorkspaces.body.items, []);
   const participantCreate = await jsonRequest("/api/v1/workspaces", {
     body: { display_name: "Forbidden", key: "forbidden" },
     headers: participantHeaders({ "idempotency-key": "wp03-participant-create" }),
@@ -433,11 +435,12 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
       (id, token_digest, principal_id, source_kind, source_id, target_kind,
        target_json, expires_at, created_at)
      VALUES ('wp03-owner-admin-session', ?1, ?2, 'credential', ?3, 'admin',
-             '{}', ?4, ?5)`,
+             ?4, ?5, ?6)`,
   ).bind(
     ownerSessionDigest,
     ids.ownerPrincipal,
     ids.ownerCredential,
+    JSON.stringify({ entry_path: "/app/admin", kind: "admin", section: "overview" }),
     Date.now() + 60_000,
     Date.now(),
   ).run();

@@ -5,13 +5,22 @@ import type { AuthContext } from "./types.ts";
 
 export const CSRF_COOKIE_NAME = "cfkanban_csrf";
 export const CSRF_HEADER_NAME = "x-csrf-token";
+const WEB_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
 
 export function serializeSessionCookie(token: string): string {
-  return `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/`;
+  return `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${WEB_SESSION_MAX_AGE_SECONDS}`;
 }
 
 export function serializeCsrfCookie(token: string): string {
-  return `${CSRF_COOKIE_NAME}=${token}; Secure; SameSite=Strict; Path=/`;
+  return `${CSRF_COOKIE_NAME}=${token}; Secure; SameSite=Strict; Path=/; Max-Age=${WEB_SESSION_MAX_AGE_SECONDS}`;
+}
+
+export function clearSessionCookie(): string {
+  return `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`;
+}
+
+export function clearCsrfCookie(): string {
+  return `${CSRF_COOKIE_NAME}=; Secure; SameSite=Strict; Path=/; Max-Age=0`;
 }
 
 function isReadOnlyMethod(method: string): boolean {

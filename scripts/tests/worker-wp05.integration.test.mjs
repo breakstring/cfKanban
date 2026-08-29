@@ -1005,7 +1005,15 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     await sha256Hex(sessionToken),
     ids.ownerPrincipal,
     ids.ownerCredential,
-    JSON.stringify({ identifier: first.body.resource.identifier }),
+    JSON.stringify({
+      entry_path: `/app/issues/${first.body.resource.identifier}`,
+      identifier: first.body.resource.identifier,
+      issue_id: first.body.resource.id,
+      kind: "issue",
+      project_id: coreProjectId,
+      project_key: "CORE",
+      workspace_key: "engineering",
+    }),
     Date.now() + 60_000,
     Date.now(),
   ).run();

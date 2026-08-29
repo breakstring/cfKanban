@@ -1061,12 +1061,13 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
       `INSERT INTO web_sessions
         (id, token_digest, principal_id, source_kind, source_id, target_kind,
          target_json, expires_at, created_at)
-       VALUES (?1, ?2, ?3, 'credential', ?4, 'admin', '{}', ?5, ?6)`,
+       VALUES (?1, ?2, ?3, 'credential', ?4, 'admin', ?5, ?6, ?7)`,
     ).bind(
       auditSessionId,
       await sha256Hex("wp06-audit-session-cookie"),
       ids.ownerPrincipal,
       auditSessionSourceCredential,
+      JSON.stringify({ entry_path: "/app/admin", kind: "admin", section: "audit" }),
       auditSessionExpiresAt,
       Date.now(),
     ),

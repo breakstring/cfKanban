@@ -270,8 +270,37 @@ CREATE TABLE browser_launches (
   revoked_at INTEGER,
   created_at INTEGER NOT NULL,
   created_operation_id TEXT NOT NULL UNIQUE,
+  last_operation_id TEXT,
   CHECK (expires_at > created_at),
-  CHECK (redeemed_at IS NULL OR revoked_at IS NULL)
+  CHECK (redeemed_at IS NULL OR revoked_at IS NULL),
+  CHECK (COALESCE((
+    (target_kind = 'admin'
+      AND json_extract(target_json, '$.kind') = 'admin'
+      AND json_extract(target_json, '$.entry_path') = '/app/admin'
+      AND json_extract(target_json, '$.section') IN ('overview', 'workspaces-projects', 'access', 'audit')
+      AND json_remove(target_json, '$.entry_path', '$.kind', '$.section') = '{}')
+    OR
+    (target_kind = 'project'
+      AND json_extract(target_json, '$.kind') = 'project'
+      AND json_extract(target_json, '$.entry_path') = '/app/w/'
+        || json_extract(target_json, '$.workspace_key')
+        || '/p/' || json_extract(target_json, '$.project_key')
+      AND json_type(target_json, '$.project_id') = 'text'
+      AND json_type(target_json, '$.project_key') = 'text'
+      AND json_type(target_json, '$.workspace_key') = 'text'
+      AND json_remove(target_json, '$.entry_path', '$.kind', '$.project_id', '$.project_key', '$.workspace_key') = '{}')
+    OR
+    (target_kind = 'issue'
+      AND json_extract(target_json, '$.kind') = 'issue'
+      AND json_extract(target_json, '$.entry_path') = '/app/issues/'
+        || json_extract(target_json, '$.identifier')
+      AND json_type(target_json, '$.identifier') = 'text'
+      AND json_type(target_json, '$.issue_id') = 'text'
+      AND json_type(target_json, '$.project_id') = 'text'
+      AND json_type(target_json, '$.project_key') = 'text'
+      AND json_type(target_json, '$.workspace_key') = 'text'
+      AND json_remove(target_json, '$.entry_path', '$.identifier', '$.issue_id', '$.kind', '$.project_id', '$.project_key', '$.workspace_key') = '{}')
+  ), 0))
 );
 
 CREATE TABLE web_authenticators (
@@ -286,12 +315,14 @@ CREATE TABLE web_authenticators (
   backup_state INTEGER NOT NULL CHECK (backup_state IN (0, 1)),
   transports_json TEXT CHECK (transports_json IS NULL OR json_valid(transports_json)),
   rp_id TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
   created_at INTEGER NOT NULL,
   last_used_at INTEGER,
   revoked_at INTEGER,
   revoked_by_principal_id TEXT REFERENCES principals(id),
   created_operation_id TEXT NOT NULL UNIQUE,
   last_operation_id TEXT,
+  CHECK (backup_state = 0 OR backup_eligible = 1),
   CHECK ((revoked_at IS NULL AND revoked_by_principal_id IS NULL) OR (revoked_at IS NOT NULL AND revoked_by_principal_id IS NOT NULL))
 );
 
@@ -305,6 +336,7 @@ CREATE TABLE webauthn_challenges (
   expires_at INTEGER NOT NULL,
   consumed_at INTEGER,
   created_at INTEGER NOT NULL,
+  last_operation_id TEXT,
   CHECK ((purpose = 'registration' AND principal_id IS NOT NULL) OR (purpose = 'authentication' AND principal_id IS NULL)),
   CHECK (expires_at > created_at)
 );
@@ -321,7 +353,42 @@ CREATE TABLE web_sessions (
   revoked_at INTEGER,
   created_at INTEGER NOT NULL,
   last_seen_at INTEGER,
-  CHECK (expires_at > created_at)
+  created_operation_id TEXT UNIQUE,
+  last_operation_id TEXT,
+  CHECK (expires_at > created_at),
+  CHECK (COALESCE((
+    (target_kind = 'admin'
+      AND json_extract(target_json, '$.kind') = 'admin'
+      AND json_extract(target_json, '$.entry_path') = '/app/admin'
+      AND json_extract(target_json, '$.section') IN ('overview', 'workspaces-projects', 'access', 'audit')
+      AND json_remove(target_json, '$.entry_path', '$.kind', '$.section') = '{}')
+    OR
+    (target_kind = 'project_selection'
+      AND json_extract(target_json, '$.kind') = 'project_selection'
+      AND json_extract(target_json, '$.entry_path') = '/app'
+      AND json_remove(target_json, '$.entry_path', '$.kind') = '{}')
+    OR
+    (target_kind = 'project'
+      AND json_extract(target_json, '$.kind') = 'project'
+      AND json_extract(target_json, '$.entry_path') = '/app/w/'
+        || json_extract(target_json, '$.workspace_key')
+        || '/p/' || json_extract(target_json, '$.project_key')
+      AND json_type(target_json, '$.project_id') = 'text'
+      AND json_type(target_json, '$.project_key') = 'text'
+      AND json_type(target_json, '$.workspace_key') = 'text'
+      AND json_remove(target_json, '$.entry_path', '$.kind', '$.project_id', '$.project_key', '$.workspace_key') = '{}')
+    OR
+    (target_kind = 'issue'
+      AND json_extract(target_json, '$.kind') = 'issue'
+      AND json_extract(target_json, '$.entry_path') = '/app/issues/'
+        || json_extract(target_json, '$.identifier')
+      AND json_type(target_json, '$.identifier') = 'text'
+      AND json_type(target_json, '$.issue_id') = 'text'
+      AND json_type(target_json, '$.project_id') = 'text'
+      AND json_type(target_json, '$.project_key') = 'text'
+      AND json_type(target_json, '$.workspace_key') = 'text'
+      AND json_remove(target_json, '$.entry_path', '$.identifier', '$.issue_id', '$.kind', '$.project_id', '$.project_key', '$.workspace_key') = '{}')
+  ), 0))
 );
 
 CREATE TABLE invitations (
@@ -381,7 +448,7 @@ CREATE TABLE events (
   event_index INTEGER NOT NULL CHECK (event_index >= 0),
   actor_principal_id TEXT REFERENCES principals(id),
   actor_credential_id TEXT REFERENCES credentials(id),
-  authorized_via TEXT NOT NULL CHECK (authorized_via IN ('deployment_owner', 'project_grant', 'public_join', 'invitation', 'web_session', 'deployment_recovery')),
+  authorized_via TEXT NOT NULL CHECK (authorized_via IN ('deployment_owner', 'project_grant', 'public_join', 'invitation', 'browser_launch', 'web_session', 'webauthn', 'deployment_recovery')),
   grant_id TEXT REFERENCES project_grants(id),
   workspace_id TEXT REFERENCES workspaces(id),
   project_id TEXT REFERENCES projects(id),

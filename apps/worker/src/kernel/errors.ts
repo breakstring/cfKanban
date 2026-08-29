@@ -31,6 +31,7 @@ const secretStringPatterns = [
   /\bCookie\s*:\s*\S+/i,
   /cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+/,
   /cfi_v1_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+/,
+  /cfl_v1_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+/,
   /\b[0-9a-f]{64}\b/i,
   /\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b[\s\S]*/i,
   /\n\s*at\s+\S+/,

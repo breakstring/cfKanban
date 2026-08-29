@@ -30,6 +30,7 @@ export interface BearerAuthContext extends AuthenticatedPrincipal {
 
 export interface CookieAuthContext extends AuthenticatedPrincipal {
   kind: "cookie";
+  sessionExpiresAt: number;
   sessionId: string;
   sourceId: string;
   sourceKind: "credential" | "web_authenticator";
