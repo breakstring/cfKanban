@@ -235,8 +235,15 @@ export async function requireProjectAuthorization(
   workspaceKey: string,
   projectKey: string,
   requiredRole: "reader" | "writer" = "reader",
+  includeDeletedParentsForRecoveryView = false,
 ): Promise<VisibleProject> {
-  const projects = await resolveVisibleProjects(db, auth, true);
+  // Idempotent replay may ignore a child resource's later tombstone, but a
+  // retained Grant is not effective while its Project or Workspace is paused.
+  const projects = await resolveVisibleProjects(
+    db,
+    auth,
+    includeDeletedParentsForRecoveryView && auth.isOwner,
+  );
   const project = projects.find(
     (candidate) => candidate.workspaceKey === workspaceKey && candidate.projectKey === projectKey,
   );

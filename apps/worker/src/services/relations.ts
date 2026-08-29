@@ -179,11 +179,12 @@ async function requireRelationAccess(
   relationIdValue: JsonValue,
   requiredRole: "reader" | "writer" = "reader",
   includeEffectiveDeleted = false,
+  includeDeletedParentsForRecoveryView = includeEffectiveDeleted,
 ): Promise<RelationAccess> {
   const relationId = requireUuid(relationIdValue, "relation_id");
   const [row, projects] = await Promise.all([
     readRelation(db, relationId, includeEffectiveDeleted),
-    resolveVisibleProjects(db, auth, includeEffectiveDeleted),
+    resolveVisibleProjects(db, auth, includeDeletedParentsForRecoveryView && auth.isOwner),
   ]);
   if (row === null) throw notFound();
   const sourceRole = projects.find((project) => project.projectId === row.source_project_id)?.role;
@@ -403,9 +404,9 @@ export async function listIssueRelations(
 ): Promise<{ [key: string]: JsonValue }> {
   const deletedMode = requireDeletedMode(url);
   const issue = deletedMode === "only"
-    ? await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer")
+    ? await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer", true)
     : await requireCollaborationIssue(db, auth, identifierValue, "reader");
-  const visibleProjects = await resolveVisibleProjects(db, auth, deletedMode === "only");
+  const visibleProjects = await resolveVisibleProjects(db, auth, deletedMode === "only" && auth.isOwner);
   const visibleIds = visibleProjects.map((project) => project.projectId);
   const writerIds = visibleProjects.filter((project) => roleCanWrite(project.role))
     .map((project) => project.projectId);
@@ -928,7 +929,7 @@ export async function restoreRelation(
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      const latest = await requireRelationAccess(db, auth, access.row.id, "writer", true);
+      const latest = await requireRelationAccess(db, auth, access.row.id, "writer", true, false);
       if (
         latest.row.source_project_id !== access.row.source_project_id
         || latest.row.target_project_id !== access.row.target_project_id

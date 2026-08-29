@@ -143,7 +143,7 @@ async function requireLabelAccess(
   const labelId = requireUuid(labelIdValue, "label_id");
   const [row, projects] = await Promise.all([
     readLabel(db, labelId),
-    resolveVisibleProjects(db, auth, includeEffectiveDeleted),
+    resolveVisibleProjects(db, auth, includeEffectiveDeleted && auth.isOwner),
   ]);
   if (row === null || (requireActive && row.deleted_at !== null)) throw notFound();
   const project = projects.find((candidate) => candidate.projectId === row.project_id);
@@ -284,7 +284,7 @@ export async function listLabels(
   const projectKey = requireProjectKey(projectKeyValue, "project_key");
   const deletedMode = requireDeletedMode(url);
   const project = deletedMode === "only"
-    ? await requireProjectAuthorization(db, auth, workspaceKey, projectKey, "writer")
+    ? await requireProjectAuthorization(db, auth, workspaceKey, projectKey, "writer", true)
     : await requireVisibleProject(db, auth, workspaceKey, projectKey);
   const context = await createCursorContext(
     "labels",
@@ -692,7 +692,7 @@ export async function restoreLabel(
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      const latest = await requireLabelAccess(db, auth, access.row.id, "writer", false, true);
+      const latest = await requireLabelAccess(db, auth, access.row.id, "writer");
       if (latest.row.project_id !== access.row.project_id) throw notFound();
     },
     db,

@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 
 import { createTestHarness } from "wrangler";
 
+import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
+import { createComment as createCommentService } from "../../apps/worker/src/services/comments.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
@@ -66,6 +68,55 @@ function assertWriteResult(value, replay = false) {
   assert.equal(value.idempotent_replay, replay);
   assert.equal(typeof value.event_cursor, "string");
   assert.equal(typeof value.resource, "object");
+}
+
+function commentReadbackBarrierDatabase(database) {
+  let paused = false;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "first" && matches) {
+        return async (...args) => {
+          if (!paused) {
+            paused = true;
+            signalReached();
+            await released;
+          }
+          return target.first(...args);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("SELECT payload_json") && sql.includes("subject_type = 'comment'"),
+          );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
 }
 
 async function seedPrincipal({ credentialId, principalId, tokenValue, grants, role = "writer" }) {
@@ -336,6 +387,64 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
   assert.equal(secondCommentPage.body.items[0].id, replyId);
 
+  const snapshotIssue = await createIssue(
+    "engineering",
+    "APP",
+    "Comment snapshot title",
+    "wp06-comment-snapshot-issue",
+    dualHeaders(),
+  );
+  const markdownBody = "    indented code\n\ntrailing paragraph\n";
+  const markdownComment = await jsonRequest(
+    `/api/v1/issues/${snapshotIssue.body.resource.identifier}/comments`,
+    {
+      body: { body: markdownBody },
+      headers: dualHeaders({ "idempotency-key": "wp06-comment-markdown-source" }),
+      method: "POST",
+    },
+  );
+  assert.equal(markdownComment.response.status, 200, JSON.stringify(markdownComment.body));
+  assert.equal(markdownComment.body.resource.body, markdownBody);
+
+  const commentReadbackBarrier = commentReadbackBarrierDatabase(db);
+  const directCommentRequest = new Request(
+    `https://kanban.example.test/api/v1/issues/${snapshotIssue.body.resource.identifier}/comments`,
+    {
+      headers: dualHeaders({ "idempotency-key": "wp06-comment-operation-reference" }),
+      method: "POST",
+    },
+  );
+  const directCommentAuth = await authenticateBearer(db, `Bearer ${dualWriterToken}`);
+  const directComment = createCommentService(
+    commentReadbackBarrier.db,
+    directCommentRequest,
+    directCommentAuth,
+    snapshotIssue.body.resource.identifier,
+    "Operation-bound reference",
+    undefined,
+    Date.now(),
+  );
+  await commentReadbackBarrier.reached;
+  const renamedSnapshotIssue = await jsonRequest(
+    `/api/v1/issues/${snapshotIssue.body.resource.identifier}`,
+    {
+      body: { expected_version: 1, title: "Changed after Comment commit" },
+      headers: dualHeaders(),
+      method: "PATCH",
+    },
+  );
+  commentReadbackBarrier.release();
+  assert.equal(renamedSnapshotIssue.response.status, 200, JSON.stringify(renamedSnapshotIssue.body));
+  const directCommentResult = await directComment;
+  assert.equal(directCommentResult.resource.issue.title, "Comment snapshot title");
+  assert.equal(directCommentResult.resource.issue.version, 1);
+  const currentSnapshotIssue = await jsonRequest(
+    `/api/v1/issues/${snapshotIssue.body.resource.identifier}`,
+    { headers: dualHeaders() },
+  );
+  assert.equal(currentSnapshotIssue.body.title, "Changed after Comment commit");
+  assert.equal(currentSnapshotIssue.body.version, 2);
+
   const deletedComment = await jsonRequest(`/api/v1/comments/${commentId}?expected_version=1`, {
     headers: dualHeaders(),
     method: "DELETE",
@@ -596,9 +705,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
       method: "POST",
     },
   );
-  assert.equal(replayedLabelAfterProjectDelete.response.status, 200, JSON.stringify(replayedLabelAfterProjectDelete.body));
-  assertWriteResult(replayedLabelAfterProjectDelete.body, true);
-  assert.equal(replayedLabelAfterProjectDelete.body.resource.id, replayLabel.body.resource.id);
+  assert.equal(replayedLabelAfterProjectDelete.response.status, 404, JSON.stringify(replayedLabelAfterProjectDelete.body));
 
   const commentReplayIssue = await createIssue(
     "engineering",
@@ -846,4 +953,81 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
      WHERE issue.project_id = ?1 AND issue.deleted_at IS NULL AND comment.deleted_at IS NULL`,
   ).bind(projectAId).first();
   assert.equal(finalUsage.active_comment_count, authoritativeComments.count);
+
+  const currentProjectA = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/APP",
+    { headers: ownerHeaders() },
+  );
+  const pausedProjectA = await jsonRequest(
+    `/api/v1/workspaces/engineering/projects/APP?expected_version=${currentProjectA.body.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(pausedProjectA.response.status, 200, JSON.stringify(pausedProjectA.body));
+  const replayRequests = [
+    jsonRequest(`/api/v1/issues/${issueA.body.resource.identifier}/comments`, {
+      body: { body: "Initial implementation note" },
+      headers: dualHeaders({ "idempotency-key": "wp06-comment-create" }),
+      method: "POST",
+    }),
+    jsonRequest(`/api/v1/issues/${issueA.body.resource.identifier}/commands/complete`, {
+      body: completionBody,
+      headers: dualHeaders({ "idempotency-key": "wp06-complete-first" }),
+      method: "POST",
+    }),
+    jsonRequest("/api/v1/workspaces/engineering/projects/APP/labels", {
+      body: { color: "#1a2b3c", name: "Security" },
+      headers: dualHeaders({ "idempotency-key": "wp06-label-create" }),
+      method: "POST",
+    }),
+    jsonRequest(`/api/v1/issues/${issueA.body.resource.identifier}/commands/add-label`, {
+      body: { expected_version: addLabelExpectedVersion, label_id: labelId },
+      headers: dualHeaders({ "idempotency-key": "wp06-label-add" }),
+      method: "POST",
+    }),
+    jsonRequest(`/api/v1/issues/${issueB.body.resource.identifier}/relations`, {
+      body: {
+        kind: "blocks",
+        source_expected_version: relation.body.resource.source.version - 1,
+        target_expected_version: relation.body.resource.target.version - 1,
+        target_identifier: issueA.body.resource.identifier,
+      },
+      headers: dualHeaders({ "idempotency-key": "wp06-relation-create" }),
+      method: "POST",
+    }),
+  ];
+  for (const replay of await Promise.all(replayRequests)) {
+    assert.equal(replay.response.status, 404, JSON.stringify(replay.body));
+  }
+
+  const restoredProjectA = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/APP/commands/restore",
+    {
+      body: { expected_version: pausedProjectA.body.resource.version },
+      headers: ownerHeaders({ "idempotency-key": "wp06-restore-project-after-replay-auth" }),
+      method: "POST",
+    },
+  );
+  assert.equal(restoredProjectA.response.status, 200, JSON.stringify(restoredProjectA.body));
+  const currentEngineering = await jsonRequest(
+    "/api/v1/workspaces/engineering",
+    { headers: ownerHeaders() },
+  );
+  const pausedEngineering = await jsonRequest(
+    `/api/v1/workspaces/engineering?expected_version=${currentEngineering.body.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(pausedEngineering.response.status, 200, JSON.stringify(pausedEngineering.body));
+  const workspacePausedCommentReplay = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/comments`,
+    {
+      body: { body: "Initial implementation note" },
+      headers: dualHeaders({ "idempotency-key": "wp06-comment-create" }),
+      method: "POST",
+    },
+  );
+  assert.equal(
+    workspacePausedCommentReplay.response.status,
+    404,
+    JSON.stringify(workspacePausedCommentReplay.body),
+  );
 });

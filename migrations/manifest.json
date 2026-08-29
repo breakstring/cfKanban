@@ -9,7 +9,7 @@
     {
       "sequence": 1,
       "name": "0001_initial.sql",
-      "sha256": "1680cc8b7971b8a2bc7643373bb0d984070f55c2f84830c474a154fb7daa1974",
+      "sha256": "1cfbc1b63beb3d97c02a8e15543393684755cbc8b40ab12931abace893185fb3",
       "classification": "bootstrap",
       "destructive": false,
       "reentry": "wrangler_migration_ledger_only",

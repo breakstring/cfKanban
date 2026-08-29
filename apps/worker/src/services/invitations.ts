@@ -770,21 +770,23 @@ export async function createInvitation(
     ...(await invitationResource(db, snapshot.row, now, snapshot.grants)),
     secret_available: false,
   }, commit.lastEventSequence, false);
-  if (generatedCode !== null && generatedDigest !== snapshot.row.code_digest) {
+  if (generatedCode === null || generatedDigest !== snapshot.row.code_digest) {
+    // A same-key peer can safely confirm the committed Invitation, but only the
+    // request that generated the persisted digest may clear the snapshot. This
+    // leaves the one request that still holds the plaintext code able to return
+    // the one-shot URL without ever persisting that code.
     return { ...safeBody, idempotent_replay: true };
   }
+  const committedCode = generatedCode;
   const finalized = await finalizeIdempotency(
     db,
     claim.operationId,
     { body: safeBody, status: 200 },
-    generatedCode === null ? [] : [generatedCode],
+    [committedCode],
     now,
   );
-  if (generatedCode === null) {
-    return { ...finalized.body, idempotent_replay: true };
-  }
   const origin = await preferredOrigin(db);
-  const inviteUrl = `${origin}/invite?code=${encodeURIComponent(generatedCode)}`;
+  const inviteUrl = `${origin}/invite?code=${encodeURIComponent(committedCode)}`;
   return {
     ...finalized.body,
     idempotent_replay: false,
@@ -1599,10 +1601,17 @@ export async function redeemInvitation(
     persistenceForbiddenValues,
   );
   const status = invitationStatus(invitation, now);
-  if (status === "revoked") throw gone("INVITATION_REVOKED");
-  if (status === "expired") throw gone("INVITATION_EXPIRED");
+  if (status === "revoked") {
+    await abandonOwnedPendingClaim(db, claim);
+    throw gone("INVITATION_REVOKED");
+  }
+  if (status === "expired") {
+    await abandonOwnedPendingClaim(db, claim);
+    throw gone("INVITATION_EXPIRED");
+  }
   if (status === "redeemed" && invitation.last_operation_id !== claim.operationId) {
-    throw conflict("INVITATION_ALREADY_REDEEMED", "request_new_invitation");
+    await abandonOwnedPendingClaim(db, claim);
+    throw gone("INVITATION_ALREADY_REDEEMED");
   }
   if (claim.state === "committed") {
     const stored = readIdempotencyResponse<{ [key: string]: JsonValue }>(claim);

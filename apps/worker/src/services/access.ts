@@ -587,7 +587,7 @@ export async function rotateOwnerCredential(
     },
     db,
     execute: async (operationId) => {
-      const guard = buildCurrentAuthGuard(initialAuth, now, 7, true);
+      const guard = buildCurrentAuthGuard(initialAuth, now, 9, true);
       try {
         await executeAtomicBatch(db, {
           businessStatements: [
@@ -596,7 +596,11 @@ export async function rotateOwnerCredential(
                 (id, principal_id, token_prefix, token_digest, issued_at,
                  created_operation_id, last_operation_id)
                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?6
-               WHERE ${guard.sql}`,
+               FROM principals current_owner
+               WHERE current_owner.id = ?2
+                 AND current_owner.version = ?7
+                 AND instr(current_owner.display_name, ?8) = 0
+                 AND ${guard.sql}`,
             ).bind(
               replacementCredentialId,
               initialAuth.principalId,
@@ -604,6 +608,8 @@ export async function rotateOwnerCredential(
               replacementDigest,
               now,
               operationId,
+              initialAuth.principalVersion,
+              replacement.token,
               ...guard.values,
             ),
             db.prepare(
@@ -637,10 +643,17 @@ export async function rotateOwnerCredential(
           ],
           committedAt: now,
           confirmBusinessRejection: async () => {
-            const existing = await db.prepare(
-              "SELECT id FROM credentials WHERE token_digest = ?1 LIMIT 1",
-            ).bind(replacementDigest).first();
-            return existing !== null || await ownerGuardRejected(db, initialAuth, now);
+            const [existing, currentPrincipal] = await Promise.all([
+              db.prepare(
+                "SELECT id FROM credentials WHERE token_digest = ?1 LIMIT 1",
+              ).bind(replacementDigest).first(),
+              readPrincipal(db, initialAuth.principalId),
+            ]);
+            return existing !== null
+              || currentPrincipal === null
+              || currentPrincipal.version !== initialAuth.principalVersion
+              || currentPrincipal.display_name.includes(replacement.token)
+              || await ownerGuardRejected(db, initialAuth, now);
           },
           expectedEventCount: 1,
           operationId,
@@ -650,10 +663,20 @@ export async function rotateOwnerCredential(
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          const existing = await db.prepare(
-            "SELECT id FROM credentials WHERE token_digest = ?1 LIMIT 1",
-          ).bind(replacementDigest).first();
+          const [existing, currentPrincipal] = await Promise.all([
+            db.prepare(
+              "SELECT id FROM credentials WHERE token_digest = ?1 LIMIT 1",
+            ).bind(replacementDigest).first(),
+            readPrincipal(db, initialAuth.principalId),
+          ]);
           if (existing !== null) throw conflict("CREDENTIAL_TOKEN_CONFLICT", "generate_new_credential");
+          if (currentPrincipal?.display_name.includes(replacement.token) === true) {
+            throw validationError("secret_value_reused", { field: "new_credential_token" });
+          }
+          if (
+            currentPrincipal !== null
+            && currentPrincipal.version !== initialAuth.principalVersion
+          ) throw versionConflict(currentPrincipal.version);
           throw unauthorized();
         }
         throw error;

@@ -46,7 +46,8 @@ interface EventScope {
   workspaceTargets: string[];
 }
 
-const EVENT_SELECT = `
+function eventSelect(eventsSource: string): string {
+  return `
   SELECT event.sequence, event.id, event.stream, event.type, event.operation_id,
          event.event_index, event.actor_principal_id, actor.display_name AS actor_display_name,
          event.actor_credential_id, event.authorized_via, event.grant_id,
@@ -55,10 +56,16 @@ const EVENT_SELECT = `
          event.project_id, project.key AS project_key,
          project.display_name AS project_display_name,
          event.subject_type, event.subject_id, event.payload_json, event.created_at
-  FROM events event
+  FROM ${eventsSource}
   LEFT JOIN principals actor ON actor.id = event.actor_principal_id
   LEFT JOIN workspaces workspace ON workspace.id = event.workspace_id
   LEFT JOIN projects project ON project.id = event.project_id`;
+}
+
+const EVENT_SELECT = eventSelect("events event");
+const PROJECT_EVENT_SELECT = eventSelect(
+  "events event INDEXED BY idx_events_project_stream_sequence",
+);
 
 function repeatedTargets(url: URL, name: "project" | "workspace"): string[] {
   const values = url.searchParams.getAll(name);
@@ -204,7 +211,7 @@ export async function listEvents(
   let rows: EventRow[];
   try {
     const result = await db.prepare(
-      `${EVENT_SELECT}
+      `${PROJECT_EVENT_SELECT}
        WHERE event.stream = 'domain' AND event.sequence > ?1
          AND event.project_id IN (SELECT value FROM json_each(?2))
          AND (

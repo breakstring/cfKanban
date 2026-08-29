@@ -8,13 +8,17 @@ import { createTestHarness } from "wrangler";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
-import { createInvitation as createInvitationService } from "../../apps/worker/src/services/invitations.ts";
+import {
+  createInvitation as createInvitationService,
+} from "../../apps/worker/src/services/invitations.ts";
+import { rotateOwnerCredential as rotateOwnerCredentialService } from "../../apps/worker/src/services/access.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
 const initialOwnerToken = token("owner", "A");
 const rotatedOwnerToken = token("owner2", "O");
 const exposedOwnerToken = token("exposed", "X");
+const racedOwnerToken = token("race", "Y");
 const participantToken = token("member", "B");
 const participantSpareToken = token("spare", "S");
 const participantRotatedToken = token("member2", "R");
@@ -122,6 +126,108 @@ function countingDatabase(database) {
   };
 }
 
+function snapshotReadBarrierDatabase(database) {
+  let paused = false;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "first" && matches) {
+        return async (...args) => {
+          if (!paused) {
+            paused = true;
+            signalReached();
+            await released;
+          }
+          return target.first(...args);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("SELECT operation_snapshot_json FROM idempotency_records"),
+          );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
+}
+
+function businessBatchBarrierDatabase(database, sqlFragment) {
+  let paused = false;
+  let releaseBatch;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseBatch = resolve;
+  });
+  const rawStatements = new WeakMap();
+  const matchedStatements = new WeakSet();
+  const wrapStatement = (statement, matches) => {
+    const wrapped = new Proxy(statement, {
+      get(target, property) {
+        if (property === "bind") {
+          return (...values) => wrapStatement(target.bind(...values), matches);
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    rawStatements.set(wrapped, statement);
+    if (matches) matchedStatements.add(wrapped);
+    return wrapped;
+  };
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(target.prepare(sql), sql.includes(sqlFragment));
+        }
+        if (property === "batch") {
+          return async (statements) => {
+            if (!paused && statements.some((statement) => matchedStatements.has(statement))) {
+              paused = true;
+              signalReached();
+              await released;
+            }
+            return target.batch(statements.map((statement) => rawStatements.get(statement) ?? statement));
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseBatch();
+    },
+  };
+}
+
 async function createInvitation(body, idempotencyKey) {
   return jsonRequest("/api/v1/admin/invitations", {
     body,
@@ -225,6 +331,60 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     [concurrentInviteLeft, concurrentInviteRight].filter((result) => result.body.resource.secret_available).length,
     1,
   );
+
+  const barrierKey = "wp04-concurrent-invite-create-barrier";
+  const barrierRequest = () => new Request("https://kanban.example.test/api/v1/admin/invitations", {
+    headers: ownerHeaders({ "idempotency-key": barrierKey }),
+    method: "POST",
+  });
+  const barrierAuth = await authenticateBearer(db, `Bearer ${ownerToken}`);
+  const snapshotBarrier = snapshotReadBarrierDatabase(db);
+  const secretHolder = createInvitationService(
+    snapshotBarrier.db,
+    barrierRequest(),
+    barrierAuth,
+    "project_grant",
+    projectInviteBody.grants,
+    undefined,
+    undefined,
+    Date.now(),
+  );
+  await snapshotBarrier.reached;
+  let safePeer;
+  let pendingSecretDelivery;
+  let safePeerError;
+  try {
+    safePeer = await createInvitationService(
+      db,
+      barrierRequest(),
+      barrierAuth,
+      "project_grant",
+      projectInviteBody.grants,
+      undefined,
+      undefined,
+      Date.now(),
+    );
+    pendingSecretDelivery = await db.prepare(
+      `SELECT state, operation_snapshot_json
+       FROM idempotency_records
+       WHERE operation_id = (
+         SELECT last_operation_id FROM invitations WHERE id = ?1
+       )`,
+    ).bind(safePeer.resource.id).first();
+  } catch (error) {
+    safePeerError = error;
+  } finally {
+    snapshotBarrier.release();
+  }
+  const deliveredSecret = await secretHolder;
+  if (safePeerError !== undefined) throw safePeerError;
+  assert.equal(safePeer.resource.secret_available, false);
+  assert.equal(pendingSecretDelivery.state, "pending");
+  assert.notEqual(pendingSecretDelivery.operation_snapshot_json, null);
+  assert.equal(deliveredSecret.resource.id, safePeer.resource.id);
+  assert.equal(deliveredSecret.resource.secret_available, true);
+  assert.equal(deliveredSecret.idempotent_replay, false);
+  await assertSecretsAbsentFromPersistence([invitationCode({ resource: deliveredSecret.resource })]);
 
   const invitationPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`);
   assert.equal(invitationPage.status, 200);
@@ -479,13 +639,20 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   });
   assert.equal(replayedRedeem.response.status, 200);
   assertWriteResult(replayedRedeem.body, true);
+  const idempotencyBeforeConsumedRetry = await db.prepare(
+    "SELECT COUNT(*) AS count FROM idempotency_records",
+  ).first();
   const secondRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: redeemBody,
     headers: { "idempotency-key": "wp04-project-redeem-second" },
     method: "POST",
   });
-  assert.equal(secondRedeem.response.status, 409);
+  assert.equal(secondRedeem.response.status, 410);
   assert.equal(secondRedeem.body.code, "INVITATION_ALREADY_REDEEMED");
+  const idempotencyAfterConsumedRetry = await db.prepare(
+    "SELECT COUNT(*) AS count FROM idempotency_records",
+  ).first();
+  assert.equal(idempotencyAfterConsumedRetry.count, idempotencyBeforeConsumedRetry.count);
 
   const participantProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
     headers: participantHeaders(participantToken),
@@ -897,6 +1064,25 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const revokedInvitePage = await jsonRequest(`/invite?code=${encodeURIComponent(revocableCode)}`);
   assert.equal(revokedInvitePage.response.status, 410);
   assert.equal(revokedInvitePage.body.code, "INVITATION_REVOKED");
+  const pendingBeforeRevokedRedeem = await db.prepare(
+    "SELECT COUNT(*) AS count FROM idempotency_records WHERE state = 'pending'",
+  ).first();
+  const revokedRedeem = await jsonRequest("/api/v1/invitations/redeem", {
+    body: {
+      display_name: "Terminal Invite Probe",
+      invite_code: revocableCode,
+      new_credential_token: token("terminal", "T"),
+      redeem_as: "new_principal",
+    },
+    headers: { "idempotency-key": "wp04-redeem-revoked" },
+    method: "POST",
+  });
+  assert.equal(revokedRedeem.response.status, 410, JSON.stringify(revokedRedeem.body));
+  assert.equal(revokedRedeem.body.code, "INVITATION_REVOKED");
+  const pendingAfterRevokedRedeem = await db.prepare(
+    "SELECT COUNT(*) AS count FROM idempotency_records WHERE state = 'pending'",
+  ).first();
+  assert.equal(pendingAfterRevokedRedeem.count, pendingBeforeRevokedRedeem.count);
 
   const expiringInvite = await createInvitation({
     grants: [{ project_id: firstProjectId, role: "reader" }],
@@ -909,6 +1095,25 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const expiredInvitePage = await jsonRequest(`/invite?code=${encodeURIComponent(expiringCode)}`);
   assert.equal(expiredInvitePage.response.status, 410);
   assert.equal(expiredInvitePage.body.code, "INVITATION_EXPIRED");
+  const pendingBeforeExpiredRedeem = await db.prepare(
+    "SELECT COUNT(*) AS count FROM idempotency_records WHERE state = 'pending'",
+  ).first();
+  const expiredRedeem = await jsonRequest("/api/v1/invitations/redeem", {
+    body: {
+      display_name: "Expired Invite Probe",
+      invite_code: expiringCode,
+      new_credential_token: token("terminal", "T"),
+      redeem_as: "new_principal",
+    },
+    headers: { "idempotency-key": "wp04-redeem-expired" },
+    method: "POST",
+  });
+  assert.equal(expiredRedeem.response.status, 410, JSON.stringify(expiredRedeem.body));
+  assert.equal(expiredRedeem.body.code, "INVITATION_EXPIRED");
+  const pendingAfterExpiredRedeem = await db.prepare(
+    "SELECT COUNT(*) AS count FROM idempotency_records WHERE state = 'pending'",
+  ).first();
+  assert.equal(pendingAfterExpiredRedeem.count, pendingBeforeExpiredRedeem.count);
 
   const ownerBeforeSecretOverlap = await jsonRequest("/api/v1/me", { headers: ownerHeaders() });
   const exposedOwnerName = await jsonRequest("/api/v1/me", {
@@ -947,6 +1152,57 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     method: "PATCH",
   });
   assert.equal(restoredOwnerName.response.status, 200, JSON.stringify(restoredOwnerName.body));
+
+  const rotationBarrier = businessBatchBarrierDatabase(db, "FROM principals current_owner");
+  const racedRotationRequest = new Request(
+    "https://kanban.example.test/api/v1/admin/owner-credentials/rotate",
+    {
+      headers: ownerHeaders({ "idempotency-key": "wp04-owner-secret-overlap-race" }),
+      method: "POST",
+    },
+  );
+  const racedRotation = rotateOwnerCredentialService(
+    rotationBarrier.db,
+    racedRotationRequest,
+    racedOwnerToken,
+    Date.now(),
+  );
+  await rotationBarrier.reached;
+  const racedOwnerName = await jsonRequest("/api/v1/me", {
+    body: {
+      display_name: racedOwnerToken,
+      expected_version: restoredOwnerName.body.resource.version,
+    },
+    headers: ownerHeaders(),
+    method: "PATCH",
+  });
+  rotationBarrier.release();
+  assert.equal(racedOwnerName.response.status, 200, JSON.stringify(racedOwnerName.body));
+  await assert.rejects(
+    racedRotation,
+    (error) => error?.status === 400 && error?.details?.reason === "secret_value_reused",
+  );
+  const racedCredential = await db.prepare(
+    "SELECT id FROM credentials WHERE token_digest = ?1 LIMIT 1",
+  ).bind(await sha256Hex(racedOwnerToken)).first();
+  assert.equal(racedCredential, null);
+  await assert.rejects(
+    () => authenticateBearer(db, `Bearer ${racedOwnerToken}`),
+    (error) => error?.status === 401,
+  );
+  const restoredOwnerNameAfterRace = await jsonRequest("/api/v1/me", {
+    body: {
+      display_name: "Deployment Owner",
+      expected_version: racedOwnerName.body.resource.version,
+    },
+    headers: ownerHeaders(),
+    method: "PATCH",
+  });
+  assert.equal(
+    restoredOwnerNameAfterRace.response.status,
+    200,
+    JSON.stringify(restoredOwnerNameAfterRace.body),
+  );
 
   const rotatedOwner = await jsonRequest("/api/v1/admin/owner-credentials/rotate", {
     body: { new_credential_token: rotatedOwnerToken },

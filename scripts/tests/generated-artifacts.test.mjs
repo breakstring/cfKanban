@@ -58,6 +58,54 @@ test("OpenAPI models Invitation create and redeem requests as discriminated unio
     "recovery",
   ]);
   assert.equal(redeemBranches.every((branch) => branch.additionalProperties === false), true);
+
+  assert.equal(
+    document.paths["/api/v1/admin/invitations"].post
+      .responses["200"].content["application/json"].schema.$ref,
+    "#/components/schemas/InvitationCreateWriteResult",
+  );
+  assert.equal(
+    document.paths["/api/v1/invitations/redeem"].post
+      .responses["200"].content["application/json"].schema.$ref,
+    "#/components/schemas/InvitationRedemptionWriteResult",
+  );
+  assert.deepEqual(
+    document.components.schemas.InvitationCreateResource.oneOf
+      .map((branch) => branch.properties.secret_available.const),
+    [true, false],
+  );
+  assert.deepEqual(
+    document.components.schemas.InvitationRedemptionResource.properties.results.items
+      .properties.outcome.enum,
+    ["created", "regranted", "already_has_access"],
+  );
+});
+
+test("OpenAPI distinguishes Comment lifecycle shapes and Relation endpoint permissions", async () => {
+  const document = JSON.parse(await readFile(
+    new URL("../../contracts/openapi.json", import.meta.url),
+    "utf8",
+  ));
+  assert.deepEqual(
+    document.components.schemas.Comment.oneOf.map((branch) => branch.$ref),
+    [
+      "#/components/schemas/ActiveStandardComment",
+      "#/components/schemas/CompletionComment",
+      "#/components/schemas/DeletedStandardComment",
+    ],
+  );
+  assert.equal(
+    document.components.schemas.CompleteIssueRequest.properties.verification.items.minLength,
+    1,
+  );
+  assert.equal(
+    document.components.schemas.CompleteIssueRequest.properties.follow_ups.items.minLength,
+    1,
+  );
+  const relationRead = document.paths["/api/v1/relations/{relation_id}"].get;
+  const relationWrite = document.paths["/api/v1/issues/{identifier}/relations"].post;
+  assert.match(relationRead.description, /both Relation endpoint Projects/);
+  assert.match(relationWrite.description, /active writer Grants for both Relation endpoint Projects/);
 });
 
 test("OpenAPI exposes concrete Issue contracts and reserves done for complete", async () => {

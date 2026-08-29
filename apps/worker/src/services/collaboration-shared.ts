@@ -131,11 +131,12 @@ export async function requireCollaborationIssueAuthorization(
   auth: AuthContext,
   identifierValue: JsonValue,
   requiredRole: "reader" | "writer" = "reader",
+  includeDeletedParentsForRecoveryView = false,
 ): Promise<CollaborationIssue> {
   const identifier = requireIssueIdentifier(identifierValue);
   const [row, authorizedProjects] = await Promise.all([
     readIssueRow(db, identifier),
-    resolveVisibleProjects(db, auth, true),
+    resolveVisibleProjects(db, auth, includeDeletedParentsForRecoveryView && auth.isOwner),
   ]);
   if (row === null) throw notFound();
   const project = authorizedProjects.find((candidate) => candidate.projectId === row.project_id);
@@ -189,6 +190,7 @@ export async function requireCollaborationIssueByIdAuthorization(
   auth: AuthContext,
   issueIdValue: JsonValue,
   requiredRole: "reader" | "writer" = "reader",
+  includeDeletedParentsForRecoveryView = false,
 ): Promise<CollaborationIssue> {
   const issueId = requireUuid(issueIdValue, "issue_id");
   let row: CollaborationIssueRow | null;
@@ -211,7 +213,11 @@ export async function requireCollaborationIssueByIdAuthorization(
     throw platformUnavailable("d1");
   }
   if (row === null) throw notFound();
-  const project = (await resolveVisibleProjects(db, auth, true)).find(
+  const project = (await resolveVisibleProjects(
+    db,
+    auth,
+    includeDeletedParentsForRecoveryView && auth.isOwner,
+  )).find(
     (candidate) => candidate.projectId === row?.project_id,
   );
   if (project === undefined) throw notFound();
@@ -274,12 +280,13 @@ export function buildTwoProjectWriterGuard(
 
 export function requireCommentBody(value: JsonValue, field = "body"): string {
   if (typeof value !== "string") throw validationError("schema_validation_failed", { field });
-  const normalized = value.trim();
   if (
-    normalized.length === 0
-    || new TextEncoder().encode(normalized).byteLength > 32 * 1_024
+    value.trim().length === 0
+    || new TextEncoder().encode(value).byteLength > 32 * 1_024
   ) throw validationError("schema_validation_failed", { field });
-  return normalized;
+  // Markdown whitespace is content (for example four-space code blocks and
+  // intentional trailing newlines), so trim only for the blank check.
+  return value;
 }
 
 export function requireLabelName(value: JsonValue, field = "name"): string {
