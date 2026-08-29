@@ -452,7 +452,7 @@ CREATE UNIQUE INDEX idx_invitations_code_digest ON invitations(code_digest);
 CREATE INDEX idx_invitations_owner_list ON invitations(created_at DESC, id);
 CREATE INDEX idx_events_project_stream_sequence ON events(project_id, stream, sequence);
 CREATE INDEX idx_events_project_nonrelation_sequence ON events(project_id, stream, sequence) WHERE relation_other_project_id IS NULL;
-CREATE INDEX idx_events_project_relation_sequence ON events(project_id, relation_other_project_id, stream, sequence) WHERE relation_other_project_id IS NOT NULL;
+CREATE INDEX idx_events_project_relation_sequence ON events(project_id, stream, sequence, relation_other_project_id) WHERE relation_other_project_id IS NOT NULL;
 CREATE INDEX idx_events_stream_sequence ON events(stream, sequence);
 CREATE INDEX idx_idempotency_expiry ON idempotency_records(expires_at, id);
 CREATE INDEX idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at, consumed_at);

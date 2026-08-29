@@ -120,8 +120,11 @@ const participantEventSql = `
     FROM events INDEXED BY idx_events_project_relation_sequence
     WHERE stream = 'domain' AND sequence > ?1
       AND project_id IN (SELECT value FROM json_each(?2))
-      AND relation_other_project_id IN (SELECT value FROM json_each(?3))
       AND relation_other_project_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM json_each(?3) visible_relation_project
+        WHERE visible_relation_project.value = relation_other_project_id
+      )
     ORDER BY sequence ASC LIMIT ?4
   ), candidate_events AS (
     SELECT sequence, id FROM non_relation_events

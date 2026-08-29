@@ -10,7 +10,13 @@ import {
   verifyCurrentAuth,
   type VisibleProject,
 } from "../kernel/authorization.ts";
-import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
+import {
+  createCursorContext,
+  cursorScopeMismatch,
+  decodeCursor,
+  encodeCursor,
+  invalidCursor,
+} from "../kernel/cursor.ts";
 import { isUuid } from "../kernel/crypto.ts";
 import { ApiError, platformUnavailable, validationError } from "../kernel/errors.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
@@ -278,8 +284,11 @@ export async function listEvents(
          FROM events INDEXED BY idx_events_project_relation_sequence
          WHERE stream = 'domain' AND sequence > ?1
            AND project_id IN (SELECT id FROM current_result_projects)
-           AND relation_other_project_id IN (SELECT id FROM current_visible_projects)
            AND relation_other_project_id IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM current_visible_projects visible_relation_project
+             WHERE visible_relation_project.id = relation_other_project_id
+           )
          ORDER BY sequence ASC LIMIT ?4
        ), candidate_events AS (
          SELECT ${EVENT_CANDIDATE_COLUMNS} FROM non_relation_events
@@ -303,6 +312,16 @@ export async function listEvents(
   }
   await verifyCurrentAuth(db, auth, now);
   const currentScope = await resolveEventScope(db, auth, url);
+  const previousVisibleIds = scope.visibleProjects.map((project) => project.projectId).sort();
+  const nextVisibleIds = currentScope.visibleProjects.map((project) => project.projectId).sort();
+  const previousResultIds = scope.projects.map((project) => project.projectId).sort();
+  const nextResultIds = currentScope.projects.map((project) => project.projectId).sort();
+  if (
+    previousVisibleIds.length !== nextVisibleIds.length
+    || previousVisibleIds.some((projectId, index) => projectId !== nextVisibleIds[index])
+    || previousResultIds.length !== nextResultIds.length
+    || previousResultIds.some((projectId, index) => projectId !== nextResultIds[index])
+  ) throw cursorScopeMismatch();
   const currentVisibleIds = new Set(currentScope.visibleProjects.map((project) => project.projectId));
   const currentResultIds = new Set(currentScope.projects.map((project) => project.projectId));
   const authorizedRows = rows.filter((row) => row.project_id !== null
@@ -329,6 +348,7 @@ export async function listAuditEvents(
   db: D1Database,
   auth: AuthContext,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
   const context = await createCursorContext(
@@ -340,18 +360,21 @@ export async function listAuditEvents(
   const afterValue = url.searchParams.get("after");
   const afterSequence = parseAuditEventCursor(decodeCursor(afterValue, context));
   const limit = requireLimit(url);
+  const authGuard = buildCurrentAuthGuard(auth, now, 3, true);
   let rows: EventRow[];
   try {
     const result = await db.prepare(
       `${EVENT_SELECT}
        WHERE event.sequence > ?1
+         AND ${authGuard.sql}
        ORDER BY event.sequence ASC
        LIMIT ?2`,
-    ).bind(afterSequence, limit + 1).all<EventRow>();
+    ).bind(afterSequence, limit + 1, ...authGuard.values).all<EventRow>();
     rows = result.results;
   } catch {
     throw platformUnavailable("d1");
   }
+  await verifyCurrentAuth(db, auth, now);
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);
   const lastSequence = page.at(-1)?.sequence ?? afterSequence;

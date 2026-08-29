@@ -22,7 +22,13 @@ import {
   verifyCurrentAuth,
   type VisibleProject,
 } from "../kernel/authorization.ts";
-import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
+import {
+  createCursorContext,
+  cursorScopeMismatch,
+  decodeCursor,
+  encodeCursor,
+  invalidCursor,
+} from "../kernel/cursor.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
 import {
   ApiError,
@@ -996,9 +1002,32 @@ async function listIssueRows(
   try {
     if (candidates) {
       const cursor = parsedCursor as [number, number, number] | null;
+      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 11);
       const candidateStatement = db.prepare(
-        `${ISSUE_SELECT}
-         WHERE i.project_id IN (SELECT value FROM json_each(?1))
+        `WITH current_visible_projects(id) AS MATERIALIZED (
+           SELECT current_project.id
+           FROM projects current_project
+           JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+           JOIN instance_meta current_instance ON current_instance.singleton = 1
+           WHERE current_project.id IN (SELECT value FROM json_each(?10))
+             AND current_project.deleted_at IS NULL
+             AND current_workspace.deleted_at IS NULL
+             AND ${currentAuthGuard.sql}
+             AND (
+               current_instance.owner_principal_id = ?8
+               OR EXISTS (
+                 SELECT 1 FROM project_grants current_grant
+                 WHERE current_grant.project_id = current_project.id
+                   AND current_grant.principal_id = ?8
+                   AND current_grant.revoked_at IS NULL
+               )
+             )
+         ), current_result_projects(id) AS MATERIALIZED (
+           SELECT id FROM current_visible_projects
+           WHERE id IN (SELECT value FROM json_each(?1))
+         )
+         ${ISSUE_SELECT}
+         WHERE i.project_id IN (SELECT id FROM current_result_projects)
            AND i.deleted_at IS NULL AND p.deleted_at IS NULL AND w.deleted_at IS NULL
            AND i.status_key = 'todo'
            ${candidate.blocked === "exclude" ? `AND i.blocked_reason IS NULL
@@ -1010,7 +1039,7 @@ async function listIssueRows(
              WHERE blocked_relation.target_issue_id = i.id
                AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
                AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
-               AND blocker.project_id IN (SELECT value FROM json_each(?10))
+               AND blocker.project_id IN (SELECT id FROM current_visible_projects)
                AND blocker_project.deleted_at IS NULL AND blocker_workspace.deleted_at IS NULL
            )` : ""}
            AND (
@@ -1041,12 +1070,11 @@ async function listIssueRows(
         auth.principalId,
         limit + 1,
       ] as const;
-      const boundCandidateStatement = candidate.blocked === "exclude"
-        ? candidateStatement.bind(
-          ...candidateBindings,
-          JSON.stringify(scope.relationProjects.map((project) => project.projectId)),
-        )
-        : candidateStatement.bind(...candidateBindings);
+      const boundCandidateStatement = candidateStatement.bind(
+        ...candidateBindings,
+        JSON.stringify(scope.relationProjects.map((project) => project.projectId)),
+        ...currentAuthGuard.values,
+      );
       const result = await boundCandidateStatement.all<IssueRow>();
       rows = result.results;
       hasMore = rows.length > limit;
@@ -1057,18 +1085,16 @@ async function listIssueRows(
       }
     } else {
       const cursor = parsedCursor as [number, number] | null;
-      const recoveryAuthGuard = deletionView === "only"
-        ? buildCurrentAuthGuard(auth, now, 10)
-        : null;
+      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 10);
       const statement = db.prepare(
-        `${deletionView === "only" ? `WITH current_recovery_projects(id) AS MATERIALIZED (
+        `WITH current_result_projects(id) AS MATERIALIZED (
            SELECT current_project.id
            FROM projects current_project
            JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
            JOIN instance_meta current_instance ON current_instance.singleton = 1
            WHERE current_project.id IN (SELECT value FROM json_each(?1))
-             AND ${recoveryAuthGuard?.sql ?? "0"}
-             AND (
+             AND ${currentAuthGuard.sql}
+             AND ${deletionView === "only" ? `(
                current_instance.owner_principal_id = ?9
                OR (
                  current_project.deleted_at IS NULL
@@ -1081,12 +1107,20 @@ async function listIssueRows(
                      AND current_grant.revoked_at IS NULL
                  )
                )
-             )
-         )` : ""}
+             )` : `current_project.deleted_at IS NULL
+             AND current_workspace.deleted_at IS NULL
+             AND (
+               current_instance.owner_principal_id = ?9
+               OR EXISTS (
+                 SELECT 1 FROM project_grants current_grant
+                 WHERE current_grant.project_id = current_project.id
+                   AND current_grant.principal_id = ?9
+                   AND current_grant.revoked_at IS NULL
+               )
+             )`}
+         )
          ${ISSUE_SELECT}
-         WHERE i.project_id IN (${deletionView === "only"
-           ? "SELECT id FROM current_recovery_projects"
-           : "SELECT value FROM json_each(?1)"})
+         WHERE i.project_id IN (SELECT id FROM current_result_projects)
            AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
            ${deletionView === "only" ? "" : "AND p.deleted_at IS NULL AND w.deleted_at IS NULL"}
            AND (?3 IS NULL OR (?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)
@@ -1104,13 +1138,11 @@ async function listIssueRows(
         issueFilter.assignees.length === 0 ? null : JSON.stringify(issueFilter.assignees),
         limit + 1,
       ] as const;
-      const result = deletionView === "only"
-        ? await statement.bind(
-          ...bindings,
-          auth.principalId,
-          ...(recoveryAuthGuard?.values ?? []),
-        ).all<IssueRow>()
-        : await statement.bind(...bindings).all<IssueRow>();
+      const result = await statement.bind(
+        ...bindings,
+        auth.principalId,
+        ...currentAuthGuard.values,
+      ).all<IssueRow>();
       rows = result.results;
       hasMore = rows.length > limit;
       rows = rows.slice(0, limit);
@@ -1157,29 +1189,6 @@ async function listIssuesInternal(
     deletionView,
     now,
   );
-  if (deletionView === "only") {
-    await verifyCurrentAuth(db, auth, now);
-    let currentScope = await resolveIssueScope(db, auth, url, forcedProject, true);
-    currentScope = {
-      ...currentScope,
-      projects: currentScope.projects.filter((project) => roleCanWrite(project.role)),
-    };
-    if (
-      forcedProject !== null
-      && !currentScope.projects.some((project) => project.projectId === forcedProject.projectId)
-    ) throw notFound();
-    const currentProjectIds = new Set(currentScope.projects.map((project) => project.projectId));
-    const previousProjectIds = scope.projects.map((project) => project.projectId).sort();
-    const nextProjectIds = currentScope.projects.map((project) => project.projectId).sort();
-    const scopeChanged = previousProjectIds.length !== nextProjectIds.length
-      || previousProjectIds.some((projectId, index) => projectId !== nextProjectIds[index]);
-    page = {
-      hasMore: scopeChanged ? false : page.hasMore,
-      nextCursor: scopeChanged ? null : page.nextCursor,
-      rows: page.rows.filter((row) => currentProjectIds.has(row.project_id)),
-    };
-    scope = currentScope;
-  }
   const labels = deletionView === "only"
     ? new Map<string, LabelRow[]>()
     : await labelsForIssues(db, page.rows.map((row) => row.id));
@@ -1193,6 +1202,41 @@ async function listIssuesInternal(
       scope.relationProjects.map((project) => project.projectId),
     );
   }
+  await verifyCurrentAuth(db, auth, now);
+  let currentScope = await resolveIssueScope(
+    db,
+    auth,
+    url,
+    forcedProject,
+    deletionView === "only",
+  );
+  if (deletionView === "only") {
+    currentScope = {
+      ...currentScope,
+      projects: currentScope.projects.filter((project) => roleCanWrite(project.role)),
+    };
+  }
+  if (
+    forcedProject !== null
+    && !currentScope.projects.some((project) => project.projectId === forcedProject.projectId)
+  ) throw notFound();
+  const sameProjectIds = (previous: readonly VisibleProject[], current: readonly VisibleProject[]) => {
+    const previousIds = previous.map((project) => project.projectId).sort();
+    const currentIds = current.map((project) => project.projectId).sort();
+    return previousIds.length === currentIds.length
+      && previousIds.every((projectId, index) => projectId === currentIds[index]);
+  };
+  if (
+    !sameProjectIds(scope.projects, currentScope.projects)
+    || !sameProjectIds(scope.relationProjects, currentScope.relationProjects)
+  ) throw cursorScopeMismatch();
+  const currentProjectIds = new Set(currentScope.projects.map((project) => project.projectId));
+  page = {
+    hasMore: page.hasMore,
+    nextCursor: page.nextCursor,
+    rows: page.rows.filter((row) => currentProjectIds.has(row.project_id)),
+  };
+  scope = currentScope;
   const roles = new Map(scope.projects.map((project) => [project.projectId, project.role]));
   return {
     has_more: page.hasMore,

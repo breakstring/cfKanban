@@ -52,7 +52,7 @@ export function invalidCursor(): ApiError {
   });
 }
 
-function scopeMismatch(): ApiError {
+export function cursorScopeMismatch(): ApiError {
   return new ApiError({
     category: "conflict",
     code: "CURSOR_SCOPE_MISMATCH",
@@ -114,7 +114,7 @@ export function decodeCursor(value: string | null, context: CursorContext): Json
     || payload.filter_hash !== context.filterHash
     || payload.scope_hash !== context.scopeHash
   ) {
-    throw scopeMismatch();
+    throw cursorScopeMismatch();
   }
   return payload.last;
 }

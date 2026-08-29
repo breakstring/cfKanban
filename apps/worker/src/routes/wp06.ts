@@ -63,7 +63,12 @@ export function registerWp06Routes(router: Router): Router {
     })
     .get("/api/v1/admin/audit-events", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await listAuditEvents(env.DB, auth, context.url), context.requestId);
+      return jsonResponse(await listAuditEvents(
+        env.DB,
+        auth,
+        context.url,
+        context.startedAt,
+      ), context.requestId);
     })
     .post("/api/v1/issues/{identifier}/commands/complete", async (request, env, context) => {
       const auth = await writeAuth(request, env, context);
@@ -265,6 +270,7 @@ export function registerWp06Routes(router: Router): Router {
         auth,
         path(context, "relation_id"),
         context.url,
+        context.startedAt,
       ), context.requestId);
     })
     .delete("/api/v1/relations/{relation_id}", async (request, env, context) => {

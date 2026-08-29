@@ -5,7 +5,13 @@ import {
   verifyCurrentAuth,
   type VisibleProject,
 } from "../kernel/authorization.ts";
-import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
+import {
+  createCursorContext,
+  cursorScopeMismatch,
+  decodeCursor,
+  encodeCursor,
+  invalidCursor,
+} from "../kernel/cursor.ts";
 import { isUuid } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
 import { ApiError, conflict, forbidden, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
@@ -65,6 +71,13 @@ interface RelationRow {
 interface RelationAccess {
   canWrite: boolean;
   row: RelationRow;
+}
+
+interface CurrentRelationAccessRow extends RelationRow {
+  source_can_read: number;
+  source_can_write: number;
+  target_can_read: number;
+  target_can_write: number;
 }
 
 function endpointResource(row: RelationRow, source: boolean): { [key: string]: JsonValue } {
@@ -293,6 +306,64 @@ async function requireRelationAccess(
   const canWrite = roleCanWrite(sourceRole) && roleCanWrite(targetRole);
   if (requiredRole === "writer" && !canWrite) throw forbidden();
   return { canWrite, row };
+}
+
+async function readCurrentRelationAccess(
+  db: D1Database,
+  auth: AuthContext,
+  relationId: string,
+  projectIds: readonly string[],
+  deletedMode: "exclude" | "only",
+  now: number,
+): Promise<CurrentRelationAccessRow | null> {
+  const authGuard = buildCurrentAuthGuard(auth, now, 4);
+  const endpointAccess = (endpoint: "source" | "target", write: boolean) => `CASE
+    WHEN current_instance.owner_principal_id = ?3 THEN 1
+    WHEN relation_row.${endpoint}_project_deleted_at IS NULL
+      AND relation_row.workspace_deleted_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM project_grants endpoint_grant
+        WHERE endpoint_grant.project_id = relation_row.${endpoint}_project_id
+          AND endpoint_grant.principal_id = ?3
+          ${write ? "AND endpoint_grant.role = 'writer'" : ""}
+          AND endpoint_grant.revoked_at IS NULL
+      ) THEN 1
+    ELSE 0 END`;
+  try {
+    return await db.prepare(
+      `WITH relation_row AS MATERIALIZED (
+         ${RELATION_SELECT}
+         WHERE relation.id = ?1
+           AND source.project_id IN (SELECT value FROM json_each(?2))
+           AND target.project_id IN (SELECT value FROM json_each(?2))
+           AND relation.source_project_id = source.project_id
+           AND relation.target_project_id = target.project_id
+           AND source_project.workspace_id = relation.workspace_id
+           AND target_project.workspace_id = relation.workspace_id
+           AND relation.deleted_at IS ${deletedMode === "only" ? "NOT NULL" : "NULL"}
+           ${deletedMode === "only" ? "" : `AND workspace.deleted_at IS NULL
+           AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+           AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL`}
+         LIMIT 1
+       )
+       SELECT relation_row.*,
+              ${endpointAccess("source", false)} AS source_can_read,
+              ${endpointAccess("source", true)} AS source_can_write,
+              ${endpointAccess("target", false)} AS target_can_read,
+              ${endpointAccess("target", true)} AS target_can_write
+       FROM relation_row
+       JOIN instance_meta current_instance ON current_instance.singleton = 1
+       WHERE ${authGuard.sql}
+       LIMIT 1`,
+    ).bind(
+      relationId,
+      JSON.stringify(projectIds),
+      auth.principalId,
+      ...authGuard.values,
+    ).first<CurrentRelationAccessRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
 }
 
 function parseRelationCursor(last: JsonValue[] | null): [number, string] | null {
@@ -571,6 +642,16 @@ export async function listIssueRelations(
   const currentWriterIds = currentVisibleProjects.filter((project) => roleCanWrite(project.role))
     .map((project) => project.projectId);
   const currentProjectIds = deletedMode === "only" ? currentWriterIds : currentVisibleIds;
+  const previousCursorIds = [...cursorProjectIds].sort();
+  const nextCursorIds = [...currentProjectIds].sort();
+  const previousVisibleIds = [...visibleIds].sort();
+  const nextVisibleIds = [...currentVisibleIds].sort();
+  if (
+    previousCursorIds.length !== nextCursorIds.length
+    || previousCursorIds.some((projectId, index) => projectId !== nextCursorIds[index])
+    || previousVisibleIds.length !== nextVisibleIds.length
+    || previousVisibleIds.some((projectId, index) => projectId !== nextVisibleIds[index])
+  ) throw cursorScopeMismatch();
   const currentProjectIdSet = new Set(currentProjectIds);
   const currentIssueProject = currentVisibleProjects.find((project) => project.projectId === issue.projectId);
   if (currentIssueProject === undefined) throw notFound();
@@ -610,17 +691,32 @@ export async function getRelation(
   auth: AuthContext,
   relationIdValue: JsonValue,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const deletedMode = requireDeletedMode(url);
-  const access = await requireRelationAccess(
+  const relationId = requireUuid(relationIdValue, "relation_id");
+  const projects = await resolveVisibleProjects(
     db,
     auth,
-    relationIdValue,
-    deletedMode === "only" ? "writer" : "reader",
-    deletedMode === "only",
+    deletedMode === "only" && auth.isOwner,
   );
-  if ((access.row.deleted_at !== null) !== (deletedMode === "only")) throw notFound();
-  return relationResource(access.row, access.canWrite);
+  const row = await readCurrentRelationAccess(
+    db,
+    auth,
+    relationId,
+    projects.map((project) => project.projectId),
+    deletedMode,
+    now,
+  );
+  if (row === null) {
+    await verifyCurrentAuth(db, auth, now);
+    throw notFound();
+  }
+  const canRead = row.source_can_read === 1 && row.target_can_read === 1;
+  const canWrite = row.source_can_write === 1 && row.target_can_write === 1;
+  if (!canRead) throw notFound();
+  if (deletedMode === "only" && !canWrite) throw forbidden();
+  return relationResource(row, canWrite);
 }
 
 async function diagnoseRelationCreate(

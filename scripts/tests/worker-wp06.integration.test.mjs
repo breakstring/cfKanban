@@ -12,8 +12,14 @@ import {
   createComment as createCommentService,
   deleteComment as deleteCommentService,
 } from "../../apps/worker/src/services/comments.ts";
-import { listEvents as listEventsService } from "../../apps/worker/src/services/events.ts";
-import { listIssueRelations as listIssueRelationsService } from "../../apps/worker/src/services/relations.ts";
+import {
+  listAuditEvents as listAuditEventsService,
+  listEvents as listEventsService,
+} from "../../apps/worker/src/services/events.ts";
+import {
+  getRelation as getRelationService,
+  listIssueRelations as listIssueRelationsService,
+} from "../../apps/worker/src/services/relations.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
@@ -249,6 +255,153 @@ function relationScopeBarrierDatabase(database) {
             target.prepare(sql),
             sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.key, p.key"),
           );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
+}
+
+function finalQueryBarrierDatabase(database, predicate) {
+  let paused = false;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "all" && matches) {
+        return async (...args) => {
+          const result = await target.all(...args);
+          if (!paused) {
+            paused = true;
+            signalReached();
+            await released;
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(target.prepare(sql), predicate(sql));
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
+}
+
+function queryExecutionBarrierDatabase(database, predicate) {
+  let paused = false;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "all" && matches) {
+        return async (...args) => {
+          if (!paused) {
+            paused = true;
+            signalReached();
+            await released;
+          }
+          return target.all(...args);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(target.prepare(sql), predicate(sql));
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
+}
+
+function relationDetailBarrierDatabase(database) {
+  let releaseRead;
+  let signalReached;
+  let scopeRead = false;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, sql) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), sql);
+      }
+      if (property === "all" && sql.includes("FROM project_grants AS pg")
+          && sql.includes("ORDER BY w.key, p.key")) {
+        return async (...args) => {
+          const result = await target.all(...args);
+          if (!scopeRead) {
+            scopeRead = true;
+            signalReached();
+          }
+          return result;
+        };
+      }
+      if (property === "first" && sql.includes("WHERE relation.id = ?1")
+          && sql.includes("FROM issue_relations relation")) {
+        return async (...args) => {
+          await released;
+          return target.first(...args);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(target.prepare(sql), sql);
         }
         const value = Reflect.get(target, property, target);
         return typeof value === "function" ? value.bind(target) : value;
@@ -807,22 +960,194 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     Date.now(),
   ).run();
   eventScopeBarrier.release();
-  const racedEventResult = await racedEvents;
-  assert.equal(
-    racedEventResult.items.some((event) => event.project?.id === projectBId),
-    false,
-  );
-  assert.equal(
-    racedEventResult.items.some((event) => event.subject.id === relationId),
-    false,
-  );
-  assert.deepEqual(
-    racedEventResult.resolved_scope.projects.map((project) => project.project_id),
-    [projectAId],
+  await assert.rejects(
+    racedEvents,
+    (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
   );
   await db.prepare(
     "UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
   ).bind("60000000-0000-4000-8000-000000000012").run();
+
+  const scopedProjectBGrant = "60000000-0000-4000-8000-000000000121";
+  const postQueryEventBarrier = finalQueryBarrierDatabase(
+    db,
+    (sql) => sql.includes("candidate_events AS") && sql.includes("current_visible_projects"),
+  );
+  const postQueryEventAuth = await authenticateBearer(db, `Bearer ${scopedWriterToken}`);
+  const postQueryScopeExpansion = listEventsService(
+    postQueryEventBarrier.db,
+    postQueryEventAuth,
+    new URL("https://kanban.example.test/api/v1/events?project=engineering%2FAPP&limit=1"),
+    Date.now(),
+  );
+  await postQueryEventBarrier.reached;
+  await db.prepare(
+    `INSERT INTO project_grants
+      (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
+     VALUES (?1, ?2, ?3, 'writer', ?4, ?4, ?5)`,
+  ).bind(
+    scopedProjectBGrant,
+    ids.scopedPrincipal,
+    projectBId,
+    Date.now(),
+    "wp06-scoped-project-b-grant",
+  ).run();
+  postQueryEventBarrier.release();
+  try {
+    await assert.rejects(
+      postQueryScopeExpansion,
+      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    );
+  } finally {
+    await db.prepare(
+      `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+         version = version + 1 WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, scopedProjectBGrant).run();
+  }
+
+  const auditBarrier = queryExecutionBarrierDatabase(
+    db,
+    (sql) => sql.includes("WHERE event.sequence > ?1") && sql.includes("event.stream"),
+  );
+  const auditAuth = await authenticateBearer(db, `Bearer ${ownerToken}`);
+  const revokedOwnerAudit = listAuditEventsService(
+    auditBarrier.db,
+    auditAuth,
+    new URL("https://kanban.example.test/api/v1/admin/audit-events?limit=1"),
+    Date.now(),
+  );
+  await auditBarrier.reached;
+  await db.prepare(
+    "UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, ids.ownerCredential).run();
+  await db.prepare(
+    `INSERT INTO events
+      (id, stream, type, operation_id, event_index, actor_principal_id,
+       actor_credential_id, authorized_via, subject_type, subject_id, payload_json, created_at)
+     VALUES (?1, 'security', 'credential.revoked-after-audit-auth', ?2, 0, ?3,
+             NULL, 'deployment_recovery', 'credential', ?4, '{}', ?5)`,
+  ).bind(
+    "60000000-0000-4000-8000-000000000122",
+    "60000000-0000-4000-8000-000000000123",
+    ids.ownerPrincipal,
+    ids.ownerCredential,
+    Date.now(),
+  ).run();
+  auditBarrier.release();
+  try {
+    await assert.rejects(revokedOwnerAudit, (error) => error?.status === 401);
+  } finally {
+    await db.prepare(
+      "UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.ownerCredential).run();
+  }
+
+  const auditSessionSourceCredential = "60000000-0000-4000-8000-000000000124";
+  const auditSessionId = "60000000-0000-4000-8000-000000000125";
+  const auditSessionExpiresAt = Date.now() + 8 * 60 * 60 * 1_000;
+  await db.batch([
+    db.prepare(
+      `INSERT INTO credentials
+        (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id)
+       VALUES (?1, ?2, 'audit-session', ?3, ?4, ?5)`,
+    ).bind(
+      auditSessionSourceCredential,
+      ids.ownerPrincipal,
+      await sha256Hex(token("audit-session", "Q")),
+      Date.now(),
+      "wp06-audit-session-source-credential",
+    ),
+    db.prepare(
+      `INSERT INTO web_sessions
+        (id, token_digest, principal_id, source_kind, source_id, target_kind,
+         target_json, expires_at, created_at)
+       VALUES (?1, ?2, ?3, 'credential', ?4, 'admin', '{}', ?5, ?6)`,
+    ).bind(
+      auditSessionId,
+      await sha256Hex("wp06-audit-session-cookie"),
+      ids.ownerPrincipal,
+      auditSessionSourceCredential,
+      auditSessionExpiresAt,
+      Date.now(),
+    ),
+  ]);
+  const auditSessionAuth = {
+    displayName: "Deployment Owner",
+    isOwner: true,
+    kind: "cookie",
+    principalId: ids.ownerPrincipal,
+    principalVersion: 1,
+    sessionExpiresAt: auditSessionExpiresAt,
+    sessionId: auditSessionId,
+    sourceId: auditSessionSourceCredential,
+    sourceKind: "credential",
+    target: {},
+    targetKind: "admin",
+  };
+  const revokedSessionBarrier = queryExecutionBarrierDatabase(
+    db,
+    (sql) => sql.includes("WHERE event.sequence > ?1") && sql.includes("auth_session"),
+  );
+  const revokedSessionAudit = listAuditEventsService(
+    revokedSessionBarrier.db,
+    auditSessionAuth,
+    new URL("https://kanban.example.test/api/v1/admin/audit-events?limit=1"),
+    Date.now(),
+  );
+  await revokedSessionBarrier.reached;
+  await db.prepare(
+    "UPDATE web_sessions SET revoked_at = ?1 WHERE id = ?2",
+  ).bind(Date.now(), auditSessionId).run();
+  await db.prepare(
+    `INSERT INTO events
+      (id, stream, type, operation_id, event_index, actor_principal_id,
+       authorized_via, subject_type, subject_id, payload_json, created_at)
+     VALUES (?1, 'security', 'web-session.revoked-after-audit-auth', ?2, 0, ?3,
+             'deployment_recovery', 'web_session', ?4, '{}', ?5)`,
+  ).bind(
+    "60000000-0000-4000-8000-000000000126",
+    "60000000-0000-4000-8000-000000000127",
+    ids.ownerPrincipal,
+    auditSessionId,
+    Date.now(),
+  ).run();
+  revokedSessionBarrier.release();
+  try {
+    await assert.rejects(revokedSessionAudit, (error) => error?.status === 401);
+  } finally {
+    await db.prepare("UPDATE web_sessions SET revoked_at = NULL WHERE id = ?1")
+      .bind(auditSessionId).run();
+  }
+
+  const revokedSourceBarrier = queryExecutionBarrierDatabase(
+    db,
+    (sql) => sql.includes("WHERE event.sequence > ?1") && sql.includes("auth_source_credential"),
+  );
+  const revokedSourceAudit = listAuditEventsService(
+    revokedSourceBarrier.db,
+    auditSessionAuth,
+    new URL("https://kanban.example.test/api/v1/admin/audit-events?limit=1"),
+    Date.now(),
+  );
+  await revokedSourceBarrier.reached;
+  await db.prepare(
+    "UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, auditSessionSourceCredential).run();
+  await db.prepare(
+    `INSERT INTO events
+      (id, stream, type, operation_id, event_index, actor_principal_id,
+       authorized_via, subject_type, subject_id, payload_json, created_at)
+     VALUES (?1, 'security', 'session-source.revoked-after-audit-auth', ?2, 0, ?3,
+             'deployment_recovery', 'credential', ?4, '{}', ?5)`,
+  ).bind(
+    "60000000-0000-4000-8000-000000000128",
+    "60000000-0000-4000-8000-000000000129",
+    ids.ownerPrincipal,
+    auditSessionSourceCredential,
+    Date.now(),
+  ).run();
+  revokedSourceBarrier.release();
+  await assert.rejects(revokedSourceAudit, (error) => error?.status === 401);
 
   const hiddenTailBaseline = await jsonRequest(
     `/api/v1/events?after=${encodeURIComponent(scopedEvents.body.next_cursor)}&limit=1`,
@@ -855,6 +1180,38 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(hiddenTail.response.status, 200, JSON.stringify(hiddenTail.body));
   assert.deepEqual(hiddenTail.body, hiddenTailBaseline.body);
 
+  const relationDetailBarrier = relationDetailBarrierDatabase(db);
+  const relationDetailAuth = await authenticateBearer(db, `Bearer ${dualWriterToken}`);
+  const racedRelationDetail = getRelationService(
+    relationDetailBarrier.db,
+    relationDetailAuth,
+    relationId,
+    new URL(`https://kanban.example.test/api/v1/relations/${relationId}?deleted=only`),
+    Date.now(),
+  );
+  await relationDetailBarrier.reached;
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, "60000000-0000-4000-8000-000000000012").run();
+  await db.prepare(
+    `UPDATE issue_relations SET deleted_at = ?1, deleted_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, relationId).run();
+  relationDetailBarrier.release();
+  try {
+    await assert.rejects(racedRelationDetail, (error) => error?.status === 404);
+  } finally {
+    await db.prepare(
+      `UPDATE issue_relations SET deleted_at = NULL, deleted_by_principal_id = NULL,
+         version = 1 WHERE id = ?1`,
+    ).bind(relationId).run();
+    await db.prepare(
+      `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         version = version + 1 WHERE id = ?1`,
+    ).bind("60000000-0000-4000-8000-000000000012").run();
+  }
+
   const deletedRelation = await jsonRequest(
     `/api/v1/relations/${relationId}?expected_version=1&source_expected_version=${issueBVersion}&target_expected_version=${issueAVersion}`,
     { headers: dualHeaders(), method: "DELETE" },
@@ -877,6 +1234,38 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
   assert.deepEqual(deletedRelationList.body.items.map((item) => item.id), [relationId]);
 
+  const relationPostQueryBarrier = finalQueryBarrierDatabase(
+    db,
+    (sql) => sql.includes("current_writer_projects") && sql.includes("candidate_relations AS"),
+  );
+  const relationPostQueryAuth = await authenticateBearer(db, `Bearer ${scopedWriterToken}`);
+  const expandedRelationScope = listIssueRelationsService(
+    relationPostQueryBarrier.db,
+    relationPostQueryAuth,
+    issueA.body.resource.identifier,
+    new URL(
+      `https://kanban.example.test/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only&limit=1`,
+    ),
+    Date.now(),
+  );
+  await relationPostQueryBarrier.reached;
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+       version = version + 1 WHERE id = ?1`,
+  ).bind(scopedProjectBGrant).run();
+  relationPostQueryBarrier.release();
+  try {
+    await assert.rejects(
+      expandedRelationScope,
+      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    );
+  } finally {
+    await db.prepare(
+      `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+         version = version + 1 WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, scopedProjectBGrant).run();
+  }
+
   const relationScopeBarrier = relationScopeBarrierDatabase(db);
   const relationScopeAuth = await authenticateBearer(db, `Bearer ${dualWriterToken}`);
   const racedDeletedRelations = listIssueRelationsService(
@@ -891,9 +1280,10 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
   ).bind(Date.now(), ids.ownerPrincipal, projectBId).run();
   relationScopeBarrier.release();
-  const racedDeletedRelationResult = await racedDeletedRelations;
-  assert.deepEqual(racedDeletedRelationResult.items, []);
-  assert.deepEqual(racedDeletedRelationResult.resolved_scope.visible_project_ids, [projectAId]);
+  await assert.rejects(
+    racedDeletedRelations,
+    (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+  );
   await db.prepare(
     "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
   )
