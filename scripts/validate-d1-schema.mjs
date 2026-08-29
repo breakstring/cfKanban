@@ -58,7 +58,7 @@ expectConstraint("priority pair", () => run("INSERT INTO issues (id, project_id,
 run("INSERT INTO labels (id, project_id, name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ["label", "project", "Security", now, now, "owner", "owner", "op-label"]);
 run("UPDATE labels SET deleted_at = ?, deleted_by_principal_id = ?, version = version + 1 WHERE id = ?", [now + 2, "owner", "label"]);
 expectConstraint("soft-deleted label identity", () => run("INSERT INTO labels (id, project_id, name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('label-duplicate', 'project', 'security', ?, ?, 'owner', 'owner', 'op-label-duplicate')", [now, now]));
-expectConstraint("self relation", () => run("INSERT INTO issue_relations (id, workspace_id, kind, source_issue_id, target_issue_id, created_at, created_by_principal_id, created_operation_id) VALUES ('relation-self', 'workspace', 'related', 'issue-1', 'issue-1', ?, 'owner', 'op-relation-self')", [now]));
+expectConstraint("self relation", () => run("INSERT INTO issue_relations (id, workspace_id, kind, source_issue_id, target_issue_id, source_project_id, target_project_id, created_at, created_by_principal_id, created_operation_id) VALUES ('relation-self', 'workspace', 'related', 'issue-1', 'issue-1', 'project', 'project', ?, 'owner', 'op-relation-self')", [now]));
 expectConstraint("completion payload", () => run("INSERT INTO comments (id, issue_id, kind, author_principal_id, body, created_at, created_operation_id) VALUES ('bad-completion', 'issue-1', 'completion', 'owner', 'Done', ?, 'op-bad-completion')", [now]));
 const markdownSource = "    indented code\n";
 run(
@@ -93,6 +93,10 @@ const planChecks = [
   ["label tombstones", "SELECT id FROM labels WHERE project_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["project"], /idx_labels_project_tombstones/],
   ["source relation tombstones", "SELECT id FROM issue_relations WHERE source_issue_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1"], /idx_issue_relations_source_tombstones/],
   ["target relation tombstones", "SELECT id FROM issue_relations WHERE target_issue_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1"], /idx_issue_relations_target_tombstones/],
+  ["visible source relation tombstones", "SELECT id FROM issue_relations WHERE source_issue_id = ? AND target_project_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1", "project"], /idx_issue_relations_source_tombstones_visible/],
+  ["visible target relation tombstones", "SELECT id FROM issue_relations WHERE target_issue_id = ? AND source_project_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1", "project"], /idx_issue_relations_target_tombstones_visible/],
+  ["visible source relation tombstone continuation", "SELECT id FROM issue_relations WHERE source_issue_id = ? AND target_project_id = ? AND deleted_at IS NOT NULL AND (deleted_at, id) < (?, ?) ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1", "project", now + 1, "relation-z"], /idx_issue_relations_source_tombstones_visible/],
+  ["visible target relation tombstone continuation", "SELECT id FROM issue_relations WHERE target_issue_id = ? AND source_project_id = ? AND deleted_at IS NOT NULL AND (deleted_at, id) < (?, ?) ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1", "project", now + 1, "relation-z"], /idx_issue_relations_target_tombstones_visible/],
   ["invitation redeem", "SELECT id FROM invitations WHERE code_digest = ?", [digest("b")], /idx_invitations_code_digest|sqlite_autoindex_invitations/],
 ];
 
@@ -104,24 +108,42 @@ for (const [label, sql, values, expectedIndex] of planChecks) {
 }
 
 const participantEventSql = `
-  WITH candidate_events AS (
-    SELECT *
-    FROM events INDEXED BY idx_events_project_stream_sequence
+  WITH non_relation_events AS (
+    SELECT sequence, id
+    FROM events INDEXED BY idx_events_project_nonrelation_sequence
     WHERE stream = 'domain' AND sequence > ?1
       AND project_id IN (SELECT value FROM json_each(?2))
-    ORDER BY sequence ASC
-    LIMIT ?3
+      AND relation_other_project_id IS NULL
+    ORDER BY sequence ASC LIMIT ?4
+  ), relation_events AS (
+    SELECT sequence, id
+    FROM events INDEXED BY idx_events_project_relation_sequence
+    WHERE stream = 'domain' AND sequence > ?1
+      AND project_id IN (SELECT value FROM json_each(?2))
+      AND relation_other_project_id IN (SELECT value FROM json_each(?3))
+      AND relation_other_project_id IS NOT NULL
+    ORDER BY sequence ASC LIMIT ?4
+  ), candidate_events AS (
+    SELECT sequence, id FROM non_relation_events
+    UNION ALL
+    SELECT sequence, id FROM relation_events
+    ORDER BY sequence ASC LIMIT ?4
   )
   SELECT event.sequence
   FROM candidate_events event
   ORDER BY event.sequence ASC`;
 const participantEventPlan = db.prepare(`EXPLAIN QUERY PLAN ${participantEventSql}`)
-  .all(0, JSON.stringify(["project"]), 21)
+  .all(0, JSON.stringify(["project"]), JSON.stringify(["project"]), 21)
   .map((row) => row.detail)
   .join(" | ");
 assert.match(
   participantEventPlan,
-  /idx_events_project_stream_sequence/,
+  /idx_events_project_nonrelation_sequence/,
+  `participant non-Relation events: ${participantEventPlan}`,
+);
+assert.match(
+  participantEventPlan,
+  /idx_events_project_relation_sequence/,
   `participant events: ${participantEventPlan}`,
 );
 assert.doesNotMatch(

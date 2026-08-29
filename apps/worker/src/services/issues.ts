@@ -387,6 +387,7 @@ async function resolveIssueRecoveryProjects(
     }
     const result = await db.prepare(
       `${select}
+       AND p.deleted_at IS NULL AND w.deleted_at IS NULL
        AND EXISTS (
          SELECT 1 FROM project_grants recovery_grant
          WHERE recovery_grant.project_id = p.id

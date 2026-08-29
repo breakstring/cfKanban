@@ -58,13 +58,25 @@ export async function eventCursor(
   identity: AuthContext | EventCursorPrincipal,
   lastEventSequence: number,
 ): Promise<string> {
+  let lastEventId: string | null = null;
+  if (lastEventSequence > 0) {
+    try {
+      const row = await db.prepare(
+        "SELECT id FROM events WHERE sequence = ?1 LIMIT 1",
+      ).bind(lastEventSequence).first<{ id: string }>();
+      if (row === null) throw platformUnavailable("d1");
+      lastEventId = row.id;
+    } catch {
+      throw platformUnavailable("d1");
+    }
+  }
   const context = await createCursorContext(
     "events",
     DEFAULT_EVENT_CURSOR_FILTER,
     await eventCursorProjectIds(db, identity),
     identity.principalId,
   );
-  return encodeCursor(context, [lastEventSequence]);
+  return encodeCursor(context, [lastEventId]);
 }
 
 export async function writeResult(

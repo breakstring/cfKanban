@@ -42,7 +42,7 @@ function finalize(operationId, subjectType, subjectId, expectedEvents) {
   );
 }
 
-function insertDomainEvent({ operationId, eventIndex, type, workspaceId, projectId, subjectType, subjectId, guardKind = "issue", guardId = subjectId }) {
+function insertDomainEvent({ operationId, eventIndex, type, workspaceId, projectId, otherProjectId = null, subjectType, subjectId, guardKind = "issue", guardId = subjectId }) {
   const guardSql = {
     issue: "SELECT 1 FROM issues WHERE id = ? AND last_operation_id = ?",
     invitation: "SELECT 1 FROM invitations WHERE id = ? AND last_operation_id = ?",
@@ -53,9 +53,9 @@ function insertDomainEvent({ operationId, eventIndex, type, workspaceId, project
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
        actor_credential_id, authorized_via, workspace_id, project_id,
-       subject_type, subject_id, payload_json, created_at)
+       relation_other_project_id, subject_type, subject_id, payload_json, created_at)
      SELECT ?, 'domain', ?, ?, ?, 'owner', 'cred-owner', 'deployment_owner',
-            ?, ?, ?, ?, '{}', ?
+            ?, ?, ?, ?, ?, '{}', ?
      WHERE EXISTS (${guardSql})`,
     [
       `${operationId}-event-${eventIndex}`,
@@ -64,6 +64,7 @@ function insertDomainEvent({ operationId, eventIndex, type, workspaceId, project
       eventIndex,
       workspaceId,
       projectId,
+      otherProjectId,
       subjectType,
       subjectId,
       now,
@@ -197,15 +198,17 @@ atomic(() => {
   );
   run(
     `INSERT INTO issue_relations
-      (id, workspace_id, kind, source_issue_id, target_issue_id, created_at,
+      (id, workspace_id, kind, source_issue_id, target_issue_id,
+       source_project_id, target_project_id, created_at,
        created_by_principal_id, created_operation_id, last_operation_id)
-     SELECT 'relation-1', 'workspace', 'blocks', 'issue-a2', 'issue-b1', ?, ?, ? ,?
+     SELECT 'relation-1', 'workspace', 'blocks', 'issue-a2', 'issue-b1',
+            'project-a', 'project-b', ?, ?, ? ,?
      WHERE (SELECT last_operation_id FROM issues WHERE id = 'issue-a2') = ?
        AND (SELECT last_operation_id FROM issues WHERE id = 'issue-b1') = ?`,
     [now, "writer", operationId, operationId, operationId, operationId],
   );
-  insertDomainEvent({ operationId, eventIndex: 0, type: "relation.created", workspaceId: "workspace", projectId: "project-a", subjectType: "relation", subjectId: "relation-1", guardKind: "relation" });
-  insertDomainEvent({ operationId, eventIndex: 1, type: "relation.created", workspaceId: "workspace", projectId: "project-b", subjectType: "relation", subjectId: "relation-1", guardKind: "relation" });
+  insertDomainEvent({ operationId, eventIndex: 0, type: "relation.created", workspaceId: "workspace", projectId: "project-a", otherProjectId: "project-b", subjectType: "relation", subjectId: "relation-1", guardKind: "relation" });
+  insertDomainEvent({ operationId, eventIndex: 1, type: "relation.created", workspaceId: "workspace", projectId: "project-b", otherProjectId: "project-a", subjectType: "relation", subjectId: "relation-1", guardKind: "relation" });
   finalize(operationId, "relation", "relation-1", 2);
 });
 assert.equal(get("SELECT COUNT(*) AS count FROM issue_relations WHERE id = 'relation-1'").count, 1);
@@ -224,15 +227,17 @@ expectAtomicRollback("relation missing permission rollback", () => {
   );
   run(
     `INSERT INTO issue_relations
-      (id, workspace_id, kind, source_issue_id, target_issue_id, created_at,
+      (id, workspace_id, kind, source_issue_id, target_issue_id,
+       source_project_id, target_project_id, created_at,
        created_by_principal_id, created_operation_id, last_operation_id)
-     SELECT 'relation-2', 'workspace', 'related', 'issue-a1', 'issue-b1', ?, 'writer', ?, ?
+     SELECT 'relation-2', 'workspace', 'related', 'issue-a1', 'issue-b1',
+            'project-a', 'project-b', ?, 'writer', ?, ?
      WHERE (SELECT last_operation_id FROM issues WHERE id = 'issue-a1') = ?
        AND (SELECT last_operation_id FROM issues WHERE id = 'issue-b1') = ?`,
     [now, operationId, operationId, operationId, operationId],
   );
-  insertDomainEvent({ operationId, eventIndex: 0, type: "relation.created", workspaceId: "workspace", projectId: "project-a", subjectType: "relation", subjectId: "relation-2", guardKind: "relation" });
-  insertDomainEvent({ operationId, eventIndex: 1, type: "relation.created", workspaceId: "workspace", projectId: "project-b", subjectType: "relation", subjectId: "relation-2", guardKind: "relation" });
+  insertDomainEvent({ operationId, eventIndex: 0, type: "relation.created", workspaceId: "workspace", projectId: "project-a", otherProjectId: "project-b", subjectType: "relation", subjectId: "relation-2", guardKind: "relation" });
+  insertDomainEvent({ operationId, eventIndex: 1, type: "relation.created", workspaceId: "workspace", projectId: "project-b", otherProjectId: "project-a", subjectType: "relation", subjectId: "relation-2", guardKind: "relation" });
   finalize(operationId, "relation", "relation-2", 2);
 });
 assert.equal(get("SELECT COUNT(*) AS count FROM issue_relations WHERE id = 'relation-2'").count, 0);

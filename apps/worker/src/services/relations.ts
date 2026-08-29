@@ -154,6 +154,39 @@ const RELATION_SELECT = `
   JOIN issues target ON target.id = relation.target_issue_id
   JOIN projects target_project ON target_project.id = target.project_id`;
 
+function deletedRelationListSql(withCursor: boolean): string {
+  const cursorPredicate = withCursor
+    ? "AND (relation.deleted_at, relation.id) < (?3, ?4)"
+    : "";
+  const limitParameter = withCursor ? "?5" : "?3";
+  return `WITH source_candidates AS (
+           SELECT relation.id, relation.deleted_at
+           FROM issue_relations relation INDEXED BY idx_issue_relations_source_tombstones_visible
+           WHERE relation.source_issue_id = ?1 AND relation.deleted_at IS NOT NULL
+             AND relation.target_project_id IN (SELECT value FROM json_each(?2))
+             ${cursorPredicate}
+           ORDER BY relation.deleted_at DESC, relation.id DESC
+           LIMIT ${limitParameter}
+         ), target_candidates AS (
+           SELECT relation.id, relation.deleted_at
+           FROM issue_relations relation INDEXED BY idx_issue_relations_target_tombstones_visible
+           WHERE relation.target_issue_id = ?1 AND relation.deleted_at IS NOT NULL
+             AND relation.source_project_id IN (SELECT value FROM json_each(?2))
+             ${cursorPredicate}
+           ORDER BY relation.deleted_at DESC, relation.id DESC
+           LIMIT ${limitParameter}
+         ), candidate_relations AS (
+           SELECT id, deleted_at FROM source_candidates
+           UNION ALL
+           SELECT id, deleted_at FROM target_candidates
+           ORDER BY deleted_at DESC, id DESC
+           LIMIT ${limitParameter}
+         )
+         ${RELATION_SELECT}
+         JOIN candidate_relations candidate ON candidate.id = relation.id
+         ORDER BY relation.deleted_at DESC, relation.id DESC`;
+}
+
 async function readRelation(
   db: D1Database,
   relationId: string,
@@ -267,6 +300,7 @@ function relationEvent(
   operationId: string,
   relationId: string,
   projectId: string,
+  otherProjectId: string,
   eventIndex: number,
   type: string,
   now: number,
@@ -275,7 +309,7 @@ function relationEvent(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
        actor_credential_id, authorized_via, grant_id, workspace_id,
-       project_id, subject_type, subject_id, payload_json, created_at)
+       project_id, relation_other_project_id, subject_type, subject_id, payload_json, created_at)
      SELECT ?1, 'domain', ?2, ?3, ?4, ?5, ?6, ?7,
             CASE WHEN ?8 = 1 THEN NULL ELSE (
               SELECT grant_row.id FROM project_grants grant_row
@@ -284,20 +318,20 @@ function relationEvent(
                 AND grant_row.role = 'writer' AND grant_row.revoked_at IS NULL
               LIMIT 1
             ) END,
-            relation.workspace_id, ?9, 'relation', relation.id,
+            relation.workspace_id, ?9, ?10, 'relation', relation.id,
             json_object(
               'kind', relation.kind,
-              'lifecycle', ?10,
+              'lifecycle', ?11,
               'relation_version', relation.version,
               'source_identifier', 'CFK-' || source.number,
               'source_version', source.version,
               'target_identifier', 'CFK-' || target.number,
               'target_version', target.version
-            ), ?11
+            ), ?12
      FROM issue_relations relation
      JOIN issues source ON source.id = relation.source_issue_id
      JOIN issues target ON target.id = relation.target_issue_id
-     WHERE relation.id = ?12 AND relation.last_operation_id = ?3
+     WHERE relation.id = ?13 AND relation.last_operation_id = ?3
        AND source.last_operation_id = ?3 AND target.last_operation_id = ?3
        AND ?9 IN (source.project_id, target.project_id)`,
   ).bind(
@@ -310,6 +344,7 @@ function relationEvent(
     authorizedVia(auth),
     auth.isOwner ? 1 : 0,
     projectId,
+    otherProjectId,
     type.endsWith("created") ? "created" : type.endsWith("deleted") ? "deleted" : "restored",
     now,
     relationId,
@@ -335,6 +370,7 @@ function relationEvents(
     operationId,
     relationId,
     projectId,
+    projectId === sourceProjectId ? targetProjectId : sourceProjectId,
     index,
     type,
     now,
@@ -422,39 +458,19 @@ export async function listIssueRelations(
   let rows: RelationRow[];
   try {
     const result = deletedMode === "only"
-      ? await db.prepare(
-        `WITH source_candidates AS (
-           SELECT relation.id, relation.deleted_at
-           FROM issue_relations relation INDEXED BY idx_issue_relations_source_tombstones
-           WHERE relation.source_issue_id = ?1 AND relation.deleted_at IS NOT NULL
-             AND (?2 IS NULL OR relation.deleted_at < ?2
-                  OR (relation.deleted_at = ?2 AND relation.id < ?3))
-           ORDER BY relation.deleted_at DESC, relation.id DESC
-           LIMIT ?4
-         ), target_candidates AS (
-           SELECT relation.id, relation.deleted_at
-           FROM issue_relations relation INDEXED BY idx_issue_relations_target_tombstones
-           WHERE relation.target_issue_id = ?1 AND relation.deleted_at IS NOT NULL
-             AND (?2 IS NULL OR relation.deleted_at < ?2
-                  OR (relation.deleted_at = ?2 AND relation.id < ?3))
-           ORDER BY relation.deleted_at DESC, relation.id DESC
-           LIMIT ?4
-         ), candidate_relations AS (
-           SELECT id, deleted_at FROM source_candidates
-           UNION ALL
-           SELECT id, deleted_at FROM target_candidates
-           ORDER BY deleted_at DESC, id DESC
-           LIMIT ?4
-         )
-         ${RELATION_SELECT}
-         JOIN candidate_relations candidate ON candidate.id = relation.id
-         ORDER BY relation.deleted_at DESC, relation.id DESC`,
-      ).bind(
-        issue.id,
-        cursor?.[0] ?? null,
-        cursor?.[1] ?? null,
-        limit + 1,
-      ).all<RelationRow>()
+      ? cursor === null
+        ? await db.prepare(deletedRelationListSql(false)).bind(
+          issue.id,
+          JSON.stringify(writerIds),
+          limit + 1,
+        ).all<RelationRow>()
+        : await db.prepare(deletedRelationListSql(true)).bind(
+          issue.id,
+          JSON.stringify(writerIds),
+          cursor[0],
+          cursor[1],
+          limit + 1,
+        ).all<RelationRow>()
       : await db.prepare(
         `${RELATION_SELECT}
          WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
@@ -481,12 +497,8 @@ export async function listIssueRelations(
   }
   const roles = new Map(visibleProjects.map((project) => [project.projectId, project.role]));
   const hasMore = rows.length > limit;
-  const scanned = rows.slice(0, limit);
-  const page = deletedMode === "only"
-    ? scanned.filter((row) => roleCanWrite(roles.get(row.source_project_id) ?? "reader")
-      && roleCanWrite(roles.get(row.target_project_id) ?? "reader"))
-    : scanned;
-  const tail = scanned.at(-1);
+  const page = rows.slice(0, limit);
+  const tail = page.at(-1);
   return {
     has_more: hasMore,
     items: page.map((row) => relationResource(
@@ -626,9 +638,11 @@ export async function createIssueRelation(
             db.prepare(
               `INSERT INTO issue_relations
                 (id, workspace_id, kind, source_issue_id, target_issue_id,
+                 source_project_id, target_project_id,
                  version, created_at, created_by_principal_id,
                  created_operation_id, last_operation_id)
                SELECT ?1, source_workspace.id, ?2, source.id, target.id,
+                      source.project_id, target.project_id,
                       1, ?7, ?8, ?9, ?9
                FROM issues source
                JOIN projects source_project ON source_project.id = source.project_id

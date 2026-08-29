@@ -695,10 +695,11 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const racedLoserError = await racedLoser.then(() => null, (error) => error);
   assert.equal(racedLoserError?.status, 410);
   assert.equal(racedLoserError?.code, "INVITATION_ALREADY_REDEEMED");
+  const racedLoserKeyDigest = await sha256Hex("wp04-terminal-race-loser");
   const racedLoserPending = await db.prepare(
     `SELECT COUNT(*) AS count FROM idempotency_records
-     WHERE idempotency_key = 'wp04-terminal-race-loser' AND state = 'pending'`,
-  ).first();
+     WHERE idempotency_key = ?1 AND state = 'pending'`,
+  ).bind(racedLoserKeyDigest).first();
   assert.equal(racedLoserPending.count, 0);
   const racedLoserPrincipal = await db.prepare(
     "SELECT COUNT(*) AS count FROM principals WHERE display_name = 'Terminal Race Loser'",
@@ -707,6 +708,36 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const consumedInvitePage = await jsonRequest(`/invite?code=${encodeURIComponent(racedInviteCode)}`);
   assert.equal(consumedInvitePage.response.status, 410, JSON.stringify(consumedInvitePage.body));
   assert.equal(consumedInvitePage.body.code, "INVITATION_ALREADY_REDEEMED");
+
+  const unsafeSnapshotInvite = await createInvitation({
+    grants: [{ project_id: firstProjectId, role: "reader" }],
+    kind: "project_grant",
+  }, "wp04-snapshot-secret-preflight-invite");
+  const unsafeSnapshotCode = invitationCode(unsafeSnapshotInvite.body);
+  await db.prepare(
+    "UPDATE projects SET display_name = ?1 WHERE id = ?2",
+  ).bind(`Unsafe ${unsafeSnapshotCode}`, firstProjectId).run();
+  const unsafeSnapshotKey = "wp04-snapshot-secret-preflight-redeem";
+  const unsafeSnapshotRedeem = await jsonRequest("/api/v1/invitations/redeem", {
+    body: {
+      display_name: "Snapshot Safety Probe",
+      invite_code: unsafeSnapshotCode,
+      new_credential_token: token("snapshotsafe", "Z"),
+      redeem_as: "new_principal",
+    },
+    headers: { "idempotency-key": unsafeSnapshotKey },
+    method: "POST",
+  });
+  assert.equal(unsafeSnapshotRedeem.response.status, 400, JSON.stringify(unsafeSnapshotRedeem.body));
+  const unsafeSnapshotKeyDigest = await sha256Hex(unsafeSnapshotKey);
+  const unsafeSnapshotPending = await db.prepare(
+    `SELECT COUNT(*) AS count FROM idempotency_records
+     WHERE idempotency_key = ?1 AND state = 'pending'`,
+  ).bind(unsafeSnapshotKeyDigest).first();
+  assert.equal(unsafeSnapshotPending.count, 0);
+  await db.prepare(
+    "UPDATE projects SET display_name = 'Core' WHERE id = ?1",
+  ).bind(firstProjectId).run();
 
   const participantProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
     headers: participantHeaders(participantToken),
