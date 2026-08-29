@@ -8,6 +8,7 @@ import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { principalUserHandle } from "../../apps/worker/src/kernel/webauthn.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { verifyWebAuthentication as verifyWebAuthenticationService } from "../../apps/worker/src/services/passkeys.ts";
+import { redeemWebLaunch as redeemWebLaunchService } from "../../apps/worker/src/services/web-auth.ts";
 import {
   base64UrlEncode,
   createAssertionCredential,
@@ -139,6 +140,60 @@ function failPasskeyAuthenticationBatch(database) {
   });
 }
 
+function browserLaunchRedemptionBarrierDatabase(database) {
+  let releaseBatch;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseBatch = resolve;
+  });
+  const rawStatements = new WeakMap();
+  const redemptionStatements = new WeakSet();
+  const wrapStatement = (statement, isRedemptionStatement) => {
+    const wrapped = new Proxy(statement, {
+      get(target, property) {
+        if (property === "bind") {
+          return (...values) => wrapStatement(target.bind(...values), isRedemptionStatement);
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    rawStatements.set(wrapped, statement);
+    if (isRedemptionStatement) redemptionStatements.add(wrapped);
+    return wrapped;
+  };
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("UPDATE browser_launches AS launch") && sql.includes("SET redeemed_at"),
+          );
+        }
+        if (property === "batch") {
+          return async (statements) => {
+            if (statements.some((statement) => redemptionStatements.has(statement))) {
+              signalReached();
+              await released;
+            }
+            return target.batch(statements.map((statement) => rawStatements.get(statement) ?? statement));
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseBatch();
+    },
+  };
+}
+
 function codeFromLaunchUrl(value) {
   const code = new URL(value).searchParams.get("code");
   assert.match(code, /^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$/u);
@@ -174,6 +229,50 @@ async function redeemLaunch(code, idempotencyKey) {
   assert.match(cookies.header, /Max-Age=28800/u);
   assert.equal(redeemed.body.resource.cookie_available, true);
   return { ...redeemed, cookies };
+}
+
+async function assertRacedRedemptionUnavailable({ idempotencyKey, launch, mutate, restore }) {
+  const before = await db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM web_sessions) AS sessions,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits`,
+  ).first();
+  const barrier = browserLaunchRedemptionBarrierDatabase(db);
+  const redemption = redeemWebLaunchService(
+    barrier.db,
+    new Request(`${origin}/api/v1/web-sessions/redeem`, {
+      headers: { "idempotency-key": idempotencyKey },
+      method: "POST",
+    }),
+    launch.code,
+    Date.now(),
+  );
+  await barrier.reached;
+  try {
+    await mutate();
+    barrier.release();
+    await assert.rejects(
+      redemption,
+      (error) => error?.code === "BROWSER_LAUNCH_UNAVAILABLE" && error?.status === 410,
+    );
+  } finally {
+    barrier.release();
+    await restore();
+  }
+  const after = await db.prepare(
+    `SELECT
+       (SELECT redeemed_at FROM browser_launches WHERE id = ?1) AS redeemed_at,
+       (SELECT COUNT(*) FROM web_sessions) AS sessions,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits,
+       (SELECT COUNT(*) FROM idempotency_records WHERE idempotency_key = ?2) AS records`,
+  ).bind(launch.body.resource.id, await sha256Hex(idempotencyKey)).first();
+  assert.deepEqual(after, {
+    ...before,
+    redeemed_at: null,
+    records: 0,
+  });
 }
 
 async function registrationOptions(cookies) {
@@ -379,6 +478,90 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(replayedCreation.body.idempotent_replay, true);
   assert.equal(replayedCreation.body.resource.secret_available, false);
   assert.equal("launch_url" in replayedCreation.body.resource, false);
+
+  const sourceInvalidationLaunch = await createLaunch(
+    { kind: "project", project_key: "APP", workspace_key: "web" },
+    "wp07-redeem-source-race-launch",
+  );
+  const grantInvalidationLaunch = await createLaunch(
+    { kind: "project", project_key: "APP", workspace_key: "web" },
+    "wp07-redeem-grant-race-launch",
+  );
+  const projectInvalidationLaunch = await createLaunch(
+    { kind: "project", project_key: "APP", workspace_key: "web" },
+    "wp07-redeem-project-race-launch",
+  );
+  const workspaceInvalidationLaunch = await createLaunch(
+    { kind: "project", project_key: "APP", workspace_key: "web" },
+    "wp07-redeem-workspace-race-launch",
+  );
+  const issueInvalidationLaunch = await createLaunch(
+    { identifier: "CFK-1", kind: "issue" },
+    "wp07-redeem-issue-race-launch",
+  );
+  secrets.push(
+    sourceInvalidationLaunch.code,
+    grantInvalidationLaunch.code,
+    projectInvalidationLaunch.code,
+    workspaceInvalidationLaunch.code,
+    issueInvalidationLaunch.code,
+  );
+  await assertRacedRedemptionUnavailable({
+    idempotencyKey: "wp07-redeem-source-race",
+    launch: sourceInvalidationLaunch,
+    mutate: () => db.prepare(
+      `UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2,
+         revoke_reason = 'test' WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, ids.participantCredential).run(),
+    restore: () => db.prepare(
+      `UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         revoke_reason = NULL WHERE id = ?1`,
+    ).bind(ids.participantCredential).run(),
+  });
+  await assertRacedRedemptionUnavailable({
+    idempotencyKey: "wp07-redeem-grant-race",
+    launch: grantInvalidationLaunch,
+    mutate: () => db.prepare(
+      `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+         version = version + 1 WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, ids.participantGrantA).run(),
+    restore: () => db.prepare(
+      `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         version = version + 1 WHERE id = ?1`,
+    ).bind(ids.participantGrantA).run(),
+  });
+  await assertRacedRedemptionUnavailable({
+    idempotencyKey: "wp07-redeem-project-race",
+    launch: projectInvalidationLaunch,
+    mutate: () => db.prepare(
+      "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+    ).bind(Date.now(), ids.ownerPrincipal, ids.projectA).run(),
+    restore: () => db.prepare(
+      "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.projectA).run(),
+  });
+  await assertRacedRedemptionUnavailable({
+    idempotencyKey: "wp07-redeem-workspace-race",
+    launch: workspaceInvalidationLaunch,
+    mutate: () => db.prepare(
+      "UPDATE workspaces SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+    ).bind(Date.now(), ids.ownerPrincipal, ids.workspace).run(),
+    restore: () => db.prepare(
+      "UPDATE workspaces SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.workspace).run(),
+  });
+  await assertRacedRedemptionUnavailable({
+    idempotencyKey: "wp07-redeem-issue-race",
+    launch: issueInvalidationLaunch,
+    mutate: () => db.prepare(
+      `UPDATE issues SET deleted_at = ?1, deleted_by_principal_id = ?2,
+         version = version + 1 WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, ids.issue).run(),
+    restore: () => db.prepare(
+      `UPDATE issues SET deleted_at = NULL, deleted_by_principal_id = NULL,
+         version = version + 1 WHERE id = ?1`,
+    ).bind(ids.issue).run(),
+  });
 
   const eventCountBeforeGet = await db.prepare("SELECT COUNT(*) AS count FROM events").first();
   for (let index = 0; index < 2; index += 1) {
