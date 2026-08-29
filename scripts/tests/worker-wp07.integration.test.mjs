@@ -92,6 +92,12 @@ function cookieWriteHeaders(cookies, extra = {}) {
   };
 }
 
+function assertSessionCookiesCleared(response) {
+  const header = response.headers.get("set-cookie") ?? "";
+  assert.match(header, /cfkanban_session=;[^,]*Max-Age=0/u);
+  assert.match(header, /cfkanban_csrf=;[^,]*Max-Age=0/u);
+}
+
 function uniformError(value) {
   return {
     category: value.body.category,
@@ -137,6 +143,81 @@ function failPasskeyAuthenticationBatch(database) {
           }
           return target.batch(statements.map((statement) => rawStatements.get(statement) ?? statement));
         };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function failBrowserLaunchRedemptionBatch(database) {
+  let failed = false;
+  const rawStatements = new WeakMap();
+  const redemptionStatements = new WeakSet();
+  const wrapStatement = (statement, isRedemptionStatement) => {
+    const wrapped = new Proxy(statement, {
+      get(target, property) {
+        if (property === "bind") {
+          return (...values) => wrapStatement(target.bind(...values), isRedemptionStatement);
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    rawStatements.set(wrapped, statement);
+    if (isRedemptionStatement) redemptionStatements.add(wrapped);
+    return wrapped;
+  };
+  return new Proxy(database, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (sql) => wrapStatement(
+          target.prepare(sql),
+          sql.includes("UPDATE browser_launches AS launch") && sql.includes("SET redeemed_at"),
+        );
+      }
+      if (property === "batch") {
+        return (statements) => {
+          if (!failed && statements.some((statement) => redemptionStatements.has(statement))) {
+            failed = true;
+            throw new Error("injected Browser Launch redemption batch failure");
+          }
+          return target.batch(statements.map((statement) => rawStatements.get(statement) ?? statement));
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function failBrowserLaunchSnapshotReadOnce(database) {
+  let failed = false;
+  const wrapStatement = (statement, isSnapshotRead) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), isSnapshotRead);
+      }
+      if (property === "first" && isSnapshotRead) {
+        return (...values) => {
+          if (!failed) {
+            failed = true;
+            throw new Error("injected Browser Launch snapshot read failure");
+          }
+          return target.first(...values);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return new Proxy(database, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (sql) => wrapStatement(
+          target.prepare(sql),
+          sql.includes("SELECT operation_snapshot_json FROM idempotency_records"),
+        );
       }
       const value = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
@@ -200,6 +281,7 @@ function browserLaunchRedemptionBarrierDatabase(database) {
 
 function webSessionScopeBarrierDatabase(database) {
   let releaseQuery;
+  let rawRows = null;
   let signalReached;
   let guardedSql = null;
   const reached = new Promise((resolve) => {
@@ -213,12 +295,14 @@ function webSessionScopeBarrierDatabase(database) {
       if (property === "bind") {
         return (...values) => wrapStatement(target.bind(...values), sql);
       }
-      if (property === "all" && sql.includes("FROM project_grants AS pg")) {
+      if (property === "all" && sql.includes("FROM web_sessions AS auth_session")) {
         return async (...values) => {
           guardedSql = sql;
           signalReached();
           await released;
-          return target.all(...values);
+          const result = await target.all(...values);
+          rawRows = result.results;
+          return result;
         };
       }
       const value = Reflect.get(target, property, target);
@@ -237,6 +321,9 @@ function webSessionScopeBarrierDatabase(database) {
     }),
     get guardedSql() {
       return guardedSql;
+    },
+    get rawRows() {
+      return rawRows;
     },
     reached,
     release() {
@@ -305,7 +392,27 @@ async function assertRacedRedemptionUnavailable({ idempotencyKey, launch, mutate
     barrier.release();
     await assert.rejects(
       redemption,
-      (error) => error?.code === "BROWSER_LAUNCH_UNAVAILABLE" && error?.status === 410,
+      (error) => {
+        assert.deepEqual(
+          {
+            category: error?.category,
+            code: error?.code,
+            recovery: error?.recovery,
+            retryable: error?.retryable,
+            source: error?.source,
+            status: error?.status,
+          },
+          {
+            category: "conflict",
+            code: "BROWSER_LAUNCH_UNAVAILABLE",
+            recovery: "request_new_browser_launch",
+            retryable: false,
+            source: "service",
+            status: 410,
+          },
+        );
+        return true;
+      },
     );
   } finally {
     barrier.release();
@@ -326,7 +433,14 @@ async function assertRacedRedemptionUnavailable({ idempotencyKey, launch, mutate
   });
 }
 
-async function assertRacedWebSessionScope({ cookies, expectedRole = null, mutate, restore }) {
+async function assertRacedWebSessionScope({
+  cookies,
+  expectedRole = null,
+  expectedStatus = 404,
+  expectGrantGuard = true,
+  mutate,
+  restore,
+}) {
   const now = Date.now();
   const auth = await authenticateRequest(
     db,
@@ -338,14 +452,18 @@ async function assertRacedWebSessionScope({ cookies, expectedRole = null, mutate
   await barrier.reached;
   try {
     assert.match(barrier.guardedSql, /FROM web_sessions AS auth_session/u);
-    assert.match(barrier.guardedSql, /pg\.revoked_at IS NULL/u);
+    if (expectGrantGuard) assert.match(barrier.guardedSql, /pg\.revoked_at IS NULL/u);
+    else assert.doesNotMatch(barrier.guardedSql, /FROM project_grants AS pg/u);
     assert.match(barrier.guardedSql, /p\.deleted_at IS NULL AND w\.deleted_at IS NULL/u);
-    await mutate();
+    assert.match(barrier.guardedSql, /target_issue\.deleted_at IS NULL/u);
+    await mutate(now);
     barrier.release();
     if (expectedRole === null) {
-      await assert.rejects(view, (error) => error?.status === 404);
+      await assert.rejects(view, (error) => error?.status === expectedStatus);
+      assert.deepEqual(barrier.rawRows, []);
     } else {
       const resource = await view;
+      assert.equal(barrier.rawRows.length, 1);
       assert.deepEqual(resource.allowed_scope.projects.map((project) => project.role), [expectedRole]);
     }
   } finally {
@@ -402,13 +520,20 @@ async function registerFixture(cookies, options, algorithm, key) {
   return { fixture, registered };
 }
 
-async function rejectRegistrationWithExtraCose(cookies, algorithm, extraCoseEntries, key) {
+async function rejectRegistrationWithExtraCose(
+  cookies,
+  algorithm,
+  extraCoseEntries,
+  key,
+  preserveCoseEntries = false,
+) {
   const options = await registrationOptions(cookies);
   const fixture = await createRegistrationFixture({
     algorithm,
     challenge: options.body.public_key.challenge,
     extraCoseEntries,
     origin,
+    preserveCoseEntries,
     rpId,
   });
   const before = await db.prepare(
@@ -427,6 +552,7 @@ async function rejectRegistrationWithExtraCose(cookies, algorithm, extraCoseEntr
   });
   assert.equal(rejected.response.status, 409, JSON.stringify(rejected.body));
   assert.equal(rejected.body.code, "PASSKEY_CHALLENGE_INVALID");
+  assert.equal(JSON.stringify(rejected.body).includes(fixture.publicKeyCose), false);
   const after = await db.prepare(
     `SELECT
        (SELECT consumed_at FROM webauthn_challenges WHERE id = ?1) AS consumed_at,
@@ -453,6 +579,52 @@ async function rejectRegistrationWithExtraCose(cookies, algorithm, extraCoseEntr
     { ...before, idempotency_records: 0, injected: 0 },
   );
   return { fixture, options };
+}
+
+async function rejectRegistrationWithCredentialMutation(cookies, mutate, key) {
+  const options = await registrationOptions(cookies);
+  const fixture = await createRegistrationFixture({
+    algorithm: -7,
+    challenge: options.body.public_key.challenge,
+    origin,
+    rpId,
+  });
+  mutate(fixture.registrationCredential);
+  const before = await db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM web_authenticators) AS authenticators,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits`,
+  ).first();
+  const rejected = await request("/api/v1/me/passkeys", {
+    body: {
+      challenge_id: options.body.challenge_id,
+      credential: fixture.registrationCredential,
+    },
+    headers: cookieWriteHeaders(cookies, { "idempotency-key": key }),
+    method: "POST",
+  });
+  assert.equal(rejected.response.status, 409, JSON.stringify(rejected.body));
+  assert.equal(rejected.body.code, "PASSKEY_CHALLENGE_INVALID");
+  const after = await db.prepare(
+    `SELECT
+       (SELECT consumed_at FROM webauthn_challenges WHERE id = ?1) AS consumed_at,
+       (SELECT COUNT(*) FROM web_authenticators) AS authenticators,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits,
+       (SELECT COUNT(*) FROM idempotency_records WHERE idempotency_key = ?2) AS idempotency_records`,
+  ).bind(options.body.challenge_id, await sha256Hex(key)).first();
+  assert.equal(typeof after.consumed_at, "number");
+  assert.deepEqual(
+    {
+      authenticators: after.authenticators,
+      commits: after.commits,
+      events: after.events,
+      idempotency_records: after.idempotency_records,
+    },
+    { ...before, idempotency_records: 0 },
+  );
+  return { fixture, options, rejected };
 }
 
 async function authenticateFixture(fixture, options, signCount, key, userHandle = principalUserHandle(ids.participantPrincipal), assertionOrigin = origin) {
@@ -593,11 +765,37 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     originSettings.last_operation_id,
   ).run();
 
+  const oldLaunchCreatedAt = Date.now() - (2 * 24 * 60 * 60 * 1_000);
+  await db.prepare(
+    `WITH RECURSIVE counter(value) AS (
+       SELECT 1
+       UNION ALL
+       SELECT value + 1 FROM counter WHERE value < 101
+     )
+     INSERT INTO browser_launches
+       (id, code_prefix, code_digest, principal_id, source_credential_id,
+        target_kind, target_json, expires_at, created_at, created_operation_id)
+     SELECT 'wp07-old-launch-' || value, 'old', printf('%064x', value + 1000),
+            ?1, ?2, 'project',
+            json_object('entry_path', '/app/w/web/p/APP', 'kind', 'project',
+                        'project_id', ?3, 'project_key', 'APP', 'workspace_key', 'web'),
+            ?4 + 300000, ?4, 'wp07-old-launch-operation-' || value
+     FROM counter`,
+  ).bind(
+    ids.participantPrincipal,
+    ids.participantCredential,
+    ids.projectA,
+    oldLaunchCreatedAt,
+  ).run();
   const projectLaunch = await createLaunch(
     { kind: "project", project_key: "APP", workspace_key: "web" },
     "wp07-project-launch",
   );
   secrets.push(projectLaunch.code);
+  const oldLaunchesAfterCleanup = await db.prepare(
+    "SELECT COUNT(*) AS count FROM browser_launches WHERE id LIKE 'wp07-old-launch-%'",
+  ).first();
+  assert.equal(oldLaunchesAfterCleanup.count, 1);
   assert.equal(projectLaunch.body.resource.target.project_id, ids.projectA);
   assert.equal(projectLaunch.body.resource.target.entry_path, "/app/w/web/p/APP");
 
@@ -610,6 +808,24 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(replayedCreation.body.idempotent_replay, true);
   assert.equal(replayedCreation.body.resource.secret_available, false);
   assert.equal("launch_url" in replayedCreation.body.resource, false);
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, ids.participantGrantA).run();
+  try {
+    const unauthorizedCreationReplay = await request("/api/v1/web-launches", {
+      body: { target: { kind: "project", project_key: "APP", workspace_key: "web" } },
+      headers: participantHeaders({ "idempotency-key": "wp07-project-launch" }),
+      method: "POST",
+    });
+    assert.equal(unauthorizedCreationReplay.response.status, 404);
+    assert.equal("resource" in unauthorizedCreationReplay.body, false);
+  } finally {
+    await db.prepare(
+      `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         version = version + 1 WHERE id = ?1`,
+    ).bind(ids.participantGrantA).run();
+  }
 
   const sourceInvalidationLaunch = await createLaunch(
     { kind: "project", project_key: "APP", workspace_key: "web" },
@@ -691,9 +907,160 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     ).bind(Date.now(), ids.ownerPrincipal, ids.issue).run(),
     restore: () => db.prepare(
       `UPDATE issues SET deleted_at = NULL, deleted_by_principal_id = NULL,
-         version = version + 1 WHERE id = ?1`,
+      version = version + 1 WHERE id = ?1`,
     ).bind(ids.issue).run(),
   });
+
+  const platformFailureLaunch = await createLaunch(
+    { kind: "project", project_key: "APP", workspace_key: "web" },
+    "wp07-redeem-platform-failure-launch",
+  );
+  secrets.push(platformFailureLaunch.code);
+  const redemptionPlatformFailureKey = "wp07-redeem-platform-failure";
+  const platformFailureBefore = await db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM web_sessions) AS sessions,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits`,
+  ).first();
+  await assert.rejects(
+    redeemWebLaunchService(
+      failBrowserLaunchRedemptionBatch(db),
+      new Request(`${origin}/api/v1/web-sessions/redeem`, {
+        headers: { "idempotency-key": redemptionPlatformFailureKey },
+        method: "POST",
+      }),
+      platformFailureLaunch.code,
+      Date.now(),
+    ),
+    (error) => {
+      assert.deepEqual(
+        {
+          category: error?.category,
+          code: error?.code,
+          recovery: error?.recovery,
+          retryable: error?.retryable,
+          source: error?.source,
+          status: error?.status,
+        },
+        {
+          category: "platform_failure",
+          code: "PLATFORM_UNAVAILABLE",
+          recovery: "request_owner",
+          retryable: false,
+          source: "cloudflare_platform",
+          status: 503,
+        },
+      );
+      return true;
+    },
+  );
+  const platformFailureAfter = await db.prepare(
+    `SELECT
+       (SELECT redeemed_at FROM browser_launches WHERE id = ?1) AS redeemed_at,
+       (SELECT COUNT(*) FROM web_sessions) AS sessions,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits,
+       (SELECT COUNT(*) FROM idempotency_records WHERE idempotency_key = ?2) AS records`,
+  ).bind(platformFailureLaunch.body.resource.id, await sha256Hex(redemptionPlatformFailureKey)).first();
+  assert.deepEqual(platformFailureAfter, {
+    ...platformFailureBefore,
+    redeemed_at: null,
+    records: 0,
+  });
+
+  const responseLossLaunch = await createLaunch(
+    { kind: "project", project_key: "APP", workspace_key: "web" },
+    "wp07-response-loss-launch",
+  );
+  secrets.push(responseLossLaunch.code);
+  const responseLossKey = "wp07-response-loss-redeem";
+  await assert.rejects(
+    redeemWebLaunchService(
+      failBrowserLaunchSnapshotReadOnce(db),
+      new Request(`${origin}/api/v1/web-sessions/redeem`, {
+        headers: { "idempotency-key": responseLossKey },
+        method: "POST",
+      }),
+      responseLossLaunch.code,
+      Date.now(),
+    ),
+    (error) => error?.code === "PLATFORM_UNAVAILABLE" && error?.status === 503,
+  );
+  const responseLossResume = await redeemWebLaunchService(
+    db,
+    new Request(`${origin}/api/v1/web-sessions/redeem`, {
+      headers: { "idempotency-key": responseLossKey },
+      method: "POST",
+    }),
+    responseLossLaunch.code,
+    Date.now(),
+  );
+  assert.equal(responseLossResume.body.idempotent_replay, true);
+  assert.equal(responseLossResume.body.resource.cookie_available, false);
+  assert.equal(responseLossResume.sessionToken, null);
+  assert.equal(responseLossResume.csrfToken, null);
+  const responseLossState = await db.prepare(
+    `SELECT record.state,
+            (record.operation_snapshot_json IS NOT NULL) AS snapshot_available,
+            (SELECT COUNT(*) FROM web_sessions
+             WHERE created_operation_id = record.operation_id) AS sessions,
+            (SELECT COUNT(*) FROM events
+             WHERE operation_id = record.operation_id) AS events,
+            (SELECT COUNT(*) FROM operation_commits
+             WHERE operation_id = record.operation_id) AS commits
+     FROM idempotency_records record
+     WHERE record.idempotency_key = ?1`,
+  ).bind(await sha256Hex(responseLossKey)).first();
+  assert.deepEqual(responseLossState, {
+    commits: 1,
+    events: 1,
+    sessions: 1,
+    snapshot_available: 1,
+    state: "pending",
+  });
+
+  const concurrentLaunch = await createLaunch(
+    { kind: "project", project_key: "APP", workspace_key: "web" },
+    "wp07-concurrent-redeem-launch",
+  );
+  secrets.push(concurrentLaunch.code);
+  const concurrentRedeemKey = "wp07-concurrent-redeem";
+  const concurrentRedemptions = await Promise.all([
+    request("/api/v1/web-sessions/redeem", {
+      body: { launch_code: concurrentLaunch.code },
+      headers: { "idempotency-key": concurrentRedeemKey },
+      method: "POST",
+    }),
+    request("/api/v1/web-sessions/redeem", {
+      body: { launch_code: concurrentLaunch.code },
+      headers: { "idempotency-key": concurrentRedeemKey },
+      method: "POST",
+    }),
+  ]);
+  assert.deepEqual(concurrentRedemptions.map((result) => result.response.status), [200, 200]);
+  assert.deepEqual(
+    concurrentRedemptions.map((result) => result.body.resource.cookie_available).sort(),
+    [false, true],
+  );
+  const concurrentWinnerCookies = concurrentRedemptions
+    .map((result) => responseCookies(result.response))
+    .find((cookies) => cookies.session !== null);
+  assert.equal(typeof concurrentWinnerCookies.session, "string");
+  assert.equal(typeof concurrentWinnerCookies.csrf, "string");
+  secrets.push(concurrentWinnerCookies.session, concurrentWinnerCookies.csrf);
+  const concurrentRedeemState = await db.prepare(
+    `SELECT record.state,
+            (SELECT COUNT(*) FROM web_sessions
+             WHERE created_operation_id = record.operation_id) AS sessions,
+            (SELECT COUNT(*) FROM events
+             WHERE operation_id = record.operation_id) AS events,
+            (SELECT COUNT(*) FROM operation_commits
+             WHERE operation_id = record.operation_id) AS commits
+     FROM idempotency_records record
+     WHERE record.idempotency_key = ?1`,
+  ).bind(await sha256Hex(concurrentRedeemKey)).first();
+  assert.deepEqual(concurrentRedeemState, { commits: 1, events: 1, sessions: 1, state: "committed" });
 
   const eventCountBeforeGet = await db.prepare("SELECT COUNT(*) AS count FROM events").first();
   for (let index = 0; index < 2; index += 1) {
@@ -714,10 +1081,41 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   const eventCountAfterGet = await db.prepare("SELECT COUNT(*) AS count FROM events").first();
   assert.equal(eventCountAfterGet.count, eventCountBeforeGet.count);
 
+  const oldSessionCreatedAt = Date.now() - (2 * 24 * 60 * 60 * 1_000);
+  await db.prepare(
+    `WITH RECURSIVE counter(value) AS (
+       SELECT 1
+       UNION ALL
+       SELECT value + 1 FROM counter WHERE value < 101
+     )
+     INSERT INTO web_sessions
+       (id, token_digest, principal_id, source_kind, source_id, target_kind,
+        target_json, expires_at, created_at, created_operation_id)
+     SELECT 'wp07-old-session-' || value, printf('%064x', value + 2000), ?1,
+            'credential', ?2, 'project_selection',
+            json_object('entry_path', '/app', 'kind', 'project_selection'),
+            ?3 + 28800000, ?3, 'wp07-old-session-operation-' || value
+     FROM counter`,
+  ).bind(ids.participantPrincipal, ids.participantCredential, oldSessionCreatedAt).run();
   const projectSession = await redeemLaunch(projectLaunch.code, "wp07-project-redeem");
   secrets.push(projectSession.cookies.session, projectSession.cookies.csrf);
+  const oldSessionsAfterCleanup = await db.prepare(
+    "SELECT COUNT(*) AS count FROM web_sessions WHERE id LIKE 'wp07-old-session-%'",
+  ).first();
+  assert.equal(oldSessionsAfterCleanup.count, 1);
   assert.equal(projectSession.body.resource.entry_path, "/app/w/web/p/APP");
   assert.deepEqual(projectSession.body.resource.allowed_scope, { kind: "project", project_id: ids.projectA });
+  assert.equal(projectSession.body.resource.principal.is_owner, false);
+  assert.equal(typeof projectSession.body.resource.principal.is_owner, "boolean");
+
+  const consumedLaunchPage = await request(projectLaunch.body.resource.launch_url);
+  assert.equal(consumedLaunchPage.response.status, 410);
+  assert.match(consumedLaunchPage.response.headers.get("content-type"), /^text\/html/u);
+  assert.equal(consumedLaunchPage.response.headers.get("cache-control"), "no-store");
+  assert.equal(consumedLaunchPage.response.headers.get("referrer-policy"), "no-referrer");
+  assert.doesNotMatch(consumedLaunchPage.body, new RegExp(projectLaunch.code));
+  assert.match(consumedLaunchPage.body, /Ask your Agent for a new link/u);
+  assert.match(consumedLaunchPage.body, /此浏览器启动链接已失效/u);
 
   const replayedRedemption = await request("/api/v1/web-sessions/redeem", {
     body: { launch_code: projectLaunch.code },
@@ -727,7 +1125,28 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(replayedRedemption.response.status, 200);
   assert.equal(replayedRedemption.body.idempotent_replay, true);
   assert.equal(replayedRedemption.body.resource.cookie_available, false);
+  assert.equal(replayedRedemption.body.resource.principal.is_owner, false);
+  assert.equal(typeof replayedRedemption.body.resource.principal.is_owner, "boolean");
   assert.equal(responseCookies(replayedRedemption.response).session, null);
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, ids.participantGrantA).run();
+  try {
+    const unauthorizedRedemptionReplay = await request("/api/v1/web-sessions/redeem", {
+      body: { launch_code: projectLaunch.code },
+      headers: { "idempotency-key": "wp07-project-redeem" },
+      method: "POST",
+    });
+    assert.equal(unauthorizedRedemptionReplay.response.status, 410);
+    assert.equal(unauthorizedRedemptionReplay.body.code, "BROWSER_LAUNCH_UNAVAILABLE");
+    assert.equal("resource" in unauthorizedRedemptionReplay.body, false);
+  } finally {
+    await db.prepare(
+      `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         version = version + 1 WHERE id = ?1`,
+    ).bind(ids.participantGrantA).run();
+  }
 
   const consumedWithNewKey = await request("/api/v1/web-sessions/redeem", {
     body: { launch_code: projectLaunch.code },
@@ -743,6 +1162,38 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(sessionView.response.status, 200);
   assert.equal(sessionView.body.allowed_scope.kind, "project");
   assert.deepEqual(sessionView.body.allowed_scope.projects.map((project) => project.project_id), [ids.projectA]);
+  await assertRacedWebSessionScope({
+    cookies: projectSession.cookies,
+    expectedStatus: 401,
+    mutate: () => db.prepare(
+      "UPDATE web_sessions SET revoked_at = ?1 WHERE id = ?2",
+    ).bind(Date.now(), projectSession.body.resource.session_id).run(),
+    restore: () => db.prepare(
+      "UPDATE web_sessions SET revoked_at = NULL WHERE id = ?1",
+    ).bind(projectSession.body.resource.session_id).run(),
+  });
+  await assertRacedWebSessionScope({
+    cookies: projectSession.cookies,
+    expectedStatus: 401,
+    mutate: (authorizationNow) => db.prepare(
+      "UPDATE web_sessions SET expires_at = ?1 WHERE id = ?2",
+    ).bind(authorizationNow, projectSession.body.resource.session_id).run(),
+    restore: () => db.prepare(
+      "UPDATE web_sessions SET expires_at = ?1 WHERE id = ?2",
+    ).bind(Date.parse(projectSession.body.resource.expires_at), projectSession.body.resource.session_id).run(),
+  });
+  await assertRacedWebSessionScope({
+    cookies: projectSession.cookies,
+    expectedStatus: 401,
+    mutate: () => db.prepare(
+      `UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2,
+         revoke_reason = 'test' WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, ids.participantCredential).run(),
+    restore: () => db.prepare(
+      `UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         revoke_reason = NULL WHERE id = ?1`,
+    ).bind(ids.participantCredential).run(),
+  });
   await assertRacedWebSessionScope({
     cookies: projectSession.cookies,
     expectedRole: "reader",
@@ -802,6 +1253,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     headers: { cookie: cookieHeader(projectSession.cookies) },
   });
   assert.equal(loggedOutRead.response.status, 401);
+  assertSessionCookiesCleared(loggedOutRead.response);
 
   const issueLaunch = await createLaunch({ identifier: "CFK-1", kind: "issue" }, "wp07-issue-launch");
   secrets.push(issueLaunch.code);
@@ -811,6 +1263,15 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   secrets.push(issueSession.cookies.session, issueSession.cookies.csrf);
   assert.equal(issueSession.body.resource.entry_path, "/app/issues/CFK-1");
   assert.equal(issueSession.body.resource.allowed_scope.project_id, ids.projectA);
+  await assertRacedWebSessionScope({
+    cookies: issueSession.cookies,
+    mutate: () => db.prepare(
+      "UPDATE issues SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+    ).bind(Date.now(), ids.ownerPrincipal, ids.issue).run(),
+    restore: () => db.prepare(
+      "UPDATE issues SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.issue).run(),
+  });
 
   const ownerLaunch = await createLaunch(
     { kind: "admin", section: "overview" },
@@ -820,11 +1281,56 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   secrets.push(ownerLaunch.code);
   const ownerSession = await redeemLaunch(ownerLaunch.code, "wp07-owner-admin-redeem");
   secrets.push(ownerSession.cookies.session, ownerSession.cookies.csrf);
+  assert.equal(ownerSession.body.resource.principal.is_owner, true);
+  assert.equal(typeof ownerSession.body.resource.principal.is_owner, "boolean");
   const ownerSessionView = await request("/api/v1/web-session", {
     headers: { cookie: cookieHeader(ownerSession.cookies) },
   });
   assert.equal(ownerSessionView.body.allowed_scope.kind, "instance");
   assert.equal(ownerSessionView.body.principal.is_owner, true);
+  await assertRacedWebSessionScope({
+    cookies: ownerSession.cookies,
+    expectedStatus: 401,
+    expectGrantGuard: false,
+    mutate: () => db.prepare(
+      "UPDATE web_sessions SET revoked_at = ?1 WHERE id = ?2",
+    ).bind(Date.now(), ownerSession.body.resource.session_id).run(),
+    restore: () => db.prepare(
+      "UPDATE web_sessions SET revoked_at = NULL WHERE id = ?1",
+    ).bind(ownerSession.body.resource.session_id).run(),
+  });
+  await assertRacedWebSessionScope({
+    cookies: ownerSession.cookies,
+    expectedStatus: 401,
+    expectGrantGuard: false,
+    mutate: () => db.prepare(
+      `UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2,
+         revoke_reason = 'test' WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, ids.ownerCredential).run(),
+    restore: () => db.prepare(
+      `UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         revoke_reason = NULL WHERE id = ?1`,
+    ).bind(ids.ownerCredential).run(),
+  });
+
+  const ownerIssueLaunch = await createLaunch(
+    { identifier: "CFK-1", kind: "issue" },
+    "wp07-owner-issue-launch",
+    ownerHeaders(),
+  );
+  secrets.push(ownerIssueLaunch.code);
+  const ownerIssueSession = await redeemLaunch(ownerIssueLaunch.code, "wp07-owner-issue-redeem");
+  secrets.push(ownerIssueSession.cookies.session, ownerIssueSession.cookies.csrf);
+  await assertRacedWebSessionScope({
+    cookies: ownerIssueSession.cookies,
+    expectGrantGuard: false,
+    mutate: () => db.prepare(
+      "UPDATE issues SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
+    ).bind(Date.now(), ids.ownerPrincipal, ids.issue).run(),
+    restore: () => db.prepare(
+      "UPDATE issues SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.issue).run(),
+  });
 
   const sourceLaunch = await createLaunch(
     { kind: "project", project_key: "APP", workspace_key: "web" },
@@ -842,6 +1348,15 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     headers: { cookie: cookieHeader(sourceSession.cookies) },
   });
   assert.equal(invalidatedBySource.response.status, 401);
+  assertSessionCookiesCleared(invalidatedBySource.response);
+  const invalidatedSourceReplay = await request("/api/v1/web-sessions/redeem", {
+    body: { launch_code: sourceLaunch.code },
+    headers: { "idempotency-key": "wp07-source-revoke-redeem" },
+    method: "POST",
+  });
+  assert.equal(invalidatedSourceReplay.response.status, 410);
+  assert.equal(invalidatedSourceReplay.body.code, "BROWSER_LAUNCH_UNAVAILABLE");
+  assert.equal("resource" in invalidatedSourceReplay.body, false);
   await db.prepare(
     "UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL, revoke_reason = NULL WHERE id = ?1",
   ).bind(ids.participantCredential).run();
@@ -865,6 +1380,34 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
   assert.equal(preRegistrationView.response.status, 200, JSON.stringify(preRegistrationView.body));
 
+  const oldChallengeCreatedAt = Date.now() - (10 * 60 * 1_000);
+  await db.prepare(
+    `WITH RECURSIVE counter(value) AS (
+       SELECT 1
+       UNION ALL
+       SELECT value + 1 FROM counter WHERE value < 101
+     )
+     INSERT INTO webauthn_challenges
+       (id, challenge_digest, purpose, principal_id, rp_id, expected_origin,
+        expires_at, created_at)
+     SELECT 'wp07-expired-challenge-' || value, printf('%064x', value + 3000),
+            'authentication', NULL, ?1, ?2, ?3 + 300000, ?3
+     FROM counter`,
+  ).bind(rpId, origin, oldChallengeCreatedAt).run();
+  const consumedChallengeCreatedAt = Date.now() - 1_000;
+  await db.prepare(
+    `WITH RECURSIVE counter(value) AS (
+       SELECT 1
+       UNION ALL
+       SELECT value + 1 FROM counter WHERE value < 101
+     )
+     INSERT INTO webauthn_challenges
+       (id, challenge_digest, purpose, principal_id, rp_id, expected_origin,
+        expires_at, consumed_at, created_at)
+     SELECT 'wp07-consumed-challenge-' || value, printf('%064x', value + 4000),
+            'authentication', NULL, ?1, ?2, ?3 + 300000, ?3, ?3 - 1
+     FROM counter`,
+  ).bind(rpId, origin, consumedChallengeCreatedAt).run();
   const ecPrivateLabel = await rejectRegistrationWithExtraCose(
     registrationSession.cookies,
     -7,
@@ -872,6 +1415,12 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     "wp07-reject-ec-private-cose-label",
   );
   secrets.push(ecPrivateLabel.options.body.public_key.challenge, ecPrivateLabel.fixture.publicKeyCose);
+  const oldChallengesAfterCleanup = await db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM webauthn_challenges WHERE id LIKE 'wp07-expired-challenge-%') AS expired,
+       (SELECT COUNT(*) FROM webauthn_challenges WHERE id LIKE 'wp07-consumed-challenge-%') AS consumed`,
+  ).first();
+  assert.deepEqual(oldChallengesAfterCleanup, { consumed: 1, expired: 1 });
   const rsaPrivateLabel = await rejectRegistrationWithExtraCose(
     registrationSession.cookies,
     -257,
@@ -879,6 +1428,65 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     "wp07-reject-rsa-private-cose-label",
   );
   secrets.push(rsaPrivateLabel.options.body.public_key.challenge, rsaPrivateLabel.fixture.publicKeyCose);
+  const duplicateCoseLabel = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -7,
+    [[-2, new Uint8Array(32).fill(0x4d)]],
+    "wp07-reject-duplicate-cose-label",
+    true,
+  );
+  secrets.push(duplicateCoseLabel.options.body.public_key.challenge, duplicateCoseLabel.fixture.publicKeyCose);
+  const stringCoseLabel = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -7,
+    [["-4", new Uint8Array(32).fill(0x5e)]],
+    "wp07-reject-string-cose-label",
+  );
+  secrets.push(stringCoseLabel.options.body.public_key.challenge, stringCoseLabel.fixture.publicKeyCose);
+  const unknownCoseLabel = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -7,
+    [[99, 1]],
+    "wp07-reject-unknown-cose-label",
+  );
+  secrets.push(unknownCoseLabel.options.body.public_key.challenge, unknownCoseLabel.fixture.publicKeyCose);
+  const nonIntegerCoseLabel = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -7,
+    [[true, 1]],
+    "wp07-reject-noninteger-cose-label",
+  );
+  secrets.push(nonIntegerCoseLabel.options.body.public_key.challenge, nonIntegerCoseLabel.fixture.publicKeyCose);
+  const invalidEcPoint = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -7,
+    [
+      [-2, new Uint8Array(32)],
+      [-3, new Uint8Array(32)],
+    ],
+    "wp07-reject-invalid-ec-public-key",
+  );
+  secrets.push(invalidEcPoint.options.body.public_key.challenge, invalidEcPoint.fixture.publicKeyCose);
+  const invalidRsaKey = await rejectRegistrationWithExtraCose(
+    registrationSession.cookies,
+    -257,
+    [
+      [-1, new Uint8Array(256)],
+      [-2, Uint8Array.of(0)],
+    ],
+    "wp07-reject-invalid-rsa-public-key",
+  );
+  secrets.push(invalidRsaKey.options.body.public_key.challenge, invalidRsaKey.fixture.publicKeyCose);
+  const unknownRegistrationField = "wp07-unknown-registration-response-field";
+  const unknownRegistration = await rejectRegistrationWithCredentialMutation(
+    registrationSession.cookies,
+    (credential) => {
+      credential.response.unexpected = unknownRegistrationField;
+    },
+    "wp07-reject-unknown-registration-field",
+  );
+  assert.equal(JSON.stringify(unknownRegistration.rejected.body).includes(unknownRegistrationField), false);
+  secrets.push(unknownRegistration.options.body.public_key.challenge, unknownRegistrationField);
 
   const esOptions = await registrationOptions(registrationSession.cookies);
   secrets.push(esOptions.body.public_key.challenge);
@@ -912,6 +1520,105 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(listed.response.headers.get("cache-control"), "no-store");
   assert.equal(listed.body.items.length, 2);
   assert.deepEqual(new Set(listed.body.items.map((passkey) => passkey.algorithm)), new Set([-7, -257]));
+
+  const duplicateOptions = await registrationOptions(registrationSession.cookies);
+  secrets.push(duplicateOptions.body.public_key.challenge);
+  const duplicateFixture = await createRegistrationFixture({
+    algorithm: -7,
+    challenge: duplicateOptions.body.public_key.challenge,
+    credentialIdBytes: es.fixture.credentialIdBytes,
+    origin,
+    rpId,
+  });
+  const duplicateRegistration = await request("/api/v1/me/passkeys", {
+    body: {
+      challenge_id: duplicateOptions.body.challenge_id,
+      credential: duplicateFixture.registrationCredential,
+    },
+    headers: cookieWriteHeaders(registrationSession.cookies, {
+      "idempotency-key": "wp07-register-duplicate-credential",
+    }),
+    method: "POST",
+  });
+  assert.equal(duplicateRegistration.response.status, 409);
+  assert.equal(duplicateRegistration.body.code, "PASSKEY_ALREADY_REGISTERED");
+  const duplicateChallenge = await db.prepare(
+    "SELECT consumed_at FROM webauthn_challenges WHERE id = ?1",
+  ).bind(duplicateOptions.body.challenge_id).first();
+  assert.equal(typeof duplicateChallenge.consumed_at, "number");
+  const duplicateChallengeReuse = await request("/api/v1/me/passkeys", {
+    body: {
+      challenge_id: duplicateOptions.body.challenge_id,
+      credential: duplicateFixture.registrationCredential,
+    },
+    headers: cookieWriteHeaders(registrationSession.cookies, {
+      "idempotency-key": "wp07-reuse-duplicate-challenge",
+    }),
+    method: "POST",
+  });
+  assert.equal(duplicateChallengeReuse.response.status, 409);
+  assert.equal(duplicateChallengeReuse.body.code, "PASSKEY_CHALLENGE_INVALID");
+
+  const limitOptions = await registrationOptions(registrationSession.cookies);
+  secrets.push(limitOptions.body.public_key.challenge);
+  const limitFixture = await createRegistrationFixture({
+    algorithm: -7,
+    challenge: limitOptions.body.public_key.challenge,
+    origin,
+    rpId,
+  });
+  await db.prepare(
+    `WITH RECURSIVE counter(value) AS (
+       SELECT 1
+       UNION ALL
+       SELECT value + 1 FROM counter WHERE value < 98
+     )
+     INSERT INTO web_authenticators
+       (id, principal_id, credential_id, public_key_cose, algorithm, user_handle,
+        sign_count, backup_eligible, backup_state, rp_id, version, created_at,
+        created_operation_id)
+     SELECT 'wp07-limit-' || value, ?1, 'wp07-limit-credential-' || value,
+            'public-only-test-fixture', -7, ?2, 0, 0, 0, ?3, 1, ?4,
+            'wp07-limit-operation-' || value
+     FROM counter`,
+  ).bind(
+    ids.participantPrincipal,
+    principalUserHandle(ids.participantPrincipal),
+    rpId,
+    Date.now(),
+  ).run();
+  try {
+    const limitRegistration = await request("/api/v1/me/passkeys", {
+      body: {
+        challenge_id: limitOptions.body.challenge_id,
+        credential: limitFixture.registrationCredential,
+      },
+      headers: cookieWriteHeaders(registrationSession.cookies, {
+        "idempotency-key": "wp07-register-at-passkey-limit",
+      }),
+      method: "POST",
+    });
+    assert.equal(limitRegistration.response.status, 409);
+    assert.equal(limitRegistration.body.code, "PASSKEY_LIMIT_REACHED");
+    const limitChallenge = await db.prepare(
+      "SELECT consumed_at FROM webauthn_challenges WHERE id = ?1",
+    ).bind(limitOptions.body.challenge_id).first();
+    assert.equal(typeof limitChallenge.consumed_at, "number");
+  } finally {
+    await db.prepare("DELETE FROM web_authenticators WHERE id LIKE 'wp07-limit-%'").run();
+  }
+  const limitChallengeReuse = await request("/api/v1/me/passkeys", {
+    body: {
+      challenge_id: limitOptions.body.challenge_id,
+      credential: limitFixture.registrationCredential,
+    },
+    headers: cookieWriteHeaders(registrationSession.cookies, {
+      "idempotency-key": "wp07-reuse-limit-challenge",
+    }),
+    method: "POST",
+  });
+  assert.equal(limitChallengeReuse.response.status, 409);
+  assert.equal(limitChallengeReuse.body.code, "PASSKEY_CHALLENGE_INVALID");
 
   const platformFailureOptions = await authenticationOptions();
   secrets.push(platformFailureOptions.body.public_key.challenge);
@@ -953,6 +1660,47 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     db.prepare("DELETE FROM webauthn_challenges WHERE id = ?1").bind(platformFailureOptions.body.challenge_id),
   ]);
 
+  const backupEligibilityOptions = await authenticationOptions();
+  secrets.push(backupEligibilityOptions.body.public_key.challenge);
+  const backupEligibilityCredential = await createAssertionCredential({
+    ...es.fixture,
+    backupEligible: true,
+    backupState: true,
+    challenge: backupEligibilityOptions.body.public_key.challenge,
+    origin,
+    rpId,
+    signCount: 1,
+    userHandle: principalUserHandle(ids.participantPrincipal),
+  });
+  const backupEligibilityChanged = await request("/api/v1/web-authentication/verify", {
+    body: {
+      challenge_id: backupEligibilityOptions.body.challenge_id,
+      credential: backupEligibilityCredential,
+    },
+    headers: { "idempotency-key": "wp07-reject-backup-eligibility-change" },
+    method: "POST",
+  });
+  assert.equal(backupEligibilityChanged.response.status, 401);
+  assert.equal(backupEligibilityChanged.body.code, "UNAUTHORIZED");
+  const backupEligibilityState = await db.prepare(
+    `SELECT
+       (SELECT consumed_at FROM webauthn_challenges WHERE id = ?1) AS consumed_at,
+       (SELECT backup_eligible FROM web_authenticators WHERE id = ?2) AS backup_eligible,
+       (SELECT backup_state FROM web_authenticators WHERE id = ?2) AS backup_state,
+       (SELECT sign_count FROM web_authenticators WHERE id = ?2) AS sign_count,
+       (SELECT version FROM web_authenticators WHERE id = ?2) AS version`,
+  ).bind(backupEligibilityOptions.body.challenge_id, es.registered.body.resource.id).first();
+  assert.equal(typeof backupEligibilityState.consumed_at, "number");
+  assert.deepEqual(
+    {
+      backup_eligible: backupEligibilityState.backup_eligible,
+      backup_state: backupEligibilityState.backup_state,
+      sign_count: backupEligibilityState.sign_count,
+      version: backupEligibilityState.version,
+    },
+    { backup_eligible: 0, backup_state: 0, sign_count: 0, version: 1 },
+  );
+
   const esZeroCounterOptions = await authenticationOptions();
   secrets.push(esZeroCounterOptions.body.public_key.challenge);
   const esZeroCounterAuthentication = await authenticateFixture(
@@ -979,6 +1727,8 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(esAuthentication.verified.response.status, 200);
   assert.equal(esAuthentication.verified.body.resource.cookie_available, true);
   assert.equal(esAuthentication.verified.body.resource.target.kind, "project_selection");
+  assert.equal(esAuthentication.verified.body.resource.principal.is_owner, false);
+  assert.equal(typeof esAuthentication.verified.body.resource.principal.is_owner, "boolean");
   const esSessionCookies = responseCookies(esAuthentication.verified.response);
   secrets.push(esSessionCookies.session, esSessionCookies.csrf);
 
@@ -991,6 +1741,18 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     new Set(passkeySessionView.body.allowed_scope.projects.map((project) => project.project_id)),
     new Set([ids.projectA, ids.projectB]),
   );
+  await assertRacedWebSessionScope({
+    cookies: esSessionCookies,
+    expectedStatus: 401,
+    mutate: () => db.prepare(
+      `UPDATE web_authenticators SET revoked_at = ?1, revoked_by_principal_id = ?2
+       WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, es.registered.body.resource.id).run(),
+    restore: () => db.prepare(
+      `UPDATE web_authenticators SET revoked_at = NULL, revoked_by_principal_id = NULL
+       WHERE id = ?1`,
+    ).bind(es.registered.body.resource.id).run(),
+  });
   const registrationFromPasskeySession = await request("/api/v1/me/passkeys/registration-options", {
     body: {},
     headers: cookieWriteHeaders(esSessionCookies),
@@ -1009,6 +1771,103 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(rsaAuthentication.verified.response.status, 200);
   const rsaSessionCookies = responseCookies(rsaAuthentication.verified.response);
   secrets.push(rsaSessionCookies.session, rsaSessionCookies.csrf);
+
+  const equalizedUnknownOptions = await authenticationOptions();
+  secrets.push(equalizedUnknownOptions.body.public_key.challenge);
+  const equalizedUnknownCredential = await createAssertionCredential({
+    ...limitFixture,
+    challenge: equalizedUnknownOptions.body.public_key.challenge,
+    origin,
+    rpId,
+    signCount: 2,
+    userHandle: principalUserHandle(ids.participantPrincipal),
+  });
+  const originalVerify = crypto.subtle.verify;
+  let unknownCredentialVerifyCalls = 0;
+  crypto.subtle.verify = (...arguments_) => {
+    unknownCredentialVerifyCalls += 1;
+    return originalVerify.call(crypto.subtle, ...arguments_);
+  };
+  try {
+    await assert.rejects(
+      verifyWebAuthenticationService(
+        db,
+        new Request(`${origin}/api/v1/web-authentication/verify`, {
+          headers: { "idempotency-key": "wp07-equalize-unknown-credential" },
+          method: "POST",
+        }),
+        equalizedUnknownOptions.body.challenge_id,
+        equalizedUnknownCredential,
+        Date.now(),
+      ),
+      (error) => error?.code === "UNAUTHORIZED" && error?.status === 401,
+    );
+  } finally {
+    crypto.subtle.verify = originalVerify;
+  }
+  assert.equal(unknownCredentialVerifyCalls, 1);
+  const equalizedUnknownState = await db.prepare(
+    `SELECT
+       (SELECT consumed_at FROM webauthn_challenges WHERE id = ?1) AS consumed_at,
+       (SELECT COUNT(*) FROM idempotency_records WHERE idempotency_key = ?2) AS records`,
+  ).bind(
+    equalizedUnknownOptions.body.challenge_id,
+    await sha256Hex("wp07-equalize-unknown-credential"),
+  ).first();
+  assert.equal(typeof equalizedUnknownState.consumed_at, "number");
+  assert.equal(equalizedUnknownState.records, 0);
+
+  const unknownAuthenticationFieldOptions = await authenticationOptions();
+  secrets.push(unknownAuthenticationFieldOptions.body.public_key.challenge);
+  const unknownAuthenticationFieldCredential = await createAssertionCredential({
+    ...es.fixture,
+    challenge: unknownAuthenticationFieldOptions.body.public_key.challenge,
+    origin,
+    rpId,
+    signCount: 2,
+    userHandle: principalUserHandle(ids.participantPrincipal),
+  });
+  const unknownAuthenticationField = "wp07-unknown-authentication-credential-field";
+  unknownAuthenticationFieldCredential.unexpected = unknownAuthenticationField;
+  const esBeforeUnknownField = await db.prepare(
+    "SELECT backup_eligible, backup_state, sign_count, version FROM web_authenticators WHERE id = ?1",
+  ).bind(es.registered.body.resource.id).first();
+  const unknownAuthenticationFieldFailure = await request("/api/v1/web-authentication/verify", {
+    body: {
+      challenge_id: unknownAuthenticationFieldOptions.body.challenge_id,
+      credential: unknownAuthenticationFieldCredential,
+    },
+    headers: { "idempotency-key": "wp07-reject-unknown-authentication-field" },
+    method: "POST",
+  });
+  assert.equal(unknownAuthenticationFieldFailure.response.status, 401);
+  assert.equal(unknownAuthenticationFieldFailure.body.code, "UNAUTHORIZED");
+  assert.equal(JSON.stringify(unknownAuthenticationFieldFailure.body).includes(unknownAuthenticationField), false);
+  const unknownAuthenticationFieldState = await db.prepare(
+    `SELECT
+       (SELECT consumed_at FROM webauthn_challenges WHERE id = ?1) AS consumed_at,
+       (SELECT backup_eligible FROM web_authenticators WHERE id = ?2) AS backup_eligible,
+       (SELECT backup_state FROM web_authenticators WHERE id = ?2) AS backup_state,
+       (SELECT sign_count FROM web_authenticators WHERE id = ?2) AS sign_count,
+       (SELECT version FROM web_authenticators WHERE id = ?2) AS version,
+       (SELECT COUNT(*) FROM idempotency_records WHERE idempotency_key = ?3) AS idempotency_records`,
+  ).bind(
+    unknownAuthenticationFieldOptions.body.challenge_id,
+    es.registered.body.resource.id,
+    await sha256Hex("wp07-reject-unknown-authentication-field"),
+  ).first();
+  assert.equal(typeof unknownAuthenticationFieldState.consumed_at, "number");
+  assert.deepEqual(
+    {
+      backup_eligible: unknownAuthenticationFieldState.backup_eligible,
+      backup_state: unknownAuthenticationFieldState.backup_state,
+      sign_count: unknownAuthenticationFieldState.sign_count,
+      version: unknownAuthenticationFieldState.version,
+    },
+    esBeforeUnknownField,
+  );
+  assert.equal(unknownAuthenticationFieldState.idempotency_records, 0);
+  secrets.push(unknownAuthenticationField);
 
   const unknownOptions = await authenticationOptions();
   secrets.push(unknownOptions.body.public_key.challenge);
@@ -1100,6 +1959,79 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   ).bind(anomalyOptions.body.challenge_id).first();
   assert.equal(typeof anomalyChallenge.consumed_at, "number");
 
+  const concurrentPasskeyOptions = await registrationOptions(registrationSession.cookies);
+  secrets.push(concurrentPasskeyOptions.body.public_key.challenge);
+  const concurrentPasskey = await registerFixture(
+    registrationSession.cookies,
+    concurrentPasskeyOptions,
+    -7,
+    "wp07-register-concurrent-passkey",
+  );
+  const concurrentAuthenticationOptions = await authenticationOptions();
+  secrets.push(concurrentAuthenticationOptions.body.public_key.challenge);
+  const concurrentAssertion = await createAssertionCredential({
+    ...concurrentPasskey.fixture,
+    challenge: concurrentAuthenticationOptions.body.public_key.challenge,
+    origin,
+    rpId,
+    signCount: 1,
+    userHandle: principalUserHandle(ids.participantPrincipal),
+  });
+  const concurrentAuthenticationKey = "wp07-concurrent-passkey-authentication";
+  const concurrentAuthentications = await Promise.all([
+    request("/api/v1/web-authentication/verify", {
+      body: {
+        challenge_id: concurrentAuthenticationOptions.body.challenge_id,
+        credential: concurrentAssertion,
+      },
+      headers: { "idempotency-key": concurrentAuthenticationKey },
+      method: "POST",
+    }),
+    request("/api/v1/web-authentication/verify", {
+      body: {
+        challenge_id: concurrentAuthenticationOptions.body.challenge_id,
+        credential: concurrentAssertion,
+      },
+      headers: { "idempotency-key": concurrentAuthenticationKey },
+      method: "POST",
+    }),
+  ]);
+  assert.deepEqual(concurrentAuthentications.map((result) => result.response.status), [200, 200]);
+  assert.deepEqual(
+    concurrentAuthentications.map((result) => result.body.resource.cookie_available).sort(),
+    [false, true],
+  );
+  const concurrentAuthenticationCookies = concurrentAuthentications
+    .map((result) => responseCookies(result.response))
+    .find((cookies) => cookies.session !== null);
+  assert.equal(typeof concurrentAuthenticationCookies.session, "string");
+  assert.equal(typeof concurrentAuthenticationCookies.csrf, "string");
+  secrets.push(concurrentAuthenticationCookies.session, concurrentAuthenticationCookies.csrf);
+  const concurrentAuthenticationState = await db.prepare(
+    `SELECT record.state,
+            (SELECT COUNT(*) FROM web_sessions
+             WHERE created_operation_id = record.operation_id) AS sessions,
+            (SELECT COUNT(*) FROM events
+             WHERE operation_id = record.operation_id) AS events,
+            (SELECT COUNT(*) FROM operation_commits
+             WHERE operation_id = record.operation_id) AS commits,
+            (SELECT sign_count FROM web_authenticators WHERE id = ?2) AS sign_count,
+            (SELECT version FROM web_authenticators WHERE id = ?2) AS version
+     FROM idempotency_records record
+     WHERE record.idempotency_key = ?1`,
+  ).bind(
+    await sha256Hex(concurrentAuthenticationKey),
+    concurrentPasskey.registered.body.resource.id,
+  ).first();
+  assert.deepEqual(concurrentAuthenticationState, {
+    commits: 1,
+    events: 1,
+    sessions: 1,
+    sign_count: 1,
+    state: "committed",
+    version: 2,
+  });
+
   const selfRevoked = await request(
     `/api/v1/me/passkeys/${es.registered.body.resource.id}?expected_version=3`,
     {
@@ -1114,6 +2046,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     headers: { cookie: cookieHeader(esSessionCookies) },
   });
   assert.equal(selfRevokedSession.response.status, 401);
+  assertSessionCookiesCleared(selfRevokedSession.response);
 
   const ownerRevoked = await request(
     `/api/v1/admin/passkeys/${rsa.registered.body.resource.id}?expected_version=2`,
@@ -1128,6 +2061,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     headers: { cookie: cookieHeader(rsaSessionCookies) },
   });
   assert.equal(ownerRevokedSession.response.status, 401);
+  assertSessionCookiesCleared(ownerRevokedSession.response);
 
   const persisted = [];
   for (const table of [

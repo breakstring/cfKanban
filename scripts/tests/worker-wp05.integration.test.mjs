@@ -1066,13 +1066,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   );
   assert.equal(issueTargetDelete.response.status, 200);
   const issueTargetListAfterDelete = await jsonRequest("/api/v1/issues", { headers: cookieHeaders });
-  assert.equal(issueTargetListAfterDelete.body.items.some((issue) => issue.identifier === "CFK-2"), true);
+  assert.equal(issueTargetListAfterDelete.response.status, 200);
+  assert.deepEqual(issueTargetListAfterDelete.body.items, []);
+  const issueTargetSiblingAfterDelete = await jsonRequest("/api/v1/issues/CFK-2", { headers: cookieHeaders });
+  assert.equal(issueTargetSiblingAfterDelete.response.status, 404);
   const issueTargetTombstone = await jsonRequest(
     "/api/v1/issues/CFK-1?deleted=only",
     { headers: cookieHeaders },
   );
   assert.equal(issueTargetTombstone.response.status, 200);
   const issueTargetTombstones = await jsonRequest("/api/v1/issues?deleted=only", { headers: cookieHeaders });
+  assert.equal(issueTargetTombstones.response.status, 200);
   assert.deepEqual(issueTargetTombstones.body.items.map((issue) => issue.identifier), ["CFK-1"]);
   const issueTargetRestore = await jsonRequest(
     "/api/v1/issues/CFK-1/commands/restore",

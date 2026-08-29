@@ -60,6 +60,16 @@ function object(value: JsonValue | undefined): { [key: string]: JsonValue } {
   return value;
 }
 
+function exactObject(
+  value: JsonValue | undefined,
+  allowedKeys: readonly string[],
+): { [key: string]: JsonValue } {
+  const result = object(value);
+  const allowed = new Set(allowedKeys);
+  if (Object.keys(result).some((key) => !allowed.has(key))) fail();
+  return result;
+}
+
 export function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -308,12 +318,29 @@ function credentialEnvelope(value: JsonValue): {
   rawId: string;
   response: { [key: string]: JsonValue };
 } {
-  const credential = object(value);
+  const credential = exactObject(value, [
+    "authenticatorAttachment",
+    "clientExtensionResults",
+    "id",
+    "rawId",
+    "response",
+    "type",
+  ]);
   if (
     credential.type !== "public-key"
     || typeof credential.id !== "string"
     || typeof credential.rawId !== "string"
     || credential.id !== credential.rawId
+  ) fail();
+  if (
+    credential.authenticatorAttachment !== undefined
+    && credential.authenticatorAttachment !== null
+    && credential.authenticatorAttachment !== "platform"
+    && credential.authenticatorAttachment !== "cross-platform"
+  ) fail();
+  if (
+    credential.clientExtensionResults !== undefined
+    && Object.keys(exactObject(credential.clientExtensionResults, [])).length !== 0
   ) fail();
   const rawId = base64UrlDecode(credential.rawId, 1_024);
   if (rawId.length < 16) fail();
@@ -369,13 +396,21 @@ export async function verifyRegistrationCredential(
   expectation: CeremonyExpectation,
 ): Promise<RegisteredAuthenticator> {
   const credential = credentialEnvelope(value);
+  const response = exactObject(credential.response, [
+    "attestationObject",
+    "authenticatorData",
+    "clientDataJSON",
+    "publicKey",
+    "publicKeyAlgorithm",
+    "transports",
+  ]);
   const clientData = await verifyClientData(
-    credential.response.clientDataJSON,
+    response.clientDataJSON,
     "webauthn.create",
     expectation,
   );
-  if (clientData.length === 0 || typeof credential.response.attestationObject !== "string") fail();
-  const attestation = base64UrlDecode(credential.response.attestationObject, MAX_ATTESTATION_BYTES);
+  if (clientData.length === 0 || typeof response.attestationObject !== "string") fail();
+  const attestation = base64UrlDecode(response.attestationObject, MAX_ATTESTATION_BYTES);
   const root = map(decodeCbor(attestation));
   if (root.get("fmt") !== "none" || map(root.get("attStmt") as CborValue).size !== 0) fail();
   const authenticatorData = parseAuthenticatorData(bytes(root.get("authData")), true);
@@ -386,14 +421,31 @@ export async function verifyRegistrationCredential(
     || !equalBytes(authenticatorData.credentialId, base64UrlDecode(credential.rawId, 1_024))
   ) fail();
   const algorithm = validatedCoseAlgorithm(authenticatorData.publicKeyCose);
+  if (response.authenticatorData !== undefined) {
+    if (typeof response.authenticatorData !== "string") fail();
+    base64UrlDecode(response.authenticatorData, MAX_AUTHENTICATOR_DATA_BYTES);
+  }
+  if (response.publicKey !== undefined && response.publicKey !== null) {
+    if (typeof response.publicKey !== "string") fail();
+    base64UrlDecode(response.publicKey, 4 * 1_024);
+  }
+  if (
+    response.publicKeyAlgorithm !== undefined
+    && response.publicKeyAlgorithm !== null
+    && response.publicKeyAlgorithm !== algorithm
+  ) fail();
+  const publicKeyCose = base64UrlEncode(authenticatorData.publicKeyCose);
+  // Shape validation alone can accept an invalid EC point or unusable RSA
+  // parameters. Registration succeeds only for a key Workers can import.
+  await importCosePublicKey(publicKeyCose, algorithm);
   return {
     algorithm,
     backupEligible: authenticatorData.backupEligible,
     backupState: authenticatorData.backupState,
     credentialId: credential.id,
-    publicKeyCose: base64UrlEncode(authenticatorData.publicKeyCose),
+    publicKeyCose,
     signCount: authenticatorData.signCount,
-    transports: transports(credential.response.transports),
+    transports: transports(response.transports),
   };
 }
 
@@ -477,33 +529,40 @@ export async function verifyAuthenticationCredential(
   value: JsonValue,
   expectation: CeremonyExpectation & {
     algorithm: -257 | -7;
+    backupEligible: boolean;
     credentialId: string;
     publicKeyCose: string;
     userHandle: string;
   },
 ): Promise<VerifiedAssertion> {
   const credential = credentialEnvelope(value);
+  const response = exactObject(credential.response, [
+    "authenticatorData",
+    "clientDataJSON",
+    "signature",
+    "userHandle",
+  ]);
   if (credential.id !== expectation.credentialId) fail();
   const clientData = await verifyClientData(
-    credential.response.clientDataJSON,
+    response.clientDataJSON,
     "webauthn.get",
     expectation,
   );
   if (
-    typeof credential.response.authenticatorData !== "string"
-    || typeof credential.response.signature !== "string"
-    || typeof credential.response.userHandle !== "string"
+    typeof response.authenticatorData !== "string"
+    || typeof response.signature !== "string"
+    || typeof response.userHandle !== "string"
   ) fail();
   const authenticatorDataBytes = base64UrlDecode(
-    credential.response.authenticatorData,
+    response.authenticatorData,
     MAX_AUTHENTICATOR_DATA_BYTES,
   );
   const authenticatorData = parseAuthenticatorData(authenticatorDataBytes, false);
   await verifyRpIdHash(authenticatorData.rpIdHash, expectation.rpId);
-  const userHandle = credential.response.userHandle;
+  const userHandle = response.userHandle;
   base64UrlDecode(userHandle, 64);
   if (!timingSafeEqual(userHandle, expectation.userHandle)) fail();
-  const signature = base64UrlDecode(credential.response.signature, MAX_SIGNATURE_BYTES);
+  const signature = base64UrlDecode(response.signature, MAX_SIGNATURE_BYTES);
   const signed = concatenate(authenticatorDataBytes, await sha256Bytes(clientData));
   const publicKey = await importCosePublicKey(expectation.publicKeyCose, expectation.algorithm);
   let verified = false;
@@ -520,6 +579,7 @@ export async function verifyAuthenticationCredential(
     fail();
   }
   if (!verified) fail();
+  if (authenticatorData.backupEligible !== expectation.backupEligible) fail();
   return {
     backupEligible: authenticatorData.backupEligible,
     backupState: authenticatorData.backupState,

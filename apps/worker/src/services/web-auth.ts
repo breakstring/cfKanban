@@ -37,6 +37,7 @@ import type { AuthContext, BearerAuthContext, CookieAuthContext, JsonValue } fro
 import { randomBase64Url } from "../kernel/webauthn.ts";
 import { requireCollaborationIssue } from "./collaboration-shared.ts";
 import { actorCredentialId, authorizedVia, eventCursor, requireIdempotencyKey, writeResult } from "./shared.ts";
+import { browserLaunchCleanupStatement, webSessionCleanupStatement } from "./web-state.ts";
 
 const BROWSER_LAUNCH_LIFETIME_MS = 5 * 60 * 1_000;
 const WEB_SESSION_LIFETIME_MS = 8 * 60 * 60 * 1_000;
@@ -326,6 +327,7 @@ async function createLaunchBatch(
   try {
     const { commit } = await executeAtomicBatch(db, {
       businessStatements: [
+        browserLaunchCleanupStatement(db, now),
         db.prepare(
           `INSERT INTO browser_launches
             (id, code_prefix, code_digest, principal_id, source_credential_id,
@@ -471,6 +473,7 @@ export async function createWebLaunch(
   const claim = await claimIdempotency(db, identity, now);
   if (claim.state === "committed") {
     await verifyCurrentAuth(db, auth, now);
+    await verifyResolvedLaunchTarget(db, auth, target);
     const stored = readIdempotencyResponse<{ [key: string]: JsonValue }>(claim);
     return {
       ...stored.body,
@@ -518,6 +521,7 @@ export async function createWebLaunch(
   }
   if (commit === null) throw new AtomicBatchRejectedError();
   await verifyCurrentAuth(db, auth, now);
+  await verifyResolvedLaunchTarget(db, auth, target);
   let snapshot: LaunchOperationSnapshot;
   try {
     snapshot = await readOperationSnapshot<LaunchOperationSnapshot>(db, claim.operationId);
@@ -604,6 +608,38 @@ async function launchCanRedeem(
   return row !== null;
 }
 
+async function launchAuthorizationCurrent(
+  db: D1Database,
+  launch: BrowserLaunchRow,
+): Promise<boolean> {
+  try {
+    const row = await db.prepare(
+      `SELECT 1 AS authorized
+       FROM browser_launches AS launch
+       WHERE launch.id = ?1 AND launch.code_digest = ?2
+         AND EXISTS (
+           SELECT 1 FROM credentials source
+           WHERE source.id = launch.source_credential_id
+             AND source.principal_id = launch.principal_id
+             AND source.revoked_at IS NULL
+         )
+         AND ${launchTargetGuardSql}
+       LIMIT 1`,
+    ).bind(launch.id, launch.code_digest).first();
+    return row !== null;
+  } catch {
+    throw platformUnavailable("d1");
+  }
+}
+
+async function requireLaunchReplayAuthorization(
+  db: D1Database,
+  codeDigest: string,
+): Promise<void> {
+  const launch = await readLaunchByDigest(db, codeDigest);
+  if (launch === null || !(await launchAuthorizationCurrent(db, launch))) throw launchUnavailable();
+}
+
 export async function assertWebLaunchPageAvailable(
   db: D1Database,
   codeValue: JsonValue,
@@ -662,6 +698,7 @@ async function redeemLaunchBatch(
   try {
     const { commit } = await executeAtomicBatch(db, {
       businessStatements: [
+        webSessionCleanupStatement(db, now),
         db.prepare(
           `UPDATE browser_launches AS launch
            SET redeemed_at = ?1, last_operation_id = ?2
@@ -701,7 +738,7 @@ async function redeemLaunchBatch(
                'display_name', principal.display_name,
                'entry_path', ?2,
                'expires_at', session.expires_at,
-               'is_owner', CASE WHEN instance.owner_principal_id = session.principal_id THEN 1 ELSE 0 END,
+               'is_owner', json(CASE WHEN instance.owner_principal_id = session.principal_id THEN 'true' ELSE 'false' END),
                'principal_id', session.principal_id,
                'session_id', session.id,
                'session_token_digest', session.token_digest,
@@ -764,6 +801,7 @@ export async function redeemWebLaunch(
   };
   const claim = await claimIdempotency(db, identity, now, [code]);
   if (claim.state === "committed") {
+    await requireLaunchReplayAuthorization(db, codeDigest);
     const stored = readIdempotencyResponse<{ [key: string]: JsonValue }>(claim);
     return {
       body: {
@@ -815,6 +853,7 @@ export async function redeemWebLaunch(
     }
   }
   if (commit === null) throw new AtomicBatchRejectedError();
+  await requireLaunchReplayAuthorization(db, codeDigest);
   let snapshot: SessionOperationSnapshot;
   try {
     snapshot = await readOperationSnapshot<SessionOperationSnapshot>(db, claim.operationId);
@@ -950,7 +989,7 @@ export async function revokeWebSession(
       primarySubjectType: "web_session",
     }));
   } catch (error) {
-    if (error instanceof AtomicBatchRejectedError) throw unauthorized();
+    if (error instanceof AtomicBatchRejectedError) throw unauthorized(true);
     throw error;
   }
   return writeResult(
@@ -988,4 +1027,8 @@ export async function webLaunchPageContentSecurityPolicy(): Promise<string> {
 
 export function webLaunchBootstrapHtml(): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban</title></head><body><main><h1>cfKanban</h1><p data-launch-status aria-live="polite">Securely establishing your session…</p><noscript>This page requires JavaScript. Ask your Agent for a new Browser Launch after enabling it.</noscript></main><script>${WEB_LAUNCH_PAGE_SCRIPT}</script></body></html>`;
+}
+
+export function webLaunchUnavailableHtml(): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban</title></head><body><main><h1>cfKanban</h1><p>This Browser Launch is no longer available. Ask your Agent for a new link.</p><p lang="zh-CN">此浏览器启动链接已失效，请让 Agent 重新生成。</p></main></body></html>`;
 }

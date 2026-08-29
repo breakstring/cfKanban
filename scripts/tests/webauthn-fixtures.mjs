@@ -36,6 +36,12 @@ function cborHead(major, length) {
   throw new TypeError("CBOR length is too large");
 }
 
+class RawCborMapEntries {
+  constructor(entries) {
+    this.entries = entries;
+  }
+}
+
 function cbor(value) {
   if (Number.isSafeInteger(value)) {
     return value >= 0 ? cborHead(0, value) : cborHead(1, -1 - value);
@@ -46,6 +52,12 @@ function cbor(value) {
   }
   if (value instanceof Uint8Array) return concatenate(cborHead(2, value.length), value);
   if (Array.isArray(value)) return concatenate(cborHead(4, value.length), ...value.map(cbor));
+  if (value instanceof RawCborMapEntries) {
+    return concatenate(
+      cborHead(5, value.entries.length),
+      ...value.entries.flatMap(([key, entry]) => [cbor(key), cbor(entry)]),
+    );
+  }
   if (value instanceof Map) {
     const entries = [];
     for (const [key, entry] of value) entries.push(cbor(key), cbor(entry));
@@ -82,8 +94,9 @@ function registrationAuthenticatorData(rpId, credentialId, publicKeyCose, signCo
   ));
 }
 
-async function assertionAuthenticatorData(rpId, signCount) {
-  return concatenate(await sha256(encoder.encode(rpId)), Uint8Array.of(0x05), uint32(signCount));
+async function assertionAuthenticatorData(rpId, signCount, backupEligible = false, backupState = false) {
+  const flags = 0x05 | (backupEligible ? 0x08 : 0) | (backupState ? 0x10 : 0);
+  return concatenate(await sha256(encoder.encode(rpId)), Uint8Array.of(flags), uint32(signCount));
 }
 
 function clientData(type, challenge, origin) {
@@ -155,14 +168,18 @@ async function keyMaterial(algorithm) {
 export async function createRegistrationFixture({
   algorithm,
   challenge,
+  credentialIdBytes = crypto.getRandomValues(new Uint8Array(32)),
   extraCoseEntries = [],
   origin,
+  preserveCoseEntries = false,
   rpId,
   signCount = 0,
 }) {
   const material = await keyMaterial(algorithm);
-  const publicKeyCose = cbor(new Map([...material.coseEntries, ...extraCoseEntries]));
-  const credentialIdBytes = crypto.getRandomValues(new Uint8Array(32));
+  const coseEntries = [...material.coseEntries, ...extraCoseEntries];
+  const publicKeyCose = cbor(
+    preserveCoseEntries ? new RawCborMapEntries(coseEntries) : new Map(coseEntries),
+  );
   const credentialId = base64UrlEncode(credentialIdBytes);
   const authData = await registrationAuthenticatorData(
     rpId,
@@ -179,6 +196,7 @@ export async function createRegistrationFixture({
   return {
     algorithm,
     credentialId,
+    credentialIdBytes,
     privateKey: material.privateKey,
     publicKeyCose: base64UrlEncode(publicKeyCose),
     registrationCredential: {
@@ -195,6 +213,8 @@ export async function createRegistrationFixture({
 }
 
 export async function createAssertionCredential({
+  backupEligible = false,
+  backupState = false,
   challenge,
   credentialId,
   privateKey,
@@ -204,7 +224,12 @@ export async function createAssertionCredential({
   signCount,
   userHandle,
 }) {
-  const authenticatorData = await assertionAuthenticatorData(rpId, signCount);
+  const authenticatorData = await assertionAuthenticatorData(
+    rpId,
+    signCount,
+    backupEligible,
+    backupState,
+  );
   const clientDataJSON = clientData("webauthn.get", challenge, origin);
   const signed = concatenate(authenticatorData, await sha256(clientDataJSON));
   let signature = new Uint8Array(await crypto.subtle.sign(

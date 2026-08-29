@@ -33,10 +33,16 @@ import {
   type RegisteredAuthenticator,
 } from "../kernel/webauthn.ts";
 import { actorCredentialId, authorizedVia, eventCursor, requireIdempotencyKey, writeResult } from "./shared.ts";
+import { webSessionCleanupStatement } from "./web-state.ts";
 
 const CHALLENGE_LIFETIME_MS = 5 * 60 * 1_000;
 const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1_000;
 const PASSKEY_LIMIT = 100;
+// Public-only P-256 key used to keep structurally valid unknown/revoked
+// credential failures on the same WebCrypto verification path as registered
+// credentials. The corresponding private key is not retained.
+const FAILURE_EQUALIZATION_PUBLIC_KEY_COSE = "pQECAyYgASFYIPvtToyXt8StHH1AVpV1CwxQjnI49md3d76LumwzowvEIlggvIZ_OJIMw9Nla4WYJD3D9nPOPABGCEYfaDKhHdsusNU";
+const FAILURE_EQUALIZATION_CHALLENGE_DIGEST = "0".repeat(64);
 
 interface ChallengeRow {
   challenge_digest: string;
@@ -253,15 +259,25 @@ async function registrationExcludeCredentials(
   }
 }
 
-function challengeCleanupStatement(db: D1Database, now: number): D1PreparedStatement {
-  return db.prepare(
-    `DELETE FROM webauthn_challenges
-     WHERE id IN (
-       SELECT id FROM webauthn_challenges
-       WHERE expires_at <= ?1 OR consumed_at IS NOT NULL
-       ORDER BY expires_at, id LIMIT 100
-     )`,
-  ).bind(now);
+function challengeCleanupStatements(db: D1Database, now: number): D1PreparedStatement[] {
+  return [
+    db.prepare(
+      `DELETE FROM webauthn_challenges
+       WHERE id IN (
+         SELECT id FROM webauthn_challenges INDEXED BY idx_webauthn_challenges_expiry
+         WHERE expires_at <= ?1
+         ORDER BY expires_at, id LIMIT 100
+       )`,
+    ).bind(now),
+    db.prepare(
+      `DELETE FROM webauthn_challenges
+       WHERE id IN (
+         SELECT id FROM webauthn_challenges INDEXED BY idx_webauthn_challenges_consumed
+         WHERE consumed_at IS NOT NULL
+         ORDER BY consumed_at, id LIMIT 100
+       )`,
+    ),
+  ];
 }
 
 async function insertChallenge(
@@ -314,8 +330,9 @@ async function insertChallenge(
     );
   }
   try {
-    const results = await db.batch([challengeCleanupStatement(db, now), insert]);
-    if ((results[1]?.meta.changes ?? 0) !== 1) {
+    const cleanup = challengeCleanupStatements(db, now);
+    const results = await db.batch([...cleanup, insert]);
+    if ((results[cleanup.length]?.meta.changes ?? 0) !== 1) {
       if (auth !== null) await authorizeAgentLaunchSession(db, auth, now);
       throw new AtomicBatchRejectedError();
     }
@@ -569,14 +586,24 @@ async function registerPasskeyBatch(
     });
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
-      return diagnoseRegistrationRejection(
-        db,
-        auth,
-        challenge.id,
-        registered.credentialId,
-        { expectedOrigin: challenge.expected_origin, rpId: challenge.rp_id },
-        now,
-      );
+      try {
+        return await diagnoseRegistrationRejection(
+          db,
+          auth,
+          challenge.id,
+          registered.credentialId,
+          { expectedOrigin: challenge.expected_origin, rpId: challenge.rp_id },
+          now,
+        );
+      } catch (diagnosis) {
+        if (diagnosis instanceof ApiError && diagnosis.code !== "PLATFORM_UNAVAILABLE") {
+          // The credential was already cryptographically verified. A
+          // deterministic duplicate/limit/auth rejection still consumes the
+          // first verification attempt; callers must request fresh options.
+          await consumeRejectedChallenge(db, challenge.id, "registration", now);
+        }
+        throw diagnosis;
+      }
     }
     throw error;
   }
@@ -863,6 +890,40 @@ function authenticationChallengeMatches(
     && authenticator.rp_id === scope.rpId;
 }
 
+function assertionUserHandle(value: JsonValue): string {
+  if (value === null || Array.isArray(value) || typeof value !== "object") return "AA";
+  const response = value.response;
+  if (response === null || Array.isArray(response) || typeof response !== "object") return "AA";
+  return typeof response.userHandle === "string" ? response.userHandle : "AA";
+}
+
+async function equalizeUnusableCredentialFailure(
+  credential: JsonValue,
+  challenge: ChallengeRow | null,
+  scope: { expectedOrigin: string; rpId: string },
+): Promise<void> {
+  let credentialId: string;
+  try {
+    credentialId = webAuthnCredentialId(credential);
+  } catch {
+    return;
+  }
+  try {
+    await verifyAuthenticationCredential(credential, {
+      algorithm: -7,
+      backupEligible: false,
+      challengeDigest: challenge?.challenge_digest ?? FAILURE_EQUALIZATION_CHALLENGE_DIGEST,
+      credentialId,
+      expectedOrigin: scope.expectedOrigin,
+      publicKeyCose: FAILURE_EQUALIZATION_PUBLIC_KEY_COSE,
+      rpId: scope.rpId,
+      userHandle: assertionUserHandle(credential),
+    });
+  } catch {
+    // The fixed public key intentionally cannot authenticate caller input.
+  }
+}
+
 function passkeySessionResource(
   snapshot: SessionSnapshot,
   cookieAvailable: boolean,
@@ -961,6 +1022,7 @@ async function authenticatePasskeyBatch(
   try {
     const { commit } = await executeAtomicBatch(db, {
       businessStatements: [
+        webSessionCleanupStatement(db, now),
         db.prepare(
           `UPDATE webauthn_challenges
            SET consumed_at = ?1, last_operation_id = ?2
@@ -977,23 +1039,22 @@ async function authenticatePasskeyBatch(
         ),
         db.prepare(
           `UPDATE web_authenticators
-           SET sign_count = ?1, backup_eligible = ?2, backup_state = ?3,
+           SET sign_count = ?1, backup_state = ?2,
                last_used_at = CASE
-                 WHEN last_used_at IS NULL OR last_used_at <= ?4 - 86400000 THEN ?4
+                 WHEN last_used_at IS NULL OR last_used_at <= ?3 - 86400000 THEN ?3
                  ELSE last_used_at
                END,
-               version = version + 1, last_operation_id = ?5
-           WHERE id = ?6 AND principal_id = ?7 AND credential_id = ?8
-             AND rp_id = ?9 AND revoked_at IS NULL AND version = ?10
-             AND sign_count = ?11
+               version = version + 1, last_operation_id = ?4
+           WHERE id = ?5 AND principal_id = ?6 AND credential_id = ?7
+             AND rp_id = ?8 AND revoked_at IS NULL AND version = ?9
+             AND sign_count = ?10
              AND ((sign_count = 0 AND ?1 = 0) OR ?1 > sign_count)
              AND EXISTS (
                SELECT 1 FROM webauthn_challenges challenge
-               WHERE challenge.id = ?12 AND challenge.last_operation_id = ?5
+               WHERE challenge.id = ?11 AND challenge.last_operation_id = ?4
              )`,
         ).bind(
           assertion.signCount,
-          assertion.backupEligible ? 1 : 0,
           assertion.backupState ? 1 : 0,
           now,
           operationId,
@@ -1036,7 +1097,7 @@ async function authenticatePasskeyBatch(
                'display_name', principal.display_name,
                'entry_path', json_extract(session.target_json, '$.entry_path'),
                'expires_at', session.expires_at,
-               'is_owner', CASE WHEN instance.owner_principal_id = session.principal_id THEN 1 ELSE 0 END,
+               'is_owner', json(CASE WHEN instance.owner_principal_id = session.principal_id THEN 'true' ELSE 'false' END),
                'principal_id', session.principal_id,
                'session_id', session.id,
                'session_token_digest', session.token_digest,
@@ -1161,11 +1222,13 @@ export async function verifyWebAuthentication(
       const credentialId = webAuthnCredentialId(credential);
       authenticator = await readAuthenticatorByCredential(db, credentialId);
       if (authenticator === null || !authenticationChallengeMatches(challenge, authenticator, scope, now)) {
+        await equalizeUnusableCredentialFailure(credential, challenge, scope);
         return rejectAuthenticationAttempt(db, claim, challengeId, now);
       }
       const activeAuthenticator = authenticator;
       assertion = await verifyAuthenticationCredential(credential, {
         algorithm: activeAuthenticator.algorithm,
+        backupEligible: activeAuthenticator.backup_eligible === 1,
         challengeDigest: challenge.challenge_digest,
         credentialId: activeAuthenticator.credential_id,
         expectedOrigin: scope.expectedOrigin,

@@ -7,6 +7,7 @@ import {
   serializeCsrfCookie,
   serializeSessionCookie,
 } from "../kernel/csrf.ts";
+import { ApiError } from "../kernel/errors.ts";
 import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
@@ -28,6 +29,7 @@ import {
   revokeWebSession,
   webLaunchBootstrapHtml,
   webLaunchPageContentSecurityPolicy,
+  webLaunchUnavailableHtml,
 } from "../services/web-auth.ts";
 
 async function body(request: Request, allowedKeys: readonly string[], requiredKeys: readonly string[]) {
@@ -65,12 +67,20 @@ function clearedCookieHeaders(): Headers {
 export function registerWp07Routes(router: Router): Router {
   router
     .get("/app/launch", async (_request, env, context) => {
-      await assertWebLaunchPageAvailable(
-        env.DB,
-        context.url.searchParams.get("code"),
-        context.startedAt,
-      );
-      return new Response(webLaunchBootstrapHtml(), {
+      let responseBody = webLaunchBootstrapHtml();
+      let status = 200;
+      try {
+        await assertWebLaunchPageAvailable(
+          env.DB,
+          context.url.searchParams.get("code"),
+          context.startedAt,
+        );
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.code !== "BROWSER_LAUNCH_UNAVAILABLE") throw error;
+        responseBody = webLaunchUnavailableHtml();
+        status = 410;
+      }
+      return new Response(responseBody, {
         headers: {
           "cache-control": "no-store",
           "content-security-policy": await webLaunchPageContentSecurityPolicy(),
@@ -79,6 +89,7 @@ export function registerWp07Routes(router: Router): Router {
           "x-content-type-options": "nosniff",
           "x-frame-options": "DENY",
         },
+        status,
       });
     })
     .post("/api/v1/web-launches", async (request, env, context) => {

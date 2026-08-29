@@ -53,6 +53,10 @@ assert.deepEqual(
   ["project_id", "stream", "sequence", "relation_other_project_id"],
   "Relation Event index must page by selected Project and sequence before checking the other endpoint",
 );
+assert.deepEqual(indexColumns("idx_browser_launches_cleanup"), ["created_at", "id"]);
+assert.deepEqual(indexColumns("idx_web_sessions_cleanup"), ["created_at", "id"]);
+assert.deepEqual(indexColumns("idx_webauthn_challenges_expiry"), ["expires_at", "id"]);
+assert.deepEqual(indexColumns("idx_webauthn_challenges_consumed"), ["consumed_at", "id"]);
 
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["owner", "Lin", now, now]);
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["writer", "Chen", now, now]);
@@ -114,12 +118,16 @@ const planChecks = [
   ["visible source relation tombstone continuation", "SELECT id FROM issue_relations WHERE source_issue_id = ? AND target_project_id = ? AND deleted_at IS NOT NULL AND (deleted_at, id) < (?, ?) ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1", "project", now + 1, "relation-z"], /idx_issue_relations_source_tombstones_visible/],
   ["visible target relation tombstone continuation", "SELECT id FROM issue_relations WHERE target_issue_id = ? AND source_project_id = ? AND deleted_at IS NOT NULL AND (deleted_at, id) < (?, ?) ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1", "project", now + 1, "relation-z"], /idx_issue_relations_target_tombstones_visible/],
   ["invitation redeem", "SELECT id FROM invitations WHERE code_digest = ?", [digest("b")], /idx_invitations_code_digest|sqlite_autoindex_invitations/],
+  ["browser launch cleanup", "SELECT id FROM browser_launches WHERE created_at <= ? ORDER BY created_at, id LIMIT 100", [now], /idx_browser_launches_cleanup/],
+  ["web session cleanup", "SELECT id FROM web_sessions WHERE created_at <= ? ORDER BY created_at, id LIMIT 100", [now], /idx_web_sessions_cleanup/],
+  ["expired WebAuthn challenge cleanup", "SELECT id FROM webauthn_challenges WHERE expires_at <= ? ORDER BY expires_at, id LIMIT 100", [now], /idx_webauthn_challenges_expiry/],
+  ["consumed WebAuthn challenge cleanup", "SELECT id FROM webauthn_challenges WHERE consumed_at IS NOT NULL ORDER BY consumed_at, id LIMIT 100", [], /idx_webauthn_challenges_consumed/],
 ];
 
 for (const [label, sql, values, expectedIndex] of planChecks) {
   const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map((row) => row.detail).join(" | ");
   assert.match(plan, expectedIndex, `${label}: ${plan}`);
-  assert.doesNotMatch(plan, /SCAN (credentials|issues|project_grants|comments|invitations|events)(?:\s|$)/, `${label} unexpectedly scans: ${plan}`);
+  assert.doesNotMatch(plan, /SCAN (credentials|issues|project_grants|comments|invitations|events|browser_launches|web_sessions|webauthn_challenges)(?:\s|$)/, `${label} unexpectedly scans: ${plan}`);
   assert.doesNotMatch(plan, /USE TEMP B-TREE FOR ORDER BY/, `${label} unexpectedly sorts: ${plan}`);
 }
 

@@ -8704,6 +8704,25 @@
           "type"
         ],
         "properties": {
+          "authenticatorAttachment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "platform",
+                  "cross-platform"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clientExtensionResults": {
+            "type": "object",
+            "maxProperties": 0,
+            "additionalProperties": false
+          },
           "id": {
             "$ref": "#/components/schemas/WebAuthnCredentialId"
           },
@@ -8723,8 +8742,39 @@
               "attestationObject": {
                 "$ref": "#/components/schemas/WebAuthnAttestation"
               },
+              "authenticatorData": {
+                "$ref": "#/components/schemas/WebAuthnAuthenticatorData"
+              },
               "clientDataJSON": {
                 "$ref": "#/components/schemas/WebAuthnClientData"
+              },
+              "publicKey": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 5462,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "publicKeyAlgorithm": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "enum": [
+                      -257,
+                      -7
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "transports": {
                 "type": "array",
@@ -8743,10 +8793,10 @@
                 }
               }
             },
-            "additionalProperties": true
+            "additionalProperties": false
           }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       },
       "WebAuthnAuthenticationCredential": {
         "type": "object",
@@ -8757,6 +8807,25 @@
           "type"
         ],
         "properties": {
+          "authenticatorAttachment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "platform",
+                  "cross-platform"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clientExtensionResults": {
+            "type": "object",
+            "maxProperties": 0,
+            "additionalProperties": false
+          },
           "id": {
             "$ref": "#/components/schemas/WebAuthnCredentialId"
           },
@@ -8788,10 +8857,10 @@
                 "$ref": "#/components/schemas/WebAuthnUserHandle"
               }
             },
-            "additionalProperties": true
+            "additionalProperties": false
           }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       },
       "RegisterPasskeyRequest": {
         "type": "object",
