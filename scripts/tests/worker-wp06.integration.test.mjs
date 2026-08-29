@@ -64,6 +64,35 @@ function readerHeaders(extra = {}) {
   return { authorization: `Bearer ${dualReaderToken}`, ...extra };
 }
 
+function matchesApiError(expected) {
+  return (error) => Object.entries(expected).every(([key, value]) => error?.[key] === value);
+}
+
+const unauthorizedError = matchesApiError({
+  category: "authentication",
+  code: "UNAUTHORIZED",
+  recovery: "reauthenticate",
+  retryable: false,
+  source: "service",
+  status: 401,
+});
+const notFoundError = matchesApiError({
+  category: "not_found",
+  code: "NOT_FOUND",
+  recovery: "none",
+  retryable: false,
+  source: "service",
+  status: 404,
+});
+const cursorScopeMismatchError = matchesApiError({
+  category: "conflict",
+  code: "CURSOR_SCOPE_MISMATCH",
+  recovery: "refresh_cursor",
+  retryable: false,
+  source: "service",
+  status: 409,
+});
+
 async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
   const response = await server.fetch(path, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -973,7 +1002,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   eventScopeBarrier.release();
   await assert.rejects(
     racedEvents,
-    (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    cursorScopeMismatchError,
   );
   assert.equal(
     eventScopeBarrier.rawEventRows.some((row) => row.project_id === projectBId
@@ -1013,7 +1042,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   try {
     await assert.rejects(
       postQueryScopeExpansion,
-      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+      cursorScopeMismatchError,
     );
   } finally {
     await db.prepare(
@@ -1052,7 +1081,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   ).run();
   auditBarrier.release();
   try {
-    await assert.rejects(revokedOwnerAudit, (error) => error?.status === 401);
+    await assert.rejects(revokedOwnerAudit, unauthorizedError);
     assert.deepEqual(
       auditBarrier.rawRows,
       [],
@@ -1137,7 +1166,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   ).run();
   revokedSessionBarrier.release();
   try {
-    await assert.rejects(revokedSessionAudit, (error) => error?.status === 401);
+    await assert.rejects(revokedSessionAudit, unauthorizedError);
     assert.deepEqual(
       revokedSessionBarrier.rawRows,
       [],
@@ -1176,7 +1205,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     Date.now(),
   ).run();
   revokedSourceBarrier.release();
-  await assert.rejects(revokedSourceAudit, (error) => error?.status === 401);
+  await assert.rejects(revokedSourceAudit, unauthorizedError);
   assert.deepEqual(
     revokedSourceBarrier.rawRows,
     [],
@@ -1202,7 +1231,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     .bind(auditExpiryStartedAt, auditSessionId).run();
   expiredSessionBarrier.release();
   try {
-    await assert.rejects(expiredSessionAudit, (error) => error?.status === 401);
+    await assert.rejects(expiredSessionAudit, unauthorizedError);
     assert.deepEqual(
       expiredSessionBarrier.rawRows,
       [],
@@ -1269,7 +1298,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
      WHERE id = ?3`,
   ).bind(Date.now(), ids.ownerPrincipal, auditPasskeyId).run();
   revokedPasskeyBarrier.release();
-  await assert.rejects(revokedPasskeyAudit, (error) => error?.status === 401);
+  await assert.rejects(revokedPasskeyAudit, unauthorizedError);
   assert.deepEqual(
     revokedPasskeyBarrier.rawRows,
     [],
@@ -1327,7 +1356,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   ).bind(Date.now(), ids.ownerPrincipal, relationId).run();
   relationDetailBarrier.release();
   try {
-    await assert.rejects(racedRelationDetail, (error) => error?.status === 404);
+    await assert.rejects(racedRelationDetail, notFoundError);
   } finally {
     await db.prepare(
       `UPDATE issue_relations SET deleted_at = NULL, deleted_by_principal_id = NULL,
@@ -1384,7 +1413,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   try {
     await assert.rejects(
       expandedRelationScope,
-      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+      cursorScopeMismatchError,
     );
   } finally {
     await db.prepare(
@@ -1409,7 +1438,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   relationScopeBarrier.release();
   await assert.rejects(
     racedDeletedRelations,
-    (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    cursorScopeMismatchError,
   );
   await db.prepare(
     "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",

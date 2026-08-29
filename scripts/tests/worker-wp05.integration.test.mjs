@@ -53,6 +53,35 @@ function readerHeaders(extra = {}) {
   return { authorization: `Bearer ${readerToken}`, ...extra };
 }
 
+function matchesApiError(expected) {
+  return (error) => Object.entries(expected).every(([key, value]) => error?.[key] === value);
+}
+
+const unauthorizedError = matchesApiError({
+  category: "authentication",
+  code: "UNAUTHORIZED",
+  recovery: "reauthenticate",
+  retryable: false,
+  source: "service",
+  status: 401,
+});
+const notFoundError = matchesApiError({
+  category: "not_found",
+  code: "NOT_FOUND",
+  recovery: "none",
+  retryable: false,
+  source: "service",
+  status: 404,
+});
+const cursorScopeMismatchError = matchesApiError({
+  category: "conflict",
+  code: "CURSOR_SCOPE_MISMATCH",
+  recovery: "refresh_cursor",
+  retryable: false,
+  source: "service",
+  status: 409,
+});
+
 async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
   const response = await server.fetch(path, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -120,6 +149,7 @@ function withOneFinalizeFailure(database) {
 
 function issueRecoveryScopeBarrierDatabase(database, pauseAtRead) {
   let matchingReads = 0;
+  let rawRows = null;
   let releaseRead;
   let signalReached;
   const reached = new Promise((resolve) => {
@@ -128,18 +158,21 @@ function issueRecoveryScopeBarrierDatabase(database, pauseAtRead) {
   const released = new Promise((resolve) => {
     releaseRead = resolve;
   });
-  const wrapStatement = (statement, matches) => new Proxy(statement, {
+  const wrapStatement = (statement, matchesScopeRead, matchesFinalQuery) => new Proxy(statement, {
     get(target, property) {
       if (property === "bind") {
-        return (...values) => wrapStatement(target.bind(...values), matches);
+        return (...values) => wrapStatement(target.bind(...values), matchesScopeRead, matchesFinalQuery);
       }
-      if (property === "all" && matches) {
+      if (property === "all" && (matchesScopeRead || matchesFinalQuery)) {
         return async (...args) => {
           const result = await target.all(...args);
-          matchingReads += 1;
-          if (matchingReads === pauseAtRead) {
-            signalReached();
-            await released;
+          if (matchesFinalQuery) rawRows = result.results;
+          if (matchesScopeRead) {
+            matchingReads += 1;
+            if (matchingReads === pauseAtRead) {
+              signalReached();
+              await released;
+            }
           }
           return result;
         };
@@ -152,15 +185,20 @@ function issueRecoveryScopeBarrierDatabase(database, pauseAtRead) {
     db: new Proxy(database, {
       get(target, property) {
         if (property === "prepare") {
-          return (sql) => wrapStatement(
-            target.prepare(sql),
-            sql.includes("recovery_grant") && sql.includes("ORDER BY w.key, p.key"),
-          );
+          return (sql) => {
+            const matchesScopeRead = sql.includes("recovery_grant") && sql.includes("ORDER BY w.key, p.key");
+            const matchesFinalQuery = sql.includes("WITH current_result_projects(id) AS MATERIALIZED")
+              && sql.includes("FROM issues i");
+            return wrapStatement(target.prepare(sql), matchesScopeRead, matchesFinalQuery);
+          };
         }
         const value = Reflect.get(target, property, target);
         return typeof value === "function" ? value.bind(target) : value;
       },
     }),
+    get rawRows() {
+      return rawRows;
+    },
     reached,
     release() {
       releaseRead();
@@ -170,6 +208,7 @@ function issueRecoveryScopeBarrierDatabase(database, pauseAtRead) {
 
 function issueActiveScopeBarrierDatabase(database, pauseAtRead = 1) {
   let matchingReads = 0;
+  let rawRows = null;
   let releaseRead;
   let signalReached;
   const reached = new Promise((resolve) => {
@@ -178,18 +217,21 @@ function issueActiveScopeBarrierDatabase(database, pauseAtRead = 1) {
   const released = new Promise((resolve) => {
     releaseRead = resolve;
   });
-  const wrapStatement = (statement, matches) => new Proxy(statement, {
+  const wrapStatement = (statement, matchesScopeRead, matchesFinalQuery) => new Proxy(statement, {
     get(target, property) {
       if (property === "bind") {
-        return (...values) => wrapStatement(target.bind(...values), matches);
+        return (...values) => wrapStatement(target.bind(...values), matchesScopeRead, matchesFinalQuery);
       }
-      if (property === "all" && matches) {
+      if (property === "all" && (matchesScopeRead || matchesFinalQuery)) {
         return async (...args) => {
           const result = await target.all(...args);
-          matchingReads += 1;
-          if (matchingReads === pauseAtRead) {
-            signalReached();
-            await released;
+          if (matchesFinalQuery) rawRows = result.results;
+          if (matchesScopeRead) {
+            matchingReads += 1;
+            if (matchingReads === pauseAtRead) {
+              signalReached();
+              await released;
+            }
           }
           return result;
         };
@@ -202,15 +244,23 @@ function issueActiveScopeBarrierDatabase(database, pauseAtRead = 1) {
     db: new Proxy(database, {
       get(target, property) {
         if (property === "prepare") {
-          return (sql) => wrapStatement(
-            target.prepare(sql),
-            sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.key, p.key"),
-          );
+          return (sql) => {
+            const matchesScopeRead = sql.includes("FROM project_grants AS pg")
+              && sql.includes("ORDER BY w.key, p.key");
+            const matchesFinalQuery = (
+              sql.includes("WITH current_result_projects(id) AS MATERIALIZED")
+              || sql.includes("WITH current_visible_projects(id) AS MATERIALIZED")
+            ) && sql.includes("FROM issues i");
+            return wrapStatement(target.prepare(sql), matchesScopeRead, matchesFinalQuery);
+          };
         }
         const value = Reflect.get(target, property, target);
         return typeof value === "function" ? value.bind(target) : value;
       },
     }),
+    get rawRows() {
+      return rawRows;
+    },
     reached,
     release() {
       releaseRead();
@@ -1735,7 +1785,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     .bind(Date.now(), raceSessionId).run();
   revokedSessionBarrier.release();
   try {
-    await assert.rejects(revokedSessionList, (error) => error?.status === 401);
+    await assert.rejects(revokedSessionList, unauthorizedError);
+    assert.deepEqual(revokedSessionBarrier.rawRows, []);
   } finally {
     await db.prepare("UPDATE web_sessions SET revoked_at = NULL WHERE id = ?1")
       .bind(raceSessionId).run();
@@ -1754,7 +1805,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(Date.now(), ids.ownerPrincipal, ids.writerCredential).run();
   revokedSessionSourceBarrier.release();
   try {
-    await assert.rejects(revokedSessionSourceList, (error) => error?.status === 401);
+    await assert.rejects(revokedSessionSourceList, unauthorizedError);
+    assert.deepEqual(revokedSessionSourceBarrier.rawRows, []);
   } finally {
     await db.prepare(
       "UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
@@ -1774,7 +1826,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     .bind(expiredSessionStartedAt, raceSessionId).run();
   expiredSessionBarrier.release();
   try {
-    await assert.rejects(expiredSessionList, (error) => error?.status === 401);
+    await assert.rejects(expiredSessionList, unauthorizedError);
+    assert.deepEqual(expiredSessionBarrier.rawRows, []);
   } finally {
     await db.prepare("UPDATE web_sessions SET expires_at = ?1 WHERE id = ?2")
       .bind(raceSessionExpiresAt, raceSessionId).run();
@@ -1799,7 +1852,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   });
   credentialRaceBarrier.release();
   try {
-    await assert.rejects(credentialRacedList, (error) => error?.status === 401);
+    await assert.rejects(credentialRacedList, unauthorizedError);
+    assert.deepEqual(credentialRaceBarrier.rawRows, []);
   } finally {
     await db.prepare(
       "UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
@@ -1828,7 +1882,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   });
   projectRaceBarrier.release();
   try {
-    await assert.rejects(projectRacedList, (error) => error?.status === 404);
+    await assert.rejects(projectRacedList, notFoundError);
+    assert.deepEqual(projectRaceBarrier.rawRows, []);
   } finally {
     await db.prepare(
       `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
@@ -1852,8 +1907,9 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   try {
     await assert.rejects(
       pausedProjectList,
-      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+      cursorScopeMismatchError,
     );
+    assert.deepEqual(pausedProjectBarrier.rawRows, []);
   } finally {
     await db.prepare(
       "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
@@ -1879,7 +1935,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(Date.now(), ids.ownerPrincipal, raceWorkspace.id).run();
   pausedWorkspaceBarrier.release();
   try {
-    await assert.rejects(pausedWorkspaceProjectList, (error) => error?.status === 404);
+    await assert.rejects(pausedWorkspaceProjectList, notFoundError);
+    assert.deepEqual(pausedWorkspaceBarrier.rawRows, []);
   } finally {
     await db.prepare(
       "UPDATE workspaces SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
@@ -1911,8 +1968,9 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   try {
     await assert.rejects(
       downgradedRecoveryList,
-      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+      cursorScopeMismatchError,
     );
+    assert.deepEqual(downgradedRecoveryBarrier.rawRows, []);
   } finally {
     await db.prepare(
       "UPDATE project_grants SET role = 'writer', version = version + 1 WHERE id = ?1",
@@ -1943,8 +2001,9 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   try {
     await assert.rejects(
       candidateRacedList,
-      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+      cursorScopeMismatchError,
     );
+    assert.deepEqual(candidateRaceBarrier.rawRows, []);
   } finally {
     await db.prepare(
       `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
@@ -1976,7 +2035,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   try {
     await assert.rejects(
       expandedAfterQuery,
-      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+      cursorScopeMismatchError,
     );
   } finally {
     await db.prepare(
@@ -2013,7 +2072,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   continuationBarrier.release();
   await assert.rejects(
     shrunkContinuation,
-    (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    cursorScopeMismatchError,
   );
 
   const duplicateEvents = await db.prepare(
