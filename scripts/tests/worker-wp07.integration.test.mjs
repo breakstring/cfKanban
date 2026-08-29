@@ -1481,7 +1481,6 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     ["zero", Uint8Array.of(0)],
     ["one", Uint8Array.of(1)],
     ["two", Uint8Array.of(2)],
-    ["three", Uint8Array.of(3)],
     ["four", Uint8Array.of(4)],
     ["leading-zero", Uint8Array.of(0, 1, 0, 1)],
     ["nine-byte", Uint8Array.of(1, 0, 0, 0, 0, 0, 0, 0, 3)],
@@ -1522,7 +1521,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     invalidEvenRsaModulus.options.body.public_key.challenge,
     invalidEvenRsaModulus.fixture.publicKeyCose,
   );
-  const oversizedRsaModulus = new Uint8Array(512).fill(0xff);
+  const oversizedRsaModulus = new Uint8Array(513).fill(0xff);
   oversizedRsaModulus[0] = 0x80;
   const invalidOversizedRsaModulus = await rejectRegistrationWithExtraCose(
     registrationSession.cookies,

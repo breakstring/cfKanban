@@ -119,7 +119,13 @@ function ecdsaRawToDer(signature) {
   return concatenate(Uint8Array.of(0x30, body.length), body);
 }
 
-async function keyMaterial(algorithm) {
+async function keyMaterial(
+  algorithm,
+  {
+    rsaModulusLength = 2048,
+    rsaPublicExponent = Uint8Array.of(1, 0, 1),
+  } = {},
+) {
   if (algorithm === -7) {
     const keys = await crypto.subtle.generateKey(
       { name: "ECDSA", namedCurve: "P-256" },
@@ -143,9 +149,9 @@ async function keyMaterial(algorithm) {
     const keys = await crypto.subtle.generateKey(
       {
         hash: "SHA-256",
-        modulusLength: 2048,
+        modulusLength: rsaModulusLength,
         name: "RSASSA-PKCS1-v1_5",
-        publicExponent: Uint8Array.of(1, 0, 1),
+        publicExponent: rsaPublicExponent,
       },
       true,
       ["sign", "verify"],
@@ -172,10 +178,12 @@ export async function createRegistrationFixture({
   extraCoseEntries = [],
   origin,
   preserveCoseEntries = false,
+  rsaModulusLength = 2048,
+  rsaPublicExponent = Uint8Array.of(1, 0, 1),
   rpId,
   signCount = 0,
 }) {
-  const material = await keyMaterial(algorithm);
+  const material = await keyMaterial(algorithm, { rsaModulusLength, rsaPublicExponent });
   const coseEntries = [...material.coseEntries, ...extraCoseEntries];
   const publicKeyCose = cbor(
     preserveCoseEntries ? new RawCborMapEntries(coseEntries) : new Map(coseEntries),

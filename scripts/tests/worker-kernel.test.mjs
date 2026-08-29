@@ -14,6 +14,7 @@ import { canonicalJson, computeRequestHash, validateIdempotencyKey } from "../..
 import { MAX_JSON_BYTES, readJsonBody, validateJsonObject } from "../../apps/worker/src/kernel/http.ts";
 import {
   verifyAuthenticationCredentialEqualized,
+  verifyRegistrationCredential,
   WebAuthnVerificationError,
 } from "../../apps/worker/src/kernel/webauthn.ts";
 import {
@@ -364,6 +365,66 @@ test("Passkey authentication equalizes ES256 and RS256 verification paths", asyn
   } finally {
     crypto.subtle.importKey = originalImportKey;
     crypto.subtle.verify = originalVerify;
+  }
+});
+
+test("RS256 registration and authentication preserve accepted historical key profiles", async () => {
+  const challenge = base64UrlEncode(new Uint8Array(32).fill(0x5b));
+  const challengeDigest = await sha256Hex(challenge);
+  const expectedOrigin = "https://kanban.example.test";
+  const rpId = "kanban.example.test";
+  const userHandle = base64UrlEncode(new TextEncoder().encode(crypto.randomUUID()));
+  for (const profile of [
+    { modulusLength: 4096, publicExponent: Uint8Array.of(1, 0, 1) },
+    { modulusLength: 2048, publicExponent: Uint8Array.of(3) },
+  ]) {
+    const fixture = await createRegistrationFixture({
+      algorithm: -257,
+      challenge,
+      origin: expectedOrigin,
+      rpId,
+      rsaModulusLength: profile.modulusLength,
+      rsaPublicExponent: profile.publicExponent,
+    });
+    const registered = await verifyRegistrationCredential(
+      fixture.registrationCredential,
+      { challengeDigest, expectedOrigin, rpId },
+    );
+    assert.equal(registered.algorithm, -257);
+    assert.equal(registered.publicKeyCose, fixture.publicKeyCose);
+
+    const assertion = await createAssertionCredential({
+      algorithm: -257,
+      challenge,
+      credentialId: registered.credentialId,
+      origin: expectedOrigin,
+      privateKey: fixture.privateKey,
+      rpId,
+      signCount: 1,
+      userHandle,
+    });
+    const verified = await verifyAuthenticationCredentialEqualized(
+      assertion,
+      {
+        algorithm: -257,
+        backupEligible: registered.backupEligible,
+        challengeDigest,
+        credentialId: registered.credentialId,
+        expectedOrigin,
+        publicKeyCose: registered.publicKeyCose,
+        rpId,
+        userHandle,
+      },
+      {
+        challengeDigest,
+        credentialId: registered.credentialId,
+        expectedOrigin,
+        rpId,
+        userHandle,
+      },
+    );
+    assert.equal(verified?.credentialId, registered.credentialId);
+    assert.equal(verified?.signCount, 1);
   }
 });
 
