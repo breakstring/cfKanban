@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  normalizeLineEndings,
+  sha256NormalizedText,
+  syncGeneratedFile,
+} from "../lib/generated-artifacts.mjs";
+
+test("normalizes migration line endings before hashing", () => {
+  assert.equal(normalizeLineEndings("one\r\ntwo\rthree\n"), "one\ntwo\nthree\n");
+  assert.equal(sha256NormalizedText("one\r\ntwo\n"), sha256NormalizedText("one\ntwo\n"));
+});
+
+test("accepts line-ending-only differences while rejecting generated drift", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cfkanban-generated-test-"));
+  const target = join(root, "artifact.json");
+
+  try {
+    await writeFile(target, "{\r\n  \"stable\": true\r\n}\r\n", "utf8");
+    await syncGeneratedFile(target, "{\n  \"stable\": true\n}\n", { mode: "check" });
+
+    await writeFile(target, "{\n  \"stable\": false\n}\n", "utf8");
+    await assert.rejects(
+      syncGeneratedFile(target, "{\n  \"stable\": true\n}\n", { mode: "check" }),
+      /Generated artifact drift detected/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -1,0 +1,13 @@
+{
+  "name": "@cfkanban/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "build": "node ../../scripts/build-worker.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260829.1"
+  }
+}

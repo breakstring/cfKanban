@@ -4,7 +4,7 @@
 
 面向 Coding Agents 的极简、API-first Cloudflare Kanban。它更接近一个“可靠的 Agent 工作协调账本”，而不是去掉 UI 的传统项目管理工具。
 
-> 当前状态：全部 v0 实现合同已经冻结。Foundation 为修订 19，Agent Skills 为修订 20，API / D1 Schema、极简 Web UI 与视觉设计合同也已冻结。仓库已有实施计划和通过验证的合同原型，但还没有业务代码。
+> 当前状态：全部 v0 实现合同已经冻结。Foundation 为修订 19，Agent Skills 为修订 20，API / D1 Schema、极简 Web UI 与视觉设计合同也已冻结。仓库现已具备 WP-01 TypeScript / Worker / Web 工程骨架和可重现的根级验证入口；业务端点与产品 UI 尚未开始。
 
 ## 产品原则
 
@@ -59,6 +59,19 @@ Credential 与 Project Grant 都不自动过期。Credential 只通过显式撤�
 v0 使用有界资源合同：请求最大 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB；列表默认 20、最大 100，Agent context 最大 64 KiB。大日志和附件使用外部 artifact 引用。
 
 Foundation SPEC 当前冻结在合同修订 19；Agent Skills & Bootstrap SPEC 已冻结到修订 20。API / D1 Schema、Web UI 与 `DESIGN.md` 已于 2026-08-29 在 91 个 OpenAPI operations、25 张 D1 表、28 个索引、关键原子操作、Browser Launch/Session、CSRF 和 Passkey 约束通过验证后冻结。v0 唯一主部署路径仍是用户的 Agent 调用 `cfkanban-deploy`；无凭据的 CI 验证只属于源码工程设施。工作范围由 [v0 实施计划](docs/plans/2026-08-29-v0-implementation-plan.md) 和 Linear 跟踪，但业务实现尚未开始。
+
+## 工程验证
+
+按根 lockfile 安装精确依赖，再运行仓库唯一完整验证入口：
+
+```sh
+npm ci
+npm run validate
+```
+
+`npm run validate` 会依次完成 workspace typecheck、unit、OpenAPI / 错误合同、生成物漂移、内存与 Wrangler local D1、无 Cloudflare 凭据的 CI policy、Vite Web build，以及带同 Worker Static Assets 配置的 Wrangler Worker dry-run build。该命令不会登录 Cloudflare，也不会创建或修改远端资源。
+
+只有显式运行 `npm run contracts:generate` 与 `npm run migrations:generate` 才会更新生成合同。普通验证不会改写跟踪文件，并会在生成物漂移时失败。
 
 ## 文档入口
 

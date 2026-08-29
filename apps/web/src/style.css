@@ -1,0 +1,49 @@
+:root {
+  --color-canvas: #faf8f4;
+  --color-text: #20201f;
+  --color-text-muted: #6c6861;
+  --font-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: ui-serif, Georgia, Cambria, "Times New Roman", serif;
+
+  color: var(--color-text);
+  background: var(--color-canvas);
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+.scaffold {
+  width: min(42rem, calc(100% - 3rem));
+  margin: 0 auto;
+  padding: 6rem 0;
+}
+
+.eyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 8vw, 3.5rem);
+  font-weight: 500;
+}
+
+p {
+  max-width: 60ch;
+  line-height: 1.6;
+}

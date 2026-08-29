@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
+
+import { sha256NormalizedText } from "./lib/generated-artifacts.mjs";
 
 const migration = await readFile(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
 const manifest = JSON.parse(await readFile(new URL("../migrations/manifest.json", import.meta.url), "utf8"));
 assert.equal(
   manifest.migrations[0].sha256,
-  createHash("sha256").update(migration).digest("hex"),
+  sha256NormalizedText(migration),
   "migration manifest digest drifted",
 );
 const db = new DatabaseSync(":memory:");
