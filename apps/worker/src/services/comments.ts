@@ -169,6 +169,20 @@ async function commentRestoreQuotaReason(
     : null;
 }
 
+async function commentRestoreQuotaReasonAfterCommit(
+  db: D1Database,
+  projectId: string,
+): Promise<CommentUnavailabilityReason | null> {
+  try {
+    return await commentRestoreQuotaReason(db, projectId);
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "PLATFORM_UNAVAILABLE") {
+      return { code: "PROJECT_COMMENT_QUOTA_UNAVAILABLE", recovery: "request_owner" };
+    }
+    throw error;
+  }
+}
+
 async function readComment(db: D1Database, commentId: string): Promise<CommentRow | null> {
   try {
     return await db.prepare(
@@ -752,7 +766,10 @@ export async function deleteComment(
     version: expectedVersion + 1,
   };
   const frozenIssueReference = await readCommentOperationIssueReference(db, operationId);
-  const quotaUnavailabilityReason = await commentRestoreQuotaReason(db, access.issue.projectId);
+  const quotaUnavailabilityReason = await commentRestoreQuotaReasonAfterCommit(
+    db,
+    access.issue.projectId,
+  );
   return writeResult(
     db,
     auth,

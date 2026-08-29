@@ -8,7 +8,10 @@ import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { createCursorContext, encodeCursor } from "../../apps/worker/src/kernel/cursor.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
-import { createComment as createCommentService } from "../../apps/worker/src/services/comments.ts";
+import {
+  createComment as createCommentService,
+  deleteComment as deleteCommentService,
+} from "../../apps/worker/src/services/comments.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
@@ -116,6 +119,42 @@ function commentReadbackBarrierDatabase(database) {
     reached,
     release() {
       releaseRead();
+    },
+  };
+}
+
+function commentQuotaPreviewFailureDatabase(database) {
+  let failureCount = 0;
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "first" && matches) {
+        return async () => {
+          failureCount += 1;
+          throw new Error("injected post-commit quota preview failure");
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("project.comment_limit") && sql.includes("usage.active_comment_count"),
+          );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    get failureCount() {
+      return failureCount;
     },
   };
 }
@@ -446,12 +485,21 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(currentSnapshotIssue.body.title, "Changed after Comment commit");
   assert.equal(currentSnapshotIssue.body.version, 2);
 
-  const deletedComment = await jsonRequest(`/api/v1/comments/${commentId}?expected_version=1`, {
-    headers: dualHeaders(),
-    method: "DELETE",
-  });
-  assert.equal(deletedComment.response.status, 200, JSON.stringify(deletedComment.body));
-  assert.equal(deletedComment.body.resource.body, null);
+  const quotaPreviewFailure = commentQuotaPreviewFailureDatabase(db);
+  const deletedCommentBody = await deleteCommentService(
+    quotaPreviewFailure.db,
+    directCommentAuth,
+    commentId,
+    1,
+    Date.now(),
+  );
+  assert.equal(quotaPreviewFailure.failureCount, 1);
+  assert.equal(deletedCommentBody.resource.body, null);
+  assert.equal(
+    deletedCommentBody.resource.unavailability_reason.code,
+    "PROJECT_COMMENT_QUOTA_UNAVAILABLE",
+  );
+  assert.deepEqual(deletedCommentBody.resource.allowed_actions, ["read"]);
   const activeCommentsAfterDelete = await jsonRequest(
     `/api/v1/issues/${issueA.body.resource.identifier}/comments`,
     { headers: dualHeaders() },
@@ -679,6 +727,43 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     { headers: dualHeaders() },
   );
   assert.deepEqual(deletedRelationList.body.items.map((item) => item.id), [relationId]);
+
+  const hiddenRelations = [
+    { id: "60000000-0000-4000-8000-000000000111", kind: "related" },
+    { id: "60000000-0000-4000-8000-000000000112", kind: "duplicate" },
+  ];
+  const hiddenRelationAt = Date.now();
+  await db.batch(hiddenRelations.map(({ id, kind }, index) => db.prepare(
+    `INSERT INTO issue_relations
+      (id, workspace_id, kind, source_issue_id, target_issue_id, version,
+       deleted_at, deleted_by_principal_id, created_at, created_by_principal_id,
+       created_operation_id, last_operation_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, 2, ?6, ?7, ?6, ?7, ?8, ?8)`,
+  ).bind(
+    id,
+    engineering.body.resource.id,
+    kind,
+    issueA.body.resource.id,
+    issueB.body.resource.id,
+    hiddenRelationAt - index,
+    ids.ownerPrincipal,
+    `wp06-hidden-relation-${index}`,
+  )));
+  const hiddenRelationPage = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only&limit=1`,
+    { headers: scopedHeaders() },
+  );
+  assert.equal(hiddenRelationPage.response.status, 200, JSON.stringify(hiddenRelationPage.body));
+  assert.deepEqual(hiddenRelationPage.body.items, []);
+  assert.equal(hiddenRelationPage.body.has_more, true);
+  assert.equal(typeof hiddenRelationPage.body.next_cursor, "string");
+  const nextHiddenRelationPage = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only&limit=1&cursor=${encodeURIComponent(hiddenRelationPage.body.next_cursor)}`,
+    { headers: scopedHeaders() },
+  );
+  assert.equal(nextHiddenRelationPage.response.status, 200, JSON.stringify(nextHiddenRelationPage.body));
+  assert.deepEqual(nextHiddenRelationPage.body.items, []);
+  assert.notEqual(nextHiddenRelationPage.body.next_cursor, hiddenRelationPage.body.next_cursor);
 
   await db.prepare(
     "UPDATE project_grants SET role = 'writer' WHERE principal_id = ?1 AND project_id = ?2",

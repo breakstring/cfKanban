@@ -423,47 +423,34 @@ export async function listIssueRelations(
   try {
     const result = deletedMode === "only"
       ? await db.prepare(
-        `WITH candidate_relations AS (
+        `WITH source_candidates AS (
            SELECT relation.id, relation.deleted_at
            FROM issue_relations relation INDEXED BY idx_issue_relations_source_tombstones
            WHERE relation.source_issue_id = ?1 AND relation.deleted_at IS NOT NULL
-             AND EXISTS (
-               SELECT 1 FROM issues source_endpoint
-               WHERE source_endpoint.id = relation.source_issue_id
-                 AND source_endpoint.project_id IN (SELECT value FROM json_each(?2))
-             )
-             AND EXISTS (
-               SELECT 1 FROM issues target_endpoint
-               WHERE target_endpoint.id = relation.target_issue_id
-                 AND target_endpoint.project_id IN (SELECT value FROM json_each(?2))
-             )
-             AND (?3 IS NULL OR relation.deleted_at < ?3
-                  OR (relation.deleted_at = ?3 AND relation.id < ?4))
-           UNION ALL
+             AND (?2 IS NULL OR relation.deleted_at < ?2
+                  OR (relation.deleted_at = ?2 AND relation.id < ?3))
+           ORDER BY relation.deleted_at DESC, relation.id DESC
+           LIMIT ?4
+         ), target_candidates AS (
            SELECT relation.id, relation.deleted_at
            FROM issue_relations relation INDEXED BY idx_issue_relations_target_tombstones
            WHERE relation.target_issue_id = ?1 AND relation.deleted_at IS NOT NULL
-             AND EXISTS (
-               SELECT 1 FROM issues source_endpoint
-               WHERE source_endpoint.id = relation.source_issue_id
-                 AND source_endpoint.project_id IN (SELECT value FROM json_each(?2))
-             )
-             AND EXISTS (
-               SELECT 1 FROM issues target_endpoint
-               WHERE target_endpoint.id = relation.target_issue_id
-                 AND target_endpoint.project_id IN (SELECT value FROM json_each(?2))
-             )
-             AND (?3 IS NULL OR relation.deleted_at < ?3
-                  OR (relation.deleted_at = ?3 AND relation.id < ?4))
+             AND (?2 IS NULL OR relation.deleted_at < ?2
+                  OR (relation.deleted_at = ?2 AND relation.id < ?3))
+           ORDER BY relation.deleted_at DESC, relation.id DESC
+           LIMIT ?4
+         ), candidate_relations AS (
+           SELECT id, deleted_at FROM source_candidates
+           UNION ALL
+           SELECT id, deleted_at FROM target_candidates
            ORDER BY deleted_at DESC, id DESC
-           LIMIT ?5
+           LIMIT ?4
          )
          ${RELATION_SELECT}
          JOIN candidate_relations candidate ON candidate.id = relation.id
          ORDER BY relation.deleted_at DESC, relation.id DESC`,
       ).bind(
         issue.id,
-        JSON.stringify(writerIds),
         cursor?.[0] ?? null,
         cursor?.[1] ?? null,
         limit + 1,
@@ -492,10 +479,14 @@ export async function listIssueRelations(
   } catch {
     throw platformUnavailable("d1");
   }
-  const hasMore = rows.length > limit;
-  const page = rows.slice(0, limit);
-  const tail = page.at(-1);
   const roles = new Map(visibleProjects.map((project) => [project.projectId, project.role]));
+  const hasMore = rows.length > limit;
+  const scanned = rows.slice(0, limit);
+  const page = deletedMode === "only"
+    ? scanned.filter((row) => roleCanWrite(roles.get(row.source_project_id) ?? "reader")
+      && roleCanWrite(roles.get(row.target_project_id) ?? "reader"))
+    : scanned;
+  const tail = scanned.at(-1);
   return {
     has_more: hasMore,
     items: page.map((row) => relationResource(

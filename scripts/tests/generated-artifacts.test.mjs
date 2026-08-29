@@ -81,7 +81,7 @@ test("OpenAPI models Invitation create and redeem requests as discriminated unio
   );
 });
 
-test("OpenAPI distinguishes Comment lifecycle shapes and Relation endpoint permissions", async () => {
+test("OpenAPI distinguishes Comment lifecycle shapes and deleted-only permissions", async () => {
   const document = JSON.parse(await readFile(
     new URL("../../contracts/openapi.json", import.meta.url),
     "utf8",
@@ -116,6 +116,40 @@ test("OpenAPI distinguishes Comment lifecycle shapes and Relation endpoint permi
   for (const operation of [commentRead, labelList]) {
     assert.match(operation.description, /deleted=only recovery view requires writer/);
     assert.equal(operation["x-cfkanban-permission"], "project_reader_active_writer_tombstone");
+  }
+  const deletedPermissionByOperation = new Map([
+    ["listWorkspaces", "visible_scope_active_owner_tombstone"],
+    ["listProjects", "visible_scope_active_owner_tombstone"],
+    ["listIssues", "project_reader_active_writer_tombstone"],
+    ["listProjectIssues", "project_reader_active_writer_tombstone"],
+    ["getIssue", "project_reader_active_writer_tombstone"],
+    ["listComments", "project_reader_active_writer_tombstone"],
+    ["getComment", "project_reader_active_writer_tombstone"],
+    ["listLabels", "project_reader_active_writer_tombstone"],
+    ["getLabel", "project_reader_active_writer_tombstone"],
+    ["listIssueRelations", "relation_endpoints_reader_active_writer_tombstone"],
+    ["getRelation", "relation_endpoints_reader_active_writer_tombstone"],
+  ]);
+  const operationsWithDeleted = [];
+  for (const pathItem of Object.values(document.paths)) {
+    for (const operation of Object.values(pathItem)) {
+      if (
+        typeof operation === "object"
+        && operation !== null
+        && operation.operationId !== undefined
+        && operation.parameters?.some((parameter) => parameter.name === "deleted")
+      ) operationsWithDeleted.push(operation);
+    }
+  }
+  assert.deepEqual(
+    operationsWithDeleted.map((operation) => operation.operationId).sort(),
+    [...deletedPermissionByOperation.keys()].sort(),
+  );
+  for (const operation of operationsWithDeleted) {
+    assert.equal(
+      operation["x-cfkanban-permission"],
+      deletedPermissionByOperation.get(operation.operationId),
+    );
   }
 });
 
