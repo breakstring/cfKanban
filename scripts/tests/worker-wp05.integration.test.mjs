@@ -9,6 +9,7 @@ import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { createCursorContext, encodeCursor } from "../../apps/worker/src/kernel/cursor.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import {
+  listIssueCandidates as listIssueCandidatesService,
   listIssues as listIssuesService,
   listProjectIssues as listProjectIssuesService,
   reportIssueBlocked,
@@ -154,6 +155,107 @@ function issueRecoveryScopeBarrierDatabase(database, pauseAtRead) {
           return (sql) => wrapStatement(
             target.prepare(sql),
             sql.includes("recovery_grant") && sql.includes("ORDER BY w.key, p.key"),
+          );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
+}
+
+function issueActiveScopeBarrierDatabase(database, pauseAtRead = 1) {
+  let matchingReads = 0;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "all" && matches) {
+        return async (...args) => {
+          const result = await target.all(...args);
+          matchingReads += 1;
+          if (matchingReads === pauseAtRead) {
+            signalReached();
+            await released;
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.key, p.key"),
+          );
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    reached,
+    release() {
+      releaseRead();
+    },
+  };
+}
+
+function issueFinalQueryBarrierDatabase(database) {
+  let paused = false;
+  let releaseRead;
+  let signalReached;
+  const reached = new Promise((resolve) => {
+    signalReached = resolve;
+  });
+  const released = new Promise((resolve) => {
+    releaseRead = resolve;
+  });
+  const wrapStatement = (statement, matches) => new Proxy(statement, {
+    get(target, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(target.bind(...values), matches);
+      }
+      if (property === "all" && matches) {
+        return async (...args) => {
+          const result = await target.all(...args);
+          if (!paused) {
+            paused = true;
+            signalReached();
+            await released;
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            target.prepare(sql),
+            sql.includes("WITH current_result_projects(id) AS MATERIALIZED")
+              && sql.includes("FROM issues i"),
           );
         }
         const value = Reflect.get(target, property, target);
@@ -1155,26 +1257,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
   ).bind(Date.now(), ids.ownerPrincipal, privateProject.body.resource.id).run();
   globalRecoveryBarrier.release();
-  let racedGlobalTombstoneResult;
   try {
-    racedGlobalTombstoneResult = await racedGlobalTombstones;
+    await assert.rejects(
+      racedGlobalTombstones,
+      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    );
   } finally {
     await db.prepare(
       "UPDATE projects SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
     )
       .bind(privateProject.body.resource.id).run();
   }
-  assert.equal(
-    racedGlobalTombstoneResult.items.some((issue) => issue.identifier === "CFK-3"),
-    false,
-  );
-  assert.equal(
-    racedGlobalTombstoneResult.resolved_scope.projects.some(
-      (project) => project.project_id === privateProject.body.resource.id,
-    ),
-    false,
-  );
-
   const projectRecoveryBarrier = issueRecoveryScopeBarrierDatabase(db, 2);
   const racedProjectTombstones = listProjectIssuesService(
     projectRecoveryBarrier.db,
@@ -1545,6 +1638,167 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
      ORDER BY created_at DESC LIMIT 1`,
   ).first();
   assert.deepEqual(finalizedRecord, { operation_snapshot_json: null, state: "committed" });
+
+  await jsonRequest("/api/v1/workspaces", {
+    body: { display_name: "Authorization races", key: "auth-races" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-workspace" }),
+    method: "POST",
+  });
+  const raceProjectA = await jsonRequest("/api/v1/workspaces/auth-races/projects", {
+    body: { display_name: "Race A", key: "RA" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-project-a" }),
+    method: "POST",
+  });
+  const raceProjectB = await jsonRequest("/api/v1/workspaces/auth-races/projects", {
+    body: { display_name: "Race B", key: "RB" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-project-b" }),
+    method: "POST",
+  });
+  const raceGrantA = "50000000-0000-4000-8000-000000000091";
+  const raceGrantB = "50000000-0000-4000-8000-000000000092";
+  await db.prepare(
+    `INSERT INTO project_grants
+      (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
+     VALUES (?1, ?2, ?3, 'writer', ?4, ?4, ?5)`,
+  ).bind(
+    raceGrantA,
+    ids.writerPrincipal,
+    raceProjectA.body.resource.id,
+    Date.now(),
+    "wp05-auth-race-grant-a",
+  ).run();
+  await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+    body: { status_key: "todo", title: "Race baseline A" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-issue-a" }),
+    method: "POST",
+  });
+  await jsonRequest("/api/v1/workspaces/auth-races/projects/RB/issues", {
+    body: { status_key: "todo", title: "Race baseline B" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-issue-b" }),
+    method: "POST",
+  });
+
+  const activeListAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const credentialRaceBarrier = issueActiveScopeBarrierDatabase(db);
+  const credentialRacedList = listIssuesService(
+    credentialRaceBarrier.db,
+    activeListAuth,
+    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    Date.now(),
+  );
+  await credentialRaceBarrier.reached;
+  await db.prepare(
+    "UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, ids.writerCredential).run();
+  await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+    body: { title: "Created after credential revoke" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-after-credential-revoke" }),
+    method: "POST",
+  });
+  credentialRaceBarrier.release();
+  try {
+    await assert.rejects(credentialRacedList, (error) => error?.status === 401);
+  } finally {
+    await db.prepare(
+      "UPDATE credentials SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.writerCredential).run();
+  }
+
+  const projectListAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const projectRaceBarrier = issueActiveScopeBarrierDatabase(db, 2);
+  const projectRacedList = listProjectIssuesService(
+    projectRaceBarrier.db,
+    projectListAuth,
+    "auth-races",
+    "RA",
+    new URL("https://kanban.example.test/api/v1/workspaces/auth-races/projects/RA/issues"),
+    Date.now(),
+  );
+  await projectRaceBarrier.reached;
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, raceGrantA).run();
+  await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+    body: { title: "Created after Project Grant revoke" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-after-grant-revoke" }),
+    method: "POST",
+  });
+  projectRaceBarrier.release();
+  try {
+    await assert.rejects(projectRacedList, (error) => error?.status === 404);
+  } finally {
+    await db.prepare(
+      `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         version = version + 1 WHERE id = ?1`,
+    ).bind(raceGrantA).run();
+  }
+
+  const candidateAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const candidateRaceBarrier = issueActiveScopeBarrierDatabase(db);
+  const candidateRacedList = listIssueCandidatesService(
+    candidateRaceBarrier.db,
+    candidateAuth,
+    new URL(
+      "https://kanban.example.test/api/v1/issues/candidates?assignment=unassigned&project=auth-races%2FRA",
+    ),
+    Date.now(),
+  );
+  await candidateRaceBarrier.reached;
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, raceGrantA).run();
+  await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+    body: { status_key: "todo", title: "Candidate created after Grant revoke" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-candidate-after-revoke" }),
+    method: "POST",
+  });
+  candidateRaceBarrier.release();
+  try {
+    await assert.rejects(
+      candidateRacedList,
+      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    );
+  } finally {
+    await db.prepare(
+      `UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL,
+         version = version + 1 WHERE id = ?1`,
+    ).bind(raceGrantA).run();
+  }
+
+  const finalQueryAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
+  const finalQueryBarrier = issueFinalQueryBarrierDatabase(db);
+  const expandedAfterQuery = listIssuesService(
+    finalQueryBarrier.db,
+    finalQueryAuth,
+    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA&limit=1"),
+    Date.now(),
+  );
+  await finalQueryBarrier.reached;
+  await db.prepare(
+    `INSERT INTO project_grants
+      (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
+     VALUES (?1, ?2, ?3, 'writer', ?4, ?4, ?5)`,
+  ).bind(
+    raceGrantB,
+    ids.writerPrincipal,
+    raceProjectB.body.resource.id,
+    Date.now(),
+    "wp05-auth-race-grant-b",
+  ).run();
+  finalQueryBarrier.release();
+  try {
+    await assert.rejects(
+      expandedAfterQuery,
+      (error) => error?.code === "CURSOR_SCOPE_MISMATCH" && error?.status === 409,
+    );
+  } finally {
+    await db.prepare(
+      `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+         version = version + 1 WHERE id = ?3`,
+    ).bind(Date.now(), ids.ownerPrincipal, raceGrantB).run();
+  }
 
   const duplicateEvents = await db.prepare(
     `SELECT operation_id, COUNT(*) AS count FROM events

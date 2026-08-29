@@ -435,9 +435,18 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
        (SELECT COUNT(*) FROM project_grants) AS grants,
        (SELECT COUNT(*) FROM events) AS events,
        (SELECT COUNT(*) FROM operation_commits) AS commits,
+       (SELECT COUNT(*) FROM invitation_redemption_items) AS redemption_items,
        (SELECT COUNT(*) FROM idempotency_records
         WHERE operation_snapshot_json IS NOT NULL) AS snapshots`,
   ).first();
+  const invitationRedemptionState = async (inviteCode) => db.prepare(
+    `SELECT invitation.id, invitation.redeemed_at,
+            invitation.redeemed_by_principal_id, invitation.last_operation_id,
+            (SELECT COUNT(*) FROM invitation_redemption_items item
+             WHERE item.invitation_id = invitation.id) AS redemption_items
+     FROM invitations invitation
+     WHERE invitation.code_digest = ?1`,
+  ).bind(await sha256Hex(inviteCode)).first();
   const secretOverlapBefore = await redemptionSideEffects();
   const secretOverlapRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
@@ -720,6 +729,12 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const unsafeSnapshotKey = "wp04-snapshot-secret-preflight-redeem";
   const unsafeSnapshotToken = token("snapshotsafe", "Z");
   const unsafeSnapshotSideEffectsBefore = await redemptionSideEffects();
+  const unsafeSnapshotInvitationBefore = await invitationRedemptionState(unsafeSnapshotCode);
+  const unsafeSnapshotKeyDigest = await sha256Hex(unsafeSnapshotKey);
+  const unsafeSnapshotIdempotencyBefore = await db.prepare(
+    `SELECT COUNT(*) AS count, MIN(operation_id) AS operation_id
+     FROM idempotency_records WHERE idempotency_key = ?1`,
+  ).bind(unsafeSnapshotKeyDigest).first();
   const unsafeSnapshotRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
       display_name: "Snapshot Safety Probe",
@@ -735,12 +750,15 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.equal(unsafeSnapshotRedeem.body.details.reason, "secret_value_reused");
   assert.equal(unsafeSnapshotRedeem.body.details.field, "project_display_name");
   assert.deepEqual(await redemptionSideEffects(), unsafeSnapshotSideEffectsBefore);
-  const unsafeSnapshotKeyDigest = await sha256Hex(unsafeSnapshotKey);
-  const unsafeSnapshotPending = await db.prepare(
-    `SELECT COUNT(*) AS count FROM idempotency_records
-     WHERE idempotency_key = ?1 AND state = 'pending'`,
+  assert.deepEqual(
+    await invitationRedemptionState(unsafeSnapshotCode),
+    unsafeSnapshotInvitationBefore,
+  );
+  const unsafeSnapshotIdempotencyAfter = await db.prepare(
+    `SELECT COUNT(*) AS count, MIN(operation_id) AS operation_id
+     FROM idempotency_records WHERE idempotency_key = ?1`,
   ).bind(unsafeSnapshotKeyDigest).first();
-  assert.equal(unsafeSnapshotPending.count, 0);
+  assert.deepEqual(unsafeSnapshotIdempotencyAfter, unsafeSnapshotIdempotencyBefore);
   await db.prepare(
     "UPDATE projects SET display_name = 'Core' WHERE id = ?1",
   ).bind(firstProjectId).run();
