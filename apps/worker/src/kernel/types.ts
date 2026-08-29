@@ -9,6 +9,7 @@ export interface WorkerEnv {
 
 export interface RequestContext {
   method: string;
+  params: Record<string, string>;
   requestId: string;
   startedAt: number;
   url: URL;

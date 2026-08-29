@@ -14,6 +14,7 @@ export interface JsonObjectSchema {
 export function createRequestContext(request: Request): RequestContext {
   return {
     method: request.method.toUpperCase(),
+    params: {},
     requestId: crypto.randomUUID(),
     startedAt: Date.now(),
     url: new URL(request.url),

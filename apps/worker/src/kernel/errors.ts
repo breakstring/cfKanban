@@ -151,6 +151,34 @@ export function notFound(): ApiError {
   });
 }
 
+export function versionConflict(currentVersion?: number): ApiError {
+  return new ApiError({
+    category: "conflict",
+    code: "VERSION_CONFLICT",
+    details: currentVersion === undefined ? {} : { current_version: currentVersion },
+    message: "The resource version changed.",
+    recovery: "refresh_resource",
+    retryable: false,
+    status: 409,
+  });
+}
+
+export function conflict(
+  code: string,
+  recovery = "refresh_resource",
+  details: Record<string, unknown> = {},
+): ApiError {
+  return new ApiError({
+    category: "conflict",
+    code,
+    details,
+    message: "The requested operation conflicts with the current resource state.",
+    recovery,
+    retryable: false,
+    status: 409,
+  });
+}
+
 export function platformUnavailable(component: "d1" | "worker" = "worker"): ApiError {
   return new ApiError({
     category: "platform_failure",
