@@ -30,6 +30,7 @@ const secretStringPatterns = [
   /\bBearer\s+\S+/i,
   /\bCookie\s*:\s*\S+/i,
   /cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+/,
+  /cfi_v1_[A-Za-z0-9_-]+_[A-Za-z0-9_-]+/,
   /\b[0-9a-f]{64}\b/i,
   /\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b[\s\S]*/i,
   /\n\s*at\s+\S+/,
@@ -174,6 +175,59 @@ export function conflict(
     details,
     message: "The requested operation conflicts with the current resource state.",
     recovery,
+    retryable: false,
+    status: 409,
+  });
+}
+
+export function gone(code: string, recovery = "request_new_invitation"): ApiError {
+  return new ApiError({
+    category: "conflict",
+    code,
+    message: "The one-time capability is no longer available.",
+    recovery,
+    retryable: false,
+    status: 410,
+  });
+}
+
+export function invitationModeMismatch(): ApiError {
+  return new ApiError({
+    category: "validation",
+    code: "INVITATION_MODE_MISMATCH",
+    message: "The requested redemption mode does not match this Invitation.",
+    recovery: "none",
+    retryable: false,
+    status: 400,
+  });
+}
+
+export function recoveryPrincipalMismatch(): ApiError {
+  return new ApiError({
+    category: "authorization",
+    code: "RECOVERY_PRINCIPAL_MISMATCH",
+    message: "The authenticated Principal does not match this recovery Invitation.",
+    recovery: "none",
+    retryable: false,
+    status: 403,
+  });
+}
+
+export function businessQuotaExceeded(
+  dimension: "comments" | "issues" | "principals",
+): ApiError {
+  const resourceKind = dimension === "comments" ? "comment" : dimension === "issues" ? "issue" : "principal";
+  const code = dimension === "comments"
+    ? "PROJECT_COMMENT_LIMIT_REACHED"
+    : dimension === "issues"
+      ? "PROJECT_ISSUE_LIMIT_REACHED"
+      : "PROJECT_PRINCIPAL_LIMIT_REACHED";
+  return new ApiError({
+    category: "business_quota",
+    code,
+    details: { resource_kind: resourceKind },
+    message: "The Project active quota does not allow this operation.",
+    recovery: "free_capacity_or_request_owner",
     retryable: false,
     status: 409,
   });

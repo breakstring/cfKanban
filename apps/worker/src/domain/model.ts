@@ -10,6 +10,10 @@ export const WORKFLOW_STATUSES = [
 ] as const;
 
 export type StatusKey = typeof WORKFLOW_STATUSES[number]["key"];
+export type ProjectRole = "reader" | "writer";
+export type InvitationKind = "principal_recovery" | "project_grant";
+export type RecoveryMode = "full_recovery" | "rotation";
+export type InvitationRedeemAs = "current_principal" | "new_principal" | "recovery";
 
 export function isStatusKey(value: JsonValue): value is StatusKey {
   return typeof value === "string" && WORKFLOW_STATUSES.some((status) => status.key === value);
@@ -98,6 +102,46 @@ export function requireCredentialToken(value: JsonValue, field = "credential_tok
   const match = /^cfk_v1_([A-Za-z0-9]{1,64})_([A-Za-z0-9_-]{43,512})$/.exec(value);
   if (!match?.[1]) throw validationError("schema_validation_failed", { field });
   return { prefix: match[1], token: value };
+}
+
+export function requireProjectRole(value: JsonValue, field = "role"): ProjectRole {
+  if (value !== "reader" && value !== "writer") {
+    throw validationError("schema_validation_failed", { field });
+  }
+  return value;
+}
+
+export function requireInvitationKind(value: JsonValue, field = "kind"): InvitationKind {
+  if (value !== "project_grant" && value !== "principal_recovery") {
+    throw validationError("schema_validation_failed", { field });
+  }
+  return value;
+}
+
+export function requireRecoveryMode(value: JsonValue, field = "recovery_mode"): RecoveryMode {
+  if (value !== "rotation" && value !== "full_recovery") {
+    throw validationError("schema_validation_failed", { field });
+  }
+  return value;
+}
+
+export function requireInvitationRedeemAs(value: JsonValue, field = "redeem_as"): InvitationRedeemAs {
+  if (value !== "new_principal" && value !== "current_principal" && value !== "recovery") {
+    throw validationError("schema_validation_failed", { field });
+  }
+  return value;
+}
+
+function base64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
+export function generateInvitationCode(): { code: string; prefix: string } {
+  const prefix = base64Url(crypto.getRandomValues(new Uint8Array(6)));
+  const secret = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+  return { code: `cfi_v1_${prefix}_${secret}`, prefix };
 }
 
 export function timestamp(value: number | null): string | null {
