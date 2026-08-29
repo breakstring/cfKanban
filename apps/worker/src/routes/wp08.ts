@@ -2,7 +2,7 @@ import { requireVersion } from "../domain/model.ts";
 import { authenticateRequest, SESSION_COOKIE_NAME } from "../kernel/auth.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
 import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
-import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
+import { enforcePrincipalRateLimit, rateLimitPolicies } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
 import {
@@ -135,6 +135,7 @@ export function registerWp08Routes(router: Router): Router {
         env.DB,
         auth,
         context.startedAt,
+        rateLimitPolicies(env),
       ), context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .post("/api/v1/public-joins/{public_id}/redeem", async (request, env, context) => {

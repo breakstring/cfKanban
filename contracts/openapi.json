@@ -9520,12 +9520,15 @@
                   "limit": {
                     "type": "integer",
                     "format": "int64",
-                    "const": 300
+                    "minimum": 1
                   },
                   "period_seconds": {
                     "type": "integer",
                     "format": "int64",
-                    "const": 60
+                    "enum": [
+                      10,
+                      60
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -9540,12 +9543,15 @@
                   "limit": {
                     "type": "integer",
                     "format": "int64",
-                    "const": 120
+                    "minimum": 1
                   },
                   "period_seconds": {
                     "type": "integer",
                     "format": "int64",
-                    "const": 60
+                    "enum": [
+                      10,
+                      60
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -9560,12 +9566,15 @@
                   "limit": {
                     "type": "integer",
                     "format": "int64",
-                    "const": 30
+                    "minimum": 1
                   },
                   "period_seconds": {
                     "type": "integer",
                     "format": "int64",
-                    "const": 60
+                    "enum": [
+                      10,
+                      60
+                    ]
                   }
                 },
                 "additionalProperties": false

@@ -569,9 +569,9 @@ const schemas = {
         type: "object",
         required: ["instance", "principal", "unauthenticated_sensitive"],
         properties: {
-          instance: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ const: 300 }), period_seconds: integer({ const: 60 }) }, additionalProperties: false },
-          principal: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ const: 120 }), period_seconds: integer({ const: 60 }) }, additionalProperties: false },
-          unauthenticated_sensitive: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ const: 30 }), period_seconds: integer({ const: 60 }) }, additionalProperties: false },
+          instance: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ minimum: 1 }), period_seconds: integer({ enum: [10, 60] }) }, additionalProperties: false },
+          principal: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ minimum: 1 }), period_seconds: integer({ enum: [10, 60] }) }, additionalProperties: false },
+          unauthenticated_sensitive: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ minimum: 1 }), period_seconds: integer({ enum: [10, 60] }) }, additionalProperties: false },
         },
         additionalProperties: false,
       },
