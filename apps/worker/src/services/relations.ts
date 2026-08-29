@@ -410,10 +410,11 @@ export async function listIssueRelations(
   const visibleIds = visibleProjects.map((project) => project.projectId);
   const writerIds = visibleProjects.filter((project) => roleCanWrite(project.role))
     .map((project) => project.projectId);
+  const cursorProjectIds = deletedMode === "only" ? writerIds : visibleIds;
   const context = await createCursorContext(
     "relations",
     { deleted: deletedMode, issue_id: issue.id },
-    visibleIds,
+    cursorProjectIds,
     auth.principalId,
   );
   const cursor = parseRelationCursor(decodeCursor(url.searchParams.get("cursor"), context));
@@ -422,15 +423,44 @@ export async function listIssueRelations(
   try {
     const result = deletedMode === "only"
       ? await db.prepare(
-        `${RELATION_SELECT}
-         WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
-           AND relation.deleted_at IS NOT NULL
-           AND source.project_id IN (SELECT value FROM json_each(?2))
-           AND target.project_id IN (SELECT value FROM json_each(?2))
-           AND (?3 IS NULL OR relation.deleted_at < ?3
-                OR (relation.deleted_at = ?3 AND relation.id < ?4))
-         ORDER BY relation.deleted_at DESC, relation.id DESC
-         LIMIT ?5`,
+        `WITH candidate_relations AS (
+           SELECT relation.id, relation.deleted_at
+           FROM issue_relations relation INDEXED BY idx_issue_relations_source_tombstones
+           WHERE relation.source_issue_id = ?1 AND relation.deleted_at IS NOT NULL
+             AND EXISTS (
+               SELECT 1 FROM issues source_endpoint
+               WHERE source_endpoint.id = relation.source_issue_id
+                 AND source_endpoint.project_id IN (SELECT value FROM json_each(?2))
+             )
+             AND EXISTS (
+               SELECT 1 FROM issues target_endpoint
+               WHERE target_endpoint.id = relation.target_issue_id
+                 AND target_endpoint.project_id IN (SELECT value FROM json_each(?2))
+             )
+             AND (?3 IS NULL OR relation.deleted_at < ?3
+                  OR (relation.deleted_at = ?3 AND relation.id < ?4))
+           UNION ALL
+           SELECT relation.id, relation.deleted_at
+           FROM issue_relations relation INDEXED BY idx_issue_relations_target_tombstones
+           WHERE relation.target_issue_id = ?1 AND relation.deleted_at IS NOT NULL
+             AND EXISTS (
+               SELECT 1 FROM issues source_endpoint
+               WHERE source_endpoint.id = relation.source_issue_id
+                 AND source_endpoint.project_id IN (SELECT value FROM json_each(?2))
+             )
+             AND EXISTS (
+               SELECT 1 FROM issues target_endpoint
+               WHERE target_endpoint.id = relation.target_issue_id
+                 AND target_endpoint.project_id IN (SELECT value FROM json_each(?2))
+             )
+             AND (?3 IS NULL OR relation.deleted_at < ?3
+                  OR (relation.deleted_at = ?3 AND relation.id < ?4))
+           ORDER BY deleted_at DESC, id DESC
+           LIMIT ?5
+         )
+         ${RELATION_SELECT}
+         JOIN candidate_relations candidate ON candidate.id = relation.id
+         ORDER BY relation.deleted_at DESC, relation.id DESC`,
       ).bind(
         issue.id,
         JSON.stringify(writerIds),

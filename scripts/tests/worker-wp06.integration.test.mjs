@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createTestHarness } from "wrangler";
 
 import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
+import { createCursorContext, encodeCursor } from "../../apps/worker/src/kernel/cursor.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { createComment as createCommentService } from "../../apps/worker/src/services/comments.ts";
@@ -469,6 +470,34 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     { headers: dualHeaders() },
   );
   assert.deepEqual(deletedCommentList.body.items.map((item) => item.id), [commentId]);
+  const quotaPreviewAt = Date.now();
+  await db.batch([
+    db.prepare("UPDATE projects SET comment_limit = 1 WHERE id = ?1").bind(projectAId),
+    db.prepare(
+      `INSERT INTO public_join_policies
+        (project_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
+         version, created_at, updated_at, last_operation_id)
+       VALUES (?1, 'wp06-comment-preview', 'Comment quota preview', ?2, ?3, 1, ?2, ?2, 'wp06-preview-policy')`,
+    ).bind(projectAId, quotaPreviewAt, ids.ownerPrincipal),
+    db.prepare(
+      `INSERT INTO project_usage
+        (project_id, active_issue_count, active_comment_count, active_principal_count,
+         updated_at, last_operation_id)
+       VALUES (?1, 0, 1, 0, ?2, 'wp06-preview-usage')`,
+    ).bind(projectAId, quotaPreviewAt),
+  ]);
+  const quotaBlockedComment = await jsonRequest(`/api/v1/comments/${commentId}?deleted=only`, {
+    headers: dualHeaders(),
+  });
+  assert.equal(quotaBlockedComment.response.status, 200, JSON.stringify(quotaBlockedComment.body));
+  assert.equal(quotaBlockedComment.body.restorable, false);
+  assert.deepEqual(quotaBlockedComment.body.allowed_actions, ["read"]);
+  assert.equal(quotaBlockedComment.body.unavailability_reason.code, "PROJECT_COMMENT_LIMIT_REACHED");
+  await db.batch([
+    db.prepare("DELETE FROM project_usage WHERE project_id = ?1").bind(projectAId),
+    db.prepare("DELETE FROM public_join_policies WHERE project_id = ?1").bind(projectAId),
+    db.prepare("UPDATE projects SET comment_limit = NULL WHERE id = ?1").bind(projectAId),
+  ]);
   const restoredComment = await jsonRequest(`/api/v1/comments/${commentId}/commands/restore`, {
     body: { expected_version: 2 },
     headers: dualHeaders({ "idempotency-key": "wp06-comment-restore" }),
@@ -620,6 +649,32 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
   assert.deepEqual(deletedRelationList.body.items.map((item) => item.id), [relationId]);
 
+  await db.prepare(
+    "UPDATE project_grants SET role = 'writer' WHERE principal_id = ?1 AND project_id = ?2",
+  ).bind(ids.readerPrincipal, projectAId).run();
+  const oldWriterScope = await createCursorContext(
+    "relations",
+    { deleted: "only", issue_id: issueA.body.resource.id },
+    [projectAId],
+    ids.readerPrincipal,
+  );
+  const oldWriterCursor = encodeCursor(oldWriterScope, [
+    Date.parse(deletedRelation.body.resource.deleted_at),
+    relationId,
+  ]);
+  await db.prepare(
+    "UPDATE project_grants SET role = 'writer' WHERE principal_id = ?1 AND project_id = ?2",
+  ).bind(ids.readerPrincipal, projectBId).run();
+  const expandedWriterScope = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/relations?deleted=only&cursor=${encodeURIComponent(oldWriterCursor)}`,
+    { headers: readerHeaders() },
+  );
+  assert.equal(expandedWriterScope.response.status, 409, JSON.stringify(expandedWriterScope.body));
+  assert.equal(expandedWriterScope.body.code, "CURSOR_SCOPE_MISMATCH");
+  await db.prepare(
+    "UPDATE project_grants SET role = 'reader' WHERE principal_id = ?1",
+  ).bind(ids.readerPrincipal).run();
+
   const restoredRelation = await jsonRequest(`/api/v1/relations/${relationId}/commands/restore`, {
     body: {
       expected_version: 2,
@@ -696,6 +751,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
   assert.equal(pausedReplayLabelTombstone.response.status, 200, JSON.stringify(pausedReplayLabelTombstone.body));
   assert.equal(pausedReplayLabelTombstone.body.restorable, false);
+  assert.deepEqual(pausedReplayLabelTombstone.body.allowed_actions, ["read"]);
   assert.equal(pausedReplayLabelTombstone.body.parent_status.project, "deleted");
   const replayedLabelAfterProjectDelete = await jsonRequest(
     "/api/v1/workspaces/engineering/projects/REPLAY/labels",

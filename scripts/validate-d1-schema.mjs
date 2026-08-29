@@ -89,6 +89,10 @@ const planChecks = [
   ["issue candidates", "SELECT number FROM issues WHERE project_id = ? AND status_key = ? AND deleted_at IS NULL ORDER BY priority_rank, created_at, number LIMIT 21", ["project", "todo"], /idx_issues_candidates/],
   ["project grants", "SELECT principal_id FROM project_grants WHERE project_id = ? AND revoked_at IS NULL AND role = ?", ["project", "writer"], /idx_project_grants_project_active/],
   ["comments", "SELECT id FROM comments WHERE issue_id = ? AND deleted_at IS NULL ORDER BY created_at, id LIMIT 21", ["issue-1"], /idx_comments_issue_list/],
+  ["comment tombstones", "SELECT id FROM comments WHERE issue_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1"], /idx_comments_issue_tombstones/],
+  ["label tombstones", "SELECT id FROM labels WHERE project_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["project"], /idx_labels_project_tombstones/],
+  ["source relation tombstones", "SELECT id FROM issue_relations WHERE source_issue_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1"], /idx_issue_relations_source_tombstones/],
+  ["target relation tombstones", "SELECT id FROM issue_relations WHERE target_issue_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1"], /idx_issue_relations_target_tombstones/],
   ["invitation redeem", "SELECT id FROM invitations WHERE code_digest = ?", [digest("b")], /idx_invitations_code_digest|sqlite_autoindex_invitations/],
 ];
 
@@ -96,6 +100,7 @@ for (const [label, sql, values, expectedIndex] of planChecks) {
   const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map((row) => row.detail).join(" | ");
   assert.match(plan, expectedIndex, `${label}: ${plan}`);
   assert.doesNotMatch(plan, /SCAN (credentials|issues|project_grants|comments|invitations|events)(?:\s|$)/, `${label} unexpectedly scans: ${plan}`);
+  assert.doesNotMatch(plan, /USE TEMP B-TREE FOR ORDER BY/, `${label} unexpectedly sorts: ${plan}`);
 }
 
 const participantEventSql = `

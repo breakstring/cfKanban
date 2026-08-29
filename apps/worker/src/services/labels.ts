@@ -87,7 +87,9 @@ function labelResource(row: LabelRow, role: VisibleProject["role"]): { [key: str
   const restorable = row.deleted_at !== null && canWrite && unavailabilityReason === null;
   return {
     allowed_actions: canWrite
-      ? row.deleted_at === null ? ["read", "update", "delete"] : ["read", "restore"]
+      ? row.deleted_at === null
+        ? ["read", "update", "delete"]
+        : restorable ? ["read", "restore"] : ["read"]
       : ["read"],
     color: row.color,
     created_at: timestamp(row.created_at),
