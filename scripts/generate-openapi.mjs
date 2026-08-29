@@ -1,4 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import {
+  parseGeneratedMode,
+  renderGeneratedJson,
+  syncGeneratedFile,
+} from "./lib/generated-artifacts.mjs";
 
 const tags = [
   "meta",
@@ -392,6 +396,10 @@ const document = {
   },
 };
 
-await mkdir(new URL("../contracts/", import.meta.url), { recursive: true });
-await writeFile(new URL("../contracts/openapi.json", import.meta.url), `${JSON.stringify(document, null, 2)}\n`);
-console.log(`Generated contracts/openapi.json with ${operations.length} operations.`);
+const mode = parseGeneratedMode(process.argv.slice(2));
+await syncGeneratedFile(
+  new URL("../contracts/openapi.json", import.meta.url),
+  renderGeneratedJson(document),
+  { mode, regenerateCommand: "npm run contracts:generate" },
+);
+console.log(`${mode === "check" ? "Verified" : "Generated"} contracts/openapi.json with ${operations.length} operations.`);

@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 A minimal, API-first Cloudflare Kanban system for coding agents. It is closer to a reliable work coordination ledger for agents than a traditional project management product with its UI removed.
 
-> Current status: all v0 implementation contracts are Frozen. The Foundation contract is at revision 19 and the Agent Skills contract at revision 20; the API/D1 Schema, minimal Web UI, and visual design contracts are also Frozen. The repository has an implementation plan and validated contract prototypes, but no application code yet.
+> Current status: all v0 implementation contracts are Frozen. The Foundation contract is at revision 19 and the Agent Skills contract at revision 20; the API/D1 Schema, minimal Web UI, and visual design contracts are also Frozen. The repository now has the WP-01 TypeScript/Worker/Web engineering scaffold and reproducible validation entrypoint; business endpoints and product UI have not started.
 
 ## Product principles
 
@@ -59,6 +59,19 @@ Credentials and Project Grants do not expire automatically. Credentials change o
 v0 uses bounded resource contracts: requests up to 128 KiB, Issue bodies up to 64 KiB, Comment/completion payloads up to 32 KiB, lists defaulting to 20 and capped at 100 items, and Agent context capped at 64 KiB. Large logs and attachments use external artifact references.
 
 The Foundation SPEC is Frozen at revision 19 and the Agent Skills & Bootstrap SPEC at revision 20. The API/D1 Schema and Web UI SPECs, together with `DESIGN.md`, were Frozen on 2026-08-29 after validating a 91-operation OpenAPI prototype, a 25-table/28-index D1 schema, critical atomic operations, Browser Launch/Session, CSRF, and Passkey constraints. The only primary v0 deployment path remains an agent using `cfkanban-deploy`; credential-free CI verification is ordinary source engineering. Work is organized by the [v0 implementation plan](docs/plans/2026-08-29-v0-implementation-plan.md) and Linear, but no business implementation has started.
+
+## Engineering validation
+
+Install the exact root lockfile and run the single repository entrypoint:
+
+```sh
+npm ci
+npm run validate
+```
+
+`npm run validate` runs workspace typechecks, unit tests, OpenAPI/error contract checks, generated-artifact drift checks, in-memory and Wrangler local D1 validation, credential-free CI policy checks, the Vite Web build, and a Wrangler Worker dry-run build with the same-Worker Static Assets configuration. It does not log in to Cloudflare or write remote resources.
+
+Generated contract artifacts are updated only by the explicit `npm run contracts:generate` and `npm run migrations:generate` commands. Normal validation is read-only for tracked artifacts and fails when either generated file drifts.
 
 ## Documentation
 

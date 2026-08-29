@@ -4,18 +4,32 @@
   "private": true,
   "description": "Agent-first Kanban on Cloudflare",
   "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
   "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "unit": "node --test scripts/tests/generated-artifacts.test.mjs",
     "contracts:generate": "node scripts/generate-openapi.mjs",
-    "contracts:check": "node scripts/validate-openapi.mjs && node scripts/validate-error-contract.mjs && redocly lint contracts/openapi.json",
+    "contracts:verify-generated": "node scripts/generate-openapi.mjs --check",
+    "contracts:check": "npm run contracts:verify-generated && node scripts/validate-openapi.mjs && node scripts/validate-error-contract.mjs && redocly lint contracts/openapi.json",
     "migrations:generate": "node scripts/generate-migration-manifest.mjs",
-    "d1:check": "npm run migrations:generate && node scripts/validate-d1-schema.mjs && node scripts/validate-d1-operations.mjs && node scripts/validate-web-security.mjs && node scripts/validate-d1-wrangler.mjs",
-    "validate": "npm run contracts:generate && npm run contracts:check && npm run d1:check"
+    "migrations:verify-generated": "node scripts/generate-migration-manifest.mjs --check",
+    "d1:check": "npm run migrations:verify-generated && node scripts/validate-d1-schema.mjs && node scripts/validate-d1-operations.mjs && node scripts/validate-web-security.mjs && node scripts/validate-d1-wrangler.mjs",
+    "ci:check": "node scripts/validate-ci-policy.mjs",
+    "clean": "node scripts/clean-build-output.mjs",
+    "web:build": "npm run build --workspace @cfkanban/web",
+    "worker:build": "npm run build --workspace @cfkanban/worker",
+    "build": "npm run clean && npm run web:build && npm run worker:build && node scripts/validate-build-output.mjs",
+    "validate": "npm run typecheck && npm run unit && npm run contracts:check && npm run d1:check && npm run ci:check && npm run build"
   },
   "devDependencies": {
+    "@types/node": "22.20.1",
     "@redocly/cli": "2.49.0",
+    "typescript": "6.0.3",
     "wrangler": "4.127.1"
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0"
   }
 }
