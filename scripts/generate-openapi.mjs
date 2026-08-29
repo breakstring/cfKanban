@@ -447,7 +447,149 @@ const schemas = {
   VerifyWebAuthenticationRequest: { type: "object", required: ["challenge_id", "credential"], properties: { challenge_id: ref("Uuid"), credential: ref("WebAuthnAuthenticationCredential") }, additionalProperties: false },
   EnablePublicJoinRequest: { type: "object", required: ["expected_version", "public_summary", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: ref("Version"), public_summary: string({ minLength: 1, maxLength: 512 }), issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
   UpdateResourceLimitsRequest: { type: "object", required: ["expected_version", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: ref("Version"), issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
-  RedeemPublicJoinRequest: { type: "object", required: ["role", "redeem_as"], properties: { role: ref("ProjectRole"), redeem_as: string({ enum: ["new_principal", "current_principal"] }), display_name: string({ minLength: 1, maxLength: 128 }), new_credential_token: credentialToken() }, additionalProperties: false },
+  RedeemPublicJoinRequest: {
+    oneOf: [
+      { type: "object", required: ["display_name", "new_credential_token", "redeem_as", "role"], properties: { display_name: string({ minLength: 1, maxLength: 128 }), new_credential_token: credentialToken(), redeem_as: { const: "new_principal" }, role: ref("ProjectRole") }, additionalProperties: false },
+      { type: "object", required: ["redeem_as", "role"], properties: { redeem_as: { const: "current_principal" }, role: ref("ProjectRole") }, additionalProperties: false },
+    ],
+  },
+  PublicProject: {
+    type: "object",
+    required: ["display_name", "public_id", "public_summary", "role_choices"],
+    properties: {
+      display_name: string({ minLength: 1, maxLength: 128 }),
+      public_id: ref("Uuid"),
+      public_summary: string({ minLength: 1, maxLength: 512 }),
+      role_choices: { type: "array", minItems: 2, maxItems: 2, uniqueItems: true, items: ref("ProjectRole") },
+    },
+    additionalProperties: false,
+  },
+  PublicProjectListResult: {
+    type: "object",
+    required: ["has_more", "items", "next_cursor"],
+    properties: {
+      has_more: { type: "boolean" },
+      items: { type: "array", items: ref("PublicProject") },
+      next_cursor: nullableString(),
+    },
+    additionalProperties: false,
+  },
+  PublicJoinPolicy: {
+    type: "object",
+    required: ["active_usage", "allowed_actions", "created_at", "disabled_at", "enabled", "enabled_at", "policy_version", "project", "public_id", "public_summary", "resource_limits", "updated_at"],
+    properties: {
+      active_usage: {
+        type: "object",
+        required: ["comments", "issues", "principals"],
+        properties: { comments: integer({ minimum: 0 }), issues: integer({ minimum: 0 }), principals: integer({ minimum: 0 }) },
+        additionalProperties: false,
+      },
+      allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["read", "enable", "update", "disable", "update_limits"] }) },
+      created_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      disabled_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      enabled: { type: "boolean" },
+      enabled_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      policy_version: { anyOf: [ref("Version"), { type: "null" }] },
+      project: {
+        type: "object",
+        required: ["display_name", "id", "key", "version", "workspace_id", "workspace_key"],
+        properties: { display_name: string({ minLength: 1, maxLength: 128 }), id: ref("Uuid"), key: string(), version: ref("Version"), workspace_id: ref("Uuid"), workspace_key: string() },
+        additionalProperties: false,
+      },
+      public_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+      public_summary: { anyOf: [string({ minLength: 1, maxLength: 512 }), { type: "null" }] },
+      resource_limits: {
+        type: "object",
+        required: ["comments", "issues", "principals"],
+        properties: {
+          comments: { anyOf: [integer({ minimum: 1 }), { type: "null" }] },
+          issues: { anyOf: [integer({ minimum: 1 }), { type: "null" }] },
+          principals: { anyOf: [integer({ minimum: 1 }), { type: "null" }] },
+        },
+        additionalProperties: false,
+      },
+      updated_at: ref("Timestamp"),
+    },
+    additionalProperties: false,
+  },
+  PublicJoinPolicyWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("PublicJoinPolicy") },
+    additionalProperties: false,
+  },
+  PublicJoinRedemptionResource: {
+    type: "object",
+    required: ["allowed_actions", "credential", "grant", "outcome", "principal", "project", "public_id"],
+    properties: {
+      allowed_actions: { type: "array", minItems: 1, uniqueItems: true, items: string({ enum: ["read", "write"] }) },
+      credential: {
+        anyOf: [
+          { type: "object", required: ["fingerprint", "id", "issued_at"], properties: { fingerprint: string({ minLength: 1 }), id: ref("Uuid"), issued_at: ref("Timestamp") }, additionalProperties: false },
+          { type: "null" },
+        ],
+      },
+      grant: {
+        type: "object",
+        required: ["effective_capabilities", "id", "role", "version"],
+        properties: {
+          effective_capabilities: { type: "object", required: ["read", "write"], properties: { read: { const: true }, write: { type: "boolean" } }, additionalProperties: false },
+          id: ref("Uuid"),
+          role: ref("ProjectRole"),
+          version: ref("Version"),
+        },
+        additionalProperties: false,
+      },
+      outcome: string({ enum: ["already_has_access", "created", "promoted", "regranted"] }),
+      principal: { type: "object", required: ["display_name", "principal_id"], properties: { display_name: string({ minLength: 1, maxLength: 128 }), principal_id: ref("Uuid") }, additionalProperties: false },
+      project: {
+        type: "object",
+        required: ["display_name", "id", "key", "public_summary", "workspace_id", "workspace_key"],
+        properties: { display_name: string({ minLength: 1, maxLength: 128 }), id: ref("Uuid"), key: string(), public_summary: string({ minLength: 1, maxLength: 512 }), workspace_id: ref("Uuid"), workspace_key: string() },
+        additionalProperties: false,
+      },
+      public_id: ref("Uuid"),
+    },
+    additionalProperties: false,
+  },
+  PublicJoinRedemptionWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("PublicJoinRedemptionResource") },
+    additionalProperties: false,
+  },
+  RateLimitSettings: {
+    type: "object",
+    required: ["allowed_actions", "configuration_source", "editable_via_api", "policies", "recent_429_summary"],
+    properties: {
+      allowed_actions: { type: "array", minItems: 1, maxItems: 1, items: { const: "read" } },
+      configuration_source: { const: "worker_configuration" },
+      editable_via_api: { const: false },
+      policies: {
+        type: "object",
+        required: ["instance", "principal", "unauthenticated_sensitive"],
+        properties: {
+          instance: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ const: 300 }), period_seconds: integer({ const: 60 }) }, additionalProperties: false },
+          principal: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ const: 120 }), period_seconds: integer({ const: 60 }) }, additionalProperties: false },
+          unauthenticated_sensitive: { type: "object", required: ["limit", "period_seconds"], properties: { limit: integer({ const: 30 }), period_seconds: integer({ const: 60 }) }, additionalProperties: false },
+        },
+        additionalProperties: false,
+      },
+      recent_429_summary: {
+        type: "object",
+        required: ["as_of", "by_scope", "observation_scope", "total", "window_seconds"],
+        properties: {
+          as_of: ref("Timestamp"),
+          by_scope: { type: "object", required: ["instance", "principal", "unauthenticated_sensitive"], properties: { instance: integer({ minimum: 0 }), principal: integer({ minimum: 0 }), unauthenticated_sensitive: integer({ minimum: 0 }) }, additionalProperties: false },
+          observation_scope: { const: "worker_isolate_best_effort" },
+          total: integer({ minimum: 0, maximum: 128 }),
+          window_seconds: integer({ const: 300 }),
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
   Health: { type: "object", required: ["service_version", "schema_version", "d1"], properties: { service_version: string(), schema_version: integer({ minimum: 1 }), d1: string({ enum: ["reachable", "unavailable"] }) }, additionalProperties: false },
   InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
   IssueLabelSummary: {
@@ -1488,6 +1630,14 @@ const querySets = {
 };
 
 const operationResponseSchemas = {
+  listPublicProjects: ref("PublicProjectListResult"),
+  getPublicJoinPolicy: ref("PublicJoinPolicy"),
+  enablePublicJoin: ref("PublicJoinPolicyWriteResult"),
+  disablePublicJoin: ref("PublicJoinPolicyWriteResult"),
+  getProjectResourceLimits: ref("PublicJoinPolicy"),
+  updateProjectResourceLimits: ref("PublicJoinPolicyWriteResult"),
+  getRateLimitSettings: ref("RateLimitSettings"),
+  redeemPublicJoin: ref("PublicJoinRedemptionWriteResult"),
   createWebLaunch: ref("BrowserLaunchWriteResult"),
   redeemWebLaunch: ref("WebSessionExchangeWriteResult"),
   getWebSession: ref("WebSessionView"),

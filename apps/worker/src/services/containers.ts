@@ -171,8 +171,8 @@ async function readWorkspace(
        WHERE key = ?1 ${includeDeleted ? "" : "AND deleted_at IS NULL"}
        LIMIT 1`,
     ).bind(key).first<WorkspaceRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -199,8 +199,8 @@ async function readProject(
          ${includeDeleted ? "" : "AND w.deleted_at IS NULL AND p.deleted_at IS NULL"}
        LIMIT 1`,
     ).bind(workspaceKey, projectKey).first<ProjectRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -241,8 +241,8 @@ async function readWorkspacePage(
        LIMIT ?4`,
     ).bind(visible, first, stableId, limit + 1).all<WorkspaceRow>();
     return result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -280,8 +280,8 @@ async function readProjectPage(
        LIMIT ?5`,
     ).bind(workspaceKey, visible, first, stableId, limit + 1).all<ProjectRow>();
     return result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -425,8 +425,8 @@ async function ownerGuardRejected(db: D1Database, auth: AuthContext, now: number
   const guard = buildCurrentAuthGuard(auth, now, 1, true);
   try {
     return await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -747,8 +747,8 @@ async function resumedPublicProjects(db: D1Database, workspaceId: string): Promi
       has_more: result.results.length > 100,
       projects: result.results.slice(0, 100).map((row) => ({ id: row.id, key: row.key })),
     };
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1181,8 +1181,8 @@ export async function listStatuses(
        WHERE project_id = ?1 ORDER BY status_key`,
     ).bind(project.id).all<StatusNameRow>();
     overrides = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   const names = new Map(overrides.map((row) => [row.status_key, row.display_name]));
   return {

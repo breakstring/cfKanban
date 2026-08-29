@@ -8,10 +8,16 @@ import {
   serializeSessionCookie,
 } from "../../apps/worker/src/kernel/csrf.ts";
 import { sha256Hex, timingSafeEqual } from "../../apps/worker/src/kernel/crypto.ts";
-import { requireDiscoverable, resolveSqlFragment } from "../../apps/worker/src/kernel/d1.ts";
-import { ApiError, errorResponse } from "../../apps/worker/src/kernel/errors.ts";
+import { lookupOpaqueResourceId, requireDiscoverable, resolveSqlFragment } from "../../apps/worker/src/kernel/d1.ts";
+import { ApiError, errorResponse, platformUnavailable } from "../../apps/worker/src/kernel/errors.ts";
 import { canonicalJson, computeRequestHash, validateIdempotencyKey } from "../../apps/worker/src/kernel/idempotency.ts";
 import { MAX_JSON_BYTES, readJsonBody, validateJsonObject } from "../../apps/worker/src/kernel/http.ts";
+import {
+  enforceInstanceRateLimit,
+  isRateLimitedDynamicPath,
+  isUnauthenticatedSensitivePath,
+  recentRateLimitSummary,
+} from "../../apps/worker/src/kernel/rate-limit.ts";
 import {
   verifyAuthenticationCredentialEqualized,
   verifyRegistrationCredential,
@@ -124,6 +130,139 @@ test("error envelope keeps Retry-After aligned and redacts unsafe details", asyn
   assert.equal(body.details.unsafe_value, "[REDACTED]");
   assert.equal(body.details.unsafe_launch_value, "[REDACTED]");
   assert.doesNotMatch(JSON.stringify(body), /token_digest|credentials|cf[kl]_v1_/i);
+});
+
+test("native rate-limit rejection maps to the stable machine error and bounded summary", async () => {
+  const now = Date.now();
+  const before = recentRateLimitSummary(now).by_scope.instance;
+  const env = {
+    INSTANCE_RATE_LIMITER: {
+      async limit({ key }) {
+        assert.equal(key, "dynamic-api");
+        return { success: false };
+      },
+    },
+  };
+
+  await assert.rejects(enforceInstanceRateLimit(env), (error) => {
+    assert.equal(error.status, 429);
+    assert.equal(error.code, "RATE_LIMITED");
+    assert.equal(error.category, "rate_limit");
+    assert.equal(error.source, "service");
+    assert.equal(error.retryable, true);
+    assert.equal(error.recovery, "retry_after");
+    assert.equal(error.retryAfterSeconds, 60);
+    assert.deepEqual(error.details, {
+      limit: 300,
+      period_seconds: 60,
+      scope: "instance",
+    });
+    return true;
+  });
+  const after = recentRateLimitSummary(Date.now());
+  assert.equal(after.by_scope.instance, before + 1);
+  assert.equal(after.observation_scope, "worker_isolate_best_effort");
+  assert.equal(after.window_seconds, 300);
+  assert.ok(after.total <= 128);
+});
+
+test("rate-limit routing covers every Worker-owned dynamic surface and bypasses static assets", () => {
+  for (const pathname of [
+    "/api/v1/issues",
+    "/api/unknown",
+    "/healthz",
+    "/openapi.json",
+    "/invite",
+    "/app/launch",
+    "/.well-known/cfkanban-instance.json",
+  ]) assert.equal(isRateLimitedDynamicPath(pathname), true, pathname);
+  for (const pathname of ["/", "/assets/app.js", "/favicon.ico", "/apiary"]) {
+    assert.equal(isRateLimitedDynamicPath(pathname), false, pathname);
+  }
+
+  for (const pathname of [
+    "/api/v1/invitations/redeem",
+    "/api/v1/web-sessions/redeem",
+    "/api/v1/web-authentication/options",
+    "/api/v1/web-authentication/verify",
+    `/api/v1/public-joins/${crypto.randomUUID()}/redeem`,
+  ]) assert.equal(isUnauthenticatedSensitivePath("POST", pathname), true, pathname);
+  assert.equal(isUnauthenticatedSensitivePath("GET", "/api/v1/web-authentication/options"), false);
+  assert.equal(isUnauthenticatedSensitivePath("POST", "/api/v1/me/passkeys"), false);
+  assert.equal(isUnauthenticatedSensitivePath("POST", "/assets/redeem"), false);
+});
+
+test("official D1 quota errors map separately from unknown platform failures", () => {
+  const now = Date.parse("2026-08-29T23:59:30.000Z");
+  const dailyRead = platformUnavailable(
+    "d1",
+    new Error("D1_ERROR: Your account has exceeded D1's free tier daily row read limit. Upgrade to a paid plan or wait until tomorrow (midnight UTC) to continue. See https://developers.cloudflare.com/d1/platform/limits/ for more details."),
+    now,
+  );
+  assert.deepEqual(errorShape(dailyRead), {
+    category: "platform_quota",
+    code: "PLATFORM_QUOTA_EXCEEDED",
+    details: {
+      component: "d1",
+      quota_kind: "daily_reads",
+      reset_at: "2026-08-30T00:00:00.000Z",
+    },
+    message: "The D1 daily quota does not allow this operation until its next reset.",
+    recovery: "wait_for_platform_reset",
+    retryable: true,
+    status: 503,
+  });
+  assert.equal(dailyRead.retryAfterSeconds, 30);
+  assert.equal(dailyRead.source, "cloudflare_platform");
+
+  const dailyWrite = platformUnavailable("d1", {
+    cause: new Error("Your account has exceeded D1's free tier daily row write limit. Upgrade to a paid plan or wait until tomorrow (midnight UTC) to continue. See https://developers.cloudflare.com/d1/platform/limits/ for more details."),
+  }, now);
+  assert.equal(dailyWrite.details.quota_kind, "daily_writes");
+  assert.equal(dailyWrite.retryAfterSeconds, 30);
+
+  for (const message of [
+    "D1_ERROR: Your account has exceeded D1's maximum account storage limit, please contact Cloudflare to raise your limit",
+    "D1_ERROR: Exceeded maximum DB size.",
+  ]) {
+    const storage = platformUnavailable("d1", new Error(message), now);
+    assert.equal(storage.category, "platform_quota");
+    assert.equal(storage.code, "PLATFORM_QUOTA_EXCEEDED");
+    assert.deepEqual(storage.details, { component: "d1", quota_kind: "storage" });
+    assert.equal(storage.recovery, "request_owner");
+    assert.equal(storage.retryable, false);
+    assert.equal(storage.retryAfterSeconds, undefined);
+  }
+
+  const overload = platformUnavailable("d1", new Error("D1_ERROR: D1 DB is overloaded. Too many requests queued."), now);
+  assert.equal(overload.category, "platform_failure");
+  assert.equal(overload.code, "PLATFORM_UNAVAILABLE");
+  assert.equal(overload.details.failure_class, "unavailable");
+});
+
+test("D1 access helpers preserve recognized quota classification", async () => {
+  const quotaMessage = "D1_ERROR: Exceeded maximum DB size.";
+  const db = {
+    prepare() {
+      return {
+        bind() {
+          return {
+            async first() {
+              throw new Error(quotaMessage);
+            },
+          };
+        },
+      };
+    },
+  };
+  await assert.rejects(lookupOpaqueResourceId(db, "principal", crypto.randomUUID()), (error) => {
+    assert.equal(error.status, 503);
+    assert.equal(error.code, "PLATFORM_QUOTA_EXCEEDED");
+    assert.equal(error.category, "platform_quota");
+    assert.equal(error.source, "cloudflare_platform");
+    assert.deepEqual(error.details, { component: "d1", quota_kind: "storage" });
+    return true;
+  });
 });
 
 test("cookie write protection enforces same-origin and double-submit while Bearer wins", () => {

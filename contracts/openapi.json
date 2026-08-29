@@ -7068,7 +7068,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/PublicProjectListResult"
                 }
               }
             }
@@ -7136,8 +7136,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/PublicJoinPolicy"
                 }
               }
             }
@@ -7209,7 +7208,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PublicJoinPolicyWriteResult"
                 }
               }
             }
@@ -7294,7 +7293,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PublicJoinPolicyWriteResult"
                 }
               }
             }
@@ -7362,8 +7361,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/PublicJoinPolicy"
                 }
               }
             }
@@ -7432,7 +7430,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PublicJoinPolicyWriteResult"
                 }
               }
             }
@@ -7504,8 +7502,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/RateLimitSettings"
                 }
               }
             }
@@ -7580,7 +7577,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/PublicJoinRedemptionWriteResult"
                 }
               }
             }
@@ -8961,33 +8958,676 @@
         "additionalProperties": false
       },
       "RedeemPublicJoinRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "display_name",
+              "new_credential_token",
+              "redeem_as",
+              "role"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "new_credential_token": {
+                "type": "string",
+                "minLength": 52,
+                "maxLength": 584,
+                "pattern": "^cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}$",
+                "writeOnly": true
+              },
+              "redeem_as": {
+                "const": "new_principal"
+              },
+              "role": {
+                "$ref": "#/components/schemas/ProjectRole"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "redeem_as",
+              "role"
+            ],
+            "properties": {
+              "redeem_as": {
+                "const": "current_principal"
+              },
+              "role": {
+                "$ref": "#/components/schemas/ProjectRole"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "PublicProject": {
         "type": "object",
         "required": [
-          "role",
-          "redeem_as"
+          "display_name",
+          "public_id",
+          "public_summary",
+          "role_choices"
         ],
         "properties": {
-          "role": {
-            "$ref": "#/components/schemas/ProjectRole"
-          },
-          "redeem_as": {
-            "type": "string",
-            "enum": [
-              "new_principal",
-              "current_principal"
-            ]
-          },
           "display_name": {
             "type": "string",
             "minLength": 1,
             "maxLength": 128
           },
-          "new_credential_token": {
+          "public_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "public_summary": {
             "type": "string",
-            "minLength": 52,
-            "maxLength": 584,
-            "pattern": "^cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}$",
-            "writeOnly": true
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "role_choices": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/ProjectRole"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublicProjectListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicProject"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublicJoinPolicy": {
+        "type": "object",
+        "required": [
+          "active_usage",
+          "allowed_actions",
+          "created_at",
+          "disabled_at",
+          "enabled",
+          "enabled_at",
+          "policy_version",
+          "project",
+          "public_id",
+          "public_summary",
+          "resource_limits",
+          "updated_at"
+        ],
+        "properties": {
+          "active_usage": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "issues": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "principals": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "enable",
+                "update",
+                "disable",
+                "update_limits"
+              ]
+            }
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "disabled_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "enabled_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "id",
+              "key",
+              "version",
+              "workspace_id",
+              "workspace_key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "version": {
+                "$ref": "#/components/schemas/Version"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "public_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "public_summary": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resource_limits": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "issues": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "principals": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublicJoinPolicyWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/PublicJoinPolicy"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublicJoinRedemptionResource": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "credential",
+          "grant",
+          "outcome",
+          "principal",
+          "project",
+          "public_id"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "write"
+              ]
+            }
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "fingerprint",
+                  "id",
+                  "issued_at"
+                ],
+                "properties": {
+                  "fingerprint": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  "issued_at": {
+                    "$ref": "#/components/schemas/Timestamp"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grant": {
+            "type": "object",
+            "required": [
+              "effective_capabilities",
+              "id",
+              "role",
+              "version"
+            ],
+            "properties": {
+              "effective_capabilities": {
+                "type": "object",
+                "required": [
+                  "read",
+                  "write"
+                ],
+                "properties": {
+                  "read": {
+                    "const": true
+                  },
+                  "write": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "role": {
+                "$ref": "#/components/schemas/ProjectRole"
+              },
+              "version": {
+                "$ref": "#/components/schemas/Version"
+              }
+            },
+            "additionalProperties": false
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "already_has_access",
+              "created",
+              "promoted",
+              "regranted"
+            ]
+          },
+          "principal": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "principal_id"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "id",
+              "key",
+              "public_summary",
+              "workspace_id",
+              "workspace_key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "public_summary": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "public_id": {
+            "$ref": "#/components/schemas/Uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublicJoinRedemptionWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/PublicJoinRedemptionResource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RateLimitSettings": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "configuration_source",
+          "editable_via_api",
+          "policies",
+          "recent_429_summary"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "const": "read"
+            }
+          },
+          "configuration_source": {
+            "const": "worker_configuration"
+          },
+          "editable_via_api": {
+            "const": false
+          },
+          "policies": {
+            "type": "object",
+            "required": [
+              "instance",
+              "principal",
+              "unauthenticated_sensitive"
+            ],
+            "properties": {
+              "instance": {
+                "type": "object",
+                "required": [
+                  "limit",
+                  "period_seconds"
+                ],
+                "properties": {
+                  "limit": {
+                    "type": "integer",
+                    "format": "int64",
+                    "const": 300
+                  },
+                  "period_seconds": {
+                    "type": "integer",
+                    "format": "int64",
+                    "const": 60
+                  }
+                },
+                "additionalProperties": false
+              },
+              "principal": {
+                "type": "object",
+                "required": [
+                  "limit",
+                  "period_seconds"
+                ],
+                "properties": {
+                  "limit": {
+                    "type": "integer",
+                    "format": "int64",
+                    "const": 120
+                  },
+                  "period_seconds": {
+                    "type": "integer",
+                    "format": "int64",
+                    "const": 60
+                  }
+                },
+                "additionalProperties": false
+              },
+              "unauthenticated_sensitive": {
+                "type": "object",
+                "required": [
+                  "limit",
+                  "period_seconds"
+                ],
+                "properties": {
+                  "limit": {
+                    "type": "integer",
+                    "format": "int64",
+                    "const": 30
+                  },
+                  "period_seconds": {
+                    "type": "integer",
+                    "format": "int64",
+                    "const": 60
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "recent_429_summary": {
+            "type": "object",
+            "required": [
+              "as_of",
+              "by_scope",
+              "observation_scope",
+              "total",
+              "window_seconds"
+            ],
+            "properties": {
+              "as_of": {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              "by_scope": {
+                "type": "object",
+                "required": [
+                  "instance",
+                  "principal",
+                  "unauthenticated_sensitive"
+                ],
+                "properties": {
+                  "instance": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  "principal": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  "unauthenticated_sensitive": {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              },
+              "observation_scope": {
+                "const": "worker_isolate_best_effort"
+              },
+              "total": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 128
+              },
+              "window_seconds": {
+                "type": "integer",
+                "format": "int64",
+                "const": 300
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

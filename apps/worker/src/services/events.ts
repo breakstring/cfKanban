@@ -168,15 +168,15 @@ async function eventSequenceForAnchor(db: D1Database, eventId: string | null): P
     return row.sequence;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
 function eventPayload(value: string): JsonValue {
   try {
     return JSON.parse(value) as JsonValue;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -307,8 +307,8 @@ export async function listEvents(
       ...authGuard.values,
     ).all<EventRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   await verifyCurrentAuth(db, auth, now);
   const currentScope = await resolveEventScope(db, auth, url);
@@ -371,8 +371,8 @@ export async function listAuditEvents(
        LIMIT ?2`,
     ).bind(afterSequence, limit + 1, ...authGuard.values).all<EventRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   await verifyCurrentAuth(db, auth, now);
   const hasMore = rows.length > limit;

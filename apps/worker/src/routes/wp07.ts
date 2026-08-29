@@ -9,6 +9,7 @@ import {
 } from "../kernel/csrf.ts";
 import { ApiError } from "../kernel/errors.ts";
 import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
+import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
 import {
@@ -64,6 +65,24 @@ function clearedCookieHeaders(): Headers {
   return headers;
 }
 
+async function bearerAuth(request: Request, env: WorkerEnv) {
+  const auth = await authenticateBearer(env.DB, request.headers.get("authorization"));
+  await enforcePrincipalRateLimit(env, auth);
+  return auth;
+}
+
+async function cookieAuth(request: Request, env: WorkerEnv, context: RequestContext) {
+  const auth = await authenticateCookieSession(env.DB, request, context.startedAt);
+  await enforcePrincipalRateLimit(env, auth);
+  return auth;
+}
+
+async function authenticated(request: Request, env: WorkerEnv, context: RequestContext) {
+  const auth = await authenticateRequest(env.DB, request, context.startedAt);
+  await enforcePrincipalRateLimit(env, auth);
+  return auth;
+}
+
 export function registerWp07Routes(router: Router): Router {
   router
     .get("/app/launch", async (_request, env, context) => {
@@ -93,7 +112,7 @@ export function registerWp07Routes(router: Router): Router {
       });
     })
     .post("/api/v1/web-launches", async (request, env, context) => {
-      const auth = await authenticateBearer(env.DB, request.headers.get("authorization"));
+      const auth = await bearerAuth(request, env);
       const value = await body(request, ["target"], ["target"]);
       return jsonResponse(await createWebLaunch(
         env.DB,
@@ -113,13 +132,13 @@ export function registerWp07Routes(router: Router): Router {
       ), context.requestId);
     })
     .get("/api/v1/web-session", async (request, env, context) => {
-      const auth = await authenticateCookieSession(env.DB, request, context.startedAt);
+      const auth = await cookieAuth(request, env, context);
       return jsonResponse(await getWebSession(env.DB, auth, context.startedAt), context.requestId, {
         headers: { "cache-control": "no-store" },
       });
     })
     .delete("/api/v1/web-session", async (request, env, context) => {
-      const auth = await authenticateCookieSession(env.DB, request, context.startedAt);
+      const auth = await cookieAuth(request, env, context);
       enforceCookieWriteProtection(request, auth);
       return jsonResponse(
         await revokeWebSession(env.DB, auth, context.startedAt),
@@ -128,7 +147,7 @@ export function registerWp07Routes(router: Router): Router {
       );
     })
     .post("/api/v1/me/passkeys/registration-options", async (request, env, context) => {
-      const auth = await authenticateCookieSession(env.DB, request, context.startedAt);
+      const auth = await cookieAuth(request, env, context);
       enforceCookieWriteProtection(request, auth);
       await body(request, [], []);
       return jsonResponse(await createPasskeyRegistrationOptions(
@@ -139,13 +158,13 @@ export function registerWp07Routes(router: Router): Router {
       ), context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .get("/api/v1/me/passkeys", async (request, env, context) => {
-      const auth = await authenticateCookieSession(env.DB, request, context.startedAt);
+      const auth = await cookieAuth(request, env, context);
       return jsonResponse(await listMyPasskeys(env.DB, auth, context.startedAt), context.requestId, {
         headers: { "cache-control": "no-store" },
       });
     })
     .post("/api/v1/me/passkeys", async (request, env, context) => {
-      const auth = await authenticateCookieSession(env.DB, request, context.startedAt);
+      const auth = await cookieAuth(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const value = await body(request, ["challenge_id", "credential"], ["challenge_id", "credential"]);
       return jsonResponse(await registerPasskey(
@@ -158,7 +177,7 @@ export function registerWp07Routes(router: Router): Router {
       ), context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .delete("/api/v1/me/passkeys/{passkey_id}", async (request, env, context) => {
-      const auth = await authenticateCookieSession(env.DB, request, context.startedAt);
+      const auth = await cookieAuth(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const result = await revokeMyPasskey(
         env.DB,
@@ -178,7 +197,7 @@ export function registerWp07Routes(router: Router): Router {
       );
     })
     .delete("/api/v1/admin/passkeys/{passkey_id}", async (request, env, context) => {
-      const auth = await authenticateRequest(env.DB, request, context.startedAt);
+      const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       return jsonResponse(await revokePrincipalPasskey(
         env.DB,

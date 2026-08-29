@@ -2,6 +2,7 @@ import { requireVersion } from "../domain/model.ts";
 import { authenticateRequest } from "../kernel/auth.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
 import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
+import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
 import {
@@ -34,7 +35,9 @@ function expectedVersionFromQuery(url: URL): number {
 }
 
 async function authenticated(request: Request, env: WorkerEnv, context: RequestContext) {
-  return authenticateRequest(env.DB, request, context.startedAt);
+  const auth = await authenticateRequest(env.DB, request, context.startedAt);
+  await enforcePrincipalRateLimit(env, auth);
+  return auth;
 }
 
 async function writeAuth(request: Request, env: WorkerEnv, context: RequestContext) {

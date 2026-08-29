@@ -281,8 +281,8 @@ async function readRelation(
          AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL`}
        LIMIT 1`,
     ).bind(relationId).first<RelationRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -361,8 +361,8 @@ async function readCurrentRelationAccess(
       auth.principalId,
       ...authGuard.values,
     ).first<CurrentRelationAccessRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -565,8 +565,8 @@ async function existingRelation(
        WHERE kind = ?1 AND source_issue_id = ?2 AND target_issue_id = ?3
        LIMIT 1`,
     ).bind(kind, sourceId, targetId).first();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -629,8 +629,8 @@ export async function listIssueRelations(
         ...authGuard.values,
       ).all<RelationRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   await verifyCurrentAuth(db, auth, now);
   const currentVisibleProjects = await resolveVisibleProjects(

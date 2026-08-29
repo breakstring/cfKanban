@@ -54,7 +54,7 @@ async function readInstance(db: D1Database): Promise<InstanceRow> {
     return row;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -64,8 +64,8 @@ async function readPrincipal(db: D1Database, principalId: string): Promise<Princ
       `SELECT id, display_name, version, created_at, updated_at
        FROM principals WHERE id = ?1 LIMIT 1`,
     ).bind(principalId).first<PrincipalRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -78,8 +78,8 @@ async function authGuardRejected(
   const guard = buildCurrentAuthGuard(auth, now, 1, ownerOnly);
   try {
     return await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 

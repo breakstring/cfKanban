@@ -429,8 +429,8 @@ async function resolveIssueRecoveryProjects(
       workspaceKey: row.workspace_key,
       workspaceName: row.workspace_name,
     }));
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -475,8 +475,8 @@ async function readIssueRow(db: D1Database, number: number, includeDeleted = fal
          ${includeDeleted ? "" : "AND i.deleted_at IS NULL"}
        LIMIT 1`,
     ).bind(number).first<IssueRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -498,8 +498,8 @@ async function labelsForIssues(db: D1Database, issueIds: readonly string[]): Pro
       byIssue.set(row.issue_id, labels);
     }
     return byIssue;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -542,8 +542,8 @@ async function applyVisibleBlockedState(
     for (const row of rows) {
       if (blockedIds.has(row.id)) row.is_blocked = 1;
     }
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -837,7 +837,7 @@ async function tombstoneQuotaRows(
     return byIssue;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -853,8 +853,8 @@ async function requireIssueRecoveryAccess(
     row = await db.prepare(
       `${ISSUE_SELECT} WHERE i.number = ?1 LIMIT 1`,
     ).bind(issueNumber(identifier)).first<IssueRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (row === null || (requireDeleted && row.deleted_at === null)) throw notFound();
   const projects = await resolveIssueRecoveryProjects(db, auth, row.project_id);
@@ -1156,7 +1156,7 @@ async function listIssueRows(
     }
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
   return { hasMore, nextCursor, rows };
 }
@@ -1331,8 +1331,8 @@ async function visibleRelations(
       })),
       totalCount: result.results[0]?.total_count ?? 0,
     };
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1350,8 +1350,8 @@ async function recentComments(db: D1Database, issueId: string): Promise<BoundedS
       items: result.results.map(({ total_count: _totalCount, ...row }) => row).reverse(),
       totalCount: result.results[0]?.total_count ?? 0,
     };
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1564,8 +1564,8 @@ async function assigneeEligible(db: D1Database, projectId: string, principalId: 
        )`,
     ).bind(principalId, projectId).first();
     return row !== null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1578,7 +1578,7 @@ async function principalDisplayName(db: D1Database, principalId: string): Promis
     return row.display_name;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1592,8 +1592,8 @@ async function projectStatusDisplayName(
       "SELECT display_name FROM project_status_names WHERE project_id = ?1 AND status_key = ?2",
     ).bind(projectId, statusKey).first<{ display_name: string }>();
     return row?.display_name ?? statusDefinition(statusKey).displayName;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1606,8 +1606,8 @@ async function activeLabelsExist(db: D1Database, projectId: string, labelIds: re
          AND id IN (SELECT value FROM json_each(?2))`,
     ).bind(projectId, JSON.stringify(labelIds)).first<{ count: number }>();
     return row?.count === labelIds.length;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1661,8 +1661,8 @@ async function issueQuotaExceeded(db: D1Database, projectId: string, restoringCo
       issueCurrent: activeIssueCount,
       issueLimit: row.issue_limit ?? undefined,
     };
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -2099,8 +2099,8 @@ async function activeCommentCount(db: D1Database, issueId: string): Promise<numb
       "SELECT COUNT(*) AS count FROM comments WHERE issue_id = ?1 AND deleted_at IS NULL",
     ).bind(issueId).first<{ count: number }>();
     return row?.count ?? 0;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 

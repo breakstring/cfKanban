@@ -81,6 +81,55 @@ test("OpenAPI models Invitation create and redeem requests as discriminated unio
   );
 });
 
+test("OpenAPI fixes Public Join request unions, projections, and rate settings", async () => {
+  const document = JSON.parse(await readFile(
+    new URL("../../contracts/openapi.json", import.meta.url),
+    "utf8",
+  ));
+  const redeemBranches = document.components.schemas.RedeemPublicJoinRequest.oneOf;
+  assert.deepEqual(redeemBranches.map((branch) => branch.properties.redeem_as.const), [
+    "new_principal",
+    "current_principal",
+  ]);
+  assert.deepEqual(redeemBranches.map((branch) => branch.required), [
+    ["display_name", "new_credential_token", "redeem_as", "role"],
+    ["redeem_as", "role"],
+  ]);
+  assert.equal(redeemBranches.every((branch) => branch.additionalProperties === false), true);
+
+  assert.equal(document.components.schemas.PublicProject.additionalProperties, false);
+  assert.deepEqual(document.components.schemas.PublicProject.required, [
+    "display_name",
+    "public_id",
+    "public_summary",
+    "role_choices",
+  ]);
+  assert.equal(
+    document.paths["/api/v1/public-projects"].get.responses["200"]
+      .content["application/json"].schema.$ref,
+    "#/components/schemas/PublicProjectListResult",
+  );
+  assert.equal(
+    document.paths["/api/v1/public-joins/{public_id}/redeem"].post.responses["200"]
+      .content["application/json"].schema.$ref,
+    "#/components/schemas/PublicJoinRedemptionWriteResult",
+  );
+  assert.deepEqual(
+    document.components.schemas.PublicJoinRedemptionResource.properties.outcome.enum,
+    ["already_has_access", "created", "promoted", "regranted"],
+  );
+  assert.equal(
+    document.paths["/api/v1/admin/rate-limit-settings"].get.responses["200"]
+      .content["application/json"].schema.$ref,
+    "#/components/schemas/RateLimitSettings",
+  );
+  assert.equal(
+    document.components.schemas.RateLimitSettings.properties.recent_429_summary.properties
+      .observation_scope.const,
+    "worker_isolate_best_effort",
+  );
+});
+
 test("OpenAPI distinguishes Comment lifecycle shapes and deleted-only permissions", async () => {
   const document = JSON.parse(await readFile(
     new URL("../../contracts/openapi.json", import.meta.url),

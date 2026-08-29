@@ -2,6 +2,7 @@ import { requireVersion } from "../domain/model.ts";
 import { authenticateRequest } from "../kernel/auth.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
 import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
+import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
 import {
@@ -42,12 +43,15 @@ function expectedVersionFromQuery(url: URL): number {
 
 async function ownerWriteAuth(request: Request, env: WorkerEnv, context: RequestContext) {
   const auth = await authenticateRequest(env.DB, request, context.startedAt);
+  await enforcePrincipalRateLimit(env, auth);
   enforceCookieWriteProtection(request, auth);
   return auth;
 }
 
 async function authenticated(request: Request, env: WorkerEnv, context: RequestContext) {
-  return authenticateRequest(env.DB, request, context.startedAt);
+  const auth = await authenticateRequest(env.DB, request, context.startedAt);
+  await enforcePrincipalRateLimit(env, auth);
+  return auth;
 }
 
 export function registerWp04Routes(router: Router): Router {
@@ -87,6 +91,7 @@ export function registerWp04Routes(router: Router): Router {
         value.display_name as JsonValue | undefined,
         value.new_credential_token as JsonValue | undefined,
         context.startedAt,
+        (auth) => enforcePrincipalRateLimit(env, auth),
       ), context.requestId);
     })
     .get("/api/v1/admin/invitations", async (request, env, context) => {
@@ -168,6 +173,7 @@ export function registerWp04Routes(router: Router): Router {
         request,
         value.new_credential_token as JsonValue,
         context.startedAt,
+        (auth) => enforcePrincipalRateLimit(env, auth),
       ), context.requestId);
     })
     .get("/api/v1/admin/projects/{project_id}/grants", async (request, env, context) => {

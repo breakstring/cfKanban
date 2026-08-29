@@ -67,8 +67,8 @@ function completionPayload(value: string | null): JsonValue {
   if (value === null) return null;
   try {
     return JSON.parse(value) as JsonValue;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -154,8 +154,8 @@ async function commentRestoreQuotaReason(
        WHERE project.id = ?1
        LIMIT 1`,
     ).bind(projectId).first<CapacityRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (row === null || row.policy_enabled === 0) return null;
   if (
@@ -196,8 +196,8 @@ async function readComment(db: D1Database, commentId: string): Promise<CommentRo
        WHERE comment.id = ?1
        LIMIT 1`,
     ).bind(commentId).first<CommentRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -343,8 +343,8 @@ async function readCommentOperationIssueReference(
        ORDER BY event_index
        LIMIT 1`,
     ).bind(operationId).first<{ payload_json: string }>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (row === null) throw new AtomicBatchRejectedError();
   let payload: unknown;
@@ -401,7 +401,7 @@ async function assertReplyValid(
     if (reply === null) throw notFound();
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -469,8 +469,8 @@ export async function listComments(
          LIMIT ?4`,
       ).bind(issue.id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<CommentRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);

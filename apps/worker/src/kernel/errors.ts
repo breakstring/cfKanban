@@ -266,7 +266,109 @@ export function businessQuotaExceeded(
   });
 }
 
-export function platformUnavailable(component: "d1" | "worker" = "worker"): ApiError {
+export function rateLimited(
+  scope: "instance" | "principal" | "unauthenticated_sensitive",
+  limit: number,
+  periodSeconds: number,
+): ApiError {
+  return new ApiError({
+    category: "rate_limit",
+    code: "RATE_LIMITED",
+    details: { limit, period_seconds: periodSeconds, scope },
+    message: "The application request rate limit was reached.",
+    recovery: "retry_after",
+    retryable: true,
+    retryAfterSeconds: periodSeconds,
+    status: 429,
+  });
+}
+
+type D1QuotaKind = "daily_reads" | "daily_writes" | "storage";
+
+const D1_QUOTA_MESSAGES: Readonly<Record<D1QuotaKind, readonly string[]>> = {
+  daily_reads: [
+    "Your account has exceeded D1's free tier daily row read limit. Upgrade to a paid plan or wait until tomorrow (midnight UTC) to continue. See https://developers.cloudflare.com/d1/platform/limits/ for more details.",
+  ],
+  daily_writes: [
+    "Your account has exceeded D1's free tier daily row write limit. Upgrade to a paid plan or wait until tomorrow (midnight UTC) to continue. See https://developers.cloudflare.com/d1/platform/limits/ for more details.",
+  ],
+  storage: [
+    "Your account has exceeded D1's maximum account storage limit, please contact Cloudflare to raise your limit",
+    "Exceeded maximum DB size.",
+  ],
+};
+
+function errorMessages(value: unknown, depth = 0): string[] {
+  if (depth > 2) return [];
+  if (typeof value === "string") return [value];
+  if (typeof value !== "object" || value === null) return [];
+  const candidate = value as { cause?: unknown; message?: unknown };
+  return [
+    ...(typeof candidate.message === "string" ? [candidate.message] : []),
+    ...errorMessages(candidate.cause, depth + 1),
+  ];
+}
+
+function recognizedD1Quota(error: unknown): D1QuotaKind | null {
+  const messages = errorMessages(error);
+  for (const [kind, knownMessages] of Object.entries(D1_QUOTA_MESSAGES) as Array<[
+    D1QuotaKind,
+    readonly string[],
+  ]>) {
+    if (knownMessages.some((known) => messages.some((message) => (
+      message === known || message === `D1_ERROR: ${known}`
+    )))) return kind;
+  }
+  return null;
+}
+
+export function d1PlatformQuotaExceeded(quotaKind: D1QuotaKind, now = Date.now()): ApiError {
+  if (quotaKind === "storage") {
+    return new ApiError({
+      category: "platform_quota",
+      code: "PLATFORM_QUOTA_EXCEEDED",
+      details: { component: "d1", quota_kind: quotaKind },
+      message: "The D1 platform quota does not allow this operation.",
+      recovery: "request_owner",
+      retryable: false,
+      source: "cloudflare_platform",
+      status: 503,
+    });
+  }
+  const current = new Date(now);
+  const resetAt = Date.UTC(
+    current.getUTCFullYear(),
+    current.getUTCMonth(),
+    current.getUTCDate() + 1,
+  );
+  const retryAfterSeconds = Math.max(1, Math.ceil((resetAt - now) / 1_000));
+  return new ApiError({
+    category: "platform_quota",
+    code: "PLATFORM_QUOTA_EXCEEDED",
+    details: {
+      component: "d1",
+      quota_kind: quotaKind,
+      reset_at: new Date(resetAt).toISOString(),
+    },
+    message: "The D1 daily quota does not allow this operation until its next reset.",
+    recovery: "wait_for_platform_reset",
+    retryable: true,
+    retryAfterSeconds,
+    source: "cloudflare_platform",
+    status: 503,
+  });
+}
+
+export function platformUnavailable(
+  component: "d1" | "worker" = "worker",
+  cause?: unknown,
+  now = Date.now(),
+): ApiError {
+  if (cause instanceof ApiError) return cause;
+  if (component === "d1") {
+    const quotaKind = recognizedD1Quota(cause);
+    if (quotaKind !== null) return d1PlatformQuotaExceeded(quotaKind, now);
+  }
   return new ApiError({
     category: "platform_failure",
     code: "PLATFORM_UNAVAILABLE",
