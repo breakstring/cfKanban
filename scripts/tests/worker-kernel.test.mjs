@@ -7,11 +7,20 @@ import {
   serializeCsrfCookie,
   serializeSessionCookie,
 } from "../../apps/worker/src/kernel/csrf.ts";
-import { timingSafeEqual } from "../../apps/worker/src/kernel/crypto.ts";
+import { sha256Hex, timingSafeEqual } from "../../apps/worker/src/kernel/crypto.ts";
 import { requireDiscoverable, resolveSqlFragment } from "../../apps/worker/src/kernel/d1.ts";
 import { ApiError, errorResponse } from "../../apps/worker/src/kernel/errors.ts";
 import { canonicalJson, computeRequestHash, validateIdempotencyKey } from "../../apps/worker/src/kernel/idempotency.ts";
 import { MAX_JSON_BYTES, readJsonBody, validateJsonObject } from "../../apps/worker/src/kernel/http.ts";
+import {
+  verifyAuthenticationCredentialEqualized,
+  WebAuthnVerificationError,
+} from "../../apps/worker/src/kernel/webauthn.ts";
+import {
+  base64UrlEncode,
+  createAssertionCredential,
+  createRegistrationFixture,
+} from "./webauthn-fixtures.mjs";
 
 function errorShape(error) {
   return {
@@ -182,6 +191,102 @@ test("constant-time comparison and hidden-resource errors are stable", () => {
   }
   assert.deepEqual(failures[0], failures[1]);
   assert.equal(failures[0].code, "NOT_FOUND");
+});
+
+test("Passkey authentication equalizes ES256 and RS256 verification paths", async () => {
+  const challenge = base64UrlEncode(new Uint8Array(32).fill(0x4a));
+  const expectedOrigin = "https://kanban.example.test";
+  const rpId = "kanban.example.test";
+  const expectedUserHandle = base64UrlEncode(new TextEncoder().encode(crypto.randomUUID()));
+  const wrongUserHandle = base64UrlEncode(new TextEncoder().encode(crypto.randomUUID()));
+  const challengeDigest = await sha256Hex(challenge);
+  const fallback = {
+    challengeDigest,
+    expectedOrigin,
+    rpId,
+    userHandle: wrongUserHandle,
+  };
+  const verifyCalls = [];
+  const originalVerify = crypto.subtle.verify;
+  crypto.subtle.verify = async function instrumentedVerify(algorithm, ...args) {
+    verifyCalls.push(typeof algorithm === "string" ? algorithm : algorithm.name);
+    return originalVerify.call(this, algorithm, ...args);
+  };
+  const expectedAlgorithms = ["ECDSA", "RSASSA-PKCS1-v1_5"];
+  try {
+    const es256 = await createRegistrationFixture({ algorithm: -7, challenge, origin: expectedOrigin, rpId });
+    const wrongHandleAssertion = await createAssertionCredential({
+      algorithm: -7,
+      challenge,
+      credentialId: es256.credentialId,
+      origin: expectedOrigin,
+      privateKey: es256.privateKey,
+      rpId,
+      signCount: 1,
+      userHandle: wrongUserHandle,
+    });
+    await assert.rejects(
+      verifyAuthenticationCredentialEqualized(
+        wrongHandleAssertion,
+        {
+          algorithm: -7,
+          backupEligible: false,
+          challengeDigest,
+          credentialId: es256.credentialId,
+          expectedOrigin,
+          publicKeyCose: es256.publicKeyCose,
+          rpId,
+          userHandle: expectedUserHandle,
+        },
+        { ...fallback, credentialId: es256.credentialId },
+      ),
+      WebAuthnVerificationError,
+    );
+    assert.deepEqual(verifyCalls.sort(), expectedAlgorithms);
+
+    verifyCalls.length = 0;
+    const unknown = await verifyAuthenticationCredentialEqualized(
+      wrongHandleAssertion,
+      null,
+      { ...fallback, credentialId: es256.credentialId },
+    );
+    assert.equal(unknown, null);
+    assert.deepEqual(verifyCalls.sort(), expectedAlgorithms);
+
+    verifyCalls.length = 0;
+    const rs256 = await createRegistrationFixture({ algorithm: -257, challenge, origin: expectedOrigin, rpId });
+    const invalidRsaAssertion = await createAssertionCredential({
+      algorithm: -257,
+      challenge,
+      credentialId: rs256.credentialId,
+      origin: expectedOrigin,
+      privateKey: rs256.privateKey,
+      rpId,
+      signCount: 1,
+      userHandle: expectedUserHandle,
+    });
+    invalidRsaAssertion.response.signature = "AA";
+    await assert.rejects(
+      verifyAuthenticationCredentialEqualized(
+        invalidRsaAssertion,
+        {
+          algorithm: -257,
+          backupEligible: false,
+          challengeDigest,
+          credentialId: rs256.credentialId,
+          expectedOrigin,
+          publicKeyCose: rs256.publicKeyCose,
+          rpId,
+          userHandle: expectedUserHandle,
+        },
+        { ...fallback, credentialId: rs256.credentialId },
+      ),
+      WebAuthnVerificationError,
+    );
+    assert.deepEqual(verifyCalls.sort(), expectedAlgorithms);
+  } finally {
+    crypto.subtle.verify = originalVerify;
+  }
 });
 
 test("SQL fragments come only from a code allowlist", () => {

@@ -7,6 +7,11 @@ const MAX_CLIENT_DATA_BYTES = 8 * 1_024;
 const MAX_ATTESTATION_BYTES = 64 * 1_024;
 const MAX_AUTHENTICATOR_DATA_BYTES = 8 * 1_024;
 const MAX_SIGNATURE_BYTES = 2 * 1_024;
+// Fixed public-only keys keep every structurally valid authentication attempt
+// on one ES256 and one RS256 import/verify path. Their private keys are not
+// retained, so a fallback verification can never authenticate caller input.
+const FAILURE_EQUALIZATION_ES256_PUBLIC_KEY_COSE = "pQECAyYgASFYIPvtToyXt8StHH1AVpV1CwxQjnI49md3d76LumwzowvEIlggvIZ_OJIMw9Nla4WYJD3D9nPOPABGCEYfaDKhHdsusNU";
+const FAILURE_EQUALIZATION_RS256_PUBLIC_KEY_COSE = "pAEDAzkBACBZAQCYbJ2iHOx4aWfKYmoQ3ijp56FCbJdyHosyVMNS2zOKLCAHsGGQlEuNVC4C7EkdB0f9jRgpk17oPoaJ43fNJjaUjD2Qyy-NT-Rc9-6Kkr7dj7WmkJTQC9PStyf6pCN5qWkSnwf8i4_9s6vr-FpubfGtCIndD7VOamEJjiT3wuyfgUg02KionC1AL07te4Wzma7KYrvnE32-fU22ZswteGM_22Feh17dwPErZnIVWY7-6961o0ooIjLcAIt7cRXsUahAGVYL-bNovkqDLU6NlLE6V84o8tJdcJob4GufbcnFZmLIYbEVsxXOoLAPt6dC8iO9jIUc-FS1WmCzTeIVEjHtIUMBAAE";
 
 type CborValue = boolean | number | string | null | Uint8Array | CborValue[] | Map<CborValue, CborValue>;
 
@@ -39,6 +44,19 @@ interface CeremonyExpectation {
   challengeDigest: string;
   expectedOrigin: string;
   rpId: string;
+}
+
+export interface AuthenticationExpectation extends CeremonyExpectation {
+  algorithm: -257 | -7;
+  backupEligible: boolean;
+  credentialId: string;
+  publicKeyCose: string;
+  userHandle: string;
+}
+
+export interface AuthenticationFallbackExpectation extends CeremonyExpectation {
+  credentialId: string;
+  userHandle: string;
 }
 
 interface ParsedAuthenticatorData {
@@ -373,7 +391,18 @@ function validatedCoseAlgorithm(publicKeyCose: Uint8Array): -257 | -7 {
     requireExactCoseLabels(cose, [1, 3, -1, -2]);
     const modulus = bytes(cose.get(-1));
     const exponent = bytes(cose.get(-2));
-    if (keyType !== 3 || modulus.length < 256 || modulus.length > 512 || exponent.length < 1 || exponent.length > 8) fail();
+    if (
+      keyType !== 3
+      || modulus.length < 256
+      || modulus.length > 512
+      || (modulus[0]! & 0x80) === 0
+      || (modulus[modulus.length - 1]! & 1) === 0
+      || exponent.length < 1
+      || exponent.length > 8
+      || exponent[0] === 0
+      || (exponent.length === 1 && exponent[0]! < 3)
+      || (exponent[exponent.length - 1]! & 1) === 0
+    ) fail();
     return -257;
   }
   fail();
@@ -527,13 +556,7 @@ async function importCosePublicKey(publicKeyCose: string, algorithm: -257 | -7):
 
 export async function verifyAuthenticationCredential(
   value: JsonValue,
-  expectation: CeremonyExpectation & {
-    algorithm: -257 | -7;
-    backupEligible: boolean;
-    credentialId: string;
-    publicKeyCose: string;
-    userHandle: string;
-  },
+  expectation: AuthenticationExpectation,
 ): Promise<VerifiedAssertion> {
   const credential = credentialEnvelope(value);
   const response = exactObject(credential.response, [
@@ -561,24 +584,34 @@ export async function verifyAuthenticationCredential(
   await verifyRpIdHash(authenticatorData.rpIdHash, expectation.rpId);
   const userHandle = response.userHandle;
   base64UrlDecode(userHandle, 64);
-  if (!timingSafeEqual(userHandle, expectation.userHandle)) fail();
   const signature = base64UrlDecode(response.signature, MAX_SIGNATURE_BYTES);
   const signed = concatenate(authenticatorDataBytes, await sha256Bytes(clientData));
   const publicKey = await importCosePublicKey(expectation.publicKeyCose, expectation.algorithm);
   let verified = false;
+  let signatureEncodingValid = true;
+  let signatureForVerification = signature;
+  if (expectation.algorithm === -7) {
+    try {
+      signatureForVerification = ecdsaDerToP1363(signature);
+    } catch {
+      signatureEncodingValid = false;
+      signatureForVerification = new Uint8Array(64);
+    }
+  }
   try {
     verified = expectation.algorithm === -7
       ? await crypto.subtle.verify(
         { hash: "SHA-256", name: "ECDSA" },
         publicKey,
-        ecdsaDerToP1363(signature),
+        signatureForVerification,
         signed,
       )
       : await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, signed);
   } catch {
     fail();
   }
-  if (!verified) fail();
+  if (!signatureEncodingValid || !verified) fail();
+  if (!timingSafeEqual(userHandle, expectation.userHandle)) fail();
   if (authenticatorData.backupEligible !== expectation.backupEligible) fail();
   return {
     backupEligible: authenticatorData.backupEligible,
@@ -587,6 +620,43 @@ export async function verifyAuthenticationCredential(
     signCount: authenticatorData.signCount,
     userHandle,
   };
+}
+
+export async function verifyAuthenticationCredentialEqualized(
+  value: JsonValue,
+  expectation: AuthenticationExpectation | null,
+  fallback: AuthenticationFallbackExpectation,
+): Promise<VerifiedAssertion | null> {
+  const fallbackBase = {
+    backupEligible: false,
+    challengeDigest: fallback.challengeDigest,
+    credentialId: fallback.credentialId,
+    expectedOrigin: fallback.expectedOrigin,
+    rpId: fallback.rpId,
+    userHandle: fallback.userHandle,
+  };
+  const es256Expectation: AuthenticationExpectation = expectation?.algorithm === -7
+    ? expectation
+    : {
+        ...fallbackBase,
+        algorithm: -7,
+        publicKeyCose: FAILURE_EQUALIZATION_ES256_PUBLIC_KEY_COSE,
+      };
+  const rs256Expectation: AuthenticationExpectation = expectation?.algorithm === -257
+    ? expectation
+    : {
+        ...fallbackBase,
+        algorithm: -257,
+        publicKeyCose: FAILURE_EQUALIZATION_RS256_PUBLIC_KEY_COSE,
+      };
+  const [es256Result, rs256Result] = await Promise.allSettled([
+    verifyAuthenticationCredential(value, es256Expectation),
+    verifyAuthenticationCredential(value, rs256Expectation),
+  ]);
+  if (expectation === null) return null;
+  const selected = expectation.algorithm === -7 ? es256Result : rs256Result;
+  if (selected.status === "rejected") throw selected.reason;
+  return selected.value;
 }
 
 export function counterAdvances(stored: number, observed: number): boolean {

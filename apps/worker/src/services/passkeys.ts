@@ -26,22 +26,22 @@ import {
   counterAdvances,
   principalUserHandle,
   randomBase64Url,
-  verifyAuthenticationCredential,
+  verifyAuthenticationCredentialEqualized,
   verifyRegistrationCredential,
   webAuthnCredentialId,
   WebAuthnVerificationError,
   type RegisteredAuthenticator,
+  type VerifiedAssertion,
 } from "../kernel/webauthn.ts";
 import { actorCredentialId, authorizedVia, eventCursor, requireIdempotencyKey, writeResult } from "./shared.ts";
-import { webSessionCleanupStatement } from "./web-state.ts";
+import {
+  webAuthnChallengeCleanupStatements,
+  webSessionCleanupStatement,
+} from "./web-state.ts";
 
 const CHALLENGE_LIFETIME_MS = 5 * 60 * 1_000;
 const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1_000;
 const PASSKEY_LIMIT = 100;
-// Public-only P-256 key used to keep structurally valid unknown/revoked
-// credential failures on the same WebCrypto verification path as registered
-// credentials. The corresponding private key is not retained.
-const FAILURE_EQUALIZATION_PUBLIC_KEY_COSE = "pQECAyYgASFYIPvtToyXt8StHH1AVpV1CwxQjnI49md3d76LumwzowvEIlggvIZ_OJIMw9Nla4WYJD3D9nPOPABGCEYfaDKhHdsusNU";
 const FAILURE_EQUALIZATION_CHALLENGE_DIGEST = "0".repeat(64);
 
 interface ChallengeRow {
@@ -259,27 +259,6 @@ async function registrationExcludeCredentials(
   }
 }
 
-function challengeCleanupStatements(db: D1Database, now: number): D1PreparedStatement[] {
-  return [
-    db.prepare(
-      `DELETE FROM webauthn_challenges
-       WHERE id IN (
-         SELECT id FROM webauthn_challenges INDEXED BY idx_webauthn_challenges_expiry
-         WHERE expires_at <= ?1
-         ORDER BY expires_at, id LIMIT 100
-       )`,
-    ).bind(now),
-    db.prepare(
-      `DELETE FROM webauthn_challenges
-       WHERE id IN (
-         SELECT id FROM webauthn_challenges INDEXED BY idx_webauthn_challenges_consumed
-         WHERE consumed_at IS NOT NULL
-         ORDER BY consumed_at, id LIMIT 100
-       )`,
-    ),
-  ];
-}
-
 async function insertChallenge(
   db: D1Database,
   principalId: string | null,
@@ -330,7 +309,7 @@ async function insertChallenge(
     );
   }
   try {
-    const cleanup = challengeCleanupStatements(db, now);
+    const cleanup = webAuthnChallengeCleanupStatements(db, now);
     const results = await db.batch([...cleanup, insert]);
     if ((results[cleanup.length]?.meta.changes ?? 0) !== 1) {
       if (auth !== null) await authorizeAgentLaunchSession(db, auth, now);
@@ -897,33 +876,6 @@ function assertionUserHandle(value: JsonValue): string {
   return typeof response.userHandle === "string" ? response.userHandle : "AA";
 }
 
-async function equalizeUnusableCredentialFailure(
-  credential: JsonValue,
-  challenge: ChallengeRow | null,
-  scope: { expectedOrigin: string; rpId: string },
-): Promise<void> {
-  let credentialId: string;
-  try {
-    credentialId = webAuthnCredentialId(credential);
-  } catch {
-    return;
-  }
-  try {
-    await verifyAuthenticationCredential(credential, {
-      algorithm: -7,
-      backupEligible: false,
-      challengeDigest: challenge?.challenge_digest ?? FAILURE_EQUALIZATION_CHALLENGE_DIGEST,
-      credentialId,
-      expectedOrigin: scope.expectedOrigin,
-      publicKeyCose: FAILURE_EQUALIZATION_PUBLIC_KEY_COSE,
-      rpId: scope.rpId,
-      userHandle: assertionUserHandle(credential),
-    });
-  } catch {
-    // The fixed public key intentionally cannot authenticate caller input.
-  }
-}
-
 function passkeySessionResource(
   snapshot: SessionSnapshot,
   cookieAvailable: boolean,
@@ -1011,7 +963,7 @@ async function authenticatePasskeyBatch(
   db: D1Database,
   challenge: ChallengeRow,
   authenticator: AuthenticatorRow,
-  assertion: Awaited<ReturnType<typeof verifyAuthenticationCredential>>,
+  assertion: VerifiedAssertion,
   operationId: string,
   sessionId: string,
   sessionTokenDigest: string,
@@ -1216,26 +1168,38 @@ export async function verifyWebAuthentication(
   if (commit === null) {
     let challenge: ChallengeRow | null = null;
     let authenticator: AuthenticatorRow | null = null;
-    let assertion: Awaited<ReturnType<typeof verifyAuthenticationCredential>> | null = null;
+    let assertion: VerifiedAssertion | null = null;
     try {
       challenge = await readChallenge(db, challengeId);
       const credentialId = webAuthnCredentialId(credential);
       authenticator = await readAuthenticatorByCredential(db, credentialId);
-      if (authenticator === null || !authenticationChallengeMatches(challenge, authenticator, scope, now)) {
-        await equalizeUnusableCredentialFailure(credential, challenge, scope);
+      const usable = authenticator !== null
+        && authenticationChallengeMatches(challenge, authenticator, scope, now);
+      assertion = await verifyAuthenticationCredentialEqualized(
+        credential,
+        usable && authenticator !== null && challenge !== null
+          ? {
+              algorithm: authenticator.algorithm,
+              backupEligible: authenticator.backup_eligible === 1,
+              challengeDigest: challenge.challenge_digest,
+              credentialId: authenticator.credential_id,
+              expectedOrigin: scope.expectedOrigin,
+              publicKeyCose: authenticator.public_key_cose,
+              rpId: scope.rpId,
+              userHandle: authenticator.user_handle,
+            }
+          : null,
+        {
+          challengeDigest: challenge?.challenge_digest ?? FAILURE_EQUALIZATION_CHALLENGE_DIGEST,
+          credentialId,
+          expectedOrigin: scope.expectedOrigin,
+          rpId: scope.rpId,
+          userHandle: assertionUserHandle(credential),
+        },
+      );
+      if (!usable || authenticator === null || challenge === null || assertion === null) {
         return rejectAuthenticationAttempt(db, claim, challengeId, now);
       }
-      const activeAuthenticator = authenticator;
-      assertion = await verifyAuthenticationCredential(credential, {
-        algorithm: activeAuthenticator.algorithm,
-        backupEligible: activeAuthenticator.backup_eligible === 1,
-        challengeDigest: challenge.challenge_digest,
-        credentialId: activeAuthenticator.credential_id,
-        expectedOrigin: scope.expectedOrigin,
-        publicKeyCose: activeAuthenticator.public_key_cose,
-        rpId: scope.rpId,
-        userHandle: activeAuthenticator.user_handle,
-      });
     } catch (error) {
       if (error instanceof AtomicBatchRejectedError) {
         commit = await probeOperationCommit(db, claim.operationId);
