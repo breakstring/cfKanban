@@ -3402,7 +3402,7 @@
           "comments"
         ],
         "summary": "List Comments",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3494,7 +3494,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "project_reader"
+        "x-cfkanban-permission": "project_reader_active_writer_tombstone"
       },
       "post": {
         "operationId": "createComment",
@@ -3590,7 +3590,7 @@
           "comments"
         ],
         "summary": "Get Comment",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3661,7 +3661,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "project_reader"
+        "x-cfkanban-permission": "project_reader_active_writer_tombstone"
       },
       "delete": {
         "operationId": "deleteComment",
@@ -3830,7 +3830,7 @@
           "labels"
         ],
         "summary": "List Labels",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3931,7 +3931,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "project_reader"
+        "x-cfkanban-permission": "project_reader_active_writer_tombstone"
       },
       "post": {
         "operationId": "createLabel",
@@ -4036,7 +4036,7 @@
           "labels"
         ],
         "summary": "Get Label",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4107,7 +4107,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "project_reader"
+        "x-cfkanban-permission": "project_reader_active_writer_tombstone"
       },
       "patch": {
         "operationId": "updateLabel",
@@ -4358,7 +4358,7 @@
           "relations"
         ],
         "summary": "List Issue Relations",
-        "description": "Deployment Owner or active reader/writer Grants for both Relation endpoint Projects. List operations use the path Issue Project for scope and omit Relations whose other endpoint is not currently readable. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active Relations require current reader/writer access to both Relation endpoint Projects. The explicit deleted=only recovery view requires writer access to both endpoints and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4450,7 +4450,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "relation_endpoints_reader"
+        "x-cfkanban-permission": "relation_endpoints_reader_active_writer_tombstone"
       },
       "post": {
         "operationId": "createIssueRelation",
@@ -4546,7 +4546,7 @@
           "relations"
         ],
         "summary": "Get Relation",
-        "description": "Deployment Owner or active reader/writer Grants for both Relation endpoint Projects. List operations use the path Issue Project for scope and omit Relations whose other endpoint is not currently readable. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active Relations require current reader/writer access to both Relation endpoint Projects. The explicit deleted=only recovery view requires writer access to both endpoints and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4617,7 +4617,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "relation_endpoints_reader"
+        "x-cfkanban-permission": "relation_endpoints_reader_active_writer_tombstone"
       },
       "delete": {
         "operationId": "deleteRelation",

@@ -431,10 +431,14 @@ CREATE INDEX idx_issues_project_list ON issues(project_id, deleted_at, updated_a
 CREATE INDEX idx_issues_candidates ON issues(project_id, status_key, deleted_at, priority_rank, created_at, number);
 CREATE INDEX idx_issues_assignee ON issues(project_id, assignee_principal_id, deleted_at, status_key, updated_at DESC);
 CREATE UNIQUE INDEX idx_labels_project_name ON labels(project_id, name COLLATE NOCASE);
+CREATE INDEX idx_labels_project_tombstones ON labels(project_id, deleted_at DESC, id DESC);
 CREATE INDEX idx_issue_labels_label_issue ON issue_labels(label_id, issue_id);
 CREATE INDEX idx_comments_issue_list ON comments(issue_id, deleted_at, created_at, id);
+CREATE INDEX idx_comments_issue_tombstones ON comments(issue_id, deleted_at DESC, id DESC);
 CREATE INDEX idx_issue_relations_source ON issue_relations(source_issue_id, deleted_at, kind);
 CREATE INDEX idx_issue_relations_target ON issue_relations(target_issue_id, deleted_at, kind);
+CREATE INDEX idx_issue_relations_source_tombstones ON issue_relations(source_issue_id, deleted_at DESC, id DESC);
+CREATE INDEX idx_issue_relations_target_tombstones ON issue_relations(target_issue_id, deleted_at DESC, id DESC);
 CREATE UNIQUE INDEX idx_invitations_code_digest ON invitations(code_digest);
 CREATE INDEX idx_invitations_owner_list ON invitations(created_at DESC, id);
 CREATE INDEX idx_events_project_stream_sequence ON events(project_id, stream, sequence);

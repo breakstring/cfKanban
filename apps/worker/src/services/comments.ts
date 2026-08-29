@@ -72,18 +72,27 @@ function completionPayload(value: string | null): JsonValue {
   }
 }
 
-function commentAllowedActions(row: CommentRow, issue: CollaborationIssue): string[] {
+type CommentUnavailabilityReason = {
+  [key: string]: JsonValue;
+  code: string;
+  recovery: string;
+};
+
+function commentAllowedActions(
+  row: CommentRow,
+  issue: CollaborationIssue,
+  restorable: boolean,
+): string[] {
   if (!roleCanWrite(issue.role) || row.kind === "completion") return ["read"];
   if (row.deleted_at === null) return ["read", "delete"];
-  return issue.deletedAt === null && issue.projectDeletedAt === null && issue.workspaceDeletedAt === null
-    ? ["read", "restore"]
-    : ["read"];
+  return restorable ? ["read", "restore"] : ["read"];
 }
 
 function commentResource(
   row: CommentRow,
   issue: CollaborationIssue,
   frozenIssueReference: JsonValue = issueReference(issue),
+  quotaUnavailabilityReason: CommentUnavailabilityReason | null = null,
 ): { [key: string]: JsonValue } {
   const unavailabilityReason = issue.workspaceDeletedAt !== null
     ? { code: "PARENT_WORKSPACE_DELETED", recovery: "restore_parent" }
@@ -91,13 +100,13 @@ function commentResource(
       ? { code: "PARENT_PROJECT_DELETED", recovery: "restore_parent" }
       : issue.deletedAt !== null
         ? { code: "PARENT_ISSUE_DELETED", recovery: "restore_parent" }
-        : null;
+        : quotaUnavailabilityReason;
   const restorable = row.deleted_at !== null
     && row.kind === "standard"
     && roleCanWrite(issue.role)
     && unavailabilityReason === null;
   return {
-    allowed_actions: commentAllowedActions(row, issue),
+    allowed_actions: commentAllowedActions(row, issue, restorable),
     author: {
       display_name: row.author_display_name,
       principal_id: row.author_principal_id,
@@ -122,6 +131,42 @@ function commentResource(
       unavailability_reason: unavailabilityReason,
     }),
   };
+}
+
+async function commentRestoreQuotaReason(
+  db: D1Database,
+  projectId: string,
+): Promise<CommentUnavailabilityReason | null> {
+  interface CapacityRow {
+    active_comment_count: number | null;
+    comment_limit: number | null;
+    policy_enabled: number;
+  }
+  let row: CapacityRow | null;
+  try {
+    row = await db.prepare(
+      `SELECT CASE WHEN policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
+                   THEN 1 ELSE 0 END AS policy_enabled,
+              project.comment_limit, usage.active_comment_count
+       FROM projects project
+       LEFT JOIN public_join_policies policy ON policy.project_id = project.id
+       LEFT JOIN project_usage usage ON usage.project_id = project.id
+       WHERE project.id = ?1
+       LIMIT 1`,
+    ).bind(projectId).first<CapacityRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+  if (row === null || row.policy_enabled === 0) return null;
+  if (
+    !Number.isSafeInteger(row.comment_limit)
+    || !Number.isSafeInteger(row.active_comment_count)
+  ) {
+    return { code: "PROJECT_COMMENT_QUOTA_UNAVAILABLE", recovery: "request_owner" };
+  }
+  return (row.active_comment_count as number) >= (row.comment_limit as number)
+    ? { code: "PROJECT_COMMENT_LIMIT_REACHED", recovery: "free_capacity_or_request_owner" }
+    : null;
 }
 
 async function readComment(db: D1Database, commentId: string): Promise<CommentRow | null> {
@@ -416,9 +461,12 @@ export async function listComments(
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);
   const tail = page.at(-1);
+  const quotaUnavailabilityReason = deletedMode === "only"
+    ? await commentRestoreQuotaReason(db, issue.projectId)
+    : null;
   return {
     has_more: hasMore,
-    items: page.map((row) => commentResource(row, issue)),
+    items: page.map((row) => commentResource(row, issue, issueReference(issue), quotaUnavailabilityReason)),
     next_cursor: hasMore && tail !== undefined
       ? encodeCursor(context, [deletedMode === "only" ? tail.deleted_at ?? 0 : tail.created_at, tail.id])
       : null,
@@ -441,7 +489,12 @@ export async function getComment(
     deletedMode === "only",
   );
   if ((row.deleted_at !== null) !== (deletedMode === "only")) throw notFound();
-  return commentResource(row, issue);
+  return commentResource(
+    row,
+    issue,
+    issueReference(issue),
+    deletedMode === "only" ? await commentRestoreQuotaReason(db, issue.projectId) : null,
+  );
 }
 
 export async function createComment(
@@ -699,10 +752,11 @@ export async function deleteComment(
     version: expectedVersion + 1,
   };
   const frozenIssueReference = await readCommentOperationIssueReference(db, operationId);
+  const quotaUnavailabilityReason = await commentRestoreQuotaReason(db, access.issue.projectId);
   return writeResult(
     db,
     auth,
-    commentResource(deletedRow, access.issue, frozenIssueReference),
+    commentResource(deletedRow, access.issue, frozenIssueReference, quotaUnavailabilityReason),
     commit.lastEventSequence,
     false,
   );

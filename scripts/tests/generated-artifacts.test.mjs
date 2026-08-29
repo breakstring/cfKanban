@@ -105,7 +105,18 @@ test("OpenAPI distinguishes Comment lifecycle shapes and Relation endpoint permi
   const relationRead = document.paths["/api/v1/relations/{relation_id}"].get;
   const relationWrite = document.paths["/api/v1/issues/{identifier}/relations"].post;
   assert.match(relationRead.description, /both Relation endpoint Projects/);
+  assert.match(relationRead.description, /deleted=only recovery view requires writer access to both endpoints/);
+  assert.equal(
+    relationRead["x-cfkanban-permission"],
+    "relation_endpoints_reader_active_writer_tombstone",
+  );
   assert.match(relationWrite.description, /active writer Grants for both Relation endpoint Projects/);
+  const commentRead = document.paths["/api/v1/comments/{comment_id}"].get;
+  const labelList = document.paths["/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels"].get;
+  for (const operation of [commentRead, labelList]) {
+    assert.match(operation.description, /deleted=only recovery view requires writer/);
+    assert.equal(operation["x-cfkanban-permission"], "project_reader_active_writer_tombstone");
+  }
 });
 
 test("OpenAPI exposes concrete Issue contracts and reserves done for complete", async () => {
