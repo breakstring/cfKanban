@@ -117,7 +117,7 @@ export async function verifyCurrentAuth(db: D1Database, auth: AuthContext, now: 
     if (row === null) throw unauthorized(auth.kind === "cookie");
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -252,7 +252,7 @@ async function queryVisibleProjects(
     return result.results.map(mapVisibleProject);
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 

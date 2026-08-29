@@ -76,8 +76,8 @@ export async function authenticateBearer(db: D1Database, header: string | null):
        WHERE c.token_digest = ?1 AND c.revoked_at IS NULL
        LIMIT 1`,
     ).bind(digest).first<BearerRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 
   if (row === null || row.token_prefix !== parsed.prefix) throw unauthorized();
@@ -131,8 +131,8 @@ export async function authenticateCookieSession(
          )
        LIMIT 1`,
     ).bind(digest, now).first<SessionRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 
   if (row === null) throw unauthorized(true);

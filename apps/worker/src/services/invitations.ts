@@ -274,8 +274,8 @@ async function readInvitationById(db: D1Database, invitationId: string): Promise
        LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
        WHERE i.id = ?1 LIMIT 1`,
     ).bind(invitationId).first<InvitationRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -291,8 +291,8 @@ async function readInvitationByDigest(db: D1Database, digest: string): Promise<I
        LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
        WHERE i.code_digest = ?1 LIMIT 1`,
     ).bind(digest).first<InvitationRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -308,8 +308,8 @@ async function readInvitationGrants(db: D1Database, invitationId: string): Promi
        ORDER BY w.key, p.key, p.id`,
     ).bind(invitationId).all<InvitationGrantRow>();
     return result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -361,8 +361,8 @@ async function readInvitationGrantPages(
     ).bind(JSON.stringify(invitationIds)).all<InvitationGrantRow & { invitation_id: string }>();
     for (const row of result.results) grouped.get(row.invitation_id)?.push(row);
     return grouped;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -407,8 +407,8 @@ async function ownerGuardRejected(db: D1Database, auth: AuthContext, now: number
   const guard = buildCurrentAuthGuard(auth, now, 1, true);
   try {
     return await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -457,8 +457,8 @@ export async function listInvitations(
        LIMIT ?3`,
     ).bind(position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<InvitationRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;
@@ -515,8 +515,8 @@ async function preferredOrigin(db: D1Database): Promise<string> {
     ).first<{ preferred_api_origin: string }>();
     if (row === null) throw new Error();
     return row.preferred_api_origin;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1034,8 +1034,8 @@ async function credentialDigestExists(db: D1Database, digest: string): Promise<b
   try {
     return await db.prepare("SELECT id FROM credentials WHERE token_digest = ?1 LIMIT 1")
       .bind(digest).first() !== null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1079,8 +1079,8 @@ async function projectQuotaExceeded(
       limit: row.quota_limit,
       projectId: row.project_id,
     };
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1095,8 +1095,8 @@ async function invitationTargetsActive(db: D1Database, invitationId: string): Pr
        WHERE ipg.invitation_id = ?1`,
     ).bind(invitationId).first<{ active: number | null; total: number }>();
     return row !== null && row.total > 0 && row.active === row.total;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1104,8 +1104,8 @@ async function currentAuthRejected(db: D1Database, auth: AuthContext, now: numbe
   const guard = buildCurrentAuthGuard(auth, now, 1);
   try {
     return await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -1546,6 +1546,7 @@ export async function redeemInvitation(
   displayNameValue: JsonValue | undefined,
   tokenValue: JsonValue | undefined,
   now: number,
+  onAuthenticated?: (auth: AuthContext) => Promise<void>,
 ): Promise<{ [key: string]: JsonValue }> {
   if (typeof inviteCodeValue !== "string" || inviteCodeValue.length < 1 || inviteCodeValue.length > 1_024) {
     throw validationError("schema_validation_failed", { field: "invite_code" });
@@ -1560,6 +1561,7 @@ export async function redeemInvitation(
   if (auth === null && invitation.recovery_mode === "rotation" && mode.replacement !== null) {
     auth = await optionalRedeemAuth(db, request, mode.replacement.token);
   }
+  if (auth !== null) await onAuthenticated?.(auth);
   const replacement = mode.replacement === null ? null : {
     digest: await sha256Hex(mode.replacement.token),
     id: crypto.randomUUID(),

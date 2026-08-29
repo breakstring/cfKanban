@@ -189,8 +189,8 @@ export async function readOperationSnapshot<T>(
          AND EXISTS (SELECT 1 FROM operation_commits WHERE operation_id = ?1)
        LIMIT 1`,
     ).bind(operationId).first<{ operation_snapshot_json: string | null }>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (row?.operation_snapshot_json === null || row === null) throw new AtomicBatchRejectedError();
   let snapshot: unknown;
@@ -275,8 +275,8 @@ export async function claimIdempotency(
       resourceScopeHash,
       storedIdempotencyKey,
     ).first<IdempotencyRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 
   if (row === null) throw platformUnavailable("d1");
@@ -318,8 +318,8 @@ export async function readFinalizedIdempotencyResponse<T extends JsonValue>(
        WHERE operation_id = ?1 AND state = 'committed'
        LIMIT 1`,
     ).bind(operationId).first<IdempotencyRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   return row === null ? null : parseStoredResponse<T>({
     operationId: row.operation_id,
@@ -364,8 +364,8 @@ export async function finalizeIdempotency<T extends JsonValue>(
       `SELECT request_hash, operation_id, state, response_status, response_json
        FROM idempotency_records WHERE operation_id = ?1 LIMIT 1`,
     ).bind(operationId).first<IdempotencyRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (row === null) throw new AtomicBatchRejectedError();
   return parseStoredResponse<T>({
@@ -392,8 +392,8 @@ export async function abandonOwnedPendingClaim(
            SELECT 1 FROM operation_commits WHERE operation_id = ?1
          )`,
     ).bind(claim.operationId, claim.requestHash).run();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 

@@ -63,8 +63,8 @@ async function readBootstrapResult(
        WHERE im.singleton = 1 AND e.subject_id = im.instance_id
        LIMIT 1`,
     ).bind(operationId, tokenDigest).first<BootstrapRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -72,8 +72,8 @@ async function instanceAlreadyInitialized(db: D1Database): Promise<boolean> {
   try {
     return await db.prepare("SELECT 1 AS initialized FROM instance_meta WHERE singleton = 1")
       .first() !== null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 

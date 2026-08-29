@@ -62,8 +62,8 @@ export async function lookupOpaqueResourceId(
   try {
     const row = await db.prepare(sql).bind(untrustedId).first<{ id: string }>();
     return row?.id ?? null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -95,8 +95,8 @@ export async function probeOperationCommit(
        LIMIT 1`,
     ).bind(operationId).first<OperationCommitRow>();
     return row === null ? null : mapCommit(row);
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -141,18 +141,18 @@ export async function executeAtomicBatch(
 
   try {
     await db.batch([...plan.businessStatements, sentinel]);
-  } catch {
+  } catch (error) {
     const recovered = await probeOperationCommit(db, plan.operationId);
     if (recovered !== null) return { commit: recovered, recovered: true };
 
     let businessRejected: boolean;
     try {
       businessRejected = await plan.confirmBusinessRejection();
-    } catch {
-      throw platformUnavailable("d1");
+    } catch (error) {
+      throw platformUnavailable("d1", error);
     }
     if (businessRejected) throw new AtomicBatchRejectedError();
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 
   const commit = await probeOperationCommit(db, plan.operationId);

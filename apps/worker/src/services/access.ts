@@ -200,8 +200,8 @@ async function readCredential(db: D1Database, credentialId: string): Promise<Cre
        JOIN principals AS p ON p.id = c.principal_id
        WHERE c.id = ?1 LIMIT 1`,
     ).bind(credentialId).first<CredentialRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -218,8 +218,8 @@ async function readGrant(db: D1Database, grantId: string): Promise<GrantRow | nu
        JOIN workspaces AS w ON w.id = p.workspace_id
        WHERE g.id = ?1 LIMIT 1`,
     ).bind(grantId).first<GrantRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -243,8 +243,8 @@ async function readGrantForPrincipalProject(
          AND (?3 IS NULL OR g.created_operation_id = ?3 OR g.last_operation_id = ?3)
        LIMIT 1`,
     ).bind(principalId, projectId, operationId).first<GrantRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -263,8 +263,8 @@ async function readPrincipal(db: D1Database, principalId: string): Promise<Princ
        JOIN instance_meta AS im ON im.singleton = 1
        WHERE p.id = ?1 LIMIT 1`,
     ).bind(principalId).first<PrincipalRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -283,8 +283,8 @@ async function readProjectControl(db: D1Database, projectId: string): Promise<Pr
        WHERE p.id = ?1 AND p.deleted_at IS NULL AND w.deleted_at IS NULL
        LIMIT 1`,
     ).bind(projectId).first<ProjectControlRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -292,8 +292,8 @@ async function ownerGuardRejected(db: D1Database, auth: AuthContext, now: number
   const guard = buildCurrentAuthGuard(auth, now, 1, true);
   try {
     return await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -355,8 +355,8 @@ export async function listPrincipals(
        LIMIT ?6`,
     ).bind(projectId, q, q.toLocaleLowerCase(), position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<PrincipalRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;
@@ -402,8 +402,8 @@ export async function getPrincipal(
     ]);
     grants = grantResult.results;
     credentials = credentialResult.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   return {
     ...principalResource(principal),
@@ -444,8 +444,8 @@ export async function listPrincipalCredentials(
        LIMIT ?4`,
     ).bind(principalId, position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<CredentialRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;
@@ -557,10 +557,12 @@ export async function rotateOwnerCredential(
   request: Request,
   tokenValue: JsonValue,
   now: number,
+  onAuthenticated?: (auth: AuthContext) => Promise<void>,
 ): Promise<{ [key: string]: JsonValue }> {
   const replacement = requireCredentialToken(tokenValue, "new_credential_token");
   const idempotencyKey = requireIdempotencyKey(request);
   const initialAuth = await authenticateRotationRequest(db, request, replacement.token);
+  await onAuthenticated?.(initialAuth);
   if (initialAuth.displayName.includes(replacement.token)) {
     throw validationError("secret_value_reused", { field: "new_credential_token" });
   }
@@ -740,8 +742,8 @@ export async function listProjectGrants(
        LIMIT ?4`,
     ).bind(projectId, position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<GrantRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;

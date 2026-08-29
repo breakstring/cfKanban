@@ -48,8 +48,8 @@ async function eventCursorProjectIds(
        ORDER BY project.id`,
     ).bind(identity.principalId).all<{ id: string }>();
     return result.results.map((row) => row.id);
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -66,8 +66,8 @@ export async function eventCursor(
       ).bind(lastEventSequence).first<{ id: string }>();
       if (row === null) throw platformUnavailable("d1");
       lastEventId = row.id;
-    } catch {
-      throw platformUnavailable("d1");
+    } catch (error) {
+      throw platformUnavailable("d1", error);
     }
   }
   const context = await createCursorContext(

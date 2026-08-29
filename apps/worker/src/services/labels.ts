@@ -129,8 +129,8 @@ async function readLabel(db: D1Database, labelId: string): Promise<LabelRow | nu
        WHERE label.id = ?1
        LIMIT 1`,
     ).bind(labelId).first<LabelRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -270,8 +270,8 @@ async function labelNameConflict(
          AND (?3 IS NULL OR id != ?3)
        LIMIT 1`,
     ).bind(projectId, name, exceptId).first() !== null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -336,8 +336,8 @@ export async function listLabels(
          LIMIT ?4`,
       ).bind(project.projectId, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<LabelRow>();
     rows = result.results;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   const hasMore = rows.length > limit;
   const page = rows.slice(0, limit);
@@ -740,8 +740,8 @@ async function associationExists(db: D1Database, issueId: string, labelId: strin
     return await db.prepare(
       "SELECT 1 FROM issue_labels WHERE issue_id = ?1 AND label_id = ?2",
     ).bind(issueId, labelId).first() !== null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -770,7 +770,7 @@ async function diagnoseIssueLabel(
       if ((count?.count ?? 0) >= 20) throw conflict("ISSUE_LABEL_LIMIT_REACHED");
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      throw platformUnavailable("d1");
+      throw platformUnavailable("d1", error);
     }
   }
   throw platformUnavailable("d1");

@@ -98,8 +98,8 @@ async function readIssueRow(
        WHERE issue.number = ?1
        LIMIT 1`,
     ).bind(issueNumber(identifier)).first<CollaborationIssueRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -168,8 +168,8 @@ export async function requireCollaborationIssueById(
        WHERE issue.id = ?1
        LIMIT 1`,
     ).bind(issueId).first<CollaborationIssueRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (
     row === null
@@ -209,8 +209,8 @@ export async function requireCollaborationIssueByIdAuthorization(
        WHERE issue.id = ?1
        LIMIT 1`,
     ).bind(issueId).first<CollaborationIssueRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (row === null) throw notFound();
   const project = (await resolveVisibleProjects(
@@ -399,8 +399,8 @@ export async function assertCommentCapacity(
        LEFT JOIN project_usage usage ON usage.project_id = project.id
        WHERE project.id = ?1`,
     ).bind(projectId).first();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (row === null || row.policy_enabled === 0) return;
   if (

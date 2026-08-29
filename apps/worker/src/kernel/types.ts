@@ -5,6 +5,9 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 export interface WorkerEnv {
   ASSETS: Fetcher;
   DB: D1Database;
+  INSTANCE_RATE_LIMITER: RateLimit;
+  PRINCIPAL_RATE_LIMITER: RateLimit;
+  UNAUTHENTICATED_RATE_LIMITER: RateLimit;
 }
 
 export interface RequestContext {

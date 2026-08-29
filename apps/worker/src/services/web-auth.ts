@@ -135,8 +135,8 @@ function jsonObject(value: string): { [key: string]: JsonValue } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(value);
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
   if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
     throw platformUnavailable("d1");
@@ -294,8 +294,8 @@ async function preferredOrigin(db: D1Database): Promise<string> {
     ).first<{ preferred_api_origin: string }>();
     if (row === null) throw new Error();
     return row.preferred_api_origin;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -573,8 +573,8 @@ async function readLaunchByDigest(db: D1Database, digest: string): Promise<Brows
               created_at, last_operation_id
        FROM browser_launches WHERE code_digest = ?1 LIMIT 1`,
     ).bind(digest).first<BrowserLaunchRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -627,8 +627,8 @@ async function launchAuthorizationCurrent(
        LIMIT 1`,
     ).bind(launch.id, launch.code_digest).first();
     return row !== null;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -656,7 +656,7 @@ export async function assertWebLaunchPageAvailable(
     if (source === null) throw launchUnavailable();
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 

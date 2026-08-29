@@ -142,8 +142,8 @@ async function readChallenge(db: D1Database, id: string): Promise<ChallengeRow |
               expires_at, consumed_at, last_operation_id
        FROM webauthn_challenges WHERE id = ?1 LIMIT 1`,
     ).bind(id).first<ChallengeRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -167,8 +167,8 @@ async function readAuthenticatorByCredential(
       `${AUTHENTICATOR_SELECT}
        WHERE authenticator.credential_id = ?1 LIMIT 1`,
     ).bind(credentialId).first<AuthenticatorRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -178,8 +178,8 @@ async function readAuthenticatorById(db: D1Database, id: string): Promise<Authen
       `${AUTHENTICATOR_SELECT}
        WHERE authenticator.id = ?1 LIMIT 1`,
     ).bind(id).first<AuthenticatorRow>();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -189,8 +189,8 @@ function transportList(row: AuthenticatorRow): JsonValue[] {
     const value = JSON.parse(row.transports_json) as JsonValue;
     if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) throw new Error();
     return value;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -225,8 +225,8 @@ async function activePasskeyCount(db: D1Database, principalId: string): Promise<
     ).bind(principalId).first<{ count: number }>();
     if (row === null || !Number.isSafeInteger(row.count)) throw new Error();
     return row.count;
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -255,7 +255,7 @@ async function registrationExcludeCredentials(
     });
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -317,7 +317,7 @@ async function insertChallenge(
     }
   } catch (error) {
     if (error instanceof ApiError || error instanceof AtomicBatchRejectedError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -402,8 +402,8 @@ async function consumeRejectedChallenge(
        SET consumed_at = ?1
        WHERE id = ?2 AND purpose = ?3 AND consumed_at IS NULL AND expires_at > ?1`,
     ).bind(now, challengeId, purpose).run();
-  } catch {
-    throw platformUnavailable("d1");
+  } catch (error) {
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -671,7 +671,7 @@ export async function listMyPasskeys(
     return result;
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw platformUnavailable("d1");
+    throw platformUnavailable("d1", error);
   }
 }
 
@@ -698,7 +698,7 @@ async function diagnosePasskeyRevocation(
       if (row.principal_id === owner.owner_principal_id) throw forbidden();
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      throw platformUnavailable("d1");
+      throw platformUnavailable("d1", error);
     }
   }
   if (row.version !== expectedVersion) throw versionConflict(row.version);
@@ -728,7 +728,7 @@ async function revokePasskey(
       if (current.principal_id === instance.owner_principal_id) throw forbidden();
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      throw platformUnavailable("d1");
+      throw platformUnavailable("d1", error);
     }
   }
   if (current.version !== expectedVersion) throw versionConflict(current.version);
