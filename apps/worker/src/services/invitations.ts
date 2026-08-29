@@ -29,6 +29,7 @@ import {
   type OperationCommit,
 } from "../kernel/d1.ts";
 import {
+  ApiError,
   businessQuotaExceeded,
   conflict,
   forbidden,
@@ -879,7 +880,7 @@ function escapeHtml(value: string): string {
 function assertInvitationUsable(row: InvitationRow, now: number): void {
   const status = invitationStatus(row, now);
   if (status === "revoked") throw gone("INVITATION_REVOKED");
-  if (status === "redeemed") throw conflict("INVITATION_ALREADY_REDEEMED", "request_new_invitation");
+  if (status === "redeemed") throw gone("INVITATION_ALREADY_REDEEMED");
   if (status === "expired") throw gone("INVITATION_EXPIRED");
 }
 
@@ -1652,7 +1653,12 @@ export async function redeemInvitation(
       }
     } catch (error) {
       commit = await probeOperationCommit(db, claim.operationId);
-      if (commit === null) throw error;
+      if (commit === null) {
+        if (error instanceof ApiError && !error.retryable) {
+          await abandonOwnedPendingClaim(db, claim);
+        }
+        throw error;
+      }
     }
     commit = await probeOperationCommit(db, claim.operationId);
   }

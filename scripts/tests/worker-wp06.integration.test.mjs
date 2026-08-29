@@ -626,6 +626,37 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     projectFilteredRelationEvents.body.items.filter((event) => event.subject.id === relationId).length,
     1,
   );
+  await db.prepare(
+    `INSERT INTO events
+      (id, stream, type, operation_id, event_index, actor_principal_id,
+       actor_credential_id, authorized_via, workspace_id, project_id,
+       subject_type, subject_id, payload_json, created_at)
+     VALUES (?1, 'domain', 'relation.hidden-tail-probe', ?2, 0, ?3,
+             ?4, 'project_grant', ?5, ?6, 'relation', ?7, '{}', ?8)`,
+  ).bind(
+    "60000000-0000-4000-8000-000000000101",
+    "60000000-0000-4000-8000-000000000102",
+    ids.dualPrincipal,
+    ids.dualCredential,
+    engineering.body.resource.id,
+    projectAId,
+    relationId,
+    Date.now(),
+  ).run();
+  const hiddenTail = await jsonRequest(
+    `/api/v1/events?after=${encodeURIComponent(scopedEvents.body.next_cursor)}&limit=1`,
+    { headers: scopedHeaders() },
+  );
+  assert.equal(hiddenTail.response.status, 200, JSON.stringify(hiddenTail.body));
+  assert.deepEqual(hiddenTail.body.items, []);
+  assert.notEqual(hiddenTail.body.next_cursor, scopedEvents.body.next_cursor);
+  const afterHiddenTail = await jsonRequest(
+    `/api/v1/events?after=${encodeURIComponent(hiddenTail.body.next_cursor)}&limit=1`,
+    { headers: scopedHeaders() },
+  );
+  assert.equal(afterHiddenTail.response.status, 200, JSON.stringify(afterHiddenTail.body));
+  assert.deepEqual(afterHiddenTail.body.items, []);
+  assert.equal(afterHiddenTail.body.next_cursor, hiddenTail.body.next_cursor);
 
   const deletedRelation = await jsonRequest(
     `/api/v1/relations/${relationId}?expected_version=1&source_expected_version=${issueBVersion}&target_expected_version=${issueAVersion}`,

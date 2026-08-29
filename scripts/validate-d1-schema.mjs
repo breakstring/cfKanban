@@ -104,26 +104,19 @@ for (const [label, sql, values, expectedIndex] of planChecks) {
 }
 
 const participantEventSql = `
+  WITH candidate_events AS (
+    SELECT *
+    FROM events INDEXED BY idx_events_project_stream_sequence
+    WHERE stream = 'domain' AND sequence > ?1
+      AND project_id IN (SELECT value FROM json_each(?2))
+    ORDER BY sequence ASC
+    LIMIT ?3
+  )
   SELECT event.sequence
-  FROM events event INDEXED BY idx_events_project_stream_sequence
-  WHERE event.stream = 'domain' AND event.sequence > ?1
-    AND event.project_id IN (SELECT value FROM json_each(?2))
-    AND (
-      event.subject_type != 'relation'
-      OR EXISTS (
-        SELECT 1
-        FROM issue_relations relation
-        JOIN issues source ON source.id = relation.source_issue_id
-        JOIN issues target ON target.id = relation.target_issue_id
-        WHERE relation.id = event.subject_id
-          AND source.project_id IN (SELECT value FROM json_each(?3))
-          AND target.project_id IN (SELECT value FROM json_each(?3))
-      )
-    )
-  ORDER BY event.sequence ASC
-  LIMIT ?4`;
+  FROM candidate_events event
+  ORDER BY event.sequence ASC`;
 const participantEventPlan = db.prepare(`EXPLAIN QUERY PLAN ${participantEventSql}`)
-  .all(0, JSON.stringify(["project"]), JSON.stringify(["project"]), 21)
+  .all(0, JSON.stringify(["project"]), 21)
   .map((row) => row.detail)
   .join(" | ");
 assert.match(

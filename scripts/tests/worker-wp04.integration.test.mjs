@@ -10,6 +10,7 @@ import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import {
   createInvitation as createInvitationService,
+  redeemInvitation as redeemInvitationService,
 } from "../../apps/worker/src/services/invitations.ts";
 import { rotateOwnerCredential as rotateOwnerCredentialService } from "../../apps/worker/src/services/access.ts";
 
@@ -653,6 +654,59 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     "SELECT COUNT(*) AS count FROM idempotency_records",
   ).first();
   assert.equal(idempotencyAfterConsumedRetry.count, idempotencyBeforeConsumedRetry.count);
+
+  const racedInvite = await createInvitation({
+    grants: [{ project_id: firstProjectId, role: "reader" }],
+    kind: "project_grant",
+  }, "wp04-terminal-race-invite");
+  const racedInviteCode = invitationCode(racedInvite.body);
+  const racedLoserToken = token("terminalracea", "L");
+  const racedWinnerToken = token("terminalraceb", "V");
+  const terminalRaceBarrier = businessBatchBarrierDatabase(db, "SET redeemed_at = ?1");
+  const racedLoser = redeemInvitationService(
+    terminalRaceBarrier.db,
+    new Request("https://kanban.example.test/api/v1/invitations/redeem", {
+      headers: { "idempotency-key": "wp04-terminal-race-loser" },
+      method: "POST",
+    }),
+    racedInviteCode,
+    "new_principal",
+    "Terminal Race Loser",
+    racedLoserToken,
+    Date.now(),
+  );
+  await terminalRaceBarrier.reached;
+  let racedWinner;
+  try {
+    racedWinner = await jsonRequest("/api/v1/invitations/redeem", {
+      body: {
+        display_name: "Terminal Race Winner",
+        invite_code: racedInviteCode,
+        new_credential_token: racedWinnerToken,
+        redeem_as: "new_principal",
+      },
+      headers: { "idempotency-key": "wp04-terminal-race-winner" },
+      method: "POST",
+    });
+  } finally {
+    terminalRaceBarrier.release();
+  }
+  assert.equal(racedWinner.response.status, 200, JSON.stringify(racedWinner.body));
+  const racedLoserError = await racedLoser.then(() => null, (error) => error);
+  assert.equal(racedLoserError?.status, 410);
+  assert.equal(racedLoserError?.code, "INVITATION_ALREADY_REDEEMED");
+  const racedLoserPending = await db.prepare(
+    `SELECT COUNT(*) AS count FROM idempotency_records
+     WHERE idempotency_key = 'wp04-terminal-race-loser' AND state = 'pending'`,
+  ).first();
+  assert.equal(racedLoserPending.count, 0);
+  const racedLoserPrincipal = await db.prepare(
+    "SELECT COUNT(*) AS count FROM principals WHERE display_name = 'Terminal Race Loser'",
+  ).first();
+  assert.equal(racedLoserPrincipal.count, 0);
+  const consumedInvitePage = await jsonRequest(`/invite?code=${encodeURIComponent(racedInviteCode)}`);
+  assert.equal(consumedInvitePage.response.status, 410, JSON.stringify(consumedInvitePage.body));
+  assert.equal(consumedInvitePage.body.code, "INVITATION_ALREADY_REDEEMED");
 
   const participantProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
     headers: participantHeaders(participantToken),
