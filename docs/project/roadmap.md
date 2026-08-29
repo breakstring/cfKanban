@@ -9,8 +9,8 @@
 
 - 产品定位为面向 Coding Agents 的轻量工作协调账本。
 - 已明确用户的 Agent 是主要调用载体，但不是唯一界面；人类也可以在极简第一方 Web 中直接查看、轻量参与和维护。部署、Owner 管理、协调和 Coding 只是 Agent 的任务模式，不是不同 Agent 类型。
-- 当前只有产品、技术、研究和治理文档，没有业务代码。
-- Linear 项目已经创建并读回，状态为 Planned；尚未创建 Milestone 或实现 Issue。
+- 当前已有 Frozen 产品/技术合同、可执行 OpenAPI/D1 验证原型和实施计划，但仍没有业务代码。
+- Linear 项目已于 2026-08-29 在线读回，状态为 Planned；已建立 `v0 可部署闭环` Milestone 和 11 个 Backlog Work Packages，均未分配、未排期、未开始。
 - 已确认一个部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project。
 - 已确认 Credential 只认证 Principal；v0 业务权限按 Project 显式授予，不从 Workspace 继承。
 - 已确认每个部署实例只有一个 Owner；只有 Owner 能创建 Workspace/Project 和管理 Project Grants，参与者只有 reader/writer。
@@ -54,11 +54,11 @@
 - 已确认小而明确的应用级资源上限：请求 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB、列表默认 20/最大 100、context 64 KiB。
 - 已确认源码/发行工程采用锁文件约束的根级验证/构建入口，以及包含顺序、checksum、分类、重入边界和预期 schema artifacts 的 D1 migration manifest；deploy Skill 以 ledger + 实际 schema 双重 readback，不把文件名或退出码当成应用完成。
 - 已确认 v0 不提供持有 Cloudflare Token 的 GitHub Actions 部署路径，继续由用户的 Agent 通过 `cfkanban-deploy` 完成唯一主部署流程。无 Cloudflare 凭据的 CI 验证 workflow 可以作为正常工程设施；远端部署 workflow 后置到下一阶段重新冻结授权与恢复体验。
-- Foundation SPEC 与 Agent Skills & Bootstrap SPEC 已于 2026-08-28 按 D-212 冻结；Foundation 当前已按 D-245 修订到 18，Agent Skills & Bootstrap 已按 D-246/D-247 修订到 20。冻结不授权实现；Web“我的资料”、CSRF 与具体 API/Schema 仍在 Draft 收敛。
+- Foundation、Agent Skills & Bootstrap、API/Schema、Web UI 与 `DESIGN.md` 均已冻结为 v0 实现基线；Foundation 当前为修订 19，Agent Skills & Bootstrap 为修订 20。冻结不表示实现已经开始或完成。
 - 已确认 SB-01：canonical 官网 bootstrap document 把 stable pointer 解析到 immutable release manifest，由 manifest 分别固定 Skill bundle 与 Service deployment bundle；manifest 逐工件限制来源并记录 SHA-256 文件指纹，本地更新校验来源连续性。marketplace/plugin 只作便捷入口，宿主差异由安装规则和 Skill 内置 scripts 吸收，不建 Host Adapter 角色。
 - 已确认 SB-02 环境准备和 SB-03 首次部署：strict-zero 默认每实例一个 Worker + 一个 D1、先使用 `workers.dev`，同名资源只有本地/远端 marker 一致时才恢复。更新拆成 SB-03A 本地 Skill update 与 SB-03B 云端 Instance upgrade；前者采用 immutable bundle/原子切换，后者采用固定目标、兼容矩阵、逐条 migration journal 和可验证 restore point，且 deploy Skill 不执行 D1 restore。SB-04～SB-24 已按三层边界复核：Service/安全脚本强制 MUST，Skills 提供可覆盖 SHOULD，上层最终 DECIDES。cfKanban 保持原子合同，同时通过相关 `SKILL.md` 告知本地状态位置、Invite 未指定 role 时推荐 writer、已知上下文中强烈推荐 Project filters、幂等/readback 组合范式、Recovery Invite 固定 mode 与 `deleted=only` tombstone 入口。D-213 已取消原 SB-24 的完整导出/整库恢复产品能力；Storyboard 已完成一轮。
-- 已形成 [Draft API & D1 Schema SPEC](../specs/2026-08-28-api-schema-spec.md)，正在收敛完整 OpenAPI、单操作合同、D1 DDL/索引和原子写入配方；它仍不授权实现。
-- 已形成 [Draft Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与 SB-25～SB-33；Browser Launch/Session、人类轻量参与、Owner 维护、公开首页、Passkey、单 Project Public Join、Project 隔离 quota、限流部署体验、English/简体中文界面和实例域名迁移的主要方向已收敛。其余主要剩余项为 wire/DDL 细节。推荐 MVP 持久技术主干仍是 Workers + D1，其他 Cloudflare 数据服务暂不成为核心依赖。
+- [API & D1 Schema SPEC](../specs/2026-08-28-api-schema-spec.md) 与 [Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 已于 2026-08-29 冻结；91 个 OpenAPI operations、25 张 D1 表、28 个索引、关键原子操作和 Web 安全骨架已通过本地验证。
+- 已形成 [v0 Implementation Plan](../plans/2026-08-29-v0-implementation-plan.md)，按 WP-01～WP-11 从工程骨架推进到 release candidate；推荐 MVP 持久技术主干仍是 Workers + D1，其他 Cloudflare 数据服务不成为核心依赖。
 
 ## 方向
 
@@ -75,11 +75,11 @@
 - 用 Agent-first Storyboard 走通人类意图、Agent 执行和关键授权边界。
 - 形成可实现、可验证的 Foundation SPEC 与 Agent Skills & Bootstrap SPEC。
 
-R0 已完成合同冻结。完整 OpenAPI 与 D1 Schema 仍需独立 SPEC 冻结；在用户明确授权前不创建实施 PLAN、Linear 实现 Issue 或业务代码。
+R0 及全部 v0 实现前合同已完成冻结。实施 PLAN 和 Linear Work Packages 已建立；业务代码仍需用户明确开始实施。
 
 ### R1 核心工作账本
 
-状态：Proposed
+状态：Planned
 
 目标：
 
@@ -92,7 +92,7 @@ R0 已完成合同冻结。完整 OpenAPI 与 D1 Schema 仍需独立 SPEC 冻结
 
 ### R2 多 Agent 可靠协作
 
-状态：Proposed
+状态：Planned
 
 目标：
 
@@ -106,7 +106,7 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 
 ### R3 Agent 集成、极简 Web UI 与分发
 
-状态：Proposed
+状态：Planned
 
 目标：
 
@@ -124,7 +124,7 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 
 ### R4 运维、安全与恢复
 
-状态：Proposed
+状态：Planned
 
 目标：
 
@@ -160,15 +160,15 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 
 ## 推荐顺序
 
-1. 继续收敛 Web UI 与 API/Schema Draft 的 CSRF、OpenAPI 和 D1 DDL/索引等剩余 wire 细节，不重新打开已确认的 Public Join、quota 或限流部署合同。
-2. 再把 Web 所需的认证、读取与原子写入纳入 API/Schema SPEC，冻结 OpenAPI、D1 DDL/索引和会话安全合同。
-3. 从已冻结合同推导最小端到端实现切片，再按用户授权创建实施 PLAN、Linear Milestone 和 Issue。
-4. 用真实 Agent、IAB/浏览器、OS 与并发场景验证后，才决定 R4/R5 的投入。
+1. 用户明确开始实现后，从 [KENN-318 / WP-01](https://linear.app/kennzhang/issue/KENN-318) 建立工程骨架和根级验证，不先铺设空业务 handler。
+2. 按 Implementation Plan 的依赖图推进 Worker/D1、领域能力、Web 安全与 Skills；每个 WP 以验收证据更新 Linear。
+3. Web、Skills 和最终 release candidate 复用同一 Frozen API/migration/release 合同，不建立第二套事实源或部署路径。
+4. 只有真实 Agent、IAB/浏览器、OS、并发与 Free profile 证据出现后，才决定 R5 的可选 Cloudflare 增强投入。
 
 ## 明确暂缓
 
 - 为了看起来完整而照搬 Linear 全部概念。
 - 把 Roadmap 逐条复制成 Linear backlog。
 - 在 v0 或没有对应版本的已冻结设计前引入 KV、DO、Queues、R2、Vectorize 和 AI。
-- 在 Web UI 与 API/Schema 合同未冻结、也没有明确实现授权前做 UI 原型、前端脚手架或部署演示。
+- 在没有明确开始对应 WP、也没有重读 Frozen 合同前做 UI、服务或部署实现。
 - 在下一阶段合同冻结前引入持有 Cloudflare Token、由 push 或 workflow_dispatch 执行远端写入的 GitHub Actions 部署 workflow。

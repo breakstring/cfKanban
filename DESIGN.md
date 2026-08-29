@@ -1,7 +1,8 @@
 ---
 name: cfKanban
-status: draft
-revision: 2
+status: frozen
+revision: 3
+frozen_on: 2026-08-29
 selected_direction: warm-editorial-workbench
 applies_to:
   - first-party-web-ui
@@ -49,7 +50,7 @@ This document is the visual and interaction design source of truth for the first
 
 - Product behavior, permissions, security, and recovery remain defined by the [Web UI SPEC](docs/specs/2026-08-29-web-ui-spec.md) and the API/Foundation contracts.
 - If this file conflicts with a security, accessibility, or product contract, the stricter contract wins.
-- `Draft` means that the direction is selected but implementation has not started and exact tokens may still be revised with visual evidence.
+- `Frozen` means the selected direction, hierarchy, and current tokens are the implementation baseline. Exact values may only be revised with visual or accessibility evidence and an explicit contract revision.
 
 ## 1. Design intent
 

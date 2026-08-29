@@ -1,0 +1,77 @@
+{
+  "manifest_version": 1,
+  "schema_version": 1,
+  "service_compatibility": {
+    "minimum": "0.1.0",
+    "maximum_exclusive": "0.2.0"
+  },
+  "migrations": [
+    {
+      "sequence": 1,
+      "name": "0001_initial.sql",
+      "sha256": "c8a1e3a81b9a989460138290f2e22a49860cbefd18c304f83b9a240ff3e3ae2b",
+      "classification": "bootstrap",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "tables": [
+          "principals",
+          "instance_meta",
+          "instance_origin_settings",
+          "credentials",
+          "workspaces",
+          "projects",
+          "project_grants",
+          "project_status_names",
+          "public_join_policies",
+          "project_usage",
+          "issues",
+          "labels",
+          "issue_labels",
+          "issue_relations",
+          "comments",
+          "browser_launches",
+          "web_authenticators",
+          "webauthn_challenges",
+          "web_sessions",
+          "invitations",
+          "invitation_project_grants",
+          "invitation_redemption_items",
+          "operation_commits",
+          "events",
+          "idempotency_records"
+        ],
+        "indexes": [
+          "idx_credentials_token_digest",
+          "idx_credentials_principal_active",
+          "idx_browser_launches_code_digest",
+          "idx_browser_launches_expiry",
+          "idx_web_sessions_token_digest",
+          "idx_web_sessions_principal_active",
+          "idx_web_sessions_source_active",
+          "idx_workspaces_key",
+          "idx_projects_workspace_key",
+          "idx_projects_list",
+          "idx_project_grants_principal_project",
+          "idx_project_grants_project_active",
+          "idx_issues_project_list",
+          "idx_issues_candidates",
+          "idx_issues_assignee",
+          "idx_labels_project_name",
+          "idx_issue_labels_label_issue",
+          "idx_comments_issue_list",
+          "idx_issue_relations_source",
+          "idx_issue_relations_target",
+          "idx_invitations_code_digest",
+          "idx_invitations_owner_list",
+          "idx_events_project_stream_sequence",
+          "idx_events_stream_sequence",
+          "idx_idempotency_expiry",
+          "idx_webauthn_challenges_expiry",
+          "idx_web_authenticators_principal_active",
+          "idx_public_join_enabled"
+        ]
+      }
+    }
+  ]
+}

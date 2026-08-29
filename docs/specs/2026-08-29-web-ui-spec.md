@@ -1,6 +1,7 @@
 # cfKanban 极简 Web UI SPEC
 
-- 文档状态：Draft
+- 文档状态：Frozen
+- 冻结日期：2026-08-29
 - Roadmap：R1 / R3
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
@@ -124,7 +125,7 @@ Web 不提供 Owner transfer、第二管理员、直接 D1 浏览、完整导出
 7. 成功兑换后服务设置 `HttpOnly + Secure + SameSite` Session cookie，使 launch code 失效，并用不含 code 的 URL 替换浏览器地址后进入 target。
 8. 页面之后通过同源 API 工作；退出登录只撤销当前 Web Session，不撤销长期 Credential。
 
-建议的路由形态为 `/app`、`/app/w/{workspace_key}/p/{project_key}`、`/app/issues/{identifier}`、`/app/admin` 与 `/app/launch?code=...`。这些路径在本文 Draft 中只是信息架构建议，最终以 API/路由合同为准。
+路由形态固定为 `/app`、`/app/w/{workspace_key}/p/{project_key}`、`/app/issues/{identifier}`、`/app/admin` 与 `/app/launch?code=...`。它们是 Web 信息架构入口，具体 API 调用仍以 Frozen API/Schema 合同为准。
 
 ### 4.2 target 与权限
 
@@ -138,7 +139,7 @@ Browser Launch 只保存服务端可校验的 target，例如 Project、Issue �
 - 启动页和已认证页面使用严格 `Referrer-Policy: no-referrer`、`Cache-Control: no-store`，不加载第三方脚本、字体、图片或统计资源。
 - launch code 短时、一次性、可撤销；失败兑换不得泄露目标、Principal 或 Project 是否存在。
 - Web Session 使用不可预测 token 的安全散列或等价服务端 session 记录；cookie 不可被 JavaScript 读取。
-- 所有 cookie-auth 写请求必须有 CSRF 防护。v0 Draft 采用 Origin/同源校验 + double-submit CSRF cookie/header；不能只依赖 SameSite。CSRF token 可被同源脚本读取，但不是认证凭据，不进入持久浏览器存储。
+- 所有 cookie-auth 写请求必须有 CSRF 防护。v0 固定采用 Origin/同源校验 + double-submit CSRF cookie/header；不能只依赖 SameSite。CSRF token 可被同源脚本读取，但不是认证凭据，不进入持久浏览器存储。
 - 页面内容视为不可信业务数据，Markdown 渲染必须去除脚本、事件属性、危险 URL 与任意 HTML 执行能力。
 - 不在 Service Worker、IndexedDB、localStorage 或 sessionStorage 保存长期 Credential、launch code 或 Web Session secret。
 
@@ -250,15 +251,15 @@ Agent Launch Session 同时按 launch target 限定 Web scope：Project target �
 
 以下问题不阻塞 v0 合同：Owner 是否需要“退出该 Principal 的全部 Web Sessions”、是否显示 active session 摘要、是否增加键盘快捷键、是否为极窄窗口提供列表替代布局，以及是否增加 English/简体中文之外的其他语言。它们可以在真实使用证据出现后决定。
 
-## 9. 冻结条件
+## 9. 冻结依据
 
-本文至少满足以下条件后才可 Frozen：
+本文冻结时已经满足：
 
 1. Q-WEB-01 已按 D-217 确认并回写 Foundation、Agent Skills 和 API/Schema。
 2. API/Schema SPEC 定义 Browser Launch、Session、cookie/CSRF、撤销和所需 D1 事实。
-3. SB-25～SB-33 的主要产品方向逐卡验收通过；Q-232 已固定原生限流部署配置与初始档位，D-243 已固定推荐域名的 Web 边界，D-244 已固定 Passkey capability/credential 区分与精确 hostname 选择，D-245 已固定同 Worker Static Assets 与无 Pages/KV 的部署拓扑；只剩 API/DDL 绝对边界待冻结。
+3. SB-25～SB-33 的主要产品方向逐卡验收通过；Q-232 已固定原生限流部署配置与初始档位，D-243 已固定推荐域名的 Web 边界，D-244 已固定 Passkey capability/credential 区分与精确 hostname 选择，D-245 已固定同 Worker Static Assets 与无 Pages/KV 的部署拓扑；API/DDL 原型已验证，D-252 已固定 Passkey 非零签名计数异常策略。
 4. reader/writer/Owner 的 Web 能力不超出既有权限，也不存在仅 Web 可用的领域后门。
 5. 明确验证在 Codex IAB 与普通浏览器中使用同一页面的实现计划，但不要求绑定某个宿主专有 API。
 6. 根目录 `DESIGN.md` 的视觉 token、主要组件状态与选定参考图已经过实现前复核，且 Vue 3 + TypeScript + Vite 的构建边界进入实施计划。
 
-冻结本文仍不授权实现、创建 Linear 实现 Issue、部署、迁移、提交或推送。
+冻结本文提供稳定实现依据，但不表示任一 Linear 实现 Issue 已完成，也不授权部署、迁移、提交或推送。

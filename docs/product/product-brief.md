@@ -191,6 +191,6 @@ Skill 可携带调用约定、references 和经过验证的 helper，但不能�
 - 有恢复权限的 Agent 可以按稳定标识或 `deleted=only` tombstone 视图定位误删资源；恢复始终是单资源原子操作，不存在批量恢复或隐藏时间窗的“最近删除”端点。
 - Cloudflare 免费可选服务超限时，核心看板仍能明确失败或继续降级运行。
 
-## 当前产品讨论入口
+## 当前实施入口
 
-[Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md) 当前为合同修订 18；[Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 已修订到 20，最新固定可重现根级构建、migration manifest/checksum/schema readback，并将部署型 GitHub Actions 后置，保持 v0 的 `cfkanban-deploy` Agent-first 唯一主路径。monorepo、同 Worker Static Assets、无 Pages/KV、Passkey、preferred origin、Public Join、Project quota、Browser Launch/Session、Credential 恢复、限流和错误归一化合同继续有效；[Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与 API/Schema Draft 正收敛交互和 wire/DDL，均不授权实现。
+[Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md) 当前为合同修订 19，[Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md) 为修订 20；[API & D1 Schema SPEC](../specs/2026-08-28-api-schema-spec.md)、[Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 与根目录 `DESIGN.md` 已于 2026-08-29 冻结。实现范围、依赖、验收和停止条件进入 [v0 Implementation Plan](../plans/2026-08-29-v0-implementation-plan.md)，动态状态进入 Linear `v0 可部署闭环` Milestone。monorepo、同 Worker Static Assets、无 Pages/KV、Passkey、preferred origin、Public Join、Project quota、Browser Launch/Session、Credential 恢复、限流和错误归一化合同继续有效；业务编码、部署和远端 migration 仍按独立授权推进。

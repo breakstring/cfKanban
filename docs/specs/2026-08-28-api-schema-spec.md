@@ -1,20 +1,20 @@
 # cfKanban API & D1 Schema SPEC
 
-- 文档状态：Draft
+- 文档状态：Frozen
 - Roadmap：R1 / R2
 - 上游合同：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)（Frozen）
 - Agent 合同：[Agent Skills & Bootstrap SPEC](2026-08-28-agent-skills-bootstrap-spec.md)（Frozen）
-- Web 合同：[极简 Web UI SPEC](2026-08-29-web-ui-spec.md)（Draft）
+- Web 合同：[极简 Web UI SPEC](2026-08-29-web-ui-spec.md)（Frozen）
 - 架构基线：[Cloudflare 架构基线](../architecture/cloudflare-baseline.md)
 - 平台快照：[2026-08-28 Cloudflare 平台快照](../research/cloudflare-platform-snapshot-2026-08-28.md)
 - 最近更新：2026-08-29
-- 冻结日期：待确认
+- 冻结日期：2026-08-29
 
 ## 1. 目的与边界
 
 本文把两份 Frozen 上游合同推导为可实现、可验证的 v0 HTTP API、OpenAPI 约定、D1 逻辑 schema、索引和原子写入配方。本文不得重新解释 Owner、Principal、Project Grant、Invitation、assignment、status、blocked、soft delete、Event/Audit 或 Agent Guidance 的产品语义。
 
-本文仍是 Draft，不授权编写业务代码、生成 migration、创建 Linear 实现 Issue、部署或迁移。冻结前应通过 OpenAPI/DDL 原型和本地 D1 验证本文的 SQL 能力假设，但原型不能被表述为产品实现。
+本文已依据 OpenAPI/DDL 原型和本地 D1 验证冻结。冻结提供稳定实现依据，但不把验证原型表述为业务实现，也不表示任一 Linear 实现 Issue 已完成；部署和远端 migration 仍需要独立授权。
 
 本文定义：
 
@@ -125,7 +125,7 @@ Browser Launch 的 `expires_at` 固定为 `created_at + 5 minutes`，只能兑�
 
 - Worker 在读取完整正文前执行流式/长度预检；JSON request 最大 128 KiB。
 - `Idempotency-Key` 为调用方生成的 1～128 个可打印 ASCII 字符，不得包含 secret。
-- 所有创建、命令和其他非天然幂等写入都要求 `Idempotency-Key`；纯读取和带 `expected_version` 的资源 PATCH/DELETE 不强制该 Header，但 Skill 可以统一提供。
+- 所有创建、命令和其他非天然幂等写入都要求 `Idempotency-Key`；纯读取和带 `expected_version` 的资源 PATCH/DELETE 不强制该 Header，但 Skill 可以统一提供。PATCH/command 在 JSON body 携带 `expected_version`；DELETE 为避免依赖兼容性不一的 DELETE body，固定使用必填 query parameter `expected_version`。跨两个 Issue 的 Relation DELETE 还必须同时携带两端 `source_expected_version` 与 `target_expected_version`。
 - request fingerprint 是 `method + route_template + normalized_resource_scope + RFC 8785 canonical JSON body` 的 SHA-256；query 中影响写入语义的参数必须进入 normalized scope。
 - 幂等记录保留 24 小时。重放前必须重新验证当前 Credential 和 effective authorization；授权失效时返回当前鉴权错误，不返回历史业务响应。
 
@@ -144,7 +144,7 @@ Browser Launch 的 `expires_at` 固定为 `created_at + 5 minutes`，只能兑�
 - 单资源读取直接返回资源对象。
 - 列表返回 `{items, next_cursor, has_more, resolved_scope?}`。
 - 写入返回变更后的最小资源摘要，以及 `event_cursor`、`idempotent_replay`。
-- DELETE 表示 soft delete 或 revoke，成功返回更新后的 tombstone/revocation 摘要，不返回 204。
+- DELETE 表示 soft delete 或 revoke，使用 query 中的版本前置条件，成功返回更新后的 tombstone/revocation 摘要，不返回 204。
 - 响应中的 `allowed_actions` 是当前事实投影，不是未来授权保证；执行时仍重新鉴权。
 
 ## 4. Cursor 与查询合同
@@ -294,6 +294,10 @@ preferred origin 是实例级应用设置，不负责在 Cloudflare 或第三方
 Passkey 登记 options 固定 `residentKey=required`、`userVerification=required`，以支持首页无用户名的 discoverable-credential 登录；只把当前 Principal 在当前 RP ID 下已登记且 active 的 credential IDs 放入 `excludeCredentials`，用于降低同一 hostname 重复登记概率，不把返回结果解释成设备 inventory。公开 authentication options 使用 discoverable request，不以调用方自报 Principal 过滤，`allowCredentials` 省略或为空，并固定 `userVerification=required`。
 
 Passkey 登记和 assertion 验证都必须验证 challenge purpose、RP ID、origin、expiry、单次消费、credential ID、公钥签名、user handle 与 Principal 绑定。v0 对每次 ceremony 固定 `rp_id=request hostname`、`expected_origin=normalized current HTTPS origin` 并随 challenge 保存，不启用跨 hostname RP ID 共享或 Related Origin Requests；hostname/origin 必须从受信的 Worker 请求 URL 推导，不能接受调用方或任意 forwarded header 覆盖。具体 COSE algorithm allowlist、attestation policy 与 counter 异常处理在实现原型中验证后冻结。服务端不保存 authenticator 私钥，也不按 display name 查找身份。
+
+验证原型已证明 Cloudflare Workers Web Crypto 所需的 ECDSA P-256/SHA-256 与 RSASSA-PKCS1-v1_5/SHA-256 路径可用。v0 推荐把 `pubKeyCredParams` 固定为 COSE `ES256 (-7)` 优先、`RS256 (-257)` 兼容，拒绝未列出的算法；`attestation=none`，不建立认证器厂商根证书或设备可信等级；registration/authentication challenge 固定 5 分钟，并在第一次 verify 请求内原子消费，失败后重新取 options。`web_authenticators` 同时保存已验证 algorithm、sign count、backup eligible/state，不能只保存不可检查的自由 JSON。
+
+D-252 已确认签名计数策略：两边都为 0 时允许；新值严格大于已存值时原子更新并允许；只要任一非 0 且新值小于等于已存值，就统一认证失败并写 security Audit，但不自动 revoke Passkey。该异常按 WebAuthn 规范只能说明可能克隆、认证器异常或并发乱序，不是克隆证明；用户可通过 Agent Browser Launch 恢复访问并处理该 Passkey。
 
 公开 options/verify 不能泄露某个 Principal、credential ID 或当前设备 credential 是否存在。verify 失败使用统一认证失败语义；浏览器取消、超时、没有匹配 credential、认证器不可用与本地策略拒绝由 Web 客户端作为不确定的“登录未完成”处理，服务端不得声称是哪一种。`GET /api/v1/me/passkeys` 只返回当前 Principal 的服务端登记摘要，例如 passkey ID、RP ID、created/last-used/revoked 状态，不代表私钥仍在当前设备或当前可用。
 
@@ -450,7 +454,6 @@ Cloudflare 在 Worker 执行前生成的 Error 1027、平台 429 或 HTML 5xx �
 - `PROJECT_ISSUE_LIMIT_REACHED`；
 - `PROJECT_COMMENT_LIMIT_REACHED`；
 - `PROJECT_PRINCIPAL_LIMIT_REACHED`；
-- `PROJECT_LIMIT_BELOW_USAGE`；
 - `RATE_LIMITED`；
 - `PLATFORM_QUOTA_EXCEEDED`；
 - `PLATFORM_UNAVAILABLE`。
@@ -494,9 +497,9 @@ Cloudflare 在 Worker 执行前生成的 Error 1027、平台 429 或 HTML 5xx �
 | `credentials` | id, principal_id, token_prefix, token_digest, issued_at, last_used_at, revoked_at, revoked_by_principal_id, revoke_reason, created_operation_id, last_operation_id | token_digest unique；无 expiry；secret 永不保存 |
 | `project_grants` | id, principal_id, project_id, role, revoked_at, revoked_by_principal_id, version, created_at, updated_at, last_operation_id | unique(principal_id, project_id)；role CHECK reader/writer；Owner 不建 Grant |
 | `browser_launches` | id, code_prefix, code_digest, principal_id, source_credential_id, target_kind, target_json, expires_at, redeemed_at, revoked_at, created_at, created_operation_id | code_digest unique；一次性；target kind/shape CHECK；明文 code 不保存 |
-| `web_authenticators` | id, principal_id, credential_id, public_key_cose, user_handle, sign_count, transports_json, rp_id, created_at, last_used_at, revoked_at/by, created_operation_id, last_operation_id | credential_id unique；私钥不保存；一个 Principal 可多行；transports JSON valid |
+| `web_authenticators` | id, principal_id, credential_id, public_key_cose, algorithm, user_handle, sign_count, backup_eligible/state, transports_json, rp_id, created_at, last_used_at, revoked_at/by, created_operation_id, last_operation_id | credential_id unique；algorithm 只允许 -7/-257；backup flags 为 boolean；私钥不保存；一个 Principal 可多行；transports JSON valid |
 | `webauthn_challenges` | id, challenge_digest, purpose, principal_id, rp_id, expected_origin, expires_at, consumed_at, created_at | challenge_digest unique；登记时 principal 必填，认证时可空；RP ID/expected origin 与创建 challenge 的请求 hostname/完整 HTTPS origin 固定；短期单次使用并有界清理 |
-| `web_sessions` | id, token_digest, principal_id, source_kind, source_id, target_kind, target_json, expires_at, revoked_at, created_at | token_digest unique；source kind credential/web_authenticator；secret 不保存；固定 8 小时 expiry；scope shape CHECK |
+| `web_sessions` | id, token_digest, principal_id, source_kind, source_id, target_kind, target_json, expires_at, revoked_at, created_at, last_seen_at | token_digest unique；source kind credential/web_authenticator；secret 不保存；固定 8 小时 expiry；last_seen 只作低频提示且不续期；scope shape CHECK |
 
 `last_used_at` 只允许按低频阈值更新，例如距离上次记录超过 24 小时；不能每次请求写 D1。鉴权逻辑只看 token digest 与 revoked_at，不依赖 last-used。v0 的身份停用由 Credential revoke 与 Project Grant revoke 表达，不在 Principal 上增加第三条状态轴。
 
@@ -541,7 +544,7 @@ Relation 唯一性：
 | `invitations` | id, kind, code_prefix, code_digest, bound_principal_id, recovery_mode, expires_at, revoked_at/by, redeemed_at/by, created_at/by_owner, created_operation_id, last_operation_id | code_digest unique；kind/mode/bound principal 的跨列 CHECK；一次性 |
 | `invitation_project_grants` | invitation_id, project_id, role | PK(invitation_id,project_id)；仅 project_grant kind，最多 20 由 Worker + transaction guard 校验 |
 | `invitation_redemption_items` | invitation_id, project_id, operation_id, outcome, effective_role | PK(invitation_id,project_id)；immutable；记录 created/regranted/already_has_access，用于精确 replay |
-| `operation_commits` | operation_id, primary_subject_type/id, last_event_sequence, committed_at | operation_id PK；由业务 batch 最后一条条件 INSERT 写入；immutable |
+| `operation_commits` | operation_id, primary_subject_type/id, last_event_sequence, committed_at | operation_id PK；last_event_sequence NOT NULL；由业务 batch 最后一条提交哨兵写入；immutable |
 | `events` | sequence INTEGER PK AUTOINCREMENT, id, stream, type, operation_id, event_index, actor_principal_id, actor_credential_id, authorized_via, grant_id, workspace_id, project_id, subject_type/id, payload_json, created_at | unique(operation_id,event_index)；append-only；stream domain/security |
 | `idempotency_records` | id, scope_key, method, route_template, resource_scope_hash, idempotency_key, request_hash, operation_id, state, response_status, response_json, created_at, expires_at | unique(scope_key,method,route_template,resource_scope_hash,idempotency_key)；state pending/committed |
 
@@ -551,13 +554,14 @@ Relation 唯一性：
 
 ## 9. 必需索引与查询形状
 
-索引只服务已知高频查询，避免为了“可能有用”增加每次写入成本。冻结前必须用 `EXPLAIN QUERY PLAN` 证明下列查询不做意外全表扫描：
+索引只服务已知高频查询，避免为了“可能有用”增加每次写入成本。冻结验证已用 `EXPLAIN QUERY PLAN` 证明下列查询不做意外全表扫描：
 
 | 索引 | 服务查询 |
 | --- | --- |
 | unique `credentials(token_digest)`；`credentials(principal_id, revoked_at)` | 每请求鉴权；Owner Credential 摘要 |
 | unique `browser_launches(code_digest)`；`browser_launches(expires_at,redeemed_at,revoked_at)` | launch redeem 与有界清理 |
-| unique `web_sessions(token_digest)`；`web_sessions(principal_id,revoked_at,expires_at)`；`web_sessions(source_credential_id,revoked_at)` | cookie 鉴权、Principal/源 Credential 撤销联动 |
+| unique `web_sessions(token_digest)`；`web_sessions(principal_id,revoked_at,expires_at)`；`web_sessions(source_kind,source_id,revoked_at)` | cookie 鉴权、Principal/来源 Credential 或 Passkey 撤销联动 |
+| `web_authenticators(principal_id,revoked_at,created_at,id)` | 当前 Principal 的 Passkey 摘要列表与 active 过滤 |
 | unique `workspaces(key)` | Workspace path lookup |
 | unique `projects(workspace_id,key)`；`projects(workspace_id,deleted_at,display_name,id)` | Project path/list/tombstone |
 | unique `project_grants(principal_id,project_id)`；`project_grants(project_id,revoked_at,role,principal_id)` | 授权与 Project 成员查找 |
@@ -586,8 +590,8 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 1. Worker 预生成 IDs、timestamp、operation ID 和规范化 request hash；
 2. 只读鉴权、schema 校验和幂等 preflight 用于快速失败，但不作为最终授权保证；
 3. business batch 中的第一条 INSERT/UPDATE 使用条件 SQL，同时复核 active Credential、Principal 存在性、Owner/Grant、容器状态和 expected version；
-4. 后续 Comment/Relation/Event 写入以相同 operation ID 和已成功业务行作为条件；任何真实 SQL/constraint 失败使整个 batch 回滚；
-5. batch 最后只有在该配方预期的业务变更与 Event 都存在时，才条件写入唯一 `operation_commits` 行；
+4. 后续 Comment/Relation/Event 写入以相同 operation ID 和该操作最终主实体确实成功的事实作为条件；跨资源操作不能只因其中任意一端写入就产生成功 Event；
+5. batch 最后使用 `operation_commits.last_event_sequence NOT NULL` 作为提交哨兵：只有预期数量 Event 全部存在时子查询才返回最后 sequence，否则写入 NULL 必须触发约束错误并让 D1 回滚整个 batch。不能只用 `INSERT ... SELECT ... WHERE` 的零行结果作为失败，因为 D1 会把此前已成功的 counter/资源写入一并提交；
 6. Worker 检查 `meta.changes`/operation readback，区分成功、version conflict、权限变化和状态冲突；
 7. 响应丢失时以 operation ID 找到 operation commit、Event 和资源，而不是再次盲写。
 
@@ -657,6 +661,8 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 - enum 同时给稳定 key 及中文解释，示例不使用真实 token/code；
 - security schemes 包含 Agent/API 使用的 Bearer Credential 与第一方 Web 使用的 Cookie Session；Invite、Browser Launch、WebAuthn challenge 和 Public Join 的条件认证通过各 operation 说明和 request schema 表达；
 - 所有 list/cursor/error schema 复用公共 component，但不增加无意义通用响应外壳；
+- 每个 operation 以 `x-cfkanban-permission` 显式声明 Public、当前 Principal、Project reader/writer、Deployment Owner 或一次性 capability 边界，不能把“已认证”误写成业务授权；
+- 所有 Worker 响应声明 `X-Request-ID`；带 JSON body 的请求声明 413；短期 Invitation/Browser Launch capability 的过期、撤销或已消费统一声明 410；
 - OpenAPI 自身不包含 canonical Skill 安装指令、secret、本地路径或上层编排 prompt。
 
 ## 13. Migration 与本地/远端验证
@@ -668,9 +674,9 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 - 每次 schema release 同时声明最小/最大兼容 service version；Worker rollback 不等于 schema rollback。
 - 初始实现前必须在本地 D1 验证 migration、约束与主要 query plan；进入部署前再在一次隔离远端 D1 上验证平台实际行为。远端验证需要用户另行授权，本文不授予该权限。
 
-## 14. 冻结前完成定义
+## 14. 冻结完成定义与证据
 
-本文从 Draft 变为 Frozen 前至少需要：
+本文冻结时已经满足：
 
 1. 逐项证明端点没有引入 Frozen Foundation 之外的业务角色、批量写入或权限继承。
 2. 生成可解析的 OpenAPI 原型，并检查 operationId 唯一、所有写入前置条件和错误响应。
@@ -685,9 +691,9 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 11. 对每类错误验证 HTTP、code/category/source、retryable/recovery、header/body Retry-After 和敏感信息裁剪一致；mock D1 daily/storage/overload、Cloudflare 1027 HTML、edge 429、未知非 JSON 5xx 与网络失败，证明 Web/Skill 得到一致但不伪造来源的 normalized result。
 12. 验证 discovery 响应按请求 origin 动态生成且 `no-store`，不接受转发 host 覆盖；Owner Cookie Session 不能修改 preferred origin。验证客户端只在当前 trusted origin 发布更高 `origin_version` 且无 Credential、不跟随 redirect 的目标探测完全一致时自动迁移，降级、同版本漂移、instance mismatch、target observed-origin mismatch 与旧 origin 不可达都不改写本地信任。
 
-## 15. 当前 Draft 结论
+## 15. 冻结结论
 
-D-215/D-216 已要求对两份 Frozen 上游 SPEC 做合同修订 3；本文相应新增 Web 会话落点。以下 Draft 技术合同冻结前应重点复核：
+D-215/D-216 已要求对两份 Frozen 上游 SPEC 做合同修订 3；本文相应新增 Web 会话落点。下列技术合同已经通过 [2026-08-29 API/D1 验证快照](../research/api-d1-contract-validation-2026-08-29.md) 复核并冻结：
 
 - Workspace key 小写 slug、Project key 大写短 key；
 - Invite 单次最多 20 个 Project grants；
@@ -698,9 +704,10 @@ D-215/D-216 已要求对两份 Frozen 上游 SPEC 做合同修订 3；本文相�
 - D1 条件 SQL + operation commit + pending/committed idempotency state machine 代替传统 callback transaction。
 - Browser Launch 与 Web Session 分表保存 hash-only secret；同源 Web 复用现有权限并用 CSRF 防护写入。
 - Passkey 使用独立 Web Authenticator 与短期 challenge 表；Session 以 source kind/id 统一表达 Credential launch 或 Passkey 来源。v0 使用 discoverable credential、精确请求 hostname RP ID 与完整 HTTPS expected origin，公开认证失败不泄露 credential 是否存在。
+- Passkey 使用 ES256/RS256、无 attestation 和 5 分钟单次 challenge；D-252 已固定非零签名计数不前进时拒绝并审计、但不自动撤销。
 - Public Join 使用单 Project Policy 和单 Grant 原子兑换；Team Join、多 Project 数组与逐 Principal reentry denylist 不进入 v0。
 - Public Project 必须配置本 Project 独立的 Issue/Comment/Principal 三项 active limits；它们只在该 Project 的 Public Join enabled 期间生效，不影响其他 Project。limit 可以低于 usage，既有数据不变且只阻止相应计数增长；soft delete/revoke 释放，restore/regrant 重新占用。请求门控另由三个 Workers Rate Limiting bindings 近似执行，采用 120/300/30 每 60 秒的首次部署档位，并只通过 deploy Skill 发布配置修改。
 - 所有 Worker 内错误使用统一 JSON envelope；Project quota、应用 rate limit、D1 platform quota 与 platform failure 使用不同机器类别。Cloudflare edge 在 Worker 外生成的错误只由 Web/Skill 客户端本地归一化，不能伪装成 OpenAPI response。
 - 实例只保存一个 Owner 推荐的 `preferred_api_origin`；公开 well-known 文档按当前请求动态返回 observed origin 与递增版本。只有 Owner Bearer 能修改设置，服务不做认证重定向；可信旧 origin 发布的更高版本与无 Credential 目标探测共同构成 Agent 自动迁移证据。
 
-这些选择没有增加新角色、权限或产品模块。若后续原型证明某项无法在 D1 上可靠实现，应先修订本文 Draft；不得通过引入 Durable Objects、KV 或隐藏批量 API 绕过 Frozen Foundation。
+这些选择没有增加新角色、权限或产品模块。若后续实现证据证明某项无法在 D1 上可靠实现，应先显式修订本文 Frozen 合同；不得通过引入 Durable Objects、KV 或隐藏批量 API 绕过 Frozen Foundation。

@@ -14,10 +14,10 @@
 - [用户使用 Storyboard](product/user-storyboard.md)：从首次部署到日常协作与恢复的逐卡产品验收故事。
 - [Agent-native Kanban Foundation SPEC](specs/2026-08-26-agent-native-kanban-foundation-spec.md)：已冻结的领域、身份、assignment、基础 API 语义和可靠性合同。
 - [Agent Skills & Bootstrap SPEC](specs/2026-08-28-agent-skills-bootstrap-spec.md)：已冻结的 Skill 能力暴露、可覆盖 Agent Guidance、宿主兼容、跨平台 Node scripts、部署与凭据安全体验合同；不替上层 Agent 作最终工作决策。
-- [API & D1 Schema SPEC](specs/2026-08-28-api-schema-spec.md)：仍在收敛的 v0 HTTP/OpenAPI、D1 schema、索引和原子写入 Draft 合同。
-- [Web UI SPEC](specs/2026-08-29-web-ui-spec.md)：极简第一方 Web、Browser Launch/Session、参与者轻量操作和 Owner 维护的 Draft 合同。
-- [Web 视觉设计合同](../DESIGN.md)：已选定 warm editorial workbench 方向的颜色、排版、布局、组件状态与无障碍约束；当前为 Draft，不授权实现。
-- `docs/plans/`：目前尚未采用；只有形成明确实现授权和实施配方后才创建。
+- [API & D1 Schema SPEC](specs/2026-08-28-api-schema-spec.md)：已冻结的 v0 HTTP/OpenAPI、D1 schema、索引和原子写入合同。
+- [Web UI SPEC](specs/2026-08-29-web-ui-spec.md)：已冻结的极简第一方 Web、Browser Launch/Session、参与者轻量操作和 Owner 维护合同。
+- [Web 视觉设计合同](../DESIGN.md)：已冻结的 warm editorial workbench 颜色、排版、布局、组件状态与无障碍约束。
+- [v0 Implementation Plan](plans/2026-08-29-v0-implementation-plan.md)：WP-01～WP-11 的范围、依赖、验收和停止条件；执行状态以 Linear 为准。
 
 ## 技术与研究
 
@@ -28,6 +28,7 @@
 - [Cloudflare 缓存、协调与限流能力快照（2026-08-29）](research/cloudflare-cache-rate-limit-snapshot-2026-08-29.md)：Workers KV、Cache API、Durable Objects 与 Rate Limiting 的适用边界。
 - [Cloudflare Worker 域名与实例发现能力快照（2026-08-29）](research/cloudflare-worker-domain-discovery-snapshot-2026-08-29.md)：Custom Domains、控制面枚举、第三方代理域名与本地 trusted origin 迁移边界。
 - [Edgechat 架构与部署工程快照（2026-08-29）](research/edgechat-architecture-snapshot-2026-08-29.md)：同 Worker 的 Web/API 部署、Cloudflare 产品取舍、D1 migration 与 GitHub Actions 借鉴边界。
+- [API / D1 合同验证快照（2026-08-29）](research/api-d1-contract-validation-2026-08-29.md)：OpenAPI、D1 schema、原子操作、Web 安全与错误归一化的实现前证据。
 
 ## 项目治理
 

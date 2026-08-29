@@ -8,7 +8,7 @@
 
 - 默认使用简体中文沟通和维护文档；代码标识、协议字段和外部标准保留英文。
 - 根目录 `README.md` 默认使用英文；简体中文版本使用 `README.zh-CN.md`，两者顶部互相链接。后续语言版本沿用 `README.<locale>.md`，并同步维护顶部语言导航。
-- 项目当前处于产品发现与架构收敛阶段。`Draft` 文档只表示讨论基线，不是实现授权。
+- 项目已完成 v0 实现前产品发现与架构冻结，当前处于 implementation-ready、尚未开始业务编码的阶段。`Draft` 文档仍只表示讨论基线，不是实现授权。
 - 未得到用户明确授权前，不开始业务实现、部署、迁移、提交或推送。
 - 开始实现前必须重读相关 SPEC；只有 `Frozen` 合同才能作为稳定实现依据。若用户明确要求基于 Draft 试验，应在交付中标明偏差和未冻结项。
 
@@ -26,13 +26,14 @@
 | 产品定位 | `docs/product/product-brief.md` | 用户、问题、原则、范围与非目标 |
 | 用户旅程验收 | `docs/product/user-storyboard.md` | 从部署到日常协作与恢复的逐卡产品发现；不是实现 backlog |
 | Agent 使用与分发合同 | `docs/specs/2026-08-28-agent-skills-bootstrap-spec.md` | URL bootstrap、portable Skills、宿主兼容、跨平台 Node scripts、部署与本地凭据体验 |
-| Web UI 合同 | `docs/specs/2026-08-29-web-ui-spec.md` | 极简第一方 Web、Browser Launch/Session、人类直接参与和 Owner 维护；当前为 Draft |
-| Web 视觉设计合同 | `DESIGN.md` | 已选定 warm editorial workbench 的 tokens、排版、布局、组件与无障碍约束；当前为 Draft |
-| API / Schema 合同 | `docs/specs/2026-08-28-api-schema-spec.md` | v0 HTTP/OpenAPI、D1 schema、索引与原子写入；当前为 Draft，不授权实现 |
+| Web UI 合同 | `docs/specs/2026-08-29-web-ui-spec.md` | 极简第一方 Web、Browser Launch/Session、人类直接参与和 Owner 维护；Frozen |
+| Web 视觉设计合同 | `DESIGN.md` | warm editorial workbench 的 tokens、排版、布局、组件与无障碍约束；Frozen |
+| API / Schema 合同 | `docs/specs/2026-08-28-api-schema-spec.md` | v0 HTTP/OpenAPI、D1 schema、索引与原子写入；Frozen |
 | Roadmap | `docs/project/roadmap.md` | 方向、基线、推荐顺序与暂缓项；不保存动态 backlog |
 | 执行跟踪 | Linear 项目 `cfKanban` | Issue、状态、优先级、负责人、排期与执行评论 |
 | 决策记录 | `docs/project/decision-register.md` | 已确认、建议和延后决策；不得把建议写成已冻结事实 |
 | SPEC / PLAN | `docs/specs/`、`docs/plans/` | 公共合同与高风险实施配方；不复制 Linear 动态状态 |
+| v0 实施计划 | `docs/plans/2026-08-29-v0-implementation-plan.md` | WP-01～WP-11 的范围、依赖、验收与停止条件；状态仍以 Linear 为准 |
 | 完成证据 | 暂不采用独立 progress log | 在项目进入实现阶段后再由用户确认是否启用 |
 
 涉及治理接入或迁移、Roadmap 方向变化、Linear 同步、SPEC/PLAN 合同位置变化或 progress log 采用方式时，使用项目管理治理技能。该技能提供方法，不扩大 Linear 写入、文件修改、提交或推送权限。
@@ -42,13 +43,13 @@
 - 机器绑定为 `.linear/project.json`，人类可读规则为 `docs/project/linear.md`。
 - Linear 是执行真相，仓库文档是产品与技术合同真相；两者通过链接关联，不复制动态状态。
 - Linear 写入前先在线查重并确认 workspace、team、project 和目标 Issue。
-- 当前讨论假设不批量创建成实现 Issue。方向冻结后再按可独立交付的范围拆分。
+- v0 方向已冻结并按实施 PLAN 建立 WP-01～WP-11；后续新增 Issue 仍须先查重，只按可独立交付和验证的范围补充，不把 Roadmap 机械复制成 backlog。
 - 不在仓库中保存 Linear token、OAuth、cookie 或其他凭据。
 
-## 安全下限与 Draft 约束
+## 安全下限与合同约束
 
 - Agent/API-first 不等于 Agent-only。用户直接使用的 Agent 是主要调用载体，但不是 cfKanban 领域角色或受产品规定的工作流执行器；部署、Owner 管理、协调和 Coding 只是任务模式。v0 同时提供同一 Worker 托管的极简第一方 Web UI，用于人类直接查看 Kanban、低频 Issue 参与和 Owner 简单维护；它复用同一 REST/权限/并发/审计合同，不发展为重型产品表面或第二套领域实现。
-- 浏览器不能读取 `~/.cfkanban/`，也不能要求用户粘贴长期 Credential。已认证 Agent 为明确 Web target 创建固定 5 分钟、一次性的 Browser Launch URL，浏览器以 POST 兑换固定 8 小时、不滑动续期且无 refresh 的 `HttpOnly + Secure + SameSite` Session；Session 绑定 Principal、源 Credential 和 target scope。长期 Credential 不进入 URL、localStorage、页面脚本上下文或浏览器日志；CSRF 具体合同仍由 Web UI/API Draft 冻结。
+- 浏览器不能读取 `~/.cfkanban/`，也不能要求用户粘贴长期 Credential。已认证 Agent 为明确 Web target 创建固定 5 分钟、一次性的 Browser Launch URL，浏览器以 POST 兑换固定 8 小时、不滑动续期且无 refresh 的 `HttpOnly + Secure + SameSite` Session；Session 绑定 Principal、源 Credential 和 target scope。长期 Credential 不进入 URL、localStorage、页面脚本上下文或浏览器日志；CSRF 固定使用同源 Origin 校验与 double-submit cookie/header。
 - Owner `admin` Web Session 具有实例级管理与数据面 scope，默认只打开 Overview，不自动查询全部 Issue；Owner 显式选择 Workspace/Project 后可进入任意 Project 看板。Project/Issue target 的普通 Session 仍严格限制在其单一 Project。
 - 未认证实例首页提供简短产品介绍和指向 canonical bootstrap document 的可复制 Agent 部署话术，不提供 Credential 输入框、远程脚本执行或私有资源枚举。首次 Agent Launch 后可登记 Passkey；Passkey 是 v0 唯一免 Agent 的 Web 直登方法。浏览器 capability detection 不能当作 credential existence detection；v0 按当前请求 hostname/完整 HTTPS origin 隔离 WebAuthn，失败或 hostname 变化时仍以 Agent Browser Launch 恢复。
 - Owner 可逐个 Project 开关 Public Join，并同时公开多个 Project；访客每次选择一个 Project 与 `reader | writer`，只执行一条 Grant 的原子 self-join。v0 不提供 Team Join、多 Project 公开授权、公开批量写入或逐 Principal 重入 blacklist；Project 仍公开时撤权者可再次加入。公开 writer 风险必须在 Owner 启用时明确提示。
@@ -112,7 +113,7 @@
 - 后期检索增强优先考虑 Cloudflare Vectorize 可重建派生索引；v0 只提供 D1 结构化过滤与基础 title 搜索。Vectorize 不得参与权限、CAS、唯一约束或刚写即读的核心判断，费用、embedding 和同步合同进入对应版本时另行冻结。
 - 任何状态写入都要考虑并发前置条件、幂等重试、审计事件和结构化错误恢复。
 - v0 Web Board 支持固定五列间单卡拖拽。落到非 `done` 列立即执行带 expected version 的状态保存；拖入 `done` 自动使用 complete 合同，缺少 summary 时先收集完成摘要。失败或冲突回到服务端真实列；不提供多卡/批量写入或手工 rank。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG。
-- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 已形成合同修订 18，Agent Skills & Bootstrap SPEC 已形成合同修订 20；v0 已确认不采用 lease。Web UI 与 API/Schema 仍是 Draft，完整 OpenAPI、CSRF 与 D1 DDL/索引不得在实现中默默补齐。
+- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 20；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 Linear WP 推进，不得默补或改变公共合同。
 
 ## 文档路由
 

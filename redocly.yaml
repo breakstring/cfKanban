@@ -1,0 +1,7 @@
+extends:
+  - recommended
+
+rules:
+  # The repository has not selected a license yet. Keep the OpenAPI artifact
+  # explicit about that without inventing an SPDX identifier.
+  info-license-strict: off
