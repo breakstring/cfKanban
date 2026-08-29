@@ -20,22 +20,11 @@ import {
   createInvitation,
   getInvitation,
   getInvitationBootstrapHtml,
+  invitationPageContentSecurityPolicy,
   listInvitations,
   redeemInvitation,
   revokeInvitation,
 } from "../services/invitations.ts";
-
-const INVITATION_PAGE_CSP = [
-  "default-src 'none'",
-  "script-src 'sha256-nz/HcXi8i3neAsDIt7kAGLz+gVTfd+Je7RtFPckEkRc='",
-  "base-uri 'none'",
-  "connect-src 'none'",
-  "font-src 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-  "img-src 'none'",
-  "style-src 'none'",
-].join("; ");
 
 async function body(request: Request, allowedKeys: readonly string[], requiredKeys: readonly string[]) {
   return validateJsonObject(await readJsonBody(request), { allowedKeys, requiredKeys });
@@ -63,24 +52,27 @@ async function authenticated(request: Request, env: WorkerEnv, context: RequestC
 
 export function registerWp04Routes(router: Router): Router {
   router
-    .get("/invite", async (request, env, context) => new Response(
-      await getInvitationBootstrapHtml(
-        env.DB,
-        context.url.searchParams.get("code"),
-        context.startedAt,
-        request.headers.get("accept-language"),
-      ),
-      {
+    .get("/invite", async (request, env, context) => {
+      const [html, contentSecurityPolicy] = await Promise.all([
+        getInvitationBootstrapHtml(
+          env.DB,
+          context.url.searchParams.get("code"),
+          context.startedAt,
+          request.headers.get("accept-language"),
+        ),
+        invitationPageContentSecurityPolicy(),
+      ]);
+      return new Response(html, {
         headers: {
           "cache-control": "no-store",
-          "content-security-policy": INVITATION_PAGE_CSP,
+          "content-security-policy": contentSecurityPolicy,
           "content-type": "text/html; charset=utf-8",
           "referrer-policy": "no-referrer",
           "x-content-type-options": "nosniff",
           "x-frame-options": "DENY",
         },
-      },
-    ))
+      });
+    })
     .post("/api/v1/invitations/redeem", async (request, env, context) => {
       const value = await body(
         request,

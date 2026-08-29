@@ -795,6 +795,36 @@ function preferredInvitationLocale(acceptLanguage: string | null): "en" | "zh-CN
   return "en";
 }
 
+export const INVITATION_PAGE_SCRIPT = `(()=>{const apply=(locale)=>{const selected=locale==="zh-CN"?"zh-CN":"en";document.documentElement.lang=selected;document.querySelectorAll("[data-invitation-locale]").forEach((section)=>{section.hidden=section.dataset.invitationLocale!==selected});try{localStorage.setItem("cfkanban.locale",selected)}catch{}};document.querySelectorAll("[data-select-locale]").forEach((button)=>button.addEventListener("click",()=>apply(button.dataset.selectLocale)));try{const saved=localStorage.getItem("cfkanban.locale");if(saved)apply(saved)}catch{}history.replaceState({},document.title,"/invite")})()`;
+
+let invitationPageScriptHash: Promise<string> | null = null;
+
+async function invitationPageScriptSource(): Promise<string> {
+  invitationPageScriptHash ??= crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(INVITATION_PAGE_SCRIPT),
+  ).then((digest) => {
+    let binary = "";
+    for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+    return `sha256-${btoa(binary)}`;
+  });
+  return invitationPageScriptHash;
+}
+
+export async function invitationPageContentSecurityPolicy(): Promise<string> {
+  return [
+    "default-src 'none'",
+    `script-src '${await invitationPageScriptSource()}'`,
+    "base-uri 'none'",
+    "connect-src 'none'",
+    "font-src 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "img-src 'none'",
+    "style-src 'none'",
+  ].join("; ");
+}
+
 export async function getInvitationBootstrapHtml(
   db: D1Database,
   codeValue: string | null,
@@ -839,7 +869,7 @@ export async function getInvitationBootstrapHtml(
       : "This page is read-only and has not consumed the Invitation. Ask your Agent to use a cfKanban Skill already verified against the project-declared canonical publisher, then check its source, version, integrity, and the targets below before redeeming. Do not run remote scripts from this page.";
     return `<section data-invitation-locale="${sectionLocale}"${locale === sectionLocale ? "" : " hidden"}><p>${intro}</p>${renderDetails(isChinese)}<p>${isChinese ? "有效期至" : "Expires at"} ${escapeHtml(timestamp(row.expires_at) ?? "")}.</p></section>`;
   };
-  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><nav aria-label="Language"><button type="button" data-select-locale="en">English</button> <button type="button" data-select-locale="zh-CN">简体中文</button></nav><h1>cfKanban Invitation</h1>${section("en")}${section("zh-CN")}<script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>(()=>{const apply=(locale)=>{const selected=locale==="zh-CN"?"zh-CN":"en";document.documentElement.lang=selected;document.querySelectorAll("[data-invitation-locale]").forEach((section)=>{section.hidden=section.dataset.invitationLocale!==selected});try{localStorage.setItem("cfkanban.locale",selected)}catch{}};document.querySelectorAll("[data-select-locale]").forEach((button)=>button.addEventListener("click",()=>apply(button.dataset.selectLocale)));try{const saved=localStorage.getItem("cfkanban.locale");if(saved)apply(saved)}catch{}history.replaceState({},document.title,"/invite")})()</script></body></html>`;
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><nav aria-label="Language"><button type="button" data-select-locale="en">English</button> <button type="button" data-select-locale="zh-CN">简体中文</button></nav><h1>cfKanban Invitation</h1>${section("en")}${section("zh-CN")}<script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>${INVITATION_PAGE_SCRIPT}</script></body></html>`;
 }
 
 async function optionalRedeemAuth(
