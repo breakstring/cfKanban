@@ -27,6 +27,7 @@
 - Owner 可以逐个 Project 开启 Public Join。未认证访客可以从多个公开 Project 中选择一个，再明确选择 `reader` 或 `writer`；每次加入只产生一个 Project Grant，不提供 Team Join 或多 Project 公开授权。
 - Codex App 的应用内浏览器（IAB）只是一个使用示例。宿主支持时 Agent 可以直接打开；否则返回同一 URL 供用户在普通浏览器打开。服务端不依赖任何宿主专有协议。
 - v0 不提供公开 batch/bulk 写入；Web 的拖拽一次只移动一张卡，不能通过多选、拖拽多卡或隐藏循环制造批量写接口。
+- 公开首页与认证后 Web UI 公共文案至少支持 English 与简体中文，并允许用户随时切换；这不引入业务内容自动翻译或 Skill/API locale。
 
 ## 3. 产品表面
 
@@ -57,6 +58,7 @@ UI 只呈现服务端返回的 allowed actions，不靠缓存角色猜测权限�
 SB-26 的 v0 交互进一步固定为：
 
 - Project header 始终展示 Workspace/Project、当前 Principal display name、`reader | writer | owner` 摘要和 Session 到期时间；reader 页面醒目标记“只读”，不渲染无效写按钮。
+- 当前 Principal display name 提供轻量“我的资料”入口。所有已认证 Principal，不论 Owner、reader 或 writer，都可以查看只读 principal ID、当前 display name 与身份摘要，并通过同一 `PATCH /api/v1/me` + `expected_version` 合同修改自己的非空 display name；v0 不增加头像、邮箱、简介或他人资料编辑。Passkey 列举/撤销属于认证设置，不与资料修改合并成隐藏复合写入。
 - Board 卡片点击进入同页 Issue 详情；writer 可以从 Board 创建单个 Issue，但 priority、assignee、labels、relations 等编辑集中在详情，避免卡片堆满快捷控件。
 - 拖拽落列采用状态自动保存；Issue title/body 等文本编辑仍使用普通文本框/textarea 和显式 Save，不做后台 autosave，避免输入过程持续写 D1。正文与 Comment 以 Markdown 源码编辑，并在详情、评论流和可选预览中安全渲染；不引入 WYSIWYG 富文本编辑器。
 - 每次保存只提交一个资源的显式改动，并等待服务端成功后更新页面。`VERSION_CONFLICT` 保留尚未提交的当前页草稿，展示远端新 version 与刷新/复制草稿选项，不做自动 merge 或自动重放。
@@ -85,6 +87,16 @@ Owner 管理面按四个简单分区组织：Overview、Workspaces/Projects、Ac
 Owner `admin` Session 默认落在 Overview，不自动读取全部 Project 或 Issue。Owner 显式选择 Workspace/Project 后可以在同一 Session 进入任意 Project Board/Issue 数据面，再返回管理区；这是 Owner 已有隐式数据面权限的 Web 呈现，不创建 Grant。普通 Project/Issue Session 仍不能导航到其他 Project 或管理区。
 
 Web 不提供 Owner transfer、第二管理员、直接 D1 浏览、完整导出/导入、Time Travel restore、Cloudflare 资源删除、DNS 或计费设置。这些不属于应用内维护面。
+
+### 3.4 语言与内容边界
+
+- 公开首页、登录/Launch、Project 看板、Issue 详情、Owner 管理、错误与恢复页等第一方 Web UI 公共文案至少提供 `en` 与 `zh-CN`。
+- 首次访问根据浏览器首选语言选择 `zh-CN` 或 `en`，不能归入简体中文时默认 `en`。全局显式切换器保存一个非秘密 locale 偏好，不与 Principal、Credential、Grant 或 Session 生命周期绑定。
+- 稳定 API/workflow key 永远保持英文。Project 未配置 status display-name override 时，五列默认显示名也保持 `Backlog / Todo / In Progress / Done / Canceled`，不随 Web locale 改变。
+- Workspace/Project 显示名、Issue 标题/Markdown、Comment、Label、Project context、status override 和其他业务内容始终按原文展示，不做自动翻译。
+- Web 只根据稳定 `code/category/recovery` 选择本地化错误与操作提示；API/OpenAPI 字段、枚举和机器错误不因 `Accept-Language` 或 Web locale 改变。Skill 输出由上层 Agent 语言环境决定。
+- 每个页面设置与当前 locale 一致的 HTML `lang`；日期/时间可按 locale 展示，但 wire 值仍保持已冻结的 UTC/RFC 3339 合同。
+- 缺少翻译时逐条回退 English，不显示裸 translation key，也不阻断核心读写。更多语言是后置扩展，不影响 v0 对 English/简体中文的承诺。
 
 ## 4. Browser Launch 与 Web Session
 
@@ -137,6 +149,8 @@ Passkey 登录后的 Session 不继承某个旧 Browser Launch 的单 Project ta
 
 一个实例可以同时展示多个已公开 Project。访客每次先选择一个 Project，再明确选择 `reader` 或 `writer`：未登录访客复制与该选择绑定的 Agent 话术，由 Agent 复用或创建本地 Principal/Credential 后执行一次 self-join；已通过 Passkey 登录的 Principal 可以直接执行同一原子动作。首页不生成或下载长期 Credential。
 
+加入成功后，Passkey Session 直接进入刚加入的 Project 看板。Agent 路径返回实际 Project/role、Principal/Credential fingerprint 与 resolved scope，并只建议打开看板或显式写入当前 Repo scope；不能自动打开页面或修改 Repo 文件。
+
 Public Join 每次最多建立或恢复一条 Project Grant，不提供批量入口。已有同等或更高权限时幂等返回当前权限；`reader` 可以按公开选择提升到 `writer`，`writer` 选择 `reader` 不自动降级。Grant 不自动过期，直到 Owner 显式改变或撤销。
 
 Owner 开启 Public Join 时必须明确接受公开 `writer` 的后果：未知互联网参与者可以修改、评论、移动、完成和软删除 Project 内容并制造 D1 写入。公开卡片只包含显示名称、有界公开摘要和 role 选择，不泄露内部 Project context、Issue、成员或未公开资源。
@@ -184,6 +198,7 @@ v0 不包含：自定义列/工作流、手工 rank、批量选择/编辑、复�
 - SB-29：未认证访客理解产品并复制可信 Agent 部署话术。
 - SB-30：已建立身份的人类不粘贴 API Credential，也能通过可恢复的 Web authentication method 再次登录。
 - SB-31：Owner 可以同时公开多个 Project，访客每次选择一个 Project 与 `reader|writer` 后原子加入；不提供 Team Join 或多 Project 公开授权。
+- SB-32：人类可以在 English 与简体中文间切换 Web UI，但稳定 key、默认 workflow 显示名和业务内容不自动翻译。
 
 ## 8. 已确认生命周期与可后置问题
 
@@ -197,7 +212,7 @@ Agent Launch Session 同时按 launch target 限定 Web scope：Project target �
 
 ### Q-WEB-02：后置增强
 
-以下问题不阻塞 v0 合同：Owner 是否需要“退出该 Principal 的全部 Web Sessions”、是否显示 active session 摘要、是否增加键盘快捷键，以及是否为极窄窗口提供列表替代布局。它们可以在真实使用证据出现后决定。
+以下问题不阻塞 v0 合同：Owner 是否需要“退出该 Principal 的全部 Web Sessions”、是否显示 active session 摘要、是否增加键盘快捷键、是否为极窄窗口提供列表替代布局，以及是否增加 English/简体中文之外的其他语言。它们可以在真实使用证据出现后决定。
 
 ## 9. 冻结条件
 
@@ -205,7 +220,7 @@ Agent Launch Session 同时按 launch target 限定 Web scope：Project target �
 
 1. Q-WEB-01 已按 D-217 确认并回写 Foundation、Agent Skills 和 API/Schema。
 2. API/Schema SPEC 定义 Browser Launch、Session、cookie/CSRF、撤销和所需 D1 事实。
-3. SB-25～SB-31 的主要产品方向逐卡验收通过；Q-232 已固定原生限流部署配置与初始档位，只剩 API/DDL 绝对边界待冻结。
+3. SB-25～SB-32 的主要产品方向逐卡验收通过；Q-232 已固定原生限流部署配置与初始档位，只剩 API/DDL 绝对边界待冻结。
 4. reader/writer/Owner 的 Web 能力不超出既有权限，也不存在仅 Web 可用的领域后门。
 5. 明确验证在 Codex IAB 与普通浏览器中使用同一页面的实现计划，但不要求绑定某个宿主专有 API。
 

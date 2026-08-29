@@ -1,12 +1,12 @@
 # Agent-native Kanban Foundation SPEC
 
 - 文档状态：Frozen
-- 合同修订：12
+- 合同修订：13
 - Roadmap：R0
 - Linear：[cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f)
 - 最近更新：2026-08-29
 - 冻结日期：2026-08-28
-- 最近修订：2026-08-29（D-233）
+- 最近修订：2026-08-29（D-234）
 - 替代文档：无
 
 ## 1. 目的
@@ -226,6 +226,7 @@ Event 内部使用部署级严格单调 sequence，跨 Workspace/Project 共享�
 - 客户端本地以 immutable `instance_id` 定位实例记录，但 Credential 只能发送到该记录当前已信任的 API origin；远端自报相同 `instance_id` 不能自行扩大信任。已信任 origin 返回不同 ID 时停止，新 origin 声称已有 ID 时必须先由用户显式 rebind，不能在确认前发送认证材料。
 - D1 只保存 token 的安全散列和用于定位的非秘密 prefix；明文仅签发时展示一次。
 - v0 Credential 不设置自动失效日期；只有显式 revoke 或正常 rotation/full recovery 中撤销旧 Credential 才使其失效。未来强制定期轮换只能作为明确启用的部署 profile，不能默默改变 v0 核心合同。
+- Credential 不做设备或 Agent 宿主绑定。用户可以自行把同一 Bearer Credential 复制到多个受信执行环境；服务端无需也无法把这些副本区分为独立身份。所有副本共享同一 Principal、fingerprint、`last_used_at`、审计主体和 revoke/rotation 后果。
 - `last_used_at` 只用于 Owner 运维判断，可以按最多每日一次的低频条件更新并允许滞后；它不能参与鉴权、自动撤销或自动轮换，避免把普通读取放大为每请求 D1 写入。
 - Principal 由验证后的 Credential 推导，客户端不能用 Header 覆盖。
 - Credential 的职责止于认证 Principal；非 Owner 的业务权限和角色从独立 Project Grant 读取，Owner 的部署级能力由唯一 Owner 身份推导。
@@ -664,5 +665,6 @@ Invite bootstrap 页面是公开说明与 Invitation 兑换入口，不是日常
 13. D-229～D-231 通过合同修订 10 固定 Project Issue、Comment、Principal 三项 active quota，以及 Owner 可见的实例级请求门控。软删除/revoke 释放额度，restore/regrant 重新占用；精确 quota 由 D1 原子强制。当时未确定的限流修改载体已由合同修订 11 解决。
 14. D-232 通过合同修订 11 固定 Workers Rate Limiting deployment config 为 v0 载体，并提供 120/300/30 每 60 秒的零参数初始档位。调整限流只部署 Worker 配置，不改变 D1 Project quota 或触发 migration；严格全球计数与 Web 即时修改不属于 v0。
 15. D-233 通过合同修订 12 固定机器可操作的统一错误分类，以及“Worker 内统一 JSON、Worker 外由 Web/Skill 客户端显式归一化”的边界。业务 quota、应用限流、D1 quota 与 Cloudflare edge failure 不能再混用一个模糊 `QUOTA_EXCEEDED` 或靠 message 判断。
+16. D-234 通过合同修订 13 校正 Credential 跨环境语义：API 不做设备绑定，用户可以手工复制同一 Credential；各副本不是独立身份或新 Credential，撤销/轮换会同时影响全部副本。这不改变浏览器不接受长期 Credential 的安全边界。
 
 本次冻结只固定 Foundation 级领域、权限、并发、资源层级与 HTTP 语义，不固定完整 OpenAPI 字段清单、D1 DDL/索引或实现代码。完整 API/Schema 必须进入后续独立 SPEC；冻结本身不授权实现、创建 Linear 实现 Issue、部署、迁移、提交或推送。
