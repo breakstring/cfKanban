@@ -283,6 +283,7 @@ const permissionDescriptions = {
   public: "Public, non-secret read.",
   authenticated_principal: "Any authenticated Principal; returned data is filtered to current effective authorization.",
   visible_scope: "Deployment Owner or a Principal with a currently visible Project in this container.",
+  visible_scope_active_owner_tombstone: "Active container lists require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner.",
   current_principal: "The currently authenticated Principal acting only on its own identity or Web authentication state.",
   deployment_owner: "The single Deployment Owner. Project Grants never satisfy this permission.",
   project_reader: "Deployment Owner or an active reader/writer Grant for the resource Project.",
@@ -302,7 +303,8 @@ const permissionDescriptions = {
 const permissionGroups = {
   public: ["getHealth", "getOpenApi", "discoverInstance", "getInvitationBootstrap", "getWebLaunchPage", "listPublicProjects"],
   authenticated_principal: ["getMeta", "listEvents"],
-  visible_scope: ["listWorkspaces", "getWorkspace", "listProjects", "getProject"],
+  visible_scope: ["getWorkspace", "getProject"],
+  visible_scope_active_owner_tombstone: ["listWorkspaces", "listProjects"],
   current_principal: ["getMe", "updateMe", "getWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey"],
   deployment_owner: [
     "createWorkspace", "updateWorkspace", "deleteWorkspace", "restoreWorkspace",
@@ -314,10 +316,11 @@ const permissionGroups = {
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
     "updateProjectResourceLimits", "getRateLimitSettings",
   ],
-  project_reader: [
-    "listProjectStatuses", "listIssues", "listIssueCandidates", "listProjectIssues", "getIssue", "getIssueContext",
+  project_reader: ["listProjectStatuses", "listIssueCandidates", "getIssueContext"],
+  project_reader_active_writer_tombstone: [
+    "listIssues", "listProjectIssues", "getIssue",
+    "listComments", "getComment", "listLabels", "getLabel",
   ],
-  project_reader_active_writer_tombstone: ["listComments", "getComment", "listLabels", "getLabel"],
   project_writer: [
     "createIssue", "updateIssue", "deleteIssue", "restoreIssue", "assignIssueToMe", "reportIssueBlocked",
     "clearIssueBlocked", "completeIssue", "addIssueLabel", "removeIssueLabel", "createComment", "deleteComment",
