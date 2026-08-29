@@ -116,13 +116,13 @@ async function keyMaterial(algorithm) {
     const jwk = await crypto.subtle.exportKey("jwk", keys.publicKey);
     return {
       algorithm,
-      cose: cbor(new Map([
+      coseEntries: [
         [1, 2],
         [3, -7],
         [-1, 1],
         [-2, base64UrlDecode(jwk.x)],
         [-3, base64UrlDecode(jwk.y)],
-      ])),
+      ],
       privateKey: keys.privateKey,
     };
   }
@@ -140,26 +140,34 @@ async function keyMaterial(algorithm) {
     const jwk = await crypto.subtle.exportKey("jwk", keys.publicKey);
     return {
       algorithm,
-      cose: cbor(new Map([
+      coseEntries: [
         [1, 3],
         [3, -257],
         [-1, base64UrlDecode(jwk.n)],
         [-2, base64UrlDecode(jwk.e)],
-      ])),
+      ],
       privateKey: keys.privateKey,
     };
   }
   throw new TypeError("Unsupported fixture algorithm");
 }
 
-export async function createRegistrationFixture({ algorithm, challenge, origin, rpId, signCount = 0 }) {
+export async function createRegistrationFixture({
+  algorithm,
+  challenge,
+  extraCoseEntries = [],
+  origin,
+  rpId,
+  signCount = 0,
+}) {
   const material = await keyMaterial(algorithm);
+  const publicKeyCose = cbor(new Map([...material.coseEntries, ...extraCoseEntries]));
   const credentialIdBytes = crypto.getRandomValues(new Uint8Array(32));
   const credentialId = base64UrlEncode(credentialIdBytes);
   const authData = await registrationAuthenticatorData(
     rpId,
     credentialIdBytes,
-    material.cose,
+    publicKeyCose,
     signCount,
   );
   const attestationObject = cbor(new Map([
@@ -172,6 +180,7 @@ export async function createRegistrationFixture({ algorithm, challenge, origin, 
     algorithm,
     credentialId,
     privateKey: material.privateKey,
+    publicKeyCose: base64UrlEncode(publicKeyCose),
     registrationCredential: {
       id: credentialId,
       rawId: credentialId,

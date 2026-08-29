@@ -8,6 +8,7 @@ import {
   buildCurrentAuthGuard,
   requireOwnerControl,
   requireProjectAuthorization,
+  resolveCurrentVisibleProjects,
   resolveVisibleProjects,
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
@@ -874,14 +875,13 @@ export async function getWebSession(
   auth: CookieAuthContext,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const projects = await resolveVisibleProjects(db, auth);
+  // This is the response's authorization point: the same D1 statement that
+  // reads Grants and parent-container state also verifies the Session/source.
+  const projects = await resolveCurrentVisibleProjects(db, auth, now);
   if (auth.targetKind !== "project_selection" && auth.targetKind !== "admin" && projects.length === 0) {
     throw notFound();
   }
   if (auth.targetKind === "admin" && !auth.isOwner) throw forbidden();
-  // The scope query and this final source/session check give the response a
-  // single valid authorization point even if the Session is revoked mid-read.
-  await verifyCurrentAuth(db, auth, now);
   return {
     allowed_scope: auth.targetKind === "admin"
       ? { kind: "instance", projects: visibleScopeResource(projects) }

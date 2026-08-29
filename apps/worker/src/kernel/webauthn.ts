@@ -186,6 +186,14 @@ function integer(value: CborValue | undefined): number {
   return value;
 }
 
+function requireExactCoseLabels(cose: Map<CborValue, CborValue>, allowed: readonly number[]): void {
+  if (cose.size !== allowed.length) fail();
+  const allowedLabels = new Set(allowed);
+  for (const label of cose.keys()) {
+    if (typeof label !== "number" || !Number.isSafeInteger(label) || !allowedLabels.has(label)) fail();
+  }
+}
+
 function uint32(bytesValue: Uint8Array, offset: number): number {
   if (offset + 4 > bytesValue.length) fail();
   return (((bytesValue[offset] ?? 0) * 0x1_00_00_00)
@@ -321,6 +329,9 @@ function validatedCoseAlgorithm(publicKeyCose: Uint8Array): -257 | -7 {
   const keyType = integer(cose.get(1));
   const algorithm = integer(cose.get(3));
   if (algorithm === -7) {
+    // Persist only the exact EC2 public-key shape. In particular, reject the
+    // private scalar label (-4) and arbitrary unverified authenticator data.
+    requireExactCoseLabels(cose, [1, 3, -1, -2, -3]);
     if (
       keyType !== 2
       || integer(cose.get(-1)) !== 1
@@ -330,6 +341,9 @@ function validatedCoseAlgorithm(publicKeyCose: Uint8Array): -257 | -7 {
     return -7;
   }
   if (algorithm === -257) {
+    // RSA registrations may contain only kty, alg, modulus and exponent.
+    // Private CRT factors and extension labels must stay in the authenticator.
+    requireExactCoseLabels(cose, [1, 3, -1, -2]);
     const modulus = bytes(cose.get(-1));
     const exponent = bytes(cose.get(-2));
     if (keyType !== 3 || modulus.length < 256 || modulus.length > 512 || exponent.length < 1 || exponent.length > 8) fail();
