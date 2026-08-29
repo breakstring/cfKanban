@@ -42,6 +42,7 @@ interface EventScope {
   projects: VisibleProject[];
   unresolvedProjectTargets: string[];
   unresolvedWorkspaceTargets: string[];
+  visibleProjects: VisibleProject[];
   workspaceTargets: string[];
 }
 
@@ -109,6 +110,7 @@ async function resolveEventScope(
     unresolvedWorkspaceTargets: parsedWorkspaces.filter((target) => !visible.some(
       (project) => target.workspaceKey === project.workspaceKey,
     )).map((target) => target.target),
+    visibleProjects: visible,
     workspaceTargets,
   };
 }
@@ -193,7 +195,7 @@ export async function listEvents(
   const context = await createCursorContext(
     "events",
     filter,
-    scope.projects.map((project) => project.projectId),
+    scope.visibleProjects.map((project) => project.projectId),
     auth.principalId,
   );
   const afterValue = url.searchParams.get("after");
@@ -213,15 +215,16 @@ export async function listEvents(
              JOIN issues source ON source.id = relation.source_issue_id
              JOIN issues target ON target.id = relation.target_issue_id
              WHERE relation.id = event.subject_id
-               AND source.project_id IN (SELECT value FROM json_each(?2))
-               AND target.project_id IN (SELECT value FROM json_each(?2))
+               AND source.project_id IN (SELECT value FROM json_each(?3))
+               AND target.project_id IN (SELECT value FROM json_each(?3))
            )
          )
        ORDER BY event.sequence ASC
-       LIMIT ?3`,
+       LIMIT ?4`,
     ).bind(
       afterSequence,
       JSON.stringify(scope.projects.map((project) => project.projectId)),
+      JSON.stringify(scope.visibleProjects.map((project) => project.projectId)),
       limit + 1,
     ).all<EventRow>();
     rows = result.results;

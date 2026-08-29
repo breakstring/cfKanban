@@ -132,7 +132,12 @@ export function registerWp06Routes(router: Router): Router {
     })
     .get("/api/v1/comments/{comment_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await getComment(env.DB, auth, path(context, "comment_id")), context.requestId);
+      return jsonResponse(await getComment(
+        env.DB,
+        auth,
+        path(context, "comment_id"),
+        context.url,
+      ), context.requestId);
     })
     .delete("/api/v1/comments/{comment_id}", async (request, env, context) => {
       const auth = await writeAuth(request, env, context);
@@ -182,7 +187,12 @@ export function registerWp06Routes(router: Router): Router {
     })
     .get("/api/v1/labels/{label_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await getLabel(env.DB, auth, path(context, "label_id")), context.requestId);
+      return jsonResponse(await getLabel(
+        env.DB,
+        auth,
+        path(context, "label_id"),
+        context.url,
+      ), context.requestId);
     })
     .patch("/api/v1/labels/{label_id}", async (request, env, context) => {
       const auth = await writeAuth(request, env, context);
@@ -249,7 +259,12 @@ export function registerWp06Routes(router: Router): Router {
     })
     .get("/api/v1/relations/{relation_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await getRelation(env.DB, auth, path(context, "relation_id")), context.requestId);
+      return jsonResponse(await getRelation(
+        env.DB,
+        auth,
+        path(context, "relation_id"),
+        context.url,
+      ), context.requestId);
     })
     .delete("/api/v1/relations/{relation_id}", async (request, env, context) => {
       const auth = await writeAuth(request, env, context);

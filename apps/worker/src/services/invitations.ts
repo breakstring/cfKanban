@@ -45,6 +45,7 @@ import {
   abandonOwnedPendingClaim,
   claimIdempotency,
   finalizeIdempotency,
+  readFinalizedIdempotencyResponse,
   readIdempotencyResponse,
   readOperationSnapshot,
   type IdempotencyClaim,
@@ -743,11 +744,35 @@ export async function createInvitation(
   }
   if (commit === null) throw new AtomicBatchRejectedError();
   await reauthenticateOwner(db, request, now);
-  const snapshot = await readOperationSnapshot<InvitationOperationSnapshot>(db, claim.operationId);
+  let snapshot: InvitationOperationSnapshot;
+  try {
+    snapshot = await readOperationSnapshot<InvitationOperationSnapshot>(db, claim.operationId);
+  } catch (error) {
+    if (error instanceof AtomicBatchRejectedError) {
+      const finalizedByPeer = await readFinalizedIdempotencyResponse<{ [key: string]: JsonValue }>(
+        db,
+        claim.operationId,
+      );
+      if (finalizedByPeer !== null) {
+        return {
+          ...finalizedByPeer.body,
+          idempotent_replay: true,
+          resource: {
+            ...(finalizedByPeer.body.resource as { [key: string]: JsonValue }),
+            secret_available: false,
+          },
+        };
+      }
+    }
+    throw error;
+  }
   const safeBody = await writeResult(db, auth, {
     ...(await invitationResource(db, snapshot.row, now, snapshot.grants)),
     secret_available: false,
   }, commit.lastEventSequence, false);
+  if (generatedCode !== null && generatedDigest !== snapshot.row.code_digest) {
+    return { ...safeBody, idempotent_replay: true };
+  }
   const finalized = await finalizeIdempotency(
     db,
     claim.operationId,
@@ -755,7 +780,7 @@ export async function createInvitation(
     generatedCode === null ? [] : [generatedCode],
     now,
   );
-  if (generatedCode === null || generatedDigest !== snapshot.row.code_digest) {
+  if (generatedCode === null) {
     return { ...finalized.body, idempotent_replay: true };
   }
   const origin = await preferredOrigin(db);
@@ -1623,7 +1648,21 @@ export async function redeemInvitation(
     commit = await probeOperationCommit(db, claim.operationId);
   }
   if (commit === null) throw new AtomicBatchRejectedError();
-  const body = await redemptionReadback(db, commit, now);
+  let body: { [key: string]: JsonValue };
+  try {
+    body = await redemptionReadback(db, commit, now);
+  } catch (error) {
+    if (error instanceof AtomicBatchRejectedError) {
+      const finalizedByPeer = await readFinalizedIdempotencyResponse<{ [key: string]: JsonValue }>(
+        db,
+        claim.operationId,
+      );
+      if (finalizedByPeer !== null) {
+        return { ...finalizedByPeer.body, idempotent_replay: true };
+      }
+    }
+    throw error;
+  }
   const finalized = await finalizeIdempotency(
     db,
     claim.operationId,

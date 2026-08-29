@@ -955,6 +955,11 @@ export async function updateProject(
                updated_by_principal_id = ?6, last_operation_id = ?7
            WHERE id = ?8 AND workspace_id = ?9 AND version = ?10
              AND deleted_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM workspaces parent_workspace
+               WHERE parent_workspace.id = projects.workspace_id
+                 AND parent_workspace.deleted_at IS NULL
+             )
              AND ${guard.sql}`,
         ).bind(
           displayNameValue === undefined ? 0 : 1,
@@ -1226,6 +1231,11 @@ export async function updateStatusName(
            SET version = version + 1, updated_at = ?1,
                updated_by_principal_id = ?2, last_operation_id = ?3
            WHERE id = ?4 AND version = ?5 AND deleted_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM workspaces parent_workspace
+               WHERE parent_workspace.id = projects.workspace_id
+                 AND parent_workspace.deleted_at IS NULL
+             )
              AND ${guard.sql}`,
         ).bind(now, auth.principalId, operationId, project.id, expectedVersion, ...guard.values),
         db.prepare(

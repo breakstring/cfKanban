@@ -561,6 +561,9 @@ export async function rotateOwnerCredential(
   const replacement = requireCredentialToken(tokenValue, "new_credential_token");
   const idempotencyKey = requireIdempotencyKey(request);
   const initialAuth = await authenticateRotationRequest(db, request, replacement.token);
+  if (initialAuth.displayName.includes(replacement.token)) {
+    throw validationError("secret_value_reused", { field: "new_credential_token" });
+  }
   const replacementDigest = await sha256Hex(replacement.token);
   const replacementCredentialId = crypto.randomUUID();
   const replacementRow: CredentialRow = {

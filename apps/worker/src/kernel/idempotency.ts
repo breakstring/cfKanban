@@ -306,7 +306,7 @@ function parseStoredResponse<T extends JsonValue>(claim: IdempotencyClaim): Idem
   return { body: body as T, status: claim.responseStatus };
 }
 
-async function readFinalizedOperationResponse<T extends JsonValue>(
+export async function readFinalizedIdempotencyResponse<T extends JsonValue>(
   db: D1Database,
   operationId: string,
 ): Promise<IdempotentReadback<T> | null> {
@@ -442,7 +442,7 @@ export async function runIdempotentOperation<T extends JsonValue>(
     readback = await options.readback(claim.operationId, commit);
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
-      const finalizedByPeer = await readFinalizedOperationResponse<T>(options.db, claim.operationId);
+      const finalizedByPeer = await readFinalizedIdempotencyResponse<T>(options.db, claim.operationId);
       if (finalizedByPeer !== null) {
         return {
           ...(options.replay === undefined

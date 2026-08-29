@@ -173,7 +173,11 @@ function mapVisibleProject(row: VisibleProjectRow): VisibleProject {
   };
 }
 
-export async function resolveVisibleProjects(db: D1Database, auth: AuthContext): Promise<VisibleProject[]> {
+export async function resolveVisibleProjects(
+  db: D1Database,
+  auth: AuthContext,
+  includeEffectiveDeleted = false,
+): Promise<VisibleProject[]> {
   const target = fixedTarget(auth);
   if (target?.invalid === true) return [];
   const targetProjectId = target?.projectId ?? null;
@@ -188,7 +192,7 @@ export async function resolveVisibleProjects(db: D1Database, auth: AuthContext):
                 w.display_name AS workspace_name, 'owner' AS role
          FROM projects AS p
          JOIN workspaces AS w ON w.id = p.workspace_id
-         WHERE p.deleted_at IS NULL AND w.deleted_at IS NULL
+         WHERE ${includeEffectiveDeleted ? "1 = 1" : "p.deleted_at IS NULL AND w.deleted_at IS NULL"}
            AND (?1 IS NULL OR p.id = ?1)
            AND (?2 IS NULL OR w.key = ?2)
            AND (?3 IS NULL OR p.key = ?3)
@@ -209,7 +213,7 @@ export async function resolveVisibleProjects(db: D1Database, auth: AuthContext):
        JOIN projects AS p ON p.id = pg.project_id
        JOIN workspaces AS w ON w.id = p.workspace_id
        WHERE pg.principal_id = ?1 AND pg.revoked_at IS NULL
-         AND p.deleted_at IS NULL AND w.deleted_at IS NULL
+         AND ${includeEffectiveDeleted ? "1 = 1" : "p.deleted_at IS NULL AND w.deleted_at IS NULL"}
          AND (?2 IS NULL OR p.id = ?2)
          AND (?3 IS NULL OR w.key = ?3)
          AND (?4 IS NULL OR p.key = ?4)
@@ -223,6 +227,22 @@ export async function resolveVisibleProjects(db: D1Database, auth: AuthContext):
   } catch {
     throw platformUnavailable("d1");
   }
+}
+
+export async function requireProjectAuthorization(
+  db: D1Database,
+  auth: AuthContext,
+  workspaceKey: string,
+  projectKey: string,
+  requiredRole: "reader" | "writer" = "reader",
+): Promise<VisibleProject> {
+  const projects = await resolveVisibleProjects(db, auth, true);
+  const project = projects.find(
+    (candidate) => candidate.workspaceKey === workspaceKey && candidate.projectKey === projectKey,
+  );
+  if (project === undefined) throw notFound();
+  if (requiredRole === "writer" && project.role === "reader") throw forbidden();
+  return project;
 }
 
 export async function requireVisibleProject(

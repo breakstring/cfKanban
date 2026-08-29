@@ -17,10 +17,12 @@ export type CollaborationRole = VisibleProject["role"];
 export type RelationKind = "blocks" | "duplicate" | "parent" | "related";
 
 export interface CollaborationIssue {
+  deletedAt: number | null;
   id: string;
   identifier: string;
   number: number;
   projectId: string;
+  projectDeletedAt: number | null;
   projectKey: string;
   projectName: string;
   role: CollaborationRole;
@@ -28,6 +30,7 @@ export interface CollaborationIssue {
   title: string;
   version: number;
   workspaceId: string;
+  workspaceDeletedAt: number | null;
   workspaceKey: string;
   workspaceName: string;
 }
@@ -55,19 +58,22 @@ export function roleCanWrite(role: CollaborationRole): boolean {
   return role === "owner" || role === "writer";
 }
 
-function mapIssue(row: CollaborationIssueRow, project: VisibleProject): CollaborationIssue {
+function mapIssue(row: CollaborationIssueRow, role: CollaborationRole): CollaborationIssue {
   return {
+    deletedAt: row.deleted_at,
     id: row.id,
     identifier: `CFK-${row.number}`,
     number: row.number,
     projectId: row.project_id,
+    projectDeletedAt: row.project_deleted_at,
     projectKey: row.project_key,
     projectName: row.project_name,
-    role: project.role,
+    role,
     statusKey: row.status_key,
     title: row.title,
     version: row.version,
     workspaceId: row.workspace_id,
+    workspaceDeletedAt: row.workspace_deleted_at,
     workspaceKey: row.workspace_key,
     workspaceName: row.workspace_name,
   };
@@ -117,7 +123,25 @@ export async function requireCollaborationIssue(
   const project = visibleProjects.find((candidate) => candidate.projectId === row.project_id);
   if (project === undefined) throw notFound();
   if (requiredRole === "writer" && !roleCanWrite(project.role)) throw forbidden();
-  return mapIssue(row, project);
+  return mapIssue(row, project.role);
+}
+
+export async function requireCollaborationIssueAuthorization(
+  db: D1Database,
+  auth: AuthContext,
+  identifierValue: JsonValue,
+  requiredRole: "reader" | "writer" = "reader",
+): Promise<CollaborationIssue> {
+  const identifier = requireIssueIdentifier(identifierValue);
+  const [row, authorizedProjects] = await Promise.all([
+    readIssueRow(db, identifier),
+    resolveVisibleProjects(db, auth, true),
+  ]);
+  if (row === null) throw notFound();
+  const project = authorizedProjects.find((candidate) => candidate.projectId === row.project_id);
+  if (project === undefined) throw notFound();
+  if (requiredRole === "writer" && !roleCanWrite(project.role)) throw forbidden();
+  return mapIssue(row, project.role);
 }
 
 export async function requireCollaborationIssueById(
@@ -157,7 +181,42 @@ export async function requireCollaborationIssueById(
   );
   if (project === undefined) throw notFound();
   if (requiredRole === "writer" && !roleCanWrite(project.role)) throw forbidden();
-  return mapIssue(row, project);
+  return mapIssue(row, project.role);
+}
+
+export async function requireCollaborationIssueByIdAuthorization(
+  db: D1Database,
+  auth: AuthContext,
+  issueIdValue: JsonValue,
+  requiredRole: "reader" | "writer" = "reader",
+): Promise<CollaborationIssue> {
+  const issueId = requireUuid(issueIdValue, "issue_id");
+  let row: CollaborationIssueRow | null;
+  try {
+    row = await db.prepare(
+      `SELECT issue.id, issue.number, issue.project_id, issue.title,
+              issue.status_key, issue.version, issue.deleted_at,
+              project.key AS project_key, project.display_name AS project_name,
+              project.deleted_at AS project_deleted_at,
+              workspace.id AS workspace_id, workspace.key AS workspace_key,
+              workspace.display_name AS workspace_name,
+              workspace.deleted_at AS workspace_deleted_at
+       FROM issues issue
+       JOIN projects project ON project.id = issue.project_id
+       JOIN workspaces workspace ON workspace.id = project.workspace_id
+       WHERE issue.id = ?1
+       LIMIT 1`,
+    ).bind(issueId).first<CollaborationIssueRow>();
+  } catch {
+    throw platformUnavailable("d1");
+  }
+  if (row === null) throw notFound();
+  const project = (await resolveVisibleProjects(db, auth, true)).find(
+    (candidate) => candidate.projectId === row?.project_id,
+  );
+  if (project === undefined) throw notFound();
+  if (requiredRole === "writer" && !roleCanWrite(project.role)) throw forbidden();
+  return mapIssue(row, project.role);
 }
 
 export function buildProjectRoleGuard(

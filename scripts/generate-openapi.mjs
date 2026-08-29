@@ -86,22 +86,22 @@ const operations = [
   ["post", "/api/v1/issues/{identifier}/commands/add-label", "addIssueLabel", "issues", authenticated, "idempotent-cas", "IssueLabelRequest"],
   ["post", "/api/v1/issues/{identifier}/commands/remove-label", "removeIssueLabel", "issues", authenticated, "idempotent-cas", "IssueLabelRequest"],
 
-  ["get", "/api/v1/issues/{identifier}/comments", "listComments", "comments", authenticated, "read", "CursorQuery"],
+  ["get", "/api/v1/issues/{identifier}/comments", "listComments", "comments", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/issues/{identifier}/comments", "createComment", "comments", authenticated, "idempotent", "CreateCommentRequest"],
-  ["get", "/api/v1/comments/{comment_id}", "getComment", "comments", authenticated, "read"],
+  ["get", "/api/v1/comments/{comment_id}", "getComment", "comments", authenticated, "read", "IssueDetailQuery"],
   ["delete", "/api/v1/comments/{comment_id}", "deleteComment", "comments", authenticated, "cas-delete"],
   ["post", "/api/v1/comments/{comment_id}/commands/restore", "restoreComment", "comments", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
 
   ["get", "/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels", "listLabels", "labels", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels", "createLabel", "labels", authenticated, "idempotent", "CreateLabelRequest"],
-  ["get", "/api/v1/labels/{label_id}", "getLabel", "labels", authenticated, "read"],
+  ["get", "/api/v1/labels/{label_id}", "getLabel", "labels", authenticated, "read", "IssueDetailQuery"],
   ["patch", "/api/v1/labels/{label_id}", "updateLabel", "labels", authenticated, "cas", "UpdateLabelRequest"],
   ["delete", "/api/v1/labels/{label_id}", "deleteLabel", "labels", authenticated, "cas-delete"],
   ["post", "/api/v1/labels/{label_id}/commands/restore", "restoreLabel", "labels", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
 
-  ["get", "/api/v1/issues/{identifier}/relations", "listIssueRelations", "relations", authenticated, "read", "CursorQuery"],
+  ["get", "/api/v1/issues/{identifier}/relations", "listIssueRelations", "relations", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/issues/{identifier}/relations", "createIssueRelation", "relations", authenticated, "idempotent", "CreateRelationRequest"],
-  ["get", "/api/v1/relations/{relation_id}", "getRelation", "relations", authenticated, "read"],
+  ["get", "/api/v1/relations/{relation_id}", "getRelation", "relations", authenticated, "read", "IssueDetailQuery"],
   ["delete", "/api/v1/relations/{relation_id}", "deleteRelation", "relations", authenticated, "cas-delete", "RelationDeleteQuery"],
   ["post", "/api/v1/relations/{relation_id}/commands/restore", "restoreRelation", "relations", authenticated, "idempotent-cas", "RelationVersionsRequest"],
 
@@ -615,7 +615,29 @@ const schemas = {
       id: ref("Uuid"),
       issue: ref("IssueReference"),
       kind: string({ enum: ["standard", "completion"] }),
+      parent_status: {
+        type: "object",
+        required: ["issue", "project", "workspace"],
+        properties: {
+          issue: string({ enum: ["active", "deleted"] }),
+          project: string({ enum: ["active", "deleted"] }),
+          workspace: string({ enum: ["active", "deleted"] }),
+        },
+        additionalProperties: false,
+      },
       reply_to_comment_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+      restorable: { type: "boolean" },
+      unavailability_reason: {
+        anyOf: [
+          {
+            type: "object",
+            required: ["code", "recovery"],
+            properties: { code: string(), recovery: string() },
+            additionalProperties: false,
+          },
+          { type: "null" },
+        ],
+      },
       version: ref("Version"),
     },
     additionalProperties: false,
@@ -653,6 +675,15 @@ const schemas = {
       deleted_by_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] },
       id: ref("Uuid"),
       name: string({ minLength: 1, maxLength: 64 }),
+      parent_status: {
+        type: "object",
+        required: ["project", "workspace"],
+        properties: {
+          project: string({ enum: ["active", "deleted"] }),
+          workspace: string({ enum: ["active", "deleted"] }),
+        },
+        additionalProperties: false,
+      },
       project: {
         type: "object",
         required: ["id", "key", "workspace_key"],
@@ -660,6 +691,18 @@ const schemas = {
         additionalProperties: false,
       },
       updated_at: ref("Timestamp"),
+      restorable: { type: "boolean" },
+      unavailability_reason: {
+        anyOf: [
+          {
+            type: "object",
+            required: ["code", "recovery"],
+            properties: { code: string(), recovery: string() },
+            additionalProperties: false,
+          },
+          { type: "null" },
+        ],
+      },
       version: ref("Version"),
     },
     additionalProperties: false,
@@ -714,8 +757,32 @@ const schemas = {
       deleted_by_principal_id: { anyOf: [ref("Uuid"), { type: "null" }] },
       id: ref("Uuid"),
       kind: ref("RelationKind"),
+      parent_status: {
+        type: "object",
+        required: ["source_issue", "source_project", "target_issue", "target_project", "workspace"],
+        properties: {
+          source_issue: string({ enum: ["active", "deleted"] }),
+          source_project: string({ enum: ["active", "deleted"] }),
+          target_issue: string({ enum: ["active", "deleted"] }),
+          target_project: string({ enum: ["active", "deleted"] }),
+          workspace: string({ enum: ["active", "deleted"] }),
+        },
+        additionalProperties: false,
+      },
+      restorable: { type: "boolean" },
       source: ref("RelationEndpoint"),
       target: ref("RelationEndpoint"),
+      unavailability_reason: {
+        anyOf: [
+          {
+            type: "object",
+            required: ["code", "recovery"],
+            properties: { code: string(), recovery: string() },
+            additionalProperties: false,
+          },
+          { type: "null" },
+        ],
+      },
       version: ref("Version"),
       workspace: {
         type: "object",

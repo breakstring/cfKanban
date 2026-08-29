@@ -5,6 +5,7 @@ import {
   timestamp,
 } from "../domain/model.ts";
 import {
+  requireProjectAuthorization,
   requireVisibleProject,
   resolveVisibleProjects,
   verifyCurrentAuth,
@@ -27,6 +28,7 @@ import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import {
   buildProjectRoleGuard,
   requireCollaborationIssue,
+  requireCollaborationIssueAuthorization,
   requireLabelColor,
   requireLabelName,
   roleCanWrite,
@@ -55,11 +57,13 @@ interface LabelRow {
   last_operation_id: string | null;
   name: string;
   project_id: string;
+  project_deleted_at: number | null;
   project_key: string;
   project_name: string;
   updated_at: number;
   version: number;
   workspace_id: string;
+  workspace_deleted_at: number | null;
   workspace_key: string;
   workspace_name: string;
 }
@@ -71,6 +75,16 @@ interface LabelAccess {
 
 function labelResource(row: LabelRow, role: VisibleProject["role"]): { [key: string]: JsonValue } {
   const canWrite = roleCanWrite(role);
+  const parentStatus = {
+    project: row.project_deleted_at === null ? "active" : "deleted",
+    workspace: row.workspace_deleted_at === null ? "active" : "deleted",
+  };
+  const unavailabilityReason = row.workspace_deleted_at !== null
+    ? { code: "PARENT_WORKSPACE_DELETED", recovery: "restore_parent" }
+    : row.project_deleted_at !== null
+      ? { code: "PARENT_PROJECT_DELETED", recovery: "restore_parent" }
+      : null;
+  const restorable = row.deleted_at !== null && canWrite && unavailabilityReason === null;
   return {
     allowed_actions: canWrite
       ? row.deleted_at === null ? ["read", "update", "delete"] : ["read", "restore"]
@@ -88,6 +102,11 @@ function labelResource(row: LabelRow, role: VisibleProject["role"]): { [key: str
     },
     updated_at: timestamp(row.updated_at),
     version: row.version,
+    ...(row.deleted_at === null ? {} : {
+      parent_status: parentStatus,
+      restorable,
+      unavailability_reason: unavailabilityReason,
+    }),
   };
 }
 
@@ -98,12 +117,14 @@ async function readLabel(db: D1Database, labelId: string): Promise<LabelRow | nu
               label.version, label.deleted_at, label.deleted_by_principal_id,
               label.created_at, label.updated_at, label.last_operation_id,
               project.key AS project_key, project.display_name AS project_name,
+              project.deleted_at AS project_deleted_at,
               workspace.id AS workspace_id, workspace.key AS workspace_key,
-              workspace.display_name AS workspace_name
+              workspace.display_name AS workspace_name,
+              workspace.deleted_at AS workspace_deleted_at
        FROM labels label
        JOIN projects project ON project.id = label.project_id
        JOIN workspaces workspace ON workspace.id = project.workspace_id
-       WHERE label.id = ?1 AND project.deleted_at IS NULL AND workspace.deleted_at IS NULL
+       WHERE label.id = ?1
        LIMIT 1`,
     ).bind(labelId).first<LabelRow>();
   } catch {
@@ -117,11 +138,12 @@ async function requireLabelAccess(
   labelIdValue: JsonValue,
   requiredRole: "reader" | "writer" = "reader",
   requireActive = false,
+  includeEffectiveDeleted = false,
 ): Promise<LabelAccess> {
   const labelId = requireUuid(labelIdValue, "label_id");
   const [row, projects] = await Promise.all([
     readLabel(db, labelId),
-    resolveVisibleProjects(db, auth),
+    resolveVisibleProjects(db, auth, includeEffectiveDeleted),
   ]);
   if (row === null || (requireActive && row.deleted_at !== null)) throw notFound();
   const project = projects.find((candidate) => candidate.projectId === row.project_id);
@@ -163,11 +185,13 @@ function labelSnapshotStatement(
          'last_operation_id', label.last_operation_id,
          'name', label.name,
          'project_id', label.project_id,
+         'project_deleted_at', project.deleted_at,
          'project_key', project.key,
          'project_name', project.display_name,
          'updated_at', label.updated_at,
          'version', label.version,
          'workspace_id', workspace.id,
+         'workspace_deleted_at', workspace.deleted_at,
          'workspace_key', workspace.key,
          'workspace_name', workspace.display_name
        )
@@ -258,9 +282,10 @@ export async function listLabels(
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const projectKey = requireProjectKey(projectKeyValue, "project_key");
-  const project = await requireVisibleProject(db, auth, workspaceKey, projectKey);
   const deletedMode = requireDeletedMode(url);
-  if (deletedMode === "only" && !roleCanWrite(project.role)) throw forbidden();
+  const project = deletedMode === "only"
+    ? await requireProjectAuthorization(db, auth, workspaceKey, projectKey, "writer")
+    : await requireVisibleProject(db, auth, workspaceKey, projectKey);
   const context = await createCursorContext(
     "labels",
     { deleted: deletedMode, project_id: project.projectId },
@@ -277,8 +302,10 @@ export async function listLabels(
                 label.version, label.deleted_at, label.deleted_by_principal_id,
                 label.created_at, label.updated_at, label.last_operation_id,
                 project.key AS project_key, project.display_name AS project_name,
+                project.deleted_at AS project_deleted_at,
                 workspace.id AS workspace_id, workspace.key AS workspace_key,
-                workspace.display_name AS workspace_name
+                workspace.display_name AS workspace_name,
+                workspace.deleted_at AS workspace_deleted_at
          FROM labels label
          JOIN projects project ON project.id = label.project_id
          JOIN workspaces workspace ON workspace.id = project.workspace_id
@@ -293,8 +320,10 @@ export async function listLabels(
                 label.version, label.deleted_at, label.deleted_by_principal_id,
                 label.created_at, label.updated_at, label.last_operation_id,
                 project.key AS project_key, project.display_name AS project_name,
+                project.deleted_at AS project_deleted_at,
                 workspace.id AS workspace_id, workspace.key AS workspace_key,
-                workspace.display_name AS workspace_name
+                workspace.display_name AS workspace_name,
+                workspace.deleted_at AS workspace_deleted_at
          FROM labels label
          JOIN projects project ON project.id = label.project_id
          JOIN workspaces workspace ON workspace.id = project.workspace_id
@@ -331,8 +360,18 @@ export async function getLabel(
   db: D1Database,
   auth: AuthContext,
   labelIdValue: JsonValue,
+  url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
-  const { project, row } = await requireLabelAccess(db, auth, labelIdValue);
+  const deletedMode = requireDeletedMode(url);
+  const { project, row } = await requireLabelAccess(
+    db,
+    auth,
+    labelIdValue,
+    deletedMode === "only" ? "writer" : "reader",
+    false,
+    deletedMode === "only",
+  );
+  if ((row.deleted_at !== null) !== (deletedMode === "only")) throw notFound();
   return labelResource(row, project.role);
 }
 
@@ -364,7 +403,7 @@ export async function createLabel(
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const projectKey = requireProjectKey(projectKeyValue, "project_key");
-  const project = await requireVisibleProject(db, auth, workspaceKey, projectKey, "writer");
+  const project = await requireProjectAuthorization(db, auth, workspaceKey, projectKey, "writer");
   const name = requireLabelName(nameValue);
   const color = requireLabelColor(colorValue) ?? null;
   const labelId = crypto.randomUUID();
@@ -372,10 +411,13 @@ export async function createLabel(
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      await requireVisibleProject(db, auth, workspaceKey, projectKey, "writer");
+      const latest = await requireProjectAuthorization(db, auth, workspaceKey, projectKey, "writer");
+      if (latest.projectId !== project.projectId) throw notFound();
     },
     db,
     execute: async (operationId) => {
+      const activeProject = await requireVisibleProject(db, auth, workspaceKey, projectKey, "writer");
+      if (activeProject.projectId !== project.projectId) throw notFound();
       const guard = buildProjectRoleGuard(auth, now, 8, "project.id");
       try {
         await executeAtomicBatch(db, {
@@ -495,6 +537,13 @@ export async function updateLabel(
                version = version + 1, updated_at = ?5,
                updated_by_principal_id = ?6, last_operation_id = ?7
            WHERE id = ?8 AND version = ?9 AND deleted_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM projects parent_project
+               JOIN workspaces parent_workspace ON parent_workspace.id = parent_project.workspace_id
+               WHERE parent_project.id = labels.project_id
+                 AND parent_project.deleted_at IS NULL
+                 AND parent_workspace.deleted_at IS NULL
+             )
              AND ${guard.sql}`,
         ).bind(
           nameValue === undefined ? 0 : 1,
@@ -561,6 +610,13 @@ async function setLabelDeleted(
                updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7
              AND ${deleted ? "deleted_at IS NULL" : "deleted_at IS NOT NULL"}
+             AND EXISTS (
+               SELECT 1 FROM projects parent_project
+               JOIN workspaces parent_workspace ON parent_workspace.id = parent_project.workspace_id
+               WHERE parent_project.id = labels.project_id
+                 AND parent_project.deleted_at IS NULL
+                 AND parent_workspace.deleted_at IS NULL
+             )
              AND ${guard.sql}`,
         ).bind(
           deleted ? now : null,
@@ -631,24 +687,28 @@ export async function restoreLabel(
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const access = await requireLabelAccess(db, auth, labelIdValue, "writer");
+  const access = await requireLabelAccess(db, auth, labelIdValue, "writer", false, true);
   const idempotencyKey = requireIdempotencyKey(request);
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      await requireLabelAccess(db, auth, access.row.id, "writer");
+      const latest = await requireLabelAccess(db, auth, access.row.id, "writer", false, true);
+      if (latest.row.project_id !== access.row.project_id) throw notFound();
     },
     db,
-    execute: (operationId) => setLabelDeleted(
-      db,
-      auth,
-      access,
-      expectedVersion,
-      now,
-      false,
-      operationId,
-      true,
-    ).then(() => undefined),
+    execute: async (operationId) => {
+      const activeAccess = await requireLabelAccess(db, auth, access.row.id, "writer");
+      await setLabelDeleted(
+        db,
+        auth,
+        activeAccess,
+        expectedVersion,
+        now,
+        false,
+        operationId,
+        true,
+      );
+    },
     idempotencyKey,
     method: "POST",
     normalizedResourceScope: `label:${access.row.id}:restore`,
@@ -777,18 +837,20 @@ async function changeIssueLabel(
   adding: boolean,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const issue = await requireCollaborationIssue(db, auth, identifierValue, "writer");
+  const issue = await requireCollaborationIssueAuthorization(db, auth, identifierValue, "writer");
   const labelId = requireUuid(labelIdValue, "label_id");
-  const label = await requireLabelAccess(db, auth, labelId, "reader", true);
-  if (label.row.project_id !== issue.projectId) throw notFound();
   const idempotencyKey = requireIdempotencyKey(request);
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      await requireCollaborationIssue(db, auth, issue.identifier, "writer");
+      const latest = await requireCollaborationIssueAuthorization(db, auth, issue.identifier, "writer");
+      if (latest.projectId !== issue.projectId) throw notFound();
     },
     db,
     execute: async (operationId) => {
+      const activeIssue = await requireCollaborationIssue(db, auth, issue.identifier, "writer");
+      const label = await requireLabelAccess(db, auth, labelId, "reader", true);
+      if (label.row.project_id !== activeIssue.projectId) throw notFound();
       const guard = buildProjectRoleGuard(auth, now, 7, "issue.project_id");
       const businessStatements: D1PreparedStatement[] = adding
         ? [
@@ -806,7 +868,7 @@ async function changeIssueLabel(
                AND (SELECT COUNT(*) FROM issue_labels existing WHERE existing.issue_id = issue.id) < 20
                AND ${guard.sql}`,
           ).bind(
-            issue.id,
+            activeIssue.id,
             labelId,
             expectedVersion,
             now,
@@ -824,7 +886,7 @@ async function changeIssueLabel(
                  WHERE association.issue_id = issues.id AND association.label_id = ?6
                    AND association.created_operation_id = ?3
                )`,
-          ).bind(now, auth.principalId, operationId, issue.id, expectedVersion, labelId),
+          ).bind(now, auth.principalId, operationId, activeIssue.id, expectedVersion, labelId),
         ]
         : [
           db.prepare(
@@ -845,33 +907,33 @@ async function changeIssueLabel(
                    )
                    AND ${guard.sql}
                )`,
-          ).bind(now, auth.principalId, operationId, issue.id, expectedVersion, labelId, ...guard.values),
+          ).bind(now, auth.principalId, operationId, activeIssue.id, expectedVersion, labelId, ...guard.values),
           db.prepare(
             `DELETE FROM issue_labels
              WHERE issue_id = ?1 AND label_id = ?2
                AND EXISTS (SELECT 1 FROM issues issue WHERE issue.id = ?1 AND issue.last_operation_id = ?3)`,
-          ).bind(issue.id, labelId, operationId),
+          ).bind(activeIssue.id, labelId, operationId),
         ];
       try {
         await executeAtomicBatch(db, {
           businessStatements: [
             ...businessStatements,
-            issueWriteSnapshotStatement(db, operationId, issue.id, issue.role),
-            issueLabelEvent(db, auth, operationId, issue, labelId, adding, now),
+            issueWriteSnapshotStatement(db, operationId, activeIssue.id, activeIssue.role),
+            issueLabelEvent(db, auth, operationId, activeIssue, labelId, adding, now),
           ],
           committedAt: now,
           confirmBusinessRejection: () => deterministicRejection(
-            () => diagnoseIssueLabel(db, auth, issue, labelId, expectedVersion, adding, now),
+            () => diagnoseIssueLabel(db, auth, activeIssue, labelId, expectedVersion, adding, now),
           ),
           expectedEventCount: 1,
           operationId,
-          primarySubjectId: issue.id,
+          primarySubjectId: activeIssue.id,
           primarySubjectType: "issue",
           requireIdempotencySnapshot: true,
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          return diagnoseIssueLabel(db, auth, issue, labelId, expectedVersion, adding, now);
+          return diagnoseIssueLabel(db, auth, activeIssue, labelId, expectedVersion, adding, now);
         }
         throw error;
       }
