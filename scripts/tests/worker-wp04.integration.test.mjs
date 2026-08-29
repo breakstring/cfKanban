@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 import { createTestHarness } from "wrangler";
 
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
+import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
+import { createInvitation as createInvitationService } from "../../apps/worker/src/services/invitations.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const token = (prefix, character) => `cfk_v1_${prefix}_${character.repeat(43)}`;
@@ -70,6 +72,53 @@ function assertWriteResult(value, replay = false) {
   assert.equal(value.idempotent_replay, replay);
   assert.equal(typeof value.event_cursor, "string");
   assert.equal(typeof value.resource, "object");
+}
+
+function countingDatabase(database) {
+  let queryCount = 0;
+  const rawStatements = new WeakMap();
+  const queryMethods = new Set(["all", "first", "raw", "run"]);
+
+  const wrapStatement = (statement) => {
+    const wrapped = new Proxy(statement, {
+      get(target, property) {
+        if (property === "bind") {
+          return (...values) => wrapStatement(target.bind(...values));
+        }
+        if (queryMethods.has(property)) {
+          return (...args) => {
+            queryCount += 1;
+            return target[property](...args);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    rawStatements.set(wrapped, statement);
+    return wrapped;
+  };
+
+  return {
+    db: new Proxy(database, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(target.prepare(sql));
+        }
+        if (property === "batch") {
+          return (statements) => {
+            queryCount += statements.length;
+            return target.batch(statements.map((statement) => rawStatements.get(statement) ?? statement));
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }),
+    get queryCount() {
+      return queryCount;
+    },
+  };
 }
 
 async function createInvitation(body, idempotencyKey) {
@@ -201,6 +250,32 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   ).bind(await sha256Hex(projectInviteCode)).first();
   assert.equal(inviteBeforeRedeem.redeemed_at, null);
 
+  const redemptionSideEffects = async () => db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM principals) AS principals,
+       (SELECT COUNT(*) FROM credentials) AS credentials,
+       (SELECT COUNT(*) FROM project_grants) AS grants,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits,
+       (SELECT COUNT(*) FROM idempotency_records
+        WHERE operation_snapshot_json IS NOT NULL) AS snapshots`,
+  ).first();
+  const secretOverlapBefore = await redemptionSideEffects();
+  const secretOverlapRedeem = await jsonRequest("/api/v1/invitations/redeem", {
+    body: {
+      display_name: participantToken,
+      invite_code: projectInviteCode,
+      new_credential_token: participantToken,
+      redeem_as: "new_principal",
+    },
+    headers: { "idempotency-key": "wp04-secret-overlap-redeem" },
+    method: "POST",
+  });
+  assert.equal(secretOverlapRedeem.response.status, 400);
+  assert.equal(secretOverlapRedeem.body.code, "VALIDATION_ERROR");
+  assert.equal(secretOverlapRedeem.body.details.reason, "secret_value_reused");
+  assert.deepEqual(await redemptionSideEffects(), secretOverlapBefore);
+
   const redeemBody = {
     display_name: "Participant",
     invite_code: projectInviteCode,
@@ -243,6 +318,44 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     project_id: projectId,
     role: index % 2 === 0 ? "reader" : "writer",
   }));
+  const invalidBulkGrants = [
+    ...bulkGrants.slice(0, 19),
+    { project_id: crypto.randomUUID(), role: "writer" },
+  ];
+  const invitationWriteCounts = async () => db.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM invitations) AS invitations,
+       (SELECT COUNT(*) FROM invitation_project_grants) AS invitation_grants,
+       (SELECT COUNT(*) FROM events) AS events,
+       (SELECT COUNT(*) FROM operation_commits) AS commits,
+       (SELECT COUNT(*) FROM idempotency_records) AS idempotency_records`,
+  ).first();
+  const invalidBulkBefore = await invitationWriteCounts();
+  const counted = countingDatabase(db);
+  const invalidBulkRequest = new Request("https://kanban.example.test/api/v1/admin/invitations", {
+    headers: ownerHeaders({ "idempotency-key": "wp04-invalid-bulk-invite" }),
+    method: "POST",
+  });
+  const countedOwner = await authenticateBearer(
+    counted.db,
+    invalidBulkRequest.headers.get("authorization"),
+  );
+  await assert.rejects(
+    () => createInvitationService(
+      counted.db,
+      invalidBulkRequest,
+      countedOwner,
+      "project_grant",
+      invalidBulkGrants,
+      undefined,
+      undefined,
+      Date.now(),
+    ),
+    (error) => error?.status === 404 && error?.code === "NOT_FOUND",
+  );
+  assert.ok(counted.queryCount <= 20, `invalid 20-project Invite used ${counted.queryCount} D1 queries`);
+  assert.deepEqual(await invitationWriteCounts(), invalidBulkBefore);
+
   const bulkNewInvite = await createInvitation(
     { grants: bulkGrants, kind: "project_grant" },
     "wp04-bulk-new-invite",

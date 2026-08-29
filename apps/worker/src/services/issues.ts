@@ -120,6 +120,7 @@ interface IssueScope {
   broad: boolean;
   projectTargets: string[];
   projects: VisibleProject[];
+  relationProjects: VisibleProject[];
   targetIdentifier: string | null;
   unresolvedProjectTargets: string[];
   unresolvedWorkspaceTargets: string[];
@@ -259,9 +260,10 @@ async function resolveIssueScope(
     target,
     workspaceKey: requireWorkspaceKey(target, "workspace"),
   }));
-  let projects = recoveryView
+  const relationProjects = recoveryView
     ? await resolveIssueRecoveryProjects(db, auth)
     : await resolveVisibleProjects(db, auth);
+  let projects = relationProjects;
   const targetIdentifier = issueTarget(auth);
   if (forcedProject !== null) projects = projects.filter((project) => project.projectId === forcedProject.projectId);
   const visibleBeforeQueryFilters = projects;
@@ -287,6 +289,7 @@ async function resolveIssueScope(
     broad: forcedProject === null && targetIdentifier === null && projectTargets.length === 0 && workspaceTargets.length === 0,
     projectTargets,
     projects,
+    relationProjects,
     targetIdentifier,
     unresolvedProjectTargets,
     unresolvedWorkspaceTargets,
@@ -493,9 +496,15 @@ async function labelsForIssues(db: D1Database, issueIds: readonly string[]): Pro
   }
 }
 
+interface BlockedProjectionRow {
+  blocked_reason: string | null;
+  id: string;
+  is_blocked: number;
+}
+
 async function applyVisibleBlockedState(
   db: D1Database,
-  rows: readonly IssueRow[],
+  rows: readonly BlockedProjectionRow[],
   visibleProjectIds: readonly string[],
 ): Promise<void> {
   for (const row of rows) row.is_blocked = row.blocked_reason === null ? 0 : 1;
@@ -536,7 +545,6 @@ function issueOperationSnapshotStatement(
   operationId: string,
   issueId: string,
   role: ProjectAccessRole,
-  visibleProjectIds: readonly string[],
 ): D1PreparedStatement {
   return db.prepare(
     `UPDATE idempotency_records
@@ -560,17 +568,7 @@ function issueOperationSnapshotStatement(
            'deleted_at', i.deleted_at,
            'deleted_by_principal_id', i.deleted_by_principal_id,
            'id', i.id,
-           'is_blocked', CASE WHEN i.blocked_reason IS NOT NULL OR EXISTS (
-             SELECT 1 FROM issue_relations blocked_relation
-             JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
-             JOIN projects blocker_project ON blocker_project.id = blocker.project_id
-             JOIN workspaces blocker_workspace ON blocker_workspace.id = blocker_project.workspace_id
-             WHERE blocked_relation.target_issue_id = i.id
-               AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
-               AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
-               AND blocker.project_id IN (SELECT value FROM json_each(?4))
-               AND blocker_project.deleted_at IS NULL AND blocker_workspace.deleted_at IS NULL
-           ) THEN 1 ELSE 0 END,
+           'is_blocked', CASE WHEN i.blocked_reason IS NOT NULL THEN 1 ELSE 0 END,
            'number', i.number,
            'priority_key', i.priority_key,
            'priority_rank', i.priority_rank,
@@ -619,7 +617,7 @@ function issueOperationSnapshotStatement(
        WHERE i.id = ?2
      )
      WHERE operation_id = ?1 AND state = 'pending'`,
-  ).bind(operationId, issueId, role, JSON.stringify(visibleProjectIds));
+  ).bind(operationId, issueId, role);
 }
 
 async function readIssueOperationSnapshot(
@@ -627,6 +625,75 @@ async function readIssueOperationSnapshot(
   operationId: string,
 ): Promise<IssueOperationSnapshot & { role: ProjectAccessRole }> {
   return readOperationSnapshot<IssueOperationSnapshot & { role: ProjectAccessRole }>(db, operationId);
+}
+
+async function issueSnapshotResource(
+  db: D1Database,
+  auth: AuthContext,
+  snapshot: IssueOperationSnapshot & { role: ProjectAccessRole },
+): Promise<{ [key: string]: JsonValue }> {
+  const row = { ...snapshot.row };
+  const visibleProjects = await resolveVisibleProjects(db, auth);
+  await applyVisibleBlockedState(
+    db,
+    [row],
+    visibleProjects.map((project) => project.projectId),
+  );
+  return issueResource(row, snapshot.labels, snapshot.role, true);
+}
+
+export function issueWriteSnapshotStatement(
+  db: D1Database,
+  operationId: string,
+  issueId: string,
+  role: VisibleProject["role"],
+): D1PreparedStatement {
+  return issueOperationSnapshotStatement(db, operationId, issueId, role);
+}
+
+export async function readIssueWriteSnapshotResource(
+  db: D1Database,
+  auth: AuthContext,
+  operationId: string,
+): Promise<{ [key: string]: JsonValue }> {
+  return issueSnapshotResource(db, auth, await readIssueOperationSnapshot(db, operationId));
+}
+
+export async function currentIssueReplayProjection(
+  db: D1Database,
+  auth: AuthContext,
+  stored: { body: { [key: string]: JsonValue }; status: number },
+): Promise<{ body: { [key: string]: JsonValue }; status: number }> {
+  const resourceValue = stored.body.resource;
+  if (resourceValue === null || Array.isArray(resourceValue) || typeof resourceValue !== "object") {
+    throw platformUnavailable();
+  }
+  const id = resourceValue.id;
+  const blockedReason = resourceValue.blocked_reason;
+  if (
+    typeof id !== "string"
+    || (blockedReason !== null && typeof blockedReason !== "string")
+  ) {
+    throw platformUnavailable();
+  }
+  const projection: BlockedProjectionRow = {
+    blocked_reason: blockedReason,
+    id,
+    is_blocked: blockedReason === null ? 0 : 1,
+  };
+  const visibleProjects = await resolveVisibleProjects(db, auth);
+  await applyVisibleBlockedState(
+    db,
+    [projection],
+    visibleProjects.map((project) => project.projectId),
+  );
+  return {
+    body: {
+      ...stored.body,
+      resource: { ...resourceValue, is_blocked: projection.is_blocked === 1 },
+    },
+    status: stored.status,
+  };
 }
 
 function allowedIssueActions(role: ProjectAccessRole, deleted: boolean): string[] {
@@ -897,7 +964,10 @@ async function listIssueRows(
   const cursorContext = await createCursorContext(
     candidates ? "issue-candidates" : "issues",
     filter,
-    scope.projects.map((project) => project.projectId),
+    [
+      ...scope.projects.map((project) => `result:${project.projectId}`),
+      ...scope.relationProjects.map((project) => `relation:${project.projectId}`),
+    ],
     principalId,
   );
   const projectIds = scope.projects.map((project) => project.projectId);
@@ -924,7 +994,7 @@ async function listIssueRows(
   try {
     if (candidates) {
       const cursor = parsedCursor as [number, number, number] | null;
-      const result = await db.prepare(
+      const candidateStatement = db.prepare(
         `${ISSUE_SELECT}
          WHERE i.project_id IN (SELECT value FROM json_each(?1))
            AND i.deleted_at IS NULL AND p.deleted_at IS NULL AND w.deleted_at IS NULL
@@ -938,7 +1008,7 @@ async function listIssueRows(
              WHERE blocked_relation.target_issue_id = i.id
                AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
                AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
-               AND blocker.project_id IN (SELECT value FROM json_each(?1))
+               AND blocker.project_id IN (SELECT value FROM json_each(?10))
                AND blocker_project.deleted_at IS NULL AND blocker_workspace.deleted_at IS NULL
            )` : ""}
            AND (
@@ -961,11 +1031,21 @@ async function listIssueRows(
                 OR (i.priority_rank = ?4 AND i.created_at = ?5 AND i.number > ?6))
          ORDER BY i.priority_rank ASC, i.created_at ASC, i.number ASC
          LIMIT ?9`,
-      ).bind(
+      );
+      const candidateBindings = [
         JSON.stringify(projectIds), search.number, search.normalized,
         cursor?.[0] ?? null, cursor?.[1] ?? null, cursor?.[2] ?? null,
-        candidate.assignment, principalId, limit + 1,
-      ).all<IssueRow>();
+        candidate.assignment,
+        principalId,
+        limit + 1,
+      ] as const;
+      const boundCandidateStatement = candidate.blocked === "exclude"
+        ? candidateStatement.bind(
+          ...candidateBindings,
+          JSON.stringify(scope.relationProjects.map((project) => project.projectId)),
+        )
+        : candidateStatement.bind(...candidateBindings);
+      const result = await boundCandidateStatement.all<IssueRow>();
       rows = result.results;
       hasMore = rows.length > limit;
       rows = rows.slice(0, limit);
@@ -1045,7 +1125,11 @@ async function listIssuesInternal(
     ? await tombstoneQuotaRows(db, page.rows.map((row) => row.id))
     : new Map<string, TombstoneQuotaRow>();
   if (deletionView !== "only") {
-    await applyVisibleBlockedState(db, page.rows, scope.projects.map((project) => project.projectId));
+    await applyVisibleBlockedState(
+      db,
+      page.rows,
+      scope.relationProjects.map((project) => project.projectId),
+    );
   }
   const roles = new Map(scope.projects.map((project) => [project.projectId, project.role]));
   return {
@@ -1120,10 +1204,11 @@ async function visibleRelations(
          AND target.project_id IN (SELECT value FROM json_each(?2))
        ORDER BY CASE
          WHEN r.kind = 'blocks' AND r.target_issue_id = ?1 AND source.status_key != 'done' THEN 0
-         WHEN r.kind = 'parent' THEN 1
-         WHEN r.kind = 'blocks' THEN 2
-         WHEN r.kind = 'duplicate' THEN 3
-         ELSE 4
+         WHEN r.kind = 'parent' AND r.source_issue_id = ?1 THEN 1
+         WHEN r.kind = 'parent' THEN 2
+         WHEN r.kind = 'blocks' THEN 3
+         WHEN r.kind = 'duplicate' THEN 4
+         ELSE 5
        END, r.created_at DESC, r.id
        LIMIT ?3`,
     ).bind(issueId, JSON.stringify([...visibleProjectIds].sort()), limit).all<RelationRow>();
@@ -1600,9 +1685,6 @@ export async function createIssue(
   const issueId = crypto.randomUUID();
   const idempotencyKey = requireIdempotencyKey(request);
   const targetAllowed = cookieTargetAllowsProject(auth, workspaceKey, projectKey) ? 1 : 0;
-  const snapshotVisibleProjectIds = (await resolveVisibleProjects(db, auth)).map(
-    (visibleProject) => visibleProject.projectId,
-  );
   const result = await runIdempotentOperation({
     authorize: async () => {
       const latest = await authorizeProjectWrite(db, auth, workspaceKey, projectKey);
@@ -1678,7 +1760,6 @@ export async function createIssue(
               operationId,
               issueId,
               project.role,
-              snapshotVisibleProjectIds,
             ),
             issueEvent(db, auth, operationId, issueId, "issue.created", {
               identifier_pending: true,
@@ -1715,14 +1796,17 @@ export async function createIssue(
     readback: async (operationId, commit) => {
       const snapshot = await readIssueOperationSnapshot(db, operationId);
       return {
-        body: writeResult(
-          issueResource(snapshot.row, snapshot.labels, snapshot.role, true),
+        body: await writeResult(
+          db,
+          auth,
+          await issueSnapshotResource(db, auth, snapshot),
           commit.lastEventSequence,
           false,
         ),
         status: 200,
       };
     },
+    replay: (stored) => currentIssueReplayProjection(db, auth, stored),
     requestBody: {
       assignee_principal_id: assigneeId,
       body,
@@ -1875,7 +1959,11 @@ export async function updateIssue(
   }
   const updated: IssueRow = {
     ...row,
-    assignee_available: assigneeId === null ? 0 : 1,
+    assignee_available: assigneeId === null
+      ? 0
+      : hasAssignee
+        ? 1
+        : row.assignee_available,
     assignee_display_name: assigneeId === null ? null : assigneeDisplayName,
     assignee_principal_id: assigneeId,
     body,
@@ -1888,6 +1976,8 @@ export async function updateIssue(
     version: expectedVersion + 1,
   };
   return writeResult(
+    db,
+    auth,
     issueResource(updated, labels.get(updated.id) ?? [], project.role, true),
     commit.lastEventSequence,
     false,
@@ -1913,7 +2003,7 @@ async function setIssueDeleted(
   now: number,
   deleted: boolean,
   operationId: string,
-  snapshot: { role: ProjectAccessRole; visibleProjectIds: readonly string[] } | null = null,
+  snapshot: { role: ProjectAccessRole } | null = null,
 ): Promise<OperationCommit> {
   const { row } = deleted
     ? await requireIssueAccess(db, auth, identifier, "writer", true)
@@ -1991,7 +2081,6 @@ async function setIssueDeleted(
           operationId,
           row.id,
           snapshot.role,
-          snapshot.visibleProjectIds,
         )]),
         issueEvent(
           db,
@@ -2071,6 +2160,8 @@ export async function deleteIssue(
   };
   const quotas = await tombstoneQuotaRows(db, [deleted.id]);
   return writeResult(
+    db,
+    auth,
     issueTombstoneResource(deleted, project.role, quotas.get(deleted.id) ?? null),
     commit.lastEventSequence,
     false,
@@ -2095,12 +2186,8 @@ export async function restoreIssue(
     },
     db,
     execute: async (operationId) => {
-      const visibleProjectIds = (await resolveVisibleProjects(db, auth)).map(
-        (visibleProject) => visibleProject.projectId,
-      );
       await setIssueDeleted(db, auth, identifier, expectedVersion, now, false, operationId, {
         role: initial.project.role,
-        visibleProjectIds,
       });
     },
     idempotencyKey,
@@ -2110,14 +2197,17 @@ export async function restoreIssue(
     readback: async (operationId, commit) => {
       const snapshot = await readIssueOperationSnapshot(db, operationId);
       return {
-        body: writeResult(
-          issueResource(snapshot.row, snapshot.labels, snapshot.role, true),
+        body: await writeResult(
+          db,
+          auth,
+          await issueSnapshotResource(db, auth, snapshot),
           commit.lastEventSequence,
           false,
         ),
         status: 200,
       };
     },
+    replay: (stored) => currentIssueReplayProjection(db, auth, stored),
     requestBody: { expected_version: expectedVersion },
     routeTemplate: "/api/v1/issues/{identifier}/commands/restore",
     scopeKey: `principal:${auth.principalId}`,
@@ -2152,9 +2242,6 @@ async function runIssueCommand(
     initial.row.workspace_key,
     initial.row.project_key,
   ) ? 1 : 0;
-  const snapshotVisibleProjectIds = (await resolveVisibleProjects(db, auth)).map(
-    (visibleProject) => visibleProject.projectId,
-  );
   const result = await runIdempotentOperation({
     authorize: async () => {
       const latest = await requireIssueAccess(db, auth, identifier, "writer", true);
@@ -2200,7 +2287,6 @@ async function runIssueCommand(
                 operationId,
                 initial.row.id,
                 initial.project.role,
-                snapshotVisibleProjectIds,
               ),
               issueEvent(db, auth, operationId, initial.row.id, input.eventType, {
               assignee_changed: assigneeChanged,
@@ -2253,14 +2339,17 @@ async function runIssueCommand(
     readback: async (operationId, commit) => {
       const snapshot = await readIssueOperationSnapshot(db, operationId);
       return {
-        body: writeResult(
-          issueResource(snapshot.row, snapshot.labels, snapshot.role, true),
+        body: await writeResult(
+          db,
+          auth,
+          await issueSnapshotResource(db, auth, snapshot),
           commit.lastEventSequence,
           false,
         ),
         status: 200,
       };
     },
+    replay: (stored) => currentIssueReplayProjection(db, auth, stored),
     requestBody: input.requestBody,
     routeTemplate: input.routeTemplate,
     scopeKey: `principal:${auth.principalId}`,

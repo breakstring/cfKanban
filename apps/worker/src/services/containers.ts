@@ -121,6 +121,11 @@ function projectResource(row: ProjectRow, auth: AuthContext): { [key: string]: J
   };
 }
 
+function projectWriteResource(row: ProjectRow, auth: AuthContext): { [key: string]: JsonValue } {
+  const { active_usage: _activeUsage, ...resource } = projectResource(row, auth);
+  return resource;
+}
+
 async function readResourceSnapshot(
   db: D1Database,
   operationId: string,
@@ -591,7 +596,13 @@ export async function createWorkspace(
     now,
     readback: async (operationId, commit) => {
       return {
-        body: writeResult(await readResourceSnapshot(db, operationId), commit.lastEventSequence, false),
+        body: await writeResult(
+          db,
+          auth,
+          await readResourceSnapshot(db, operationId),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },
@@ -645,7 +656,7 @@ export async function updateWorkspace(
     if (error instanceof AtomicBatchRejectedError) return diagnoseWorkspaceCas(db, auth, key, expectedVersion, now, false);
     throw error;
   }
-  return writeResult(workspaceResource(updated, auth), commit.lastEventSequence, false);
+  return writeResult(db, auth, workspaceResource(updated, auth), commit.lastEventSequence, false);
 }
 
 async function setWorkspaceDeleted(
@@ -759,7 +770,7 @@ export async function deleteWorkspace(
     true,
     crypto.randomUUID(),
   );
-  return writeResult(workspaceResource(row, auth), commit.lastEventSequence, false);
+  return writeResult(db, auth, workspaceResource(row, auth), commit.lastEventSequence, false);
 }
 
 export async function restoreWorkspace(
@@ -788,7 +799,13 @@ export async function restoreWorkspace(
     now,
     readback: async (operationId, commit) => {
       return {
-        body: writeResult(await readResourceSnapshot(db, operationId), commit.lastEventSequence, false),
+        body: await writeResult(
+          db,
+          auth,
+          await readResourceSnapshot(db, operationId),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },
@@ -857,7 +874,7 @@ export async function createProject(
                FROM workspaces AS w
                WHERE w.key = ?8 AND w.deleted_at IS NULL AND ${guard.sql}`,
             ).bind(projectId, key, displayName, context, now, auth.principalId, operationId, workspaceKey, ...guard.values),
-            operationSnapshotStatement(db, operationId, projectResource(createdRow, auth)),
+            operationSnapshotStatement(db, operationId, projectWriteResource(createdRow, auth)),
             projectEvent(db, auth, crypto.randomUUID(), operationId, "project.created", projectId, { key, workspace_key: workspaceKey }, now),
           ],
           committedAt: now,
@@ -885,7 +902,13 @@ export async function createProject(
     now,
     readback: async (operationId, commit) => {
       return {
-        body: writeResult(await readResourceSnapshot(db, operationId), commit.lastEventSequence, false),
+        body: await writeResult(
+          db,
+          auth,
+          await readResourceSnapshot(db, operationId),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },
@@ -974,7 +997,7 @@ export async function updateProject(
     }
     throw error;
   }
-  return writeResult(projectResource(updated, auth), commit.lastEventSequence, false);
+  return writeResult(db, auth, projectWriteResource(updated, auth), commit.lastEventSequence, false);
 }
 
 async function setProjectDeleted(
@@ -995,7 +1018,7 @@ async function setProjectDeleted(
   const row = updatedProjectRow(current, { deleted_at: deleted ? now : null }, now);
   const snapshot = persistSnapshot
     ? {
-        ...projectResource(row, auth),
+        ...projectWriteResource(row, auth),
         resumed_public_projects: row.public_join_enabled
           ? { has_more: false, projects: [{ id: row.id, key: row.key }] }
           : { has_more: false, projects: [] },
@@ -1086,7 +1109,7 @@ export async function deleteProject(
     true,
     crypto.randomUUID(),
   );
-  return writeResult(projectResource(row, auth), commit.lastEventSequence, false);
+  return writeResult(db, auth, projectWriteResource(row, auth), commit.lastEventSequence, false);
 }
 
 export async function restoreProject(
@@ -1119,7 +1142,13 @@ export async function restoreProject(
     now,
     readback: async (operationId, commit) => {
       return {
-        body: writeResult(await readResourceSnapshot(db, operationId), commit.lastEventSequence, false),
+        body: await writeResult(
+          db,
+          auth,
+          await readResourceSnapshot(db, operationId),
+          commit.lastEventSequence,
+          false,
+        ),
         status: 200,
       };
     },
@@ -1232,7 +1261,7 @@ export async function updateStatusName(
   }
   const definition = WORKFLOW_STATUSES.find((status) => status.key === statusKey);
   if (definition === undefined) throw platformUnavailable();
-  return writeResult({
+  return writeResult(db, auth, {
     category: definition.category,
     created_at: timestamp(updated.created_at),
     deleted_at: null,

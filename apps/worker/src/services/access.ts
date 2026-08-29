@@ -531,7 +531,7 @@ export async function revokeCredential(
     }
     throw error;
   }
-  return writeResult(credentialResource(updated, false), commit.lastEventSequence, false);
+  return writeResult(db, auth, credentialResource(updated, false), commit.lastEventSequence, false);
 }
 
 async function authenticateRotationRequest(
@@ -663,7 +663,9 @@ export async function rotateOwnerCredential(
     now,
     readback: async (operationId, commit) => {
       return {
-        body: writeResult(
+        body: await writeResult(
+          db,
+          initialAuth,
           await readOperationSnapshot<{ [key: string]: JsonValue }>(db, operationId),
           commit.lastEventSequence,
           false,
@@ -861,8 +863,9 @@ export async function createProjectGrant(
                WHERE target_principal.id = ?2 AND target_principal.id != im.owner_principal_id
                  AND p.deleted_at IS NULL AND w.deleted_at IS NULL
                  AND (policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL
-                      OR p.principal_limit IS NULL
-                      OR usage.active_principal_count < p.principal_limit)
+                      OR (p.principal_limit IS NOT NULL
+                          AND usage.project_id IS NOT NULL
+                          AND usage.active_principal_count < p.principal_limit))
                  AND ${guard.sql}
                ON CONFLICT(principal_id, project_id) DO UPDATE SET
                  role = excluded.role, revoked_at = NULL,
@@ -925,7 +928,10 @@ export async function createProjectGrant(
     now,
     readback: async (operationId, commit) => {
       const row = await readGrantOperationSnapshot(db, operationId);
-      return { body: writeResult(grantResource(row), commit.lastEventSequence, false), status: 200 };
+      return {
+        body: await writeResult(db, auth, grantResource(row), commit.lastEventSequence, false),
+        status: 200,
+      };
     },
     requestBody: { principal_id: principalId, role },
     routeTemplate: "/api/v1/admin/projects/{project_id}/grants",
@@ -994,7 +1000,7 @@ export async function updateProjectGrant(
     }
     throw error;
   }
-  return writeResult(grantResource(updated), commit.lastEventSequence, false);
+  return writeResult(db, auth, grantResource(updated), commit.lastEventSequence, false);
 }
 
 export async function revokeProjectGrant(
@@ -1065,5 +1071,5 @@ export async function revokeProjectGrant(
     }
     throw error;
   }
-  return writeResult(grantResource(updated), commit.lastEventSequence, false);
+  return writeResult(db, auth, grantResource(updated), commit.lastEventSequence, false);
 }

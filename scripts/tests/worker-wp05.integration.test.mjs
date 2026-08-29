@@ -78,6 +78,11 @@ const ordinaryCursorFilter = (projectTargets = []) => ({
   workspace_targets: [],
 });
 
+const issueCursorScope = (resultProjectIds, relationProjectIds) => [
+  ...resultProjectIds.map((projectId) => `result:${projectId}`),
+  ...relationProjectIds.map((projectId) => `relation:${projectId}`),
+];
+
 function withOneFinalizeFailure(database) {
   let failed = false;
   return new Proxy(database, {
@@ -276,7 +281,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const ordinaryCursorContext = await createCursorContext(
     "issues",
     ordinaryCursorFilter(),
-    [coreProjectId],
+    issueCursorScope([coreProjectId], [coreProjectId]),
     ids.writerPrincipal,
   );
   const invalidOrdinaryCursor = encodeCursor(ordinaryCursorContext, [-1, 1]);
@@ -294,7 +299,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
       candidate_assignment: "unassigned",
       candidate_blocked: "exclude",
     },
-    [coreProjectId],
+    issueCursorScope([coreProjectId], [coreProjectId]),
     ids.writerPrincipal,
   );
   const invalidCandidateCursor = encodeCursor(candidateCursorContext, [5, 0, 1]);
@@ -307,7 +312,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const emptyScopeCursorContext = await createCursorContext(
     "issues",
     ordinaryCursorFilter(["engineering/MISSING"]),
-    [],
+    issueCursorScope([], [coreProjectId]),
     ids.writerPrincipal,
   );
   const invalidEmptyScopeCursor = encodeCursor(emptyScopeCursorContext, [0, 1.5]);
@@ -1046,6 +1051,18 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     method: "POST",
   });
   assert.equal(callerDowngradedReplay.response.status, 403);
+  const unavailableAssignee = await jsonRequest("/api/v1/issues/CFK-1", { headers: ownerHeaders() });
+  const unrelatedPatch = await jsonRequest("/api/v1/issues/CFK-1", {
+    body: {
+      expected_version: unavailableAssignee.body.version,
+      title: "Initial issue with unavailable assignee",
+    },
+    headers: ownerHeaders(),
+    method: "PATCH",
+  });
+  assert.equal(unrelatedPatch.response.status, 200);
+  assert.equal(unrelatedPatch.body.resource.assignee.available, false);
+  assert.equal(unrelatedPatch.body.resource.needs_reassignment, true);
   const reassignmentCandidates = await jsonRequest(
     "/api/v1/issues/candidates?assignment=needs_reassignment",
     { headers: ownerHeaders() },
@@ -1162,6 +1179,139 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
        version = version + 1 WHERE id = ?3`,
   ).bind(Date.now(), ids.ownerPrincipal, crossProjectGrantId).run();
+
+  await jsonRequest("/api/v1/workspaces", {
+    body: { display_name: "Relation Scope", key: "relation-scope" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-relation-scope-workspace" }),
+    method: "POST",
+  });
+  const relationProjectA = await jsonRequest("/api/v1/workspaces/relation-scope/projects", {
+    body: { display_name: "Relation A", key: "RA" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-relation-project-a" }),
+    method: "POST",
+  });
+  const relationProjectB = await jsonRequest("/api/v1/workspaces/relation-scope/projects", {
+    body: { display_name: "Relation B", key: "RB" },
+    headers: ownerHeaders({ "idempotency-key": "wp05-relation-project-b" }),
+    method: "POST",
+  });
+  const relationProjectAGrant = "50000000-0000-4000-8000-000000000020";
+  const relationProjectBGrant = "50000000-0000-4000-8000-000000000021";
+  await db.batch([
+    db.prepare(
+      `INSERT INTO project_grants
+        (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
+       VALUES (?1, ?2, ?3, 'writer', ?4, ?4, ?5)`,
+    ).bind(
+      relationProjectAGrant,
+      ids.writerPrincipal,
+      relationProjectA.body.resource.id,
+      Date.now(),
+      "wp05-relation-scope-grant-a",
+    ),
+    db.prepare(
+      `INSERT INTO project_grants
+        (id, principal_id, project_id, role, created_at, updated_at, created_operation_id)
+       VALUES (?1, ?2, ?3, 'writer', ?4, ?4, ?5)`,
+    ).bind(
+      relationProjectBGrant,
+      ids.writerPrincipal,
+      relationProjectB.body.resource.id,
+      Date.now(),
+      "wp05-relation-scope-grant-b",
+    ),
+  ]);
+  const relationTarget = await jsonRequest("/api/v1/workspaces/relation-scope/projects/RA/issues", {
+    body: { status_key: "todo", title: "Visible target with cross-project blocker" },
+    headers: writerHeaders({ "idempotency-key": "wp05-relation-target" }),
+    method: "POST",
+  });
+  await jsonRequest("/api/v1/workspaces/relation-scope/projects/RA/issues", {
+    body: { title: "Second scoped issue for cursor validation" },
+    headers: writerHeaders({ "idempotency-key": "wp05-relation-target-second" }),
+    method: "POST",
+  });
+  const relationBlocker = await jsonRequest("/api/v1/workspaces/relation-scope/projects/RB/issues", {
+    body: { status_key: "in_progress", title: "Visible cross-project blocker" },
+    headers: writerHeaders({ "idempotency-key": "wp05-relation-blocker" }),
+    method: "POST",
+  });
+  const relationWorkspace = await db.prepare(
+    "SELECT workspace_id FROM projects WHERE id = ?1",
+  ).bind(relationProjectA.body.resource.id).first();
+  await db.prepare(
+    `INSERT INTO issue_relations
+      (id, workspace_id, kind, source_issue_id, target_issue_id, created_at,
+       created_by_principal_id, created_operation_id)
+     VALUES (?1, ?2, 'blocks', ?3, ?4, ?5, ?6, ?7)`,
+  ).bind(
+    "50000000-0000-4000-8000-000000000022",
+    relationWorkspace.workspace_id,
+    relationBlocker.body.resource.id,
+    relationTarget.body.resource.id,
+    Date.now(),
+    ids.writerPrincipal,
+    "wp05-relation-scope-blocker",
+  ).run();
+  const explicitRelationScope = await jsonRequest(
+    "/api/v1/issues?project=relation-scope%2FRA",
+    { headers: writerHeaders() },
+  );
+  assert.equal(
+    explicitRelationScope.body.items.find(
+      (issue) => issue.identifier === relationTarget.body.resource.identifier,
+    ).is_blocked,
+    true,
+  );
+  const blockedExplicitCandidate = await jsonRequest(
+    "/api/v1/issues/candidates?assignment=unassigned&project=relation-scope%2FRA",
+    { headers: writerHeaders() },
+  );
+  assert.deepEqual(blockedExplicitCandidate.body.items, []);
+  const relationScopePage = await jsonRequest(
+    "/api/v1/issues?project=relation-scope%2FRA&limit=1",
+    { headers: writerHeaders() },
+  );
+  assert.equal(relationScopePage.body.has_more, true);
+  const scopedCommandBody = { expected_version: relationTarget.body.resource.version };
+  const scopedCommand = await jsonRequest(
+    `/api/v1/issues/${relationTarget.body.resource.identifier}/commands/assign-to-me`,
+    {
+      body: scopedCommandBody,
+      headers: writerHeaders({ "idempotency-key": "wp05-relation-scope-command" }),
+      method: "POST",
+    },
+  );
+  assert.equal(scopedCommand.body.resource.is_blocked, true);
+  await db.prepare(
+    `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
+       version = version + 1 WHERE id = ?3`,
+  ).bind(Date.now(), ids.ownerPrincipal, relationProjectBGrant).run();
+  const changedRelationVisibilityCursor = await jsonRequest(
+    `/api/v1/issues?project=relation-scope%2FRA&limit=1&cursor=${encodeURIComponent(relationScopePage.body.next_cursor)}`,
+    { headers: writerHeaders() },
+  );
+  assert.equal(changedRelationVisibilityCursor.response.status, 409);
+  assert.equal(changedRelationVisibilityCursor.body.code, "CURSOR_SCOPE_MISMATCH");
+  const replayAfterBlockerGrantRevoke = await jsonRequest(
+    `/api/v1/issues/${relationTarget.body.resource.identifier}/commands/assign-to-me`,
+    {
+      body: scopedCommandBody,
+      headers: writerHeaders({ "idempotency-key": "wp05-relation-scope-command" }),
+      method: "POST",
+    },
+  );
+  assert.equal(replayAfterBlockerGrantRevoke.response.status, 200);
+  assert.equal(replayAfterBlockerGrantRevoke.body.idempotent_replay, true);
+  assert.equal(replayAfterBlockerGrantRevoke.body.resource.is_blocked, false);
+  const visibleCandidateAfterGrantRevoke = await jsonRequest(
+    "/api/v1/issues/candidates?assignment=mine&project=relation-scope%2FRA",
+    { headers: writerHeaders() },
+  );
+  assert.deepEqual(
+    visibleCandidateAfterGrantRevoke.body.items.map((issue) => issue.identifier),
+    [relationTarget.body.resource.identifier],
+  );
 
   const finalizeInterruptionIssue = await jsonRequest(
     "/api/v1/workspaces/engineering/projects/CORE/issues",

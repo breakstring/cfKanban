@@ -605,12 +605,41 @@
         ],
         "parameters": [
           {
-            "name": "cursor",
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "workspace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "after",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Opaque Event cursor returned by a write or an earlier Event page."
           },
           {
             "name": "limit",
@@ -636,7 +665,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/EventListResult"
                 }
               }
             }
@@ -1951,7 +1980,8 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 128
+              "description": "Normalized title/identifier search. Runtime limit: 128 UTF-8 bytes.",
+              "x-cfkanban-max-utf8-bytes": 128
             }
           },
           {
@@ -2095,7 +2125,8 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 128
+              "description": "Normalized title/identifier search. Runtime limit: 128 UTF-8 bytes.",
+              "x-cfkanban-max-utf8-bytes": 128
             }
           },
           {
@@ -2130,7 +2161,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueListResult"
+                  "$ref": "#/components/schemas/ActiveIssueListResult"
                 }
               }
             }
@@ -2272,7 +2303,8 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 128
+              "description": "Normalized title/identifier search. Runtime limit: 128 UTF-8 bytes.",
+              "x-cfkanban-max-utf8-bytes": 128
             }
           },
           {
@@ -2389,7 +2421,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/ActiveIssueWriteResult"
                 }
               }
             }
@@ -2561,7 +2593,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/ActiveIssueWriteResult"
                 }
               }
             }
@@ -2647,7 +2679,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/DeletedIssueWriteResult"
                 }
               }
             }
@@ -2722,7 +2754,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/ActiveIssueWriteResult"
                 }
               }
             }
@@ -2879,7 +2911,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/ActiveIssueWriteResult"
                 }
               }
             }
@@ -2967,7 +2999,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/ActiveIssueWriteResult"
                 }
               }
             }
@@ -3055,7 +3087,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/ActiveIssueWriteResult"
                 }
               }
             }
@@ -3143,7 +3175,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/CompletedIssueWriteResult"
                 }
               }
             }
@@ -3231,7 +3263,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/ActiveIssueWriteResult"
                 }
               }
             }
@@ -3319,7 +3351,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IssueWriteResult"
+                  "$ref": "#/components/schemas/ActiveIssueWriteResult"
                 }
               }
             }
@@ -3421,7 +3453,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/CommentListResult"
                 }
               }
             }
@@ -3494,7 +3526,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/CommentWriteResult"
                 }
               }
             }
@@ -3560,8 +3592,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -3576,8 +3607,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/Comment"
                 }
               }
             }
@@ -3628,8 +3658,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -3650,7 +3679,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/CommentWriteResult"
                 }
               }
             }
@@ -3703,8 +3732,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -3725,7 +3753,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/CommentWriteResult"
                 }
               }
             }
@@ -3849,7 +3877,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/LabelListResult"
                 }
               }
             }
@@ -3931,7 +3959,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/LabelWriteResult"
                 }
               }
             }
@@ -3997,8 +4025,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -4013,8 +4040,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/Label"
                 }
               }
             }
@@ -4065,8 +4091,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -4084,7 +4109,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/LabelWriteResult"
                 }
               }
             }
@@ -4148,8 +4173,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -4170,7 +4194,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/LabelWriteResult"
                 }
               }
             }
@@ -4223,8 +4247,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -4245,7 +4268,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/LabelWriteResult"
                 }
               }
             }
@@ -4347,7 +4370,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/RelationListResult"
                 }
               }
             }
@@ -4420,7 +4443,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/RelationWriteResult"
                 }
               }
             }
@@ -4486,8 +4509,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -4502,8 +4524,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/Relation"
                 }
               }
             }
@@ -4554,8 +4575,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -4592,7 +4612,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/RelationWriteResult"
                 }
               }
             }
@@ -4645,8 +4665,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -4667,7 +4686,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/RelationWriteResult"
                 }
               }
             }
@@ -4967,8 +4986,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -5035,8 +5053,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -5207,8 +5224,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -5277,8 +5293,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -5366,8 +5381,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -5645,8 +5659,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -5732,8 +5745,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -5820,8 +5832,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -5888,8 +5899,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -5971,8 +5981,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -6042,12 +6051,13 @@
         ],
         "parameters": [
           {
-            "name": "cursor",
+            "name": "after",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Opaque Owner audit cursor."
           },
           {
             "name": "limit",
@@ -6073,7 +6083,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/AuditEventListResult"
                 }
               }
             }
@@ -6617,8 +6627,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -6692,8 +6701,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -6992,8 +7000,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -7060,8 +7067,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -7146,8 +7152,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -7221,8 +7226,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -7289,8 +7293,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -7435,8 +7438,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -7855,7 +7857,8 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 32768
+                "description": "Untrusted bounded Project context. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
               },
               {
                 "type": "null"
@@ -7884,7 +7887,8 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 32768
+                "description": "Untrusted bounded Project context. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
               },
               {
                 "type": "null"
@@ -7925,8 +7929,9 @@
           },
           "body": {
             "type": "string",
-            "maxLength": 65536,
-            "default": ""
+            "default": "",
+            "description": "Untrusted Markdown source. Runtime limit: 65536 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 65536
           },
           "status_key": {
             "$ref": "#/components/schemas/NonDoneStatusKey",
@@ -7976,7 +7981,8 @@
           },
           "body": {
             "type": "string",
-            "maxLength": 65536
+            "description": "Untrusted Markdown source. Runtime limit: 65536 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 65536
           },
           "status_key": {
             "$ref": "#/components/schemas/NonDoneStatusKey"
@@ -8078,7 +8084,8 @@
             "default": []
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "x-cfkanban-max-utf8-bytes": 32768
       },
       "IssueLabelRequest": {
         "type": "object",
@@ -8105,7 +8112,8 @@
           "body": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 32768
+            "description": "Append-only untrusted Comment body. Runtime limit: 32768 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 32768
           },
           "reply_to_comment_id": {
             "anyOf": [
@@ -8234,6 +8242,7 @@
               "invite_code": {
                 "type": "string",
                 "minLength": 1,
+                "maxLength": 1024,
                 "writeOnly": true
               },
               "redeem_as": {
@@ -8246,7 +8255,9 @@
               },
               "new_credential_token": {
                 "type": "string",
-                "pattern": "^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+$",
+                "minLength": 52,
+                "maxLength": 584,
+                "pattern": "^cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}$",
                 "writeOnly": true
               }
             },
@@ -8262,6 +8273,7 @@
               "invite_code": {
                 "type": "string",
                 "minLength": 1,
+                "maxLength": 1024,
                 "writeOnly": true
               },
               "redeem_as": {
@@ -8281,6 +8293,7 @@
               "invite_code": {
                 "type": "string",
                 "minLength": 1,
+                "maxLength": 1024,
                 "writeOnly": true
               },
               "redeem_as": {
@@ -8288,7 +8301,9 @@
               },
               "new_credential_token": {
                 "type": "string",
-                "pattern": "^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+$",
+                "minLength": 52,
+                "maxLength": 584,
+                "pattern": "^cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}$",
                 "writeOnly": true
               }
             },
@@ -8369,7 +8384,9 @@
         "properties": {
           "new_credential_token": {
             "type": "string",
-            "pattern": "^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+$",
+            "minLength": 52,
+            "maxLength": 584,
+            "pattern": "^cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}$",
             "writeOnly": true
           }
         },
@@ -8635,7 +8652,9 @@
           },
           "new_credential_token": {
             "type": "string",
-            "pattern": "^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]+$",
+            "minLength": 52,
+            "maxLength": 584,
+            "pattern": "^cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}$",
             "writeOnly": true
           }
         },
@@ -9834,33 +9853,6 @@
         },
         "additionalProperties": false
       },
-      "IssueWriteResult": {
-        "type": "object",
-        "required": [
-          "event_cursor",
-          "idempotent_replay",
-          "resource"
-        ],
-        "properties": {
-          "event_cursor": {
-            "type": "string"
-          },
-          "idempotent_replay": {
-            "type": "boolean"
-          },
-          "resource": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/IssueDetail"
-              },
-              {
-                "$ref": "#/components/schemas/IssueTombstone"
-              }
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
       "IssueContext": {
         "type": "object",
         "required": [
@@ -10198,6 +10190,1233 @@
           },
           "truncated": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompletedIssueDetail": {
+        "type": "object",
+        "required": [
+          "assignee",
+          "created_at",
+          "deleted_at",
+          "id",
+          "identifier",
+          "is_blocked",
+          "labels",
+          "needs_reassignment",
+          "number",
+          "priority",
+          "project",
+          "status",
+          "title",
+          "updated_at",
+          "version",
+          "workspace",
+          "allowed_actions",
+          "blocked_reason",
+          "body",
+          "completion_comment_id"
+        ],
+        "properties": {
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "available",
+                  "display_name",
+                  "principal_id"
+                ],
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "is_blocked": {
+            "type": "boolean"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueLabelSummary"
+            }
+          },
+          "needs_reassignment": {
+            "type": "boolean"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "priority": {
+            "$ref": "#/components/schemas/PriorityKey"
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "id",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "status": {
+            "type": "object",
+            "required": [
+              "category",
+              "display_name",
+              "key",
+              "terminal"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "backlog",
+                  "unstarted",
+                  "started",
+                  "completed",
+                  "canceled"
+                ]
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "$ref": "#/components/schemas/StatusKey"
+              },
+              "terminal": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "completion_comment_id": {
+            "$ref": "#/components/schemas/Uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActiveIssueListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IssueSummary"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "$ref": "#/components/schemas/IssueResolvedScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ActiveIssueWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/IssueDetail"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompletedIssueWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/CompletedIssueDetail"
+          }
+        },
+        "additionalProperties": false
+      },
+      "DeletedIssueWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/IssueTombstone"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueReference": {
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "project",
+          "title",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "id",
+              "key",
+              "workspace_key"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CompletionPayload": {
+        "type": "object",
+        "required": [
+          "artifacts",
+          "follow_ups",
+          "summary",
+          "verification"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "required": [
+                "kind",
+                "value"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "url",
+                    "path",
+                    "commit",
+                    "other"
+                  ]
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "follow_ups": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "verification": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "Comment": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "author",
+          "body",
+          "completion",
+          "created_at",
+          "deleted_at",
+          "deleted_by_principal_id",
+          "id",
+          "issue",
+          "kind",
+          "reply_to_comment_id",
+          "version"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "delete",
+                "restore"
+              ]
+            }
+          },
+          "author": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "principal_id"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompletionPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deleted_by_principal_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "issue": {
+            "$ref": "#/components/schemas/IssueReference"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "completion"
+            ]
+          },
+          "reply_to_comment_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CommentListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Comment"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "issue"
+            ],
+            "properties": {
+              "issue": {
+                "$ref": "#/components/schemas/IssueReference"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "CommentWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/Comment"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Label": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "color",
+          "created_at",
+          "deleted_at",
+          "deleted_by_principal_id",
+          "id",
+          "name",
+          "project",
+          "updated_at",
+          "version"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "update",
+                "delete",
+                "restore"
+              ]
+            }
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9A-F]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deleted_by_principal_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "id",
+              "key",
+              "workspace_key"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LabelListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Label"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "project_id",
+              "project_key",
+              "workspace_key"
+            ],
+            "properties": {
+              "project_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "project_key": {
+                "type": "string"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "LabelWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/Label"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RelationEndpoint": {
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "project",
+          "title",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "id",
+              "key",
+              "workspace_key"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Relation": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "created_at",
+          "created_by_principal_id",
+          "deleted_at",
+          "deleted_by_principal_id",
+          "id",
+          "kind",
+          "source",
+          "target",
+          "version",
+          "workspace"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "delete",
+                "restore"
+              ]
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "created_by_principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deleted_by_principal_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RelationKind"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RelationEndpoint"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RelationEndpoint"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "id",
+              "key"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "RelationListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Relation"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "issue_id",
+              "issue_identifier",
+              "visible_project_ids"
+            ],
+            "properties": {
+              "issue_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "issue_identifier": {
+                "type": "string",
+                "pattern": "^CFK-[1-9][0-9]*$"
+              },
+              "visible_project_ids": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Uuid"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "RelationWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/Relation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Event": {
+        "type": "object",
+        "required": [
+          "actor",
+          "authorized_via",
+          "created_at",
+          "event_index",
+          "grant_id",
+          "id",
+          "operation_id",
+          "payload",
+          "project",
+          "subject",
+          "type",
+          "workspace"
+        ],
+        "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "credential_id",
+                  "display_name",
+                  "principal_id"
+                ],
+                "properties": {
+                  "credential_id": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/Uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "authorized_via": {
+            "type": "string",
+            "enum": [
+              "deployment_owner",
+              "project_grant",
+              "public_join",
+              "invitation",
+              "web_session",
+              "deployment_recovery"
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "event_index": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "grant_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "operation_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "payload": {},
+          "project": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "display_name",
+                  "id",
+                  "key"
+                ],
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stream": {
+            "type": "string",
+            "enum": [
+              "domain",
+              "security"
+            ]
+          },
+          "subject": {
+            "type": "object",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "type": {
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "display_name",
+                  "id",
+                  "key"
+                ],
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EventResolvedScope": {
+        "type": "object",
+        "required": [
+          "expanded_to_all_authorized_projects",
+          "projects",
+          "unresolved_project_targets",
+          "unresolved_workspace_targets"
+        ],
+        "properties": {
+          "expanded_to_all_authorized_projects": {
+            "type": "boolean"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "project_id",
+                "project_key",
+                "workspace_key"
+              ],
+              "properties": {
+                "project_id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "project_key": {
+                  "type": "string"
+                },
+                "workspace_key": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "unresolved_project_targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unresolved_workspace_targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EventListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          },
+          "resolved_scope": {
+            "$ref": "#/components/schemas/EventResolvedScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuditEvent": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Event"
+          },
+          {
+            "type": "object",
+            "required": [
+              "stream"
+            ]
+          }
+        ]
+      },
+      "AuditEventListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
           }
         },
         "additionalProperties": false

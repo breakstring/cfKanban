@@ -183,7 +183,11 @@ CREATE TABLE labels (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id),
   name TEXT COLLATE NOCASE NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 64),
-  color TEXT CHECK (color IS NULL OR (length(color) = 7 AND color GLOB '#[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]')),
+  color TEXT CHECK (
+    color IS NULL
+    OR (length(color) = 7 AND substr(color, 1, 1) = '#'
+        AND substr(color, 2) NOT GLOB '*[^0-9A-Fa-f]*')
+  ),
   version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
   deleted_at INTEGER,
   deleted_by_principal_id TEXT REFERENCES principals(id),
@@ -347,7 +351,7 @@ CREATE TABLE invitation_redemption_items (
   invitation_id TEXT NOT NULL REFERENCES invitations(id),
   project_id TEXT NOT NULL REFERENCES projects(id),
   operation_id TEXT NOT NULL,
-  outcome TEXT NOT NULL CHECK (outcome IN ('created', 'regranted', 'already_has_access', 'promoted')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('created', 'regranted', 'already_has_access')),
   effective_role TEXT NOT NULL CHECK (effective_role IN ('reader', 'writer')),
   PRIMARY KEY (invitation_id, project_id)
 );
