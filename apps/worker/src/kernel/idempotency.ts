@@ -4,6 +4,8 @@ import { AtomicBatchRejectedError, probeOperationCommit, type OperationCommit } 
 import type { JsonValue } from "./types.ts";
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000;
+const IDEMPOTENCY_CLEANUP_BATCH_SIZE = 64;
+const credentialTokenPattern = /cfk_v1_[A-Za-z0-9]{1,64}_[A-Za-z0-9_-]{43,512}/;
 
 interface IdempotencyRow {
   operation_id: string;
@@ -69,7 +71,7 @@ const sensitivePersistenceKeys = new Set([
   "bookmark",
 ]);
 
-export function validateIdempotencyKey(key: string): void {
+export function validateIdempotencyKey(key: string, forbiddenValues: readonly string[] = []): void {
   if (key.length === 0) {
     throw new ApiError({
       category: "validation",
@@ -81,6 +83,12 @@ export function validateIdempotencyKey(key: string): void {
     });
   }
   if (!/^[\x20-\x7E]{1,128}$/.test(key)) {
+    throw validationError("invalid_idempotency_key");
+  }
+  if (
+    credentialTokenPattern.test(key)
+    || forbiddenValues.some((secret) => secret.length >= 8 && key.includes(secret))
+  ) {
     throw validationError("invalid_idempotency_key");
   }
 }
@@ -153,9 +161,14 @@ export async function claimIdempotency(
   db: D1Database,
   identity: IdempotencyIdentity,
   now = Date.now(),
+  forbiddenValues: readonly string[] = [],
 ): Promise<IdempotencyClaim> {
-  validateIdempotencyKey(identity.idempotencyKey);
-  const { requestHash, resourceScopeHash } = await computeRequestHash(identity);
+  validateIdempotencyKey(identity.idempotencyKey, forbiddenValues);
+  // The schema column is a lookup key; persist a digest so a caller mistake cannot store the raw header value.
+  const [{ requestHash, resourceScopeHash }, storedIdempotencyKey] = await Promise.all([
+    computeRequestHash(identity),
+    sha256Hex(identity.idempotencyKey),
+  ]);
   const proposedOperationId = crypto.randomUUID();
   const recordId = crypto.randomUUID();
 
@@ -171,9 +184,19 @@ export async function claimIdempotency(
       identity.method.toUpperCase(),
       identity.routeTemplate,
       resourceScopeHash,
-      identity.idempotencyKey,
+      storedIdempotencyKey,
       now,
     );
+    const deleteExpiredBatch = db.prepare(
+      `DELETE FROM idempotency_records
+       WHERE id IN (
+         SELECT id
+         FROM idempotency_records
+         WHERE expires_at <= ?1
+         ORDER BY expires_at, id
+         LIMIT ?2
+       )`,
+    ).bind(now, IDEMPOTENCY_CLEANUP_BATCH_SIZE);
     const insertPending = db.prepare(
       `INSERT OR IGNORE INTO idempotency_records
         (id, scope_key, method, route_template, resource_scope_hash,
@@ -185,13 +208,13 @@ export async function claimIdempotency(
       identity.method.toUpperCase(),
       identity.routeTemplate,
       resourceScopeHash,
-      identity.idempotencyKey,
+      storedIdempotencyKey,
       requestHash,
       proposedOperationId,
       now,
       now + IDEMPOTENCY_TTL_MS,
     );
-    await db.batch([deleteExpired, insertPending]);
+    await db.batch([deleteExpired, deleteExpiredBatch, insertPending]);
 
     row = await db.prepare(
       `SELECT request_hash, operation_id, state, response_status, response_json
@@ -204,7 +227,7 @@ export async function claimIdempotency(
       identity.method.toUpperCase(),
       identity.routeTemplate,
       resourceScopeHash,
-      identity.idempotencyKey,
+      storedIdempotencyKey,
     ).first<IdempotencyRow>();
   } catch {
     throw platformUnavailable("d1");
@@ -282,7 +305,12 @@ export async function runIdempotentOperation<T extends JsonValue>(
   options: RunIdempotentOperationOptions<T>,
 ): Promise<IdempotentOperationResult<T>> {
   await options.authorize();
-  const claim = await claimIdempotency(options.db, options, options.now);
+  const claim = await claimIdempotency(
+    options.db,
+    options,
+    options.now,
+    options.forbiddenPersistenceValues ?? [],
+  );
 
   if (claim.state === "committed") {
     await options.authorize();

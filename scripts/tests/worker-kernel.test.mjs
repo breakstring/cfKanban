@@ -212,4 +212,12 @@ test("canonical request hashing is stable and idempotency keys are bounded", asy
   assert.throws(() => validateIdempotencyKey(""), (error) => error.code === "IDEMPOTENCY_KEY_REQUIRED");
   assert.throws(() => validateIdempotencyKey("line\nbreak"), (error) => error.code === "VALIDATION_ERROR");
   assert.throws(() => validateIdempotencyKey("x".repeat(129)), (error) => error.code === "VALIDATION_ERROR");
+
+  const credential = `cfk_v1_live_${"A".repeat(43)}`;
+  const sessionSecret = "S".repeat(43);
+  assert.throws(() => validateIdempotencyKey(credential), (error) => error.code === "VALIDATION_ERROR");
+  assert.throws(
+    () => validateIdempotencyKey(`request-${sessionSecret}`, [sessionSecret]),
+    (error) => error.code === "VALIDATION_ERROR",
+  );
 });
