@@ -49,6 +49,11 @@ interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
+export type InvitationRecoveryExclusiveLock = <T>(
+  name: string,
+  callback: () => Promise<T> | T,
+) => Promise<T>;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -58,8 +63,38 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
   return Object.keys(value).every((key) => allowedSet.has(key));
 }
 
-function isNullableString(value: unknown): value is string | null {
-  return value === null || typeof value === "string";
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && uuidPattern.test(value);
+}
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string"
+    && timestampPattern.test(value)
+    && Number.isFinite(Date.parse(value));
+}
+
+function isNullableTimestamp(value: unknown): value is string | null {
+  return value === null || isTimestamp(value);
+}
+
+function isNullableUuid(value: unknown): value is string | null {
+  return value === null || isUuid(value);
+}
+
+function isHttpsUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:"
+      && parsed.username === ""
+      && parsed.password === ""
+      && parsed.hostname.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function isInvitationRequestBody(value: unknown): value is InvitationRequestBody {
@@ -83,11 +118,9 @@ function isInvitationRequestBody(value: unknown): value is InvitationRequestBody
 }
 
 function isInvitationGrant(value: unknown): boolean {
-  if (!isRecord(value) || !hasOnlyKeys(value, [
-    "display_name", "project_id", "project_key", "role", "workspace_key",
-  ])) return false;
+  if (!isRecord(value)) return false;
   return typeof value.display_name === "string"
-    && typeof value.project_id === "string"
+    && isUuid(value.project_id)
     && typeof value.project_key === "string"
     && (value.role === "reader" || value.role === "writer")
     && typeof value.workspace_key === "string";
@@ -96,59 +129,45 @@ function isInvitationGrant(value: unknown): boolean {
 function isBoundPrincipal(value: unknown): boolean {
   return value === null || (
     isRecord(value)
-    && hasOnlyKeys(value, ["display_name", "principal_id"])
     && typeof value.display_name === "string"
-    && typeof value.principal_id === "string"
+    && isUuid(value.principal_id)
   );
 }
 
 function isInvitationCreateResource(value: unknown): value is InvitationCreateResource {
-  if (!isRecord(value) || !hasOnlyKeys(value, [
-    "allowed_actions",
-    "bound_principal",
-    "code_fingerprint",
-    "copy_text",
-    "created_at",
-    "deleted_at",
-    "expires_at",
-    "grants",
-    "id",
-    "invite_url",
-    "kind",
-    "recovery_mode",
-    "redeemed_at",
-    "redeemed_by_principal_id",
-    "revoked_at",
-    "secret_available",
-    "status",
-    "updated_at",
-    "version",
-  ])) return false;
+  if (!isRecord(value)) return false;
   const commonFieldsAreValid = Array.isArray(value.allowed_actions)
-    && value.allowed_actions.every((action) => typeof action === "string")
+    && value.allowed_actions.every((action) => action === "read" || action === "revoke")
+    && new Set(value.allowed_actions).size === value.allowed_actions.length
     && isBoundPrincipal(value.bound_principal)
     && typeof value.code_fingerprint === "string"
-    && typeof value.created_at === "string"
-    && isNullableString(value.deleted_at)
-    && typeof value.expires_at === "string"
+    && /^cfi_v1_[A-Za-z0-9_-]{8}_…$/.test(value.code_fingerprint)
+    && isTimestamp(value.created_at)
+    && isNullableTimestamp(value.deleted_at)
+    && isTimestamp(value.expires_at)
     && Array.isArray(value.grants)
     && value.grants.every(isInvitationGrant)
-    && typeof value.id === "string"
+    && isUuid(value.id)
     && (value.kind === "project_grant" || value.kind === "principal_recovery")
     && (value.recovery_mode === null || value.recovery_mode === "rotation" || value.recovery_mode === "full_recovery")
-    && isNullableString(value.redeemed_at)
-    && isNullableString(value.redeemed_by_principal_id)
-    && isNullableString(value.revoked_at)
+    && isNullableTimestamp(value.redeemed_at)
+    && isNullableUuid(value.redeemed_by_principal_id)
+    && isNullableTimestamp(value.revoked_at)
     && (value.status === "active" || value.status === "expired" || value.status === "redeemed" || value.status === "revoked")
-    && typeof value.updated_at === "string"
+    && isTimestamp(value.updated_at)
     && Number.isSafeInteger(value.version)
     && Number(value.version) >= 1;
   if (!commonFieldsAreValid) return false;
+  const grantCount = Array.isArray(value.grants) ? value.grants.length : -1;
+  if (value.kind === "project_grant") {
+    if (value.bound_principal !== null || value.recovery_mode !== null || grantCount === 0) return false;
+  } else if (value.bound_principal === null || value.recovery_mode === null || grantCount !== 0) {
+    return false;
+  }
   if (value.secret_available === true) {
     return typeof value.copy_text === "string"
       && value.copy_text.length > 0
-      && typeof value.invite_url === "string"
-      && value.invite_url.length > 0;
+      && isHttpsUrl(value.invite_url);
   }
   return value.secret_available === false
     && !("copy_text" in value)
@@ -157,16 +176,19 @@ function isInvitationCreateResource(value: unknown): value is InvitationCreateRe
 
 export function isInvitationCreateWriteResult(value: unknown): value is InvitationCreateWriteResult {
   return isRecord(value)
-    && hasOnlyKeys(value, ["event_cursor", "idempotent_replay", "resource"])
     && typeof value.event_cursor === "string"
+    && value.event_cursor.length > 0
     && typeof value.idempotent_replay === "boolean"
-    && isInvitationCreateResource(value.resource);
+    && isInvitationCreateResource(value.resource)
+    && value.idempotent_replay === !value.resource.secret_available;
 }
 
 export function invitationOutcomeRequiresReview(failure: InvitationFailureShape | null): boolean {
   if (failure === null) return true;
   return failure.code === "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED"
     || failure.status === 0
+    || failure.status === 401
+    || failure.status === 403
     || failure.status >= 500;
 }
 
@@ -182,14 +204,20 @@ export function canConfirmInvitationReview(
   readbackReady: boolean,
   hasMore: boolean,
   recoveryRecord: InvitationRecoveryRecord | null = null,
+  reviewStartedAt: number | null = null,
   now = Date.now(),
   committedInvitationResolved = false,
 ): boolean {
   return readbackReady
     && !hasMore
     && (recoveryRecord === null
-      || (recoveryRecord.state === "pending" && !invitationRecoveryCanRetry(recoveryRecord, now))
-      || (recoveryRecord.state === "committed_unavailable" && committedInvitationResolved));
+      || (recoveryRecord.state === "pending"
+        && reviewStartedAt !== null
+        && reviewStartedAt >= recoveryRecord.acquired_at + INVITATION_RECOVERY_TTL_MS
+        && !invitationRecoveryCanRetry(recoveryRecord, now))
+      || (recoveryRecord.state === "committed_unavailable"
+        && reviewStartedAt !== null
+        && committedInvitationResolved));
 }
 
 function parseInvitationRecoveryRecord(value: unknown, principalId: string): InvitationRecoveryRecord | null {
@@ -215,6 +243,15 @@ function parseInvitationRecoveryRecord(value: unknown, principalId: string): Inv
   return value as unknown as InvitationRecoveryRecord;
 }
 
+function sameInvitationRecoveryState(
+  current: InvitationRecoveryRecord,
+  expected: InvitationRecoveryRecord,
+): boolean {
+  if (current.marker !== expected.marker || current.state !== expected.state) return false;
+  return current.state === "pending"
+    || (expected.state === "committed_unavailable" && current.invitation_id === expected.invitation_id);
+}
+
 export class InvitationRecoveryBlockedError extends Error {
   readonly record: InvitationRecoveryRecord;
 
@@ -228,16 +265,19 @@ export class InvitationRecoveryBlockedError extends Error {
 export class InvitationRecoveryCoordinator {
   readonly storageKey: string;
   readonly #createMarker: () => string;
+  readonly #runExclusive: InvitationRecoveryExclusiveLock;
   readonly #principalId: string;
   readonly #storage: StorageLike;
 
   constructor(
     principalId: string,
     storage: StorageLike,
+    runExclusive: InvitationRecoveryExclusiveLock,
     createMarker: () => string = () => crypto.randomUUID(),
   ) {
     this.#createMarker = createMarker;
     this.#principalId = principalId;
+    this.#runExclusive = runExclusive;
     this.#storage = storage;
     this.storageKey = `cfkanban.invitation-recovery.owner.${principalId}`;
   }
@@ -267,41 +307,55 @@ export class InvitationRecoveryCoordinator {
     return parseInvitationRecoveryRecord(value, this.#principalId);
   }
 
-  begin(intent: AcquiredPendingIntent, body: InvitationRequestBody): InvitationRecoveryRecord {
-    const existing = this.read();
-    if (existing !== null) throw new InvitationRecoveryBlockedError(existing);
-    const record: InvitationRecoveryRecord = {
-      acquired_at: intent.acquiredAt,
-      body: structuredClone(body),
-      idempotency_key: intent.key,
-      marker: this.#createMarker(),
-      principal_id: this.#principalId,
-      state: "pending",
-      version: 1,
-    };
-    this.#storage.setItem(this.storageKey, JSON.stringify(record));
-    return record;
+  async begin(intent: AcquiredPendingIntent, body: InvitationRequestBody): Promise<InvitationRecoveryRecord> {
+    // localStorage has no compare-and-set; every state transition must share this origin-wide lock.
+    return this.#runExclusive(this.storageKey, () => {
+      const existing = this.read();
+      if (existing !== null) throw new InvitationRecoveryBlockedError(existing);
+      const record: InvitationRecoveryRecord = {
+        acquired_at: intent.acquiredAt,
+        body: structuredClone(body),
+        idempotency_key: intent.key,
+        marker: this.#createMarker(),
+        principal_id: this.#principalId,
+        state: "pending",
+        version: 1,
+      };
+      this.#storage.setItem(this.storageKey, JSON.stringify(record));
+      return record;
+    });
   }
 
-  markCommittedUnavailable(
+  async markCommittedUnavailable(
     record: InvitationRecoveryRecord,
     invitationId: string,
-  ): InvitationRecoveryRecord | null {
-    const current = this.read();
-    if (current === null || current.marker !== record.marker) return null;
-    const committed: InvitationRecoveryRecord = {
-      ...current,
-      invitation_id: invitationId,
-      state: "committed_unavailable",
-    };
-    this.#storage.setItem(this.storageKey, JSON.stringify(committed));
-    return committed;
+  ): Promise<InvitationRecoveryRecord | null> {
+    return this.#runExclusive(this.storageKey, () => {
+      const current = this.read();
+      if (current === null || !sameInvitationRecoveryState(current, record)) {
+        return null;
+      }
+      if (current.state === "committed_unavailable") {
+        return current.invitation_id === invitationId ? current : null;
+      }
+      const committed: InvitationRecoveryRecord = {
+        ...current,
+        invitation_id: invitationId,
+        state: "committed_unavailable",
+      };
+      this.#storage.setItem(this.storageKey, JSON.stringify(committed));
+      return committed;
+    });
   }
 
-  settle(record: InvitationRecoveryRecord): boolean {
-    const current = this.read();
-    if (current === null || current.marker !== record.marker) return false;
-    this.#storage.removeItem(this.storageKey);
-    return true;
+  async settle(record: InvitationRecoveryRecord): Promise<boolean> {
+    return this.#runExclusive(this.storageKey, () => {
+      const current = this.read();
+      if (current === null || !sameInvitationRecoveryState(current, record)) {
+        return false;
+      }
+      this.#storage.removeItem(this.storageKey);
+      return true;
+    });
   }
 }

@@ -6,6 +6,7 @@ import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
+import { ProjectionGeneration } from "../lib/projection-generation";
 import { navigate } from "../lib/router";
 import type {
   IssueComment,
@@ -49,17 +50,27 @@ const relation = ref({ kind: "related", target_identifier: "" });
 const relationTarget = ref<IssueDetail | null>(null);
 const assigneePrincipalId = ref("");
 const newLabel = ref({ color: "", name: "" });
+const projectionGeneration = new ProjectionGeneration();
+let issueProjectScope: { projectKey: string; workspaceKey: string } | null = null;
+let loadRequestId = 0;
 
 const canUpdate = computed(() => issue.value?.allowed_actions.includes("update") ?? false);
 const canDelete = computed(() => issue.value?.allowed_actions.includes("delete") ?? false);
 const canRestore = computed(() => issue.value?.allowed_actions.includes("restore") ?? false);
 
-function clearRemovedProjectProjection(): void {
-  const current = issue.value;
-  const scope = props.session.allowed_scope.projects;
-  if (current === null || scope === undefined || scope.some((item) => (
-    item.workspace_key === current.workspace.key && item.project_key === current.project.key
-  ))) return;
+function projectIsActive(scope = issueProjectScope): boolean {
+  if (scope === null) return true;
+  const projects = props.session.allowed_scope.projects;
+  return projects === undefined || projects.some((item) => (
+    item.workspace_key === scope.workspaceKey && item.project_key === scope.projectKey
+  ));
+}
+
+function projectionIsCurrent(generation: number): boolean {
+  return projectionGeneration.isCurrent(generation) && projectIsActive();
+}
+
+function clearIssueProjection(): void {
   issue.value = null;
   labels.value = [];
   deletedLabels.value = [];
@@ -69,18 +80,34 @@ function clearRemovedProjectProjection(): void {
   relations.value = [];
   deletedRelations.value = [];
   relationTarget.value = null;
-  error.value = locale.value === "zh-CN"
-    ? "此 Issue 的 Project 已不在当前 active Project 列表中。"
-    : "This Issue's Project is no longer in the current active Project inventory.";
+  loading.value = false;
+  commentLoadingMore.value = false;
+}
+
+function refreshProjectInventory(): void {
+  projectionGeneration.invalidate();
+  loadRequestId += 1;
+  const current = issue.value;
+  if (current !== null) {
+    issueProjectScope = { projectKey: current.project.key, workspaceKey: current.workspace.key };
+  }
+  const scope = props.session.allowed_scope.projects;
+  if (issueProjectScope !== null && scope !== undefined && !projectIsActive()) {
+    clearIssueProjection();
+    error.value = locale.value === "zh-CN"
+      ? "此 Issue 的 Project 已不在当前 active Project 列表中。"
+      : "This Issue's Project is no longer in the current active Project inventory.";
+    return;
+  }
+  void load(true);
 }
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat(locale.value, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function roleForProject(): string {
+function roleForProject(current = issue.value): string {
   if (props.session.principal.is_owner) return "owner";
-  const current = issue.value;
   if (current === null) return "reader";
   return props.session.allowed_scope.projects?.find((item) => (
     item.workspace_key === current.workspace.key && item.project_key === current.project.key
@@ -94,15 +121,17 @@ function mergeComments(...groups: IssueComment[][]): IssueComment[] {
 }
 
 async function load(preserveLocalState = editMode.value): Promise<void> {
+  const generation = projectionGeneration.capture();
+  const requestId = loadRequestId + 1;
+  loadRequestId = requestId;
   loading.value = true;
   error.value = "";
   try {
     const result = await apiRequest<IssueDetail>(`/api/v1/issues/${encodeURIComponent(props.identifier)}`);
-    issue.value = result;
-    if (!preserveLocalState) {
-      edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title };
+    const resultScope = { projectKey: result.project.key, workspaceKey: result.workspace.key };
+    if (requestId !== loadRequestId || !projectionGeneration.isCurrent(generation) || !projectIsActive(resultScope)) {
+      return;
     }
-    emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject() });
     const [labelResult, commentResult, relationResult] = await Promise.all([
       apiRequest<ListResult<LabelResource>>(
         `/api/v1/workspaces/${encodeURIComponent(result.workspace.key)}/projects/${encodeURIComponent(result.project.key)}/labels?limit=100`,
@@ -110,6 +139,15 @@ async function load(preserveLocalState = editMode.value): Promise<void> {
       apiRequest<ListResult<IssueComment>>(`/api/v1/issues/${encodeURIComponent(result.identifier)}/comments?limit=100`),
       apiRequest<ListResult<IssueRelation>>(`/api/v1/issues/${encodeURIComponent(result.identifier)}/relations?limit=100`),
     ]);
+    if (requestId !== loadRequestId || !projectionGeneration.isCurrent(generation) || !projectIsActive(resultScope)) {
+      return;
+    }
+    issueProjectScope = resultScope;
+    issue.value = result;
+    if (!preserveLocalState) {
+      edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title };
+    }
+    emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject(result) });
     labels.value = labelResult.items;
     comments.value = preserveLocalState
       ? mergeComments(comments.value, commentResult.items)
@@ -117,6 +155,7 @@ async function load(preserveLocalState = editMode.value): Promise<void> {
     commentNextCursor.value = commentResult.has_more ? commentResult.next_cursor : null;
     relations.value = relationResult.items;
   } catch (caught) {
+    if (requestId !== loadRequestId || !projectionGeneration.isCurrent(generation)) return;
     error.value = errorText(caught);
     if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
       issue.value = null;
@@ -126,21 +165,25 @@ async function load(preserveLocalState = editMode.value): Promise<void> {
       relations.value = [];
     }
   } finally {
-    loading.value = false;
+    if (requestId === loadRequestId) loading.value = false;
   }
 }
 
 async function loadMoreComments(): Promise<void> {
   const current = issue.value;
   if (current === null || commentNextCursor.value === null) return;
+  const generation = projectionGeneration.capture();
   commentLoadingMore.value = true;
   try {
     const result = await apiRequest<ListResult<IssueComment>>(
       `/api/v1/issues/${encodeURIComponent(current.identifier)}/comments?limit=100&cursor=${encodeURIComponent(commentNextCursor.value)}`,
     );
-    comments.value = mergeComments(comments.value, result.items);
-    commentNextCursor.value = result.has_more ? result.next_cursor : null;
+    if (projectionIsCurrent(generation)) {
+      comments.value = mergeComments(comments.value, result.items);
+      commentNextCursor.value = result.has_more ? result.next_cursor : null;
+    }
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
   } finally {
     commentLoadingMore.value = false;
@@ -148,14 +191,19 @@ async function loadMoreComments(): Promise<void> {
 }
 
 async function refreshCurrentFacts(): Promise<void> {
+  const generation = projectionGeneration.capture();
   const result = await apiRequest<IssueDetail>(`/api/v1/issues/${encodeURIComponent(props.identifier)}`);
+  const resultScope = { projectKey: result.project.key, workspaceKey: result.workspace.key };
+  if (!projectionGeneration.isCurrent(generation) || !projectIsActive(resultScope)) return;
+  issueProjectScope = resultScope;
   issue.value = result;
-  emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject() });
+  emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject(result) });
 }
 
 async function updateIssue(payload: Record<string, unknown>): Promise<void> {
   const current = issue.value;
   if (current === null) return;
+  const generation = projectionGeneration.capture();
   busy.value = true;
   error.value = "";
   try {
@@ -163,9 +211,12 @@ async function updateIssue(payload: Record<string, unknown>): Promise<void> {
       body: { expected_version: current.version, ...payload },
       method: "PATCH",
     });
-    issue.value = result.resource;
-    editMode.value = false;
+    if (projectionIsCurrent(generation)) {
+      issue.value = result.resource;
+      editMode.value = false;
+    }
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
       ? t("error.conflict")
       : errorText(caught);
@@ -188,6 +239,7 @@ async function saveEdit(): Promise<void> {
 async function runCommand(command: string, payload: Record<string, unknown> = {}): Promise<void> {
   const current = issue.value;
   if (current === null) return;
+  const generation = projectionGeneration.capture();
   busy.value = true;
   error.value = "";
   try {
@@ -195,6 +247,7 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
       `/api/v1/issues/${current.identifier}/commands/${command}`,
       { body: { expected_version: current.version, ...payload }, method: "POST" },
     );
+    if (!projectionIsCurrent(generation)) return;
     issue.value = result.resource;
     showComplete.value = false;
     showBlocked.value = false;
@@ -203,12 +256,13 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
     if (command === "complete" && result.resource.completion_comment_id) {
       try {
         const completion = await apiRequest<IssueComment>(`/api/v1/comments/${result.resource.completion_comment_id}`);
-        comments.value = mergeComments(comments.value, [completion]);
+        if (projectionIsCurrent(generation)) comments.value = mergeComments(comments.value, [completion]);
       } catch (caught) {
-        error.value = errorText(caught);
+        if (projectionIsCurrent(generation)) error.value = errorText(caught);
       }
     }
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
       ? t("error.conflict")
       : errorText(caught);
@@ -223,20 +277,24 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
 async function deleteOrRestore(): Promise<void> {
   const current = issue.value;
   if (current === null) return;
+  const generation = projectionGeneration.capture();
   busy.value = true;
   try {
     if (current.deleted_at === null) {
       await apiRequest(`/api/v1/issues/${current.identifier}?expected_version=${current.version}`, { method: "DELETE" });
-      showDelete.value = false;
-      navigate(`/app/w/${encodeURIComponent(current.workspace.key)}/p/${encodeURIComponent(current.project.key)}`);
+      if (projectionIsCurrent(generation)) {
+        showDelete.value = false;
+        navigate(`/app/w/${encodeURIComponent(current.workspace.key)}/p/${encodeURIComponent(current.project.key)}`);
+      }
       return;
     } else {
       await apiRequest(`/api/v1/issues/${current.identifier}/commands/restore`, {
         body: { expected_version: current.version }, method: "POST",
       });
     }
-    await load();
+    if (projectionIsCurrent(generation)) await load();
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
   } finally {
     busy.value = false;
@@ -246,14 +304,18 @@ async function deleteOrRestore(): Promise<void> {
 async function addComment(): Promise<void> {
   const current = issue.value;
   if (current === null || !comment.value.trim()) return;
+  const generation = projectionGeneration.capture();
   busy.value = true;
   try {
     const result = await apiRequest<WriteResult<IssueComment>>(`/api/v1/issues/${current.identifier}/comments`, {
       body: { body: comment.value }, method: "POST",
     });
-    comment.value = "";
-    comments.value = mergeComments(comments.value, [result.resource]);
+    if (projectionIsCurrent(generation)) {
+      comment.value = "";
+      comments.value = mergeComments(comments.value, [result.resource]);
+    }
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
   } finally {
     busy.value = false;
@@ -277,13 +339,16 @@ async function toggleLabel(labelId: string, add: boolean): Promise<void> {
 }
 
 async function deleteComment(entry: IssueComment): Promise<void> {
+  const generation = projectionGeneration.capture();
   busy.value = true;
   try {
     await apiRequest(`/api/v1/comments/${entry.id}?expected_version=${entry.version}`, { method: "DELETE" });
-    comments.value = comments.value.filter((commentEntry) => commentEntry.id !== entry.id);
-    await load();
+    if (projectionIsCurrent(generation)) {
+      comments.value = comments.value.filter((commentEntry) => commentEntry.id !== entry.id);
+      await load();
+    }
   } catch (caught) {
-    error.value = errorText(caught);
+    if (projectionIsCurrent(generation)) error.value = errorText(caught);
   } finally {
     busy.value = false;
   }
@@ -292,6 +357,7 @@ async function deleteComment(entry: IssueComment): Promise<void> {
 async function loadCollaborationRecovery(): Promise<void> {
   const current = issue.value;
   if (current === null) return;
+  const generation = projectionGeneration.capture();
   busy.value = true;
   error.value = "";
   try {
@@ -302,12 +368,14 @@ async function loadCollaborationRecovery(): Promise<void> {
       ),
       apiRequest<ListResult<IssueRelation>>(`/api/v1/issues/${current.identifier}/relations?deleted=only&limit=100`),
     ]);
-    deletedComments.value = commentResult.items;
-    deletedLabels.value = labelResult.items;
-    deletedRelations.value = relationResult.items;
-    showCollaborationRecovery.value = true;
+    if (projectionIsCurrent(generation)) {
+      deletedComments.value = commentResult.items;
+      deletedLabels.value = labelResult.items;
+      deletedRelations.value = relationResult.items;
+      showCollaborationRecovery.value = true;
+    }
   } catch (caught) {
-    error.value = errorText(caught);
+    if (projectionIsCurrent(generation)) error.value = errorText(caught);
   } finally {
     busy.value = false;
   }
@@ -365,12 +433,14 @@ async function restoreLabel(label: LabelResource): Promise<void> {
 
 async function previewRelationTarget(): Promise<void> {
   const identifier = relation.value.target_identifier.trim().toUpperCase();
+  const generation = projectionGeneration.capture();
   relationTarget.value = null;
   if (!/^CFK-[1-9][0-9]*$/.test(identifier)) return;
   try {
-    relationTarget.value = await apiRequest<IssueDetail>(`/api/v1/issues/${identifier}`);
+    const target = await apiRequest<IssueDetail>(`/api/v1/issues/${identifier}`);
+    if (projectionIsCurrent(generation)) relationTarget.value = target;
   } catch (caught) {
-    error.value = errorText(caught);
+    if (projectionIsCurrent(generation)) error.value = errorText(caught);
   }
 }
 
@@ -451,7 +521,7 @@ function backToBoard(): void {
 }
 
 onMounted(load);
-watch(() => props.session.allowed_scope.projects, clearRemovedProjectProjection, { deep: true });
+watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { deep: true });
 </script>
 
 <template>

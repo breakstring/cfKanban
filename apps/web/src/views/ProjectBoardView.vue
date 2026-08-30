@@ -5,6 +5,7 @@ import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
+import { ProjectionGeneration } from "../lib/projection-generation";
 import { navigate } from "../lib/router";
 import type {
   ContainerResource,
@@ -42,6 +43,8 @@ const showNewIssue = ref(false);
 const showDeleted = ref(false);
 const formBusy = ref(false);
 const newIssue = ref({ body: "", priority_key: "none" as PriorityKey, status_key: "backlog" as StatusKey, title: "" });
+const projectionGeneration = new ProjectionGeneration();
+let loadRequestId = 0;
 
 const role = computed(() => {
   if (props.session.principal.is_owner) return "owner";
@@ -49,22 +52,44 @@ const role = computed(() => {
     item.workspace_key === props.workspaceKey && item.project_key === props.projectKey
   ))?.role ?? "reader";
 });
-const canWrite = computed(() => role.value === "writer" || role.value === "owner");
+const canWrite = computed(() => projectIsActive() && (role.value === "writer" || role.value === "owner"));
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 
-function clearRemovedProjectProjection(): void {
+function projectIsActive(): boolean {
   const scope = props.session.allowed_scope.projects;
-  if (scope === undefined || scope.some((item) => (
+  return scope === undefined || scope.some((item) => (
     item.workspace_key === props.workspaceKey && item.project_key === props.projectKey
-  ))) return;
+  ));
+}
+
+function projectionIsCurrent(generation: number): boolean {
+  return projectionGeneration.isCurrent(generation) && projectIsActive();
+}
+
+function clearProjectProjection(): void {
   project.value = null;
   statuses.value = [];
   issues.value = [];
   deletedIssues.value = [];
   nextCursor.value = null;
+  loading.value = false;
+  loadingMore.value = false;
+  completionIssue.value = null;
+  showDeleted.value = false;
+  showNewIssue.value = false;
   error.value = locale.value === "zh-CN"
     ? "此 Project 已不在当前 active Project 列表中。"
     : "This Project is no longer in the current active Project inventory.";
+}
+
+function refreshProjectInventory(): void {
+  projectionGeneration.invalidate();
+  loadRequestId += 1;
+  if (!projectIsActive()) {
+    clearProjectProjection();
+    return;
+  }
+  void load();
 }
 
 function query(cursor?: string): string {
@@ -75,6 +100,13 @@ function query(cursor?: string): string {
 }
 
 async function load(reset = true): Promise<void> {
+  if (!projectIsActive()) {
+    clearProjectProjection();
+    return;
+  }
+  const generation = projectionGeneration.capture();
+  const requestId = loadRequestId + 1;
+  loadRequestId = requestId;
   if (reset) loading.value = true;
   else loadingMore.value = true;
   error.value = "";
@@ -84,12 +116,14 @@ async function load(reset = true): Promise<void> {
       apiRequest<ListResult<ProjectStatusResource>>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/statuses`),
       apiRequest<ListResult<IssueSummary>>(query(reset ? undefined : nextCursor.value ?? undefined)),
     ]);
+    if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
     project.value = projectResult;
     statuses.value = statusResult.items;
     issues.value = reset ? issueResult.items : [...issues.value, ...issueResult.items];
     nextCursor.value = issueResult.next_cursor;
     emit("context", { label: `${props.workspaceKey} / ${projectResult.display_name}`, role: role.value });
   } catch (caught) {
+    if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
     if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
       project.value = null;
@@ -98,8 +132,10 @@ async function load(reset = true): Promise<void> {
       nextCursor.value = null;
     }
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (requestId === loadRequestId) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
 }
 
@@ -112,13 +148,17 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
   }
   saving.value = new Set(saving.value).add(issue.id);
   error.value = "";
+  const generation = projectionGeneration.capture();
   try {
     const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}`, {
       body: { expected_version: issue.version, status_key: status },
       method: "PATCH",
     });
-    issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
+    if (projectionIsCurrent(generation)) {
+      issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
+    }
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
       ? t("error.conflict")
       : errorText(caught);
@@ -141,14 +181,18 @@ async function completeIssue(): Promise<void> {
   const issue = completionIssue.value;
   if (issue === null || !completionSummary.value.trim()) return;
   formBusy.value = true;
+  const generation = projectionGeneration.capture();
   try {
     const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}/commands/complete`, {
       body: { expected_version: issue.version, summary: completionSummary.value.trim() },
       method: "POST",
     });
-    issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
-    completionIssue.value = null;
+    if (projectionIsCurrent(generation)) {
+      issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
+      completionIssue.value = null;
+    }
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
       ? t("error.conflict")
       : errorText(caught);
@@ -161,6 +205,7 @@ async function completeIssue(): Promise<void> {
 async function createIssue(): Promise<void> {
   if (!newIssue.value.title.trim()) return;
   formBusy.value = true;
+  const generation = projectionGeneration.capture();
   try {
     const result = await apiRequest<WriteResult<IssueSummary>>(
       `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues`,
@@ -174,10 +219,13 @@ async function createIssue(): Promise<void> {
         method: "POST",
       },
     );
-    issues.value = [result.resource, ...issues.value];
-    newIssue.value = { body: "", priority_key: "none", status_key: "backlog", title: "" };
-    showNewIssue.value = false;
+    if (projectionIsCurrent(generation)) {
+      issues.value = [result.resource, ...issues.value];
+      newIssue.value = { body: "", priority_key: "none", status_key: "backlog", title: "" };
+      showNewIssue.value = false;
+    }
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
   } finally {
     formBusy.value = false;
@@ -186,26 +234,32 @@ async function createIssue(): Promise<void> {
 
 async function loadDeleted(): Promise<void> {
   showDeleted.value = true;
+  const generation = projectionGeneration.capture();
   try {
     const result = await apiRequest<ListResult<IssueSummary>>(
       `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues?deleted=only&limit=100`,
     );
-    deletedIssues.value = result.items;
+    if (projectionIsCurrent(generation)) deletedIssues.value = result.items;
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
   }
 }
 
 async function restoreIssue(issue: IssueSummary): Promise<void> {
   formBusy.value = true;
+  const generation = projectionGeneration.capture();
   try {
     await apiRequest(`/api/v1/issues/${issue.identifier}/commands/restore`, {
       body: { expected_version: issue.version },
       method: "POST",
     });
-    deletedIssues.value = deletedIssues.value.filter((item) => item.id !== issue.id);
-    await load();
+    if (projectionIsCurrent(generation)) {
+      deletedIssues.value = deletedIssues.value.filter((item) => item.id !== issue.id);
+      await load();
+    }
   } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
   } finally {
     formBusy.value = false;
@@ -229,7 +283,7 @@ function onDrop(status: StatusKey): void {
 }
 
 onMounted(() => load());
-watch(() => props.session.allowed_scope.projects, clearRemovedProjectProjection, { deep: true });
+watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { deep: true });
 </script>
 
 <template>
