@@ -494,7 +494,7 @@ test("a committed one-time Invitation remains locked until the visible delivery 
   assert.equal(coordinator.read(), null);
 });
 
-test("apiRequest waits for the atomic Invitation claim before sending either tab", async () => {
+test("apiRequest keeps the atomic Invitation claim for the complete request", async () => {
   const { apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
   const storage = new MemoryStorage();
   const locks = new MemoryExclusiveLocks();
@@ -513,8 +513,12 @@ test("apiRequest waits for the atomic Invitation claim before sending either tab
   try {
     const request = (coordinator, body) => apiRequest("/test/invitation-atomic-claim", {
       body,
+      coordinateIdempotencyIntent: (intent, execute) => coordinator.runNewOperation(
+        intent,
+        body,
+        async () => execute(),
+      ),
       method: "POST",
-      onIdempotencyIntent: async (intent) => coordinator.begin(intent, body),
       validateResponse: isInvitationCreateWriteResult,
     });
     const attempts = await Promise.allSettled([
@@ -525,6 +529,95 @@ test("apiRequest waits for the atomic Invitation claim before sending either tab
     const rejected = attempts.filter((attempt) => attempt.status === "rejected");
     assert.equal(rejected.length, 1);
     assert.ok(rejected[0].reason instanceof InvitationRecoveryBlockedError);
+    assert.equal(fetches, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a deferred Invitation POST cannot be retired by a readback after the 24-hour deadline", async () => {
+  const { apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const storage = new MemoryStorage();
+  const locks = new MemoryExclusiveLocks();
+  const runExclusive = locks.run.bind(locks);
+  const firstTab = new InvitationRecoveryCoordinator("owner-principal", storage, runExclusive, () => "marker-live");
+  const secondTab = new InvitationRecoveryCoordinator("owner-principal", storage, runExclusive, () => "marker-new");
+  const originalFetch = globalThis.fetch;
+  const acquiredAt = 1_000;
+  const deadline = acquiredAt + 24 * 60 * 60 * 1000;
+  const firstBody = {
+    grants: [{ project_id: "22222222-2222-4222-8222-222222222222", role: "writer" }],
+    kind: "project_grant",
+  };
+  const secondBody = {
+    kind: "principal_recovery",
+    principal_id: "33333333-3333-4333-8333-333333333333",
+    recovery_mode: "rotation",
+  };
+  let fetches = 0;
+  let releaseFetch;
+  let announceFetch;
+  const fetchStarted = new Promise((resolve) => { announceFetch = resolve; });
+  const fetchReleased = new Promise((resolve) => { releaseFetch = resolve; });
+  globalThis.fetch = async () => {
+    fetches += 1;
+    announceFetch();
+    await fetchReleased;
+    return new Response(JSON.stringify(invitationWriteResult(true)), {
+      headers: { "content-type": "application/json" },
+      status: 200,
+    });
+  };
+  try {
+    const firstRequest = apiRequest("/test/invitation-cross-deadline", {
+      body: firstBody,
+      coordinateIdempotencyIntent: (intent, execute) => firstTab.runNewOperation(
+        { ...intent, acquiredAt },
+        firstBody,
+        async (lease) => {
+          const result = await execute();
+          assert.ok(lease.markCommittedUnavailable(result.resource.id));
+          return result;
+        },
+      ),
+      method: "POST",
+      validateResponse: isInvitationCreateWriteResult,
+    });
+    await fetchStarted;
+    const pending = secondTab.read();
+    assert.ok(pending);
+    assert.equal(canConfirmInvitationReview(true, false, pending, deadline, deadline), true);
+
+    let staleSettleFinished = false;
+    const staleSettle = secondTab.settle(pending).then((settled) => {
+      staleSettleFinished = true;
+      return settled;
+    });
+    let exactRetryExecutions = 0;
+    const queuedExactRetry = assert.rejects(secondTab.runExistingOperation(pending, async () => {
+      exactRetryExecutions += 1;
+    }), InvitationRecoveryBlockedError);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(staleSettleFinished, false);
+    assert.equal(exactRetryExecutions, 0);
+
+    releaseFetch();
+    await firstRequest;
+    assert.equal(await staleSettle, false);
+    await queuedExactRetry;
+    assert.equal(exactRetryExecutions, 0);
+    assert.equal(secondTab.read()?.state, "committed_unavailable");
+
+    await assert.rejects(apiRequest("/test/invitation-cross-deadline", {
+      body: secondBody,
+      coordinateIdempotencyIntent: (intent, execute) => secondTab.runNewOperation(
+        intent,
+        secondBody,
+        async () => execute(),
+      ),
+      method: "POST",
+      validateResponse: isInvitationCreateWriteResult,
+    }), InvitationRecoveryBlockedError);
     assert.equal(fetches, 1);
   } finally {
     globalThis.fetch = originalFetch;
@@ -547,18 +640,21 @@ test("a failed pre-fetch Invitation claim does not retain an unsent local key", 
   try {
     await assert.rejects(apiRequest("/test/invitation-prefetch-claim", {
       body,
-      method: "POST",
-      onIdempotencyIntent: (intent) => {
+      coordinateIdempotencyIntent: (intent) => {
         acquiredKeys.push(intent.key);
         throw new Error("claim blocked before fetch");
       },
+      method: "POST",
       validateResponse: isInvitationCreateWriteResult,
     }), /claim blocked before fetch/);
     assert.equal(fetches, 0);
     await apiRequest("/test/invitation-prefetch-claim", {
       body,
+      coordinateIdempotencyIntent: (intent, execute) => {
+        acquiredKeys.push(intent.key);
+        return execute();
+      },
       method: "POST",
-      onIdempotencyIntent: (intent) => { acquiredKeys.push(intent.key); },
       validateResponse: isInvitationCreateWriteResult,
     });
     assert.equal(fetches, 1);
@@ -854,13 +950,17 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(appSource, /sessionReloadPending = true/);
   assert.match(ownerSource, /initializeInvitationRecovery\(\)/);
   assert.match(ownerSource, /navigator\.locks\.request\(name, \{ mode: "exclusive" \}, callback\)/);
-  assert.match(ownerSource, /await invitationRecoveryCoordinator\.begin\(intent, body\)/);
+  assert.match(ownerSource, /coordinateIdempotencyIntent: async \(intent, execute\)/);
+  assert.match(ownerSource, /coordinator\.runNewOperation\(intent, body, async \(lease\)/);
+  assert.match(ownerSource, /coordinator\.runExistingOperation\(record, async \(lease\)/);
+  assert.match(ownerSource, /settleInvitationRecovery\(operationRecord\)/);
+  assert.match(ownerSource, /handleInvitationCreateFailure\(caught, "Invite", false, operationRecord\)/);
   assert.match(ownerSource, /generation !== invitationReviewGeneration/);
   assert.match(ownerSource, /function invalidateInvitationReview\(\)/);
   assert.match(ownerSource, /ownerViewMounted/);
   assert.match(ownerSource, /acknowledgePresentedInvitation/);
   assert.match(ownerSource, /validateResponse: isInvitationCreateWriteResult/);
-  assert.match(ownerSource, /markCommittedUnavailable\(record, result\.resource\.id\)/);
+  assert.match(ownerSource, /lease\.markCommittedUnavailable\(response\.resource\.id\)/);
   assert.match(ownerSource, /readInvitationsForReview\(false\)/);
   assert.match(projectBoardSource, /projectionGeneration\.isCurrent\(generation\)/);
   assert.match(projectBoardSource, /void load\(\)/);

@@ -374,6 +374,7 @@ async function handleInvitationCreateFailure(
   caught: unknown,
   kind: "Invite" | "recovery URL",
   recoveryAttempt = false,
+  operationRecord: InvitationRecoveryRecord | null = null,
 ): Promise<void> {
   error.value = errorText(caught);
   if (caught instanceof InvitationRecoveryBlockedError) {
@@ -383,8 +384,9 @@ async function handleInvitationCreateFailure(
     ? { code: caught.body.code, status: caught.status }
     : null;
   if (!recoveryAttempt && !invitationOutcomeRequiresReview(failure)) {
-    const record = invitationRecoveryRecord.value;
-    if (record !== null && await settleInvitationRecovery(record)) {
+    // Settle only the marker/state captured by this request. A storage event
+    // may already have advanced the shared record in another tab.
+    if (operationRecord !== null && await settleInvitationRecovery(operationRecord)) {
       try {
         await readInvitationsForReview(true);
       } catch (readbackFailure) {
@@ -406,22 +408,9 @@ async function handleInvitationCreateFailure(
 
 async function finishInvitationOperation(
   result: InvitationCreateWriteResult,
-  record: InvitationRecoveryRecord,
+  committed: InvitationRecoveryRecord,
   recovered: boolean,
 ): Promise<void> {
-  const coordinator = invitationRecoveryCoordinator;
-  const committed = coordinator === null
-    ? null
-    : await coordinator.markCommittedUnavailable(record, result.resource.id);
-  if (committed === null) {
-    if (ownerViewMounted) {
-      lockInvitationCreation(ui(
-        "The committed Invitation could not be bound to the shared recovery lock. Keep creation disabled and use cfkanban-admin.",
-        "已提交的 Invitation 无法绑定到共享恢复锁。请保持创建禁用，并使用 cfkanban-admin。",
-      ));
-    }
-    return;
-  }
   // A successful HTTP response proves the operation committed, but it does not
   // prove that a still-mounted page presented the one-time secret to the Owner.
   // Keep the non-secret shared record until the visible page explicitly
@@ -454,6 +443,46 @@ async function finishInvitationOperation(
   }
 }
 
+async function executeNewInvitationOperation(
+  body: InvitationRequestBody,
+  onRecord: (record: InvitationRecoveryRecord) => void,
+): Promise<{ committed: InvitationRecoveryRecord; result: InvitationCreateWriteResult }> {
+  let committedRecord: InvitationRecoveryRecord | null = null;
+  const result = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
+    body,
+    coordinateIdempotencyIntent: async (intent, execute) => {
+      const coordinator = invitationRecoveryCoordinator;
+      if (coordinator === null) throw new Error("Shared Invitation recovery is unavailable.");
+      return coordinator.runNewOperation(intent, body, async (lease) => {
+        invitationRecoveryRecord.value = lease.record;
+        onRecord(lease.record);
+        invalidateInvitationReview();
+        try {
+          const response = await execute();
+          const committed = lease.markCommittedUnavailable(response.resource.id);
+          if (committed === null) {
+            throw new Error("The committed Invitation could not be bound to the shared recovery lock.");
+          }
+          committedRecord = committed;
+          return response;
+        } catch (caught) {
+          const failure = caught instanceof ApiProblem
+            ? { code: caught.body.code, status: caught.status }
+            : null;
+          if (!invitationOutcomeRequiresReview(failure)) lease.settle();
+          throw caught;
+        }
+      });
+    },
+    method: "POST",
+    validateResponse: isInvitationCreateWriteResult,
+  });
+  if (committedRecord === null) {
+    throw new Error("The Invitation recovery record was not committed.");
+  }
+  return { committed: committedRecord, result };
+}
+
 async function acknowledgePresentedInvitation(): Promise<void> {
   const record = presentedInvitationRecord.value;
   if (record === null || oneTimeInvite.value === "") return;
@@ -467,16 +496,28 @@ async function acknowledgePresentedInvitation(): Promise<void> {
 async function recoverInvitationOperation(): Promise<void> {
   const record = invitationRecoveryRecord.value;
   if (record === null || !invitationRecoveryCanRetry(record)) return;
+  const coordinator = invitationRecoveryCoordinator;
+  if (coordinator === null) return;
   busy.value = true;
   error.value = "";
   try {
-    const result = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
-      body: record.body,
-      idempotencyKey: record.idempotency_key,
-      method: "POST",
-      validateResponse: isInvitationCreateWriteResult,
+    let committedRecord: InvitationRecoveryRecord | null = null;
+    const result = await coordinator.runExistingOperation(record, async (lease) => {
+      const response = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
+        body: record.body,
+        idempotencyKey: record.idempotency_key,
+        method: "POST",
+        validateResponse: isInvitationCreateWriteResult,
+      });
+      const committed = lease.markCommittedUnavailable(response.resource.id);
+      if (committed === null) {
+        throw new Error("The recovered Invitation could not be bound to the shared recovery lock.");
+      }
+      committedRecord = committed;
+      return response;
     });
-    await finishInvitationOperation(result, record, true);
+    if (committedRecord === null) throw new Error("The recovered Invitation record was not committed.");
+    await finishInvitationOperation(result, committedRecord, true);
   } catch (caught) {
     await handleInvitationCreateFailure(caught, record.body.kind === "project_grant" ? "Invite" : "recovery URL", true);
   } finally {
@@ -754,26 +795,10 @@ async function createRecoveryInvite(): Promise<void> {
   };
   let operationRecord: InvitationRecoveryRecord | null = null;
   try {
-    const result = await apiRequest<InvitationCreateWriteResult>(
-      "/api/v1/admin/invitations",
-      {
-        body,
-        method: "POST",
-        onIdempotencyIntent: async (intent) => {
-          if (invitationRecoveryCoordinator === null) {
-            throw new Error("Shared Invitation recovery is unavailable.");
-          }
-          operationRecord = await invitationRecoveryCoordinator.begin(intent, body);
-          invitationRecoveryRecord.value = operationRecord;
-          invalidateInvitationReview();
-        },
-        validateResponse: isInvitationCreateWriteResult,
-      },
-    );
-    if (operationRecord === null) throw new Error("The Invitation recovery record was not established.");
-    await finishInvitationOperation(result, operationRecord, false);
+    const operation = await executeNewInvitationOperation(body, (record) => { operationRecord = record; });
+    await finishInvitationOperation(operation.result, operation.committed, false);
   } catch (caught) {
-    await handleInvitationCreateFailure(caught, "recovery URL");
+    await handleInvitationCreateFailure(caught, "recovery URL", false, operationRecord);
   } finally { busy.value = false; }
 }
 
@@ -837,23 +862,10 @@ async function createInvite(): Promise<void> {
   };
   let operationRecord: InvitationRecoveryRecord | null = null;
   try {
-    const result = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
-      body,
-      method: "POST",
-      onIdempotencyIntent: async (intent) => {
-        if (invitationRecoveryCoordinator === null) {
-          throw new Error("Shared Invitation recovery is unavailable.");
-        }
-        operationRecord = await invitationRecoveryCoordinator.begin(intent, body);
-        invitationRecoveryRecord.value = operationRecord;
-        invalidateInvitationReview();
-      },
-      validateResponse: isInvitationCreateWriteResult,
-    });
-    if (operationRecord === null) throw new Error("The Invitation recovery record was not established.");
-    await finishInvitationOperation(result, operationRecord, false);
+    const operation = await executeNewInvitationOperation(body, (record) => { operationRecord = record; });
+    await finishInvitationOperation(operation.result, operation.committed, false);
   } catch (caught) {
-    await handleInvitationCreateFailure(caught, "Invite");
+    await handleInvitationCreateFailure(caught, "Invite", false, operationRecord);
   } finally { busy.value = false; }
 }
 
