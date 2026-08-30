@@ -54,6 +54,12 @@ export type InvitationRecoveryExclusiveLock = <T>(
   callback: () => Promise<T> | T,
 ) => Promise<T>;
 
+export interface InvitationRecoveryLease {
+  readonly record: InvitationRecoveryRecord;
+  markCommittedUnavailable(invitationId: string): InvitationRecoveryRecord | null;
+  settle(): boolean;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -307,55 +313,111 @@ export class InvitationRecoveryCoordinator {
     return parseInvitationRecoveryRecord(value, this.#principalId);
   }
 
-  async begin(intent: AcquiredPendingIntent, body: InvitationRequestBody): Promise<InvitationRecoveryRecord> {
-    // localStorage has no compare-and-set; every state transition must share this origin-wide lock.
-    return this.#runExclusive(this.storageKey, () => {
-      const existing = this.read();
-      if (existing !== null) throw new InvitationRecoveryBlockedError(existing);
-      const record: InvitationRecoveryRecord = {
-        acquired_at: intent.acquiredAt,
-        body: structuredClone(body),
-        idempotency_key: intent.key,
-        marker: this.#createMarker(),
-        principal_id: this.#principalId,
-        state: "pending",
-        version: 1,
-      };
-      this.#storage.setItem(this.storageKey, JSON.stringify(record));
-      return record;
+  #beginUnlocked(intent: AcquiredPendingIntent, body: InvitationRequestBody): InvitationRecoveryRecord {
+    const existing = this.read();
+    if (existing !== null) throw new InvitationRecoveryBlockedError(existing);
+    const record: InvitationRecoveryRecord = {
+      acquired_at: intent.acquiredAt,
+      body: structuredClone(body),
+      idempotency_key: intent.key,
+      marker: this.#createMarker(),
+      principal_id: this.#principalId,
+      state: "pending",
+      version: 1,
+    };
+    this.#storage.setItem(this.storageKey, JSON.stringify(record));
+    return record;
+  }
+
+  #markCommittedUnavailableUnlocked(
+    record: InvitationRecoveryRecord,
+    invitationId: string,
+  ): InvitationRecoveryRecord | null {
+    const current = this.read();
+    if (current === null || !sameInvitationRecoveryState(current, record)) {
+      return null;
+    }
+    if (current.state === "committed_unavailable") {
+      return current.invitation_id === invitationId ? current : null;
+    }
+    const committed: InvitationRecoveryRecord = {
+      ...current,
+      invitation_id: invitationId,
+      state: "committed_unavailable",
+    };
+    this.#storage.setItem(this.storageKey, JSON.stringify(committed));
+    return committed;
+  }
+
+  #settleUnlocked(record: InvitationRecoveryRecord): boolean {
+    const current = this.read();
+    if (current === null || !sameInvitationRecoveryState(current, record)) {
+      return false;
+    }
+    this.#storage.removeItem(this.storageKey);
+    return true;
+  }
+
+  #lease(initialRecord: InvitationRecoveryRecord): InvitationRecoveryLease {
+    let expected = initialRecord;
+    return {
+      get record() {
+        return expected;
+      },
+      markCommittedUnavailable: (invitationId) => {
+        const committed = this.#markCommittedUnavailableUnlocked(expected, invitationId);
+        if (committed !== null) expected = committed;
+        return committed;
+      },
+      settle: () => this.#settleUnlocked(expected),
+    };
+  }
+
+  async runNewOperation<T>(
+    intent: AcquiredPendingIntent,
+    body: InvitationRequestBody,
+    callback: (lease: InvitationRecoveryLease) => Promise<T>,
+  ): Promise<T> {
+    // Keep the origin-wide lock for the complete request lifetime. A list
+    // readback must not retire this record while the original POST can still
+    // commit after its fixed 24-hour recovery deadline.
+    return this.#runExclusive(this.storageKey, async () => {
+      const record = this.#beginUnlocked(intent, body);
+      return callback(this.#lease(record));
     });
+  }
+
+  async runExistingOperation<T>(
+    record: InvitationRecoveryRecord,
+    callback: (lease: InvitationRecoveryLease) => Promise<T>,
+  ): Promise<T> {
+    return this.#runExclusive(this.storageKey, async () => {
+      const current = this.read();
+      if (current === null) {
+        throw new Error("The shared Invitation recovery operation is no longer available.");
+      }
+      if (!sameInvitationRecoveryState(current, record)) {
+        throw new InvitationRecoveryBlockedError(current);
+      }
+      return callback(this.#lease(current));
+    });
+  }
+
+  async begin(intent: AcquiredPendingIntent, body: InvitationRequestBody): Promise<InvitationRecoveryRecord> {
+    return this.#runExclusive(this.storageKey, () => this.#beginUnlocked(intent, body));
   }
 
   async markCommittedUnavailable(
     record: InvitationRecoveryRecord,
     invitationId: string,
   ): Promise<InvitationRecoveryRecord | null> {
-    return this.#runExclusive(this.storageKey, () => {
-      const current = this.read();
-      if (current === null || !sameInvitationRecoveryState(current, record)) {
-        return null;
-      }
-      if (current.state === "committed_unavailable") {
-        return current.invitation_id === invitationId ? current : null;
-      }
-      const committed: InvitationRecoveryRecord = {
-        ...current,
-        invitation_id: invitationId,
-        state: "committed_unavailable",
-      };
-      this.#storage.setItem(this.storageKey, JSON.stringify(committed));
-      return committed;
-    });
+    return this.#runExclusive(
+      this.storageKey,
+      () => this.#markCommittedUnavailableUnlocked(record, invitationId),
+    );
   }
 
   async settle(record: InvitationRecoveryRecord): Promise<boolean> {
-    return this.#runExclusive(this.storageKey, () => {
-      const current = this.read();
-      if (current === null || !sameInvitationRecoveryState(current, record)) {
-        return false;
-      }
-      this.#storage.removeItem(this.storageKey);
-      return true;
-    });
+    return this.#runExclusive(this.storageKey, () => this.#settleUnlocked(record));
   }
 }

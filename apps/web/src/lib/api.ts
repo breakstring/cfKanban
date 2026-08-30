@@ -115,11 +115,14 @@ export class ApiProblem extends Error {
   }
 }
 
-export interface ApiRequestOptions {
+export interface ApiRequestOptions<T = unknown> {
   body?: unknown;
+  coordinateIdempotencyIntent?: (
+    intent: AcquiredPendingIntent,
+    execute: () => Promise<T>,
+  ) => Promise<T>;
   idempotencyKey?: string;
   method?: string;
-  onIdempotencyIntent?: (intent: AcquiredPendingIntent) => Promise<void> | void;
   signal?: AbortSignal;
   validateResponse?: (value: unknown) => boolean;
 }
@@ -128,10 +131,11 @@ export function clearPendingRequestIntents(method: string, path: string): void {
   pendingIntents.clearRequest(method.toUpperCase(), path);
 }
 
-export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> = {}): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers({ accept: "application/json" });
   if (options.body !== undefined) headers.set("content-type", "application/json");
+  let coordinatedIntent: AcquiredPendingIntent | null = null;
   let signature: string | null = null;
   if (!SAFE_METHODS.has(method)) {
     const csrf = cookieValue(CSRF_COOKIE);
@@ -155,88 +159,100 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         });
       }
       signature = intent.signature;
+      coordinatedIntent = intent;
       headers.set("idempotency-key", intent.key);
-      try {
-        await options.onIdempotencyIntent?.(intent);
-      } catch (error) {
-        // The coordination hook runs before fetch. If it cannot establish the
-        // external recovery record, no request was sent and this local key must
-        // not consume part of the fixed recovery window.
-        pendingIntents.complete(signature);
-        throw error;
-      }
     }
   }
 
-  let response: Response;
-  try {
-    response = await fetch(path, {
-      credentials: "same-origin",
-      headers,
-      method,
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-  } catch {
-    throw new ApiProblem(0, normalizedFailure(crypto.randomUUID(), {
-      category: "platform_failure",
-      code: "PLATFORM_UNAVAILABLE",
-      recovery: "retry_after",
-      retryable: true,
-      source: "client_transport",
-    }));
-  }
-
-  const localRequestId = crypto.randomUUID();
-  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
-  let payload: unknown = null;
-  if (mediaType === "application/json") {
+  const executeRequest = async (): Promise<T> => {
+    let response: Response;
     try {
-      payload = await response.json();
+      response = await fetch(path, {
+        credentials: "same-origin",
+        headers,
+        method,
+        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
     } catch {
-      const problem = normalizedHttpFailure(response, "", localRequestId);
-      notifyAuthorizationFailure(problem.status, problem.body);
-      throw problem;
+      throw new ApiProblem(0, normalizedFailure(crypto.randomUUID(), {
+        category: "platform_failure",
+        code: "PLATFORM_UNAVAILABLE",
+        recovery: "retry_after",
+        retryable: true,
+        source: "client_transport",
+      }));
     }
-  } else if (response.status !== 204) {
-    const problem = normalizedHttpFailure(response, (await response.text()).slice(0, 16_384), localRequestId);
-    notifyAuthorizationFailure(problem.status, problem.body);
-    throw problem;
-  }
 
-  if (!response.ok) {
-    if (!isVerifiedErrorEnvelope(response, payload)) {
-      const problem = normalizedHttpFailure(
-        response,
-        (JSON.stringify(payload) ?? "").slice(0, 16_384),
-        localRequestId,
-      );
+    const localRequestId = crypto.randomUUID();
+    const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
+    let payload: unknown = null;
+    if (mediaType === "application/json") {
+      try {
+        payload = await response.json();
+      } catch {
+        const problem = normalizedHttpFailure(response, "", localRequestId);
+        notifyAuthorizationFailure(problem.status, problem.body);
+        throw problem;
+      }
+    } else if (response.status !== 204) {
+      const problem = normalizedHttpFailure(response, (await response.text()).slice(0, 16_384), localRequestId);
       notifyAuthorizationFailure(problem.status, problem.body);
       throw problem;
     }
-    const headerRetryAfter = retryAfterSeconds(response.headers.get("retry-after"));
-    const bodyRetryAfter = typeof payload.retry_after_seconds === "number"
-      && Number.isSafeInteger(payload.retry_after_seconds)
-      && payload.retry_after_seconds >= 0
-      ? payload.retry_after_seconds
-      : null;
-    const retryAfter = headerRetryAfter ?? bodyRetryAfter;
-    const body = payload;
-    notifyAuthorizationFailure(response.status, body);
-    throw new ApiProblem(response.status, body, retryAfter);
+
+    if (!response.ok) {
+      if (!isVerifiedErrorEnvelope(response, payload)) {
+        const problem = normalizedHttpFailure(
+          response,
+          (JSON.stringify(payload) ?? "").slice(0, 16_384),
+          localRequestId,
+        );
+        notifyAuthorizationFailure(problem.status, problem.body);
+        throw problem;
+      }
+      const headerRetryAfter = retryAfterSeconds(response.headers.get("retry-after"));
+      const bodyRetryAfter = typeof payload.retry_after_seconds === "number"
+        && Number.isSafeInteger(payload.retry_after_seconds)
+        && payload.retry_after_seconds >= 0
+        ? payload.retry_after_seconds
+        : null;
+      const retryAfter = headerRetryAfter ?? bodyRetryAfter;
+      const body = payload;
+      notifyAuthorizationFailure(response.status, body);
+      throw new ApiProblem(response.status, body, retryAfter);
+    }
+    if (options.validateResponse !== undefined && !options.validateResponse(payload)) {
+      throw new ApiProblem(503, normalizedFailure(crypto.randomUUID(), {
+        category: "platform_failure",
+        code: "PLATFORM_UNAVAILABLE",
+        component: "response_validation",
+        recovery: "retry_after",
+        retryable: true,
+        source: "client_transport",
+      }));
+    }
+    if (signature !== null) pendingIntents.complete(signature);
+    return payload as T;
+  };
+
+  if (coordinatedIntent !== null && options.coordinateIdempotencyIntent !== undefined) {
+    let requestStarted = false;
+    try {
+      return await options.coordinateIdempotencyIntent(coordinatedIntent, () => {
+        requestStarted = true;
+        return executeRequest();
+      });
+    } catch (error) {
+      if (!requestStarted && signature !== null) {
+        // Coordination failed before fetch, so the generated key never left
+        // this page and must not consume part of the fixed recovery window.
+        pendingIntents.complete(signature);
+      }
+      throw error;
+    }
   }
-  if (options.validateResponse !== undefined && !options.validateResponse(payload)) {
-    throw new ApiProblem(503, normalizedFailure(crypto.randomUUID(), {
-      category: "platform_failure",
-      code: "PLATFORM_UNAVAILABLE",
-      component: "response_validation",
-      recovery: "retry_after",
-      retryable: true,
-      source: "client_transport",
-    }));
-  }
-  if (signature !== null) pendingIntents.complete(signature);
-  return payload as T;
+  return executeRequest();
 }
 
 export function errorText(error: unknown): string {
