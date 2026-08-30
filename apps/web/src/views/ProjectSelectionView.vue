@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 
 import PageState from "../components/PageState.vue";
 import { locale, t } from "../lib/i18n";
@@ -32,6 +32,7 @@ function load(): void {
 }
 
 onMounted(load);
+watch(() => props.session.allowed_scope.projects, load, { deep: true });
 </script>
 
 <template>

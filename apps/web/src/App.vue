@@ -116,7 +116,7 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
       session.value = null;
       if (caught instanceof ApiProblem && caught.status === 401) sessionEnded.value = true;
       else sessionError.value = errorText(caught);
-    } else if (caught instanceof ApiProblem && shouldClearAfterSessionRevalidation(caught.status)) {
+    } else if (caught instanceof ApiProblem && shouldClearAfterSessionRevalidation(caught)) {
       const message = errorText(caught);
       clearSession(false);
       sessionError.value = message;
