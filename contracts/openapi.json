@@ -705,7 +705,7 @@
           "workspaces"
         ],
         "summary": "List Workspaces",
-        "description": "Active container lists require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -869,7 +869,7 @@
           "workspaces"
         ],
         "summary": "Get Workspace",
-        "description": "Deployment Owner or a Principal with a currently visible Project in this container. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -886,6 +886,19 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
             }
           }
         ],
@@ -929,7 +942,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "visible_scope"
+        "x-cfkanban-permission": "visible_scope_active_owner_tombstone"
       },
       "patch": {
         "operationId": "updateWorkspace",
@@ -1183,7 +1196,7 @@
           "projects"
         ],
         "summary": "List Projects",
-        "description": "Active container lists require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1365,7 +1378,7 @@
           "projects"
         ],
         "summary": "Get Project",
-        "description": "Deployment Owner or a Principal with a currently visible Project in this container. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1391,6 +1404,19 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "exclude",
+                "only"
+              ],
+              "default": "exclude"
             }
           }
         ],
@@ -1434,7 +1460,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "visible_scope"
+        "x-cfkanban-permission": "visible_scope_active_owner_tombstone"
       },
       "patch": {
         "operationId": "updateProject",

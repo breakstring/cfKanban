@@ -224,6 +224,16 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.equal(secondUpdated.response.status, 200);
   assert.equal(secondUpdated.body.resource.public_id, secondPublicId);
   assert.equal(secondUpdated.body.resource.project.version, 3);
+  const secondRecoverySummary = {
+    active_usage: { comments: 0, issues: 0, principals: 0 },
+    display_name: "Independent Public Project",
+    id: secondProjectId,
+    key: "AUX",
+    public_summary: "An updated independent public Project.",
+    resource_limits: { comments: 3, issues: 3, principals: 3 },
+    role_choices: ["reader", "writer"],
+    workspace_key: "public-space",
+  };
   const secondEventTypes = await db.prepare(
     `SELECT type FROM events
      WHERE project_id = ?1 AND type LIKE 'project.public-join-%'
@@ -259,7 +269,21 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   );
   assert.equal(pausedSecond.response.status, 200);
   assert.equal(pausedSecond.body.resource.deleted_at !== null, true);
+  assert.deepEqual(pausedSecond.body.resource.resumed_public_projects.projects, [secondRecoverySummary]);
   assert.equal(await tableCount("project_usage", "project_id = ?1", secondProjectId), 1);
+  const pausedSecondTombstone = await request(
+    "/api/v1/workspaces/public-space/projects?deleted=only",
+    { headers: ownerHeaders() },
+  );
+  assert.deepEqual(
+    pausedSecondTombstone.body.items[0].resumed_public_projects.projects,
+    [secondRecoverySummary],
+  );
+  const pausedSecondDetail = await request(
+    "/api/v1/workspaces/public-space/projects/AUX?deleted=only",
+    { headers: ownerHeaders() },
+  );
+  assert.deepEqual(pausedSecondDetail.body.resumed_public_projects.projects, [secondRecoverySummary]);
   const pausedPublicList = await request("/api/v1/public-projects");
   assert.deepEqual(pausedPublicList.body.items.map((item) => item.public_id), [publicId]);
   const pausedRedeem = await request(`/api/v1/public-joins/${secondPublicId}/redeem`, {
@@ -273,6 +297,19 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     method: "POST",
   });
   assert.equal(pausedRedeem.response.status, 404);
+  await db.prepare("DELETE FROM project_usage WHERE project_id = ?1").bind(secondProjectId).run();
+  const missingRecoveryUsage = await request(
+    "/api/v1/workspaces/public-space/projects?deleted=only",
+    { headers: ownerHeaders() },
+  );
+  assert.equal(missingRecoveryUsage.response.status, 503);
+  assert.equal(missingRecoveryUsage.body.code, "PLATFORM_UNAVAILABLE");
+  await db.prepare(
+    `INSERT INTO project_usage
+      (project_id, active_issue_count, active_comment_count,
+       active_principal_count, updated_at, last_operation_id)
+     VALUES (?1, 0, 0, 0, ?2, NULL)`,
+  ).bind(secondProjectId, Date.now()).run();
 
   const restoredSecond = await request(
     "/api/v1/workspaces/public-space/projects/AUX/commands/restore",
@@ -284,10 +321,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   );
   assert.equal(restoredSecond.response.status, 200);
   assert.equal(restoredSecond.body.resource.version, 5);
-  assert.deepEqual(restoredSecond.body.resource.resumed_public_projects.projects, [{
-    id: secondProjectId,
-    key: "AUX",
-  }]);
+  assert.deepEqual(restoredSecond.body.resource.resumed_public_projects.projects, [secondRecoverySummary]);
   const restoredPublicList = await request("/api/v1/public-projects");
   assert.deepEqual(
     restoredPublicList.body.items.map((item) => item.public_id).sort(),
@@ -981,6 +1015,33 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(pausedWorkspace.response.status, 200);
+  const workspaceRecoveryProjects = [
+    {
+      ...secondRecoverySummary,
+      active_usage: { comments: 0, issues: 0, principals: 3 },
+    },
+    {
+      active_usage: { comments: 3, issues: 3, principals: 2 },
+      display_name: "Public Project",
+      id: projectId,
+      key: "PUB",
+      public_summary: "Re-enabled with explicit limits.",
+      resource_limits: { comments: 5, issues: 5, principals: 5 },
+      role_choices: ["reader", "writer"],
+      workspace_key: "public-space",
+    },
+  ];
+  const pausedWorkspaceTombstone = await request("/api/v1/workspaces?deleted=only", {
+    headers: ownerHeaders(),
+  });
+  assert.equal(pausedWorkspaceTombstone.body.items[0].resumed_public_projects, undefined);
+  const pausedWorkspaceDetail = await request("/api/v1/workspaces/public-space?deleted=only", {
+    headers: ownerHeaders(),
+  });
+  assert.deepEqual(
+    pausedWorkspaceDetail.body.resumed_public_projects.projects,
+    workspaceRecoveryProjects,
+  );
   const hiddenByWorkspace = await request("/api/v1/public-projects");
   assert.deepEqual(hiddenByWorkspace.body.items, []);
   assert.equal(await tableCount("project_usage", "project_id IN (?1, ?2)", projectId, secondProjectId), 2);
@@ -991,10 +1052,10 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     method: "POST",
   });
   assert.equal(restoredWorkspace.response.status, 200);
-  assert.deepEqual(restoredWorkspace.body.resource.resumed_public_projects.projects, [
-    { id: secondProjectId, key: "AUX" },
-    { id: projectId, key: "PUB" },
-  ]);
+  assert.deepEqual(
+    restoredWorkspace.body.resource.resumed_public_projects.projects,
+    workspaceRecoveryProjects,
+  );
   const restoredByWorkspace = await request("/api/v1/public-projects");
   assert.deepEqual(
     restoredByWorkspace.body.items.map((item) => item.public_id).sort(),
