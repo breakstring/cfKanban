@@ -118,8 +118,8 @@ export class ApiProblem extends Error {
 export interface ApiRequestOptions<T = unknown> {
   body?: unknown;
   coordinateIdempotencyIntent?: (
-    intent: AcquiredPendingIntent,
-    execute: () => Promise<T>,
+    acquire: () => AcquiredPendingIntent,
+    execute: (intent: AcquiredPendingIntent) => Promise<T>,
   ) => Promise<T>;
   idempotencyKey?: string;
   method?: string;
@@ -135,36 +135,35 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers({ accept: "application/json" });
   if (options.body !== undefined) headers.set("content-type", "application/json");
-  let coordinatedIntent: AcquiredPendingIntent | null = null;
-  let signature: string | null = null;
+  let requestIntent: AcquiredPendingIntent | null = null;
+  const acquirePendingIntent = (): AcquiredPendingIntent => {
+    try {
+      return pendingIntents.acquire(method, path, options.body);
+    } catch (error) {
+      if (!(error instanceof PendingIntentExpiredError)) throw error;
+      throw new ApiProblem(409, {
+        category: "conflict",
+        code: "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED",
+        details: { normalized_by: "client" },
+        message: "The safe retry window for this write has expired.",
+        recovery: "refresh_resource",
+        request_id: crypto.randomUUID(),
+        retryable: false,
+        source: "client_transport",
+      });
+    }
+  };
   if (!SAFE_METHODS.has(method)) {
     const csrf = cookieValue(CSRF_COOKIE);
     if (csrf !== null) headers.set("x-csrf-token", csrf);
     if (options.idempotencyKey !== undefined) headers.set("idempotency-key", options.idempotencyKey);
-    else {
-      let intent: ReturnType<PendingIntentKeys["acquire"]>;
-      try {
-        intent = pendingIntents.acquire(method, path, options.body);
-      } catch (error) {
-        if (!(error instanceof PendingIntentExpiredError)) throw error;
-        throw new ApiProblem(409, {
-          category: "conflict",
-          code: "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED",
-          details: { normalized_by: "client" },
-          message: "The safe retry window for this write has expired.",
-          recovery: "refresh_resource",
-          request_id: crypto.randomUUID(),
-          retryable: false,
-          source: "client_transport",
-        });
-      }
-      signature = intent.signature;
-      coordinatedIntent = intent;
-      headers.set("idempotency-key", intent.key);
+    else if (options.coordinateIdempotencyIntent === undefined) {
+      requestIntent = acquirePendingIntent();
     }
   }
 
-  const executeRequest = async (): Promise<T> => {
+  const executeRequest = async (intent: AcquiredPendingIntent | null = requestIntent): Promise<T> => {
+    if (intent !== null) headers.set("idempotency-key", intent.key);
     let response: Response;
     try {
       response = await fetch(path, {
@@ -232,22 +231,36 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
         source: "client_transport",
       }));
     }
-    if (signature !== null) pendingIntents.complete(signature);
+    if (intent !== null) pendingIntents.complete(intent.signature);
     return payload as T;
   };
 
-  if (coordinatedIntent !== null && options.coordinateIdempotencyIntent !== undefined) {
-    let requestStarted = false;
+  if (!SAFE_METHODS.has(method)
+    && options.idempotencyKey === undefined
+    && options.coordinateIdempotencyIntent !== undefined) {
+    const coordination: {
+      intent: AcquiredPendingIntent | null;
+      requestStarted: boolean;
+    } = { intent: null, requestStarted: false };
     try {
-      return await options.coordinateIdempotencyIntent(coordinatedIntent, () => {
-        requestStarted = true;
-        return executeRequest();
+      return await options.coordinateIdempotencyIntent(() => {
+        if (coordination.intent !== null) return coordination.intent;
+        coordination.intent = acquirePendingIntent();
+        return coordination.intent;
+      }, (intent) => {
+        if (coordination.intent === null
+          || coordination.intent.key !== intent.key
+          || coordination.intent.signature !== intent.signature) {
+          throw new Error("The coordinated Idempotency-Key was not acquired by this request.");
+        }
+        coordination.requestStarted = true;
+        return executeRequest(intent);
       });
     } catch (error) {
-      if (!requestStarted && signature !== null) {
+      if (!coordination.requestStarted && coordination.intent !== null) {
         // Coordination failed before fetch, so the generated key never left
         // this page and must not consume part of the fixed recovery window.
-        pendingIntents.complete(signature);
+        pendingIntents.complete(coordination.intent.signature);
       }
       throw error;
     }
