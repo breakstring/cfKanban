@@ -168,7 +168,9 @@ test("OpenAPI distinguishes Comment lifecycle shapes and deleted-only permission
   }
   const deletedPermissionByOperation = new Map([
     ["listWorkspaces", "visible_scope_active_owner_tombstone"],
+    ["getWorkspace", "visible_scope_active_owner_tombstone"],
     ["listProjects", "visible_scope_active_owner_tombstone"],
+    ["getProject", "visible_scope_active_owner_tombstone"],
     ["listIssues", "project_reader_active_writer_tombstone"],
     ["listProjectIssues", "project_reader_active_writer_tombstone"],
     ["getIssue", "project_reader_active_writer_tombstone"],

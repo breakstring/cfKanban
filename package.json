@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "unit": "node --test scripts/tests/generated-artifacts.test.mjs && node --experimental-strip-types --test scripts/tests/worker-kernel.test.mjs",
+    "unit": "node --test scripts/tests/generated-artifacts.test.mjs && node --experimental-strip-types --test scripts/tests/worker-kernel.test.mjs && node --experimental-strip-types --test scripts/tests/web-ui.test.mjs",
     "contracts:generate": "node scripts/generate-openapi.mjs",
     "contracts:verify-generated": "node scripts/generate-openapi.mjs --check",
     "contracts:check": "npm run contracts:verify-generated && node scripts/validate-openapi.mjs && node scripts/validate-error-contract.mjs && redocly lint contracts/openapi.json",

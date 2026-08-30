@@ -56,14 +56,14 @@ const operations = [
 
   ["get", "/api/v1/workspaces", "listWorkspaces", "workspaces", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/workspaces", "createWorkspace", "workspaces", bearer, "idempotent", "CreateWorkspaceRequest"],
-  ["get", "/api/v1/workspaces/{workspace_key}", "getWorkspace", "workspaces", authenticated, "read"],
+  ["get", "/api/v1/workspaces/{workspace_key}", "getWorkspace", "workspaces", authenticated, "read", "DeletedModeQuery"],
   ["patch", "/api/v1/workspaces/{workspace_key}", "updateWorkspace", "workspaces", authenticated, "cas", "UpdateDisplayNameRequest"],
   ["delete", "/api/v1/workspaces/{workspace_key}", "deleteWorkspace", "workspaces", authenticated, "cas-delete"],
   ["post", "/api/v1/workspaces/{workspace_key}/commands/restore", "restoreWorkspace", "workspaces", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
 
   ["get", "/api/v1/workspaces/{workspace_key}/projects", "listProjects", "projects", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/workspaces/{workspace_key}/projects", "createProject", "projects", bearer, "idempotent", "CreateProjectRequest"],
-  ["get", "/api/v1/workspaces/{workspace_key}/projects/{project_key}", "getProject", "projects", authenticated, "read"],
+  ["get", "/api/v1/workspaces/{workspace_key}/projects/{project_key}", "getProject", "projects", authenticated, "read", "DeletedModeQuery"],
   ["patch", "/api/v1/workspaces/{workspace_key}/projects/{project_key}", "updateProject", "projects", authenticated, "cas", "UpdateProjectRequest"],
   ["delete", "/api/v1/workspaces/{workspace_key}/projects/{project_key}", "deleteProject", "projects", authenticated, "cas-delete"],
   ["post", "/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore", "restoreProject", "projects", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
@@ -283,7 +283,7 @@ const permissionDescriptions = {
   public: "Public, non-secret read.",
   authenticated_principal: "Any authenticated Principal; returned data is filtered to current effective authorization.",
   visible_scope: "Deployment Owner or a Principal with a currently visible Project in this container.",
-  visible_scope_active_owner_tombstone: "Active container lists require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner.",
+  visible_scope_active_owner_tombstone: "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner.",
   current_principal: "The currently authenticated Principal acting only on its own identity or Web authentication state.",
   deployment_owner: "The single Deployment Owner. Project Grants never satisfy this permission.",
   project_reader: "Deployment Owner or an active reader/writer Grant for the resource Project.",
@@ -304,8 +304,7 @@ const permissionDescriptions = {
 const permissionGroups = {
   public: ["getHealth", "getOpenApi", "discoverInstance", "getInvitationBootstrap", "getWebLaunchPage", "listPublicProjects"],
   authenticated_principal: ["getMeta", "listEvents"],
-  visible_scope: ["getWorkspace", "getProject"],
-  visible_scope_active_owner_tombstone: ["listWorkspaces", "listProjects"],
+  visible_scope_active_owner_tombstone: ["listWorkspaces", "getWorkspace", "listProjects", "getProject"],
   current_principal: ["getMe", "updateMe", "getWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey"],
   deployment_owner: [
     "createWorkspace", "updateWorkspace", "deleteWorkspace", "restoreWorkspace",
@@ -1621,6 +1620,7 @@ const querySets = {
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],
   CursorQuery: [{ name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
+  DeletedModeQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],
   DeletedCursorQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   IssueListQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "status", in: "query", required: false, schema: { type: "array", maxItems: 5, items: ref("StatusKey") }, style: "form", explode: true }, { name: "assignee", in: "query", required: false, schema: { type: "array", maxItems: 20, items: ref("Uuid") }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: utf8String(128, { minLength: 1, description: "Normalized title/identifier search." }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   IssueDetailQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],

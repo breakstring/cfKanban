@@ -57,10 +57,26 @@ interface ProjectRow {
   issue_limit: number | null;
   key: string;
   principal_limit: number | null;
+  public_join_public_summary: string | null;
   public_join_enabled: number;
   updated_at: number;
+  usage_present: number;
   version: number;
   workspace_id: string;
+  workspace_key: string;
+}
+
+interface ResumedPublicProjectRow {
+  active_comment_count: number | null;
+  active_issue_count: number | null;
+  active_principal_count: number | null;
+  comment_limit: number | null;
+  display_name: string;
+  id: string;
+  issue_limit: number | null;
+  key: string;
+  principal_limit: number | null;
+  public_summary: string;
   workspace_key: string;
 }
 
@@ -92,7 +108,7 @@ function workspaceResource(row: WorkspaceRow, auth: AuthContext): { [key: string
 
 function projectResource(row: ProjectRow, auth: AuthContext): { [key: string]: JsonValue } {
   const canManage = canManageContainers(auth);
-  return {
+  const resource: { [key: string]: JsonValue } = {
     active_usage: {
       comments: row.active_comment_count,
       issues: row.active_issue_count,
@@ -118,6 +134,29 @@ function projectResource(row: ProjectRow, auth: AuthContext): { [key: string]: J
     version: row.version,
     workspace_id: row.workspace_id,
     workspace_key: row.workspace_key,
+  };
+  if (row.deleted_at !== null) resource.resumed_public_projects = projectRowResumedSummary(row);
+  return resource;
+}
+
+function projectRowResumedSummary(row: ProjectRow): { [key: string]: JsonValue } {
+  if (row.public_join_enabled !== 1) return { has_more: false, projects: [] };
+  if (row.usage_present !== 1 || row.public_join_public_summary === null) throw platformUnavailable("d1");
+  return {
+    has_more: false,
+    projects: [resumedPublicProjectResource({
+      active_comment_count: row.active_comment_count,
+      active_issue_count: row.active_issue_count,
+      active_principal_count: row.active_principal_count,
+      comment_limit: row.comment_limit,
+      display_name: row.display_name,
+      id: row.id,
+      issue_limit: row.issue_limit,
+      key: row.key,
+      principal_limit: row.principal_limit,
+      public_summary: row.public_join_public_summary,
+      workspace_key: row.workspace_key,
+    })],
   };
 }
 
@@ -190,6 +229,8 @@ async function readProject(
               COALESCE(pu.active_issue_count, 0) AS active_issue_count,
               COALESCE(pu.active_comment_count, 0) AS active_comment_count,
               COALESCE(pu.active_principal_count, 0) AS active_principal_count,
+              CASE WHEN pu.project_id IS NULL THEN 0 ELSE 1 END AS usage_present,
+              pjp.public_summary AS public_join_public_summary,
               CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
        FROM projects AS p
        JOIN workspaces AS w ON w.id = p.workspace_id
@@ -265,6 +306,8 @@ async function readProjectPage(
               COALESCE(pu.active_issue_count, 0) AS active_issue_count,
               COALESCE(pu.active_comment_count, 0) AS active_comment_count,
               COALESCE(pu.active_principal_count, 0) AS active_principal_count,
+              CASE WHEN pu.project_id IS NULL THEN 0 ELSE 1 END AS usage_present,
+              pjp.public_summary AS public_join_public_summary,
               CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
        FROM projects AS p
        JOIN workspaces AS w ON w.id = p.workspace_id
@@ -353,11 +396,20 @@ export async function getWorkspace(
   db: D1Database,
   auth: AuthContext,
   workspaceKeyValue: JsonValue,
+  url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
-  const row = await readWorkspace(db, workspaceKey);
-  if (row === null || !(await workspaceIsVisible(db, auth, row.id))) throw notFound();
-  return workspaceResource(row, auth);
+  const deleted = requireDeletedMode(url);
+  if (deleted === "only") requireOwnerControl(auth);
+  const row = await readWorkspace(db, workspaceKey, deleted === "only");
+  if (
+    row === null
+    || (deleted === "only" ? row.deleted_at === null : !(await workspaceIsVisible(db, auth, row.id)))
+  ) throw notFound();
+  return {
+    ...workspaceResource(row, auth),
+    ...(deleted === "only" ? { resumed_public_projects: await resumedPublicProjects(db, row.id) } : {}),
+  };
 }
 
 export async function listProjects(
@@ -413,11 +465,17 @@ export async function getProject(
   auth: AuthContext,
   workspaceKeyValue: JsonValue,
   projectKeyValue: JsonValue,
+  url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const projectKey = requireProjectKey(projectKeyValue, "project_key");
-  const row = await readProject(db, workspaceKey, projectKey);
-  if (row === null || !(await projectIsVisible(db, auth, row.id))) throw notFound();
+  const deleted = requireDeletedMode(url);
+  if (deleted === "only") requireOwnerControl(auth);
+  const row = await readProject(db, workspaceKey, projectKey, deleted === "only");
+  if (
+    row === null
+    || (deleted === "only" ? row.deleted_at === null : !(await projectIsVisible(db, auth, row.id)))
+  ) throw notFound();
   return projectResource(row, auth);
 }
 
@@ -733,19 +791,59 @@ async function setWorkspaceDeleted(
   }
 }
 
-async function resumedPublicProjects(db: D1Database, workspaceId: string): Promise<{ [key: string]: JsonValue }> {
+function resumedPublicProjectResource(row: ResumedPublicProjectRow): { [key: string]: JsonValue } {
+  if (
+    row.active_comment_count === null
+    || row.active_issue_count === null
+    || row.active_principal_count === null
+    || row.comment_limit === null
+    || row.issue_limit === null
+    || row.principal_limit === null
+  ) throw platformUnavailable("d1");
+  return {
+    active_usage: {
+      comments: row.active_comment_count,
+      issues: row.active_issue_count,
+      principals: row.active_principal_count,
+    },
+    display_name: row.display_name,
+    id: row.id,
+    key: row.key,
+    public_summary: row.public_summary,
+    resource_limits: {
+      comments: row.comment_limit,
+      issues: row.issue_limit,
+      principals: row.principal_limit,
+    },
+    role_choices: ["reader", "writer"],
+    workspace_key: row.workspace_key,
+  };
+}
+
+async function resumedPublicProjects(
+  db: D1Database,
+  workspaceId: string,
+): Promise<{ [key: string]: JsonValue }> {
   try {
     const result = await db.prepare(
-      `SELECT p.id, p.key
+      `SELECT workspace.key AS workspace_key,
+              p.id, p.key, p.display_name, policy.public_summary,
+              p.issue_limit, p.comment_limit, p.principal_limit,
+              usage.active_issue_count, usage.active_comment_count,
+              usage.active_principal_count
        FROM projects AS p
+       JOIN workspaces AS workspace ON workspace.id = p.workspace_id
        JOIN public_join_policies AS policy ON policy.project_id = p.id
-       WHERE p.workspace_id = ?1 AND p.deleted_at IS NULL
+       LEFT JOIN project_usage AS usage ON usage.project_id = p.id
+       WHERE p.workspace_id = ?1
+         AND p.deleted_at IS NULL
          AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
-       ORDER BY p.key, p.id LIMIT 101`,
-    ).bind(workspaceId).all<{ id: string; key: string }>();
+       ORDER BY p.key, p.id
+       LIMIT 101`,
+    ).bind(workspaceId).all<ResumedPublicProjectRow>();
     return {
       has_more: result.results.length > 100,
-      projects: result.results.slice(0, 100).map((row) => ({ id: row.id, key: row.key })),
+      projects: result.results.slice(0, 100).map(resumedPublicProjectResource),
     };
   } catch (error) {
     throw platformUnavailable("d1", error);
@@ -856,7 +954,9 @@ export async function createProject(
         key,
         principal_limit: null,
         public_join_enabled: 0,
+        public_join_public_summary: null,
         updated_at: now,
+        usage_present: 0,
         version: 1,
         workspace_id: workspace.id,
         workspace_key: workspaceKey,
@@ -1024,9 +1124,7 @@ async function setProjectDeleted(
   const snapshot = persistSnapshot
     ? {
         ...projectWriteResource(row, auth),
-        resumed_public_projects: row.public_join_enabled
-          ? { has_more: false, projects: [{ id: row.id, key: row.key }] }
-          : { has_more: false, projects: [] },
+        resumed_public_projects: projectRowResumedSummary(current),
       }
     : null;
   const guard = buildCurrentAuthGuard(auth, now, 9, true);
