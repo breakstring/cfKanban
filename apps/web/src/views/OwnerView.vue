@@ -469,7 +469,20 @@ async function executeNewInvitationOperation(
           const failure = caught instanceof ApiProblem
             ? { code: caught.body.code, status: caught.status }
             : null;
-          if (!invitationOutcomeRequiresReview(failure)) lease.settle();
+          if (!invitationOutcomeRequiresReview(failure)) {
+            lease.settle();
+          } else {
+            // Fence every list review that began while this POST was still in
+            // flight. A queued confirmation may run only after the lock is
+            // released, so marker/state alone cannot distinguish its stale
+            // snapshot from a post-failure readback.
+            const retained = lease.retainPendingAfterUncertainResult();
+            if (retained !== null) {
+              invitationRecoveryRecord.value = retained;
+              onRecord(retained);
+              invalidateInvitationReview();
+            }
+          }
           throw caught;
         }
       });
@@ -503,18 +516,27 @@ async function recoverInvitationOperation(): Promise<void> {
   try {
     let committedRecord: InvitationRecoveryRecord | null = null;
     const result = await coordinator.runExistingOperation(record, async (lease) => {
-      const response = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
-        body: record.body,
-        idempotencyKey: record.idempotency_key,
-        method: "POST",
-        validateResponse: isInvitationCreateWriteResult,
-      });
-      const committed = lease.markCommittedUnavailable(response.resource.id);
-      if (committed === null) {
-        throw new Error("The recovered Invitation could not be bound to the shared recovery lock.");
+      try {
+        const response = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
+          body: record.body,
+          idempotencyKey: record.idempotency_key,
+          method: "POST",
+          validateResponse: isInvitationCreateWriteResult,
+        });
+        const committed = lease.markCommittedUnavailable(response.resource.id);
+        if (committed === null) {
+          throw new Error("The recovered Invitation could not be bound to the shared recovery lock.");
+        }
+        committedRecord = committed;
+        return response;
+      } catch (caught) {
+        const retained = lease.retainPendingAfterUncertainResult();
+        if (retained !== null) {
+          invitationRecoveryRecord.value = retained;
+          invalidateInvitationReview();
+        }
+        throw caught;
       }
-      committedRecord = committed;
-      return response;
     });
     if (committedRecord === null) throw new Error("The recovered Invitation record was not committed.");
     await finishInvitationOperation(result, committedRecord, true);
