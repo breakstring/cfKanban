@@ -15,6 +15,7 @@ import {
   canConfirmInvitationReview,
   InvitationRecoveryBlockedError,
   InvitationRecoveryCoordinator,
+  InvitationRecoveryExpiredError,
   invitationRecoveryCanRetry,
   invitationOutcomeRequiresReview,
   isInvitationCreateWriteResult,
@@ -622,6 +623,103 @@ test("a deferred Invitation POST cannot be retired by a readback after the 24-ho
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("a readback queued during an uncertain Invitation POST cannot retire its retained operation", async () => {
+  const storage = new MemoryStorage();
+  const locks = new MemoryExclusiveLocks();
+  const runExclusive = locks.run.bind(locks);
+  const firstTab = new InvitationRecoveryCoordinator("owner-principal", storage, runExclusive, () => "marker-live");
+  const secondTab = new InvitationRecoveryCoordinator("owner-principal", storage, runExclusive, () => "marker-review");
+  const acquiredAt = 1_000;
+  const deadline = acquiredAt + 24 * 60 * 60 * 1000;
+  const body = {
+    grants: [{ project_id: "22222222-2222-4222-8222-222222222222", role: "writer" }],
+    kind: "project_grant",
+  };
+  let releaseRequest;
+  let announceRequest;
+  const requestStarted = new Promise((resolve) => { announceRequest = resolve; });
+  const requestReleased = new Promise((resolve) => { releaseRequest = resolve; });
+
+  const request = assert.rejects(firstTab.runNewOperation(
+    { acquiredAt, key: "idempotency-live", signature: "signature-live" },
+    body,
+    async (lease) => {
+      announceRequest();
+      await requestReleased;
+      const retained = lease.retainPendingAfterUncertainResult();
+      assert.ok(retained);
+      throw new Error("transport outcome unknown");
+    },
+  ), /transport outcome unknown/);
+  await requestStarted;
+  const staleRecord = secondTab.read();
+  assert.ok(staleRecord);
+  assert.equal(canConfirmInvitationReview(true, false, staleRecord, deadline, deadline), true);
+  let staleSettleFinished = false;
+  const staleSettle = secondTab.settle(staleRecord).then((settled) => {
+    staleSettleFinished = true;
+    return settled;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(staleSettleFinished, false);
+
+  releaseRequest();
+  await request;
+  assert.equal(await staleSettle, false);
+  const retained = secondTab.read();
+  assert.ok(retained);
+  assert.equal(retained.state, "pending");
+  assert.equal(retained.review_revision, staleRecord.review_revision + 1);
+  await assert.rejects(secondTab.runNewOperation(
+    { acquiredAt: deadline + 1, key: "idempotency-new", signature: "signature-new" },
+    { kind: "principal_recovery", principal_id: "principal", recovery_mode: "rotation" },
+    async () => undefined,
+  ), InvitationRecoveryBlockedError);
+});
+
+test("an exact Invitation retry rechecks the fixed deadline after acquiring its Web Lock", async () => {
+  const storage = new MemoryStorage();
+  const locks = new MemoryExclusiveLocks();
+  const acquiredAt = 1_000;
+  const deadline = acquiredAt + 24 * 60 * 60 * 1000;
+  let now = deadline - 1;
+  const coordinator = new InvitationRecoveryCoordinator(
+    "owner-principal",
+    storage,
+    locks.run.bind(locks),
+    () => "marker-deadline",
+    () => now,
+  );
+  const record = await coordinator.begin(
+    { acquiredAt, key: "idempotency-deadline", signature: "signature-deadline" },
+    { grants: [{ project_id: "project", role: "writer" }], kind: "project_grant" },
+  );
+  assert.equal(invitationRecoveryCanRetry(record, now), true);
+
+  let releaseBlocker;
+  let announceBlocker;
+  const blockerStarted = new Promise((resolve) => { announceBlocker = resolve; });
+  const blockerReleased = new Promise((resolve) => { releaseBlocker = resolve; });
+  const blocker = locks.run(coordinator.storageKey, async () => {
+    announceBlocker();
+    await blockerReleased;
+  });
+  await blockerStarted;
+  let retryExecutions = 0;
+  const retry = assert.rejects(coordinator.runExistingOperation(record, async () => {
+    retryExecutions += 1;
+  }), InvitationRecoveryExpiredError);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(retryExecutions, 0);
+
+  now = deadline + 1;
+  releaseBlocker();
+  await blocker;
+  await retry;
+  assert.equal(retryExecutions, 0);
+  assert.deepEqual(coordinator.read(), record);
 });
 
 test("a failed pre-fetch Invitation claim does not retain an unsent local key", async () => {

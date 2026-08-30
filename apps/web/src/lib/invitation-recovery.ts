@@ -30,6 +30,7 @@ interface InvitationRecoveryRecordBase {
   idempotency_key: string;
   marker: string;
   principal_id: string;
+  review_revision: number;
   version: 1;
 }
 
@@ -57,6 +58,7 @@ export type InvitationRecoveryExclusiveLock = <T>(
 export interface InvitationRecoveryLease {
   readonly record: InvitationRecoveryRecord;
   markCommittedUnavailable(invitationId: string): InvitationRecoveryRecord | null;
+  retainPendingAfterUncertainResult(): InvitationRecoveryRecord | null;
   settle(): boolean;
 }
 
@@ -229,7 +231,7 @@ export function canConfirmInvitationReview(
 function parseInvitationRecoveryRecord(value: unknown, principalId: string): InvitationRecoveryRecord | null {
   if (!isRecord(value)
     || !hasOnlyKeys(value, [
-      "acquired_at", "body", "idempotency_key", "invitation_id", "marker", "principal_id", "state", "version",
+      "acquired_at", "body", "idempotency_key", "invitation_id", "marker", "principal_id", "review_revision", "state", "version",
     ])
     || value.version !== 1
     || value.principal_id !== principalId
@@ -239,21 +241,32 @@ function parseInvitationRecoveryRecord(value: unknown, principalId: string): Inv
     || value.idempotency_key.length === 0
     || typeof value.marker !== "string"
     || value.marker.length === 0
+    || ("review_revision" in value
+      && (!Number.isSafeInteger(value.review_revision) || Number(value.review_revision) < 0))
     || !isInvitationRequestBody(value.body)) return null;
+  const normalized = {
+    ...value,
+    // Records created before request-lifetime fencing did not persist a
+    // revision. Treat them as revision zero so an upgrade keeps the exact
+    // body/key recovery path instead of silently abandoning it.
+    review_revision: "review_revision" in value ? Number(value.review_revision) : 0,
+  };
   if (value.state === "pending" && !("invitation_id" in value)) {
-    return value as unknown as InvitationRecoveryRecord;
+    return normalized as unknown as InvitationRecoveryRecord;
   }
   if (value.state !== "committed_unavailable"
     || typeof value.invitation_id !== "string"
     || value.invitation_id.length === 0) return null;
-  return value as unknown as InvitationRecoveryRecord;
+  return normalized as unknown as InvitationRecoveryRecord;
 }
 
 function sameInvitationRecoveryState(
   current: InvitationRecoveryRecord,
   expected: InvitationRecoveryRecord,
 ): boolean {
-  if (current.marker !== expected.marker || current.state !== expected.state) return false;
+  if (current.marker !== expected.marker
+    || current.review_revision !== expected.review_revision
+    || current.state !== expected.state) return false;
   return current.state === "pending"
     || (expected.state === "committed_unavailable" && current.invitation_id === expected.invitation_id);
 }
@@ -268,9 +281,17 @@ export class InvitationRecoveryBlockedError extends Error {
   }
 }
 
+export class InvitationRecoveryExpiredError extends Error {
+  constructor() {
+    super("The safe Invitation recovery window has expired.");
+    this.name = "InvitationRecoveryExpiredError";
+  }
+}
+
 export class InvitationRecoveryCoordinator {
   readonly storageKey: string;
   readonly #createMarker: () => string;
+  readonly #now: () => number;
   readonly #runExclusive: InvitationRecoveryExclusiveLock;
   readonly #principalId: string;
   readonly #storage: StorageLike;
@@ -280,8 +301,10 @@ export class InvitationRecoveryCoordinator {
     storage: StorageLike,
     runExclusive: InvitationRecoveryExclusiveLock,
     createMarker: () => string = () => crypto.randomUUID(),
+    now: () => number = Date.now,
   ) {
     this.#createMarker = createMarker;
+    this.#now = now;
     this.#principalId = principalId;
     this.#runExclusive = runExclusive;
     this.#storage = storage;
@@ -322,6 +345,7 @@ export class InvitationRecoveryCoordinator {
       idempotency_key: intent.key,
       marker: this.#createMarker(),
       principal_id: this.#principalId,
+      review_revision: 0,
       state: "pending",
       version: 1,
     };
@@ -334,7 +358,9 @@ export class InvitationRecoveryCoordinator {
     invitationId: string,
   ): InvitationRecoveryRecord | null {
     const current = this.read();
-    if (current === null || !sameInvitationRecoveryState(current, record)) {
+    if (current === null
+      || !sameInvitationRecoveryState(current, record)
+      || current.review_revision >= Number.MAX_SAFE_INTEGER) {
       return null;
     }
     if (current.state === "committed_unavailable") {
@@ -343,10 +369,29 @@ export class InvitationRecoveryCoordinator {
     const committed: InvitationRecoveryRecord = {
       ...current,
       invitation_id: invitationId,
+      review_revision: current.review_revision + 1,
       state: "committed_unavailable",
     };
     this.#storage.setItem(this.storageKey, JSON.stringify(committed));
     return committed;
+  }
+
+  #retainPendingAfterUncertainResultUnlocked(
+    record: InvitationRecoveryRecord,
+  ): InvitationRecoveryRecord | null {
+    const current = this.read();
+    if (current === null
+      || current.state !== "pending"
+      || !sameInvitationRecoveryState(current, record)
+      || current.review_revision >= Number.MAX_SAFE_INTEGER) {
+      return null;
+    }
+    const retained: InvitationRecoveryRecord = {
+      ...current,
+      review_revision: current.review_revision + 1,
+    };
+    this.#storage.setItem(this.storageKey, JSON.stringify(retained));
+    return retained;
   }
 
   #settleUnlocked(record: InvitationRecoveryRecord): boolean {
@@ -368,6 +413,11 @@ export class InvitationRecoveryCoordinator {
         const committed = this.#markCommittedUnavailableUnlocked(expected, invitationId);
         if (committed !== null) expected = committed;
         return committed;
+      },
+      retainPendingAfterUncertainResult: () => {
+        const retained = this.#retainPendingAfterUncertainResultUnlocked(expected);
+        if (retained !== null) expected = retained;
+        return retained;
       },
       settle: () => this.#settleUnlocked(expected),
     };
@@ -398,6 +448,13 @@ export class InvitationRecoveryCoordinator {
       }
       if (!sameInvitationRecoveryState(current, record)) {
         throw new InvitationRecoveryBlockedError(current);
+      }
+      // The caller may have queued this retry before the fixed deadline and
+      // waited behind another tab's request lease. Recheck only after the lock
+      // is actually acquired so an expired D1 idempotency row is never reused
+      // as though it were still an exact replay.
+      if (!invitationRecoveryCanRetry(current, this.#now())) {
+        throw new InvitationRecoveryExpiredError();
       }
       return callback(this.#lease(current));
     });
