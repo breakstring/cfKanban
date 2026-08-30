@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
@@ -53,6 +53,26 @@ const newLabel = ref({ color: "", name: "" });
 const canUpdate = computed(() => issue.value?.allowed_actions.includes("update") ?? false);
 const canDelete = computed(() => issue.value?.allowed_actions.includes("delete") ?? false);
 const canRestore = computed(() => issue.value?.allowed_actions.includes("restore") ?? false);
+
+function clearRemovedProjectProjection(): void {
+  const current = issue.value;
+  const scope = props.session.allowed_scope.projects;
+  if (current === null || scope === undefined || scope.some((item) => (
+    item.workspace_key === current.workspace.key && item.project_key === current.project.key
+  ))) return;
+  issue.value = null;
+  labels.value = [];
+  deletedLabels.value = [];
+  comments.value = [];
+  deletedComments.value = [];
+  commentNextCursor.value = null;
+  relations.value = [];
+  deletedRelations.value = [];
+  relationTarget.value = null;
+  error.value = locale.value === "zh-CN"
+    ? "此 Issue 的 Project 已不在当前 active Project 列表中。"
+    : "This Issue's Project is no longer in the current active Project inventory.";
+}
 
 function formatTime(value: string): string {
   return new Intl.DateTimeFormat(locale.value, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
@@ -431,6 +451,7 @@ function backToBoard(): void {
 }
 
 onMounted(load);
+watch(() => props.session.allowed_scope.projects, clearRemovedProjectProjection, { deep: true });
 </script>
 
 <template>

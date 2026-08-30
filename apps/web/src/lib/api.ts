@@ -1,5 +1,6 @@
 import type { ApiErrorBody } from "../types";
 import {
+  type AcquiredPendingIntent,
   normalizeOuterHttp,
   normalizedFailure,
   PendingIntentExpiredError,
@@ -8,6 +9,7 @@ import {
 } from "./api-core";
 import { locale, t } from "./i18n";
 import { presentApiProblem } from "./error-presentation";
+import { isVerifiedServiceAccessFailure } from "./session-boundary";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const CSRF_COOKIE = "cfkanban_csrf";
@@ -34,13 +36,22 @@ function isErrorBody(value: unknown): value is ApiErrorBody {
     && typeof body.source === "string";
 }
 
+function isVerifiedErrorEnvelope(response: Response, value: unknown): value is ApiErrorBody {
+  if (!isErrorBody(value)) return false;
+  const responseRequestId = response.headers.get("x-request-id");
+  return responseRequestId !== null
+    && responseRequestId === value.request_id
+    && value.details?.normalized_by !== "client";
+}
+
 function normalizedHttpFailure(response: Response, text: string, requestId: string): ApiProblem {
   const normalized = normalizeOuterHttp(response.status, response.headers, text, requestId);
   return new ApiProblem(normalized.status, normalized.body, normalized.retryAfter);
 }
 
-function notifyAuthorizationFailure(status: number): void {
+function notifyAuthorizationFailure(status: number, body: ApiErrorBody): void {
   if (typeof window === "undefined") return;
+  if (!isVerifiedServiceAccessFailure(status, body)) return;
   if (status === 401) window.dispatchEvent(new CustomEvent("cfkanban:session-invalid"));
   if (status === 403) window.dispatchEvent(new CustomEvent("cfkanban:authorization-stale"));
 }
@@ -63,7 +74,9 @@ export interface ApiRequestOptions {
   body?: unknown;
   idempotencyKey?: string;
   method?: string;
+  onIdempotencyIntent?: (intent: AcquiredPendingIntent) => void;
   signal?: AbortSignal;
+  validateResponse?: (value: unknown) => boolean;
 }
 
 export function clearPendingRequestIntents(method: string, path: string): void {
@@ -98,6 +111,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       }
       signature = intent.signature;
       headers.set("idempotency-key", intent.key);
+      options.onIdempotencyIntent?.(intent);
     }
   }
 
@@ -120,44 +134,53 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     }));
   }
 
-  const requestId = response.headers.get("x-request-id") ?? crypto.randomUUID();
+  const localRequestId = crypto.randomUUID();
   const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
   let payload: unknown = null;
   if (mediaType === "application/json") {
     try {
       payload = await response.json();
     } catch {
-      const problem = normalizedHttpFailure(response, "", requestId);
-      notifyAuthorizationFailure(problem.status);
+      const problem = normalizedHttpFailure(response, "", localRequestId);
+      notifyAuthorizationFailure(problem.status, problem.body);
       throw problem;
     }
   } else if (response.status !== 204) {
-    const problem = normalizedHttpFailure(response, (await response.text()).slice(0, 16_384), requestId);
-    notifyAuthorizationFailure(problem.status);
+    const problem = normalizedHttpFailure(response, (await response.text()).slice(0, 16_384), localRequestId);
+    notifyAuthorizationFailure(problem.status, problem.body);
     throw problem;
   }
 
   if (!response.ok) {
+    if (!isVerifiedErrorEnvelope(response, payload)) {
+      const problem = normalizedHttpFailure(
+        response,
+        (JSON.stringify(payload) ?? "").slice(0, 16_384),
+        localRequestId,
+      );
+      notifyAuthorizationFailure(problem.status, problem.body);
+      throw problem;
+    }
     const headerRetryAfter = retryAfterSeconds(response.headers.get("retry-after"));
-    const bodyRetryAfter = isErrorBody(payload)
-      && typeof payload.retry_after_seconds === "number"
+    const bodyRetryAfter = typeof payload.retry_after_seconds === "number"
       && Number.isSafeInteger(payload.retry_after_seconds)
       && payload.retry_after_seconds >= 0
       ? payload.retry_after_seconds
       : null;
     const retryAfter = headerRetryAfter ?? bodyRetryAfter;
-    const body = isErrorBody(payload)
-      ? payload
-      : normalizedFailure(requestId, {
-        category: "platform_failure",
-        code: "PLATFORM_UNAVAILABLE",
-        providerRequestId: response.headers.get("cf-ray"),
-        recovery: "request_owner",
-        retryable: false,
-        source: "cloudflare_platform",
-      });
-    notifyAuthorizationFailure(response.status);
+    const body = payload;
+    notifyAuthorizationFailure(response.status, body);
     throw new ApiProblem(response.status, body, retryAfter);
+  }
+  if (options.validateResponse !== undefined && !options.validateResponse(payload)) {
+    throw new ApiProblem(503, normalizedFailure(crypto.randomUUID(), {
+      category: "platform_failure",
+      code: "PLATFORM_UNAVAILABLE",
+      component: "response_validation",
+      recovery: "retry_after",
+      retryable: true,
+      source: "client_transport",
+    }));
   }
   if (signature !== null) pendingIntents.complete(signature);
   return payload as T;

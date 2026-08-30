@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
@@ -51,6 +51,21 @@ const role = computed(() => {
 });
 const canWrite = computed(() => role.value === "writer" || role.value === "owner");
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
+
+function clearRemovedProjectProjection(): void {
+  const scope = props.session.allowed_scope.projects;
+  if (scope === undefined || scope.some((item) => (
+    item.workspace_key === props.workspaceKey && item.project_key === props.projectKey
+  ))) return;
+  project.value = null;
+  statuses.value = [];
+  issues.value = [];
+  deletedIssues.value = [];
+  nextCursor.value = null;
+  error.value = locale.value === "zh-CN"
+    ? "此 Project 已不在当前 active Project 列表中。"
+    : "This Project is no longer in the current active Project inventory.";
+}
 
 function query(cursor?: string): string {
   const params = new URLSearchParams({ limit: "100" });
@@ -214,6 +229,7 @@ function onDrop(status: StatusKey): void {
 }
 
 onMounted(() => load());
+watch(() => props.session.allowed_scope.projects, clearRemovedProjectProjection, { deep: true });
 </script>
 
 <template>

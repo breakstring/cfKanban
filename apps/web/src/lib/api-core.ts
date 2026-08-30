@@ -15,6 +15,12 @@ interface PendingIntent {
   idempotencyKey: string;
 }
 
+export interface AcquiredPendingIntent {
+  acquiredAt: number;
+  key: string;
+  signature: string;
+}
+
 export class PendingIntentExpiredError extends Error {
   constructor() {
     super("The safe idempotency recovery window has expired.");
@@ -35,16 +41,16 @@ export class PendingIntentKeys {
     this.#ttlMs = ttlMs;
   }
 
-  acquire(method: string, path: string, body: unknown, now = Date.now()): { key: string; signature: string } {
+  acquire(method: string, path: string, body: unknown, now = Date.now()): AcquiredPendingIntent {
     const signature = `${method}\n${path}\n${canonicalJson(body)}`;
     const existing = this.#entries.get(signature);
     if (existing !== undefined) {
       if (existing.acquiredAt + this.#ttlMs <= now) throw new PendingIntentExpiredError();
-      return { key: existing.idempotencyKey, signature };
+      return { acquiredAt: existing.acquiredAt, key: existing.idempotencyKey, signature };
     }
     const key = this.#createKey();
     this.#entries.set(signature, { acquiredAt: now, idempotencyKey: key });
-    return { key, signature };
+    return { acquiredAt: now, key, signature };
   }
 
   complete(signature: string): void {
@@ -73,7 +79,10 @@ function canonicalJson(value: unknown): string {
 
 export function retryAfterSeconds(value: string | null, now = Date.now()): number | null {
   if (value === null) return null;
-  if (/^\d+$/.test(value)) return Number(value);
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isSafeInteger(seconds) ? seconds : null;
+  }
   const deadline = Date.parse(value);
   return Number.isFinite(deadline) ? Math.max(0, Math.ceil((deadline - now) / 1000)) : null;
 }

@@ -1,4 +1,4 @@
-import type { ProjectScopeItem, WebSessionView } from "../types";
+import type { ApiErrorBody, ProjectScopeItem, WebSessionView } from "../types";
 
 function orderedProjects(projects: ProjectScopeItem[] | undefined): ProjectScopeItem[] {
   return [...(projects ?? [])].sort((left, right) => (
@@ -35,6 +35,15 @@ export function sameSessionBoundary(left: WebSessionView, right: WebSessionView)
   return JSON.stringify(boundaryValue(left)) === JSON.stringify(boundaryValue(right));
 }
 
-export function shouldClearAfterSessionRevalidation(status: number): boolean {
-  return status === 401 || status === 403 || status === 404;
+export function isVerifiedServiceAccessFailure(status: number, body: ApiErrorBody): boolean {
+  if (body.source !== "service" || body.details?.normalized_by === "client") return false;
+  return (status === 401 && body.category === "authentication" && body.code === "UNAUTHORIZED")
+    || (status === 403 && body.category === "authorization" && body.code === "FORBIDDEN")
+    || (status === 404 && body.category === "not_found" && body.code === "NOT_FOUND");
+}
+
+export function shouldClearAfterSessionRevalidation(
+  failure: { body: ApiErrorBody; status: number },
+): boolean {
+  return isVerifiedServiceAccessFailure(failure.status, failure.body);
 }

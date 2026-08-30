@@ -1,11 +1,21 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
-import { canConfirmInvitationReview, invitationOutcomeRequiresReview } from "../lib/invitation-recovery";
+import {
+  canConfirmInvitationReview,
+  type InvitationCreateWriteResult,
+  InvitationRecoveryBlockedError,
+  InvitationRecoveryCoordinator,
+  type InvitationRecoveryRecord,
+  invitationOutcomeRequiresReview,
+  invitationRecoveryCanRetry,
+  type InvitationRequestBody,
+  isInvitationCreateWriteResult,
+} from "../lib/invitation-recovery";
 import { publicJoinRiskNotice } from "../lib/public-join-risk";
 import { navigate } from "../lib/router";
 import type {
@@ -69,7 +79,10 @@ const oneTimeInvite = ref("");
 const inviteNeedsReview = ref(true);
 const inviteReviewReady = ref(false);
 const invitationsHasMore = ref(false);
+const invitationsNextCursor = ref<string | null>(null);
 const inviteRecoveryNotice = ref("");
+const invitationCoordinationReady = ref(false);
+const invitationRecoveryRecord = ref<InvitationRecoveryRecord | null>(null);
 const selectedWorkspace = ref("");
 const selectedProject = ref<ProjectEntry | null>(null);
 const workspaceForm = ref({ display_name: "", key: "" });
@@ -91,6 +104,7 @@ const recoveryConfirmed = ref(false);
 const policyRiskConfirmed = ref(false);
 let projectSettingsRequestId = 0;
 let policyRequestId = 0;
+let invitationRecoveryCoordinator: InvitationRecoveryCoordinator | null = null;
 
 function ui(english: string, chinese: string): string {
   return locale.value === "zh-CN" ? chinese : english;
@@ -178,11 +192,15 @@ async function loadWorkspaceTree(includeDeleted = props.section === "workspaces"
   treeTruncated.value = result.has_more || deletedResult.has_more || groups.some((group) => group.truncated);
 }
 
-async function readInvitationsForReview(): Promise<void> {
+async function readInvitationsForReview(reset = true): Promise<void> {
   inviteReviewReady.value = false;
-  const result = await apiRequest<ListResult<InvitationResource>>("/api/v1/admin/invitations?limit=100");
-  invitations.value = result.items;
+  const params = new URLSearchParams({ limit: "100" });
+  if (!reset && invitationsNextCursor.value !== null) params.set("cursor", invitationsNextCursor.value);
+  const result = await apiRequest<ListResult<InvitationResource>>(`/api/v1/admin/invitations?${params}`);
+  const merged = reset ? result.items : [...invitations.value, ...result.items];
+  invitations.value = [...new Map(merged.map((invitation) => [invitation.id, invitation])).values()];
   invitationsHasMore.value = result.has_more;
+  invitationsNextCursor.value = result.has_more ? result.next_cursor : null;
   inviteReviewReady.value = true;
 }
 
@@ -192,8 +210,23 @@ function lockInvitationCreation(message: string): void {
   inviteRecoveryNotice.value = message;
 }
 
+function committedInvitationResolved(): boolean {
+  const record = invitationRecoveryRecord.value;
+  if (record?.state !== "committed_unavailable") return false;
+  const invitation = invitations.value.find((item) => item.id === record.invitation_id);
+  return invitation !== undefined && invitation.status !== "active";
+}
+
 function confirmInvitationReview(): void {
-  if (!canConfirmInvitationReview(inviteReviewReady.value, invitationsHasMore.value)) return;
+  if (!invitationCoordinationReady.value || !canConfirmInvitationReview(
+    inviteReviewReady.value,
+    invitationsHasMore.value,
+    invitationRecoveryRecord.value,
+    Date.now(),
+    committedInvitationResolved(),
+  )) return;
+  const record = invitationRecoveryRecord.value;
+  if (record !== null && !settleInvitationRecovery(record)) return;
   clearPendingRequestIntents("POST", "/api/v1/admin/invitations");
   inviteNeedsReview.value = false;
   inviteRecoveryNotice.value = "";
@@ -203,7 +236,7 @@ async function refreshInvitationReview(): Promise<void> {
   busy.value = true;
   error.value = "";
   try {
-    await readInvitationsForReview();
+    await readInvitationsForReview(true);
   } catch (caught) {
     error.value = errorText(caught);
   } finally {
@@ -211,20 +244,185 @@ async function refreshInvitationReview(): Promise<void> {
   }
 }
 
-async function handleInvitationCreateFailure(caught: unknown, kind: "Invite" | "recovery URL"): Promise<void> {
+async function continueInvitationReview(): Promise<void> {
+  if (invitationsNextCursor.value === null) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await readInvitationsForReview(false);
+  } catch (caught) {
+    error.value = errorText(caught);
+  } finally {
+    busy.value = false;
+  }
+}
+
+function sharedInvitationRecoveryMessage(): string {
+  return ui(
+    "Another tab or an earlier request has an Invitation operation whose result is not yet proven. Recover that exact operation before creating another capability.",
+    "另一个标签页或先前请求仍有一项结果尚未确定的 Invitation 操作。请先恢复该同一操作，再创建新的 capability。",
+  );
+}
+
+function applySharedInvitationRecovery(record: InvitationRecoveryRecord): void {
+  invitationRecoveryRecord.value = record;
+  lockInvitationCreation(sharedInvitationRecoveryMessage());
+}
+
+function onInvitationRecoveryStorage(event: StorageEvent): void {
+  const coordinator = invitationRecoveryCoordinator;
+  if (coordinator === null || event.key !== coordinator.storageKey) return;
+  if (event.newValue === null) {
+    invitationRecoveryRecord.value = null;
+    inviteReviewReady.value = false;
+    inviteRecoveryNotice.value = ui(
+      "The other tab proved the operation ended. Refresh and review the complete Invitation list before unlocking this tab.",
+      "另一个标签页已证明该操作结束。请刷新并检查完整 Invitation 列表，再解锁本标签页。",
+    );
+    return;
+  }
+  const record = coordinator.readStorageValue(event.newValue);
+  if (record === null) {
+    invitationCoordinationReady.value = false;
+    lockInvitationCreation(ui(
+      "The shared recovery state is invalid. Keep creation locked and use cfkanban-admin to inspect Invitations.",
+      "共享恢复状态无效。请保持创建锁定，并使用 cfkanban-admin 检查 Invitation。",
+    ));
+    return;
+  }
+  applySharedInvitationRecovery(record);
+}
+
+function initializeInvitationRecovery(): void {
+  try {
+    const probeKey = `cfkanban.invitation-recovery.probe.${crypto.randomUUID()}`;
+    window.localStorage.setItem(probeKey, "1");
+    window.localStorage.removeItem(probeKey);
+    invitationRecoveryCoordinator = new InvitationRecoveryCoordinator(
+      props.session.principal.id,
+      window.localStorage,
+    );
+    invitationCoordinationReady.value = true;
+    window.addEventListener("storage", onInvitationRecoveryStorage);
+    const record = invitationRecoveryCoordinator.read();
+    if (record !== null) applySharedInvitationRecovery(record);
+  } catch {
+    invitationRecoveryCoordinator = null;
+    invitationCoordinationReady.value = false;
+    lockInvitationCreation(ui(
+      "This browser cannot maintain the non-secret shared recovery lock. Invitation creation stays disabled; use cfkanban-admin instead.",
+      "此浏览器无法维护非秘密的共享恢复锁。Invitation 创建将保持禁用；请改用 cfkanban-admin。",
+    ));
+  }
+}
+
+function settleInvitationRecovery(record: InvitationRecoveryRecord): boolean {
+  const coordinator = invitationRecoveryCoordinator;
+  if (coordinator === null) return false;
+  try {
+    const settled = coordinator.settle(record);
+    if (!settled) {
+      const current = coordinator.read();
+      if (current !== null) {
+        applySharedInvitationRecovery(current);
+        return false;
+      }
+    }
+    invitationRecoveryRecord.value = null;
+    return true;
+  } catch {
+    invitationCoordinationReady.value = false;
+    lockInvitationCreation(ui(
+      "The shared recovery lock could not be safely cleared. Keep creation disabled and use cfkanban-admin.",
+      "共享恢复锁无法安全清除。请保持创建禁用，并使用 cfkanban-admin。",
+    ));
+    return false;
+  }
+}
+
+async function handleInvitationCreateFailure(
+  caught: unknown,
+  kind: "Invite" | "recovery URL",
+  recoveryAttempt = false,
+): Promise<void> {
   error.value = errorText(caught);
+  if (caught instanceof InvitationRecoveryBlockedError) {
+    applySharedInvitationRecovery(caught.record);
+  }
   const failure = caught instanceof ApiProblem
     ? { code: caught.body.code, status: caught.status }
     : null;
-  if (!invitationOutcomeRequiresReview(failure)) return;
+  if (!recoveryAttempt && !invitationOutcomeRequiresReview(failure)) {
+    const record = invitationRecoveryRecord.value;
+    if (record !== null) settleInvitationRecovery(record);
+    return;
+  }
   lockInvitationCreation(ui(
-    `The ${kind} result is uncertain and its bearer URL cannot be reconstructed. Review the complete Invitation list and revoke any matching active capability before starting another intent.`,
-    `${kind === "Invite" ? "Invite" : "恢复 URL"} 的提交结果不确定，bearer URL 也无法重建。请检查完整 Invitation 列表并撤销匹配的 active capability，再开始新的创建意图。`,
+    `The ${kind} result is uncertain and its bearer URL cannot be reconstructed. Retry the exact stored operation with the same Idempotency-Key; an immediate list snapshot cannot prove the original POST has ended.`,
+    `${kind === "Invite" ? "Invite" : "恢复 URL"} 的提交结果不确定，bearer URL 也无法重建。请使用相同 Idempotency-Key 恢复已保存的同一操作；即时列表快照不能证明原 POST 已结束。`,
   ));
   try {
-    await readInvitationsForReview();
+    await readInvitationsForReview(true);
   } catch (readbackFailure) {
     error.value = `${error.value} ${errorText(readbackFailure)}`;
+  }
+}
+
+async function finishInvitationOperation(
+  result: InvitationCreateWriteResult,
+  record: InvitationRecoveryRecord,
+  recovered: boolean,
+): Promise<void> {
+  oneTimeInvite.value = result.resource.secret_available ? result.resource.copy_text : "";
+  if (!result.resource.secret_available) {
+    const coordinator = invitationRecoveryCoordinator;
+    const committed = coordinator?.markCommittedUnavailable(record, result.resource.id) ?? null;
+    if (committed === null) {
+      lockInvitationCreation(ui(
+        "The committed Invitation could not be bound to the shared recovery lock. Keep creation disabled and use cfkanban-admin.",
+        "已提交的 Invitation 无法绑定到共享恢复锁。请保持创建禁用，并使用 cfkanban-admin。",
+      ));
+      return;
+    }
+    invitationRecoveryRecord.value = committed;
+    lockInvitationCreation(ui(
+      `The committed Invitation ${result.resource.id} cannot reproduce its bearer URL. Revoke that exact capability (or wait until it is no longer active), load the complete list, then confirm before creating another one.`,
+      `已提交的 Invitation ${result.resource.id} 无法重建 bearer URL。请撤销这项 capability（或等待其不再 active）、读完完整列表并确认后，再创建下一项。`,
+    ));
+  } else {
+    if (!settleInvitationRecovery(record)) return;
+    clearPendingRequestIntents("POST", "/api/v1/admin/invitations");
+  }
+  if (recovered && result.resource.secret_available) {
+    lockInvitationCreation(ui(
+      "The exact operation was recovered and its one-time URL is shown below. Save it, then review the complete list before starting another capability.",
+      "同一操作已恢复，一次性 URL 显示如下。请先保存，再检查完整列表后开始新的 capability。",
+    ));
+  }
+  try {
+    await readInvitationsForReview(true);
+  } catch (caught) {
+    error.value = errorText(caught);
+  }
+}
+
+async function recoverInvitationOperation(): Promise<void> {
+  const record = invitationRecoveryRecord.value;
+  if (record === null || !invitationRecoveryCanRetry(record)) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    const result = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
+      body: record.body,
+      idempotencyKey: record.idempotency_key,
+      method: "POST",
+      validateResponse: isInvitationCreateWriteResult,
+    });
+    await finishInvitationOperation(result, record, true);
+  } catch (caught) {
+    await handleInvitationCreateFailure(caught, record.body.kind === "project_grant" ? "Invite" : "recovery URL", true);
+  } finally {
+    busy.value = false;
   }
 }
 
@@ -485,38 +683,38 @@ async function revokePrincipalPasskey(passkey: PrincipalPasskey): Promise<void> 
 }
 
 async function createRecoveryInvite(): Promise<void> {
-  if (!recoveryForm.value.principal_id || !recoveryConfirmed.value || inviteNeedsReview.value) return;
+  if (!recoveryForm.value.principal_id
+    || !recoveryConfirmed.value
+    || inviteNeedsReview.value
+    || !invitationCoordinationReady.value) return;
   busy.value = true;
   oneTimeInvite.value = "";
-  let result: WriteResult<{ copy_text?: string; invite_url?: string; secret_available: boolean }>;
+  const body: InvitationRequestBody = {
+    kind: "principal_recovery",
+    principal_id: recoveryForm.value.principal_id,
+    recovery_mode: recoveryForm.value.mode,
+  };
+  let operationRecord: InvitationRecoveryRecord | null = null;
   try {
-    result = await apiRequest<WriteResult<{ copy_text?: string; invite_url?: string; secret_available: boolean }>>(
+    const result = await apiRequest<InvitationCreateWriteResult>(
       "/api/v1/admin/invitations",
       {
-        body: {
-          kind: "principal_recovery",
-          principal_id: recoveryForm.value.principal_id,
-          recovery_mode: recoveryForm.value.mode,
-        },
+        body,
         method: "POST",
+        onIdempotencyIntent: (intent) => {
+          if (invitationRecoveryCoordinator === null) {
+            throw new Error("Shared Invitation recovery is unavailable.");
+          }
+          operationRecord = invitationRecoveryCoordinator.begin(intent, body);
+          invitationRecoveryRecord.value = operationRecord;
+        },
+        validateResponse: isInvitationCreateWriteResult,
       },
     );
+    if (operationRecord === null) throw new Error("The Invitation recovery record was not established.");
+    await finishInvitationOperation(result, operationRecord, false);
   } catch (caught) {
     await handleInvitationCreateFailure(caught, "recovery URL");
-    busy.value = false;
-    return;
-  }
-  oneTimeInvite.value = result.resource.copy_text ?? result.resource.invite_url ?? "";
-  if (!result.resource.secret_available) {
-    lockInvitationCreation(ui(
-      "The original recovery URL cannot be reconstructed. Review and revoke the committed Invitation before explicitly starting a new one.",
-      "首次恢复 URL 无法重建。请先检查并撤销已经提交的 Invitation，再显式开始一次新创建。",
-    ));
-  }
-  try {
-    await readInvitationsForReview();
-  } catch (caught) {
-    error.value = errorText(caught);
   } finally { busy.value = false; }
 }
 
@@ -571,30 +769,31 @@ async function revokeGrant(grant: GrantResource): Promise<void> {
 }
 
 async function createInvite(): Promise<void> {
-  if (!inviteForm.value.project_id || inviteNeedsReview.value) return;
+  if (!inviteForm.value.project_id || inviteNeedsReview.value || !invitationCoordinationReady.value) return;
   busy.value = true;
   oneTimeInvite.value = "";
-  let result: WriteResult<{ copy_text?: string; invite_url?: string; secret_available: boolean }>;
+  const body: InvitationRequestBody = {
+    grants: [{ project_id: inviteForm.value.project_id, role: inviteForm.value.role }],
+    kind: "project_grant",
+  };
+  let operationRecord: InvitationRecoveryRecord | null = null;
   try {
-    result = await apiRequest<WriteResult<{ copy_text?: string; invite_url?: string; secret_available: boolean }>>("/api/v1/admin/invitations", {
-      body: { kind: "project_grant", grants: [inviteForm.value] }, method: "POST",
+    const result = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
+      body,
+      method: "POST",
+      onIdempotencyIntent: (intent) => {
+        if (invitationRecoveryCoordinator === null) {
+          throw new Error("Shared Invitation recovery is unavailable.");
+        }
+        operationRecord = invitationRecoveryCoordinator.begin(intent, body);
+        invitationRecoveryRecord.value = operationRecord;
+      },
+      validateResponse: isInvitationCreateWriteResult,
     });
+    if (operationRecord === null) throw new Error("The Invitation recovery record was not established.");
+    await finishInvitationOperation(result, operationRecord, false);
   } catch (caught) {
     await handleInvitationCreateFailure(caught, "Invite");
-    busy.value = false;
-    return;
-  }
-  oneTimeInvite.value = result.resource.copy_text ?? result.resource.invite_url ?? "";
-  if (!result.resource.secret_available) {
-    lockInvitationCreation(ui(
-      "The original Invite URL cannot be reconstructed. Review and revoke the committed Invitation before explicitly starting a new one.",
-      "首次 Invite URL 无法重建。请先检查并撤销已经提交的 Invitation，再显式开始一次新创建。",
-    ));
-  }
-  try {
-    await readInvitationsForReview();
-  } catch (caught) {
-    error.value = errorText(caught);
   } finally { busy.value = false; }
 }
 
@@ -667,7 +866,11 @@ function formatTime(value: string): string {
 }
 
 watch(() => props.section, load);
-onMounted(load);
+onMounted(() => {
+  initializeInvitationRecovery();
+  void load();
+});
+onUnmounted(() => window.removeEventListener("storage", onInvitationRecoveryStorage));
 </script>
 
 <template>
@@ -710,12 +913,18 @@ onMounted(load);
       <div class="section-action-bar"><p>{{ locale === "zh-CN" ? "按稳定 Principal ID 与显式 Project role 管理访问。" : "Manage access by stable Principal ID and explicit Project role." }}</p><button class="primary-button" type="button" :disabled="busy || inviteNeedsReview" @click="openInviteDialog">+ Invite</button></div>
       <div v-if="inviteNeedsReview" class="warning-panel">
         <p><strong>{{ ui("Invitation safety review required", "需要完成 Invitation 安全复核") }}</strong></p>
-        <p>{{ ui("One-time bearer URLs are never stored and cannot be reconstructed after an uncertain response. Review the complete current Invitation list, revoke any matching active capability, then explicitly confirm before creating any Project or Principal Recovery Invitation.", "一次性 bearer URL 永不持久化，响应结果不确定后也无法重建。请检查完整的当前 Invitation 列表，撤销任何匹配的 active capability，再显式确认后创建新的 Project 或 Principal Recovery Invitation。") }}</p>
+        <p>{{ ui("One-time bearer URLs are never stored. While a shared recovery record is within its fixed 24-hour window, only an exact retry with the stored body and Idempotency-Key can prove the original POST ended. A list snapshot alone cannot unlock creation.", "一次性 bearer URL 永不持久化。共享恢复记录仍处于固定 24 小时窗口内时，只有使用已保存 body 与 Idempotency-Key 的同操作重试，才能证明原 POST 已结束；仅靠列表快照不能解锁创建。") }}</p>
         <p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p>
-        <p v-if="invitationsHasMore" class="inline-alert" role="alert">{{ ui("More than 100 Invitations exist, so this Web view cannot prove the review is complete. Use cfkanban-admin with the returned cursor before creating another capability.", "Invitation 超过 100 条，此 Web 视图无法证明复核完整。请先让 cfkanban-admin 使用返回的 cursor 完成检查，再创建新的 capability。") }}</p>
+        <textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" />
+        <p v-if="invitationRecoveryRecord && invitationRecoveryCanRetry(invitationRecoveryRecord)" class="muted-copy">{{ ui("The original operation is still inside its safe replay window. Changing Project, role, recovery mode, tab, or page cannot start a new capability.", "原操作仍处于安全重放窗口内。更改 Project、role、恢复模式、标签页或页面，都不能开始新的 capability。") }}</p>
+        <p v-else-if="invitationRecoveryRecord" class="muted-copy">{{ ui("The fixed recovery window ended. Refresh every Invitation page, revoke any matching active capability, and explicitly confirm before abandoning the old key.", "固定恢复窗口已结束。请刷新并读完全部 Invitation 页面，撤销任何匹配的 active capability，再显式确认放弃旧 key。") }}</p>
+        <p v-if="invitationsHasMore" class="inline-alert" role="alert">{{ ui("More Invitation history remains. Load every page before confirmation; this Web view will not treat the first 100 rows as complete.", "还有更多 Invitation 历史。确认前必须读完每一页；此 Web 视图不会把前 100 行当作完整结果。") }}</p>
         <div class="form-actions">
           <button class="secondary-button" type="button" :disabled="busy" @click="refreshInvitationReview">{{ ui("Refresh Invitation list", "刷新 Invitation 列表") }}</button>
-          <button class="primary-button" type="button" :disabled="busy || !canConfirmInvitationReview(inviteReviewReady, invitationsHasMore)" @click="confirmInvitationReview">{{ ui("I reviewed the complete list", "我已检查完整列表") }}</button>
+          <button v-if="invitationsHasMore && invitationsNextCursor" class="secondary-button" type="button" :disabled="busy" @click="continueInvitationReview">{{ ui("Load next review page", "加载下一复核页") }}</button>
+          <button v-if="invitationRecoveryRecord && invitationRecoveryCanRetry(invitationRecoveryRecord)" class="primary-button" type="button" :disabled="busy" @click="recoverInvitationOperation">{{ ui("Recover exact operation", "恢复同一操作") }}</button>
+          <button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button>
+          <button class="primary-button" type="button" :disabled="busy || !invitationCoordinationReady || !canConfirmInvitationReview(inviteReviewReady, invitationsHasMore, invitationRecoveryRecord, Date.now(), committedInvitationResolved())" @click="confirmInvitationReview">{{ ui("I reviewed the complete list", "我已检查完整列表") }}</button>
         </div>
       </div>
       <p v-if="treeTruncated" class="warning-panel">{{ ui("Project access controls are limited to the first 20 Workspaces and first 20 Projects in each. Use cfkanban-admin with an explicit cursor for omitted Projects.", "Project 访问管理只显示前 20 个 Workspace，以及每个 Workspace 的前 20 个 Project；未显示的 Project 请让 cfkanban-admin 使用显式 cursor。") }}</p>

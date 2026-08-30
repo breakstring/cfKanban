@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { build } from "esbuild";
 
 import {
   normalizeOuterHttp,
   normalizedFailure,
   PendingIntentExpiredError,
   PendingIntentKeys,
+  retryAfterSeconds,
 } from "../../apps/web/src/lib/api-core.ts";
 import { presentApiProblem } from "../../apps/web/src/lib/error-presentation.ts";
 import {
   canConfirmInvitationReview,
+  InvitationRecoveryBlockedError,
+  InvitationRecoveryCoordinator,
+  invitationRecoveryCanRetry,
   invitationOutcomeRequiresReview,
+  isInvitationCreateWriteResult,
 } from "../../apps/web/src/lib/invitation-recovery.ts";
 import { resolveLocalePreference } from "../../apps/web/src/lib/locale-preference.ts";
 import { renderMarkdown } from "../../apps/web/src/lib/markdown.ts";
@@ -54,6 +61,64 @@ const englishErrors = {
 };
 
 const translate = (key) => englishErrors[key];
+
+class MemoryStorage {
+  values = new Map();
+
+  getItem(key) { return this.values.get(key) ?? null; }
+  removeItem(key) { this.values.delete(key); }
+  setItem(key, value) { this.values.set(key, value); }
+}
+
+function invitationWriteResult(secretAvailable = true) {
+  return {
+    event_cursor: "event-cursor",
+    idempotent_replay: false,
+    resource: {
+      allowed_actions: ["read", "revoke"],
+      bound_principal: null,
+      code_fingerprint: "invite-fingerprint",
+      created_at: "2026-08-30T00:00:00.000Z",
+      deleted_at: null,
+      expires_at: "2026-09-06T00:00:00.000Z",
+      grants: [{
+        display_name: "Project",
+        project_id: "project-id",
+        project_key: "PROJ",
+        role: "writer",
+        workspace_key: "workspace",
+      }],
+      id: "invitation-id",
+      kind: "project_grant",
+      recovery_mode: null,
+      redeemed_at: null,
+      redeemed_by_principal_id: null,
+      revoked_at: null,
+      secret_available: secretAvailable,
+      status: "active",
+      updated_at: "2026-08-30T00:00:00.000Z",
+      version: 1,
+      ...(secretAvailable
+        ? { copy_text: "Copy this one-time URL", invite_url: "https://example.test/invite/code" }
+        : {}),
+    },
+  };
+}
+
+async function importBundledWebModule(relativePath) {
+  const entryPoint = new URL(relativePath, import.meta.url).pathname;
+  const result = await build({
+    bundle: true,
+    entryPoints: [entryPoint],
+    format: "esm",
+    logLevel: "silent",
+    platform: "node",
+    write: false,
+  });
+  const output = result.outputFiles[0]?.text;
+  assert.ok(output);
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
+}
 
 test("locale preference uses the saved choice or the browser's first language", () => {
   assert.equal(resolveLocalePreference("zh-CN", ["en-US"]), "zh-CN");
@@ -119,6 +184,11 @@ test("rate limit recovery includes the verified Retry-After value", () => {
     presentApiProblem(limited, "en", translate),
     "Too many requests. Wait before trying again. Try again in 17 seconds.",
   );
+});
+
+test("Retry-After rejects unbounded numeric values", () => {
+  assert.equal(retryAfterSeconds("19"), 19);
+  assert.equal(retryAfterSeconds("9".repeat(400)), null);
 });
 
 test("platform quota presentation distinguishes reset and Owner recovery", () => {
@@ -290,12 +360,33 @@ test("Owner instance inventory refresh does not remount one-time local state", (
 });
 
 test("Session revalidation clears deterministic auth and target failures only", () => {
-  assert.equal(shouldClearAfterSessionRevalidation(401), true);
-  assert.equal(shouldClearAfterSessionRevalidation(403), true);
-  assert.equal(shouldClearAfterSessionRevalidation(404), true);
-  assert.equal(shouldClearAfterSessionRevalidation(0), false);
-  assert.equal(shouldClearAfterSessionRevalidation(429), false);
-  assert.equal(shouldClearAfterSessionRevalidation(503), false);
+  const serviceFailure = (status, category, code) => ({
+    body: {
+      category,
+      code,
+      details: {},
+      message: "stable",
+      recovery: "none",
+      request_id: "request",
+      retryable: false,
+      source: "service",
+    },
+    status,
+  });
+  assert.equal(shouldClearAfterSessionRevalidation(serviceFailure(401, "authentication", "UNAUTHORIZED")), true);
+  assert.equal(shouldClearAfterSessionRevalidation(serviceFailure(403, "authorization", "FORBIDDEN")), true);
+  assert.equal(shouldClearAfterSessionRevalidation(serviceFailure(404, "not_found", "NOT_FOUND")), true);
+  assert.equal(shouldClearAfterSessionRevalidation(serviceFailure(503, "platform_failure", "PLATFORM_UNAVAILABLE")), false);
+  assert.equal(shouldClearAfterSessionRevalidation({
+    body: {
+      ...serviceFailure(403, "authorization", "FORBIDDEN").body,
+      category: "platform_failure",
+      code: "PLATFORM_UNAVAILABLE",
+      details: { normalized_by: "client" },
+      source: "cloudflare_platform",
+    },
+    status: 403,
+  }), false);
 });
 
 test("Invitation uncertainty requires complete readback before another capability", () => {
@@ -308,6 +399,197 @@ test("Invitation uncertainty requires complete readback before another capabilit
   assert.equal(canConfirmInvitationReview(false, false), false);
   assert.equal(canConfirmInvitationReview(true, true), false);
   assert.equal(canConfirmInvitationReview(true, false), true);
+});
+
+test("Invitation recovery record is shared by Owner Principal and blocks a changed-body second capability", () => {
+  const storage = new MemoryStorage();
+  const firstTab = new InvitationRecoveryCoordinator("owner-principal", storage, () => "marker-a");
+  const secondTab = new InvitationRecoveryCoordinator("owner-principal", storage, () => "marker-b");
+  const record = firstTab.begin(
+    { acquiredAt: 100, key: "idempotency-a", signature: "signature-a" },
+    { grants: [{ project_id: "project-a", role: "writer" }], kind: "project_grant" },
+  );
+  assert.deepEqual(secondTab.read(), record);
+  assert.throws(
+    () => secondTab.begin(
+      { acquiredAt: 101, key: "idempotency-b", signature: "signature-b" },
+      { grants: [{ project_id: "project-b", role: "reader" }], kind: "project_grant" },
+    ),
+    InvitationRecoveryBlockedError,
+  );
+  assert.equal(firstTab.settle(record), true);
+  assert.equal(secondTab.read(), null);
+});
+
+test("Invitation list cannot unlock an operation still inside the exact-retry window", () => {
+  const storage = new MemoryStorage();
+  const coordinator = new InvitationRecoveryCoordinator("owner-principal", storage, () => "marker-window");
+  const record = coordinator.begin(
+    { acquiredAt: 1_000, key: "idempotency-window", signature: "signature-window" },
+    { kind: "principal_recovery", principal_id: "principal", recovery_mode: "rotation" },
+  );
+  assert.equal(invitationRecoveryCanRetry(record, 1_001), true);
+  assert.equal(canConfirmInvitationReview(true, false, record, 1_001), false);
+  assert.equal(canConfirmInvitationReview(true, false, record, 1_000 + 24 * 60 * 60 * 1000), true);
+  const committed = coordinator.markCommittedUnavailable(record, "invitation-committed");
+  assert.ok(committed);
+  assert.equal(invitationRecoveryCanRetry(committed, 1_001), false);
+  assert.equal(canConfirmInvitationReview(true, false, committed, 1_001, false), false);
+  assert.equal(canConfirmInvitationReview(true, false, committed, 1_001, true), true);
+});
+
+test("Invitation success is accepted only after the complete WriteResult shape is verified", () => {
+  assert.equal(isInvitationCreateWriteResult(invitationWriteResult(true)), true);
+  assert.equal(isInvitationCreateWriteResult(invitationWriteResult(false)), true);
+  assert.equal(isInvitationCreateWriteResult(null), false);
+  assert.equal(isInvitationCreateWriteResult({}), false);
+  assert.equal(isInvitationCreateWriteResult({ ...invitationWriteResult(true), event_cursor: 7 }), false);
+  const missingResourceField = invitationWriteResult(true);
+  delete missingResourceField.resource.code_fingerprint;
+  assert.equal(isInvitationCreateWriteResult(missingResourceField), false);
+});
+
+test("malformed 2xx Invitation responses retain one Idempotency-Key until a verified success", async () => {
+  const { ApiProblem, apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const originalFetch = globalThis.fetch;
+  const keys = [];
+  let mode = "json";
+  globalThis.fetch = async (_path, init) => {
+    keys.push(new Headers(init.headers).get("idempotency-key"));
+    if (mode === "empty") return new Response(null, { status: 204 });
+    if (mode === "valid") {
+      return new Response(JSON.stringify(invitationWriteResult(true)), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }
+    return new Response("{}", { headers: { "content-type": "application/json" }, status: 200 });
+  };
+  try {
+    const options = {
+      body: { grants: [{ project_id: "project", role: "writer" }], kind: "project_grant" },
+      method: "POST",
+      validateResponse: isInvitationCreateWriteResult,
+    };
+    await assert.rejects(
+      apiRequest("/test/invitation-malformed-json", options),
+      (error) => error instanceof ApiProblem && error.status === 503,
+    );
+    await assert.rejects(
+      apiRequest("/test/invitation-malformed-json", options),
+      (error) => error instanceof ApiProblem && error.status === 503,
+    );
+    assert.equal(keys[0], keys[1]);
+
+    mode = "empty";
+    await assert.rejects(
+      apiRequest("/test/invitation-empty-success", options),
+      (error) => error instanceof ApiProblem && error.status === 503,
+    );
+    await assert.rejects(
+      apiRequest("/test/invitation-empty-success", options),
+      (error) => error instanceof ApiProblem && error.status === 503,
+    );
+    assert.equal(keys[2], keys[3]);
+
+    mode = "valid";
+    await apiRequest("/test/invitation-verified-success", options);
+    await apiRequest("/test/invitation-verified-success", options);
+    assert.notEqual(keys[4], keys[5]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("JSON outer responses use client normalization rather than service authorization semantics", async () => {
+  const { ApiProblem, apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const originalFetch = globalThis.fetch;
+  let response = new Response(JSON.stringify({ error: "edge limited" }), {
+    headers: {
+      "cf-ray": "ray-json-429",
+      "content-type": "application/json",
+      "retry-after": "23",
+      "x-request-id": "untrusted-outer-id",
+    },
+    status: 429,
+  });
+  globalThis.fetch = async () => response;
+  try {
+    await assert.rejects(apiRequest("/test/json-outer-429"), (error) => {
+      assert.ok(error instanceof ApiProblem);
+      assert.equal(error.status, 429);
+      assert.equal(error.body.code, "RATE_LIMITED");
+      assert.equal(error.body.category, "rate_limit");
+      assert.equal(error.body.source, "cloudflare_platform");
+      assert.equal(error.body.details.normalized_by, "client");
+      assert.equal(error.body.details.provider_request_id, "ray-json-429");
+      assert.notEqual(error.body.request_id, "untrusted-outer-id");
+      assert.equal(error.retryAfter, 23);
+      return true;
+    });
+
+    response = new Response(JSON.stringify({ error: "blocked by an outer layer" }), {
+      headers: { "content-type": "application/json" },
+      status: 403,
+    });
+    await assert.rejects(apiRequest("/test/json-outer-403"), (error) => {
+      assert.ok(error instanceof ApiProblem);
+      assert.equal(error.status, 503);
+      assert.equal(error.body.code, "PLATFORM_UNAVAILABLE");
+      assert.equal(error.body.category, "platform_failure");
+      assert.equal(error.body.source, "cloudflare_platform");
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a Worker error envelope is trusted only when its request id matches the response header", async () => {
+  const { ApiProblem, apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const originalFetch = globalThis.fetch;
+  const body = {
+    category: "authorization",
+    code: "FORBIDDEN",
+    details: {},
+    message: "Forbidden",
+    recovery: "reauthenticate",
+    request_id: "worker-request",
+    retryable: false,
+    source: "service",
+  };
+  globalThis.fetch = async () => new Response(JSON.stringify(body), {
+    headers: { "content-type": "application/json", "x-request-id": "worker-request" },
+    status: 403,
+  });
+  try {
+    await assert.rejects(apiRequest("/test/verified-worker-error"), (error) => {
+      assert.ok(error instanceof ApiProblem);
+      assert.equal(error.status, 403);
+      assert.deepEqual(error.body, body);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("high-risk Session and Invitation recovery helpers remain wired into the Vue views", async () => {
+  const [appSource, ownerSource, projectBoardSource, issueDetailSource] = await Promise.all([
+    readFile(new URL("../../apps/web/src/App.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/OwnerView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/ProjectBoardView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/IssueDetailView.vue", import.meta.url), "utf8"),
+  ]);
+  assert.match(appSource, /shouldClearAfterSessionRevalidation\(caught\)/);
+  assert.match(appSource, /sessionReloadPending = true/);
+  assert.match(ownerSource, /initializeInvitationRecovery\(\)/);
+  assert.match(ownerSource, /invitationRecoveryCoordinator\.begin\(intent, body\)/);
+  assert.match(ownerSource, /validateResponse: isInvitationCreateWriteResult/);
+  assert.match(ownerSource, /markCommittedUnavailable\(record, result\.resource\.id\)/);
+  assert.match(ownerSource, /readInvitationsForReview\(false\)/);
+  assert.match(projectBoardSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, clearRemovedProjectProjection/);
+  assert.match(issueDetailSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, clearRemovedProjectProjection/);
 });
 
 test("client transport normalizes Cloudflare outer errors without prose branching", async () => {
