@@ -14,6 +14,11 @@ import { isVerifiedServiceAccessFailure } from "./session-boundary";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const CSRF_COOKIE = "cfkanban_csrf";
 const pendingIntents = new PendingIntentKeys(() => crypto.randomUUID());
+const ERROR_CATEGORIES = new Set([
+  "authentication", "authorization", "business_quota", "conflict", "not_found",
+  "platform_failure", "platform_quota", "rate_limit", "validation",
+]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function cookieValue(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -25,23 +30,63 @@ function cookieValue(name: string): string | null {
 }
 
 function isErrorBody(value: unknown): value is ApiErrorBody {
-  if (typeof value !== "object" || value === null) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const body = value as Record<string, unknown>;
   return typeof body.code === "string"
+    && body.code.length > 0
     && typeof body.category === "string"
+    && ERROR_CATEGORIES.has(body.category)
     && typeof body.message === "string"
     && typeof body.recovery === "string"
+    && body.recovery.length > 0
     && typeof body.request_id === "string"
+    && UUID_PATTERN.test(body.request_id)
     && typeof body.retryable === "boolean"
-    && typeof body.source === "string";
+    && (body.source === "service" || body.source === "cloudflare_platform")
+    && typeof body.details === "object"
+    && body.details !== null
+    && !Array.isArray(body.details)
+    && (body.retry_after_seconds === undefined || (
+      typeof body.retry_after_seconds === "number"
+      && Number.isSafeInteger(body.retry_after_seconds)
+      && body.retry_after_seconds >= 0
+    ));
+}
+
+function categoryMatchesStatus(category: string, status: number): boolean {
+  if (category === "authentication") return status === 401;
+  if (category === "authorization") return status === 403;
+  if (category === "not_found") return status === 404;
+  if (category === "validation") return status === 400 || status === 413;
+  if (category === "conflict") return status === 409 || status === 410;
+  if (category === "business_quota") return status === 409;
+  if (category === "rate_limit") return status === 429;
+  return status === 503;
 }
 
 function isVerifiedErrorEnvelope(response: Response, value: unknown): value is ApiErrorBody {
   if (!isErrorBody(value)) return false;
   const responseRequestId = response.headers.get("x-request-id");
+  const rawRetryAfter = response.headers.get("retry-after");
+  const parsedRetryAfter = retryAfterSeconds(rawRetryAfter);
+  const hasBodyRetryAfter = value.retry_after_seconds !== undefined;
+  const retryAfterIsConsistent = rawRetryAfter === null
+    ? !hasBodyRetryAfter
+    : parsedRetryAfter !== null
+      && hasBodyRetryAfter
+      && parsedRetryAfter === value.retry_after_seconds;
+  const sourceIsConsistent = value.source === "service"
+    || value.category === "platform_failure"
+    || value.category === "platform_quota";
   return responseRequestId !== null
+    && UUID_PATTERN.test(responseRequestId)
     && responseRequestId === value.request_id
-    && value.details?.normalized_by !== "client";
+    && value.details.normalized_by !== "client"
+    && categoryMatchesStatus(value.category, response.status)
+    && sourceIsConsistent
+    && retryAfterIsConsistent
+    && value.retryable === hasBodyRetryAfter
+    && (value.category !== "rate_limit" || hasBodyRetryAfter);
 }
 
 function normalizedHttpFailure(response: Response, text: string, requestId: string): ApiProblem {
@@ -74,7 +119,7 @@ export interface ApiRequestOptions {
   body?: unknown;
   idempotencyKey?: string;
   method?: string;
-  onIdempotencyIntent?: (intent: AcquiredPendingIntent) => void;
+  onIdempotencyIntent?: (intent: AcquiredPendingIntent) => Promise<void> | void;
   signal?: AbortSignal;
   validateResponse?: (value: unknown) => boolean;
 }
@@ -111,7 +156,15 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       }
       signature = intent.signature;
       headers.set("idempotency-key", intent.key);
-      options.onIdempotencyIntent?.(intent);
+      try {
+        await options.onIdempotencyIntent?.(intent);
+      } catch (error) {
+        // The coordination hook runs before fetch. If it cannot establish the
+        // external recovery record, no request was sent and this local key must
+        // not consume part of the fixed recovery window.
+        pendingIntents.complete(signature);
+        throw error;
+      }
     }
   }
 

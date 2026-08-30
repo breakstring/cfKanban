@@ -6,7 +6,7 @@ export type PriorityKey = "none" | "low" | "medium" | "high" | "urgent";
 export interface ApiErrorBody {
   category: string;
   code: string;
-  details?: Record<string, unknown>;
+  details: Record<string, unknown>;
   message: string;
   recovery: string;
   request_id: string;
