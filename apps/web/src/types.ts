@@ -49,13 +49,26 @@ export interface WebSessionView {
 
 export interface InvitationResource {
   allowed_actions: string[];
+  bound_principal: { display_name: string; principal_id: string } | null;
   code_fingerprint: string;
   created_at: string;
+  deleted_at: string | null;
   expires_at: string;
-  grants: Array<{ project: { display_name: string; id: string; key: string; workspace_key: string }; role: "reader" | "writer" }>;
+  grants: Array<{
+    display_name: string;
+    project_id: string;
+    project_key: string;
+    role: "reader" | "writer";
+    workspace_key: string;
+  }>;
   id: string;
   kind: "project_grant" | "principal_recovery";
+  recovery_mode: "full_recovery" | "rotation" | null;
+  redeemed_at: string | null;
+  redeemed_by_principal_id: string | null;
+  revoked_at: string | null;
   status: "active" | "expired" | "redeemed" | "revoked";
+  updated_at: string;
   version: number;
 }
 

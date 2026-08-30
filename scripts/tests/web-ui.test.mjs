@@ -8,11 +8,18 @@ import {
   PendingIntentKeys,
 } from "../../apps/web/src/lib/api-core.ts";
 import { presentApiProblem } from "../../apps/web/src/lib/error-presentation.ts";
+import {
+  canConfirmInvitationReview,
+  invitationOutcomeRequiresReview,
+} from "../../apps/web/src/lib/invitation-recovery.ts";
 import { resolveLocalePreference } from "../../apps/web/src/lib/locale-preference.ts";
 import { renderMarkdown } from "../../apps/web/src/lib/markdown.ts";
 import { publicJoinInstruction } from "../../apps/web/src/lib/public-join-instruction.ts";
 import { publicJoinRiskNotice } from "../../apps/web/src/lib/public-join-risk.ts";
-import { sameSessionBoundary } from "../../apps/web/src/lib/session-boundary.ts";
+import {
+  sameSessionBoundary,
+  shouldClearAfterSessionRevalidation,
+} from "../../apps/web/src/lib/session-boundary.ts";
 
 function apiError(category, code, requestId = "request-test", retryAfter = null, status = 503, overrides = {}) {
   return {
@@ -200,6 +207,20 @@ test("unsafe response-loss retry uses a fixed 24-hour safety deadline", () => {
   assert.equal(sequence, 1);
 });
 
+test("an expired write starts a new key only after explicit request review", () => {
+  let sequence = 0;
+  const intents = new PendingIntentKeys(() => `intent-${++sequence}`, 100);
+  const first = intents.acquire("POST", "/api/v1/admin/invitations", { role: "writer" }, 0);
+  assert.throws(
+    () => intents.acquire("POST", "/api/v1/admin/invitations", { role: "writer" }, 101),
+    PendingIntentExpiredError,
+  );
+  intents.clearRequest("POST", "/api/v1/admin/invitations");
+  const reviewedIntent = intents.acquire("POST", "/api/v1/admin/invitations", { role: "writer" }, 102);
+  assert.notEqual(reviewedIntent.key, first.key);
+  assert.equal(sequence, 2);
+});
+
 test("expired idempotency recovery asks for readback instead of retry", () => {
   const expired = apiError("conflict", "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED", "client-intent", null, 409, {
     recovery: "refresh_resource",
@@ -239,6 +260,54 @@ test("session revalidation preserves the mounted view until the security boundar
     },
   }), false);
   assert.equal(sameSessionBoundary(session, { ...session, session_id: "replacement-session" }), false);
+});
+
+test("Owner instance inventory refresh does not remount one-time local state", () => {
+  const session = {
+    allowed_scope: {
+      kind: "instance",
+      projects: [
+        { project_id: "project-a", project_key: "A", role: "owner", workspace_key: "workspace" },
+      ],
+    },
+    expires_at: "2026-08-31T00:00:00.000Z",
+    principal: { display_name: "Owner", id: "owner", is_owner: true, version: 1 },
+    session_id: "session",
+    source: { id: "credential", kind: "credential" },
+    target: { kind: "admin", section: "access" },
+  };
+  assert.equal(sameSessionBoundary(session, {
+    ...session,
+    allowed_scope: {
+      kind: "instance",
+      projects: [
+        ...session.allowed_scope.projects,
+        { project_id: "project-b", project_key: "B", role: "owner", workspace_key: "workspace" },
+      ],
+    },
+  }), true);
+  assert.equal(sameSessionBoundary(session, { ...session, source: { id: "replacement", kind: "credential" } }), false);
+});
+
+test("Session revalidation clears deterministic auth and target failures only", () => {
+  assert.equal(shouldClearAfterSessionRevalidation(401), true);
+  assert.equal(shouldClearAfterSessionRevalidation(403), true);
+  assert.equal(shouldClearAfterSessionRevalidation(404), true);
+  assert.equal(shouldClearAfterSessionRevalidation(0), false);
+  assert.equal(shouldClearAfterSessionRevalidation(429), false);
+  assert.equal(shouldClearAfterSessionRevalidation(503), false);
+});
+
+test("Invitation uncertainty requires complete readback before another capability", () => {
+  assert.equal(invitationOutcomeRequiresReview(null), true);
+  assert.equal(invitationOutcomeRequiresReview({ status: 0 }), true);
+  assert.equal(invitationOutcomeRequiresReview({ code: "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED", status: 409 }), true);
+  assert.equal(invitationOutcomeRequiresReview({ status: 503 }), true);
+  assert.equal(invitationOutcomeRequiresReview({ status: 400 }), false);
+  assert.equal(invitationOutcomeRequiresReview({ status: 429 }), false);
+  assert.equal(canConfirmInvitationReview(false, false), false);
+  assert.equal(canConfirmInvitationReview(true, true), false);
+  assert.equal(canConfirmInvitationReview(true, false), true);
 });
 
 test("client transport normalizes Cloudflare outer errors without prose branching", async () => {

@@ -10,11 +10,14 @@ function orderedProjects(projects: ProjectScopeItem[] | undefined): ProjectScope
 }
 
 function boundaryValue(session: WebSessionView): Record<string, unknown> {
+  const scopeProjects = session.allowed_scope.kind === "instance"
+    ? []
+    : orderedProjects(session.allowed_scope.projects);
   return {
     allowed_scope: {
       kind: session.allowed_scope.kind,
       project_id: session.allowed_scope.project_id ?? null,
-      projects: orderedProjects(session.allowed_scope.projects),
+      projects: scopeProjects,
     },
     principal_id: session.principal.id,
     session_id: session.session_id,
@@ -30,4 +33,8 @@ function boundaryValue(session: WebSessionView): Record<string, unknown> {
 
 export function sameSessionBoundary(left: WebSessionView, right: WebSessionView): boolean {
   return JSON.stringify(boundaryValue(left)) === JSON.stringify(boundaryValue(right));
+}
+
+export function shouldClearAfterSessionRevalidation(status: number): boolean {
+  return status === 401 || status === 403 || status === 404;
 }
