@@ -1,9 +1,11 @@
 import type { ApiErrorBody } from "../types";
+import { normalizeOuterHttp, normalizedFailure, PendingIntentKeys, retryAfterSeconds } from "./api-core";
 import { locale, t } from "./i18n";
 import { presentApiProblem } from "./error-presentation";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const CSRF_COOKIE = "cfkanban_csrf";
+const pendingIntents = new PendingIntentKeys(() => crypto.randomUUID());
 
 function cookieValue(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -12,19 +14,6 @@ function cookieValue(name: string): string | null {
     if (rawName === name) return decodeURIComponent(rawValue.join("="));
   }
   return null;
-}
-
-function clientFailure(requestId: string, code = "TRANSPORT_ERROR"): ApiErrorBody {
-  return {
-    category: "platform_failure",
-    code,
-    message: "The service response could not be verified.",
-    normalized_by: "client",
-    recovery: "retry_or_contact_owner",
-    request_id: requestId,
-    retryable: true,
-    source: "client",
-  };
 }
 
 function isErrorBody(value: unknown): value is ApiErrorBody {
@@ -37,6 +26,17 @@ function isErrorBody(value: unknown): value is ApiErrorBody {
     && typeof body.request_id === "string"
     && typeof body.retryable === "boolean"
     && typeof body.source === "string";
+}
+
+function normalizedHttpFailure(response: Response, text: string, requestId: string): ApiProblem {
+  const normalized = normalizeOuterHttp(response.status, response.headers, text, requestId);
+  return new ApiProblem(normalized.status, normalized.body, normalized.retryAfter);
+}
+
+function notifyAuthorizationFailure(status: number): void {
+  if (typeof window === "undefined") return;
+  if (status === 401) window.dispatchEvent(new CustomEvent("cfkanban:session-invalid"));
+  if (status === 403) window.dispatchEvent(new CustomEvent("cfkanban:authorization-stale"));
 }
 
 export class ApiProblem extends Error {
@@ -64,10 +64,16 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers({ accept: "application/json" });
   if (options.body !== undefined) headers.set("content-type", "application/json");
+  let signature: string | null = null;
   if (!SAFE_METHODS.has(method)) {
     const csrf = cookieValue(CSRF_COOKIE);
     if (csrf !== null) headers.set("x-csrf-token", csrf);
-    headers.set("idempotency-key", options.idempotencyKey ?? crypto.randomUUID());
+    if (options.idempotencyKey !== undefined) headers.set("idempotency-key", options.idempotencyKey);
+    else {
+      const intent = pendingIntents.acquire(method, path, options.body);
+      signature = intent.signature;
+      headers.set("idempotency-key", intent.key);
+    }
   }
 
   let response: Response;
@@ -80,8 +86,13 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   } catch {
-    const requestId = crypto.randomUUID();
-    throw new ApiProblem(0, clientFailure(requestId));
+    throw new ApiProblem(0, normalizedFailure(crypto.randomUUID(), {
+      category: "platform_failure",
+      code: "PLATFORM_UNAVAILABLE",
+      recovery: "retry_after",
+      retryable: true,
+      source: "client_transport",
+    }));
   }
 
   const requestId = response.headers.get("x-request-id") ?? crypto.randomUUID();
@@ -91,23 +102,39 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     try {
       payload = await response.json();
     } catch {
-      throw new ApiProblem(response.status, clientFailure(requestId, "INVALID_JSON_RESPONSE"));
+      const problem = normalizedHttpFailure(response, "", requestId);
+      notifyAuthorizationFailure(problem.status);
+      throw problem;
     }
   } else if (response.status !== 204) {
-    throw new ApiProblem(response.status, clientFailure(requestId, "NON_JSON_RESPONSE"));
+    const problem = normalizedHttpFailure(response, (await response.text()).slice(0, 16_384), requestId);
+    notifyAuthorizationFailure(problem.status);
+    throw problem;
   }
 
   if (!response.ok) {
-    const body = isErrorBody(payload) ? payload : clientFailure(requestId);
-    const retryAfterRaw = response.headers.get("retry-after");
-    const retryAfter = retryAfterRaw !== null && /^\d+$/.test(retryAfterRaw)
-      ? Number(retryAfterRaw)
+    const headerRetryAfter = retryAfterSeconds(response.headers.get("retry-after"));
+    const bodyRetryAfter = isErrorBody(payload)
+      && typeof payload.retry_after_seconds === "number"
+      && Number.isSafeInteger(payload.retry_after_seconds)
+      && payload.retry_after_seconds >= 0
+      ? payload.retry_after_seconds
       : null;
-    if (response.status === 401 && typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("cfkanban:session-invalid"));
-    }
+    const retryAfter = headerRetryAfter ?? bodyRetryAfter;
+    const body = isErrorBody(payload)
+      ? payload
+      : normalizedFailure(requestId, {
+        category: "platform_failure",
+        code: "PLATFORM_UNAVAILABLE",
+        providerRequestId: response.headers.get("cf-ray"),
+        recovery: "request_owner",
+        retryable: false,
+        source: "cloudflare_platform",
+      });
+    notifyAuthorizationFailure(response.status);
     throw new ApiProblem(response.status, body, retryAfter);
   }
+  if (signature !== null) pendingIntents.complete(signature);
   return payload as T;
 }
 

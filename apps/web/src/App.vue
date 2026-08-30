@@ -30,6 +30,8 @@ const loadingSession = ref(false);
 const sessionError = ref("");
 const sessionEnded = ref(false);
 const context = ref<{ label: string; role: string } | null>(null);
+let sessionExpiryTimer: number | null = null;
+let sessionLoadGeneration = 0;
 
 function decoded(value: string): string | null {
   try {
@@ -65,20 +67,40 @@ const route = computed<AppRoute>(() => {
 const authenticatedRoute = computed(() => route.value.kind !== "home");
 
 function clearSession(ended = true): void {
+  if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
+  sessionExpiryTimer = null;
+  sessionLoadGeneration += 1;
   session.value = null;
   context.value = null;
   sessionError.value = "";
   sessionEnded.value = ended;
 }
 
+function scheduleSessionExpiry(expiresAt: string): boolean {
+  if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
+  const remaining = Date.parse(expiresAt) - Date.now();
+  if (!Number.isFinite(remaining) || remaining <= 0) {
+    clearSession(true);
+    return false;
+  }
+  sessionExpiryTimer = window.setTimeout(() => clearSession(true), Math.min(remaining, 2_147_483_647));
+  return true;
+}
+
 async function loadSession(): Promise<void> {
-  if (!authenticatedRoute.value) return;
+  if (!authenticatedRoute.value || loadingSession.value) return;
+  const generation = sessionLoadGeneration + 1;
+  clearSession(false);
+  sessionLoadGeneration = generation;
   loadingSession.value = true;
   sessionError.value = "";
   sessionEnded.value = false;
   try {
-    session.value = await apiRequest<WebSessionView>("/api/v1/web-session");
+    const result = await apiRequest<WebSessionView>("/api/v1/web-session");
+    if (generation !== sessionLoadGeneration || !authenticatedRoute.value) return;
+    if (scheduleSessionExpiry(result.expires_at)) session.value = result;
   } catch (caught) {
+    if (generation !== sessionLoadGeneration) return;
     session.value = null;
     if (caught instanceof ApiProblem && caught.status === 401) sessionEnded.value = true;
     else sessionError.value = errorText(caught);
@@ -104,15 +126,39 @@ function sessionInvalid(): void {
   if (authenticatedRoute.value) clearSession(true);
 }
 
+function authorizationStale(): void {
+  if (!authenticatedRoute.value) return;
+  clearSession(false);
+  void loadSession();
+}
+
+function revalidateVisibleSession(): void {
+  if (authenticatedRoute.value && document.visibilityState === "visible") void loadSession();
+}
+
 onMounted(() => {
   window.addEventListener("cfkanban:session-invalid", sessionInvalid);
+  window.addEventListener("cfkanban:authorization-stale", authorizationStale);
+  window.addEventListener("cfkanban:session-exchanged", authorizationStale);
+  window.addEventListener("focus", revalidateVisibleSession);
+  window.addEventListener("pageshow", revalidateVisibleSession);
+  document.addEventListener("visibilitychange", revalidateVisibleSession);
   void loadSession();
 });
-onUnmounted(() => window.removeEventListener("cfkanban:session-invalid", sessionInvalid));
+onUnmounted(() => {
+  clearSession(false);
+  window.removeEventListener("cfkanban:session-invalid", sessionInvalid);
+  window.removeEventListener("cfkanban:authorization-stale", authorizationStale);
+  window.removeEventListener("cfkanban:session-exchanged", authorizationStale);
+  window.removeEventListener("focus", revalidateVisibleSession);
+  window.removeEventListener("pageshow", revalidateVisibleSession);
+  document.removeEventListener("visibilitychange", revalidateVisibleSession);
+});
 
 watch(currentPath, () => {
   context.value = null;
-  if (authenticatedRoute.value && session.value === null && !loadingSession.value) void loadSession();
+  if (!authenticatedRoute.value) clearSession(false);
+  else if (session.value === null && !loadingSession.value) void loadSession();
 });
 </script>
 

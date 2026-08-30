@@ -76,6 +76,12 @@ async function load(reset = true): Promise<void> {
     emit("context", { label: `${props.workspaceKey} / ${projectResult.display_name}`, role: role.value });
   } catch (caught) {
     error.value = errorText(caught);
+    if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
+      project.value = null;
+      statuses.value = [];
+      issues.value = [];
+      nextCursor.value = null;
+    }
   } finally {
     loading.value = false;
     loadingMore.value = false;

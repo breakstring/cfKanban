@@ -77,6 +77,19 @@ interface PrincipalRow {
   version: number;
 }
 
+interface PrincipalPasskeyRow {
+  algorithm: number;
+  backup_eligible: number;
+  backup_state: number;
+  created_at: number;
+  id: string;
+  last_used_at: number | null;
+  revoked_at: number | null;
+  rp_id: string;
+  transports_json: string | null;
+  version: number;
+}
+
 interface ProjectControlRow {
   active_principal_count: number;
   id: string;
@@ -148,6 +161,32 @@ function principalResource(row: PrincipalRow): { [key: string]: JsonValue } {
     is_owner: row.is_owner === 1,
     principal_id: row.id,
     updated_at: timestamp(row.updated_at),
+    version: row.version,
+  };
+}
+
+function principalPasskeyResource(row: PrincipalPasskeyRow, canRevoke: boolean): { [key: string]: JsonValue } {
+  let transports: JsonValue[] = [];
+  if (row.transports_json !== null) {
+    try {
+      const parsed = JSON.parse(row.transports_json) as JsonValue;
+      if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) throw new Error();
+      transports = parsed;
+    } catch (error) {
+      throw platformUnavailable("d1", error);
+    }
+  }
+  return {
+    algorithm: row.algorithm,
+    allowed_actions: row.revoked_at === null && canRevoke ? ["revoke"] : [],
+    backup_eligible: row.backup_eligible === 1,
+    backup_state: row.backup_state === 1,
+    created_at: timestamp(row.created_at),
+    id: row.id,
+    last_used_at: timestamp(row.last_used_at),
+    revoked_at: timestamp(row.revoked_at),
+    rp_id: row.rp_id,
+    transports,
     version: row.version,
   };
 }
@@ -374,6 +413,7 @@ export async function getPrincipal(
   db: D1Database,
   auth: AuthContext,
   principalIdValue: JsonValue,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
   const principalId = requireUuid(principalIdValue, "principal_id");
@@ -381,8 +421,9 @@ export async function getPrincipal(
   if (principal === null) throw notFound();
   let grants: GrantRow[];
   let credentials: CredentialRow[];
+  let passkeys: PrincipalPasskeyRow[];
   try {
-    const [grantResult, credentialResult] = await Promise.all([
+    const [grantResult, credentialResult, passkeyResult] = await Promise.all([
       db.prepare(
         `SELECT g.id, g.principal_id, pr.display_name AS principal_display_name,
                 g.project_id, p.key AS project_key, p.display_name AS project_display_name,
@@ -400,18 +441,30 @@ export async function getPrincipal(
          FROM credentials AS c JOIN principals AS p ON p.id = c.principal_id
          WHERE c.principal_id = ?1 ORDER BY c.issued_at DESC, c.id DESC LIMIT 101`,
       ).bind(principalId).all<CredentialRow>(),
+      db.prepare(
+        `SELECT id, algorithm, backup_eligible, backup_state, transports_json, rp_id,
+                version, created_at, last_used_at, revoked_at
+         FROM web_authenticators
+         WHERE principal_id = ?1 AND revoked_at IS NULL
+         ORDER BY created_at DESC, id DESC
+         LIMIT 101`,
+      ).bind(principalId).all<PrincipalPasskeyRow>(),
     ]);
     grants = grantResult.results;
     credentials = credentialResult.results;
+    passkeys = passkeyResult.results;
   } catch (error) {
     throw platformUnavailable("d1", error);
   }
+  await verifyCurrentAuth(db, auth, now);
   return {
     ...principalResource(principal),
     credentials: credentials.slice(0, 100).map((row) => credentialResource(row, principal.is_owner !== 1)),
     credentials_has_more: credentials.length > 100,
     grants: grants.slice(0, 100).map(grantResource),
     grants_has_more: grants.length > 100,
+    passkeys: passkeys.slice(0, 100).map((row) => principalPasskeyResource(row, principal.is_owner !== 1)),
+    passkeys_has_more: passkeys.length > 100,
   };
 }
 

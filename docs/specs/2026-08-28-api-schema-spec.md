@@ -293,6 +293,8 @@ preferred origin 是实例级应用设置，不负责在 Cloudflare 或第三方
 
 Passkey 登记 options 固定 `residentKey=required`、`userVerification=required`，以支持首页无用户名的 discoverable-credential 登录；只把当前 Principal 在当前 RP ID 下已登记且 active 的 credential IDs 放入 `excludeCredentials`，用于降低同一 hostname 重复登记概率，不把返回结果解释成设备 inventory。公开 authentication options 使用 discoverable request，不以调用方自报 Principal 过滤，`allowCredentials` 省略或为空，并固定 `userVerification=required`。
 
+Owner 读取 `GET /api/v1/admin/principals/{principal_id}` 时，Principal detail 同时返回该参与者全部 active Passkey 的非秘密摘要（active 数量上限为 100，因此不依赖不可达的历史分页），至少包含 `id/version/created_at/last_used_at/rp_id/algorithm/transports` 与 `allowed_actions`；不返回 COSE 公钥、credential ID 原文或其他认证材料。Owner Principal 自身的这些摘要不得提供 `revoke` action。
+
 Passkey 登记和 assertion 验证都必须验证 challenge purpose、RP ID、origin、expiry、单次消费、credential ID、公钥签名、user handle 与 Principal 绑定。v0 对每次 ceremony 固定 `rp_id=request hostname`、`expected_origin=normalized current HTTPS origin` 并随 challenge 保存，不启用跨 hostname RP ID 共享或 Related Origin Requests；hostname/origin 必须从受信的 Worker 请求 URL 推导，不能接受调用方或任意 forwarded header 覆盖。具体 COSE algorithm allowlist、attestation policy 与 counter 异常处理在实现原型中验证后冻结。服务端不保存 authenticator 私钥，也不按 display name 查找身份。
 
 验证原型已证明 Cloudflare Workers Web Crypto 所需的 ECDSA P-256/SHA-256 与 RSASSA-PKCS1-v1_5/SHA-256 路径可用。v0 推荐把 `pubKeyCredParams` 固定为 COSE `ES256 (-7)` 优先、`RS256 (-257)` 兼容，拒绝未列出的算法；`attestation=none`，不建立认证器厂商根证书或设备可信等级；registration/authentication challenge 固定 5 分钟，并在第一次 verify 请求内原子消费，失败后重新取 options。`web_authenticators` 同时保存已验证 algorithm、sign count、backup eligible/state，不能只保存不可检查的自由 JSON。

@@ -26,6 +26,8 @@ const issue = ref<IssueDetail | null>(null);
 const labels = ref<LabelResource[]>([]);
 const deletedLabels = ref<LabelResource[]>([]);
 const comments = ref<IssueComment[]>([]);
+const commentNextCursor = ref<string | null>(null);
+const commentLoadingMore = ref(false);
 const deletedComments = ref<IssueComment[]>([]);
 const relations = ref<IssueRelation[]>([]);
 const deletedRelations = ref<IssueRelation[]>([]);
@@ -65,13 +67,21 @@ function roleForProject(): string {
   ))?.role ?? "reader";
 }
 
-async function load(): Promise<void> {
+function mergeComments(...groups: IssueComment[][]): IssueComment[] {
+  return [...new Map(groups.flat().map((entry) => [entry.id, entry])).values()].sort((left, right) => (
+    left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id)
+  ));
+}
+
+async function load(preserveLocalState = editMode.value): Promise<void> {
   loading.value = true;
   error.value = "";
   try {
     const result = await apiRequest<IssueDetail>(`/api/v1/issues/${encodeURIComponent(props.identifier)}`);
     issue.value = result;
-    edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title };
+    if (!preserveLocalState) {
+      edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title };
+    }
     emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject() });
     const [labelResult, commentResult, relationResult] = await Promise.all([
       apiRequest<ListResult<LabelResource>>(
@@ -81,12 +91,39 @@ async function load(): Promise<void> {
       apiRequest<ListResult<IssueRelation>>(`/api/v1/issues/${encodeURIComponent(result.identifier)}/relations?limit=100`),
     ]);
     labels.value = labelResult.items;
-    comments.value = commentResult.items;
+    comments.value = preserveLocalState
+      ? mergeComments(comments.value, commentResult.items)
+      : commentResult.items;
+    commentNextCursor.value = commentResult.has_more ? commentResult.next_cursor : null;
     relations.value = relationResult.items;
   } catch (caught) {
     error.value = errorText(caught);
+    if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
+      issue.value = null;
+      labels.value = [];
+      comments.value = [];
+      commentNextCursor.value = null;
+      relations.value = [];
+    }
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadMoreComments(): Promise<void> {
+  const current = issue.value;
+  if (current === null || commentNextCursor.value === null) return;
+  commentLoadingMore.value = true;
+  try {
+    const result = await apiRequest<ListResult<IssueComment>>(
+      `/api/v1/issues/${encodeURIComponent(current.identifier)}/comments?limit=100&cursor=${encodeURIComponent(commentNextCursor.value)}`,
+    );
+    comments.value = mergeComments(comments.value, result.items);
+    commentNextCursor.value = result.has_more ? result.next_cursor : null;
+  } catch (caught) {
+    error.value = errorText(caught);
+  } finally {
+    commentLoadingMore.value = false;
   }
 }
 
@@ -134,7 +171,7 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
   busy.value = true;
   error.value = "";
   try {
-    const result = await apiRequest<WriteResult<IssueDetail>>(
+    const result = await apiRequest<WriteResult<IssueDetail & { completion_comment_id?: string }>>(
       `/api/v1/issues/${current.identifier}/commands/${command}`,
       { body: { expected_version: current.version, ...payload }, method: "POST" },
     );
@@ -143,6 +180,14 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
     showBlocked.value = false;
     completionSummary.value = "";
     blockReason.value = "";
+    if (command === "complete" && result.resource.completion_comment_id) {
+      try {
+        const completion = await apiRequest<IssueComment>(`/api/v1/comments/${result.resource.completion_comment_id}`);
+        comments.value = mergeComments(comments.value, [completion]);
+      } catch (caught) {
+        error.value = errorText(caught);
+      }
+    }
   } catch (caught) {
     error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
       ? t("error.conflict")
@@ -183,11 +228,11 @@ async function addComment(): Promise<void> {
   if (current === null || !comment.value.trim()) return;
   busy.value = true;
   try {
-    await apiRequest<WriteResult<IssueComment>>(`/api/v1/issues/${current.identifier}/comments`, {
+    const result = await apiRequest<WriteResult<IssueComment>>(`/api/v1/issues/${current.identifier}/comments`, {
       body: { body: comment.value }, method: "POST",
     });
     comment.value = "";
-    await load();
+    comments.value = mergeComments(comments.value, [result.resource]);
   } catch (caught) {
     error.value = errorText(caught);
   } finally {
@@ -215,6 +260,7 @@ async function deleteComment(entry: IssueComment): Promise<void> {
   busy.value = true;
   try {
     await apiRequest(`/api/v1/comments/${entry.id}?expected_version=${entry.version}`, { method: "DELETE" });
+    comments.value = comments.value.filter((commentEntry) => commentEntry.id !== entry.id);
     await load();
   } catch (caught) {
     error.value = errorText(caught);
@@ -432,6 +478,7 @@ onMounted(load);
               </article>
               <p v-if="!comments.length" class="empty-copy">{{ locale === "zh-CN" ? "还没有评论。" : "No comments yet." }}</p>
             </div>
+            <button v-if="commentNextCursor" class="load-more" type="button" :disabled="commentLoadingMore" @click="loadMoreComments">{{ commentLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多 Activity" : "Load more activity") }}</button>
             <form v-if="canUpdate" class="comment-form" @submit.prevent="addComment">
               <label>{{ t("comment.add") }}<textarea v-model="comment" rows="5" :placeholder="t('comment.placeholder')" /></label>
               <button class="primary-button" type="submit" :disabled="busy || !comment.trim()">{{ t("action.comment") }}</button>
