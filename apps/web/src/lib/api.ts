@@ -1,5 +1,11 @@
 import type { ApiErrorBody } from "../types";
-import { normalizeOuterHttp, normalizedFailure, PendingIntentKeys, retryAfterSeconds } from "./api-core";
+import {
+  normalizeOuterHttp,
+  normalizedFailure,
+  PendingIntentExpiredError,
+  PendingIntentKeys,
+  retryAfterSeconds,
+} from "./api-core";
 import { locale, t } from "./i18n";
 import { presentApiProblem } from "./error-presentation";
 
@@ -70,7 +76,22 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     if (csrf !== null) headers.set("x-csrf-token", csrf);
     if (options.idempotencyKey !== undefined) headers.set("idempotency-key", options.idempotencyKey);
     else {
-      const intent = pendingIntents.acquire(method, path, options.body);
+      let intent: ReturnType<PendingIntentKeys["acquire"]>;
+      try {
+        intent = pendingIntents.acquire(method, path, options.body);
+      } catch (error) {
+        if (!(error instanceof PendingIntentExpiredError)) throw error;
+        throw new ApiProblem(409, {
+          category: "conflict",
+          code: "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED",
+          details: { normalized_by: "client" },
+          message: "The safe retry window for this write has expired.",
+          recovery: "refresh_resource",
+          request_id: crypto.randomUUID(),
+          retryable: false,
+          source: "client_transport",
+        });
+      }
       signature = intent.signature;
       headers.set("idempotency-key", intent.key);
     }

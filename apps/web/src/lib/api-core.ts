@@ -11,8 +11,15 @@ export interface LocalErrorBody {
 }
 
 interface PendingIntent {
+  acquiredAt: number;
   idempotencyKey: string;
-  touchedAt: number;
+}
+
+export class PendingIntentExpiredError extends Error {
+  constructor() {
+    super("The safe idempotency recovery window has expired.");
+    this.name = "PendingIntentExpiredError";
+  }
 }
 
 export class PendingIntentKeys {
@@ -29,17 +36,14 @@ export class PendingIntentKeys {
   }
 
   acquire(method: string, path: string, body: unknown, now = Date.now()): { key: string; signature: string } {
-    for (const [signature, intent] of this.#entries) {
-      if (intent.touchedAt + this.#ttlMs <= now) this.#entries.delete(signature);
-    }
     const signature = `${method}\n${path}\n${canonicalJson(body)}`;
     const existing = this.#entries.get(signature);
     if (existing !== undefined) {
-      existing.touchedAt = now;
+      if (existing.acquiredAt + this.#ttlMs <= now) throw new PendingIntentExpiredError();
       return { key: existing.idempotencyKey, signature };
     }
     const key = this.#createKey();
-    this.#entries.set(signature, { idempotencyKey: key, touchedAt: now });
+    this.#entries.set(signature, { acquiredAt: now, idempotencyKey: key });
     return { key, signature };
   }
 

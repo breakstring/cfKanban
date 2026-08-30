@@ -7,6 +7,7 @@ import PageState from "./components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "./lib/api";
 import { locale, t } from "./lib/i18n";
 import { currentPath, navigate, routePath } from "./lib/router";
+import { sameSessionBoundary } from "./lib/session-boundary";
 import type { WebSessionView } from "./types";
 import IssueDetailView from "./views/IssueDetailView.vue";
 import OwnerView from "./views/OwnerView.vue";
@@ -30,6 +31,7 @@ const loadingSession = ref(false);
 const sessionError = ref("");
 const sessionEnded = ref(false);
 const context = ref<{ label: string; role: string } | null>(null);
+const sessionViewGeneration = ref(0);
 let sessionExpiryTimer: number | null = null;
 let sessionLoadGeneration = 0;
 
@@ -70,6 +72,8 @@ function clearSession(ended = true): void {
   if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
   sessionExpiryTimer = null;
   sessionLoadGeneration += 1;
+  sessionViewGeneration.value += 1;
+  loadingSession.value = false;
   session.value = null;
   context.value = null;
   sessionError.value = "";
@@ -87,10 +91,11 @@ function scheduleSessionExpiry(expiresAt: string): boolean {
   return true;
 }
 
-async function loadSession(): Promise<void> {
+async function loadSession(resetBeforeRequest = session.value === null): Promise<void> {
   if (!authenticatedRoute.value || loadingSession.value) return;
+  if (resetBeforeRequest) clearSession(false);
+  const previous = session.value;
   const generation = sessionLoadGeneration + 1;
-  clearSession(false);
   sessionLoadGeneration = generation;
   loadingSession.value = true;
   sessionError.value = "";
@@ -98,14 +103,22 @@ async function loadSession(): Promise<void> {
   try {
     const result = await apiRequest<WebSessionView>("/api/v1/web-session");
     if (generation !== sessionLoadGeneration || !authenticatedRoute.value) return;
+    if (previous !== null && !sameSessionBoundary(previous, result)) {
+      sessionViewGeneration.value += 1;
+      context.value = null;
+    }
     if (scheduleSessionExpiry(result.expires_at)) session.value = result;
   } catch (caught) {
     if (generation !== sessionLoadGeneration) return;
-    session.value = null;
-    if (caught instanceof ApiProblem && caught.status === 401) sessionEnded.value = true;
-    else sessionError.value = errorText(caught);
+    if (previous === null) {
+      session.value = null;
+      if (caught instanceof ApiProblem && caught.status === 401) sessionEnded.value = true;
+      else sessionError.value = errorText(caught);
+    } else if (!(caught instanceof ApiProblem && caught.status === 401)) {
+      sessionError.value = errorText(caught);
+    }
   } finally {
-    loadingSession.value = false;
+    if (generation === sessionLoadGeneration) loadingSession.value = false;
   }
 }
 
@@ -128,8 +141,7 @@ function sessionInvalid(): void {
 
 function authorizationStale(): void {
   if (!authenticatedRoute.value) return;
-  clearSession(false);
-  void loadSession();
+  void loadSession(false);
 }
 
 function revalidateVisibleSession(): void {
@@ -174,7 +186,7 @@ watch(currentPath, () => {
       @logout="logout"
     />
 
-    <div v-if="loadingSession" class="session-gate">
+    <div v-if="loadingSession && !session" class="session-gate">
       <PageState loading />
     </div>
 
@@ -185,7 +197,7 @@ watch(currentPath, () => {
         <p v-if="sessionError" class="inline-alert" role="alert">{{ sessionError }}</p>
         <p>{{ locale === "zh-CN" ? "请返回实例首页使用 Passkey，或让 Agent 创建新的 Browser Launch。" : "Return home to use a Passkey, or ask your Agent for a new Browser Launch." }}</p>
         <div class="form-actions">
-          <button class="secondary-button" type="button" @click="loadSession">{{ t("action.refresh") }}</button>
+          <button class="secondary-button" type="button" @click="loadSession(true)">{{ t("action.refresh") }}</button>
           <button class="primary-button" type="button" @click="navigate('/')">{{ locale === "zh-CN" ? "返回实例首页" : "Return home" }}</button>
         </div>
         <LocaleSwitch />
@@ -193,10 +205,10 @@ watch(currentPath, () => {
     </main>
 
     <template v-else>
-      <ProjectSelectionView v-if="route.kind === 'selection'" :key="currentPath" :session="session" />
+      <ProjectSelectionView v-if="route.kind === 'selection'" :key="`${sessionViewGeneration}:${currentPath}`" :session="session" />
       <ProjectBoardView
         v-else-if="route.kind === 'project'"
-        :key="currentPath"
+        :key="`${sessionViewGeneration}:${currentPath}`"
         :project-key="route.projectKey"
         :session="session"
         :workspace-key="route.workspaceKey"
@@ -204,20 +216,20 @@ watch(currentPath, () => {
       />
       <IssueDetailView
         v-else-if="route.kind === 'issue'"
-        :key="currentPath"
+        :key="`${sessionViewGeneration}:${currentPath}`"
         :identifier="route.identifier"
         :session="session"
         @context="context = $event"
       />
       <ProfileView
         v-else-if="route.kind === 'profile'"
-        :key="currentPath"
+        :key="`${sessionViewGeneration}:${currentPath}`"
         :session="session"
         @context="context = $event"
       />
       <OwnerView
         v-else-if="route.kind === 'owner' && session.principal.is_owner"
-        :key="currentPath"
+        :key="`${sessionViewGeneration}:${currentPath}`"
         :section="route.section"
         :session="session"
         @context="context = $event"
