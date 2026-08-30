@@ -10,6 +10,7 @@ import {
   type InvitationCreateWriteResult,
   InvitationRecoveryBlockedError,
   InvitationRecoveryCoordinator,
+  InvitationRecoveryExpiredError,
   type InvitationRecoveryExclusiveLock,
   type InvitationRecoveryRecord,
   invitationOutcomeRequiresReview,
@@ -85,6 +86,7 @@ const invitationsNextCursor = ref<string | null>(null);
 const inviteRecoveryNotice = ref("");
 const invitationCoordinationReady = ref(false);
 const invitationRecoveryRecord = ref<InvitationRecoveryRecord | null>(null);
+const invitationReviewRecord = ref<InvitationRecoveryRecord | null>(null);
 const presentedInvitationRecord = ref<InvitationRecoveryRecord | null>(null);
 const selectedWorkspace = ref("");
 const selectedProject = ref<ProjectEntry | null>(null);
@@ -201,6 +203,7 @@ function invalidateInvitationReview(): void {
   invitationReviewGeneration += 1;
   inviteReviewReady.value = false;
   inviteReviewStartedAt.value = null;
+  invitationReviewRecord.value = null;
   invitations.value = [];
   invitationsHasMore.value = false;
   invitationsNextCursor.value = null;
@@ -209,7 +212,26 @@ function invalidateInvitationReview(): void {
 async function readInvitationsForReview(reset = true): Promise<void> {
   if (reset) {
     invalidateInvitationReview();
-    inviteReviewStartedAt.value = Date.now();
+    const coordinator = invitationRecoveryCoordinator;
+    const current = coordinator?.read() ?? null;
+    if (current === null) {
+      inviteReviewStartedAt.value = Date.now();
+    } else if (!invitationRecoveryCanRetry(current)) {
+      // Acquire the request-lifetime Web Lock before starting the first page.
+      // The persisted revision returned here is the only recovery generation
+      // that this complete cursor walk may later settle.
+      const prepared = await coordinator?.prepareReview(current);
+      if (prepared === undefined) throw new Error("Shared Invitation recovery is unavailable.");
+      invalidateInvitationReview();
+      invitationRecoveryRecord.value = prepared;
+      invitationReviewRecord.value = prepared;
+      if (presentedInvitationRecord.value?.marker === prepared.marker) {
+        presentedInvitationRecord.value = prepared;
+      }
+      inviteReviewStartedAt.value = Date.now();
+    } else {
+      invitationRecoveryRecord.value = current;
+    }
   } else {
     inviteReviewReady.value = false;
   }
@@ -248,7 +270,10 @@ async function confirmInvitationReview(): Promise<void> {
     committedInvitationResolved(),
   )) return;
   const record = invitationRecoveryRecord.value;
-  if (record !== null && !await settleInvitationRecovery(record)) return;
+  if (record !== null) {
+    const reviewed = invitationReviewRecord.value;
+    if (reviewed === null || !await settleInvitationRecovery(reviewed)) return;
+  }
   clearPendingRequestIntents("POST", "/api/v1/admin/invitations");
   inviteNeedsReview.value = false;
   inviteRecoveryNotice.value = "";
@@ -376,7 +401,9 @@ async function handleInvitationCreateFailure(
   recoveryAttempt = false,
   operationRecord: InvitationRecoveryRecord | null = null,
 ): Promise<void> {
-  error.value = errorText(caught);
+  error.value = caught instanceof InvitationRecoveryExpiredError
+    ? t("error.idempotencyExpired")
+    : errorText(caught);
   if (caught instanceof InvitationRecoveryBlockedError) {
     applySharedInvitationRecovery(caught.record);
   }
@@ -488,7 +515,7 @@ async function executeNewInvitationOperation(
       });
     },
     method: "POST",
-    validateResponse: isInvitationCreateWriteResult,
+    validateResponse: (value) => isInvitationCreateWriteResult(value, body),
   });
   if (committedRecord === null) {
     throw new Error("The Invitation recovery record was not committed.");
@@ -521,7 +548,7 @@ async function recoverInvitationOperation(): Promise<void> {
           body: record.body,
           idempotencyKey: record.idempotency_key,
           method: "POST",
-          validateResponse: isInvitationCreateWriteResult,
+          validateResponse: (value) => isInvitationCreateWriteResult(value, record.body),
         });
         const committed = lease.markCommittedUnavailable(response.resource.id);
         if (committed === null) {
