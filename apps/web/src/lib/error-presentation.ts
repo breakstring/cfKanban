@@ -4,6 +4,7 @@ export type ErrorTranslationKey =
   | "error.capability"
   | "error.conflict"
   | "error.generic"
+  | "error.idempotencyExpired"
   | "error.notFound"
   | "error.platform"
   | "error.platformQuota"
@@ -55,6 +56,7 @@ export function presentApiProblem(
     }
     return "";
   };
+  if (body.code === "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED") return translate("error.idempotencyExpired");
   if (body.code === "VERSION_CONFLICT") return translate("error.conflict");
   if (
     error.status === 410

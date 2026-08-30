@@ -4,12 +4,15 @@ import test from "node:test";
 import {
   normalizeOuterHttp,
   normalizedFailure,
+  PendingIntentExpiredError,
   PendingIntentKeys,
 } from "../../apps/web/src/lib/api-core.ts";
 import { presentApiProblem } from "../../apps/web/src/lib/error-presentation.ts";
 import { resolveLocalePreference } from "../../apps/web/src/lib/locale-preference.ts";
 import { renderMarkdown } from "../../apps/web/src/lib/markdown.ts";
 import { publicJoinInstruction } from "../../apps/web/src/lib/public-join-instruction.ts";
+import { publicJoinRiskNotice } from "../../apps/web/src/lib/public-join-risk.ts";
+import { sameSessionBoundary } from "../../apps/web/src/lib/session-boundary.ts";
 
 function apiError(category, code, requestId = "request-test", retryAfter = null, status = 503, overrides = {}) {
   return {
@@ -34,6 +37,7 @@ const englishErrors = {
   "error.capability": "This one-time link is no longer available.",
   "error.conflict": "The issue changed on the server.",
   "error.generic": "This action could not be completed.",
+  "error.idempotencyExpired": "The safe retry window ended. Read back the remote state before starting a new action.",
   "error.notFound": "This resource is unavailable.",
   "error.platform": "The service is temporarily unavailable.",
   "error.platformQuota": "Cloudflare platform capacity is unavailable.",
@@ -136,6 +140,31 @@ test("Public Join Agent instruction never embeds untrusted Project text", () => 
   assert.doesNotMatch(instruction, /display_name|trusted\n/);
 });
 
+test("Public Join consent covers every quota, recovery, and rejoin consequence in both locales", () => {
+  const english = publicJoinRiskNotice("en").join(" ");
+  const chinese = publicJoinRiskNotice("zh-CN").join(" ");
+  for (const phrase of [
+    /unknown internet/i,
+    /only while.*enabled/i,
+    /restore and regrant/i,
+    /all of its active Comments/i,
+    /whole restore fails atomically/i,
+    /completion comment.*active Comment quota/i,
+    /self-join again/i,
+    /D1 storage/i,
+  ]) assert.match(english, phrase);
+  for (const phrase of [
+    /未知互联网参与者/,
+    /只在.*enabled.*强制/,
+    /restore 与 regrant 会重新占用/,
+    /全部 active Comment/,
+    /整个恢复原子失败/,
+    /completion comment.*active Comment quota/,
+    /再次 self-join/,
+    /D1 存储/,
+  ]) assert.match(chinese, phrase);
+});
+
 test("unsafe response-loss retry reuses one Idempotency-Key until success", () => {
   let sequence = 0;
   const intents = new PendingIntentKeys(() => `intent-${++sequence}`);
@@ -151,6 +180,65 @@ test("unsafe response-loss retry reuses one Idempotency-Key until success", () =
   intents.complete(responseLossRetry.signature);
   const nextIntent = intents.acquire("POST", "/test/idempotency", body, 3);
   assert.notEqual(responseLossRetry.key, nextIntent.key);
+});
+
+test("unsafe response-loss retry uses a fixed 24-hour safety deadline", () => {
+  let sequence = 0;
+  const ttl = 24 * 60 * 60 * 1000;
+  const intents = new PendingIntentKeys(() => `intent-${++sequence}`, ttl);
+  const first = intents.acquire("POST", "/test/idempotency", { title: "same intent" }, 100);
+  const beforeDeadline = intents.acquire("POST", "/test/idempotency", { title: "same intent" }, 100 + ttl - 1);
+  assert.equal(beforeDeadline.key, first.key);
+  assert.throws(
+    () => intents.acquire("POST", "/test/idempotency", { title: "same intent" }, 100 + ttl + 1),
+    PendingIntentExpiredError,
+  );
+  assert.throws(
+    () => intents.acquire("POST", "/test/idempotency", { title: "same intent" }, 100 + ttl * 2),
+    PendingIntentExpiredError,
+  );
+  assert.equal(sequence, 1);
+});
+
+test("expired idempotency recovery asks for readback instead of retry", () => {
+  const expired = apiError("conflict", "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED", "client-intent", null, 409, {
+    recovery: "refresh_resource",
+    retryable: false,
+  });
+  assert.match(presentApiProblem(expired, "en", translate), /safe retry window ended/i);
+});
+
+test("session revalidation preserves the mounted view until the security boundary changes", () => {
+  const session = {
+    allowed_scope: {
+      kind: "project_selection",
+      projects: [
+        { project_id: "project-b", project_key: "B", role: "reader", workspace_key: "workspace" },
+        { project_id: "project-a", project_key: "A", role: "writer", workspace_key: "workspace" },
+      ],
+    },
+    expires_at: "2026-08-31T00:00:00.000Z",
+    principal: { display_name: "Before", id: "principal", is_owner: false, version: 1 },
+    session_id: "session",
+    source: { id: "credential", kind: "credential" },
+    target: { kind: "project_selection" },
+  };
+  assert.equal(sameSessionBoundary(session, {
+    ...session,
+    allowed_scope: { ...session.allowed_scope, projects: [...session.allowed_scope.projects].reverse() },
+    expires_at: "2026-09-01T00:00:00.000Z",
+    principal: { ...session.principal, display_name: "After", version: 2 },
+  }), true);
+  assert.equal(sameSessionBoundary(session, {
+    ...session,
+    allowed_scope: {
+      ...session.allowed_scope,
+      projects: session.allowed_scope.projects.map((project) => (
+        project.project_id === "project-a" ? { ...project, role: "reader" } : project
+      )),
+    },
+  }), false);
+  assert.equal(sameSessionBoundary(session, { ...session, session_id: "replacement-session" }), false);
 });
 
 test("client transport normalizes Cloudflare outer errors without prose branching", async () => {
