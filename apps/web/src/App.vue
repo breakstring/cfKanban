@@ -7,7 +7,7 @@ import PageState from "./components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "./lib/api";
 import { locale, t } from "./lib/i18n";
 import { currentPath, navigate, routePath } from "./lib/router";
-import { sameSessionBoundary } from "./lib/session-boundary";
+import { sameSessionBoundary, shouldClearAfterSessionRevalidation } from "./lib/session-boundary";
 import type { WebSessionView } from "./types";
 import IssueDetailView from "./views/IssueDetailView.vue";
 import OwnerView from "./views/OwnerView.vue";
@@ -34,6 +34,7 @@ const context = ref<{ label: string; role: string } | null>(null);
 const sessionViewGeneration = ref(0);
 let sessionExpiryTimer: number | null = null;
 let sessionLoadGeneration = 0;
+let sessionReloadPending = false;
 
 function decoded(value: string): string | null {
   try {
@@ -72,6 +73,7 @@ function clearSession(ended = true): void {
   if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
   sessionExpiryTimer = null;
   sessionLoadGeneration += 1;
+  sessionReloadPending = false;
   sessionViewGeneration.value += 1;
   loadingSession.value = false;
   session.value = null;
@@ -114,11 +116,21 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
       session.value = null;
       if (caught instanceof ApiProblem && caught.status === 401) sessionEnded.value = true;
       else sessionError.value = errorText(caught);
+    } else if (caught instanceof ApiProblem && shouldClearAfterSessionRevalidation(caught.status)) {
+      const message = errorText(caught);
+      clearSession(false);
+      sessionError.value = message;
     } else if (!(caught instanceof ApiProblem && caught.status === 401)) {
       sessionError.value = errorText(caught);
     }
   } finally {
-    if (generation === sessionLoadGeneration) loadingSession.value = false;
+    if (generation === sessionLoadGeneration) {
+      loadingSession.value = false;
+      if (sessionReloadPending && authenticatedRoute.value && session.value !== null) {
+        sessionReloadPending = false;
+        void loadSession(false);
+      }
+    }
   }
 }
 
@@ -141,6 +153,10 @@ function sessionInvalid(): void {
 
 function authorizationStale(): void {
   if (!authenticatedRoute.value) return;
+  if (loadingSession.value) {
+    sessionReloadPending = true;
+    return;
+  }
   void loadSession(false);
 }
 
@@ -205,6 +221,7 @@ watch(currentPath, () => {
     </main>
 
     <template v-else>
+      <p v-if="sessionError" class="inline-alert" role="alert">{{ sessionError }}</p>
       <ProjectSelectionView v-if="route.kind === 'selection'" :key="`${sessionViewGeneration}:${currentPath}`" :session="session" />
       <ProjectBoardView
         v-else-if="route.kind === 'project'"

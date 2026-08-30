@@ -66,6 +66,10 @@ export interface ApiRequestOptions {
   signal?: AbortSignal;
 }
 
+export function clearPendingRequestIntents(method: string, path: string): void {
+  pendingIntents.clearRequest(method.toUpperCase(), path);
+}
+
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers({ accept: "application/json" });

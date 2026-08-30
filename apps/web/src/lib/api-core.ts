@@ -50,6 +50,13 @@ export class PendingIntentKeys {
   complete(signature: string): void {
     this.#entries.delete(signature);
   }
+
+  clearRequest(method: string, path: string): void {
+    const prefix = `${method}\n${path}\n`;
+    for (const signature of this.#entries.keys()) {
+      if (signature.startsWith(prefix)) this.#entries.delete(signature);
+    }
+  }
 }
 
 function canonicalJson(value: unknown): string {
