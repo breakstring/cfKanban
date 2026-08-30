@@ -72,16 +72,30 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
 }
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const timestampPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
 
 function isUuid(value: unknown): value is string {
   return typeof value === "string" && uuidPattern.test(value);
 }
 
 function isTimestamp(value: unknown): value is string {
-  return typeof value === "string"
-    && timestampPattern.test(value)
-    && Number.isFinite(Date.parse(value));
+  if (typeof value !== "string") return false;
+  const match = timestampPattern.exec(value);
+  if (match === null) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (year < 1
+    || month < 1 || month > 12
+    || hour > 23
+    || minute > 59
+    || second > 59) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return day >= 1 && daysInMonth !== undefined && day <= daysInMonth;
 }
 
 function isNullableTimestamp(value: unknown): value is string | null {
@@ -142,35 +156,66 @@ function isBoundPrincipal(value: unknown): boolean {
   );
 }
 
-function isInvitationCreateResource(value: unknown): value is InvitationCreateResource {
+function isInvitationCreateResource(
+  value: unknown,
+  expectedBody: InvitationRequestBody,
+): value is InvitationCreateResource {
   if (!isRecord(value)) return false;
-  const commonFieldsAreValid = Array.isArray(value.allowed_actions)
-    && value.allowed_actions.every((action) => action === "read" || action === "revoke")
-    && new Set(value.allowed_actions).size === value.allowed_actions.length
-    && isBoundPrincipal(value.bound_principal)
-    && typeof value.code_fingerprint === "string"
-    && /^cfi_v1_[A-Za-z0-9_-]{8}_…$/.test(value.code_fingerprint)
-    && isTimestamp(value.created_at)
-    && isNullableTimestamp(value.deleted_at)
-    && isTimestamp(value.expires_at)
-    && Array.isArray(value.grants)
-    && value.grants.every(isInvitationGrant)
-    && isUuid(value.id)
-    && (value.kind === "project_grant" || value.kind === "principal_recovery")
-    && (value.recovery_mode === null || value.recovery_mode === "rotation" || value.recovery_mode === "full_recovery")
-    && isNullableTimestamp(value.redeemed_at)
-    && isNullableUuid(value.redeemed_by_principal_id)
-    && isNullableTimestamp(value.revoked_at)
-    && (value.status === "active" || value.status === "expired" || value.status === "redeemed" || value.status === "revoked")
-    && isTimestamp(value.updated_at)
-    && Number.isSafeInteger(value.version)
-    && Number(value.version) >= 1;
-  if (!commonFieldsAreValid) return false;
-  const grantCount = Array.isArray(value.grants) ? value.grants.length : -1;
-  if (value.kind === "project_grant") {
-    if (value.bound_principal !== null || value.recovery_mode !== null || grantCount === 0) return false;
-  } else if (value.bound_principal === null || value.recovery_mode === null || grantCount !== 0) {
-    return false;
+  const allowedActions = value.allowed_actions;
+  const createdAt = value.created_at;
+  const expiresAt = value.expires_at;
+  const grants = value.grants;
+  const updatedAt = value.updated_at;
+  const version = value.version;
+  if (!Array.isArray(allowedActions)
+    || !allowedActions.every((action) => action === "read" || action === "revoke")
+    || new Set(allowedActions).size !== allowedActions.length
+    || !isBoundPrincipal(value.bound_principal)
+    || typeof value.code_fingerprint !== "string"
+    || !/^cfi_v1_[A-Za-z0-9_-]{8}_…$/.test(value.code_fingerprint)
+    || !isTimestamp(createdAt)
+    || !isNullableTimestamp(value.deleted_at)
+    || !isTimestamp(expiresAt)
+    || !Array.isArray(grants)
+    || !grants.every(isInvitationGrant)
+    || !isUuid(value.id)
+    || (value.kind !== "project_grant" && value.kind !== "principal_recovery")
+    || (value.recovery_mode !== null && value.recovery_mode !== "rotation" && value.recovery_mode !== "full_recovery")
+    || !isNullableTimestamp(value.redeemed_at)
+    || !isNullableUuid(value.redeemed_by_principal_id)
+    || !isNullableTimestamp(value.revoked_at)
+    || (value.status !== "active" && value.status !== "expired" && value.status !== "redeemed" && value.status !== "revoked")
+    || !isTimestamp(updatedAt)
+    || !Number.isSafeInteger(version)
+    || Number(version) < 1
+    || value.status !== "active"
+    || value.deleted_at !== null
+    || value.redeemed_at !== null
+    || value.redeemed_by_principal_id !== null
+    || value.revoked_at !== null
+    || version !== 1
+    || updatedAt !== createdAt
+    || Date.parse(expiresAt) <= Date.parse(createdAt)
+    || allowedActions.length !== 2
+    || allowedActions[0] !== "read"
+    || allowedActions[1] !== "revoke") return false;
+  const grantCount = grants.length;
+  if (expectedBody.kind === "project_grant") {
+    const expectedGrant = expectedBody.grants[0];
+    const actualGrant = grants[0];
+    if (value.kind !== "project_grant"
+      || value.bound_principal !== null
+      || value.recovery_mode !== null
+      || grantCount !== 1
+      || !isRecord(actualGrant)
+      || actualGrant.project_id !== expectedGrant.project_id
+      || actualGrant.role !== expectedGrant.role) return false;
+  } else {
+    if (value.kind !== "principal_recovery"
+      || !isRecord(value.bound_principal)
+      || value.bound_principal.principal_id !== expectedBody.principal_id
+      || value.recovery_mode !== expectedBody.recovery_mode
+      || grantCount !== 0) return false;
   }
   if (value.secret_available === true) {
     return typeof value.copy_text === "string"
@@ -182,12 +227,15 @@ function isInvitationCreateResource(value: unknown): value is InvitationCreateRe
     && !("invite_url" in value);
 }
 
-export function isInvitationCreateWriteResult(value: unknown): value is InvitationCreateWriteResult {
+export function isInvitationCreateWriteResult(
+  value: unknown,
+  expectedBody: InvitationRequestBody,
+): value is InvitationCreateWriteResult {
   return isRecord(value)
     && typeof value.event_cursor === "string"
     && value.event_cursor.length > 0
     && typeof value.idempotent_replay === "boolean"
-    && isInvitationCreateResource(value.resource)
+    && isInvitationCreateResource(value.resource, expectedBody)
     && value.idempotent_replay === !value.resource.secret_available;
 }
 
@@ -394,9 +442,58 @@ export class InvitationRecoveryCoordinator {
     return retained;
   }
 
+  #prepareReviewUnlocked(record: InvitationRecoveryRecord): InvitationRecoveryRecord {
+    const current = this.read();
+    if (current === null) {
+      throw new Error("The shared Invitation recovery operation is no longer available.");
+    }
+    if (!sameInvitationRecoveryState(current, record)) {
+      throw new InvitationRecoveryBlockedError(current);
+    }
+    if (invitationRecoveryCanRetry(current, this.#now())) {
+      throw new InvitationRecoveryBlockedError(current);
+    }
+    if (current.review_revision >= Number.MAX_SAFE_INTEGER) {
+      throw new Error("The shared Invitation recovery revision is exhausted.");
+    }
+    // Persist a new review generation only after acquiring the same lock that
+    // covers the complete POST lifetime. The first list request can therefore
+    // begin only after every live request lease has ended, including when an
+    // old page is terminated without running its Promise catch handler.
+    const prepared: InvitationRecoveryRecord = {
+      ...current,
+      review_revision: current.review_revision + 1,
+    };
+    this.#storage.setItem(this.storageKey, JSON.stringify(prepared));
+    return prepared;
+  }
+
   #settleUnlocked(record: InvitationRecoveryRecord): boolean {
     const current = this.read();
     if (current === null || !sameInvitationRecoveryState(current, record)) {
+      return false;
+    }
+    const serialized = this.#storage.getItem(this.storageKey);
+    let persistedRevision = false;
+    if (serialized !== null) {
+      try {
+        const raw = JSON.parse(serialized) as unknown;
+        persistedRevision = isRecord(raw) && "review_revision" in raw;
+      } catch {
+        return false;
+      }
+    }
+    if (!persistedRevision) {
+      // A pre-fencing tab may still own the old request lease and will not
+      // advance review_revision on an uncertain terminal result. The first
+      // post-upgrade settlement therefore migrates under the same origin-wide
+      // lock and deliberately fails, invalidating every list snapshot that
+      // began while legacy code could still commit.
+      const migrated: InvitationRecoveryRecord = {
+        ...current,
+        review_revision: current.review_revision + 1,
+      };
+      this.#storage.setItem(this.storageKey, JSON.stringify(migrated));
       return false;
     }
     this.#storage.removeItem(this.storageKey);
@@ -478,6 +575,10 @@ export class InvitationRecoveryCoordinator {
       this.storageKey,
       () => this.#markCommittedUnavailableUnlocked(record, invitationId),
     );
+  }
+
+  async prepareReview(record: InvitationRecoveryRecord): Promise<InvitationRecoveryRecord> {
+    return this.#runExclusive(this.storageKey, () => this.#prepareReviewUnlocked(record));
   }
 
   async settle(record: InvitationRecoveryRecord): Promise<boolean> {

@@ -93,27 +93,44 @@ class MemoryExclusiveLocks {
   }
 }
 
-function invitationWriteResult(secretAvailable = true) {
+const PROJECT_A_ID = "22222222-2222-4222-8222-222222222222";
+const PROJECT_B_ID = "44444444-4444-4444-8444-444444444444";
+const PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
+const PROJECT_INVITATION_BODY = {
+  grants: [{ project_id: PROJECT_A_ID, role: "writer" }],
+  kind: "project_grant",
+};
+const RECOVERY_INVITATION_BODY = {
+  kind: "principal_recovery",
+  principal_id: PRINCIPAL_ID,
+  recovery_mode: "rotation",
+};
+
+function invitationWriteResult(secretAvailable = true, body = PROJECT_INVITATION_BODY) {
+  const projectGrant = body.kind === "project_grant" ? body.grants[0] : null;
   return {
     event_cursor: "event-cursor",
     idempotent_replay: !secretAvailable,
     resource: {
       allowed_actions: ["read", "revoke"],
-      bound_principal: null,
+      bound_principal: body.kind === "principal_recovery" ? {
+        display_name: "Participant",
+        principal_id: body.principal_id,
+      } : null,
       code_fingerprint: "cfi_v1_Abcd_123_…",
       created_at: "2026-08-30T00:00:00.000Z",
       deleted_at: null,
       expires_at: "2026-09-06T00:00:00.000Z",
-      grants: [{
+      grants: projectGrant === null ? [] : [{
         display_name: "Project",
-        project_id: "22222222-2222-4222-8222-222222222222",
+        project_id: projectGrant.project_id,
         project_key: "PROJ",
-        role: "writer",
+        role: projectGrant.role,
         workspace_key: "workspace",
       }],
       id: "11111111-1111-4111-8111-111111111111",
-      kind: "project_grant",
-      recovery_mode: null,
+      kind: body.kind,
+      recovery_mode: body.kind === "principal_recovery" ? body.recovery_mode : null,
       redeemed_at: null,
       redeemed_by_principal_id: null,
       revoked_at: null,
@@ -504,9 +521,10 @@ test("apiRequest keeps the atomic Invitation claim for the complete request", as
   const secondTab = new InvitationRecoveryCoordinator("owner-principal", storage, runExclusive, () => "marker-b");
   const originalFetch = globalThis.fetch;
   let fetches = 0;
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (_path, init) => {
     fetches += 1;
-    return new Response(JSON.stringify(invitationWriteResult(true)), {
+    const body = JSON.parse(String(init.body));
+    return new Response(JSON.stringify(invitationWriteResult(true, body)), {
       headers: { "content-type": "application/json" },
       status: 200,
     });
@@ -520,11 +538,11 @@ test("apiRequest keeps the atomic Invitation claim for the complete request", as
         async (_lease, intent) => execute(intent),
       ),
       method: "POST",
-      validateResponse: isInvitationCreateWriteResult,
+      validateResponse: (value) => isInvitationCreateWriteResult(value, body),
     });
     const attempts = await Promise.allSettled([
-      request(firstTab, { grants: [{ project_id: "project-a", role: "writer" }], kind: "project_grant" }),
-      request(secondTab, { grants: [{ project_id: "project-b", role: "reader" }], kind: "project_grant" }),
+      request(firstTab, PROJECT_INVITATION_BODY),
+      request(secondTab, { grants: [{ project_id: PROJECT_B_ID, role: "reader" }], kind: "project_grant" }),
     ]);
     assert.equal(attempts.filter((attempt) => attempt.status === "fulfilled").length, 1);
     const rejected = attempts.filter((attempt) => attempt.status === "rejected");
@@ -582,7 +600,7 @@ test("a deferred Invitation POST cannot be retired by a readback after the 24-ho
         },
       ),
       method: "POST",
-      validateResponse: isInvitationCreateWriteResult,
+      validateResponse: (value) => isInvitationCreateWriteResult(value, firstBody),
     });
     await fetchStarted;
     const pending = secondTab.read();
@@ -617,7 +635,7 @@ test("a deferred Invitation POST cannot be retired by a readback after the 24-ho
         async (_lease, intent) => execute(intent),
       ),
       method: "POST",
-      validateResponse: isInvitationCreateWriteResult,
+      validateResponse: (value) => isInvitationCreateWriteResult(value, secondBody),
     }), InvitationRecoveryBlockedError);
     assert.equal(fetches, 1);
   } finally {
@@ -677,6 +695,99 @@ test("a readback queued during an uncertain Invitation POST cannot retire its re
     { kind: "principal_recovery", principal_id: "principal", recovery_mode: "rotation" },
     async () => undefined,
   ), InvitationRecoveryBlockedError);
+});
+
+test("the first post-upgrade review migrates and retains a legacy recovery record", async () => {
+  const storage = new MemoryStorage();
+  const locks = new MemoryExclusiveLocks();
+  const coordinator = new InvitationRecoveryCoordinator(
+    "owner-principal",
+    storage,
+    locks.run.bind(locks),
+    () => "marker-new",
+  );
+  const legacy = {
+    acquired_at: 1_000,
+    body: { grants: [{ project_id: "project", role: "writer" }], kind: "project_grant" },
+    idempotency_key: "idempotency-legacy",
+    marker: "marker-legacy",
+    principal_id: "owner-principal",
+    state: "pending",
+    version: 1,
+  };
+  storage.setItem(coordinator.storageKey, JSON.stringify(legacy));
+  let releaseLegacyLease;
+  let announceLegacyLease;
+  const legacyLeaseStarted = new Promise((resolve) => { announceLegacyLease = resolve; });
+  const legacyLeaseReleased = new Promise((resolve) => { releaseLegacyLease = resolve; });
+  const legacyLease = locks.run(coordinator.storageKey, async () => {
+    announceLegacyLease();
+    await legacyLeaseReleased;
+  });
+  await legacyLeaseStarted;
+  const staleReviewRecord = coordinator.read();
+  assert.ok(staleReviewRecord);
+  assert.equal(staleReviewRecord.review_revision, 0);
+  let settleFinished = false;
+  const queuedSettle = coordinator.settle(staleReviewRecord).then((settled) => {
+    settleFinished = true;
+    return settled;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settleFinished, false);
+
+  releaseLegacyLease();
+  await legacyLease;
+  assert.equal(await queuedSettle, false);
+  const migrated = coordinator.read();
+  assert.ok(migrated);
+  assert.equal(migrated.review_revision, 1);
+  await assert.rejects(coordinator.runNewOperation(
+    () => ({ acquiredAt: 2_000, key: "idempotency-new", signature: "signature-new" }),
+    { kind: "principal_recovery", principal_id: "principal", recovery_mode: "rotation" },
+    async () => undefined,
+  ), InvitationRecoveryBlockedError);
+});
+
+test("a review generation starts only after an abruptly released request lease", async () => {
+  const storage = new MemoryStorage();
+  const locks = new MemoryExclusiveLocks();
+  const coordinator = new InvitationRecoveryCoordinator(
+    "owner-principal",
+    storage,
+    locks.run.bind(locks),
+    () => "marker-abrupt",
+    () => 1_000 + 24 * 60 * 60 * 1000,
+  );
+  const pending = await coordinator.begin(
+    { acquiredAt: 1_000, key: "idempotency-abrupt", signature: "signature-abrupt" },
+    PROJECT_INVITATION_BODY,
+  );
+  let releaseAbruptLease;
+  let announceAbruptLease;
+  const abruptLeaseStarted = new Promise((resolve) => { announceAbruptLease = resolve; });
+  const abruptLeaseReleased = new Promise((resolve) => { releaseAbruptLease = resolve; });
+  const abruptLease = locks.run(coordinator.storageKey, async () => {
+    announceAbruptLease();
+    await abruptLeaseReleased;
+  });
+  await abruptLeaseStarted;
+  let preparationFinished = false;
+  const queuedPreparation = coordinator.prepareReview(pending).then((prepared) => {
+    preparationFinished = true;
+    return prepared;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(preparationFinished, false);
+
+  // Model a hard refresh or renderer termination: the browser releases its
+  // Web Lock without executing any success/failure callback or revision write.
+  releaseAbruptLease();
+  await abruptLease;
+  const prepared = await queuedPreparation;
+  assert.equal(prepared.review_revision, pending.review_revision + 1);
+  assert.equal(await coordinator.settle(pending), false);
+  assert.equal(await coordinator.settle(prepared), true);
 });
 
 test("an exact Invitation retry rechecks the fixed deadline after acquiring its Web Lock", async () => {
@@ -772,7 +883,7 @@ test("a new Invitation acquires its local key only after waiting for the Web Loc
         },
       ),
       method: "POST",
-      validateResponse: isInvitationCreateWriteResult,
+      validateResponse: (value) => isInvitationCreateWriteResult(value, body),
     }), (caught) => caught instanceof ApiProblem && caught.status === 0);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(fetches, 0);
@@ -798,14 +909,15 @@ test("a failed pre-fetch Invitation claim does not retain an unsent local key", 
   const originalFetch = globalThis.fetch;
   const acquiredKeys = [];
   let fetches = 0;
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (_path, init) => {
     fetches += 1;
-    return new Response(JSON.stringify(invitationWriteResult(true)), {
+    const requestBody = JSON.parse(String(init.body));
+    return new Response(JSON.stringify(invitationWriteResult(true, requestBody)), {
       headers: { "content-type": "application/json" },
       status: 200,
     });
   };
-  const body = { grants: [{ project_id: "project-a", role: "writer" }], kind: "project_grant" };
+  const body = PROJECT_INVITATION_BODY;
   try {
     await assert.rejects(apiRequest("/test/invitation-prefetch-claim", {
       body,
@@ -815,7 +927,7 @@ test("a failed pre-fetch Invitation claim does not retain an unsent local key", 
         throw new Error("claim blocked before fetch");
       },
       method: "POST",
-      validateResponse: isInvitationCreateWriteResult,
+      validateResponse: (value) => isInvitationCreateWriteResult(value, body),
     }), /claim blocked before fetch/);
     assert.equal(fetches, 0);
     await apiRequest("/test/invitation-prefetch-claim", {
@@ -826,7 +938,7 @@ test("a failed pre-fetch Invitation claim does not retain an unsent local key", 
         return execute(intent);
       },
       method: "POST",
-      validateResponse: isInvitationCreateWriteResult,
+      validateResponse: (value) => isInvitationCreateWriteResult(value, body),
     });
     assert.equal(fetches, 1);
     assert.equal(acquiredKeys.length, 2);
@@ -890,50 +1002,76 @@ test("Invitation list cannot unlock an operation still inside the exact-retry wi
 });
 
 test("Invitation success is accepted only after the complete WriteResult shape is verified", () => {
-  assert.equal(isInvitationCreateWriteResult(invitationWriteResult(true)), true);
-  assert.equal(isInvitationCreateWriteResult(invitationWriteResult(false)), true);
-  assert.equal(isInvitationCreateWriteResult(null), false);
-  assert.equal(isInvitationCreateWriteResult({}), false);
-  assert.equal(isInvitationCreateWriteResult({ ...invitationWriteResult(true), event_cursor: 7 }), false);
+  assert.equal(isInvitationCreateWriteResult(invitationWriteResult(true), PROJECT_INVITATION_BODY), true);
+  assert.equal(isInvitationCreateWriteResult(invitationWriteResult(false), PROJECT_INVITATION_BODY), true);
+  assert.equal(isInvitationCreateWriteResult(null, PROJECT_INVITATION_BODY), false);
+  assert.equal(isInvitationCreateWriteResult({}, PROJECT_INVITATION_BODY), false);
+  assert.equal(isInvitationCreateWriteResult(
+    { ...invitationWriteResult(true), event_cursor: 7 },
+    PROJECT_INVITATION_BODY,
+  ), false);
   const missingResourceField = invitationWriteResult(true);
   delete missingResourceField.resource.code_fingerprint;
-  assert.equal(isInvitationCreateWriteResult(missingResourceField), false);
+  assert.equal(isInvitationCreateWriteResult(missingResourceField, PROJECT_INVITATION_BODY), false);
 
   const forwardCompatible = invitationWriteResult(true);
   forwardCompatible.future_top_level_projection = { value: 1 };
   forwardCompatible.resource.future_resource_projection = "future";
   forwardCompatible.resource.grants[0].future_grant_projection = true;
-  assert.equal(isInvitationCreateWriteResult(forwardCompatible), true);
+  assert.equal(isInvitationCreateWriteResult(forwardCompatible, PROJECT_INVITATION_BODY), true);
 
   const impossibleReplaySecret = invitationWriteResult(true);
   impossibleReplaySecret.idempotent_replay = true;
-  assert.equal(isInvitationCreateWriteResult(impossibleReplaySecret), false);
+  assert.equal(isInvitationCreateWriteResult(impossibleReplaySecret, PROJECT_INVITATION_BODY), false);
 
-  const forwardCompatibleRecovery = invitationWriteResult(false);
-  forwardCompatibleRecovery.resource.kind = "principal_recovery";
-  forwardCompatibleRecovery.resource.grants = [];
-  forwardCompatibleRecovery.resource.recovery_mode = "rotation";
-  forwardCompatibleRecovery.resource.bound_principal = {
-    display_name: "Participant",
-    future_principal_projection: ["future"],
-    principal_id: "33333333-3333-4333-8333-333333333333",
-  };
-  assert.equal(isInvitationCreateWriteResult(forwardCompatibleRecovery), true);
+  const forwardCompatibleRecovery = invitationWriteResult(false, RECOVERY_INVITATION_BODY);
+  forwardCompatibleRecovery.resource.bound_principal.future_principal_projection = ["future"];
+  assert.equal(isInvitationCreateWriteResult(forwardCompatibleRecovery, RECOVERY_INVITATION_BODY), true);
 
   const conflictingSecretBranch = invitationWriteResult(false);
   conflictingSecretBranch.resource.copy_text = "must not exist without the one-time secret";
-  assert.equal(isInvitationCreateWriteResult(conflictingSecretBranch), false);
+  assert.equal(isInvitationCreateWriteResult(conflictingSecretBranch, PROJECT_INVITATION_BODY), false);
+
+  const wrongProject = invitationWriteResult(true, {
+    grants: [{ project_id: PROJECT_B_ID, role: "writer" }],
+    kind: "project_grant",
+  });
+  assert.equal(isInvitationCreateWriteResult(wrongProject, PROJECT_INVITATION_BODY), false);
+  const wrongRole = invitationWriteResult(true, {
+    grants: [{ project_id: PROJECT_A_ID, role: "reader" }],
+    kind: "project_grant",
+  });
+  assert.equal(isInvitationCreateWriteResult(wrongRole, PROJECT_INVITATION_BODY), false);
+  assert.equal(isInvitationCreateWriteResult(
+    invitationWriteResult(true, RECOVERY_INVITATION_BODY),
+    PROJECT_INVITATION_BODY,
+  ), false);
+  assert.equal(isInvitationCreateWriteResult(
+    invitationWriteResult(true, {
+      ...RECOVERY_INVITATION_BODY,
+      recovery_mode: "full_recovery",
+    }),
+    RECOVERY_INVITATION_BODY,
+  ), false);
 
   for (const mutate of [
     (value) => { value.resource.id = ""; },
     (value) => { value.resource.created_at = "not-a-timestamp"; },
+    (value) => { value.resource.created_at = "2026-02-31T00:00:00.000Z"; },
     (value) => { value.resource.code_fingerprint = "wrong-fingerprint"; },
     (value) => { value.resource.allowed_actions = ["admin"]; },
     (value) => { value.resource.invite_url = "javascript:alert(1)"; },
+    (value) => {
+      value.resource.status = "revoked";
+      value.resource.revoked_at = "2026-08-30T00:01:00.000Z";
+      value.resource.deleted_at = value.resource.revoked_at;
+      value.resource.updated_at = value.resource.revoked_at;
+      value.resource.version = 2;
+    },
   ]) {
     const invalid = invitationWriteResult(true);
     mutate(invalid);
-    assert.equal(isInvitationCreateWriteResult(invalid), false);
+    assert.equal(isInvitationCreateWriteResult(invalid, PROJECT_INVITATION_BODY), false);
   }
 });
 
@@ -965,9 +1103,9 @@ test("malformed 2xx Invitation responses retain one Idempotency-Key until a veri
   };
   try {
     const options = {
-      body: { grants: [{ project_id: "project", role: "writer" }], kind: "project_grant" },
+      body: PROJECT_INVITATION_BODY,
       method: "POST",
-      validateResponse: isInvitationCreateWriteResult,
+      validateResponse: (value) => isInvitationCreateWriteResult(value, PROJECT_INVITATION_BODY),
     };
     await assert.rejects(
       apiRequest("/test/invitation-malformed-json", options),
@@ -1126,11 +1264,15 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(ownerSource, /coordinator\.runExistingOperation\(record, async \(lease\)/);
   assert.match(ownerSource, /settleInvitationRecovery\(operationRecord\)/);
   assert.match(ownerSource, /handleInvitationCreateFailure\(caught, "Invite", false, operationRecord\)/);
+  assert.match(ownerSource, /caught instanceof InvitationRecoveryExpiredError/);
   assert.match(ownerSource, /generation !== invitationReviewGeneration/);
   assert.match(ownerSource, /function invalidateInvitationReview\(\)/);
+  assert.match(ownerSource, /prepareReview\(current\)/);
+  assert.match(ownerSource, /invitationReviewRecord\.value/);
   assert.match(ownerSource, /ownerViewMounted/);
   assert.match(ownerSource, /acknowledgePresentedInvitation/);
-  assert.match(ownerSource, /validateResponse: isInvitationCreateWriteResult/);
+  assert.match(ownerSource, /validateResponse: \(value\) => isInvitationCreateWriteResult\(value, body\)/);
+  assert.match(ownerSource, /validateResponse: \(value\) => isInvitationCreateWriteResult\(value, record\.body\)/);
   assert.match(ownerSource, /lease\.markCommittedUnavailable\(response\.resource\.id\)/);
   assert.match(ownerSource, /readInvitationsForReview\(false\)/);
   assert.match(projectBoardSource, /projectionGeneration\.isCurrent\(generation\)/);
