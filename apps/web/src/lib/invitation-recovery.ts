@@ -424,16 +424,22 @@ export class InvitationRecoveryCoordinator {
   }
 
   async runNewOperation<T>(
-    intent: AcquiredPendingIntent,
+    acquireIntent: () => AcquiredPendingIntent,
     body: InvitationRequestBody,
-    callback: (lease: InvitationRecoveryLease) => Promise<T>,
+    callback: (lease: InvitationRecoveryLease, intent: AcquiredPendingIntent) => Promise<T>,
   ): Promise<T> {
     // Keep the origin-wide lock for the complete request lifetime. A list
     // readback must not retire this record while the original POST can still
     // commit after its fixed 24-hour recovery deadline.
     return this.#runExclusive(this.storageKey, async () => {
+      const existing = this.read();
+      if (existing !== null) throw new InvitationRecoveryBlockedError(existing);
+      // Acquire the local key only after the origin-wide lock is held. A tab
+      // may wait behind another request for longer than the fixed 24-hour
+      // window; an unsent key must start its deadline at the real send edge.
+      const intent = acquireIntent();
       const record = this.#beginUnlocked(intent, body);
-      return callback(this.#lease(record));
+      return callback(this.#lease(record), intent);
     });
   }
 

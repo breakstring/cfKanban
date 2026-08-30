@@ -450,15 +450,15 @@ async function executeNewInvitationOperation(
   let committedRecord: InvitationRecoveryRecord | null = null;
   const result = await apiRequest<InvitationCreateWriteResult>("/api/v1/admin/invitations", {
     body,
-    coordinateIdempotencyIntent: async (intent, execute) => {
+    coordinateIdempotencyIntent: async (acquireIntent, execute) => {
       const coordinator = invitationRecoveryCoordinator;
       if (coordinator === null) throw new Error("Shared Invitation recovery is unavailable.");
-      return coordinator.runNewOperation(intent, body, async (lease) => {
+      return coordinator.runNewOperation(acquireIntent, body, async (lease, intent) => {
         invitationRecoveryRecord.value = lease.record;
         onRecord(lease.record);
         invalidateInvitationReview();
         try {
-          const response = await execute();
+          const response = await execute(intent);
           const committed = lease.markCommittedUnavailable(response.resource.id);
           if (committed === null) {
             throw new Error("The committed Invitation could not be bound to the shared recovery lock.");

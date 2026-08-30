@@ -514,10 +514,10 @@ test("apiRequest keeps the atomic Invitation claim for the complete request", as
   try {
     const request = (coordinator, body) => apiRequest("/test/invitation-atomic-claim", {
       body,
-      coordinateIdempotencyIntent: (intent, execute) => coordinator.runNewOperation(
-        intent,
+      coordinateIdempotencyIntent: (acquireIntent, execute) => coordinator.runNewOperation(
+        acquireIntent,
         body,
-        async () => execute(),
+        async (_lease, intent) => execute(intent),
       ),
       method: "POST",
       validateResponse: isInvitationCreateWriteResult,
@@ -572,11 +572,11 @@ test("a deferred Invitation POST cannot be retired by a readback after the 24-ho
   try {
     const firstRequest = apiRequest("/test/invitation-cross-deadline", {
       body: firstBody,
-      coordinateIdempotencyIntent: (intent, execute) => firstTab.runNewOperation(
-        { ...intent, acquiredAt },
+      coordinateIdempotencyIntent: (acquireIntent, execute) => firstTab.runNewOperation(
+        () => ({ ...acquireIntent(), acquiredAt }),
         firstBody,
-        async (lease) => {
-          const result = await execute();
+        async (lease, intent) => {
+          const result = await execute(intent);
           assert.ok(lease.markCommittedUnavailable(result.resource.id));
           return result;
         },
@@ -611,10 +611,10 @@ test("a deferred Invitation POST cannot be retired by a readback after the 24-ho
 
     await assert.rejects(apiRequest("/test/invitation-cross-deadline", {
       body: secondBody,
-      coordinateIdempotencyIntent: (intent, execute) => secondTab.runNewOperation(
-        intent,
+      coordinateIdempotencyIntent: (acquireIntent, execute) => secondTab.runNewOperation(
+        acquireIntent,
         secondBody,
-        async () => execute(),
+        async (_lease, intent) => execute(intent),
       ),
       method: "POST",
       validateResponse: isInvitationCreateWriteResult,
@@ -643,7 +643,7 @@ test("a readback queued during an uncertain Invitation POST cannot retire its re
   const requestReleased = new Promise((resolve) => { releaseRequest = resolve; });
 
   const request = assert.rejects(firstTab.runNewOperation(
-    { acquiredAt, key: "idempotency-live", signature: "signature-live" },
+    () => ({ acquiredAt, key: "idempotency-live", signature: "signature-live" }),
     body,
     async (lease) => {
       announceRequest();
@@ -673,7 +673,7 @@ test("a readback queued during an uncertain Invitation POST cannot retire its re
   assert.equal(retained.state, "pending");
   assert.equal(retained.review_revision, staleRecord.review_revision + 1);
   await assert.rejects(secondTab.runNewOperation(
-    { acquiredAt: deadline + 1, key: "idempotency-new", signature: "signature-new" },
+    () => ({ acquiredAt: deadline + 1, key: "idempotency-new", signature: "signature-new" }),
     { kind: "principal_recovery", principal_id: "principal", recovery_mode: "rotation" },
     async () => undefined,
   ), InvitationRecoveryBlockedError);
@@ -722,6 +722,77 @@ test("an exact Invitation retry rechecks the fixed deadline after acquiring its 
   assert.deepEqual(coordinator.read(), record);
 });
 
+test("a new Invitation acquires its local key only after waiting for the Web Lock", async () => {
+  const { ApiProblem, apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const storage = new MemoryStorage();
+  const locks = new MemoryExclusiveLocks();
+  let now = 1_000;
+  const deadline = now + 24 * 60 * 60 * 1000;
+  const coordinator = new InvitationRecoveryCoordinator(
+    "owner-principal",
+    storage,
+    locks.run.bind(locks),
+    () => "marker-queued-new",
+    () => now,
+  );
+  const body = {
+    grants: [{ project_id: "22222222-2222-4222-8222-222222222222", role: "writer" }],
+    kind: "project_grant",
+  };
+  let releaseBlocker;
+  let announceBlocker;
+  const blockerStarted = new Promise((resolve) => { announceBlocker = resolve; });
+  const blockerReleased = new Promise((resolve) => { releaseBlocker = resolve; });
+  const blocker = locks.run(coordinator.storageKey, async () => {
+    announceBlocker();
+    await blockerReleased;
+  });
+  await blockerStarted;
+  const originalFetch = globalThis.fetch;
+  const originalDateNow = Date.now;
+  let fetches = 0;
+  Date.now = () => now;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    throw new Error("response lost");
+  };
+  try {
+    const queued = assert.rejects(apiRequest("/test/invitation-queued-new-intent", {
+      body,
+      coordinateIdempotencyIntent: (acquireIntent, execute) => coordinator.runNewOperation(
+        acquireIntent,
+        body,
+        async (lease, intent) => {
+          try {
+            return await execute(intent);
+          } catch (caught) {
+            assert.ok(lease.retainPendingAfterUncertainResult());
+            throw caught;
+          }
+        },
+      ),
+      method: "POST",
+      validateResponse: isInvitationCreateWriteResult,
+    }), (caught) => caught instanceof ApiProblem && caught.status === 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(fetches, 0);
+    assert.equal(coordinator.read(), null);
+
+    now = deadline + 1;
+    releaseBlocker();
+    await blocker;
+    await queued;
+    const retained = coordinator.read();
+    assert.ok(retained);
+    assert.equal(fetches, 1);
+    assert.equal(retained.acquired_at, now);
+    assert.equal(invitationRecoveryCanRetry(retained, now), true);
+  } finally {
+    Date.now = originalDateNow;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("a failed pre-fetch Invitation claim does not retain an unsent local key", async () => {
   const { apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
   const originalFetch = globalThis.fetch;
@@ -738,7 +809,8 @@ test("a failed pre-fetch Invitation claim does not retain an unsent local key", 
   try {
     await assert.rejects(apiRequest("/test/invitation-prefetch-claim", {
       body,
-      coordinateIdempotencyIntent: (intent) => {
+      coordinateIdempotencyIntent: (acquireIntent) => {
+        const intent = acquireIntent();
         acquiredKeys.push(intent.key);
         throw new Error("claim blocked before fetch");
       },
@@ -748,9 +820,10 @@ test("a failed pre-fetch Invitation claim does not retain an unsent local key", 
     assert.equal(fetches, 0);
     await apiRequest("/test/invitation-prefetch-claim", {
       body,
-      coordinateIdempotencyIntent: (intent, execute) => {
+      coordinateIdempotencyIntent: (acquireIntent, execute) => {
+        const intent = acquireIntent();
         acquiredKeys.push(intent.key);
-        return execute();
+        return execute(intent);
       },
       method: "POST",
       validateResponse: isInvitationCreateWriteResult,
@@ -1048,8 +1121,8 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(appSource, /sessionReloadPending = true/);
   assert.match(ownerSource, /initializeInvitationRecovery\(\)/);
   assert.match(ownerSource, /navigator\.locks\.request\(name, \{ mode: "exclusive" \}, callback\)/);
-  assert.match(ownerSource, /coordinateIdempotencyIntent: async \(intent, execute\)/);
-  assert.match(ownerSource, /coordinator\.runNewOperation\(intent, body, async \(lease\)/);
+  assert.match(ownerSource, /coordinateIdempotencyIntent: async \(acquireIntent, execute\)/);
+  assert.match(ownerSource, /coordinator\.runNewOperation\(acquireIntent, body, async \(lease, intent\)/);
   assert.match(ownerSource, /coordinator\.runExistingOperation\(record, async \(lease\)/);
   assert.match(ownerSource, /settleInvitationRecovery\(operationRecord\)/);
   assert.match(ownerSource, /handleInvitationCreateFailure\(caught, "Invite", false, operationRecord\)/);
