@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
@@ -87,6 +87,11 @@ function clearIssueProjection(): void {
 function refreshProjectInventory(): void {
   projectionGeneration.invalidate();
   loadRequestId += 1;
+  deletedComments.value = [];
+  deletedLabels.value = [];
+  deletedRelations.value = [];
+  relationTarget.value = null;
+  showCollaborationRecovery.value = false;
   const current = issue.value;
   if (current !== null) {
     issueProjectScope = { projectKey: current.project.key, workspaceKey: current.workspace.key };
@@ -120,7 +125,7 @@ function mergeComments(...groups: IssueComment[][]): IssueComment[] {
   ));
 }
 
-async function load(preserveLocalState = editMode.value): Promise<void> {
+async function load(preserveLocalDrafts = editMode.value): Promise<void> {
   const generation = projectionGeneration.capture();
   const requestId = loadRequestId + 1;
   loadRequestId = requestId;
@@ -144,14 +149,15 @@ async function load(preserveLocalState = editMode.value): Promise<void> {
     }
     issueProjectScope = resultScope;
     issue.value = result;
-    if (!preserveLocalState) {
+    if (!preserveLocalDrafts) {
       edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title };
     }
     emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject(result) });
     labels.value = labelResult.items;
-    comments.value = preserveLocalState
-      ? mergeComments(comments.value, commentResult.items)
-      : commentResult.items;
+    // Remote projections are replaced from the current first page. Local edit,
+    // comment, completion, block, and relation drafts live in separate refs and
+    // do not require retaining rows that the server no longer returns.
+    comments.value = commentResult.items;
     commentNextCursor.value = commentResult.has_more ? commentResult.next_cursor : null;
     relations.value = relationResult.items;
   } catch (caught) {
@@ -521,6 +527,10 @@ function backToBoard(): void {
 }
 
 onMounted(load);
+onUnmounted(() => {
+  projectionGeneration.invalidate();
+  loadRequestId += 1;
+});
 watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { deep: true });
 </script>
 

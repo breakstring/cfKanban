@@ -1276,8 +1276,13 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(ownerSource, /lease\.markCommittedUnavailable\(response\.resource\.id\)/);
   assert.match(ownerSource, /readInvitationsForReview\(false\)/);
   assert.match(projectBoardSource, /projectionGeneration\.isCurrent\(generation\)/);
+  assert.match(projectBoardSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
+  assert.match(projectBoardSource, /deletedIssues\.value = \[\]/);
   assert.match(projectBoardSource, /void load\(\)/);
   assert.match(issueDetailSource, /projectionGeneration\.isCurrent\(generation\)/);
+  assert.match(issueDetailSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
+  assert.match(issueDetailSource, /comments\.value = commentResult\.items/);
+  assert.match(issueDetailSource, /showCollaborationRecovery\.value = false/);
   assert.match(issueDetailSource, /void load\(true\)/);
   assert.match(projectBoardSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
   assert.match(issueDetailSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
