@@ -5331,8 +5331,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/PrincipalDetail"
                 }
               }
             }
@@ -14154,6 +14153,405 @@
                 "usb"
               ]
             }
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrincipalPasskeySummary": {
+        "type": "object",
+        "required": [
+          "algorithm",
+          "allowed_actions",
+          "backup_eligible",
+          "backup_state",
+          "created_at",
+          "id",
+          "last_used_at",
+          "revoked_at",
+          "rp_id",
+          "transports",
+          "version"
+        ],
+        "properties": {
+          "algorithm": {
+            "type": "integer",
+            "format": "int64",
+            "enum": [
+              -7,
+              -257
+            ]
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "revoke"
+              ]
+            }
+          },
+          "backup_eligible": {
+            "type": "boolean"
+          },
+          "backup_state": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rp_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "transports": {
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "ble",
+                "hybrid",
+                "internal",
+                "nfc",
+                "smart-card",
+                "usb"
+              ]
+            }
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrincipalCredentialSummary": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "created_at",
+          "deleted_at",
+          "fingerprint",
+          "id",
+          "issued_at",
+          "last_used_at",
+          "principal",
+          "principal_id",
+          "revoke_reason",
+          "revoked_at",
+          "updated_at",
+          "version"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "revoke"
+              ]
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "issued_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "principal": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "principal_id"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "revoke_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrincipalGrantSummary": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "created_at",
+          "deleted_at",
+          "id",
+          "principal",
+          "principal_id",
+          "project",
+          "project_id",
+          "revoked_at",
+          "role",
+          "updated_at",
+          "version"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "principal": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "principal_id"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "principal_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "id",
+              "key",
+              "workspace_key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "workspace_key": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "$ref": "#/components/schemas/ProjectRole"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PrincipalDetail": {
+        "type": "object",
+        "required": [
+          "active_credential_count",
+          "active_grant_count",
+          "assignee_count",
+          "created_at",
+          "credentials",
+          "credentials_has_more",
+          "deleted_at",
+          "display_name",
+          "grants",
+          "grants_has_more",
+          "id",
+          "is_owner",
+          "passkeys",
+          "passkeys_has_more",
+          "principal_id",
+          "updated_at",
+          "version"
+        ],
+        "properties": {
+          "active_credential_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "active_grant_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "assignee_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "credentials": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/PrincipalCredentialSummary"
+            }
+          },
+          "credentials_has_more": {
+            "type": "boolean"
+          },
+          "deleted_at": {
+            "type": "null"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "grants": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/PrincipalGrantSummary"
+            }
+          },
+          "grants_has_more": {
+            "type": "boolean"
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "passkeys": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/PrincipalPasskeySummary"
+            }
+          },
+          "passkeys_has_more": {
+            "type": "boolean"
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
           },
           "version": {
             "$ref": "#/components/schemas/Version"

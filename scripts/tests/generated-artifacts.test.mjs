@@ -292,6 +292,18 @@ test("OpenAPI exposes concrete Browser Launch, Session, and WebAuthn contracts",
       .pubKeyCredParams.items.properties.alg.enum,
     [-7, -257],
   );
+  assert.equal(
+    document.paths["/api/v1/admin/principals/{principal_id}"].get.responses["200"]
+      .content["application/json"].schema.$ref,
+    "#/components/schemas/PrincipalDetail",
+  );
+  assert.ok(document.components.schemas.PrincipalDetail.required.includes("passkeys"));
+  assert.equal(
+    document.components.schemas.PrincipalDetail.properties.passkeys.items.$ref,
+    "#/components/schemas/PrincipalPasskeySummary",
+  );
+  assert.equal(document.components.schemas.PrincipalPasskeySummary.additionalProperties, false);
+  assert.equal("public_key_cose" in document.components.schemas.PrincipalPasskeySummary.properties, false);
   const launchQuery = document.paths["/app/launch"].get.parameters
     .find((parameter) => parameter.name === "code").schema;
   assert.equal(launchQuery.minLength, 59);

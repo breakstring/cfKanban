@@ -78,7 +78,7 @@ export function registerWp03Routes(router: Router): Router {
     })
     .get("/api/v1/workspaces", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await listWorkspaces(env.DB, auth, context.url), context.requestId);
+      return jsonResponse(await listWorkspaces(env.DB, auth, context.url, context.startedAt), context.requestId);
     })
     .post("/api/v1/workspaces", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
@@ -100,6 +100,7 @@ export function registerWp03Routes(router: Router): Router {
         auth,
         path(context, "workspace_key"),
         context.url,
+        context.startedAt,
       ), context.requestId);
     })
     .patch("/api/v1/workspaces/{workspace_key}", async (request, env, context) => {
@@ -141,7 +142,13 @@ export function registerWp03Routes(router: Router): Router {
     })
     .get("/api/v1/workspaces/{workspace_key}/projects", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await listProjects(env.DB, auth, path(context, "workspace_key"), context.url), context.requestId);
+      return jsonResponse(await listProjects(
+        env.DB,
+        auth,
+        path(context, "workspace_key"),
+        context.url,
+        context.startedAt,
+      ), context.requestId);
     })
     .post("/api/v1/workspaces/{workspace_key}/projects", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
@@ -166,6 +173,7 @@ export function registerWp03Routes(router: Router): Router {
         path(context, "workspace_key"),
         path(context, "project_key"),
         context.url,
+        context.startedAt,
       ), context.requestId);
     })
     .patch("/api/v1/workspaces/{workspace_key}/projects/{project_key}", async (request, env, context) => {

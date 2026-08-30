@@ -14,6 +14,7 @@ import type {
   InvitationResource,
   ListResult,
   MetaResource,
+  PrincipalPasskey,
   PrincipalDetail,
   PrincipalResource,
   ProjectStatusResource,
@@ -51,6 +52,8 @@ const deletedProjects = ref<ProjectEntry[]>([]);
 const principals = ref<PrincipalResource[]>([]);
 const invitations = ref<InvitationResource[]>([]);
 const audit = ref<EventResource[]>([]);
+const auditNextCursor = ref<string | null>(null);
+const auditLoadingMore = ref(false);
 const showWorkspace = ref(false);
 const showProject = ref(false);
 const showInvite = ref(false);
@@ -61,6 +64,8 @@ const showRestore = ref(false);
 const showPrincipal = ref(false);
 const showGrant = ref(false);
 const oneTimeInvite = ref("");
+const inviteNeedsReview = ref(false);
+const inviteRecoveryNotice = ref("");
 const selectedWorkspace = ref("");
 const selectedProject = ref<ProjectEntry | null>(null);
 const workspaceForm = ref({ display_name: "", key: "" });
@@ -78,6 +83,10 @@ const selectedGrantProject = ref<ProjectEntry | null>(null);
 const projectGrants = ref<GrantResource[]>([]);
 const grantForm = ref({ principal_id: "", role: "writer" as "reader" | "writer" });
 const recoveryForm = ref({ mode: "rotation" as "rotation" | "full_recovery", principal_id: "" });
+const recoveryConfirmed = ref(false);
+const policyRiskConfirmed = ref(false);
+let projectSettingsRequestId = 0;
+let policyRequestId = 0;
 
 function ui(english: string, chinese: string): string {
   return locale.value === "zh-CN" ? chinese : english;
@@ -95,12 +104,34 @@ async function copyText(value: string): Promise<void> {
 
 function openInviteDialog(): void {
   oneTimeInvite.value = "";
+  inviteNeedsReview.value = false;
+  inviteRecoveryNotice.value = "";
   showInvite.value = true;
 }
 
 function closeInviteDialog(): void {
   oneTimeInvite.value = "";
+  inviteNeedsReview.value = false;
+  inviteRecoveryNotice.value = "";
   showInvite.value = false;
+}
+
+function closeProjectSettings(): void {
+  projectSettingsRequestId += 1;
+  projectStatuses.value = [];
+  statusDrafts.value = {};
+  selectedProject.value = null;
+  showProjectSettings.value = false;
+  busy.value = false;
+}
+
+function closePolicy(): void {
+  policyRequestId += 1;
+  policy.value = null;
+  selectedProject.value = null;
+  policyRiskConfirmed.value = false;
+  showPolicy.value = false;
+  busy.value = false;
 }
 
 const tabs = computed(() => [
@@ -172,14 +203,30 @@ async function load(): Promise<void> {
       principals.value = principalResult.items;
       invitations.value = inviteResult.items;
     } else {
-      const auditResult = await apiRequest<ListResult<EventResource>>("/api/v1/admin/audit-events?limit=100");
-      audit.value = auditResult.items;
+      await loadAudit(true);
     }
     emit("context", { label: t("admin.title"), role: "owner" });
   } catch (caught) {
     error.value = errorText(caught);
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadAudit(reset = false): Promise<void> {
+  if (!reset && auditNextCursor.value === null) return;
+  auditLoadingMore.value = !reset;
+  try {
+    const params = new URLSearchParams({ limit: "100" });
+    if (!reset && auditNextCursor.value !== null) params.set("after", auditNextCursor.value);
+    const result = await apiRequest<ListResult<EventResource>>(`/api/v1/admin/audit-events?${params}`);
+    const merged = reset ? result.items : [...audit.value, ...result.items];
+    audit.value = [...new Map(merged.map((event) => [event.id, event])).values()];
+    auditNextCursor.value = result.has_more ? result.next_cursor : null;
+  } catch (caught) {
+    error.value = errorText(caught);
+  } finally {
+    auditLoadingMore.value = false;
   }
 }
 
@@ -246,7 +293,11 @@ async function saveContainerEdit(): Promise<void> {
 }
 
 async function openProjectSettings(item: ProjectEntry): Promise<void> {
+  const requestId = projectSettingsRequestId + 1;
+  projectSettingsRequestId = requestId;
   selectedProject.value = item;
+  projectStatuses.value = [];
+  statusDrafts.value = {};
   projectSettingsForm.value = { context: item.context ?? "", display_name: item.display_name };
   showProjectSettings.value = true;
   busy.value = true;
@@ -254,9 +305,15 @@ async function openProjectSettings(item: ProjectEntry): Promise<void> {
     const result = await apiRequest<ListResult<ProjectStatusResource>>(
       `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}/statuses`,
     );
+    if (requestId !== projectSettingsRequestId || selectedProject.value?.id !== item.id) return;
     projectStatuses.value = result.items;
     statusDrafts.value = Object.fromEntries(result.items.map((status) => [status.key, status.display_name]));
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (requestId === projectSettingsRequestId) {
+      error.value = errorText(caught);
+      closeProjectSettings();
+    }
+  } finally { if (requestId === projectSettingsRequestId) busy.value = false; }
 }
 
 async function saveProjectSettings(): Promise<void> {
@@ -346,6 +403,9 @@ async function openPrincipal(principal: PrincipalResource): Promise<void> {
     oneTimeInvite.value = "";
     selectedPrincipal.value = await apiRequest<PrincipalDetail>(`/api/v1/admin/principals/${principal.id}`);
     recoveryForm.value = { mode: "rotation", principal_id: principal.id };
+    recoveryConfirmed.value = false;
+    inviteNeedsReview.value = false;
+    inviteRecoveryNotice.value = "";
     showPrincipal.value = true;
   } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
 }
@@ -353,6 +413,9 @@ async function openPrincipal(principal: PrincipalResource): Promise<void> {
 function closePrincipal(): void {
   oneTimeInvite.value = "";
   selectedPrincipal.value = null;
+  recoveryConfirmed.value = false;
+  inviteNeedsReview.value = false;
+  inviteRecoveryNotice.value = "";
   showPrincipal.value = false;
 }
 
@@ -365,12 +428,22 @@ async function revokeCredential(credential: CredentialResource): Promise<void> {
   } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
 }
 
+async function revokePrincipalPasskey(passkey: PrincipalPasskey): Promise<void> {
+  const principal = selectedPrincipal.value;
+  if (principal === null || !passkey.allowed_actions.includes("revoke")) return;
+  busy.value = true;
+  try {
+    await apiRequest(`/api/v1/admin/passkeys/${passkey.id}?expected_version=${passkey.version}`, { method: "DELETE" });
+    await openPrincipal(principal);
+  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+}
+
 async function createRecoveryInvite(): Promise<void> {
-  if (!recoveryForm.value.principal_id) return;
+  if (!recoveryForm.value.principal_id || !recoveryConfirmed.value || inviteNeedsReview.value) return;
   busy.value = true;
   oneTimeInvite.value = "";
   try {
-    const result = await apiRequest<WriteResult<{ copy_text?: string; invite_url?: string }>>(
+    const result = await apiRequest<WriteResult<{ copy_text?: string; invite_url?: string; secret_available: boolean }>>(
       "/api/v1/admin/invitations",
       {
         body: {
@@ -382,6 +455,13 @@ async function createRecoveryInvite(): Promise<void> {
       },
     );
     oneTimeInvite.value = result.resource.copy_text ?? result.resource.invite_url ?? "";
+    if (!result.resource.secret_available) {
+      inviteNeedsReview.value = true;
+      inviteRecoveryNotice.value = ui(
+        "The original recovery URL cannot be reconstructed. Review and revoke the committed Invitation before explicitly starting a new one.",
+        "首次恢复 URL 无法重建。请先检查并撤销已经提交的 Invitation，再显式开始一次新创建。",
+      );
+    }
     await load();
   } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
 }
@@ -437,14 +517,21 @@ async function revokeGrant(grant: GrantResource): Promise<void> {
 }
 
 async function createInvite(): Promise<void> {
-  if (!inviteForm.value.project_id) return;
+  if (!inviteForm.value.project_id || inviteNeedsReview.value) return;
   busy.value = true;
   oneTimeInvite.value = "";
   try {
-    const result = await apiRequest<WriteResult<{ copy_text?: string; invite_url?: string }>>("/api/v1/admin/invitations", {
+    const result = await apiRequest<WriteResult<{ copy_text?: string; invite_url?: string; secret_available: boolean }>>("/api/v1/admin/invitations", {
       body: { kind: "project_grant", grants: [inviteForm.value] }, method: "POST",
     });
     oneTimeInvite.value = result.resource.copy_text ?? result.resource.invite_url ?? "";
+    if (!result.resource.secret_available) {
+      inviteNeedsReview.value = true;
+      inviteRecoveryNotice.value = ui(
+        "The original Invite URL cannot be reconstructed. Review and revoke the committed Invitation before explicitly starting a new one.",
+        "首次 Invite URL 无法重建。请先检查并撤销已经提交的 Invitation，再显式开始一次新创建。",
+      );
+    }
     await load();
   } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
 }
@@ -458,11 +545,16 @@ async function revokeInvite(invitation: InvitationResource): Promise<void> {
 }
 
 async function openPolicy(item: ProjectEntry): Promise<void> {
+  const requestId = policyRequestId + 1;
+  policyRequestId = requestId;
   selectedProject.value = item;
+  policy.value = null;
+  policyRiskConfirmed.value = false;
   showPolicy.value = true;
   busy.value = true;
   try {
     const result = await apiRequest<PolicyResource>(`/api/v1/admin/projects/${item.id}/public-join`);
+    if (requestId !== policyRequestId || selectedProject.value?.id !== item.id) return;
     policy.value = result;
     policyForm.value = {
       comments: result.resource_limits.comments ?? 500,
@@ -470,12 +562,17 @@ async function openPolicy(item: ProjectEntry): Promise<void> {
       principals: result.resource_limits.principals ?? 50,
       public_summary: result.public_summary ?? "",
     };
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (requestId === policyRequestId) {
+      error.value = errorText(caught);
+      closePolicy();
+    }
+  } finally { if (requestId === policyRequestId) busy.value = false; }
 }
 
 async function savePolicy(): Promise<void> {
   const item = selectedProject.value;
-  if (item === null) return;
+  if (item === null || policy.value === null || !policyRiskConfirmed.value) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/projects/${item.id}/public-join`, {
@@ -556,17 +653,19 @@ onMounted(load);
     </template>
 
     <template v-if="!loading && section === 'audit'">
+      <p v-if="auditNextCursor" class="warning-panel">{{ ui("More Audit events are available. Load the next page to continue the sequence; this view never silently treats the first 100 as complete.", "还有更多 Audit Event。请继续加载后续 sequence；此页面不会把前 100 条静默当成完整记录。") }}</p>
       <section class="audit-list"><article v-for="event in audit" :key="event.id"><div><code>{{ event.type }}</code><strong>{{ event.subject.type }} · {{ event.subject.id }}</strong></div><p>{{ event.actor?.display_name ?? ui('system', '系统') }} · {{ formatTime(event.created_at) }}</p><pre>{{ JSON.stringify(event.payload, null, 2) }}</pre></article><p v-if="audit.length === 0" class="empty-copy">{{ ui("No audit events", "暂无审计事件") }}</p></section>
+      <button v-if="auditNextCursor" class="load-more" type="button" :disabled="auditLoadingMore" @click="loadAudit(false)">{{ auditLoadingMore ? "…" : ui("Load more Audit events", "加载更多 Audit Event") }}</button>
     </template>
 
     <ModalDialog v-if="showWorkspace" :busy="busy" :title="ui('Create Workspace', '创建 Workspace')" @close="showWorkspace = false"><form class="form-stack" @submit.prevent="createWorkspace"><label>Key<input v-model="workspaceForm.key" required pattern="[a-z][a-z0-9-]{1,31}" /></label><label>{{ ui("Display name", "显示名称") }}<input v-model="workspaceForm.display_name" required maxlength="128" /></label><div class="form-actions"><button class="secondary-button" type="button" @click="showWorkspace = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit">{{ t("action.save") }}</button></div></form></ModalDialog>
     <ModalDialog v-if="showProject" :busy="busy" :title="ui('Create Project', '创建 Project')" @close="showProject = false"><form class="form-stack" @submit.prevent="createProject"><label>Workspace<select v-model="selectedWorkspace" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.key">{{ workspace.display_name }}</option></select></label><label>Key<input v-model="projectForm.key" required pattern="[A-Z][A-Z0-9-]{1,15}" /></label><label>{{ ui("Display name", "显示名称") }}<input v-model="projectForm.display_name" required maxlength="128" /></label><label>Context<textarea v-model="projectForm.context" rows="5" /></label><div class="form-actions"><button class="secondary-button" type="button" @click="showProject = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit">{{ t("action.save") }}</button></div></form></ModalDialog>
     <ModalDialog v-if="showContainerEdit && containerEdit" :busy="busy" :title="ui('Rename container', '容器改名')" @close="showContainerEdit = false"><form class="form-stack" @submit.prevent="saveContainerEdit"><p><code>{{ containerEdit.item.key }}</code></p><label>{{ ui("Display name", "显示名称") }}<input v-model="containerEdit.display_name" required maxlength="128" /></label><div class="form-actions"><button class="secondary-button" type="button" @click="showContainerEdit = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit">{{ t("action.save") }}</button></div></form></ModalDialog>
-    <ModalDialog v-if="showProjectSettings && selectedProject" :busy="busy" :title="ui('Project settings', 'Project 设置')" @close="showProjectSettings = false"><form class="form-stack" @submit.prevent="saveProjectSettings"><p><code>{{ selectedProject.workspaceKey }}/{{ selectedProject.key }}</code> · v{{ selectedProject.version }}</p><label>{{ ui("Display name", "显示名称") }}<input v-model="projectSettingsForm.display_name" required maxlength="128" /></label><label>Context<textarea v-model="projectSettingsForm.context" rows="6" /></label><button class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</button></form><section class="recovery-section"><h3>{{ ui("Workflow display names", "工作流显示名称") }}</h3><p class="muted-copy">{{ ui("Stable keys, order, and terminal semantics do not change.", "稳定 key、顺序和 terminal 语义不会改变。") }}</p><form v-for="status in projectStatuses" :key="status.key" class="compact-inline-form" @submit.prevent="saveStatusName(status)"><code>{{ status.key }}</code><input v-model="statusDrafts[status.key]" required maxlength="128" /><button class="text-button" type="submit" :disabled="busy || statusDrafts[status.key] === status.display_name">{{ t("action.save") }}</button></form></section></ModalDialog>
+    <ModalDialog v-if="showProjectSettings && selectedProject" :busy="busy" :title="ui('Project settings', 'Project 设置')" @close="closeProjectSettings"><form class="form-stack" @submit.prevent="saveProjectSettings"><p><code>{{ selectedProject.workspaceKey }}/{{ selectedProject.key }}</code> · v{{ selectedProject.version }}</p><label>{{ ui("Display name", "显示名称") }}<input v-model="projectSettingsForm.display_name" required maxlength="128" /></label><label>Context<textarea v-model="projectSettingsForm.context" rows="6" /></label><button class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</button></form><section class="recovery-section"><h3>{{ ui("Workflow display names", "工作流显示名称") }}</h3><p class="muted-copy">{{ ui("Stable keys, order, and terminal semantics do not change.", "稳定 key、顺序和 terminal 语义不会改变。") }}</p><form v-for="status in projectStatuses" :key="status.key" class="compact-inline-form" @submit.prevent="saveStatusName(status)"><code>{{ status.key }}</code><input v-model="statusDrafts[status.key]" required maxlength="128" /><button class="text-button" type="submit" :disabled="busy || statusDrafts[status.key] === status.display_name">{{ t("action.save") }}</button></form></section></ModalDialog>
     <ModalDialog v-if="showRestore && restoreTarget" :busy="busy" :title="ui('Restore container?', '恢复容器？')" @close="showRestore = false"><p><code>{{ restoreTarget.item.key }}</code> · {{ restoreTarget.item.display_name }}</p><p class="warning-panel">{{ ui("Restoring reactivates every still-enabled Public Join policy shown below. Existing Grants remain unchanged.", "恢复会重新启用下列仍 enabled 的 Public Join Policy；既有 Grants 不会改变。") }}</p><p v-if="restoreTarget.item.resumed_public_projects?.has_more" class="inline-alert" role="alert">{{ ui("More than 100 Public Join Projects will resume. Only the first 100 are listed here; confirming still republishes every enabled policy in this container.", "将恢复超过 100 个 Public Join Project。此处只列出前 100 个；确认后仍会重新公开该容器内全部 enabled Policy。") }}</p><div class="data-list"><div v-for="publicProject in restoreTarget.item.resumed_public_projects?.projects ?? []" :key="publicProject.id" class="data-row"><span><strong>{{ publicProject.workspace_key ? `${publicProject.workspace_key}/` : '' }}{{ publicProject.key }}</strong><small>{{ publicProject.display_name ?? publicProject.id }}</small></span><span v-if="publicProject.resource_limits">{{ publicProject.role_choices?.join(' | ') }} · {{ publicProject.resource_limits.issues }}/{{ publicProject.resource_limits.comments }}/{{ publicProject.resource_limits.principals }}</span></div><p v-if="!(restoreTarget.item.resumed_public_projects?.projects.length)" class="empty-copy">{{ ui("No enabled Public Join policy will resume.", "没有 enabled Public Join Policy 会重新公开。") }}</p></div><div class="form-actions"><button class="secondary-button" type="button" @click="showRestore = false">{{ t("action.cancel") }}</button><button class="primary-button" type="button" :disabled="busy" @click="restoreContainer">{{ t("action.restore") }}</button></div></ModalDialog>
-    <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建 Project Invite')" @close="closeInviteDialog"><form class="form-stack" @submit.prevent="createInvite"><label>Project<select v-model="inviteForm.project_id" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.workspaceKey }}/{{ item.key }} · {{ item.display_name }}</option></select></label><label>{{ ui("Role", "角色") }}<select v-model="inviteForm.role"><option value="reader">reader</option><option value="writer">writer</option></select></label><p class="muted-copy">{{ locale === "zh-CN" ? "完整 URL 只在创建响应中出现一次；页面不会保存它。" : "The full URL appears only in the create response; this page does not store it." }}</p><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><div class="form-actions"><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ oneTimeInvite ? (locale === 'zh-CN' ? '再创建一个' : 'Create another') : t('action.save') }}</button></div></form></ModalDialog>
-    <ModalDialog v-if="showPrincipal && selectedPrincipal" :busy="busy" :title="ui('Principal access', 'Principal 访问')" @close="closePrincipal"><header class="modal-summary"><strong>{{ selectedPrincipal.display_name }}</strong><code>{{ selectedPrincipal.id }}</code><span>{{ selectedPrincipal.is_owner ? 'Owner' : ui('Participant', '参与者') }}</span></header><section class="recovery-section"><h3>Credentials</h3><div class="data-list"><div v-for="credential in selectedPrincipal.credentials" :key="credential.id" class="data-row"><span><strong>{{ credential.fingerprint }}</strong><small>{{ credential.last_used_at ? formatTime(credential.last_used_at) : ui('never used', '尚未使用') }}</small></span><button v-if="credential.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokeCredential(credential)">{{ ui('Revoke', '撤销') }}</button></div></div></section><section class="recovery-section"><h3>Grants</h3><div class="data-list"><div v-for="grant in selectedPrincipal.grants" :key="grant.id" class="data-row"><span><strong>{{ grant.project.workspace_key }}/{{ grant.project.key }}</strong><small>{{ grant.role }} · {{ grant.revoked_at ? ui('revoked', '已撤销') : ui('active', 'active') }}</small></span></div></div></section><form v-if="!selectedPrincipal.is_owner" class="form-stack warning-panel" @submit.prevent="createRecoveryInvite"><h3>{{ ui('Principal recovery invite', 'Principal 恢复邀请') }}</h3><label>{{ ui('Recovery mode', '恢复模式') }}<select v-model="recoveryForm.mode"><option value="rotation">rotation · {{ ui('revoke the credential used to redeem', '仅撤销本次兑换所用旧 Credential') }}</option><option value="full_recovery">full_recovery · {{ ui('revoke all prior credentials', '撤销全部 prior Credentials') }}</option></select></label><button class="primary-button" type="submit" :disabled="busy">{{ ui('Create one-time recovery URL', '创建一次性恢复 URL') }}</button><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button></form></ModalDialog>
+    <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建 Project Invite')" @close="closeInviteDialog"><form class="form-stack" @submit.prevent="createInvite"><label>Project<select v-model="inviteForm.project_id" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.workspaceKey }}/{{ item.key }} · {{ item.display_name }}</option></select></label><label>{{ ui("Role", "角色") }}<select v-model="inviteForm.role"><option value="reader">reader</option><option value="writer">writer</option></select></label><p class="muted-copy">{{ locale === "zh-CN" ? "完整 URL 只在创建响应中出现一次；页面不会保存它。" : "The full URL appears only in the create response; this page does not store it." }}</p><p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><div class="form-actions"><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button><button class="primary-button" type="submit" :disabled="busy || inviteNeedsReview">{{ oneTimeInvite ? (locale === 'zh-CN' ? '再创建一个' : 'Create another') : t('action.save') }}</button></div></form></ModalDialog>
+    <ModalDialog v-if="showPrincipal && selectedPrincipal" :busy="busy" :title="ui('Principal access', 'Principal 访问')" @close="closePrincipal"><header class="modal-summary"><strong>{{ selectedPrincipal.display_name }}</strong><code>{{ selectedPrincipal.id }}</code><span>{{ selectedPrincipal.is_owner ? 'Owner' : ui('Participant', '参与者') }}</span><small>{{ ui('Created', '创建于') }} {{ selectedPrincipal.created_at ? formatTime(selectedPrincipal.created_at) : '—' }} · {{ selectedPrincipal.active_credential_count ?? 0 }} Credentials · {{ selectedPrincipal.active_grant_count ?? 0 }} Grants · {{ selectedPrincipal.assignee_count ?? 0 }} Assignees</small></header><section class="recovery-section"><h3>Credentials</h3><div class="data-list"><div v-for="credential in selectedPrincipal.credentials" :key="credential.id" class="data-row"><span><strong>{{ credential.fingerprint }}</strong><small>{{ credential.last_used_at ? formatTime(credential.last_used_at) : ui('never used', '尚未使用') }}</small></span><button v-if="credential.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokeCredential(credential)">{{ ui('Revoke', '撤销') }}</button></div></div><p v-if="selectedPrincipal.credentials_has_more" class="warning-panel">{{ ui('More Credentials exist; use cfkanban-admin with an explicit cursor.', '还有更多 Credential；请让 cfkanban-admin 使用显式 cursor。') }}</p></section><section class="recovery-section"><h3>Passkeys</h3><div class="data-list"><div v-for="passkey in selectedPrincipal.passkeys" :key="passkey.id" class="data-row"><span><strong>{{ passkey.algorithm === -7 ? 'ES256' : 'RS256' }}</strong><small>{{ passkey.rp_id }} · {{ passkey.last_used_at ? formatTime(passkey.last_used_at) : ui('never used', '尚未使用') }}</small></span><button v-if="passkey.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokePrincipalPasskey(passkey)">{{ ui('Revoke', '撤销') }}</button></div></div><p v-if="selectedPrincipal.passkeys_has_more" class="warning-panel">{{ ui('More Passkeys exist; use cfkanban-admin for the complete list.', '还有更多 Passkey；请使用 cfkanban-admin 查看完整列表。') }}</p></section><section class="recovery-section"><h3>Grants</h3><div class="data-list"><div v-for="grant in selectedPrincipal.grants" :key="grant.id" class="data-row"><span><strong>{{ grant.project.workspace_key }}/{{ grant.project.key }}</strong><small>{{ grant.role }} · {{ grant.revoked_at ? ui('revoked', '已撤销') : ui('active', 'active') }}</small></span></div></div><p v-if="selectedPrincipal.grants_has_more" class="warning-panel">{{ ui('More Grants exist; use cfkanban-admin with an explicit cursor.', '还有更多 Grant；请让 cfkanban-admin 使用显式 cursor。') }}</p></section><form v-if="!selectedPrincipal.is_owner" class="form-stack warning-panel" @submit.prevent="createRecoveryInvite"><h3>{{ ui('Principal recovery invite', 'Principal 恢复邀请') }}</h3><p><strong>{{ ui('Identity takeover warning:', '身份接管警告：') }}</strong> {{ ui('the redeemer becomes this same stable Principal and inherits every existing Grant, assignee relationship, and historical attribution.', '兑换者会成为这个相同的稳定 Principal，并继承其全部既有 Grant、assignee 关系和历史归属。') }}</p><label>{{ ui('Recovery mode', '恢复模式') }}<select v-model="recoveryForm.mode"><option value="rotation">rotation · {{ ui('revoke the credential used to redeem', '仅撤销本次兑换所用旧 Credential') }}</option><option value="full_recovery">full_recovery · {{ ui('revoke all prior credentials', '撤销全部 prior Credentials') }}</option></select></label><p>{{ recoveryForm.mode === 'rotation' ? ui('Rotation preserves every other existing Credential and Passkey.', 'rotation 会保留其他既有 Credential 与 Passkey。') : ui('Full recovery revokes all prior Credentials; existing Grants, assignments, history, and Passkeys remain tied to this Principal.', 'full_recovery 会撤销全部 prior Credential；既有 Grant、assignment、历史和 Passkey 仍绑定该 Principal。') }}</p><label class="confirmation-check"><input v-model="recoveryConfirmed" type="checkbox" />{{ ui('I verified the immutable Principal ID and understand the complete inheritance and revocation scope.', '我已核对不可变 Principal ID，并理解完整继承范围与撤销范围。') }}</label><p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p><button class="primary-button" type="submit" :disabled="busy || !recoveryConfirmed || inviteNeedsReview">{{ ui('Create one-time recovery URL', '创建一次性恢复 URL') }}</button><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button></form></ModalDialog>
     <ModalDialog v-if="showGrant && selectedGrantProject" :busy="busy" :title="ui('Project Grants', 'Project Grants')" @close="showGrant = false"><p><code>{{ selectedGrantProject.workspaceKey }}/{{ selectedGrantProject.key }}</code> · {{ selectedGrantProject.display_name }}</p><form class="compact-inline-form" @submit.prevent="createGrant"><input v-model="grantForm.principal_id" required placeholder="Principal ID" /><select v-model="grantForm.role"><option value="reader">reader</option><option value="writer">writer</option></select><button class="primary-button" type="submit" :disabled="busy">{{ ui('Grant', '授予') }}</button></form><div class="data-list"><div v-for="grant in projectGrants" :key="grant.id" class="data-row"><span><strong>{{ grant.principal.display_name }}</strong><code>{{ grant.principal_id }}</code></span><select :value="grant.role" :disabled="busy || grant.revoked_at !== null" @change="setGrantRole(grant, ($event.target as HTMLSelectElement).value as 'reader' | 'writer')"><option value="reader">reader</option><option value="writer">writer</option></select><div><button v-if="grant.revoked_at === null" class="danger-text-button" type="button" @click="revokeGrant(grant)">{{ ui('Revoke', '撤销') }}</button><button v-else class="secondary-button" type="button" @click="setGrantRole(grant, grant.role)">{{ ui('Regrant', '重新授予') }}</button></div></div></div></ModalDialog>
-    <ModalDialog v-if="showPolicy" :busy="busy" title="Public Join" @close="showPolicy = false"><form class="form-stack" @submit.prevent="savePolicy"><p class="warning-panel">{{ locale === "zh-CN" ? "公开 writer 可修改、完成和软删除 Project 内容。三项 quota 只在此 Project 公开期间约束新增计数；关闭不会撤销既有 Grants。" : "Public writers can modify, complete, and soft-delete Project content. These quotas gate growth only while this Project is public; disabling does not revoke existing Grants." }}</p><label>{{ ui("Public summary", "公开摘要") }}<textarea v-model="policyForm.public_summary" rows="4" required /></label><div class="form-grid"><label>Issues<input v-model.number="policyForm.issues" type="number" min="1" required /></label><label>Comments<input v-model.number="policyForm.comments" type="number" min="1" required /></label><label>Principals<input v-model.number="policyForm.principals" type="number" min="1" required /></label></div><p v-if="policy" class="muted-copy">{{ ui("Active", "当前 active") }}: {{ policy.active_usage.issues }} issues · {{ policy.active_usage.comments }} comments · {{ policy.active_usage.principals }} principals</p><div class="form-actions"><button v-if="policy?.enabled" class="danger-button" type="button" :disabled="busy" @click="disablePolicy">{{ ui("Disable", "关闭") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ policy?.enabled ? ui('Update policy', '更新 Policy') : ui('Enable Public Join', '开启 Public Join') }}</button></div></form></ModalDialog>
+    <ModalDialog v-if="showPolicy" :busy="busy" title="Public Join" @close="closePolicy"><form class="form-stack" @submit.prevent="savePolicy"><div class="warning-panel"><p>{{ ui('Unknown Internet participants may join. Public writers can create comments, move, complete, modify, and soft-delete Project content, producing D1 writes.', '未知互联网参与者可以加入。公开 writer 可创建评论、移动、完成、修改和软删除 Project 内容，并产生 D1 写入。') }}</p><p>{{ ui('The three active quotas belong only to this Project and are not a shared pool. Limits may be below current usage; doing so never deletes resources or revokes Grants and only blocks further growth in that dimension.', '三项 active quota 仅属于这个 Project，不是共享池。limit 可以低于当前 usage；这不会自动删除资源或撤销 Grant，只会阻止该维度继续增长。') }}</p><p>{{ ui('Soft delete and Grant revoke release active slots, but tombstones and history still consume D1 storage. Disabling Public Join does not revoke existing Grants.', 'soft delete 与 Grant revoke 只释放 active slot，tombstone 与历史仍占用 D1 存储。关闭 Public Join 不会撤销既有 Grant。') }}</p></div><label>{{ ui("Public summary", "公开摘要") }}<textarea v-model="policyForm.public_summary" rows="4" required /></label><div class="form-grid"><label>Issues<input v-model.number="policyForm.issues" type="number" min="1" required /></label><label>Comments<input v-model.number="policyForm.comments" type="number" min="1" required /></label><label>Principals<input v-model.number="policyForm.principals" type="number" min="1" required /></label></div><p v-if="policy" class="muted-copy">{{ ui("Active", "当前 active") }}: {{ policy.active_usage.issues }} issues · {{ policy.active_usage.comments }} comments · {{ policy.active_usage.principals }} principals</p><label class="confirmation-check"><input v-model="policyRiskConfirmed" type="checkbox" />{{ ui('I understand the public writer, quota, and D1 storage consequences.', '我理解 public writer、quota 与 D1 存储后果。') }}</label><div class="form-actions"><button v-if="policy?.enabled" class="danger-button" type="button" :disabled="busy" @click="disablePolicy">{{ ui("Disable", "关闭") }}</button><button class="primary-button" type="submit" :disabled="busy || policy === null || !policyRiskConfirmed">{{ policy?.enabled ? ui('Update policy', '更新 Policy') : ui('Enable Public Join', '开启 Public Join') }}</button></div></form></ModalDialog>
   </main>
 </template>

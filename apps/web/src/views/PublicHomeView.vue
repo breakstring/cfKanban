@@ -5,6 +5,7 @@ import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
+import { publicJoinInstruction } from "../lib/public-join-instruction";
 import { navigate } from "../lib/router";
 import {
   authenticationCredential,
@@ -62,9 +63,7 @@ async function copyText(value: string, key: string): Promise<void> {
 }
 
 function joinInstruction(project: PublicProject, role: "reader" | "writer"): string {
-  return locale.value === "zh-CN"
-    ? `请使用 canonical cfKanban Skill，在实例 ${window.location.origin} 以 ${role} 身份加入公开 Project「${project.display_name}」。Public Join ID：${project.public_id}。请先展示 Principal/Credential 与授权计划，不要把 Credential 放进浏览器。`
-    : `Use the canonical cfKanban Skill to join the public project “${project.display_name}” at ${window.location.origin} as ${role}. Public Join ID: ${project.public_id}. Show the Principal/Credential and authorization plan first; never put a Credential in the browser.`;
+  return publicJoinInstruction(window.location.origin, project.public_id, role, locale.value);
 }
 
 async function chooseRole(project: PublicProject, role: "reader" | "writer"): Promise<void> {
@@ -104,6 +103,7 @@ async function signInWithPasskey(): Promise<void> {
       },
       method: "POST",
     });
+    window.dispatchEvent(new CustomEvent("cfkanban:session-exchanged"));
     navigate("/app");
   } catch (caught) {
     error.value = caught instanceof DOMException ? t("passkey.failed") : errorText(caught);

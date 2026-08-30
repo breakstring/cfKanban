@@ -8,9 +8,9 @@ export interface ApiErrorBody {
   code: string;
   details?: Record<string, unknown>;
   message: string;
-  normalized_by?: "client";
   recovery: string;
   request_id: string;
+  retry_after_seconds?: number;
   retryable: boolean;
   source: string;
 }
@@ -171,6 +171,10 @@ export interface Passkey {
   version: number;
 }
 
+export interface PrincipalPasskey extends Passkey {
+  allowed_actions: string[];
+}
+
 export interface EventResource {
   actor: null | { display_name: string; principal_id: string };
   created_at: string;
@@ -249,6 +253,7 @@ export interface PrincipalResource {
   active_credential_count?: number;
   active_grant_count?: number;
   assignee_count?: number;
+  created_at?: string;
   display_name: string;
   id: string;
   is_owner: boolean;
@@ -286,6 +291,8 @@ export interface PrincipalDetail extends PrincipalResource {
   credentials_has_more: boolean;
   grants: GrantResource[];
   grants_has_more: boolean;
+  passkeys: PrincipalPasskey[];
+  passkeys_has_more: boolean;
 }
 
 export interface WriteResult<T> {

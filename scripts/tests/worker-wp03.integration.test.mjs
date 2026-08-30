@@ -4,13 +4,21 @@ import { fileURLToPath } from "node:url";
 
 import { createTestHarness } from "wrangler";
 
+import { authenticateRequest } from "../../apps/worker/src/kernel/auth.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
+import {
+  getProject as getProjectService,
+  getWorkspace as getWorkspaceService,
+  listProjects as listProjectsService,
+  listWorkspaces as listWorkspacesService,
+} from "../../apps/worker/src/services/containers.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const ownerToken = `cfk_v1_owner_${"A".repeat(43)}`;
 const participantToken = `cfk_v1_member_${"B".repeat(43)}`;
 const ownerSessionToken = "S".repeat(43);
+const staleOwnerSessionToken = "R".repeat(43);
 const issueSessionToken = "T".repeat(43);
 const malformedSessionToken = "M".repeat(43);
 const csrfToken = "C".repeat(43);
@@ -57,6 +65,50 @@ function assertWriteResult(value, replay = false) {
   assert.equal(value.idempotent_replay, replay);
   assert.equal(typeof value.event_cursor, "string");
   assert.equal(typeof value.resource, "object");
+}
+
+function guardedRecoveryDatabase(target) {
+  const rawRows = [];
+  const wrapStatement = (statement, guarded) => new Proxy(statement, {
+    get(current, property) {
+      if (property === "bind") {
+        return (...values) => wrapStatement(current.bind(...values), guarded);
+      }
+      if (property === "all") {
+        return async (...values) => {
+          const result = await current.all(...values);
+          if (guarded) rawRows.push(result.results);
+          return result;
+        };
+      }
+      if (property === "first") {
+        return async (...values) => {
+          const result = await current.first(...values);
+          if (guarded) rawRows.push(result === null ? [] : [result]);
+          return result;
+        };
+      }
+      const value = Reflect.get(current, property, current);
+      return typeof value === "function" ? value.bind(current) : value;
+    },
+  });
+  return {
+    db: new Proxy(target, {
+      get(current, property) {
+        if (property === "prepare") {
+          return (sql) => wrapStatement(
+            current.prepare(sql),
+            (sql.includes("FROM credentials AS auth_credential")
+              || sql.includes("FROM web_sessions AS auth_session"))
+              && !sql.startsWith("SELECT 1 AS allowed WHERE"),
+          );
+        }
+        const value = Reflect.get(current, property, current);
+        return typeof value === "function" ? value.bind(current) : value;
+      },
+    }),
+    rawRows,
+  };
 }
 
 before(async () => {
@@ -403,6 +455,88 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     method: "DELETE",
   });
   assert.equal(deletedWorkspace.body.resource.version, 3);
+  const staleOwnerNow = Date.now();
+  const staleOwnerAuth = await authenticateRequest(
+    db,
+    new Request("https://kanban.example.test/api/v1/workspaces?deleted=only", {
+      headers: ownerHeaders(),
+    }),
+    staleOwnerNow,
+  );
+  await db.prepare(
+    `INSERT INTO web_sessions
+      (id, token_digest, principal_id, source_kind, source_id, target_kind,
+       target_json, expires_at, created_at)
+     VALUES ('wp03-stale-owner-session', ?1, ?2, 'credential', ?3, 'admin',
+             ?4, ?5, ?6)`,
+  ).bind(
+    await sha256Hex(staleOwnerSessionToken),
+    ids.ownerPrincipal,
+    ids.ownerCredential,
+    JSON.stringify({ entry_path: "/app/admin", kind: "admin", section: "workspaces-projects" }),
+    staleOwnerNow + 60_000,
+    staleOwnerNow,
+  ).run();
+  const staleOwnerSessionAuth = await authenticateRequest(
+    db,
+    new Request("https://kanban.example.test/api/v1/workspaces?deleted=only", {
+      headers: { cookie: `cfkanban_session=${staleOwnerSessionToken}` },
+    }),
+    staleOwnerNow,
+  );
+  await db.prepare("UPDATE credentials SET revoked_at = ?1 WHERE id = ?2")
+    .bind(staleOwnerNow, ids.ownerCredential)
+    .run();
+  try {
+    for (const staleAuth of [staleOwnerAuth, staleOwnerSessionAuth]) {
+      const staleRecoveryReads = [];
+      for (const read of [
+        (guardedDb) => listWorkspacesService(
+          guardedDb,
+          staleAuth,
+          new URL("https://kanban.example.test/api/v1/workspaces?deleted=only"),
+          staleOwnerNow,
+        ),
+        (guardedDb) => getWorkspaceService(
+          guardedDb,
+          staleAuth,
+          "engineering",
+          new URL("https://kanban.example.test/api/v1/workspaces/engineering?deleted=only"),
+          staleOwnerNow,
+        ),
+        (guardedDb) => listProjectsService(
+          guardedDb,
+          staleAuth,
+          "engineering",
+          new URL("https://kanban.example.test/api/v1/workspaces/engineering/projects?deleted=only"),
+          staleOwnerNow,
+        ),
+        (guardedDb) => getProjectService(
+          guardedDb,
+          staleAuth,
+          "engineering",
+          "CORE",
+          new URL("https://kanban.example.test/api/v1/workspaces/engineering/projects/CORE?deleted=only"),
+          staleOwnerNow,
+        ),
+      ]) {
+        const guarded = guardedRecoveryDatabase(db);
+        staleRecoveryReads.push(await Promise.allSettled([read(guarded.db)]).then(([result]) => result));
+        assert.ok(guarded.rawRows.length > 0);
+        assert.deepEqual(guarded.rawRows, guarded.rawRows.map(() => []));
+      }
+      for (const read of staleRecoveryReads) {
+        assert.equal(read.status, "rejected");
+        assert.equal(read.reason?.status, 401);
+        assert.equal(read.reason?.code, "UNAUTHORIZED");
+      }
+    }
+  } finally {
+    await db.prepare("UPDATE credentials SET revoked_at = NULL WHERE id = ?1")
+      .bind(ids.ownerCredential)
+      .run();
+    await db.prepare("DELETE FROM web_sessions WHERE id = 'wp03-stale-owner-session'").run();
+  }
   const childRestoreWhileParentDeleted = await jsonRequest(
     "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
     {

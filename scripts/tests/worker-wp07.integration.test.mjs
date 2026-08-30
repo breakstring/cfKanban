@@ -2104,6 +2104,18 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   assert.equal(selfRevokedSession.response.status, 401);
   assertSessionCookiesCleared(selfRevokedSession.response);
 
+  const participantBeforeOwnerRevoke = await request(
+    `/api/v1/admin/principals/${ids.participantPrincipal}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(participantBeforeOwnerRevoke.response.status, 200);
+  assert.equal(participantBeforeOwnerRevoke.body.passkeys_has_more, false);
+  const discoveredParticipantPasskey = participantBeforeOwnerRevoke.body.passkeys.find(
+    (passkey) => passkey.id === rsa.registered.body.resource.id,
+  );
+  assert.deepEqual(discoveredParticipantPasskey.allowed_actions, ["revoke"]);
+  const participantCredentialSnapshot = participantBeforeOwnerRevoke.body.credentials;
+  const participantGrantSnapshot = participantBeforeOwnerRevoke.body.grants;
   const ownerRevoked = await request(
     `/api/v1/admin/passkeys/${rsa.registered.body.resource.id}?expected_version=2`,
     {
@@ -2118,6 +2130,17 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
   assert.equal(ownerRevokedSession.response.status, 401);
   assertSessionCookiesCleared(ownerRevokedSession.response);
+  const participantAfterOwnerRevoke = await request(
+    `/api/v1/admin/principals/${ids.participantPrincipal}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(participantAfterOwnerRevoke.response.status, 200);
+  const revokedParticipantPasskey = participantAfterOwnerRevoke.body.passkeys.find(
+    (passkey) => passkey.id === rsa.registered.body.resource.id,
+  );
+  assert.equal(revokedParticipantPasskey, undefined);
+  assert.deepEqual(participantAfterOwnerRevoke.body.credentials, participantCredentialSnapshot);
+  assert.deepEqual(participantAfterOwnerRevoke.body.grants, participantGrantSnapshot);
 
   const persisted = [];
   for (const table of [

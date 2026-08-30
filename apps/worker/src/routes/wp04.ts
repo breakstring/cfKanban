@@ -146,6 +146,7 @@ export function registerWp04Routes(router: Router): Router {
         env.DB,
         auth,
         path(context, "principal_id"),
+        context.startedAt,
       ), context.requestId);
     })
     .get("/api/v1/admin/principals/{principal_id}/credentials", async (request, env, context) => {

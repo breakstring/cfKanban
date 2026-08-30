@@ -202,14 +202,20 @@ async function readWorkspace(
   db: D1Database,
   key: string,
   includeDeleted = false,
+  auth: AuthContext | null = null,
+  now = Date.now(),
 ): Promise<WorkspaceRow | null> {
   try {
+    const currentAuth = includeDeleted && auth !== null
+      ? buildCurrentAuthGuard(auth, now, 2, true)
+      : null;
     return await db.prepare(
       `SELECT id, key, display_name, version, deleted_at, created_at, updated_at
        FROM workspaces
        WHERE key = ?1 ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+         ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        LIMIT 1`,
-    ).bind(key).first<WorkspaceRow>();
+    ).bind(key, ...(currentAuth?.values ?? [])).first<WorkspaceRow>();
   } catch (error) {
     throw platformUnavailable("d1", error);
   }
@@ -220,8 +226,13 @@ async function readProject(
   workspaceKey: string,
   projectKey: string,
   includeDeleted = false,
+  auth: AuthContext | null = null,
+  now = Date.now(),
 ): Promise<ProjectRow | null> {
   try {
+    const currentAuth = includeDeleted && auth !== null
+      ? buildCurrentAuthGuard(auth, now, 3, true)
+      : null;
     return await db.prepare(
       `SELECT p.id, p.workspace_id, w.key AS workspace_key, p.key, p.display_name,
               p.context, p.issue_limit, p.comment_limit, p.principal_limit,
@@ -238,8 +249,9 @@ async function readProject(
        LEFT JOIN public_join_policies AS pjp ON pjp.project_id = p.id
        WHERE w.key = ?1 AND p.key = ?2
          ${includeDeleted ? "" : "AND w.deleted_at IS NULL AND p.deleted_at IS NULL"}
+         ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        LIMIT 1`,
-    ).bind(workspaceKey, projectKey).first<ProjectRow>();
+    ).bind(workspaceKey, projectKey, ...(currentAuth?.values ?? [])).first<ProjectRow>();
   } catch (error) {
     throw platformUnavailable("d1", error);
   }
@@ -261,8 +273,13 @@ async function readWorkspacePage(
   visibleProjectIds: readonly string[] | null,
   position: [string, string] | [number, string] | null,
   limit: number,
+  auth: AuthContext | null = null,
+  now = Date.now(),
 ): Promise<WorkspaceRow[]> {
   try {
+    const currentAuth = deleted === "only" && auth !== null
+      ? buildCurrentAuthGuard(auth, now, 5, true)
+      : null;
     const visible = visibleProjectIds === null ? null : JSON.stringify(visibleProjectIds);
     const first = position?.[0] ?? null;
     const stableId = position?.[1] ?? null;
@@ -278,9 +295,10 @@ async function readWorkspacePage(
          AND (?2 IS NULL OR ${deleted === "only"
            ? "deleted_at < ?2 OR (deleted_at = ?2 AND id < ?3)"
            : "key > ?2 OR (key = ?2 AND id > ?3)"})
+         ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        ORDER BY ${deleted === "only" ? "deleted_at DESC, id DESC" : "key, id"}
        LIMIT ?4`,
-    ).bind(visible, first, stableId, limit + 1).all<WorkspaceRow>();
+    ).bind(visible, first, stableId, limit + 1, ...(currentAuth?.values ?? [])).all<WorkspaceRow>();
     return result.results;
   } catch (error) {
     throw platformUnavailable("d1", error);
@@ -294,8 +312,13 @@ async function readProjectPage(
   visibleProjectIds: readonly string[] | null,
   position: [string, string] | [number, string] | null,
   limit: number,
+  auth: AuthContext | null = null,
+  now = Date.now(),
 ): Promise<ProjectRow[]> {
   try {
+    const currentAuth = deleted === "only" && auth !== null
+      ? buildCurrentAuthGuard(auth, now, 6, true)
+      : null;
     const visible = visibleProjectIds === null ? null : JSON.stringify(visibleProjectIds);
     const first = position?.[0] ?? null;
     const stableId = position?.[1] ?? null;
@@ -319,9 +342,17 @@ async function readProjectPage(
          AND (?3 IS NULL OR ${deleted === "only"
            ? "p.deleted_at < ?3 OR (p.deleted_at = ?3 AND p.id < ?4)"
            : "p.key > ?3 OR (p.key = ?3 AND p.id > ?4)"})
+         ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        ORDER BY ${deleted === "only" ? "p.deleted_at DESC, p.id DESC" : "p.key, p.id"}
        LIMIT ?5`,
-    ).bind(workspaceKey, visible, first, stableId, limit + 1).all<ProjectRow>();
+    ).bind(
+      workspaceKey,
+      visible,
+      first,
+      stableId,
+      limit + 1,
+      ...(currentAuth?.values ?? []),
+    ).all<ProjectRow>();
     return result.results;
   } catch (error) {
     throw platformUnavailable("d1", error);
@@ -353,6 +384,7 @@ export async function listWorkspaces(
   db: D1Database,
   auth: AuthContext,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const deleted = requireDeletedMode(url);
   const limit = requireLimit(url);
@@ -375,11 +407,13 @@ export async function listWorkspaces(
     canManageContainers(auth) ? null : visibleProjects.map((project) => project.projectId),
     position,
     limit,
+    deleted === "only" ? auth : null,
+    now,
   );
   const hasMore = rows.length > limit;
   const items = rows.slice(0, limit);
   const tail = items.at(-1);
-  return {
+  const result = {
     has_more: hasMore,
     items: items.map((row) => workspaceResource(row, auth)),
     next_cursor: hasMore && tail !== undefined
@@ -390,6 +424,8 @@ export async function listWorkspaces(
       project_ids: visibleProjects.map((project) => project.projectId),
     },
   };
+  if (deleted === "only") await verifyCurrentAuth(db, auth, now);
+  return result;
 }
 
 export async function getWorkspace(
@@ -397,19 +433,31 @@ export async function getWorkspace(
   auth: AuthContext,
   workspaceKeyValue: JsonValue,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const deleted = requireDeletedMode(url);
   if (deleted === "only") requireOwnerControl(auth);
-  const row = await readWorkspace(db, workspaceKey, deleted === "only");
+  const row = await readWorkspace(
+    db,
+    workspaceKey,
+    deleted === "only",
+    deleted === "only" ? auth : null,
+    now,
+  );
+  if (row === null && deleted === "only") await verifyCurrentAuth(db, auth, now);
   if (
     row === null
     || (deleted === "only" ? row.deleted_at === null : !(await workspaceIsVisible(db, auth, row.id)))
   ) throw notFound();
-  return {
+  const resource = {
     ...workspaceResource(row, auth),
-    ...(deleted === "only" ? { resumed_public_projects: await resumedPublicProjects(db, row.id) } : {}),
+    ...(deleted === "only"
+      ? { resumed_public_projects: await resumedPublicProjects(db, row.id, auth, now) }
+      : {}),
   };
+  if (deleted === "only") await verifyCurrentAuth(db, auth, now);
+  return resource;
 }
 
 export async function listProjects(
@@ -417,12 +465,20 @@ export async function listProjects(
   auth: AuthContext,
   workspaceKeyValue: JsonValue,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const deleted = requireDeletedMode(url);
   const limit = requireLimit(url);
   if (deleted === "only") requireOwnerControl(auth);
-  const workspace = await readWorkspace(db, workspaceKey, deleted === "only");
+  const workspace = await readWorkspace(
+    db,
+    workspaceKey,
+    deleted === "only",
+    deleted === "only" ? auth : null,
+    now,
+  );
+  if (workspace === null && deleted === "only") await verifyCurrentAuth(db, auth, now);
   if (workspace === null) throw notFound();
   const visibleProjects = await resolveVisibleProjects(db, auth);
   if (deleted === "exclude" && !canManageContainers(auth) && !visibleProjects.some((p) => p.workspaceId === workspace.id)) {
@@ -446,11 +502,13 @@ export async function listProjects(
     canManageContainers(auth) ? null : visibleProjects.map((project) => project.projectId),
     position,
     limit,
+    deleted === "only" ? auth : null,
+    now,
   );
   const hasMore = rows.length > limit;
   const items = rows.slice(0, limit);
   const tail = items.at(-1);
-  return {
+  const result = {
     has_more: hasMore,
     items: items.map((row) => projectResource(row, auth)),
     next_cursor: hasMore && tail !== undefined
@@ -458,6 +516,8 @@ export async function listProjects(
       : null,
     resolved_scope: { deleted, workspace_key: workspaceKey },
   };
+  if (deleted === "only") await verifyCurrentAuth(db, auth, now);
+  return result;
 }
 
 export async function getProject(
@@ -466,17 +526,28 @@ export async function getProject(
   workspaceKeyValue: JsonValue,
   projectKeyValue: JsonValue,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const projectKey = requireProjectKey(projectKeyValue, "project_key");
   const deleted = requireDeletedMode(url);
   if (deleted === "only") requireOwnerControl(auth);
-  const row = await readProject(db, workspaceKey, projectKey, deleted === "only");
+  const row = await readProject(
+    db,
+    workspaceKey,
+    projectKey,
+    deleted === "only",
+    deleted === "only" ? auth : null,
+    now,
+  );
+  if (row === null && deleted === "only") await verifyCurrentAuth(db, auth, now);
   if (
     row === null
     || (deleted === "only" ? row.deleted_at === null : !(await projectIsVisible(db, auth, row.id)))
   ) throw notFound();
-  return projectResource(row, auth);
+  const resource = projectResource(row, auth);
+  if (deleted === "only") await verifyCurrentAuth(db, auth, now);
+  return resource;
 }
 
 async function ownerGuardRejected(db: D1Database, auth: AuthContext, now: number): Promise<boolean> {
@@ -733,7 +804,7 @@ async function setWorkspaceDeleted(
   const snapshot = persistSnapshot
     ? {
         ...workspaceResource(row, auth),
-        resumed_public_projects: await resumedPublicProjects(db, current.id),
+        resumed_public_projects: await resumedPublicProjects(db, current.id, auth, now),
       }
     : null;
   const guard = buildCurrentAuthGuard(auth, now, 8, true);
@@ -823,8 +894,11 @@ function resumedPublicProjectResource(row: ResumedPublicProjectRow): { [key: str
 async function resumedPublicProjects(
   db: D1Database,
   workspaceId: string,
+  auth: AuthContext,
+  now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   try {
+    const currentAuth = buildCurrentAuthGuard(auth, now, 2, true);
     const result = await db.prepare(
       `SELECT workspace.key AS workspace_key,
               p.id, p.key, p.display_name, policy.public_summary,
@@ -838,9 +912,10 @@ async function resumedPublicProjects(
        WHERE p.workspace_id = ?1
          AND p.deleted_at IS NULL
          AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
+         AND ${currentAuth.sql}
        ORDER BY p.key, p.id
        LIMIT 101`,
-    ).bind(workspaceId).all<ResumedPublicProjectRow>();
+    ).bind(workspaceId, ...currentAuth.values).all<ResumedPublicProjectRow>();
     return {
       has_more: result.results.length > 100,
       projects: result.results.slice(0, 100).map(resumedPublicProjectResource),
