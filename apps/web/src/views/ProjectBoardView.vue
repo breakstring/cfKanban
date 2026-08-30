@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
@@ -85,6 +85,8 @@ function clearProjectProjection(): void {
 function refreshProjectInventory(): void {
   projectionGeneration.invalidate();
   loadRequestId += 1;
+  deletedIssues.value = [];
+  showDeleted.value = false;
   if (!projectIsActive()) {
     clearProjectProjection();
     return;
@@ -283,6 +285,10 @@ function onDrop(status: StatusKey): void {
 }
 
 onMounted(() => load());
+onUnmounted(() => {
+  projectionGeneration.invalidate();
+  loadRequestId += 1;
+});
 watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { deep: true });
 </script>
 
