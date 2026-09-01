@@ -24,6 +24,18 @@ node scripts/cfkanban-tool.mjs api request
 
 Never add a Credential to the JSON. `api request` reads the current Credential internally. `invite redeem` and `public-join redeem` read a pending Credential internally when creating or recovering a Principal.
 
+## Join and start working
+
+For a new participant's common first-use request:
+
+1. inspect the Invite URL without redeeming it and show the instance, exact Projects/roles, expiry, recovery mode, and local storage effect;
+2. inspect the local instance slot, reuse its current Principal when allowed, or ask only for the missing display name before preparing one pending Credential;
+3. present one combined application plan for trusted Skill source, local writes, identity/Credential creation or reuse, and the exact Grants, then wait for approval;
+4. redeem once, verify `/api/v1/me` and resulting Grants, and promote a pending Credential only after matching identity/fingerprint readback;
+5. resolve the joined Project scope, list its Issues, and offer a Project Browser Launch.
+
+Invite redemption never writes `.cfkanban-scope.json`, creates an Issue, registers a Passkey, or opens the browser implicitly. Those are separate user choices.
+
 ## Local identity and scope
 
 | Task | Command | Expected result |

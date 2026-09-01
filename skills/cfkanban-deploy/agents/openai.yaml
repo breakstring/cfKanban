@@ -1,6 +1,6 @@
 interface:
   display_name: "cfKanban Deploy"
   short_description: "Deploy and upgrade cfKanban safely on Cloudflare"
-  default_prompt: "Use $cfkanban-deploy to produce a read-only capability report and a frozen deployment plan."
+  default_prompt: "Use $cfkanban-deploy to deploy cfKanban for me."
 policy:
   allow_implicit_invocation: true

@@ -2,98 +2,160 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A minimal, API-first Cloudflare Kanban system for coding agents. It is closer to a reliable work coordination ledger for agents than a traditional project management product with its UI removed.
+cfKanban is a small, self-hosted Kanban for people who work through Coding Agents. You ask your Agent to deploy and operate it; the same Cloudflare Worker also serves a bilingual Web board for direct human use.
 
-> Current status: the initial-release contracts are Frozen. The Foundation contract is at revision 19 and the Agent Skills contract at revision 22; the API/D1 Schema, minimal Web UI, and visual design contracts are also Frozen. Implementation is active under the implementation plan, with dynamic execution state tracked in Linear.
+It runs as one Cloudflare Worker plus one D1 database. There is no separate server, Pages project, KV namespace, or standalone cfKanban CLI.
 
-## Product principles
+## Availability
 
-- Agents are the default operators. Humans express goals and authorize important side effects; agents discover capabilities, make decisions, execute operations, recover from failures, and report results.
-- Preserve the Kanban core: projects, issues, statuses, priorities, labels, comments, dependencies, and history.
-- Run on Cloudflare's free tier by default. Paid services may enhance the product but must not become core dependencies.
-- Prefer fewer components. The MVP starts with Workers and D1; KV, Durable Objects, AI, and other services require demonstrated value.
-- A minimal first-party Web UI is required for direct Kanban viewing, light Issue participation, and simple Owner maintenance; it must reuse the same API and stay deliberately small.
-- The canonical source is a monorepo, while the current cloud topology remains one Worker plus one D1. Prebuilt Web assets ship in the same Service deployment bundle through Workers Static Assets; the initial release creates neither a Pages project nor a KV namespace.
+cfKanban is currently a **public testing preview**, not a stable end-user release.
 
-## Current product contract
+- The Worker, D1 schema, Web UI, and three Agent Skills are implemented in this repository.
+- You can install the Codex plugin from this public repository today and inspect or evaluate the Skills.
+- The [`0.1.0-alpha.1` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.1) packages immutable Skill and Service bundles for testing.
+- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/prerelease.json).
+- The stable release pointer and real multi-environment deployment acceptance are not published yet.
+- Do not treat `main`, a local checkout, or a marketplace snapshot as a canonical stable release or production-ready deployment.
 
-- One deployment instance can contain multiple Workspaces, and one Workspace can contain multiple Projects.
-- Each deployment instance has exactly one Deployment Owner. Only the Owner can create Workspaces and Projects, invite Principals to Projects, or change Project Grants.
-- The Owner does not need Project Grants and implicitly has read/write access to every Project. Owner is a deployment-level identity, not a third Project role.
-- There is no second administrator and no Owner transfer. Credential rotation or recovery cannot change the Owner Principal.
-- Initial deployment reveals the bootstrap Credential only once. If all Owner Credentials are lost, only an operator who controls the Cloudflare deployment may reissue one for the same Owner Principal through a controlled, out-of-band Skill script.
-- A Credential authenticates one Principal. A Principal may hold Grants for multiple Projects across multiple Workspaces.
-- Credentials are not device-bound. A user may copy the same Credential between trusted execution environments; all copies remain the same server-side Credential and therefore share identity, audit, revocation, and rotation effects. Skills do not transfer secrets across environments automatically.
-- Non-Owner participants have only `reader` or `writer` per Project. Permissions do not inherit from Workspace; `writer` includes creating, editing, soft-deleting, and restoring Project content, with no separate delete role.
-- A `writer` cannot delete or restore Workspace or Project containers; those operations remain Owner-only.
-- A Project is a work-coordination namespace, not a repository mirror. One repository may relate to several Projects, and one Project may span several repositories.
-- An Issue can have one human or agent Principal as assignee. Assignment identifies responsibility but creates neither a lock nor extra permission; other writers may continue collaborating.
-- Blocking is orthogonal to workflow status. An Issue keeps its current stage while unresolved dependencies or a manual reason produce the `is_blocked` projection.
-- The Owner invites participants with a copyable, short-lived, single-use Invite URL. Project Invites expire after seven days; Principal Recovery Invites expire after one hour. The recipient gives the URL to their agent, which reuses a local identity or creates a new Principal/Credential through the Skill and atomically redeems the specified Project Grants.
-- When first deployment instructions omit the Owner display name, the agent asks only for that identity value before producing the final plan; “zero-parameter” refers to Cloudflare resource configuration, not to guessing identity data. First-time join uses one combined plan and one application-level confirmation for Skill installation, local Credential creation, and the stated Project Grants.
-- The workflow is fixed to `backlog / todo / in_progress / done / canceled`. A Project may override display names only, and only the Owner can change those names. The Owner or any Project `writer` may explicitly move or reopen an Issue among the fixed statuses using version/CAS and an Event record.
-- An Issue may be assigned only to the Owner or an active `writer` of its Project. Losing eligibility preserves the historical assignee reference but projects `assignee_available=false` and `needs_reassignment=true` until someone explicitly reassigns it.
-- Invitations are either ordinary Project Invites or Principal-bound Recovery Invites. Only the Owner may create them, and participants cannot issue additional Credentials for themselves.
-- Completing an Issue atomically appends a structured, immutable, undeletable completion comment and moves the Issue to `done`. Reopening preserves previous completion records; completing again appends another record.
-- Relations are fixed to `blocks / parent / related / duplicate`. They may cross Projects in the same Workspace but cannot cross Workspaces. Cross-Project writes require `writer` on both Projects, and relations never change status or permission automatically.
-- The initial release provides deterministic candidate listing plus explicit assign and assign-to-me operations; it does not initially provide atomic assign-next. An upstream agent may combine these atomic capabilities according to user intent and local rules.
-- The product includes a minimal first-party Web UI hosted by the same instance; it reuses the REST permission, version, idempotency, and audit contracts for Project boards, light Issue operations, and simple Owner maintenance. It does not publish a standalone cfKanban CLI.
-- Every authenticated Principal can view their stable ID and current display name, and update only their own non-empty display name through the `cfkanban` Skill or the Web “My profile” surface. The initial release does not add avatars, email addresses, biographies, or a general user-profile system.
-- The Web board supports moving one card between the five fixed columns and immediately saves that status with optimistic concurrency. Moving to `done` routes through the atomic complete contract; Markdown bodies and comments are edited as source and rendered safely. There is no bulk drag, manual rank, or WYSIWYG editor.
-- Public and authenticated Web UI chrome supports at least English and Simplified Chinese with an explicit language switch. Stable keys and default workflow labels remain English, and user/Project content is never translated automatically. API/OpenAPI and Skill output are not localized by this Web setting.
-- An authenticated agent creates a five-minute, single-use Browser Launch URL for an explicit Project, Issue, or Owner target. The browser exchanges it for a fixed eight-hour, target-scoped HttpOnly session with no sliding renewal or refresh token. It becomes invalid when its source Credential is revoked; long-lived Credentials never enter the URL, page scripts, localStorage, or sessionStorage. An in-app browser is an optional host convenience, not a protocol dependency.
-- After an initial Agent Launch, a Principal may register Passkeys for direct Web login. Passkeys are Web-only authenticators, never API Credentials or Grants; browser capability checks cannot prove a credential exists, and each Passkey is scoped to the exact hostname. Agent Launch remains the recovery and new-host registration route.
-- An Owner may expose multiple Projects through Public Join. A visitor chooses one Project and either `reader` or `writer` per atomic join. The initial release has no Team Join or multi-Project public grant operation.
-- Enabling Public Join requires explicit active limits for Issues, Comments, and non-Owner Principals. Each limit set is isolated to that Project, is enforced only while that Project's Public Join is enabled, and never constrains another Project. Disabling Public Join stops enforcement without revoking existing Grants; re-enabling requires an explicit limit submission. An Owner may lower a limit below current usage: existing data remains, while only operations that increase that counter are blocked until usage falls or the limit rises. Soft delete or Grant revocation releases active capacity; restore or regrant consumes it again. The UI may suggest 50/500/50, but the API has no silent defaults.
-- Request-rate gates are Owner-visible deployment configuration. The zero-parameter deployment starts with 120 authenticated API requests per Principal, 300 dynamic API requests per instance, and 30 unauthenticated sensitive operations per 60 seconds. Changes use `cfkanban-deploy` to publish Worker configuration without a D1 migration. These are approximate per-location abuse controls; D1 remains responsible for exact business quotas.
-- Web and Agent clients share a machine-readable error model for business quotas, application rate limits, D1 platform quotas, and platform failures. Errors generated before the Worker runs are explicitly normalized by the client and never misrepresented as cfKanban/OpenAPI JSON.
-- Each instance publishes one Owner-selected preferred API origin through a dynamic, public, non-secret discovery document. An existing agent may automatically rebind only when its current trusted origin announces a higher version and a credential-free probe proves the new HTTPS origin is the same instance; unfamiliar origins still require explicit trust. Domain bindings remain external control-plane configuration. Web sessions remain origin-specific, while Passkeys are deliberately not shared across hostnames.
-- The product provides an authorization-filtered deployment-wide Issue query across Workspaces and Projects. Project filters are optional at the API layer, but Skills strongly recommend explicit Project scopes when context is known.
-- Project Grants do not expire. Each Principal/Project pair has one current record changed only by explicit Owner role change, revocation, or regrant. Invitations retain their own short expiry.
-- Issue priority is fixed to `none / low / medium / high / urgent`, defaulting to `none`. The initial release stores no manual rank; candidate ordering is priority followed by FIFO.
-- Non-idempotent creates and commands require an `Idempotency-Key` retained for 24 hours. Structured errors expose stable `code`, `retryable`, and `recovery` fields.
-- Standard Comments are append-only: they cannot be edited in place, but may be soft-deleted and restored. Corrections append a new Comment that references the earlier one. Completion comments remain immutable and undeletable.
+This distinction matters: the plugin helps Codex discover the Skills, while a canonical release manifest will identify and verify the exact Skill and Service bundles that may be deployed.
 
-Credentials and Project Grants do not expire automatically. Credentials change only through explicit revocation, rotation, or full-recovery revocation; Grants change only through explicit role changes, revocation, or regrant. Invitations are the only authentication/authorization bootstrap capability with automatic expiry. The initial release has no Principal disable/enable/delete lifecycle.
+## What you need
 
-The product uses bounded resource contracts: requests up to 128 KiB, Issue bodies up to 64 KiB, Comment/completion payloads up to 32 KiB, lists defaulting to 20 and capped at 100 items, and Agent context capped at 64 KiB. Large logs and attachments use external artifact references.
+For the current testing-preview path:
 
-The Foundation SPEC is Frozen at revision 19 and the Agent Skills & Bootstrap SPEC at revision 22. The API/D1 Schema and Web UI SPECs, together with `DESIGN.md`, were Frozen on 2026-08-29 after validating a 91-operation OpenAPI prototype, a 25-table/28-index D1 schema, critical atomic operations, Browser Launch/Session, CSRF, and Passkey constraints. The only primary deployment path remains an agent using `cfkanban-deploy`; credential-free CI verification is ordinary source engineering. Implementation is active under the [implementation plan](docs/plans/2026-08-29-v0-implementation-plan.md); dynamic execution state remains in Linear.
+- Codex desktop or Codex CLI with plugin support;
+- Git access to this repository;
+- a new Codex task after plugin installation, so the new Skills are loaded.
 
-## Engineering validation
+For a future Cloudflare deployment you will also need:
 
-Install the exact root lockfile and run the single repository entrypoint:
+- a Cloudflare account that can create one Worker and one D1 database;
+- a compatible Node.js and Wrangler environment. `cfkanban-deploy` checks what already exists first and must show a separate installation plan before adding an isolated Wrangler runtime;
+- the Owner display name you want cfKanban to use. The Agent must not guess it from your operating-system or Git identity.
+
+## Install the testing-preview Skills in Codex
+
+The repository is a Codex plugin marketplace. From the command line, add the immutable testing tag and install its plugin:
+
+```sh
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.1
+codex plugin add cfkanban-agent-skills@cfkanban
+```
+
+Use `--ref main` only when you deliberately want the latest mutable development snapshot.
+
+If you already have a local checkout, register that exact checkout instead:
+
+```sh
+cd /absolute/path/to/cfKanban
+codex plugin marketplace add .
+codex plugin add cfkanban-agent-skills@cfkanban
+```
+
+Then start a **new Codex task**. Plugin installation does not modify Cloudflare, create `~/.cfkanban/`, deploy the Service, or authorize any later operation.
+
+The plugin contains three Skills:
+
+| Skill | Ask it to help with |
+| --- | --- |
+| `$cfkanban-deploy` | Deploy, update, resume, or recover a cfKanban installation. |
+| `$cfkanban-admin` | Create boards and manage Projects, invitations, access, and Owner settings. |
+| `$cfkanban` | Join a Project and work with Issues, Comments, and the Web board. |
+
+You normally talk to the Skill in natural language. The bundled `.mjs` commands are deterministic tools for the Agent; ordinary users do not need to run them manually.
+
+## Ask your Agent to deploy
+
+In the new task, this one sentence is enough:
+
+> Use `$cfkanban-deploy` to deploy cfKanban for me.
+
+You do not need to know or mention manifests, digests, preflight, deployment plans, migrations, or rollback journals. The Skill handles those details: it starts with read-only checks, explains what is available in plain language, asks only for information that is actually missing, and shows the exact changes before anything is installed or deployed.
+
+At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.1` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
+
+If you deliberately want to evaluate a source revision, say so explicitly:
+
+> Use `$cfkanban-deploy` to evaluate this source checkout for a cfKanban deployment.
+
+A source evaluation is an engineering path, not the stable installation path. The Skill must explain that distinction and its consequences; the user should not have to formulate the warning themselves.
+
+The current Skill does not provide a source-specific remote deployment plan that freezes all of those facts, so a correct source evaluation stops before Cloudflare writes. Publishing and accepting the first immutable release is the remaining prerequisite for the supported deployment flow below.
+
+## What the deployment Skill handles for you
+
+Whether you use the testing prerelease now or a stable release later, the same short prompt remains the entry point. The Skill is responsible for:
+
+1. confirming the exact release and checking that its files have not changed;
+2. checking the computer and reusing compatible Node.js and Wrangler installations when possible;
+3. selecting the exact Cloudflare account and asking only for genuinely missing choices, such as the Owner display name;
+4. showing the resources, local changes, costs, and recovery limits before asking for approval;
+5. creating one Worker, one D1 database, and the bundled Web app only after approval;
+6. reading everything back before reporting that deployment succeeded.
+
+The default plan creates only one Worker and one D1 database on `workers.dev`. Custom domains, paid services, destructive migrations, resource adoption or replacement, and permission changes require a new explicit plan.
+
+## Test the installation from another machine
+
+Use a non-production Cloudflare account or an account where creating one test Worker and one test D1 database is acceptable.
+
+1. Install Codex and a compatible Node.js version (`>=22.12.0`) on the other machine. Sign in to Cloudflare through your normal Wrangler setup; the Skill will inspect it without changing it first.
+2. Install the tagged plugin with the two commands above, then start a new Codex task.
+3. Say: `Use $cfkanban-deploy to deploy cfKanban for me.`
+4. When the Skill explains that only a testing prerelease is available, explicitly choose `0.1.0-alpha.1`. Provide the Owner display name and Cloudflare account only if asked.
+5. Review the plan. For the basic test it should create exactly one new Worker, one new D1 database, bundled Web assets, and a `workers.dev` URL, with no custom domain or paid optional service. Approving that exact plan authorizes real Cloudflare writes.
+6. After deployment, require the Skill to read back the resource markers, schema/migrations, health endpoint, instance discovery, and Owner identity. Then say: `Use $cfkanban-admin to create my first cfKanban board.`
+7. Open the one-time Web URL, verify the English/简体中文 language switch, create one Issue, refresh the page, and confirm the Issue remains present.
+
+Keep the Worker, D1, `workers.dev` URL, and redacted receipt identifiers until the test evidence is reviewed. Cleanup is a separate destructive operation and is not implied by this test.
+
+## Get your first usable board
+
+After deployment has been verified, start a new task or continue with the installed Skills:
+
+1. Ask `$cfkanban-admin` to verify the Owner identity, create one Workspace and one Project with the keys and names you choose, read both back, and create an Owner Web launch.
+2. Open the returned one-time URL. The long-lived Credential is not placed in the browser or URL.
+3. Ask `$cfkanban` to create the first Issue or work with the Project from the Agent.
+4. If another person or Agent should join, ask `$cfkanban-admin` to create an invitation with explicit Project targets and `reader` or `writer` access.
+
+The user-facing prompt can stay just as short:
+
+> Use `$cfkanban-admin` to create my first cfKanban board.
+
+The Skill verifies the Owner, asks for the Workspace and Project names/keys it still needs, explains each write, reads the result back, and then offers the Web board.
+
+## Join an existing cfKanban Project
+
+Install the plugin, start a new task, and give the one-time Invite URL to your Agent:
+
+> Use `$cfkanban` to join this Project: `<Invite URL>`
+
+The Skill inspects the Invite before redeeming it, explains the Project and access level, and asks only for missing information or approval. It should reuse your existing identity for that instance when allowed. Otherwise it asks only for the display name, creates a pending Credential directly inside private local state, redeems the Invite, verifies `/api/v1/me`, and promotes the Credential only after matching readback. Do not paste a long-lived Credential into chat, environment variables, command arguments, a repository, or browser storage.
+
+## Local data and security boundaries
+
+cfKanban-owned persistent local data uses the current execution environment user's private directory:
+
+```text
+~/.cfkanban/
+  instances/       # trusted instance metadata, Credentials, journals, receipts
+  skill-releases/  # verified immutable Skill releases and active pointer
+  tool-runtime/    # isolated Wrangler runtime, only when explicitly approved
+```
+
+Codex marketplace configuration and plugin caches remain in Codex-owned directories because Codex must discover them there. They are disposable host projections, not cfKanban state and not canonical release truth. Windows native and WSL2 use separate user homes and are never mixed automatically.
+
+## For contributors
+
+Install the exact lockfile and run the complete repository validation:
 
 ```sh
 npm ci
 npm run validate
 ```
 
-`npm run validate` runs workspace typechecks, unit tests, OpenAPI/error contract checks, generated-artifact drift checks, in-memory and Wrangler local D1 validation, credential-free CI policy checks, the Vite Web build, and a Wrangler Worker dry-run build with the same-Worker Static Assets configuration. It does not log in to Cloudflare or write remote resources.
+`npm run validate` runs typechecks, unit and integration tests, OpenAPI/error checks, generated-artifact drift checks, local D1 validation, credential-free CI policy checks, the Web build, and a Worker dry-run build. It does not log in to Cloudflare or write remote resources.
 
-Generated contract artifacts are updated only by the explicit `npm run contracts:generate` and `npm run migrations:generate` commands. Normal validation is read-only for tracked artifacts and fails when either generated file drifts.
+Start with the [documentation index](docs/README.md), [product brief](docs/product/product-brief.md), [user storyboard](docs/product/user-storyboard.md), [Agent Skills guide](docs/skills/README.md), and [implementation plan](docs/plans/2026-08-29-v0-implementation-plan.md). Frozen technical contracts live under [`docs/specs/`](docs/specs/).
 
-## Documentation
-
-- [Documentation index](docs/README.md)
-- [Product brief](docs/product/product-brief.md)
-- [User storyboard](docs/product/user-storyboard.md)
-- [Foundation SPEC](docs/specs/2026-08-26-agent-native-kanban-foundation-spec.md)
-- [Agent Skills & Bootstrap SPEC](docs/specs/2026-08-28-agent-skills-bootstrap-spec.md)
-- [Agent Skills, plugin, and marketplace guide](docs/skills/README.md)
-- [Minimal Web UI SPEC](docs/specs/2026-08-29-web-ui-spec.md)
-- [Implementation Plan](docs/plans/2026-08-29-v0-implementation-plan.md)
-- [API & D1 Schema SPEC](docs/specs/2026-08-28-api-schema-spec.md)
-- [Cloudflare architecture baseline](docs/architecture/cloudflare-baseline.md)
-- [Cloudflare platform snapshot](docs/research/cloudflare-platform-snapshot-2026-08-28.md)
-- [Agent Skill platform snapshot](docs/research/agent-skill-platform-snapshot-2026-08-28.md)
-- [Roadmap](docs/project/roadmap.md)
-- [Decision register](docs/project/decision-register.md)
-- [Open questions](docs/project/open-questions.md)
-- [Linear workflow](docs/project/linear.md)
-
-## Project tracking
-
-Linear project: [cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f).
-
-Linear stores execution state; repository documents remain the source of truth for product and technical contracts. No implementation Issues are being bulk-created merely to populate the board.
+Execution is tracked in the [cfKanban Linear project](https://linear.app/kennzhang/project/cfkanban-567c4995296f); repository documents remain the source of truth for product and technical contracts.

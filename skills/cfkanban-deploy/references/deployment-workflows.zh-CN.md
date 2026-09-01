@@ -34,6 +34,14 @@ Agent 宿主只会从自己规定的位置发现 Skills/plugins。例如 Codex �
 
 marketplace/plugin 是受支持的便利安装入口，但不能覆盖 canonical HTTPS publisher、immutable manifest、artifact origin allowlist、SHA-256 digest 或已安装 receipt。marketplace 更新不自动授权安装、更新 Skill、部署或升级 Instance。
 
+## 首个 canonical release 发布前
+
+项目发布首个 canonical release 前，repository marketplace 可以让宿主发现本 Skill；这**不代表**已经存在 stable deployment target。
+
+只读检查时，应明确报告缺少 canonical bootstrap/manifest 并停止。不得编造 release URL、向 `release verify` 提供伪造的 HTTPS manifest、把 plugin cache 当作 Service bundle，也不能静默退回当前 working tree。
+
+明确的源码评估属于另一种工程模式。生成任何计划前，记录 repository URL、准确 commit、仅作人类辅助说明的 branch/tag、dirty/untracked 状态、lockfile 状态、验证命令/结果，以及不具备 publisher continuity 和 canonical release 保证这一事实。只有可变 branch name 不构成可复现来源。如果当前 Skill release 没有能够冻结这些事实的源码专用计划，必须在本地安装、Credential 生成或 Cloudflare 写入前停止。不得把源码试验作为无标记的既有 Instance upgrade。
+
 ## 与 Cloudflare 上游对齐
 
 Cloudflare 在自己的仓库维护了两个有用的可选协作 Skill：
@@ -70,7 +78,7 @@ Cloudflare 在自己的仓库维护了两个有用的可选协作 Skill：
 
 ## 首次部署
 
-1. 把 canonical bootstrap 当作文档读取，将 stable pointer 解析为一个 immutable release manifest。
+1. 把 canonical bootstrap 当作文档读取，将 stable pointer 解析为一个 immutable release manifest；只有用户明确选择测试版时才可改用 prerelease pointer。
 2. 对 Skill 与 Service deployment bundles 运行 `release verify`，再与既有 receipt 比较 publisher/origin continuity。
 3. 运行 `capabilities`。复用兼容 Node/Wrangler；Wrangler 缺失/不兼容时生成并展示 `runtime plan-install`，只在准确授权后安装。使用准确 account ID 与可选 named profile 运行 `runtime wrangler-account-readback`；禁止使用裸 `npx`，因为它可能下载未固定的最新 Wrangler。Wrangler 的 `whoami` 不支持 `--profile`，因此该命令改用只读 `d1 list --json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定账户、丢弃数据库清单，并在环境 Credential 会遮蔽所选 profile 时停止。
 4. 运行 `plan strict-zero`。默认候选包含一个 Worker、一个 D1、bundled Static Assets、`workers.dev`、不包含可选 Cloudflare 产品，并使用每 60 秒 120/300/30 request gates。冻结所选 Cloudflare profile/account，并在冻结 digest 前解决缺少的 Owner display name。
@@ -81,6 +89,10 @@ Cloudflare 在自己的仓库维护了两个有用的可选协作 Skill：
 9. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。
 10. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。
 11. 部署后验证 Worker health、public instance discovery、bindings、migration/schema state 与 `/api/v1/me`；之后才提升 pending Owner Credential 并写入脱敏 receipt。
+
+### 交接到真正可用的看板
+
+首次部署只创建基础设施和 Deployment Owner，按设计不会创建 Workspace、Project、Label、Grant 或 Issue。最终报告必须提供一条简单的下一步提示词：“请使用 `$cfkanban-admin` 创建我的第一个 cfKanban 看板。”Owner 验证、缺失名称询问、两个独立创建与读回以及 Browser Launch 流程都由 Admin Skill 负责；不能要求用户把这些步骤写进提示词，也不能把这些应用写入隐藏在 Cloudflare deployment authorization 里面。
 
 ## 中断与续做
 

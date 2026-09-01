@@ -24,6 +24,18 @@ node scripts/cfkanban-tool.mjs api request
 
 JSON 中绝不能添加 Credential。`api request` 在内部读取 current Credential；创建或恢复 Principal 时，`invite redeem` 与 `public-join redeem` 在内部读取 pending Credential。
 
+## 加入并开始工作
+
+处理新参与者常见的首次使用请求时：
+
+1. 不兑换地检查 Invite URL，展示 instance、准确 Projects/roles、有效期、recovery mode 和本地存储影响；
+2. 检查本地 instance slot，允许时复用 current Principal；否则只询问缺少的 display name，再准备一个 pending Credential；
+3. 对 trusted Skill source、本地写入、identity/Credential 创建或复用以及准确 Grants 形成一份合并的应用计划，并等待批准；
+4. 只兑换一次，验证 `/api/v1/me` 与生成的 Grants，只在 identity/fingerprint 读回匹配后提升 pending Credential；
+5. 解析已加入 Project scope，列出其 Issues，并提供 Project Browser Launch 选项。
+
+Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 Passkey 或打开浏览器；这些都是独立的用户选择。
+
 ## 本地身份与 scope
 
 | 任务 | 命令 | 预期结果 |
