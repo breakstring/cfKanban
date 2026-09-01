@@ -1,0 +1,6 @@
+interface:
+  display_name: "cfKanban"
+  short_description: "Use cfKanban for daily issue collaboration"
+  default_prompt: "Use $cfkanban to inspect my current Project scope and help with this issue safely."
+policy:
+  allow_implicit_invocation: true

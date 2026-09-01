@@ -1,0 +1,6 @@
+interface:
+  display_name: "cfKanban Admin"
+  short_description: "Manage cfKanban access and application settings"
+  default_prompt: "Use $cfkanban-admin to review this Owner operation, its exact target, and its recovery boundary."
+policy:
+  allow_implicit_invocation: true

@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +6,7 @@ const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const outputRoot = new URL("../apps/worker/dist/", import.meta.url);
 const wranglerCli = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
 
+await rm(outputRoot, { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
 
 const result = spawnSync(process.execPath, [
@@ -14,8 +15,8 @@ const result = spawnSync(process.execPath, [
   "--dry-run",
   "--config",
   "wrangler.jsonc",
-  "--outfile",
-  fileURLToPath(new URL("worker.js", outputRoot)),
+  "--outdir",
+  fileURLToPath(outputRoot),
   "--metafile",
   fileURLToPath(new URL("metafile.json", outputRoot)),
 ], {
