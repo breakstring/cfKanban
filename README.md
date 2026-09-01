@@ -95,20 +95,6 @@ Whether you use the testing prerelease now or a stable release later, the same s
 
 The default plan creates only one Worker and one D1 database on `workers.dev`. Custom domains, paid services, destructive migrations, resource adoption or replacement, and permission changes require a new explicit plan.
 
-## Test the installation from another machine
-
-Use a non-production Cloudflare account or an account where creating one test Worker and one test D1 database is acceptable.
-
-1. Install Codex and a compatible Node.js version (`>=22.12.0`) on the other machine. Sign in to Cloudflare through your normal Wrangler setup; the Skill will inspect it without changing it first.
-2. Install the tagged plugin with the two commands above, then start a new Codex task.
-3. Say: `Use $cfkanban-deploy to deploy cfKanban for me.`
-4. When the Skill explains that only a testing prerelease is available, explicitly choose `0.1.0-alpha.1`. Provide the Owner display name and Cloudflare account only if asked.
-5. Review the plan. For the basic test it should create exactly one new Worker, one new D1 database, bundled Web assets, and a `workers.dev` URL, with no custom domain or paid optional service. Approving that exact plan authorizes real Cloudflare writes.
-6. After deployment, require the Skill to read back the resource markers, schema/migrations, health endpoint, instance discovery, and Owner identity. Then say: `Use $cfkanban-admin to create my first cfKanban board.`
-7. Open the one-time Web URL, verify the English/简体中文 language switch, create one Issue, refresh the page, and confirm the Issue remains present.
-
-Keep the Worker, D1, `workers.dev` URL, and redacted receipt identifiers until the test evidence is reviewed. Cleanup is a separate destructive operation and is not implied by this test.
-
 ## Get your first usable board
 
 After deployment has been verified, start a new task or continue with the installed Skills:

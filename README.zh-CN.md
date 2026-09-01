@@ -95,20 +95,6 @@ plugin 包含三个 Skills：
 
 默认计划只在 `workers.dev` 创建一个 Worker 和一个 D1。custom domain、付费服务、破坏性 migration、资源接管或替换，以及权限变化都必须生成新的明确计划并重新授权。
 
-## 从另一台机器验证安装与部署
-
-请使用非生产 Cloudflare 账户，或者确认当前账户允许创建一个测试 Worker 和一个测试 D1 数据库。
-
-1. 在另一台机器安装 Codex 和兼容的 Node.js（`>=22.12.0`）。通过你平时使用的 Wrangler 方式登录 Cloudflare；Skill 会先只读检查，不会直接修改环境。
-2. 使用上面的两条命令安装带 tag 的 plugin，然后新建一个 Codex 任务。
-3. 只需要说：`请使用 $cfkanban-deploy 为我部署一套 cfKanban。`
-4. Skill 说明当前只有测试发行版时，明确选择 `0.1.0-alpha.1`；只有在它询问时才提供 Owner 显示名称和 Cloudflare 账户选择。
-5. 检查看到的计划。基础测试应该只新建一个 Worker、一个 D1 数据库、内置 Web assets 和一个 `workers.dev` 地址，不应包含自定义域名或付费可选服务。批准这份准确计划会授权真实的 Cloudflare 写入。
-6. 部署后，要求 Skill 读回资源标记、schema/migrations、health endpoint、instance discovery 与 Owner identity。然后说：`请使用 $cfkanban-admin 创建我的第一个 cfKanban 看板。`
-7. 打开一次性 Web URL，验证 English/简体中文语言切换；创建一条 Issue，刷新页面，确认它仍然存在。
-
-在测试证据完成复核前，请保留 Worker、D1、`workers.dev` 地址和脱敏 receipt identifiers。清理资源属于独立的破坏性操作，本测试不会自动执行。
-
 ## 得到第一个真正可用的看板
 
 部署验证完成后，可以新建任务或继续使用已安装的 Skills：
