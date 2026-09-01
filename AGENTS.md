@@ -65,6 +65,7 @@
 - v0 首次发行信任根是项目声明的 canonical HTTPS。不可覆盖的版本清单必须逐工件限制允许来源并记录 SHA-256 文件指纹；本地 receipt 保存 publisher/origin/manifest/digests，更新或降级必须校验来源连续性，来源变化时停止并重新授权。marketplace/plugin 不能覆盖 canonical 来源，安装、更新和降级不得自动执行。该机制不防官方发布系统整体失陷；独立签名与密钥轮换/撤销留到公共分发、自动更新或托管分离时再评估。
 - Node 是用户拥有的通用开发环境。Skill 可以只读探测并引导，但不得静默选择或安装 version manager、改变安装路径、PATH、shell profile 或全局默认 Node；已有兼容版本必须优先复用，具体兼容范围由每个 Skill release 的机器清单声明。用户选择安装方式并授权 Agent 展示的精确计划后，Agent 可以代为执行和读回验证；计划外的提权或系统环境变化需要另行授权。
 - Wrangler 优先复用用户显式配置或 PATH 中的兼容版本；缺失或不兼容时，使用独立于 Agent 宿主和任意用户 Repo、由同一 OS 用户共享的 cfKanban Tool Runtime。不得修改用户现有 Wrangler、向 PATH 暴露新的全局命令，或在用户工作 Repo 中写入 Wrangler 依赖。
+- Cloudflare 官方 `cloudflare`/`wrangler` Skills 只作可选、需显式安装的当前平台参考，不是 cfKanban 部署依赖或授权来源；不得因部署而自动安装或隐式调用 Wrangler `--install-skills`。通用的 repo-local latest/bare npx/产品选型建议不能覆盖 canonical bundle、兼容矩阵、strict-zero plan、journal 与 readback；若当前官方文档/schema 证明 bundle 失效，应停止并发布新 immutable release。
 - v0 同时支持 Windows 原生与 WSL2，但将其视为互不混用的独立执行环境。Agent 只解析当前环境内的 Node、Wrangler、Skills、Tool Runtime、Cloudflare auth 与 cfKanban Credential，不跨 Windows/WSL 边界自动发现、调用、复制或共享。这个自动化边界不禁止用户自行在受信环境间复制 Credential。
 - v0 不依赖 OS secure store 保存 cfKanban Credential；默认使用当前执行环境用户主目录下的 `.cfkanban/` 私有目录。Credential 文件依赖 ownership/ACL 与最小权限保护，不得声称已加密，也不得进入 Repo、同步或临时目录、日志、环境配置、命令行参数或 Agent 正常上下文；创建和每次使用前都要校验存储边界。
 - 部署授权绑定当前 Agent 任务、规范化 plan digest 与 operation ID/journal；同一任务内可以连续完成计划内 Cloudflare 写入和无漂移恢复，不逐命令重复确认。付费、DNS/domain、删除/覆盖、破坏性 migration、未知资源接管、账户/权限变化或其他 plan delta 必须重新获得授权。
@@ -113,7 +114,8 @@
 - 后期检索增强优先考虑 Cloudflare Vectorize 可重建派生索引；v0 只提供 D1 结构化过滤与基础 title 搜索。Vectorize 不得参与权限、CAS、唯一约束或刚写即读的核心判断，费用、embedding 和同步合同进入对应版本时另行冻结。
 - 任何状态写入都要考虑并发前置条件、幂等重试、审计事件和结构化错误恢复。
 - v0 Web Board 支持固定五列间单卡拖拽。落到非 `done` 列立即执行带 expected version 的状态保存；拖入 `done` 自动使用 complete 合同，缺少 summary 时先收集完成摘要。失败或冲突回到服务端真实列；不提供多卡/批量写入或手工 rank。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG。
-- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 20；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 Linear WP 推进，不得默补或改变公共合同。
+- cfKanban 自管持久数据统一使用当前执行环境 home 下的 `.cfkanban/`，按 `instances/`、`skill-releases/`、`tool-runtime/` 分责；宿主 marketplace/plugin metadata、发现投影/cache 与 Cloudflare auth 仍留在各自所有者目录。分发 `SKILL.md` 必须直接说明能力、命令/API 对照、读回和停止条件；可本地化的操作文档维护 English/简体中文，不支持 locale 的 metadata 使用英文，公开表面不显示内部阶段标签。
+- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 22；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 Linear WP 推进，不得默补或改变公共合同。
 
 ## 文档路由
 

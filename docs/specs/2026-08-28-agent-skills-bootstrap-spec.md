@@ -1,14 +1,14 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
 - 文档状态：Frozen
-- 合同修订：20
+- 合同修订：22
 - Roadmap：R0 / R3
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
 - 事实快照：[Agent Skill 与本地部署环境能力快照](../research/agent-skill-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-08-29
+- 最近更新：2026-09-01
 - 冻结日期：2026-08-28
-- 最近修订：2026-08-29（D-246、D-247）
+- 最近修订：2026-09-01（D-253、D-254、D-255）
 
 ## 1. 目的与边界
 
@@ -90,7 +90,7 @@ Guidance 随 Skill bundle 版本发布，不由服务端在运行时静默改写
 
 首版至少需要向上层 Agent 暴露以下全局指导：
 
-- 用户级状态根为当前执行环境 home 下的 `.cfkanban/`；Credential、实例记录、Tool Runtime receipt/journal 的具体子路径和权限规则由对应 reference 说明，不能写入 Repo、同步盘或临时目录。
+- cfKanban 自管持久数据统一位于当前执行环境 home 下的 `.cfkanban/`：实例/Credential/journal/receipt 使用 `instances/`，验证后的版本化 Skill 使用 `skill-releases/`，私有 Wrangler 使用 `tool-runtime/`。宿主必须管理的 marketplace/plugin metadata 与发现投影、Agent plugin cache、Cloudflare auth 仍留在各自所有者目录；任何 cfKanban 状态都不能写入 Repo、同步盘或临时目录。
 - Repo 可选 scope 文件为根目录 `.cfkanban-scope.json`，只保存非秘密 Project targets；它是推荐过滤输入，不是身份、Grant 或服务端默认 Project。
 - Project Invite role 按“明确的上层 role → cfKanban 推荐 `writer`”解析；明确只读就是 `reader`。无论推荐结果如何，API 请求都必须显式提交最终 role。
 - 查询 Issue 的推荐 scope 顺序是“本次显式 Project targets → Repo `.cfkanban-scope.json` targets → 无过滤聚合并醒目标示范围扩大”。API 允许省略 filters；Skill 必须呈现 resolved scope 和失效 target 警告，上层可以覆盖这套推荐顺序。
@@ -161,6 +161,7 @@ v0 固定拆成三个按工作场景发现的能力，而不是一个塞满所�
 不另建一个需要上层 Agent 主动发现的“全局指导 Skill”。指导应跟随实际能力出现：
 
 - 每个相关 `SKILL.md` 顶层直接放置简短的“合同与建议”段，使用 MUST / SHOULD / DECIDES 区分强制、推荐和上层决策。
+- 每个 `SKILL.md` 还必须直接说明“能做什么”、何时切换到另一个 Skill、内置命令入口、常见任务到命令/API 的对照、读回流程和停止条件；`node scripts/cfkanban-tool.mjs help` 必须返回当前 Skill 可用命令、effect 与输入字段，不能要求用户从安全政策或 OpenAPI 自行猜出执行方法。可本地化的详细操作手册维护 English 与简体中文配对；不支持 locale 的 metadata 使用英文。
 - 所有会使用身份的 Skills 都直接说明 `.cfkanban/` 是用户级状态根、Credential 不进入 Agent 正常上下文；`cfkanban-deploy` 还直接说明 Tool Runtime、Skill update 与 Instance upgrade 分离，以及部署安全边界。
 - `cfkanban` 直接说明 `.cfkanban-scope.json`、Project filters 强烈推荐但可省略、原子写操作和 context 不可信；打开 Web 时只为明确 target 创建 5 分钟一次性 Browser Launch，不向浏览器传递长期 Credential。Project/Issue launch 的 8 小时固定 Session 只覆盖对应 Project，切换范围时重新创建 launch。
 - `cfkanban` 在用户选择 Passkey 登记时必须确认当前 Web Session 来自 Agent Launch，并说明 Passkey 只用于 Web、不会替代 `.cfkanban/` Credential。Skill 不把浏览器 WebAuthn/平台认证器能力探测或服务端登记清单解释成“当前设备已有可用 Passkey”；登录未完成时只说明可能是取消、超时、无匹配 credential、认证器不可用或策略拒绝，并提供 Browser Launch 恢复入口。hostname 变化时，v0 在新地址重新登记，不尝试跨 hostname 复用 Passkey，也不把 API Credential 粘贴或上传到网页。
@@ -172,6 +173,7 @@ v0 固定拆成三个按工作场景发现的能力，而不是一个塞满所�
 - `cfkanban-admin` 修改限制前读取并展示当前 active usage，但允许 Owner 提交低于 usage 的值；Skill 应预告既有数据和 Grants 保持不变，并明确列出进入 over-limit 后会被阻止的增长动作以及仍可用于释放容量的软删除/撤权动作，不能要求 Owner 先清理数据才能保存。
 - `cfkanban-admin` 打开 Owner 管理页时应显示当前生效的单 Principal、实例总请求和未认证敏感操作门槛、配置来源与安全的近期 429 摘要。精确 quota 仍由 D1 强制；Skill 不能把部署配置伪装成应用内即时设置。
 - `cfkanban-deploy` 首次部署零参数生成 120/60 秒、300/60 秒、30/60 秒三个默认 binding 配置。后续修改必须作为独立、可读的 deployment plan delta 展示并读回验证；只发布 Worker 配置，不运行 D1 migration，也不得因 Owner 在管理页查看策略而自动部署。
+- Cloudflare 官方 `cloudflare`/`wrangler` Skills 是可选上游参考，不是 `cfkanban-deploy` 的依赖、信任根或授权来源。已安装时可用于检索当前 Cloudflare 文档、Wrangler syntax/config schema 与通用排障；缺失不阻塞部署。任何安装都是独立的宿主写入计划，必须展示上游 repo/revision、scope、投影目标和回滚，不得自动安装或在 cfKanban 部署中隐式启用 Wrangler `--install-skills`。
 - 三个 Skills 的共享客户端必须按 `code/category/source/retryable/retry_after_seconds/recovery` 解释错误，不能匹配人类 `message`。Project active quota 提示释放容量或请求 Owner 调高；`RATE_LIMITED` 只在幂等安全时按 Retry-After 等待，并禁止无界快速重试；D1/Workers 平台 quota 提示等待平台重置或请求 Owner 检查付费/容量。
 - Cloudflare 1027、边缘 429、非 JSON 5xx 或网络失败可能没有 cfKanban envelope。共享客户端应按稳定 HTTP/header/数字错误码生成本地 normalized result，明确 `source=cloudflare_platform|client_transport` 与 `details.normalized_by=client`，保留可用的 Ray/request ID，但不保存或转储完整供应商 HTML。它不能把本地归一化结果称为服务端/OpenAPI response。
 - `cfkanban-admin` 不维护逐 Principal Public Join blacklist。Project 仍公开时，撤权者可以重新加入；若 Owner 的目标是停止新的自助加入，Skill 应调用关闭 Public Join，而不是循环撤销 Grant。
@@ -211,6 +213,8 @@ Portable Skill 必须遵循 Agent Skills 共同最小格式：
 
 这些差异优先由 bootstrap 安装规则和 bundle 内 Node scripts 吸收，不在 Storyboard 中建模为 Host Adapter actor。兼容逻辑不得修改领域合同、跳过宿主审批或为方便而扩大工具权限。未知 Agent 可以读取 bootstrap 文档并使用 portable Skill，但不得声称“完整支持”。
 
+宿主要求的 personal/project/plugin Skill 目录、marketplace 配置与 plugin cache 是宿主所有的发现投影，必须留在宿主规定位置；它们不能因为 cfKanban 统一自己的数据根而迁入 `.cfkanban/`。canonical bundle 的已验证版本副本和 active pointer 位于 `.cfkanban/skill-releases/`，宿主投影只在显式 source/version/digest 安装计划后创建或更新，不保存 cfKanban Credential，也不取代 immutable release manifest/receipt。删除投影只影响对应宿主发现，不得联动删除 cfKanban 状态。
+
 若首次安装时 Node.js 尚不可用，Agent 先依据 bootstrap document 使用宿主已有的安全文件能力完成最小 Skill 安装；安装后的 deploy Skill 再处理 Node.js 前置条件。不能为了运行 installer 而先执行不受信任的 shell/bootstrap 脚本。
 
 ## 6. 跨平台执行与脚本政策
@@ -218,6 +222,7 @@ Portable Skill 必须遵循 Agent Skills 共同最小格式：
 ### 6.1 当前基线
 
 - Skill 内置的共享 scripts/helper 使用 Node.js/TypeScript，因为 Wrangler 本身要求 Node.js，并覆盖目标 macOS、Windows 和 Linux 环境。
+- 分发入口采用 `.mjs`，即 Node 原生的显式 ES module JavaScript；它可以直接由 `node` 执行、不需要编译，并且在 portable Skill 安装到没有 `package.json` 的目录时仍具有确定的模块语义。`.mjs` 不是另一种语言或独立 runtime。
 - Node 是用户拥有的通用开发环境，不是 cfKanban 管理的 runtime。每个 stable Skill release 在机器可读 manifest 中声明已验证的 Node semver 范围，不在稳定 SPEC 中写死易过期的具体版本号。
 - 已存在且兼容的 Node 必须优先复用；Skill 不为了追求“最新版”要求升级，也不改变用户的全局默认版本。
 - 兼容的现有 Wrangler 可以复用；否则在用户级 cfKanban Tool Runtime 中安装受控版本。不修改全局 Wrangler、不写入任意用户 Repo，也不在关键部署时通过裸 `npx wrangler` 隐式下载未知最新版。
@@ -269,9 +274,11 @@ cfKanban Tool Runtime 是一个逻辑上的用户级私有工具目录：
 - 独立于用户正在开发的任何代码 Repo，也不能写入这些 Repo 的 `package.json`、lockfile 或 `node_modules`；
 - 同一 OS 用户下由所有支持的 Agent 宿主、cfKanban 实例和工作 Repo 共用；
 - 只承载 cfKanban Skills 所需的受控工具依赖，不向 PATH 暴露新的全局 `wrangler` 命令；
-- 具体 macOS/Windows/Linux 路径、版本并存和清理策略在实现前另行冻结，不能由某个 Agent 宿主私自决定。
+- 固定为当前执行环境 home 下 `.cfkanban/tool-runtime/`；版本/receipt 由该子目录独立维护，清理不得宽泛递归作用于 `.cfkanban/` 根或其他子目录。
 
-无论使用现有还是私有 Wrangler，Agent 在每次 deploy/migrate 等高风险操作前重新读回 executable path 与 version；不兼容时停止或切换到已授权的私有 runtime，不能静默使用另一个版本。该解析与共享 runtime 模型已通过 SB-02 确认；具体平台路径、版本并存和清理策略仍是实现前需要收敛的细节。
+无论使用现有还是私有 Wrangler，Agent 在每次 deploy/migrate 等高风险操作前重新读回 executable path 与 version；不兼容时停止或切换到已授权的私有 runtime，不能静默使用另一个版本。该解析与共享 runtime 模型已通过 SB-02 确认；`.cfkanban/` 统一根与宿主发现投影边界由 D-253 固定。
+
+Cloudflare 官方通用 Skill/文档提出的 repo-local `wrangler@latest` 解决一般项目的版本协作问题；cfKanban 源码开发/CI 继续使用 lockfile 固定的 repo-local Wrangler，但用户从 immutable Service bundle 部署 stable 实例时，不写入任何用户 Repo，也不使用可能下载 latest 的裸 `npx`。此时只调用 manifest 兼容范围内、已读回绝对路径/version 的 executable。当前 Cloudflare 文档与 Service bundle 内固定的 Wrangler config schema 用来发现平台漂移；一旦它们证明 bundle 无效，正常部署必须停止并等待新的 immutable release，不能现场修改已验证 bundle。
 
 ### 6.5 Windows 与 WSL2 执行环境边界
 
@@ -300,7 +307,7 @@ v0 不把 Credential 绑定到设备或 Agent 宿主。用户可以自行把同�
 
 1. `cfkanban-deploy` 运行只读 capability report。
 2. Node 缺失或不兼容时按 6.3 引导选择；Wrangler 按 6.4 解析兼容现有版本或用户级 cfKanban Tool Runtime。
-3. 检查 Cloudflare auth/profile；本地交互环境优先 OAuth + keyring，远程/容器可使用 device flow，CI/headless 使用明确提供的 API token。
+3. 使用已解析的 Wrangler executable 对准确 account/profile 执行只读 account preflight；本地交互环境优先 OAuth + keyring，远程/容器可使用 device flow，CI/headless 使用明确提供的 API token。Wrangler `whoami` 只作用于当前 active profile、不能接受 `--profile`，因此 named profile 通过 `CLOUDFLARE_ACCOUNT_ID=<准确账户>` 与 `d1 list --json --profile <名称>` 验证目标账户的 D1 只读访问，数据库清单不得返回 Agent 正常输出；环境 Credential 会遮蔽 profile 时停止。存在多个 profile 时显式选择并把 profile/account 冻结进 plan。
 4. 当前指令没有 Owner display name 时，只询问这一项身份信息；不得从 OS username、Git identity、hostname 或 Agent account 推断。它不属于 Cloudflare 资源参数。
 5. 默认按 7.2.1 零参数生成 strict-zero 候选；只有 Cloudflare account/profile 歧义，或用户目标要求 custom domain、付费能力、数据地域/合规约束、非 stable 版本或源码试验时，才请求会改变结果的最少输入。
 6. 输出 deploy plan：将创建/修改的 Worker、D1、bindings、migration、domain、自动生成值、Owner display name，以及费用和回滚边界；人类通过一次完整计划授权接受这些值，不逐字段确认。
@@ -337,6 +344,8 @@ Node 安装方法、Cloudflare 登录或权限授权属于环境/身份前置步
 
 Skill 内置部署脚本使用本地 journal/operation ID 记录 plan digest 和每个已确认步骤。失败后，同一 Agent 任务内先 readback Cloudflare 当前状态；状态仍匹配 plan 时可以 resume/repair，不需要重复授权。进入新任务/新会话、无法可靠关联原始授权，或 readback 与 plan 不一致时，必须展示当前状态、已完成步骤和剩余 delta，再取得新的明确授权。不得盲目重建 D1、重复 migration、创建第二 Owner 或覆盖未知远程配置。
 
+Service deployment bundle 必须携带已构建 Worker、预构建 Static Assets、migrations、可移植 Wrangler template 和构建时固定的 config schema；不能让 template 指向 bundle 外不存在的源码或依赖。D1 创建并读回准确 database ID 后，受控脚本在 `.cfkanban/instances/<instance_id>/journals/` 生成私有 Frozen Wrangler config，绑定 plan 中的 account/profile、Worker/D1 名称、bindings、compatibility date、rate gates 与 bundle 内绝对路径，而不修改 immutable bundle。远端 Worker deploy 前必须使用计划中的同一 executable/config 执行 `wrangler deploy --dry-run`；dry run 成功只证明本地编译/config 可接受，不等于远端部署成功或新增授权。D1 继续使用 Cloudflare 标准 migrations apply 的顺序与单 migration 失败回滚语义，同时以 cfKanban checksum ledger + 实际 schema readback 作为完成事实。
+
 ### 7.4 Owner Credential 与交付
 
 - Owner Credential secret 优先由 Skill 内置 Node 脚本生成并直接写入 `.cfkanban/` 受限 Credential 文件；Agent context 和终端正常输出只看到 fingerprint。
@@ -351,11 +360,11 @@ Skill 内置部署脚本使用本地 journal/operation ID 记录 plan digest 和
 
 ### 7.5 cfKanban Credential 本地存储
 
-Cloudflare auth 与 cfKanban Credential 分别存储；前者仍由 Wrangler 及用户选择的 Cloudflare 登录方式管理。v0 不依赖 OS secure store，cfKanban Credential 默认保存在当前执行环境用户主目录下的 `.cfkanban/` 私有目录：POSIX 文档形式为 `~/.cfkanban/`，Windows 使用当前用户 profile home 下的等价目录。OS secure store 可在未来作为可选 backend 评估，但不能成为 v0 远程 SSH、WSL、headless 或桌面环境的不同默认行为。
+Cloudflare auth 与 cfKanban Credential 分别存储；前者仍由 Wrangler 及用户选择的 Cloudflare 登录方式管理。v0 不依赖 OS secure store，cfKanban 自管持久数据统一保存在当前执行环境用户主目录下的 `.cfkanban/` 私有根：POSIX 文档形式为 `~/.cfkanban/`，Windows 使用当前用户 profile home 下的等价目录。实例状态/Credential/journal/receipt、版本化 Skill 与 Tool Runtime 分别使用 `instances/`、`skill-releases/`、`tool-runtime/` 子目录；OS secure store 可在未来作为可选 backend 评估，但不能成为 v0 远程 SSH、WSL、headless 或桌面环境的不同默认行为。
 
 文件存储合同如下：
 
-- `.cfkanban/` 是 cfKanban 自己的用户级状态根，不位于代码 Repo、云同步目录、临时目录、Skill bundle、Agent 宿主或 cfKanban Tool Runtime 内；
+- `.cfkanban/` 是 cfKanban 自己的用户级持久根，不位于代码 Repo、云同步目录或临时目录；Agent 宿主目录与 Cloudflare auth 不是其子目录。Skill release 与 Tool Runtime 属于该根内独立的非 Credential 子目录，不得因此放宽 `instances/` 及 secret 文件的 ownership/ACL 检查；
 - 目录以服务端生成的 immutable `instance_id` 作为实例记录的稳定主键，secret 与非秘密 metadata/fingerprint 分离；同一环境可以保存多个上游实例，但每个实例正常只维护一个当前 Principal/Credential 槽位，一个 Credential 不能跨实例复用；
 - 同一 `instance_id` 发现多个不同 Principal 时属于本地状态冲突，必须停止并引导整理，不提供常规身份选择器，也不能按 display name、Repo、最近使用或 Agent 宿主猜测；同一 Principal 轮换时短暂存在的新旧 Credential 只作为脚本内部可恢复过渡状态；
 - API origin 是实例记录下可变但受信任的安全 metadata，不参与本地记录主键。普通请求只向当前 trusted origin 发送 Credential；本地记录保存最近确认的 `origin_version` 与低频 discovery 检查时间。已信任 origin 返回不同 `instance_id` 时停止；陌生 origin 声称已有 ID 时必须先由旧 trusted origin 交叉确认，无法确认则在发送 Credential 前走显式 rebind；
@@ -511,8 +520,11 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 29. 已确认：D-245 固定 canonical source 采用 monorepo 逻辑边界，但 v0 云端仍为一个 Worker + 一个 D1。stable Service deployment bundle 同时固定 Worker、预构建 Web assets 与 migrations；普通部署不创建 Pages/KV，也不要求部署者安装前端构建工具链。源码开发/CI 使用 repo-local Wrangler 不改变用户级 Tool Runtime 合同。
 30. 已确认：D-246 要求源码提供锁文件约束下的根级验证/构建入口，Service deployment bundle 的 migration manifest 固定顺序、checksum、分类、重入属性和预期 schema artifacts；deploy Skill 以 ledger + 实际 schema 双重 readback 判断 migration，不把文件名或退出码当成完成事实。
 31. 已确认：D-247 将持有 Cloudflare Token、执行远端写入的 GitHub Actions 部署 workflow 后置到下一阶段。v0 只有 `cfkanban-deploy` Agent-first 主部署路径；无凭据的 CI 验证 workflow 不属于第二套部署合同。
+32. 已确认：D-253 将 cfKanban 自管持久数据统一到当前执行环境 home 下的 `.cfkanban/`，按 `instances/`、`skill-releases/`、`tool-runtime/` 分责；宿主 marketplace/plugin metadata、发现投影/cache 与 Cloudflare auth 继续由各自所有者管理。Windows 原生与 WSL2 仍是不同 home 下的独立边界，统一根不授权放宽 secret 权限或宽泛递归清理。
+33. 已确认：D-254 要求三个分发 `SKILL.md` 直接呈现能力、切换边界、命令 catalog、任务到命令/API 对照、readback 与停止条件；详细文档维护 English/简体中文配对，不支持 locale 的 metadata 用英文。专用安全命令在内部注入 pending Credential；公开表面不显示内部阶段标签，`.mjs` 明确为 Node 原生 ESM JavaScript。
+34. 已确认：D-255 将 Cloudflare 官方 `cloudflare`/`wrangler` Skills 定位为可选上游参考而非依赖或授权来源；安装不自动发生，通用 latest/repo-local/npx 建议不覆盖 stable release 合同。Service bundle 携带 portable Wrangler template/schema，D1 创建后生成私有 Frozen config，并在正式 deploy 前用同一 Wrangler/config dry run。
 
-SB-01～SB-33 的主要产品体验与安全边界已经确认；合同修订 20 又固定确定性根级构建、migration manifest/checksum/schema readback，并将部署型 GitHub Actions 后置，保持 v0 的 `cfkanban-deploy` Agent-first 唯一主部署路径。此前 monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
+SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 22 在此前确定性构建、migration readback 与唯一主部署路径之上，又固定统一 `.cfkanban/` 维护根、宿主发现投影边界、任务/命令导向的双语 Skill 表面、专用 secret 注入命令，以及 Cloudflare 官方 Skills 的可选参考边界和 portable Wrangler config/dry-run。此前 monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
 
 ## 12. 冻结范围与完成依据
 
@@ -541,5 +553,7 @@ SB-01～SB-33 的主要产品体验与安全边界已经确认；合同修订 20
 21. 合同修订 18 已固定 Passkey capability detection 不能充当 credential inventory，并明确 v0 按当前 hostname/origin 隔离 WebAuthn；新 hostname 由 Browser Launch 恢复并重新登记。
 22. 合同修订 19 已固定源码 monorepo 与部署资源不是同一层级：Service deployment bundle 携带 Worker、预构建 Web assets 与 migrations，v0 实例仍只有一个 Worker 和一个 D1，不创建 Pages/KV；源码使用 repo-local Wrangler 只服务开发/CI。
 23. 合同修订 20 已固定可重现根级构建与 migration manifest/ledger/schema readback，同时将持有 Cloudflare Token 的 GitHub Actions 部署路径后置；v0 仍由用户的 Agent 通过 `cfkanban-deploy` 完成计划、授权、执行与恢复。
+24. 合同修订 21 已固定 cfKanban 自管持久数据统一到 `.cfkanban/` 的三个分责子目录，宿主发现投影继续留在宿主目录；三个 Skills 以可自描述命令 catalog 和任务→命令/API 的 English/简体中文文档呈现，并以专用命令内部注入 pending Credential。
+25. 合同修订 22 已固定 Cloudflare 官方 Skills 只作可选事实参考，不能自动安装、替代 cfKanban 信任/授权或把通用 latest/repo-local 规则强加给 stable 部署；Service bundle 必须携带 portable Wrangler template/schema，并通过私有 Frozen config 与正式 deploy 前 dry run 证明可移植性。
 
-本次冻结只固定上述公共 Agent 体验与安全边界，不固定尚未设计的具体 npm package 名、最终 Skill 文件拆分、平台绝对路径、清理策略或实现代码。冻结范围内的语义如需变化，必须通过显式新决策和可追踪修订；冻结本身不授权实现、安装、部署或发布。
+本次冻结只固定上述公共 Agent 体验与安全边界，不固定尚未设计的具体 npm package 名、各宿主未来新增的投影机制、版本淘汰阈值或实现代码。冻结范围内的语义如需变化，必须通过显式新决策和可追踪修订；冻结本身不授权实现、安装、部署或发布。

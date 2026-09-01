@@ -1,0 +1,67 @@
+# cfKanban Agent Skills
+
+Language: [English](README.md) | [简体中文](README.zh-CN.md)
+
+cfKanban ships three portable Skills:
+
+- `cfkanban`: daily identity, scope, Issue collaboration, Invite/Public Join, and Project/Issue Web launch.
+- `cfkanban-admin`: Deployment Owner application administration.
+- `cfkanban-deploy`: canonical release verification, local Skill lifecycle, Cloudflare deployment, resume, migration, and upgrade safety.
+
+Each `SKILL.md` starts with what the Skill can do, when to use a different Skill, a task-to-command map, the required workflow, and stop conditions. The paired reference guide provides the detailed English or Simplified Chinese endpoint and recovery instructions.
+
+## Commands included with each Skill
+
+From any Skill directory, inspect that Skill's exact command surface:
+
+```text
+node scripts/cfkanban-tool.mjs help
+```
+
+The result is structured JSON containing each command's name, effect, and accepted input fields. Commands accept structured JSON on stdin so secrets do not need to appear in process arguments. Credentials are never accepted as input fields; ordinary authenticated requests, Invite/Public Join redemption, and Owner rotation read the correct current or pending secret from private files internally.
+
+The `.mjs` extension means plain JavaScript in Node's explicit ES module format. These files run directly with `node`, need no compile step, and remain unambiguous when a portable Skill is installed outside a `package.json` tree.
+
+## Marketplace and plugin installation
+
+The repository root is a Codex plugin, and `.agents/plugins/marketplace.json` provides a named local marketplace entry. A source checkout can be registered and installed for development or validation with:
+
+```text
+codex plugin marketplace add .
+codex plugin add cfkanban-agent-skills@cfkanban
+```
+
+Codex and other Agent hosts place discoverable Skills/plugins in host-owned locations. Those files are verified projections used for host discovery; they are not cfKanban's persistent state or canonical release truth. Removing one projection affects only that host's discovery.
+
+Marketplace/plugin is a convenience entry and never overrides the canonical HTTPS publisher, immutable release manifest, artifact-origin allowlist, SHA-256 digests, or installed receipt. A local source checkout is not a canonical stable release. Install, update, downgrade, deployment, and Instance upgrade remain separate planned actions and never run automatically because a marketplace entry exists.
+
+### Optional Cloudflare companion
+
+Cloudflare's own [`cloudflare`](https://github.com/cloudflare/skills/tree/main/skills/cloudflare) and [`wrangler`](https://github.com/cloudflare/skills/tree/main/skills/wrangler) Skills are useful optional references for current platform facts and Wrangler syntax. They are not dependencies of `cfkanban-deploy`, are never installed automatically, and cannot replace its release verification, exact Wrangler compatibility, frozen plan, journal, migration readback, or authorization. If a user requests them, follow the [upstream installation guide](https://github.com/cloudflare/skills#installing) as a separate host-owned change with source/revision, scope, target, and rollback shown first.
+
+## Unified cfKanban data root
+
+All persistent files owned by cfKanban use one private maintenance root for the current execution environment:
+
+```text
+~/.cfkanban/
+  instances/
+  skill-releases/
+  tool-runtime/
+```
+
+- `instances/` stores trusted instance metadata, Credentials, journals, and redacted receipts.
+- `skill-releases/` stores verified immutable Skill versions and the atomic active pointer.
+- `tool-runtime/` stores an isolated compatible Wrangler only when a user-owned compatible Wrangler is unavailable and the exact install plan is authorized.
+
+Host marketplace/plugin metadata, host Skill projections, plugin caches, and Cloudflare authentication stay in their owning system's directories. They cannot be moved into `.cfkanban/` because the corresponding host/tool must discover and manage them there. Windows native and WSL2 use different user homes and never share these locations automatically.
+
+The unified root does not weaken secret boundaries: Credential files keep minimum ownership/ACL checks, no broad recursive cleanup is allowed, and no cfKanban state belongs in a Repo, sync directory, or temporary directory.
+
+## Localization policy
+
+Metadata schemas that accept only one string—`SKILL.md` frontmatter, `agents/openai.yaml`, `.codex-plugin/plugin.json`, and marketplace metadata—use English. Documents that support locale-specific files are maintained as paired English and Simplified Chinese files with language links at the top.
+
+## Shared runtime
+
+The three Skills route into the same dependency-free Node modules in `packages/skill-runtime`. This keeps path validation, trusted-origin handling, secret injection, error normalization, release verification, plan digests, and migration readback consistent without publishing a standalone cfKanban CLI or copying business rules out of the Service.

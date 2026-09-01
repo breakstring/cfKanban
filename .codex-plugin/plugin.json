@@ -1,0 +1,37 @@
+{
+  "name": "cfkanban-agent-skills",
+  "version": "0.0.0",
+  "description": "Portable cfKanban skills for daily collaboration, Owner administration, and safe Cloudflare deployment.",
+  "author": {
+    "name": "cfKanban maintainers"
+  },
+  "homepage": "https://github.com/breakstring/cfKanban",
+  "repository": "https://github.com/breakstring/cfKanban",
+  "license": "UNLICENSED",
+  "keywords": [
+    "cfkanban",
+    "kanban",
+    "agent-skills",
+    "cloudflare",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "cfKanban Agent Skills",
+    "shortDescription": "Use, administer, and deploy cfKanban with portable Agent Skills",
+    "longDescription": "Three portable Agent Skills for daily cfKanban issue collaboration, Deployment Owner application administration, and canonical-manifest-based Cloudflare deployment and upgrades.",
+    "developerName": "cfKanban maintainers",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/breakstring/cfKanban",
+    "defaultPrompt": [
+      "Inspect my cfKanban Project scope and help with this issue safely.",
+      "Review an Owner operation and its exact permission impact.",
+      "Produce a read-only cfKanban deployment capability report and plan."
+    ],
+    "brandColor": "#D86F45"
+  }
+}
