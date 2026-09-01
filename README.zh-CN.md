@@ -42,7 +42,7 @@ codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-只有在你明确想试用最新、可能变化的开发快照时，才把参数改成 `--ref main`。
+`--ref` 不是必填参数；上面特意使用它，只是为了把安装固定在不可变的测试 tag。只有在你明确想试用最新、可能变化的开发快照时，才省略 `--ref`；此时 Codex 会使用仓库的默认分支，当前为 `main`。
 
 如果你已经有本地 checkout，也可以注册这个准确的 checkout：
 
