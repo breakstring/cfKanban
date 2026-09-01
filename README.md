@@ -42,7 +42,7 @@ codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-Use `--ref main` only when you deliberately want the latest mutable development snapshot.
+`--ref` is optional. It is included above only to pin the installation to the immutable testing tag. If you deliberately want the latest mutable development snapshot, omit `--ref`; Codex will then use the repository's default branch, currently `main`.
 
 If you already have a local checkout, register that exact checkout instead:
 
