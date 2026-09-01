@@ -80,7 +80,7 @@ If you deliberately want to evaluate a source revision, say so explicitly:
 
 A source evaluation is an engineering path, not the stable installation path. The Skill must explain that distinction and its consequences; the user should not have to formulate the warning themselves.
 
-The current Skill does not provide a source-specific remote deployment plan that freezes all of those facts, so a correct source evaluation stops before Cloudflare writes. Publishing and accepting the first immutable release is the remaining prerequisite for the supported deployment flow below.
+The current Skill does not provide a source-specific remote deployment plan that freezes all of those facts, so a correct source evaluation stops before Cloudflare writes. Use the published prerelease for the supported testing flow below.
 
 ## What the deployment Skill handles for you
 
