@@ -2,13 +2,40 @@
 
 语言：[English](README.md) | [简体中文](README.zh-CN.md)
 
-cfKanban 交付三个 portable Skills：
+cfKanban 把三个 Skills 放在同一个 portable、可验证 bundle 中交付：
 
 - `cfkanban`：日常身份、scope、Issue 协作、Invite/Public Join 和 Project/Issue Web launch。
 - `cfkanban-admin`：Deployment Owner 应用管理。
 - `cfkanban-deploy`：canonical release 校验、本地 Skill 生命周期、Cloudflare 部署、续做、migration 与升级安全。
 
 每个 `SKILL.md` 都先说明“能做什么”、何时应使用另一个 Skill、任务到命令对照、必须遵循的流程与停止条件；配对的 English/简体中文 reference 再提供详细 endpoint 和恢复说明。
+
+## 用户只需要怎么说
+
+用户只描述想要的结果，安全流程由 Skills 负责。下面这些提示词已经足够：
+
+```text
+请使用 $cfkanban-deploy 为我部署一套 cfKanban。
+请使用 $cfkanban-admin 创建我的第一个 cfKanban 看板。
+请使用 $cfkanban 加入这个 Project：<邀请链接>
+```
+
+用户不需要主动要求 release 校验、只读预检、部署计划、版本检查、读回或恢复处理。每个 Skill 会根据用户意图自动从安全的只读检查开始，只询问缺少的选择，并在正确的授权边界说明副作用。
+
+## 当前测试预览入口
+
+首个稳定发行版还没有发布。目前 Codex 用户可以加载不可变的测试 tag：
+
+```text
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.1
+codex plugin add cfkanban-agent-skills@cfkanban
+```
+
+测试 tag 不会变化；只有明确评估开发快照时才使用可变的 `main`。安装后新建一个 Codex 任务，让 Skills 被加载。安装只启用发现能力；它不会创建 `.cfkanban/`、选择稳定版或测试版部署，也不授权本地或云端写入。
+
+当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
+
+应安装完整 plugin/bundle，不能只复制某个 `SKILL.md` 或单独的 `skills/<name>/` 目录。三个 entrypoints 按设计共用 bundle 内的 `packages/skill-runtime`，宿主投影必须保留这套已验证 bundle layout。当前测试预览只支持 Codex plugin 路径；其他宿主的 projection 属于稳定发行安装流程，不能用不完整的目录复制冒充。
 
 ## 每个 Skill 内置的命令
 
@@ -24,12 +51,14 @@ node scripts/cfkanban-tool.mjs help
 
 ## Marketplace 与 plugin 安装
 
-仓库根目录是一个 Codex plugin，`.agents/plugins/marketplace.json` 提供具名的本地 marketplace entry。开发或验证时，可以注册并安装源码 checkout：
+仓库根目录是一个 Codex plugin，`.agents/plugins/marketplace.json` 提供具名的本地 marketplace entry。已经下载源码 checkout 时，可以注册并用于开发或验证：
 
 ```text
 codex plugin marketplace add .
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
+
+安装或重装后请新建一个 Codex 任务，让宿主加载该 snapshot 中的 Skills。
 
 Codex 和其他 Agent 宿主会把可发现 Skills/plugins 放在宿主自己管理的位置。这些文件是用于宿主发现的已验证投影，不是 cfKanban 的持久状态或 canonical release 真相源；删除一个投影只会影响该宿主的能力发现。
 

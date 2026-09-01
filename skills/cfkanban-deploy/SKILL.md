@@ -21,6 +21,23 @@ Use this Skill for the Cloudflare control plane and local Skill lifecycle. For t
 
 Loading this Skill is not authorization to install software, change local state, create cloud resources, migrate data, change DNS, recover an Owner, publish, or upgrade.
 
+## Intent-first user experience
+
+Treat a plain request such as “Deploy cfKanban for me” as sufficient to begin. Do not require the user to mention capability checks, release manifests, bundle digests, strict-zero, migrations, journals, readback, or rollback terminology. Translate the requested outcome into the required workflow: begin with read-only discovery, explain availability and blockers in plain language, ask only for result-changing missing choices, and present the exact effects at the authorization boundary. Keep detailed contract terms in Agent reasoning and technical evidence, not in a prompt the user must compose.
+
+If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
+
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+
+## Choose the deployment source first
+
+- **Canonical stable release:** start from the project's published HTTPS bootstrap document, resolve one immutable manifest, and verify both bundles before planning. This is the normal end-user path.
+- **Explicit testing prerelease:** verify its immutable release pointer, manifest, and both bundles exactly like a stable release, but label every plan and report as testing and require the user to choose it explicitly.
+- **Marketplace or plugin snapshot:** use it only to discover and load this Skill. It is not a Service deployment bundle and does not prove that a canonical release exists.
+- **Explicit source evaluation:** require the user to choose the exact repository revision and acknowledge non-canonical, reproducibility, and working-tree risks. Inspect the commit and dirty state and run the repository's complete validation before proposing any source plan. Never fabricate an HTTPS manifest, call a source checkout stable, or use source evaluation for an existing production Instance without a separately supported plan.
+
+If no stable release is published and the user has not explicitly chosen an available prerelease or source evaluation, report that stable deployment is not currently available and stop before local or Cloudflare writes.
+
 ## Command entry point
 
 Run commands from this Skill directory:
@@ -51,6 +68,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Update local Skills | `plan skill-update`, `release install-skill-bundle` | Local-only atomic version switch; no Cloudflare or D1 write. |
 | Upgrade an Instance | `plan instance-upgrade`, journal and deploy commands | Pin Service bundle and restore evidence; do not update local Skills implicitly. |
 | Recover lost Owner access | deployment plan/journal plus the same pending-secret and bootstrap primitives | Restore the same Principal only; this is not a Web/application endpoint. |
+| Hand off to first-use setup | `cfkanban-admin` after deployment verification | Deployment alone creates no Workspace or Project; offer the next prompt but do not silently perform application writes. |
 
 The full phase, path, recovery, and marketplace/plugin guide is [references/deployment-workflows.md](references/deployment-workflows.md).
 
@@ -87,6 +105,10 @@ The companion Skills cannot choose a different Cloudflare product, install `wran
 6. Execute only plan-listed actions. Before and after migrations, reconcile ledger checksums and schema artifacts.
 7. On interruption or uncertain response, read back remote markers, journal, migration ledger, and schema before resuming.
 8. Verify health, public discovery, schema, bindings, and `/api/v1/me`; then write only a redacted receipt and promote the pending Owner Credential.
+
+## Definition of a usable first installation
+
+A verified Worker and D1 are the deployment result, but the user still has no board until application setup is complete. End the deployment report with the verified instance URL/ID, Owner Principal/fingerprint, redacted receipt/journal identifiers, and a clear next action: use `cfkanban-admin` to verify Owner identity, create one explicitly named Workspace and Project, read both back, and create an Owner Web launch. Creating those resources is a separate application workflow and must not be hidden inside deployment.
 
 ## Contract and stop conditions
 

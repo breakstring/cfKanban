@@ -18,6 +18,10 @@ Use this Skill for ordinary work in a cfKanban instance. For the same operationa
 
 Use `cfkanban-admin` for Owner application administration. Use `cfkanban-deploy` for local Skill lifecycle, Cloudflare resources, migrations, deployment, upgrades, or out-of-band Owner recovery.
 
+## Intent-first user experience
+
+Treat a plain request such as “Join this Project: `<Invite URL>`” as sufficient to begin. Do not require the user to ask for Invite inspection, identity reuse, pending-Credential handling, a combined join plan, or readback. Start with the required safe inspection, explain the Project and access level in plain language, ask only for missing choices or required approval, and then complete the verified workflow. Keep protocol terminology in technical evidence, not in a prompt the user must compose.
+
 ## Command entry point
 
 Run commands from this Skill directory:
@@ -48,6 +52,14 @@ The `.mjs` file is plain JavaScript using Node's explicit ES module format. It r
 | Open the Web UI | `POST /api/v1/web-launches` through `api request` | Use one explicit Project or Issue target; never send the long-lived Credential to the browser. |
 
 The complete endpoint and recovery guide is [references/workflows.md](references/workflows.md).
+
+## First-use workflow for an invited participant
+
+1. Inspect the Invite URL with a credential-free GET and show the instance, exact Projects/roles, expiry, recovery mode, and local storage effect before redemption.
+2. Inspect the local instance slot. Reuse the current Principal when the Invite permits it; otherwise ask only for the missing display name and prepare one pending Credential.
+3. Present one combined join plan covering trusted Skill source, local writes, Principal/Credential creation or reuse, and exact Grants. Wait for the user's application-level approval.
+4. Redeem once, verify `/api/v1/me` and the Grants, and promote a pending Credential only after identity/fingerprint readback matches.
+5. Resolve the joined Project scope, list its Issues, and offer a Project Web launch. Do not write `.cfkanban-scope.json` or create an Issue unless the user asks.
 
 ## Required workflow
 

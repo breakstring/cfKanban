@@ -34,15 +34,22 @@ export function validateReleaseManifest(manifest) {
   };
 }
 
-export function verifyStablePointer({ stable, manifestBytes }) {
-  if (stable?.schema_version !== 1 || !/^[a-f0-9]{64}$/.test(stable.manifest_sha256 || "")) {
-    throw toolError("INVALID_STABLE_POINTER", "Stable pointer is missing an immutable manifest digest");
+export function verifyReleasePointer({ pointer, manifestBytes }) {
+  if (pointer?.schema_version !== 1
+    || (pointer.channel !== "stable" && pointer.channel !== "prerelease")
+    || !/^[a-f0-9]{64}$/.test(pointer.manifest_sha256 || "")) {
+    throw toolError("INVALID_RELEASE_POINTER", "Release pointer is missing a supported channel or immutable manifest digest");
   }
   const actual = sha256Bytes(manifestBytes);
-  if (actual !== stable.manifest_sha256) {
-    throw toolError("MANIFEST_DIGEST_MISMATCH", "Immutable release manifest digest does not match the stable pointer", { expected: stable.manifest_sha256, actual });
+  if (actual !== pointer.manifest_sha256) {
+    throw toolError("MANIFEST_DIGEST_MISMATCH", "Immutable release manifest digest does not match the release pointer", { expected: pointer.manifest_sha256, actual });
   }
   return actual;
+}
+
+export function verifyStablePointer({ stable, manifestBytes }) {
+  if (stable?.channel !== "stable") throw toolError("INVALID_STABLE_POINTER", "Stable pointer must use the stable channel");
+  return verifyReleasePointer({ pointer: stable, manifestBytes });
 }
 
 export async function verifyReleaseArtifacts({ manifest, artifactFiles }) {
@@ -75,11 +82,19 @@ export function verifyPublisherContinuity({ currentReceipt, targetManifest }) {
   };
 }
 
-export async function loadAndVerifyRelease({ stablePath, manifestPath, artifactFiles }) {
-  const stable = await readJson(stablePath);
+export async function loadAndVerifyRelease({ releasePointerPath = null, stablePath = null, manifestPath, artifactFiles }) {
+  const pointerPath = releasePointerPath || stablePath;
+  if (!pointerPath) throw toolError("INVALID_INPUT", "releasePointerPath is required");
+  const pointer = await readJson(pointerPath);
   const manifestBytes = await readFile(manifestPath);
-  verifyStablePointer({ stable, manifestBytes });
+  verifyReleasePointer({ pointer, manifestBytes });
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  if (pointer.release_version !== manifest.release?.version) {
+    throw toolError("RELEASE_VERSION_MISMATCH", "Release pointer and immutable manifest identify different versions", {
+      pointer_version: pointer.release_version,
+      manifest_version: manifest.release?.version || null,
+    });
+  }
   const artifacts = await verifyReleaseArtifacts({ manifest, artifactFiles });
-  return { stable, manifest, manifest_content_digest: canonicalDigest(manifest), ...artifacts };
+  return { pointer, stable: pointer.channel === "stable" ? pointer : null, manifest, manifest_content_digest: canonicalDigest(manifest), ...artifacts };
 }

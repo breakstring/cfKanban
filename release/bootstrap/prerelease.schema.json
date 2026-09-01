@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/breakstring/cfKanban/release/bootstrap/prerelease.schema.json",
+  "title": "cfKanban testing prerelease pointer",
+  "type": "object",
+  "required": ["schema_version", "product", "publisher", "channel", "release_version", "manifest_url", "manifest_sha256", "documents"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "product": { "const": "cfkanban" },
+    "channel": { "const": "prerelease" },
+    "release_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-[0-9A-Za-z.-]+$" },
+    "manifest_url": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "manifest_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "publisher": {
+      "type": "object",
+      "required": ["id", "canonical_origin"],
+      "properties": {
+        "id": { "const": "cfkanban" },
+        "canonical_origin": { "type": "string", "format": "uri", "pattern": "^https://" }
+      },
+      "additionalProperties": false
+    },
+    "documents": {
+      "type": "object",
+      "required": ["en", "zh-CN"],
+      "properties": {
+        "en": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "zh-CN": { "type": "string", "format": "uri", "pattern": "^https://" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

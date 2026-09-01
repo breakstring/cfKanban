@@ -569,12 +569,44 @@ test("release metadata pins two artifacts, localized documents, and installable 
     schemaVersion: 1,
   });
   assert.equal(generated.manifest.artifacts.length, 2);
+  assert.equal(generated.pointer.channel, "stable");
   assert.equal(generated.manifest.documents["zh-CN"].endsWith("install.zh-CN.md"), true);
   assert.equal(generated.stable.manifest_sha256, sha256Bytes(await readFile(generated.manifestPath)));
   const installHome = path.join(root, "install");
   const installed = await installVerifiedSkillBundle({ bundlePath: skillBundle, version: "0.1.0", expectedSha256: sha256Bytes(await readFile(skillBundle)), publisher: "https://releases.example.test", source: generated.manifest.artifacts[0].url, releaseRoot: installHome });
   assert.equal(installed.installed, true);
   assert.equal((await readJson(path.join(installHome, "active.json"))).version, "0.1.0");
+
+  const prereleaseOutput = path.join(root, "prerelease-output");
+  await mkdir(prereleaseOutput);
+  const prerelease = await generateReleaseMetadata({
+    outputDirectory: prereleaseOutput,
+    canonicalBaseUrl: "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/",
+    version: "0.1.0-alpha.1",
+    channel: "prerelease",
+    urlLayout: "flat",
+    skillBundlePath: skillBundle,
+    serviceBundlePath: serviceBundle,
+    nodeRange: ">=22.12.0 <25",
+    wranglerRange: ">=4.127.1 <5",
+    serviceApiRange: ">=0.1.0 <0.2.0",
+    schemaVersion: 1,
+  });
+  assert.equal(path.basename(prerelease.pointerPath), "prerelease.json");
+  assert.equal(prerelease.pointer.channel, "prerelease");
+  assert.equal(prerelease.stable, null);
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/cfkanban-release-0.1.0-alpha.1.json");
+  assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
+  const verifiedPrerelease = await dispatch("release verify", {
+    releasePointerPath: prerelease.pointerPath,
+    manifestPath: prerelease.manifestPath,
+    artifactFiles: {
+      skill_bundle: path.join(prereleaseOutput, "artifacts", path.basename(skillBundle)),
+      service_deployment_bundle: path.join(prereleaseOutput, "artifacts", path.basename(serviceBundle)),
+    },
+  }, { surface: "deploy" });
+  assert.equal(verifiedPrerelease.pointer.channel, "prerelease");
+  assert.equal(verifiedPrerelease.verified, true);
 });
 
 test("plugin and Skill metadata stay English where localization is unsupported, while documents are paired", async () => {
@@ -594,6 +626,50 @@ test("plugin and Skill metadata stay English where localization is unsupported, 
   ]) {
     await Promise.all(pair.map((entry) => stat(new URL(entry, import.meta.url))));
   }
+  const releaseNotes = await readFile(new URL("../../release/notes/0.1.0-alpha.1.md", import.meta.url), "utf8");
+  assert.match(releaseNotes, /## English/u);
+  assert.match(releaseNotes, /## 简体中文/u);
+});
+
+test("user-facing entrypoints use short intent-first prompts while Skills retain the safety workflow", async () => {
+  const [readmeEn, readmeZh, skillsEn, skillsZh, daily, admin, deploy, dailyYaml, adminYaml, deployYaml] = await Promise.all([
+    readFile(new URL("../../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../../README.zh-CN.md", import.meta.url), "utf8"),
+    readFile(new URL("../../docs/skills/README.md", import.meta.url), "utf8"),
+    readFile(new URL("../../docs/skills/README.zh-CN.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-admin/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-deploy/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban/agents/openai.yaml", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-admin/agents/openai.yaml", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-deploy/agents/openai.yaml", import.meta.url), "utf8"),
+  ]);
+  const installCommand = "codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.1";
+  for (const source of [readmeEn, readmeZh, skillsEn, skillsZh]) {
+    assert.match(source, new RegExp(installCommand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(source, /codex plugin add cfkanban-agent-skills@cfkanban/u);
+  }
+  assert.match(readmeEn, /public testing preview/u);
+  assert.match(readmeZh, /公开测试预览版/u);
+  assert.match(skillsEn, /complete plugin\/bundle/u);
+  assert.match(skillsZh, /完整 plugin\/bundle/u);
+  assert.match(readmeEn, /> Use `\$cfkanban-deploy` to deploy cfKanban for me\./u);
+  assert.match(readmeZh, /> 请使用 `\$cfkanban-deploy` 为我部署一套 cfKanban。/u);
+  assert.match(readmeEn, /> Use `\$cfkanban-admin` to create my first cfKanban board\./u);
+  assert.match(readmeZh, /> 请使用 `\$cfkanban-admin` 创建我的第一个 cfKanban 看板。/u);
+  assert.match(readmeEn, /> Use `\$cfkanban` to join this Project:/u);
+  assert.match(readmeZh, /> 请使用 `\$cfkanban` 加入这个 Project：/u);
+  assert.doesNotMatch(readmeEn, /Run only the read-only capability and release checks first/u);
+  assert.doesNotMatch(readmeZh, /先只执行只读的 capability 和 release 检查/u);
+  assert.doesNotMatch(readmeEn, /complete strict-zero plan/u);
+  assert.doesNotMatch(readmeZh, /完整的 strict-zero 计划/u);
+  assert.match(daily, /First-use workflow for an invited participant/u);
+  assert.match(admin, /First-use workflow after deployment/u);
+  assert.match(deploy, /Choose the deployment source first/u);
+  for (const skill of [daily, admin, deploy]) assert.match(skill, /Intent-first user experience/u);
+  assert.match(dailyYaml, /Use \$cfkanban to help me work in this cfKanban Project\./u);
+  assert.match(adminYaml, /Use \$cfkanban-admin to create my first cfKanban board\./u);
+  assert.match(deployYaml, /Use \$cfkanban-deploy to deploy cfKanban for me\./u);
 });
 
 test("public Agent-facing documents avoid the internal stage label", async () => {
@@ -604,6 +680,8 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../docs/skills/README.zh-CN.md",
     "../../release/bootstrap/install.md",
     "../../release/bootstrap/install.zh-CN.md",
+    "../../release/bootstrap/prerelease.schema.json",
+    "../../release/notes/0.1.0-alpha.1.md",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

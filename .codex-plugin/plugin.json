@@ -1,6 +1,6 @@
 {
   "name": "cfkanban-agent-skills",
-  "version": "0.0.0",
+  "version": "0.1.0-alpha.1",
   "description": "Portable cfKanban skills for daily collaboration, Owner administration, and safe Cloudflare deployment.",
   "author": {
     "name": "cfKanban maintainers"
@@ -28,9 +28,9 @@
     ],
     "websiteURL": "https://github.com/breakstring/cfKanban",
     "defaultPrompt": [
-      "Inspect my cfKanban Project scope and help with this issue safely.",
-      "Review an Owner operation and its exact permission impact.",
-      "Produce a read-only cfKanban deployment capability report and plan."
+      "Use $cfkanban to help me work in this cfKanban Project.",
+      "Use $cfkanban-admin to create my first cfKanban board.",
+      "Use $cfkanban-deploy to deploy cfKanban for me."
     ],
     "brandColor": "#D86F45"
   }

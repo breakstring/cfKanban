@@ -34,6 +34,14 @@ Those host-owned files are verified discovery projections of the canonical Skill
 
 Marketplace/plugin installation is supported as a convenience entry point. It never overrides the canonical HTTPS publisher, immutable manifest, artifact origin allowlist, SHA-256 digest, or installed receipt. A marketplace update is not automatic authorization to install, update a Skill, deploy, or upgrade an Instance.
 
+## Before the first canonical release
+
+A repository marketplace can make this Skill discoverable before the project publishes its first canonical release. That does **not** make a stable deployment target available.
+
+For a read-only check, report the missing canonical bootstrap/manifest plainly and stop. Do not invent a release URL, give `release verify` a synthetic HTTPS manifest, treat a plugin cache as the Service bundle, or fall back to the current working tree.
+
+An explicit source evaluation is a separate engineering mode. Before any plan, record the repository URL, exact commit, branch/tag only as a human-readable aid, dirty/untracked state, lockfile state, validation command/result, and the fact that publisher continuity and canonical release guarantees do not apply. A mutable branch name alone is not a reproducible source. If the installed Skill release does not provide a source-specific plan that freezes those facts, stop before local installation, Credential generation, or Cloudflare writes. Never reuse a source experiment as an unlabelled upgrade of an existing Instance.
+
 ## Cloudflare upstream alignment
 
 Cloudflare maintains two useful optional companions in its own repository:
@@ -70,7 +78,7 @@ Commands accept structured JSON on stdin. Credential generation and loading rema
 
 ## First deployment
 
-1. Read the canonical bootstrap as a document. Resolve the stable pointer to one immutable release manifest.
+1. Read the canonical bootstrap as a document. Resolve the stable pointer to one immutable release manifest, or use a prerelease pointer only after the user explicitly chooses testing.
 2. Run `release verify` for both Skill and Service deployment bundles, then compare publisher/origin continuity with any receipt.
 3. Run `capabilities`. Reuse compatible Node and Wrangler. If Wrangler is absent/incompatible, create and present `runtime plan-install`; install only after exact authorization. Run `runtime wrangler-account-readback` with the exact account ID and optional named profile; a bare `npx` is forbidden because it may download an unpinned latest Wrangler. Since Wrangler does not support `--profile` on `whoami`, the command uses read-only `d1 list --json`, fixes the account through `CLOUDFLARE_ACCOUNT_ID`, discards the database inventory, and stops when an environment credential would shadow the requested profile.
 4. Run `plan strict-zero`. The default candidate contains one Worker, one D1, bundled Static Assets, `workers.dev`, no optional Cloudflare products, and 120/300/30 request gates per 60 seconds. Freeze the selected Cloudflare profile/account and resolve missing Owner display name before freezing the digest.
@@ -81,6 +89,10 @@ Commands accept structured JSON on stdin. Credential generation and loading rema
 9. Initialize the checksum ledger and use Cloudflare's standard `wrangler d1 migrations apply --remote` behavior. It applies pending files sequentially; reconcile the cfKanban checksum ledger plus actual schema after the command or any uncertain result.
 10. Run `validate_worker_bundle` with the exact generated config and resolved Wrangler. A successful dry run is required but is not deployment authorization or remote-write proof.
 11. Deploy, then verify Worker health, public instance discovery, bindings, migration/schema state, and `/api/v1/me`. Only then promote the pending Owner Credential and write a redacted receipt.
+
+### Handoff to a usable board
+
+The first deployment creates infrastructure and the Deployment Owner, but it intentionally creates no Workspace, Project, Label, Grant, or Issue. The final report must offer the simple next prompt, “Use `$cfkanban-admin` to create my first cfKanban board.” The Admin Skill owns Owner verification, the missing-name questions, the two read-backed atomic creates, and the Browser Launch workflow. Do not make the user encode those steps in their prompt or hide the application writes inside the Cloudflare deployment authorization.
 
 ## Interruption and resume
 

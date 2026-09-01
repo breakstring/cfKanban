@@ -18,6 +18,10 @@ Use this Skill only with a verified Deployment Owner Credential. For the same op
 
 This Skill uses the application REST API only. Use `cfkanban` for daily Issue work and `cfkanban-deploy` for Cloudflare resources, deployment, migrations, Instance upgrades, or total Owner Credential loss.
 
+## Intent-first user experience
+
+Treat a plain request such as “Create my first cfKanban board” as sufficient to begin. Do not require the user to specify Owner verification, readback, Browser Launch, idempotency, or concurrency terminology. Verify the Owner and current state first, ask concisely for any missing Workspace and Project names/keys, explain the writes at the required authorization boundary, and carry the task through to a verified usable board. Keep implementation terminology in technical evidence, not in a prompt the user must compose.
+
 ## Command entry point
 
 Run commands from this Skill directory:
@@ -34,6 +38,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Goal | Command or REST operation | Required handling |
 | --- | --- | --- |
 | Verify Owner identity | `state inspect`, then `api request` → `GET /api/v1/me` | Require `is_owner=true`; never infer Owner from display name. |
+| Create the first usable board | create one Workspace, create one Project, read both back, then `POST /api/v1/web-launches` with an `admin` target | Ask for explicit immutable keys and display names; each create is a separate atomic write and deployment creates neither resource automatically. |
 | Manage Workspaces and Projects | Workspace/Project `GET/POST/PATCH/DELETE` plus single-resource `commands/restore` | Use explicit keys/IDs, CAS where defined, one Idempotency Key per atomic write, and readback. |
 | Rename fixed status labels | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Only display names change; stable keys, order, category, and terminal meaning do not. |
 | Create or revoke an Invite | `/api/v1/admin/invitations` and `/api/v1/admin/invitations/{invitation_id}` through `api request` | Always submit explicit Project roles; never log or retain the complete Invite URL. |
@@ -49,6 +54,14 @@ node scripts/cfkanban-tool.mjs <command>
 | Inspect audit history | `GET /api/v1/admin/audit-events` | Use bounded pagination and explicit filters. |
 
 The complete request and recovery guide is [references/owner-workflows.md](references/owner-workflows.md).
+
+## First-use workflow after deployment
+
+1. Verify local state, trusted origin, `/api/v1/me`, and `is_owner=true`.
+2. Ask only for the missing Workspace key/name and Project key/name; do not derive keys from a filesystem path, Git remote, hostname, or display name without explicit user choice.
+3. Preview and create one Workspace, then read it back. Create one Project in that Workspace with a new Idempotency Key, then read it and its five fixed statuses back.
+4. Create an Owner Browser Launch only after both resources exist. Deployment does not create a default Workspace, Project, Label, Grant, or Issue.
+5. Offer, but do not silently perform, the next independent actions: create the first Issue with `cfkanban`, create an explicit-role Invite, or configure Public Join with explicit quotas.
 
 ## Required workflow
 

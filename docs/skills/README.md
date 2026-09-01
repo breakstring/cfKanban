@@ -2,13 +2,40 @@
 
 Language: [English](README.md) | [简体中文](README.zh-CN.md)
 
-cfKanban ships three portable Skills:
+cfKanban packages three Skills in one portable, verified bundle:
 
 - `cfkanban`: daily identity, scope, Issue collaboration, Invite/Public Join, and Project/Issue Web launch.
 - `cfkanban-admin`: Deployment Owner application administration.
 - `cfkanban-deploy`: canonical release verification, local Skill lifecycle, Cloudflare deployment, resume, migration, and upgrade safety.
 
 Each `SKILL.md` starts with what the Skill can do, when to use a different Skill, a task-to-command map, the required workflow, and stop conditions. The paired reference guide provides the detailed English or Simplified Chinese endpoint and recovery instructions.
+
+## What users need to say
+
+Users describe the result; the Skills own the safety workflow. These prompts are enough:
+
+```text
+Use $cfkanban-deploy to deploy cfKanban for me.
+Use $cfkanban-admin to create my first cfKanban board.
+Use $cfkanban to join this Project: <Invite URL>
+```
+
+The user does not need to request release verification, read-only preflight, a deployment plan, version checks, readback, or recovery handling. Each Skill starts with the safe discovery required for that intent, asks only for missing choices, and presents side effects at the correct authorization boundary.
+
+## Current testing-preview entry
+
+The first stable release has not been published. Today, Codex users can load the immutable testing tag:
+
+```text
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.1
+codex plugin add cfkanban-agent-skills@cfkanban
+```
+
+The testing tag is immutable; use mutable `main` only for deliberate development-snapshot evaluation. After installation, start a new Codex task so the Skills are loaded. Installation only enables discovery; it does not create `.cfkanban/`, select a stable or prerelease deployment, or authorize local/cloud writes.
+
+The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
+
+Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three entrypoints deliberately share the bundled `packages/skill-runtime`; a host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
 
 ## Commands included with each Skill
 
@@ -24,12 +51,14 @@ The `.mjs` extension means plain JavaScript in Node's explicit ES module format.
 
 ## Marketplace and plugin installation
 
-The repository root is a Codex plugin, and `.agents/plugins/marketplace.json` provides a named local marketplace entry. A source checkout can be registered and installed for development or validation with:
+The repository root is a Codex plugin, and `.agents/plugins/marketplace.json` provides a named local marketplace entry. An already downloaded checkout can be registered and installed for development or validation with:
 
 ```text
 codex plugin marketplace add .
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
+
+Start a new Codex task after installing or reinstalling so the host loads the snapshot's Skills.
 
 Codex and other Agent hosts place discoverable Skills/plugins in host-owned locations. Those files are verified projections used for host discovery; they are not cfKanban's persistent state or canonical release truth. Removing one projection affects only that host's discovery.
 

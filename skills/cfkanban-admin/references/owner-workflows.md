@@ -18,6 +18,18 @@ Provide one JSON object on stdin, not in process arguments:
 
 Use it with `node scripts/cfkanban-tool.mjs api request`. The command reads the current Owner Credential internally. Never add a Credential, pending secret, complete Invite URL, or recovery code to generic request input.
 
+## First usable board after deployment
+
+Deployment creates no application container automatically. For the common first-use request:
+
+1. inspect local state and verify `/api/v1/me` returns the expected stable Principal with `is_owner=true`;
+2. obtain an explicit immutable Workspace key and display name from the user, preview the write, create it with one Idempotency Key, and read it back;
+3. obtain an explicit immutable Project key and display name, create it inside that Workspace with a different Idempotency Key, then read the Project and its fixed five statuses back;
+4. create an Owner Browser Launch with `target.kind=admin` and return the one-time URL only to the user;
+5. offer separate next actions: use `cfkanban` to create the first Issue, create an explicit-role Invite, or configure Public Join and all three quotas.
+
+Do not guess keys from a Repo, path, Git remote, hostname, or display name. Do not silently create a default Project, Label, Grant, Issue, Invite, or Public Join policy. If Workspace creation succeeds and Project creation fails, report the Workspace as committed rather than claiming the sequence rolled back.
+
 ## Administration endpoint map
 
 | Task | Method and path | Required checks |

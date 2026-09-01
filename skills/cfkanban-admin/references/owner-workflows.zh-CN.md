@@ -18,6 +18,18 @@
 
 将其作为 `node scripts/cfkanban-tool.mjs api request` 的 stdin。命令在内部读取 current Owner Credential。不得把 Credential、pending secret、完整 Invite URL 或 recovery code 放入普通请求输入。
 
+## 部署后的第一个可用看板
+
+部署不会自动创建应用容器。处理常见的首次使用请求时：
+
+1. 检查本地状态，并验证 `/api/v1/me` 返回预期稳定 Principal 且 `is_owner=true`；
+2. 从用户取得明确、不可变的 Workspace key 和 display name，预览写入，用一个 Idempotency Key 创建，再读回；
+3. 取得明确、不可变的 Project key 和 display name，用另一个 Idempotency Key 在该 Workspace 中创建，再读回 Project 和固定五个 statuses；
+4. 使用 `target.kind=admin` 创建 Owner Browser Launch，只把一次性 URL 返回给用户；
+5. 提供彼此独立的后续选项：用 `cfkanban` 创建第一条 Issue、创建显式 role Invite，或配置 Public Join 与全部三项 quotas。
+
+不得从 Repo、path、Git remote、hostname 或 display name 猜测 key；不得静默创建默认 Project、Label、Grant、Issue、Invite 或 Public Join policy。如果 Workspace 创建成功而 Project 创建失败，必须把 Workspace 报告为已提交，不能声称整组操作已回滚。
+
 ## 管理端 endpoint 对照
 
 | 任务 | Method 与 path | 必要检查 |
