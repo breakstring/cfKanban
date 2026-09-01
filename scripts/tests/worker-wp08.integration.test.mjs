@@ -263,6 +263,35 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     [publicId, secondPublicId].sort(),
   );
 
+  await db.prepare("DELETE FROM project_usage WHERE project_id = ?1").bind(secondProjectId).run();
+  const deleteEventCountBeforeInvariantFailure = await tableCount(
+    "events",
+    "project_id = ?1 AND type = 'project.deleted'",
+    secondProjectId,
+  );
+  const operationCountBeforeInvariantFailure = await tableCount("operation_commits");
+  const rejectedDeleteWithoutUsage = await request(
+    "/api/v1/workspaces/public-space/projects/AUX?expected_version=3",
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(rejectedDeleteWithoutUsage.response.status, 503);
+  assert.equal(rejectedDeleteWithoutUsage.body.code, "PLATFORM_UNAVAILABLE");
+  const projectAfterInvariantFailure = await db.prepare(
+    "SELECT deleted_at, version FROM projects WHERE id = ?1",
+  ).bind(secondProjectId).first();
+  assert.deepEqual(projectAfterInvariantFailure, { deleted_at: null, version: 3 });
+  assert.equal(
+    await tableCount("events", "project_id = ?1 AND type = 'project.deleted'", secondProjectId),
+    deleteEventCountBeforeInvariantFailure,
+  );
+  assert.equal(await tableCount("operation_commits"), operationCountBeforeInvariantFailure);
+  await db.prepare(
+    `INSERT INTO project_usage
+      (project_id, active_issue_count, active_comment_count,
+       active_principal_count, updated_at, last_operation_id)
+     VALUES (?1, 0, 0, 0, ?2, NULL)`,
+  ).bind(secondProjectId, Date.now()).run();
+
   const pausedSecond = await request(
     "/api/v1/workspaces/public-space/projects/AUX?expected_version=3",
     { headers: ownerHeaders(), method: "DELETE" },
@@ -1071,4 +1100,126 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     joinTokenG,
     publicJoinSessionToken,
   ]);
+});
+
+test("KENN-338 validates every enabled recovery row while bounding the displayed summary", async () => {
+  const now = Date.now();
+  await db.prepare(
+    `INSERT INTO workspaces
+      (id, key, display_name, created_at, updated_at, created_by_principal_id,
+       updated_by_principal_id, created_operation_id)
+     VALUES ('kenn338-workspace', 'recovery-scale', 'Recovery Scale', ?1, ?1, ?2, ?2,
+             'kenn338-workspace-create')`,
+  ).bind(now, ids.ownerPrincipal).run();
+  await db.prepare(
+    `INSERT INTO workspaces
+      (id, key, display_name, created_at, updated_at, created_by_principal_id,
+       updated_by_principal_id, created_operation_id)
+     VALUES ('kenn338-disabled-workspace', 'disabled-scale', 'Disabled Scale', ?1, ?1, ?2, ?2,
+             'kenn338-disabled-workspace-create')`,
+  ).bind(now, ids.ownerPrincipal).run();
+  await db.prepare(
+    `WITH RECURSIVE sequence(value) AS (
+       SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < 101
+     )
+     INSERT INTO projects
+       (id, workspace_id, key, display_name, issue_limit, comment_limit, principal_limit,
+        created_at, updated_at, created_by_principal_id, updated_by_principal_id,
+        created_operation_id)
+     SELECT printf('kenn338-enabled-%03d', value), 'kenn338-workspace', printf('E%03d', value),
+            printf('Enabled %03d', value), 10, 10, 10, ?1, ?1, ?2, ?2,
+            printf('kenn338-enabled-create-%03d', value)
+     FROM sequence`,
+  ).bind(now, ids.ownerPrincipal).run();
+  await db.prepare(
+    `WITH RECURSIVE sequence(value) AS (
+       SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < 10000
+     )
+     INSERT INTO projects
+       (id, workspace_id, key, display_name, created_at, updated_at,
+        created_by_principal_id, updated_by_principal_id, created_operation_id)
+     SELECT printf('kenn338-disabled-%05d', value), 'kenn338-disabled-workspace', printf('D%05d', value),
+            printf('Disabled %05d', value), ?1, ?1, ?2, ?2,
+            printf('kenn338-disabled-create-%05d', value)
+     FROM sequence`,
+  ).bind(now, ids.ownerPrincipal).run();
+  await db.prepare(
+    `INSERT INTO public_join_policies
+      (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
+       version, created_at, updated_at)
+     SELECT id, workspace_id, key, printf('public-%s', id), printf('Summary for %s', key), ?1, ?2, 1, ?1, ?1
+     FROM projects WHERE workspace_id = 'kenn338-workspace' AND key LIKE 'E%'`,
+  ).bind(now, ids.ownerPrincipal).run();
+  await db.prepare(
+    `INSERT INTO public_join_policies
+      (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
+       disabled_at, disabled_by_principal_id, version, created_at, updated_at)
+     SELECT id, workspace_id, key, printf('public-%s', id), printf('Disabled summary for %s', key),
+            ?1, ?2, ?1 + 1, ?2, 2, ?1, ?1 + 1
+     FROM projects WHERE workspace_id = 'kenn338-disabled-workspace'`,
+  ).bind(now, ids.ownerPrincipal).run();
+  await db.prepare(
+    `INSERT INTO project_usage
+      (project_id, active_issue_count, active_comment_count, active_principal_count, updated_at)
+     SELECT id, 0, 0, 0, ?1
+     FROM projects
+     WHERE workspace_id = 'kenn338-workspace' AND key BETWEEN 'E001' AND 'E100'`,
+  ).bind(now).run();
+
+  const deletedDisabledOnly = await request(
+    "/api/v1/workspaces/disabled-scale?expected_version=1",
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(deletedDisabledOnly.response.status, 200);
+  const disabledOnlyTombstone = await request(
+    "/api/v1/workspaces/disabled-scale?deleted=only",
+    { headers: ownerHeaders() },
+  );
+  assert.deepEqual(disabledOnlyTombstone.body.resumed_public_projects, {
+    has_more: false,
+    projects: [],
+  });
+
+  const eventCountBefore = await tableCount(
+    "events",
+    "workspace_id = 'kenn338-workspace' AND type = 'workspace.deleted'",
+  );
+  const operationCountBefore = await tableCount("operation_commits");
+  const rejectedAtRow101 = await request(
+    "/api/v1/workspaces/recovery-scale?expected_version=1",
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(rejectedAtRow101.response.status, 503);
+  assert.equal(rejectedAtRow101.body.code, "PLATFORM_UNAVAILABLE");
+  assert.deepEqual(
+    await db.prepare("SELECT deleted_at, version FROM workspaces WHERE id = 'kenn338-workspace'").first(),
+    { deleted_at: null, version: 1 },
+  );
+  assert.equal(
+    await tableCount("events", "workspace_id = 'kenn338-workspace' AND type = 'workspace.deleted'"),
+    eventCountBefore,
+  );
+  assert.equal(await tableCount("operation_commits"), operationCountBefore);
+
+  await db.prepare(
+    `INSERT INTO project_usage
+      (project_id, active_issue_count, active_comment_count, active_principal_count, updated_at)
+     VALUES ('kenn338-enabled-101', 0, 0, 0, ?1)`,
+  ).bind(now).run();
+  const deleted = await request(
+    "/api/v1/workspaces/recovery-scale?expected_version=1",
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(deleted.response.status, 200);
+  const tombstoneDetail = await request(
+    "/api/v1/workspaces/recovery-scale?deleted=only",
+    { headers: ownerHeaders() },
+  );
+  assert.equal(tombstoneDetail.response.status, 200);
+  assert.equal(tombstoneDetail.body.resumed_public_projects.has_more, true);
+  assert.equal(tombstoneDetail.body.resumed_public_projects.projects.length, 100);
+  assert.deepEqual(
+    tombstoneDetail.body.resumed_public_projects.projects.map((project) => project.key),
+    Array.from({ length: 100 }, (_, index) => `E${String(index + 1).padStart(3, "0")}`),
+  );
 });

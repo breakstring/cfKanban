@@ -1117,9 +1117,11 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   ).bind(secondProjectId, Date.now()).run();
   await db.prepare(
     `INSERT INTO public_join_policies
-      (project_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
+      (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
        version, created_at, updated_at, last_operation_id)
-     VALUES (?1, 'wp04-public', 'Quota test', ?2, ?3, 1, ?2, ?2, 'wp04-policy')`,
+     VALUES (?1, (SELECT workspace_id FROM projects WHERE id = ?1),
+             (SELECT key FROM projects WHERE id = ?1),
+             'wp04-public', 'Quota test', ?2, ?3, 1, ?2, ?2, 'wp04-policy')`,
   ).bind(secondProjectId, Date.now(), ids.ownerPrincipal).run();
   const activeDuplicateAtQuota = await jsonRequest(`/api/v1/admin/projects/${secondProjectId}/grants`, {
     body: { principal_id: participantId, role: "reader" },

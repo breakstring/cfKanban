@@ -830,9 +830,11 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(quotaProjectId).run();
   await db.prepare(
     `INSERT INTO public_join_policies
-      (project_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
+      (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
        version, created_at, updated_at)
-     VALUES (?1, 'quota-public', 'Quota test', ?2, ?3, 1, ?2, ?2)`,
+     VALUES (?1, (SELECT workspace_id FROM projects WHERE id = ?1),
+             (SELECT key FROM projects WHERE id = ?1),
+             'quota-public', 'Quota test', ?2, ?3, 1, ?2, ?2)`,
   ).bind(quotaProjectId, Date.now(), ids.ownerPrincipal).run();
   await db.prepare(
     `INSERT INTO project_usage

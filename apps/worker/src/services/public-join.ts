@@ -500,10 +500,10 @@ export async function enablePublicJoin(
             ),
             db.prepare(
               `INSERT INTO public_join_policies
-                (project_id, public_id, public_summary, enabled_at,
+                (project_id, workspace_id, project_key, public_id, public_summary, enabled_at,
                  enabled_by_principal_id, version, created_at, updated_at,
                  last_operation_id)
-               SELECT project.id, ?1, ?2, ?3, ?4, 1, ?3, ?3, ?5
+               SELECT project.id, project.workspace_id, project.key, ?1, ?2, ?3, ?4, 1, ?3, ?3, ?5
                FROM projects project
                WHERE project.id = ?6 AND project.last_operation_id = ?5
                ON CONFLICT(project_id) DO UPDATE SET

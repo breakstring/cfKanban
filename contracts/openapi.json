@@ -760,7 +760,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/WorkspaceListResult"
                 }
               }
             }
@@ -818,7 +818,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/WorkspaceActiveWriteResult"
                 }
               }
             }
@@ -913,8 +913,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceActive"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkspaceTombstoneDetail"
+                    }
+                  ]
                 }
               }
             }
@@ -984,7 +990,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/WorkspaceActiveWriteResult"
                 }
               }
             }
@@ -1070,7 +1076,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/WorkspaceTombstoneWriteResult"
                 }
               }
             }
@@ -1145,7 +1151,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/WorkspaceRestoredWriteResult"
                 }
               }
             }
@@ -1260,7 +1266,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListResult"
+                  "$ref": "#/components/schemas/ProjectListResult"
                 }
               }
             }
@@ -1327,7 +1333,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/ProjectActiveWriteResult"
                 }
               }
             }
@@ -1431,8 +1437,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ProjectActiveRead"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ProjectTombstoneRead"
+                    }
+                  ]
                 }
               }
             }
@@ -1511,7 +1523,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/ProjectActiveWriteResult"
                 }
               }
             }
@@ -1606,7 +1618,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/ProjectTombstoneWriteResult"
                 }
               }
             }
@@ -1690,7 +1702,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResult"
+                  "$ref": "#/components/schemas/ProjectRestoredWriteResult"
                 }
               }
             }
@@ -14794,6 +14806,1478 @@
               }
             },
             "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResumedPublicProject": {
+        "type": "object",
+        "required": [
+          "active_usage",
+          "display_name",
+          "id",
+          "key",
+          "public_summary",
+          "resource_limits",
+          "role_choices",
+          "workspace_key"
+        ],
+        "properties": {
+          "active_usage": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "issues": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "principals": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
+          },
+          "public_summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "resource_limits": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "issues": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "principals": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "role_choices": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/components/schemas/ProjectRole"
+            }
+          },
+          "workspace_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceActive": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "restorable",
+          "updated_at",
+          "version"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "create_project",
+                "delete",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "deleted_at": {
+            "type": "null"
+          },
+          "restorable": {
+            "const": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceTombstone": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "restorable",
+          "updated_at",
+          "version"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "create_project",
+                "delete",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "deleted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "restorable": {
+            "const": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceTombstoneDetail": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "restorable",
+          "updated_at",
+          "version",
+          "resumed_public_projects"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "create_project",
+                "delete",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "deleted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "restorable": {
+            "const": true
+          },
+          "resumed_public_projects": {
+            "type": "object",
+            "required": [
+              "has_more",
+              "projects"
+            ],
+            "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
+              "projects": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/ResumedPublicProject"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceRestored": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "restorable",
+          "updated_at",
+          "version",
+          "resumed_public_projects"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "create_project",
+                "delete",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "deleted_at": {
+            "type": "null"
+          },
+          "restorable": {
+            "const": false
+          },
+          "resumed_public_projects": {
+            "type": "object",
+            "required": [
+              "has_more",
+              "projects"
+            ],
+            "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
+              "projects": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/ResumedPublicProject"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/WorkspaceActive"
+                },
+                {
+                  "$ref": "#/components/schemas/WorkspaceTombstone"
+                }
+              ]
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "deleted",
+              "project_ids"
+            ],
+            "properties": {
+              "deleted": {
+                "type": "string",
+                "enum": [
+                  "exclude",
+                  "only"
+                ]
+              },
+              "project_ids": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Uuid"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceActiveWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/WorkspaceActive"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceTombstoneWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/WorkspaceTombstone"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WorkspaceRestoredWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/WorkspaceRestored"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectActiveRead": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "context",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "public_join_enabled",
+          "resource_limits",
+          "restorable",
+          "updated_at",
+          "version",
+          "workspace_id",
+          "workspace_key",
+          "active_usage"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "delete",
+                "manage_status_names",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Project context. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
+          },
+          "public_join_enabled": {
+            "type": "boolean"
+          },
+          "resource_limits": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "issues": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "principals": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "active_usage": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "issues": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "principals": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "deleted_at": {
+            "type": "null"
+          },
+          "restorable": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectActiveWrite": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "context",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "public_join_enabled",
+          "resource_limits",
+          "restorable",
+          "updated_at",
+          "version",
+          "workspace_id",
+          "workspace_key"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "delete",
+                "manage_status_names",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Project context. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
+          },
+          "public_join_enabled": {
+            "type": "boolean"
+          },
+          "resource_limits": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "issues": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "principals": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "deleted_at": {
+            "type": "null"
+          },
+          "restorable": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectTombstoneRead": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "context",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "public_join_enabled",
+          "resource_limits",
+          "restorable",
+          "updated_at",
+          "version",
+          "workspace_id",
+          "workspace_key",
+          "active_usage",
+          "parent_status",
+          "resumed_public_projects",
+          "unavailability_reason"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "delete",
+                "manage_status_names",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Project context. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
+          },
+          "public_join_enabled": {
+            "type": "boolean"
+          },
+          "resource_limits": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "issues": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "principals": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "active_usage": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "issues": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "principals": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "deleted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "restorable": {
+            "type": "boolean"
+          },
+          "parent_status": {
+            "type": "object",
+            "required": [
+              "workspace"
+            ],
+            "properties": {
+              "workspace": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "resumed_public_projects": {
+            "type": "object",
+            "required": [
+              "has_more",
+              "projects"
+            ],
+            "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
+              "projects": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/ResumedPublicProject"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "unavailability_reason": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "recovery"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "PARENT_WORKSPACE_DELETED"
+                  },
+                  "recovery": {
+                    "const": "restore_parent"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectTombstoneWrite": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "context",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "public_join_enabled",
+          "resource_limits",
+          "restorable",
+          "updated_at",
+          "version",
+          "workspace_id",
+          "workspace_key",
+          "parent_status",
+          "resumed_public_projects",
+          "unavailability_reason"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "delete",
+                "manage_status_names",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Project context. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
+          },
+          "public_join_enabled": {
+            "type": "boolean"
+          },
+          "resource_limits": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "issues": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "principals": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "deleted_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "restorable": {
+            "type": "boolean"
+          },
+          "parent_status": {
+            "type": "object",
+            "required": [
+              "workspace"
+            ],
+            "properties": {
+              "workspace": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "deleted"
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "resumed_public_projects": {
+            "type": "object",
+            "required": [
+              "has_more",
+              "projects"
+            ],
+            "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
+              "projects": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/ResumedPublicProject"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "unavailability_reason": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "code",
+                  "recovery"
+                ],
+                "properties": {
+                  "code": {
+                    "const": "PARENT_WORKSPACE_DELETED"
+                  },
+                  "recovery": {
+                    "const": "restore_parent"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectRestoredWrite": {
+        "type": "object",
+        "required": [
+          "allowed_actions",
+          "context",
+          "created_at",
+          "deleted_at",
+          "display_name",
+          "id",
+          "key",
+          "public_join_enabled",
+          "resource_limits",
+          "restorable",
+          "updated_at",
+          "version",
+          "workspace_id",
+          "workspace_key",
+          "resumed_public_projects"
+        ],
+        "properties": {
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "delete",
+                "manage_status_names",
+                "read",
+                "restore",
+                "update"
+              ]
+            }
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "Untrusted bounded Project context. Runtime limit: 32768 UTF-8 bytes.",
+                "x-cfkanban-max-utf8-bytes": 32768
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
+          },
+          "public_join_enabled": {
+            "type": "boolean"
+          },
+          "resource_limits": {
+            "type": "object",
+            "required": [
+              "comments",
+              "issues",
+              "principals"
+            ],
+            "properties": {
+              "comments": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "issues": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "principals": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          },
+          "deleted_at": {
+            "type": "null"
+          },
+          "restorable": {
+            "type": "boolean"
+          },
+          "resumed_public_projects": {
+            "type": "object",
+            "required": [
+              "has_more",
+              "projects"
+            ],
+            "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
+              "projects": {
+                "type": "array",
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/ResumedPublicProject"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ProjectActiveRead"
+                },
+                {
+                  "$ref": "#/components/schemas/ProjectTombstoneRead"
+                }
+              ]
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "deleted",
+              "workspace_key"
+            ],
+            "properties": {
+              "deleted": {
+                "type": "string",
+                "enum": [
+                  "exclude",
+                  "only"
+                ]
+              },
+              "workspace_key": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{1,31}$"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectActiveWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ProjectActiveWrite"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectTombstoneWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ProjectTombstoneWrite"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectRestoredWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/ProjectRestoredWrite"
           }
         },
         "additionalProperties": false

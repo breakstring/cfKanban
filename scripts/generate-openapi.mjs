@@ -342,6 +342,111 @@ for (const [permission, operationIds] of Object.entries(permissionGroups)) {
   for (const operationId of operationIds) operationPermissions.set(operationId, permission);
 }
 
+const containerUsageSchema = (nullable = false) => ({
+  type: "object",
+  required: ["comments", "issues", "principals"],
+  properties: {
+    comments: nullable ? { anyOf: [integer({ minimum: 0 }), { type: "null" }] } : integer({ minimum: 0 }),
+    issues: nullable ? { anyOf: [integer({ minimum: 0 }), { type: "null" }] } : integer({ minimum: 0 }),
+    principals: nullable ? { anyOf: [integer({ minimum: 0 }), { type: "null" }] } : integer({ minimum: 0 }),
+  },
+  additionalProperties: false,
+});
+const resumedPublicProjectsSchema = {
+  type: "object",
+  required: ["has_more", "projects"],
+  properties: {
+    has_more: { type: "boolean" },
+    projects: { type: "array", maxItems: 100, items: ref("ResumedPublicProject") },
+  },
+  additionalProperties: false,
+};
+const workspaceProperties = {
+  allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["create_project", "delete", "read", "restore", "update"] }) },
+  created_at: ref("Timestamp"),
+  display_name: string({ minLength: 1, maxLength: 128 }),
+  id: ref("Uuid"),
+  key: string({ pattern: "^[a-z][a-z0-9-]{1,31}$" }),
+  updated_at: ref("Timestamp"),
+  version: ref("Version"),
+};
+const workspaceRequired = ["allowed_actions", "created_at", "deleted_at", "display_name", "id", "key", "restorable", "updated_at", "version"];
+const workspaceSchema = ({ deleted, resumed = false }) => ({
+  type: "object",
+  required: [...workspaceRequired, ...(resumed ? ["resumed_public_projects"] : [])],
+  properties: {
+    ...workspaceProperties,
+    deleted_at: deleted ? ref("Timestamp") : { type: "null" },
+    restorable: deleted ? { const: true } : { const: false },
+    ...(resumed ? { resumed_public_projects: resumedPublicProjectsSchema } : {}),
+  },
+  additionalProperties: false,
+});
+const projectProperties = {
+  allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["delete", "manage_status_names", "read", "restore", "update"] }) },
+  context: nullableUtf8String(32768, { description: "Untrusted bounded Project context." }),
+  created_at: ref("Timestamp"),
+  display_name: string({ minLength: 1, maxLength: 128 }),
+  id: ref("Uuid"),
+  key: string({ pattern: "^[A-Z][A-Z0-9-]{1,15}$" }),
+  public_join_enabled: { type: "boolean" },
+  resource_limits: containerUsageSchema(true),
+  updated_at: ref("Timestamp"),
+  version: ref("Version"),
+  workspace_id: ref("Uuid"),
+  workspace_key: string({ pattern: "^[a-z][a-z0-9-]{1,31}$" }),
+};
+const projectRequired = [
+  "allowed_actions", "context", "created_at", "deleted_at", "display_name", "id", "key",
+  "public_join_enabled", "resource_limits", "restorable", "updated_at", "version", "workspace_id", "workspace_key",
+];
+const projectSchema = ({ activeUsage, deleted, resumed = false }) => ({
+  type: "object",
+  required: [
+    ...projectRequired,
+    ...(activeUsage ? ["active_usage"] : []),
+    ...(deleted ? ["parent_status", "resumed_public_projects", "unavailability_reason"] : []),
+    ...(!deleted && resumed ? ["resumed_public_projects"] : []),
+  ],
+  properties: {
+    ...projectProperties,
+    ...(activeUsage ? { active_usage: containerUsageSchema() } : {}),
+    deleted_at: deleted ? ref("Timestamp") : { type: "null" },
+    restorable: { type: "boolean" },
+    ...(deleted ? {
+      parent_status: {
+        type: "object",
+        required: ["workspace"],
+        properties: { workspace: string({ enum: ["active", "deleted"] }) },
+        additionalProperties: false,
+      },
+      resumed_public_projects: resumedPublicProjectsSchema,
+      unavailability_reason: {
+        anyOf: [
+          { type: "null" },
+          {
+            type: "object",
+            required: ["code", "recovery"],
+            properties: { code: { const: "PARENT_WORKSPACE_DELETED" }, recovery: { const: "restore_parent" } },
+            additionalProperties: false,
+          },
+        ],
+      },
+    } : resumed ? { resumed_public_projects: resumedPublicProjectsSchema } : {}),
+  },
+  additionalProperties: false,
+});
+const containerWriteResult = (resourceName) => ({
+  type: "object",
+  required: ["event_cursor", "idempotent_replay", "resource"],
+  properties: {
+    event_cursor: string(),
+    idempotent_replay: { type: "boolean" },
+    resource: ref(resourceName),
+  },
+  additionalProperties: false,
+});
+
 const schemas = {
   Uuid: string({ format: "uuid" }),
   Timestamp: string({ format: "date-time" }),
@@ -1681,6 +1786,74 @@ const schemas = {
     },
     additionalProperties: false,
   },
+  ResumedPublicProject: {
+    type: "object",
+    required: ["active_usage", "display_name", "id", "key", "public_summary", "resource_limits", "role_choices", "workspace_key"],
+    properties: {
+      active_usage: containerUsageSchema(),
+      display_name: string({ minLength: 1, maxLength: 128 }),
+      id: ref("Uuid"),
+      key: string({ pattern: "^[A-Z][A-Z0-9-]{1,15}$" }),
+      public_summary: string({ minLength: 1, maxLength: 512 }),
+      resource_limits: containerUsageSchema(),
+      role_choices: { type: "array", minItems: 2, maxItems: 2, items: ref("ProjectRole") },
+      workspace_key: string({ pattern: "^[a-z][a-z0-9-]{1,31}$" }),
+    },
+    additionalProperties: false,
+  },
+  WorkspaceActive: workspaceSchema({ deleted: false }),
+  WorkspaceTombstone: workspaceSchema({ deleted: true }),
+  WorkspaceTombstoneDetail: workspaceSchema({ deleted: true, resumed: true }),
+  WorkspaceRestored: workspaceSchema({ deleted: false, resumed: true }),
+  WorkspaceListResult: {
+    type: "object",
+    required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    properties: {
+      has_more: { type: "boolean" },
+      items: { type: "array", maxItems: 100, items: { oneOf: [ref("WorkspaceActive"), ref("WorkspaceTombstone")] } },
+      next_cursor: nullableString(),
+      resolved_scope: {
+        type: "object",
+        required: ["deleted", "project_ids"],
+        properties: {
+          deleted: string({ enum: ["exclude", "only"] }),
+          project_ids: { type: "array", items: ref("Uuid") },
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  WorkspaceActiveWriteResult: containerWriteResult("WorkspaceActive"),
+  WorkspaceTombstoneWriteResult: containerWriteResult("WorkspaceTombstone"),
+  WorkspaceRestoredWriteResult: containerWriteResult("WorkspaceRestored"),
+  ProjectActiveRead: projectSchema({ activeUsage: true, deleted: false }),
+  ProjectActiveWrite: projectSchema({ activeUsage: false, deleted: false }),
+  ProjectTombstoneRead: projectSchema({ activeUsage: true, deleted: true }),
+  ProjectTombstoneWrite: projectSchema({ activeUsage: false, deleted: true }),
+  ProjectRestoredWrite: projectSchema({ activeUsage: false, deleted: false, resumed: true }),
+  ProjectListResult: {
+    type: "object",
+    required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    properties: {
+      has_more: { type: "boolean" },
+      items: { type: "array", maxItems: 100, items: { oneOf: [ref("ProjectActiveRead"), ref("ProjectTombstoneRead")] } },
+      next_cursor: nullableString(),
+      resolved_scope: {
+        type: "object",
+        required: ["deleted", "workspace_key"],
+        properties: {
+          deleted: string({ enum: ["exclude", "only"] }),
+          workspace_key: string({ pattern: "^[a-z][a-z0-9-]{1,31}$" }),
+        },
+        additionalProperties: false,
+      },
+    },
+    additionalProperties: false,
+  },
+  ProjectActiveWriteResult: containerWriteResult("ProjectActiveWrite"),
+  ProjectTombstoneWriteResult: containerWriteResult("ProjectTombstoneWrite"),
+  ProjectRestoredWriteResult: containerWriteResult("ProjectRestoredWrite"),
   ResourceSummary: { type: "object", required: ["id", "version", "created_at", "updated_at", "deleted_at"], properties: { id: ref("Uuid"), version: ref("Version"), created_at: ref("Timestamp"), updated_at: ref("Timestamp"), deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] } }, additionalProperties: true },
   WriteResult: { type: "object", required: ["resource", "event_cursor", "idempotent_replay"], properties: { resource: ref("ResourceSummary"), event_cursor: string(), idempotent_replay: { type: "boolean" } }, additionalProperties: false },
   ListResult: { type: "object", required: ["items", "next_cursor", "has_more"], properties: { items: { type: "array", items: { type: "object", additionalProperties: true } }, next_cursor: nullableString(), has_more: { type: "boolean" }, resolved_scope: { type: "object", additionalProperties: true } }, additionalProperties: false },
@@ -1711,6 +1884,18 @@ const querySets = {
 };
 
 const operationResponseSchemas = {
+  listWorkspaces: ref("WorkspaceListResult"),
+  getWorkspace: { oneOf: [ref("WorkspaceActive"), ref("WorkspaceTombstoneDetail")] },
+  createWorkspace: ref("WorkspaceActiveWriteResult"),
+  updateWorkspace: ref("WorkspaceActiveWriteResult"),
+  deleteWorkspace: ref("WorkspaceTombstoneWriteResult"),
+  restoreWorkspace: ref("WorkspaceRestoredWriteResult"),
+  listProjects: ref("ProjectListResult"),
+  getProject: { oneOf: [ref("ProjectActiveRead"), ref("ProjectTombstoneRead")] },
+  createProject: ref("ProjectActiveWriteResult"),
+  updateProject: ref("ProjectActiveWriteResult"),
+  deleteProject: ref("ProjectTombstoneWriteResult"),
+  restoreProject: ref("ProjectRestoredWriteResult"),
   listPublicProjects: ref("PublicProjectListResult"),
   getPublicJoinPolicy: ref("PublicJoinPolicy"),
   enablePublicJoin: ref("PublicJoinPolicyWriteResult"),

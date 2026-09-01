@@ -12,6 +12,10 @@ import {
   PUBLIC_PROJECTS_CONTINUATION_SQL,
   PUBLIC_PROJECTS_FIRST_PAGE_SQL,
 } from "../apps/worker/src/services/public-join-sql.ts";
+import {
+  workspacePublicResumeInvariantSql,
+  workspacePublicResumePageSql,
+} from "../apps/worker/src/services/containers.ts";
 import { sha256NormalizedText } from "./lib/generated-artifacts.mjs";
 
 const migration = await readFile(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
@@ -67,6 +71,11 @@ assert.deepEqual(indexColumns("idx_browser_launches_cleanup"), ["created_at", "i
 assert.deepEqual(indexColumns("idx_web_sessions_cleanup"), ["created_at", "id"]);
 assert.deepEqual(indexColumns("idx_webauthn_challenges_expiry"), ["expires_at", "id"]);
 assert.deepEqual(indexColumns("idx_webauthn_challenges_consumed"), ["consumed_at", "id"]);
+assert.deepEqual(
+  indexColumns("idx_public_join_resume_enabled_workspace_project"),
+  ["workspace_id", "project_key", "project_id"],
+  "recovery preview index must bound one Workspace page in display order",
+);
 
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["owner", "Lin", now, now]);
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["writer", "Chen", now, now]);
@@ -118,6 +127,8 @@ const planChecks = [
   ["project issue list", "SELECT number FROM issues WHERE project_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC, number DESC LIMIT 21", ["project"], /idx_issues_project_list/],
   ["issue candidates", "SELECT number FROM issues WHERE project_id = ? AND status_key = ? AND deleted_at IS NULL ORDER BY priority_rank, created_at, number LIMIT 21", ["project", "todo"], /idx_issues_candidates/],
   ["project grants", "SELECT principal_id FROM project_grants WHERE project_id = ? AND revoked_at IS NULL AND role = ?", ["project", "writer"], /idx_project_grants_project_active/],
+  ["workspace tombstones", "SELECT id FROM workspaces INDEXED BY idx_workspaces_tombstones WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", [], /idx_workspaces_tombstones/],
+  ["project tombstones", "SELECT id FROM projects INDEXED BY idx_projects_workspace_tombstones WHERE workspace_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["workspace"], /idx_projects_workspace_tombstones/],
   ["comments", "SELECT id FROM comments WHERE issue_id = ? AND deleted_at IS NULL ORDER BY created_at, id LIMIT 21", ["issue-1"], /idx_comments_issue_list/],
   ["comment tombstones", "SELECT id FROM comments WHERE issue_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["issue-1"], /idx_comments_issue_tombstones/],
   ["label tombstones", "SELECT id FROM labels WHERE project_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["project"], /idx_labels_project_tombstones/],
@@ -130,6 +141,8 @@ const planChecks = [
   ["invitation redeem", "SELECT id FROM invitations WHERE code_digest = ?", [digest("b")], /idx_invitations_code_digest|sqlite_autoindex_invitations/],
   ["public Projects first page", PUBLIC_PROJECTS_FIRST_PAGE_SQL, [21], /idx_public_join_enabled \(disabled_at=\?\)/],
   ["public Projects continuation", PUBLIC_PROJECTS_CONTINUATION_SQL, ["00000000-0000-4000-8000-000000000000", 21], /idx_public_join_enabled \(disabled_at=\? AND public_id>\?\)/],
+  ["workspace public resume invariant", workspacePublicResumeInvariantSql("1 = 1"), ["workspace"], /idx_public_join_resume_enabled_workspace_project/],
+  ["workspace public resume page", workspacePublicResumePageSql("1 = 1"), ["workspace"], /idx_public_join_resume_enabled_workspace_project/],
   ["browser launch cleanup", BROWSER_LAUNCH_CLEANUP_SQL, [now, 100], /idx_browser_launches_cleanup/],
   ["web session cleanup", WEB_SESSION_CLEANUP_SQL, [now, 100], /idx_web_sessions_cleanup/],
   ["expired WebAuthn challenge cleanup", EXPIRED_WEB_AUTHN_CHALLENGE_CLEANUP_SQL, [now, 100], /idx_webauthn_challenges_expiry/],

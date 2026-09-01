@@ -3,14 +3,15 @@
 - 文档状态：Draft
 - 方向真相：本文件
 - 执行真相：[Linear cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f)
-- 最近讨论：2026-08-29
+- 最近讨论：2026-09-01
 
 ## 当前基线
 
 - 产品定位为面向 Coding Agents 的轻量工作协调账本。
 - 已明确用户的 Agent 是主要调用载体，但不是唯一界面；人类也可以在极简第一方 Web 中直接查看、轻量参与和维护。部署、Owner 管理、协调和 Coding 只是 Agent 的任务模式，不是不同 Agent 类型。
-- 当前已有 Frozen 产品/技术合同、可执行 OpenAPI/D1 验证原型和实施计划，但仍没有业务代码。
-- Linear 项目已于 2026-08-29 在线读回，状态为 Planned；已建立 `v0 可部署闭环` Milestone 和 11 个 Backlog Work Packages，均未分配、未排期、未开始。
+- 当前已有 Frozen 产品/技术合同、可执行 OpenAPI/D1 合同、Worker/D1 业务实现和极简双语 Web；WP-01～WP-09 已完成，三个 portable Skills、部署/更新流程和 release candidate 尚未实现或验收。
+- Linear 项目已于 2026-09-01 在线读回并校准为 In Progress：`v0 可部署闭环` Milestone 进度为 67%，15 个 Issues 中 10 个 Done、其余 5 个为 Backlog。未完成范围为 WP-10、WP-11，以及 KENN-335～KENN-337 三个 release-blocking 加固任务；动态状态仍以 Linear 为准。
+- KENN-338 的容器恢复、usage invariant、OpenAPI 投影和 D1 查询预算加固已完成；当前实现主线进入 WP-10，其余 Web 加固完成后才进入 WP-11。
 - 已确认一个部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project。
 - 已确认 Credential 只认证 Principal；v0 业务权限按 Project 显式授予，不从 Workspace 继承。
 - 已确认每个部署实例只有一个 Owner；只有 Owner 能创建 Workspace/Project 和管理 Project Grants，参与者只有 reader/writer。
@@ -79,7 +80,7 @@ R0 及全部 v0 实现前合同已完成冻结。实施 PLAN 和 Linear Work Pac
 
 ### R1 核心工作账本
 
-状态：Planned
+状态：Active（主体已实现，待加固与 RC 验收）
 
 目标：
 
@@ -92,7 +93,7 @@ R0 及全部 v0 实现前合同已完成冻结。实施 PLAN 和 Linear Work Pac
 
 ### R2 多 Agent 可靠协作
 
-状态：Planned
+状态：Active（主体已实现，待加固与 RC 验收）
 
 目标：
 
@@ -106,7 +107,7 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 
 ### R3 Agent 集成、极简 Web UI 与分发
 
-状态：Planned
+状态：Active（Web 已实现，Skills 与分发待实现）
 
 目标：
 
@@ -124,7 +125,7 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 
 ### R4 运维、安全与恢复
 
-状态：Planned
+状态：Active（安全合同已进入实现，运维与发布待收口）
 
 目标：
 
@@ -160,9 +161,9 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 
 ## 推荐顺序
 
-1. 用户明确开始实现后，从 [KENN-318 / WP-01](https://linear.app/kennzhang/issue/KENN-318) 建立工程骨架和根级验证，不先铺设空业务 handler。
-2. 按 Implementation Plan 的依赖图推进 Worker/D1、领域能力、Web 安全与 Skills；每个 WP 以验收证据更新 Linear。
-3. Web、Skills 和最终 release candidate 复用同一 Frozen API/migration/release 合同，不建立第二套事实源或部署路径。
+1. 推进 [KENN-326 / WP-10](https://linear.app/kennzhang/issue/KENN-326)，实现三个 portable Skills、strict-zero 部署和两个独立更新平面。
+2. 按风险依次收口 KENN-336、KENN-335 与 KENN-337；这些加固任务和 WP-10 全部完成后，才能进入 [KENN-327 / WP-11](https://linear.app/kennzhang/issue/KENN-327) 的端到端 release candidate 验证。
+3. Web、Skills 和最终 release candidate 继续复用同一 Frozen API/migration/release 合同，不建立第二套事实源或部署路径。
 4. 只有真实 Agent、IAB/浏览器、OS、并发与 Free profile 证据出现后，才决定 R5 的可选 Cloudflare 增强投入。
 
 ## 明确暂缓
