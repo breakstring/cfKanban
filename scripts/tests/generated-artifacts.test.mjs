@@ -130,6 +130,63 @@ test("OpenAPI fixes Public Join request unions, projections, and rate settings",
   );
 });
 
+test("OpenAPI exposes exact Workspace and Project lifecycle response models", async () => {
+  const document = JSON.parse(await readFile(
+    new URL("../../contracts/openapi.json", import.meta.url),
+    "utf8",
+  ));
+  const responseRef = (path, method) => document.paths[path][method]
+    .responses["200"].content["application/json"].schema;
+  assert.deepEqual(responseRef("/api/v1/workspaces", "get"), {
+    $ref: "#/components/schemas/WorkspaceListResult",
+  });
+  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_key}", "get").oneOf, [
+    { $ref: "#/components/schemas/WorkspaceActive" },
+    { $ref: "#/components/schemas/WorkspaceTombstoneDetail" },
+  ]);
+  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_key}/commands/restore", "post"), {
+    $ref: "#/components/schemas/WorkspaceRestoredWriteResult",
+  });
+  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_key}/projects", "get"), {
+    $ref: "#/components/schemas/ProjectListResult",
+  });
+  assert.deepEqual(
+    responseRef("/api/v1/workspaces/{workspace_key}/projects/{project_key}", "get").oneOf,
+    [
+      { $ref: "#/components/schemas/ProjectActiveRead" },
+      { $ref: "#/components/schemas/ProjectTombstoneRead" },
+    ],
+  );
+  assert.deepEqual(
+    responseRef("/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore", "post"),
+    { $ref: "#/components/schemas/ProjectRestoredWriteResult" },
+  );
+  for (const schemaName of [
+    "WorkspaceActive",
+    "WorkspaceTombstone",
+    "WorkspaceTombstoneDetail",
+    "WorkspaceRestored",
+    "ProjectActiveRead",
+    "ProjectActiveWrite",
+    "ProjectTombstoneRead",
+    "ProjectTombstoneWrite",
+    "ProjectRestoredWrite",
+    "ResumedPublicProject",
+  ]) {
+    assert.equal(document.components.schemas[schemaName].additionalProperties, false, schemaName);
+  }
+  assert.deepEqual(
+    document.components.schemas.ProjectTombstoneRead.required.filter((field) =>
+      ["parent_status", "resumed_public_projects", "unavailability_reason"].includes(field)),
+    ["parent_status", "resumed_public_projects", "unavailability_reason"],
+  );
+  assert.equal(
+    document.components.schemas.WorkspaceTombstoneDetail.properties
+      .resumed_public_projects.properties.projects.maxItems,
+    100,
+  );
+});
+
 test("OpenAPI distinguishes Comment lifecycle shapes and deleted-only permissions", async () => {
   const document = JSON.parse(await readFile(
     new URL("../../contracts/openapi.json", import.meta.url),

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +16,7 @@ import {
 } from "../../apps/worker/src/services/containers.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const openApi = JSON.parse(await readFile(new URL("../../contracts/openapi.json", import.meta.url), "utf8"));
 const ownerToken = `cfk_v1_owner_${"A".repeat(43)}`;
 const participantToken = `cfk_v1_member_${"B".repeat(43)}`;
 const ownerSessionToken = "S".repeat(43);
@@ -40,6 +42,12 @@ const server = createTestHarness({
 });
 
 let db;
+
+function assertExactOpenApiObject(value, schemaName) {
+  const schema = openApi.components.schemas[schemaName];
+  assert.equal(schema.additionalProperties, false, `${schemaName} must reject unknown fields`);
+  assert.deepEqual(Object.keys(value).sort(), [...schema.required].sort(), `${schemaName} runtime keys drifted`);
+}
 
 function ownerHeaders(extra = {}) {
   return { authorization: `Bearer ${ownerToken}`, ...extra };
@@ -190,6 +198,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   const createdWorkspace = await jsonRequest("/api/v1/workspaces", createWorkspaceRequest);
   assert.equal(createdWorkspace.response.status, 200);
   assertWriteResult(createdWorkspace.body);
+  assertExactOpenApiObject(createdWorkspace.body.resource, "WorkspaceActive");
   assert.equal(createdWorkspace.body.resource.key, "engineering");
   const replayedWorkspace = await jsonRequest("/api/v1/workspaces", createWorkspaceRequest);
   assert.equal(replayedWorkspace.body.resource.id, createdWorkspace.body.resource.id);
@@ -403,6 +412,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   );
   assert.equal(deletedProject.body.resource.deleted_at !== null, true);
   assert.equal(deletedProject.body.resource.version, 4);
+  assertExactOpenApiObject(deletedProject.body.resource, "ProjectTombstoneWrite");
   const repeatedDeleteProject = await jsonRequest(
     "/api/v1/workspaces/engineering/projects/CORE?expected_version=4",
     { headers: ownerHeaders(), method: "DELETE" },
@@ -428,6 +438,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   );
   assert.equal(restoredProject.body.resource.version, 5);
   assert.deepEqual(restoredProject.body.resource.resumed_public_projects.projects, []);
+  assertExactOpenApiObject(restoredProject.body.resource, "ProjectRestoredWrite");
   const repeatedRestoreProject = await jsonRequest(
     "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
     {
@@ -455,6 +466,27 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     method: "DELETE",
   });
   assert.equal(deletedWorkspace.body.resource.version, 3);
+  assertExactOpenApiObject(deletedWorkspace.body.resource, "WorkspaceTombstone");
+  const childTombstoneUnderDeletedParent = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects/CORE?deleted=only",
+    { headers: ownerHeaders() },
+  );
+  assert.equal(childTombstoneUnderDeletedParent.response.status, 200);
+  assertExactOpenApiObject(childTombstoneUnderDeletedParent.body, "ProjectTombstoneRead");
+  assert.equal(childTombstoneUnderDeletedParent.body.restorable, false);
+  assert.deepEqual(childTombstoneUnderDeletedParent.body.allowed_actions, []);
+  assert.deepEqual(childTombstoneUnderDeletedParent.body.parent_status, { workspace: "deleted" });
+  assert.deepEqual(childTombstoneUnderDeletedParent.body.unavailability_reason, {
+    code: "PARENT_WORKSPACE_DELETED",
+    recovery: "restore_parent",
+  });
+  const childTombstonePageUnderDeletedParent = await jsonRequest(
+    "/api/v1/workspaces/engineering/projects?deleted=only",
+    { headers: ownerHeaders() },
+  );
+  assert.equal(childTombstonePageUnderDeletedParent.response.status, 200);
+  assert.equal(childTombstonePageUnderDeletedParent.body.items[0].restorable, false);
+  assert.deepEqual(childTombstonePageUnderDeletedParent.body.items[0].parent_status, { workspace: "deleted" });
   const staleOwnerNow = Date.now();
   const staleOwnerAuth = await authenticateRequest(
     db,
@@ -553,6 +585,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     method: "POST",
   });
   assert.equal(restoredWorkspace.body.resource.version, 4);
+  assertExactOpenApiObject(restoredWorkspace.body.resource, "WorkspaceRestored");
   const restoredChildAfterParent = await jsonRequest(
     "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
     {

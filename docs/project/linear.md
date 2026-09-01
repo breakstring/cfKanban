@@ -1,7 +1,7 @@
 # Linear 协作约定
 
 - 采用模式：Linear 已启用
-- 在线核验日期：2026-08-29
+- 在线核验日期：2026-09-01
 - 机器绑定：[`.linear/project.json`](../../.linear/project.json)
 
 ## 已验证绑定
@@ -30,12 +30,12 @@
 
 ## 当前在线快照
 
-截至 2026-08-29 冻结合同并建立执行范围后：
+截至 2026-09-01 在线读回：
 
-- Project status：Planned；
-- Milestone：`v0 可部署闭环`；
-- 实现 Issues：KENN-317～KENN-327 中属于本项目的 11 个 WP，全部为 Backlog、未分配、无排期；
-- 依赖关系按 [v0 Implementation Plan](../plans/2026-08-29-v0-implementation-plan.md) 建立。
+- Project status：In Progress；
+- Milestone：`v0 可部署闭环`，进度 67%；
+- WP-01～WP-09 与 KENN-338 已 Done；WP-10、WP-11 与 KENN-335～KENN-337 为 Backlog；
+- KENN-335～KENN-338 是 WP-11 的 release-blocking 子任务，原 WP 依赖关系继续按 [v0 Implementation Plan](../plans/2026-08-29-v0-implementation-plan.md) 保持。
 
 这是核验快照，不是长期状态真相。后续状态必须在线读回，不能仅凭本段判断。
 

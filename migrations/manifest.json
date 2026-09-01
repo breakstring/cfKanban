@@ -9,7 +9,7 @@
     {
       "sequence": 1,
       "name": "0001_initial.sql",
-      "sha256": "183707d9beb62de7a47b650148f423d49a9b7b9336f1b39a56f359a1f2ae536e",
+      "sha256": "8552f2967b0d2b21889a3c7978f46e66d14e0d5da808dc189fe62ac3ac54e5ac",
       "classification": "bootstrap",
       "destructive": false,
       "reentry": "wrangler_migration_ledger_only",
@@ -52,8 +52,10 @@
           "idx_web_sessions_source_active",
           "idx_web_sessions_cleanup",
           "idx_workspaces_key",
+          "idx_workspaces_tombstones",
           "idx_projects_workspace_key",
           "idx_projects_list",
+          "idx_projects_workspace_tombstones",
           "idx_project_grants_principal_project",
           "idx_project_grants_project_active",
           "idx_issues_project_list",
@@ -80,7 +82,8 @@
           "idx_webauthn_challenges_expiry",
           "idx_webauthn_challenges_consumed",
           "idx_web_authenticators_principal_active",
-          "idx_public_join_enabled"
+          "idx_public_join_enabled",
+          "idx_public_join_resume_enabled_workspace_project"
         ]
       }
     }

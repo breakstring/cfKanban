@@ -122,6 +122,8 @@ CREATE TABLE project_status_names (
 
 CREATE TABLE public_join_policies (
   project_id TEXT PRIMARY KEY REFERENCES projects(id),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  project_key TEXT NOT NULL,
   public_id TEXT NOT NULL UNIQUE,
   public_summary TEXT NOT NULL CHECK (length(trim(public_summary)) BETWEEN 1 AND 512),
   enabled_at INTEGER,
@@ -499,8 +501,10 @@ CREATE INDEX idx_web_sessions_principal_active ON web_sessions(principal_id, rev
 CREATE INDEX idx_web_sessions_source_active ON web_sessions(source_kind, source_id, revoked_at);
 CREATE INDEX idx_web_sessions_cleanup ON web_sessions(created_at, id);
 CREATE UNIQUE INDEX idx_workspaces_key ON workspaces(key);
+CREATE INDEX idx_workspaces_tombstones ON workspaces(deleted_at DESC, id DESC) WHERE deleted_at IS NOT NULL;
 CREATE UNIQUE INDEX idx_projects_workspace_key ON projects(workspace_id, key);
 CREATE INDEX idx_projects_list ON projects(workspace_id, deleted_at, display_name, id);
+CREATE INDEX idx_projects_workspace_tombstones ON projects(workspace_id, deleted_at DESC, id DESC) WHERE deleted_at IS NOT NULL;
 CREATE UNIQUE INDEX idx_project_grants_principal_project ON project_grants(principal_id, project_id);
 CREATE INDEX idx_project_grants_project_active ON project_grants(project_id, revoked_at, role, principal_id);
 CREATE INDEX idx_issues_project_list ON issues(project_id, deleted_at, updated_at DESC, number DESC);
@@ -528,3 +532,4 @@ CREATE INDEX idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at, i
 CREATE INDEX idx_webauthn_challenges_consumed ON webauthn_challenges(consumed_at, id) WHERE consumed_at IS NOT NULL;
 CREATE INDEX idx_web_authenticators_principal_active ON web_authenticators(principal_id, revoked_at, created_at, id);
 CREATE INDEX idx_public_join_enabled ON public_join_policies(disabled_at, public_id);
+CREATE INDEX idx_public_join_resume_enabled_workspace_project ON public_join_policies(workspace_id, project_key, project_id) WHERE enabled_at IS NOT NULL AND disabled_at IS NULL;

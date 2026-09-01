@@ -75,7 +75,10 @@ async function validateBatchWorker() {
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert.ok(response?.ok, `Wrangler validation Worker did not start: ${lastError ?? output.join("")}`);
+    assert.ok(
+      response?.ok,
+      `Wrangler validation Worker did not start: ${lastError ?? "no fetch error"}\n${output.join("")}`,
+    );
     const result = await response.json();
     assert.deepEqual(result, {
       rejected: true,

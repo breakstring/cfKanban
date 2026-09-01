@@ -63,6 +63,7 @@ interface ProjectRow {
   usage_present: number;
   version: number;
   workspace_id: string;
+  workspace_deleted_at: number | null;
   workspace_key: string;
 }
 
@@ -108,6 +109,7 @@ function workspaceResource(row: WorkspaceRow, auth: AuthContext): { [key: string
 
 function projectResource(row: ProjectRow, auth: AuthContext): { [key: string]: JsonValue } {
   const canManage = canManageContainers(auth);
+  const parentActive = row.workspace_deleted_at === null;
   const resource: { [key: string]: JsonValue } = {
     active_usage: {
       comments: row.active_comment_count,
@@ -116,7 +118,7 @@ function projectResource(row: ProjectRow, auth: AuthContext): { [key: string]: J
     },
     allowed_actions: row.deleted_at === null
       ? [...(canManage ? ["update", "delete", "manage_status_names"] : []), "read"]
-      : canManage ? ["restore"] : [],
+      : canManage && parentActive ? ["restore"] : [],
     context: row.context,
     created_at: timestamp(row.created_at),
     deleted_at: timestamp(row.deleted_at),
@@ -129,13 +131,19 @@ function projectResource(row: ProjectRow, auth: AuthContext): { [key: string]: J
       issues: row.issue_limit,
       principals: row.principal_limit,
     },
-    restorable: row.deleted_at !== null && canManage,
+    restorable: row.deleted_at !== null && canManage && parentActive,
     updated_at: timestamp(row.updated_at),
     version: row.version,
     workspace_id: row.workspace_id,
     workspace_key: row.workspace_key,
   };
-  if (row.deleted_at !== null) resource.resumed_public_projects = projectRowResumedSummary(row);
+  if (row.deleted_at !== null) {
+    resource.parent_status = { workspace: parentActive ? "active" : "deleted" };
+    resource.resumed_public_projects = projectRowResumedSummary(row);
+    resource.unavailability_reason = parentActive
+      ? null
+      : { code: "PARENT_WORKSPACE_DELETED", recovery: "restore_parent" };
+  }
   return resource;
 }
 
@@ -234,7 +242,8 @@ async function readProject(
       ? buildCurrentAuthGuard(auth, now, 3, true)
       : null;
     return await db.prepare(
-      `SELECT p.id, p.workspace_id, w.key AS workspace_key, p.key, p.display_name,
+      `SELECT p.id, p.workspace_id, w.key AS workspace_key, w.deleted_at AS workspace_deleted_at,
+              p.key, p.display_name,
               p.context, p.issue_limit, p.comment_limit, p.principal_limit,
               p.version, p.deleted_at, p.created_at, p.updated_at,
               COALESCE(pu.active_issue_count, 0) AS active_issue_count,
@@ -285,7 +294,7 @@ async function readWorkspacePage(
     const stableId = position?.[1] ?? null;
     const result = await db.prepare(
       `SELECT id, key, display_name, version, deleted_at, created_at, updated_at
-       FROM workspaces
+       FROM workspaces ${deleted === "only" ? "INDEXED BY idx_workspaces_tombstones" : ""}
        WHERE deleted_at IS ${deleted === "only" ? "NOT NULL" : "NULL"}
          AND (?1 IS NULL OR id IN (
            SELECT DISTINCT project_row.workspace_id
@@ -323,7 +332,8 @@ async function readProjectPage(
     const first = position?.[0] ?? null;
     const stableId = position?.[1] ?? null;
     const result = await db.prepare(
-      `SELECT p.id, p.workspace_id, w.key AS workspace_key, p.key, p.display_name,
+      `SELECT p.id, p.workspace_id, w.key AS workspace_key, w.deleted_at AS workspace_deleted_at,
+              p.key, p.display_name,
               p.context, p.issue_limit, p.comment_limit, p.principal_limit,
               p.version, p.deleted_at, p.created_at, p.updated_at,
               COALESCE(pu.active_issue_count, 0) AS active_issue_count,
@@ -332,7 +342,7 @@ async function readProjectPage(
               CASE WHEN pu.project_id IS NULL THEN 0 ELSE 1 END AS usage_present,
               pjp.public_summary AS public_join_public_summary,
               CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
-       FROM projects AS p
+       FROM projects AS p ${deleted === "only" ? "INDEXED BY idx_projects_workspace_tombstones" : ""}
        JOIN workspaces AS w ON w.id = p.workspace_id
        LEFT JOIN project_usage AS pu ON pu.project_id = p.id
        LEFT JOIN public_join_policies AS pjp ON pjp.project_id = p.id
@@ -818,6 +828,23 @@ async function setWorkspaceDeleted(
                updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7
              AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
+             AND NOT EXISTS (
+               SELECT 1
+               FROM projects AS invariant_project
+               JOIN public_join_policies AS invariant_policy
+                 ON invariant_policy.project_id = invariant_project.id
+               LEFT JOIN project_usage AS invariant_usage
+                 ON invariant_usage.project_id = invariant_project.id
+               WHERE invariant_project.workspace_id = workspaces.id
+                 AND invariant_project.deleted_at IS NULL
+                 AND invariant_policy.enabled_at IS NOT NULL
+                 AND invariant_policy.disabled_at IS NULL
+                 AND (invariant_usage.project_id IS NULL
+                   OR invariant_project.issue_limit IS NULL
+                   OR invariant_project.comment_limit IS NULL
+                   OR invariant_project.principal_limit IS NULL
+                   OR invariant_policy.public_summary IS NULL)
+             )
              AND ${guard.sql}`,
         ).bind(
           deleted ? now : null,
@@ -856,6 +883,7 @@ async function setWorkspaceDeleted(
     return { commit, row };
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
+      await resumedPublicProjects(db, current.id, auth, now);
       return diagnoseWorkspaceCas(db, auth, key, expectedVersion, now, !deleted);
     }
     throw error;
@@ -891,6 +919,40 @@ function resumedPublicProjectResource(row: ResumedPublicProjectRow): { [key: str
   };
 }
 
+export function workspacePublicResumeInvariantSql(currentAuthSql: string): string {
+  return `SELECT policy.project_id
+          FROM public_join_policies AS policy INDEXED BY idx_public_join_resume_enabled_workspace_project
+          JOIN projects AS p ON p.id = policy.project_id AND p.workspace_id = policy.workspace_id
+          JOIN workspaces AS workspace ON workspace.id = p.workspace_id
+          LEFT JOIN project_usage AS usage ON usage.project_id = p.id
+          WHERE policy.workspace_id = ?1
+            AND p.deleted_at IS NULL
+            AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
+            AND (usage.project_id IS NULL
+              OR p.issue_limit IS NULL OR p.comment_limit IS NULL OR p.principal_limit IS NULL
+              OR policy.public_summary IS NULL)
+            AND ${currentAuthSql}
+          LIMIT 1`;
+}
+
+export function workspacePublicResumePageSql(currentAuthSql: string): string {
+  return `SELECT workspace.key AS workspace_key,
+                 p.id, p.key, p.display_name, policy.public_summary,
+                 p.issue_limit, p.comment_limit, p.principal_limit,
+                 usage.active_issue_count, usage.active_comment_count,
+                 usage.active_principal_count
+          FROM public_join_policies AS policy INDEXED BY idx_public_join_resume_enabled_workspace_project
+          JOIN projects AS p ON p.id = policy.project_id AND p.workspace_id = policy.workspace_id
+          JOIN workspaces AS workspace ON workspace.id = p.workspace_id
+          JOIN project_usage AS usage ON usage.project_id = p.id
+          WHERE policy.workspace_id = ?1
+            AND p.deleted_at IS NULL
+            AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
+            AND ${currentAuthSql}
+          ORDER BY policy.project_key, policy.project_id
+          LIMIT 101`;
+}
+
 async function resumedPublicProjects(
   db: D1Database,
   workspaceId: string,
@@ -899,23 +961,11 @@ async function resumedPublicProjects(
 ): Promise<{ [key: string]: JsonValue }> {
   try {
     const currentAuth = buildCurrentAuthGuard(auth, now, 2, true);
-    const result = await db.prepare(
-      `SELECT workspace.key AS workspace_key,
-              p.id, p.key, p.display_name, policy.public_summary,
-              p.issue_limit, p.comment_limit, p.principal_limit,
-              usage.active_issue_count, usage.active_comment_count,
-              usage.active_principal_count
-       FROM projects AS p
-       JOIN workspaces AS workspace ON workspace.id = p.workspace_id
-       JOIN public_join_policies AS policy ON policy.project_id = p.id
-       LEFT JOIN project_usage AS usage ON usage.project_id = p.id
-       WHERE p.workspace_id = ?1
-         AND p.deleted_at IS NULL
-         AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
-         AND ${currentAuth.sql}
-       ORDER BY p.key, p.id
-       LIMIT 101`,
-    ).bind(workspaceId, ...currentAuth.values).all<ResumedPublicProjectRow>();
+    const invalid = await db.prepare(workspacePublicResumeInvariantSql(currentAuth.sql))
+      .bind(workspaceId, ...currentAuth.values).first<{ project_id: string }>();
+    if (invalid !== null) throw platformUnavailable("d1");
+    const result = await db.prepare(workspacePublicResumePageSql(currentAuth.sql))
+      .bind(workspaceId, ...currentAuth.values).all<ResumedPublicProjectRow>();
     return {
       has_more: result.results.length > 100,
       projects: result.results.slice(0, 100).map(resumedPublicProjectResource),
@@ -1034,6 +1084,7 @@ export async function createProject(
         usage_present: 0,
         version: 1,
         workspace_id: workspace.id,
+        workspace_deleted_at: null,
         workspace_key: workspaceKey,
       };
       const guard = buildCurrentAuthGuard(auth, now, 9, true);
@@ -1195,11 +1246,12 @@ async function setProjectDeleted(
   if (current === null) throw notFound();
   const workspace = await readWorkspace(db, workspaceKey, true);
   if (workspace === null || workspace.deleted_at !== null) throw notFound();
+  const resumedSummary = projectRowResumedSummary(current);
   const row = updatedProjectRow(current, { deleted_at: deleted ? now : null }, now);
   const snapshot = persistSnapshot
     ? {
         ...projectWriteResource(row, auth),
-        resumed_public_projects: projectRowResumedSummary(current),
+        resumed_public_projects: resumedSummary,
       }
     : null;
   const guard = buildCurrentAuthGuard(auth, now, 9, true);
@@ -1218,6 +1270,20 @@ async function setProjectDeleted(
                WHERE parent_workspace.id = projects.workspace_id
                  AND parent_workspace.key = ?8
                  AND parent_workspace.deleted_at IS NULL
+             )
+             AND NOT EXISTS (
+               SELECT 1
+               FROM public_join_policies AS invariant_policy
+               LEFT JOIN project_usage AS invariant_usage
+                 ON invariant_usage.project_id = invariant_policy.project_id
+               WHERE invariant_policy.project_id = projects.id
+                 AND invariant_policy.enabled_at IS NOT NULL
+                 AND invariant_policy.disabled_at IS NULL
+                 AND (invariant_usage.project_id IS NULL
+                   OR projects.issue_limit IS NULL
+                   OR projects.comment_limit IS NULL
+                   OR projects.principal_limit IS NULL
+                   OR invariant_policy.public_summary IS NULL)
              )
              AND ${guard.sql}`,
         ).bind(
@@ -1260,6 +1326,8 @@ async function setProjectDeleted(
     return { commit, row };
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
+      const latest = await readProject(db, workspaceKey, projectKey, true);
+      if (latest !== null) projectRowResumedSummary(latest);
       return diagnoseProjectCas(db, auth, workspaceKey, projectKey, expectedVersion, now, !deleted);
     }
     throw error;

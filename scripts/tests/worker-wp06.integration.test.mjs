@@ -818,9 +818,11 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     db.prepare("UPDATE projects SET comment_limit = 1 WHERE id = ?1").bind(projectAId),
     db.prepare(
       `INSERT INTO public_join_policies
-        (project_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
+        (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
          version, created_at, updated_at, last_operation_id)
-       VALUES (?1, 'wp06-comment-preview', 'Comment quota preview', ?2, ?3, 1, ?2, ?2, 'wp06-preview-policy')`,
+       VALUES (?1, (SELECT workspace_id FROM projects WHERE id = ?1),
+               (SELECT key FROM projects WHERE id = ?1),
+               'wp06-comment-preview', 'Comment quota preview', ?2, ?3, 1, ?2, ?2, 'wp06-preview-policy')`,
     ).bind(projectAId, quotaPreviewAt, ids.ownerPrincipal),
     db.prepare(
       `INSERT INTO project_usage
@@ -1785,9 +1787,11 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     ).bind(usage.comment_count, projectAId),
     db.prepare(
       `INSERT INTO public_join_policies
-        (project_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
+        (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
          version, created_at, updated_at)
-       VALUES (?1, ?2, 'Public test project', ?3, ?4, 1, ?3, ?3)`,
+       VALUES (?1, (SELECT workspace_id FROM projects WHERE id = ?1),
+               (SELECT key FROM projects WHERE id = ?1),
+               ?2, 'Public test project', ?3, ?4, 1, ?3, ?3)`,
     ).bind(projectAId, "wp06-public-app", now, ids.ownerPrincipal),
     db.prepare(
       `INSERT INTO project_usage
