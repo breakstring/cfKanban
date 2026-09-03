@@ -12,8 +12,8 @@ cfKanban is currently a **public testing preview**, not a stable end-user releas
 
 - The Worker, D1 schema, Web UI, and three Agent Skills are implemented in this repository.
 - You can install the Codex plugin from this public repository today and inspect or evaluate the Skills.
-- The [`0.1.0-alpha.1` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.1) packages immutable Skill and Service bundles for testing.
-- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/prerelease.json).
+- The [`0.1.0-alpha.2` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.2) packages immutable Skill and Service bundles for testing, including support for Node.js 26.
+- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.2/prerelease.json).
 - The stable release pointer and real multi-environment deployment acceptance are not published yet.
 - Do not treat `main`, a local checkout, or a marketplace snapshot as a canonical stable release or production-ready deployment.
 
@@ -38,7 +38,7 @@ For a future Cloudflare deployment you will also need:
 The repository is a Codex plugin marketplace. From the command line, add the immutable testing tag and install its plugin:
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.1
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.2
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -72,7 +72,7 @@ In the new task, this one sentence is enough:
 
 You do not need to know or mention manifests, digests, preflight, deployment plans, migrations, or rollback journals. The Skill handles those details: it starts with read-only checks, explains what is available in plain language, asks only for information that is actually missing, and shows the exact changes before anything is installed or deployed.
 
-At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.1` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
+At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.2` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
 
 If you deliberately want to evaluate a source revision, say so explicitly:
 

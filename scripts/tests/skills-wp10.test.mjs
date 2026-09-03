@@ -36,6 +36,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.2.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -76,6 +77,15 @@ test("capability fixtures keep macOS, Windows native, WSL2, and Linux isolated w
   const runtimePlan = createToolRuntimePlan({ taskId: "wp10", npmExecutable: "/opt/node/bin/npm", wranglerVersion: "4.127.1", runtimeRoot: "/private/cfkanban/tool-runtime" });
   assert.equal(runtimePlan.plan.changes_path, false);
   assert.equal(runtimePlan.plan.writes_user_repositories, false);
+});
+
+test("testing release accepts verified Node.js 26 while retaining a future-major boundary", () => {
+  assert.equal(TESTING_RELEASE_CONFIG.nodeRange, ">=22.12.0 <27");
+  assert.equal(satisfiesSimpleRange("v22.12.0", TESTING_RELEASE_CONFIG.nodeRange), true);
+  assert.equal(satisfiesSimpleRange("v24.19.0", TESTING_RELEASE_CONFIG.nodeRange), true);
+  assert.equal(satisfiesSimpleRange("v26.8.1", TESTING_RELEASE_CONFIG.nodeRange), true);
+  assert.equal(satisfiesSimpleRange("v22.11.0", TESTING_RELEASE_CONFIG.nodeRange), false);
+  assert.equal(satisfiesSimpleRange("v27.0.0", TESTING_RELEASE_CONFIG.nodeRange), false);
 });
 
 test("each Skill exposes a self-describing command catalog with a bounded surface", async () => {
@@ -563,7 +573,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
     version: "0.1.0",
     skillBundlePath: skillBundle,
     serviceBundlePath: serviceBundle,
-    nodeRange: ">=22.12.0 <25",
+    nodeRange: TESTING_RELEASE_CONFIG.nodeRange,
     wranglerRange: ">=4.127.1 <5",
     serviceApiRange: ">=0.1.0 <0.2.0",
     schemaVersion: 1,
@@ -581,21 +591,22 @@ test("release metadata pins two artifacts, localized documents, and installable 
   await mkdir(prereleaseOutput);
   const prerelease = await generateReleaseMetadata({
     outputDirectory: prereleaseOutput,
-    canonicalBaseUrl: "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/",
-    version: "0.1.0-alpha.1",
-    channel: "prerelease",
-    urlLayout: "flat",
+    canonicalBaseUrl: TESTING_RELEASE_CONFIG.canonicalBaseUrl,
+    version: TESTING_RELEASE_CONFIG.version,
+    channel: TESTING_RELEASE_CONFIG.channel,
+    urlLayout: TESTING_RELEASE_CONFIG.urlLayout,
     skillBundlePath: skillBundle,
     serviceBundlePath: serviceBundle,
-    nodeRange: ">=22.12.0 <25",
-    wranglerRange: ">=4.127.1 <5",
-    serviceApiRange: ">=0.1.0 <0.2.0",
-    schemaVersion: 1,
+    nodeRange: TESTING_RELEASE_CONFIG.nodeRange,
+    wranglerRange: TESTING_RELEASE_CONFIG.wranglerRange,
+    serviceApiRange: TESTING_RELEASE_CONFIG.serviceApiRange,
+    schemaVersion: TESTING_RELEASE_CONFIG.schemaVersion,
   });
   assert.equal(path.basename(prerelease.pointerPath), "prerelease.json");
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.1/cfkanban-release-0.1.0-alpha.1.json");
+  assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.2/cfkanban-release-0.1.0-alpha.2.json");
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -612,6 +623,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
 test("plugin and Skill metadata stay English where localization is unsupported, while documents are paired", async () => {
   const plugin = JSON.parse(await readFile(new URL("../../.codex-plugin/plugin.json", import.meta.url), "utf8"));
   assert.equal(plugin.name, "cfkanban-agent-skills");
+  assert.equal(plugin.version, TESTING_RELEASE_CONFIG.version);
   assert.equal(/[\u3400-\u9fff]/u.test(JSON.stringify(plugin)), false);
   for (const skill of ["cfkanban", "cfkanban-admin", "cfkanban-deploy"]) {
     const yaml = await readFile(new URL(`../../skills/${skill}/agents/openai.yaml`, import.meta.url), "utf8");
@@ -626,7 +638,7 @@ test("plugin and Skill metadata stay English where localization is unsupported, 
   ]) {
     await Promise.all(pair.map((entry) => stat(new URL(entry, import.meta.url))));
   }
-  const releaseNotes = await readFile(new URL("../../release/notes/0.1.0-alpha.1.md", import.meta.url), "utf8");
+  const releaseNotes = await readFile(new URL(`../../release/notes/${TESTING_RELEASE_CONFIG.version}.md`, import.meta.url), "utf8");
   assert.match(releaseNotes, /## English/u);
   assert.match(releaseNotes, /## 简体中文/u);
 });
@@ -644,7 +656,7 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
     readFile(new URL("../../skills/cfkanban-admin/agents/openai.yaml", import.meta.url), "utf8"),
     readFile(new URL("../../skills/cfkanban-deploy/agents/openai.yaml", import.meta.url), "utf8"),
   ]);
-  const installCommand = "codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.1";
+  const installCommand = `codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref ${TESTING_RELEASE_CONFIG.version}`;
   for (const source of [readmeEn, readmeZh, skillsEn, skillsZh]) {
     assert.match(source, new RegExp(installCommand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(source, /codex plugin add cfkanban-agent-skills@cfkanban/u);
@@ -682,6 +694,8 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/bootstrap/install.zh-CN.md",
     "../../release/bootstrap/prerelease.schema.json",
     "../../release/notes/0.1.0-alpha.1.md",
+    "../../release/notes/0.1.0-alpha.2.md",
+    "../../release/config/0.1.0-alpha.2.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

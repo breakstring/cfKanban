@@ -17,6 +17,7 @@
 # Node.js and build output
 node_modules/
 dist/
+/build/
 coverage/
 *.tsbuildinfo
 
