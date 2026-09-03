@@ -45,7 +45,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.12.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.13.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -1191,6 +1191,11 @@ test("strict-zero plan freezes defaults; any delta requires new authorization", 
   assert.equal(plan.resources.custom_domain, null);
   assert.equal(plan.migrations.checksum_ledger_table, "cfkanban_migration_ledger");
   assert.equal(plan.steps.includes("read_migration_checksum_ledger_and_schema_again"), true);
+  assert.deepEqual(plan.owner_bootstrap.recovery_authorization, {
+    zero_state_retry_included_in_plan: true,
+    separate_confirmation_per_attempt: false,
+    requires_same_task_operation_plan_sql_and_credential: true,
+  });
   const firstSkillInstall = createSkillUpdatePlan({
     taskId: "task-wp10",
     current: null,
@@ -1878,6 +1883,7 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
   assert.match(admin, /First-use workflow after deployment/u);
   assert.match(deploy, /Choose the deployment source first/u);
   assert.match(deploy, /owner_bootstrap_readback/u);
+  assert.match(deploy, /Do not phrase the authorization as a one-command or one-attempt approval/u);
   for (const skill of [daily, admin, deploy]) assert.match(skill, /Intent-first user experience/u);
   assert.match(dailyYaml, /Use \$cfkanban to help me work in this cfKanban Project\./u);
   assert.match(adminYaml, /Use \$cfkanban-admin to create my first cfKanban board\./u);
@@ -1944,6 +1950,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.10.md",
     "../../release/notes/0.1.0-alpha.11.md",
     "../../release/notes/0.1.0-alpha.12.md",
+    "../../release/notes/0.1.0-alpha.13.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -1955,6 +1962,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.10.json",
     "../../release/config/0.1.0-alpha.11.json",
     "../../release/config/0.1.0-alpha.12.json",
+    "../../release/config/0.1.0-alpha.13.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
