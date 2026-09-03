@@ -35,7 +35,7 @@ The testing tag is immutable; use mutable `main` only for deliberate development
 
 The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.2/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
 
-Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three entrypoints deliberately share the bundled `packages/skill-runtime`; a host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
+Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three entrypoints deliberately share the bundled JavaScript source modules under `packages/skill-runtime`; despite the internal directory name, this is not an embedded Node.js executable or runtime distribution. A host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
 
 ## Commands included with each Skill
 
@@ -81,7 +81,7 @@ All persistent files owned by cfKanban use one private maintenance root for the 
 
 - `instances/` stores trusted instance metadata, Credentials, journals, and redacted receipts.
 - `skill-releases/` stores verified immutable Skill versions and the atomic active pointer.
-- `tool-runtime/` stores an isolated compatible Wrangler only when a user-owned compatible Wrangler is unavailable and the exact install plan is authorized.
+- `tool-runtime/` stores an isolated pinned Wrangler npm package and its dependencies only when a user-owned compatible Wrangler is unavailable and the exact install plan is authorized. It uses a compatible user-owned Node.js and never contains or installs Node.js itself.
 
 Host marketplace/plugin metadata, host Skill projections, plugin caches, and Cloudflare authentication stay in their owning system's directories. They cannot be moved into `.cfkanban/` because the corresponding host/tool must discover and manage them there. Windows native and WSL2 use different user homes and never share these locations automatically.
 
@@ -91,6 +91,8 @@ The unified root does not weaken secret boundaries: Credential files keep minimu
 
 Metadata schemas that accept only one string—`SKILL.md` frontmatter, `agents/openai.yaml`, `.codex-plugin/plugin.json`, and marketplace metadata—use English. Documents that support locale-specific files are maintained as paired English and Simplified Chinese files with language links at the top.
 
-## Shared runtime
+## Shared helper modules
 
-The three Skills route into the same dependency-free Node modules in `packages/skill-runtime`. This keeps path validation, trusted-origin handling, secret injection, error normalization, release verification, plan digests, and migration readback consistent without publishing a standalone cfKanban CLI or copying business rules out of the Service.
+The three Skills route into the same dependency-free JavaScript modules in `packages/skill-runtime`. These are source files executed by the user's compatible Node.js, not a bundled Node.js runtime. Sharing them keeps path validation, trusted-origin handling, secret injection, error normalization, release verification, plan digests, and migration readback consistent without publishing a standalone cfKanban CLI or copying business rules out of the Service.
+
+The separate Service archive contains the built Worker, Web assets, migrations, contracts, a pinned Wrangler configuration schema, and `wrangler.template.json`. That JSON file is a non-deployable skeleton with placeholder resource identities. After the exact deployment plan is authorized and D1 exists, `deployment write-wrangler-config` writes a private actual configuration outside the immutable archive; the template is never deployed unchanged.

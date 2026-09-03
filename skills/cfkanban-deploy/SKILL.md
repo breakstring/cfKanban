@@ -1,6 +1,6 @@
 ---
 name: cfkanban-deploy
-description: Install, inspect, deploy, resume, and upgrade cfKanban on Cloudflare with canonical release verification, strict-zero plans, migration readback, journals, Tool Runtime isolation, and out-of-band Owner recovery.
+description: Install, inspect, deploy, resume, and upgrade cfKanban on Cloudflare with canonical release verification, strict-zero plans, migration readback, journals, isolated pinned Wrangler management, and out-of-band Owner recovery.
 ---
 
 # cfKanban Deploy
@@ -12,7 +12,7 @@ Use this Skill for the Cloudflare control plane and local Skill lifecycle. For t
 - Verify a canonical bootstrap pointer, immutable release manifest, allowed artifact origins, SHA-256 digests, and publisher continuity.
 - Inspect Node, Wrangler, OS, storage, and host capabilities without changing them.
 - Read the selected Wrangler authentication profile and Cloudflare account before freezing a plan.
-- Plan and install an isolated Wrangler Tool Runtime when no compatible user-owned Wrangler exists.
+- Plan and install an isolated pinned Wrangler npm package, called the Tool Runtime, when no compatible user-owned Wrangler exists.
 - Produce, authorize, execute, resume, and verify a strict-zero deployment: one Worker, one D1, bundled Static Assets, and `workers.dev` by default.
 - Generate a private portable Wrangler configuration from the verified Service bundle and validate it with `wrangler deploy --dry-run` before deployment.
 - Reconcile migration manifest checksums, the remote ledger, and actual D1 schema artifacts.
@@ -20,6 +20,8 @@ Use this Skill for the Cloudflare control plane and local Skill lifecycle. For t
 - Perform controlled out-of-band recovery for the same Owner Principal after total Owner Credential loss.
 
 Loading this Skill is not authorization to install software, change local state, create cloud resources, migrate data, change DNS, recover an Owner, publish, or upgrade.
+
+`packages/skill-runtime` contains shared JavaScript source modules, not a Node.js executable or runtime distribution. The optional Tool Runtime under `~/.cfkanban/tool-runtime/` contains only pinned Wrangler and its npm dependencies; it runs with a compatible user-owned Node.js and never installs Node.js. In the Service bundle, `wrangler.template.json` is a schema-checked skeleton with placeholder resource identities, not a deployable configuration. Generate the private, plan-bound actual configuration outside the immutable bundle before any dry run or deployment.
 
 ## Intent-first user experience
 

@@ -20,7 +20,7 @@ All persistent state owned by cfKanban uses one current-environment user root:
 
 - `instances/` contains trusted-origin metadata, private Credentials, operation journals, and redacted receipts.
 - `skill-releases/` contains verified immutable Skill bundle versions plus an atomic active pointer and previous known-good version.
-- `tool-runtime/` contains the exact cfKanban-managed Wrangler dependency when a compatible user-owned Wrangler is unavailable. It is never added to PATH.
+- `tool-runtime/` contains the exact cfKanban-managed Wrangler npm package and its dependencies when a compatible user-owned Wrangler is unavailable. It uses the current environment's compatible user-owned Node.js, never contains or installs Node.js, and is never added to PATH.
 
 Windows native places `.cfkanban` under the current Windows profile home. WSL2 uses the current Linux home. They are separate execution environments and never discover, call, copy, or share these directories automatically.
 
@@ -84,7 +84,7 @@ Commands accept structured JSON on stdin. Credential generation and loading rema
 4. Run `plan strict-zero`. The default candidate contains one Worker, one D1, bundled Static Assets, `workers.dev`, no optional Cloudflare products, and 120/300/30 request gates per 60 seconds. Freeze the selected Cloudflare profile/account and resolve missing Owner display name before freezing the digest.
 5. Create the journal and present the entire plan. `journal authorize` records approval only for the current Agent task, operation ID, and digest.
 6. Execute only allowlisted `deploy wrangler-action` steps. Create D1 explicitly; automatic provisioning is not used. Unknown same-name resources are never adopted; a collision proposes a different name.
-7. Run `deployment write-wrangler-config` with the created D1 ID. It writes a private config outside the immutable bundle, points to the bundle's built Worker/Static Assets/migrations, and freezes account, names, bindings, compatibility date, and rate gates.
+7. Run `deployment write-wrangler-config` with the created D1 ID. The bundle's `wrangler.template.json` is only a schema-checked skeleton with placeholder resource identities and must never be deployed unchanged. The command writes a private actual config outside the immutable bundle, points to the bundle's built Worker/Static Assets/migrations, and freezes account, names, bindings, compatibility date, and rate gates.
 8. Before data bootstrap, create the pending Owner Credential and hash-only bootstrap SQL. The plaintext token never enters the plan, SQL, stdout, command arguments, environment, logs, or receipt.
 9. Initialize the checksum ledger and use Cloudflare's standard `wrangler d1 migrations apply --remote` behavior. It applies pending files sequentially; reconcile the cfKanban checksum ledger plus actual schema after the command or any uncertain result.
 10. Run `validate_worker_bundle` with the exact generated config and resolved Wrangler. A successful dry run is required but is not deployment authorization or remote-write proof.

@@ -35,7 +35,7 @@ codex plugin add cfkanban-agent-skills@cfkanban
 
 当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.2/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
 
-应安装完整 plugin/bundle，不能只复制某个 `SKILL.md` 或单独的 `skills/<name>/` 目录。三个 entrypoints 按设计共用 bundle 内的 `packages/skill-runtime`，宿主投影必须保留这套已验证 bundle layout。当前测试预览只支持 Codex plugin 路径；其他宿主的 projection 属于稳定发行安装流程，不能用不完整的目录复制冒充。
+应安装完整 plugin/bundle，不能只复制某个 `SKILL.md` 或单独的 `skills/<name>/` 目录。三个 entrypoints 按设计共用 bundle 内 `packages/skill-runtime` 下的 JavaScript 源码模块；尽管内部目录名包含 `runtime`，它并不是内嵌的 Node.js 可执行程序或运行时发行包。宿主投影必须保留这套已验证 bundle layout。当前测试预览只支持 Codex plugin 路径；其他宿主的 projection 属于稳定发行安装流程，不能用不完整的目录复制冒充。
 
 ## 每个 Skill 内置的命令
 
@@ -81,7 +81,7 @@ cfKanban 自己拥有的所有持久文件统一放在当前执行环境用户�
 
 - `instances/` 保存 trusted instance metadata、Credentials、journals 与脱敏 receipts。
 - `skill-releases/` 保存已验证 immutable Skill versions 和 atomic active pointer。
-- `tool-runtime/` 只在没有兼容的用户自有 Wrangler、且准确安装计划已获授权时，保存隔离的兼容 Wrangler。
+- `tool-runtime/` 只在没有兼容的用户自有 Wrangler、且准确安装计划已获授权时，保存隔离的固定版本 Wrangler npm package 及其依赖。它使用用户已有的兼容 Node.js，本身绝不包含或安装 Node.js。
 
 宿主 marketplace/plugin metadata、宿主 Skill 投影、plugin caches 与 Cloudflare authentication 继续保存在各自所有者的目录；对应宿主/工具必须在那里发现并管理它们，因此不能迁入 `.cfkanban/`。Windows 原生与 WSL2 使用不同 user homes，绝不自动共享这些目录。
 
@@ -91,6 +91,8 @@ cfKanban 自己拥有的所有持久文件统一放在当前执行环境用户�
 
 只接受一个字符串的 metadata schema——`SKILL.md` frontmatter、`agents/openai.yaml`、`.codex-plugin/plugin.json` 与 marketplace metadata——统一使用英文。支持 locale-specific files 的文档同时维护 English 与简体中文，并在顶部提供语言链接。
 
-## 共享 runtime
+## 共享 helper modules
 
-三个 Skills 都路由到 `packages/skill-runtime` 中同一套无第三方依赖 Node modules。这样路径校验、trusted-origin 处理、secret 注入、错误归一化、release 验证、plan digest 与 migration readback 保持一致，同时不发布独立 cfKanban CLI，也不把 Service 的业务规则复制到本地。
+三个 Skills 都路由到 `packages/skill-runtime` 中同一套无第三方依赖 JavaScript modules。这些是由用户已有兼容 Node.js 执行的源码文件，不是打包进来的 Node.js runtime。共享这些模块可以让路径校验、trusted-origin 处理、secret 注入、错误归一化、release 验证、plan digest 与 migration readback 保持一致，同时不发布独立 cfKanban CLI，也不把 Service 的业务规则复制到本地。
+
+独立的 Service 压缩包包含构建后的 Worker、Web assets、migrations、contracts、固定的 Wrangler 配置 schema，以及 `wrangler.template.json`。这个 JSON 文件只是带占位资源身份的不可直接部署配置骨架。准确部署计划获批且 D1 已创建后，`deployment write-wrangler-config` 才会在 immutable archive 外写入私有的实际配置；模板绝不能原样部署。

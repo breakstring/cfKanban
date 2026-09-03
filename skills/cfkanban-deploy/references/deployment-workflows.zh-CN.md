@@ -20,7 +20,7 @@ cfKanban 自己拥有的持久数据统一放在当前执行环境用户的一�
 
 - `instances/` 保存 trusted-origin metadata、私有 Credentials、operation journals 与脱敏 receipts。
 - `skill-releases/` 保存已验证的 immutable Skill bundle versions、atomic active pointer 与上一 known-good version。
-- `tool-runtime/` 在没有兼容的用户自有 Wrangler 时保存准确的 cfKanban-managed Wrangler 依赖；不会加入 PATH。
+- `tool-runtime/` 在没有兼容的用户自有 Wrangler 时保存准确的 cfKanban-managed Wrangler npm package 及其依赖；它使用当前环境中用户已有的兼容 Node.js，绝不包含或安装 Node.js，也不会加入 PATH。
 
 Windows 原生把 `.cfkanban` 放在当前 Windows profile home 下；WSL2 使用当前 Linux home。两者是独立执行环境，不自动发现、调用、复制或共享这些目录。
 
@@ -84,7 +84,7 @@ Cloudflare 在自己的仓库维护了两个有用的可选协作 Skill：
 4. 运行 `plan strict-zero`。默认候选包含一个 Worker、一个 D1、bundled Static Assets、`workers.dev`、不包含可选 Cloudflare 产品，并使用每 60 秒 120/300/30 request gates。冻结所选 Cloudflare profile/account，并在冻结 digest 前解决缺少的 Owner display name。
 5. 创建 journal 并展示完整 plan。`journal authorize` 只记录 current Agent task、operation ID 与 digest 的授权。
 6. 只执行 allowlisted `deploy wrangler-action`。显式创建 D1，不使用自动资源供应。未知同名资源绝不接管；冲突时另提名称。
-7. 使用已创建 D1 的 ID 运行 `deployment write-wrangler-config`。它在 immutable bundle 外写入私有 config，指向 bundle 内已构建 Worker/Static Assets/migrations，并固定 account、名称、bindings、compatibility date 与 rate gates。
+7. 使用已创建 D1 的 ID 运行 `deployment write-wrangler-config`。bundle 内的 `wrangler.template.json` 只是带占位资源身份、经过 schema 校验的配置骨架，绝不能原样部署。该命令会在 immutable bundle 外写入私有的实际 config，指向 bundle 内已构建 Worker/Static Assets/migrations，并固定 account、名称、bindings、compatibility date 与 rate gates。
 8. 数据 bootstrap 前创建 pending Owner Credential 与 hash-only bootstrap SQL。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
 9. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。
 10. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。

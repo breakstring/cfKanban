@@ -19,6 +19,8 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 
 这个区别很重要：plugin 只帮助 Codex 发现 Skills；未来的 canonical release manifest 才会固定并校验真正允许部署的 Skill bundle 与 Service bundle。
 
+发行压缩包不包含 Node.js 可执行程序。Skill bundle 里是普通 `.mjs` helper modules，由用户电脑上已有的兼容 Node.js 运行。Service bundle 里是构建后的 Worker、Web assets、migrations、contracts，以及一份 `wrangler.template.json` 配置骨架；部署 Skill 不会直接使用其中的占位资源值，而是在部署前根据已批准计划生成一份私有的实际 Wrangler 配置。普通用户不需要手工解压这两个文件。
+
 ## 你需要准备什么
 
 当前测试预览路径需要：
@@ -30,7 +32,7 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 未来部署到 Cloudflare 时还需要：
 
 - 一个有权创建一个 Worker 和一个 D1 数据库的 Cloudflare 账户；
-- 兼容的 Node.js 与 Wrangler 环境。`cfkanban-deploy` 会先检查已有工具；只有没有可复用版本时，才可在展示并获得独立安装计划授权后添加隔离的 Wrangler runtime；
+- 兼容的 Node.js 与 Wrangler 环境。`cfkanban-deploy` 会先检查已有工具；Wrangler 不可用时，只有在展示并获得独立安装计划授权后，才能把固定版本的 Wrangler package 安装到 `~/.cfkanban/tool-runtime/`。它不会内嵌或安装 Node.js；
 - 你希望 cfKanban 使用的 Owner display name。Agent 不能从操作系统账号或 Git identity 猜测这个名称。
 
 ## 在 Codex 中安装测试预览 Skills
@@ -126,7 +128,7 @@ cfKanban 自己拥有的持久本地数据统一使用当前执行环境用户�
 ~/.cfkanban/
   instances/       # trusted instance metadata、Credentials、journals、receipts
   skill-releases/  # verified immutable Skill releases 与 active pointer
-  tool-runtime/    # 仅在明确授权后使用的隔离 Wrangler runtime
+  tool-runtime/    # 隔离的固定版本 Wrangler package；不包含 Node.js runtime
 ```
 
 Codex marketplace 配置和 plugin cache 仍放在 Codex 自己管理的目录，因为 Codex 只能在那里发现它们。这些内容是可丢弃的宿主投影，不是 cfKanban 状态，也不是 canonical release 真相源。Windows 原生和 WSL2 使用各自独立的用户目录，绝不自动混用。
