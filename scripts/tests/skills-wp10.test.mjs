@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { buildCapabilityReport } from "../../packages/skill-runtime/src/capabilities.mjs";
-import { writeOwnerBootstrapSql } from "../../packages/skill-runtime/src/bootstrap-sql.mjs";
+import { prepareOwnerCredential, writeOwnerBootstrapSql } from "../../packages/skill-runtime/src/bootstrap-sql.mjs";
+import { finalizeOwnerDeployment } from "../../packages/skill-runtime/src/deployment-finalize.mjs";
 import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
 import { redeemInvitation, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
 import { buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
@@ -44,7 +45,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.10.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.11.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -509,6 +510,8 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
   assert.equal(names(deploy).includes("runtime wrangler-account-readback"), true);
   assert.equal(names(deploy).includes("runtime d1-resource-readback"), true);
   assert.equal(names(deploy).includes("runtime worker-resource-readback"), true);
+  assert.equal(names(deploy).includes("deployment prepare-owner-credential"), true);
+  assert.equal(names(deploy).includes("deployment finalize-owner"), true);
   assert.equal(names(deploy).includes("runtime wrangler-whoami"), false);
   assert.equal(names(deploy).includes("scope resolve"), false);
   assert.equal(deploy.commands.every((entry) => entry.description && entry.effect && Array.isArray(entry.input_fields)), true);
@@ -547,8 +550,10 @@ test("Invite redemption injects and verifies a pending Credential without exposi
       });
     }
     return new Response(JSON.stringify({
+      id: PRINCIPAL_ID,
       principal_id: PRINCIPAL_ID,
-      credential: { id: CREDENTIAL_ID, fingerprint: pending.fingerprint },
+      is_owner: false,
+      credential: { id: pending.credential_id, fingerprint: pending.fingerprint },
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
   const result = await redeemInvitation({
@@ -582,7 +587,7 @@ test("Owner rotation keeps both current and replacement Credentials inside the b
     idempotencyKey: "owner-bootstrap",
   });
   const firstSecret = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
-  await promotePendingCredential({ stateRoot, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, fingerprint: first.fingerprint });
+  await promotePendingCredential({ stateRoot, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, credentialId: first.credential_id, fingerprint: first.fingerprint });
 
   const replacement = await createPendingCredential({
     stateRoot,
@@ -607,7 +612,9 @@ test("Owner rotation keeps both current and replacement Credentials inside the b
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response(JSON.stringify({
+      id: PRINCIPAL_ID,
       principal_id: PRINCIPAL_ID,
+      is_owner: true,
       credential: { id: replacement.credential_id, fingerprint: replacement.fingerprint },
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
@@ -641,7 +648,11 @@ test("private state uses pending to current promotion, hides secrets, and reject
   assert.match(pendingSecret.token, /^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]{43}$/);
   const inspected = await inspectInstanceState({ stateRoot, home, persistenceConfirmed: true, instanceId: INSTANCE_ID });
   assert.equal(JSON.stringify(inspected).includes(pendingSecret.token), false);
-  const promoted = await promotePendingCredential({ stateRoot, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, fingerprint: pending.fingerprint });
+  await assert.rejects(
+    promotePendingCredential({ stateRoot, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, credentialId: "77777777-7777-4777-8777-777777777777", fingerprint: pending.fingerprint }),
+    (error) => error.code === "STATE_SECRET_MISMATCH",
+  );
+  const promoted = await promotePendingCredential({ stateRoot, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, credentialId: pending.credential_id, fingerprint: pending.fingerprint });
   assert.equal(promoted.state, "current");
   assert.equal((await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID })).token, pendingSecret.token);
   if (process.platform !== "win32") {
@@ -667,19 +678,137 @@ test("state initialization rejects a symlink root", async (t) => {
   );
 });
 
-test("Owner bootstrap SQL contains only the Credential digest and prefix", async (t) => {
+test("Owner bootstrap and finalization stay plan-bound, verify exact identity, and write only a redacted receipt", async (t) => {
   const { home, stateRoot } = await fixtureState();
   t.after(() => rm(home, { recursive: true, force: true }));
-  const pending = await createPendingCredential({ stateRoot, home, persistenceConfirmed: true, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, credentialId: CREDENTIAL_ID, operationId: OPERATION_ID });
+  const serviceRoot = path.join(home, "service-bundle");
+  await mkdir(path.join(serviceRoot, "dist"), { recursive: true });
+  await mkdir(path.join(serviceRoot, "apps", "web", "dist"), { recursive: true });
+  await mkdir(path.join(serviceRoot, "contracts"), { recursive: true });
+  await mkdir(path.join(serviceRoot, "migrations"), { recursive: true });
+  await mkdir(path.join(serviceRoot, "release", "deployment"), { recursive: true });
+  await writeFile(path.join(serviceRoot, "dist", "index.js"), "export default {};\n", "utf8");
+  await writeFile(path.join(serviceRoot, "apps", "web", "dist", "index.html"), "<!doctype html>\n", "utf8");
+  await writeFile(path.join(serviceRoot, "contracts", "openapi.json"), `${JSON.stringify({ info: { version: "0.1.0" } })}\n`, "utf8");
+  const migrationText = "SELECT 1;\n";
+  const migration = {
+    sequence: 1,
+    name: "0001_initial.sql",
+    sha256: sha256Bytes(Buffer.from(migrationText, "utf8")),
+    classification: "bootstrap",
+    destructive: false,
+    reentry: "wrangler_migration_ledger_only",
+    expected_artifacts: { tables: [], indexes: [] },
+  };
+  await writeFile(path.join(serviceRoot, "migrations", migration.name), migrationText, "utf8");
+  await writeFile(path.join(serviceRoot, "migrations", "manifest.json"), `${JSON.stringify({ manifest_version: 1, schema_version: 1, migrations: [migration] }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(serviceRoot, "release", "deployment", "migration-readback.sql"), "SELECT 1;\n", "utf8");
+  await writeFile(path.join(serviceRoot, "wrangler-config-schema.json"), "{}\n", "utf8");
+  await writeFile(path.join(serviceRoot, "wrangler.template.json"), JSON.stringify({
+    compatibility_date: "2026-08-29",
+    assets: { binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: ["/api/*", "/healthz"] },
+  }), "utf8");
+
+  const artifactRoot = path.join(home, "artifacts");
+  const skillSource = path.join(home, "skill-source");
+  await mkdir(artifactRoot);
+  await mkdir(skillSource);
+  await writeFile(path.join(skillSource, "SKILL.md"), "---\nname: fixture\ndescription: fixture\n---\n", "utf8");
+  const skillBundle = path.join(artifactRoot, "skills.zip");
+  const serviceBundle = path.join(artifactRoot, "service.zip");
+  await writeDeterministicZip({ root: skillSource, outputPath: skillBundle, prefix: "skills/" });
+  await writeDeterministicZip({ root: serviceRoot, outputPath: serviceBundle, prefix: "service/" });
+  const releaseOutput = path.join(home, "release-output");
+  await mkdir(releaseOutput);
+  const generated = await generateReleaseMetadata({
+    outputDirectory: releaseOutput,
+    canonicalBaseUrl: "https://releases.example.test/cfkanban/0.1.0/",
+    version: "0.1.0",
+    skillBundlePath: skillBundle,
+    serviceBundlePath: serviceBundle,
+    nodeRange: ">=22.12.0 <27",
+    wranglerRange: ">=4.127.1 <5",
+    serviceApiRange: ">=0.1.0 <0.2.0",
+    schemaVersion: 1,
+  });
+  const serviceArtifact = generated.manifest.artifacts.find((artifact) => artifact.kind === "service_deployment_bundle");
+  const skillArtifact = generated.manifest.artifacts.find((artifact) => artifact.kind === "skill_bundle");
+  const plan = createStrictZeroPlan({
+    taskId: "wp10-owner-finalize",
+    accountId: "account-one",
+    cloudflareProfile: "production",
+    ownerDisplayName: "Example Owner",
+    release: {
+      manifest_version: generated.manifest.release.version,
+      manifest_sha256: generated.pointer.manifest_sha256,
+      service_bundle_version: serviceArtifact.version,
+      service_bundle_sha256: serviceArtifact.sha256,
+    },
+    instanceId: INSTANCE_ID,
+    ownerPrincipalId: PRINCIPAL_ID,
+    ownerCredentialId: CREDENTIAL_ID,
+    operationId: OPERATION_ID,
+  }).plan;
+  await createJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, plan });
+  await authorizeJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: plan.task_id, planDigest: canonicalDigest(plan) });
+  const config = await writeFrozenWranglerConfig({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    serviceBundleRoot: serviceRoot,
+    d1DatabaseId: "77777777-7777-4777-8777-777777777777",
+  });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: {
+      type: "command_finished",
+      action: "migration_ledger_readback",
+      exit_code: 0,
+      migration_readback: {
+        ledger: [{ ...migration, operation_id: OPERATION_ID, applied_at: Date.now() }],
+        schema: { tables: [], indexes: [] },
+        result_set_count: 2,
+      },
+    },
+  });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "deploy_worker_and_static_assets", exit_code: 0 },
+  });
+  await installVerifiedSkillBundle({
+    bundlePath: skillBundle,
+    version: "0.1.0",
+    expectedSha256: skillArtifact.sha256,
+    publisher: generated.manifest.publisher.canonical_origin,
+    source: skillArtifact.url,
+    releaseRoot: path.join(stateRoot, "skill-releases"),
+  });
+  const prepared = await prepareOwnerCredential({
+    stateRoot,
+    home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+  });
+  assert.equal(prepared.state, "pending");
+  const pending = await readJson(getInstancePaths({ stateRoot, instanceId: INSTANCE_ID }).pendingMetadata);
   const secret = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
   const result = await writeOwnerBootstrapSql({
     stateRoot,
     instanceId: INSTANCE_ID,
-    ownerDisplayName: "Example Owner",
-    ownerPrincipalId: PRINCIPAL_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    configPath: config.wrangler_config_path,
     preferredApiOrigin: "https://example.workers.dev",
-    serviceVersion: "0.1.0",
-    schemaVersion: 1,
   });
   const sql = await readFile(result.bootstrap_sql_path, "utf8");
   assert.equal(sql.includes(secret.token), false);
@@ -687,6 +816,84 @@ test("Owner bootstrap SQL contains only the Credential digest and prefix", async
   assert.doesNotMatch(sql, /\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/iu);
   assert.equal(result.contains_plaintext_credential, false);
   assert.equal(result.relies_on_wrangler_file_ingestion_transaction, true);
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "bootstrap_owner",
+    configPath: config.wrangler_config_path,
+    bootstrapSqlPath: result.bootstrap_sql_path,
+    runner: async () => ({ code: 0, signal: null, stdout: "bootstrap complete", stderr: "" }),
+  });
+  await assert.rejects(
+    executeWranglerAction({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      operationId: OPERATION_ID,
+      taskId: plan.task_id,
+      plan,
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      action: "bootstrap_owner",
+      configPath: config.wrangler_config_path,
+      bootstrapSqlPath: result.bootstrap_sql_path,
+      runner: async () => ({ code: 0, signal: null, stdout: "", stderr: "" }),
+    }),
+    (error) => error.code === "OWNER_BOOTSTRAP_ALREADY_ATTEMPTED",
+  );
+
+  const fetchCalls = [];
+  let wrongCredential = true;
+  const fetchImpl = async (url, options) => {
+    const headers = new Headers(options.headers);
+    fetchCalls.push({ path: url.pathname, authorization: headers.has("authorization") });
+    let body;
+    if (url.pathname === "/healthz") {
+      body = { d1: "reachable", service_version: "0.1.0", schema_version: 1 };
+    } else if (url.pathname === "/.well-known/cfkanban-instance.json") {
+      body = { discovery_version: 1, instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0" };
+    } else if (url.pathname === "/api/v1/meta") {
+      body = { instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0", schema_version: 1, principal: { id: PRINCIPAL_ID, is_owner: true } };
+    } else {
+      body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example Owner", is_owner: true, credential: { id: wrongCredential ? "88888888-8888-4888-8888-888888888888" : CREDENTIAL_ID, fingerprint: pending.fingerprint } };
+    }
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const finalizeInput = {
+    stateRoot,
+    home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    configPath: config.wrangler_config_path,
+    apiOrigin: "https://example.workers.dev",
+    releasePointerPath: generated.pointerPath,
+    manifestPath: generated.manifestPath,
+    artifactFiles: { skill_bundle: skillBundle, service_deployment_bundle: serviceBundle },
+    fetchImpl,
+  };
+  await assert.rejects(finalizeOwnerDeployment(finalizeInput), (error) => error.code === "DEPLOYMENT_OWNER_MISMATCH");
+  assert.equal((await inspectInstanceState({ stateRoot, home, persistenceConfirmed: true, instanceId: INSTANCE_ID })).credential.pending.state, "pending");
+  wrongCredential = false;
+  const finalized = await finalizeOwnerDeployment(finalizeInput);
+  assert.equal(finalized.finalized, true);
+  assert.equal(finalized.credential_state, "current");
+  assert.equal(finalized.secret_values_exposed, false);
+  const receipt = await readJson(finalized.receipt_path);
+  assert.equal(receipt.owner.credential_id, CREDENTIAL_ID);
+  assert.equal(receipt.operation.plan_digest, canonicalDigest(plan));
+  assert.equal(receipt.active_skill_runtime.version, "0.1.0");
+  assert.equal(JSON.stringify(receipt).includes(secret.token), false);
+  assert.equal(JSON.stringify(finalized).includes(secret.token), false);
+  assert.equal(fetchCalls.filter((call) => call.authorization).every((call) => call.path === "/api/v1/meta" || call.path === "/api/v1/me"), true);
+  const resumed = await finalizeOwnerDeployment(finalizeInput);
+  assert.equal(resumed.resumed, true);
+  const journal = await readJson(getInstancePaths({ stateRoot, instanceId: INSTANCE_ID }).journalsRoot + `/${OPERATION_ID}.json`);
+  assert.equal(journal.events.filter((event) => event.type === "deployment_finalized").length, 1);
 });
 
 test("scope resolution prefers explicit, then Repo, then warned aggregate", () => {
@@ -1423,7 +1630,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
   assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.10/cfkanban-release-0.1.0-alpha.10.json");
+  assert.equal(prerelease.pointer.manifest_url, `https://github.com/breakstring/cfKanban/releases/download/${TESTING_RELEASE_CONFIG.version}/cfkanban-release-${TESTING_RELEASE_CONFIG.version}.json`);
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -1558,6 +1765,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.8.md",
     "../../release/notes/0.1.0-alpha.9.md",
     "../../release/notes/0.1.0-alpha.10.md",
+    "../../release/notes/0.1.0-alpha.11.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -1567,6 +1775,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.8.json",
     "../../release/config/0.1.0-alpha.9.json",
     "../../release/config/0.1.0-alpha.10.json",
+    "../../release/config/0.1.0-alpha.11.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

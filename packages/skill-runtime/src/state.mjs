@@ -234,15 +234,19 @@ export async function loadPendingCredentialSecret({ stateRoot = resolveStateRoot
   return { metadata, token: secret.token };
 }
 
-export async function promotePendingCredential({ stateRoot = resolveStateRoot(), instanceId, principalId, fingerprint }) {
+export async function promotePendingCredential({ stateRoot = resolveStateRoot(), instanceId, principalId, credentialId, fingerprint }) {
   const paths = instancePaths(stateRoot, instanceId);
   const { metadata } = await loadPendingCredentialSecret({ stateRoot, instanceId });
   const verifiedPrincipalId = requireUuid(principalId, "principal_id");
+  const verifiedCredentialId = requireUuid(credentialId, "credential_id");
   if (metadata.principal_id !== null && metadata.principal_id !== verifiedPrincipalId) {
     throw toolError("STATE_IDENTITY_CONFLICT", "Server readback returned a different Principal for the pending Credential", { instanceId });
   }
   if (metadata.fingerprint !== fingerprint) {
     throw toolError("STATE_SECRET_MISMATCH", "Server readback fingerprint does not match the pending Credential", { instanceId });
+  }
+  if (metadata.credential_id !== verifiedCredentialId) {
+    throw toolError("STATE_SECRET_MISMATCH", "Server readback Credential ID does not match the pending Credential", { instanceId });
   }
   const current = await readJson(paths.currentMetadata, { allowMissing: true });
   if (current !== null && current.principal_id !== verifiedPrincipalId) {

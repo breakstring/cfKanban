@@ -26,7 +26,7 @@ function redactSecretValues(value, secrets) {
   return value;
 }
 
-async function verifyAndPromote({ stateRoot, instanceId, token, operation, fetchImpl }) {
+async function verifyAndPromote({ stateRoot, instanceId, token, operation, fetchImpl, requireOwner = false }) {
   const verification = await trustedApiRequest({
     stateRoot,
     instanceId,
@@ -42,18 +42,32 @@ async function verifyAndPromote({ stateRoot, instanceId, token, operation, fetch
     };
   }
   const principalId = requireUuid(verification.data?.principal_id, "principal_id");
+  const resourceId = requireUuid(verification.data?.id, "principal_resource_id");
+  if (resourceId !== principalId) {
+    throw toolError("CREDENTIAL_VERIFICATION_MISMATCH", "/me returned inconsistent Principal identifiers", { instanceId });
+  }
+  if (typeof verification.data?.is_owner !== "boolean") {
+    throw toolError("CREDENTIAL_VERIFICATION_MISMATCH", "/me did not return an explicit Owner identity flag", { instanceId });
+  }
+  if (requireOwner && verification.data.is_owner !== true) {
+    throw toolError("CREDENTIAL_VERIFICATION_MISMATCH", "/me did not verify the expected Deployment Owner identity", { instanceId });
+  }
+  const credentialId = requireUuid(verification.data?.credential?.id, "credential_id");
   const fingerprint = requireString(verification.data?.credential?.fingerprint, "credential_fingerprint", { max: 128 });
-  const promoted = await promotePendingCredential({ stateRoot, instanceId, principalId, fingerprint });
+  const promoted = await promotePendingCredential({ stateRoot, instanceId, principalId, credentialId, fingerprint });
   return {
     operation,
     verification: {
       ok: true,
       principal_id: principalId,
+      is_owner: verification.data.is_owner,
+      credential_id: credentialId,
       credential_fingerprint: fingerprint,
     },
     credential: {
       state: promoted.state,
       principal_id: promoted.principal_id,
+      credential_id: promoted.credential_id,
       fingerprint: promoted.fingerprint,
       secret_values_exposed: false,
     },
@@ -181,5 +195,5 @@ export async function rotateOwnerCredential({
   });
   const safeOperation = redactSecretValues(operation, [current.token, pending.token]);
   if (!operation.ok) return { operation: safeOperation, credential: { state: "pending", secret_values_exposed: false } };
-  return verifyAndPromote({ stateRoot, instanceId, token: pending.token, operation: safeOperation, fetchImpl });
+  return verifyAndPromote({ stateRoot, instanceId, token: pending.token, operation: safeOperation, fetchImpl, requireOwner: true });
 }

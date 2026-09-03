@@ -1,14 +1,14 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
 - 文档状态：Frozen
-- 合同修订：24
+- 合同修订：25
 - Roadmap：R0 / R3
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
 - 事实快照：[Agent Skill 与本地部署环境能力快照](../research/agent-skill-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-09-03
+- 最近更新：2026-09-04
 - 冻结日期：2026-08-28
-- 最近修订：2026-09-03（D-257、D-258）
+- 最近修订：2026-09-04（D-259）
 
 ## 1. 目的与边界
 
@@ -349,10 +349,12 @@ Service deployment bundle 必须携带已构建 Worker、预构建 Static Assets
 ### 7.4 Owner Credential 与交付
 
 - Owner Credential secret 优先由 Skill 内置 Node 脚本生成并直接写入 `.cfkanban/` 受限 Credential 文件；Agent context 和终端正常输出只看到 fingerprint。
+- 首次 Owner Credential 必须由绑定同一 task/operation/plan digest 的专用部署命令从冻结的 Owner Principal/Credential IDs 创建或恢复；不得让 Agent 把这些 ID 手工复制到通用 Credential 命令后再宣称 plan-bound。hash-only bootstrap SQL 同样重新核对已授权 journal、私有 Frozen Wrangler config、完整 migration ledger/schema readback、同 journal Worker deploy、准确 `workers.dev` origin 与 pending Credential，并把固定私有路径和文件 digest 写入 journal。
+- Owner bootstrap 的远端 SQL 每个 operation 只允许尝试一次。存在任何已记录尝试后，不得盲目重跑；必须先通过公开 discovery 和持有同一 pending/current Credential 的只读请求判断是否提交。
 - 云端只保存 hash/prefix；本地保存失败时不把 bootstrap 标记为完成。
 - Cloudflare auth 与 cfKanban Owner Credential 是两套不同凭据，不能互相复制或代用。
 - Owner 正常轮换由 `cfkanban-admin` 执行：脚本先生成替代 token 并写入同一实例的受限 pending 文件，再以当前 Owner Bearer Credential 调用幂等原子 rotation，验证新 Credential 后才原子切换本地 current slot。Web Session 不能发起该操作，管理页也不提供 Owner Credential revoke/rotate。全部 Owner Credential 丢失时才使用 `cfkanban-deploy` 的部署外恢复。
-- 部署完成后验证 health、instance metadata 与 `/api/v1/me`。
+- 部署最终化必须同时验证 health、公开 `/.well-known/cfkanban-instance.json`、认证后的 `/api/v1/meta` 与 `/api/v1/me`：准确匹配 instance ID、observed/preferred origin、origin version、Service/schema versions、Owner flag、Principal ID、Credential ID 与 fingerprint。`/me` 单独不包含 instance ID，不能单独作为部署完成证据。全部匹配后才写 trusted instance metadata、把 pending 原子提升为 current，并创建脱敏 receipt；若本地写入在提升后中断，续做必须复用同一 current Credential，不得生成第二个 secret。
 - `cfkanban-deploy` 的实例检查/升级 preflight 还要只读核对 Cloudflare 当前 Workers Domains/Routes 与本地 receipt，报告 Dashboard 手工添加的域名和配置所有权。deployment bundle 默认不得因路由未出现在 release 文件中就静默删除域名；任何创建、删除或接管 domain 都是明确 plan delta。
 - Owner 设置 preferred API origin 由 `cfkanban-admin` 使用 Owner Bearer Credential 调用应用层原子能力，不要求重新部署 Worker；Owner Web 只读显示而不修改。Cloudflare-native candidate 可由 `cfkanban-deploy` 显式只读 reconcile 提供，第三方 candidate 必须由 Owner 明确给出。设置前先完成无 Credential 探测和影响预览，设置后从旧/new origin 读回 discovery 一致性。
 - 最终输出人类摘要和去敏 machine receipt：instance URL/ID、Cloudflare resource identifiers、Owner Principal/fingerprint、Skill bundle/scripts/Service versions、验证结果、journal ID 和下一条建议 prompt。
@@ -527,8 +529,9 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 34. 已确认：D-255 将 Cloudflare 官方 `cloudflare`/`wrangler` Skills 定位为可选上游参考而非依赖或授权来源；安装不自动发生，通用 latest/repo-local/npx 建议不覆盖 stable release 合同。Service bundle 携带 portable Wrangler template/schema，D1 创建后生成私有 Frozen config，并在正式 deploy 前用同一 Wrangler/config dry run。
 35. 已修订：D-256 曾将 Wrangler auth 收敛为当前上下文优先并只检查一个备用 profile；D-257 进一步从 auth resolver 移除自动 profile listing。当前顺序是“journal/receipt 准确目标 → 环境 Token → 用户明确给出的 `--profile` → 私有部署/config 上下文 → default profile → 新登录”，resolver 不通过枚举选择身份；准确 account 仍由读回和私有 `wrangler.jsonc.account_id` 固定。新登录候选的 exact collision preflight 不属于 profile 选择。
 36. 已确认：D-258 按 Wrangler/D1 ingestion 合同移除生成 SQL 中的显式事务控制；checksum 与 Owner bootstrap 文件由远端 `d1 execute --file` 提供事务边界。schema 完整但 ledger 缺行只允许在同一已授权 journal 证明 apply 成功、后继准确读回完整且无其他 drift 时补写单条 insert-only checksum，随后必须再次读回；任意既有 schema 仍不能自动 baseline。
+37. 已确认：D-259 将首次 Owner Credential 准备、bootstrap SQL digest、单次远端尝试、discovery/`/meta`/`/me` 身份读回、pending → current 与脱敏 receipt 全部绑定到同一已授权 task/operation/plan。`/me` 必须核对 Principal resource ID、Owner flag、Credential ID/fingerprint；部署最终化还必须通过 discovery 与 `/meta` 核对 Instance/origin/Service/schema。局部最终化失败只复用准确 pending/current，不创建第二份 Credential。
 
-SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 24 在此前统一 `.cfkanban/`、双语 Skill 表面与 portable Wrangler config 的基础上，移除自动 profile 枚举，以 Wrangler 身份上下文配合私有 config 的准确 `account_id`；同时固定 D1 file ingestion 事务与严格的同 journal 缺 ledger 行恢复。此前 monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
+SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 25 在此前统一 `.cfkanban/`、双语 Skill 表面、portable Wrangler config、不枚举 profiles 与 D1 ingestion 恢复合同的基础上，将首次 Owner bootstrap 的 secret、SQL、远端尝试、完整身份读回、提升和 receipt 收敛为同一 plan-bound 可恢复流程。此前 monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
 
 ## 12. 冻结范围与完成依据
 
@@ -561,5 +564,6 @@ SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 24
 25. 合同修订 22 已固定 Cloudflare 官方 Skills 只作可选事实参考，不能自动安装、替代 cfKanban 信任/授权或把通用 latest/repo-local 规则强加给 stable 部署；Service bundle 必须携带 portable Wrangler template/schema，并通过私有 Frozen config 与正式 deploy 前 dry run 证明可移植性。
 26. 合同修订 23 已固定 Wrangler auth 使用当前环境/config 上下文优先，只有失败后才列出 profile 名称并只检查唯一或明确选中的 profile；准确 account 由最终读回及私有 `wrangler.jsonc.account_id` 固定，无关 profile 不形成 blocker。
 27. 合同修订 24 已用 D-257 移除自动 profile listing：环境 Token 与用户明确给出的 profile 优先，其余由私有 config 目录/default 上下文决定；并以 D-258 固定远端 `--file` ingestion 的隐式事务边界及仅限同一已授权 journal 的缺 checksum 行恢复。
+28. 合同修订 25 已用 D-259 固定首次 Owner bootstrap 的完整最终化证据：专用 plan-bound Credential 准备、bootstrap SQL digest、单次执行、discovery/`/meta`/`/me` 准确读回、pending/current 恢复与幂等脱敏 receipt。
 
 本次冻结只固定上述公共 Agent 体验与安全边界，不固定尚未设计的具体 npm package 名、各宿主未来新增的投影机制、版本淘汰阈值或实现代码。冻结范围内的语义如需变化，必须通过显式新决策和可追踪修订；冻结本身不授权实现、安装、部署或发布。

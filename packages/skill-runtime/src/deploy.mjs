@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { toolError } from "./errors.mjs";
-import { canonicalDigest, readJson, requireString, requireUuid } from "./utils.mjs";
+import { loadPendingCredentialSecret } from "./state.mjs";
+import { canonicalDigest, readJson, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
 
 const MAX_MIGRATION_READBACK_SQL_BYTES = 4 * 1024;
 const MAX_MIGRATION_LEDGER_ROWS = 1024;
@@ -389,6 +390,27 @@ export async function executeWranglerAction({
       throw toolError("MIGRATION_READBACK_SQL_INVALID", "Migration readback SQL is empty, oversized, or contains a NUL byte");
     }
     migrationReadbackSql = bytes.toString("utf8");
+  }
+  if (action === "bootstrap_owner") {
+    const bootstrapPath = safeAbsolute(bootstrapSqlPath, "bootstrap_sql_path");
+    const bootstrapEvent = [...journal.events].reverse().find((event) => event?.type === "owner_bootstrap_sql_written") || null;
+    const priorAttempt = [...journal.events].reverse().find((event) => (event?.type === "command_started" || event?.type === "command_finished") && event.action === "bootstrap_owner") || null;
+    if (priorAttempt !== null) {
+      throw toolError("OWNER_BOOTSTRAP_ALREADY_ATTEMPTED", "Owner bootstrap was already attempted; use deployment finalization to read back the exact result instead of executing it again");
+    }
+    if (bootstrapEvent === null
+      || bootstrapEvent.bootstrap_sql_path !== bootstrapPath
+      || bootstrapEvent.bootstrap_sql_sha256 !== sha256Bytes(await readFile(bootstrapPath))) {
+      throw toolError("OWNER_BOOTSTRAP_SQL_DRIFT", "Owner bootstrap SQL does not match the plan-bound journal evidence");
+    }
+    const { metadata } = await loadPendingCredentialSecret({ stateRoot, instanceId });
+    if (metadata.operation_id !== operationId
+      || metadata.principal_id !== plan.owner_bootstrap?.owner_principal_id
+      || metadata.credential_id !== plan.owner_bootstrap?.owner_credential_id
+      || metadata.purpose !== "owner_bootstrap"
+      || metadata.fingerprint !== bootstrapEvent.credential_fingerprint) {
+      throw toolError("STATE_IDENTITY_CONFLICT", "Pending Owner Credential does not match the authorized bootstrap SQL and plan");
+    }
   }
   const args = buildWranglerInvocation({
     action,
