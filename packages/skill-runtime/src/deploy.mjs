@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { toolError } from "./errors.mjs";
-import { canonicalDigest, readJson, requireString } from "./utils.mjs";
+import { canonicalDigest, readJson, requireString, requireUuid } from "./utils.mjs";
 
 function redact(value) {
   return value
@@ -74,7 +74,7 @@ export function buildWranglerInvocation({
   const d1Name = plan.resources?.d1?.name;
   const normalizedConfig = configPath === null ? null : safeAbsolute(configPath, "config_path");
   switch (action) {
-    case "create_d1": return withProfile(["d1", "create", requireString(d1Name, "d1_name", { max: 64 }), "--json"], plan, environment);
+    case "create_d1": return withProfile(["d1", "create", requireString(d1Name, "d1_name", { max: 64 })], plan, environment);
     case "validate_worker_bundle":
       if (normalizedConfig === null) throw toolError("CONFIG_REQUIRED", "Worker dry run requires a frozen generated Wrangler config");
       return withProfile(["deploy", "--dry-run", "--config", normalizedConfig], plan, environment);
@@ -136,6 +136,60 @@ export async function readWranglerAccountAccess({
   };
 }
 
+export async function readD1ResourceByName({
+  wranglerExecutable,
+  accountId,
+  d1Name,
+  cloudflareProfile = null,
+  environment = process.env,
+  runner = spawnCaptured,
+}) {
+  const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
+  const name = requireString(d1Name, "d1_name", { max: 64 });
+  const probe = buildWranglerAccountProbe({ accountId, cloudflareProfile, environment });
+  const result = await runner(executable, probe.args, {
+    env: { ...environment, ...probe.env_overrides },
+  });
+  if (result.code !== 0) {
+    throw toolError("WRANGLER_D1_READBACK_FAILED", "Wrangler could not read back the requested D1 resource", { exitCode: result.code });
+  }
+  let resources;
+  try {
+    resources = JSON.parse(result.stdout || "");
+  } catch (error) {
+    throw toolError("WRANGLER_D1_READBACK_INVALID", "Wrangler returned invalid JSON while reading back the requested D1 resource", {}, error);
+  }
+  if (!Array.isArray(resources)) {
+    throw toolError("WRANGLER_D1_READBACK_INVALID", "Wrangler D1 readback did not return a resource list");
+  }
+  const matches = resources.filter((resource) => resource?.name === name);
+  if (matches.length === 0) {
+    return {
+      status: "absent",
+      account_id: probe.account_id,
+      profile: probe.profile,
+      d1_name: name,
+      database_id: null,
+    };
+  }
+  if (matches.length !== 1) {
+    throw toolError("WRANGLER_D1_READBACK_AMBIGUOUS", "Wrangler returned more than one exact D1 name match", { d1Name: name });
+  }
+  let databaseId;
+  try {
+    databaseId = requireUuid(matches[0].uuid, "database_id");
+  } catch (error) {
+    throw toolError("WRANGLER_D1_READBACK_INVALID", "Wrangler returned an invalid D1 database UUID", { d1Name: name }, error);
+  }
+  return {
+    status: "present",
+    account_id: probe.account_id,
+    profile: probe.profile,
+    d1_name: name,
+    database_id: databaseId,
+  };
+}
+
 export async function executeWranglerAction({
   stateRoot,
   instanceId,
@@ -161,9 +215,14 @@ export async function executeWranglerAction({
       throw toolError("WRANGLER_CONFIG_DRIFT", "Wrangler config does not match the frozen config recorded in the authorized operation journal", { configPath: normalizedConfig });
     }
   }
+  const environment = {
+    ...process.env,
+    CLOUDFLARE_ACCOUNT_ID: requireString(plan.target?.cloudflare_account_id, "cloudflare_account_id", { max: 128 }),
+  };
   const args = buildWranglerInvocation({
     action,
     plan,
+    environment,
     configPath,
     bootstrapSqlPath,
     migrationLedgerSchemaSqlPath,
@@ -171,7 +230,7 @@ export async function executeWranglerAction({
     migrationRecordSqlPath,
   });
   await appendJournalEvent({ stateRoot, instanceId, operationId, event: { type: "command_started", action, executable, args } });
-  const result = await runner(executable, args);
+  const result = await runner(executable, args, { env: environment });
   await appendJournalEvent({
     stateRoot,
     instanceId,
