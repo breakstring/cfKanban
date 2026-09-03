@@ -6,6 +6,75 @@ import { resolveToolRuntimeRoot } from "./paths.mjs";
 import { atomicWriteJson, canonicalDigest, ensurePrivateDirectory, pathType, requireString } from "./utils.mjs";
 import { toolError } from "./errors.mjs";
 
+const CFKANBAN_OAUTH_SCOPES = Object.freeze([
+  "account:read",
+  "user:read",
+  "workers_scripts:write",
+  "d1:write",
+]);
+
+const AUTH_MODES = Object.freeze([
+  "named_profile_browser",
+  "default_profile_browser",
+  "default_profile_device",
+]);
+
+const WRANGLER_AUTH_CONTRACT_RANGE = ">=4.127.1 <5.0.0";
+
+function safeAbsolute(filePath, name) {
+  const value = requireString(filePath, name, { max: 4096 });
+  if (!path.isAbsolute(value)) throw toolError("ABSOLUTE_PATH_REQUIRED", `${name} must be an absolute path`, { field: name });
+  return path.normalize(value);
+}
+
+function stripAnsi(value) {
+  return String(value || "").replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function validateProfileName(value, { allowDefault = true } = {}) {
+  const profile = requireString(value, "profile_name", { max: 128 });
+  if (!/^[A-Za-z0-9_-]+$/.test(profile)) {
+    throw toolError("INVALID_WRANGLER_PROFILE", "Wrangler profile names may contain only letters, numbers, hyphens, and underscores", { profile });
+  }
+  if (!allowDefault && ["default", "staging"].includes(profile.toLowerCase())) {
+    throw toolError("RESERVED_WRANGLER_PROFILE", "The selected name is reserved by Wrangler and cannot be used for a named profile", { profile });
+  }
+  return profile;
+}
+
+function environmentAuthNames(environment) {
+  const names = [];
+  if (environment.CLOUDFLARE_API_TOKEN) names.push("CLOUDFLARE_API_TOKEN");
+  if (environment.CLOUDFLARE_API_KEY) names.push("CLOUDFLARE_API_KEY");
+  if (environment.CLOUDFLARE_EMAIL) names.push("CLOUDFLARE_EMAIL");
+  return names;
+}
+
+async function spawnCaptured(executable, args, { env = process.env } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code, signal) => resolve({
+      code,
+      signal,
+      stdout: Buffer.concat(stdout).toString("utf8").slice(0, 64 * 1024),
+      stderr: Buffer.concat(stderr).toString("utf8").slice(0, 64 * 1024),
+    }));
+  });
+}
+
+async function spawnInteractive(executable, args, { env = process.env } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { env, shell: false, windowsHide: true, stdio: "inherit" });
+    child.on("error", reject);
+    child.on("close", (code, signal) => resolve({ code, signal }));
+  });
+}
+
 function parseVersion(value) {
   const match = /(?:^|\s|v)(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?/.exec(value || "");
   return match ? match.slice(1, 4).map(Number) : null;
@@ -89,6 +158,292 @@ export async function resolveWrangler({ explicitPath = null, requiredRange, runt
     if (version !== null && satisfiesSimpleRange(version, requiredRange)) return { status: "compatible", ...candidate, version, required_range: requiredRange };
   }
   return { status: candidates.length === 0 ? "unavailable" : "incompatible", required_range: requiredRange, candidates: await Promise.all(candidates.map(async (candidate) => ({ ...candidate, version: await versionOf(candidate.path) }))) };
+}
+
+export async function inspectCloudflareAuth({
+  wranglerExecutable,
+  profileName,
+  runner = spawnCaptured,
+  environment = process.env,
+  platform = process.platform,
+}) {
+  const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
+  const profile = validateProfileName(profileName);
+  const probes = [
+    ["--version"],
+    ["auth", "create", "--help"],
+    ["auth", "keyring"],
+    ["auth", "list"],
+    ["login", "--help"],
+    ["login", "--scopes-list"],
+  ];
+  const results = [];
+  for (const args of probes) {
+    const result = await runner(executable, args, { env: { ...environment, WRANGLER_WRITE_LOGS: "false" } });
+    results.push({
+      args,
+      code: result?.code,
+      stdout: stripAnsi(result?.stdout),
+      stderr: stripAnsi(result?.stderr),
+    });
+  }
+
+  const [versionProbe, namedProfileHelp, keyringProbe, profilesProbe, loginHelp, scopesProbe] = results;
+  const version = versionProbe.code === 0 ? versionProbe.stdout.trim().split(/\r?\n/, 1)[0] : null;
+  const keyringText = `${keyringProbe.stdout}\n${keyringProbe.stderr}`;
+  const effectiveMatch = /Keyring storage is (enabled|disabled)/i.exec(keyringText);
+  const persistedMatch = /persisted preference:\s*(enabled|disabled)/i.exec(keyringText);
+  const keyringEnabled = effectiveMatch === null ? null : effectiveMatch[1].toLowerCase() === "enabled";
+  const persistedKeyringEnabled = persistedMatch === null ? keyringEnabled : persistedMatch[1].toLowerCase() === "enabled";
+  const profileText = `${profilesProbe.stdout}\n${profilesProbe.stderr}`;
+  const escapedProfile = profile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const profileExists = profilesProbe.code !== 0
+    ? null
+    : /No profiles found\./i.test(profileText)
+      ? false
+      : new RegExp(`(^|[^A-Za-z0-9_-])${escapedProfile}(?=$|[^A-Za-z0-9_-])`, "m").test(profileText);
+  const availableRequiredScopes = CFKANBAN_OAUTH_SCOPES.filter((scope) => {
+    const escaped = scope.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^A-Za-z0-9_:-])${escaped}(?=$|[^A-Za-z0-9_:-])`, "m").test(scopesProbe.stdout);
+  });
+  const authEnvironmentVariables = environmentAuthNames(environment);
+  const keyringOverride = environment.CLOUDFLARE_AUTH_USE_KEYRING;
+  const blockers = [];
+  if (version === null || !satisfiesSimpleRange(version, WRANGLER_AUTH_CONTRACT_RANGE)) blockers.push("WRANGLER_AUTH_CONTRACT_UNSUPPORTED");
+  if (namedProfileHelp.code !== 0 || !/named auth profile/i.test(namedProfileHelp.stdout)) blockers.push("WRANGLER_NAMED_PROFILE_UNSUPPORTED");
+  if (keyringProbe.code !== 0 || keyringEnabled === null || persistedKeyringEnabled === null) blockers.push("WRANGLER_KEYRING_STATE_UNKNOWN");
+  if (profilesProbe.code !== 0 || profileExists === null) blockers.push("WRANGLER_PROFILE_STATE_UNKNOWN");
+  if (loginHelp.code !== 0 || !/--device\b/.test(loginHelp.stdout)) blockers.push("WRANGLER_DEVICE_FLOW_UNSUPPORTED");
+  if (scopesProbe.code !== 0 || availableRequiredScopes.length !== CFKANBAN_OAUTH_SCOPES.length) blockers.push("WRANGLER_REQUIRED_OAUTH_SCOPE_UNAVAILABLE");
+  if (authEnvironmentVariables.length > 0) blockers.push("WRANGLER_PROFILE_SHADOWED_BY_ENV");
+  if (String(keyringOverride).toLowerCase() === "false") blockers.push("WRANGLER_KEYRING_DISABLED_BY_ENV");
+
+  return {
+    schema_version: 1,
+    executable,
+    version,
+    platform,
+    auth_contract_range: WRANGLER_AUTH_CONTRACT_RANGE,
+    profile: { name: profile, exists: profileExists },
+    keyring: {
+      enabled: keyringEnabled,
+      persisted_enabled: persistedKeyringEnabled,
+      global_for_current_os_user: true,
+    },
+    capabilities: {
+      named_profiles: !blockers.includes("WRANGLER_NAMED_PROFILE_UNSUPPORTED"),
+      browser_callback: true,
+      device_flow: !blockers.includes("WRANGLER_DEVICE_FLOW_UNSUPPORTED"),
+      scoped_oauth: availableRequiredScopes.length === CFKANBAN_OAUTH_SCOPES.length,
+    },
+    required_scopes_available: availableRequiredScopes,
+    environment_auth_variables: authEnvironmentVariables,
+    blockers,
+    safe_to_plan: blockers.length === 0,
+    raw_output_returned: false,
+  };
+}
+
+function buildOAuthArgs(mode, profileName) {
+  const scopes = [...CFKANBAN_OAUTH_SCOPES];
+  if (mode === "named_profile_browser") {
+    return [
+      "auth", "create", profileName,
+      "--browser=true",
+      "--callback-host", "localhost",
+      "--callback-port", "8976",
+      "--scopes", ...scopes,
+    ];
+  }
+  if (mode === "default_profile_browser") {
+    return [
+      "login",
+      "--browser=true",
+      "--callback-host", "localhost",
+      "--callback-port", "8976",
+      "--scopes", ...scopes,
+    ];
+  }
+  return ["login", "--device", "--browser=false", "--scopes", ...scopes];
+}
+
+export function createCloudflareAuthPlan({
+  taskId,
+  mode = "named_profile_browser",
+  preflight,
+  allowExistingProfile = false,
+}) {
+  if (!AUTH_MODES.includes(mode)) throw toolError("INVALID_WRANGLER_AUTH_MODE", "Unknown Wrangler authentication mode", { mode });
+  if (preflight?.safe_to_plan !== true || preflight.blockers?.length !== 0) {
+    throw toolError("WRANGLER_AUTH_PREFLIGHT_BLOCKED", "Wrangler authentication preflight is not safe to plan", { blockers: preflight?.blockers || ["INVALID_PREFLIGHT"] });
+  }
+  const executable = safeAbsolute(preflight.executable, "wrangler_executable");
+  const version = requireString(preflight.version, "wrangler_version", { max: 128 });
+  if (!satisfiesSimpleRange(version, WRANGLER_AUTH_CONTRACT_RANGE)) {
+    throw toolError("WRANGLER_AUTH_CONTRACT_UNSUPPORTED", "Wrangler version is outside the verified authentication command range", { version, requiredRange: WRANGLER_AUTH_CONTRACT_RANGE });
+  }
+  const expectedScopes = [...CFKANBAN_OAUTH_SCOPES];
+  if (JSON.stringify(preflight.required_scopes_available) !== JSON.stringify(expectedScopes)) {
+    throw toolError("WRANGLER_REQUIRED_OAUTH_SCOPE_UNAVAILABLE", "Wrangler does not expose every OAuth scope required by this cfKanban release");
+  }
+  if (typeof preflight.keyring?.persisted_enabled !== "boolean" || typeof preflight.profile?.exists !== "boolean") {
+    throw toolError("WRANGLER_AUTH_STATE_UNKNOWN", "Wrangler keyring and profile state must be known before planning");
+  }
+  const namedProfile = mode === "named_profile_browser";
+  const profileName = validateProfileName(preflight.profile.name, { allowDefault: !namedProfile });
+  if (namedProfile && !preflight.capabilities?.named_profiles) {
+    throw toolError("WRANGLER_NAMED_PROFILE_UNSUPPORTED", "This Wrangler does not support named authentication profiles");
+  }
+  if (!namedProfile && profileName !== "default") {
+    throw toolError("WRANGLER_DEFAULT_PROFILE_REQUIRED", "Default-profile authentication modes require a preflight for the default profile");
+  }
+  if (mode === "default_profile_device" && !preflight.capabilities?.device_flow) {
+    throw toolError("WRANGLER_DEVICE_FLOW_UNSUPPORTED", "This Wrangler does not support device authorization");
+  }
+  if (preflight.profile.exists && allowExistingProfile !== true) {
+    throw toolError("WRANGLER_AUTH_PROFILE_EXISTS", "The selected Wrangler profile already exists; re-authentication must be explicitly planned", { profile: profileName });
+  }
+
+  const actions = [];
+  if (!preflight.keyring.persisted_enabled) {
+    actions.push({
+      id: "enable_keyring",
+      args: ["auth", "keyring", "enable"],
+      effect: "change the global Wrangler OAuth storage preference for every profile owned by the current OS user",
+    });
+  }
+  actions.push({
+    id: "oauth_login",
+    args: buildOAuthArgs(mode, profileName),
+    effect: namedProfile
+      ? `${preflight.profile.exists ? "re-authenticate" : "create"} the named Wrangler OAuth profile and complete Cloudflare consent in a browser`
+      : `${preflight.profile.exists ? "re-authenticate" : "create"} the default Wrangler OAuth profile and complete Cloudflare consent`,
+  });
+
+  const plan = {
+    schema_version: 1,
+    kind: "cloudflare_oauth_login",
+    task_id: requireString(taskId, "task_id"),
+    platform: preflight.platform,
+    wrangler: {
+      executable,
+      version,
+      auth_contract_range: WRANGLER_AUTH_CONTRACT_RANGE,
+    },
+    profile: {
+      name: profileName,
+      operation: preflight.profile.exists ? "reauthenticate" : "create",
+      experimental: namedProfile,
+      directory_binding_created: false,
+    },
+    keyring: {
+      persisted_previously_enabled: preflight.keyring.persisted_enabled,
+      requested_enabled: true,
+      global_for_current_os_user: true,
+      affects_all_wrangler_profiles: true,
+      existing_plaintext_profiles_may_migrate_when_next_accessed: true,
+      windows_backend_may_require_one_time_download: preflight.platform === "win32" && !preflight.keyring.persisted_enabled,
+    },
+    oauth: {
+      mode,
+      requested_scopes: expectedScopes,
+      automatically_added_scopes: ["offline_access"],
+      browser_confirmation_required: true,
+      callback: mode === "default_profile_device" ? null : { host: "localhost", port: 8976 },
+      scopes_are_separate_process_arguments: true,
+    },
+    actions,
+    cloudflare_resource_writes: false,
+    worker_writes: false,
+    d1_writes: false,
+    writes_user_repositories: false,
+    stores_cloudflare_auth_outside_cfkanban_root: true,
+    wrangler_disk_logs_disabled_for_auth_actions: true,
+    raw_oauth_token_returned: false,
+    readback: "verify the exact account and profile with runtime wrangler-account-readback before creating a deployment plan",
+    rollback: {
+      delete_profile_args: namedProfile ? ["auth", "delete", profileName] : ["logout"],
+      delete_profile_requires_separate_authorization: true,
+      disable_keyring_automatically: false,
+      keyring_reason: "keyring is a global Wrangler preference and disabling it can remove encrypted credentials for other profiles",
+    },
+  };
+  return { plan, plan_digest: canonicalDigest(plan) };
+}
+
+function validateAuthAction(plan, action) {
+  if (!["enable_keyring", "oauth_login"].includes(action.id)) {
+    throw toolError("WRANGLER_AUTH_ACTION_REJECTED", "Wrangler authentication action is not allowlisted", { actionId: action.id });
+  }
+  const expectedArgs = action.id === "enable_keyring"
+    ? ["auth", "keyring", "enable"]
+    : buildOAuthArgs(plan.oauth?.mode, plan.profile?.name);
+  if (JSON.stringify(action.args) !== JSON.stringify(expectedArgs)) {
+    throw toolError("WRANGLER_AUTH_PLAN_INVALID", "Wrangler authentication arguments do not match the fixed action contract", { actionId: action.id });
+  }
+}
+
+function validateAuthPlanActions(plan) {
+  const namedProfile = plan.oauth.mode === "named_profile_browser";
+  const profileName = validateProfileName(plan.profile?.name, { allowDefault: !namedProfile });
+  if (!namedProfile && profileName !== "default") {
+    throw toolError("WRANGLER_AUTH_PLAN_INVALID", "Default-profile authentication modes require the default Wrangler profile");
+  }
+  if (typeof plan.keyring?.persisted_previously_enabled !== "boolean") {
+    throw toolError("WRANGLER_AUTH_PLAN_INVALID", "Cloudflare authentication plan does not contain a known prior keyring preference");
+  }
+  const expectedActionIds = plan.keyring.persisted_previously_enabled
+    ? ["oauth_login"]
+    : ["enable_keyring", "oauth_login"];
+  const actionIds = Array.isArray(plan.actions) ? plan.actions.map((action) => action?.id) : [];
+  if (JSON.stringify(actionIds) !== JSON.stringify(expectedActionIds)) {
+    throw toolError("WRANGLER_AUTH_PLAN_INVALID", "Cloudflare authentication actions do not match the fixed keyring and OAuth sequence");
+  }
+  for (const action of plan.actions) validateAuthAction(plan, action);
+}
+
+export async function executeCloudflareAuthAction({
+  plan,
+  actionId,
+  completedActionIds = [],
+  authorizedTaskId,
+  authorizedPlanDigest,
+  runner = spawnInteractive,
+}) {
+  const digest = canonicalDigest(plan);
+  if (plan?.kind !== "cloudflare_oauth_login" || authorizedTaskId !== plan.task_id || authorizedPlanDigest !== digest) {
+    throw toolError("PLAN_NOT_AUTHORIZED", "Cloudflare authentication authorization does not match the frozen task and plan digest");
+  }
+  if (!AUTH_MODES.includes(plan.oauth?.mode) || JSON.stringify(plan.oauth?.requested_scopes) !== JSON.stringify(CFKANBAN_OAUTH_SCOPES)) {
+    throw toolError("WRANGLER_AUTH_PLAN_INVALID", "Cloudflare authentication plan has drifted from the verified scope or mode contract");
+  }
+  validateAuthPlanActions(plan);
+  const actionIndex = plan.actions.findIndex((candidate) => candidate.id === actionId);
+  if (actionIndex === -1) throw toolError("WRANGLER_AUTH_ACTION_REJECTED", "Requested authentication action is not present in the frozen plan", { actionId });
+  const requiredCompletedActionIds = plan.actions.slice(0, actionIndex).map((candidate) => candidate.id);
+  if (JSON.stringify(completedActionIds) !== JSON.stringify(requiredCompletedActionIds)) {
+    throw toolError("WRANGLER_AUTH_ACTION_OUT_OF_ORDER", "Earlier Cloudflare authentication actions must complete in their frozen order", {
+      actionId,
+      requiredCompletedActionIds,
+    });
+  }
+  const action = plan.actions[actionIndex];
+  const executable = safeAbsolute(plan.wrangler?.executable, "wrangler_executable");
+  const result = await runner(executable, [...action.args], {
+    env: { ...process.env, WRANGLER_WRITE_LOGS: "false" },
+    shell: false,
+    windowsHide: true,
+    stdio: "inherit",
+  });
+  if (result.code !== 0) {
+    throw toolError("WRANGLER_AUTH_ACTION_FAILED", "Wrangler authentication action failed; inspect current auth state before retrying", { actionId, exitCode: result.code, signal: result.signal || null });
+  }
+  return {
+    action_completed: true,
+    action_id: actionId,
+    readback_required: true,
+    raw_output_returned: false,
+  };
 }
 
 export function createToolRuntimePlan({ taskId, npmExecutable, wranglerVersion, sourceRegistry = "npm", runtimeRoot = resolveToolRuntimeRoot() }) {

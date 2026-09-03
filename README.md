@@ -12,8 +12,8 @@ cfKanban is currently a **public testing preview**, not a stable end-user releas
 
 - The Worker, D1 schema, Web UI, and three Agent Skills are implemented in this repository.
 - You can install the Codex plugin from this public repository today and inspect or evaluate the Skills.
-- The [`0.1.0-alpha.3` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.3) packages immutable Skill and Service bundles for testing, including Node.js 26 support and the complete canonical first-install workflow.
-- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.3/prerelease.json).
+- The [`0.1.0-alpha.4` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.4) packages immutable Skill and Service bundles for testing, including Node.js 26 support, canonical first-install/update handling, and deterministic Cloudflare login planning.
+- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.4/prerelease.json).
 - The stable release pointer and real multi-environment deployment acceptance are not published yet.
 - Do not treat `main`, a local checkout, or a marketplace snapshot as a canonical stable release or production-ready deployment.
 
@@ -40,7 +40,7 @@ For a future Cloudflare deployment you will also need:
 The repository is a Codex plugin marketplace. From the command line, add the immutable testing tag and install its plugin:
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.3
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.4
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -74,7 +74,9 @@ In the new task, this one sentence is enough:
 
 You do not need to know or mention manifests, digests, preflight, deployment plans, migrations, or rollback journals. The Skill handles those details: it starts with read-only checks, explains what is available in plain language, asks only for information that is actually missing, and shows the exact changes before anything is installed or deployed.
 
-At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.3` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
+If Cloudflare login is needed, the Skill shows that as its own small plan and then opens the appropriate browser or device flow after approval. Completing login does not create a Worker or D1 database; the deployment plan remains a later, separate approval.
+
+At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.4` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
 
 If you deliberately want to evaluate a source revision, say so explicitly:
 
@@ -90,7 +92,7 @@ Whether you use the testing prerelease now or a stable release later, the same s
 
 1. confirming the exact release and checking that its files have not changed;
 2. checking the computer and reusing compatible Node.js and Wrangler installations when possible;
-3. selecting the exact Cloudflare account and asking only for genuinely missing choices, such as the Owner display name;
+3. planning Cloudflare login when needed, then selecting the exact account and asking only for genuinely missing choices, such as the Owner display name;
 4. showing the resources, local changes, costs, and recovery limits before asking for approval;
 5. creating one Worker, one D1 database, and the bundled Web app only after approval;
 6. reading everything back before reporting that deployment succeeded.

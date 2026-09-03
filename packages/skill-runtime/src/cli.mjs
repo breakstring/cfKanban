@@ -19,7 +19,14 @@ import { writeOwnerBootstrapSql } from "./bootstrap-sql.mjs";
 import { executeWranglerAction, readWranglerAccountAccess } from "./deploy.mjs";
 import { writeFrozenWranglerConfig } from "./deployment-config.mjs";
 import { installVerifiedSkillBundle } from "./skill-update.mjs";
-import { createToolRuntimePlan, installToolRuntime, resolveWrangler } from "./tool-runtime.mjs";
+import {
+  createCloudflareAuthPlan,
+  createToolRuntimePlan,
+  executeCloudflareAuthAction,
+  inspectCloudflareAuth,
+  installToolRuntime,
+  resolveWrangler,
+} from "./tool-runtime.mjs";
 import { canonicalDigest } from "./utils.mjs";
 
 const ALL_SURFACES = Object.freeze(["daily", "admin", "deploy"]);
@@ -49,6 +56,9 @@ const COMMANDS = new Map([
   ["release continuity", command({ description: "Compare publisher and artifact-origin continuity with an installed receipt.", effect: "read_only", inputFields: ["currentReceipt", "targetManifest"], surfaces: ["deploy"], run: verifyPublisherContinuity })],
   ["release install-skill-bundle", command({ description: "Install one verified Skill bundle version and atomically switch its active pointer.", effect: "local_write", inputFields: ["bundlePath", "version", "expectedSha256", "publisher", "source"], surfaces: ["deploy"], run: installVerifiedSkillBundle })],
   ["runtime resolve-wrangler", command({ description: "Resolve an explicitly configured, PATH, or cfKanban-managed compatible Wrangler.", effect: "read_only", inputFields: ["explicitPath", "requiredRange"], surfaces: ["deploy"], run: resolveWrangler })],
+  ["runtime inspect-cloudflare-auth", command({ description: "Inspect one Wrangler profile, keyring preference, auth command support, and required OAuth scopes without returning tokens.", effect: "read_only_local_auth", inputFields: ["wranglerExecutable", "profileName"], surfaces: ["deploy"], run: inspectCloudflareAuth })],
+  ["runtime plan-cloudflare-auth", command({ description: "Create a frozen Cloudflare OAuth plan with exact shell-free Wrangler arguments and global keyring effects.", effect: "plan_only", inputFields: ["taskId", "mode", "preflight", "allowExistingProfile"], surfaces: ["deploy"], run: createCloudflareAuthPlan })],
+  ["runtime cloudflare-auth-action", command({ description: "Run one ordered, allowlisted action from an authorized Cloudflare OAuth plan without returning raw auth output.", effect: "authorized_local_auth_and_oauth", inputFields: ["plan", "actionId", "completedActionIds", "authorizedTaskId", "authorizedPlanDigest"], surfaces: ["deploy"], run: executeCloudflareAuthAction })],
   ["runtime wrangler-account-readback", command({ description: "Verify read-only D1 access for one exact Cloudflare account/profile before creating a deployment plan.", effect: "read_only_cloudflare_account", inputFields: ["wranglerExecutable", "accountId", "cloudflareProfile"], surfaces: ["deploy"], run: readWranglerAccountAccess })],
   ["runtime plan-install", command({ description: "Create an exact local Tool Runtime installation plan.", effect: "plan_only", inputFields: ["taskId", "npmExecutable", "wranglerVersion"], surfaces: ["deploy"], run: createToolRuntimePlan })],
   ["runtime install", command({ description: "Install the exact authorized Wrangler version inside the cfKanban user root.", effect: "local_tool_write", inputFields: ["plan", "authorizedTaskId", "authorizedPlanDigest"], surfaces: ["deploy"], run: installToolRuntime })],

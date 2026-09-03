@@ -27,7 +27,13 @@ import {
   putInstanceMetadata,
 } from "../../packages/skill-runtime/src/state.mjs";
 import { normalizeNetworkFailure, normalizeResponse } from "../../packages/skill-runtime/src/transport.mjs";
-import { createToolRuntimePlan, satisfiesSimpleRange } from "../../packages/skill-runtime/src/tool-runtime.mjs";
+import {
+  createCloudflareAuthPlan,
+  createToolRuntimePlan,
+  executeCloudflareAuthAction,
+  inspectCloudflareAuth,
+  satisfiesSimpleRange,
+} from "../../packages/skill-runtime/src/tool-runtime.mjs";
 import { canonicalDigest, readJson, sha256Bytes } from "../../packages/skill-runtime/src/utils.mjs";
 import { writeDeterministicZip } from "../lib/deterministic-zip.mjs";
 
@@ -36,7 +42,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.3.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.4.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -88,6 +94,144 @@ test("testing release accepts verified Node.js 26 while retaining a future-major
   assert.equal(satisfiesSimpleRange("v27.0.0", TESTING_RELEASE_CONFIG.nodeRange), false);
 });
 
+test("Cloudflare OAuth planning freezes named-profile syntax, least scopes, and global keyring effects", async () => {
+  const calls = [];
+  const outputs = new Map([
+    ["--version", { code: 0, stdout: "4.127.1\n", stderr: "" }],
+    ["auth create --help", { code: 0, stdout: "Create or re-authenticate a named auth profile\n--scopes\n", stderr: "" }],
+    ["auth keyring", { code: 0, stdout: "Keyring storage is disabled.\nCredentials are currently stored in: /private/default.toml\n", stderr: "" }],
+    ["auth list", { code: 0, stdout: "No profiles found. Run `wrangler login` to get started.\n", stderr: "" }],
+    ["login --help", { code: 0, stdout: "--device\n--scopes\n", stderr: "" }],
+    ["login --scopes-list", {
+      code: 0,
+      stdout: ["account:read", "user:read", "workers:write", "workers_scripts:write", "d1:write"].join("\n"),
+      stderr: "",
+    }],
+  ]);
+  const preflight = await inspectCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    profileName: "cfkanban-test",
+    platform: "darwin",
+    environment: {},
+    runner: async (executable, args, options) => {
+      calls.push({ executable, args, options });
+      return { signal: null, ...outputs.get(args.join(" ")) };
+    },
+  });
+  assert.equal(preflight.safe_to_plan, true);
+  assert.equal(preflight.keyring.enabled, false);
+  assert.equal(preflight.profile.exists, false);
+  assert.equal(preflight.capabilities.named_profiles, true);
+  assert.equal(preflight.capabilities.device_flow, true);
+  assert.equal(preflight.raw_output_returned, false);
+  assert.equal(JSON.stringify(preflight).includes("/private/default.toml"), false);
+
+  const frozen = createCloudflareAuthPlan({
+    taskId: "task-auth",
+    mode: "named_profile_browser",
+    preflight,
+  });
+  assert.equal(frozen.plan.kind, "cloudflare_oauth_login");
+  assert.equal(frozen.plan.cloudflare_resource_writes, false);
+  assert.equal(frozen.plan.keyring.global_for_current_os_user, true);
+  assert.equal(frozen.plan.keyring.affects_all_wrangler_profiles, true);
+  assert.deepEqual(frozen.plan.oauth.requested_scopes, [
+    "account:read",
+    "user:read",
+    "workers_scripts:write",
+    "d1:write",
+  ]);
+  assert.equal(frozen.plan.oauth.requested_scopes.includes("workers:write"), false);
+  assert.equal(frozen.plan.oauth.requested_scopes.includes("workers_kv:write"), false);
+  assert.equal(frozen.plan.oauth.requested_scopes.includes("workers_routes:write"), false);
+  assert.deepEqual(frozen.plan.actions[0].args, ["auth", "keyring", "enable"]);
+  assert.deepEqual(frozen.plan.actions[1].args, [
+    "auth", "create", "cfkanban-test",
+    "--browser=true",
+    "--callback-host", "localhost",
+    "--callback-port", "8976",
+    "--scopes",
+    "account:read",
+    "user:read",
+    "workers_scripts:write",
+    "d1:write",
+  ]);
+  assert.equal(frozen.plan.actions[1].args.includes("account:read user:read workers_scripts:write d1:write"), false);
+  assert.equal(frozen.plan.profile.experimental, true);
+  assert.deepEqual(frozen.plan.rollback.delete_profile_args, ["auth", "delete", "cfkanban-test"]);
+  assert.equal(frozen.plan.rollback.disable_keyring_automatically, false);
+
+  const defaultPreflight = structuredClone(preflight);
+  defaultPreflight.profile = { name: "default", exists: false };
+  defaultPreflight.keyring = { ...defaultPreflight.keyring, enabled: true, persisted_enabled: true };
+  const device = createCloudflareAuthPlan({
+    taskId: "task-device-auth",
+    mode: "default_profile_device",
+    preflight: defaultPreflight,
+  });
+  assert.deepEqual(device.plan.actions.map(({ id }) => id), ["oauth_login"]);
+  assert.deepEqual(device.plan.actions[0].args, [
+    "login", "--device", "--browser=false", "--scopes",
+    "account:read", "user:read", "workers_scripts:write", "d1:write",
+  ]);
+  assert.equal(device.plan.oauth.callback, null);
+  assert.equal(device.plan.profile.experimental, false);
+
+  const existingProfile = structuredClone(preflight);
+  existingProfile.profile.exists = true;
+  assert.throws(
+    () => createCloudflareAuthPlan({ taskId: "task-existing-auth", preflight: existingProfile }),
+    (error) => error.code === "WRANGLER_AUTH_PROFILE_EXISTS",
+  );
+
+  await assert.rejects(
+    executeCloudflareAuthAction({
+      plan: frozen.plan,
+      actionId: "oauth_login",
+      completedActionIds: [],
+      authorizedTaskId: "task-auth",
+      authorizedPlanDigest: frozen.plan_digest,
+      runner: async () => ({ code: 0, signal: null }),
+    }),
+    (error) => error.code === "WRANGLER_AUTH_ACTION_OUT_OF_ORDER",
+  );
+
+  const executed = [];
+  const completedActionIds = [];
+  for (const action of frozen.plan.actions) {
+    const result = await executeCloudflareAuthAction({
+      plan: frozen.plan,
+      actionId: action.id,
+      completedActionIds,
+      authorizedTaskId: "task-auth",
+      authorizedPlanDigest: frozen.plan_digest,
+      runner: async (executable, args, options) => {
+        executed.push({ executable, args, options });
+        return { code: 0, signal: null };
+      },
+    });
+    assert.equal(result.action_completed, true);
+    assert.equal(result.raw_output_returned, false);
+    completedActionIds.push(action.id);
+  }
+  assert.deepEqual(executed.map(({ args }) => args), frozen.plan.actions.map(({ args }) => args));
+  assert.equal(executed.every(({ options }) => options.shell === false), true);
+  assert.equal(executed.every(({ options }) => options.env.WRANGLER_WRITE_LOGS === "false"), true);
+  assert.equal(calls.length, 6);
+  assert.equal(calls.every(({ options }) => options.env.WRANGLER_WRITE_LOGS === "false"), true);
+
+  await assert.rejects(
+    executeCloudflareAuthAction({
+      plan: frozen.plan,
+      actionId: "oauth_login",
+      authorizedTaskId: "different-task",
+      authorizedPlanDigest: frozen.plan_digest,
+      runner: async () => ({ code: 0, signal: null }),
+    }),
+    (error) => error.code === "PLAN_NOT_AUTHORIZED",
+  );
+});
+
 test("each Skill exposes a self-describing command catalog with a bounded surface", async () => {
   const daily = getCommandCatalog({ surface: "daily" });
   const admin = getCommandCatalog({ surface: "admin" });
@@ -105,6 +249,10 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
   assert.equal(names(admin).includes("scope resolve"), false);
   assert.equal(names(admin).includes("plan strict-zero"), false);
   assert.equal(names(deploy).includes("plan strict-zero"), true);
+  assert.equal(names(deploy).includes("runtime inspect-cloudflare-auth"), true);
+  assert.equal(names(deploy).includes("runtime plan-cloudflare-auth"), true);
+  assert.equal(names(deploy).includes("runtime cloudflare-auth-action"), true);
+  assert.equal(deploy.commands.find((entry) => entry.name === "runtime cloudflare-auth-action").input_fields.includes("completedActionIds"), true);
   assert.equal(names(deploy).includes("runtime wrangler-account-readback"), true);
   assert.equal(names(deploy).includes("runtime wrangler-whoami"), false);
   assert.equal(names(deploy).includes("scope resolve"), false);
@@ -620,7 +768,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
   assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.3/cfkanban-release-0.1.0-alpha.3.json");
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.4/cfkanban-release-0.1.0-alpha.4.json");
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -698,6 +846,30 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
   assert.match(deployYaml, /Use \$cfkanban-deploy to deploy cfKanban for me\./u);
 });
 
+test("deployment Skill directly documents the deterministic Cloudflare authentication boundary", async () => {
+  const [deploy, workflowEn, workflowZh] = await Promise.all([
+    readFile(new URL("../../skills/cfkanban-deploy/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-deploy/references/deployment-workflows.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-deploy/references/deployment-workflows.zh-CN.md", import.meta.url), "utf8"),
+  ]);
+  for (const source of [deploy, workflowEn, workflowZh]) {
+    assert.match(source, /runtime inspect-cloudflare-auth/u);
+    assert.match(source, /runtime plan-cloudflare-auth/u);
+    assert.match(source, /runtime cloudflare-auth-action/u);
+    assert.match(source, /account:read/u);
+    assert.match(source, /user:read/u);
+    assert.match(source, /workers_scripts:write/u);
+    assert.match(source, /d1:write/u);
+    assert.match(source, /auth create <name>/u);
+    assert.match(source, /login --profile/u);
+  }
+  assert.match(deploy, /global to every Wrangler profile for the current OS user/u);
+  assert.match(workflowEn, /global for every Wrangler profile owned by the current OS user/u);
+  assert.match(workflowZh, /当前 OS 用户拥有的所有 Wrangler profiles/u);
+  assert.match(workflowEn, /login alone creates no Worker, D1/u);
+  assert.match(workflowZh, /登录本身不会创建 Worker、D1/u);
+});
+
 test("public Agent-facing documents avoid the internal stage label", async () => {
   const publicDocuments = [
     "../../README.md",
@@ -710,8 +882,10 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.1.md",
     "../../release/notes/0.1.0-alpha.2.md",
     "../../release/notes/0.1.0-alpha.3.md",
+    "../../release/notes/0.1.0-alpha.4.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
+    "../../release/config/0.1.0-alpha.4.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
