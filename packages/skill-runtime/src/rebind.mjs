@@ -4,13 +4,14 @@ import { normalizeNetworkFailure } from "./transport.mjs";
 import { readJson, requireHttpsOrigin } from "./utils.mjs";
 import { toolError } from "./errors.mjs";
 
-async function fetchDiscovery(origin, fetchImpl) {
+export async function fetchDiscovery(origin, fetchImpl) {
   let response;
   try {
     response = await fetchImpl(new URL("/.well-known/cfkanban-instance.json", origin), {
       method: "GET",
       headers: { accept: "application/json" },
       redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
     });
   } catch (error) {
     throw toolError("DISCOVERY_NETWORK_FAILURE", "Instance discovery failed without sending a Credential", normalizeNetworkFailure(error).error.details, error);
@@ -21,7 +22,7 @@ async function fetchDiscovery(origin, fetchImpl) {
   return response.json();
 }
 
-function validateDiscovery(discovery, requestedOrigin) {
+export function validateDiscovery(discovery, requestedOrigin) {
   if (discovery?.discovery_version !== 1 || typeof discovery.instance_id !== "string" || !Number.isSafeInteger(discovery.origin_version)) {
     throw toolError("INVALID_DISCOVERY", "Instance discovery response is missing required fields", { requestedOrigin });
   }

@@ -12,8 +12,8 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 
 - Worker、D1 schema、Web UI 和三个 Agent Skills 已经在本仓库中实现。
 - 你现在可以从这个公开仓库安装 Codex plugin，并检查或试用这些 Skills。
-- [`0.1.0-alpha.10` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.10) 提供不可变的 Skill 与 Service bundle；它不再自动枚举 Wrangler profiles，而是让 Wrangler 解析当前身份、由私有配置固定目标 account，并修复 D1 文件导入事务处理。
-- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.10/prerelease.json)。
+- [`0.1.0-alpha.11` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.11) 提供不可变的 Skill 与 Service bundle；它保留简化后的 Wrangler profile/account 处理，并补齐同 plan 绑定的 Owner bootstrap、准确身份读回和脱敏 deployment receipt。
+- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.11/prerelease.json)。
 - 稳定发行指针和真实多环境部署验收尚未发布。
 - 不要把 `main`、本地 checkout 或 marketplace snapshot 当成 canonical stable release 或生产就绪部署。
 
@@ -40,7 +40,7 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 本仓库本身就是一个 Codex plugin marketplace。可以在命令行添加不可变的测试 tag，并安装其中的 plugin：
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.10
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.11
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -76,7 +76,7 @@ plugin 包含三个 Skills：
 
 如果需要登录 Cloudflare，Skill 会把它作为一份独立的小计划展示；获批后再打开对应的浏览器或 device flow。完成登录不会创建 Worker 或 D1 数据库，真正的部署计划仍会在后面单独请求确认。
 
-当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `0.1.0-alpha.10` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
+当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `0.1.0-alpha.11` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
 
 如果你明确想评估某个源码修订，请把这一点说清楚：
 

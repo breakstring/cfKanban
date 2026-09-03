@@ -113,7 +113,7 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 | Portable config | `deployment write-wrangler-config` | 绑定 verified bundle、Frozen account/Worker 与已创建 D1 的私有配置。 |
 | Cloudflare 步骤 | `deploy wrangler-action` | 一个 allowlisted Wrangler action 与脱敏结果摘要。 |
 | Worker 验证 | `deploy wrangler-action`，且 `action=validate_worker_bundle` | 使用正式部署同一 config/executable 执行 `wrangler deploy --dry-run`。 |
-| Owner bootstrap | `credential prepare`、`bootstrap write-owner-sql`、`credential verify-and-promote` | pending secret、hash-only SQL 与内部 `/me` 验证；都不暴露 token。 |
+| Owner bootstrap | `deployment prepare-owner-credential`、`bootstrap write-owner-sql`、带 `bootstrap_owner` 的 `deploy wrangler-action`、`deployment finalize-owner` | plan-bound pending secret、hash-only SQL、一次 journaled D1 执行、准确 discovery/`/meta`/`/me` 验证、提升与脱敏 receipt；都不暴露 token。 |
 | Migration 证明 | `migrations reconcile`、`migrations assess-ledger-recovery`、`migrations write-ledger-record-sql` | ledger/schema 一致性、同 journal 缺行恢复判断与 insert-only checksum record。 |
 | Skill update | `plan skill-update`、`release install-skill-bundle` | 新的已验证本地版本与 atomic active pointer。 |
 | Instance upgrade | `plan instance-upgrade` 加 journal/deploy/migration commands | 独立的 pinned Cloudflare upgrade。 |
@@ -134,10 +134,10 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 9. 创建 journal 并展示完整 plan。`journal authorize` 只记录 current Agent task、operation ID 与 digest 的授权。
 10. 在 allowlisted `create_d1` 动作前后都重新运行 `runtime d1-resource-readback`。固定的 Wrangler 只在 `d1 list` 支持 JSON，`d1 create` 不支持；因此写入动作不带 `--json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定计划中的账户，并把命令文本输出视为非权威信息。只有写前为 absent、创建命令成功且写后准确名称读回得到唯一已验证 UUID 时才能继续。若创建失败后资源却存在，其归属不明确，必须停止。不得使用自动资源供应，也不得接管未知同名资源。
 11. 使用 `runtime d1-resource-readback` 返回的 UUID 运行 `deployment write-wrangler-config`。bundle 内的 `wrangler.template.json` 只是带占位资源身份、经过 schema 校验的配置骨架，绝不能原样部署。该命令会在 immutable bundle 外写入私有的实际 config，指向 bundle 内已构建 Worker/Static Assets/migrations，并固定 account、名称、bindings、compatibility date 与 rate gates。
-12. 数据 bootstrap 前创建 pending Owner Credential 与 hash-only bootstrap SQL。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
-13. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。固定的只读核对 SQL 必须使用 `d1 execute --command --json`：Wrangler 的远端 `--file` 路径会走 ingestion API，可能只返回统计信息而没有 SELECT rows。只把两个预期 result sets 解析成有界 ledger/table/index facts，并丢弃原始 schema SQL/output。生成的 checksum 与 Owner-bootstrap 文件使用远端 `d1 execute --file`，依赖其 ingestion 事务边界，文件中不得出现显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`，与 Cloudflare 的 [D1 import 指南](https://developers.cloudflare.com/d1/best-practices/import-export-data/)保持一致。
-14. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。
-15. 部署前再次运行 `runtime worker-resource-readback` 并要求 `absent`。部署后要求同一准确读回变为 `present`，再验证 Worker health、匹配的公开 `instance_id`、bindings、migration/schema state 与 `/api/v1/me`；之后才提升 pending Owner Credential 并写入脱敏 receipt。
+12. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。固定的只读核对 SQL 必须使用 `d1 execute --command --json`：Wrangler 的远端 `--file` 路径会走 ingestion API，可能只返回统计信息而没有 SELECT rows。只把两个预期 result sets 解析成有界 ledger/table/index facts，并丢弃原始 schema SQL/output。生成的 checksum 与 Owner-bootstrap 文件使用远端 `d1 execute --file`，依赖其 ingestion 事务边界，文件中不得出现显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`，与 Cloudflare 的 [D1 import 指南](https://developers.cloudflare.com/d1/best-practices/import-export-data/)保持一致。
+13. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。
+14. 部署前再次运行 `runtime worker-resource-readback` 并要求 `absent`；部署后要求同一准确读回变为 `present`。
+15. Worker 部署和准确 migration 读回之后，使用 `deployment prepare-owner-credential`，不要向通用 Credential 命令手工复制 Owner IDs。随后使用同一已授权 plan/config 和准确 workers.dev origin 运行 `bootstrap write-owner-sql`。它从冻结证据推导 Owner IDs/display name 与 Service/schema versions，只向固定私有路径写 digest/prefix，并在 journal 固定 SQL digest。只执行一次该 `bootstrap_owner` 文件；已有任何尝试时必须先读回，不能盲目重试。使用同一 verified release 文件运行 `deployment finalize-owner`：只有 health、公开 discovery、认证后的 `/api/v1/meta`、`/api/v1/me`、准确 Instance/origin/Service/schema、Owner Principal、Credential ID 与 fingerprint 全部匹配，才把 pending 提升为 current 并写入幂等脱敏 receipt。本地最终化若在提升后中断，应复用该准确 current Credential，不得生成第二个 secret。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
 
 ### 交接到真正可用的看板
 
