@@ -29,7 +29,7 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.2/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.3/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
 
 ## Choose the deployment source first
 
@@ -67,7 +67,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Validate Worker bundle | `deploy wrangler-action` with `action=validate_worker_bundle` | Run the resolved, release-compatible Wrangler with `deploy --dry-run` before the remote deploy action. |
 | Bootstrap Owner | `credential prepare`, `bootstrap write-owner-sql`, authorized D1/Worker steps, then `credential verify-and-promote` | Generate the secret only after plan authorization; SQL contains only digest/prefix; promote only after `/me` verifies it. |
 | Verify migrations | `migrations reconcile`, `migrations write-ledger-record-sql` | Check ordered manifest + insert-only checksum ledger + bounded schema artifacts; command success alone is insufficient. |
-| Update local Skills | `plan skill-update`, `release install-skill-bundle` | Local-only atomic version switch; no Cloudflare or D1 write. |
+| Install or update canonical Skills | `plan skill-update`, `release install-skill-bundle` | Required before a canonical first deployment when no matching verified release is active; local-only atomic version switch, with no Cloudflare or D1 write. |
 | Upgrade an Instance | `plan instance-upgrade`, journal and deploy commands | Pin Service bundle and restore evidence; do not update local Skills implicitly. |
 | Recover lost Owner access | deployment plan/journal plus the same pending-secret and bootstrap primitives | Restore the same Principal only; this is not a Web/application endpoint. |
 | Hand off to first-use setup | `cfkanban-admin` after deployment verification | Deployment alone creates no Workspace or Project; offer the next prompt but do not silently perform application writes. |
@@ -100,13 +100,15 @@ The companion Skills cannot choose a different Cloudflare product, install `wran
 ## Required deployment workflow
 
 1. Verify bootstrap, immutable manifest, origins, digests, compatibility, and publisher continuity.
-2. Run `capabilities`; reuse compatible user-owned Node/Wrangler or present an exact Tool Runtime plan. Run `runtime wrangler-account-readback` for the selected account/profile. Wrangler does not allow `--profile` on `whoami`, so named-profile verification uses a read-only D1 probe with `CLOUDFLARE_ACCOUNT_ID` and returns no database inventory; stop if an environment credential would shadow that profile.
-3. Generate and freeze the complete deployment or upgrade plan. Resolve account ambiguity and Owner display name before authorization.
-4. Create the operation journal and record approval only for the exact task/operation/digest.
-5. Create D1, generate the private Wrangler config from the verified bundle, reconcile/apply migrations with the standard D1 migration command, then run the allowlisted Worker dry run.
-6. Execute only plan-listed actions. Before and after migrations, reconcile ledger checksums and schema artifacts.
-7. On interruption or uncertain response, read back remote markers, journal, migration ledger, and schema before resuming.
-8. Verify health, public discovery, schema, bindings, and `/api/v1/me`; then write only a redacted receipt and promote the pending Owner Credential.
+2. Run `capabilities`; reuse compatible user-owned Node/Wrangler and compare the verified Skill artifact with `installed_skill_bundle`. If the exact canonical release is not active, create `plan skill-update` with `current: null` for a first install or the redacted current receipt for an update. A matching marketplace/plugin cache never satisfies this step. If Wrangler is missing or incompatible, create an exact Tool Runtime plan.
+3. Before any write, show the Skill plan's source, version, digest, `~/.cfkanban/skill-releases/` target, atomic switch, and rollback. When both local installations are needed, present both plans together and obtain authorization for each exact digest before executing either. Install the Skill bundle with `release install-skill-bundle`, run `help` from the returned canonical path, and read back the active Skill receipt before continuing.
+4. Run `runtime wrangler-account-readback` for the selected account/profile. Wrangler does not allow `--profile` on `whoami`, so named-profile verification uses a read-only D1 probe with `CLOUDFLARE_ACCOUNT_ID` and returns no database inventory; stop if an environment credential would shadow that profile.
+5. Generate and freeze the complete deployment or upgrade plan. Resolve account ambiguity and Owner display name before authorization.
+6. Create the operation journal and record approval only for the exact task/operation/digest.
+7. Create D1, generate the private Wrangler config from the verified bundle, reconcile/apply migrations with the standard D1 migration command, then run the allowlisted Worker dry run.
+8. Execute only plan-listed actions. Before and after migrations, reconcile ledger checksums and schema artifacts.
+9. On interruption or uncertain response, read back remote markers, journal, migration ledger, and schema before resuming.
+10. Verify health, public discovery, schema, bindings, and `/api/v1/me`; then write only a redacted receipt and promote the pending Owner Credential.
 
 ## Definition of a usable first installation
 
@@ -123,4 +125,4 @@ A verified Worker and D1 are the deployment result, but the user still has no bo
 - **MUST:** Skill update and Instance upgrade are separate planes; checking both never authorizes or executes either.
 - **DECIDES:** The user chooses Node installation method, ambiguous Cloudflare account, custom domain, paid capability, compliance location, non-stable source, and destructive recovery.
 
-Stop on origin/digest mismatch, publisher discontinuity, unknown same-name resources, account ambiguity, missing Owner display name, unverified storage, incompatible Node/Wrangler without an approved plan, plan drift, migration checksum/schema drift, unavailable restore evidence, partial migration state, or any request to adopt an unknown resource silently.
+Stop on origin/digest mismatch, publisher discontinuity, missing or unverified canonical Skill installation, unknown same-name resources, account ambiguity, missing Owner display name, unverified storage, incompatible Node/Wrangler without an approved plan, plan drift, migration checksum/schema drift, unavailable restore evidence, partial migration state, or any request to adopt an unknown resource silently.
