@@ -11,9 +11,7 @@ ORDER BY sequence;
 
 SELECT
   type,
-  name,
-  tbl_name,
-  sql
+  name
 FROM sqlite_master
 WHERE type IN ('table', 'index')
   AND name NOT LIKE 'sqlite_%'
