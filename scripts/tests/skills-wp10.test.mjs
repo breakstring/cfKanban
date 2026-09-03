@@ -7,7 +7,7 @@ import { buildCapabilityReport } from "../../packages/skill-runtime/src/capabili
 import { writeOwnerBootstrapSql } from "../../packages/skill-runtime/src/bootstrap-sql.mjs";
 import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
 import { redeemInvitation, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
-import { buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, readD1ResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
+import { buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
 import { writeFrozenWranglerConfig } from "../../packages/skill-runtime/src/deployment-config.mjs";
 import { authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
 import { reconcileMigrationState, writeMigrationLedgerRecordSql } from "../../packages/skill-runtime/src/migrations.mjs";
@@ -43,7 +43,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.6.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.7.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -289,6 +289,7 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
   assert.equal(deploy.commands.find((entry) => entry.name === "runtime cloudflare-auth-action").input_fields.includes("completedActionIds"), true);
   assert.equal(names(deploy).includes("runtime wrangler-account-readback"), true);
   assert.equal(names(deploy).includes("runtime d1-resource-readback"), true);
+  assert.equal(names(deploy).includes("runtime worker-resource-readback"), true);
   assert.equal(names(deploy).includes("runtime wrangler-whoami"), false);
   assert.equal(names(deploy).includes("scope resolve"), false);
   assert.equal(deploy.commands.every((entry) => entry.description && entry.effect && Array.isArray(entry.input_fields)), true);
@@ -544,7 +545,7 @@ test("D1 exact-name readback returns one verified UUID without exposing account 
     d1Name: "cfkanban-d1",
     environment: { PATH: "/usr/bin" },
     runner: async (executable, args, options) => {
-      calls.push({ executable, args, accountId: options.env.CLOUDFLARE_ACCOUNT_ID });
+      calls.push({ executable, args, accountId: options.env.CLOUDFLARE_ACCOUNT_ID, writeLogs: options.env.WRANGLER_WRITE_LOGS });
       return {
         code: 0,
         signal: null,
@@ -560,6 +561,7 @@ test("D1 exact-name readback returns one verified UUID without exposing account 
     executable: "/opt/cfkanban/wrangler",
     args: ["d1", "list", "--json", "--profile", "production"],
     accountId: "account-one",
+    writeLogs: "false",
   }]);
   assert.deepEqual(result, {
     status: "present",
@@ -607,6 +609,75 @@ test("D1 exact-name readback returns one verified UUID without exposing account 
       }),
     }),
     (error) => error.code === "WRANGLER_D1_READBACK_AMBIGUOUS",
+  );
+});
+
+test("Worker exact-name readback distinguishes presence, absence, and unknown Cloudflare failures", async () => {
+  const calls = [];
+  const present = await readWorkerResourceByName({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    accountId: "account-one",
+    cloudflareProfile: "production",
+    workerName: "cfkanban-worker",
+    environment: { PATH: "/usr/bin" },
+    runner: async (executable, args, options) => {
+      calls.push({ executable, args, accountId: options.env.CLOUDFLARE_ACCOUNT_ID, writeLogs: options.env.WRANGLER_WRITE_LOGS });
+      return {
+        code: 0,
+        signal: null,
+        stdout: JSON.stringify([{ id: "private-deployment-id", source: "private-account-metadata" }]),
+        stderr: "",
+      };
+    },
+  });
+  assert.deepEqual(calls, [{
+    executable: "/opt/cfkanban/wrangler",
+    args: ["deployments", "list", "--name", "cfkanban-worker", "--json", "--profile", "production"],
+    accountId: "account-one",
+    writeLogs: "false",
+  }]);
+  assert.deepEqual(present, {
+    status: "present",
+    account_id: "account-one",
+    profile: "production",
+    worker_name: "cfkanban-worker",
+  });
+  assert.equal(JSON.stringify(present).includes("private-deployment-id"), false);
+  assert.equal(JSON.stringify(present).includes("private-account-metadata"), false);
+
+  const absent = await readWorkerResourceByName({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    accountId: "account-one",
+    workerName: "cfkanban-worker",
+    environment: {},
+    runner: async () => ({ code: 1, signal: null, stdout: "", stderr: "Cloudflare API error [code: 10007]" }),
+  });
+  assert.deepEqual(absent, {
+    status: "absent",
+    account_id: "account-one",
+    profile: null,
+    worker_name: "cfkanban-worker",
+  });
+
+  await assert.rejects(
+    readWorkerResourceByName({
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      accountId: "account-one",
+      workerName: "cfkanban-worker",
+      environment: {},
+      runner: async () => ({ code: 0, signal: null, stdout: "not-json", stderr: "" }),
+    }),
+    (error) => error.code === "WRANGLER_WORKER_READBACK_INVALID",
+  );
+  await assert.rejects(
+    readWorkerResourceByName({
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      accountId: "account-one",
+      workerName: "cfkanban-worker",
+      environment: {},
+      runner: async () => ({ code: 1, signal: null, stdout: "", stderr: "Cloudflare API error [code: 10000]" }),
+    }),
+    (error) => error.code === "WRANGLER_WORKER_READBACK_FAILED",
   );
 });
 
@@ -749,7 +820,7 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
     wranglerExecutable: "/opt/cfkanban/wrangler",
     accountId: "account-one",
     runner: async (executable, args, options) => {
-      accountReadbackCalls.push({ executable, args, accountId: options.env.CLOUDFLARE_ACCOUNT_ID });
+      accountReadbackCalls.push({ executable, args, accountId: options.env.CLOUDFLARE_ACCOUNT_ID, writeLogs: options.env.WRANGLER_WRITE_LOGS });
       return { code: 0, signal: null, stdout: '[{"name":"must-not-leak"}]', stderr: "" };
     },
   });
@@ -757,7 +828,7 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
   assert.equal(accountReadback.account_id, "account-one");
   assert.equal(accountReadback.proof, "wrangler_d1_list");
   assert.equal(JSON.stringify(accountReadback).includes("must-not-leak"), false);
-  assert.deepEqual(accountReadbackCalls, [{ executable: "/opt/cfkanban/wrangler", args: ["d1", "list", "--json"], accountId: "account-one" }]);
+  assert.deepEqual(accountReadbackCalls, [{ executable: "/opt/cfkanban/wrangler", args: ["d1", "list", "--json"], accountId: "account-one", writeLogs: "false" }]);
   assert.deepEqual(
     buildWranglerInvocation({ action: "validate_worker_bundle", plan, configPath: generated.wrangler_config_path, environment: {} }),
     ["deploy", "--dry-run", "--config", generated.wrangler_config_path, "--profile", "production"],
@@ -888,7 +959,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
   assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.6/cfkanban-release-0.1.0-alpha.6.json");
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.7/cfkanban-release-0.1.0-alpha.7.json");
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -1013,11 +1084,13 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.4.md",
     "../../release/notes/0.1.0-alpha.5.md",
     "../../release/notes/0.1.0-alpha.6.md",
+    "../../release/notes/0.1.0-alpha.7.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
     "../../release/config/0.1.0-alpha.5.json",
     "../../release/config/0.1.0-alpha.6.json",
+    "../../release/config/0.1.0-alpha.7.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

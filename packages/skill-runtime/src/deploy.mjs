@@ -121,7 +121,7 @@ export async function readWranglerAccountAccess({
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
   const probe = buildWranglerAccountProbe({ accountId, cloudflareProfile, environment: process.env });
   const result = await runner(executable, probe.args, {
-    env: { ...process.env, ...probe.env_overrides },
+    env: { ...process.env, ...probe.env_overrides, WRANGLER_WRITE_LOGS: "false" },
   });
   if (result.code !== 0) {
     throw toolError("WRANGLER_ACCOUNT_READBACK_FAILED", "Wrangler could not verify D1 read access for the selected Cloudflare account/profile", { exitCode: result.code });
@@ -148,7 +148,7 @@ export async function readD1ResourceByName({
   const name = requireString(d1Name, "d1_name", { max: 64 });
   const probe = buildWranglerAccountProbe({ accountId, cloudflareProfile, environment });
   const result = await runner(executable, probe.args, {
-    env: { ...environment, ...probe.env_overrides },
+    env: { ...environment, ...probe.env_overrides, WRANGLER_WRITE_LOGS: "false" },
   });
   if (result.code !== 0) {
     throw toolError("WRANGLER_D1_READBACK_FAILED", "Wrangler could not read back the requested D1 resource", { exitCode: result.code });
@@ -187,6 +187,55 @@ export async function readD1ResourceByName({
     profile: probe.profile,
     d1_name: name,
     database_id: databaseId,
+  };
+}
+
+function hasCloudflareApiErrorCode(result, code) {
+  const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+  return new RegExp(`\\[code:\\s*${code}\\]`, "u").test(output);
+}
+
+export async function readWorkerResourceByName({
+  wranglerExecutable,
+  accountId,
+  workerName,
+  cloudflareProfile = null,
+  environment = process.env,
+  runner = spawnCaptured,
+}) {
+  const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
+  const name = requireString(workerName, "worker_name", { max: 63 });
+  const probe = buildWranglerAccountProbe({ accountId, cloudflareProfile, environment });
+  const args = ["deployments", "list", "--name", name, "--json"];
+  if (probe.profile !== null) args.push("--profile", probe.profile);
+  const result = await runner(executable, args, {
+    env: { ...environment, ...probe.env_overrides, WRANGLER_WRITE_LOGS: "false" },
+  });
+  if (result.code !== 0) {
+    if (hasCloudflareApiErrorCode(result, 10007)) {
+      return {
+        status: "absent",
+        account_id: probe.account_id,
+        profile: probe.profile,
+        worker_name: name,
+      };
+    }
+    throw toolError("WRANGLER_WORKER_READBACK_FAILED", "Wrangler could not read back the requested Worker resource", { exitCode: result.code });
+  }
+  let deployments;
+  try {
+    deployments = JSON.parse(result.stdout || "");
+  } catch (error) {
+    throw toolError("WRANGLER_WORKER_READBACK_INVALID", "Wrangler returned invalid JSON while reading back the requested Worker resource", {}, error);
+  }
+  if (!Array.isArray(deployments)) {
+    throw toolError("WRANGLER_WORKER_READBACK_INVALID", "Wrangler Worker readback did not return a deployment list");
+  }
+  return {
+    status: "present",
+    account_id: probe.account_id,
+    profile: probe.profile,
+    worker_name: name,
   };
 }
 
