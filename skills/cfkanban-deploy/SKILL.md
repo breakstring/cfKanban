@@ -29,7 +29,7 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.6/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.7/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
 
 ## Choose the deployment source first
 
@@ -62,6 +62,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Plan and perform login | `runtime plan-cloudflare-auth`, then `runtime cloudflare-auth-action` | Freeze separate process arguments, OAuth scopes, global keyring effects, profile operation, and task digest before opening a browser or saving auth. |
 | Verify Cloudflare account | `runtime wrangler-account-readback` | Run a read-only D1 listing against one exact account ID, with an explicit named profile when selected; return no database inventory. |
 | Read back the target D1 | `runtime d1-resource-readback` | Return only the exact target name and verified UUID, or `absent`; never expose the account's other databases. |
+| Read back the target Worker | `runtime worker-resource-readback` | Return only whether the exact Worker name is present or absent; never expose deployments or account inventory, and treat only Cloudflare code `10007` as absence. |
 | Install Tool Runtime | `runtime plan-install`, then `runtime install` | Exact version and plan digest; never modify PATH, shell profile, global Node/Wrangler, or a user Repo. |
 | Plan first deployment | `plan strict-zero` | Freeze account, resource names, bindings, Owner display name, release, instance IDs, migrations, and rate gates. |
 | Authorize/resume deployment | `journal create`, `journal authorize`, `plan compare` | Authorization binds the current task, operation ID, and exact normalized plan digest. |
@@ -79,7 +80,7 @@ The full phase, path, recovery, and marketplace/plugin guide is [references/depl
 
 ## Cloudflare login contract
 
-If compatible Wrangler exists but authentication is missing, do not invent or directly run a login command. Inspect the proposed profile with `runtime inspect-cloudflare-auth`, then feed that redacted result to `runtime plan-cloudflare-auth`. Show the returned plan and digest before invoking any `runtime cloudflare-auth-action`.
+If compatible Wrangler exists but authentication is missing, do not invent or directly run a login command. A known profile that still passes `runtime wrangler-account-readback` in this execution environment is already usable and must be reused across Skill or Service release changes; never create a new profile merely because a version changed. Profile names identify an authentication context, not a cfKanban release, so do not put release/version labels in newly proposed names. When there is no known prior choice, propose the stable name `cfkanban`, inspect it with `runtime inspect-cloudflare-auth`, then feed that redacted result to `runtime plan-cloudflare-auth`. Show the returned plan and digest before invoking any `runtime cloudflare-auth-action`.
 
 For an interactive local computer, prefer `named_profile_browser`. Wrangler 4.127.1 requires `auth create <name>`, with the profile name as a positional argument; `login --profile` is invalid. The planned `--scopes` values are separate process arguments: `account:read`, `user:read`, `workers_scripts:write`, and `d1:write`. Do not collapse them into one quoted argument and do not add the broader `workers:write`, KV, routes, Pages, zone, AI, or other product scopes. Cloudflare adds `offline_access` for refresh. If the consent page requires unexpected access, stop and report the delta.
 
@@ -117,15 +118,15 @@ The companion Skills cannot choose a different Cloudflare product, install `wran
 1. Verify bootstrap, immutable manifest, origins, digests, compatibility, and publisher continuity.
 2. Run `capabilities` and compare the verified Skill artifact with `installed_skill_bundle`. Its `tools.wrangler` result is explicitly PATH-only, while `installed_tool_runtime` is only an unverified receipt hint. Always run `runtime resolve-wrangler` with the verified manifest's Wrangler range before deciding that Wrangler is absent or incompatible; the resolver checks an explicit path, PATH, and the active `~/.cfkanban/tool-runtime/` in that order. Reuse a compatible result. Only when the resolver returns unavailable/incompatible may an exact Tool Runtime plan be created. If the exact canonical Skill release is not active, create `plan skill-update` with `current: null` for a first install or the redacted current receipt for an update. A matching marketplace/plugin cache never satisfies this step.
 3. Before any write, show the Skill plan's source, version, digest, `~/.cfkanban/skill-releases/` target, atomic switch, and rollback. When both local installations are needed, present both plans together and obtain authorization for each exact digest before executing either. Install the Skill bundle with `release install-skill-bundle`, run `help` from the returned canonical path, and read back the active Skill receipt before continuing.
-4. Inspect the proposed Cloudflare profile and auth storage. If login is required, generate the exact OAuth plan, disclose the global keyring/profile/scopes effects, and execute only its authorized actions. Do not bind a profile to the Repo.
+4. Reuse any known profile/account pair that still passes readback; Skill or Service version changes never justify a new login. Otherwise inspect the stable proposed profile name and auth storage. If login is required, generate the exact OAuth plan, disclose the global keyring/profile/scopes effects, and execute only its authorized actions. Do not bind a profile to the Repo.
 5. Run `runtime wrangler-account-readback` for the selected account/profile. Wrangler does not allow `--profile` on `whoami`, so named-profile verification uses a read-only D1 probe with `CLOUDFLARE_ACCOUNT_ID` and returns no database inventory; stop if an environment credential would shadow that profile.
 6. Generate and freeze the complete deployment or upgrade plan. Resolve account ambiguity and Owner display name before authorization.
-7. Create the operation journal and record approval only for the exact task/operation/digest.
-8. Before D1 creation, require `runtime d1-resource-readback` to return `absent`. The pinned Wrangler `d1 create` command has no JSON flag, so `action=create_d1` deliberately omits `--json` and fixes the account through `CLOUDFLARE_ACCOUNT_ID`. Never parse its human output for the UUID. After success or failure, run the exact-name readback again; only a successful create plus one verified exact match supplies the D1 ID for the private config. A failed command followed by a present resource is ambiguous and must stop rather than adopt it.
-9. Generate the private Wrangler config from the verified bundle, reconcile/apply migrations with the standard D1 migration command, then run the allowlisted Worker dry run.
-10. Execute only plan-listed actions. Before and after migrations, reconcile ledger checksums and schema artifacts.
-11. On interruption or uncertain response, read back remote markers, journal, migration ledger, and schema before resuming.
-12. Verify health, public discovery, schema, bindings, and `/api/v1/me`; then write only a redacted receipt and promote the pending Owner Credential.
+7. Before requesting deployment authorization, run both `runtime d1-resource-readback` and `runtime worker-resource-readback` for the exact frozen names. Both must return `absent`; a present or unclassifiable target stops the plan, and the user may instead approve newly proposed names. The read-only wrappers disable Wrangler disk logs and return no account inventory.
+8. Create the operation journal and record approval only for the exact task/operation/digest.
+9. Immediately before D1 creation, require its exact readback to remain `absent`. The pinned Wrangler `d1 create` command has no JSON flag, so `action=create_d1` deliberately omits `--json` and fixes the account through `CLOUDFLARE_ACCOUNT_ID`. Never parse its human output for the UUID. After success or failure, run the exact-name readback again; only a successful create plus one verified exact match supplies the D1 ID for the private config. A failed command followed by a present resource is ambiguous and must stop rather than adopt it.
+10. Generate the private Wrangler config from the verified bundle. Execute only plan-listed actions, reconcile ledger checksums and schema artifacts before and after migrations, and run the allowlisted Worker dry run.
+11. Immediately before Worker deployment, require its exact readback to remain `absent`. After a successful deploy, require it to return `present`, then verify the public `instance_id` marker, health, bindings, migration/schema state, and `/api/v1/me`; only then write a redacted receipt and promote the pending Owner Credential.
+12. On interruption or uncertain response, read back both exact resources, journal, migration ledger, schema, and public instance marker before resuming.
 
 ## Definition of a usable first installation
 
@@ -138,6 +139,8 @@ A verified Worker and D1 are the deployment result, but the user still has no bo
 - **MUST:** Cloudflare login uses the structured auth preflight and task-bound plan; OAuth scopes remain separate process arguments, and global keyring/profile effects are shown before execution.
 - **MUST:** Never interpret `capabilities.tools.wrangler` as the final availability result. Run `runtime resolve-wrangler` with the verified release range and reuse a compatible active Tool Runtime before proposing installation.
 - **MUST:** `create_d1` uses the pinned Wrangler syntax without `--json`, fixes the frozen account ID in the child environment, and obtains the database UUID only through `runtime d1-resource-readback` after the command.
+- **MUST:** Both frozen resource names use their exact readback commands before authorization and again immediately before their write; Worker absence is recognized only from Cloudflare machine code `10007`, and all other failures stop.
+- **MUST:** A verified Cloudflare profile/account remains reusable across releases. New profile names do not contain cfKanban Skill or Service version labels.
 - **MUST:** Use current Cloudflare documentation and the pinned Wrangler config schema to detect drift, but never mutate an immutable Service bundle in place to follow generic advice.
 - **MUST:** Windows native and WSL2 never auto-discover, execute, copy, or share Node, Wrangler, Cloudflare auth, Skills, Tool Runtime, or `.cfkanban/` state.
 - **MUST:** Any cost, account, permission, DNS/domain, destructive migration, resource adoption/replacement, secret, binding, or plan-digest delta requires new authorization.

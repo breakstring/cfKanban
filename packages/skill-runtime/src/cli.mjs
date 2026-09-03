@@ -16,7 +16,7 @@ import {
 } from "./state.mjs";
 import { apiRequest } from "./transport.mjs";
 import { writeOwnerBootstrapSql } from "./bootstrap-sql.mjs";
-import { executeWranglerAction, readD1ResourceByName, readWranglerAccountAccess } from "./deploy.mjs";
+import { executeWranglerAction, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "./deploy.mjs";
 import { writeFrozenWranglerConfig } from "./deployment-config.mjs";
 import { installVerifiedSkillBundle } from "./skill-update.mjs";
 import {
@@ -61,6 +61,7 @@ const COMMANDS = new Map([
   ["runtime cloudflare-auth-action", command({ description: "Run one ordered, allowlisted action from an authorized Cloudflare OAuth plan without returning raw auth output.", effect: "authorized_local_auth_and_oauth", inputFields: ["plan", "actionId", "completedActionIds", "authorizedTaskId", "authorizedPlanDigest"], surfaces: ["deploy"], run: executeCloudflareAuthAction })],
   ["runtime wrangler-account-readback", command({ description: "Verify read-only D1 access for one exact Cloudflare account/profile before creating a deployment plan.", effect: "read_only_cloudflare_account", inputFields: ["wranglerExecutable", "accountId", "cloudflareProfile"], surfaces: ["deploy"], run: readWranglerAccountAccess })],
   ["runtime d1-resource-readback", command({ description: "Read back one exact D1 name and verified UUID without returning the account resource inventory.", effect: "read_only_cloudflare_resource", inputFields: ["wranglerExecutable", "accountId", "cloudflareProfile", "d1Name"], surfaces: ["deploy"], run: readD1ResourceByName })],
+  ["runtime worker-resource-readback", command({ description: "Read back one exact Worker name without returning deployment or account inventory.", effect: "read_only_cloudflare_resource", inputFields: ["wranglerExecutable", "accountId", "cloudflareProfile", "workerName"], surfaces: ["deploy"], run: readWorkerResourceByName })],
   ["runtime plan-install", command({ description: "Create an exact local Tool Runtime installation plan.", effect: "plan_only", inputFields: ["taskId", "npmExecutable", "wranglerVersion"], surfaces: ["deploy"], run: createToolRuntimePlan })],
   ["runtime install", command({ description: "Install the exact authorized Wrangler version inside the cfKanban user root.", effect: "local_tool_write", inputFields: ["plan", "authorizedTaskId", "authorizedPlanDigest"], surfaces: ["deploy"], run: installToolRuntime })],
   ["plan strict-zero", command({ description: "Create a frozen first-deployment plan for one Worker, one D1, and bundled Static Assets.", effect: "plan_only", inputFields: ["taskId", "accountId", "accountLabel", "cloudflareProfile", "ownerDisplayName", "release"], surfaces: ["deploy"], run: createStrictZeroPlan })],
