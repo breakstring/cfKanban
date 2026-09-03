@@ -36,7 +36,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.2.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.3.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -372,7 +372,21 @@ test("strict-zero plan freezes defaults; any delta requires new authorization", 
   assert.equal(plan.resources.custom_domain, null);
   assert.equal(plan.migrations.checksum_ledger_table, "cfkanban_migration_ledger");
   assert.equal(plan.steps.includes("read_migration_checksum_ledger_and_schema_again"), true);
-  assert.equal(createSkillUpdatePlan({ taskId: "task-wp10", current: null, target: { version: "0.1.0" }, installRoot: "/safe" }).cloudflare_writes, false);
+  const firstSkillInstall = createSkillUpdatePlan({
+    taskId: "task-wp10",
+    current: null,
+    target: {
+      version: TESTING_RELEASE_CONFIG.version,
+      source: TESTING_RELEASE_CONFIG.canonicalBaseUrl,
+      sha256: "a".repeat(64),
+    },
+    installRoot: "/safe/skill-releases",
+  });
+  assert.equal(firstSkillInstall.current, null);
+  assert.equal(firstSkillInstall.target.kind, "skill_bundle");
+  assert.equal(firstSkillInstall.install_root, "/safe/skill-releases");
+  assert.equal(firstSkillInstall.cloudflare_writes, false);
+  assert.equal(firstSkillInstall.d1_migrations, false);
   assert.equal(createInstanceUpgradePlan({ taskId: "task-wp10", instanceId: INSTANCE_ID, current: {}, target: {}, migrations: [], restorePoint: {} }).skill_update_included, false);
   const changed = structuredClone(plan);
   changed.resources.custom_domain = "kanban.example.test";
@@ -606,7 +620,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
   assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.2/cfkanban-release-0.1.0-alpha.2.json");
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.3/cfkanban-release-0.1.0-alpha.3.json");
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -695,7 +709,9 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/bootstrap/prerelease.schema.json",
     "../../release/notes/0.1.0-alpha.1.md",
     "../../release/notes/0.1.0-alpha.2.md",
+    "../../release/notes/0.1.0-alpha.3.md",
     "../../release/config/0.1.0-alpha.2.json",
+    "../../release/config/0.1.0-alpha.3.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
