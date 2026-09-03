@@ -98,6 +98,7 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 | Cloudflare auth 检查 | `runtime inspect-cloudflare-auth` | 脱敏的命令/profile/keyring/scope 事实与 blockers；不返回 token 或原始输出。 |
 | Cloudflare auth 计划/动作 | `runtime plan-cloudflare-auth`、`runtime cloudflare-auth-action` | 绑定 task 的 digest、非 shell 参数数组、明确的全局 keyring 影响、OAuth consent 与必需读回。 |
 | Cloudflare 账户 | `runtime wrangler-account-readback` | 对准确 account/profile 验证只读 D1 访问；丢弃数据库清单。 |
+| 准确 D1 资源 | `runtime d1-resource-readback` | 只返回准确名称的 absent/present 状态与已验证 UUID，不暴露其他数据库。 |
 | Tool Runtime 计划/安装 | `runtime plan-install`、`runtime install` | 准确 local-only plan 与 `.cfkanban/tool-runtime` 下的授权安装。 |
 | 首次部署计划 | `plan strict-zero` | Frozen plan 与 normalized digest。 |
 | Plan 漂移 | `plan compare` | 准确 delta 与是否需要新授权。 |
@@ -123,8 +124,8 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 6. 使用准确 account ID 与可选 named profile 运行 `runtime wrangler-account-readback`；禁止使用裸 `npx`，因为它可能下载未固定的最新 Wrangler。Wrangler 的 `whoami` 不支持 `--profile`，因此该命令改用只读 `d1 list --json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定账户、丢弃数据库清单，并在环境 Credential 会遮蔽所选 profile 时停止。
 7. 运行 `plan strict-zero`。默认候选包含一个 Worker、一个 D1、bundled Static Assets、`workers.dev`、不包含可选 Cloudflare 产品，并使用每 60 秒 120/300/30 request gates。冻结所选 Cloudflare profile/account，并在冻结 digest 前解决缺少的 Owner display name。
 8. 创建 journal 并展示完整 plan。`journal authorize` 只记录 current Agent task、operation ID 与 digest 的授权。
-9. 只执行 allowlisted `deploy wrangler-action`。显式创建 D1，不使用自动资源供应。未知同名资源绝不接管；冲突时另提名称。
-10. 使用已创建 D1 的 ID 运行 `deployment write-wrangler-config`。bundle 内的 `wrangler.template.json` 只是带占位资源身份、经过 schema 校验的配置骨架，绝不能原样部署。该命令会在 immutable bundle 外写入私有的实际 config，指向 bundle 内已构建 Worker/Static Assets/migrations，并固定 account、名称、bindings、compatibility date 与 rate gates。
+9. 在 allowlisted `create_d1` 动作前后都使用 `runtime d1-resource-readback`。固定的 Wrangler 只在 `d1 list` 支持 JSON，`d1 create` 不支持；因此写入动作不带 `--json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定计划中的账户，并把命令文本输出视为非权威信息。只有 preflight 为 absent、创建命令成功且写后准确名称读回得到唯一已验证 UUID 时才能继续。若创建失败后资源却存在，其归属不明确，必须停止。不得使用自动资源供应，也不得接管未知同名资源。
+10. 使用 `runtime d1-resource-readback` 返回的 UUID 运行 `deployment write-wrangler-config`。bundle 内的 `wrangler.template.json` 只是带占位资源身份、经过 schema 校验的配置骨架，绝不能原样部署。该命令会在 immutable bundle 外写入私有的实际 config，指向 bundle 内已构建 Worker/Static Assets/migrations，并固定 account、名称、bindings、compatibility date 与 rate gates。
 11. 数据 bootstrap 前创建 pending Owner Credential 与 hash-only bootstrap SQL。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
 12. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。
 13. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。

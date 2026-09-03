@@ -29,7 +29,7 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.5/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.6/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
 
 ## Choose the deployment source first
 
@@ -61,6 +61,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Inspect Cloudflare login | `runtime inspect-cloudflare-auth` | Read exact Wrangler/profile/keyring/command/scope state without returning tokens or raw command output. |
 | Plan and perform login | `runtime plan-cloudflare-auth`, then `runtime cloudflare-auth-action` | Freeze separate process arguments, OAuth scopes, global keyring effects, profile operation, and task digest before opening a browser or saving auth. |
 | Verify Cloudflare account | `runtime wrangler-account-readback` | Run a read-only D1 listing against one exact account ID, with an explicit named profile when selected; return no database inventory. |
+| Read back the target D1 | `runtime d1-resource-readback` | Return only the exact target name and verified UUID, or `absent`; never expose the account's other databases. |
 | Install Tool Runtime | `runtime plan-install`, then `runtime install` | Exact version and plan digest; never modify PATH, shell profile, global Node/Wrangler, or a user Repo. |
 | Plan first deployment | `plan strict-zero` | Freeze account, resource names, bindings, Owner display name, release, instance IDs, migrations, and rate gates. |
 | Authorize/resume deployment | `journal create`, `journal authorize`, `plan compare` | Authorization binds the current task, operation ID, and exact normalized plan digest. |
@@ -120,10 +121,11 @@ The companion Skills cannot choose a different Cloudflare product, install `wran
 5. Run `runtime wrangler-account-readback` for the selected account/profile. Wrangler does not allow `--profile` on `whoami`, so named-profile verification uses a read-only D1 probe with `CLOUDFLARE_ACCOUNT_ID` and returns no database inventory; stop if an environment credential would shadow that profile.
 6. Generate and freeze the complete deployment or upgrade plan. Resolve account ambiguity and Owner display name before authorization.
 7. Create the operation journal and record approval only for the exact task/operation/digest.
-8. Create D1, generate the private Wrangler config from the verified bundle, reconcile/apply migrations with the standard D1 migration command, then run the allowlisted Worker dry run.
-9. Execute only plan-listed actions. Before and after migrations, reconcile ledger checksums and schema artifacts.
-10. On interruption or uncertain response, read back remote markers, journal, migration ledger, and schema before resuming.
-11. Verify health, public discovery, schema, bindings, and `/api/v1/me`; then write only a redacted receipt and promote the pending Owner Credential.
+8. Before D1 creation, require `runtime d1-resource-readback` to return `absent`. The pinned Wrangler `d1 create` command has no JSON flag, so `action=create_d1` deliberately omits `--json` and fixes the account through `CLOUDFLARE_ACCOUNT_ID`. Never parse its human output for the UUID. After success or failure, run the exact-name readback again; only a successful create plus one verified exact match supplies the D1 ID for the private config. A failed command followed by a present resource is ambiguous and must stop rather than adopt it.
+9. Generate the private Wrangler config from the verified bundle, reconcile/apply migrations with the standard D1 migration command, then run the allowlisted Worker dry run.
+10. Execute only plan-listed actions. Before and after migrations, reconcile ledger checksums and schema artifacts.
+11. On interruption or uncertain response, read back remote markers, journal, migration ledger, and schema before resuming.
+12. Verify health, public discovery, schema, bindings, and `/api/v1/me`; then write only a redacted receipt and promote the pending Owner Credential.
 
 ## Definition of a usable first installation
 
@@ -135,6 +137,7 @@ A verified Worker and D1 are the deployment result, but the user still has no bo
 - **MUST:** Cloudflare companion Skills and Wrangler Skill installation are optional host-owned changes; they never run implicitly and never replace the cfKanban deployment contract.
 - **MUST:** Cloudflare login uses the structured auth preflight and task-bound plan; OAuth scopes remain separate process arguments, and global keyring/profile effects are shown before execution.
 - **MUST:** Never interpret `capabilities.tools.wrangler` as the final availability result. Run `runtime resolve-wrangler` with the verified release range and reuse a compatible active Tool Runtime before proposing installation.
+- **MUST:** `create_d1` uses the pinned Wrangler syntax without `--json`, fixes the frozen account ID in the child environment, and obtains the database UUID only through `runtime d1-resource-readback` after the command.
 - **MUST:** Use current Cloudflare documentation and the pinned Wrangler config schema to detect drift, but never mutate an immutable Service bundle in place to follow generic advice.
 - **MUST:** Windows native and WSL2 never auto-discover, execute, copy, or share Node, Wrangler, Cloudflare auth, Skills, Tool Runtime, or `.cfkanban/` state.
 - **MUST:** Any cost, account, permission, DNS/domain, destructive migration, resource adoption/replacement, secret, binding, or plan-digest delta requires new authorization.
