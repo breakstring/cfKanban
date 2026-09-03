@@ -85,6 +85,22 @@ export function buildCapabilityReport({
   } catch {
     result.installed_skill_bundle = { status: "unavailable" };
   }
+  try {
+    const activeToolRuntime = JSON.parse(readFileSync(path.join(result.paths.tool_runtime_root, "active.json"), "utf8"));
+    const version = typeof activeToolRuntime?.version === "string" && activeToolRuntime.version.length <= 64
+      && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(activeToolRuntime.version)
+      ? activeToolRuntime.version
+      : null;
+    result.installed_tool_runtime = version !== null
+      ? {
+          status: "recorded_unverified",
+          version,
+          resolver_required: true,
+        }
+      : { status: "invalid_receipt", resolver_required: true };
+  } catch {
+    result.installed_tool_runtime = { status: "unavailable", resolver_required: true };
+  }
   if (probes) {
     result.tools.npm = probe(platform === "win32" ? "npm.cmd" : "npm", ["--version"], { env });
     result.tools.git = probe("git", ["--version"], { env });
@@ -102,5 +118,13 @@ export function buildCapabilityReport({
     result.tools.wrangler = { status: "unknown" };
     result.repository = { status: "not_probed", root: null, dirty: null };
   }
+  result.tools.wrangler.discovery_scope = "path_only";
+  result.tools.wrangler.release_compatibility = "not_determined";
+  result.required_next_checks = [{
+    command: "runtime resolve-wrangler",
+    required_input: "verified release compatibility.wrangler range",
+    searches: ["explicit_path", "path", "cfkanban_tool_runtime"],
+    purpose: "decide whether a compatible Wrangler can be reused before planning any installation",
+  }];
   return result;
 }
