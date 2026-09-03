@@ -12,8 +12,8 @@ cfKanban is currently a **public testing preview**, not a stable end-user releas
 
 - The Worker, D1 schema, Web UI, and three Agent Skills are implemented in this repository.
 - You can install the Codex plugin from this public repository today and inspect or evaluate the Skills.
-- The [`0.1.0-alpha.9` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.9) packages immutable Skill and Service bundles for testing. It follows Wrangler's current-context-first profile/account resolution and fixes D1 migration row readback.
-- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.9/prerelease.json).
+- The [`0.1.0-alpha.10` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.10) packages immutable Skill and Service bundles for testing. It lets Wrangler resolve the active identity without automatic profile enumeration, pins the target account in private config, and fixes D1 file-ingestion transaction handling.
+- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.10/prerelease.json).
 - The stable release pointer and real multi-environment deployment acceptance are not published yet.
 - Do not treat `main`, a local checkout, or a marketplace snapshot as a canonical stable release or production-ready deployment.
 
@@ -40,7 +40,7 @@ For a future Cloudflare deployment you will also need:
 The repository is a Codex plugin marketplace. From the command line, add the immutable testing tag and install its plugin:
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.9
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.10
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -76,7 +76,7 @@ You do not need to know or mention manifests, digests, preflight, deployment pla
 
 If Cloudflare login is needed, the Skill shows that as its own small plan and then opens the appropriate browser or device flow after approval. Completing login does not create a Worker or D1 database; the deployment plan remains a later, separate approval.
 
-At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.9` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
+At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.10` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
 
 If you deliberately want to evaluate a source revision, say so explicitly:
 
@@ -92,7 +92,7 @@ Whether you use the testing prerelease now or a stable release later, the same s
 
 1. confirming the exact release and checking that its files have not changed;
 2. checking the computer and reusing compatible Node.js and Wrangler installations when possible;
-3. reusing an exact journal/receipt auth target or asking Wrangler to resolve the current private deployment/config context; only after failure does it consider the sole or user-selected alternate profile, while the private config pins the exact account;
+3. reusing an exact journal/receipt auth target or asking Wrangler to resolve the current private deployment/config context; an alternate profile is considered only when the user explicitly names it, while the private config pins the exact account;
 4. showing the resources, local changes, costs, and recovery limits before asking for approval;
 5. creating one Worker, one D1 database, and the bundled Web app only after approval;
 6. reading everything back before reporting that deployment succeeded.

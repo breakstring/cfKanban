@@ -12,8 +12,8 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 
 - Worker、D1 schema、Web UI 和三个 Agent Skills 已经在本仓库中实现。
 - 你现在可以从这个公开仓库安装 Codex plugin，并检查或试用这些 Skills。
-- [`0.1.0-alpha.9` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.9) 提供不可变的 Skill 与 Service bundle；它按 Wrangler 的“当前上下文优先”逻辑解析 profile/account，并修复 D1 migration 结果读回，可用于测试。
-- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.9/prerelease.json)。
+- [`0.1.0-alpha.10` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.10) 提供不可变的 Skill 与 Service bundle；它不再自动枚举 Wrangler profiles，而是让 Wrangler 解析当前身份、由私有配置固定目标 account，并修复 D1 文件导入事务处理。
+- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.10/prerelease.json)。
 - 稳定发行指针和真实多环境部署验收尚未发布。
 - 不要把 `main`、本地 checkout 或 marketplace snapshot 当成 canonical stable release 或生产就绪部署。
 
@@ -40,7 +40,7 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 本仓库本身就是一个 Codex plugin marketplace。可以在命令行添加不可变的测试 tag，并安装其中的 plugin：
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.9
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.10
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -76,7 +76,7 @@ plugin 包含三个 Skills：
 
 如果需要登录 Cloudflare，Skill 会把它作为一份独立的小计划展示；获批后再打开对应的浏览器或 device flow。完成登录不会创建 Worker 或 D1 数据库，真正的部署计划仍会在后面单独请求确认。
 
-当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `0.1.0-alpha.9` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
+当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `0.1.0-alpha.10` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
 
 如果你明确想评估某个源码修订，请把这一点说清楚：
 
@@ -92,7 +92,7 @@ plugin 包含三个 Skills：
 
 1. 确认准确的发行版本，并检查文件没有被替换；
 2. 检查当前电脑，尽量复用已有的兼容 Node.js 与 Wrangler；
-3. 优先复用 journal/receipt 中的准确认证目标，或让 Wrangler 解析当前私有部署/config 上下文；只有失败后才考虑唯一或用户选中的其他 profile，并由私有配置固定准确 account；
+3. 优先复用 journal/receipt 中的准确认证目标，或让 Wrangler 解析当前私有部署/config 上下文；只有用户明确指定时才考虑其他 profile，并由私有配置固定准确 account；
 4. 在请求确认前，说明会创建哪些资源、修改哪些本地内容、可能的费用和恢复边界；
 5. 获得确认后才创建一个 Worker、一个 D1 数据库和内置 Web 应用；
 6. 完成后读回验证，再报告部署成功。

@@ -27,13 +27,13 @@ The user does not need to request release verification, read-only preflight, a d
 The first stable release has not been published. Today, Codex users can load the immutable testing tag:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.9
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.10
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
 The testing tag is immutable; use mutable `main` only for deliberate development-snapshot evaluation. After installation, start a new Codex task so the Skills are loaded. Installation only enables discovery; it does not create `.cfkanban/`, select a stable or prerelease deployment, or authorize local/cloud writes.
 
-The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.9/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
+The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.10/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
 
 Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three entrypoints deliberately share the bundled JavaScript source modules under `packages/skill-runtime`; despite the internal directory name, this is not an embedded Node.js executable or runtime distribution. A host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
 
@@ -47,7 +47,7 @@ node scripts/cfkanban-tool.mjs help
 
 The result is structured JSON containing each command's name, effect, and accepted input fields. Commands accept structured JSON on stdin so secrets do not need to appear in process arguments. Credentials are never accepted as input fields; ordinary authenticated requests, Invite/Public Join redemption, and Owner rotation read the correct current or pending secret from private files internally.
 
-Before proposing Cloudflare login, `cfkanban-deploy` first reuses an exact profile/account already frozen in a deployment journal or receipt. Otherwise, `runtime resolve-cloudflare-auth` asks Wrangler to resolve the current private deployment/config context. It checks no other profile when that context works. Only after failure does it list bounded profile names; it inspects account memberships for the sole or explicitly selected profile, never every profile. The generated private `wrangler.jsonc` pins `account_id`; an explicitly selected profile is passed with `--profile`, while environment/config-directory selection remains Wrangler-owned. Tokens, email, bindings, resource inventories, and raw Wrangler output are never returned. A new login is planned only when no usable context exists.
+Before proposing Cloudflare login, `cfkanban-deploy` first reuses an exact profile/account already frozen in a deployment journal or receipt. Otherwise, `runtime resolve-cloudflare-auth` lets Wrangler use environment authentication or resolve the current private deployment/config context. It never lists profiles. A named profile is inspected only when the user explicitly supplies it, using `--profile`; otherwise environment/config-directory selection remains Wrangler-owned. The generated private `wrangler.jsonc` pins the selected `account_id`. Tokens, email, bindings, resource inventories, and raw Wrangler output are never returned. A new login is planned only when neither the current context nor an explicitly supplied profile is usable.
 
 The `.mjs` extension means plain JavaScript in Node's explicit ES module format. These files run directly with `node`, need no compile step, and remain unambiguous when a portable Skill is installed outside a `package.json` tree.
 
