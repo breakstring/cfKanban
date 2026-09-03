@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { toolError } from "./errors.mjs";
 import { canonicalDigest, jsonPointerChanges, requireHttpsOrigin, requireString, requireUuid } from "./utils.mjs";
 
@@ -26,11 +27,20 @@ function digest(value, name) {
   return text;
 }
 
+function absolutePath(value, name) {
+  const text = requireString(value, name, { max: 4096 });
+  if (!path.posix.isAbsolute(text) && !path.win32.isAbsolute(text)) {
+    throw toolError("ABSOLUTE_PATH_REQUIRED", `${name} must be an absolute path`, { field: name });
+  }
+  return text;
+}
+
 export function createStrictZeroPlan({
   taskId,
   accountId,
   accountLabel = null,
   cloudflareProfile = null,
+  cloudflareAuthContextDirectory = null,
   ownerDisplayName,
   release,
   resourcePrefix = "cfkanban",
@@ -45,6 +55,9 @@ export function createStrictZeroPlan({
   const owner = requireString(ownerDisplayName, "owner_display_name", { max: 128 }).trim();
   const frozenWorkerName = exactResourceName(workerName || resourceName(resourcePrefix, "worker"), "worker_name");
   const frozenD1Name = exactResourceName(d1Name || resourceName(resourcePrefix, "d1"), "d1_name");
+  if (cloudflareProfile !== null && cloudflareAuthContextDirectory !== null) {
+    throw toolError("AMBIGUOUS_WRANGLER_AUTH_CONTEXT", "Use either an explicit Wrangler profile or an effective context directory, not both");
+  }
   const plan = {
     schema_version: 1,
     kind: "strict_zero_deploy",
@@ -54,6 +67,9 @@ export function createStrictZeroPlan({
       cloudflare_account_id: requireString(accountId, "account_id", { max: 128 }),
       cloudflare_account_label: accountLabel,
       cloudflare_profile: cloudflareProfile === null ? null : requireString(cloudflareProfile, "cloudflare_profile", { max: 128 }),
+      cloudflare_auth_context_directory: cloudflareAuthContextDirectory === null
+        ? null
+        : absolutePath(cloudflareAuthContextDirectory, "cloudflare_auth_context_directory"),
       instance_id: requireUuid(instanceId, "instance_id"),
     },
     release: {

@@ -1,14 +1,14 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
 - 文档状态：Frozen
-- 合同修订：22
+- 合同修订：23
 - Roadmap：R0 / R3
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
 - 事实快照：[Agent Skill 与本地部署环境能力快照](../research/agent-skill-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-09-01
+- 最近更新：2026-09-03
 - 冻结日期：2026-08-28
-- 最近修订：2026-09-01（D-253、D-254、D-255）
+- 最近修订：2026-09-03（D-256）
 
 ## 1. 目的与边界
 
@@ -307,7 +307,7 @@ v0 不把 Credential 绑定到设备或 Agent 宿主。用户可以自行把同�
 
 1. `cfkanban-deploy` 运行只读 capability report。
 2. Node 缺失或不兼容时按 6.3 引导选择；Wrangler 按 6.4 解析兼容现有版本或用户级 cfKanban Tool Runtime。
-3. 使用已解析的 Wrangler executable 对准确 account/profile 执行只读 account preflight；本地交互环境优先 OAuth + keyring，远程/容器可使用 device flow，CI/headless 使用明确提供的 API token。Wrangler `whoami` 只作用于当前 active profile、不能接受 `--profile`，因此 named profile 通过 `CLOUDFLARE_ACCOUNT_ID=<准确账户>` 与 `d1 list --json --profile <名称>` 验证目标账户的 D1 只读访问，数据库清单不得返回 Agent 正常输出；环境 Credential 会遮蔽 profile 时停止。存在多个 profile 时显式选择并把 profile/account 冻结进 plan。
+3. 已授权 journal/receipt 已固定准确 profile/account 时先对该组合做只读读回。其他情况按 Wrangler 自身顺序解析认证：环境 Token 优先，其次使用私有部署/config 上下文目录绑定的 profile，最后使用 default profile。当前上下文可用时不得枚举其他 profile；不可用时只列出范围受控的 profile 名称，一个 profile 可只校验它，多个时由用户选定后只解析该 profile 的 account memberships。无关或失效 profile 不得阻塞已选上下文。Wrangler `whoami` 不接受 `--profile`，因此显式 named profile 的最终验证使用 `CLOUDFLARE_ACCOUNT_ID=<准确账户>` 与 `d1 list --json --profile <名称>`；当前环境/config 上下文则省略 `--profile`。数据库清单不得返回 Agent 正常输出，环境 Credential 遮蔽显式 profile 时停止。
 4. 当前指令没有 Owner display name 时，只询问这一项身份信息；不得从 OS username、Git identity、hostname 或 Agent account 推断。它不属于 Cloudflare 资源参数。
 5. 默认按 7.2.1 零参数生成 strict-zero 候选；只有 Cloudflare account/profile 歧义，或用户目标要求 custom domain、付费能力、数据地域/合规约束、非 stable 版本或源码试验时，才请求会改变结果的最少输入。
 6. 输出 deploy plan：将创建/修改的 Worker、D1、bindings、migration、domain、自动生成值、Owner display name，以及费用和回滚边界；人类通过一次完整计划授权接受这些值，不逐字段确认。
@@ -318,7 +318,7 @@ v0 不把 Credential 绑定到设备或 Agent 宿主。用户可以自行把同�
 - Web 使用已包含在固定 Service deployment bundle 中的预构建资产，并与 API 通过同一个 Worker deployment 的 Workers Static Assets 发布；普通 stable 部署不要求部署者现场构建前端，也不创建 Pages project 或 KV namespace。
 - 初始公开入口使用 Cloudflare 分配的 `workers.dev` 地址；custom domain/DNS 只有被人类明确选择并列入 plan 时才配置。
 - KV、R2、Queues、Durable Objects、Vectorize 和 Workers AI 都不在默认 plan 中；未来即使某项有免费额度，也必须作为可选 profile 明确启用。
-- 认证上下文只明确对应一个 Cloudflare account/profile 时直接采用并在 plan 展示；存在多个候选或映射不可靠时只询问这一项，不能按最近使用猜测。
+- 当前认证上下文只明确对应一个 Cloudflare account 时直接采用并在 plan 展示；当前上下文失败且存在多个 named profiles 时只询问 profile，选中 profile 对应多个 accounts 时只询问 account，不能按最近使用猜测或遍历无关 profile。计划固定准确 account 与任何明确选择的 profile；生成的私有 `wrangler.jsonc` 始终固定 `account_id`。
 - Agent 自动提议非权威的人类可读 instance label/resource prefix，并派生 Worker/D1 资源名；用户无需先填写名称表单。read-only 检查发现 unrelated/unknown collision 时不得接管，而是生成新的无冲突候选并写入 plan；用户坚持精确名称或处理既有资源时退出默认流程。
 - D1 location/jurisdiction 默认不显式设置，由平台默认处理；用户提出数据地域、合规或主位置要求时才请求对应选择，并把它作为计划偏差展示。
 - immutable release manifest 自动解析当前 stable Service deployment bundle。用户明确要求旧版、预览版、任意非 stable 版本或 repo 源码时，必须退出默认路径并说明版本/可重现性风险。
@@ -344,7 +344,7 @@ Node 安装方法、Cloudflare 登录或权限授权属于环境/身份前置步
 
 Skill 内置部署脚本使用本地 journal/operation ID 记录 plan digest 和每个已确认步骤。失败后，同一 Agent 任务内先 readback Cloudflare 当前状态；状态仍匹配 plan 时可以 resume/repair，不需要重复授权。进入新任务/新会话、无法可靠关联原始授权，或 readback 与 plan 不一致时，必须展示当前状态、已完成步骤和剩余 delta，再取得新的明确授权。不得盲目重建 D1、重复 migration、创建第二 Owner 或覆盖未知远程配置。
 
-Service deployment bundle 必须携带已构建 Worker、预构建 Static Assets、migrations、可移植 Wrangler template 和构建时固定的 config schema；不能让 template 指向 bundle 外不存在的源码或依赖。D1 创建并读回准确 database ID 后，受控脚本在 `.cfkanban/instances/<instance_id>/journals/` 生成私有 Frozen Wrangler config，绑定 plan 中的 account/profile、Worker/D1 名称、bindings、compatibility date、rate gates 与 bundle 内绝对路径，而不修改 immutable bundle。远端 Worker deploy 前必须使用计划中的同一 executable/config 执行 `wrangler deploy --dry-run`；dry run 成功只证明本地编译/config 可接受，不等于远端部署成功或新增授权。D1 继续使用 Cloudflare 标准 migrations apply 的顺序与单 migration 失败回滚语义，同时以 cfKanban checksum ledger + 实际 schema readback 作为完成事实。
+Service deployment bundle 必须携带已构建 Worker、预构建 Static Assets、migrations、可移植 Wrangler template 和构建时固定的 config schema；不能让 template 指向 bundle 外不存在的源码或依赖。D1 创建并读回准确 database ID 后，受控脚本在 `.cfkanban/instances/<instance_id>/journals/` 生成私有 Frozen Wrangler config，使用 `account_id` 固定 plan 中的准确 account，并绑定 Worker/D1 名称、bindings、compatibility date、rate gates 与 bundle 内绝对路径，而不修改 immutable bundle。明确选中的 named profile 通过 `--profile` 传入；未显式选中时由 Wrangler 按环境/config 目录解析身份。远端 Worker deploy 前必须使用计划中的同一 executable/config 执行 `wrangler deploy --dry-run`；dry run 成功只证明本地编译/config 可接受，不等于远端部署成功或新增授权。D1 继续使用 Cloudflare 标准 migrations apply 的顺序与单 migration 失败回滚语义，同时以 cfKanban checksum ledger + 实际 schema readback 作为完成事实。
 
 ### 7.4 Owner Credential 与交付
 
@@ -523,8 +523,9 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 32. 已确认：D-253 将 cfKanban 自管持久数据统一到当前执行环境 home 下的 `.cfkanban/`，按 `instances/`、`skill-releases/`、`tool-runtime/` 分责；宿主 marketplace/plugin metadata、发现投影/cache 与 Cloudflare auth 继续由各自所有者管理。Windows 原生与 WSL2 仍是不同 home 下的独立边界，统一根不授权放宽 secret 权限或宽泛递归清理。
 33. 已确认：D-254 要求三个分发 `SKILL.md` 直接呈现能力、切换边界、命令 catalog、任务到命令/API 对照、readback 与停止条件；详细文档维护 English/简体中文配对，不支持 locale 的 metadata 用英文。专用安全命令在内部注入 pending Credential；公开表面不显示内部阶段标签，`.mjs` 明确为 Node 原生 ESM JavaScript。
 34. 已确认：D-255 将 Cloudflare 官方 `cloudflare`/`wrangler` Skills 定位为可选上游参考而非依赖或授权来源；安装不自动发生，通用 latest/repo-local/npx 建议不覆盖 stable release 合同。Service bundle 携带 portable Wrangler template/schema，D1 创建后生成私有 Frozen config，并在正式 deploy 前用同一 Wrangler/config dry run。
+35. 已确认：D-256 将 Wrangler auth 解析收敛为“journal/receipt 准确目标 → 当前环境/config 上下文 → 唯一或用户选中的 named profile → 新登录”。当前上下文可用时不枚举其他 profiles；失败后只列名称并只检查一个 profile。准确 account 由读回和私有 `wrangler.jsonc.account_id` 固定，无关失效 profile 不再形成全局 blocker。
 
-SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 22 在此前确定性构建、migration readback 与唯一主部署路径之上，又固定统一 `.cfkanban/` 维护根、宿主发现投影边界、任务/命令导向的双语 Skill 表面、专用 secret 注入命令，以及 Cloudflare 官方 Skills 的可选参考边界和 portable Wrangler config/dry-run。此前 monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
+SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 23 在此前统一 `.cfkanban/`、双语 Skill 表面与 portable Wrangler config 的基础上，又把 Wrangler auth 收敛为当前上下文优先、只检查唯一或明确选中的备用 profile，并以私有 config 的 `account_id` 固定目标账户。此前 monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
 
 ## 12. 冻结范围与完成依据
 
@@ -555,5 +556,6 @@ SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 22
 23. 合同修订 20 已固定可重现根级构建与 migration manifest/ledger/schema readback，同时将持有 Cloudflare Token 的 GitHub Actions 部署路径后置；v0 仍由用户的 Agent 通过 `cfkanban-deploy` 完成计划、授权、执行与恢复。
 24. 合同修订 21 已固定 cfKanban 自管持久数据统一到 `.cfkanban/` 的三个分责子目录，宿主发现投影继续留在宿主目录；三个 Skills 以可自描述命令 catalog 和任务→命令/API 的 English/简体中文文档呈现，并以专用命令内部注入 pending Credential。
 25. 合同修订 22 已固定 Cloudflare 官方 Skills 只作可选事实参考，不能自动安装、替代 cfKanban 信任/授权或把通用 latest/repo-local 规则强加给 stable 部署；Service bundle 必须携带 portable Wrangler template/schema，并通过私有 Frozen config 与正式 deploy 前 dry run 证明可移植性。
+26. 合同修订 23 已固定 Wrangler auth 使用当前环境/config 上下文优先，只有失败后才列出 profile 名称并只检查唯一或明确选中的 profile；准确 account 由最终读回及私有 `wrangler.jsonc.account_id` 固定，无关 profile 不形成 blocker。
 
 本次冻结只固定上述公共 Agent 体验与安全边界，不固定尚未设计的具体 npm package 名、各宿主未来新增的投影机制、版本淘汰阈值或实现代码。冻结范围内的语义如需变化，必须通过显式新决策和可追踪修订；冻结本身不授权实现、安装、部署或发布。

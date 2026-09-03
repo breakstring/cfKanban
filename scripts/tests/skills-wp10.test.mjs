@@ -7,7 +7,7 @@ import { buildCapabilityReport } from "../../packages/skill-runtime/src/capabili
 import { writeOwnerBootstrapSql } from "../../packages/skill-runtime/src/bootstrap-sql.mjs";
 import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
 import { redeemInvitation, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
-import { buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
+import { buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
 import { writeFrozenWranglerConfig } from "../../packages/skill-runtime/src/deployment-config.mjs";
 import { authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
 import { reconcileMigrationState, writeMigrationLedgerRecordSql } from "../../packages/skill-runtime/src/migrations.mjs";
@@ -44,7 +44,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.8.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.9.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -267,17 +267,104 @@ test("Cloudflare OAuth planning freezes named-profile syntax, least scopes, and 
   );
 });
 
-test("Cloudflare auth resolution reuses one discoverable named profile without exposing its token or user identity", async () => {
-  const token = "cloudflare-oauth-token-fixture";
+test("Cloudflare auth resolution prefers the effective private deployment context", async () => {
+  const contextDirectory = "/private/cfkanban/deploy-context";
   const calls = [];
   const result = await resolveCloudflareAuth({
     wranglerExecutable: "/opt/cfkanban/wrangler",
+    contextDirectory,
     environment: {},
     runner: async (executable, args, options) => {
       calls.push({ executable, args, options });
       const command = args.join(" ");
       if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
-      if (command === "auth list") {
+      if (command === `whoami --json --cwd ${contextDirectory}`) {
+        return {
+          code: 0,
+          signal: null,
+          stdout: JSON.stringify({
+            loggedIn: true,
+            authType: "OAuth Token",
+            email: "private@example.test",
+            accounts: [{ id: "a".repeat(32), name: "Example Account" }],
+          }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.schema_version, 2);
+  assert.equal(result.status, "resolved");
+  assert.equal(result.context_directory, contextDirectory);
+  assert.deepEqual(result.selected, {
+    profile: null,
+    account_id: "a".repeat(32),
+    account_label: "Example Account",
+    auth_source: "effective_context",
+  });
+  assert.deepEqual(result.candidates, [result.selected]);
+  assert.deepEqual(result.available_profiles, []);
+  assert.deepEqual(result.blockers, []);
+  assert.equal(result.account_readback_required, true);
+  assert.equal(result.raw_token_returned, false);
+  assert.equal(result.raw_output_returned, false);
+  assert.equal(result.candidate_values_are_untrusted_display_metadata, true);
+  assert.equal(JSON.stringify(result).includes("private@example.test"), false);
+  assert.equal(calls.some(({ args }) => args[0] === "auth"), false);
+  assert.equal(calls.every(({ options }) => options.env.WRANGLER_WRITE_LOGS === "false"), true);
+});
+
+test("Cloudflare auth resolution honors an environment account ID without changing the effective profile", async () => {
+  const contextDirectory = "/private/cfkanban/deploy-context";
+  const selectedAccountId = "b".repeat(32);
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    contextDirectory,
+    environment: { CLOUDFLARE_ACCOUNT_ID: selectedAccountId },
+    runner: async (_executable, args) => {
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === `whoami --json --cwd ${contextDirectory}`) {
+        return {
+          code: 0,
+          signal: null,
+          stdout: JSON.stringify({
+            loggedIn: true,
+            accounts: [
+              { id: "a".repeat(32), name: "Account A" },
+              { id: selectedAccountId, name: "Account B" },
+            ],
+          }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.status, "resolved");
+  assert.equal(result.selected.account_id, selectedAccountId);
+  assert.equal(result.selected.auth_source, "effective_context");
+});
+
+test("Cloudflare auth resolution probes only the sole fallback profile and never returns its token or user identity", async () => {
+  const token = "cloudflare-oauth-token-fixture";
+  const contextDirectory = "/private/cfkanban/deploy-context";
+  const calls = [];
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    contextDirectory,
+    environment: {},
+    runner: async (executable, args, options) => {
+      calls.push({ executable, args, options });
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === undefined) {
+        return { code: 1, signal: null, stdout: JSON.stringify({ loggedIn: false }), stderr: "" };
+      }
+      if (command === `auth list --cwd ${contextDirectory}`) {
         return {
           code: 0,
           signal: null,
@@ -291,11 +378,10 @@ test("Cloudflare auth resolution reuses one discoverable named profile without e
           stderr: "",
         };
       }
-      if (command === "auth token --json --profile default") return { code: 1, signal: null, stdout: "", stderr: "Not logged in" };
       if (command === "auth token --json --profile cfkanban-alpha5") {
         return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token }), stderr: "" };
       }
-      if (command === "whoami --json" && options.env.CLOUDFLARE_API_TOKEN === token) {
+      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === token) {
         return {
           code: 0,
           signal: null,
@@ -317,11 +403,11 @@ test("Cloudflare auth resolution reuses one discoverable named profile without e
     profile: "cfkanban-alpha5",
     account_id: "a".repeat(32),
     account_label: "Example Account",
-    auth_source: "wrangler_profile",
+    auth_source: "selected_profile",
   });
   assert.deepEqual(result.candidates, [result.selected]);
-  assert.deepEqual(result.unverified_profiles, []);
-  assert.equal(result.profile_inventory_complete, true);
+  assert.deepEqual(result.available_profiles, ["cfkanban-alpha5"]);
+  assert.deepEqual(result.blockers, []);
   assert.equal(result.account_readback_required, true);
   assert.equal(result.raw_token_returned, false);
   assert.equal(result.raw_output_returned, false);
@@ -330,34 +416,97 @@ test("Cloudflare auth resolution reuses one discoverable named profile without e
   assert.equal(JSON.stringify(result).includes("private@example.test"), false);
   assert.equal(JSON.stringify(result).includes("/private/should-not-be-shown"), false);
   assert.equal(calls.every(({ options }) => options.env.WRANGLER_WRITE_LOGS === "false"), true);
-  assert.equal(calls.find(({ args }) => args.join(" ") === "whoami --json").options.env.CLOUDFLARE_ACCOUNT_ID, undefined);
+  assert.equal(calls.filter(({ args }) => args[0] === "auth" && args[1] === "token").length, 1);
 });
 
-test("Cloudflare auth resolution requires selection instead of guessing across profiles or accounts", async () => {
-  const tokens = new Map([
-    ["team-a", "token-a"],
-    ["team-b", "token-b"],
-  ]);
+test("Cloudflare auth resolution lists profile names without probing every profile", async () => {
+  const contextDirectory = "/private/cfkanban/deploy-context";
+  const calls = [];
   const result = await resolveCloudflareAuth({
     wranglerExecutable: "/opt/cfkanban/wrangler",
+    contextDirectory,
+    environment: {},
+    runner: async (_executable, args, options) => {
+      calls.push({ args, options });
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === `whoami --json --cwd ${contextDirectory}`) {
+        return { code: 1, signal: null, stdout: JSON.stringify({ loggedIn: false }), stderr: "" };
+      }
+      if (command === `auth list --cwd ${contextDirectory}`) {
+        return { code: 0, signal: null, stdout: "│ Profile │ Bound Directories │\n│ team-a │ - │\n│ team-b │ - │\n", stderr: "" };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.status, "profile_selection_required");
+  assert.equal(result.selected, null);
+  assert.deepEqual(result.candidates, []);
+  assert.deepEqual(result.available_profiles, ["team-a", "team-b"]);
+  assert.equal(result.account_readback_required, false);
+  assert.equal(calls.some(({ args }) => args[0] === "auth" && args[1] === "token"), false);
+});
+
+test("Cloudflare auth resolution verifies only the profile explicitly selected after current context fails", async () => {
+  const contextDirectory = "/private/cfkanban/deploy-context";
+  const token = "team-b-token";
+  const calls = [];
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    contextDirectory,
+    selectedProfile: "team-b",
+    environment: {},
+    runner: async (_executable, args, options) => {
+      calls.push({ args, options });
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === undefined) {
+        return { code: 1, signal: null, stdout: JSON.stringify({ loggedIn: false }), stderr: "" };
+      }
+      if (command === "auth token --json --profile team-b") {
+        return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token }), stderr: "" };
+      }
+      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === token) {
+        return { code: 0, signal: null, stdout: JSON.stringify({ loggedIn: true, accounts: [{ id: "b".repeat(32), name: "Team B" }] }), stderr: "" };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.status, "resolved");
+  assert.equal(result.selected.profile, "team-b");
+  assert.equal(result.selected.account_id, "b".repeat(32));
+  assert.deepEqual(result.available_profiles, ["team-b"]);
+  assert.equal(calls.some(({ args }) => args.join(" ") === `auth list --cwd ${contextDirectory}`), false);
+  assert.deepEqual(calls.filter(({ args }) => args.slice(0, 2).join(" ") === "auth token").map(({ args }) => args.at(-1)), ["team-b"]);
+});
+
+test("Cloudflare auth resolution asks only for an account after one selected profile exposes several accounts", async () => {
+  const contextDirectory = "/private/cfkanban/deploy-context";
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    contextDirectory,
+    selectedProfile: "team-a",
     environment: {},
     runner: async (_executable, args, options) => {
       const command = args.join(" ");
       if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
-      if (command === "auth list") {
-        return { code: 0, signal: null, stdout: "│ Profile │ Bound Directories │\n│ team-a │ - │\n│ team-b │ - │\n", stderr: "" };
+      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === undefined) {
+        return { code: 1, signal: null, stdout: JSON.stringify({ loggedIn: false }), stderr: "" };
       }
-      if (command === "auth token --json --profile default") return { code: 1, signal: null, stdout: "", stderr: "" };
-      const profile = args.at(-1);
-      if (command.startsWith("auth token --json --profile ")) {
-        return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token: tokens.get(profile) }), stderr: "" };
-      }
-      if (command === "whoami --json") {
-        const suffix = options.env.CLOUDFLARE_API_TOKEN === "token-a" ? "a" : "b";
+      if (command === "auth token --json --profile team-a") return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token: "team-a-token" }), stderr: "" };
+      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === "team-a-token") {
         return {
           code: 0,
           signal: null,
-          stdout: JSON.stringify({ loggedIn: true, accounts: [{ id: `${suffix}`.repeat(32), name: `Team ${suffix.toUpperCase()}` }] }),
+          stdout: JSON.stringify({
+            loggedIn: true,
+            accounts: [
+              { id: "a".repeat(32), name: "Team A Primary" },
+              { id: "c".repeat(32), name: "Team A Secondary" },
+            ],
+          }),
           stderr: "",
         };
       }
@@ -365,68 +514,26 @@ test("Cloudflare auth resolution requires selection instead of guessing across p
     },
   });
 
-  assert.equal(result.status, "selection_required");
+  assert.equal(result.status, "account_selection_required");
   assert.equal(result.selected, null);
-  assert.deepEqual(result.candidates.map(({ profile }) => profile), ["team-a", "team-b"]);
+  assert.deepEqual(result.candidates.map(({ account_id }) => account_id), ["a".repeat(32), "c".repeat(32)]);
+  assert.deepEqual(result.available_profiles, ["team-a"]);
   assert.equal(result.account_readback_required, true);
-});
-
-test("Cloudflare auth resolution blocks when a listed profile cannot be verified", async () => {
-  const result = await resolveCloudflareAuth({
-    wranglerExecutable: "/opt/cfkanban/wrangler",
-    environment: {},
-    runner: async (_executable, args) => {
-      const command = args.join(" ");
-      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
-      if (command === "auth list") return { code: 0, signal: null, stdout: "│ Profile │ Bound Directories │\n│ stale │ - │\n", stderr: "" };
-      if (command === "auth token --json --profile default" || command === "auth token --json --profile stale") {
-        return { code: 1, signal: null, stdout: "", stderr: "not logged in" };
-      }
-      throw new Error(`Unexpected command: ${command}`);
-    },
-  });
-
-  assert.equal(result.status, "blocked");
-  assert.equal(result.selected, null);
-  assert.deepEqual(result.candidates, []);
-  assert.deepEqual(result.unverified_profiles, [{ profile: "stale", code: "WRANGLER_PROFILE_ACCOUNT_DISCOVERY_FAILED" }]);
-});
-
-test("Cloudflare auth resolution does not select a partial result when another listed profile is unresolved", async () => {
-  const result = await resolveCloudflareAuth({
-    wranglerExecutable: "/opt/cfkanban/wrangler",
-    environment: {},
-    runner: async (_executable, args, options) => {
-      const command = args.join(" ");
-      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
-      if (command === "auth list") return { code: 0, signal: null, stdout: "│ Profile │ Bound Directories │\n│ usable │ - │\n│ stale │ - │\n", stderr: "" };
-      if (command === "auth token --json --profile default") return { code: 1, signal: null, stdout: "", stderr: "" };
-      if (command === "auth token --json --profile usable") return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token: "usable-token" }), stderr: "" };
-      if (command === "auth token --json --profile stale") return { code: 1, signal: null, stdout: "", stderr: "" };
-      if (command === "whoami --json" && options.env.CLOUDFLARE_API_TOKEN === "usable-token") {
-        return { code: 0, signal: null, stdout: JSON.stringify({ loggedIn: true, accounts: [{ id: "c".repeat(32), name: "Usable" }] }), stderr: "" };
-      }
-      throw new Error(`Unexpected command: ${command}`);
-    },
-  });
-
-  assert.equal(result.status, "blocked");
-  assert.equal(result.selected, null);
-  assert.equal(result.candidates.length, 1);
-  assert.deepEqual(result.unverified_profiles, [{ profile: "stale", code: "WRANGLER_PROFILE_ACCOUNT_DISCOVERY_FAILED" }]);
 });
 
 test("Cloudflare auth resolution honors effective environment authentication without inspecting shadowed profiles", async () => {
   const token = "environment-token-fixture";
+  const contextDirectory = "/private/cfkanban/deploy-context";
   const calls = [];
   const result = await resolveCloudflareAuth({
     wranglerExecutable: "/opt/cfkanban/wrangler",
+    contextDirectory,
     environment: { CLOUDFLARE_API_TOKEN: token },
     runner: async (_executable, args, options) => {
       calls.push({ args, options });
       const command = args.join(" ");
       if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
-      if (command === "whoami --json" && options.env.CLOUDFLARE_API_TOKEN === token) {
+      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === token) {
         return {
           code: 0,
           signal: null,
@@ -885,6 +992,7 @@ test("strict-zero plan freezes defaults; any delta requires new authorization", 
   assert.deepEqual(plan.bindings.rate_limits, { principal: { limit: 120, period_seconds: 60 }, instance: { limit: 300, period_seconds: 60 }, unauthenticated_sensitive: { limit: 30, period_seconds: 60 } });
   assert.equal(plan.resources.pages, false);
   assert.equal(plan.target.cloudflare_profile, "production");
+  assert.equal(plan.target.cloudflare_auth_context_directory, null);
   assert.equal(plan.resources.custom_domain, null);
   assert.equal(plan.migrations.checksum_ledger_table, "cfkanban_migration_ledger");
   assert.equal(plan.steps.includes("read_migration_checksum_ledger_and_schema_again"), true);
@@ -930,6 +1038,21 @@ test("strict-zero plan freezes defaults; any delta requires new authorization", 
     args: ["d1", "create", "cfkanban-d1", "--profile", "production"],
     accountId: "account-one",
   }]);
+  const contextDirectory = path.join(home, ".cfkanban");
+  const contextPlan = createStrictZeroPlan({
+    ...baseInput,
+    cloudflareProfile: null,
+    cloudflareAuthContextDirectory: contextDirectory,
+  }).plan;
+  assert.equal(contextPlan.target.cloudflare_auth_context_directory, contextDirectory);
+  assert.deepEqual(
+    buildWranglerInvocation({ action: "create_d1", plan: contextPlan, environment: {} }),
+    ["d1", "create", "cfkanban-d1", "--cwd", contextDirectory],
+  );
+  assert.throws(
+    () => createStrictZeroPlan({ ...baseInput, cloudflareAuthContextDirectory: contextDirectory }),
+    (error) => error.code === "AMBIGUOUS_WRANGLER_AUTH_CONTEXT",
+  );
   await assert.rejects(
     executeWranglerAction({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: "task-wp10", plan: changed, wranglerExecutable: "/opt/cfkanban/wrangler", action: "create_d1", runner: async () => ({ code: 0 }) }),
     (error) => error.code === "PLAN_NOT_AUTHORIZED",
@@ -943,9 +1066,13 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
   await mkdir(path.join(serviceRoot, "dist"), { recursive: true });
   await mkdir(path.join(serviceRoot, "apps", "web", "dist"), { recursive: true });
   await mkdir(path.join(serviceRoot, "migrations"), { recursive: true });
+  await mkdir(path.join(serviceRoot, "release", "deployment"), { recursive: true });
   await writeFile(path.join(serviceRoot, "dist", "index.js"), "export default {};\n", "utf8");
   await writeFile(path.join(serviceRoot, "apps", "web", "dist", "index.html"), "<!doctype html>\n", "utf8");
   await writeFile(path.join(serviceRoot, "migrations", "0001_initial.sql"), "SELECT 1;\n", "utf8");
+  const migrationReadbackPath = path.join(serviceRoot, "release", "deployment", "migration-readback.sql");
+  const migrationReadbackSql = "SELECT sequence, name, sha256, classification, reentry, operation_id, applied_at FROM cfkanban_migration_ledger ORDER BY sequence; SELECT type, name FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' ORDER BY type, name;\n";
+  await writeFile(migrationReadbackPath, migrationReadbackSql, "utf8");
   await writeFile(path.join(serviceRoot, "wrangler-config-schema.json"), "{}\n", "utf8");
   await writeFile(path.join(serviceRoot, "wrangler.template.json"), JSON.stringify({
     compatibility_date: "2026-08-29",
@@ -993,6 +1120,13 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
   });
   assert.deepEqual(accountProbe.args, ["d1", "list", "--json", "--profile", "production"]);
   assert.deepEqual(accountProbe.env_overrides, { CLOUDFLARE_ACCOUNT_ID: "account-one" });
+  const contextDirectory = path.join(home, ".cfkanban");
+  const contextProbe = buildWranglerAccountProbe({
+    accountId: "account-one",
+    contextDirectory,
+    environment: {},
+  });
+  assert.deepEqual(contextProbe.args, ["d1", "list", "--json", "--cwd", contextDirectory]);
   assert.throws(
     () => buildWranglerAccountProbe({
       accountId: "account-one",
@@ -1005,6 +1139,7 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
   const accountReadback = await readWranglerAccountAccess({
     wranglerExecutable: "/opt/cfkanban/wrangler",
     accountId: "account-one",
+    contextDirectory,
     runner: async (executable, args, options) => {
       accountReadbackCalls.push({ executable, args, accountId: options.env.CLOUDFLARE_ACCOUNT_ID, writeLogs: options.env.WRANGLER_WRITE_LOGS });
       return { code: 0, signal: null, stdout: '[{"name":"must-not-leak"}]', stderr: "" };
@@ -1012,9 +1147,10 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
   });
   assert.equal(accountReadback.authenticated, true);
   assert.equal(accountReadback.account_id, "account-one");
+  assert.equal(accountReadback.context_directory, contextDirectory);
   assert.equal(accountReadback.proof, "wrangler_d1_list");
   assert.equal(JSON.stringify(accountReadback).includes("must-not-leak"), false);
-  assert.deepEqual(accountReadbackCalls, [{ executable: "/opt/cfkanban/wrangler", args: ["d1", "list", "--json"], accountId: "account-one", writeLogs: "false" }]);
+  assert.deepEqual(accountReadbackCalls, [{ executable: "/opt/cfkanban/wrangler", args: ["d1", "list", "--json", "--cwd", contextDirectory], accountId: "account-one", writeLogs: "false" }]);
   assert.deepEqual(
     buildWranglerInvocation({ action: "validate_worker_bundle", plan, configPath: generated.wrangler_config_path, environment: {} }),
     ["deploy", "--dry-run", "--config", generated.wrangler_config_path, "--profile", "production"],
@@ -1031,6 +1167,51 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
     runner: async () => ({ code: 0, signal: null, stdout: "dry run ok", stderr: "" }),
   });
   assert.equal(dryRun.command_succeeded, true);
+  const migrationCalls = [];
+  const migrationReadback = await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: "wp10-portable",
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "migration_ledger_readback",
+    configPath: generated.wrangler_config_path,
+    migrationReadbackSqlPath: migrationReadbackPath,
+    runner: async (executable, args) => {
+      migrationCalls.push({ executable, args });
+      return {
+        code: 0,
+        signal: null,
+        stdout: JSON.stringify([
+          { success: true, results: [] },
+          { success: true, results: [{ type: "table", name: "cfkanban_migration_ledger" }] },
+        ]),
+        stderr: "",
+      };
+    },
+  });
+  assert.deepEqual(migrationReadback.migration_readback.schema, { tables: ["cfkanban_migration_ledger"], indexes: [] });
+  assert.equal(migrationReadback.stdout_summary, JSON.stringify({ result_sets: 2, ledger_rows: 0, schema_tables: 1, schema_indexes: 0 }));
+  assert.deepEqual(migrationCalls[0].args, [
+    "d1", "execute", "cfkanban-d1", "--remote", "--command", migrationReadbackSql,
+    "--config", generated.wrangler_config_path, "--json", "--profile", "production",
+  ]);
+  await assert.rejects(
+    executeWranglerAction({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      operationId: OPERATION_ID,
+      taskId: "wp10-portable",
+      plan,
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      action: "migration_ledger_readback",
+      configPath: generated.wrangler_config_path,
+      migrationReadbackSqlPath: path.join(serviceRoot, "migrations", "0001_initial.sql"),
+      runner: async () => ({ code: 0, signal: null, stdout: "[]", stderr: "" }),
+    }),
+    (error) => error.code === "MIGRATION_READBACK_SOURCE_DRIFT",
+  );
   config.name = "tampered-worker";
   await writeFile(generated.wrangler_config_path, `${JSON.stringify(config)}\n`, "utf8");
   await assert.rejects(
@@ -1057,6 +1238,45 @@ test("migration reconciliation requires both ledger checksum and schema artifact
   assert.equal(reconcileMigrationState({ manifest, ledger: [{ sequence: 1, name: "0001.sql", sha256: "a".repeat(64) }, { sequence: 2, name: "unknown.sql", sha256: "b".repeat(64) }], schema: { tables: ["issues"], indexes: ["idx_issues"] } }).safe_to_continue, false);
 });
 
+test("migration readback parser keeps only bounded ledger and schema facts", () => {
+  const raw = JSON.stringify([
+    {
+      success: true,
+      results: [{
+        sequence: 1,
+        name: "0001_initial.sql",
+        sha256: "a".repeat(64),
+        classification: "bootstrap",
+        reentry: "safe_baseline",
+        operation_id: OPERATION_ID,
+        applied_at: 1_725_000_000_000,
+      }],
+    },
+    {
+      success: true,
+      results: [
+        { type: "index", name: "idx_issues_status", sql: "must not be returned" },
+        { type: "table", name: "issues", sql: "must not be returned" },
+      ],
+    },
+  ]);
+  const parsed = parseMigrationReadbackOutput(raw);
+  assert.deepEqual(parsed.schema, { tables: ["issues"], indexes: ["idx_issues_status"] });
+  assert.equal(parsed.ledger[0].operation_id, OPERATION_ID);
+  assert.equal(JSON.stringify(parsed).includes("must not be returned"), false);
+  assert.throws(
+    () => parseMigrationReadbackOutput(JSON.stringify([{ success: true, results: [] }])),
+    (error) => error.code === "WRANGLER_MIGRATION_READBACK_INVALID",
+  );
+  assert.throws(
+    () => parseMigrationReadbackOutput(JSON.stringify([
+      { success: true, results: [] },
+      { success: true, results: [{ type: "table", name: "issues" }, { type: "table", name: "issues" }] },
+    ])),
+    (error) => error.code === "WRANGLER_MIGRATION_READBACK_INVALID",
+  );
+});
+
 test("migration ledger SQL is fixed in the Service bundle and checksum records never overwrite", async (t) => {
   const { home, stateRoot } = await fixtureState();
   t.after(() => rm(home, { recursive: true, force: true }));
@@ -1074,6 +1294,8 @@ test("migration ledger SQL is fixed in the Service bundle and checksum records n
   const configPath = path.join(home, "wrangler.jsonc");
   const ledgerSchemaPath = path.resolve("release/deployment/migration-ledger.sql");
   const readbackPath = path.resolve("release/deployment/migration-readback.sql");
+  const readbackSql = await readFile(readbackPath, "utf8");
+  assert.doesNotMatch(readbackSql, /tbl_name|\bsql\b/iu);
   const plan = createStrictZeroPlan({
     taskId: "wp10-ledger",
     accountId: "account-one",
@@ -1089,8 +1311,8 @@ test("migration ledger SQL is fixed in the Service bundle and checksum records n
     ["d1", "execute", "cfkanban-d1", "--remote", "--file", ledgerSchemaPath, "--config", configPath, "--json"],
   );
   assert.deepEqual(
-    buildWranglerInvocation({ action: "migration_ledger_readback", plan, configPath, migrationReadbackSqlPath: readbackPath }),
-    ["d1", "execute", "cfkanban-d1", "--remote", "--file", readbackPath, "--config", configPath, "--json"],
+    buildWranglerInvocation({ action: "migration_ledger_readback", plan, configPath, migrationReadbackSql: readbackSql }),
+    ["d1", "execute", "cfkanban-d1", "--remote", "--command", readbackSql, "--config", configPath, "--json"],
   );
 });
 
@@ -1145,7 +1367,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
   assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.8/cfkanban-release-0.1.0-alpha.8.json");
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.9/cfkanban-release-0.1.0-alpha.9.json");
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -1273,6 +1495,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.6.md",
     "../../release/notes/0.1.0-alpha.7.md",
     "../../release/notes/0.1.0-alpha.8.md",
+    "../../release/notes/0.1.0-alpha.9.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -1280,6 +1503,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.6.json",
     "../../release/config/0.1.0-alpha.7.json",
     "../../release/config/0.1.0-alpha.8.json",
+    "../../release/config/0.1.0-alpha.9.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
