@@ -8,7 +8,7 @@ import { prepareOwnerCredential, writeOwnerBootstrapSql } from "../../packages/s
 import { finalizeOwnerDeployment } from "../../packages/skill-runtime/src/deployment-finalize.mjs";
 import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
 import { redeemInvitation, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
-import { buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
+import { buildOwnerBootstrapReadbackSql, buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, parseOwnerBootstrapReadbackOutput, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
 import { writeFrozenWranglerConfig } from "../../packages/skill-runtime/src/deployment-config.mjs";
 import { appendJournalEvent, authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
 import { assessMigrationLedgerRecovery, reconcileMigrationState, writeMigrationLedgerRecordSql } from "../../packages/skill-runtime/src/migrations.mjs";
@@ -45,7 +45,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.11.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.12.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -816,7 +816,66 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
   assert.doesNotMatch(sql, /\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/iu);
   assert.equal(result.contains_plaintext_credential, false);
   assert.equal(result.relies_on_wrangler_file_ingestion_transaction, true);
-  await executeWranglerAction({
+  await assert.rejects(
+    executeWranglerAction({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      operationId: OPERATION_ID,
+      taskId: plan.task_id,
+      plan,
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      action: "bootstrap_owner",
+      configPath: config.wrangler_config_path,
+      bootstrapSqlPath: result.bootstrap_sql_path,
+      runner: async () => ({ code: 1, signal: null, stdout: "", stderr: "fetch failed" }),
+    }),
+    (error) => error.code === "WRANGLER_ACTION_FAILED",
+  );
+  await assert.rejects(
+    executeWranglerAction({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      operationId: OPERATION_ID,
+      taskId: plan.task_id,
+      plan,
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      action: "bootstrap_owner",
+      configPath: config.wrangler_config_path,
+      bootstrapSqlPath: result.bootstrap_sql_path,
+      runner: async () => ({ code: 0, signal: null, stdout: "", stderr: "" }),
+    }),
+    (error) => error.code === "OWNER_BOOTSTRAP_ALREADY_ATTEMPTED",
+  );
+  let recoveryArgs = null;
+  const recovery = await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "owner_bootstrap_readback",
+    configPath: config.wrangler_config_path,
+    bootstrapSqlPath: result.bootstrap_sql_path,
+    runner: async (_executable, args) => {
+      recoveryArgs = args;
+      return {
+        code: 0,
+        signal: null,
+        stdout: JSON.stringify([{ success: true, results: [{ principals: 0, instance_meta: 0, instance_origin_settings: 0, credentials: 0, events: 0, operation_commits: 0 }] }]),
+        stderr: "",
+      };
+    },
+  });
+  assert.equal(recovery.owner_bootstrap_readback.state, "absent");
+  assert.equal(recovery.owner_bootstrap_readback.safe_to_retry, true);
+  assert.equal(recovery.stdout_summary, '{"state":"absent","safe_to_retry":true}');
+  assert.equal(recoveryArgs.includes("--command"), true);
+  assert.equal(recoveryArgs.includes("--json"), true);
+  assert.equal(JSON.stringify(recoveryArgs).includes(secret.token), false);
+  assert.equal(JSON.stringify(recoveryArgs).includes(pending.token_digest), false);
+
+  const retried = await executeWranglerAction({
     stateRoot,
     instanceId: INSTANCE_ID,
     operationId: OPERATION_ID,
@@ -828,6 +887,7 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
     bootstrapSqlPath: result.bootstrap_sql_path,
     runner: async () => ({ code: 0, signal: null, stdout: "bootstrap complete", stderr: "" }),
   });
+  assert.equal(retried.command_succeeded, true);
   await assert.rejects(
     executeWranglerAction({
       stateRoot,
@@ -1529,6 +1589,121 @@ test("migration readback parser keeps only bounded ledger and schema facts", () 
   );
 });
 
+test("Owner bootstrap recovery readback permits only a completely empty bootstrap state", () => {
+  const sql = buildOwnerBootstrapReadbackSql();
+  assert.match(sql, /COUNT\(\*\) FROM principals/u);
+  assert.match(sql, /COUNT\(\*\) FROM operation_commits/u);
+  assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|REPLACE|BEGIN|COMMIT)\b/iu);
+  const emptyRow = {
+    principals: 0,
+    instance_meta: 0,
+    instance_origin_settings: 0,
+    credentials: 0,
+    events: 0,
+    operation_commits: 0,
+  };
+  const empty = parseOwnerBootstrapReadbackOutput(JSON.stringify([{ success: true, results: [emptyRow] }]));
+  assert.equal(empty.state, "absent");
+  assert.equal(empty.safe_to_retry, true);
+  assert.deepEqual(empty.counts, emptyRow);
+
+  const partial = parseOwnerBootstrapReadbackOutput(JSON.stringify([{
+    success: true,
+    results: [{ ...emptyRow, principals: 1 }],
+  }]));
+  assert.equal(partial.state, "present_or_partial");
+  assert.equal(partial.safe_to_retry, false);
+  assert.throws(
+    () => parseOwnerBootstrapReadbackOutput(JSON.stringify([{ success: true, results: [{ ...emptyRow, credentials: -1 }] }])),
+    (error) => error.code === "WRANGLER_OWNER_BOOTSTRAP_READBACK_INVALID",
+  );
+  assert.throws(
+    () => parseOwnerBootstrapReadbackOutput(JSON.stringify([{ success: true, results: [{ ...emptyRow, credentials: null }] }])),
+    (error) => error.code === "WRANGLER_OWNER_BOOTSTRAP_READBACK_INVALID",
+  );
+});
+
+test("Owner bootstrap never retries after any present or partial recovery readback", async (t) => {
+  const { home, stateRoot } = await fixtureState();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const plan = createStrictZeroPlan({
+    taskId: "wp10-owner-partial",
+    accountId: "account-one",
+    ownerDisplayName: "Example Owner",
+    release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
+    instanceId: INSTANCE_ID,
+    ownerPrincipalId: PRINCIPAL_ID,
+    ownerCredentialId: CREDENTIAL_ID,
+    operationId: OPERATION_ID,
+  }).plan;
+  await createJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, plan });
+  await authorizeJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: plan.task_id, planDigest: canonicalDigest(plan) });
+  const paths = getInstancePaths({ stateRoot, instanceId: INSTANCE_ID });
+  const configPath = path.join(paths.journalsRoot, `${OPERATION_ID}.wrangler.jsonc`);
+  const config = { name: "cfkanban-worker", account_id: "account-one" };
+  await writeFile(configPath, `${JSON.stringify(config)}\n`, { mode: 0o600 });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "wrangler_config_written", config_path: configPath, config_digest: canonicalDigest(config) },
+  });
+  const pending = await createPendingCredential({
+    stateRoot,
+    home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    idempotencyKey: OPERATION_ID,
+    operationId: OPERATION_ID,
+    purpose: "owner_bootstrap",
+  });
+  const bootstrapSqlPath = path.join(paths.journalsRoot, `${OPERATION_ID}.owner-bootstrap.sql`);
+  const bootstrapSql = "SELECT 1;\n";
+  await writeFile(bootstrapSqlPath, bootstrapSql, { mode: 0o600 });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: {
+      type: "owner_bootstrap_sql_written",
+      bootstrap_sql_path: bootstrapSqlPath,
+      bootstrap_sql_sha256: sha256Bytes(Buffer.from(bootstrapSql, "utf8")),
+      credential_fingerprint: pending.fingerprint,
+    },
+  });
+  await appendJournalEvent({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, event: { type: "command_started", action: "bootstrap_owner" } });
+  await appendJournalEvent({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, event: { type: "command_finished", action: "bootstrap_owner", exit_code: 1 } });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "owner_bootstrap_readback", exit_code: 0, owner_bootstrap_readback: { state: "present_or_partial", safe_to_retry: false } },
+  });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "owner_bootstrap_readback", exit_code: 0, owner_bootstrap_readback: { state: "absent", safe_to_retry: true } },
+  });
+  await assert.rejects(
+    executeWranglerAction({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      operationId: OPERATION_ID,
+      taskId: plan.task_id,
+      plan,
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      action: "bootstrap_owner",
+      configPath,
+      bootstrapSqlPath,
+      runner: async () => ({ code: 0, signal: null, stdout: "", stderr: "" }),
+    }),
+    (error) => error.code === "OWNER_BOOTSTRAP_REMOTE_STATE_PRESENT",
+  );
+});
+
 test("migration ledger SQL is fixed in the Service bundle and checksum records never overwrite", async (t) => {
   const { home, stateRoot } = await fixtureState();
   t.after(() => rm(home, { recursive: true, force: true }));
@@ -1702,6 +1877,7 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
   assert.match(daily, /First-use workflow for an invited participant/u);
   assert.match(admin, /First-use workflow after deployment/u);
   assert.match(deploy, /Choose the deployment source first/u);
+  assert.match(deploy, /owner_bootstrap_readback/u);
   for (const skill of [daily, admin, deploy]) assert.match(skill, /Intent-first user experience/u);
   assert.match(dailyYaml, /Use \$cfkanban to help me work in this cfKanban Project\./u);
   assert.match(adminYaml, /Use \$cfkanban-admin to create my first cfKanban board\./u);
@@ -1726,6 +1902,7 @@ test("deployment Skill directly documents the deterministic Cloudflare authentic
     assert.match(source, /auth create <name>/u);
     assert.match(source, /login --profile/u);
     assert.match(source, /migrations assess-ledger-recovery/u);
+    assert.match(source, /owner_bootstrap_readback/u);
   }
   assert.match(deploy, /never enumerate profiles/u);
   assert.doesNotMatch(deploy, /profile_selection_required/u);
@@ -1766,6 +1943,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.9.md",
     "../../release/notes/0.1.0-alpha.10.md",
     "../../release/notes/0.1.0-alpha.11.md",
+    "../../release/notes/0.1.0-alpha.12.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -1776,6 +1954,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.9.json",
     "../../release/config/0.1.0-alpha.10.json",
     "../../release/config/0.1.0-alpha.11.json",
+    "../../release/config/0.1.0-alpha.12.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
