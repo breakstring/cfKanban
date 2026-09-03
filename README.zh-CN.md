@@ -147,5 +147,3 @@ npm run validate
 `npm run validate` 包含 typecheck、单元与集成测试、OpenAPI/error 检查、生成物漂移检查、本地 D1 验证、无 Credential 的 CI policy 检查、Web build 和 Worker dry-run build。它不会登录 Cloudflare，也不会写入远端资源。
 
 建议从[文档导航](docs/README.md)、[产品简报](docs/product/product-brief.md)、[用户 Storyboard](docs/product/user-storyboard.md)、[Agent Skills 指南](docs/skills/README.zh-CN.md)和[实施计划](docs/plans/2026-08-29-v0-implementation-plan.md)开始；冻结的技术合同位于 [`docs/specs/`](docs/specs/)。
-
-执行状态在 [cfKanban Linear 项目](https://linear.app/kennzhang/project/cfkanban-567c4995296f)中跟踪；仓库文档仍是产品和技术合同的真相源。
