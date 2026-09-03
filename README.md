@@ -19,6 +19,8 @@ cfKanban is currently a **public testing preview**, not a stable end-user releas
 
 This distinction matters: the plugin helps Codex discover the Skills, while a canonical release manifest will identify and verify the exact Skill and Service bundles that may be deployed.
 
+The release archives do not contain a Node.js executable. The Skill bundle contains ordinary `.mjs` helper modules that run with a compatible Node.js already available on the user's computer. The Service bundle contains the built Worker, Web assets, migrations, contracts, and a `wrangler.template.json` configuration skeleton; the deployment Skill replaces its placeholder resource values by generating a private, plan-bound Wrangler configuration before use. Users do not need to unpack either archive manually.
+
 ## What you need
 
 For the current testing-preview path:
@@ -30,7 +32,7 @@ For the current testing-preview path:
 For a future Cloudflare deployment you will also need:
 
 - a Cloudflare account that can create one Worker and one D1 database;
-- a compatible Node.js and Wrangler environment. `cfkanban-deploy` checks what already exists first and must show a separate installation plan before adding an isolated Wrangler runtime;
+- a compatible Node.js and Wrangler environment. `cfkanban-deploy` checks what already exists first. If Wrangler is unavailable, it must show a separate installation plan before adding a pinned Wrangler package under `~/.cfkanban/tool-runtime/`; it does not bundle or install Node.js;
 - the Owner display name you want cfKanban to use. The Agent must not guess it from your operating-system or Git identity.
 
 ## Install the testing-preview Skills in Codex
@@ -126,7 +128,7 @@ cfKanban-owned persistent local data uses the current execution environment user
 ~/.cfkanban/
   instances/       # trusted instance metadata, Credentials, journals, receipts
   skill-releases/  # verified immutable Skill releases and active pointer
-  tool-runtime/    # isolated Wrangler runtime, only when explicitly approved
+  tool-runtime/    # isolated pinned Wrangler package; never a bundled Node.js runtime
 ```
 
 Codex marketplace configuration and plugin caches remain in Codex-owned directories because Codex must discover them there. They are disposable host projections, not cfKanban state and not canonical release truth. Windows native and WSL2 use separate user homes and are never mixed automatically.
