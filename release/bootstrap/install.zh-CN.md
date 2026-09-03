@@ -15,6 +15,6 @@
 3. 在任何本地写入前展示 Skill 安装/更新目标、本地 scope 和回滚边界。
 4. 把已验证的版本化 release 保存在当前执行环境用户私有的 `~/.cfkanban/skill-releases/`，再仅创建宿主发现所必需的宿主所有 Skill/plugin 投影。
 5. 安装三个 portable Skills，并运行 `node scripts/cfkanban-tool.mjs help` 作为无副作用 discovery smoke。
-6. 如需部署，先执行只读检查，用普通语言解释将创建的 Cloudflare 资源，并在规定的授权边界等待确认。
+6. 如需部署，先执行只读检查；提出新登录前，安全发现并复用已有 Wrangler profile/account 映射；再用普通语言解释将创建的 Cloudflare 资源，并在规定的授权边界等待确认。
 
 marketplace/plugin 只是便捷入口。宿主 marketplace metadata 与 plugin caches 继续留在宿主管理目录，它们只是已验证投影，不是 cfKanban 状态；不能替代 immutable manifest，也不授权 Skill update、Cloudflare 部署、D1 migration、DNS、secret 或恢复操作。

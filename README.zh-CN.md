@@ -12,8 +12,8 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 
 - Worker、D1 schema、Web UI 和三个 Agent Skills 已经在本仓库中实现。
 - 你现在可以从这个公开仓库安装 Codex plugin，并检查或试用这些 Skills。
-- [`0.1.0-alpha.7` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.7) 提供了不可变的 Skill 与 Service bundle，支持 Node.js 26、本地前置条件复用、确定性的 Cloudflare 登录计划，以及准确的 D1/Worker 同名读回，可用于测试。
-- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.7/prerelease.json)。
+- [`0.1.0-alpha.8` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.8) 提供了不可变的 Skill 与 Service bundle；在提出新登录前，它会安全发现并复用已有 Wrangler profile/account 映射，可用于测试。
+- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.8/prerelease.json)。
 - 稳定发行指针和真实多环境部署验收尚未发布。
 - 不要把 `main`、本地 checkout 或 marketplace snapshot 当成 canonical stable release 或生产就绪部署。
 
@@ -40,7 +40,7 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 本仓库本身就是一个 Codex plugin marketplace。可以在命令行添加不可变的测试 tag，并安装其中的 plugin：
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.7
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.8
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -76,7 +76,7 @@ plugin 包含三个 Skills：
 
 如果需要登录 Cloudflare，Skill 会把它作为一份独立的小计划展示；获批后再打开对应的浏览器或 device flow。完成登录不会创建 Worker 或 D1 数据库，真正的部署计划仍会在后面单独请求确认。
 
-当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `0.1.0-alpha.7` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
+当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `0.1.0-alpha.8` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
 
 如果你明确想评估某个源码修订，请把这一点说清楚：
 
@@ -92,7 +92,7 @@ plugin 包含三个 Skills：
 
 1. 确认准确的发行版本，并检查文件没有被替换；
 2. 检查当前电脑，尽量复用已有的兼容 Node.js 与 Wrangler；
-3. 需要时先生成 Cloudflare 登录计划，再确认准确账户，并且只询问 Owner 显示名称等真正缺少的选择；
+3. 先安全发现并复用已有 Wrangler profile/account 映射；只有无法解析既有登录时才生成 Cloudflare 登录计划，随后只询问 Owner 显示名称等真正缺少的选择；
 4. 在请求确认前，说明会创建哪些资源、修改哪些本地内容、可能的费用和恢复边界；
 5. 获得确认后才创建一个 Worker、一个 D1 数据库和内置 Web 应用；
 6. 完成后读回验证，再报告部署成功。

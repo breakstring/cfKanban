@@ -32,6 +32,7 @@ import {
   createToolRuntimePlan,
   executeCloudflareAuthAction,
   inspectCloudflareAuth,
+  resolveCloudflareAuth,
   resolveWrangler,
   satisfiesSimpleRange,
 } from "../../packages/skill-runtime/src/tool-runtime.mjs";
@@ -43,7 +44,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.7.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.8.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -266,6 +267,190 @@ test("Cloudflare OAuth planning freezes named-profile syntax, least scopes, and 
   );
 });
 
+test("Cloudflare auth resolution reuses one discoverable named profile without exposing its token or user identity", async () => {
+  const token = "cloudflare-oauth-token-fixture";
+  const calls = [];
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    environment: {},
+    runner: async (executable, args, options) => {
+      calls.push({ executable, args, options });
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === "auth list") {
+        return {
+          code: 0,
+          signal: null,
+          stdout: [
+            "┌─────────────────┬──────────────────────────────┐",
+            "│ Profile         │ Bound Directories            │",
+            "├─────────────────┼──────────────────────────────┤",
+            "│ cfkanban-alpha5 │ /private/should-not-be-shown │",
+            "└─────────────────┴──────────────────────────────┘",
+          ].join("\n"),
+          stderr: "",
+        };
+      }
+      if (command === "auth token --json --profile default") return { code: 1, signal: null, stdout: "", stderr: "Not logged in" };
+      if (command === "auth token --json --profile cfkanban-alpha5") {
+        return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token }), stderr: "" };
+      }
+      if (command === "whoami --json" && options.env.CLOUDFLARE_API_TOKEN === token) {
+        return {
+          code: 0,
+          signal: null,
+          stdout: JSON.stringify({
+            loggedIn: true,
+            authType: "OAuth Token",
+            email: "private@example.test",
+            accounts: [{ id: "a".repeat(32), name: "Example Account" }],
+          }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.status, "resolved");
+  assert.deepEqual(result.selected, {
+    profile: "cfkanban-alpha5",
+    account_id: "a".repeat(32),
+    account_label: "Example Account",
+    auth_source: "wrangler_profile",
+  });
+  assert.deepEqual(result.candidates, [result.selected]);
+  assert.deepEqual(result.unverified_profiles, []);
+  assert.equal(result.profile_inventory_complete, true);
+  assert.equal(result.account_readback_required, true);
+  assert.equal(result.raw_token_returned, false);
+  assert.equal(result.raw_output_returned, false);
+  assert.equal(result.candidate_values_are_untrusted_display_metadata, true);
+  assert.equal(JSON.stringify(result).includes(token), false);
+  assert.equal(JSON.stringify(result).includes("private@example.test"), false);
+  assert.equal(JSON.stringify(result).includes("/private/should-not-be-shown"), false);
+  assert.equal(calls.every(({ options }) => options.env.WRANGLER_WRITE_LOGS === "false"), true);
+  assert.equal(calls.find(({ args }) => args.join(" ") === "whoami --json").options.env.CLOUDFLARE_ACCOUNT_ID, undefined);
+});
+
+test("Cloudflare auth resolution requires selection instead of guessing across profiles or accounts", async () => {
+  const tokens = new Map([
+    ["team-a", "token-a"],
+    ["team-b", "token-b"],
+  ]);
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    environment: {},
+    runner: async (_executable, args, options) => {
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === "auth list") {
+        return { code: 0, signal: null, stdout: "│ Profile │ Bound Directories │\n│ team-a │ - │\n│ team-b │ - │\n", stderr: "" };
+      }
+      if (command === "auth token --json --profile default") return { code: 1, signal: null, stdout: "", stderr: "" };
+      const profile = args.at(-1);
+      if (command.startsWith("auth token --json --profile ")) {
+        return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token: tokens.get(profile) }), stderr: "" };
+      }
+      if (command === "whoami --json") {
+        const suffix = options.env.CLOUDFLARE_API_TOKEN === "token-a" ? "a" : "b";
+        return {
+          code: 0,
+          signal: null,
+          stdout: JSON.stringify({ loggedIn: true, accounts: [{ id: `${suffix}`.repeat(32), name: `Team ${suffix.toUpperCase()}` }] }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.status, "selection_required");
+  assert.equal(result.selected, null);
+  assert.deepEqual(result.candidates.map(({ profile }) => profile), ["team-a", "team-b"]);
+  assert.equal(result.account_readback_required, true);
+});
+
+test("Cloudflare auth resolution blocks when a listed profile cannot be verified", async () => {
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    environment: {},
+    runner: async (_executable, args) => {
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === "auth list") return { code: 0, signal: null, stdout: "│ Profile │ Bound Directories │\n│ stale │ - │\n", stderr: "" };
+      if (command === "auth token --json --profile default" || command === "auth token --json --profile stale") {
+        return { code: 1, signal: null, stdout: "", stderr: "not logged in" };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.selected, null);
+  assert.deepEqual(result.candidates, []);
+  assert.deepEqual(result.unverified_profiles, [{ profile: "stale", code: "WRANGLER_PROFILE_ACCOUNT_DISCOVERY_FAILED" }]);
+});
+
+test("Cloudflare auth resolution does not select a partial result when another listed profile is unresolved", async () => {
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    environment: {},
+    runner: async (_executable, args, options) => {
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === "auth list") return { code: 0, signal: null, stdout: "│ Profile │ Bound Directories │\n│ usable │ - │\n│ stale │ - │\n", stderr: "" };
+      if (command === "auth token --json --profile default") return { code: 1, signal: null, stdout: "", stderr: "" };
+      if (command === "auth token --json --profile usable") return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token: "usable-token" }), stderr: "" };
+      if (command === "auth token --json --profile stale") return { code: 1, signal: null, stdout: "", stderr: "" };
+      if (command === "whoami --json" && options.env.CLOUDFLARE_API_TOKEN === "usable-token") {
+        return { code: 0, signal: null, stdout: JSON.stringify({ loggedIn: true, accounts: [{ id: "c".repeat(32), name: "Usable" }] }), stderr: "" };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.selected, null);
+  assert.equal(result.candidates.length, 1);
+  assert.deepEqual(result.unverified_profiles, [{ profile: "stale", code: "WRANGLER_PROFILE_ACCOUNT_DISCOVERY_FAILED" }]);
+});
+
+test("Cloudflare auth resolution honors effective environment authentication without inspecting shadowed profiles", async () => {
+  const token = "environment-token-fixture";
+  const calls = [];
+  const result = await resolveCloudflareAuth({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    environment: { CLOUDFLARE_API_TOKEN: token },
+    runner: async (_executable, args, options) => {
+      calls.push({ args, options });
+      const command = args.join(" ");
+      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
+      if (command === "whoami --json" && options.env.CLOUDFLARE_API_TOKEN === token) {
+        return {
+          code: 0,
+          signal: null,
+          stdout: JSON.stringify({ loggedIn: true, email: "private@example.test", accounts: [{ id: "d".repeat(32), name: "Environment Account" }] }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    },
+  });
+
+  assert.equal(result.status, "resolved");
+  assert.deepEqual(result.environment_auth_variables, ["CLOUDFLARE_API_TOKEN"]);
+  assert.deepEqual(result.selected, {
+    profile: null,
+    account_id: "d".repeat(32),
+    account_label: "Environment Account",
+    auth_source: "environment",
+  });
+  assert.equal(calls.some(({ args }) => args[0] === "auth"), false);
+  assert.equal(JSON.stringify(result).includes(token), false);
+  assert.equal(JSON.stringify(result).includes("private@example.test"), false);
+});
+
 test("each Skill exposes a self-describing command catalog with a bounded surface", async () => {
   const daily = getCommandCatalog({ surface: "daily" });
   const admin = getCommandCatalog({ surface: "admin" });
@@ -284,6 +469,7 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
   assert.equal(names(admin).includes("plan strict-zero"), false);
   assert.equal(names(deploy).includes("plan strict-zero"), true);
   assert.equal(names(deploy).includes("runtime inspect-cloudflare-auth"), true);
+  assert.equal(names(deploy).includes("runtime resolve-cloudflare-auth"), true);
   assert.equal(names(deploy).includes("runtime plan-cloudflare-auth"), true);
   assert.equal(names(deploy).includes("runtime cloudflare-auth-action"), true);
   assert.equal(deploy.commands.find((entry) => entry.name === "runtime cloudflare-auth-action").input_fields.includes("completedActionIds"), true);
@@ -959,7 +1145,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
   assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.7/cfkanban-release-0.1.0-alpha.7.json");
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.8/cfkanban-release-0.1.0-alpha.8.json");
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -1044,6 +1230,7 @@ test("deployment Skill directly documents the deterministic Cloudflare authentic
     readFile(new URL("../../skills/cfkanban-deploy/references/deployment-workflows.zh-CN.md", import.meta.url), "utf8"),
   ]);
   for (const source of [deploy, workflowEn, workflowZh]) {
+    assert.match(source, /runtime resolve-cloudflare-auth/u);
     assert.match(source, /runtime inspect-cloudflare-auth/u);
     assert.match(source, /runtime plan-cloudflare-auth/u);
     assert.match(source, /runtime cloudflare-auth-action/u);
@@ -1085,12 +1272,14 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.5.md",
     "../../release/notes/0.1.0-alpha.6.md",
     "../../release/notes/0.1.0-alpha.7.md",
+    "../../release/notes/0.1.0-alpha.8.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
     "../../release/config/0.1.0-alpha.5.json",
     "../../release/config/0.1.0-alpha.6.json",
     "../../release/config/0.1.0-alpha.7.json",
+    "../../release/config/0.1.0-alpha.8.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

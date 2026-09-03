@@ -20,6 +20,8 @@ const AUTH_MODES = Object.freeze([
 ]);
 
 const WRANGLER_AUTH_CONTRACT_RANGE = ">=4.127.1 <5.0.0";
+const MAX_DISCOVERED_PROFILES = 32;
+const MAX_DISCOVERED_ACCOUNT_MAPPINGS = 128;
 
 function safeAbsolute(filePath, name) {
   const value = requireString(filePath, name, { max: 4096 });
@@ -242,6 +244,242 @@ export async function inspectCloudflareAuth({
     safe_to_plan: blockers.length === 0,
     raw_output_returned: false,
   };
+}
+
+function parseWranglerProfileNames(value) {
+  const output = stripAnsi(value);
+  if (/No profiles found\./i.test(output)) return { complete: true, profiles: [] };
+  const profiles = [];
+  let recognizedTable = false;
+  for (const line of output.split(/\r?\n/)) {
+    if (/\bBound Directories\b/i.test(line)) {
+      recognizedTable = true;
+      continue;
+    }
+    const match = /^\s*│\s*([^│]+?)\s*│/u.exec(line);
+    if (match === null) continue;
+    const candidate = match[1].trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(candidate)) continue;
+    profiles.push(validateProfileName(candidate));
+  }
+  return {
+    complete: recognizedTable,
+    profiles: [...new Set(profiles)],
+  };
+}
+
+function isolatedTokenEnvironment(environment, token) {
+  const isolated = { ...environment, WRANGLER_WRITE_LOGS: "false" };
+  delete isolated.CLOUDFLARE_API_TOKEN;
+  delete isolated.CLOUDFLARE_API_KEY;
+  delete isolated.CLOUDFLARE_EMAIL;
+  delete isolated.CLOUDFLARE_ACCOUNT_ID;
+  isolated.CLOUDFLARE_API_TOKEN = token;
+  return isolated;
+}
+
+function parseWranglerToken(value) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stripAnsi(value));
+  } catch {
+    return null;
+  }
+  if (!["oauth", "api_token"].includes(parsed?.type) || typeof parsed.token !== "string" || parsed.token.length === 0) {
+    return null;
+  }
+  return parsed.token;
+}
+
+function safeAccountLabel(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  return normalized.length === 0 ? null : normalized.slice(0, 256);
+}
+
+function parseWranglerAccounts(value) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stripAnsi(value));
+  } catch {
+    return null;
+  }
+  if (parsed?.loggedIn !== true || !Array.isArray(parsed.accounts)) return null;
+  const accounts = [];
+  const seen = new Set();
+  for (const account of parsed.accounts) {
+    if (typeof account?.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(account.id) || seen.has(account.id)) continue;
+    seen.add(account.id);
+    accounts.push({ account_id: account.id, account_label: safeAccountLabel(account.name) });
+  }
+  return accounts;
+}
+
+async function runAuthProbe(runner, executable, args, environment) {
+  try {
+    const result = await runner(executable, args, { env: { ...environment, WRANGLER_WRITE_LOGS: "false" } });
+    return {
+      code: result?.code,
+      signal: result?.signal || null,
+      stdout: stripAnsi(result?.stdout),
+      stderr: stripAnsi(result?.stderr),
+    };
+  } catch {
+    return { code: null, signal: null, stdout: "", stderr: "" };
+  }
+}
+
+async function discoverAccountsForToken({ runner, executable, environment, token }) {
+  const result = await runAuthProbe(
+    runner,
+    executable,
+    ["whoami", "--json"],
+    isolatedTokenEnvironment(environment, token),
+  );
+  if (result.code !== 0) return null;
+  return parseWranglerAccounts(result.stdout);
+}
+
+async function discoverProfileAccounts({ runner, executable, environment, profile }) {
+  const args = ["auth", "token", "--json", "--profile", profile];
+  const tokenResult = await runAuthProbe(runner, executable, args, environment);
+  if (tokenResult.code !== 0) return null;
+  const token = parseWranglerToken(tokenResult.stdout);
+  if (token === null) return null;
+  return discoverAccountsForToken({ runner, executable, environment, token });
+}
+
+function authResolutionResult({ executable, version, environmentVariables, profileInventoryComplete, candidates, unverifiedProfiles }) {
+  const sortedCandidates = [...candidates].sort((left, right) => {
+    const leftProfile = left.profile || "";
+    const rightProfile = right.profile || "";
+    if (leftProfile !== rightProfile) return leftProfile < rightProfile ? -1 : 1;
+    if (left.account_id === right.account_id) return 0;
+    return left.account_id < right.account_id ? -1 : 1;
+  });
+  let status;
+  let selected = null;
+  if (unverifiedProfiles.length > 0 || profileInventoryComplete === false) {
+    status = "blocked";
+  } else if (sortedCandidates.length === 1) {
+    status = "resolved";
+    [selected] = sortedCandidates;
+  } else if (sortedCandidates.length > 0) {
+    status = "selection_required";
+  } else {
+    status = "unavailable";
+  }
+  return {
+    schema_version: 1,
+    status,
+    executable,
+    version,
+    auth_contract_range: WRANGLER_AUTH_CONTRACT_RANGE,
+    environment_auth_variables: environmentVariables,
+    profile_inventory_complete: profileInventoryComplete,
+    candidates: sortedCandidates,
+    selected,
+    unverified_profiles: unverifiedProfiles,
+    account_readback_required: sortedCandidates.length > 0,
+    candidate_values_are_untrusted_display_metadata: true,
+    raw_token_returned: false,
+    raw_output_returned: false,
+    next_step: status === "resolved"
+      ? "run runtime wrangler-account-readback for selected.profile and selected.account_id"
+      : status === "selection_required"
+        ? "ask the user to choose one candidate, then run runtime wrangler-account-readback"
+        : status === "unavailable"
+          ? "inspect the stable proposed profile and create a separate Cloudflare authentication plan"
+          : "stop; the existing Cloudflare authentication inventory could not be resolved safely",
+  };
+}
+
+export async function resolveCloudflareAuth({
+  wranglerExecutable,
+  runner = spawnCaptured,
+  environment = process.env,
+}) {
+  const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
+  const versionProbe = await runAuthProbe(runner, executable, ["--version"], environment);
+  const version = versionProbe.code === 0 ? versionProbe.stdout.trim().split(/\r?\n/, 1)[0] : null;
+  if (version === null || !satisfiesSimpleRange(version, WRANGLER_AUTH_CONTRACT_RANGE)) {
+    throw toolError("WRANGLER_AUTH_CONTRACT_UNSUPPORTED", "Wrangler version is outside the verified authentication discovery range", {
+      version,
+      requiredRange: WRANGLER_AUTH_CONTRACT_RANGE,
+    });
+  }
+
+  const environmentVariables = environmentAuthNames(environment);
+  if (environmentVariables.length > 0) {
+    const whoami = await runAuthProbe(runner, executable, ["whoami", "--json"], environment);
+    const accounts = whoami.code === 0 ? parseWranglerAccounts(whoami.stdout) : null;
+    const candidates = (accounts || []).map((account) => ({
+      profile: null,
+      ...account,
+      auth_source: "environment",
+    }));
+    const unverifiedProfiles = accounts === null
+      ? [{ profile: null, code: "WRANGLER_ENV_AUTH_ACCOUNT_DISCOVERY_FAILED" }]
+      : [];
+    return authResolutionResult({
+      executable,
+      version,
+      environmentVariables,
+      profileInventoryComplete: null,
+      candidates,
+      unverifiedProfiles,
+    });
+  }
+
+  const listResult = await runAuthProbe(runner, executable, ["auth", "list"], environment);
+  const inventory = listResult.code === 0
+    ? parseWranglerProfileNames(`${listResult.stdout}\n${listResult.stderr}`)
+    : { complete: false, profiles: [] };
+  if (inventory.profiles.length > MAX_DISCOVERED_PROFILES) {
+    return authResolutionResult({
+      executable,
+      version,
+      environmentVariables,
+      profileInventoryComplete: false,
+      candidates: [],
+      unverifiedProfiles: [{ profile: null, code: "WRANGLER_PROFILE_DISCOVERY_LIMIT_EXCEEDED" }],
+    });
+  }
+
+  const candidates = [];
+  const unverifiedProfiles = [];
+  const profiles = ["default", ...inventory.profiles.filter((profile) => profile !== "default")];
+  for (const profile of profiles) {
+    const accounts = await discoverProfileAccounts({ runner, executable, environment, profile });
+    if (accounts === null) {
+      if (profile !== "default") unverifiedProfiles.push({ profile, code: "WRANGLER_PROFILE_ACCOUNT_DISCOVERY_FAILED" });
+      continue;
+    }
+    if (profile !== "default" && accounts.length === 0) {
+      unverifiedProfiles.push({ profile, code: "WRANGLER_PROFILE_ACCOUNT_DISCOVERY_FAILED" });
+      continue;
+    }
+    if (candidates.length + accounts.length > MAX_DISCOVERED_ACCOUNT_MAPPINGS) {
+      unverifiedProfiles.push({ profile, code: "WRANGLER_ACCOUNT_DISCOVERY_LIMIT_EXCEEDED" });
+      break;
+    }
+    for (const account of accounts) {
+      candidates.push({
+        profile,
+        ...account,
+        auth_source: "wrangler_profile",
+      });
+    }
+  }
+
+  return authResolutionResult({
+    executable,
+    version,
+    environmentVariables,
+    profileInventoryComplete: inventory.complete,
+    candidates,
+    unverifiedProfiles,
+  });
 }
 
 function buildOAuthArgs(mode, profileName) {
