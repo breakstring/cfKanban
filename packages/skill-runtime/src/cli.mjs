@@ -36,7 +36,7 @@ function command({ description, effect, inputFields = [], surfaces = ALL_SURFACE
 }
 
 const COMMANDS = new Map([
-  ["capabilities", command({ description: "Inspect the current host, paths, and available tools without installing anything.", effect: "read_only", run: buildCapabilityReport })],
+  ["capabilities", command({ description: "Inspect the current host, paths, and PATH-level tools without installing anything; Wrangler usability still requires runtime resolve-wrangler.", effect: "read_only", run: buildCapabilityReport })],
   ["state init", command({ description: "Create and verify the private cfKanban user root.", effect: "local_write", inputFields: ["home", "repoRoot", "persistenceConfirmed"], run: initializeStateRoot })],
   ["state put-instance", command({ description: "Store non-secret metadata for one trusted instance.", effect: "local_write", inputFields: ["instanceId", "trustedApiOrigin", "originVersion"], surfaces: ["daily", "deploy"], run: putInstanceMetadata })],
   ["state inspect", command({ description: "Inspect one local instance slot without returning Credential values.", effect: "local_state_check", inputFields: ["instanceId"], run: inspectInstanceState })],

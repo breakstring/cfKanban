@@ -29,7 +29,7 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.4/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.5/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
 
 ## Choose the deployment source first
 
@@ -55,9 +55,9 @@ node scripts/cfkanban-tool.mjs <command>
 
 | Goal | Command | Required handling |
 | --- | --- | --- |
-| Inspect host support | `capabilities` | Read-only first step; report unavailable, unknown, unsupported, and permission-denied separately. |
+| Inspect host support | `capabilities` | Read-only first step. Its Wrangler probe covers PATH only and cannot decide whether the cfKanban Tool Runtime is reusable. |
 | Verify a release | `release verify`, `release continuity` | Pin immutable manifest, artifact origins, versions, and digests; stop on source discontinuity. |
-| Resolve Wrangler | `runtime resolve-wrangler` | Prefer explicit compatible path, then PATH, then an authorized Tool Runtime. |
+| Resolve Wrangler | `runtime resolve-wrangler` | Mandatory before any install decision. Prefer an explicit compatible path, then PATH, then the active cfKanban Tool Runtime. |
 | Inspect Cloudflare login | `runtime inspect-cloudflare-auth` | Read exact Wrangler/profile/keyring/command/scope state without returning tokens or raw command output. |
 | Plan and perform login | `runtime plan-cloudflare-auth`, then `runtime cloudflare-auth-action` | Freeze separate process arguments, OAuth scopes, global keyring effects, profile operation, and task digest before opening a browser or saving auth. |
 | Verify Cloudflare account | `runtime wrangler-account-readback` | Run a read-only D1 listing against one exact account ID, with an explicit named profile when selected; return no database inventory. |
@@ -114,7 +114,7 @@ The companion Skills cannot choose a different Cloudflare product, install `wran
 ## Required deployment workflow
 
 1. Verify bootstrap, immutable manifest, origins, digests, compatibility, and publisher continuity.
-2. Run `capabilities`; reuse compatible user-owned Node/Wrangler and compare the verified Skill artifact with `installed_skill_bundle`. If the exact canonical release is not active, create `plan skill-update` with `current: null` for a first install or the redacted current receipt for an update. A matching marketplace/plugin cache never satisfies this step. If Wrangler is missing or incompatible, create an exact Tool Runtime plan.
+2. Run `capabilities` and compare the verified Skill artifact with `installed_skill_bundle`. Its `tools.wrangler` result is explicitly PATH-only, while `installed_tool_runtime` is only an unverified receipt hint. Always run `runtime resolve-wrangler` with the verified manifest's Wrangler range before deciding that Wrangler is absent or incompatible; the resolver checks an explicit path, PATH, and the active `~/.cfkanban/tool-runtime/` in that order. Reuse a compatible result. Only when the resolver returns unavailable/incompatible may an exact Tool Runtime plan be created. If the exact canonical Skill release is not active, create `plan skill-update` with `current: null` for a first install or the redacted current receipt for an update. A matching marketplace/plugin cache never satisfies this step.
 3. Before any write, show the Skill plan's source, version, digest, `~/.cfkanban/skill-releases/` target, atomic switch, and rollback. When both local installations are needed, present both plans together and obtain authorization for each exact digest before executing either. Install the Skill bundle with `release install-skill-bundle`, run `help` from the returned canonical path, and read back the active Skill receipt before continuing.
 4. Inspect the proposed Cloudflare profile and auth storage. If login is required, generate the exact OAuth plan, disclose the global keyring/profile/scopes effects, and execute only its authorized actions. Do not bind a profile to the Repo.
 5. Run `runtime wrangler-account-readback` for the selected account/profile. Wrangler does not allow `--profile` on `whoami`, so named-profile verification uses a read-only D1 probe with `CLOUDFLARE_ACCOUNT_ID` and returns no database inventory; stop if an environment credential would shadow that profile.
@@ -134,6 +134,7 @@ A verified Worker and D1 are the deployment result, but the user still has no bo
 - **MUST:** Marketplace/plugin is a discovery and installation convenience; it never overrides canonical publisher, manifest, artifact origins, or digests.
 - **MUST:** Cloudflare companion Skills and Wrangler Skill installation are optional host-owned changes; they never run implicitly and never replace the cfKanban deployment contract.
 - **MUST:** Cloudflare login uses the structured auth preflight and task-bound plan; OAuth scopes remain separate process arguments, and global keyring/profile effects are shown before execution.
+- **MUST:** Never interpret `capabilities.tools.wrangler` as the final availability result. Run `runtime resolve-wrangler` with the verified release range and reuse a compatible active Tool Runtime before proposing installation.
 - **MUST:** Use current Cloudflare documentation and the pinned Wrangler config schema to detect drift, but never mutate an immutable Service bundle in place to follow generic advice.
 - **MUST:** Windows native and WSL2 never auto-discover, execute, copy, or share Node, Wrangler, Cloudflare auth, Skills, Tool Runtime, or `.cfkanban/` state.
 - **MUST:** Any cost, account, permission, DNS/domain, destructive migration, resource adoption/replacement, secret, binding, or plan-digest delta requires new authorization.

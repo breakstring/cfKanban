@@ -91,10 +91,10 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 
 | 阶段 | 命令 | 结果 |
 | --- | --- | --- |
-| 宿主 preflight | `capabilities` | 只读环境与路径报告。 |
+| 宿主 preflight | `capabilities` | 只读环境与 PATH 报告；其中的 Wrangler 观察不是最终 resolver 结果。 |
 | Release trust | `release verify`、`release continuity` | 已验证 immutable manifest/artifacts 与 publisher continuity 决策。 |
 | Canonical Skill 安装 | `plan skill-update`、`release install-skill-bundle` | 准确的首次安装/更新计划、immutable version 目录、atomic active pointer 与 `.cfkanban/skill-releases` 读回。 |
-| Wrangler 选择 | `runtime resolve-wrangler` | 显式兼容路径、PATH 兼容路径或缺失/不兼容结果。 |
+| Wrangler 选择 | `runtime resolve-wrangler` | 在显式、PATH 与 active Tool Runtime candidates 中作出必须执行的兼容性判断。 |
 | Cloudflare auth 检查 | `runtime inspect-cloudflare-auth` | 脱敏的命令/profile/keyring/scope 事实与 blockers；不返回 token 或原始输出。 |
 | Cloudflare auth 计划/动作 | `runtime plan-cloudflare-auth`、`runtime cloudflare-auth-action` | 绑定 task 的 digest、非 shell 参数数组、明确的全局 keyring 影响、OAuth consent 与必需读回。 |
 | Cloudflare 账户 | `runtime wrangler-account-readback` | 对准确 account/profile 验证只读 D1 访问；丢弃数据库清单。 |
@@ -117,8 +117,8 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 
 1. 把 canonical bootstrap 当作文档读取，将 stable pointer 解析为一个 immutable release manifest；只有用户明确选择测试版时才可改用 prerelease pointer。
 2. 对 Skill 与 Service deployment bundles 运行 `release verify`，再与既有 receipt 比较 publisher/origin continuity。
-3. 运行 `capabilities`。把已验证的 Skill artifact 与 `installed_skill_bundle` 比较；首次安装时，`plan skill-update` 必须使用 `current: null`，更新时只使用脱敏后的 current receipt。即使 plugin 或 marketplace cache 完全匹配，它也只是宿主投影，绝不能跳过本步骤。复用兼容 Node/Wrangler；Wrangler 缺失/不兼容时生成 `runtime plan-install`。
-4. 展示 Skill 计划的 canonical source/version/digest、`.cfkanban/skill-releases` 目标、atomic switch 与 rollback。若两项本地前置条件都缺失，必须把 Skill 与 Tool Runtime 两份计划及其 digest 一起展示，再请求一次只覆盖这些准确写入的用户决定。授权后先安装 canonical Skill bundle，从返回的 installed path 运行 `help`，并核对 active receipt，之后才安装或解析 Wrangler。
+3. 运行 `capabilities`。把已验证的 Skill artifact 与 `installed_skill_bundle` 比较；首次安装时，`plan skill-update` 必须使用 `current: null`，更新时只使用脱敏后的 current receipt。即使 plugin 或 marketplace cache 完全匹配，它也只是宿主投影，绝不能跳过本步骤。`capabilities.tools.wrangler` 只探测 PATH，`installed_tool_runtime` 也只是未经验证的提示。必须使用 manifest 的准确兼容范围调用 `runtime resolve-wrangler`；它会依次检查显式 candidate、PATH 与 active cfKanban Tool Runtime。任何兼容结果都应直接复用。只有 resolver 明确返回 unavailable/incompatible 时才能生成 `runtime plan-install`。
+4. 展示 Skill 计划的 canonical source/version/digest、`.cfkanban/skill-releases` 目标、atomic switch 与 rollback。若两项本地前置条件都缺失，必须把 Skill 与 Tool Runtime 两份计划及其 digest 一起展示，再请求一次只覆盖这些准确写入的用户决定。授权后先安装 canonical Skill bundle，从返回的 installed path 运行 `help`，并核对 active receipt；只有此前 resolver 已证明确有必要时才安装 Wrangler。安装完成后必须再次 resolve，并要求兼容读回。
 5. Cloudflare auth 尚不可用时，先检查并生成绑定 task 的 OAuth 计划。展示 profile operation、四个请求 scopes、全局 keyring 影响、browser/device 交互、本地存储归属和准确 digest。只执行已授权的 `runtime cloudflare-auth-action`，完成后再次检查。禁止使用 `login --profile`、把全部 scopes 引用成一个参数、把 profile 绑定到 Repo 或增加宽泛产品 scopes。
 6. 使用准确 account ID 与可选 named profile 运行 `runtime wrangler-account-readback`；禁止使用裸 `npx`，因为它可能下载未固定的最新 Wrangler。Wrangler 的 `whoami` 不支持 `--profile`，因此该命令改用只读 `d1 list --json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定账户、丢弃数据库清单，并在环境 Credential 会遮蔽所选 profile 时停止。
 7. 运行 `plan strict-zero`。默认候选包含一个 Worker、一个 D1、bundled Static Assets、`workers.dev`、不包含可选 Cloudflare 产品，并使用每 60 秒 120/300/30 request gates。冻结所选 Cloudflare profile/account，并在冻结 digest 前解决缺少的 Owner display name。

@@ -32,6 +32,7 @@ import {
   createToolRuntimePlan,
   executeCloudflareAuthAction,
   inspectCloudflareAuth,
+  resolveWrangler,
   satisfiesSimpleRange,
 } from "../../packages/skill-runtime/src/tool-runtime.mjs";
 import { canonicalDigest, readJson, sha256Bytes } from "../../packages/skill-runtime/src/utils.mjs";
@@ -42,7 +43,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.4.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.5.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -92,6 +93,39 @@ test("testing release accepts verified Node.js 26 while retaining a future-major
   assert.equal(satisfiesSimpleRange("v26.8.1", TESTING_RELEASE_CONFIG.nodeRange), true);
   assert.equal(satisfiesSimpleRange("v22.11.0", TESTING_RELEASE_CONFIG.nodeRange), false);
   assert.equal(satisfiesSimpleRange("v27.0.0", TESTING_RELEASE_CONFIG.nodeRange), false);
+});
+
+test("PATH capability output cannot hide a reusable cfKanban Tool Runtime", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-runtime-resolution-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const runtimeRoot = path.join(home, ".cfkanban", "tool-runtime");
+  const executable = path.join(runtimeRoot, "versions", "4.127.1", "node_modules", ".bin", "wrangler");
+  await mkdir(path.dirname(executable), { recursive: true });
+  await writeFile(executable, "#!/bin/sh\nprintf '4.127.1\\n'\n", { mode: 0o700 });
+  await writeFile(path.join(runtimeRoot, "active.json"), `${JSON.stringify({ schema_version: 1, version: "4.127.1" })}\n`, "utf8");
+
+  const report = buildCapabilityReport({ home, env: { PATH: "" }, probes: false });
+  assert.equal(report.tools.wrangler.status, "unknown");
+  assert.equal(report.tools.wrangler.discovery_scope, "path_only");
+  assert.equal(report.tools.wrangler.release_compatibility, "not_determined");
+  assert.deepEqual(report.installed_tool_runtime, {
+    status: "recorded_unverified",
+    version: "4.127.1",
+    resolver_required: true,
+  });
+  assert.equal(report.required_next_checks[0].command, "runtime resolve-wrangler");
+  assert.deepEqual(report.required_next_checks[0].searches, ["explicit_path", "path", "cfkanban_tool_runtime"]);
+
+  const resolved = await resolveWrangler({
+    requiredRange: ">=4.127.1 <5",
+    runtimeRoot,
+    env: { PATH: "" },
+    platform: "darwin",
+  });
+  assert.equal(resolved.status, "compatible");
+  assert.equal(resolved.source, "cfkanban_tool_runtime");
+  assert.equal(resolved.path, executable);
+  assert.equal(resolved.version, "4.127.1");
 });
 
 test("Cloudflare OAuth planning freezes named-profile syntax, least scopes, and global keyring effects", async () => {
@@ -768,7 +802,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
   assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.4/cfkanban-release-0.1.0-alpha.4.json");
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.5/cfkanban-release-0.1.0-alpha.5.json");
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -868,6 +902,14 @@ test("deployment Skill directly documents the deterministic Cloudflare authentic
   assert.match(workflowZh, /当前 OS 用户拥有的所有 Wrangler profiles/u);
   assert.match(workflowEn, /login alone creates no Worker, D1/u);
   assert.match(workflowZh, /登录本身不会创建 Worker、D1/u);
+  for (const source of [deploy, workflowEn, workflowZh]) {
+    assert.match(source, /runtime resolve-wrangler/u);
+    assert.match(source, /PATH/u);
+    assert.match(source, /installed_tool_runtime/u);
+  }
+  assert.match(deploy, /Always run `runtime resolve-wrangler`/u);
+  assert.match(workflowEn, /Always invoke `runtime resolve-wrangler`/u);
+  assert.match(workflowZh, /必须使用 manifest 的准确兼容范围调用 `runtime resolve-wrangler`/u);
 });
 
 test("public Agent-facing documents avoid the internal stage label", async () => {
@@ -883,9 +925,11 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.2.md",
     "../../release/notes/0.1.0-alpha.3.md",
     "../../release/notes/0.1.0-alpha.4.md",
+    "../../release/notes/0.1.0-alpha.5.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
+    "../../release/config/0.1.0-alpha.5.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
