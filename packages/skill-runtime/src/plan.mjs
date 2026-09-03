@@ -102,6 +102,11 @@ export function createStrictZeroPlan({
       owner_credential_id: requireUuid(ownerCredentialId, "owner_credential_id"),
       credential_strategy: "generate_after_authorization_to_private_pending_file",
       preferred_api_origin: preferredApiOrigin === null ? "derive_from_deployed_workers_dev_origin" : requireHttpsOrigin(preferredApiOrigin, "preferred_api_origin"),
+      recovery_authorization: {
+        zero_state_retry_included_in_plan: true,
+        separate_confirmation_per_attempt: false,
+        requires_same_task_operation_plan_sql_and_credential: true,
+      },
     },
     migrations: {
       allow_destructive: false,

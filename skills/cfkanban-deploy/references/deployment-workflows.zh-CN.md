@@ -131,13 +131,13 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 6. 使用准确 account ID 运行 `runtime wrangler-account-readback`。明确选择 named/default profile 时传入它；否则让 Wrangler 使用当前环境/config 目录上下文。该命令使用只读 `d1 list --json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定账户并丢弃数据库清单；环境 Credential 遮蔽显式 profile 时停止。仍禁止裸 `npx`，因为它可能下载未固定的最新 Wrangler。
 7. 运行 `plan strict-zero`。默认候选包含一个 Worker、一个 D1、bundled Static Assets、`workers.dev`、不包含可选 Cloudflare 产品，并使用每 60 秒 120/300/30 request gates。冻结准确 account 与任何明确选择的 profile，并在 digest 前解决 Owner display name；生成的私有 `wrangler.jsonc` 固定 `account_id`。
 8. 展示计划前，对其中两个准确名称分别运行 `runtime d1-resource-readback` 与 `runtime worker-resource-readback`。两者都必须返回 `absent`；present 或无法分类的结果都要停止，更换名称需要新计划。这些只读 wrapper 会关闭 Wrangler 磁盘日志，且不返回账户清单。
-9. 创建 journal 并展示完整 plan。`journal authorize` 只记录 current Agent task、operation ID 与 digest 的授权。
+9. 创建 journal 并展示完整 plan。`journal authorize` 只记录 current Agent task、operation ID 与 digest 的授权。请求一次覆盖完整计划的授权，其中包括 plan 已声明的 Owner bootstrap 零状态恢复；不要让用户授权“一个命令”或“只尝试一次”，否则会无意中把可续做计划收窄。用户自行明确提出的更窄限制仍然优先。
 10. 在 allowlisted `create_d1` 动作前后都重新运行 `runtime d1-resource-readback`。固定的 Wrangler 只在 `d1 list` 支持 JSON，`d1 create` 不支持；因此写入动作不带 `--json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定计划中的账户，并把命令文本输出视为非权威信息。只有写前为 absent、创建命令成功且写后准确名称读回得到唯一已验证 UUID 时才能继续。若创建失败后资源却存在，其归属不明确，必须停止。不得使用自动资源供应，也不得接管未知同名资源。
 11. 使用 `runtime d1-resource-readback` 返回的 UUID 运行 `deployment write-wrangler-config`。bundle 内的 `wrangler.template.json` 只是带占位资源身份、经过 schema 校验的配置骨架，绝不能原样部署。该命令会在 immutable bundle 外写入私有的实际 config，指向 bundle 内已构建 Worker/Static Assets/migrations，并固定 account、名称、bindings、compatibility date 与 rate gates。
 12. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。固定的只读核对 SQL 必须使用 `d1 execute --command --json`：Wrangler 的远端 `--file` 路径会走 ingestion API，可能只返回统计信息而没有 SELECT rows。只把两个预期 result sets 解析成有界 ledger/table/index facts，并丢弃原始 schema SQL/output。生成的 checksum 与 Owner-bootstrap 文件使用远端 `d1 execute --file`，依赖其 ingestion 事务边界，文件中不得出现显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`，与 Cloudflare 的 [D1 import 指南](https://developers.cloudflare.com/d1/best-practices/import-export-data/)保持一致。
 13. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。
 14. 部署前再次运行 `runtime worker-resource-readback` 并要求 `absent`；部署后要求同一准确读回变为 `present`。
-15. Worker 部署和准确 migration 读回之后，使用 `deployment prepare-owner-credential`，不要向通用 Credential 命令手工复制 Owner IDs。随后使用同一已授权 plan/config 和准确 workers.dev origin 运行 `bootstrap write-owner-sql`。它从冻结证据推导 Owner IDs/display name 与 Service/schema versions，只向固定私有路径写 digest/prefix，并在 journal 固定 SQL digest。先执行一次该 `bootstrap_owner` 文件。若动作失败、中断或响应不确定，通过同一 `deploy wrangler-action` 运行 `owner_bootstrap_readback`：其固定 `SELECT` 会关闭 Wrangler 磁盘日志，并且只记录 `principals`、`instance_meta`、`instance_origin_settings`、`credentials`、`events` 与 `operation_commits` 六张表的有界行数。只有更新的读回证明六张表全部为空时，才允许对同一 SQL 重试一次；只要存在任何完整或部分状态，就转入最终化/读回或停止，绝不再次写入。使用同一 verified release 文件运行 `deployment finalize-owner`：只有 health、公开 discovery、认证后的 `/api/v1/meta`、`/api/v1/me`、准确 Instance/origin/Service/schema、Owner Principal、Credential ID 与 fingerprint 全部匹配，才把 pending 提升为 current 并写入幂等脱敏 receipt。本地最终化若在提升后中断，应复用该准确 current Credential，不得生成第二个 secret。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
+15. Worker 部署和准确 migration 读回之后，使用 `deployment prepare-owner-credential`，不要向通用 Credential 命令手工复制 Owner IDs。随后使用同一已授权 plan/config 和准确 workers.dev origin 运行 `bootstrap write-owner-sql`。它从冻结证据推导 Owner IDs/display name 与 Service/schema versions，只向固定私有路径写 digest/prefix，并在 journal 固定 SQL digest。先执行该 `bootstrap_owner` 文件的一次初始尝试。若动作失败、中断或响应不确定，通过同一 `deploy wrangler-action` 运行 `owner_bootstrap_readback`：其固定 `SELECT` 会关闭 Wrangler 磁盘日志，并且只记录 `principals`、`instance_meta`、`instance_origin_settings`、`credentials`、`events` 与 `operation_commits` 六张表的有界行数。只有更新的读回证明六张表全部为空时，才允许对同一 SQL 重试一次。这个受保护的重试已经包含在未变化的完整计划授权中，不应再次要求应用层确认；只要存在任何完整或部分状态，就转入最终化/读回或停止，绝不再次写入。使用同一 verified release 文件运行 `deployment finalize-owner`：只有 health、公开 discovery、认证后的 `/api/v1/meta`、`/api/v1/me`、准确 Instance/origin/Service/schema、Owner Principal、Credential ID 与 fingerprint 全部匹配，才把 pending 提升为 current 并写入幂等脱敏 receipt。本地最终化若在提升后中断，应复用该准确 current Credential，不得生成第二个 secret。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
 
 ### 交接到真正可用的看板
 
@@ -145,7 +145,7 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 
 ## 中断与续做
 
-一个 Agent task、normalized plan digest 与 operation ID 共同定义一次授权。同一任务可以续做无漂移的计划内步骤；新任务或任何 plan delta 都需要新授权。
+一个 Agent task、normalized plan digest 与 operation ID 共同定义一次授权。同一任务可以续做无漂移的计划内步骤，其中包括 `owner_bootstrap.recovery_authorization` 已声明、且经零状态证明安全的重试；不能按每次进程执行重复索要确认。新任务、任何 plan delta 或用户亲自提出的更窄限制都需要新授权。
 
 遇到 timeout、response loss、Agent restart 或部分执行后：
 

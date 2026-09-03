@@ -1,14 +1,14 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
 - 文档状态：Frozen
-- 合同修订：26
+- 合同修订：27
 - Roadmap：R0 / R3
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
 - 事实快照：[Agent Skill 与本地部署环境能力快照](../research/agent-skill-platform-snapshot-2026-08-28.md)
 - 最近更新：2026-09-04
 - 冻结日期：2026-08-28
-- 最近修订：2026-09-04（D-260）
+- 最近修订：2026-09-04（D-261）
 
 ## 1. 目的与边界
 
@@ -333,7 +333,7 @@ Node 安装方法、Cloudflare 登录或权限授权属于环境/身份前置步
 
 部署属于外部写操作。Agent 必须先输出规范化 deploy plan，至少包含目标 Cloudflare account、release/deployment bundle、资源名称/类型、公开入口、bindings、migration 分类、Owner bootstrap、费用 profile、自动生成值、验证和回滚边界，并为它计算稳定 plan digest。默认值不需要逐字段确认；人类一次明确授权完整计划后，该授权与当前 Agent 任务、plan digest 和 operation ID 绑定。
 
-同一任务内，计划授权覆盖 plan 明确列出的 Worker/D1 创建、bindings、非破坏性 migration、服务部署、Owner bootstrap 和验证；这些步骤不得为了形式安全逐条重复询问。下列 delta 不在授权内，Agent 必须停止、展示 readback 与影响并重新确认：
+同一任务内，计划授权覆盖 plan 明确列出的 Worker/D1 创建、bindings、非破坏性 migration、服务部署、Owner bootstrap、经零状态证明安全的同 SQL 恢复重试和验证；这些步骤不得为了形式安全逐条重复询问。Agent 请求授权时必须以完整 plan 为范围，并让结构化 plan 明确声明 Owner bootstrap 的安全恢复也在授权内；不得自行把确认话术写成“只执行一个命令”或“只尝试一次”，从而无意中取消计划本身的可续做性。用户亲自提出更窄限制时仍以该限制为准。下列 delta 不在授权内，Agent 必须停止、展示 readback 与影响并重新确认：
 
 - 新增或启用付费服务，或实际资源/用量不再符合已展示费用 profile；
 - 新增或修改 DNS/custom domain，除非它已经作为明确目标列入 plan；
@@ -350,7 +350,7 @@ Service deployment bundle 必须携带已构建 Worker、预构建 Static Assets
 
 - Owner Credential secret 优先由 Skill 内置 Node 脚本生成并直接写入 `.cfkanban/` 受限 Credential 文件；Agent context 和终端正常输出只看到 fingerprint。
 - 首次 Owner Credential 必须由绑定同一 task/operation/plan digest 的专用部署命令从冻结的 Owner Principal/Credential IDs 创建或恢复；不得让 Agent 把这些 ID 手工复制到通用 Credential 命令后再宣称 plan-bound。hash-only bootstrap SQL 同样重新核对已授权 journal、私有 Frozen Wrangler config、完整 migration ledger/schema readback、同 journal Worker deploy、准确 `workers.dev` origin 与 pending Credential，并把固定私有路径和文件 digest 写入 journal。
-- Owner bootstrap 的远端 SQL 默认只尝试一次。失败、中断或响应状态不确定后，不得盲目重跑；同一已授权 task/operation/plan 必须先执行固定的只读 D1 probe，通过 `d1 execute --command --json` 对 `principals`、`instance_meta`、`instance_origin_settings`、`credentials`、`events` 与 `operation_commits` 六张 bootstrap 所触及的表只返回有界行数，并关闭 Wrangler 磁盘日志。只有该次尝试之后的最新有效 probe 证明六张表全部为空、且前次动作未记录成功时，才允许对准确的同一 hash-only SQL 重试一次；每次新的失败或不确定结果都需要更新 probe。任何完整或部分记录、probe 失败/畸形、成功的既有尝试、plan/config/SQL/pending Credential 漂移都禁止重试，只能进入准确最终化读回或停止。
+- Owner bootstrap 的远端 SQL 先进行一次初始尝试。失败、中断或响应状态不确定后，不得盲目重跑；同一已授权 task/operation/plan 必须先执行固定的只读 D1 probe，通过 `d1 execute --command --json` 对 `principals`、`instance_meta`、`instance_origin_settings`、`credentials`、`events` 与 `operation_commits` 六张 bootstrap 所触及的表只返回有界行数，并关闭 Wrangler 磁盘日志。只有该次尝试之后的最新有效 probe 证明六张表全部为空、且前次动作未记录成功时，才允许对准确的同一 hash-only SQL 重试一次；每次新的失败或不确定结果都需要更新 probe。这个受保护的重试已经包含在未变化的完整 plan 授权中，不需要逐次重新索要应用层确认。任何完整或部分记录、probe 失败/畸形、成功的既有尝试、plan/config/SQL/pending Credential 漂移都禁止重试，只能进入准确最终化读回或停止。
 - 云端只保存 hash/prefix；本地保存失败时不把 bootstrap 标记为完成。
 - Cloudflare auth 与 cfKanban Owner Credential 是两套不同凭据，不能互相复制或代用。
 - Owner 正常轮换由 `cfkanban-admin` 执行：脚本先生成替代 token 并写入同一实例的受限 pending 文件，再以当前 Owner Bearer Credential 调用幂等原子 rotation，验证新 Credential 后才原子切换本地 current slot。Web Session 不能发起该操作，管理页也不提供 Owner Credential revoke/rotate。全部 Owner Credential 丢失时才使用 `cfkanban-deploy` 的部署外恢复。
@@ -531,8 +531,9 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 36. 已确认：D-258 按 Wrangler/D1 ingestion 合同移除生成 SQL 中的显式事务控制；checksum 与 Owner bootstrap 文件由远端 `d1 execute --file` 提供事务边界。schema 完整但 ledger 缺行只允许在同一已授权 journal 证明 apply 成功、后继准确读回完整且无其他 drift 时补写单条 insert-only checksum，随后必须再次读回；任意既有 schema 仍不能自动 baseline。
 37. 已修订：D-259 将首次 Owner Credential 准备、bootstrap SQL digest、远端尝试、discovery/`/meta`/`/me` 身份读回、pending → current 与脱敏 receipt 全部绑定到同一已授权 task/operation/plan。`/me` 必须核对 Principal resource ID、Owner flag、Credential ID/fingerprint；部署最终化还必须通过 discovery 与 `/meta` 核对 Instance/origin/Service/schema。局部最终化失败只复用准确 pending/current，不创建第二份 Credential。D-260 只修订了其中“每 operation 绝对单次执行”的恢复边界。
 38. 已确认：D-260 针对真实 Owner bootstrap `fetch failed` 且远端零写入的中断场景，引入同 task/operation/plan 的固定六表零状态 probe。只有更新 probe 精确证明全部为空时，才能对同一 SQL 重试一次；任何存在/部分/畸形状态继续保持停止或最终化，不生成新 Credential，也不扩大原部署授权。
+39. 已确认：D-261 要求 strict-zero plan 结构化声明零状态恢复属于同一完整计划授权，并禁止 Agent 自行把确认话术收窄为“一个命令”或“只尝试一次”。同 task/operation/plan/config/SQL/Credential/target 均无漂移且 probe 为 `absent` 时直接续做；用户亲自提出的更窄限制、新任务或任何 plan delta 仍需重新授权。
 
-SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 26 在修订 25 的 plan-bound Owner 最终化证据链上，补充了仅限同一授权 journal、且必须由固定六表零状态 probe 证明远端完全未提交的 Owner bootstrap 重试。此前统一 `.cfkanban/`、双语 Skill 表面、portable Wrangler config、不枚举 profiles、D1 ingestion 恢复、monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
+SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 27 在修订 26 的六表零状态恢复上，进一步要求完整计划授权直接覆盖该安全续做，并禁止 Agent 用单命令/单次尝试话术制造额外确认。此前统一 `.cfkanban/`、双语 Skill 表面、portable Wrangler config、不枚举 profiles、D1 ingestion 恢复、plan-bound Owner 最终化、monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
 
 ## 12. 冻结范围与完成依据
 
@@ -567,5 +568,6 @@ SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 26
 27. 合同修订 24 已用 D-257 移除自动 profile listing：环境 Token 与用户明确给出的 profile 优先，其余由私有 config 目录/default 上下文决定；并以 D-258 固定远端 `--file` ingestion 的隐式事务边界及仅限同一已授权 journal 的缺 checksum 行恢复。
 28. 合同修订 25 已用 D-259 固定首次 Owner bootstrap 的完整最终化证据：专用 plan-bound Credential 准备、bootstrap SQL digest、单次执行、discovery/`/meta`/`/me` 准确读回、pending/current 恢复与幂等脱敏 receipt。
 29. 合同修订 26 已用 D-260 修订“单次执行”的中断边界：失败或响应不确定后，只有同一授权 journal 中更新的固定六表只读 probe 证明 bootstrap 状态完全为空，才允许对同一 SQL 重试一次；任何远端存在/部分状态继续停止或进入最终化。
+30. 合同修订 27 已用 D-261 固定完整 strict-zero plan 授权包含上述零状态恢复；Agent 不得自行用“只执行一次”类话术收窄授权并制造额外确认，除非更窄限制确实由用户提出。
 
 本次冻结只固定上述公共 Agent 体验与安全边界，不固定尚未设计的具体 npm package 名、各宿主未来新增的投影机制、版本淘汰阈值或实现代码。冻结范围内的语义如需变化，必须通过显式新决策和可追踪修订；冻结本身不授权实现、安装、部署或发布。
