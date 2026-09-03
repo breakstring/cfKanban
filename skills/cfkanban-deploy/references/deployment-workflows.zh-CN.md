@@ -113,7 +113,7 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 | Portable config | `deployment write-wrangler-config` | 绑定 verified bundle、Frozen account/Worker 与已创建 D1 的私有配置。 |
 | Cloudflare 步骤 | `deploy wrangler-action` | 一个 allowlisted Wrangler action 与脱敏结果摘要。 |
 | Worker 验证 | `deploy wrangler-action`，且 `action=validate_worker_bundle` | 使用正式部署同一 config/executable 执行 `wrangler deploy --dry-run`。 |
-| Owner bootstrap | `deployment prepare-owner-credential`、`bootstrap write-owner-sql`、带 `bootstrap_owner` 的 `deploy wrangler-action`、`deployment finalize-owner` | plan-bound pending secret、hash-only SQL、一次 journaled D1 执行、准确 discovery/`/meta`/`/me` 验证、提升与脱敏 receipt；都不暴露 token。 |
+| Owner bootstrap | `deployment prepare-owner-credential`、`bootstrap write-owner-sql`、带 `bootstrap_owner` 及恢复动作 `owner_bootstrap_readback` 的 `deploy wrangler-action`、`deployment finalize-owner` | plan-bound pending secret、hash-only SQL、journaled D1 执行、固定的零状态恢复读回、准确 discovery/`/meta`/`/me` 验证、提升与脱敏 receipt；都不暴露 token。 |
 | Migration 证明 | `migrations reconcile`、`migrations assess-ledger-recovery`、`migrations write-ledger-record-sql` | ledger/schema 一致性、同 journal 缺行恢复判断与 insert-only checksum record。 |
 | Skill update | `plan skill-update`、`release install-skill-bundle` | 新的已验证本地版本与 atomic active pointer。 |
 | Instance upgrade | `plan instance-upgrade` 加 journal/deploy/migration commands | 独立的 pinned Cloudflare upgrade。 |
@@ -137,7 +137,7 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 12. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。固定的只读核对 SQL 必须使用 `d1 execute --command --json`：Wrangler 的远端 `--file` 路径会走 ingestion API，可能只返回统计信息而没有 SELECT rows。只把两个预期 result sets 解析成有界 ledger/table/index facts，并丢弃原始 schema SQL/output。生成的 checksum 与 Owner-bootstrap 文件使用远端 `d1 execute --file`，依赖其 ingestion 事务边界，文件中不得出现显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`，与 Cloudflare 的 [D1 import 指南](https://developers.cloudflare.com/d1/best-practices/import-export-data/)保持一致。
 13. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。
 14. 部署前再次运行 `runtime worker-resource-readback` 并要求 `absent`；部署后要求同一准确读回变为 `present`。
-15. Worker 部署和准确 migration 读回之后，使用 `deployment prepare-owner-credential`，不要向通用 Credential 命令手工复制 Owner IDs。随后使用同一已授权 plan/config 和准确 workers.dev origin 运行 `bootstrap write-owner-sql`。它从冻结证据推导 Owner IDs/display name 与 Service/schema versions，只向固定私有路径写 digest/prefix，并在 journal 固定 SQL digest。只执行一次该 `bootstrap_owner` 文件；已有任何尝试时必须先读回，不能盲目重试。使用同一 verified release 文件运行 `deployment finalize-owner`：只有 health、公开 discovery、认证后的 `/api/v1/meta`、`/api/v1/me`、准确 Instance/origin/Service/schema、Owner Principal、Credential ID 与 fingerprint 全部匹配，才把 pending 提升为 current 并写入幂等脱敏 receipt。本地最终化若在提升后中断，应复用该准确 current Credential，不得生成第二个 secret。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
+15. Worker 部署和准确 migration 读回之后，使用 `deployment prepare-owner-credential`，不要向通用 Credential 命令手工复制 Owner IDs。随后使用同一已授权 plan/config 和准确 workers.dev origin 运行 `bootstrap write-owner-sql`。它从冻结证据推导 Owner IDs/display name 与 Service/schema versions，只向固定私有路径写 digest/prefix，并在 journal 固定 SQL digest。先执行一次该 `bootstrap_owner` 文件。若动作失败、中断或响应不确定，通过同一 `deploy wrangler-action` 运行 `owner_bootstrap_readback`：其固定 `SELECT` 会关闭 Wrangler 磁盘日志，并且只记录 `principals`、`instance_meta`、`instance_origin_settings`、`credentials`、`events` 与 `operation_commits` 六张表的有界行数。只有更新的读回证明六张表全部为空时，才允许对同一 SQL 重试一次；只要存在任何完整或部分状态，就转入最终化/读回或停止，绝不再次写入。使用同一 verified release 文件运行 `deployment finalize-owner`：只有 health、公开 discovery、认证后的 `/api/v1/meta`、`/api/v1/me`、准确 Instance/origin/Service/schema、Owner Principal、Credential ID 与 fingerprint 全部匹配，才把 pending 提升为 current 并写入幂等脱敏 receipt。本地最终化若在提升后中断，应复用该准确 current Credential，不得生成第二个 secret。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
 
 ### 交接到真正可用的看板
 
@@ -152,7 +152,8 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 1. 加载 journal，不能只从上一条命令 exit code 推断进度。
 2. 读回 Cloudflare resource markers，验证 account/type/`instance_id` 所有权。
 3. 通过 `d1 execute --command --json` 执行 Service bundle 固定的只读 SQL，读取 migration checksum ledger 与有界 `sqlite_master` artifacts；这类 SELECT readback 不得使用远端 `--file`。
-4. 比较 Frozen plan 与 current state；只有无漂移时才继续一个 allowlisted 未完成步骤。
+4. 如果 Owner bootstrap 已尝试但结果失败或不确定，运行 plan-bound 的 `owner_bootstrap_readback`。只有更新的探测结果为 `absent` 时，才重试准确的同一 SQL；bootstrap 所触及表中只要有任何一行，就禁止重试。
+5. 比较 Frozen plan 与 current state；只有无漂移时才继续一个 allowlisted 未完成步骤。
 
 Wrangler 原始输出必须先脱敏，不能直接记日志。前一次 create 是否提交不确定时，不能用新 identifiers 重试。
 

@@ -9,6 +9,14 @@ import { canonicalDigest, readJson, requireString, requireUuid, sha256Bytes } fr
 const MAX_MIGRATION_READBACK_SQL_BYTES = 4 * 1024;
 const MAX_MIGRATION_LEDGER_ROWS = 1024;
 const MAX_MIGRATION_SCHEMA_ARTIFACTS = 4096;
+const OWNER_BOOTSTRAP_READBACK_FIELDS = Object.freeze([
+  "principals",
+  "instance_meta",
+  "instance_origin_settings",
+  "credentials",
+  "events",
+  "operation_commits",
+]);
 
 function redact(value) {
   return String(value || "")
@@ -91,6 +99,7 @@ export function buildWranglerInvocation({
   migrationReadbackSqlPath = null,
   migrationReadbackSql = null,
   migrationRecordSqlPath = null,
+  ownerBootstrapReadbackSql = null,
 }) {
   const d1Name = plan.resources?.d1?.name;
   const normalizedConfig = configPath === null ? null : safeAbsolute(configPath, "config_path");
@@ -114,11 +123,27 @@ export function buildWranglerInvocation({
     case "bootstrap_owner":
       if (normalizedConfig === null || bootstrapSqlPath === null) throw toolError("BOOTSTRAP_INPUT_REQUIRED", "Owner bootstrap requires frozen Wrangler config and private SQL paths");
       return withProfile(["d1", "execute", requireString(d1Name, "d1_name", { max: 64 }), "--remote", "--file", safeAbsolute(bootstrapSqlPath, "bootstrap_sql_path"), "--config", normalizedConfig], plan, environment);
+    case "owner_bootstrap_readback":
+      if (normalizedConfig === null || ownerBootstrapReadbackSql === null) throw toolError("OWNER_BOOTSTRAP_READBACK_INPUT_REQUIRED", "Owner bootstrap recovery readback requires frozen Wrangler config and the fixed read-only SQL command");
+      return withProfile(["d1", "execute", requireString(d1Name, "d1_name", { max: 64 }), "--remote", "--command", requireString(ownerBootstrapReadbackSql, "owner_bootstrap_readback_sql", { max: MAX_MIGRATION_READBACK_SQL_BYTES }), "--config", normalizedConfig, "--json"], plan, environment);
     case "migration_ledger_readback":
       if (normalizedConfig === null || migrationReadbackSql === null) throw toolError("MIGRATION_READBACK_INPUT_REQUIRED", "Migration readback requires frozen Wrangler config and a read-only SQL command");
       return withProfile(["d1", "execute", requireString(d1Name, "d1_name", { max: 64 }), "--remote", "--command", requireString(migrationReadbackSql, "migration_readback_sql", { max: MAX_MIGRATION_READBACK_SQL_BYTES }), "--config", normalizedConfig, "--json"], plan, environment);
     default: throw toolError("DEPLOY_ACTION_REJECTED", "Deployment action is not in the allowlist", { action });
   }
+}
+
+export function buildOwnerBootstrapReadbackSql() {
+  return [
+    "SELECT",
+    "  (SELECT COUNT(*) FROM principals) AS principals,",
+    "  (SELECT COUNT(*) FROM instance_meta) AS instance_meta,",
+    "  (SELECT COUNT(*) FROM instance_origin_settings) AS instance_origin_settings,",
+    "  (SELECT COUNT(*) FROM credentials) AS credentials,",
+    "  (SELECT COUNT(*) FROM events) AS events,",
+    "  (SELECT COUNT(*) FROM operation_commits) AS operation_commits;",
+    "",
+  ].join("\n");
 }
 
 async function spawnCaptured(executable, args, { env = process.env } = {}) {
@@ -204,6 +229,68 @@ export function parseMigrationReadbackOutput(value) {
     schema: { tables, indexes },
     result_set_count: 2,
   };
+}
+
+function ownerBootstrapReadbackInvalid(message) {
+  return toolError("WRANGLER_OWNER_BOOTSTRAP_READBACK_INVALID", message);
+}
+
+export function parseOwnerBootstrapReadbackOutput(value) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(value || ""));
+  } catch {
+    throw ownerBootstrapReadbackInvalid("Wrangler returned invalid JSON for Owner bootstrap recovery readback");
+  }
+  if (!Array.isArray(parsed)
+    || parsed.length !== 1
+    || parsed[0]?.success !== true
+    || !Array.isArray(parsed[0].results)
+    || parsed[0].results.length !== 1) {
+    throw ownerBootstrapReadbackInvalid("Wrangler Owner bootstrap recovery readback did not return the one expected successful result row");
+  }
+  const row = parsed[0].results[0];
+  const counts = {};
+  for (const field of OWNER_BOOTSTRAP_READBACK_FIELDS) {
+    const count = row?.[field];
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      throw ownerBootstrapReadbackInvalid(`Wrangler Owner bootstrap recovery readback returned an invalid ${field} count`);
+    }
+    counts[field] = count;
+  }
+  const absent = OWNER_BOOTSTRAP_READBACK_FIELDS.every((field) => counts[field] === 0);
+  return {
+    state: absent ? "absent" : "present_or_partial",
+    safe_to_retry: absent,
+    counts,
+  };
+}
+
+function assertOwnerBootstrapCanRun(journal) {
+  const attemptIndex = journal.events.findLastIndex((event) => event?.type === "command_started" && event.action === "bootstrap_owner");
+  if (attemptIndex < 0) return;
+  const finishIndex = journal.events.findLastIndex((event, index) => index > attemptIndex && event?.type === "command_finished" && event.action === "bootstrap_owner");
+  if (finishIndex > attemptIndex && journal.events[finishIndex].exit_code === 0) {
+    throw toolError("OWNER_BOOTSTRAP_ALREADY_ATTEMPTED", "Owner bootstrap already succeeded; use deployment finalization instead of executing it again");
+  }
+  const observedRemoteState = journal.events.slice(attemptIndex + 1).some((event) => event?.type === "command_finished"
+    && event.action === "owner_bootstrap_readback"
+    && event.exit_code === 0
+    && event.owner_bootstrap_readback?.state === "present_or_partial");
+  if (observedRemoteState) {
+    throw toolError("OWNER_BOOTSTRAP_REMOTE_STATE_PRESENT", "Owner bootstrap readback observed remote or partial state; do not execute bootstrap again");
+  }
+  const readbackIndex = journal.events.findLastIndex((event, index) => index > attemptIndex && event?.type === "command_finished" && event.action === "owner_bootstrap_readback");
+  const readback = readbackIndex > attemptIndex ? journal.events[readbackIndex] : null;
+  if (readback?.exit_code === 0
+    && readback.owner_bootstrap_readback?.state === "absent"
+    && readback.owner_bootstrap_readback?.safe_to_retry === true) {
+    return;
+  }
+  throw toolError(
+    "OWNER_BOOTSTRAP_ALREADY_ATTEMPTED",
+    "Owner bootstrap was already attempted; run the plan-bound Owner bootstrap readback and retry only when it proves every bootstrap table is still empty",
+  );
 }
 
 export async function readWranglerAccountAccess({
@@ -374,6 +461,7 @@ export async function executeWranglerAction({
     CLOUDFLARE_ACCOUNT_ID: requireString(plan.target?.cloudflare_account_id, "cloudflare_account_id", { max: 128 }),
   };
   let migrationReadbackSql = null;
+  let ownerBootstrapReadbackSql = null;
   if (action === "migration_ledger_readback") {
     if (migrationReadbackSqlPath === null) {
       throw toolError("MIGRATION_READBACK_INPUT_REQUIRED", "Migration readback requires a frozen read-only SQL path");
@@ -391,13 +479,16 @@ export async function executeWranglerAction({
     }
     migrationReadbackSql = bytes.toString("utf8");
   }
-  if (action === "bootstrap_owner") {
+  if (action === "owner_bootstrap_readback") {
+    const priorAttempt = journal.events.find((event) => event?.type === "command_started" && event.action === "bootstrap_owner") || null;
+    if (priorAttempt === null) {
+      throw toolError("OWNER_BOOTSTRAP_READBACK_NOT_REQUIRED", "Owner bootstrap recovery readback requires a prior journaled bootstrap attempt");
+    }
+    ownerBootstrapReadbackSql = buildOwnerBootstrapReadbackSql();
+  }
+  if (action === "bootstrap_owner" || action === "owner_bootstrap_readback") {
     const bootstrapPath = safeAbsolute(bootstrapSqlPath, "bootstrap_sql_path");
     const bootstrapEvent = [...journal.events].reverse().find((event) => event?.type === "owner_bootstrap_sql_written") || null;
-    const priorAttempt = [...journal.events].reverse().find((event) => (event?.type === "command_started" || event?.type === "command_finished") && event.action === "bootstrap_owner") || null;
-    if (priorAttempt !== null) {
-      throw toolError("OWNER_BOOTSTRAP_ALREADY_ATTEMPTED", "Owner bootstrap was already attempted; use deployment finalization to read back the exact result instead of executing it again");
-    }
     if (bootstrapEvent === null
       || bootstrapEvent.bootstrap_sql_path !== bootstrapPath
       || bootstrapEvent.bootstrap_sql_sha256 !== sha256Bytes(await readFile(bootstrapPath))) {
@@ -411,6 +502,7 @@ export async function executeWranglerAction({
       || metadata.fingerprint !== bootstrapEvent.credential_fingerprint) {
       throw toolError("STATE_IDENTITY_CONFLICT", "Pending Owner Credential does not match the authorized bootstrap SQL and plan");
     }
+    if (action === "bootstrap_owner") assertOwnerBootstrapCanRun(journal);
   }
   const args = buildWranglerInvocation({
     action,
@@ -422,10 +514,16 @@ export async function executeWranglerAction({
     migrationReadbackSqlPath,
     migrationReadbackSql,
     migrationRecordSqlPath,
+    ownerBootstrapReadbackSql,
   });
   await appendJournalEvent({ stateRoot, instanceId, operationId, event: { type: "command_started", action, executable, args } });
-  const result = await runner(executable, args, { env: environment });
+  const result = await runner(executable, args, {
+    env: action === "owner_bootstrap_readback"
+      ? { ...environment, WRANGLER_WRITE_LOGS: "false" }
+      : environment,
+  });
   let migrationReadback = null;
+  let ownerBootstrapReadback = null;
   let stdoutSummary = redact(result.stdout || "");
   let readbackError = null;
   if (result.code === 0 && action === "migration_ledger_readback") {
@@ -442,6 +540,18 @@ export async function executeWranglerAction({
       stdoutSummary = "[MIGRATION_READBACK_OUTPUT_REJECTED]";
     }
   }
+  if (result.code === 0 && action === "owner_bootstrap_readback") {
+    try {
+      ownerBootstrapReadback = parseOwnerBootstrapReadbackOutput(result.stdout);
+      stdoutSummary = JSON.stringify({
+        state: ownerBootstrapReadback.state,
+        safe_to_retry: ownerBootstrapReadback.safe_to_retry,
+      });
+    } catch (error) {
+      readbackError = error;
+      stdoutSummary = "[OWNER_BOOTSTRAP_READBACK_OUTPUT_REJECTED]";
+    }
+  }
   await appendJournalEvent({
     stateRoot,
     instanceId,
@@ -455,6 +565,7 @@ export async function executeWranglerAction({
       stderr_summary: redact(result.stderr || ""),
       readback_required: true,
       ...(migrationReadback === null ? {} : { migration_readback: migrationReadback }),
+      ...(ownerBootstrapReadback === null ? {} : { owner_bootstrap_readback: ownerBootstrapReadback }),
     },
   });
   if (result.code !== 0) throw toolError("WRANGLER_ACTION_FAILED", "Wrangler action failed; read back remote state before deciding whether to resume", { action, exitCode: result.code });
@@ -465,5 +576,6 @@ export async function executeWranglerAction({
     readback_required: true,
     stdout_summary: stdoutSummary,
     ...(migrationReadback === null ? {} : { migration_readback: migrationReadback }),
+    ...(ownerBootstrapReadback === null ? {} : { owner_bootstrap_readback: ownerBootstrapReadback }),
   };
 }
