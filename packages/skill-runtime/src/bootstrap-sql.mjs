@@ -38,14 +38,12 @@ export async function writeOwnerBootstrapSql({
   });
   const statements = [
     "PRAGMA foreign_keys = ON;",
-    "BEGIN IMMEDIATE;",
     `INSERT INTO principals (id, display_name, version, created_at, updated_at, last_operation_id) VALUES (${sql(principalId)}, ${sql(displayName)}, 1, ${now}, ${now}, ${sql(operationId)});`,
     `INSERT INTO instance_meta (singleton, instance_id, owner_principal_id, service_version, schema_version, created_at) VALUES (1, ${sql(instance)}, ${sql(principalId)}, ${sql(version)}, ${schemaVersion}, ${now});`,
     `INSERT INTO instance_origin_settings (singleton, preferred_api_origin, version, updated_at, updated_by_principal_id, last_operation_id) VALUES (1, ${sql(origin)}, 1, ${now}, ${sql(principalId)}, ${sql(operationId)});`,
     `INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id, last_operation_id) VALUES (${sql(credentialId)}, ${sql(principalId)}, ${sql(metadata.token_prefix)}, ${sql(metadata.token_digest)}, ${now}, ${sql(operationId)}, ${sql(operationId)});`,
     `INSERT INTO events (id, stream, type, operation_id, event_index, actor_principal_id, actor_credential_id, authorized_via, subject_type, subject_id, payload_json, created_at) VALUES (${sql(eventId)}, 'security', 'instance.bootstrapped', ${sql(operationId)}, 0, ${sql(principalId)}, ${sql(credentialId)}, 'deployment_recovery', 'instance', ${sql(instance)}, ${sql(payload)}, ${now});`,
     `INSERT INTO operation_commits (operation_id, primary_subject_type, primary_subject_id, last_event_sequence, committed_at) SELECT ${sql(operationId)}, 'instance', ${sql(instance)}, sequence, ${now} FROM events WHERE operation_id = ${sql(operationId)} AND event_index = 0;`,
-    "COMMIT;",
     "",
   ];
   const filePath = outputPath || path.join(paths.journalsRoot, `${operationId}.owner-bootstrap.sql`);
@@ -57,5 +55,6 @@ export async function writeOwnerBootstrapSql({
     credential_id: credentialId,
     credential_fingerprint: metadata.fingerprint,
     contains_plaintext_credential: false,
+    relies_on_wrangler_file_ingestion_transaction: true,
   };
 }

@@ -9,8 +9,8 @@ import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cl
 import { redeemInvitation, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
 import { buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
 import { writeFrozenWranglerConfig } from "../../packages/skill-runtime/src/deployment-config.mjs";
-import { authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
-import { reconcileMigrationState, writeMigrationLedgerRecordSql } from "../../packages/skill-runtime/src/migrations.mjs";
+import { appendJournalEvent, authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
+import { assessMigrationLedgerRecovery, reconcileMigrationState, writeMigrationLedgerRecordSql } from "../../packages/skill-runtime/src/migrations.mjs";
 import { comparePlans, createInstanceUpgradePlan, createSkillUpdatePlan, createStrictZeroPlan } from "../../packages/skill-runtime/src/plan.mjs";
 import { checkTrustedOriginRebind } from "../../packages/skill-runtime/src/rebind.mjs";
 import { generateReleaseMetadata } from "../generate-release-metadata.mjs";
@@ -44,7 +44,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.9.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.10.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -295,8 +295,9 @@ test("Cloudflare auth resolution prefers the effective private deployment contex
     },
   });
 
-  assert.equal(result.schema_version, 2);
+  assert.equal(result.schema_version, 3);
   assert.equal(result.status, "resolved");
+  assert.deepEqual(result.resolution_order, ["environment_auth", "explicit_profile", "directory_bound_profile", "default_profile", "new_login"]);
   assert.equal(result.context_directory, contextDirectory);
   assert.deepEqual(result.selected, {
     profile: null,
@@ -305,7 +306,6 @@ test("Cloudflare auth resolution prefers the effective private deployment contex
     auth_source: "effective_context",
   });
   assert.deepEqual(result.candidates, [result.selected]);
-  assert.deepEqual(result.available_profiles, []);
   assert.deepEqual(result.blockers, []);
   assert.equal(result.account_readback_required, true);
   assert.equal(result.raw_token_returned, false);
@@ -349,8 +349,7 @@ test("Cloudflare auth resolution honors an environment account ID without changi
   assert.equal(result.selected.auth_source, "effective_context");
 });
 
-test("Cloudflare auth resolution probes only the sole fallback profile and never returns its token or user identity", async () => {
-  const token = "cloudflare-oauth-token-fixture";
+test("Cloudflare auth resolution does not enumerate profiles when the current context is unavailable", async () => {
   const contextDirectory = "/private/cfkanban/deploy-context";
   const calls = [];
   const result = await resolveCloudflareAuth({
@@ -361,96 +360,27 @@ test("Cloudflare auth resolution probes only the sole fallback profile and never
       calls.push({ executable, args, options });
       const command = args.join(" ");
       if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
-      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === undefined) {
-        return { code: 1, signal: null, stdout: JSON.stringify({ loggedIn: false }), stderr: "" };
-      }
-      if (command === `auth list --cwd ${contextDirectory}`) {
-        return {
-          code: 0,
-          signal: null,
-          stdout: [
-            "┌─────────────────┬──────────────────────────────┐",
-            "│ Profile         │ Bound Directories            │",
-            "├─────────────────┼──────────────────────────────┤",
-            "│ cfkanban-alpha5 │ /private/should-not-be-shown │",
-            "└─────────────────┴──────────────────────────────┘",
-          ].join("\n"),
-          stderr: "",
-        };
-      }
-      if (command === "auth token --json --profile cfkanban-alpha5") {
-        return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token }), stderr: "" };
-      }
-      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === token) {
-        return {
-          code: 0,
-          signal: null,
-          stdout: JSON.stringify({
-            loggedIn: true,
-            authType: "OAuth Token",
-            email: "private@example.test",
-            accounts: [{ id: "a".repeat(32), name: "Example Account" }],
-          }),
-          stderr: "",
-        };
-      }
-      throw new Error(`Unexpected command: ${command}`);
-    },
-  });
-
-  assert.equal(result.status, "resolved");
-  assert.deepEqual(result.selected, {
-    profile: "cfkanban-alpha5",
-    account_id: "a".repeat(32),
-    account_label: "Example Account",
-    auth_source: "selected_profile",
-  });
-  assert.deepEqual(result.candidates, [result.selected]);
-  assert.deepEqual(result.available_profiles, ["cfkanban-alpha5"]);
-  assert.deepEqual(result.blockers, []);
-  assert.equal(result.account_readback_required, true);
-  assert.equal(result.raw_token_returned, false);
-  assert.equal(result.raw_output_returned, false);
-  assert.equal(result.candidate_values_are_untrusted_display_metadata, true);
-  assert.equal(JSON.stringify(result).includes(token), false);
-  assert.equal(JSON.stringify(result).includes("private@example.test"), false);
-  assert.equal(JSON.stringify(result).includes("/private/should-not-be-shown"), false);
-  assert.equal(calls.every(({ options }) => options.env.WRANGLER_WRITE_LOGS === "false"), true);
-  assert.equal(calls.filter(({ args }) => args[0] === "auth" && args[1] === "token").length, 1);
-});
-
-test("Cloudflare auth resolution lists profile names without probing every profile", async () => {
-  const contextDirectory = "/private/cfkanban/deploy-context";
-  const calls = [];
-  const result = await resolveCloudflareAuth({
-    wranglerExecutable: "/opt/cfkanban/wrangler",
-    contextDirectory,
-    environment: {},
-    runner: async (_executable, args, options) => {
-      calls.push({ args, options });
-      const command = args.join(" ");
-      if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
       if (command === `whoami --json --cwd ${contextDirectory}`) {
         return { code: 1, signal: null, stdout: JSON.stringify({ loggedIn: false }), stderr: "" };
       }
-      if (command === `auth list --cwd ${contextDirectory}`) {
-        return { code: 0, signal: null, stdout: "│ Profile │ Bound Directories │\n│ team-a │ - │\n│ team-b │ - │\n", stderr: "" };
-      }
       throw new Error(`Unexpected command: ${command}`);
     },
   });
 
-  assert.equal(result.status, "profile_selection_required");
+  assert.equal(result.status, "unavailable");
   assert.equal(result.selected, null);
   assert.deepEqual(result.candidates, []);
-  assert.deepEqual(result.available_profiles, ["team-a", "team-b"]);
+  assert.deepEqual(result.blockers, []);
   assert.equal(result.account_readback_required, false);
-  assert.equal(calls.some(({ args }) => args[0] === "auth" && args[1] === "token"), false);
+  assert.equal(result.raw_token_returned, false);
+  assert.equal(result.raw_output_returned, false);
+  assert.equal(calls.every(({ options }) => options.env.WRANGLER_WRITE_LOGS === "false"), true);
+  assert.equal(calls.some(({ args }) => args[0] === "auth"), false);
 });
 
-test("Cloudflare auth resolution verifies only the profile explicitly selected after current context fails", async () => {
-  const contextDirectory = "/private/cfkanban/deploy-context";
+test("Cloudflare auth resolution gives an explicitly selected profile precedence over directory context", async () => {
   const token = "team-b-token";
+  const contextDirectory = "/private/cfkanban/deploy-context";
   const calls = [];
   const result = await resolveCloudflareAuth({
     wranglerExecutable: "/opt/cfkanban/wrangler",
@@ -461,9 +391,6 @@ test("Cloudflare auth resolution verifies only the profile explicitly selected a
       calls.push({ args, options });
       const command = args.join(" ");
       if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
-      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === undefined) {
-        return { code: 1, signal: null, stdout: JSON.stringify({ loggedIn: false }), stderr: "" };
-      }
       if (command === "auth token --json --profile team-b") {
         return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token }), stderr: "" };
       }
@@ -477,8 +404,9 @@ test("Cloudflare auth resolution verifies only the profile explicitly selected a
   assert.equal(result.status, "resolved");
   assert.equal(result.selected.profile, "team-b");
   assert.equal(result.selected.account_id, "b".repeat(32));
-  assert.deepEqual(result.available_profiles, ["team-b"]);
+  assert.equal(result.selected.auth_source, "explicit_profile");
   assert.equal(calls.some(({ args }) => args.join(" ") === `auth list --cwd ${contextDirectory}`), false);
+  assert.equal(calls.some(({ args, options }) => args.join(" ") === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === undefined), false);
   assert.deepEqual(calls.filter(({ args }) => args.slice(0, 2).join(" ") === "auth token").map(({ args }) => args.at(-1)), ["team-b"]);
 });
 
@@ -492,9 +420,6 @@ test("Cloudflare auth resolution asks only for an account after one selected pro
     runner: async (_executable, args, options) => {
       const command = args.join(" ");
       if (command === "--version") return { code: 0, signal: null, stdout: "4.127.1\n", stderr: "" };
-      if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === undefined) {
-        return { code: 1, signal: null, stdout: JSON.stringify({ loggedIn: false }), stderr: "" };
-      }
       if (command === "auth token --json --profile team-a") return { code: 0, signal: null, stdout: JSON.stringify({ type: "oauth", token: "team-a-token" }), stderr: "" };
       if (command === `whoami --json --cwd ${contextDirectory}` && options.env.CLOUDFLARE_API_TOKEN === "team-a-token") {
         return {
@@ -517,7 +442,6 @@ test("Cloudflare auth resolution asks only for an account after one selected pro
   assert.equal(result.status, "account_selection_required");
   assert.equal(result.selected, null);
   assert.deepEqual(result.candidates.map(({ account_id }) => account_id), ["a".repeat(32), "c".repeat(32)]);
-  assert.deepEqual(result.available_profiles, ["team-a"]);
   assert.equal(result.account_readback_required, true);
 });
 
@@ -528,6 +452,7 @@ test("Cloudflare auth resolution honors effective environment authentication wit
   const result = await resolveCloudflareAuth({
     wranglerExecutable: "/opt/cfkanban/wrangler",
     contextDirectory,
+    selectedProfile: "shadowed-profile",
     environment: { CLOUDFLARE_API_TOKEN: token },
     runner: async (_executable, args, options) => {
       calls.push({ args, options });
@@ -577,6 +502,7 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
   assert.equal(names(deploy).includes("plan strict-zero"), true);
   assert.equal(names(deploy).includes("runtime inspect-cloudflare-auth"), true);
   assert.equal(names(deploy).includes("runtime resolve-cloudflare-auth"), true);
+  assert.equal(names(deploy).includes("migrations assess-ledger-recovery"), true);
   assert.equal(names(deploy).includes("runtime plan-cloudflare-auth"), true);
   assert.equal(names(deploy).includes("runtime cloudflare-auth-action"), true);
   assert.equal(deploy.commands.find((entry) => entry.name === "runtime cloudflare-auth-action").input_fields.includes("completedActionIds"), true);
@@ -758,7 +684,9 @@ test("Owner bootstrap SQL contains only the Credential digest and prefix", async
   const sql = await readFile(result.bootstrap_sql_path, "utf8");
   assert.equal(sql.includes(secret.token), false);
   assert.equal(sql.includes(pending.token_digest), true);
+  assert.doesNotMatch(sql, /\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/iu);
   assert.equal(result.contains_plaintext_credential, false);
+  assert.equal(result.relies_on_wrangler_file_ingestion_transaction, true);
 });
 
 test("scope resolution prefers explicit, then Repo, then warned aggregate", () => {
@@ -1193,6 +1121,10 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
   });
   assert.deepEqual(migrationReadback.migration_readback.schema, { tables: ["cfkanban_migration_ledger"], indexes: [] });
   assert.equal(migrationReadback.stdout_summary, JSON.stringify({ result_sets: 2, ledger_rows: 0, schema_tables: 1, schema_indexes: 0 }));
+  const readbackJournal = await readJson(path.join(stateRoot, "instances", INSTANCE_ID, "journals", `${OPERATION_ID}.json`));
+  const readbackEvent = [...readbackJournal.events].reverse().find((event) => event.action === "migration_ledger_readback" && event.type === "command_finished");
+  assert.deepEqual(readbackEvent.migration_readback, migrationReadback.migration_readback);
+  assert.equal(JSON.stringify(readbackEvent).includes("sqlite_master"), false);
   assert.deepEqual(migrationCalls[0].args, [
     "d1", "execute", "cfkanban-d1", "--remote", "--command", migrationReadbackSql,
     "--config", generated.wrangler_config_path, "--json", "--profile", "production",
@@ -1236,6 +1168,119 @@ test("migration reconciliation requires both ledger checksum and schema artifact
   assert.equal(reconcileMigrationState({ manifest, ledger: [{ sequence: 1, name: "0001.sql", sha256: "b".repeat(64) }], schema: { tables: ["issues"], indexes: ["idx_issues"] } }).safe_to_continue, false);
   assert.equal(reconcileMigrationState({ manifest, ledger: [{ sequence: 1, name: "0001.sql", sha256: "a".repeat(64) }], schema: { tables: ["issues"], indexes: [] } }).safe_to_continue, false);
   assert.equal(reconcileMigrationState({ manifest, ledger: [{ sequence: 1, name: "0001.sql", sha256: "a".repeat(64) }, { sequence: 2, name: "unknown.sql", sha256: "b".repeat(64) }], schema: { tables: ["issues"], indexes: ["idx_issues"] } }).safe_to_continue, false);
+});
+
+test("missing migration ledger recovery requires the same authorized journal, successful apply, and later exact readback", async (t) => {
+  const { home, stateRoot } = await fixtureState();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const serviceRoot = path.join(home, "verified-service");
+  const migrationsRoot = path.join(serviceRoot, "migrations");
+  await mkdir(migrationsRoot, { recursive: true });
+  const migrationText = "CREATE TABLE issues (id TEXT PRIMARY KEY);\nCREATE INDEX idx_issues ON issues(id);\n";
+  const migration = {
+    sequence: 1,
+    name: "0001_initial.sql",
+    sha256: sha256Bytes(Buffer.from(migrationText, "utf8")),
+    classification: "bootstrap",
+    destructive: false,
+    reentry: "wrangler_migration_ledger_only",
+    expected_artifacts: { tables: ["issues"], indexes: ["idx_issues"] },
+  };
+  const manifestPath = path.join(migrationsRoot, "manifest.json");
+  await writeFile(path.join(migrationsRoot, migration.name), migrationText, "utf8");
+  await writeFile(manifestPath, `${JSON.stringify({ manifest_version: 1, schema_version: 1, migrations: [migration] }, null, 2)}\n`, "utf8");
+  const plan = createStrictZeroPlan({
+    taskId: "wp10-ledger-recovery",
+    accountId: "account-one",
+    ownerDisplayName: "Example Owner",
+    release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
+    instanceId: INSTANCE_ID,
+    ownerPrincipalId: PRINCIPAL_ID,
+    ownerCredentialId: CREDENTIAL_ID,
+    operationId: OPERATION_ID,
+  }).plan;
+  await createJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, plan });
+  await authorizeJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: plan.task_id, planDigest: canonicalDigest(plan) });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "wrangler_config_written", service_bundle_root: serviceRoot },
+  });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "apply_non_destructive_migrations", exit_code: 0 },
+  });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "migration_ledger_readback", exit_code: 0, migration_readback: { ledger: [] } },
+  });
+  const malformed = await assessMigrationLedgerRecovery({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    migrationManifestPath: manifestPath,
+  });
+  assert.equal(malformed.safe_to_record_missing_checksum, false);
+  assert.deepEqual(malformed.blockers, ["VERIFIED_MIGRATION_READBACK_REQUIRED"]);
+  const missingLedgerReadback = {
+    ledger: [],
+    schema: { tables: ["issues"], indexes: ["idx_issues"] },
+    result_set_count: 2,
+  };
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "migration_ledger_readback", exit_code: 0, migration_readback: missingLedgerReadback },
+  });
+
+  const recovery = await assessMigrationLedgerRecovery({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    migrationManifestPath: manifestPath,
+  });
+  assert.equal(recovery.status, "same_authorized_journal_recovery");
+  assert.equal(recovery.safe_to_record_missing_checksum, true);
+  assert.deepEqual(recovery.migration, {
+    sequence: 1,
+    name: migration.name,
+    sha256: migration.sha256,
+    classification: migration.classification,
+    reentry: migration.reentry,
+  });
+
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "record_migration_checksum", exit_code: 0 },
+  });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "migration_ledger_readback", exit_code: 0, migration_readback: missingLedgerReadback },
+  });
+  const inconsistent = await assessMigrationLedgerRecovery({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    migrationManifestPath: manifestPath,
+  });
+  assert.equal(inconsistent.safe_to_record_missing_checksum, false);
+  assert.equal(inconsistent.blockers.includes("SUCCESSFUL_LEDGER_WRITE_MISSING_FROM_READBACK"), true);
 });
 
 test("migration readback parser keeps only bounded ledger and schema facts", () => {
@@ -1289,7 +1334,9 @@ test("migration ledger SQL is fixed in the Service bundle and checksum records n
   const sql = await readFile(record.migration_record_sql_path, "utf8");
   assert.match(sql, /WHERE NOT EXISTS/);
   assert.doesNotMatch(sql, /UPDATE|REPLACE|ON CONFLICT/i);
+  assert.doesNotMatch(sql, /\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/iu);
   assert.equal(record.overwrites_existing_ledger_row, false);
+  assert.equal(record.relies_on_wrangler_file_ingestion_transaction, true);
 
   const configPath = path.join(home, "wrangler.jsonc");
   const ledgerSchemaPath = path.resolve("release/deployment/migration-ledger.sql");
@@ -1313,6 +1360,15 @@ test("migration ledger SQL is fixed in the Service bundle and checksum records n
   assert.deepEqual(
     buildWranglerInvocation({ action: "migration_ledger_readback", plan, configPath, migrationReadbackSql: readbackSql }),
     ["d1", "execute", "cfkanban-d1", "--remote", "--command", readbackSql, "--config", configPath, "--json"],
+  );
+  assert.deepEqual(
+    buildWranglerInvocation({ action: "record_migration_checksum", plan, configPath, migrationRecordSqlPath: record.migration_record_sql_path }),
+    ["d1", "execute", "cfkanban-d1", "--remote", "--file", record.migration_record_sql_path, "--config", configPath, "--json"],
+  );
+  const bootstrapSqlPath = path.join(home, "owner-bootstrap.sql");
+  assert.deepEqual(
+    buildWranglerInvocation({ action: "bootstrap_owner", plan, configPath, bootstrapSqlPath }),
+    ["d1", "execute", "cfkanban-d1", "--remote", "--file", bootstrapSqlPath, "--config", configPath],
   );
 });
 
@@ -1367,7 +1423,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   assert.equal(prerelease.pointer.channel, "prerelease");
   assert.equal(prerelease.stable, null);
   assert.equal(prerelease.manifest.compatibility.node, TESTING_RELEASE_CONFIG.nodeRange);
-  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.9/cfkanban-release-0.1.0-alpha.9.json");
+  assert.equal(prerelease.pointer.manifest_url, "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.10/cfkanban-release-0.1.0-alpha.10.json");
   assert.equal(prerelease.manifest.artifacts.every((artifact) => !artifact.url.includes("/artifacts/")), true);
   const verifiedPrerelease = await dispatch("release verify", {
     releasePointerPath: prerelease.pointerPath,
@@ -1462,7 +1518,12 @@ test("deployment Skill directly documents the deterministic Cloudflare authentic
     assert.match(source, /d1:write/u);
     assert.match(source, /auth create <name>/u);
     assert.match(source, /login --profile/u);
+    assert.match(source, /migrations assess-ledger-recovery/u);
   }
+  assert.match(deploy, /never enumerate profiles/u);
+  assert.doesNotMatch(deploy, /profile_selection_required/u);
+  assert.match(workflowEn, /never enumerates profiles/u);
+  assert.match(workflowZh, /不会枚举 profiles/u);
   assert.match(deploy, /global to every Wrangler profile for the current OS user/u);
   assert.match(workflowEn, /global for every Wrangler profile owned by the current OS user/u);
   assert.match(workflowZh, /当前 OS 用户拥有的所有 Wrangler profiles/u);
@@ -1496,6 +1557,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.7.md",
     "../../release/notes/0.1.0-alpha.8.md",
     "../../release/notes/0.1.0-alpha.9.md",
+    "../../release/notes/0.1.0-alpha.10.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -1504,6 +1566,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.7.json",
     "../../release/config/0.1.0-alpha.8.json",
     "../../release/config/0.1.0-alpha.9.json",
+    "../../release/config/0.1.0-alpha.10.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

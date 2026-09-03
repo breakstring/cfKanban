@@ -432,6 +432,7 @@ export async function executeWranglerAction({
       stdout_summary: stdoutSummary,
       stderr_summary: redact(result.stderr || ""),
       readback_required: true,
+      ...(migrationReadback === null ? {} : { migration_readback: migrationReadback }),
     },
   });
   if (result.code !== 0) throw toolError("WRANGLER_ACTION_FAILED", "Wrangler action failed; read back remote state before deciding whether to resume", { action, exitCode: result.code });

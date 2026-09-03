@@ -20,7 +20,6 @@ const AUTH_MODES = Object.freeze([
 ]);
 
 const WRANGLER_AUTH_CONTRACT_RANGE = ">=4.127.1 <5.0.0";
-const MAX_DISCOVERED_PROFILES = 32;
 const MAX_DISCOVERED_ACCOUNTS = 128;
 
 function safeAbsolute(filePath, name) {
@@ -253,28 +252,6 @@ export async function inspectCloudflareAuth({
   };
 }
 
-function parseWranglerProfileNames(value) {
-  const output = stripAnsi(value);
-  if (/No profiles found\./i.test(output)) return { complete: true, profiles: [] };
-  const profiles = [];
-  let recognizedTable = false;
-  for (const line of output.split(/\r?\n/)) {
-    if (/\bBound Directories\b/i.test(line)) {
-      recognizedTable = true;
-      continue;
-    }
-    const match = /^\s*│\s*([^│]+?)\s*│/u.exec(line);
-    if (match === null) continue;
-    const candidate = match[1].trim();
-    if (!/^[A-Za-z0-9_-]+$/.test(candidate)) continue;
-    profiles.push(validateProfileName(candidate));
-  }
-  return {
-    complete: recognizedTable,
-    profiles: [...new Set(profiles)],
-  };
-}
-
 function isolatedTokenEnvironment(environment, token) {
   const isolated = { ...environment, WRANGLER_WRITE_LOGS: "false" };
   delete isolated.CLOUDFLARE_API_TOKEN;
@@ -376,7 +353,6 @@ function authResolutionResult({
   environmentVariables,
   status,
   candidates = [],
-  availableProfiles = [],
   blockers = [],
 }) {
   const sortedCandidates = [...candidates].sort((left, right) => {
@@ -390,22 +366,20 @@ function authResolutionResult({
   const nextSteps = {
     resolved: "run runtime wrangler-account-readback for selected.profile and selected.account_id",
     account_selection_required: "ask the user to choose one account, then run runtime wrangler-account-readback",
-    profile_selection_required: "ask the user to choose one available profile, then rerun runtime resolve-cloudflare-auth with selectedProfile",
-    unavailable: "inspect the stable proposed profile and create a separate Cloudflare authentication plan",
+    unavailable: "use a profile explicitly named by the user or inspect the stable proposed profile and create a separate Cloudflare authentication plan",
     blocked: "stop and resolve the reported Cloudflare authentication blocker",
   };
   return {
-    schema_version: 2,
+    schema_version: 3,
     status,
     executable,
     version,
     auth_contract_range: WRANGLER_AUTH_CONTRACT_RANGE,
-    resolution_order: ["effective_environment", "effective_context", "selected_profile", "new_login"],
+    resolution_order: ["environment_auth", "explicit_profile", "directory_bound_profile", "default_profile", "new_login"],
     context_directory: contextDirectory,
     environment_auth_variables: environmentVariables,
     candidates: sortedCandidates,
     selected,
-    available_profiles: [...new Set(availableProfiles)].sort(),
     blockers,
     account_readback_required: sortedCandidates.length > 0,
     candidate_values_are_untrusted_display_metadata: true,
@@ -436,6 +410,51 @@ export async function resolveCloudflareAuth({
 
   const environmentVariables = environmentAuthNames(environment);
   const environmentAuthActive = hasEffectiveEnvironmentAuth(environment);
+
+  if (requestedProfile !== null && !environmentAuthActive) {
+    const discoveredAccounts = await discoverProfileAccounts({
+      runner,
+      executable,
+      environment,
+      profile: requestedProfile,
+      contextDirectory: context,
+    });
+    if (discoveredAccounts === null || discoveredAccounts.length === 0) {
+      return authResolutionResult({
+        executable,
+        version,
+        contextDirectory: context,
+        environmentVariables,
+        status: "blocked",
+        blockers: ["WRANGLER_SELECTED_PROFILE_UNUSABLE"],
+      });
+    }
+    const selectedAccounts = applyEnvironmentAccountSelection(discoveredAccounts, environment);
+    if (selectedAccounts.blocker !== null) {
+      return authResolutionResult({
+        executable,
+        version,
+        contextDirectory: context,
+        environmentVariables,
+        status: "blocked",
+        blockers: [selectedAccounts.blocker],
+      });
+    }
+    const candidates = selectedAccounts.accounts.map((account) => ({
+      profile: requestedProfile,
+      ...account,
+      auth_source: "explicit_profile",
+    }));
+    return authResolutionResult({
+      executable,
+      version,
+      contextDirectory: context,
+      environmentVariables,
+      status: candidates.length === 1 ? "resolved" : "account_selection_required",
+      candidates,
+    });
+  }
+
   const whoamiArgs = ["whoami", "--json", "--cwd", context];
   const whoami = await runAuthProbe(runner, executable, whoamiArgs, environment);
   const parsedCurrentAccounts = whoami.code === 0 ? parseWranglerAccounts(whoami.stdout) : null;
@@ -488,102 +507,12 @@ export async function resolveCloudflareAuth({
       blockers: ["WRANGLER_ENV_AUTH_ACCOUNT_DISCOVERY_FAILED"],
     });
   }
-
-  let availableProfiles;
-  let profile = requestedProfile;
-  if (profile === null) {
-    const listResult = await runAuthProbe(runner, executable, ["auth", "list", "--cwd", context], environment);
-    const inventory = listResult.code === 0
-      ? parseWranglerProfileNames(`${listResult.stdout}\n${listResult.stderr}`)
-      : { complete: false, profiles: [] };
-    if (!inventory.complete) {
-      return authResolutionResult({
-        executable,
-        version,
-        contextDirectory: context,
-        environmentVariables,
-        status: "blocked",
-        blockers: ["WRANGLER_PROFILE_LIST_UNREADABLE"],
-      });
-    }
-    availableProfiles = inventory.profiles;
-    if (availableProfiles.length > MAX_DISCOVERED_PROFILES) {
-      return authResolutionResult({
-        executable,
-        version,
-        contextDirectory: context,
-        environmentVariables,
-        status: "blocked",
-        blockers: ["WRANGLER_PROFILE_DISCOVERY_LIMIT_EXCEEDED"],
-      });
-    }
-    if (availableProfiles.length === 0) {
-      return authResolutionResult({
-        executable,
-        version,
-        contextDirectory: context,
-        environmentVariables,
-        status: "unavailable",
-      });
-    }
-    if (availableProfiles.length > 1) {
-      return authResolutionResult({
-        executable,
-        version,
-        contextDirectory: context,
-        environmentVariables,
-        status: "profile_selection_required",
-        availableProfiles,
-      });
-    }
-    [profile] = availableProfiles;
-  } else {
-    availableProfiles = [profile];
-  }
-
-  const discoveredAccounts = await discoverProfileAccounts({
-    runner,
-    executable,
-    environment,
-    profile,
-    contextDirectory: context,
-  });
-  if (discoveredAccounts === null || discoveredAccounts.length === 0) {
-    return authResolutionResult({
-      executable,
-      version,
-      contextDirectory: context,
-      environmentVariables,
-      status: requestedProfile === null ? "unavailable" : "blocked",
-      availableProfiles,
-      blockers: ["WRANGLER_SELECTED_PROFILE_UNUSABLE"],
-    });
-  }
-  const selectedAccounts = applyEnvironmentAccountSelection(discoveredAccounts, environment);
-  if (selectedAccounts.blocker !== null) {
-    return authResolutionResult({
-      executable,
-      version,
-      contextDirectory: context,
-      environmentVariables,
-      status: "blocked",
-      availableProfiles,
-      blockers: [selectedAccounts.blocker],
-    });
-  }
-  const candidates = selectedAccounts.accounts.map((account) => ({
-    profile,
-    ...account,
-    auth_source: "selected_profile",
-  }));
   return authResolutionResult({
     executable,
     version,
     contextDirectory: context,
     environmentVariables,
-    status: candidates.length === 1 ? "resolved" : "account_selection_required",
-    candidates,
-    availableProfiles,
+    status: "unavailable",
   });
 }
 
