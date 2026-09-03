@@ -27,13 +27,13 @@ cfKanban 把三个 Skills 放在同一个 portable、可验证 bundle 中交付�
 首个稳定发行版还没有发布。目前 Codex 用户可以加载不可变的测试 tag：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.3
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.4
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
 测试 tag 不会变化；只有明确评估开发快照时才使用可变的 `main`。安装后新建一个 Codex 任务，让 Skills 被加载。安装只启用发现能力；它不会创建 `.cfkanban/`、选择稳定版或测试版部署，也不授权本地或云端写入。
 
-当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.3/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
+当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.4/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
 
 应安装完整 plugin/bundle，不能只复制某个 `SKILL.md` 或单独的 `skills/<name>/` 目录。三个 entrypoints 按设计共用 bundle 内 `packages/skill-runtime` 下的 JavaScript 源码模块；尽管内部目录名包含 `runtime`，它并不是内嵌的 Node.js 可执行程序或运行时发行包。宿主投影必须保留这套已验证 bundle layout。当前测试预览只支持 Codex plugin 路径；其他宿主的 projection 属于稳定发行安装流程，不能用不完整的目录复制冒充。
 
@@ -46,6 +46,8 @@ node scripts/cfkanban-tool.mjs help
 ```
 
 结果是结构化 JSON，列出每个 command 的名称、effect 与输入字段。其他命令通过 stdin 接收结构化 JSON，因此 secret 无需出现在进程参数中。Credential 从来不是输入字段；普通认证请求、Invite/Public Join 兑换和 Owner 轮换都在内部从私有文件读取正确的 current 或 pending secret。
+
+Cloudflare 登录时，`cfkanban-deploy` 会先使用 `runtime inspect-cloudflare-auth`，再使用 `runtime plan-cloudflare-auth`；只有准确计划获批后，才会按顺序调用其中的 `runtime cloudflare-auth-action`。计划会明确所选 Wrangler profile、浏览器或 device 交互、最小必需 OAuth scopes，以及启用 Wrangler keyring 会改变当前操作系统用户所有 Wrangler profiles 的全局偏好。登录本身不会创建 Worker 或 D1 资源。
 
 `.mjs` 表示使用 Node 显式 ES module 格式的普通 JavaScript。这些文件可直接由 `node` 运行、无需编译，并且 portable Skill 安装到没有 `package.json` 的目录时仍不会产生模块语义歧义。
 

@@ -53,6 +53,40 @@ Cloudflare 在自己的仓库维护了两个有用的可选协作 Skill：
 
 这些协作 Skill 是当前平台参考，不是 cfKanban 编排依赖。诸如在当前项目安装 `wrangler@latest`、使用裸 `npx wrangler`、改选 Pages/自动资源供应或直接部署等通用建议，在这里由 verified release 的兼容 Wrangler range、已解析的绝对 executable、一个 Worker + 一个 D1 + Static Assets 拓扑、Frozen plan、journal 与 readback 规则覆盖。若当前 Cloudflare 文档或固定的 config schema 表明 Service bundle 已失效，必须停止并发布修正后的 immutable release，不能现场修改已验证 bundle。
 
+## Cloudflare 认证
+
+认证是 Tool Runtime 准备与 strict-zero 部署计划之间的一道独立计划边界。用户只需提出简单的部署请求，下面这些细节由 Agent 负责：
+
+1. 本地交互环境选择一个无冲突 profile 名称；device flow 环境使用 `default`。用已解析的 Wrangler 绝对路径和该名称运行 `runtime inspect-cloudflare-auth`。它会检查准确版本、命令支持、keyring 偏好、profile 是否存在、所需 scope catalog 与环境变量遮蔽，但不返回 token、Credential 路径、完整 profile 清单或 Wrangler 原始输出。
+2. 如果 `safe_to_plan` 为 false，报告 blocker codes 并停止。不能改用裸 `npx`、其他 profile、明文存储或更宽 scope 集合绕过问题。
+3. 用当前 Agent task ID、选定 mode 和未经修改的 preflight 结果运行 `runtime plan-cloudflare-auth`。默认遇到既有 profile 就停止；只有明确说明会替换原登录并设置 `allowExistingProfile: true`，才能计划重新认证。
+4. 展示 plan digest 与每个 action。只有用户授权这份准确计划后，才按顺序调用 `runtime cloudflare-auth-action`。每个 action 都会重新校验 digest，并通过非 shell 进程参数执行。wrapper 会关闭这些认证动作的 Wrangler 磁盘日志，且不返回原始认证输出或 OAuth token。
+5. 再次运行认证检查，然后对一个准确 account ID 和选定 named profile 运行 `runtime wrangler-account-readback`；default 登录则不传 profile。只有读回成功后才能进入部署计划。
+
+支持的 mode 如下：
+
+| 环境 | `mode` | 准确 Wrangler 行为 | 重要边界 |
+| --- | --- | --- | --- |
+| 本地交互电脑 | `named_profile_browser` | 使用 localhost 浏览器 callback 执行 `auth create <name>` | Wrangler 4.127.1 的 named profile 仍是 experimental；`login --profile` 无效，也不会创建目录绑定。 |
+| 本地交互 default profile | `default_profile_browser` | 使用 localhost 浏览器 callback 执行 `login` | profile 已存在时会替换/重新认证 default profile。 |
+| 远程 SSH 或容器 | `default_profile_device` | 执行 `login --device --browser=false` | Wrangler 4.127.1 的 `auth create` 没有 device flow，因此只能使用 default profile，也不能带 callback host/port。 |
+| 非交互/headless | 已有环境 API token | 不计划 OAuth action | token 由用户或宿主在 Skill 输入之外提供；不能请求、回显、持久化或复制。它会遮蔽 profile。 |
+
+OAuth 计划只请求下面四个 scope，并在单个 `--scopes` 后把每个 scope 作为独立进程参数传递：
+
+| Scope | cfKanban 使用原因 |
+| --- | --- |
+| `account:read` | 解析并验证选定 account membership。 |
+| `user:read` | 完成 Wrangler 身份/account discovery。 |
+| `workers_scripts:write` | 上传 verified Service bundle 的 Worker、内置 Static Assets、bindings、subdomain 与 triggers。 |
+| `d1:write` | 创建、迁移、查询并绑定唯一 D1 数据库。 |
+
+Cloudflare 会自动增加 `offline_access`，供 Wrangler 刷新 OAuth 登录。计划明确不申请宽泛的 `workers:write`，也不申请 KV、routes、Pages、zone、AI、Queue、R2、DNS 或其他产品 scope。如果 Wrangler 不再提供上述四项中的任意一项，或者 Cloudflare consent 页面要求未预期的 scope，必须停止并等待修正后的发行版，不能现场扩大权限。
+
+Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profiles。持久偏好关闭时，计划会把启用动作单独列出；既有明文 profile 在后继访问时可能迁移为加密文件。macOS 使用 Keychain，Linux 需要可用的 secret-service backend，Windows 可能会一次性下载 Wrangler 固定版本的 keyring binding。这些变化都发生在 `~/.cfkanban/` 之外。不能把关闭 keyring 当作自动回滚，因为 Wrangler 可能删除其他 profile 的加密 Credential；删除 profile/logout 与任何 keyring 修改都必须作为新的独立清理动作授权。
+
+不要使用 `wrangler auth activate`。它会写入目录绑定，使行为依赖当前 Repo。cfKanban 的后继命令总是显式携带选定 `--profile`，并在生成的私有 Wrangler config 中固定 `account_id`。Cloudflare 登录本身不会创建 Worker、D1、deployment、cfKanban Credential 或 Repo 文件。
+
 ## 命令对照
 
 | 阶段 | 命令 | 结果 |
@@ -61,6 +95,8 @@ Cloudflare 在自己的仓库维护了两个有用的可选协作 Skill：
 | Release trust | `release verify`、`release continuity` | 已验证 immutable manifest/artifacts 与 publisher continuity 决策。 |
 | Canonical Skill 安装 | `plan skill-update`、`release install-skill-bundle` | 准确的首次安装/更新计划、immutable version 目录、atomic active pointer 与 `.cfkanban/skill-releases` 读回。 |
 | Wrangler 选择 | `runtime resolve-wrangler` | 显式兼容路径、PATH 兼容路径或缺失/不兼容结果。 |
+| Cloudflare auth 检查 | `runtime inspect-cloudflare-auth` | 脱敏的命令/profile/keyring/scope 事实与 blockers；不返回 token 或原始输出。 |
+| Cloudflare auth 计划/动作 | `runtime plan-cloudflare-auth`、`runtime cloudflare-auth-action` | 绑定 task 的 digest、非 shell 参数数组、明确的全局 keyring 影响、OAuth consent 与必需读回。 |
 | Cloudflare 账户 | `runtime wrangler-account-readback` | 对准确 account/profile 验证只读 D1 访问；丢弃数据库清单。 |
 | Tool Runtime 计划/安装 | `runtime plan-install`、`runtime install` | 准确 local-only plan 与 `.cfkanban/tool-runtime` 下的授权安装。 |
 | 首次部署计划 | `plan strict-zero` | Frozen plan 与 normalized digest。 |
@@ -83,15 +119,16 @@ Cloudflare 在自己的仓库维护了两个有用的可选协作 Skill：
 2. 对 Skill 与 Service deployment bundles 运行 `release verify`，再与既有 receipt 比较 publisher/origin continuity。
 3. 运行 `capabilities`。把已验证的 Skill artifact 与 `installed_skill_bundle` 比较；首次安装时，`plan skill-update` 必须使用 `current: null`，更新时只使用脱敏后的 current receipt。即使 plugin 或 marketplace cache 完全匹配，它也只是宿主投影，绝不能跳过本步骤。复用兼容 Node/Wrangler；Wrangler 缺失/不兼容时生成 `runtime plan-install`。
 4. 展示 Skill 计划的 canonical source/version/digest、`.cfkanban/skill-releases` 目标、atomic switch 与 rollback。若两项本地前置条件都缺失，必须把 Skill 与 Tool Runtime 两份计划及其 digest 一起展示，再请求一次只覆盖这些准确写入的用户决定。授权后先安装 canonical Skill bundle，从返回的 installed path 运行 `help`，并核对 active receipt，之后才安装或解析 Wrangler。
-5. 使用准确 account ID 与可选 named profile 运行 `runtime wrangler-account-readback`；禁止使用裸 `npx`，因为它可能下载未固定的最新 Wrangler。Wrangler 的 `whoami` 不支持 `--profile`，因此该命令改用只读 `d1 list --json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定账户、丢弃数据库清单，并在环境 Credential 会遮蔽所选 profile 时停止。
-6. 运行 `plan strict-zero`。默认候选包含一个 Worker、一个 D1、bundled Static Assets、`workers.dev`、不包含可选 Cloudflare 产品，并使用每 60 秒 120/300/30 request gates。冻结所选 Cloudflare profile/account，并在冻结 digest 前解决缺少的 Owner display name。
-7. 创建 journal 并展示完整 plan。`journal authorize` 只记录 current Agent task、operation ID 与 digest 的授权。
-8. 只执行 allowlisted `deploy wrangler-action`。显式创建 D1，不使用自动资源供应。未知同名资源绝不接管；冲突时另提名称。
-9. 使用已创建 D1 的 ID 运行 `deployment write-wrangler-config`。bundle 内的 `wrangler.template.json` 只是带占位资源身份、经过 schema 校验的配置骨架，绝不能原样部署。该命令会在 immutable bundle 外写入私有的实际 config，指向 bundle 内已构建 Worker/Static Assets/migrations，并固定 account、名称、bindings、compatibility date 与 rate gates。
-10. 数据 bootstrap 前创建 pending Owner Credential 与 hash-only bootstrap SQL。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
-11. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。
-12. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。
-13. 部署后验证 Worker health、public instance discovery、bindings、migration/schema state 与 `/api/v1/me`；之后才提升 pending Owner Credential 并写入脱敏 receipt。
+5. Cloudflare auth 尚不可用时，先检查并生成绑定 task 的 OAuth 计划。展示 profile operation、四个请求 scopes、全局 keyring 影响、browser/device 交互、本地存储归属和准确 digest。只执行已授权的 `runtime cloudflare-auth-action`，完成后再次检查。禁止使用 `login --profile`、把全部 scopes 引用成一个参数、把 profile 绑定到 Repo 或增加宽泛产品 scopes。
+6. 使用准确 account ID 与可选 named profile 运行 `runtime wrangler-account-readback`；禁止使用裸 `npx`，因为它可能下载未固定的最新 Wrangler。Wrangler 的 `whoami` 不支持 `--profile`，因此该命令改用只读 `d1 list --json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定账户、丢弃数据库清单，并在环境 Credential 会遮蔽所选 profile 时停止。
+7. 运行 `plan strict-zero`。默认候选包含一个 Worker、一个 D1、bundled Static Assets、`workers.dev`、不包含可选 Cloudflare 产品，并使用每 60 秒 120/300/30 request gates。冻结所选 Cloudflare profile/account，并在冻结 digest 前解决缺少的 Owner display name。
+8. 创建 journal 并展示完整 plan。`journal authorize` 只记录 current Agent task、operation ID 与 digest 的授权。
+9. 只执行 allowlisted `deploy wrangler-action`。显式创建 D1，不使用自动资源供应。未知同名资源绝不接管；冲突时另提名称。
+10. 使用已创建 D1 的 ID 运行 `deployment write-wrangler-config`。bundle 内的 `wrangler.template.json` 只是带占位资源身份、经过 schema 校验的配置骨架，绝不能原样部署。该命令会在 immutable bundle 外写入私有的实际 config，指向 bundle 内已构建 Worker/Static Assets/migrations，并固定 account、名称、bindings、compatibility date 与 rate gates。
+11. 数据 bootstrap 前创建 pending Owner Credential 与 hash-only bootstrap SQL。明文 token 不进入 plan、SQL、stdout、命令参数、环境、日志或 receipt。
+12. 初始化 checksum ledger，并使用 Cloudflare 标准的 `wrangler d1 migrations apply --remote` 行为。该命令按序应用 pending files；命令结束或响应不确定后，都要核对 cfKanban checksum ledger 与实际 schema。
+13. 用准确生成的 config 与已解析 Wrangler 运行 `validate_worker_bundle`。dry run 成功是必要验证，但不等于部署授权或远端写入证明。
+14. 部署后验证 Worker health、public instance discovery、bindings、migration/schema state 与 `/api/v1/me`；之后才提升 pending Owner Credential 并写入脱敏 receipt。
 
 ### 交接到真正可用的看板
 
@@ -139,4 +176,4 @@ Worker rollback 不会回滚 D1。D1 restore 是破坏性操作，绝不自动�
 
 ## 停止条件
 
-canonical origin/digest mismatch、publisher discontinuity、存储不可验证、未授权的 Node/Wrangler 不兼容、Windows/WSL 混用、account 歧义、Owner display name 缺失、未知资源所有权、plan drift、migration checksum/schema drift、部分应用或 restore evidence 不可用时必须停止。加载 Skill 或安装 marketplace/plugin 入口从来不等于获得部署授权。
+canonical origin/digest mismatch、publisher discontinuity、存储不可验证、未授权的 Node/Wrangler 不兼容、Windows/WSL 混用、auth preflight blockers、未明确批准重新认证的既有 profile 冲突、未预期 OAuth scope、account 歧义、Owner display name 缺失、未知资源所有权、plan drift、migration checksum/schema drift、部分应用或 restore evidence 不可用时必须停止。加载 Skill 或安装 marketplace/plugin 入口从来不等于获得部署授权。
