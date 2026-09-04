@@ -549,8 +549,8 @@ const schemas = {
   },
   RegisterPasskeyRequest: { type: "object", required: ["challenge_id", "credential"], properties: { challenge_id: ref("Uuid"), credential: ref("WebAuthnRegistrationCredential") }, additionalProperties: false },
   VerifyWebAuthenticationRequest: { type: "object", required: ["challenge_id", "credential"], properties: { challenge_id: ref("Uuid"), credential: ref("WebAuthnAuthenticationCredential") }, additionalProperties: false },
-  EnablePublicJoinRequest: { type: "object", required: ["expected_version", "public_summary", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: ref("Version"), public_summary: string({ minLength: 1, maxLength: 512 }), issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
-  UpdateResourceLimitsRequest: { type: "object", required: ["expected_version", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: ref("Version"), issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
+  EnablePublicJoinRequest: { type: "object", required: ["expected_version", "public_summary", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: { ...ref("Version"), description: "Current Project version from the policy response's project.version; policy_version is not this CAS value." }, public_summary: string({ minLength: 1, maxLength: 512 }), issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
+  UpdateResourceLimitsRequest: { type: "object", required: ["expected_version", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: { ...ref("Version"), description: "Current Project version from the resource-limits response's project.version; the Public Join policy_version is not this CAS value." }, issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
   RedeemPublicJoinRequest: {
     oneOf: [
       { type: "object", required: ["display_name", "new_credential_token", "redeem_as", "role"], properties: { display_name: string({ minLength: 1, maxLength: 128 }), new_credential_token: credentialToken(), redeem_as: { const: "new_principal" }, role: ref("ProjectRole") }, additionalProperties: false },
@@ -2115,7 +2115,7 @@ const document = {
       IdempotencyKey: { name: "Idempotency-Key", in: "header", required: true, schema: string({ minLength: 1, maxLength: 128, pattern: "^[\\x20-\\x7E]+$" }) },
       CsrfToken: { name: "X-CSRF-Token", in: "header", required: true, schema: string({ minLength: 1 }), description: "Must equal the readable same-origin CSRF cookie for Cookie-authenticated writes." },
       ConditionalCsrfToken: { name: "X-CSRF-Token", in: "header", required: false, schema: string({ minLength: 1 }), description: "Required when this operation uses WebSession cookie authentication; omitted for Bearer or unauthenticated branches." },
-      ExpectedVersion: { name: "expected_version", in: "query", required: true, schema: ref("Version"), description: "CAS precondition for DELETE operations." },
+      ExpectedVersion: { name: "expected_version", in: "query", required: true, schema: ref("Version"), description: "CAS precondition for DELETE operations. For Public Join disable, use policy.project.version from the GET response; policy_version is not this CAS value." },
     },
     headers: {
       RequestId: { required: true, schema: ref("Uuid"), description: "Non-secret request correlation ID; equals error body request_id when an error body exists." },

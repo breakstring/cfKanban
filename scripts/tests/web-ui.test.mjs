@@ -40,7 +40,7 @@ import {
   writeStoredLocale,
 } from "../../apps/web/src/lib/locale-preference.ts";
 import { renderMarkdown } from "../../apps/web/src/lib/markdown.ts";
-import { publicJoinInstruction } from "../../apps/web/src/lib/public-join-instruction.ts";
+import { deployAgentInstruction, publicGuideUrl, publicJoinInstruction } from "../../apps/web/src/lib/public-guide.ts";
 import { publicJoinRiskNotice } from "../../apps/web/src/lib/public-join-risk.ts";
 import { ProjectionGeneration } from "../../apps/web/src/lib/projection-generation.ts";
 import {
@@ -619,10 +619,19 @@ test("Public Join Agent instruction never embeds untrusted Project text", () => 
   assert.match(instruction, /https:\/\/example\.test/);
   assert.match(instruction, /public-safe-id/);
   assert.match(instruction, /writer/);
+  assert.match(instruction, /https:\/\/example\.test\/join\.md/);
+  assert.match(chineseInstruction, /https:\/\/example\.test\/join\.zh-CN\.md/);
   assert.doesNotMatch(instruction, new RegExp(hostileProjectText));
   assert.doesNotMatch(instruction, /display_name|trusted\n/);
-  assert.match(chineseInstruction, /项目官方发布的 cfKanban 技能/);
+  assert.match(chineseInstruction, /按其中步骤使用 cfKanban 技能加入/);
   assert.doesNotMatch(chineseInstruction, /canonical/i);
+});
+
+test("public guide URLs and deployment prompts stay locale-specific and instance-local", () => {
+  assert.equal(publicGuideUrl("https://example.test", "deploy-guide", "en"), "https://example.test/deploy-guide.md");
+  assert.equal(publicGuideUrl("https://example.test/ignored", "join", "zh-CN"), "https://example.test/join.zh-CN.md");
+  assert.match(deployAgentInstruction("https://example.test", "en"), /https:\/\/example\.test\/deploy-guide\.md/);
+  assert.match(deployAgentInstruction("https://example.test", "zh-CN"), /https:\/\/example\.test\/deploy-guide\.zh-CN\.md/);
 });
 
 test("Public Join consent covers every quota, recovery, and rejoin consequence in both locales", () => {
@@ -654,11 +663,31 @@ test("public-home copy keeps the Agent-first promise playful and concrete", asyn
   const source = await readFile(new URL("../../apps/web/src/lib/i18n.ts", import.meta.url), "utf8");
   const chineseBlock = source.match(/"zh-CN": \{([\s\S]*?)\n  \},\n\} as const;/)?.[1];
   assert.ok(chineseBlock);
-  assert.match(chineseBlock, /"home\.heading": "活儿让 Agent 干，进度不用猜。"/);
-  assert.match(chineseBlock, /把活儿交给 Agent，把状态、责任和结果留在同一块看板上/);
-  assert.match(source, /"home\.heading": "Let Agents do the work\. Skip the guesswork\."/);
-  assert.match(chineseBlock, /从项目声明的官方来源安装或更新 cfKanban 技能/);
+  assert.match(chineseBlock, /"home\.headingFirst": "有事代理干，"/);
+  assert.match(chineseBlock, /"home\.headingSecond": "没事干代理！"/);
+  assert.match(chineseBlock, /把活儿往看板上一扔，Agent 自己往前推/);
+  assert.match(source, /"home\.headingFirst": "Agents do the work\."/);
+  assert.match(source, /"home\.headingSecond": "You tune the Agents\."/);
+  assert.match(chineseBlock, /给 Agent 一份正经说明书/);
+  assert.doesNotMatch(source, /github\.com\/breakstring\/cfKanban#readme/i);
   assert.doesNotMatch(chineseBlock, /canonical/i);
+});
+
+test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
+  const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
+  const documents = await Promise.all(paths.map((name) => readFile(
+    new URL(`../../apps/web/public/${name}`, import.meta.url),
+    "utf8",
+  )));
+  for (const [index, document] of documents.entries()) {
+    assert.match(document, /0\.1\.0-alpha\.33/);
+    assert.match(document, /cfkanban-agent-skills@cfkanban/);
+    assert.doesNotMatch(document, /curl[^\n]*\|\s*(?:ba)?sh/iu, `${paths[index]} must not teach pipe-to-shell`);
+  }
+  assert.match(documents[0], /Node\.js `>=22\.12\.0 <27`/);
+  assert.match(documents[1], /strict-zero/);
+  assert.match(documents[2], /Public Join ID/);
+  assert.match(documents[3], /不可信业务数据/);
 });
 
 test("unsafe response-loss retry reuses one Idempotency-Key until success", () => {

@@ -12,3 +12,23 @@
 
 /assets/*
   Cache-Control: public, max-age=31556952, immutable
+
+/deploy-guide.md
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+
+/deploy-guide.zh-CN.md
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+
+/join.md
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+
+/join.zh-CN.md
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff

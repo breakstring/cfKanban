@@ -8,7 +8,7 @@
 - 关联 Agent Skills：[Agent Skills & Bootstrap SPEC](2026-08-28-agent-skills-bootstrap-spec.md)
 - 关联 API/Schema：[API & D1 Schema SPEC](2026-08-28-api-schema-spec.md)
 - 事实快照：[Web 认证与公开加入能力快照](../research/web-auth-public-enrollment-snapshot-2026-08-29.md)
-- 最近更新：2026-09-04（D-262）
+- 最近更新：2026-09-04（D-264、D-266）
 
 ## 1. 目的与边界
 
@@ -36,11 +36,13 @@
 
 ### 3.0 未认证首页
 
-任何人直接打开实例根地址时先看到一个极简公开首页，而不是 Credential 输入框或空白错误页。首页说明 cfKanban 是 Agent-first Kanban、当前地址是一个独立部署实例，并在视觉中心提供一段可以直接复制给 Agent 的短话术；话术只指向 canonical HTTPS bootstrap document，由 Agent 按已冻结的来源、版本和授权合同安装 Skills 或部署新实例，不在页面内嵌 shell 命令、远程脚本或 secret。
+任何人直接打开实例根地址时先看到一个极简公开首页，而不是 Credential 输入框或空白错误页。首页说明 cfKanban 是 Agent-first Kanban、当前地址是一个独立部署实例，并在视觉中心提供一段可以直接复制给 Agent 的短话术；话术指向同实例、同语言的专用 `deploy-guide.md`，由该指南逐步说明 Skill 安装、环境前置、计划/授权、Cloudflare 部署和读回，并继续把具体发行真相交给项目声明的 canonical HTTPS pointer 与 immutable manifest。首页不把通用 README 当作部署指南，也不内嵌可执行 shell、远程脚本或 secret。
 
 首页可以显示 Owner 明确开启 Public Join 的多个 Project 卡片，每张只包含 Project 显示名称、有界公开摘要与 `reader | writer` 选择，不得枚举未公开 Workspace/Project、内部 context、成员、Issue 数量或其他实例事实。canonical 项目站点可以复用产品介绍和部署话术，但没有某个部署实例的登录状态或 Public Join。
 
 若当前请求 origin 与实例发布的 preferred origin 不同，未认证首页可以显示一个清楚标注的“推荐地址”链接；页面仍可在当前有效 alias 上工作，不把这个差异显示成实例错误。它不得自动携带 URL 中的 capability、长期 Credential 或已有 cookie 跳转到新 origin。
+
+首页标题按 English/简体中文分别固定两条有意换行的短句，并通过 locale-specific 响应式字号保证每一条在 320px 窄屏内不再次断行或造成横向溢出。页面以一条克制分隔线和简短页脚收尾；页脚只提供品牌短句、部署/加入指南、OpenAPI、源码、Service 版本与缩短的 Instance ID，不扩张为站点地图、营销面板或第二套导航。
 
 ### 3.1 Project Kanban
 
@@ -172,7 +174,7 @@ Passkey 登录后的 Session 不继承某个旧 Browser Launch 的单 Project ta
 
 普通 Project Invitation 仍是 7 天、一次性 capability，不能把同一个 code 暴露在首页供多人兑换。Public Join 是独立、Owner 按单个 Project 开启或关闭的公开授权策略，不是 Invitation、Team Link 或多 Project Grant bundle。
 
-一个实例可以同时展示多个已公开 Project。访客每次先选择一个 Project，再明确选择 `reader` 或 `writer`：未登录访客复制与该选择绑定的 Agent 话术，由 Agent 复用或创建本地 Principal/Credential 后执行一次 self-join；已通过 Passkey 登录的 Principal 可以直接执行同一原子动作。首页不生成或下载长期 Credential。
+一个实例可以同时展示多个已公开 Project。访客每次先选择一个 Project，再明确选择 `reader` 或 `writer`：未登录访客复制与该选择绑定的 Agent 话术，话术必须指向同实例、同语言的专用 `join.md`，再携带准确 origin、Public Join ID 与 role；该指南先覆盖 Skill 安装与安全计划，不能假设接收方已经安装 Skill。Agent 随后复用或创建本地 Principal/Credential，并执行一次 self-join；已通过 Passkey 登录的 Principal 可以直接执行同一原子动作。首页不生成或下载长期 Credential。
 
 加入成功后，Passkey Session 直接进入刚加入的 Project 看板。Agent 路径返回实际 Project/role、Principal/Credential fingerprint 与 resolved scope，并只建议打开看板或显式写入当前 Repo scope；不能自动打开页面或修改 Repo 文件。
 
@@ -180,7 +182,7 @@ Public Join 每次最多建立或恢复一条 Project Grant，不提供批量入
 
 Owner 开启 Public Join 时必须明确接受公开 `writer` 的后果：未知互联网参与者可以修改、评论、移动、完成和软删除 Project 内容并制造 D1 写入。公开卡片只包含显示名称、有界公开摘要和 role 选择，不泄露内部 Project context、Issue、成员或未公开资源。
 
-开启表单必须要求 Owner 显式填写该 Project 独立的 Issue、Comment 与 Principal 三项 active quota；UI 可以预填建议值 50/500/50，但必须由 Owner 提交。页面必须说明三项限制不与其他 Project 共享，只在本 Project 的 Public Join enabled 期间生效。当前 active usage 和新上限同时显示，但允许把上限调到低于 usage；提交前提示既有资源与 Grants 不会被自动删除或撤销，只有继续增加相应计数的操作会被阻止。
+开启表单必须要求 Owner 显式填写该 Project 独立的 Issue、Comment 与 Principal 三项 active quota；UI 可以预填建议值 50/500/50，但必须由 Owner 提交。页面必须说明三项限制不与其他 Project 共享，只在本 Project 的 Public Join enabled 期间生效。当前 active usage 和新上限同时显示，但允许把上限调到低于 usage；提交前提示既有资源与 Grants 不会被自动删除或撤销，只有继续增加相应计数的操作会被阻止。开启、更新、关闭 Policy 和更新 resource limits 的 `expected_version` 一律来自响应中的 `project.version`；`policy_version` 只展示 Policy 历史，不能用作写入 CAS。
 
 Issue/Comment soft delete 与 Grant revoke 释放 slot，restore/regrant 重新占用。soft-delete Issue 还会让其当前有效 Comments 暂时不占 Comment quota；restore 时必须同时容纳 Issue 与这些 Comments，任一不足都整体失败。completion comment 不可删除，所属 Issue active 时持续计数。页面必须区分“active quota 已释放”和“tombstone 仍保留在 D1”，不能暗示已回收物理存储。
 
@@ -199,6 +201,7 @@ v0 不包含：自定义列/工作流、手工 rank、批量选择/编辑、复�
 ### 5.2 技术克制
 
 - Web 预构建资产由同一 Worker 的 Workers Static Assets 提供，复用同一 origin、部署版本和 API；它们随固定 Service deployment bundle 一起发布，普通部署者不需要现场构建前端。v0 不新增独立 Pages project、KV namespace、R2、Durable Objects 或第三方认证服务。
+- `deploy-guide.md`、`deploy-guide.zh-CN.md`、`join.md` 与 `join.zh-CN.md` 是 Service bundle 中受版本控制的公开静态文档；路径稳定但内容随部署版本更新，因此使用 `no-store`、`no-referrer` 与 MIME sniffing 防护，不能被 SPA fallback 替代。
 - API、Invite/bootstrap、Web auth/session 与 `/.well-known/` discovery 等动态/协议路径必须优先进入 Worker；普通 UI navigation 可以使用 SPA fallback。带内容指纹的不可变 assets 可以长期缓存，包含身份、邀请、实例发现或动态业务数据的响应沿用各自安全缓存合同，不能被 SPA fallback 或静态缓存吞掉。
 - 前端只调用公开或同合同的 REST 能力；不出现直接 SQL、隐藏管理员后门或仅 Web 可用的第二套业务动作。
 - 前端固定使用 Vue 3 + TypeScript + Vite。具体 minor/patch 版本、依赖管理器、测试库、状态管理和目录结构仍由实现计划在兼容范围内选择；不得为框架便利引入第二套 API、服务端渲染、常驻 Node 服务或额外云资源。
@@ -212,7 +215,7 @@ v0 不包含：自定义列/工作流、手工 rank、批量选择/编辑、复�
 - 默认 Board 不设置持久重型侧栏；Workspace/Project、搜索、语言、身份/Session 与一个主要创建动作收敛在紧凑顶部区域。
 - 五列依靠排版、间距、细分隔线和轻微表面差异组织；普通卡片无阴影，不使用玻璃、渐变、霓虹、装饰插画或 cards-inside-cards。
 - 拉丁 Project 页面标题可以使用克制的系统 serif 建立编辑感；高频控件、中文界面、卡片和正文保持系统 sans，Issue identifier 使用系统 monospace。v0 不加载第三方字体。
-- 选定视觉稿只固定气质、信息层级与可见密度。图中的日期页脚、重复 Add issue、装饰头像或其他未进入产品合同的生成式偶然细节不得被实现。
+- 选定视觉稿只固定气质、信息层级与可见密度。图中的任意日期、重复 Add issue、装饰头像或其他未进入产品合同的生成式偶然细节不得被实现；D-264 明确要求的有界产品页脚不属于该类偶然元素。
 - 精确颜色、间距、圆角、组件状态、无障碍和响应式规则由 `DESIGN.md` 明确；任何有意偏离必须同时更新设计合同与视觉证据，不能在代码中静默漂移。
 
 ## 6. 错误与恢复体验

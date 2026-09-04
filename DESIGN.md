@@ -1,8 +1,9 @@
 ---
 name: cfKanban
 status: frozen
-revision: 3
+revision: 4
 frozen_on: 2026-08-29
+revised_on: 2026-09-04
 selected_direction: warm-editorial-workbench
 applies_to:
   - first-party-web-ui
@@ -169,7 +170,10 @@ The visual order is:
 
 - Public pages use a centered reading column on the same warm canvas, not a boxed application mockup.
 - The copyable Agent instruction is the visual primary content on the public home page.
+- The public-home headline uses exactly two intentional lines per locale. Each line stays intact rather than accepting an arbitrary browser wrap; its responsive type size must fit a 320px viewport without horizontal overflow. English and Simplified Chinese may use different sizes because their glyph widths differ.
+- The Agent instruction card gives the short copyable prompt, one sentence explaining the dedicated guide, and a direct guide link. It must not send the Agent to a general README and ask it to infer the deployment workflow.
 - Public Join Project choices are a simple list or grid of records with a clear `reader | writer` choice. Do not market them as pricing tiers.
+- The public home ends with an understated product footer separated by one rule. It contains the wordmark/tagline, deployment and joining guides, API contract, source link, Service version, and a shortened Instance ID; it does not grow into a sitemap, marketing panel, decorative date, or second navigation shell.
 - Browser Launch, Passkey, expiry, and failure pages use one clear next action and avoid exposing protocol noise unless it helps recovery.
 
 ## 4. Components and states

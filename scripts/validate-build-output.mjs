@@ -22,6 +22,13 @@ assert.ok(
   staticHeaders.includes("/assets/*\n  Cache-Control: public, max-age=31556952, immutable"),
   "fingerprinted Web assets must be immutable",
 );
+for (const guide of ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"]) {
+  assert.ok((await stat(new URL(guide, webRoot))).isFile(), `${guide} must be included in the Web build`);
+  assert.ok(
+    staticHeaders.includes(`/${guide}\n  Cache-Control: no-store\n  Referrer-Policy: no-referrer\n  X-Content-Type-Options: nosniff`),
+    `${guide} must use the public-guide security headers`,
+  );
+}
 const webFiles = await filesUnder(webRoot);
 assert.ok(webFiles.some((name) => name.endsWith(".js")), "Web build must emit a JavaScript asset");
 

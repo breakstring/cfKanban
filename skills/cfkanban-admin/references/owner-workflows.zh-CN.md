@@ -52,8 +52,8 @@
 | 读取/改 role/撤销 Grant | `GET/PATCH/DELETE /api/v1/admin/grants/{grant_id}` | Role 变化或撤销不抹除 assignment/history。 |
 | 读取审计 | `GET /api/v1/admin/audit-events` | 有界分页；可按一个不可变 `project_id` 和／或 `stream=domain|security` 筛选，并核对 `resolved_filters`。 |
 | 读取/修改 preferred origin | `GET/PUT /api/v1/admin/instance-origin` | 无 Credential 探测 candidate、CAS、新旧 discovery 读回。 |
-| 管理 Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | 一个 Project 与显式 role；关闭不撤销 Grants。 |
-| 读取/修改 Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | 显式 Issue/Comment/Principal limits 与 current usage。 |
+| 管理 Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | `expected_version` 使用 `project.version`，不能使用 `policy_version`；关闭不撤销 Grants。 |
+| 读取/修改 Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | 使用返回的 `project.version`，提交显式 Issue/Comment/Principal limits。 |
 | 检查 rate gates | `GET /api/v1/admin/rate-limit-settings` | 这里只读；bindings 由 deploy Skill 修改。 |
 | 撤销参与者 Passkey | `DELETE /api/v1/admin/passkeys/{passkey_id}` | 不撤销 API Credential 或 Grant。 |
 | 打开 Owner Web | 专用 `web launch`，`target.kind=admin` | 选择显式 section；默认不输出 capability，直接在系统浏览器打开 Overview。 |
@@ -95,6 +95,8 @@ Web Session 不能轮换或撤销 Owner Credential。全部 Owner Credential 丢
 - soft delete/Grant revoke 释放 active capacity，restore/regrant 再占用；
 - 关闭后阻止新 self-join 并停止 quota 强制，但不撤销既有 Grants；
 - Project 仍公开时，撤销 Grant 不会建立 rejoin blacklist。
+
+Policy 响应会有意展示两个版本号：Public Join 开启、更新、关闭和 resource-limit 写入的 CAS 值是 `project.version`；`policy_version` 只表示 Policy 记录自己的历史，绝不能复制到 `expected_version`。遇到 `VERSION_CONFLICT` 时重新读取 Project/Policy 事实并重新判断，不能猜一个版本继续重试。
 
 ## Tombstone 与容器恢复
 
