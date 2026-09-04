@@ -58,7 +58,7 @@ The complete endpoint and recovery guide is [references/workflows.md](references
 1. Inspect the Invite URL with a credential-free GET and show the instance, exact Projects/roles, expiry, recovery mode, and local storage effect before redemption.
 2. Inspect the local instance slot. Reuse the current Principal when the Invite permits it; otherwise ask only for the missing display name and prepare one pending Credential.
 3. Present one combined join plan covering trusted Skill source, local writes, Principal/Credential creation or reuse, and exact Grants. Wait for the user's application-level approval.
-4. Redeem once, verify `/api/v1/me` and the Grants, and promote a pending Credential only after identity/fingerprint readback matches.
+4. Redeem once, verify `/api/v1/me` and the Grants, and promote a pending Credential only after identity/fingerprint readback matches. For Invite, Public Join, and recovery operations, adopt the Credential ID authenticated by that secret; only a deployment-plan-bound Owner bootstrap requires an exact preassigned ID.
 5. Resolve the joined Project scope, list its Issues, and offer a Project Web launch. Do not write `.cfkanban-scope.json` or create an Issue unless the user asks.
 
 ## Required workflow

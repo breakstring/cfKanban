@@ -82,7 +82,7 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 2. 验证 canonical Skill 来源和私有 `.cfkanban` 存储；Invite 允许时优先复用 current Principal。
 3. 需要新建或恢复 Credential 时，使用稳定 operation ID 与 Idempotency Key 运行 `credential prepare`。secret 直接写入 `pending`，不会返回。
 4. 运行 `invite redeem`，传入 `instanceId`、`inviteCode`、`redeemAs`；只有 `new_principal` 传 `displayName`。`current_principal` 还需显式 Idempotency Key。
-5. 专用命令按需注入 pending secret、复用 pending Idempotency Key、通过 `/api/v1/me` 验证结果，并且只在 Principal/fingerprint 匹配后提升为 current。
+5. 专用命令按需注入 pending secret、复用 pending Idempotency Key、通过 `/api/v1/me` 验证结果，并且只在 Principal/fingerprint 匹配后提升为 current。Invite 与 recovery 兑换的新 Credential ID 由 Service 分配，经 `/me` 验证的 ID 会成为本地 current ID。
 6. 超时或响应丢失时保留 pending，并用同一输入重跑。只有结构化响应或读回证明远端未提交后，才可运行 `credential clear`。
 
 Project Invite 可以授予一个或多个显式 Project roles。Recovery Invite 绑定一个稳定 Principal 和一个不可变的 `rotation | full_recovery` mode。不得用 display name 选择身份。
