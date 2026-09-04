@@ -1,9 +1,9 @@
 ---
 name: cfKanban
 status: frozen
-revision: 5
+revision: 6
 frozen_on: 2026-08-29
-revised_on: 2026-09-04
+revised_on: 2026-09-05
 selected_direction: warm-editorial-workbench
 applies_to:
   - first-party-web-ui
@@ -20,10 +20,10 @@ tokens:
     text-muted: "#6C6861"
     border: "#DDD8CF"
     border-strong: "#BDB7AD"
-    primary: "#2167D5"
-    primary-hover: "#1857BB"
-    primary-pressed: "#124794"
-    focus: "#0B5FCC"
+    primary: "#B84708"
+    primary-hover: "#9D3905"
+    primary-pressed: "#7D2C02"
+    focus: "#B84708"
     danger: "#B42318"
     danger-soft: "#FCE8E6"
     warning: "#A15C00"
@@ -76,7 +76,7 @@ must not become features.
 
 1. **Quiet chrome, clear work.** Issue content and current scope dominate; navigation and account controls recede.
 2. **Warm, not decorative.** Warm neutrals replace clinical gray, but the UI does not use illustration, texture, gradients, or ornamental effects.
-3. **One primary action.** A screen has one blue primary action. Supporting actions use text, outline, or menus.
+3. **One primary action.** A screen has one deep-orange primary action. Supporting actions use text, outline, or menus.
 4. **Structure before containers.** Use spacing, alignment, typography, and dividers before adding backgrounds, borders, or elevation.
 5. **Dense enough, never cramped.** Metadata is compact, while titles and action targets remain easy to scan and operate.
 6. **Behavior is visible.** Saving, read-only state, conflicts, quota failures, and session expiry are explicit and never communicated by color alone.
@@ -126,7 +126,7 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 
 ### 2.4 Brand mark
 
-- The cfKanban mark is a warm-ink board with one vivid-orange task card moving out of it: the board identifies the product, while the escaping card gives the Agent-first promise a small, playful motion cue. Orange is the mark's expressive accent; it does not replace blue's semantic role for primary actions inside the product UI.
+- The cfKanban mark is a warm-ink board with one vivid-orange task card moving out of it: the board identifies the product, while the escaping card gives the Agent-first promise a small, playful motion cue. The mark uses a brighter orange than controls; interactive surfaces use the deeper accessible orange tokens above so white text and focus cues retain sufficient contrast.
 - Use the same self-hosted mark for the favicon, public wordmark, authenticated header, and compact footer lockup. Keep adjacent `cfKanban` text as live text rather than baking a wordmark into the image.
 - The mark must remain legible at 16px and 32px, keep its colored details within one warm-orange family, load no third-party resource, and carry an empty alt value when adjacent text already names the product.
 
@@ -187,7 +187,7 @@ The visual order is:
 
 ### Buttons
 
-- One filled blue primary button per visible task region.
+- One filled deep-orange primary button per visible task region.
 - Secondary actions are neutral outline buttons; tertiary actions are text buttons or menu items.
 - Destructive actions are not filled red by default. Use a red treatment only at the final, explicit destructive step.
 - Every button has default, hover, focus-visible, active, disabled, and loading states.

@@ -725,6 +725,44 @@ test("the self-hosted brand mark is wired to the favicon and both Web shells", a
   assert.doesNotMatch(indexHtml, /cloudflareinsights|https?:\/\/[^\s"']+\.(?:png|svg)/iu);
 });
 
+test("the Web interaction palette uses accessible orange without legacy blue theme literals", async () => {
+  const [stylesheet, issueDetail, design, webSpec] = await Promise.all([
+    readFile(new URL("../../apps/web/src/style.css", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/IssueDetailView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../DESIGN.md", import.meta.url), "utf8"),
+    readFile(new URL("../../docs/specs/2026-08-29-web-ui-spec.md", import.meta.url), "utf8"),
+  ]);
+  assert.match(stylesheet, /--color-primary:\s*#b84708;/iu);
+  assert.match(stylesheet, /--color-primary-hover:\s*#9d3905;/iu);
+  assert.match(stylesheet, /--color-primary-pressed:\s*#7d2c02;/iu);
+  assert.match(stylesheet, /--color-focus:\s*#b84708;/iu);
+  assert.match(issueDetail, /placeholder="#D97706"/u);
+
+  const relativeLuminance = (hex) => {
+    const channels = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
+      .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const orangeLuminance = relativeLuminance("b84708");
+  const whiteLuminance = relativeLuminance("ffffff");
+  const whiteOnOrangeContrast = (whiteLuminance + 0.05) / (orangeLuminance + 0.05);
+  assert.equal(whiteOnOrangeContrast >= 4.5, true, `white on primary orange has only ${whiteOnOrangeContrast.toFixed(2)}:1 contrast`);
+
+  const sixDigitColors = [...stylesheet.matchAll(/#([0-9a-f]{6})(?![0-9a-f])/giu)]
+    .map((match) => match[1]);
+  const blueDominant = sixDigitColors.filter((hex) => {
+    const red = Number.parseInt(hex.slice(0, 2), 16);
+    const green = Number.parseInt(hex.slice(2, 4), 16);
+    const blue = Number.parseInt(hex.slice(4, 6), 16);
+    return blue > 80 && blue > red * 1.08 && blue > green * 1.02;
+  });
+  assert.deepEqual(blueDominant, [], `stylesheet retains blue-dominant literals: ${blueDominant.join(", ")}`);
+  assert.doesNotMatch(issueDetail, /#2563EB/iu);
+  assert.match(design, /revision:\s*6/u);
+  assert.match(design, /One filled deep-orange primary button per visible task region\./u);
+  assert.match(webSpec, /以单一深橙色主操作色组织的工作台/u);
+});
+
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
   const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
   const [pluginManifest, ...documents] = await Promise.all([
