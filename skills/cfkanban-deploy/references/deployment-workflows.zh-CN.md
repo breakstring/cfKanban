@@ -105,7 +105,8 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 | Cloudflare auth 计划/动作 | `runtime plan-cloudflare-auth`、`runtime cloudflare-auth-action` | 绑定 task 的 digest、非 shell 参数数组、明确的全局 keyring 影响、OAuth consent 与必需读回。 |
 | Cloudflare 账户 | `runtime wrangler-account-readback` | 对准确 account/profile 验证只读 D1 访问；丢弃数据库清单。 |
 | 准确 D1 资源 | `runtime d1-resource-readback` | 只返回准确名称的 absent/present 状态与已验证 UUID，不暴露其他数据库。 |
-| 准确 Worker 资源 | `runtime worker-resource-readback` | 只返回准确名称的 absent/present 状态，不暴露 deployment 或账户清单；只有 Cloudflare `10007` 表示 absent。 |
+| 准确 Worker 资源 | `runtime worker-resource-readback`、`runtime worker-version-readback` | 只返回准确的当前单版本 deployment 与脱敏 bindings，不暴露账户清单、作者元数据或 secret；只有 Cloudflare `10007` 表示 absent。 |
+| D1 restore 证据 | `runtime d1-restore-point-readback` | 只返回一个 bookmark，绝不 restore；Wrangler 不提供当前套餐 retention boundary。 |
 | Tool Runtime 计划/安装 | `runtime plan-install`、`runtime install` | 准确 local-only plan 与 `.cfkanban/tool-runtime` 下的授权安装。 |
 | 首次部署计划 | `plan strict-zero` | Frozen plan 与 normalized digest。 |
 | Plan 漂移 | `plan compare` | 准确 delta 与是否需要新授权。 |
@@ -116,7 +117,7 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 | Owner bootstrap | `deployment prepare-owner-credential`、`bootstrap write-owner-sql`、带 `bootstrap_owner` 及恢复动作 `owner_bootstrap_readback` 的 `deploy wrangler-action`、`deployment finalize-owner` | plan-bound pending secret、hash-only SQL、journaled D1 执行、固定的零状态恢复读回、准确 discovery/`/meta`/`/me` 验证、提升与脱敏 receipt；都不暴露 token。 |
 | Migration 证明 | `migrations reconcile`、`migrations assess-ledger-recovery`、`migrations write-ledger-record-sql` | ledger/schema 一致性、同 journal 缺行恢复判断与 insert-only checksum record。 |
 | Skill update | `plan skill-update`、`release install-skill-bundle` | 新的已验证本地版本与 atomic active pointer。 |
-| Instance upgrade | `plan instance-upgrade` 加 journal/deploy/migration commands | 独立的 pinned Cloudflare upgrade。 |
+| Instance upgrade | `release install-service-bundle`、`plan instance-upgrade`、journal/deploy/migration commands、`deployment finalize-upgrade` | 使用已验证私有 Service cache 与脱敏 before/after receipt 的独立 pinned Cloudflare upgrade。 |
 | 本地读回 | `state inspect`、`origin rebind-check`、`api request` | 脱敏状态、trusted origin 连续性、认证后的 health/identity 检查。 |
 
 命令通过 stdin 接收结构化 JSON；Credential 生成与读取留在内部。`.mjs` 是采用显式 ES module 格式的普通 Node JavaScript，可直接由 `node` 运行，无需编译，并且安装到缺少 `package.json` 的 portable Skill 目录时仍不会产生模块语义歧义。
@@ -176,11 +177,14 @@ pointer 切换前失败时 active version 不变。该操作绝不升级已部�
 
 Instance upgrade 是独立 Cloudflare plan：
 
-1. 固定 Service deployment bundle 与 compatibility matrix；检查当前 Worker/D1 markers 和 bindings。
-2. 需要时取得 Cloudflare restore point/bookmark 作为证据；Skill 不执行 Time Travel restore。
-3. 创建 `plan instance-upgrade`，列出准确 Worker、binding、ordered migration deltas。
-4. 授权并 journal 准确 digest；每次只 apply 一个 migration，并在前后读回 ledger 与 schema。
-5. 最后验证已部署 Service；不隐式更新本地 Skills。
+1. 验证目标 release 与 publisher continuity，只用 `release install-service-bundle` 安装它的 Service artifact；这个 immutable 私有 cache 与源码 checkout、active Skill 都彼此独立。
+2. 读回准确 D1、当前 Worker deployment/version、脱敏 Worker bindings、认证后的 Instance/Owner 身份、上次 receipt、migration ledger 与 schema。常规路径只接受一个 100% Worker version，以及准确的 DB/ASSETS/rate-limit bindings；未知或额外 binding 必须退出该路径。
+3. 有 migrations 时，用 `runtime d1-restore-point-readback` 取得 bookmark，并另行验证当前 Cloudflare 套餐的 retention boundary。该命令不返回 retention，也绝不执行 restore。无 migration 时必须明确记录 `not required`。
+4. 使用准确 resources、当前 binding 读回、不变的 Owner Principal/Credential fingerprint、目标 compatibility、ordered migration delta 与 restore evidence 创建 `plan instance-upgrade`。授权 task/operation/digest，并从已安装 Service cache 生成 frozen config。
+5. 先运行固定 migration 读回。每条 planned migration 只执行下一条 pending 的 verified bundle 文件；随后再次读回；必须让 `migrations assess-ledger-recovery` 证明准确的 post-apply checksum 缺行；再写入绑定计划的固定路径 SQL、记录 checksum，最后重新读回并 reconcile。不能跳过 apply 后证明。
+6. 执行 Worker dry run，只部署一次，再用 `worker_deployment_readback` 证明新的单版本 deployment。最后运行 `deployment finalize-upgrade`，验证 canonical release、最终 migration/schema、公开 health/discovery、认证 `/meta` 与 `/me`、未变化的 Owner Credential，并写入幂等脱敏 receipt。
+
+Skill update 始终是独立的本地计划。较新的 active Skill 可以是 compatibility 前置条件，但绝不会静默升级 Instance。
 
 destructive migration、缺少 restore evidence、unknown baseline、partial schema artifacts、checksum drift、资源删除/替换、DNS/domain 变化或费用/权限变化都会退出常规 upgrade 路径，并要求新的明确 plan。
 

@@ -24,3 +24,7 @@ export function resolveToolRuntimeRoot({ platform = process.platform, home = os.
 export function resolveSkillReleaseRoot({ platform = process.platform, home = os.homedir() } = {}) {
   return pathApi(platform).join(resolveStateRoot({ platform, home }), "skill-releases");
 }
+
+export function resolveServiceReleaseRoot({ platform = process.platform, home = os.homedir() } = {}) {
+  return pathApi(platform).join(resolveStateRoot({ platform, home }), "service-releases");
+}

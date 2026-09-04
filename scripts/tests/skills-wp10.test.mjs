@@ -6,9 +6,10 @@ import test from "node:test";
 import { buildCapabilityReport } from "../../packages/skill-runtime/src/capabilities.mjs";
 import { prepareOwnerCredential, writeOwnerBootstrapSql } from "../../packages/skill-runtime/src/bootstrap-sql.mjs";
 import { finalizeOwnerDeployment } from "../../packages/skill-runtime/src/deployment-finalize.mjs";
+import { finalizeInstanceUpgrade } from "../../packages/skill-runtime/src/instance-upgrade.mjs";
 import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
 import { redeemInvitation, redeemPublicJoin, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
-import { buildOwnerBootstrapReadbackSql, buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, parseOwnerBootstrapReadbackOutput, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
+import { buildOwnerBootstrapReadbackSql, buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, parseOwnerBootstrapReadbackOutput, readD1ResourceByName, readD1RestorePoint, readWorkerResourceByName, readWorkerVersionById, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
 import { writeFrozenWranglerConfig } from "../../packages/skill-runtime/src/deployment-config.mjs";
 import { appendJournalEvent, authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
 import { assessMigrationLedgerRecovery, reconcileMigrationState, writeMigrationLedgerRecordSql } from "../../packages/skill-runtime/src/migrations.mjs";
@@ -18,6 +19,7 @@ import { verifyPublisherContinuity } from "../../packages/skill-runtime/src/rele
 import { generateReleaseMetadata } from "../generate-release-metadata.mjs";
 import { resolveScope, validateScopeDocument } from "../../packages/skill-runtime/src/scope.mjs";
 import { installVerifiedSkillBundle } from "../../packages/skill-runtime/src/skill-update.mjs";
+import { installVerifiedServiceBundle } from "../../packages/skill-runtime/src/service-bundle.mjs";
 import {
   createPendingCredential,
   getInstancePaths,
@@ -47,7 +49,23 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.18.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.19.json", import.meta.url), "utf8"));
+
+function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
+  return [
+    { type: "assets", name: "ASSETS", value_redacted: true },
+    { type: "d1", name: "DB", database_id: databaseId },
+    { type: "plain_text", name: "RATE_LIMIT_INSTANCE_LIMIT", text: "300" },
+    { type: "plain_text", name: "RATE_LIMIT_INSTANCE_PERIOD_SECONDS", text: "60" },
+    { type: "plain_text", name: "RATE_LIMIT_PRINCIPAL_LIMIT", text: "120" },
+    { type: "plain_text", name: "RATE_LIMIT_PRINCIPAL_PERIOD_SECONDS", text: "60" },
+    { type: "plain_text", name: "RATE_LIMIT_UNAUTHENTICATED_SENSITIVE_LIMIT", text: "30" },
+    { type: "plain_text", name: "RATE_LIMIT_UNAUTHENTICATED_SENSITIVE_PERIOD_SECONDS", text: "60" },
+    { type: "ratelimit", name: "INSTANCE_RATE_LIMITER", namespace_id: "1002" },
+    { type: "ratelimit", name: "PRINCIPAL_RATE_LIMITER", namespace_id: "1001" },
+    { type: "ratelimit", name: "UNAUTHENTICATED_RATE_LIMITER", namespace_id: "1003" },
+  ];
+}
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -66,6 +84,90 @@ async function fixtureState() {
   return { home, stateRoot };
 }
 
+function upgradePlanInput(overrides = {}) {
+  const base = {
+    taskId: "wp10-upgrade",
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    cloudflare: {
+      account_id: "account-one",
+      account_label: "Example Account",
+      profile: "production",
+      auth_context_directory: null,
+      api_origin: "https://example.workers.dev",
+    },
+    resources: {
+      worker: {
+        name: "cfkanban-worker",
+        deployment_id: "66666666-6666-4666-8666-666666666666",
+        version_id: "77777777-7777-4777-8777-777777777777",
+        bindings: upgradeBindingReadback(),
+      },
+      d1: {
+        name: "cfkanban-d1",
+        database_id: "88888888-8888-4888-8888-888888888888",
+      },
+      workers_dev: true,
+      custom_domain: null,
+      routes: [],
+      pages: false,
+    },
+    bindings: {
+      d1: "DB",
+      assets: "ASSETS",
+      rate_limits: {
+        principal: { limit: 120, period_seconds: 60 },
+        instance: { limit: 300, period_seconds: 60 },
+        unauthenticated_sensitive: { limit: 30, period_seconds: 60 },
+      },
+    },
+    owner: {
+      display_name: "Example Owner",
+      principal_id: PRINCIPAL_ID,
+      credential_id: CREDENTIAL_ID,
+      credential_fingerprint: "cfk_v1_example_…",
+    },
+    current: {
+      publisher: "https://github.com",
+      manifest_version: "0.1.0-alpha.8",
+      manifest_sha256: "a".repeat(64),
+      service_bundle_version: "0.1.0-alpha.8",
+      service_bundle_sha256: "b".repeat(64),
+      service_bundle_source: "https://github.com/example/cfkanban-service-alpha.8.zip",
+      service_api_version: "0.1.0",
+      schema_version: 1,
+    },
+    target: {
+      publisher: "https://github.com",
+      manifest_version: "0.1.0-alpha.19",
+      manifest_sha256: "c".repeat(64),
+      service_bundle_version: "0.1.0-alpha.19",
+      service_bundle_sha256: "d".repeat(64),
+      service_bundle_source: "https://github.com/example/cfkanban-service-alpha.19.zip",
+      service_api_version: "0.1.0",
+      schema_version: 1,
+      migration_manifest_sha256: "e".repeat(64),
+      compatibility: {
+        node: ">=22.12.0 <27",
+        wrangler: ">=4.127.1 <5",
+        service_api: ">=0.1.0 <0.2.0",
+        schema_version: 1,
+      },
+    },
+    migrations: [],
+    restorePoint: {
+      required: false,
+      verified: false,
+      bookmark: null,
+      observed_at: null,
+      reason: "no_migration_delta",
+      restore_overwrites_later_writes: true,
+      restore_automatic: false,
+    },
+  };
+  return { ...base, ...overrides };
+}
+
 test("capability fixtures keep macOS, Windows native, WSL2, and Linux isolated without mutation", () => {
   const cases = [
     [{ platform: "darwin", release: "25.0.0", home: "/Users/example", env: {}, probes: false }, "macos", "/Users/example/.cfkanban"],
@@ -79,6 +181,7 @@ test("capability fixtures keep macOS, Windows native, WSL2, and Linux isolated w
     assert.equal(report.paths.state_root, root);
     assert.equal(report.paths.tool_runtime_root, input.platform === "win32" ? `${root}\\tool-runtime` : `${root}/tool-runtime`);
     assert.equal(report.paths.skill_release_root, input.platform === "win32" ? `${root}\\skill-releases` : `${root}/skill-releases`);
+    assert.equal(report.paths.service_release_root, input.platform === "win32" ? `${root}\\service-releases` : `${root}/service-releases`);
     assert.equal(report.boundaries.windows_wsl_mixed_toolchain, false);
     assert.equal(report.boundaries.mutates_path, false);
     assert.equal(report.boundaries.installs_dependencies, false);
@@ -929,6 +1032,26 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
   });
   const serviceArtifact = generated.manifest.artifacts.find((artifact) => artifact.kind === "service_deployment_bundle");
   const skillArtifact = generated.manifest.artifacts.find((artifact) => artifact.kind === "skill_bundle");
+  const installedService = await installVerifiedServiceBundle({
+    bundlePath: serviceBundle,
+    version: serviceArtifact.version,
+    expectedSha256: serviceArtifact.sha256,
+    publisher: generated.manifest.publisher.canonical_origin,
+    source: serviceArtifact.url,
+    releaseRoot: path.join(stateRoot, "service-releases"),
+  });
+  assert.equal(installedService.installed, true);
+  assert.equal(installedService.verified, true);
+  assert.equal(installedService.path.endsWith(path.join("versions", "0.1.0", "service")), true);
+  const reusedService = await installVerifiedServiceBundle({
+    bundlePath: serviceBundle,
+    version: serviceArtifact.version,
+    expectedSha256: serviceArtifact.sha256,
+    publisher: generated.manifest.publisher.canonical_origin,
+    source: serviceArtifact.url,
+    releaseRoot: path.join(stateRoot, "service-releases"),
+  });
+  assert.equal(reusedService.reused, true);
   const plan = createStrictZeroPlan({
     taskId: "wp10-owner-finalize",
     accountId: "account-one",
@@ -1152,6 +1275,405 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
   assert.equal(journal.events.filter((event) => event.type === "deployment_finalized").length, 1);
 });
 
+test("existing Instance upgrade consumes a verified Service cache, preserves the Owner Credential, and writes a redacted before/after receipt", async (t) => {
+  const { home, stateRoot } = await fixtureState();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const serviceRoot = path.join(home, "upgrade-service");
+  for (const directory of [
+    "dist",
+    path.join("apps", "web", "dist"),
+    "contracts",
+    "migrations",
+    path.join("release", "deployment"),
+  ]) {
+    await mkdir(path.join(serviceRoot, directory), { recursive: true });
+  }
+  await writeFile(path.join(serviceRoot, "dist", "index.js"), "export default {};\n", "utf8");
+  await writeFile(path.join(serviceRoot, "apps", "web", "dist", "index.html"), "<!doctype html>\n", "utf8");
+  await writeFile(path.join(serviceRoot, "contracts", "openapi.json"), JSON.stringify({ info: { version: "0.1.0" } }) + "\n", "utf8");
+  const initialSql = "SELECT 1;\n";
+  const initialMigration = {
+    sequence: 1,
+    name: "0001_initial.sql",
+    sha256: sha256Bytes(Buffer.from(initialSql, "utf8")),
+    classification: "bootstrap",
+    destructive: false,
+    reentry: "wrangler_migration_ledger_only",
+    expected_artifacts: { tables: [], indexes: [] },
+  };
+  const upgradeSql = "CREATE TABLE project_context (project_id TEXT PRIMARY KEY);\n";
+  const upgradeMigration = {
+    sequence: 2,
+    name: "0002_project_context.sql",
+    sha256: sha256Bytes(Buffer.from(upgradeSql, "utf8")),
+    classification: "backward_compatible",
+    destructive: false,
+    reentry: "wrangler_file_ingestion_transaction",
+    expected_artifacts: { tables: ["project_context"], indexes: [] },
+  };
+  const migrationManifest = { manifest_version: 1, schema_version: 2, migrations: [initialMigration, upgradeMigration] };
+  const migrationManifestText = JSON.stringify(migrationManifest, null, 2) + "\n";
+  await writeFile(path.join(serviceRoot, "migrations", initialMigration.name), initialSql, "utf8");
+  await writeFile(path.join(serviceRoot, "migrations", upgradeMigration.name), upgradeSql, "utf8");
+  await writeFile(path.join(serviceRoot, "migrations", "manifest.json"), migrationManifestText, "utf8");
+  await writeFile(path.join(serviceRoot, "release", "deployment", "migration-readback.sql"), "SELECT 1;\nSELECT 1;\n", "utf8");
+  await writeFile(path.join(serviceRoot, "wrangler-config-schema.json"), "{}\n", "utf8");
+  await writeFile(path.join(serviceRoot, "wrangler.template.json"), JSON.stringify({
+    compatibility_date: "2026-08-29",
+    assets: { binding: "ASSETS", not_found_handling: "single-page-application", run_worker_first: ["/api/*", "/healthz"] },
+  }), "utf8");
+
+  const artifactRoot = path.join(home, "upgrade-artifacts");
+  const skillSource = path.join(home, "upgrade-skill");
+  await mkdir(artifactRoot);
+  await mkdir(skillSource);
+  await writeFile(path.join(skillSource, "SKILL.md"), "---\nname: fixture\ndescription: fixture\n---\n", "utf8");
+  const skillBundle = path.join(artifactRoot, "skills.zip");
+  const serviceBundle = path.join(artifactRoot, "service.zip");
+  await writeDeterministicZip({ root: skillSource, outputPath: skillBundle, prefix: "skills/" });
+  await writeDeterministicZip({ root: serviceRoot, outputPath: serviceBundle, prefix: "service/" });
+  const releaseOutput = path.join(home, "upgrade-release");
+  await mkdir(releaseOutput);
+  const generated = await generateReleaseMetadata({
+    outputDirectory: releaseOutput,
+    canonicalBaseUrl: "https://releases.example.test/cfkanban/0.1.0-alpha.19/",
+    channel: "prerelease",
+    version: "0.1.0-alpha.19",
+    skillBundlePath: skillBundle,
+    serviceBundlePath: serviceBundle,
+    nodeRange: ">=22.12.0 <27",
+    wranglerRange: ">=4.127.1 <5",
+    serviceApiRange: ">=0.1.0 <0.2.0",
+    schemaVersion: 2,
+  });
+  const serviceArtifact = generated.manifest.artifacts.find((artifact) => artifact.kind === "service_deployment_bundle");
+  const skillArtifact = generated.manifest.artifacts.find((artifact) => artifact.kind === "skill_bundle");
+  const installedService = await installVerifiedServiceBundle({
+    bundlePath: serviceBundle,
+    version: serviceArtifact.version,
+    expectedSha256: serviceArtifact.sha256,
+    publisher: generated.manifest.publisher.canonical_origin,
+    source: serviceArtifact.url,
+    releaseRoot: path.join(stateRoot, "service-releases"),
+  });
+  await installVerifiedSkillBundle({
+    bundlePath: skillBundle,
+    version: skillArtifact.version,
+    expectedSha256: skillArtifact.sha256,
+    publisher: generated.manifest.publisher.canonical_origin,
+    source: skillArtifact.url,
+    releaseRoot: path.join(stateRoot, "skill-releases"),
+  });
+
+  const credential = await createPendingCredential({
+    stateRoot,
+    home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    operationId: "99999999-9999-4999-8999-999999999999",
+    idempotencyKey: "99999999-9999-4999-8999-999999999999",
+    purpose: "owner_bootstrap",
+  });
+  await promotePendingCredential({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    fingerprint: credential.fingerprint,
+  });
+  const secret = await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
+  const base = upgradePlanInput();
+  const current = {
+    ...base.current,
+    publisher: generated.manifest.publisher.canonical_origin,
+    service_bundle_source: "https://releases.example.test/cfkanban/0.1.0-alpha.8/service.zip",
+  };
+  const target = {
+    publisher: generated.manifest.publisher.canonical_origin,
+    manifest_version: generated.manifest.release.version,
+    manifest_sha256: generated.pointer.manifest_sha256,
+    service_bundle_version: serviceArtifact.version,
+    service_bundle_sha256: serviceArtifact.sha256,
+    service_bundle_source: serviceArtifact.url,
+    service_api_version: "0.1.0",
+    schema_version: 2,
+    migration_manifest_sha256: sha256Bytes(Buffer.from(migrationManifestText, "utf8")),
+    compatibility: generated.manifest.compatibility,
+  };
+  const plan = createInstanceUpgradePlan({
+    ...base,
+    current,
+    target,
+    migrations: [upgradeMigration],
+    restorePoint: {
+      required: true,
+      verified: true,
+      bookmark: "0000001c-00000000-000050dc-example",
+      observed_at: "2026-09-04T01:02:03.000Z",
+      retention_boundary: "verified_current_cloudflare_plan_boundary",
+      reason: "pre_migration_time_travel_bookmark",
+    },
+    owner: {
+      display_name: "Example Owner",
+      principal_id: PRINCIPAL_ID,
+      credential_id: CREDENTIAL_ID,
+      credential_fingerprint: credential.fingerprint,
+    },
+  });
+  const paths = getInstancePaths({ stateRoot, instanceId: INSTANCE_ID });
+  await mkdir(paths.receiptsRoot, { recursive: true, mode: 0o700 });
+  const currentReceiptPath = path.join(paths.receiptsRoot, "99999999-9999-4999-8999-999999999999.deployment.json");
+  await writeFile(currentReceiptPath, JSON.stringify({
+    schema_version: 1,
+    kind: "cfkanban_deployment_receipt",
+    instance: { id: INSTANCE_ID, api_origin: "https://example.workers.dev", origin_version: 1, service_version: "0.1.0", schema_version: 1 },
+    cloudflare: {
+      account_id: "account-one",
+      profile: "production",
+      worker: { name: "cfkanban-worker" },
+      d1: { name: "cfkanban-d1", database_id: base.resources.d1.database_id },
+    },
+    owner: {
+      display_name: "Example Owner",
+      principal_id: PRINCIPAL_ID,
+      credential_id: CREDENTIAL_ID,
+      credential_fingerprint: credential.fingerprint,
+    },
+    service_release: current,
+    secret_values_exposed: false,
+  }, null, 2) + "\n", { mode: 0o600 });
+
+  await createJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, plan });
+  await authorizeJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: plan.task_id, planDigest: canonicalDigest(plan) });
+  const config = await writeFrozenWranglerConfig({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    serviceBundleRoot: installedService.path,
+    d1DatabaseId: base.resources.d1.database_id,
+  });
+  const readbackOutput = JSON.stringify([
+    {
+      success: true,
+      results: [{
+        ...initialMigration,
+        operation_id: "99999999-9999-4999-8999-999999999999",
+        applied_at: 1_788_000_000_000,
+      }],
+    },
+    { success: true, results: [] },
+  ]);
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "migration_ledger_readback",
+    configPath: config.wrangler_config_path,
+    migrationReadbackSqlPath: path.join(installedService.path, "release", "deployment", "migration-readback.sql"),
+    runner: async () => ({ code: 0, signal: null, stdout: readbackOutput, stderr: "" }),
+  });
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "apply_migration",
+    configPath: config.wrangler_config_path,
+    migrationName: upgradeMigration.name,
+    migrationSqlPath: path.join(installedService.path, "migrations", upgradeMigration.name),
+    runner: async () => ({ code: 0, signal: null, stdout: "[]", stderr: "" }),
+  });
+  const postApplyReadback = JSON.stringify([
+    {
+      success: true,
+      results: [{
+        ...initialMigration,
+        operation_id: "99999999-9999-4999-8999-999999999999",
+        applied_at: 1_788_000_000_000,
+      }],
+    },
+    { success: true, results: [{ type: "table", name: "project_context" }] },
+  ]);
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "migration_ledger_readback",
+    configPath: config.wrangler_config_path,
+    migrationReadbackSqlPath: path.join(installedService.path, "release", "deployment", "migration-readback.sql"),
+    runner: async () => ({ code: 0, signal: null, stdout: postApplyReadback, stderr: "" }),
+  });
+  const record = await writeMigrationLedgerRecordSql({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    migration: upgradeMigration,
+    migrationManifestPath: path.join(installedService.path, "migrations", "manifest.json"),
+  });
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "record_migration_checksum",
+    configPath: config.wrangler_config_path,
+    migrationName: upgradeMigration.name,
+    migrationRecordSqlPath: record.migration_record_sql_path,
+    runner: async () => ({ code: 0, signal: null, stdout: "[]", stderr: "" }),
+  });
+  await assert.rejects(
+    executeWranglerAction({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      operationId: OPERATION_ID,
+      taskId: plan.task_id,
+      plan,
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      action: "record_migration_checksum",
+      configPath: config.wrangler_config_path,
+      migrationName: upgradeMigration.name,
+      migrationRecordSqlPath: record.migration_record_sql_path,
+      runner: async () => ({ code: 0, signal: null, stdout: "[]", stderr: "" }),
+    }),
+    (error) => error.code === "UPGRADE_MIGRATION_CHECKSUM_ALREADY_RECORDED",
+  );
+  const finalReadback = JSON.stringify([
+    {
+      success: true,
+      results: [
+        {
+          ...initialMigration,
+          operation_id: "99999999-9999-4999-8999-999999999999",
+          applied_at: 1_788_000_000_000,
+        },
+        {
+          ...upgradeMigration,
+          operation_id: OPERATION_ID,
+          applied_at: 1_788_000_001_000,
+        },
+      ],
+    },
+    { success: true, results: [{ type: "table", name: "project_context" }] },
+  ]);
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "migration_ledger_readback",
+    configPath: config.wrangler_config_path,
+    migrationReadbackSqlPath: path.join(installedService.path, "release", "deployment", "migration-readback.sql"),
+    runner: async () => ({ code: 0, signal: null, stdout: finalReadback, stderr: "" }),
+  });
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "validate_worker_bundle",
+    configPath: config.wrangler_config_path,
+    runner: async () => ({ code: 0, signal: null, stdout: "dry run", stderr: "" }),
+  });
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "deploy_worker_and_static_assets",
+    configPath: config.wrangler_config_path,
+    runner: async () => ({ code: 0, signal: null, stdout: "deployed", stderr: "" }),
+  });
+  const afterDeploymentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const afterVersionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "worker_deployment_readback",
+    configPath: config.wrangler_config_path,
+    runner: async () => ({
+      code: 0,
+      signal: null,
+      stdout: JSON.stringify([{
+        id: afterDeploymentId,
+        created_on: "2026-09-04T02:03:04.000Z",
+        versions: [{ version_id: afterVersionId, percentage: 100 }],
+      }]),
+      stderr: "",
+    }),
+  });
+  const fetchImpl = async (url) => {
+    let body;
+    if (url.pathname === "/healthz") {
+      body = { d1: "reachable", service_version: "0.1.0", schema_version: 2 };
+    } else if (url.pathname === "/.well-known/cfkanban-instance.json") {
+      body = { discovery_version: 1, instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0" };
+    } else if (url.pathname === "/api/v1/meta") {
+      body = { instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0", schema_version: 2, principal: { id: PRINCIPAL_ID, is_owner: true } };
+    } else {
+      body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example Owner", is_owner: true, credential: { id: CREDENTIAL_ID, fingerprint: credential.fingerprint } };
+    }
+    return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const finalizeInput = {
+    stateRoot,
+    home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    configPath: config.wrangler_config_path,
+    apiOrigin: "https://example.workers.dev",
+    currentReceiptPath,
+    releasePointerPath: generated.pointerPath,
+    manifestPath: generated.manifestPath,
+    artifactFiles: { skill_bundle: skillBundle, service_deployment_bundle: serviceBundle },
+    fetchImpl,
+  };
+  const finalized = await finalizeInstanceUpgrade(finalizeInput);
+  assert.equal(finalized.finalized, true);
+  assert.equal(finalized.credential_unchanged, true);
+  assert.equal(finalized.worker_deployment_id, afterDeploymentId);
+  const receipt = await readJson(finalized.receipt_path);
+  assert.equal(receipt.kind, "cfkanban_instance_upgrade_receipt");
+  assert.equal(receipt.service_release.before.service_bundle_version, "0.1.0-alpha.8");
+  assert.equal(receipt.service_release.after.service_bundle_version, "0.1.0-alpha.19");
+  assert.equal(receipt.cloudflare.worker.after_version_id, afterVersionId);
+  assert.equal(receipt.owner.credential_id, CREDENTIAL_ID);
+  assert.equal(JSON.stringify(receipt).includes(secret.token), false);
+  assert.equal((await readJson(paths.currentMetadata)).credential_id, CREDENTIAL_ID);
+  const resumed = await finalizeInstanceUpgrade(finalizeInput);
+  assert.equal(resumed.resumed, true);
+  const journal = await readJson(path.join(paths.journalsRoot, `${OPERATION_ID}.json`));
+  assert.equal(journal.events.filter((event) => event.type === "upgrade_finalized").length, 1);
+});
+
 test("scope resolution prefers explicit, then Repo, then warned aggregate", () => {
   const explicit = [{ instance_id: INSTANCE_ID, workspace_key: "team", project_key: "APP" }];
   const repository = [{ instance_id: INSTANCE_ID, workspace_key: "team", project_key: "OPS" }];
@@ -1309,7 +1831,12 @@ test("Worker exact-name readback distinguishes presence, absence, and unknown Cl
       return {
         code: 0,
         signal: null,
-        stdout: JSON.stringify([{ id: "private-deployment-id", source: "private-account-metadata" }]),
+        stdout: JSON.stringify([{
+          id: "66666666-6666-4666-8666-666666666666",
+          created_on: "2026-09-04T00:00:00.000Z",
+          source: "private-account-metadata",
+          versions: [{ version_id: "77777777-7777-4777-8777-777777777777", percentage: 100 }],
+        }]),
         stderr: "",
       };
     },
@@ -1325,8 +1852,10 @@ test("Worker exact-name readback distinguishes presence, absence, and unknown Cl
     account_id: "account-one",
     profile: "production",
     worker_name: "cfkanban-worker",
+    deployment_id: "66666666-6666-4666-8666-666666666666",
+    version_id: "77777777-7777-4777-8777-777777777777",
+    created_on: "2026-09-04T00:00:00.000Z",
   });
-  assert.equal(JSON.stringify(present).includes("private-deployment-id"), false);
   assert.equal(JSON.stringify(present).includes("private-account-metadata"), false);
 
   const absent = await readWorkerResourceByName({
@@ -1363,6 +1892,67 @@ test("Worker exact-name readback distinguishes presence, absence, and unknown Cl
     }),
     (error) => error.code === "WRANGLER_WORKER_READBACK_FAILED",
   );
+});
+
+test("Worker version and D1 restore-point readbacks return only normalized upgrade evidence", async () => {
+  const version = await readWorkerVersionById({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    accountId: "account-one",
+    cloudflareProfile: "production",
+    workerName: "cfkanban-worker",
+    versionId: "77777777-7777-4777-8777-777777777777",
+    environment: {},
+    runner: async () => ({
+      code: 0,
+      signal: null,
+      stdout: JSON.stringify({
+        id: "77777777-7777-4777-8777-777777777777",
+        resources: {
+          bindings: [
+            { type: "assets", name: "ASSETS" },
+            { type: "d1", name: "DB", database_id: "88888888-8888-4888-8888-888888888888" },
+            { type: "plain_text", name: "RATE_LIMIT_INSTANCE_LIMIT", text: "300" },
+            { type: "plain_text", name: "PRIVATE_VALUE", text: "must-not-leak" },
+          ],
+        },
+      }),
+      stderr: "",
+    }),
+  });
+  assert.equal(version.version_id, "77777777-7777-4777-8777-777777777777");
+  assert.deepEqual(version.bindings.find((entry) => entry.name === "PRIVATE_VALUE"), {
+    type: "plain_text",
+    name: "PRIVATE_VALUE",
+    value_redacted: true,
+  });
+  assert.equal(JSON.stringify(version).includes("must-not-leak"), false);
+
+  const restore = await readD1RestorePoint({
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    accountId: "account-one",
+    cloudflareProfile: "production",
+    d1Name: "cfkanban-d1",
+    environment: {},
+    now: () => new Date("2026-09-04T01:02:03.000Z"),
+    runner: async () => ({
+      code: 0,
+      signal: null,
+      stdout: JSON.stringify({ bookmark: "0000001c-00000000-000050dc-example" }),
+      stderr: "",
+    }),
+  });
+  assert.deepEqual(restore, {
+    status: "available",
+    account_id: "account-one",
+    profile: "production",
+    d1_name: "cfkanban-d1",
+    bookmark: "0000001c-00000000-000050dc-example",
+    observed_at: "2026-09-04T01:02:03.000Z",
+    retention_boundary: null,
+    retention_boundary_source: "not_reported_by_wrangler",
+    restore_overwrites_later_writes: true,
+    restore_automatic: false,
+  });
 });
 
 test("strict-zero plan freezes defaults; any delta requires new authorization", async (t) => {
@@ -1407,7 +1997,77 @@ test("strict-zero plan freezes defaults; any delta requires new authorization", 
   assert.equal(firstSkillInstall.install_root, "/safe/skill-releases");
   assert.equal(firstSkillInstall.cloudflare_writes, false);
   assert.equal(firstSkillInstall.d1_migrations, false);
-  assert.equal(createInstanceUpgradePlan({ taskId: "task-wp10", instanceId: INSTANCE_ID, current: {}, target: {}, migrations: [], restorePoint: {} }).skill_update_included, false);
+  const upgrade = createInstanceUpgradePlan(upgradePlanInput());
+  assert.equal(upgrade.kind, "deployed_instance_upgrade");
+  assert.equal(upgrade.operation_id, OPERATION_ID);
+  assert.equal(upgrade.target.instance_id, INSTANCE_ID);
+  assert.equal(upgrade.target.cloudflare_account_id, "account-one");
+  assert.equal(upgrade.resources.worker.create, false);
+  assert.deepEqual(upgrade.resources.worker.current_bindings, upgradeBindingReadback());
+  assert.equal(upgrade.resources.d1.create, false);
+  assert.equal(upgrade.resources.d1.database_id, "88888888-8888-4888-8888-888888888888");
+  assert.deepEqual(upgrade.migrations.ordered, []);
+  assert.equal(upgrade.release.service_bundle_sha256, "d".repeat(64));
+  assert.equal(upgrade.skill_update_included, false);
+  assert.equal(upgrade.resource_replacement_allowed, false);
+  assert.equal(upgrade.binding_changes_allowed, false);
+  assert.equal(upgrade.d1_restore_automatic, false);
+  assert.throws(
+    () => createInstanceUpgradePlan(upgradePlanInput({
+      resources: {
+        ...upgradePlanInput().resources,
+        worker: { ...upgradePlanInput().resources.worker, bindings: [] },
+      },
+    })),
+    (error) => error.code === "UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN",
+  );
+  const migrationUpgradeInput = upgradePlanInput({
+    target: {
+      ...upgradePlanInput().target,
+      schema_version: 2,
+      compatibility: { ...upgradePlanInput().target.compatibility, schema_version: 2 },
+    },
+    migrations: [{
+      sequence: 2,
+      name: "0002_add_context.sql",
+      sha256: "f".repeat(64),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_file_ingestion_transaction",
+      expected_artifacts: { tables: ["project_context"], indexes: [] },
+    }],
+    restorePoint: {
+      required: true,
+      verified: true,
+      bookmark: "0000001c-00000000-000050dc-example",
+      observed_at: "2026-09-04T01:02:03.000Z",
+      retention_boundary: null,
+      reason: "pre_migration_time_travel_bookmark",
+    },
+  });
+  assert.throws(
+    () => createInstanceUpgradePlan(migrationUpgradeInput),
+    (error) => error.code === "RESTORE_POINT_RETENTION_REQUIRED",
+  );
+  const migrationUpgrade = createInstanceUpgradePlan({
+    ...migrationUpgradeInput,
+    restorePoint: { ...migrationUpgradeInput.restorePoint, retention_boundary: "verified_current_cloudflare_plan_boundary" },
+  });
+  assert.equal(migrationUpgrade.steps.includes("read_migration_checksum_ledger_and_schema_after_apply:2"), true);
+  assert.throws(
+    () => createInstanceUpgradePlan(upgradePlanInput({
+      migrations: [{
+        sequence: 2,
+        name: "0002_break.sql",
+        sha256: "f".repeat(64),
+        classification: "destructive",
+        destructive: true,
+        reentry: "not_safe",
+        expected_artifacts: { tables: [], indexes: [] },
+      }],
+    })),
+    (error) => error.code === "DESTRUCTIVE_MIGRATION_REQUIRES_SEPARATE_PLAN",
+  );
   const changed = structuredClone(plan);
   changed.resources.custom_domain = "kanban.example.test";
   assert.equal(comparePlans(plan, changed).requires_new_authorization, true);
@@ -1905,27 +2565,9 @@ test("Owner bootstrap never retries after any present or partial recovery readba
   );
 });
 
-test("migration ledger SQL is fixed in the Service bundle and checksum records never overwrite", async (t) => {
+test("migration checksum SQL is fixed, same-journal authorized, and never overwrites", async (t) => {
   const { home, stateRoot } = await fixtureState();
   t.after(() => rm(home, { recursive: true, force: true }));
-  const record = await writeMigrationLedgerRecordSql({
-    stateRoot,
-    instanceId: INSTANCE_ID,
-    operationId: OPERATION_ID,
-    migration: { sequence: 1, name: "0001_initial.sql", sha256: "a".repeat(64), classification: "bootstrap", reentry: "safe_baseline" },
-  });
-  const sql = await readFile(record.migration_record_sql_path, "utf8");
-  assert.match(sql, /WHERE NOT EXISTS/);
-  assert.doesNotMatch(sql, /UPDATE|REPLACE|ON CONFLICT/i);
-  assert.doesNotMatch(sql, /\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/iu);
-  assert.equal(record.overwrites_existing_ledger_row, false);
-  assert.equal(record.relies_on_wrangler_file_ingestion_transaction, true);
-
-  const configPath = path.join(home, "wrangler.jsonc");
-  const ledgerSchemaPath = path.resolve("release/deployment/migration-ledger.sql");
-  const readbackPath = path.resolve("release/deployment/migration-readback.sql");
-  const readbackSql = await readFile(readbackPath, "utf8");
-  assert.doesNotMatch(readbackSql, /tbl_name|\bsql\b/iu);
   const plan = createStrictZeroPlan({
     taskId: "wp10-ledger",
     accountId: "account-one",
@@ -1936,6 +2578,98 @@ test("migration ledger SQL is fixed in the Service bundle and checksum records n
     ownerCredentialId: CREDENTIAL_ID,
     operationId: OPERATION_ID,
   }).plan;
+  await createJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, plan });
+  await authorizeJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: plan.task_id, planDigest: canonicalDigest(plan) });
+  const serviceRoot = path.join(home, "service");
+  const migrationsRoot = path.join(serviceRoot, "migrations");
+  await mkdir(migrationsRoot, { recursive: true });
+  const migrationSql = "CREATE TABLE issues (id TEXT PRIMARY KEY);\n";
+  const migration = {
+    sequence: 1,
+    name: "0001_initial.sql",
+    sha256: sha256Bytes(Buffer.from(migrationSql, "utf8")),
+    classification: "bootstrap",
+    destructive: false,
+    reentry: "safe_baseline",
+    expected_artifacts: { tables: ["issues"], indexes: [] },
+  };
+  const manifestPath = path.join(migrationsRoot, "manifest.json");
+  await writeFile(path.join(migrationsRoot, migration.name), migrationSql, "utf8");
+  await writeFile(manifestPath, JSON.stringify({ manifest_version: 1, schema_version: 1, migrations: [migration] }) + "\n", "utf8");
+  const configPath = path.join(home, "wrangler.jsonc");
+  const config = { name: "cfkanban-worker", account_id: "account-one" };
+  await writeFile(configPath, JSON.stringify(config) + "\n", { mode: 0o600 });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: {
+      type: "wrangler_config_written",
+      config_path: configPath,
+      config_digest: canonicalDigest(config),
+      service_bundle_root: serviceRoot,
+    },
+  });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: { type: "command_finished", action: "apply_non_destructive_migrations", exit_code: 0 },
+  });
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    event: {
+      type: "command_finished",
+      action: "migration_ledger_readback",
+      exit_code: 0,
+      migration_readback: { ledger: [], schema: { tables: ["issues"], indexes: [] }, result_set_count: 2 },
+    },
+  });
+  const record = await writeMigrationLedgerRecordSql({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    migration,
+    migrationManifestPath: manifestPath,
+  });
+  const sql = await readFile(record.migration_record_sql_path, "utf8");
+  assert.match(sql, /WHERE NOT EXISTS/);
+  assert.doesNotMatch(sql, /UPDATE|REPLACE|ON CONFLICT/i);
+  assert.doesNotMatch(sql, /\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/iu);
+  assert.equal(record.overwrites_existing_ledger_row, false);
+  assert.equal(record.relies_on_wrangler_file_ingestion_transaction, true);
+  assert.equal(record.resumed, false);
+  assert.equal((await writeMigrationLedgerRecordSql({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    migration,
+    migrationManifestPath: manifestPath,
+  })).resumed, true);
+  await assert.rejects(
+    writeMigrationLedgerRecordSql({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      operationId: OPERATION_ID,
+      taskId: plan.task_id,
+      plan,
+      migration,
+      migrationManifestPath: manifestPath,
+      outputPath: path.join(home, "unbound.sql"),
+    }),
+    (error) => error.code === "MIGRATION_RECORD_OUTPUT_DRIFT",
+  );
+
+  const ledgerSchemaPath = path.resolve("release/deployment/migration-ledger.sql");
+  const readbackPath = path.resolve("release/deployment/migration-readback.sql");
+  const readbackSql = await readFile(readbackPath, "utf8");
+  assert.doesNotMatch(readbackSql, /tbl_name|\bsql\b/iu);
   assert.deepEqual(
     buildWranglerInvocation({ action: "initialize_migration_checksum_ledger", plan, configPath, migrationLedgerSchemaSqlPath: ledgerSchemaPath }),
     ["d1", "execute", "cfkanban-d1", "--remote", "--file", ledgerSchemaPath, "--config", configPath, "--json"],
@@ -1948,6 +2682,19 @@ test("migration ledger SQL is fixed in the Service bundle and checksum records n
     buildWranglerInvocation({ action: "record_migration_checksum", plan, configPath, migrationRecordSqlPath: record.migration_record_sql_path }),
     ["d1", "execute", "cfkanban-d1", "--remote", "--file", record.migration_record_sql_path, "--config", configPath, "--json"],
   );
+  await executeWranglerAction({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    taskId: plan.task_id,
+    plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler",
+    action: "record_migration_checksum",
+    migrationName: migration.name,
+    configPath,
+    migrationRecordSqlPath: record.migration_record_sql_path,
+    runner: async () => ({ code: 0, signal: null, stdout: "[]", stderr: "" }),
+  });
   const bootstrapSqlPath = path.join(home, "owner-bootstrap.sql");
   assert.deepEqual(
     buildWranglerInvocation({ action: "bootstrap_owner", plan, configPath, bootstrapSqlPath }),
@@ -2210,6 +2957,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.16.md",
     "../../release/notes/0.1.0-alpha.17.md",
     "../../release/notes/0.1.0-alpha.18.md",
+    "../../release/notes/0.1.0-alpha.19.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -2227,6 +2975,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.16.json",
     "../../release/config/0.1.0-alpha.17.json",
     "../../release/config/0.1.0-alpha.18.json",
+    "../../release/config/0.1.0-alpha.19.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

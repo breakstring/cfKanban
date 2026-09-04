@@ -105,7 +105,8 @@ Do not run `wrangler auth activate` or create a Repo binding automatically. When
 | Cloudflare auth plan/action | `runtime plan-cloudflare-auth`, `runtime cloudflare-auth-action` | Task-bound digest, shell-free argument arrays, explicit global keyring effect, OAuth consent, and required readback. |
 | Cloudflare account | `runtime wrangler-account-readback` | Read-only D1 access proof for one exact account/profile; database inventory is discarded. |
 | Exact D1 resource | `runtime d1-resource-readback` | Exact-name absence/presence and verified UUID without exposing any other database. |
-| Exact Worker resource | `runtime worker-resource-readback` | Exact-name absence/presence without exposing deployments or account inventory; only Cloudflare code `10007` means absent. |
+| Exact Worker resource | `runtime worker-resource-readback`, `runtime worker-version-readback` | Exact current single-version deployment plus redacted bindings without account inventory or author metadata; only Cloudflare code `10007` means absent. |
+| D1 restore evidence | `runtime d1-restore-point-readback` | One bookmark only; no restore. Wrangler does not supply the current plan retention boundary. |
 | Tool Runtime plan/install | `runtime plan-install`, `runtime install` | Exact local-only plan and authorized installation under `.cfkanban/tool-runtime`. |
 | Initial plan | `plan strict-zero` | Frozen plan and normalized digest. |
 | Plan drift | `plan compare` | Exact deltas and whether new authorization is required. |
@@ -116,7 +117,7 @@ Do not run `wrangler auth activate` or create a Repo binding automatically. When
 | Owner bootstrap | `deployment prepare-owner-credential`, `bootstrap write-owner-sql`, `deploy wrangler-action` with `bootstrap_owner` and recovery `owner_bootstrap_readback`, `deployment finalize-owner` | Plan-bound pending secret and hash-only SQL, journaled D1 attempt, fixed zero-state recovery readback, exact discovery/`/meta`/`/me` verification, promotion, and redacted receipt; none reveals the token. |
 | Migration proof | `migrations reconcile`, `migrations assess-ledger-recovery`, `migrations write-ledger-record-sql` | Ledger/schema consistency, same-journal missing-row recovery assessment, and insert-only checksum record. |
 | Skill update | `plan skill-update`, `release install-skill-bundle` | New verified local version and atomic active pointer. |
-| Instance upgrade | `plan instance-upgrade` plus journal/deploy/migration commands | Independent pinned Cloudflare upgrade. |
+| Instance upgrade | `release install-service-bundle`, `plan instance-upgrade`, journal/deploy/migration commands, `deployment finalize-upgrade` | Independent pinned Cloudflare upgrade with a verified private Service cache and redacted before/after receipt. |
 | Local readback | `state inspect`, `origin rebind-check`, `api request` | Redacted state, trusted origin continuity, and authenticated health/identity checks. |
 
 Commands accept structured JSON on stdin. Credential generation and loading remain internal. The `.mjs` entrypoint is ordinary Node JavaScript in explicit ES module format; it runs directly with `node`, requires no build step, and stays portable outside a `package.json` tree.
@@ -176,11 +177,14 @@ Failure before pointer switch leaves the active version unchanged. This operatio
 
 An Instance upgrade is a separate Cloudflare plan:
 
-1. Pin the Service deployment bundle and compatibility matrix; inspect current Worker/D1 markers and bindings.
-2. Obtain a Cloudflare restore point/bookmark as evidence when required. The Skill does not execute Time Travel restore.
-3. Create `plan instance-upgrade` with exact Worker, binding, and ordered migration deltas.
-4. Authorize and journal the exact digest; apply one migration at a time with before/after ledger and schema readback.
-5. Verify the deployed Service after the final step. Do not update local Skills implicitly.
+1. Verify the target release and publisher continuity. Install only its Service artifact with `release install-service-bundle`; this immutable private cache is separate from both the source checkout and the active Skill.
+2. Read the exact D1, current Worker deployment/version, redacted Worker bindings, authenticated Instance/Owner identity, prior receipt, migration ledger, and schema. The normal path requires one 100% Worker version and the exact existing DB/ASSETS/rate-limit bindings; an unknown or extra binding leaves this path.
+3. When migrations are present, obtain a bookmark with `runtime d1-restore-point-readback` and separately verify the current Cloudflare plan retention boundary. The command does not report that boundary and never performs a restore. A no-migration upgrade records an explicit `not required` decision.
+4. Create `plan instance-upgrade` with the exact resources, current binding readback, unchanged Owner Principal/Credential fingerprint, target compatibility, ordered migration delta, and restore evidence. Authorize its task/operation/digest and create the frozen config from the installed Service cache.
+5. Run the fixed migration readback. For each planned migration: apply only the next pending verified bundle file; read back again; require `migrations assess-ledger-recovery` to prove the one expected post-apply missing checksum; write the plan-bound fixed-path SQL; record it; then read back and reconcile again. Do not skip the post-apply proof.
+6. Run the Worker dry run, deploy once, and use `worker_deployment_readback` to prove a new single-version deployment. Finish with `deployment finalize-upgrade`, which verifies the canonical release, final migration/schema state, public health/discovery, authenticated `/meta` and `/me`, unchanged Owner Credential, and an idempotent redacted receipt.
+
+Skill update remains a separate local plan. Having a newer active Skill may be a compatibility prerequisite, but it never silently upgrades the Instance.
 
 Destructive migrations, missing restore evidence, unknown baseline, partial schema artifacts, checksum drift, resource deletion/replacement, DNS/domain changes, or cost/permission changes leave the normal upgrade path and require a new explicit plan.
 

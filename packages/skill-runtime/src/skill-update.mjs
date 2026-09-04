@@ -13,7 +13,7 @@ function safeArchiveName(name) {
   return normalized;
 }
 
-async function extractStoredZip(zipPath, targetRoot) {
+export async function extractStoredZip(zipPath, targetRoot) {
   const data = await readFile(zipPath);
   let offset = 0;
   let files = 0;

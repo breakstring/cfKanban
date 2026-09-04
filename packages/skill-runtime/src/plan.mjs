@@ -3,6 +3,8 @@ import path from "node:path";
 import { toolError } from "./errors.mjs";
 import { canonicalDigest, jsonPointerChanges, requireHttpsOrigin, requireString, requireUuid } from "./utils.mjs";
 
+export { createInstanceUpgradePlan } from "./upgrade-plan.mjs";
+
 export const DEFAULT_RATE_LIMITS = Object.freeze({
   principal: { limit: 120, period_seconds: 60 },
   instance: { limit: 300, period_seconds: 60 },
@@ -164,22 +166,5 @@ export function createSkillUpdatePlan({ taskId, current, target, installRoot }) 
     d1_migrations: false,
     switch: "atomic_after_digest_and_discovery_smoke",
     rollback: "previous_known_good_bundle",
-  };
-}
-
-export function createInstanceUpgradePlan({ taskId, instanceId, current, target, migrations, restorePoint }) {
-  return {
-    schema_version: 1,
-    kind: "deployed_instance_upgrade",
-    task_id: requireString(taskId, "task_id"),
-    instance_id: requireUuid(instanceId, "instance_id"),
-    current,
-    target: { ...target, kind: "service_deployment_bundle" },
-    migrations,
-    restore_point: restorePoint,
-    requires_cloudflare_authorization: true,
-    skill_update_included: false,
-    d1_restore_automatic: false,
-    worker_rollback_rolls_back_d1: false,
   };
 }
