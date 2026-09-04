@@ -31,18 +31,18 @@ node scripts/cfkanban-tool.mjs help
 node scripts/cfkanban-tool.mjs <command>
 ```
 
-`help` returns only the commands available to this Skill. Other commands receive structured JSON on stdin. Use `api request` for ordinary application operations. Never put a Credential into the input: `owner rotate-credential` reads current and pending secrets internally, verifies the replacement through `/api/v1/me`, and only then promotes it.
+`help` returns only the commands available to this Skill, including each command's output classification. Other commands receive structured JSON on stdin. Use `api request` for ordinary application operations; it refuses Invite and Browser Launch creation because those responses require dedicated delivery. Never put a Credential into the input: `owner rotate-credential` reads current and pending secrets internally, verifies the replacement through `/api/v1/me`, and only then promotes it.
 
 ## Task-to-command map
 
 | Goal | Command or REST operation | Required handling |
 | --- | --- | --- |
 | Verify Owner identity | `state inspect`, then `api request` → `GET /api/v1/me` | Require `is_owner=true`; never infer Owner from display name. |
-| Create the first usable board | create one Workspace, create one Project, read both back, then `POST /api/v1/web-launches` with an `admin` target | Ask for explicit immutable keys and display names; normalize the chosen Workspace key to lowercase and Project key to uppercase before preview and submission; each create is a separate atomic write. |
+| Create the first usable board | create one Workspace, create one Project, read both back, then `web launch` with an `admin` target | Ask for explicit immutable keys and display names; normalize the chosen Workspace key to lowercase and Project key to uppercase before preview and submission; each create is a separate atomic write. |
 | Manage Workspaces and Projects | Workspace/Project `GET/POST/PATCH/DELETE` plus single-resource `commands/restore` | Use explicit keys/IDs, CAS where defined, one Idempotency Key per atomic write, and readback. |
 | Rename fixed status labels | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Only display names change; stable keys, order, category, and terminal meaning do not. |
-| Create or revoke an Invite | `/api/v1/admin/invitations` and `/api/v1/admin/invitations/{invitation_id}` through `api request` | Always submit explicit Project roles; never log or retain the complete Invite URL. |
-| Recover a participant | Create a Principal Recovery Invite through the admin invitation endpoint | Bind the exact Principal ID and immutable `rotation | full_recovery` mode; show exact revocation scope first. |
+| Create or revoke an Invite | `invite create`; read/revoke through `api request` | Always submit explicit Project roles. Default clipboard delivery keeps the complete Invite URL out of stdout. |
+| Recover a participant | `invite create` with `kind=principal_recovery` | Bind the exact Principal ID and immutable `rotation | full_recovery` mode; show exact revocation scope first. |
 | Manage access | Principal, Credential, Project Grant, and Passkey admin endpoints | Display names are not identity selectors; read back every role change or revocation. |
 | Rotate Owner Credential | `credential prepare` with `purpose=owner_rotation`, then `owner rotate-credential` | Keep the same pending secret/Idempotency Key on uncertainty; promotion follows verified `/me` readback. |
 | Configure Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | One Project, explicit role, explicit public summary; disabling does not revoke existing Grants. |
@@ -50,7 +50,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Inspect request-rate settings | `GET /api/v1/admin/rate-limit-settings` | Read-only here; changing Worker bindings belongs to `cfkanban-deploy`. |
 | Restore content or a container | Stable resource read or explicit `deleted=only`, then one restore endpoint | Before container restore, show every enabled Public Join policy that will resume. |
 | Change preferred origin | `origin rebind-check`, then `GET/PUT /api/v1/admin/instance-origin` | Probe the candidate without a Credential, use expected version, then cross-read both origins. |
-| Open Owner Web | `POST /api/v1/web-launches` with an `admin` target | URL contains only a five-minute one-time code; default to Overview. |
+| Open Owner Web | `web launch` with an `admin` target | Default to Overview and direct system-browser delivery without returning the five-minute code. |
 | Inspect audit history | `GET /api/v1/admin/audit-events` | Use bounded pagination; when the task has a known scope, pass one immutable `project_id` and/or `stream=domain|security`, then verify `resolved_filters`. |
 
 The complete request and recovery guide is [references/owner-workflows.md](references/owner-workflows.md).
@@ -78,6 +78,7 @@ Audit reads without `project_id` or `stream` deliberately cover the whole Instan
 - **MUST:** Every mutation has an explicit target, expected version where defined, independent Idempotency Key, impact summary, and readback.
 - **MUST:** Before Workspace/Project creation, case-normalize explicit user-chosen keys, validate the canonical forms, and show the exact immutable values that will be stored. Case normalization does not authorize deriving or otherwise rewriting a key.
 - **MUST:** Invite roles are always explicit. Recovery binds a stable Principal ID and immutable recovery mode; display names never select identity.
+- **MUST:** Create Invites with `invite create` and Browser Launches with `web launch`; generic `api request` must not expose either one-time capability. Prefer clipboard/direct-browser delivery. Use marked `stdout_once` only after the exact acknowledgement and never repeat its value.
 - **MUST:** Owner rotation first writes the replacement to the private pending slot. Web Sessions cannot rotate or revoke Owner Credentials.
 - **SHOULD:** Recommend `writer` only when no higher-level role exists; explicit read-only intent means `reader`. The API still receives the resolved role explicitly.
 - **DECIDES:** The user or higher-level Agent controls preview, confirmation, ordering, and continuation of multi-call goals.

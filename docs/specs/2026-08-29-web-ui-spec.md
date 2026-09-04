@@ -26,7 +26,7 @@
 - 已认证 Agent 为明确 target 创建短期一次性 Browser Launch URL；浏览器通过显式 POST 兑换 HttpOnly Session。
 - 首次 Agent Launch 后可以显式登记 Passkey；Passkey 是 v0 唯一不依赖 Agent 的直接 Web 登录方法，且永远不接受长期 API Credential 粘贴或上传。
 - Owner 可以逐个 Project 开启 Public Join。未认证访客可以从多个公开 Project 中选择一个，再明确选择 `reader` 或 `writer`；每次加入只产生一个 Project Grant，不提供 Team Join 或多 Project 公开授权。
-- Codex App 的应用内浏览器（IAB）只是一个使用示例。宿主支持时 Agent 可以直接打开；否则返回同一 URL 供用户在普通浏览器打开。服务端不依赖任何宿主专有协议。
+- Codex App 的应用内浏览器（IAB）只是一个使用示例。Skill 默认通过专用命令和纯内存 loopback relay 直接打开系统浏览器，不把远端 launch URL/code 写进普通工具输出；宿主只有在提供不进入 transcript/log 的等价安全通道时才直接打开 IAB。headless 的一次性 URL 输出必须由用户明确接受宿主留存风险，并标记为不得复述或保存的单次 capability。服务端仍返回同一 URL 且不依赖任何宿主专有协议。
 - v0 不提供公开 batch/bulk 写入；Web 的拖拽一次只移动一张卡，不能通过多选、拖拽多卡或隐藏循环制造批量写接口。
 - 公开首页与认证后 Web UI 公共文案至少支持 English 与简体中文，并允许用户随时切换；这不引入业务内容自动翻译或 Skill/API locale。
 - 同一 Worker 可以通过多个有效域名访问，但实例只发布一个 preferred API/Web origin。页面不替 Cloudflare 管理域名，也不把跨域 Session/Passkey 迁移伪装成普通导航。

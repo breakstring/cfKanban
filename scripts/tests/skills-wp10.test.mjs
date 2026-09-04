@@ -1,14 +1,25 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import { buildCapabilityReport } from "../../packages/skill-runtime/src/capabilities.mjs";
 import { prepareOwnerCredential, writeOwnerBootstrapSql } from "../../packages/skill-runtime/src/bootstrap-sql.mjs";
+import {
+  assertGenericApiPathIsNonSensitive,
+  createBrowserLaunchAndDeliver,
+  createInvitationAndDeliver,
+  resolveClipboardWriter,
+  resolveSystemBrowserOpener,
+  sensitiveStdoutAcknowledgement,
+} from "../../packages/skill-runtime/src/capability-delivery.mjs";
 import { finalizeOwnerDeployment } from "../../packages/skill-runtime/src/deployment-finalize.mjs";
 import { finalizeInstanceUpgrade } from "../../packages/skill-runtime/src/instance-upgrade.mjs";
 import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
 import { redeemInvitation, redeemPublicJoin, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
+import { serializeError } from "../../packages/skill-runtime/src/errors.mjs";
 import { buildOwnerBootstrapReadbackSql, buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, parseOwnerBootstrapReadbackOutput, readD1ResourceByName, readD1RestorePoint, readWorkerResourceByName, readWorkerVersionById, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
 import { writeFrozenWranglerConfig } from "../../packages/skill-runtime/src/deployment-config.mjs";
 import { appendJournalEvent, authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
@@ -49,7 +60,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.31.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.32.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -82,6 +93,42 @@ async function fixtureState() {
     schemaVersion: 1,
   });
   return { home, stateRoot };
+}
+
+async function fixtureCurrentCredential() {
+  const fixture = await fixtureState();
+  const pending = await createPendingCredential({
+    stateRoot: fixture.stateRoot,
+    home: fixture.home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    operationId: OPERATION_ID,
+    idempotencyKey: "current-credential",
+    purpose: "owner_bootstrap",
+  });
+  const secret = await loadPendingCredentialSecret({ stateRoot: fixture.stateRoot, instanceId: INSTANCE_ID });
+  await promotePendingCredential({
+    stateRoot: fixture.stateRoot,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    fingerprint: pending.fingerprint,
+  });
+  return { ...fixture, token: secret.token };
+}
+
+function discoveryResponse(url) {
+  return new Response(JSON.stringify({
+    discovery_version: 1,
+    instance_id: INSTANCE_ID,
+    observed_origin: url.origin,
+    origin_version: 1,
+    preferred_api_origin: "https://old.example.test",
+    service_version: "0.1.0",
+    updated_at: "2026-09-04T00:00:00.000Z",
+  }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
 function upgradePlanInput(overrides = {}) {
@@ -617,15 +664,21 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
 
   assert.equal(daily.surface, "daily");
   assert.equal(names(daily).includes("scope resolve"), true);
+  assert.equal(names(daily).includes("web launch"), true);
+  assert.equal(names(daily).includes("invite create"), false);
   assert.equal(names(daily).includes("invite redeem"), true);
   assert.equal(names(daily).includes("credential verify-and-promote"), true);
   assert.equal(names(daily).includes("credential promote"), false);
   assert.equal(names(daily).includes("plan strict-zero"), false);
   assert.equal(names(admin).includes("api request"), true);
+  assert.equal(names(admin).includes("web launch"), true);
+  assert.equal(names(admin).includes("invite create"), true);
   assert.equal(names(admin).includes("owner rotate-credential"), true);
   assert.equal(names(admin).includes("scope resolve"), false);
   assert.equal(names(admin).includes("plan strict-zero"), false);
   assert.equal(names(deploy).includes("plan strict-zero"), true);
+  assert.equal(names(deploy).includes("web launch"), false);
+  assert.equal(names(deploy).includes("invite create"), false);
   assert.equal(names(deploy).includes("runtime inspect-cloudflare-auth"), true);
   assert.equal(names(deploy).includes("runtime resolve-cloudflare-auth"), true);
   assert.equal(names(deploy).includes("migrations assess-ledger-recovery"), true);
@@ -643,13 +696,431 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
   assert.equal(names(deploy).includes("deployment finalize-owner"), true);
   assert.equal(names(deploy).includes("runtime wrangler-whoami"), false);
   assert.equal(names(deploy).includes("scope resolve"), false);
-  assert.equal(deploy.commands.every((entry) => entry.description && entry.effect && Array.isArray(entry.input_fields)), true);
+  assert.deepEqual(
+    daily.commands.find((entry) => entry.name === "scope resolve").input_fields,
+    ["explicitTargets", "repoTargets", "validTargets", "allowUnfiltered"],
+  );
+  assert.equal(daily.commands.find((entry) => entry.name === "web launch").output, "conditional_one_time_capability");
+  assert.equal(admin.commands.find((entry) => entry.name === "invite create").output, "conditional_one_time_capability");
+  assert.equal([...daily.commands, ...admin.commands, ...deploy.commands].every((entry) => entry.description && entry.effect && entry.output && Array.isArray(entry.input_fields)), true);
   assert.equal([...daily.commands, ...admin.commands].some((entry) => entry.input_fields.includes("newCredentialToken")), false);
 
   await assert.rejects(
     dispatch("plan strict-zero", {}, { surface: "daily" }),
     (error) => error.code === "COMMAND_OUTSIDE_SKILL_SURFACE",
   );
+});
+
+test("one-time capability creation is blocked on generic API output and uses dedicated delivery", async (t) => {
+  const { home, stateRoot, token } = await fixtureCurrentCredential();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  assert.throws(
+    () => assertGenericApiPathIsNonSensitive({ method: "POST", apiPath: "/api/v1/web-launches" }),
+    (error) => error.code === "SENSITIVE_DELIVERY_REQUIRED" && error.details.command === "web launch",
+  );
+  assert.throws(
+    () => assertGenericApiPathIsNonSensitive({ method: "post", apiPath: "/api/v1/admin/invitations?unexpected=1" }),
+    (error) => error.code === "SENSITIVE_DELIVERY_REQUIRED" && error.details.command === "invite create",
+  );
+  assert.throws(
+    () => assertGenericApiPathIsNonSensitive({ method: " POST ", apiPath: "/api/v1/%77eb-launches/" }),
+    (error) => error.code === "SENSITIVE_DELIVERY_REQUIRED" && error.details.command === "web launch",
+  );
+  assert.throws(
+    () => assertGenericApiPathIsNonSensitive({ method: "POST", apiPath: "/api/v1/admin/invitations///" }),
+    (error) => error.code === "SENSITIVE_DELIVERY_REQUIRED" && error.details.command === "invite create",
+  );
+  assert.doesNotThrow(() => assertGenericApiPathIsNonSensitive({ method: "GET", apiPath: "/api/v1/admin/invitations" }));
+
+  const launchCode = `cfl_v1_abcdefgh_${"L".repeat(43)}`;
+  const launchUrl = `https://old.example.test/app/launch?code=${launchCode}`;
+  let relayLocation = null;
+  const browserCalls = [];
+  const browserFetch = async (url, options) => {
+    browserCalls.push({ url: url.href, headers: new Headers(options.headers) });
+    if (url.pathname === "/.well-known/cfkanban-instance.json") return discoveryResponse(url);
+    return new Response(JSON.stringify({
+      event_cursor: "10",
+      idempotent_replay: false,
+      resource: {
+        id: "88888888-8888-4888-8888-888888888888",
+        created_at: "2026-09-04T00:00:00.000Z",
+        expires_at: "2026-09-04T00:05:00.000Z",
+        launch_url: launchUrl,
+        secret_available: true,
+        target: {
+          kind: "project",
+          workspace_key: "team",
+          project_key: "APP",
+          project_id: "99999999-9999-4999-8999-999999999999",
+          entry_path: "/app/w/team/p/APP",
+        },
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const launched = await createBrowserLaunchAndDeliver({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    target: { kind: "project", workspace_key: "team", project_key: "APP" },
+    idempotencyKey: "browser-launch-one",
+    fetchImpl: browserFetch,
+    browserOpener: {
+      open: async (localUrl) => {
+        assert.match(localUrl, /^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]+$/u);
+        assert.equal(localUrl.includes(launchCode), false);
+        const response = await fetch(localUrl, { redirect: "manual" });
+        assert.equal(response.status, 302);
+        relayLocation = response.headers.get("location");
+      },
+    },
+  });
+  assert.equal(browserCalls.length, 2);
+  assert.equal(browserCalls[0].headers.has("authorization"), false);
+  assert.equal(browserCalls[1].headers.get("authorization"), `Bearer ${token}`);
+  assert.equal(relayLocation, launchUrl);
+  assert.deepEqual(launched.delivery, { channel: "system_browser", delivered: true, capability_exposed: false });
+  assert.equal(JSON.stringify(launched).includes(launchCode), false);
+
+  let replayOpenCalls = 0;
+  const replayedLaunch = await createBrowserLaunchAndDeliver({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    target: { kind: "project", workspace_key: "team", project_key: "APP" },
+    idempotencyKey: "browser-launch-one",
+    fetchImpl: async (url) => url.pathname === "/.well-known/cfkanban-instance.json"
+      ? discoveryResponse(url)
+      : new Response(JSON.stringify({
+        event_cursor: "10",
+        idempotent_replay: true,
+        resource: {
+          id: "88888888-8888-4888-8888-888888888888",
+          created_at: "2026-09-04T00:00:00.000Z",
+          expires_at: "2026-09-04T00:05:00.000Z",
+          secret_available: false,
+          target: {
+            kind: "project",
+            workspace_key: "team",
+            project_key: "APP",
+            project_id: "99999999-9999-4999-8999-999999999999",
+            entry_path: "/app/w/team/p/APP",
+          },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    browserOpener: { open: async () => { replayOpenCalls += 1; } },
+  });
+  assert.equal(replayOpenCalls, 0);
+  assert.deepEqual(replayedLaunch.delivery, {
+    channel: "system_browser",
+    delivered: false,
+    reason: "one_time_secret_not_available_on_replay",
+  });
+  assert.equal(JSON.stringify(replayedLaunch).includes(launchCode), false);
+
+  let clipboardValue = null;
+  const inviteCode = `cfi_v1_abcdefgh_${"I".repeat(43)}`;
+  const inviteUrl = `https://old.example.test/invite?code=${inviteCode}`;
+  const copyText = `Join the test Project: ${inviteUrl}`;
+  const invited = await createInvitationAndDeliver({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    body: { kind: "project_grant", grants: [{ project_id: "99999999-9999-4999-8999-999999999999", role: "writer" }] },
+    idempotencyKey: "invite-create-one",
+    fetchImpl: async (url, options) => {
+      if (url.pathname === "/.well-known/cfkanban-instance.json") return discoveryResponse(url);
+      assert.equal(url.pathname, "/api/v1/admin/invitations");
+      assert.equal(new Headers(options.headers).get("authorization"), `Bearer ${token}`);
+      return new Response(JSON.stringify({
+        event_cursor: "11",
+        idempotent_replay: false,
+        resource: {
+          allowed_actions: ["read", "revoke"],
+          bound_principal: null,
+          code_fingerprint: "cfi_v1_abcdefgh_…",
+          copy_text: copyText,
+          created_at: "2026-09-04T00:00:00.000Z",
+          deleted_at: null,
+          expires_at: "2026-09-11T00:00:00.000Z",
+          grants: [{
+            display_name: "App",
+            project_id: "99999999-9999-4999-8999-999999999999",
+            project_key: "APP",
+            role: "writer",
+            workspace_key: "team",
+          }],
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          invite_url: inviteUrl,
+          kind: "project_grant",
+          recovery_mode: null,
+          redeemed_at: null,
+          redeemed_by_principal_id: null,
+          revoked_at: null,
+          secret_available: true,
+          status: "active",
+          updated_at: "2026-09-04T00:00:00.000Z",
+          version: 1,
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+    clipboardWriter: { write: async (value) => { clipboardValue = value; } },
+  });
+  assert.equal(clipboardValue, copyText);
+  assert.deepEqual(invited.delivery, { channel: "clipboard", delivered: true, capability_exposed: false });
+  assert.equal(JSON.stringify(invited).includes(inviteCode), false);
+
+  let replayClipboardWrites = 0;
+  const replayedInvite = await createInvitationAndDeliver({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    body: { kind: "project_grant", grants: [{ project_id: "99999999-9999-4999-8999-999999999999", role: "writer" }] },
+    idempotencyKey: "invite-create-one",
+    fetchImpl: async (url) => url.pathname === "/.well-known/cfkanban-instance.json"
+      ? discoveryResponse(url)
+      : new Response(JSON.stringify({
+        event_cursor: "11",
+        idempotent_replay: true,
+        resource: {
+          bound_principal: null,
+          code_fingerprint: "cfi_v1_abcdefgh_…",
+          created_at: "2026-09-04T00:00:00.000Z",
+          expires_at: "2026-09-11T00:00:00.000Z",
+          grants: [{
+            project_id: "99999999-9999-4999-8999-999999999999",
+            project_key: "APP",
+            role: "writer",
+            workspace_key: "team",
+          }],
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          kind: "project_grant",
+          recovery_mode: null,
+          secret_available: false,
+          status: "active",
+          version: 1,
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    clipboardWriter: { write: async () => { replayClipboardWrites += 1; } },
+  });
+  assert.equal(replayClipboardWrites, 0);
+  assert.deepEqual(replayedInvite.delivery, {
+    channel: "clipboard",
+    delivered: false,
+    reason: "one_time_secret_not_available_on_replay",
+  });
+  assert.equal(JSON.stringify(replayedInvite).includes(inviteCode), false);
+});
+
+test("browser and clipboard delivery preflight covers macOS, Windows, WSL2, and Linux", async () => {
+  const available = async () => undefined;
+  assert.equal((await resolveSystemBrowserOpener({ platform: "darwin", release: "25.0.0", env: {}, accessImpl: available })).kind, "system_browser");
+  assert.equal((await resolveClipboardWriter({ platform: "darwin", release: "25.0.0", env: {}, accessImpl: available })).kind, "clipboard");
+  assert.equal((await resolveSystemBrowserOpener({
+    platform: "win32",
+    release: "10.0.26100",
+    env: { PATH: "C:\\Windows\\System32", PATHEXT: ".EXE" },
+    accessImpl: async (candidate) => {
+      assert.equal(candidate, "C:\\Windows\\System32\\cmd.exe");
+    },
+  })).kind, "system_browser");
+  assert.equal((await resolveClipboardWriter({
+    platform: "linux",
+    release: "6.6.87.2-microsoft-standard-WSL2",
+    env: { PATH: "/mnt/c/Windows/System32", WSL_DISTRO_NAME: "Ubuntu" },
+    accessImpl: async (candidate) => {
+      if (!candidate.endsWith("/clip.exe")) throw new Error("missing");
+    },
+  })).kind, "clipboard");
+  assert.equal((await resolveSystemBrowserOpener({
+    platform: "linux",
+    release: "6.12.0",
+    env: { DISPLAY: ":0", PATH: "/usr/bin" },
+    accessImpl: async (candidate) => {
+      if (candidate !== "/usr/bin/xdg-open") throw new Error("missing");
+    },
+  })).kind, "system_browser");
+
+  let deliveredEnvironment = null;
+  const spawnImpl = (_executable, _args, options) => {
+    deliveredEnvironment = options.env;
+    const child = new EventEmitter();
+    child.stdin = new PassThrough();
+    queueMicrotask(() => child.emit("exit", 0));
+    return child;
+  };
+  const sanitizedOpener = await resolveSystemBrowserOpener({
+    platform: "darwin",
+    release: "25.0.0",
+    env: { HOME: "/Users/test", LANG: "en_US.UTF-8", PATH: "/usr/bin", PRIVATE_DEPLOY_TOKEN: "must-not-leak" },
+    accessImpl: available,
+    spawnImpl,
+  });
+  await sanitizedOpener.open("http://127.0.0.1:12345/safe-nonce");
+  assert.deepEqual(deliveredEnvironment, { HOME: "/Users/test", LANG: "en_US.UTF-8", PATH: "/usr/bin" });
+});
+
+test("headless delivery stops before remote creation and stdout fallback requires exact acknowledgement", async (t) => {
+  await assert.rejects(
+    resolveSystemBrowserOpener({ platform: "linux", release: "6.12.0", env: { PATH: "/usr/bin" } }),
+    (error) => error.code === "BROWSER_DELIVERY_UNAVAILABLE",
+  );
+  await assert.rejects(
+    resolveClipboardWriter({ platform: "linux", release: "6.12.0", env: { PATH: "/usr/bin" } }),
+    (error) => error.code === "CLIPBOARD_DELIVERY_UNAVAILABLE",
+  );
+
+  const { home, stateRoot } = await fixtureCurrentCredential();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  let requests = 0;
+  await assert.rejects(
+    createBrowserLaunchAndDeliver({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      target: { kind: "project", workspace_key: "team", project_key: "APP" },
+      idempotencyKey: "invalid-browser-opener",
+      browserOpener: {},
+      fetchImpl: async () => { requests += 1; },
+    }),
+    (error) => error.code === "BROWSER_DELIVERY_UNAVAILABLE",
+  );
+  await assert.rejects(
+    createInvitationAndDeliver({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      body: { kind: "project_grant", grants: [{ project_id: "99999999-9999-4999-8999-999999999999", role: "writer" }] },
+      idempotencyKey: "invalid-clipboard-writer",
+      clipboardWriter: {},
+      fetchImpl: async () => { requests += 1; },
+    }),
+    (error) => error.code === "CLIPBOARD_DELIVERY_UNAVAILABLE",
+  );
+  assert.equal(requests, 0);
+  await assert.rejects(
+    createBrowserLaunchAndDeliver({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      target: { kind: "project", workspace_key: "team", project_key: "APP" },
+      idempotencyKey: "browser-launch-headless",
+      delivery: "stdout_once",
+      sensitiveOutputAcknowledgement: "yes",
+      fetchImpl: async () => { requests += 1; },
+    }),
+    (error) => error.code === "SENSITIVE_STDOUT_ACKNOWLEDGEMENT_REQUIRED",
+  );
+  assert.equal(requests, 0);
+
+  const launchCode = `cfl_v1_abcdefgh_${"S".repeat(43)}`;
+  const launchUrl = `https://old.example.test/app/launch?code=${launchCode}`;
+  const result = await createBrowserLaunchAndDeliver({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    target: { kind: "admin", section: "overview" },
+    idempotencyKey: "browser-launch-stdout",
+    delivery: "stdout_once",
+    sensitiveOutputAcknowledgement: sensitiveStdoutAcknowledgement,
+    fetchImpl: async (url) => url.pathname === "/.well-known/cfkanban-instance.json"
+      ? discoveryResponse(url)
+      : new Response(JSON.stringify({
+        event_cursor: "12",
+        idempotent_replay: false,
+        resource: {
+          id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          created_at: "2026-09-04T00:00:00.000Z",
+          expires_at: "2026-09-04T00:05:00.000Z",
+          launch_url: launchUrl,
+          secret_available: true,
+          target: { kind: "admin", section: "overview", entry_path: "/app/admin" },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+  assert.equal(result.sensitive_output, launchUrl);
+  assert.equal(result.delivery.classification, "one_time_bearer_capability");
+});
+
+test("post-commit Browser and Invite delivery failures expose only safe recovery metadata", async (t) => {
+  const { home, stateRoot } = await fixtureCurrentCredential();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const launchCode = `cfl_v1_abcdefgh_${"F".repeat(43)}`;
+  const launchUrl = `https://old.example.test/app/launch?code=${launchCode}`;
+  let browserError;
+  try {
+    await createBrowserLaunchAndDeliver({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      target: { kind: "project", workspace_key: "team", project_key: "APP" },
+      idempotencyKey: "browser-delivery-failure",
+      fetchImpl: async (url) => url.pathname === "/.well-known/cfkanban-instance.json"
+        ? discoveryResponse(url)
+        : new Response(JSON.stringify({
+          event_cursor: "13",
+          idempotent_replay: false,
+          resource: {
+            id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            created_at: "2026-09-04T00:00:00.000Z",
+            expires_at: "2026-09-04T00:05:00.000Z",
+            launch_url: launchUrl,
+            secret_available: true,
+            target: {
+              kind: "project",
+              workspace_key: "team",
+              project_key: "APP",
+              project_id: "99999999-9999-4999-8999-999999999999",
+              entry_path: "/app/w/team/p/APP",
+            },
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } }),
+      browserOpener: { open: async () => { throw new Error(`never serialize ${launchUrl}`); } },
+    });
+  } catch (error) {
+    browserError = error;
+  }
+  const safeBrowserError = serializeError(browserError);
+  assert.equal(safeBrowserError.error.code, "BROWSER_DELIVERY_FAILED_AFTER_COMMIT");
+  assert.equal(safeBrowserError.error.details.committed, true);
+  assert.equal(JSON.stringify(safeBrowserError).includes(launchCode), false);
+
+  const inviteCode = `cfi_v1_abcdefgh_${"G".repeat(43)}`;
+  const inviteUrl = `https://old.example.test/invite?code=${inviteCode}`;
+  const copyText = `Join the test Project: ${inviteUrl}`;
+  let clipboardError;
+  try {
+    await createInvitationAndDeliver({
+      stateRoot,
+      instanceId: INSTANCE_ID,
+      body: { kind: "project_grant", grants: [{ project_id: "99999999-9999-4999-8999-999999999999", role: "writer" }] },
+      idempotencyKey: "invite-delivery-failure",
+      fetchImpl: async (url) => url.pathname === "/.well-known/cfkanban-instance.json"
+        ? discoveryResponse(url)
+        : new Response(JSON.stringify({
+          event_cursor: "14",
+          idempotent_replay: false,
+          resource: {
+            bound_principal: null,
+            code_fingerprint: "cfi_v1_abcdefgh_…",
+            copy_text: copyText,
+            created_at: "2026-09-04T00:00:00.000Z",
+            expires_at: "2026-09-11T00:00:00.000Z",
+            grants: [{
+              project_id: "99999999-9999-4999-8999-999999999999",
+              project_key: "APP",
+              role: "writer",
+              workspace_key: "team",
+            }],
+            id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            invite_url: inviteUrl,
+            kind: "project_grant",
+            recovery_mode: null,
+            secret_available: true,
+            status: "active",
+            version: 1,
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } }),
+      clipboardWriter: { write: async () => { throw new Error(`never serialize ${copyText}`); } },
+    });
+  } catch (error) {
+    clipboardError = error;
+  }
+  const safeClipboardError = serializeError(clipboardError);
+  assert.equal(safeClipboardError.error.code, "CLIPBOARD_DELIVERY_FAILED_AFTER_COMMIT");
+  assert.equal(safeClipboardError.error.details.committed, true);
+  assert.equal(JSON.stringify(safeClipboardError).includes(inviteCode), false);
 });
 
 test("Invite redemption injects and verifies a pending Credential without exposing it", async (t) => {
@@ -3159,6 +3630,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.29.md",
     "../../release/notes/0.1.0-alpha.30.md",
     "../../release/notes/0.1.0-alpha.31.md",
+    "../../release/notes/0.1.0-alpha.32.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3189,6 +3661,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.29.json",
     "../../release/config/0.1.0-alpha.30.json",
     "../../release/config/0.1.0-alpha.31.json",
+    "../../release/config/0.1.0-alpha.32.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

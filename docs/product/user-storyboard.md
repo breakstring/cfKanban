@@ -326,8 +326,8 @@
 
 - **任务触发**：陈说“把这个 Project 的看板打开给我看看”，或“打开 CFK-123”。
 - **起点**：陈的 Agent 已在当前执行环境中持有该实例的有效 Credential；目标可能来自本次明确指令、Issue 引用或 Repo scope。
-- **Agent 行动**：陈的 Agent 先解析明确实例与 target，再调用一次 Browser Launch 创建能力。宿主支持应用内浏览器时直接打开；否则返回同一短期 URL 供陈在普通浏览器打开。浏览器首次 GET 只加载启动页，显式 POST 才兑换为 HttpOnly Session，成功后立即移除地址中的 launch code 并进入目标。
-- **能力与安全边界**：Browser Launch 只把当前 Principal 已有权限安全带入浏览器，不授予新 Grant。长期 Credential 不进入 URL、浏览器脚本或存储。服务不能依赖 Codex IAB 等专有接口；IAB 只是更顺手的打开方式。
+- **Agent 行动**：陈的 Agent 先解析明确实例与 target，再调用专用 `web launch`。命令先确认本地浏览器 opener 可用，创建 Browser Launch 后通过只存在于内存的 loopback redirect 直接打开，普通输出只保留安全 metadata；宿主提供等价的不落 transcript 安全通道时也可直接打开 IAB。浏览器首次 GET 只加载启动页，显式 POST 才兑换为 HttpOnly Session，成功后立即移除地址中的 launch code 并进入目标。
+- **能力与安全边界**：Browser Launch 只把当前 Principal 已有权限安全带入浏览器，不授予新 Grant。长期 Credential 不进入 URL、浏览器脚本或存储，远端 launch URL/code 也不进入普通 stdout、日志、journal 或 receipt。服务不能依赖 Codex IAB 等专有接口；真正 headless 的手工 URL 交付只有在用户明确接受宿主留存风险后才使用标记的一次性输出。
 - **成功反馈**：陈直接看到明确 Project 看板或 Issue；页面可见 scope 与身份摘要，不需要再与 Agent 往返询问当前状态，也不暴露 Credential。
 - **失败恢复**：target 不明确时上层 Agent自行决定怎样消歧；launch 已用、过期、撤销、资源无权或不存在时，页面不泄露目标详情，只建议回到 Agent 重新创建或选择目标。
 - **已确认**：launch 固定 5 分钟一次性；Session 固定 8 小时、不滑动续期且无 refresh，绑定源 Credential，并限制在 launch target 的 Project/admin scope。到期后只能让 Agent 重新创建 launch，不提供网页密码或 Credential 粘贴入口。

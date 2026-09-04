@@ -228,7 +228,7 @@ Queue 是至少一次投递通道，消费者必须按 event ID 幂等。Queue �
 - 裁剪/渲染 context pack；
 - 对不同 Agent 的配置差异做适配；
 - 按需调用 bundle 内 Node.js/TypeScript scripts 完成凭据、重试、部署 journal 等确定性操作；
-- 为明确 Project/Issue/Owner 管理 target 创建一次性 Browser Launch；宿主支持时打开 IAB，否则返回普通浏览器 URL。
+- 为明确 Project/Issue/Owner 管理 target 创建一次性 Browser Launch；专用 Skill 命令默认通过内存 loopback 直接打开系统浏览器且不输出远端 code，只有宿主提供等价安全通道时打开 IAB。headless 返回 URL 必须是用户接受留存风险后的显式、标记单次输出。
 - 低频读取当前 trusted origin 的实例发现文档；只有更高版本指示与无 Credential 目标探测完全一致时自动更新本地 trusted origin，否则保留旧记录并请求显式 rebind。
 
 Skill 是客户端分发包，不是云端状态或人类页面。v0 不发布独立 cfKanban CLI；Node scripts 只是 Skill 内部执行资源。人类直接表面由同一 Worker 托管的极简 Web UI 提供，并复用同一 REST 业务合同。
