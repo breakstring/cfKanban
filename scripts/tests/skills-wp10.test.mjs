@@ -49,7 +49,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.25.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.26.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -2985,6 +2985,23 @@ test("admin Skill canonicalizes user-chosen Workspace and Project key casing bef
   }
 });
 
+test("admin Skill documents the exact Owner audit filter and cursor contract", async () => {
+  const [admin, workflowEn, workflowZh] = await Promise.all([
+    readFile(new URL("../../skills/cfkanban-admin/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-admin/references/owner-workflows.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-admin/references/owner-workflows.zh-CN.md", import.meta.url), "utf8"),
+  ]);
+  for (const source of [admin, workflowEn, workflowZh]) {
+    assert.match(source, /project_id/u);
+    assert.match(source, /stream=domain\|security/u);
+    assert.match(source, /resolved_filters/u);
+    assert.match(source, /cursor/u);
+  }
+  assert.match(admin, /whole Instance and both streams/u);
+  assert.match(workflowEn, /Omitting both is an intentional Instance-wide, both-stream read/u);
+  assert.match(workflowZh, /两者都省略表示有意读取整个实例的业务与安全审计/u);
+});
+
 test("deployment Skill directly documents the deterministic Cloudflare authentication boundary", async () => {
   const [deploy, workflowEn, workflowZh] = await Promise.all([
     readFile(new URL("../../skills/cfkanban-deploy/SKILL.md", import.meta.url), "utf8"),
@@ -3058,6 +3075,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.23.md",
     "../../release/notes/0.1.0-alpha.24.md",
     "../../release/notes/0.1.0-alpha.25.md",
+    "../../release/notes/0.1.0-alpha.26.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3082,6 +3100,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.23.json",
     "../../release/config/0.1.0-alpha.24.json",
     "../../release/config/0.1.0-alpha.25.json",
+    "../../release/config/0.1.0-alpha.26.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

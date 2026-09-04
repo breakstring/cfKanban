@@ -50,7 +50,7 @@ Accept user-chosen keys in either letter case and do not ask the user to retype 
 | Rotate Owner Credential | dedicated `credential prepare` + `owner rotate-credential` | See the rotation workflow below. |
 | List/create Project Grants | `GET/POST /api/v1/admin/projects/{project_id}/grants` | One stable Principal and explicit role. |
 | Read/change/revoke Grant | `GET/PATCH/DELETE /api/v1/admin/grants/{grant_id}` | Role changes/revocation do not erase assignment/history. |
-| Read audit | `GET /api/v1/admin/audit-events` | Bounded pagination and explicit filters. |
+| Read audit | `GET /api/v1/admin/audit-events` | Bounded pagination; optionally filter by one immutable `project_id` and/or `stream=domain|security`, and verify `resolved_filters`. |
 | Read/change preferred origin | `GET/PUT /api/v1/admin/instance-origin` | Credential-free candidate probe, CAS, old/new discovery readback. |
 | Manage Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | One Project and explicit role; disable does not revoke Grants. |
 | Read/change Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Explicit Issue/Comment/Principal limits and current usage. |
@@ -105,6 +105,10 @@ Before restoring a Project or Workspace, list every still-enabled Public Join po
 For preferred-origin changes, probe the proposed HTTPS origin without a Credential, update with the current expected version, then read the public discovery document from both old and new origins. Do not rely on cross-origin authenticated redirects.
 
 An Owner Browser Launch uses the current Owner Credential only to create a five-minute opaque code. It exchanges into an instance-level admin Session, opens Overview, and does not prefetch all Issues. The user may then explicitly choose a Workspace/Project. The long-lived Credential never enters the browser.
+
+## Audit filters
+
+Use `project_id` when the task concerns one known Project and `stream=domain|security` when only one event class is relevant. Omitting both is an intentional Instance-wide, both-stream read. The response repeats the normalized `project_id` and stream list in `resolved_filters`. Continue with `next_cursor` only while those filters stay unchanged; a changed filter invalidates the old cursor and starts a fresh sequence.
 
 ## Error and readback rules
 

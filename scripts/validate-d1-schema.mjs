@@ -127,6 +127,8 @@ const planChecks = [
   ["project issue list", "SELECT number FROM issues WHERE project_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC, number DESC LIMIT 21", ["project"], /idx_issues_project_list/],
   ["issue candidates", "SELECT number FROM issues WHERE project_id = ? AND status_key = ? AND deleted_at IS NULL ORDER BY priority_rank, created_at, number LIMIT 21", ["project", "todo"], /idx_issues_candidates/],
   ["project grants", "SELECT principal_id FROM project_grants WHERE project_id = ? AND revoked_at IS NULL AND role = ?", ["project", "writer"], /idx_project_grants_project_active/],
+  ["audit events by stream", "SELECT sequence FROM events WHERE stream = ? AND sequence > ? ORDER BY sequence ASC LIMIT 21", ["security", 0], /idx_events_stream_sequence/],
+  ["audit events by Project and stream", "SELECT sequence FROM events WHERE project_id = ? AND stream = ? AND sequence > ? ORDER BY sequence ASC LIMIT 21", ["project", "domain", 0], /idx_events_project_stream_sequence/],
   ["workspace tombstones", "SELECT id FROM workspaces INDEXED BY idx_workspaces_tombstones WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", [], /idx_workspaces_tombstones/],
   ["project tombstones", "SELECT id FROM projects INDEXED BY idx_projects_workspace_tombstones WHERE workspace_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT 21", ["workspace"], /idx_projects_workspace_tombstones/],
   ["comments", "SELECT id FROM comments WHERE issue_id = ? AND deleted_at IS NULL ORDER BY created_at, id LIMIT 21", ["issue-1"], /idx_comments_issue_list/],
@@ -203,6 +205,38 @@ assert.doesNotMatch(
   /SCAN events(?:\s|$)/,
   `participant events unexpectedly scan the global Event stream: ${participantEventPlan}`,
 );
+
+const projectAuditSql = `
+  WITH candidate_events AS (
+    SELECT sequence, id
+    FROM events INDEXED BY idx_events_project_stream_sequence
+    WHERE project_id = ?2 AND stream = 'domain' AND sequence > ?1
+    UNION ALL
+    SELECT sequence, id
+    FROM events INDEXED BY idx_events_project_stream_sequence
+    WHERE project_id = ?2 AND stream = 'security' AND sequence > ?1
+    ORDER BY sequence ASC LIMIT ?3
+  )
+  SELECT sequence FROM candidate_events ORDER BY sequence ASC LIMIT ?3`;
+const projectAuditPlan = db.prepare(`EXPLAIN QUERY PLAN ${projectAuditSql}`)
+  .all(0, "project", 21)
+  .map((row) => row.detail)
+  .join(" | ");
+assert.match(
+  projectAuditPlan,
+  /idx_events_project_stream_sequence/,
+  `Project-filtered Audit events: ${projectAuditPlan}`,
+);
+assert.doesNotMatch(
+  projectAuditPlan,
+  /SCAN events(?:\s|$)|USE TEMP B-TREE FOR ORDER BY/,
+  `Project-filtered Audit events unexpectedly scan or sort the full Event stream: ${projectAuditPlan}`,
+);
+assert.match(
+  eventServiceSource,
+  /WITH candidate_events AS \([\s\S]*?idx_events_project_stream_sequence[\s\S]*?stream = 'domain'[\s\S]*?UNION ALL[\s\S]*?idx_events_project_stream_sequence[\s\S]*?stream = 'security'[\s\S]*?ORDER BY sequence ASC LIMIT \?3/,
+  "runtime Project-filtered Audit query must merge both indexed streams before applying the page limit",
+);
 assert.match(
   eventServiceSource,
   /FROM events INDEXED BY idx_events_project_relation_sequence[\s\S]*?project_id IN \(SELECT id FROM current_result_projects\)[\s\S]*?EXISTS \([\s\S]*?FROM current_visible_projects visible_relation_project[\s\S]*?visible_relation_project\.id = relation_other_project_id/,
@@ -214,4 +248,4 @@ assert.doesNotMatch(
   "runtime Relation Event query regressed to selected Projects x visible Projects expansion",
 );
 
-console.log(`D1 schema checks passed for ${tables.length} tables, core constraints, tombstone uniqueness, and ${planChecks.length + 1} indexed query shapes.`);
+console.log(`D1 schema checks passed for ${tables.length} tables, core constraints, tombstone uniqueness, and ${planChecks.length + 2} indexed query shapes.`);

@@ -6154,6 +6154,28 @@
         ],
         "parameters": [
           {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "Restrict the Owner audit feed to events bound to one immutable Project ID."
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "domain",
+                "security"
+              ]
+            },
+            "description": "Restrict the Owner audit feed to one event stream; omission reads both streams."
+          },
+          {
             "name": "after",
             "in": "query",
             "required": false,
@@ -13586,12 +13608,46 @@
           }
         ]
       },
+      "AuditEventResolvedFilters": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "streams"
+        ],
+        "properties": {
+          "project_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "streams": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "domain",
+                "security"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "AuditEventListResult": {
         "type": "object",
         "required": [
           "has_more",
           "items",
-          "next_cursor"
+          "next_cursor",
+          "resolved_filters"
         ],
         "properties": {
           "has_more": {
@@ -13605,6 +13661,9 @@
           },
           "next_cursor": {
             "type": "string"
+          },
+          "resolved_filters": {
+            "$ref": "#/components/schemas/AuditEventResolvedFilters"
           }
         },
         "additionalProperties": false

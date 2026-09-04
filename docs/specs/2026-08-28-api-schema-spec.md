@@ -7,7 +7,7 @@
 - Web 合同：[极简 Web UI SPEC](2026-08-29-web-ui-spec.md)（Frozen）
 - 架构基线：[Cloudflare 架构基线](../architecture/cloudflare-baseline.md)
 - 平台快照：[2026-08-28 Cloudflare 平台快照](../research/cloudflare-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-08-29
+- 最近更新：2026-09-04（D-262）
 - 冻结日期：2026-08-29
 
 ## 1. 目的与边界
@@ -254,9 +254,11 @@ Relation 的方向固定：`blocks` 表示 source blocks target；`parent` 表�
 | PUT | `/api/v1/admin/instance-origin` | Owner Bearer only | 带 expected version 原子发布一个规范化 HTTPS preferred origin；拒绝 Cookie Session |
 | GET/POST | `/api/v1/admin/projects/{project_id}/grants` | Owner | 列表；创建或重新授予一条明确 Grant |
 | GET/PATCH/DELETE | `/api/v1/admin/grants/{grant_id}` | Owner | 读取；改 reader/writer；撤销，均带 expected version |
-| GET | `/api/v1/admin/audit-events` | Owner | 按 sequence 增量读取安全与领域审计投影 |
+| GET | `/api/v1/admin/audit-events` | Owner | 按 sequence 增量读取安全与领域审计投影；可按一个 immutable `project_id` 和／或 `stream=domain|security` 筛选 |
 
 Project Invite 创建 body 必须逐项给出 Project immutable ID 与 `reader|writer`，1～20 项且去重。API 不采用 Skill 的默认 role 建议。Recovery Invite 必须给出 bound `principal_id` 和不可变 `rotation|full_recovery` mode，不能同时携带 Project grants。
+
+Owner Audit 不带 `project_id` 与 `stream` 时有意读取整个实例的两个 stream。响应必须返回 `resolved_filters={project_id,streams}`；省略 `stream` 时 `streams` 固定回显 `domain,security`。Audit cursor 的 filter hash 同时绑定规范化 Project ID 与 stream 列表，改变任一筛选后复用旧 cursor 返回 `CURSOR_SCOPE_MISMATCH`。`project_id` 只按 Event 当时绑定的 Project 过滤，不要求目标 Project 当前仍 active，因此删除后的历史仍可定位；全局安全事件的 Project 为空，不进入 Project-filtered 结果。
 
 Owner Credential 不提供通用 DELETE。正常 rotation 请求携带由 `cfkanban-admin` 本地脚本预生成并已写入受限 pending 文件的新 token，服务端以一个幂等原子操作保存新 digest、撤销当前 Bearer Credential 并写 security Audit；响应不回传 secret。脚本再用新 Credential 验证 `/me` 并原子切换本地 current slot。全部 Owner Credential 丢失不走 HTTP 应用端点，只能使用既有部署外恢复合同。
 
@@ -552,7 +554,7 @@ Relation 唯一性：
 
 `scope_key` 为 `principal:<id>`；没有旧 Credential 的 `new_principal` 或 `full_recovery` 兑换使用 `invitation:<id>`。它永不依赖 nullable 列的 UNIQUE 行为。`response_json` 只保存已去敏且不超过应用响应上限的精确结果。
 
-`events` 是一个物理 append-only 表、两个逻辑读取面：参与者 Event feed 只查询 `stream='domain'` 且执行 Project 授权过滤；Owner audit endpoint 可以读取 domain + security 投影。一个跨 Project 或安全敏感操作可以写多条具有同一 operation ID 的 Event；每条 domain Event 只绑定一个明确 Project，避免用 JSON Project 列表绕过授权查询。`operation_commits.last_event_sequence` 指向该操作最后一条 Event，作为写响应的 `event_cursor` 基础。
+`events` 是一个物理 append-only 表、两个逻辑读取面：参与者 Event feed 只查询 `stream='domain'` 且执行 Project 授权过滤；Owner audit endpoint 可以读取 domain + security 投影，并按一个 immutable Project ID 和／或一个 stream 做有界筛选。一个跨 Project 或安全敏感操作可以写多条具有同一 operation ID 的 Event；每条 domain Event 只绑定一个明确 Project，避免用 JSON Project 列表绕过授权查询。`operation_commits.last_event_sequence` 指向该操作最后一条 Event，作为写响应的 `event_cursor` 基础。
 
 ## 9. 必需索引与查询形状
 
@@ -575,7 +577,7 @@ Relation 唯一性：
 | `comments(issue_id,deleted_at,created_at,id)` | 评论分页/context |
 | `issue_relations(source_issue_id,deleted_at,kind)` 与 target 对称索引 | 关系与 blocked 投影 |
 | unique `invitations(code_digest)`；`invitations(created_at DESC,id)` | redeem 与 Owner 列表 |
-| `events(project_id,stream,sequence)`；`events(stream,sequence)` | Project-filtered Event 与 Owner audit |
+| `events(project_id,stream,sequence)`；`events(stream,sequence)` | Project/stream-filtered Event 与 Owner Audit；Project-only Audit 合并两个有索引的 stream 分支 |
 | `operation_commits(operation_id)` | 响应丢失后的提交探针 |
 | unique idempotency scope key；`idempotency_records(expires_at,id)` | claim/replay 与有界清理 |
 
@@ -692,6 +694,7 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 10. 验证三项 active counters 只在对应 Project 的 Public Join enabled 时与资源/Grant 状态变化同事务提交，其他 Project 不受影响；关闭后普通写入不受三项 limits 约束，重新开启从权威表原子重算。验证 limit 可低于 usage 且不破坏既有数据，over-limit 只阻止计数增长；soft delete/revoke 释放、restore/regrant 重占，Issue restore 同时校验其有效 Comments，Comment 无容量时 complete 不改变 Issue status，Principal 无容量时不遗留孤立身份。
 11. 对每类错误验证 HTTP、code/category/source、retryable/recovery、header/body Retry-After 和敏感信息裁剪一致；mock D1 daily/storage/overload、Cloudflare 1027 HTML、edge 429、未知非 JSON 5xx 与网络失败，证明 Web/Skill 得到一致但不伪造来源的 normalized result。
 12. 验证 discovery 响应按请求 origin 动态生成且 `no-store`，不接受转发 host 覆盖；Owner Cookie Session 不能修改 preferred origin。验证客户端只在当前 trusted origin 发布更高 `origin_version` 且无 Credential、不跟随 redirect 的目标探测完全一致时自动迁移，降级、同版本漂移、instance mismatch、target observed-origin mismatch 与旧 origin 不可达都不改写本地信任。
+13. 验证 Owner Audit 的 Project/stream 筛选、`resolved_filters`、筛选绑定 cursor 和既有 Event 索引查询形状；不允许 Project-only Audit 退化为全局 Event 扫描。
 
 ## 15. 冻结结论
 
@@ -703,6 +706,7 @@ D-215/D-216 已要求对两份 Frozen 上游 SPEC 做合同修订 3；本文相�
 - v0 不使用 FTS5；后期检索增强优先采用 Vectorize 可重建派生索引；
 - canceled blocker 不自动视为完成；
 - 一个物理 Event 表通过 stream/权限形成参与者 Event 与 Owner Audit 两个逻辑读取面；
+- D-262 为 Owner Audit 增加单 Project 与单 stream 的可组合筛选、`resolved_filters` 和筛选绑定 cursor；无筛选仍明确表示实例级双 stream 读取；
 - D1 条件 SQL + operation commit + pending/committed idempotency state machine 代替传统 callback transaction。
 - Browser Launch 与 Web Session 分表保存 hash-only secret；同源 Web 复用现有权限并用 CSRF 防护写入。
 - Passkey 使用独立 Web Authenticator 与短期 challenge 表；Session 以 source kind/id 统一表达 Credential launch 或 Passkey 来源。v0 使用 discoverable credential、精确请求 hostname RP ID 与完整 HTTPS expected origin，公开认证失败不泄露 credential 是否存在。

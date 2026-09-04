@@ -8,7 +8,7 @@
 - 关联 Agent Skills：[Agent Skills & Bootstrap SPEC](2026-08-28-agent-skills-bootstrap-spec.md)
 - 关联 API/Schema：[API & D1 Schema SPEC](2026-08-28-api-schema-spec.md)
 - 事实快照：[Web 认证与公开加入能力快照](../research/web-auth-public-enrollment-snapshot-2026-08-29.md)
-- 最近更新：2026-08-29
+- 最近更新：2026-09-04（D-262）
 
 ## 1. 目的与边界
 
@@ -89,6 +89,8 @@ v0 已按 D-219 移除 Principal disable/enable/delete。Owner 通过 Credential
 Web 只允许撤销参与者 Credential。Owner Credential 在 Web 中只显示 ID、fingerprint、issued/last-used/revoked 等非秘密摘要，不显示 revoke/rotate 操作。Owner 正常轮换由 `cfkanban-admin` 使用本地受限文件与 Bearer-only 原子 rotation 完成；全部丢失时才由 `cfkanban-deploy` 做部署外恢复。Cookie Session 不能调用 Owner Credential lifecycle API，因此当前 Session 来源和最后一个有效 Owner Credential 都不存在 Web 自锁路径。
 
 Owner 管理面按四个简单分区组织：Overview、Workspaces/Projects、Access、Audit。它不做可配置 Dashboard；Overview 只展示实例自身能够读取的健康、版本、资源计数、preferred/current observed origin 与近期错误摘要。preferred origin 在 Web 中只读，页面提供一段让 Owner 交给 `cfkanban-admin` 的简短话术；修改只能使用 Owner Bearer Credential，避免一个被劫持的 Cookie Session 把后续 Agent Credential 导向攻击者地址。Web 不保存 Cloudflare API token，也不声称提供权威 account quota/usage 或域名清单；Cloudflare-native domain reconcile 属于 `cfkanban-deploy`，第三方 alias 由 Owner 明确提供。
+
+Audit 默认读取实例级 domain + security 最近事件，同时提供一个 Project 与一个 stream 的可选筛选。页面显示当前事件的 stream 与 Project scope；改变筛选会清空旧列表并开始新的 cursor 序列，不能把旧 `next_cursor` 接到新筛选上。Project 选择器仍遵守 Owner 页面既有的有界容器清单；超出 Web 清单的 Project 由 `cfkanban-admin` 使用 immutable Project ID 精确读取。
 
 Owner `admin` Session 默认落在 Overview，不自动读取全部 Project 或 Issue。Owner 显式选择 Workspace/Project 后可以在同一 Session 进入任意 Project Board/Issue 数据面，再返回管理区；这是 Owner 已有隐式数据面权限的 Web 呈现，不创建 Grant。普通 Project/Issue Session 仍不能导航到其他 Project 或管理区。
 

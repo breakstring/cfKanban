@@ -1383,11 +1383,26 @@ textarea:disabled {
   border-top: 1px solid var(--color-border);
 }
 
-.principal-search {
+.principal-search,
+.audit-search {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.7fr) auto;
   gap: 10px;
   margin: 18px 0;
+}
+
+.audit-search {
+  align-items: end;
+}
+
+.audit-search label {
+  display: grid;
+  gap: 6px;
+}
+
+.audit-search label > span {
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
 }
 
 .data-row > span:first-child {
@@ -1698,6 +1713,7 @@ textarea:disabled {
   .form-grid,
   .profile-form,
   .principal-search,
+  .audit-search,
   .overview-strip,
   .project-table-row,
   .data-row,

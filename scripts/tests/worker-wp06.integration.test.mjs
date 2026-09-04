@@ -1793,6 +1793,71 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(audit.response.status, 200, JSON.stringify(audit.body));
   assert.equal(audit.body.items.some((event) => event.stream === "security"), true);
   assert.equal(audit.body.items.some((event) => event.subject.id === relationId), true);
+  assert.deepEqual(audit.body.resolved_filters, {
+    project_id: null,
+    streams: ["domain", "security"],
+  });
+
+  const projectAudit = await jsonRequest(
+    `/api/v1/admin/audit-events?project_id=${projectAId}&limit=100`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(projectAudit.response.status, 200, JSON.stringify(projectAudit.body));
+  assert.equal(projectAudit.body.items.length > 0, true);
+  assert.equal(projectAudit.body.items.every((event) => event.project?.id === projectAId), true);
+  assert.deepEqual(projectAudit.body.resolved_filters, {
+    project_id: projectAId,
+    streams: ["domain", "security"],
+  });
+
+  const securityAudit = await jsonRequest(
+    "/api/v1/admin/audit-events?stream=security&limit=100",
+    { headers: ownerHeaders() },
+  );
+  assert.equal(securityAudit.response.status, 200, JSON.stringify(securityAudit.body));
+  assert.equal(securityAudit.body.items.length > 0, true);
+  assert.equal(securityAudit.body.items.every((event) => event.stream === "security"), true);
+  assert.deepEqual(securityAudit.body.resolved_filters, {
+    project_id: null,
+    streams: ["security"],
+  });
+
+  const projectDomainAudit = await jsonRequest(
+    `/api/v1/admin/audit-events?project_id=${projectAId}&stream=domain&limit=1`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(projectDomainAudit.response.status, 200, JSON.stringify(projectDomainAudit.body));
+  assert.equal(projectDomainAudit.body.items.length, 1);
+  assert.equal(projectDomainAudit.body.items[0].project.id, projectAId);
+  assert.equal(projectDomainAudit.body.items[0].stream, "domain");
+
+  const changedProjectAuditCursor = await jsonRequest(
+    `/api/v1/admin/audit-events?project_id=${projectBId}&stream=domain&after=${encodeURIComponent(projectDomainAudit.body.next_cursor)}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(changedProjectAuditCursor.response.status, 409);
+  assert.equal(changedProjectAuditCursor.body.code, "CURSOR_SCOPE_MISMATCH");
+
+  const changedStreamAuditCursor = await jsonRequest(
+    `/api/v1/admin/audit-events?project_id=${projectAId}&stream=security&after=${encodeURIComponent(projectDomainAudit.body.next_cursor)}`,
+    { headers: ownerHeaders() },
+  );
+  assert.equal(changedStreamAuditCursor.response.status, 409);
+  assert.equal(changedStreamAuditCursor.body.code, "CURSOR_SCOPE_MISMATCH");
+
+  const invalidAuditProject = await jsonRequest(
+    "/api/v1/admin/audit-events?project_id=not-a-uuid",
+    { headers: ownerHeaders() },
+  );
+  assert.equal(invalidAuditProject.response.status, 400);
+  assert.equal(invalidAuditProject.body.code, "VALIDATION_ERROR");
+
+  const invalidAuditStream = await jsonRequest(
+    "/api/v1/admin/audit-events?stream=everything",
+    { headers: ownerHeaders() },
+  );
+  assert.equal(invalidAuditStream.response.status, 400);
+  assert.equal(invalidAuditStream.body.code, "VALIDATION_ERROR");
 
   const usage = await db.prepare(
     `SELECT
