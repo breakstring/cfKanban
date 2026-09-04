@@ -38,7 +38,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Goal | Command or REST operation | Required handling |
 | --- | --- | --- |
 | Verify Owner identity | `state inspect`, then `api request` → `GET /api/v1/me` | Require `is_owner=true`; never infer Owner from display name. |
-| Create the first usable board | create one Workspace, create one Project, read both back, then `POST /api/v1/web-launches` with an `admin` target | Ask for explicit immutable keys and display names; each create is a separate atomic write and deployment creates neither resource automatically. |
+| Create the first usable board | create one Workspace, create one Project, read both back, then `POST /api/v1/web-launches` with an `admin` target | Ask for explicit immutable keys and display names; normalize the chosen Workspace key to lowercase and Project key to uppercase before preview and submission; each create is a separate atomic write. |
 | Manage Workspaces and Projects | Workspace/Project `GET/POST/PATCH/DELETE` plus single-resource `commands/restore` | Use explicit keys/IDs, CAS where defined, one Idempotency Key per atomic write, and readback. |
 | Rename fixed status labels | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Only display names change; stable keys, order, category, and terminal meaning do not. |
 | Create or revoke an Invite | `/api/v1/admin/invitations` and `/api/v1/admin/invitations/{invitation_id}` through `api request` | Always submit explicit Project roles; never log or retain the complete Invite URL. |
@@ -58,8 +58,8 @@ The complete request and recovery guide is [references/owner-workflows.md](refer
 ## First-use workflow after deployment
 
 1. Verify local state, trusted origin, `/api/v1/me`, and `is_owner=true`.
-2. Ask only for the missing Workspace key/name and Project key/name; do not derive keys from a filesystem path, Git remote, hostname, or display name without explicit user choice.
-3. Preview and create one Workspace, then read it back. Create one Project in that Workspace with a new Idempotency Key, then read it and its five fixed statuses back.
+2. Ask only for the missing Workspace key/name and Project key/name; do not derive keys from a filesystem path, Git remote, hostname, or display name without explicit user choice. Accept the user's chosen keys in either letter case, normalize the Workspace key to lowercase and the Project key to uppercase, then validate `[a-z][a-z0-9-]{1,31}` and `[A-Z][A-Z0-9-]{1,15}` respectively.
+3. Show the normalized immutable keys in the preview, create one Workspace, then read it back. Create one Project in that Workspace with a new Idempotency Key, then read it and its five fixed statuses back. Do not ask the user to retype a key only to satisfy letter case.
 4. Create an Owner Browser Launch only after both resources exist. Deployment does not create a default Workspace, Project, Label, Grant, or Issue.
 5. Offer, but do not silently perform, the next independent actions: create the first Issue with `cfkanban`, create an explicit-role Invite, or configure Public Join with explicit quotas.
 
@@ -74,6 +74,7 @@ The complete request and recovery guide is [references/owner-workflows.md](refer
 ## Contract and stop conditions
 
 - **MUST:** Every mutation has an explicit target, expected version where defined, independent Idempotency Key, impact summary, and readback.
+- **MUST:** Before Workspace/Project creation, case-normalize explicit user-chosen keys, validate the canonical forms, and show the exact immutable values that will be stored. Case normalization does not authorize deriving or otherwise rewriting a key.
 - **MUST:** Invite roles are always explicit. Recovery binds a stable Principal ID and immutable recovery mode; display names never select identity.
 - **MUST:** Owner rotation first writes the replacement to the private pending slot. Web Sessions cannot rotate or revoke Owner Credentials.
 - **SHOULD:** Recommend `writer` only when no higher-level role exists; explicit read-only intent means `reader`. The API still receives the resolved role explicitly.

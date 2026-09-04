@@ -45,7 +45,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.13.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.14.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -1890,6 +1890,26 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
   assert.match(deployYaml, /Use \$cfkanban-deploy to deploy cfKanban for me\./u);
 });
 
+test("admin Skill canonicalizes user-chosen Workspace and Project key casing before creation", async () => {
+  const [admin, workflowEn, workflowZh] = await Promise.all([
+    readFile(new URL("../../skills/cfkanban-admin/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-admin/references/owner-workflows.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban-admin/references/owner-workflows.zh-CN.md", import.meta.url), "utf8"),
+  ]);
+  for (const source of [admin, workflowEn]) {
+    assert.match(source, /Workspace key[^\n]*lowercase/u);
+    assert.match(source, /Project key[^\n]*uppercase/u);
+    assert.match(source, /\[a-z\]\[a-z0-9-\]\{1,31\}/u);
+    assert.match(source, /\[A-Z\]\[A-Z0-9-\]\{1,15\}/u);
+  }
+  assert.match(workflowZh, /Workspace key[^\n]*规范为小写/u);
+  assert.match(workflowZh, /Project key[^\n]*规范为大写/u);
+  for (const source of [admin, workflowEn, workflowZh]) {
+    assert.match(source, /canonical|不可变/u);
+    assert.match(source, /retype|重新输入/u);
+  }
+});
+
 test("deployment Skill directly documents the deterministic Cloudflare authentication boundary", async () => {
   const [deploy, workflowEn, workflowZh] = await Promise.all([
     readFile(new URL("../../skills/cfkanban-deploy/SKILL.md", import.meta.url), "utf8"),
@@ -1951,6 +1971,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.11.md",
     "../../release/notes/0.1.0-alpha.12.md",
     "../../release/notes/0.1.0-alpha.13.md",
+    "../../release/notes/0.1.0-alpha.14.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -1963,6 +1984,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.11.json",
     "../../release/config/0.1.0-alpha.12.json",
     "../../release/config/0.1.0-alpha.13.json",
+    "../../release/config/0.1.0-alpha.14.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
