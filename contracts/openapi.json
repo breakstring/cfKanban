@@ -13687,7 +13687,13 @@
             ],
             "properties": {
               "entry_path": {
-                "const": "/app/admin"
+                "type": "string",
+                "enum": [
+                  "/app/admin",
+                  "/app/admin?section=workspaces",
+                  "/app/admin?section=access",
+                  "/app/admin?section=audit"
+                ]
               },
               "kind": {
                 "const": "admin"

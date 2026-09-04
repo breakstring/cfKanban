@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { locale, setLocale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
+import { canAccessOwnerControlPlane } from "../lib/session-capabilities";
 import type { WebSessionView } from "../types";
 
 defineProps<{
@@ -23,7 +24,7 @@ const emit = defineEmits<{ logout: [] }>();
       <span v-if="role" class="role-badge">{{ role }}</span>
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
-      <button v-if="session.principal.is_owner" class="text-button" type="button" @click="navigate('/app/admin')">
+      <button v-if="canAccessOwnerControlPlane(session)" class="text-button" type="button" @click="navigate('/app/admin')">
         {{ t("admin.overview") }}
       </button>
       <button class="text-button" type="button" @click="navigate('/app/profile')">

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 
 import PageState from "../components/PageState.vue";
 import { apiRequest, errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
+import { canRegisterPasskeyFromSession } from "../lib/session-capabilities";
 import { registrationCredential, registrationOptions } from "../lib/webauthn";
 import type { Passkey, PrincipalResource, WebSessionView, WriteResult } from "../types";
 
@@ -27,6 +28,7 @@ const loading = ref(true);
 const busy = ref(false);
 const error = ref("");
 const canUsePasskeys = typeof window !== "undefined" && "PublicKeyCredential" in window;
+const canRegisterPasskey = computed(() => canRegisterPasskeyFromSession(props.session, canUsePasskeys));
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -128,7 +130,7 @@ onMounted(load);
       <section class="profile-section">
         <div class="section-heading-row">
           <div><h2>Passkeys</h2><p>{{ t("passkey.list") }}</p></div>
-          <button v-if="canUsePasskeys" class="primary-button" type="button" :disabled="busy" @click="registerPasskey">{{ locale === "zh-CN" ? "登记 Passkey" : "Register Passkey" }}</button>
+          <button v-if="canRegisterPasskey" class="primary-button" type="button" :disabled="busy" @click="registerPasskey">{{ locale === "zh-CN" ? "登记 Passkey" : "Register Passkey" }}</button>
         </div>
         <div class="passkey-list">
           <article v-for="passkey in passkeys" :key="passkey.id" class="passkey-row">

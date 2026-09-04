@@ -7,6 +7,7 @@ import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
 import { publicJoinInstruction } from "../lib/public-join-instruction";
 import { navigate } from "../lib/router";
+import { safeWebEntryPath } from "../lib/session-capabilities";
 import {
   authenticationCredential,
   authenticationOptions,
@@ -96,17 +97,21 @@ async function signInWithPasskey(): Promise<void> {
       method: "POST",
     });
     const credential = await navigator.credentials.get({ publicKey: authenticationOptions(options) });
-    await apiRequest<WriteResult<unknown>>("/api/v1/web-authentication/verify", {
+    const result = await apiRequest<WriteResult<{ entry_path: string }>>("/api/v1/web-authentication/verify", {
       body: {
         challenge_id: options.challenge_id,
         credential: authenticationCredential(credential),
       },
       method: "POST",
     });
+    const entryPath = safeWebEntryPath(result.resource.entry_path);
+    if (entryPath === null) throw new Error("invalid_session_entry_path");
     window.dispatchEvent(new CustomEvent("cfkanban:session-exchanged"));
-    navigate("/app");
+    navigate(entryPath);
   } catch (caught) {
-    error.value = caught instanceof DOMException ? t("passkey.failed") : errorText(caught);
+    error.value = caught instanceof DOMException || (caught instanceof ApiProblem && caught.status === 401)
+      ? t("passkey.failed")
+      : errorText(caught);
   } finally {
     passkeyBusy.value = false;
   }

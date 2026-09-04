@@ -43,6 +43,13 @@ const BROWSER_LAUNCH_LIFETIME_MS = 5 * 60 * 1_000;
 const WEB_SESSION_LIFETIME_MS = 8 * 60 * 60 * 1_000;
 const ADMIN_SECTIONS = new Set(["overview", "workspaces-projects", "access", "audit"]);
 
+function adminEntryPath(section: string): string {
+  if (section === "overview") return "/app/admin";
+  if (section === "workspaces-projects") return "/app/admin?section=workspaces";
+  if (section === "access" || section === "audit") return `/app/admin?section=${section}`;
+  throw platformUnavailable("d1");
+}
+
 type LaunchTarget =
   | {
     entry_path: string;
@@ -65,6 +72,11 @@ type LaunchTarget =
     project_key: string;
     workspace_key: string;
   };
+
+function resolvedAdminTarget(section: unknown): Extract<LaunchTarget, { kind: "admin" }> {
+  if (typeof section !== "string" || !ADMIN_SECTIONS.has(section)) throw platformUnavailable("d1");
+  return { entry_path: adminEntryPath(section), kind: "admin", section };
+}
 
 interface BrowserLaunchRow {
   code_digest: string;
@@ -147,8 +159,7 @@ function jsonObject(value: string): { [key: string]: JsonValue } {
 function launchTargetFromRow(row: BrowserLaunchRow): LaunchTarget {
   const target = jsonObject(row.target_json);
   if (row.target_kind === "admin") {
-    if (typeof target.section !== "string" || !ADMIN_SECTIONS.has(target.section)) throw platformUnavailable("d1");
-    return { entry_path: "/app/admin", kind: "admin", section: target.section };
+    return resolvedAdminTarget(target.section);
   }
   if (
     typeof target.project_id !== "string"
@@ -226,6 +237,8 @@ async function resolveLaunchTarget(
     if (typeof target.section !== "string" || !ADMIN_SECTIONS.has(target.section)) {
       throw validationError("schema_validation_failed", { field: "section" });
     }
+    // The persisted schema keeps one stable Owner entry root. The response
+    // reconstructs the exact section path from the separately stored section.
     return { entry_path: "/app/admin", kind: "admin", section: target.section };
   }
   throw validationError("schema_validation_failed", { field: "target.kind" });
@@ -308,7 +321,7 @@ function launchResource(
     expires_at: timestamp(snapshot.row.expires_at),
     id: snapshot.row.id,
     secret_available: secretAvailable,
-    target: snapshot.target,
+    target: launchTargetFromRow(snapshot.row),
   };
 }
 
@@ -664,6 +677,9 @@ function sessionSnapshotResource(
   snapshot: SessionOperationSnapshot,
   cookieAvailable: boolean,
 ): { [key: string]: JsonValue } {
+  const target = snapshot.target.kind === "admin"
+    ? resolvedAdminTarget(snapshot.target.section)
+    : snapshot.target;
   return {
     allowed_scope: snapshot.target.kind === "admin"
       ? { kind: "instance" }
@@ -680,7 +696,7 @@ function sessionSnapshotResource(
     },
     session_id: snapshot.session_id,
     source: { id: snapshot.source_id, kind: snapshot.source_kind },
-    target: snapshot.target,
+    target,
   };
 }
 
@@ -921,6 +937,9 @@ export async function getWebSession(
     throw notFound();
   }
   if (auth.targetKind === "admin" && !auth.isOwner) throw forbidden();
+  const target = auth.targetKind === "admin"
+    ? resolvedAdminTarget(auth.target.section)
+    : { kind: auth.targetKind, ...auth.target };
   return {
     allowed_scope: auth.targetKind === "admin"
       ? { kind: "instance", projects: visibleScopeResource(projects) }
@@ -934,7 +953,7 @@ export async function getWebSession(
     },
     session_id: auth.sessionId,
     source: { id: auth.sourceId, kind: auth.sourceKind },
-    target: { kind: auth.targetKind, ...auth.target },
+    target,
   };
 }
 
@@ -1005,7 +1024,7 @@ export async function revokeWebSession(
   );
 }
 
-export const WEB_LAUNCH_PAGE_SCRIPT = `(()=>{const status=document.querySelector("[data-launch-status]");const zh=(navigator.languages||[navigator.language||""]).some((value)=>String(value).toLowerCase().startsWith("zh"));const set=(message)=>{if(status)status.textContent=message};const params=new URLSearchParams(location.search);const code=params.get("code");history.replaceState({},document.title,"/app/launch");if(!code){set(zh?"打开链接无效，请让 Agent 重新生成。":"This launch link is invalid. Ask your Agent for a new one.");return}set(zh?"正在安全建立会话…":"Securely establishing your session…");fetch("/api/v1/web-sessions/redeem",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json","idempotency-key":crypto.randomUUID()},body:JSON.stringify({launch_code:code})}).then(async(response)=>{const body=await response.json().catch(()=>null);if(!response.ok||!body||typeof body!=="object")throw new Error();const entry=body.resource&&body.resource.entry_path;if(typeof entry!=="string"||!entry.startsWith("/app"))throw new Error();location.replace(entry)}).catch(()=>set(zh?"会话未建立，请让 Agent 重新生成链接。":"The session was not established. Ask your Agent for a new link."))})()`;
+export const WEB_LAUNCH_PAGE_SCRIPT = `(()=>{const status=document.querySelector("[data-launch-status]");const zh=(navigator.languages||[navigator.language||""]).some((value)=>String(value).toLowerCase().startsWith("zh"));const set=(message)=>{if(status)status.textContent=message};const params=new URLSearchParams(location.search);const code=params.get("code");history.replaceState({},document.title,"/app/launch");if(!code){set(zh?"打开链接无效，请让 Agent 重新生成。":"This launch link is invalid. Ask your Agent for a new one.");return}set(zh?"正在安全建立会话…":"Securely establishing your session…");fetch("/api/v1/web-sessions/redeem",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json","idempotency-key":crypto.randomUUID()},body:JSON.stringify({launch_code:code})}).then(async(response)=>{const body=await response.json().catch(()=>null);if(!response.ok||!body||typeof body!=="object")throw new Error();const entry=body.resource&&body.resource.entry_path;if(typeof entry!=="string")throw new Error();const target=new URL(entry,location.origin);if(target.origin!==location.origin||target.hash||(target.pathname!=="/app"&&!target.pathname.startsWith("/app/")))throw new Error();location.replace(target.pathname+target.search)}).catch(()=>set(zh?"会话未建立，请让 Agent 重新生成链接。":"The session was not established. Ask your Agent for a new link."))})()`;
 
 let webLaunchPageScriptHash: Promise<string> | null = null;
 

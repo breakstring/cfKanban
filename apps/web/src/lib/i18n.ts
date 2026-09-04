@@ -1,7 +1,7 @@
 import { computed, ref, watch } from "vue";
 
 import type { Locale } from "../types";
-import { resolveLocalePreference } from "./locale-preference";
+import { readStoredLocale, resolveLocalePreference, writeStoredLocale } from "./locale-preference";
 
 const translations = {
   en: {
@@ -136,7 +136,7 @@ const STORAGE_KEY = "cfkanban_locale";
 function initialLocale(): Locale {
   if (typeof window === "undefined") return "en";
   return resolveLocalePreference(
-    window.localStorage.getItem(STORAGE_KEY),
+    readStoredLocale(() => window.localStorage, STORAGE_KEY),
     window.navigator.languages,
   );
 }
@@ -147,7 +147,7 @@ export const htmlLanguage = computed(() => locale.value);
 watch(locale, (value) => {
   if (typeof document === "undefined" || typeof window === "undefined") return;
   document.documentElement.lang = value;
-  window.localStorage.setItem(STORAGE_KEY, value);
+  writeStoredLocale(() => window.localStorage, STORAGE_KEY, value);
 }, { immediate: true });
 
 export function setLocale(value: Locale): void {

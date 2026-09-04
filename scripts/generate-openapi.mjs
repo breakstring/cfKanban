@@ -1451,7 +1451,7 @@ const schemas = {
         type: "object",
         required: ["entry_path", "kind", "section"],
         properties: {
-          entry_path: { const: "/app/admin" },
+          entry_path: string({ enum: ["/app/admin", "/app/admin?section=workspaces", "/app/admin?section=access", "/app/admin?section=audit"] }),
           kind: { const: "admin" },
           section: string({ enum: ["overview", "workspaces-projects", "access", "audit"] }),
         },

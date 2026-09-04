@@ -7,6 +7,7 @@ import PageState from "./components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "./lib/api";
 import { locale, t } from "./lib/i18n";
 import { currentPath, navigate, routePath } from "./lib/router";
+import { canAccessOwnerControlPlane } from "./lib/session-capabilities";
 import { sameSessionBoundary, shouldClearAfterSessionRevalidation } from "./lib/session-boundary";
 import type { WebSessionView } from "./types";
 import IssueDetailView from "./views/IssueDetailView.vue";
@@ -245,7 +246,7 @@ watch(currentPath, () => {
         @context="context = $event"
       />
       <OwnerView
-        v-else-if="route.kind === 'owner' && session.principal.is_owner"
+        v-else-if="route.kind === 'owner' && canAccessOwnerControlPlane(session)"
         :key="`${sessionViewGeneration}:${currentPath}`"
         :section="route.section"
         :session="session"
