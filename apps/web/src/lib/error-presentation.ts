@@ -41,7 +41,7 @@ export function presentApiProblem(
         : resetAt === null ? "Wait for the platform quota to reset." : `Wait for the platform quota reset at ${resetAt}.`;
     }
     if (body.recovery === "request_owner") {
-      return locale === "zh-CN" ? "请联系 Deployment Owner 处理。" : "Ask the Deployment Owner to resolve it.";
+      return locale === "zh-CN" ? "请联系部署实例所有者处理。" : "Ask the Deployment Owner to resolve it.";
     }
     if (body.recovery === "retry_after") {
       if (retryAfter !== null) {
@@ -51,8 +51,8 @@ export function presentApiProblem(
     }
     if (body.recovery === "retry_or_request_owner") {
       return body.retryable
-        ? (locale === "zh-CN" ? "可安全重试；持续失败时联系 Deployment Owner。" : "Retry safely; ask the Deployment Owner if it persists.")
-        : (locale === "zh-CN" ? "请刷新后重试；持续失败时联系 Deployment Owner。" : "Refresh before retrying; ask the Deployment Owner if it persists.");
+        ? (locale === "zh-CN" ? "可安全重试；持续失败时联系部署实例所有者。" : "Retry safely; ask the Deployment Owner if it persists.")
+        : (locale === "zh-CN" ? "请刷新后重试；持续失败时联系部署实例所有者。" : "Refresh before retrying; ask the Deployment Owner if it persists.");
     }
     return "";
   };

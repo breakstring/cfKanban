@@ -3,11 +3,11 @@ import type { Locale } from "../types";
 export function publicJoinRiskNotice(locale: Locale): string[] {
   if (locale === "zh-CN") {
     return [
-      "未知互联网参与者可以加入。公开 writer 可创建评论、移动、完成、修改和软删除 Project 内容，并产生 D1 写入。只要 Project 仍公开，被撤销 Grant 的 Principal 就可以再次 self-join。",
-      "三项 active quota 仅属于这个 Project，不是共享池，而且只在 Public Join Policy enabled 时强制。关闭 Policy 不会撤销既有 Grant；重新开启后 quota 会再次生效。",
-      "limit 可以低于当前 usage；这不会自动删除资源或撤销 Grant，只会阻止该维度继续增长。soft delete 与 Grant revoke 会释放 active slot，restore 与 regrant 会重新占用 slot。",
-      "恢复 soft-deleted Issue 时，Issue 本身及其全部 active Comment 必须同时容纳在 quota 中；任一 quota 不足都会让整个恢复原子失败。每次 complete 创建的不可变 completion comment 也持续计入 active Comment quota。",
-      "active slot 被释放不代表数据已物理清除；tombstone、completion 与历史仍占用 D1 存储。",
+      "未知互联网参与者可以加入。公开协作者（writer）可创建评论、移动、完成、修改和软删除项目内容，并产生 D1 写入。只要项目仍公开，被撤销授权的身份就可以再次自助加入。",
+      "三项有效数据限额仅属于这个项目，不是共享池，而且只在公开加入策略启用时强制。关闭策略不会撤销既有授权；重新开启后限额会再次生效。",
+      "限额可以低于当前用量；这不会自动删除资源或撤销授权，只会阻止该维度继续增长。软删除与撤销授权会释放有效名额，恢复资源与重新授权会再次占用名额。",
+      "恢复已软删除事项时，事项本身及其全部有效评论必须同时容纳在限额内；任一限额不足都会让整个恢复原子失败。每次完成操作创建的不可变完成评论也持续计入有效评论限额。",
+      "释放有效名额不代表数据已物理清除；墓碑、完成记录与历史仍占用 D1 存储。",
     ];
   }
   return [

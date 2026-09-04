@@ -211,10 +211,10 @@ watch(currentPath, () => {
 
     <main v-else-if="!session" class="session-gate">
       <div class="session-message">
-        <p class="eyebrow">Web Session</p>
-        <h1>{{ sessionEnded ? t("error.session") : (locale === "zh-CN" ? "无法验证 Session" : "Session could not be verified") }}</h1>
+        <p class="eyebrow">{{ locale === "zh-CN" ? "网页会话" : "Web Session" }}</p>
+        <h1>{{ sessionEnded ? t("error.session") : (locale === "zh-CN" ? "无法验证会话" : "Session could not be verified") }}</h1>
         <p v-if="sessionError" class="inline-alert" role="alert">{{ sessionError }}</p>
-        <p>{{ locale === "zh-CN" ? "请返回实例首页使用 Passkey，或让 Agent 创建新的 Browser Launch。" : "Return home to use a Passkey, or ask your Agent for a new Browser Launch." }}</p>
+        <p>{{ locale === "zh-CN" ? "请返回实例首页使用通行密钥，或让智能体创建新的浏览器启动链接。" : "Return home to use a Passkey, or ask your Agent for a new Browser Launch." }}</p>
         <div class="form-actions">
           <button class="secondary-button" type="button" @click="loadSession(true)">{{ t("action.refresh") }}</button>
           <button class="primary-button" type="button" @click="navigate('/')">{{ locale === "zh-CN" ? "返回实例首页" : "Return home" }}</button>
@@ -258,7 +258,7 @@ watch(currentPath, () => {
         <div class="session-message">
           <p class="eyebrow">404</p>
           <h1>{{ locale === "zh-CN" ? "页面不可用" : "Page unavailable" }}</h1>
-          <p>{{ locale === "zh-CN" ? "此路径不在当前 Session 的可用 Web 范围内。" : "This path is not available in the current Web Session." }}</p>
+          <p>{{ locale === "zh-CN" ? "此路径不在当前网页会话的可用范围内。" : "This path is not available in the current Web Session." }}</p>
           <button class="primary-button" type="button" @click="navigate('/app')">{{ t("project.choose") }}</button>
         </div>
       </main>

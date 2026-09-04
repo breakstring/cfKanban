@@ -59,7 +59,7 @@ async function load(reset = true): Promise<void> {
     if (!reset && cursorRequiresRestart(caught)) {
       projectsNextCursor.value = null;
       error.value = locale.value === "zh-CN"
-        ? "公开 Project 范围已变化，旧 cursor 已停用。请刷新后继续。"
+        ? "公开项目范围已变化，原分页位置已失效。请刷新后继续。"
         : "The public Project scope changed, so the old cursor was retired. Refresh before continuing.";
     } else {
       error.value = errorText(caught);
@@ -159,7 +159,7 @@ onMounted(load);
 
     <section class="hero-section">
       <div class="hero-copy">
-        <p class="eyebrow">Agent-first Kanban · Cloudflare</p>
+        <p class="eyebrow">{{ locale === "zh-CN" ? "Agent 优先 · 共享项目事实" : "Agent-first · Shared project truth" }}</p>
         <h1>{{ t("home.heading") }}</h1>
         <p class="hero-description">{{ t("home.description") }}</p>
         <p class="instance-note">{{ t("home.independent") }}</p>
@@ -168,7 +168,7 @@ onMounted(load);
         </a>
       </div>
       <aside class="agent-note">
-        <p class="note-kicker">{{ locale === "zh-CN" ? "交给你的 Agent" : "Give this to your Agent" }}</p>
+        <p class="note-kicker">{{ locale === "zh-CN" ? "交给你的智能体" : "Give this to your Agent" }}</p>
         <p>{{ t("home.agentInstruction") }}</p>
         <button class="primary-button" type="button" @click="copyText(t('home.agentInstruction'), 'deploy')">
           {{ copied === "deploy" ? (locale === "zh-CN" ? "已复制" : "Copied") : t("action.copy") }}
@@ -188,7 +188,7 @@ onMounted(load);
     <section v-if="!loading && !error" class="public-projects-section">
       <header class="section-heading-row">
         <div>
-          <p class="eyebrow">Public Join</p>
+          <p class="eyebrow">{{ locale === "zh-CN" ? "公开加入" : "Public Join" }}</p>
           <h2>{{ t("home.projects") }}</h2>
           <p>{{ t("home.projectsDescription") }}</p>
         </div>
@@ -220,14 +220,14 @@ onMounted(load);
         </article>
       </div>
       <p v-else class="empty-copy">
-        {{ locale === "zh-CN" ? "当前没有公开 Project。" : "No projects are public right now." }}
+        {{ locale === "zh-CN" ? "当前没有公开项目。" : "No projects are public right now." }}
       </p>
-      <button v-if="projectsNextCursor" class="load-more" type="button" :disabled="projectsLoadingMore" @click="load(false)">{{ projectsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多公开 Project" : "Load more public projects") }}</button>
+      <button v-if="projectsNextCursor" class="load-more" type="button" :disabled="projectsLoadingMore" @click="load(false)">{{ projectsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多公开项目" : "Load more public projects") }}</button>
     </section>
 
     <footer class="public-footer">
-      <span>service {{ meta?.service_version ?? "—" }}</span>
-      <span>{{ meta?.instance_id ? `instance ${meta.instance_id.slice(0, 8)}` : "" }}</span>
+      <span>{{ locale === "zh-CN" ? "服务版本" : "service" }} {{ meta?.service_version ?? "—" }}</span>
+      <span>{{ meta?.instance_id ? `${locale === "zh-CN" ? "实例" : "instance"} ${meta.instance_id.slice(0, 8)}` : "" }}</span>
     </footer>
   </main>
 </template>
