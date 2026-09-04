@@ -1,0 +1,13 @@
+{
+  "outputDirectory": "build/releases/0.1.0-alpha.39",
+  "canonicalBaseUrl": "https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.39/",
+  "version": "0.1.0-alpha.39",
+  "channel": "prerelease",
+  "urlLayout": "flat",
+  "skillBundlePath": "build/releases/0.1.0-alpha.39/input/cfkanban-skills-0.1.0-alpha.39.zip",
+  "serviceBundlePath": "build/releases/0.1.0-alpha.39/input/cfkanban-service-0.1.0-alpha.39.zip",
+  "nodeRange": ">=22.12.0 <27",
+  "wranglerRange": ">=4.127.1 <5",
+  "serviceApiRange": ">=0.1.0 <0.2.0",
+  "schemaVersion": 1
+}

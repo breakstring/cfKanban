@@ -60,7 +60,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.38.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.39.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -3509,6 +3509,27 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
   assert.match(deployYaml, /Use \$cfkanban-deploy to deploy cfKanban for me\./u);
 });
 
+test("daily Skill documents an executable deterministic candidate query contract", async () => {
+  const sources = await Promise.all([
+    readFile(new URL("../../skills/cfkanban/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban/references/workflows.md", import.meta.url), "utf8"),
+    readFile(new URL("../../skills/cfkanban/references/workflows.zh-CN.md", import.meta.url), "utf8"),
+  ]);
+  for (const source of sources) {
+    const example = source.match(/`(\/api\/v1\/issues\/candidates\?assignment=mine&blocked=exclude&project=\{workspace_key\}%2F\{project_key\})`/u);
+    assert.ok(example, "candidate guidance must include one directly reusable scoped query template");
+    const parsed = new URL(example[1], "https://cfkanban.example");
+    assert.equal(parsed.searchParams.get("assignment"), "mine");
+    assert.equal(parsed.searchParams.get("blocked"), "exclude");
+    assert.equal(parsed.searchParams.get("project"), "{workspace_key}/{project_key}");
+    for (const assignment of ["mine", "unassigned", "needs_reassignment"]) {
+      assert.match(source, new RegExp(`\\b${assignment}\\b`, "u"));
+    }
+    assert.match(source, /resolved_scope\.candidate_policy/u);
+    assert.match(source, /blocked=include/u);
+  }
+});
+
 test("admin Skill canonicalizes user-chosen Workspace and Project key casing before creation", async () => {
   const [admin, workflowEn, workflowZh] = await Promise.all([
     readFile(new URL("../../skills/cfkanban-admin/SKILL.md", import.meta.url), "utf8"),
@@ -3632,6 +3653,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.31.md",
     "../../release/notes/0.1.0-alpha.32.md",
     "../../release/notes/0.1.0-alpha.38.md",
+    "../../release/notes/0.1.0-alpha.39.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3664,6 +3686,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.31.json",
     "../../release/config/0.1.0-alpha.32.json",
     "../../release/config/0.1.0-alpha.38.json",
+    "../../release/config/0.1.0-alpha.39.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

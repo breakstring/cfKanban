@@ -42,7 +42,7 @@ The `.mjs` file is plain JavaScript using Node's explicit ES module format. It r
 | Inspect environment and local identity | `capabilities`, `state inspect`, then `api request` → `GET /api/v1/me` | Stop on permission drift, symlinks, identity conflict, or untrusted origin. |
 | Read or change my display name | `GET /api/v1/me`; `PATCH /api/v1/me` | Read the current `version`; send `expected_version`; read back `/me`. |
 | Resolve Project scope | `scope read`, `scope resolve`; use `scope merge` only on explicit request | Prefer explicit targets, then `.cfkanban-scope.json`, then warned authorized aggregate. |
-| List/search work | `GET /api/v1/issues`, `GET /api/v1/issues/candidates`, or `GET /api/v1/workspaces/{workspace_key}/projects/{project_key}/issues` | Include explicit Project filters when context is known. |
+| List/search work | `GET /api/v1/issues`, `GET /api/v1/issues/candidates`, or `GET /api/v1/workspaces/{workspace_key}/projects/{project_key}/issues` | Include explicit Project filters when context is known. Candidate queries require an explicit assignment policy. |
 | Create an Issue | `POST /api/v1/workspaces/{workspace_key}/projects/{project_key}/issues` | One Project, one Idempotency Key, then read back the returned Issue. |
 | Edit, move, reopen, delete, or restore an Issue | `GET/PATCH/DELETE /api/v1/issues/{identifier}` or `POST .../commands/restore` | Read current state/version first; use CAS; read back after the mutation. |
 | Assign, block, unblock, or complete | `POST /api/v1/issues/{identifier}/commands/{assign-to-me|report-blocked|clear-blocked|complete}` | Completion requires its structured summary and creates an immutable completion comment. |
@@ -50,6 +50,8 @@ The `.mjs` file is plain JavaScript using Node's explicit ES module format. It r
 | Redeem an Invite | `credential prepare` when a new/recovery Credential is needed, then `invite redeem` | The dedicated command injects the pending secret, verifies `/me`, and returns the same `{ operation, credential }` shape for new or existing Principals. |
 | Join a public Project | `credential prepare` when needed, then `public-join redeem` | Submit exactly one `publicId`, one explicit `reader | writer`, and one atomic join; the result shape is stable across identity modes. |
 | Open the Web UI | `web launch` | Use one explicit Project or Issue target. The default `system_browser` delivery opens through a memory-only loopback relay and returns no code. |
+
+Candidate queries are intentionally explicit. Use `/api/v1/issues/candidates?assignment=mine&blocked=exclude&project={workspace_key}%2F{project_key}` as the scoped template, choosing exactly one required `assignment`: `mine`, `unassigned`, or `needs_reassignment`. Keep `blocked=exclude` for the normal work queue and use `blocked=include` only when blocked candidates are wanted. Repeat the workspace-qualified `project` parameter for multiple Projects, and report the response's `resolved_scope.candidate_policy` and resolved Projects instead of inferring what the server selected.
 
 The complete endpoint and recovery guide is [references/workflows.md](references/workflows.md).
 
