@@ -1096,7 +1096,9 @@ export async function updateProjectGrant(
       await verifyCurrentAuth(db, auth, now);
       const latest = await readGrant(db, grantId);
       if (latest === null || await readProjectControl(db, latest.project_id) === null) throw notFound();
-      if (latest.revoked_at !== null) throw conflict("GRANT_REVOKED", "regrant");
+      if (latest.revoked_at !== null) {
+        throw conflict("GRANT_REVOKED", "regrant", { current_version: latest.version });
+      }
       throw versionConflict(latest.version);
     }
     throw error;
@@ -1167,7 +1169,9 @@ export async function revokeProjectGrant(
       await verifyCurrentAuth(db, auth, now);
       const latest = await readGrant(db, grantId);
       if (latest === null) throw notFound();
-      if (latest.revoked_at !== null) throw conflict("GRANT_REVOKED", "none");
+      if (latest.revoked_at !== null) {
+        throw conflict("GRANT_REVOKED", "none", { current_version: latest.version });
+      }
       throw versionConflict(latest.version);
     }
     throw error;
