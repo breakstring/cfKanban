@@ -92,6 +92,8 @@ const invitations = ref<InvitationResource[]>([]);
 const audit = ref<EventResource[]>([]);
 const auditNextCursor = ref<string | null>(null);
 const auditLoadingMore = ref(false);
+const auditProjectId = ref("");
+const auditStream = ref<"" | "domain" | "security">("");
 const showWorkspace = ref(false);
 const showProject = ref(false);
 const showInvite = ref(false);
@@ -142,6 +144,7 @@ const policyRiskConfirmed = ref(false);
 let projectSettingsRequestId = 0;
 let policyRequestId = 0;
 let invitationReviewGeneration = 0;
+let auditRequestId = 0;
 let invitationRecoveryCoordinator: InvitationRecoveryCoordinator | null = null;
 let ownerViewMounted = false;
 const writeFence = new WriteFence();
@@ -753,7 +756,7 @@ async function load(): Promise<void> {
         readInvitationsForReview(),
       ]);
     } else {
-      await loadAudit(true);
+      await Promise.all([loadWorkspaceTree(false), loadAudit(true)]);
     }
     emit("context", { label: t("admin.title"), role: "owner" });
   } catch (caught) {
@@ -765,19 +768,31 @@ async function load(): Promise<void> {
 
 async function loadAudit(reset = false): Promise<void> {
   if (!reset && auditNextCursor.value === null) return;
-  auditLoadingMore.value = !reset;
+  const requestId = reset ? auditRequestId + 1 : auditRequestId;
+  if (reset) auditRequestId = requestId;
+  auditLoadingMore.value = true;
   try {
     const params = new URLSearchParams({ limit: "100" });
+    if (auditProjectId.value) params.set("project_id", auditProjectId.value);
+    if (auditStream.value) params.set("stream", auditStream.value);
     if (!reset && auditNextCursor.value !== null) params.set("after", auditNextCursor.value);
     const result = await apiRequest<ListResult<EventResource>>(`/api/v1/admin/audit-events?${params}`);
+    if (requestId !== auditRequestId) return;
     audit.value = mergePageById(audit.value, result.items, reset);
     auditNextCursor.value = continuationCursor(result);
   } catch (caught) {
+    if (requestId !== auditRequestId) return;
     if (!reset) handleCursorError(caught, () => { auditNextCursor.value = null; });
     else setError(caught);
   } finally {
-    auditLoadingMore.value = false;
+    if (requestId === auditRequestId) auditLoadingMore.value = false;
   }
+}
+
+function resetAuditPagination(): void {
+  auditRequestId += 1;
+  audit.value = [];
+  auditNextCursor.value = null;
 }
 
 async function createWorkspace(): Promise<void> {
@@ -1439,8 +1454,15 @@ onUnmounted(() => {
     </template>
 
     <template v-if="!loading && section === 'audit'">
+      <form class="audit-search" role="search" @submit.prevent="loadAudit(true)">
+        <label><span>{{ ui("Project", "项目") }}</span><select v-model="auditProjectId" :disabled="auditLoadingMore" @change="resetAuditPagination"><option value="">{{ ui("Every Project", "全部项目") }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.workspaceKey }}/{{ item.key }}</option></select></label>
+        <label><span>{{ ui("Stream", "类型") }}</span><select v-model="auditStream" :disabled="auditLoadingMore" @change="resetAuditPagination"><option value="">{{ ui("Domain + security", "业务与安全") }}</option><option value="domain">{{ ui("Domain only", "仅业务") }}</option><option value="security">{{ ui("Security only", "仅安全") }}</option></select></label>
+        <button class="secondary-button" type="submit" :disabled="auditLoadingMore">{{ auditLoadingMore ? "…" : ui("Apply filters", "应用筛选") }}</button>
+      </form>
+      <p class="muted-copy">{{ ui("Choose one immutable Project and/or one stream. Changing either filter starts a fresh cursor sequence.", "可按一个不可变项目和／或一种类型缩小范围；修改筛选会从新的分页位置重新读取。") }}</p>
+      <p v-if="treeTruncated" class="warning-panel">{{ ui("The Project picker shows the first 20 Workspaces and first 20 Projects in each. Use cfkanban-admin with an explicit Project ID for omitted Projects.", "项目选择器只显示前 20 个工作区及每个工作区的前 20 个项目；未显示的项目请让 cfkanban-admin 使用明确的项目 ID。") }}</p>
       <p v-if="auditNextCursor" class="warning-panel">{{ ui("More Audit events are available. Load the next page to continue the sequence; this view never silently treats the first 100 as complete.", "还有更多审计事件。请继续加载后续记录；此页面不会把前 100 条静默当成完整结果。") }}</p>
-      <section class="audit-list"><article v-for="event in audit" :key="event.id"><div><code>{{ event.type }}</code><strong>{{ event.subject.type }} · {{ event.subject.id }}</strong></div><p>{{ event.actor?.display_name ?? ui('system', '系统') }} · {{ formatTime(event.created_at) }}</p><pre>{{ JSON.stringify(event.payload, null, 2) }}</pre></article><p v-if="audit.length === 0" class="empty-copy">{{ ui("No audit events", "暂无审计事件") }}</p></section>
+      <section class="audit-list"><article v-for="event in audit" :key="event.id"><div><code>{{ event.stream }} · {{ event.type }}</code><strong>{{ event.subject.type }} · {{ event.subject.id }}</strong><small v-if="event.project">{{ event.workspace?.key }}/{{ event.project.key }}</small></div><p>{{ event.actor?.display_name ?? ui('system', '系统') }} · {{ formatTime(event.created_at) }}</p><pre>{{ JSON.stringify(event.payload, null, 2) }}</pre></article><p v-if="audit.length === 0" class="empty-copy">{{ ui("No audit events match these filters", "没有符合当前筛选的审计事件") }}</p></section>
       <button v-if="auditNextCursor" class="load-more" type="button" :disabled="auditLoadingMore" @click="loadAudit(false)">{{ auditLoadingMore ? "…" : ui("Load more Audit events", "加载更多审计事件") }}</button>
     </template>
 

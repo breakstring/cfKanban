@@ -1728,6 +1728,11 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(ownerSource, /principalQuery/);
   assert.match(ownerSource, /project_id/);
   assert.match(ownerSource, /loadPrincipals\(false\)/);
+  assert.match(ownerSource, /const auditProjectId = ref\(""\)/);
+  assert.match(ownerSource, /const auditStream = ref<"" \| "domain" \| "security">\(""\)/);
+  assert.match(ownerSource, /params\.set\("project_id", auditProjectId\.value\)/);
+  assert.match(ownerSource, /params\.set\("stream", auditStream\.value\)/);
+  assert.match(ownerSource, /@submit\.prevent="loadAudit\(true\)"/);
   assert.match(ownerSource, /loadMorePrincipalCredentials/);
   assert.match(ownerSource, /loadMoreProjectGrants/);
   assert.match(ownerSource, /recoverCasConflict/);

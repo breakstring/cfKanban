@@ -1,14 +1,14 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
 - 文档状态：Frozen
-- 合同修订：27
+- 合同修订：28
 - Roadmap：R0 / R3
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
 - 事实快照：[Agent Skill 与本地部署环境能力快照](../research/agent-skill-platform-snapshot-2026-08-28.md)
 - 最近更新：2026-09-04
 - 冻结日期：2026-08-28
-- 最近修订：2026-09-04（D-261）
+- 最近修订：2026-09-04（D-262）
 
 ## 1. 目的与边界
 
@@ -171,6 +171,7 @@ v0 固定拆成三个按工作场景发现的能力，而不是一个塞满所�
 - `cfkanban-admin` 逐个 Project 开关 Public Join。开启前必须明确展示公开 `writer` 后果：未知互联网参与者可以自行取得写权限、修改/软删除内容并产生 D1 写入；公开卡片只使用显式 public summary，不复用内部 Project context。关闭入口不自动撤销既有 Grants。
 - `cfkanban-admin` 开启 Public Join 时必须取得 Owner 为该 Project 显式提交的 Issue/Comment/Principal active limits；可以建议 50/500/50，但不能把建议值作为未告知默认。Skill 必须说明三项限制按 Project 隔离，只在该 Project 的 Public Join enabled 期间生效，关闭后不约束本 Project 的普通协作且不撤销既有 Grants；重新开启可以预填旧值，但必须让 Owner 显式提交。说明 soft delete/revoke 会释放额度，restore/regrant 会重新占用；恢复 Issue 还必须容纳其有效 Comments，Comment 满额会阻止 complete。
 - `cfkanban-admin` 修改限制前读取并展示当前 active usage，但允许 Owner 提交低于 usage 的值；Skill 应预告既有数据和 Grants 保持不变，并明确列出进入 over-limit 后会被阻止的增长动作以及仍可用于释放容量的软删除/撤权动作，不能要求 Owner 先清理数据才能保存。
+- `cfkanban-admin` 读取 Owner Audit 时使用有界分页；任务已知一个 Project 或只关心一种事件时，应分别使用 immutable `project_id` 和 `stream=domain|security`，并核对响应 `resolved_filters`。两者都省略只表示上层明确需要实例级双 stream 读取；筛选改变后必须开始新 cursor 序列。
 - `cfkanban-admin` 打开 Owner 管理页时应显示当前生效的单 Principal、实例总请求和未认证敏感操作门槛、配置来源与安全的近期 429 摘要。精确 quota 仍由 D1 强制；Skill 不能把部署配置伪装成应用内即时设置。
 - `cfkanban-deploy` 首次部署零参数生成 120/60 秒、300/60 秒、30/60 秒三个默认 binding 配置。后续修改必须作为独立、可读的 deployment plan delta 展示并读回验证；只发布 Worker 配置，不运行 D1 migration，也不得因 Owner 在管理页查看策略而自动部署。
 - Cloudflare 官方 `cloudflare`/`wrangler` Skills 是可选上游参考，不是 `cfkanban-deploy` 的依赖、信任根或授权来源。已安装时可用于检索当前 Cloudflare 文档、Wrangler syntax/config schema 与通用排障；缺失不阻塞部署。任何安装都是独立的宿主写入计划，必须展示上游 repo/revision、scope、投影目标和回滚，不得自动安装或在 cfKanban 部署中隐式启用 Wrangler `--install-skills`。
@@ -532,8 +533,9 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 37. 已修订：D-259 将首次 Owner Credential 准备、bootstrap SQL digest、远端尝试、discovery/`/meta`/`/me` 身份读回、pending → current 与脱敏 receipt 全部绑定到同一已授权 task/operation/plan。`/me` 必须核对 Principal resource ID、Owner flag、Credential ID/fingerprint；部署最终化还必须通过 discovery 与 `/meta` 核对 Instance/origin/Service/schema。局部最终化失败只复用准确 pending/current，不创建第二份 Credential。D-260 只修订了其中“每 operation 绝对单次执行”的恢复边界。
 38. 已确认：D-260 针对真实 Owner bootstrap `fetch failed` 且远端零写入的中断场景，引入同 task/operation/plan 的固定六表零状态 probe。只有更新 probe 精确证明全部为空时，才能对同一 SQL 重试一次；任何存在/部分/畸形状态继续保持停止或最终化，不生成新 Credential，也不扩大原部署授权。
 39. 已确认：D-261 要求 strict-zero plan 结构化声明零状态恢复属于同一完整计划授权，并禁止 Agent 自行把确认话术收窄为“一个命令”或“只尝试一次”。同 task/operation/plan/config/SQL/Credential/target 均无漂移且 probe 为 `absent` 时直接续做；用户亲自提出的更窄限制、新任务或任何 plan delta 仍需重新授权。
+40. 已确认：D-262 要求 `cfkanban-admin` 的 Owner Audit 读取与 Service/OpenAPI/Web 使用同一显式筛选合同：可选一个不可变 `project_id` 与一个 `stream=domain|security`，省略表示实例级双 stream 读取；响应回显 `resolved_filters`，筛选变化使旧 cursor 失效并开始新的分页序列。
 
-SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 27 在修订 26 的六表零状态恢复上，进一步要求完整计划授权直接覆盖该安全续做，并禁止 Agent 用单命令/单次尝试话术制造额外确认。此前统一 `.cfkanban/`、双语 Skill 表面、portable Wrangler config、不枚举 profiles、D1 ingestion 恢复、plan-bound Owner 最终化、monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
+SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 28 在修订 27 的完整 strict-zero plan 恢复授权上，进一步统一 Owner Audit 的 Project/stream 筛选、`resolved_filters` 和 cursor scope 合同。此前统一 `.cfkanban/`、双语 Skill 表面、portable Wrangler config、不枚举 profiles、D1 ingestion 恢复、plan-bound Owner 最终化、monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定并由 D-262 作加法式修订。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
 
 ## 12. 冻结范围与完成依据
 
@@ -569,5 +571,6 @@ SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 27
 28. 合同修订 25 已用 D-259 固定首次 Owner bootstrap 的完整最终化证据：专用 plan-bound Credential 准备、bootstrap SQL digest、单次执行、discovery/`/meta`/`/me` 准确读回、pending/current 恢复与幂等脱敏 receipt。
 29. 合同修订 26 已用 D-260 修订“单次执行”的中断边界：失败或响应不确定后，只有同一授权 journal 中更新的固定六表只读 probe 证明 bootstrap 状态完全为空，才允许对同一 SQL 重试一次；任何远端存在/部分状态继续停止或进入最终化。
 30. 合同修订 27 已用 D-261 固定完整 strict-zero plan 授权包含上述零状态恢复；Agent 不得自行用“只执行一次”类话术收窄授权并制造额外确认，除非更窄限制确实由用户提出。
+31. 合同修订 28 已用 D-262 固定 Owner Audit 的显式筛选合同：`project_id` 与 `stream` 可独立组合，省略表示实例级双 stream，响应回显 `resolved_filters`，cursor 绑定完整筛选上下文；`cfkanban-admin` 与 Owner Web 必须据此调用同一 API。
 
 本次冻结只固定上述公共 Agent 体验与安全边界，不固定尚未设计的具体 npm package 名、各宿主未来新增的投影机制、版本淘汰阈值或实现代码。冻结范围内的语义如需变化，必须通过显式新决策和可追踪修订；冻结本身不授权实现、安装、部署或发布。

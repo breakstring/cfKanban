@@ -51,9 +51,11 @@ node scripts/cfkanban-tool.mjs <command>
 | Restore content or a container | Stable resource read or explicit `deleted=only`, then one restore endpoint | Before container restore, show every enabled Public Join policy that will resume. |
 | Change preferred origin | `origin rebind-check`, then `GET/PUT /api/v1/admin/instance-origin` | Probe the candidate without a Credential, use expected version, then cross-read both origins. |
 | Open Owner Web | `POST /api/v1/web-launches` with an `admin` target | URL contains only a five-minute one-time code; default to Overview. |
-| Inspect audit history | `GET /api/v1/admin/audit-events` | Use bounded pagination and explicit filters. |
+| Inspect audit history | `GET /api/v1/admin/audit-events` | Use bounded pagination; when the task has a known scope, pass one immutable `project_id` and/or `stream=domain|security`, then verify `resolved_filters`. |
 
 The complete request and recovery guide is [references/owner-workflows.md](references/owner-workflows.md).
+
+Audit reads without `project_id` or `stream` deliberately cover the whole Instance and both streams. Reuse `next_cursor` only with the exact same filters; changing either filter starts a fresh read.
 
 ## First-use workflow after deployment
 

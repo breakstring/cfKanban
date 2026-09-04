@@ -1409,13 +1409,29 @@ const schemas = {
   AuditEvent: {
     allOf: [ref("Event"), { type: "object", required: ["stream"] }],
   },
+  AuditEventResolvedFilters: {
+    type: "object",
+    required: ["project_id", "streams"],
+    properties: {
+      project_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+      streams: {
+        type: "array",
+        minItems: 1,
+        maxItems: 2,
+        uniqueItems: true,
+        items: string({ enum: ["domain", "security"] }),
+      },
+    },
+    additionalProperties: false,
+  },
   AuditEventListResult: {
     type: "object",
-    required: ["has_more", "items", "next_cursor"],
+    required: ["has_more", "items", "next_cursor", "resolved_filters"],
     properties: {
       has_more: { type: "boolean" },
       items: { type: "array", items: ref("AuditEvent") },
       next_cursor: string(),
+      resolved_filters: ref("AuditEventResolvedFilters"),
     },
     additionalProperties: false,
   },
@@ -1870,6 +1886,8 @@ const querySets = {
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],
   AuditEventQuery: [
+    { name: "project_id", in: "query", required: false, schema: ref("Uuid"), description: "Restrict the Owner audit feed to events bound to one immutable Project ID." },
+    { name: "stream", in: "query", required: false, schema: string({ enum: ["domain", "security"] }), description: "Restrict the Owner audit feed to one event stream; omission reads both streams." },
     { name: "after", in: "query", required: false, schema: string(), description: "Opaque Owner audit cursor." },
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],

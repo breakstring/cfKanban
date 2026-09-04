@@ -50,7 +50,7 @@
 | 轮换 Owner Credential | 专用 `credential prepare` + `owner rotate-credential` | 见下方轮换流程。 |
 | 列出/创建 Project Grant | `GET/POST /api/v1/admin/projects/{project_id}/grants` | 一个稳定 Principal 与显式 role。 |
 | 读取/改 role/撤销 Grant | `GET/PATCH/DELETE /api/v1/admin/grants/{grant_id}` | Role 变化或撤销不抹除 assignment/history。 |
-| 读取审计 | `GET /api/v1/admin/audit-events` | 有界分页与显式 filters。 |
+| 读取审计 | `GET /api/v1/admin/audit-events` | 有界分页；可按一个不可变 `project_id` 和／或 `stream=domain|security` 筛选，并核对 `resolved_filters`。 |
 | 读取/修改 preferred origin | `GET/PUT /api/v1/admin/instance-origin` | 无 Credential 探测 candidate、CAS、新旧 discovery 读回。 |
 | 管理 Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | 一个 Project 与显式 role；关闭不撤销 Grants。 |
 | 读取/修改 Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | 显式 Issue/Comment/Principal limits 与 current usage。 |
@@ -105,6 +105,10 @@ Web Session 不能轮换或撤销 Owner Credential。全部 Owner Credential 丢
 修改 preferred origin 前，不带 Credential 探测目标 HTTPS origin，使用 current expected version 更新，再从新旧 origin 分别读取 public discovery document。认证请求不依赖跨 origin redirect。
 
 Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 opaque code；它兑换为实例级 admin Session，默认打开 Overview，不预取全部 Issues。用户随后可显式选择 Workspace/Project。长期 Credential 不进入浏览器。
+
+## 审计筛选
+
+任务只涉及一个已知 Project 时使用 `project_id`，只关心一种事件时使用 `stream=domain|security`。两者都省略表示有意读取整个实例的业务与安全审计。响应会在 `resolved_filters` 中回显规范化的 `project_id` 与 stream 列表。只有筛选条件完全不变时才能继续使用 `next_cursor`；任何筛选变化都应开启新的分页序列。
 
 ## 错误与读回
 

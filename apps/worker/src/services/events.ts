@@ -1,5 +1,6 @@
 import {
   requireProjectKey,
+  requireUuid,
   requireWorkspaceKey,
   timestamp,
 } from "../domain/model.ts";
@@ -54,6 +55,13 @@ interface EventScope {
   unresolvedWorkspaceTargets: string[];
   visibleProjects: VisibleProject[];
   workspaceTargets: string[];
+}
+
+type AuditEventStream = "domain" | "security";
+
+interface AuditEventFilter {
+  projectId: string | null;
+  streams: AuditEventStream[];
 }
 
 function eventSelect(eventsSource: string): string {
@@ -156,6 +164,21 @@ function parseAuditEventCursor(last: JsonValue[] | null): number {
     || last[0] < 0
   ) throw invalidCursor();
   return last[0];
+}
+
+function requireAuditEventFilter(url: URL): AuditEventFilter {
+  const projectIdValue = url.searchParams.get("project_id");
+  const projectId = projectIdValue === null ? null : requireUuid(projectIdValue, "project_id");
+  const streamValue = url.searchParams.get("stream");
+  if (streamValue !== null && streamValue !== "domain" && streamValue !== "security") {
+    throw validationError("schema_validation_failed", { field: "stream" });
+  }
+  return {
+    projectId,
+    streams: streamValue === null
+      ? ["domain", "security"]
+      : [streamValue],
+  };
 }
 
 async function eventSequenceForAnchor(db: D1Database, eventId: string | null): Promise<number> {
@@ -351,25 +374,60 @@ export async function listAuditEvents(
   now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
+  const filter = requireAuditEventFilter(url);
   const context = await createCursorContext(
     "audit-events",
-    { streams: ["domain", "security"] },
+    { project_id: filter.projectId, streams: filter.streams },
     [],
     auth.principalId,
   );
   const afterValue = url.searchParams.get("after");
   const afterSequence = parseAuditEventCursor(decodeCursor(afterValue, context));
   const limit = requireLimit(url);
-  const authGuard = buildCurrentAuthGuard(auth, now, 3, true);
+  let bindings: Array<string | number | null>;
+  let query: string;
+  if (filter.projectId !== null && filter.streams.length === 2) {
+    bindings = [afterSequence, filter.projectId, limit + 1];
+    const authGuard = buildCurrentAuthGuard(auth, now, 4, true);
+    query = `WITH candidate_events AS (
+       SELECT ${EVENT_CANDIDATE_COLUMNS}
+       FROM events INDEXED BY idx_events_project_stream_sequence
+       WHERE project_id = ?2 AND stream = 'domain' AND sequence > ?1
+       UNION ALL
+       SELECT ${EVENT_CANDIDATE_COLUMNS}
+       FROM events INDEXED BY idx_events_project_stream_sequence
+       WHERE project_id = ?2 AND stream = 'security' AND sequence > ?1
+       ORDER BY sequence ASC LIMIT ?3
+     )
+     ${eventSelect("candidate_events event")}
+     WHERE ${authGuard.sql}
+     ORDER BY event.sequence ASC
+     LIMIT ?3`;
+    bindings.push(...authGuard.values);
+  } else {
+    const predicates = ["event.sequence > ?1"];
+    bindings = [afterSequence];
+    if (filter.projectId !== null) {
+      bindings.push(filter.projectId);
+      predicates.push(`event.project_id = ?${bindings.length}`);
+    }
+    if (filter.streams.length === 1) {
+      bindings.push(filter.streams[0] ?? null);
+      predicates.push(`event.stream = ?${bindings.length}`);
+    }
+    bindings.push(limit + 1);
+    const limitParameter = `?${bindings.length}`;
+    const authGuard = buildCurrentAuthGuard(auth, now, bindings.length + 1, true);
+    query = `${EVENT_SELECT}
+     WHERE ${predicates.join("\n       AND ")}
+       AND ${authGuard.sql}
+     ORDER BY event.sequence ASC
+     LIMIT ${limitParameter}`;
+    bindings.push(...authGuard.values);
+  }
   let rows: EventRow[];
   try {
-    const result = await db.prepare(
-      `${EVENT_SELECT}
-       WHERE event.sequence > ?1
-         AND ${authGuard.sql}
-       ORDER BY event.sequence ASC
-       LIMIT ?2`,
-    ).bind(afterSequence, limit + 1, ...authGuard.values).all<EventRow>();
+    const result = await db.prepare(query).bind(...bindings).all<EventRow>();
     rows = result.results;
   } catch (error) {
     throw platformUnavailable("d1", error);
@@ -382,5 +440,9 @@ export async function listAuditEvents(
     has_more: hasMore,
     items: page.map((row) => eventResource(row, true)),
     next_cursor: encodeCursor(context, [lastSequence]),
+    resolved_filters: {
+      project_id: filter.projectId,
+      streams: filter.streams,
+    },
   };
 }
