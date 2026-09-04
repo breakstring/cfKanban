@@ -12,8 +12,8 @@ cfKanban is currently a **public testing preview**, not a stable end-user releas
 
 - The Worker, D1 schema, Web UI, and three Agent Skills are implemented in this repository.
 - You can install the Codex plugin from this public repository today and inspect or evaluate the Skills.
-- The [`0.1.0-alpha.33` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.33) packages immutable Skill and Service bundles for testing. It adds dedicated deployment/joining guides and the public-home footer, clarifies Public Join CAS versions, and accepts opaque one-time-delivery event cursors.
-- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.33/prerelease.json).
+- The [`0.1.0-alpha.34` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.34) packages immutable Skill and Service bundles for testing. It keeps Cloudflare from injecting third-party RUM into cfKanban HTML while preserving the strict CSP, dedicated guides, and complete public-home surface.
+- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.34/prerelease.json).
 - The stable release pointer and real multi-environment deployment acceptance are not published yet.
 - Do not treat `main`, a local checkout, or a marketplace snapshot as a canonical stable release or production-ready deployment.
 
@@ -40,7 +40,7 @@ For a future Cloudflare deployment you will also need:
 The repository is a Codex plugin marketplace. From the command line, add the immutable testing tag and install its plugin:
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.33
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.34
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -76,7 +76,7 @@ You do not need to know or mention manifests, digests, preflight, deployment pla
 
 If Cloudflare login is needed, the Skill shows that as its own small plan and then opens the appropriate browser or device flow after approval. Completing login does not create a Worker or D1 database; the deployment plan remains a later, separate approval.
 
-At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.33` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
+At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.34` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
 
 For the complete step-by-step path, give your Agent the [deployment guide](apps/web/public/deploy-guide.md). It covers Skill installation, environment checks, authorization, deployment, readback, and recovery instead of asking the Agent to infer the workflow from this general README.
 

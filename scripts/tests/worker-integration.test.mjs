@@ -182,7 +182,7 @@ test("production Worker serves health/OpenAPI, structured misses, and Static Ass
   for (const path of ["/", "/app", "/app/w/validation/p/CORE", "/app/issues/CFK-1", "/app/admin?section=audit"]) {
     const navigation = await server.fetch(path, { headers: { "sec-fetch-mode": "navigate" } });
     assert.equal(navigation.status, 200, path);
-    assert.equal(navigation.headers.get("cache-control"), "no-store", path);
+    assert.equal(navigation.headers.get("cache-control"), "no-store, no-transform", path);
     assert.equal(navigation.headers.get("referrer-policy"), "no-referrer", path);
     const html = await navigation.text();
     assert.match(html, /<div id="app"><\/div>/, path);

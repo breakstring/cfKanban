@@ -2,6 +2,7 @@ import { payloadTooLarge, validationError } from "./errors.ts";
 import type { JsonValue, RequestContext } from "./types.ts";
 
 export const MAX_JSON_BYTES = 128 * 1_024;
+export const HTML_DOCUMENT_CACHE_CONTROL = "no-store, no-transform";
 
 export type JsonValidator = (value: JsonValue) => boolean;
 

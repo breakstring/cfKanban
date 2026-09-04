@@ -2,7 +2,13 @@ import openApiDocument from "../../../contracts/openapi.json";
 
 import { clearCsrfCookie, clearSessionCookie } from "./kernel/csrf.ts";
 import { ApiError, errorResponse, notFound, platformUnavailable } from "./kernel/errors.ts";
-import { createRequestContext, jsonResponse, readJsonBody, withRequestId } from "./kernel/http.ts";
+import {
+  createRequestContext,
+  HTML_DOCUMENT_CACHE_CONTROL,
+  jsonResponse,
+  readJsonBody,
+  withRequestId,
+} from "./kernel/http.ts";
 import {
   enforceInstanceRateLimit,
   enforceUnauthenticatedSensitiveRateLimit,
@@ -49,7 +55,7 @@ function mayHaveJsonBody(request: Request): boolean {
 
 function withSpaDocumentHeaders(response: Response, requestId: string): Response {
   const headers = new Headers(response.headers);
-  headers.set("cache-control", "no-store");
+  headers.set("cache-control", HTML_DOCUMENT_CACHE_CONTROL);
   headers.set("referrer-policy", "no-referrer");
   headers.set("x-request-id", requestId);
   return new Response(response.body, {

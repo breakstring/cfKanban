@@ -8,7 +8,7 @@
 - 关联 Agent Skills：[Agent Skills & Bootstrap SPEC](2026-08-28-agent-skills-bootstrap-spec.md)
 - 关联 API/Schema：[API & D1 Schema SPEC](2026-08-28-api-schema-spec.md)
 - 事实快照：[Web 认证与公开加入能力快照](../research/web-auth-public-enrollment-snapshot-2026-08-29.md)
-- 最近更新：2026-09-04（D-264、D-266）
+- 最近更新：2026-09-04（D-264、D-266、D-267）
 
 ## 1. 目的与边界
 
@@ -140,7 +140,7 @@ Browser Launch 只保存服务端可校验的 target，例如 Project、Issue �
 ### 4.3 安全下限
 
 - D1 只保存 launch code 的安全散列，不保存明文；完整 URL、code、cookie 和长期 Credential 不进入日志、Audit payload、analytics、错误或 receipt。
-- 启动页和已认证页面使用严格 `Referrer-Policy: no-referrer`、`Cache-Control: no-store`，不加载第三方脚本、字体、图片或统计资源。
+- 启动页和已认证页面使用严格 `Referrer-Policy: no-referrer`、`Cache-Control: no-store, no-transform`；`no-transform` 阻止 Cloudflare Web Analytics 等边缘功能自动改写 HTML，不通过放宽 CSP 加载第三方脚本、字体、图片或统计资源。
 - launch code 短时、一次性、可撤销；失败兑换不得泄露目标、Principal 或 Project 是否存在。
 - Web Session 使用不可预测 token 的安全散列或等价服务端 session 记录；cookie 不可被 JavaScript 读取。
 - 所有 cookie-auth 写请求必须有 CSRF 防护。v0 固定采用 Origin/同源校验 + double-submit CSRF cookie/header；不能只依赖 SameSite。CSRF token 可被同源脚本读取，但不是认证凭据，不进入持久浏览器存储。

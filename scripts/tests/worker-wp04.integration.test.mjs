@@ -391,7 +391,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
 
   const invitationPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`);
   assert.equal(invitationPage.status, 200);
-  assert.equal(invitationPage.headers.get("cache-control"), "no-store");
+  assert.equal(invitationPage.headers.get("cache-control"), "no-store, no-transform");
   assert.equal(invitationPage.headers.get("referrer-policy"), "no-referrer");
   assert.match(invitationPage.headers.get("content-security-policy") ?? "", /default-src 'none'/);
   const invitationHtml = await invitationPage.text();

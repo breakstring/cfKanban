@@ -6,10 +6,10 @@ Use this guide for either a one-time Project Invite URL or a Public Join ID. Pro
 
 ## 1. Make sure the `cfkanban` Skill is available
 
-In Codex, the current testing plugin can be installed from the immutable `0.1.0-alpha.33` ref:
+In Codex, the current testing plugin can be installed from the immutable `0.1.0-alpha.34` ref:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.33
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.34
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 

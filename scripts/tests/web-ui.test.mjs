@@ -680,7 +680,7 @@ test("deployed deployment and joining guides are complete, paired, and non-execu
     "utf8",
   )));
   for (const [index, document] of documents.entries()) {
-    assert.match(document, /0\.1\.0-alpha\.33/);
+    assert.match(document, /0\.1\.0-alpha\.34/);
     assert.match(document, /cfkanban-agent-skills@cfkanban/);
     assert.doesNotMatch(document, /curl[^\n]*\|\s*(?:ba)?sh/iu, `${paths[index]} must not teach pipe-to-shell`);
   }

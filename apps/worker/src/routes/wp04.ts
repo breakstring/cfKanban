@@ -1,7 +1,12 @@
 import { requireVersion } from "../domain/model.ts";
 import { authenticateRequest } from "../kernel/auth.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
-import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
+import {
+  HTML_DOCUMENT_CACHE_CONTROL,
+  jsonResponse,
+  readJsonBody,
+  validateJsonObject,
+} from "../kernel/http.ts";
 import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
@@ -69,7 +74,7 @@ export function registerWp04Routes(router: Router): Router {
       ]);
       return new Response(html, {
         headers: {
-          "cache-control": "no-store",
+          "cache-control": HTML_DOCUMENT_CACHE_CONTROL,
           "content-security-policy": contentSecurityPolicy,
           "content-type": "text/html; charset=utf-8",
           "referrer-policy": "no-referrer",
