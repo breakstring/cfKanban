@@ -29,7 +29,7 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.18/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.19/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
 
 ## Choose the deployment source first
 
@@ -63,7 +63,8 @@ node scripts/cfkanban-tool.mjs <command>
 | Plan and perform login | `runtime plan-cloudflare-auth`, then `runtime cloudflare-auth-action` | Freeze separate process arguments, OAuth scopes, global keyring effects, profile operation, and task digest before opening a browser or saving auth. |
 | Verify Cloudflare account | `runtime wrangler-account-readback` | Run a read-only D1 listing against one exact account ID, with an explicit named profile when selected; return no database inventory. |
 | Read back the target D1 | `runtime d1-resource-readback` | Return only the exact target name and verified UUID, or `absent`; never expose the account's other databases. |
-| Read back the target Worker | `runtime worker-resource-readback` | Return only whether the exact Worker name is present or absent; never expose deployments or account inventory, and treat only Cloudflare code `10007` as absence. |
+| Read back the target Worker | `runtime worker-resource-readback`, `runtime worker-version-readback` | Return only the exact current single-version deployment plus a redacted binding inventory; never expose account inventory, author metadata, secrets, or raw output, and treat only Cloudflare code `10007` as absence. |
+| Read D1 restore evidence | `runtime d1-restore-point-readback` | Return one bookmark without restoring. Wrangler does not report the plan retention boundary, so a migration-bearing plan must separately freeze a verified current boundary. |
 | Install Tool Runtime | `runtime plan-install`, then `runtime install` | Exact version and plan digest; never modify PATH, shell profile, global Node/Wrangler, or a user Repo. |
 | Plan first deployment | `plan strict-zero` | Freeze account, resource names, bindings, Owner display name, release, instance IDs, migrations, and rate gates. |
 | Authorize/resume deployment | `journal create`, `journal authorize`, `plan compare` | Authorization binds the current task, operation ID, and exact normalized plan digest. |
@@ -71,9 +72,9 @@ node scripts/cfkanban-tool.mjs <command>
 | Execute Cloudflare steps | `deploy wrangler-action` | Only allowlisted plan steps; read back after every write or uncertain response. |
 | Validate Worker bundle | `deploy wrangler-action` with `action=validate_worker_bundle` | Run the resolved, release-compatible Wrangler with `deploy --dry-run` before the remote deploy action. |
 | Bootstrap Owner | `deployment prepare-owner-credential`, `bootstrap write-owner-sql`, authorized `bootstrap_owner`, recovery `owner_bootstrap_readback` when needed, then `deployment finalize-owner` | Bind the pending secret and SQL to the exact task/plan/journal. After an uncertain attempt, retry only when the fixed read-only probe proves all six bootstrap tables are still empty. Finalize only after release/config, health, discovery, `/meta`, `/me`, Owner, Credential ID, and fingerprint all match; then write the redacted receipt. |
-| Verify migrations | `migrations reconcile`, `migrations assess-ledger-recovery`, `migrations write-ledger-record-sql` | Check ordered manifest + insert-only checksum ledger + bounded schema artifacts. Missing-row recovery requires proof from the same authorized journal; command success alone is insufficient. |
+| Verify migrations | `migrations reconcile`, `migrations assess-ledger-recovery`, `migrations write-ledger-record-sql` | Check ordered manifest + insert-only checksum ledger + bounded schema artifacts. Checksum SQL is accepted only for the exact missing row proven recoverable by the same authorized journal and is fixed to that journal's private path. |
 | Install or update canonical Skills | `plan skill-update`, `release install-skill-bundle` | Required before a canonical first deployment when no matching verified release is active; local-only atomic version switch, with no Cloudflare or D1 write. |
-| Upgrade an Instance | `plan instance-upgrade`, journal and deploy commands | Pin Service bundle and restore evidence; do not update local Skills implicitly. |
+| Upgrade an Instance | `release install-service-bundle`, `plan instance-upgrade`, journal/deploy commands, `deployment finalize-upgrade` | Cache and re-verify the immutable Service bundle; freeze exact existing resources/current bindings, migration and restore evidence, deploy, then verify the unchanged Owner Credential and write an idempotent redacted before/after receipt. Do not update local Skills implicitly. |
 | Recover lost Owner access | deployment plan/journal plus the same pending-secret and bootstrap primitives | Restore the same Principal only; this is not a Web/application endpoint. |
 | Hand off to first-use setup | `cfkanban-admin` after deployment verification | Deployment alone creates no Workspace or Project; offer the next prompt but do not silently perform application writes. |
 
@@ -102,6 +103,7 @@ cfKanban-managed persistent data uses one maintenance root in the current execut
 ```text
 ~/.cfkanban/
   instances/
+  service-releases/
   skill-releases/
   tool-runtime/
 ```

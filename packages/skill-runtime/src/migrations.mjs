@@ -3,7 +3,7 @@ import path from "node:path";
 import { resolveStateRoot } from "./paths.mjs";
 import { getInstancePaths } from "./state.mjs";
 import { toolError } from "./errors.mjs";
-import { assertJournalAuthorization } from "./journal.mjs";
+import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import {
   assertNoSymlinkPath,
   atomicWritePrivateText,
@@ -38,13 +38,81 @@ export async function writeMigrationLedgerRecordSql({
   stateRoot = resolveStateRoot(),
   instanceId,
   operationId,
+  taskId,
+  plan,
   migration,
+  migrationManifestPath = null,
   outputPath = null,
 }) {
   const instance = requireUuid(instanceId, "instance_id");
   const operation = requireUuid(operationId, "operation_id");
   const record = migrationRecord(migration);
+  const journal = await assertJournalAuthorization({
+    stateRoot,
+    instanceId: instance,
+    operationId: operation,
+    taskId,
+    plan,
+  });
+  const configEvent = [...journal.events].reverse().find((event) => event?.type === "wrangler_config_written") || null;
+  if (configEvent === null || typeof configEvent.service_bundle_root !== "string") {
+    throw toolError("MIGRATION_RECORD_SOURCE_UNKNOWN", "The authorized journal does not identify its verified Service bundle");
+  }
+  const bundleRoot = absolutePath(configEvent.service_bundle_root, "service_bundle_root");
+  const expectedManifestPath = path.join(bundleRoot, "migrations", "manifest.json");
+  const manifestPath = migrationManifestPath === null
+    ? expectedManifestPath
+    : absolutePath(migrationManifestPath, "migration_manifest_path");
+  if (manifestPath !== expectedManifestPath) {
+    throw toolError("MIGRATION_RECORD_SOURCE_DRIFT", "Checksum SQL must use the manifest from the Service bundle frozen in the authorized journal");
+  }
+  const recovery = await assessMigrationLedgerRecovery({
+    stateRoot,
+    instanceId: instance,
+    operationId: operation,
+    taskId,
+    plan,
+    migrationManifestPath: manifestPath,
+  });
+  const authorizedRecord = recovery.safe_to_record_missing_checksum === true
+    ? migrationRecord(recovery.migration)
+    : null;
+  if (authorizedRecord === null
+    || authorizedRecord.sequence !== record.sequence
+    || authorizedRecord.name !== record.name
+    || authorizedRecord.sha256 !== record.sha256
+    || authorizedRecord.classification !== record.classification
+    || authorizedRecord.reentry !== record.reentry) {
+    throw toolError("MIGRATION_RECORD_NOT_AUTHORIZED", "Checksum SQL requires the exact missing row proven recoverable by the same authorized journal", {
+      blockers: recovery.blockers || [],
+    });
+  }
   const paths = getInstancePaths({ stateRoot, instanceId: instance });
+  const fixedPath = path.join(paths.journalsRoot, `${operation}.migration-${record.sequence}.sql`);
+  if (outputPath !== null && absolutePath(outputPath, "output_path") !== fixedPath) {
+    throw toolError("MIGRATION_RECORD_OUTPUT_DRIFT", "Checksum SQL path is fixed by the authorized operation journal");
+  }
+  const prior = [...journal.events].reverse().find((event) => event?.type === "migration_record_sql_written"
+    && event.migration?.sequence === record.sequence
+    && event.migration?.name === record.name) || null;
+  if (prior !== null) {
+    const existingBytes = await readFile(fixedPath);
+    if (prior.migration_record_sql_path !== fixedPath
+      || prior.migration_record_sql_sha256 !== sha256Bytes(existingBytes)
+      || prior.migration?.sha256 !== record.sha256) {
+      throw toolError("MIGRATION_RECORD_SQL_DRIFT", "Previously journaled checksum SQL changed on disk");
+    }
+    return {
+      instance_id: instance,
+      operation_id: operation,
+      migration: record,
+      migration_record_sql_path: fixedPath,
+      contains_plaintext_credential: false,
+      overwrites_existing_ledger_row: false,
+      relies_on_wrangler_file_ingestion_transaction: true,
+      resumed: true,
+    };
+  }
   const appliedAt = Date.now();
   const statements = [
     "INSERT INTO cfkanban_migration_ledger (sequence, name, sha256, classification, reentry, operation_id, applied_at)",
@@ -52,16 +120,28 @@ export async function writeMigrationLedgerRecordSql({
     `WHERE NOT EXISTS (SELECT 1 FROM cfkanban_migration_ledger WHERE sequence = ${record.sequence} OR name = ${sql(record.name)});`,
     "",
   ];
-  const filePath = outputPath || path.join(paths.journalsRoot, `${operation}.migration-${record.sequence}.sql`);
-  await atomicWritePrivateText(filePath, statements.join("\n"));
+  await atomicWritePrivateText(fixedPath, statements.join("\n"));
+  const sqlSha256 = sha256Bytes(await readFile(fixedPath));
+  await appendJournalEvent({
+    stateRoot,
+    instanceId: instance,
+    operationId: operation,
+    event: {
+      type: "migration_record_sql_written",
+      migration_record_sql_path: fixedPath,
+      migration_record_sql_sha256: sqlSha256,
+      migration: record,
+    },
+  });
   return {
     instance_id: instance,
     operation_id: operation,
     migration: record,
-    migration_record_sql_path: filePath,
+    migration_record_sql_path: fixedPath,
     contains_plaintext_credential: false,
     overwrites_existing_ledger_row: false,
     relies_on_wrangler_file_ingestion_transaction: true,
+    resumed: false,
   };
 }
 
@@ -162,6 +242,15 @@ function latestCommandFinished(events, action, beforeIndex = events.length) {
   return null;
 }
 
+function latestCommandFinishedAny(events, actions, beforeIndex = events.length) {
+  const allowed = new Set(actions);
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event?.type === "command_finished" && allowed.has(event.action)) return { event, index };
+  }
+  return null;
+}
+
 function isNormalizedMigrationReadback(value) {
   return value !== null
     && typeof value === "object"
@@ -227,7 +316,11 @@ export async function assessMigrationLedgerRecovery({
   if (otherDrift.length > 0) blockers.push("OTHER_MIGRATION_DRIFT");
   if (recoveryCandidates.length !== 1) blockers.push("EXACTLY_ONE_MISSING_LEDGER_ROW_REQUIRED");
 
-  const latestApply = latestCommandFinished(journal.events, "apply_non_destructive_migrations", latestReadback.index);
+  const latestApply = latestCommandFinishedAny(
+    journal.events,
+    ["apply_non_destructive_migrations", "apply_migration"],
+    latestReadback.index,
+  );
   if (latestApply === null || latestApply.event.exit_code !== 0) blockers.push("SAME_JOURNAL_SUCCESSFUL_MIGRATION_APPLY_REQUIRED");
   const latestRecord = latestApply === null
     ? null
@@ -239,6 +332,13 @@ export async function assessMigrationLedgerRecovery({
   const candidate = recoveryCandidates.length === 1
     ? (manifest.migrations.find((migration) => migration.sequence === recoveryCandidates[0].sequence && migration.name === recoveryCandidates[0].name) || null)
     : null;
+  if (candidate !== null && latestApply?.event?.action === "apply_migration") {
+    if (latestApply.event.migration?.sequence !== candidate.sequence
+      || latestApply.event.migration?.name !== candidate.name
+      || latestApply.event.migration?.sha256 !== candidate.sha256) {
+      blockers.push("SAME_JOURNAL_MIGRATION_APPLY_MISMATCH");
+    }
+  }
   if (candidate?.destructive === true) blockers.push("DESTRUCTIVE_MIGRATION_RECOVERY_REJECTED");
   if (candidate !== null) {
     if (path.basename(candidate.name) !== candidate.name || !/^[A-Za-z0-9._-]+$/u.test(candidate.name)) {

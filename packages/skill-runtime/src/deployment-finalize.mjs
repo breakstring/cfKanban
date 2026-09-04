@@ -40,7 +40,7 @@ function matchingOwnerCredential(metadata, facts) {
     && metadata?.purpose === "owner_bootstrap";
 }
 
-async function requestJson(origin, apiPath, { token = null, fetchImpl }) {
+export async function requestJson(origin, apiPath, { token = null, fetchImpl }) {
   const headers = new Headers({ accept: "application/json" });
   if (token !== null) headers.set("authorization", `Bearer ${token}`);
   let response;
@@ -65,7 +65,7 @@ async function requestJson(origin, apiPath, { token = null, fetchImpl }) {
   }
 }
 
-function assertReleaseMatchesPlan(verified, plan) {
+export function assertReleaseMatchesPlan(verified, plan) {
   if (verified.pointer?.manifest_sha256 !== plan.release?.manifest_sha256
     || verified.manifest?.release?.version !== plan.release?.manifest_version) {
     throw toolError("DEPLOYMENT_RELEASE_DRIFT", "Verified release pointer or manifest does not match the authorized deployment plan");
@@ -80,7 +80,7 @@ function assertReleaseMatchesPlan(verified, plan) {
   return { service, skill };
 }
 
-async function loadActiveSkillEvidence(stateRoot) {
+export async function loadActiveSkillEvidence(stateRoot) {
   const releaseRoot = path.join(stateRoot, "skill-releases");
   const activePath = path.join(releaseRoot, "active.json");
   await assertNoSymlinkPath(activePath, stateRoot);
@@ -111,7 +111,7 @@ async function loadActiveSkillEvidence(stateRoot) {
   };
 }
 
-function assertReadback({ health, discovery, meta, me, facts, contract, origin }) {
+export function assertReadback({ health, discovery, meta, me, facts, contract, origin }) {
   if (health?.d1 !== "reachable"
     || health.service_version !== contract.serviceVersion
     || health.schema_version !== contract.schemaVersion) {

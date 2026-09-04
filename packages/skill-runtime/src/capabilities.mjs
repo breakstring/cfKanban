@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { lstatSync, readFileSync } from "node:fs";
-import { classifyExecutionEnvironment, resolveSkillReleaseRoot, resolveStateRoot, resolveToolRuntimeRoot } from "./paths.mjs";
+import { classifyExecutionEnvironment, resolveServiceReleaseRoot, resolveSkillReleaseRoot, resolveStateRoot, resolveToolRuntimeRoot } from "./paths.mjs";
 
 function probe(command, args, { env = process.env } = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", env, shell: false, windowsHide: true, timeout: 5_000 });
@@ -61,6 +61,7 @@ export function buildCapabilityReport({
       state_root: resolveStateRoot({ platform, home }),
       tool_runtime_root: resolveToolRuntimeRoot({ platform, home, env }),
       skill_release_root: resolveSkillReleaseRoot({ platform, home, env }),
+      service_release_root: resolveServiceReleaseRoot({ platform, home, env }),
       current_directory: cwd,
     },
     environment: {
