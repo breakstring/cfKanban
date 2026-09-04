@@ -1066,7 +1066,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   for (let index = 0; index < 2; index += 1) {
     const page = await request(projectLaunch.body.resource.launch_url);
     assert.equal(page.response.status, 200);
-    assert.equal(page.response.headers.get("cache-control"), "no-store");
+    assert.equal(page.response.headers.get("cache-control"), "no-store, no-transform");
     assert.equal(page.response.headers.get("referrer-policy"), "no-referrer");
     assert.doesNotMatch(page.body, new RegExp(projectLaunch.code));
     const script = /<script>([\s\S]+)<\/script>/u.exec(page.body)?.[1];
@@ -1111,7 +1111,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   const consumedLaunchPage = await request(projectLaunch.body.resource.launch_url);
   assert.equal(consumedLaunchPage.response.status, 410);
   assert.match(consumedLaunchPage.response.headers.get("content-type"), /^text\/html/u);
-  assert.equal(consumedLaunchPage.response.headers.get("cache-control"), "no-store");
+  assert.equal(consumedLaunchPage.response.headers.get("cache-control"), "no-store, no-transform");
   assert.equal(consumedLaunchPage.response.headers.get("referrer-policy"), "no-referrer");
   assert.doesNotMatch(consumedLaunchPage.body, new RegExp(projectLaunch.code));
   assert.match(consumedLaunchPage.body, /Ask your Agent for a new link/u);

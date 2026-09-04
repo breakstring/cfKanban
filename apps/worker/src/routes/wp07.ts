@@ -8,7 +8,12 @@ import {
   serializeSessionCookie,
 } from "../kernel/csrf.ts";
 import { ApiError } from "../kernel/errors.ts";
-import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
+import {
+  HTML_DOCUMENT_CACHE_CONTROL,
+  jsonResponse,
+  readJsonBody,
+  validateJsonObject,
+} from "../kernel/http.ts";
 import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
@@ -101,7 +106,7 @@ export function registerWp07Routes(router: Router): Router {
       }
       return new Response(responseBody, {
         headers: {
-          "cache-control": "no-store",
+          "cache-control": HTML_DOCUMENT_CACHE_CONTROL,
           "content-security-policy": await webLaunchPageContentSecurityPolicy(),
           "content-type": "text/html; charset=utf-8",
           "referrer-policy": "no-referrer",

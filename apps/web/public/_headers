@@ -1,13 +1,13 @@
 /
-  Cache-Control: no-store
+  Cache-Control: no-store, no-transform
   Referrer-Policy: no-referrer
 
 /app
-  Cache-Control: no-store
+  Cache-Control: no-store, no-transform
   Referrer-Policy: no-referrer
 
 /app/*
-  Cache-Control: no-store
+  Cache-Control: no-store, no-transform
   Referrer-Policy: no-referrer
 
 /assets/*

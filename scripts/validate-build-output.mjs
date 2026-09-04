@@ -14,8 +14,8 @@ assert.ok((await stat(new URL("_headers", webRoot))).isFile(), "Web build must e
 const staticHeaders = await readFile(new URL("_headers", webRoot), "utf8");
 for (const route of ["/", "/app", "/app/*"]) {
   assert.ok(
-    staticHeaders.includes(`${route}\n  Cache-Control: no-store\n  Referrer-Policy: no-referrer`),
-    `${route} must disable caching and referrer disclosure`,
+    staticHeaders.includes(`${route}\n  Cache-Control: no-store, no-transform\n  Referrer-Policy: no-referrer`),
+    `${route} must disable caching, edge transforms, and referrer disclosure`,
   );
 }
 assert.ok(
