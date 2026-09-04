@@ -344,6 +344,9 @@ test("OpenAPI exposes concrete Browser Launch, Session, and WebAuthn contracts",
     document.components.schemas.Event.properties.authorized_via.enum,
     ["deployment_owner", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"],
   );
+  assert.match(document.components.schemas.Event.properties.authorized_via.description, /does not identify the mutated resource/u);
+  assert.match(document.components.schemas.Event.properties.grant_id.description, /authorization context/u);
+  assert.match(document.components.schemas.Event.properties.subject.description, /not grant_id alone/u);
   assert.deepEqual(
     document.components.schemas.PasskeyRegistrationOptions.properties.public_key.properties
       .pubKeyCredParams.items.properties.alg.enum,

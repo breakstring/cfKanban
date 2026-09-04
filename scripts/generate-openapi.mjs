@@ -1346,10 +1346,16 @@ const schemas = {
           { type: "null" },
         ],
       },
-      authorized_via: string({ enum: ["deployment_owner", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"] }),
+      authorized_via: string({
+        description: "Historical authorization path used for this Event; it does not identify the mutated resource.",
+        enum: ["deployment_owner", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"],
+      }),
       created_at: ref("Timestamp"),
       event_index: integer({ minimum: 0 }),
-      grant_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+      grant_id: {
+        description: "Project Grant involved in the Event's authorization context when one exists. On Grant-management Events it can also equal the Grant subject; use subject.type and subject.id to identify the mutated resource.",
+        anyOf: [ref("Uuid"), { type: "null" }],
+      },
       id: ref("Uuid"),
       operation_id: ref("Uuid"),
       payload: {},
@@ -1362,6 +1368,7 @@ const schemas = {
       stream: string({ enum: ["domain", "security"] }),
       subject: {
         type: "object",
+        description: "Stable type and ID of the resource whose lifecycle this Event records. Use this pair, not grant_id alone, to classify resource mutations.",
         required: ["id", "type"],
         properties: { id: string(), type: string() },
         additionalProperties: false,
