@@ -1,4 +1,5 @@
 import { buildCapabilityReport } from "./capabilities.mjs";
+import { createBrowserLaunchAndDeliver, createInvitationAndDeliver, guardedApiRequest } from "./capability-delivery.mjs";
 import { redeemInvitation, redeemPublicJoin, rotateOwnerCredential, verifyPendingCredential } from "./credential-operations.mjs";
 import { serializeError, toolError } from "./errors.mjs";
 import { authorizeJournal, createJournal } from "./journal.mjs";
@@ -14,7 +15,6 @@ import {
   preparePendingCredential,
   putInstanceMetadata,
 } from "./state.mjs";
-import { apiRequest } from "./transport.mjs";
 import { prepareOwnerCredential, writeOwnerBootstrapSql } from "./bootstrap-sql.mjs";
 import { finalizeOwnerDeployment } from "./deployment-finalize.mjs";
 import { finalizeInstanceUpgrade } from "./instance-upgrade.mjs";
@@ -35,8 +35,8 @@ import { canonicalDigest } from "./utils.mjs";
 
 const ALL_SURFACES = Object.freeze(["daily", "admin", "deploy"]);
 
-function command({ description, effect, inputFields = [], surfaces = ALL_SURFACES, run }) {
-  return Object.freeze({ description, effect, inputFields: Object.freeze(inputFields), surfaces: Object.freeze(surfaces), run });
+function command({ description, effect, inputFields = [], output = "ordinary", surfaces = ALL_SURFACES, run }) {
+  return Object.freeze({ description, effect, inputFields: Object.freeze(inputFields), output, surfaces: Object.freeze(surfaces), run });
 }
 
 const COMMANDS = new Map([
@@ -56,9 +56,11 @@ const COMMANDS = new Map([
   ["deployment finalize-upgrade", command({ description: "Verify an existing Instance upgrade, unchanged Owner identity, migration/schema state, Worker deployment, and write a redacted before/after receipt.", effect: "credential_free_and_authenticated_readback_then_local_receipt_write", inputFields: ["instanceId", "operationId", "taskId", "plan", "configPath", "apiOrigin", "currentReceiptPath", "releasePointerPath", "manifestPath", "artifactFiles"], surfaces: ["deploy"], run: finalizeInstanceUpgrade })],
   ["scope read", command({ description: "Read the optional non-secret Repo scope file.", effect: "read_only", inputFields: ["repoRoot"], surfaces: ["daily"], run: async (input) => ({ scope: await readRepoScope(input) }) })],
   ["scope merge", command({ description: "Merge explicit non-secret Repo scope targets.", effect: "local_write", inputFields: ["repoRoot", "targets"], surfaces: ["daily"], run: mergeRepoScope })],
-  ["scope resolve", command({ description: "Resolve explicit, Repo, or warned aggregate Project scope.", effect: "read_only", inputFields: ["explicitTargets", "repoTargets"], surfaces: ["daily"], run: resolveScope })],
+  ["scope resolve", command({ description: "Resolve explicit, Repo, or warned aggregate Project scope.", effect: "read_only", inputFields: ["explicitTargets", "repoTargets", "validTargets", "allowUnfiltered"], surfaces: ["daily"], run: resolveScope })],
   ["origin rebind-check", command({ description: "Cross-check trusted and preferred origins without sending a Credential; update local metadata only after proof.", effect: "credential_free_network_and_local_write", inputFields: ["instanceId"], run: checkTrustedOriginRebind })],
-  ["api request", command({ description: "Send one same-origin authenticated REST request using the private current Credential.", effect: "authenticated_remote_request", inputFields: ["instanceId", "method", "apiPath", "body", "idempotencyKey"], run: apiRequest })],
+  ["web launch", command({ description: "Create one Browser Launch and open it through a memory-only loopback relay; explicit headless fallback may return the capability once.", effect: "authenticated_remote_write_and_browser_delivery", inputFields: ["instanceId", "target", "idempotencyKey", "delivery", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["daily", "admin"], run: createBrowserLaunchAndDeliver })],
+  ["invite create", command({ description: "Create one Owner Invitation and copy it without stdout; explicit headless fallback may return the capability once.", effect: "authenticated_remote_write_and_invite_delivery", inputFields: ["instanceId", "body", "idempotencyKey", "delivery", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["admin"], run: createInvitationAndDeliver })],
+  ["api request", command({ description: "Send one same-origin authenticated REST request using the private current Credential; one-time capability creation requires a dedicated command.", effect: "authenticated_remote_request", inputFields: ["instanceId", "method", "apiPath", "body", "idempotencyKey"], run: guardedApiRequest })],
   ["release verify", command({ description: "Verify a stable or prerelease pointer, immutable manifest, allowed origins, and both artifact digests.", effect: "read_only", inputFields: ["releasePointerPath", "manifestPath", "artifactFiles"], surfaces: ["deploy"], run: loadAndVerifyRelease })],
   ["release continuity", command({ description: "Compare publisher and artifact-origin continuity with an installed receipt.", effect: "read_only", inputFields: ["currentReceipt", "targetManifest"], surfaces: ["deploy"], run: verifyPublisherContinuity })],
   ["release install-skill-bundle", command({ description: "Install one verified Skill bundle version and atomically switch its active pointer.", effect: "local_write", inputFields: ["bundlePath", "version", "expectedSha256", "publisher", "source"], surfaces: ["deploy"], run: installVerifiedSkillBundle })],
@@ -113,6 +115,7 @@ export function getCommandCatalog({ surface = "all" } = {}) {
         description: definition.description,
         effect: definition.effect,
         input_fields: [...definition.inputFields],
+        output: definition.output,
       })),
   };
 }

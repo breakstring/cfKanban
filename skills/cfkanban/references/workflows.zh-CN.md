@@ -44,7 +44,7 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 | 检查实例槽位 | `state inspect` | trusted origin，以及已脱敏的 current/pending Credential metadata。 |
 | 检查 origin 迁移 | `origin rebind-check` | 无 Credential 交叉验证；只有新旧 origin 连续性成立才更新 metadata。 |
 | 读取 Repo 推荐范围 | `scope read` | 可选 `.cfkanban-scope.json` targets。 |
-| 解析有效范围 | `scope resolve` | `explicit`、`repository` 或带警告的 `unfiltered` scope。 |
+| 解析有效范围 | `scope resolve` | `explicit`、`repository` 或带警告的 `unfiltered` scope；需要严格校验时传 `validTargets` 与 `allowUnfiltered=false`。 |
 | 增加显式 Repo targets | `scope merge` | 非秘密、去重后的 scope 文件；Invite/discovery 后不得隐式执行。 |
 | 确认服务端身份 | `api request` → `GET /api/v1/me` | Principal ID、display name、version、current Credential fingerprint、Grants 和 Owner 标记。 |
 
@@ -98,7 +98,15 @@ Project Invite 可以授予一个或多个显式 Project roles。Recovery Invite
 
 ## Browser Launch 与 Passkey
 
-通过 `api request` 调用 `POST /api/v1/web-launches`，并指定一个明确 `project` 或 `issue` target。返回 URL 只携带固定 5 分钟、一次性的 opaque launch code；浏览器把它兑换为固定 8 小时、Project-scoped 的 HttpOnly Session。长期 Credential 不进入 URL、浏览器脚本存储或页面上下文。
+使用专用 `web launch` 命令，并指定一个明确 `project` 或 `issue` target。通用 `api request` 会在网络写入前拒绝 Browser Launch 创建。默认 `delivery=system_browser` 会先确认本地浏览器 opener 可用，再创建固定 5 分钟的 capability；远端 URL 只保留在内存中，浏览器经短期 loopback redirect 打开，stdout 只返回安全 metadata。浏览器把 code 兑换为固定 8 小时、Project-scoped 的 HttpOnly Session。长期 Credential 不进入 URL、浏览器脚本存储或页面上下文。
+
+真正的 headless 环境默认在创建前停止。只有用户确实需要人工交付、并接受 Agent 宿主可能保留工具输出时，才使用 `delivery=stdout_once`，同时传入下面这句准确的 `sensitiveOutputAcknowledgement`：
+
+```text
+I understand this one-time capability may be retained by the Agent host
+```
+
+返回的 `sensitive_output` 会明确标为一次性 Bearer capability。只把它直接交给目标浏览器一次；Agent 回复、日志、journal、receipt、测试报告、文件和后续消息都不得复述或保存。幂等重放无法重新取得该值；交付失败时等待旧 launch 失效，再用新 Idempotency Key 创建。
 
 Passkey 只能从 Agent-launch Session 开始登记。Passkey 只认证 Web，不是 API Credential 或 Grant；浏览器 capability detection 不能证明 Passkey 存在，hostname 变化后必须重新 Agent Launch 并在新 hostname 登记。
 

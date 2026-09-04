@@ -12,8 +12,8 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 
 - Worker、D1 schema、Web UI 和三个 Agent Skills 已经在本仓库中实现。
 - 你现在可以从这个公开仓库安装 Codex plugin，并检查或试用这些 Skills。
-- [`0.1.0-alpha.31` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.31) 提供不可变的 Skill 与 Service bundle；本地状态检查和 Credential 准备命令现在只返回明确的安全元数据视图，不再返回内部 Credential 元数据。
-- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.31/prerelease.json)。
+- [`0.1.0-alpha.32` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.32) 提供不可变的 Skill 与 Service bundle；专用 Browser Launch 与 Invite 命令现在默认不会把一次性 capability 写进通用命令输出。
+- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.32/prerelease.json)。
 - 稳定发行指针和真实多环境部署验收尚未发布。
 - 不要把 `main`、本地 checkout 或 marketplace snapshot 当成 canonical stable release 或生产就绪部署。
 
@@ -40,7 +40,7 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 本仓库本身就是一个 Codex plugin marketplace。可以在命令行添加不可变的测试 tag，并安装其中的 plugin：
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.31
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.32
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -76,7 +76,7 @@ plugin 包含三个 Skills：
 
 如果需要登录 Cloudflare，Skill 会把它作为一份独立的小计划展示；获批后再打开对应的浏览器或 device flow。完成登录不会创建 Worker 或 D1 数据库，真正的部署计划仍会在后面单独请求确认。
 
-当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `0.1.0-alpha.31` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
+当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `0.1.0-alpha.32` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
 
 如果你明确想评估某个源码修订，请把这一点说清楚：
 
@@ -104,9 +104,9 @@ plugin 包含三个 Skills：
 部署验证完成后，可以新建任务或继续使用已安装的 Skills：
 
 1. 让 `$cfkanban-admin` 验证 Owner identity，按你选择的 key 和名称创建一个 Workspace、一个 Project，读回两者，再创建 Owner Web launch。
-2. 打开返回的一次性 URL。长期 Credential 不会进入浏览器或 URL。
+2. 专用 launch 命令默认直接打开看板，不返回一次性 URL。长期 Credential 不会进入浏览器或 URL。
 3. 让 `$cfkanban` 创建第一条 Issue，或直接通过 Agent 在这个 Project 中工作。
-4. 需要其他人或 Agent 加入时，让 `$cfkanban-admin` 创建邀请，并明确目标 Project 和 `reader` 或 `writer` 权限。
+4. 需要其他人或 Agent 加入时，让 `$cfkanban-admin` 创建邀请，并明确目标 Project 和 `reader` 或 `writer` 权限；专用命令默认把一次性话术复制到剪贴板，不写普通 stdout。
 
 给用户的提示词仍然可以很短：
 

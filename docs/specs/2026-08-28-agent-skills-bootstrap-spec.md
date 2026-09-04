@@ -1,14 +1,14 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
 - 文档状态：Frozen
-- 合同修订：28
+- 合同修订：29
 - Roadmap：R0 / R3
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
 - 事实快照：[Agent Skill 与本地部署环境能力快照](../research/agent-skill-platform-snapshot-2026-08-28.md)
 - 最近更新：2026-09-04
 - 冻结日期：2026-08-28
-- 最近修订：2026-09-04（D-262）
+- 最近修订：2026-09-04（D-263）
 
 ## 1. 目的与边界
 
@@ -163,11 +163,11 @@ v0 固定拆成三个按工作场景发现的能力，而不是一个塞满所�
 - 每个相关 `SKILL.md` 顶层直接放置简短的“合同与建议”段，使用 MUST / SHOULD / DECIDES 区分强制、推荐和上层决策。
 - 每个 `SKILL.md` 还必须直接说明“能做什么”、何时切换到另一个 Skill、内置命令入口、常见任务到命令/API 的对照、读回流程和停止条件；`node scripts/cfkanban-tool.mjs help` 必须返回当前 Skill 可用命令、effect 与输入字段，不能要求用户从安全政策或 OpenAPI 自行猜出执行方法。可本地化的详细操作手册维护 English 与简体中文配对；不支持 locale 的 metadata 使用英文。
 - 所有会使用身份的 Skills 都直接说明 `.cfkanban/` 是用户级状态根、Credential 不进入 Agent 正常上下文；`cfkanban-deploy` 还直接说明 Tool Runtime、Skill update 与 Instance upgrade 分离，以及部署安全边界。
-- `cfkanban` 直接说明 `.cfkanban-scope.json`、Project filters 强烈推荐但可省略、原子写操作和 context 不可信；打开 Web 时只为明确 target 创建 5 分钟一次性 Browser Launch，不向浏览器传递长期 Credential。Project/Issue launch 的 8 小时固定 Session 只覆盖对应 Project，切换范围时重新创建 launch。
+- `cfkanban` 直接说明 `.cfkanban-scope.json`、Project filters 强烈推荐但可省略、原子写操作和 context 不可信；打开 Web 时只为明确 target 创建 5 分钟一次性 Browser Launch，不向浏览器传递长期 Credential。Project/Issue launch 的 8 小时固定 Session 只覆盖对应 Project，切换范围时重新创建 launch。Browser Launch 创建必须使用专用 `web launch`，通用 `api request` 在远端写入前拒绝该 endpoint。
 - `cfkanban` 在用户选择 Passkey 登记时必须确认当前 Web Session 来自 Agent Launch，并说明 Passkey 只用于 Web、不会替代 `.cfkanban/` Credential。Skill 不把浏览器 WebAuthn/平台认证器能力探测或服务端登记清单解释成“当前设备已有可用 Passkey”；登录未完成时只说明可能是取消、超时、无匹配 credential、认证器不可用或策略拒绝，并提供 Browser Launch 恢复入口。hostname 变化时，v0 在新地址重新登记，不尝试跨 hostname 复用 Passkey，也不把 API Credential 粘贴或上传到网页。
 - `cfkanban` 处理 Public Join 时必须解析一个明确公开 Project 和一个显式 `reader | writer`，并只执行一次单 Project 原子 self-join。若本地已有该实例身份就复用；没有时按既有规则询问 display name、生成并安全保存新 Credential。Skill 不提供 Team Join、多 Project join 或隐藏循环批量授权，也不能把用户选择的 `writer` 静默改为 `reader`。
 - `cfkanban` 处理首次 Project Invite 或 Public Join 时，把可信 Skill 来源/本地写入、Principal/Credential 创建、secret 保存位置和目标 Project/role 合并为一份简短计划；用户一次确认后可以连续完成无漂移的计划内动作。来源、目标、role、保存位置或权限影响变化时重新计划；Agent 宿主/OS 的权限提示仍按各自机制处理。
-- `cfkanban-admin` 直接说明 Invite 缺省建议为 `writer`、API role 必须显式、Owner-only 能力、Bearer URL 与 Recovery Invite 安全边界。Recovery Invite 的 `rotation | full_recovery` mode 在创建时固定且不可互换；Skill 必须在一次明确授权前展示完整 principal ID、身份/授权摘要和确切撤销范围，不能按重名 display name 创建。
+- `cfkanban-admin` 直接说明 Invite 缺省建议为 `writer`、API role 必须显式、Owner-only 能力、Bearer URL 与 Recovery Invite 安全边界。创建必须使用专用 `invite create`，不能让通用 `api request` 把一次性 URL 写入普通工具输出。Recovery Invite 的 `rotation | full_recovery` mode 在创建时固定且不可互换；Skill 必须在一次明确授权前展示完整 principal ID、身份/授权摘要和确切撤销范围，不能按重名 display name 创建。
 - `cfkanban-admin` 逐个 Project 开关 Public Join。开启前必须明确展示公开 `writer` 后果：未知互联网参与者可以自行取得写权限、修改/软删除内容并产生 D1 写入；公开卡片只使用显式 public summary，不复用内部 Project context。关闭入口不自动撤销既有 Grants。
 - `cfkanban-admin` 开启 Public Join 时必须取得 Owner 为该 Project 显式提交的 Issue/Comment/Principal active limits；可以建议 50/500/50，但不能把建议值作为未告知默认。Skill 必须说明三项限制按 Project 隔离，只在该 Project 的 Public Join enabled 期间生效，关闭后不约束本 Project 的普通协作且不撤销既有 Grants；重新开启可以预填旧值，但必须让 Owner 显式提交。说明 soft delete/revoke 会释放额度，restore/regrant 会重新占用；恢复 Issue 还必须容纳其有效 Comments，Comment 满额会阻止 complete。
 - `cfkanban-admin` 修改限制前读取并展示当前 active usage，但允许 Owner 提交低于 usage 的值；Skill 应预告既有数据和 Grants 保持不变，并明确列出进入 over-limit 后会被阻止的增长动作以及仍可用于释放容量的软删除/撤权动作，不能要求 Owner 先清理数据才能保存。
@@ -180,7 +180,8 @@ v0 固定拆成三个按工作场景发现的能力，而不是一个塞满所�
 - `cfkanban-admin` 不维护逐 Principal Public Join blacklist。Project 仍公开时，撤权者可以重新加入；若 Owner 的目标是停止新的自助加入，Skill 应调用关闭 Public Join，而不是循环撤销 Grant。
 - `cfkanban-admin` 还直接说明 tombstone 的恢复入口：优先使用已知稳定标识，否则在有权限的 `deleted=only` 视图中分页定位；该视图没有隐藏的“最近”时间窗，恢复始终是单资源原子调用。
 - `cfkanban-admin` 恢复 Project 或 Workspace 前，必须列出会随容器恢复而重新公开的、仍 enabled 的 Public Join Projects 及其 role/quota 风险。恢复不增加第二个 Public Join 开关；用户确认容器恢复即接受这些 Policy 同步恢复，已单独 disabled 的 Policy 保持关闭。
-- `cfkanban-admin` 创建 Owner 管理页 Browser Launch 时必须使用当前 Owner Credential 认证，但 URL 只携带 5 分钟一次性 opaque code；只有明确的 Owner `admin` target 才建立实例级管理与数据面 Session。它默认落在 Overview，不自动查询全部 Issue，但人类显式选择 Workspace/Project 后可以进入任意 Project 看板。宿主支持 IAB 时可以直接打开，否则返回同一 URL。IAB 是交付优化，不是 cfKanban 身份、权限或协议依赖。
+- `cfkanban-admin` 创建 Owner 管理页 Browser Launch 时必须使用当前 Owner Credential 认证，但 URL 只携带 5 分钟一次性 opaque code；只有明确的 Owner `admin` target 才建立实例级管理与数据面 Session。它默认落在 Overview，不自动查询全部 Issue，但人类显式选择 Workspace/Project 后可以进入任意 Project 看板。专用 `web launch` 默认先探测本地 opener，再创建 launch，并通过只存在于内存的 loopback redirect 直接打开系统浏览器；远端 URL/code 不进入 stdout/stderr、文件、journal、receipt 或子进程参数。宿主只有在提供不进入 transcript/log 的等价安全通道时才直接打开 IAB。IAB 是交付优化，不是 cfKanban 身份、权限或协议依赖。
+- Invite 的专用 `invite create` 默认先探测本地 clipboard helper，再创建 Invitation，并通过 stdin 写入剪贴板；stdout 只返回脱敏 metadata。没有可用 browser/clipboard 的 headless 环境默认在远端创建前停止。只有用户明确接受 Agent 宿主可能保留工具输出时，两个专用命令才允许 `stdout_once`，且必须携带固定准确确认句；返回值必须标记 `one_time_bearer_capability`，不得复述、记录、写 journal/receipt/文件或重放展示。幂等 replay 不恢复已隐藏的 capability；交付失败按已提交操作报告，等待失效或撤销后再生成替代。
 - 较长的目录 schema、跨平台权限命令、请求示例、错误矩阵和恢复手册放在各 Skill 包内的 `references/`，由对应 `SKILL.md` 明确路由；不得依赖跨包相对路径或某个特定宿主才支持的全局 include。
 
 OpenAPI 只承载 wire contract 和字段语义，不是 Guidance 的唯一载体。确定性 Node scripts 接收已经解析好的显式参数并返回 `resolved_scope`、warnings 和结构化结果，不负责解释自然语言或替上层选择目标。
@@ -375,7 +376,7 @@ Cloudflare auth 与 cfKanban Credential 分别存储；前者仍由 Wrangler 及
 - 自动 rebind 的授权来源是旧 trusted origin，而不是新地址自报的 `instance_id`。Invite、用户直接提供或第三方代理暴露的新 origin 若无法从旧 trusted origin 取得一致指示，仍必须展示旧/新地址和影响并取得明确授权。认证请求不靠 HTTP redirect 搬迁，也不把 Credential 用于发现探测；
 - POSIX 环境要求目录仅当前用户可访问、secret 文件使用最小权限；Windows 要求 ACL 只允许当前用户和必要系统主体。具体创建与验证命令在实现前按平台冻结；
 - 文件内容是依赖 OS ownership/ACL 保护的明文 secret，产品和 Agent 不得称其为“已加密”；没有独立密钥来源时不得增加形式上的自加密来制造错误安全感；
-- 内置脚本直接读写 secret 并构造授权请求，不把 secret 输出给 Agent 正常上下文、终端、日志、receipt、环境配置、shell profile 或命令行参数；
+- 内置脚本直接读写长期 Credential secret 并构造授权请求，不把它输出给 Agent 正常上下文、终端、日志、receipt、环境配置、shell profile 或命令行参数；Invite/Browser Launch 的短期一次性 capability 只按 D-263 的专用交付通道处理，不能混入通用命令输出；
 - 创建 Owner Credential、创建新 Principal/Credential 或消费 Invite 之前，先用无秘密探针验证目录可写、可读、权限可校验且能够持久保存。验证失败不创建/消费远端一次性材料；
 - 首次加入时，新 Credential secret 先写入该实例的 pending 槽位，不占用 current；只有服务端原子提交成功并通过 `/me` 验证相同 Principal/fingerprint 后，才原子提升为 current。明确未提交的不可重试失败清理 pending；网络中断、超时或响应丢失等提交状态不确定时保留同一 secret、request 和 Idempotency-Key 恢复，不能重新生成 secret 或创建第二身份；
 - 写入必须防止跟随不可信 symlink，并采用同一私有目录内的安全临时文件和原子替换，避免权限窗口或半写文件；
@@ -485,7 +486,8 @@ Instance upgrade 仍按 8.3 在 migration 前读回可取得的 restore point/bo
 | lifecycle | fresh install、Skill compatible no-op/update/rollback、Instance upgrade、partial deploy/upgrade resume、local modification conflict |
 | failure | Node 缺失/不兼容、多个 version manager、全局 Wrangler 与锁定版本不同、Cloudflare 多账户、D1/Worker 已部分存在、migration 失败、Worker rollback 不兼容、D1 restore point 不可用、响应丢失；Project quota、应用 429、D1 daily/storage/overload、Cloudflare 1027/edge 429/HTML 与网络失败得到正确且不伪造来源的 normalized result |
 | security | 恶意 bootstrap mirror、Issue 中的安装指令、secret 输出扫描、未经授权的 deploy/delete 尝试 |
-| web launch | Codex IAB 与普通浏览器使用同一 URL；GET 不消费、POST 一次兑换、URL 去 code、长期 Credential 不进入浏览器、过期/重放/源凭据撤销安全失败 |
+| one-time delivery | macOS/Windows/Linux 的 browser opener 与 clipboard preflight；默认 Browser Launch loopback 直开和 Invite clipboard 均不输出 code；headless 在创建前停止，或仅在准确确认后产生标记的 `stdout_once`；通用 `api request` 拒绝两个创建 endpoint；失败/过期/重放不恢复或重复 capability |
+| web launch | IAB 安全宿主通道与普通浏览器使用同一 Service URL；GET 不消费、POST 一次兑换、URL 去 code、长期 Credential 不进入浏览器、过期/重放/源凭据撤销安全失败 |
 | guidance | 无 role 的 Invite 得到显式 `writer` 建议、明确只读得到 `reader`、已知 Repo scope 的 Issue 查询带 Project filters、明确全局查询允许省略并提示范围、所有身份相关 Skill 指向 `.cfkanban/` |
 | recovery | `rotation`/`full_recovery` mode 与撤销范围不可互换；tombstone 可按稳定标识或 `deleted=only` 定位且只做单资源恢复；deploy Skill 不出现完整 D1 export/import/restore capability |
 | build/release | 锁文件约束下的根级验证/构建入口可重现生成 Worker 与预构建 Web assets；repo-local Wrangler 只服务源码开发/CI；migration manifest 顺序、checksum、ledger 与 schema artifacts 可交叉读回，换行差异不产生伪漂移 |
@@ -503,7 +505,7 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 7. 已确认：首次部署默认零参数生成 strict-zero 计划，Agent 自动解析 stable release、提议无冲突资源名并生成非秘密 IDs/operation metadata；缺少 Owner display name 时只询问这一项身份信息，计划只声明 Owner Credential 生成策略，secret 在授权后直接写入受限文件。除该必要身份输入外，只有 account 歧义或 custom domain、付费能力、数据地域/合规、非 stable/源码试验等结果性偏差才询问，人类最终一次授权完整计划而不逐字段确认。
 8. 已确认：v0 以官方 canonical HTTPS 作为首次信任根；不可覆盖的版本清单逐工件固定允许来源和 SHA-256 文件指纹，本地 receipt 保存发布来源与清单/工件摘要，update/downgrade 必须保持来源连续。marketplace/plugin 不能覆盖 canonical 来源，安装、更新和降级均不得自动执行。该机制不防 canonical publisher 整体失陷；独立签名及密钥轮换/撤销延后到公共分发、自动更新或托管分离出现时再评估。
 9. 已修订：D-213 取消原 SB-24 的完整 D1 导出/整库恢复产品能力；Cloudflare 平台原生 Time Travel 与控制台运维不包装成 cfKanban Skill capability。
-10. 已确认：D-215/D-216 要求 `cfkanban`/`cfkanban-admin` 为明确 target 创建短期一次性 Browser Launch；宿主支持时可打开 IAB，否则返回普通浏览器 URL。浏览器只兑换 HttpOnly Session，Browser Launch 流程不把长期 Credential 传入浏览器。
+10. 已修订：D-215/D-216 要求 `cfkanban`/`cfkanban-admin` 为明确 target 创建短期一次性 Browser Launch；浏览器只兑换 HttpOnly Session，流程不把长期 Credential 传入浏览器。具体从 Agent 到浏览器的 capability 交付边界由 D-263 收紧。
 11. 已确认：D-217 固定 launch 为 5 分钟一次性，Session 为 8 小时固定且无 refresh；Session 绑定源 Credential 和 target scope。过期或源 Credential revoke 后只引导用户让 Agent 重新打开，不回退到网页粘贴 Credential。
 12. 已确认：D-219 移除 v0 Principal disable/enable/delete。Owner 按目标使用 Credential revoke、Project Grant revoke 或 Principal Recovery Invite；Skill 不再暴露不可逆身份停用动作。
 13. 已确认：D-221 禁止 Web 管理 Owner Credential 生命周期。`cfkanban-admin` 负责先本地落盘替代 secret、再执行 Bearer-only 原子轮换；`cfkanban-deploy` 只负责全部 Owner Credential 丢失后的部署外恢复。Web 只能撤销参与者 Credential。
@@ -534,8 +536,9 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 38. 已确认：D-260 针对真实 Owner bootstrap `fetch failed` 且远端零写入的中断场景，引入同 task/operation/plan 的固定六表零状态 probe。只有更新 probe 精确证明全部为空时，才能对同一 SQL 重试一次；任何存在/部分/畸形状态继续保持停止或最终化，不生成新 Credential，也不扩大原部署授权。
 39. 已确认：D-261 要求 strict-zero plan 结构化声明零状态恢复属于同一完整计划授权，并禁止 Agent 自行把确认话术收窄为“一个命令”或“只尝试一次”。同 task/operation/plan/config/SQL/Credential/target 均无漂移且 probe 为 `absent` 时直接续做；用户亲自提出的更窄限制、新任务或任何 plan delta 仍需重新授权。
 40. 已确认：D-262 要求 `cfkanban-admin` 的 Owner Audit 读取与 Service/OpenAPI/Web 使用同一显式筛选合同：可选一个不可变 `project_id` 与一个 `stream=domain|security`，省略表示实例级双 stream 读取；响应回显 `resolved_filters`，筛选变化使旧 cursor 失效并开始新的分页序列。
+41. 已确认：D-263 把 Invite 与 Browser Launch 创建从通用 `api request` 移到专用交付命令。Browser Launch 默认经内存 loopback 直接打开、Invite 默认写剪贴板，均不输出完整 capability；headless 只在用户接受宿主留存风险并提交固定确认句时允许标记的单次 stdout 输出，幂等 replay 不重复 secret。
 
-SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 28 在修订 27 的完整 strict-zero plan 恢复授权上，进一步统一 Owner Audit 的 Project/stream 筛选、`resolved_filters` 和 cursor scope 合同。此前统一 `.cfkanban/`、双语 Skill 表面、portable Wrangler config、不枚举 profiles、D1 ingestion 恢复、plan-bound Owner 最终化、monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节已由 2026-08-29 Frozen SPEC 固定并由 D-262 作加法式修订。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
+SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 29 在修订 28 的 Owner Audit 筛选合同上，进一步收紧 Invite/Browser Launch 的专用交付、默认无 capability 输出和 headless 明示退路。此前完整 strict-zero plan 恢复授权、统一 `.cfkanban/`、双语 Skill 表面、portable Wrangler config、不枚举 profiles、D1 ingestion 恢复、plan-bound Owner 最终化、monorepo source、同 Worker Static Assets、无 Pages/KV、Passkey、preferred API origin、安全自动 rebind、容器/Public Join 恢复、quota 隔离与 Credential 恢复边界继续有效。Web/API wire 细节仍由 2026-08-29 Frozen SPEC 固定；D-263 只改变 Skill 客户端交付，不改变 wire response。本文仍不构成安装、部署或发布授权；业务实现按独立 PLAN/Linear 执行。
 
 ## 12. 冻结范围与完成依据
 
@@ -572,5 +575,6 @@ SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 28
 29. 合同修订 26 已用 D-260 修订“单次执行”的中断边界：失败或响应不确定后，只有同一授权 journal 中更新的固定六表只读 probe 证明 bootstrap 状态完全为空，才允许对同一 SQL 重试一次；任何远端存在/部分状态继续停止或进入最终化。
 30. 合同修订 27 已用 D-261 固定完整 strict-zero plan 授权包含上述零状态恢复；Agent 不得自行用“只执行一次”类话术收窄授权并制造额外确认，除非更窄限制确实由用户提出。
 31. 合同修订 28 已用 D-262 固定 Owner Audit 的显式筛选合同：`project_id` 与 `stream` 可独立组合，省略表示实例级双 stream，响应回显 `resolved_filters`，cursor 绑定完整筛选上下文；`cfkanban-admin` 与 Owner Web 必须据此调用同一 API。
+32. 合同修订 29 已用 D-263 固定一次性 capability 的专用交付：通用 `api request` 不创建 Invite/Browser Launch，默认 clipboard/内存 loopback 不输出完整值；headless stdout 退路必须准确确认、显式标记且不得留存或重复。
 
 本次冻结只固定上述公共 Agent 体验与安全边界，不固定尚未设计的具体 npm package 名、各宿主未来新增的投影机制、版本淘汰阈值或实现代码。冻结范围内的语义如需变化，必须通过显式新决策和可追踪修订；冻结本身不授权实现、安装、部署或发布。

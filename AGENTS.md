@@ -49,7 +49,7 @@
 ## 安全下限与合同约束
 
 - Agent/API-first 不等于 Agent-only。用户直接使用的 Agent 是主要调用载体，但不是 cfKanban 领域角色或受产品规定的工作流执行器；部署、Owner 管理、协调和 Coding 只是任务模式。v0 同时提供同一 Worker 托管的极简第一方 Web UI，用于人类直接查看 Kanban、低频 Issue 参与和 Owner 简单维护；它复用同一 REST/权限/并发/审计合同，不发展为重型产品表面或第二套领域实现。
-- 浏览器不能读取 `~/.cfkanban/`，也不能要求用户粘贴长期 Credential。已认证 Agent 为明确 Web target 创建固定 5 分钟、一次性的 Browser Launch URL，浏览器以 POST 兑换固定 8 小时、不滑动续期且无 refresh 的 `HttpOnly + Secure + SameSite` Session；Session 绑定 Principal、源 Credential 和 target scope。长期 Credential 不进入 URL、localStorage、页面脚本上下文或浏览器日志；CSRF 固定使用同源 Origin 校验与 double-submit cookie/header。
+- 浏览器不能读取 `~/.cfkanban/`，也不能要求用户粘贴长期 Credential。已认证 Agent 为明确 Web target 创建固定 5 分钟、一次性的 Browser Launch URL，浏览器以 POST 兑换固定 8 小时、不滑动续期且无 refresh 的 `HttpOnly + Secure + SameSite` Session；Session 绑定 Principal、源 Credential 和 target scope。创建必须使用专用 `web launch`，默认经纯内存 loopback relay 直接打开且不输出远端 URL/code；通用 `api request` 在远端写入前拒绝该 endpoint。长期 Credential 不进入 URL、localStorage、页面脚本上下文或浏览器日志；CSRF 固定使用同源 Origin 校验与 double-submit cookie/header。
 - Owner `admin` Web Session 具有实例级管理与数据面 scope，默认只打开 Overview，不自动查询全部 Issue；Owner 显式选择 Workspace/Project 后可进入任意 Project 看板。Project/Issue target 的普通 Session 仍严格限制在其单一 Project。
 - 未认证实例首页提供简短产品介绍和指向 canonical bootstrap document 的可复制 Agent 部署话术，不提供 Credential 输入框、远程脚本执行或私有资源枚举。首次 Agent Launch 后可登记 Passkey；Passkey 是 v0 唯一免 Agent 的 Web 直登方法。浏览器 capability detection 不能当作 credential existence detection；v0 按当前请求 hostname/完整 HTTPS origin 隔离 WebAuthn，失败或 hostname 变化时仍以 Agent Browser Launch 恢复。
 - Owner 可逐个 Project 开关 Public Join，并同时公开多个 Project；访客每次选择一个 Project 与 `reader | writer`，只执行一条 Grant 的原子 self-join。v0 不提供 Team Join、多 Project 公开授权、公开批量写入或逐 Principal 重入 blacklist；Project 仍公开时撤权者可再次加入。公开 writer 风险必须在 Owner 启用时明确提示。
@@ -91,7 +91,7 @@
 - Credential 只认证 Principal 身份，不直接承载权限；v0 业务授权按 Project 显式授予，同一 Principal 可以访问分布在多个 Workspace 的多个 Project，Workspace 不向下继承权限。
 - 参与者由 Owner 创建短期、一次性的 Bearer Invite URL 邀请；普通 Project Invite 固定有效 7 天，Principal Recovery Invite 固定有效 1 小时，v0 不允许自定义或延长时效，过期后只能重新创建。邀请可兑换一个或多个明确 Project Grants。接收方 Agent 按 Skill 优先复用该实例的现有有效 Credential，没有时再通过内置脚本创建 Principal/Credential；普通长期 Credential 不能放入 URL。
 - 首次加入时，Skill 必须在一份合并计划中分别说明可信 Skill 来源/本地写入、Principal/Credential 创建和目标 Project/role，并由用户一次确认计划内动作；来源、目标、role、secret 保存位置或权限影响变化时才重新计划。Agent 宿主或 OS 自身的权限提示仍按其安全机制处理，不能由这次应用层确认绕过。
-- Project Invite 创建是 Owner-only 原子能力，请求必须为每个 Project 显式携带 `reader | writer`；服务端不从缺失字段推导 role。`cfkanban-admin` 在上层未指定 role 时推荐 `writer`，明确只读时使用 `reader`，但允许明确用户意图、宿主或上层规则覆盖；preview/确认策略由上层决定。完整 Invite URL 不写日志/receipt，cfKanban 只返回可复制话术而不负责向第三方发送。
+- Project Invite 创建是 Owner-only 原子能力，请求必须为每个 Project 显式携带 `reader | writer`；服务端不从缺失字段推导 role。`cfkanban-admin` 在上层未指定 role 时推荐 `writer`，明确只读时使用 `reader`，但允许明确用户意图、宿主或上层规则覆盖；preview/确认策略由上层决定。创建使用专用 `invite create`，默认通过 clipboard stdin 交付；完整 Invite URL 不写普通 stdout、日志/receipt，cfKanban 不负责向第三方发送。Browser/clipboard 不可用的 headless 环境默认在创建前停止；只有用户接受宿主留存风险并提交固定确认句时才允许标记的 `stdout_once`，且不得复述、写文件/journal/receipt 或重复展示。
 - Principal 不区分 human/agent kind。服务端 immutable principal ID 是授权、assignee、Grant、审计和跨用户引用依据；非唯一 display name 只用于展示，不能用于认证、去重或恢复。首次创建缺少名称时 Agent 只询问这一项，不静默读取 OS username、Git identity、hostname 或 Agent account，也不按 Agent 宿主重复创建身份。
 - 每个 Principal 可通过默认日常 Skill `cfkanban` 或已认证 Web 的“我的资料”入口查看自己的稳定 ID/display name，并以带 expected version 的 `PATCH /api/v1/me` 原子修改自己的非空 display name。v0 不增加头像、邮箱、简介等用户档案字段；改名写 Audit/Event，不改变 ID、Credential、Grants、assignment 或历史，Owner 不代改他人名称，本地非秘密 metadata 以服务端为准。
 - 首发 Skill 名称固定为 `cfkanban / cfkanban-admin / cfkanban-deploy`，分别对应日常工作、Owner 应用管理和 Cloudflare 控制面。名称只是能力发现入口，不是 Agent 类型、Principal kind 或服务端 role；同一 Agent 可以按任务和真实权限使用不同 Skill。
@@ -116,7 +116,7 @@
 - 任何状态写入都要考虑并发前置条件、幂等重试、审计事件和结构化错误恢复。
 - v0 Web Board 支持固定五列间单卡拖拽。落到非 `done` 列立即执行带 expected version 的状态保存；拖入 `done` 自动使用 complete 合同，缺少 summary 时先收集完成摘要。失败或冲突回到服务端真实列；不提供多卡/批量写入或手工 rank。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG。
 - cfKanban 自管持久数据统一使用当前执行环境 home 下的 `.cfkanban/`，按 `instances/`、`skill-releases/`、`tool-runtime/` 分责；宿主 marketplace/plugin metadata、发现投影/cache 与 Cloudflare auth 仍留在各自所有者目录。分发 `SKILL.md` 必须直接说明能力、命令/API 对照、读回和停止条件；可本地化的操作文档维护 English/简体中文，不支持 locale 的 metadata 使用英文，公开表面不显示内部阶段标签。
-- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 28；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 Linear WP 推进，不得默补或改变公共合同。
+- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 29；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 Linear WP 推进，不得默补或改变公共合同。
 
 ## 文档路由
 

@@ -2,7 +2,7 @@
 
 语言：[English](owner-workflows.md) | [简体中文](owner-workflows.zh-CN.md)
 
-在 Skill 目录运行 `node scripts/cfkanban-tool.mjs help`，查看当前 release 的 admin 命令边界。普通 REST 操作使用 `api request`，secret 轮换使用专用 `owner rotate-credential`。
+在 Skill 目录运行 `node scripts/cfkanban-tool.mjs help`，查看当前 release 的 admin 命令边界。普通 REST 操作使用 `api request`，一次性 capability 分别使用 `invite create` 与 `web launch`，secret 轮换使用专用 `owner rotate-credential`。
 
 ## 通用请求方式
 
@@ -25,7 +25,7 @@
 1. 检查本地状态，并验证 `/api/v1/me` 返回预期稳定 Principal 且 `is_owner=true`；
 2. 从用户取得明确、不可变的 Workspace key 和 display name，把所选 key 规范为小写，按 `[a-z][a-z0-9-]{1,31}` 校验，在预览中展示 canonical key，用一个 Idempotency Key 创建，再读回；
 3. 取得明确、不可变的 Project key 和 display name，把所选 key 规范为大写，按 `[A-Z][A-Z0-9-]{1,15}` 校验，在预览中展示 canonical key，用另一个 Idempotency Key 在该 Workspace 中创建，再读回 Project 和固定五个 statuses；
-4. 使用 `target.kind=admin` 创建 Owner Browser Launch，只把一次性 URL 返回给用户；
+4. 使用 `target.kind=admin` 运行 `web launch`；默认直接打开浏览器，不返回一次性 URL；
 5. 提供彼此独立的后续选项：用 `cfkanban` 创建第一条 Issue、创建显式 role Invite，或配置 Public Join 与全部三项 quotas。
 
 用户选择的 key 可以使用任意字母大小写，不能仅因大小写要求用户重新输入。大小写规范化不代表可以 slugify、派生或以其他方式改写 key。不得从 Repo、path、Git remote、hostname 或 display name 猜测 key；不得静默创建默认 Project、Label、Grant、Issue、Invite 或 Public Join policy。如果 Workspace 创建成功而 Project 创建失败，必须把 Workspace 报告为已提交，不能声称整组操作已回滚。
@@ -42,7 +42,7 @@
 | 读取/改名/暂停 Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}/projects/{project_key}` | Project key 永不修改。 |
 | 恢复 Project | `POST .../commands/restore` | 展示会恢复的 Public Join role/summary/limits。 |
 | 读取/修改 status 显示名 | `GET .../statuses`、`PATCH .../statuses/{status_key}` | 固定五个 key 和语义不能改变。 |
-| 列出/创建 Invite | `GET/POST /api/v1/admin/invitations` | 显式 kind、准确 target(s)、每个 Project 显式 `reader | writer`。 |
+| 列出/创建 Invite | `GET /api/v1/admin/invitations`；专用 `invite create` | 显式 kind、准确 target(s)、每个 Project 显式 `reader | writer`。 |
 | 读取/撤销 Invite | `GET/DELETE /api/v1/admin/invitations/{invitation_id}` | 使用稳定 ID；不保存完整 Bearer URL。 |
 | 列出/读取 Principal | `GET /api/v1/admin/principals`、`GET .../{principal_id}` | display name 不唯一，不能选择目标。 |
 | 列出参与者 Credential | `GET /api/v1/admin/principals/{principal_id}/credentials` | 只展示 fingerprint/status，不展示 secret。 |
@@ -56,7 +56,7 @@
 | 读取/修改 Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | 显式 Issue/Comment/Principal limits 与 current usage。 |
 | 检查 rate gates | `GET /api/v1/admin/rate-limit-settings` | 这里只读；bindings 由 deploy Skill 修改。 |
 | 撤销参与者 Passkey | `DELETE /api/v1/admin/passkeys/{passkey_id}` | 不撤销 API Credential 或 Grant。 |
-| 打开 Owner Web | `POST /api/v1/web-launches`，`target.kind=admin` | 选择显式 section；默认行为是 Overview。 |
+| 打开 Owner Web | 专用 `web launch`，`target.kind=admin` | 选择显式 section；默认不输出 capability，直接在系统浏览器打开 Overview。 |
 
 ## Invitation 与恢复
 
@@ -67,8 +67,10 @@ Principal Recovery Invite 固定 1 小时。创建前：
 1. 选择准确稳定 Principal ID，不能用 display name。
 2. 读取当前 Grants、assignment/history 连续性与 Credentials。
 3. 选择不可变的 `rotation` 或 `full_recovery`，并展示准确撤销范围。
-4. 用独立 Idempotency Key 创建一个 Invite，再按 invitation ID 读回。
-5. 只把可复制邀请话术返回给用户；cfKanban 不负责发送，Agent 也不记录。
+4. 用独立 Idempotency Key 通过 `invite create` 创建一个 Invite，再按 invitation ID 读回。
+5. 默认使用 `delivery=clipboard`，把一次性话术复制到剪贴板而不写 stdout；cfKanban 不负责发送，用户或 Agent 只应粘贴给目标接收方。
+
+没有剪贴板时，默认在创建前停止；只有用户明确接受宿主保留工具输出的风险，才使用 `delivery=stdout_once`，并传入准确确认句 `I understand this one-time capability may be retained by the Agent host`。其 `sensitive_output` 只展示一次，不得在回复、日志、journal、receipt、文件或后续消息中复述或保存；幂等重放只返回安全 metadata，无法找回 URL。
 
 ## Owner Credential 轮换
 
@@ -104,7 +106,7 @@ Web Session 不能轮换或撤销 Owner Credential。全部 Owner Credential 丢
 
 修改 preferred origin 前，不带 Credential 探测目标 HTTPS origin，使用 current expected version 更新，再从新旧 origin 分别读取 public discovery document。认证请求不依赖跨 origin redirect。
 
-Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 opaque code；它兑换为实例级 admin Session，默认打开 Overview，不预取全部 Issues。用户随后可显式选择 Workspace/Project。长期 Credential 不进入浏览器。
+Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 opaque code。`web launch` 默认通过纯内存 loopback relay 打开系统浏览器，远端 URL 不进入 stdout 或进程参数；它兑换为实例级 admin Session，默认打开 Overview，不预取全部 Issues。用户随后可显式选择 Workspace/Project。长期 Credential 不进入浏览器。headless 输出沿用 Invite 的显式 `stdout_once` 确认与禁止留存规则。
 
 ## 审计筛选
 

@@ -12,8 +12,8 @@ cfKanban is currently a **public testing preview**, not a stable end-user releas
 
 - The Worker, D1 schema, Web UI, and three Agent Skills are implemented in this repository.
 - You can install the Codex plugin from this public repository today and inspect or evaluate the Skills.
-- The [`0.1.0-alpha.31` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.31) packages immutable Skill and Service bundles for testing. Local state inspection and Credential preparation now return explicit safe metadata views instead of internal Credential metadata.
-- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.31/prerelease.json).
+- The [`0.1.0-alpha.32` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/0.1.0-alpha.32) packages immutable Skill and Service bundles for testing. Dedicated Browser Launch and Invite commands now keep one-time capabilities out of generic command output by default.
+- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.32/prerelease.json).
 - The stable release pointer and real multi-environment deployment acceptance are not published yet.
 - Do not treat `main`, a local checkout, or a marketplace snapshot as a canonical stable release or production-ready deployment.
 
@@ -40,7 +40,7 @@ For a future Cloudflare deployment you will also need:
 The repository is a Codex plugin marketplace. From the command line, add the immutable testing tag and install its plugin:
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.31
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.32
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -76,7 +76,7 @@ You do not need to know or mention manifests, digests, preflight, deployment pla
 
 If Cloudflare login is needed, the Skill shows that as its own small plan and then opens the appropriate browser or device flow after approval. Completing login does not create a Worker or D1 database; the deployment plan remains a later, separate approval.
 
-At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.31` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
+At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `0.1.0-alpha.32` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
 
 If you deliberately want to evaluate a source revision, say so explicitly:
 
@@ -104,9 +104,9 @@ The default plan creates only one Worker and one D1 database on `workers.dev`. C
 After deployment has been verified, start a new task or continue with the installed Skills:
 
 1. Ask `$cfkanban-admin` to verify the Owner identity, create one Workspace and one Project with the keys and names you choose, read both back, and create an Owner Web launch.
-2. Open the returned one-time URL. The long-lived Credential is not placed in the browser or URL.
+2. The dedicated launch command opens the board without returning the one-time URL by default. The long-lived Credential is not placed in the browser or URL.
 3. Ask `$cfkanban` to create the first Issue or work with the Project from the Agent.
-4. If another person or Agent should join, ask `$cfkanban-admin` to create an invitation with explicit Project targets and `reader` or `writer` access.
+4. If another person or Agent should join, ask `$cfkanban-admin` to create an invitation with explicit Project targets and `reader` or `writer` access; its dedicated command copies the one-time text without ordinary stdout output by default.
 
 The user-facing prompt can stay just as short:
 

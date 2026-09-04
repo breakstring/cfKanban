@@ -44,7 +44,7 @@ Invite redemption never writes `.cfkanban-scope.json`, creates an Issue, registe
 | Inspect one instance slot | `state inspect` | Trusted origin plus redacted current/pending Credential metadata. |
 | Check origin migration | `origin rebind-check` | Credential-free cross-check; updates metadata only when old and new origins prove continuity. |
 | Read Repo recommendations | `scope read` | Optional `.cfkanban-scope.json` targets. |
-| Resolve effective scope | `scope resolve` | `explicit`, `repository`, or warned `unfiltered` scope. |
+| Resolve effective scope | `scope resolve` | `explicit`, `repository`, or warned `unfiltered` scope; pass `validTargets` and `allowUnfiltered=false` when strict validation is required. |
 | Add explicit Repo targets | `scope merge` | A non-secret, deduplicated scope file; never run implicitly after Invite/discovery. |
 | Confirm server identity | `api request` → `GET /api/v1/me` | Principal ID, display name, version, current Credential fingerprint, Grants, and Owner flag. |
 
@@ -98,7 +98,15 @@ Do not loop over Projects, implement Team Join, silently downgrade `writer`, or 
 
 ## Browser Launch and Passkeys
 
-Use `api request` with `POST /api/v1/web-launches` and one explicit `project` or `issue` target. The returned URL carries only a five-minute, one-time opaque launch code. The browser exchanges it for a fixed eight-hour Project-scoped HttpOnly Session. Long-lived Credentials never enter the URL, browser script storage, or page context.
+Use the dedicated `web launch` command with one explicit `project` or `issue` target. Generic `api request` rejects Browser Launch creation before any network write. The default `delivery=system_browser` path creates the five-minute capability only after a local browser opener is available, keeps the remote URL in memory, and sends the browser through a short-lived loopback redirect; stdout contains only safe launch metadata. The browser exchanges the code for a fixed eight-hour Project-scoped HttpOnly Session. Long-lived Credentials never enter the URL, browser script storage, or page context.
+
+On a genuinely headless host, stop before creation unless the user needs a manual handoff and accepts that the Agent host may retain tool output. That explicit fallback uses `delivery=stdout_once` plus this exact `sensitiveOutputAcknowledgement` value:
+
+```text
+I understand this one-time capability may be retained by the Agent host
+```
+
+The result marks `sensitive_output` as a one-time bearer capability. Pass it directly to the intended browser once; never quote it in the Agent reply or copy it into logs, journals, receipts, test reports, files, or later messages. A replay cannot recover the value; create a fresh launch with a new Idempotency Key after the old one expires if delivery failed.
 
 Passkey registration starts only from an Agent-launch Session. Passkeys authenticate Web only; they are not API Credentials or Grants. Browser capability detection cannot prove a Passkey exists, and a hostname change requires a new Agent Launch and new registration on that hostname.
 

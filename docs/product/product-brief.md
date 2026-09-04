@@ -41,7 +41,7 @@ cfKanban 是面向 Coding Agents 的轻量工作协调账本：用稳定、低�
 10. 林让自己的 Agent 使用 Owner Credential 调整 Project Grants、发起参与者 Credential 轮换/恢复、处理候选维护操作，并读回 Project 内容、安全与管理历史。
 11. 未认证访客直接打开实例时先理解产品并复制可信 Agent 部署话术；既有参与者首次通过 Agent Launch 登记 Passkey 后，可以直接登录 Web。
 12. 林的 Agent 生成简短 Invite URL 话术；参与者把它交给自己的 Agent，后者读取页面、安装或更新可信 Skill，并自动复用或创建本地身份后兑换 Project 权限。
-13. 人类让 Agent 在 IAB 或普通浏览器中打开明确 Project/Issue；Agent 创建一次性 Browser Launch URL，浏览器兑换短期 Session 后直接展示对应 Kanban。
+13. 人类让 Agent 打开明确 Project/Issue；Agent 通过专用命令创建一次性 Browser Launch，默认不输出 code 而直接打开普通浏览器，具备安全宿主通道时可打开 IAB；浏览器兑换短期 Session 后直接展示对应 Kanban。
 14. `reader` 直接查看看板与详情，`writer` 进行常用原子 Issue 操作，Owner 通过简洁管理页维护 Workspace/Project、Invite、Grant、Principal/Credential、健康与审计。
 15. Owner 可以同时公开多个 Project；访客从首页每次选择一个 Project 和 `reader | writer` 后原子加入，不引入 Team 或多 Project 公开授权。
 16. Owner 在外部为 Worker 添加新域名后，通过 Agent 发布一个 preferred API origin；已有 Agent 从当前 trusted origin 获得版本化迁移指示、无凭据验证目标后自动更新本地入口，而陌生地址不能靠自报同一 instance ID 获得信任。

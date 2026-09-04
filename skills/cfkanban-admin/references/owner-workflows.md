@@ -2,7 +2,7 @@
 
 Language: [English](owner-workflows.md) | [简体中文](owner-workflows.zh-CN.md)
 
-Run `node scripts/cfkanban-tool.mjs help` from the Skill directory to inspect the installed admin command surface. Use `api request` for ordinary REST operations and the dedicated `owner rotate-credential` command for secret rotation.
+Run `node scripts/cfkanban-tool.mjs help` from the Skill directory to inspect the installed admin command surface. Use `api request` for ordinary REST operations, `invite create` and `web launch` for one-time capability delivery, and `owner rotate-credential` for secret rotation.
 
 ## Common request pattern
 
@@ -25,7 +25,7 @@ Deployment creates no application container automatically. For the common first-
 1. inspect local state and verify `/api/v1/me` returns the expected stable Principal with `is_owner=true`;
 2. obtain an explicit immutable Workspace key and display name from the user, normalize the chosen key to lowercase, validate `[a-z][a-z0-9-]{1,31}`, show the canonical key in the preview, create it with one Idempotency Key, and read it back;
 3. obtain an explicit immutable Project key and display name, normalize the chosen key to uppercase, validate `[A-Z][A-Z0-9-]{1,15}`, show the canonical key in the preview, create it inside that Workspace with a different Idempotency Key, then read the Project and its fixed five statuses back;
-4. create an Owner Browser Launch with `target.kind=admin` and return the one-time URL only to the user;
+4. run `web launch` with `target.kind=admin`; its default direct-browser delivery returns no one-time URL;
 5. offer separate next actions: use `cfkanban` to create the first Issue, create an explicit-role Invite, or configure Public Join and all three quotas.
 
 Accept user-chosen keys in either letter case and do not ask the user to retype them only for casing. Case normalization is not permission to slugify, derive, or otherwise rewrite a key. Do not guess keys from a Repo, path, Git remote, hostname, or display name. Do not silently create a default Project, Label, Grant, Issue, Invite, or Public Join policy. If Workspace creation succeeds and Project creation fails, report the Workspace as committed rather than claiming the sequence rolled back.
@@ -42,7 +42,7 @@ Accept user-chosen keys in either letter case and do not ask the user to retype 
 | Read/rename/pause Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}/projects/{project_key}` | Project key never changes. |
 | Restore Project | `POST .../commands/restore` | Show its resumed Public Join role/summary/limits. |
 | Read/rename status display | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Stable five keys and semantics cannot change. |
-| List/create Invites | `GET/POST /api/v1/admin/invitations` | Explicit kind, exact target(s), and explicit `reader | writer` per Project. |
+| List/create Invites | `GET /api/v1/admin/invitations`; dedicated `invite create` | Explicit kind, exact target(s), and explicit `reader | writer` per Project. |
 | Read/revoke Invite | `GET/DELETE /api/v1/admin/invitations/{invitation_id}` | Use stable ID; never retain the complete Bearer URL. |
 | List/read Principals | `GET /api/v1/admin/principals`, `GET .../{principal_id}` | Display names are non-unique and never identify a target. |
 | List participant Credentials | `GET /api/v1/admin/principals/{principal_id}/credentials` | Show fingerprint/status, never secret. |
@@ -56,7 +56,7 @@ Accept user-chosen keys in either letter case and do not ask the user to retype 
 | Read/change Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Explicit Issue/Comment/Principal limits and current usage. |
 | Inspect rate gates | `GET /api/v1/admin/rate-limit-settings` | Read-only; deploy Skill changes bindings. |
 | Revoke participant Passkey | `DELETE /api/v1/admin/passkeys/{passkey_id}` | Does not revoke API Credentials or Grants. |
-| Open Owner Web | `POST /api/v1/web-launches` with `target.kind=admin` | Choose explicit section; defaults to Overview behavior. |
+| Open Owner Web | dedicated `web launch` with `target.kind=admin` | Choose an explicit section; default delivery opens the system browser without stdout capability output. |
 
 ## Invitations and recovery
 
@@ -67,8 +67,10 @@ Principal Recovery Invites are fixed one-hour capabilities. Before creation:
 1. Select the exact stable Principal ID, not a display name.
 2. Read current Grants, assignments/history continuity, and Credentials.
 3. Choose immutable `rotation` or `full_recovery` and show the exact revocation scope.
-4. Create one Invite with its own Idempotency Key, then read back by invitation ID.
-5. Return copyable invitation text only to the user; cfKanban does not send it to a third party and the Agent does not log it.
+4. Create one Invite with its own Idempotency Key through `invite create`, then read back by invitation ID.
+5. Default to `delivery=clipboard`, which copies the one-time text without returning it on stdout. cfKanban does not send it to a third party; the user or Agent must paste it only to the intended recipient.
+
+If no clipboard exists, stop before creation unless the user explicitly accepts host-retained output. The fallback requires `delivery=stdout_once` and the exact acknowledgement `I understand this one-time capability may be retained by the Agent host`. Its `sensitive_output` is shown once and must not be quoted, logged, journaled, receipted, saved, or repeated. An idempotent replay returns only safe metadata and cannot recover the URL.
 
 ## Owner Credential rotation
 
@@ -104,7 +106,7 @@ Before restoring a Project or Workspace, list every still-enabled Public Join po
 
 For preferred-origin changes, probe the proposed HTTPS origin without a Credential, update with the current expected version, then read the public discovery document from both old and new origins. Do not rely on cross-origin authenticated redirects.
 
-An Owner Browser Launch uses the current Owner Credential only to create a five-minute opaque code. It exchanges into an instance-level admin Session, opens Overview, and does not prefetch all Issues. The user may then explicitly choose a Workspace/Project. The long-lived Credential never enters the browser.
+An Owner Browser Launch uses the current Owner Credential only to create a five-minute opaque code. `web launch` defaults to a memory-only loopback relay that opens the system browser while keeping the remote URL out of stdout and process arguments. It exchanges into an instance-level admin Session, opens Overview, and does not prefetch all Issues. The user may then explicitly choose a Workspace/Project. The long-lived Credential never enters the browser. Headless output follows the same explicit `stdout_once` acknowledgement and no-retention rule as Invite delivery.
 
 ## Audit filters
 

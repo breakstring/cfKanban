@@ -119,7 +119,7 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 - macOS、Windows、Linux 的 capability detection、Wrangler 登录/部署和 credential storage 验证。
 - context pack 渲染和错误恢复 playbook。
 - 同一 Worker Static Assets 承载的固定五列 Project Board、Issue 详情/常用原子写入和 Owner 简单维护页。
-- Agent 创建一次性 Browser Launch URL，在 Codex IAB 或普通浏览器中打开明确 Project/Issue；不依赖宿主专有接口。
+- Agent 通过专用命令创建一次性 Browser Launch；默认用内存 loopback 在普通浏览器直接打开且不输出远端 code，安全宿主通道可打开 IAB，headless 仅在用户明确接受留存风险后交付标记的一次性 URL；服务端不依赖宿主专有接口。
 - 在真实 Agent 上验证 discover → list → assign → complete 工作循环。
 - 根据实际需求决定是否提供远程 MCP 适配。
 
