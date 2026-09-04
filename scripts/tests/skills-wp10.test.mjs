@@ -49,7 +49,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.19.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.20.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -1619,11 +1619,11 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
     runner: async () => ({
       code: 0,
       signal: null,
-      stdout: JSON.stringify([{
+      stdout: JSON.stringify({
         id: afterDeploymentId,
         created_on: "2026-09-04T02:03:04.000Z",
         versions: [{ version_id: afterVersionId, percentage: 100 }],
-      }]),
+      }),
       stderr: "",
     }),
   });
@@ -1831,19 +1831,19 @@ test("Worker exact-name readback distinguishes presence, absence, and unknown Cl
       return {
         code: 0,
         signal: null,
-        stdout: JSON.stringify([{
+        stdout: JSON.stringify({
           id: "66666666-6666-4666-8666-666666666666",
           created_on: "2026-09-04T00:00:00.000Z",
           source: "private-account-metadata",
           versions: [{ version_id: "77777777-7777-4777-8777-777777777777", percentage: 100 }],
-        }]),
+        }),
         stderr: "",
       };
     },
   });
   assert.deepEqual(calls, [{
     executable: "/opt/cfkanban/wrangler",
-    args: ["deployments", "list", "--name", "cfkanban-worker", "--json", "--profile", "production"],
+    args: ["deployments", "status", "--name", "cfkanban-worker", "--json", "--profile", "production"],
     accountId: "account-one",
     writeLogs: "false",
   }]);
@@ -1879,6 +1879,25 @@ test("Worker exact-name readback distinguishes presence, absence, and unknown Cl
       workerName: "cfkanban-worker",
       environment: {},
       runner: async () => ({ code: 0, signal: null, stdout: "not-json", stderr: "" }),
+    }),
+    (error) => error.code === "WRANGLER_WORKER_READBACK_INVALID",
+  );
+  await assert.rejects(
+    readWorkerResourceByName({
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      accountId: "account-one",
+      workerName: "cfkanban-worker",
+      environment: {},
+      runner: async () => ({
+        code: 0,
+        signal: null,
+        stdout: JSON.stringify([{
+          id: "66666666-6666-4666-8666-666666666666",
+          created_on: "2026-09-04T00:00:00.000Z",
+          versions: [{ version_id: "77777777-7777-4777-8777-777777777777", percentage: 100 }],
+        }]),
+        stderr: "",
+      }),
     }),
     (error) => error.code === "WRANGLER_WORKER_READBACK_INVALID",
   );
@@ -2958,6 +2977,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.17.md",
     "../../release/notes/0.1.0-alpha.18.md",
     "../../release/notes/0.1.0-alpha.19.md",
+    "../../release/notes/0.1.0-alpha.20.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -2976,6 +2996,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.17.json",
     "../../release/config/0.1.0-alpha.18.json",
     "../../release/config/0.1.0-alpha.19.json",
+    "../../release/config/0.1.0-alpha.20.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
