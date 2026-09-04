@@ -1,5 +1,6 @@
 # Local cfKanban credentials and runtime state
 .cfkanban/
+.cfkanban-scope.json
 
 # Cloudflare / Wrangler local state and secrets
 .wrangler/
