@@ -285,6 +285,21 @@ test("Web input patterns compile with the HTML pattern v flag", async () => {
   }
 });
 
+test("narrow Board owns a discoverable focusable scroll region and keeps the non-drag status alternative", async () => {
+  const [view, style] = await Promise.all([
+    readFile(new URL("../../apps/web/src/views/ProjectBoardView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/style.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(view, /id="board-scroll-hint"/u);
+  assert.match(view, /左右滑动查看全部 5 列；不方便拖拽时，可用卡片下方的状态菜单。/u);
+  assert.match(view, /Swipe sideways to see all 5 columns\. Use the status menu on each card when dragging is awkward\./u);
+  assert.match(view, /class="kanban-scroll"[\s\S]*?role="region"[\s\S]*?tabindex="0"[\s\S]*?aria-describedby="board-scroll-hint"/u);
+  assert.match(view, /class="card-status-select"/u);
+  assert.match(style, /\.kanban-scroll\s*\{[^}]*overflow-x:\s*auto;/su);
+  assert.doesNotMatch(style, /\.board-page:has\(\.kanban-board\)/u);
+  assert.match(style, /@media \(max-width: 640px\)[\s\S]*?\.card-status-select\s*\{[^}]*min-height:\s*44px;/u);
+});
+
 test("Passkey registration requires a supporting browser and Credential-source Session", () => {
   assert.equal(canRegisterPasskeyFromSession(webSession(), true), true);
   assert.equal(canRegisterPasskeyFromSession(webSession(), false), false);
@@ -717,7 +732,7 @@ test("deployed deployment and joining guides are complete, paired, and non-execu
     "utf8",
   )));
   for (const [index, document] of documents.entries()) {
-    assert.match(document, /0\.1\.0-alpha\.37/);
+    assert.match(document, /0\.1\.0-alpha\.38/);
     assert.match(document, /cfkanban-agent-skills@cfkanban/);
     assert.doesNotMatch(document, /curl[^\n]*\|\s*(?:ba)?sh/iu, `${paths[index]} must not teach pipe-to-shell`);
   }

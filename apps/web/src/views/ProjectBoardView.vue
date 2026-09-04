@@ -441,60 +441,74 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
-    <section v-if="!loading" class="kanban-board" :aria-label="locale === 'zh-CN' ? '项目看板' : 'Project Kanban board'">
-      <article
-        v-for="statusKey in statusOrder"
-        :key="statusKey"
-        class="kanban-column"
-        @dragover.prevent
-        @drop="onDrop(statusKey)"
-      >
-        <header class="column-header">
-          <h2>{{ statusMap.get(statusKey)?.display_name ?? statusKey }}</h2>
-          <span>{{ issuesFor(statusKey).length }}</span>
-        </header>
-        <div class="column-content">
-          <article
-            v-for="issue in issuesFor(statusKey)"
-            :key="issue.id"
-            class="issue-card"
-            :class="{ saving: saving.has(issue.id), blocked: issue.is_blocked }"
-            :draggable="canWrite && !saving.has(issue.id)"
-            :aria-busy="saving.has(issue.id)"
-            @dragstart="onDragStart(issue, $event)"
-          >
-            <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
-              <span class="card-meta">
-                <code>{{ issue.identifier }}</code>
-                <span v-if="issue.priority !== 'none'" class="priority-mark">{{ priorityLabel(issue.priority) }}</span>
-              </span>
-              <strong>{{ issue.title }}</strong>
-              <span v-if="issue.labels.length" class="label-line">
-                <span v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip">{{ label.name }}</span>
-              </span>
-              <span class="card-footer">
-                <span>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
-                <span v-if="issue.is_blocked" class="warning-chip">{{ locale === "zh-CN" ? "已阻塞" : "blocked" }}</span>
-                <span v-if="issue.needs_reassignment" class="warning-chip">{{ locale === "zh-CN" ? "需重新指派" : "reassign" }}</span>
-              </span>
-            </button>
-            <select
-              v-if="canWrite"
-              class="card-status-select"
-              :value="issue.status.key"
-              :aria-label="locale === 'zh-CN' ? '变更状态' : 'Change status'"
-              @click.stop
-              @change.stop="onStatusSelection(issue, $event)"
+    <p v-if="!loading" id="board-scroll-hint" class="board-scroll-hint">
+      {{ locale === "zh-CN"
+        ? "左右滑动查看全部 5 列；不方便拖拽时，可用卡片下方的状态菜单。"
+        : "Swipe sideways to see all 5 columns. Use the status menu on each card when dragging is awkward." }}
+    </p>
+    <div
+      v-if="!loading"
+      class="kanban-scroll"
+      role="region"
+      tabindex="0"
+      aria-describedby="board-scroll-hint"
+      :aria-label="locale === 'zh-CN' ? '项目看板横向浏览区' : 'Project Kanban horizontal navigation'"
+    >
+      <section class="kanban-board" :aria-label="locale === 'zh-CN' ? '项目看板' : 'Project Kanban board'">
+        <article
+          v-for="statusKey in statusOrder"
+          :key="statusKey"
+          class="kanban-column"
+          @dragover.prevent
+          @drop="onDrop(statusKey)"
+        >
+          <header class="column-header">
+            <h2>{{ statusMap.get(statusKey)?.display_name ?? statusKey }}</h2>
+            <span>{{ issuesFor(statusKey).length }}</span>
+          </header>
+          <div class="column-content">
+            <article
+              v-for="issue in issuesFor(statusKey)"
+              :key="issue.id"
+              class="issue-card"
+              :class="{ saving: saving.has(issue.id), blocked: issue.is_blocked }"
+              :draggable="canWrite && !saving.has(issue.id)"
+              :aria-busy="saving.has(issue.id)"
+              @dragstart="onDragStart(issue, $event)"
             >
-              <option v-for="option in statusOrder" :key="option" :value="option">
-                {{ statusMap.get(option)?.display_name ?? option }}
-              </option>
-            </select>
-          </article>
-          <p v-if="issuesFor(statusKey).length === 0" class="column-empty">{{ t("board.empty") }}</p>
-        </div>
-      </article>
-    </section>
+              <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
+                <span class="card-meta">
+                  <code>{{ issue.identifier }}</code>
+                  <span v-if="issue.priority !== 'none'" class="priority-mark">{{ priorityLabel(issue.priority) }}</span>
+                </span>
+                <strong>{{ issue.title }}</strong>
+                <span v-if="issue.labels.length" class="label-line">
+                  <span v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip">{{ label.name }}</span>
+                </span>
+                <span class="card-footer">
+                  <span>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
+                  <span v-if="issue.is_blocked" class="warning-chip">{{ locale === "zh-CN" ? "已阻塞" : "blocked" }}</span>
+                  <span v-if="issue.needs_reassignment" class="warning-chip">{{ locale === "zh-CN" ? "需重新指派" : "reassign" }}</span>
+                </span>
+              </button>
+              <select
+                v-if="canWrite"
+                class="card-status-select"
+                :value="issue.status.key"
+                :aria-label="locale === 'zh-CN' ? '变更状态' : 'Change status'"
+                @click.stop
+                @change.stop="onStatusSelection(issue, $event)"
+              >
+                <option v-for="option in statusOrder" :key="option" :value="option">
+                  {{ statusMap.get(option)?.display_name ?? option }}
+                </option>
+              </select>
+            </article>
+            <p v-if="issuesFor(statusKey).length === 0" class="column-empty">{{ t("board.empty") }}</p>
+          </div>
+        </article>
+      </section>
+    </div>
 
     <button v-if="nextCursor" class="load-more" type="button" :disabled="loadingMore" @click="load(false)">
       {{ loadingMore ? "…" : (locale === "zh-CN" ? "加载更多" : "Load more") }}
