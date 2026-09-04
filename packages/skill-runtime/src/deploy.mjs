@@ -135,7 +135,7 @@ export function buildWranglerInvocation({
       if (normalizedConfig === null || migrationReadbackSql === null) throw toolError("MIGRATION_READBACK_INPUT_REQUIRED", "Migration readback requires frozen Wrangler config and a read-only SQL command");
       return withProfile(["d1", "execute", requireString(d1Name, "d1_name", { max: 64 }), "--remote", "--command", requireString(migrationReadbackSql, "migration_readback_sql", { max: MAX_MIGRATION_READBACK_SQL_BYTES }), "--config", normalizedConfig, "--json"], plan, environment);
     case "worker_deployment_readback":
-      return withProfile(["deployments", "list", "--name", requireString(plan.resources?.worker?.name, "worker_name", { max: 63 }), "--json"], plan, environment);
+      return withProfile(["deployments", "status", "--name", requireString(plan.resources?.worker?.name, "worker_name", { max: 63 }), "--json"], plan, environment);
     default: throw toolError("DEPLOY_ACTION_REJECTED", "Deployment action is not in the allowlist", { action });
   }
 }
@@ -418,17 +418,16 @@ function hasCloudflareApiErrorCode(result, code) {
   return new RegExp(`\\[code:\\s*${code}\\]`, "u").test(output);
 }
 
-function parseWorkerDeployments(value) {
-  let deployments;
+function parseWorkerDeployment(value) {
+  let deployment;
   try {
-    deployments = JSON.parse(value || "");
+    deployment = JSON.parse(value || "");
   } catch (error) {
     throw toolError("WRANGLER_WORKER_READBACK_INVALID", "Wrangler returned invalid JSON while reading back the requested Worker resource", {}, error);
   }
-  if (!Array.isArray(deployments) || deployments.length === 0) {
-    throw toolError("WRANGLER_WORKER_READBACK_INVALID", "Wrangler Worker readback did not return a current deployment");
+  if (deployment === null || typeof deployment !== "object" || Array.isArray(deployment)) {
+    throw toolError("WRANGLER_WORKER_READBACK_INVALID", "Wrangler Worker status did not return one current deployment object");
   }
-  const deployment = deployments[0];
   let deploymentId;
   let versionId;
   try {
@@ -596,7 +595,7 @@ export async function readWorkerResourceByName({
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
   const name = requireString(workerName, "worker_name", { max: 63 });
   const probe = buildWranglerAccountProbe({ accountId, cloudflareProfile, contextDirectory, environment });
-  const args = ["deployments", "list", "--name", name, "--json"];
+  const args = ["deployments", "status", "--name", name, "--json"];
   if (probe.profile !== null) args.push("--profile", probe.profile);
   if (probe.context_directory !== null) args.push("--cwd", probe.context_directory);
   const result = await runner(executable, args, {
@@ -620,7 +619,7 @@ export async function readWorkerResourceByName({
     profile: probe.profile,
     ...(probe.context_directory === null ? {} : { context_directory: probe.context_directory }),
     worker_name: name,
-    ...parseWorkerDeployments(result.stdout),
+    ...parseWorkerDeployment(result.stdout),
   };
 }
 
@@ -966,7 +965,7 @@ export async function executeWranglerAction({
   }
   if (result.code === 0 && action === "worker_deployment_readback") {
     try {
-      workerDeploymentReadback = parseWorkerDeployments(result.stdout);
+      workerDeploymentReadback = parseWorkerDeployment(result.stdout);
       stdoutSummary = JSON.stringify(workerDeploymentReadback);
     } catch (error) {
       readbackError = error;
