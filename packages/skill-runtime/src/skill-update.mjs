@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveSkillReleaseRoot } from "./paths.mjs";
-import { atomicWriteJson, canonicalDigest, ensurePrivateDirectory, readJson, requireString, sha256Bytes } from "./utils.mjs";
+import { atomicWriteJson, canonicalDigest, ensurePrivateDirectory, readJson, requireHttpsOrigin, requireString, sha256Bytes } from "./utils.mjs";
 import { toolError } from "./errors.mjs";
 
 function safeArchiveName(name) {
@@ -59,6 +59,19 @@ export async function treeDigest(root) {
   return canonicalDigest(await collectTree(root));
 }
 
+function normalizeHttpsSource(value) {
+  let source;
+  try {
+    source = new URL(requireString(value, "source"));
+  } catch (error) {
+    throw toolError("INVALID_INPUT", "source must be an HTTPS URL", { field: "source" }, error);
+  }
+  if (source.protocol !== "https:" || source.username || source.password) {
+    throw toolError("INVALID_INPUT", "source must be an HTTPS URL without credentials", { field: "source" });
+  }
+  return source;
+}
+
 export async function installVerifiedSkillBundle({
   bundlePath,
   version,
@@ -69,6 +82,8 @@ export async function installVerifiedSkillBundle({
 }) {
   const actualSha256 = sha256Bytes(await readFile(bundlePath));
   if (actualSha256 !== expectedSha256) throw toolError("ARTIFACT_DIGEST_MISMATCH", "Skill bundle digest does not match the immutable manifest", { expected: expectedSha256, actual: actualSha256 });
+  const publisherOrigin = requireHttpsOrigin(publisher, "publisher");
+  const sourceUrl = normalizeHttpsSource(source);
   await ensurePrivateDirectory(releaseRoot);
   const versionsRoot = path.join(releaseRoot, "versions");
   await ensurePrivateDirectory(versionsRoot);
@@ -95,8 +110,9 @@ export async function installVerifiedSkillBundle({
       schema_version: 1,
       kind: "skill_bundle",
       version: safeVersion,
-      source,
-      publisher,
+      source: sourceUrl.href,
+      publisher: publisherOrigin,
+      artifact_origins: [sourceUrl.origin],
       artifact_sha256: actualSha256,
       tree_digest_before_receipt: digest,
       installed_at: new Date().toISOString(),

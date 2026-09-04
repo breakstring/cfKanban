@@ -14,6 +14,7 @@ import { appendJournalEvent, authorizeJournal, createJournal } from "../../packa
 import { assessMigrationLedgerRecovery, reconcileMigrationState, writeMigrationLedgerRecordSql } from "../../packages/skill-runtime/src/migrations.mjs";
 import { comparePlans, createInstanceUpgradePlan, createSkillUpdatePlan, createStrictZeroPlan } from "../../packages/skill-runtime/src/plan.mjs";
 import { checkTrustedOriginRebind } from "../../packages/skill-runtime/src/rebind.mjs";
+import { verifyPublisherContinuity } from "../../packages/skill-runtime/src/release.mjs";
 import { generateReleaseMetadata } from "../generate-release-metadata.mjs";
 import { resolveScope, validateScopeDocument } from "../../packages/skill-runtime/src/scope.mjs";
 import { installVerifiedSkillBundle } from "../../packages/skill-runtime/src/skill-update.mjs";
@@ -45,7 +46,7 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.14.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.15.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -1790,6 +1791,44 @@ test("release metadata pins two artifacts, localized documents, and installable 
   const installed = await installVerifiedSkillBundle({ bundlePath: skillBundle, version: "0.1.0", expectedSha256: sha256Bytes(await readFile(skillBundle)), publisher: "https://releases.example.test", source: generated.manifest.artifacts[0].url, releaseRoot: installHome });
   assert.equal(installed.installed, true);
   assert.equal((await readJson(path.join(installHome, "active.json"))).version, "0.1.0");
+  const installedReceipt = await readJson(path.join(installed.release_path, ".cfkanban-release.json"));
+  assert.deepEqual(installedReceipt.artifact_origins, ["https://releases.example.test"]);
+  assert.deepEqual(verifyPublisherContinuity({ currentReceipt: installedReceipt, targetManifest: generated.manifest }), {
+    continuous: true,
+    first_install: false,
+    requires_explicit_rebind: false,
+    before: {
+      publisher: "https://releases.example.test",
+      artifact_origins: ["https://releases.example.test"],
+    },
+    after: {
+      publisher: "https://releases.example.test",
+      artifact_origins: ["https://releases.example.test"],
+    },
+  });
+  const legacyReceipt = { ...installedReceipt };
+  delete legacyReceipt.artifact_origins;
+  assert.equal(verifyPublisherContinuity({ currentReceipt: legacyReceipt, targetManifest: generated.manifest }).continuous, true);
+  assert.equal(verifyPublisherContinuity({
+    currentReceipt: { ...installedReceipt, publisher: { canonical_origin: "https://releases.example.test" } },
+    targetManifest: generated.manifest,
+  }).continuous, true);
+  assert.equal(verifyPublisherContinuity({
+    currentReceipt: { ...installedReceipt, publisher: "https://other.example.test" },
+    targetManifest: generated.manifest,
+  }).continuous, false);
+  assert.equal(verifyPublisherContinuity({
+    currentReceipt: { ...installedReceipt, artifact_origins: ["https://other.example.test"] },
+    targetManifest: generated.manifest,
+  }).continuous, false);
+  assert.equal(verifyPublisherContinuity({
+    currentReceipt: { ...legacyReceipt, source: "https://other.example.test/cfkanban-skills.zip" },
+    targetManifest: generated.manifest,
+  }).continuous, false);
+  assert.throws(
+    () => verifyPublisherContinuity({ currentReceipt: { ...legacyReceipt, source: "http://releases.example.test/cfkanban-skills.zip" }, targetManifest: generated.manifest }),
+    (error) => error.code === "INVALID_RELEASE_RECEIPT",
+  );
 
   const prereleaseOutput = path.join(root, "prerelease-output");
   await mkdir(prereleaseOutput);
@@ -1972,6 +2011,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.12.md",
     "../../release/notes/0.1.0-alpha.13.md",
     "../../release/notes/0.1.0-alpha.14.md",
+    "../../release/notes/0.1.0-alpha.15.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -1985,6 +2025,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.12.json",
     "../../release/config/0.1.0-alpha.13.json",
     "../../release/config/0.1.0-alpha.14.json",
+    "../../release/config/0.1.0-alpha.15.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
