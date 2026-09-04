@@ -172,7 +172,7 @@ export async function createPendingCredential({
   persistenceConfirmed = false,
   instanceId,
   principalId = null,
-  credentialId = randomUUID(),
+  credentialId = null,
   idempotencyKey = randomUUID(),
   operationId = randomUUID(),
   purpose = "principal_bootstrap",
@@ -198,11 +198,13 @@ export async function createPendingCredential({
     });
   }
   const credential = generateCredential();
+  const boundCredentialId = credentialId === null ? null : requireUuid(credentialId, "credential_id");
   const metadata = {
     schema_version: 1,
     instance_id: requireUuid(instanceId, "instance_id"),
     principal_id: principalId === null ? null : requireUuid(principalId, "principal_id"),
-    credential_id: requireUuid(credentialId, "credential_id"),
+    credential_id: boundCredentialId,
+    credential_id_binding: boundCredentialId === null ? "server_assigned" : "exact",
     token_prefix: credential.prefix,
     fingerprint: credential.fingerprint,
     token_digest: credential.digest,
@@ -245,7 +247,15 @@ export async function promotePendingCredential({ stateRoot = resolveStateRoot(),
   if (metadata.fingerprint !== fingerprint) {
     throw toolError("STATE_SECRET_MISMATCH", "Server readback fingerprint does not match the pending Credential", { instanceId });
   }
-  if (metadata.credential_id !== verifiedCredentialId) {
+  const credentialIdBinding = metadata.credential_id_binding
+    ?? (metadata.purpose === "owner_bootstrap" ? "exact" : "server_assigned");
+  if (!["exact", "server_assigned"].includes(credentialIdBinding)) {
+    throw toolError("STATE_METADATA_INVALID", "Pending Credential has an unsupported Credential ID binding", { instanceId });
+  }
+  const pendingCredentialId = metadata.credential_id === null
+    ? null
+    : requireUuid(metadata.credential_id, "pending_credential_id");
+  if (credentialIdBinding === "exact" && pendingCredentialId !== verifiedCredentialId) {
     throw toolError("STATE_SECRET_MISMATCH", "Server readback Credential ID does not match the pending Credential", { instanceId });
   }
   const current = await readJson(paths.currentMetadata, { allowMissing: true });
@@ -255,6 +265,8 @@ export async function promotePendingCredential({ stateRoot = resolveStateRoot(),
   const promoted = {
     ...metadata,
     principal_id: verifiedPrincipalId,
+    credential_id: verifiedCredentialId,
+    credential_id_binding: credentialIdBinding,
     state: "current",
     verified_at: new Date().toISOString(),
   };

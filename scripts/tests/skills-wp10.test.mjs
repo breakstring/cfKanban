@@ -7,7 +7,7 @@ import { buildCapabilityReport } from "../../packages/skill-runtime/src/capabili
 import { prepareOwnerCredential, writeOwnerBootstrapSql } from "../../packages/skill-runtime/src/bootstrap-sql.mjs";
 import { finalizeOwnerDeployment } from "../../packages/skill-runtime/src/deployment-finalize.mjs";
 import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
-import { redeemInvitation, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
+import { redeemInvitation, redeemPublicJoin, rotateOwnerCredential } from "../../packages/skill-runtime/src/credential-operations.mjs";
 import { buildOwnerBootstrapReadbackSql, buildWranglerAccountProbe, buildWranglerInvocation, executeWranglerAction, parseMigrationReadbackOutput, parseOwnerBootstrapReadbackOutput, readD1ResourceByName, readWorkerResourceByName, readWranglerAccountAccess } from "../../packages/skill-runtime/src/deploy.mjs";
 import { writeFrozenWranglerConfig } from "../../packages/skill-runtime/src/deployment-config.mjs";
 import { appendJournalEvent, authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
@@ -46,7 +46,8 @@ const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.15.json", import.meta.url), "utf8"));
+const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.16.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -536,6 +537,8 @@ test("Invite redemption injects and verifies a pending Credential without exposi
     idempotencyKey: "invite-one",
   });
   const secret = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
+  assert.equal(pending.credential_id, null);
+  assert.equal(pending.credential_id_binding, "server_assigned");
   const calls = [];
   const fetchImpl = async (url, options) => {
     calls.push({ url: url.href, headers: new Headers(options.headers), body: options.body });
@@ -554,7 +557,7 @@ test("Invite redemption injects and verifies a pending Credential without exposi
       id: PRINCIPAL_ID,
       principal_id: PRINCIPAL_ID,
       is_owner: false,
-      credential: { id: pending.credential_id, fingerprint: pending.fingerprint },
+      credential: { id: SERVER_CREDENTIAL_ID, fingerprint: pending.fingerprint },
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
   const result = await redeemInvitation({
@@ -571,8 +574,54 @@ test("Invite redemption injects and verifies a pending Credential without exposi
   assert.equal(calls[0].headers.get("idempotency-key"), "invite-one");
   assert.equal(calls[1].headers.get("authorization"), `Bearer ${secret.token}`);
   assert.equal(result.credential.state, "current");
+  assert.equal(result.credential.credential_id, SERVER_CREDENTIAL_ID);
   assert.equal(JSON.stringify(result).includes(secret.token), false);
-  assert.equal((await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID })).token, secret.token);
+  const current = await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
+  assert.equal(current.metadata.credential_id, SERVER_CREDENTIAL_ID);
+  assert.equal(current.token, secret.token);
+});
+
+test("Public Join promotes the Credential ID assigned by the Service", async (t) => {
+  const { home, stateRoot } = await fixtureState();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const pending = await createPendingCredential({
+    stateRoot,
+    home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    idempotencyKey: "public-join-one",
+  });
+  const secret = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
+  const publicId = "88888888-8888-4888-8888-888888888888";
+  const fetchImpl = async (url, options) => {
+    if (url.pathname === `/api/v1/public-joins/${publicId}/redeem`) {
+      assert.equal(JSON.parse(options.body).new_credential_token, secret.token);
+      return new Response(JSON.stringify({
+        resource: { principal: { principal_id: PRINCIPAL_ID } },
+        event_cursor: "1",
+        idempotent_replay: false,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({
+      id: PRINCIPAL_ID,
+      principal_id: PRINCIPAL_ID,
+      is_owner: false,
+      credential: { id: SERVER_CREDENTIAL_ID, fingerprint: pending.fingerprint },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const result = await redeemPublicJoin({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    publicId,
+    role: "writer",
+    redeemAs: "new_principal",
+    displayName: "Public Join Participant",
+    fetchImpl,
+  });
+  assert.equal(result.credential.credential_id, SERVER_CREDENTIAL_ID);
+  assert.equal((await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID })).metadata.credential_id, SERVER_CREDENTIAL_ID);
+  assert.equal(JSON.stringify(result).includes(secret.token), false);
 });
 
 test("Owner rotation keeps both current and replacement Credentials inside the bundled tool", async (t) => {
@@ -584,8 +633,10 @@ test("Owner rotation keeps both current and replacement Credentials inside the b
     persistenceConfirmed: true,
     instanceId: INSTANCE_ID,
     principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
     operationId: OPERATION_ID,
     idempotencyKey: "owner-bootstrap",
+    purpose: "owner_bootstrap",
   });
   const firstSecret = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
   await promotePendingCredential({ stateRoot, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, credentialId: first.credential_id, fingerprint: first.fingerprint });
@@ -601,12 +652,14 @@ test("Owner rotation keeps both current and replacement Credentials inside the b
     purpose: "owner_rotation",
   });
   const replacementSecret = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
+  assert.equal(replacement.credential_id, null);
+  assert.equal(replacement.credential_id_binding, "server_assigned");
   const calls = [];
   const fetchImpl = async (url, options) => {
     calls.push({ url: url.href, headers: new Headers(options.headers), body: options.body });
     if (url.pathname === "/api/v1/admin/owner-credentials/rotate") {
       return new Response(JSON.stringify({
-        resource: { id: replacement.credential_id },
+        resource: { id: SERVER_CREDENTIAL_ID },
         event_cursor: "2",
         idempotent_replay: false,
         unsafe_echo_fixture: `${firstSecret.token}:${replacementSecret.token}`,
@@ -616,7 +669,7 @@ test("Owner rotation keeps both current and replacement Credentials inside the b
       id: PRINCIPAL_ID,
       principal_id: PRINCIPAL_ID,
       is_owner: true,
-      credential: { id: replacement.credential_id, fingerprint: replacement.fingerprint },
+      credential: { id: SERVER_CREDENTIAL_ID, fingerprint: replacement.fingerprint },
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
   const result = await rotateOwnerCredential({ stateRoot, instanceId: INSTANCE_ID, fetchImpl });
@@ -626,9 +679,68 @@ test("Owner rotation keeps both current and replacement Credentials inside the b
   assert.equal(calls[0].headers.get("idempotency-key"), "owner-rotation");
   assert.equal(calls[1].headers.get("authorization"), `Bearer ${replacementSecret.token}`);
   assert.equal(result.credential.state, "current");
+  assert.equal(result.credential.credential_id, SERVER_CREDENTIAL_ID);
   assert.equal(JSON.stringify(result).includes(firstSecret.token), false);
   assert.equal(JSON.stringify(result).includes(replacementSecret.token), false);
   assert.equal((await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID })).token, replacementSecret.token);
+});
+
+test("legacy participant pending records accept the authenticated server Credential ID without weakening Owner bootstrap binding", async (t) => {
+  const participant = await fixtureState();
+  const owner = await fixtureState();
+  t.after(() => Promise.all([
+    rm(participant.home, { recursive: true, force: true }),
+    rm(owner.home, { recursive: true, force: true }),
+  ]));
+
+  const participantPending = await createPendingCredential({
+    stateRoot: participant.stateRoot,
+    home: participant.home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    operationId: OPERATION_ID,
+    idempotencyKey: "legacy-participant",
+  });
+  const participantPaths = getInstancePaths({ stateRoot: participant.stateRoot, instanceId: INSTANCE_ID });
+  const legacyParticipant = JSON.parse(await readFile(participantPaths.pendingMetadata, "utf8"));
+  delete legacyParticipant.credential_id_binding;
+  legacyParticipant.credential_id = CREDENTIAL_ID;
+  await writeFile(participantPaths.pendingMetadata, `${JSON.stringify(legacyParticipant)}\n`, { mode: 0o600 });
+  const promoted = await promotePendingCredential({
+    stateRoot: participant.stateRoot,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: SERVER_CREDENTIAL_ID,
+    fingerprint: participantPending.fingerprint,
+  });
+  assert.equal(promoted.credential_id, SERVER_CREDENTIAL_ID);
+  assert.equal(promoted.credential_id_binding, "server_assigned");
+
+  const ownerPending = await createPendingCredential({
+    stateRoot: owner.stateRoot,
+    home: owner.home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    operationId: OPERATION_ID,
+    idempotencyKey: "legacy-owner",
+    purpose: "owner_bootstrap",
+  });
+  const ownerPaths = getInstancePaths({ stateRoot: owner.stateRoot, instanceId: INSTANCE_ID });
+  const legacyOwner = JSON.parse(await readFile(ownerPaths.pendingMetadata, "utf8"));
+  delete legacyOwner.credential_id_binding;
+  await writeFile(ownerPaths.pendingMetadata, `${JSON.stringify(legacyOwner)}\n`, { mode: 0o600 });
+  await assert.rejects(
+    promotePendingCredential({
+      stateRoot: owner.stateRoot,
+      instanceId: INSTANCE_ID,
+      principalId: PRINCIPAL_ID,
+      credentialId: SERVER_CREDENTIAL_ID,
+      fingerprint: ownerPending.fingerprint,
+    }),
+    (error) => error.code === "STATE_SECRET_MISMATCH",
+  );
 });
 
 test("private state uses pending to current promotion, hides secrets, and rejects a second Principal", async (t) => {
@@ -2012,6 +2124,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.13.md",
     "../../release/notes/0.1.0-alpha.14.md",
     "../../release/notes/0.1.0-alpha.15.md",
+    "../../release/notes/0.1.0-alpha.16.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -2026,6 +2139,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.13.json",
     "../../release/config/0.1.0-alpha.14.json",
     "../../release/config/0.1.0-alpha.15.json",
+    "../../release/config/0.1.0-alpha.16.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
