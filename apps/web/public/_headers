@@ -1,0 +1,14 @@
+/
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
+/app
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
+/app/*
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
+/assets/*
+  Cache-Control: public, max-age=31556952, immutable

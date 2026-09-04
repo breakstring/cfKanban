@@ -47,6 +47,18 @@ function mayHaveJsonBody(request: Request): boolean {
   return request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
 }
 
+function withSpaDocumentHeaders(response: Response, requestId: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "no-store");
+  headers.set("referrer-policy", "no-referrer");
+  headers.set("x-request-id", requestId);
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+}
+
 export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Response> {
   const context = createRequestContext(request);
   try {
@@ -64,7 +76,11 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
       throw notFound();
     }
 
-    return withRequestId(await env.ASSETS.fetch(request), context.requestId);
+    const assetResponse = await env.ASSETS.fetch(request);
+    if (context.url.pathname === "/" || context.url.pathname === "/app" || context.url.pathname.startsWith("/app/")) {
+      return withSpaDocumentHeaders(assetResponse, context.requestId);
+    }
+    return withRequestId(assetResponse, context.requestId);
   } catch (error) {
     const response = errorResponse(error, context.requestId);
     if (!(error instanceof ApiError) || !error.clearSessionCookies) return response;

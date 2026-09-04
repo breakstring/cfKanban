@@ -12,7 +12,9 @@
       "/healthz",
       "/openapi.json",
       "/invite",
-      "/app/launch",
+      "/",
+      "/app",
+      "/app/*",
       "/.well-known/*"
     ]
   },

@@ -16,6 +16,7 @@ import type {
   LabelResource,
   ListResult,
   PriorityKey,
+  ProjectStatusResource,
   StatusKey,
   WebSessionView,
   WriteResult,
@@ -25,6 +26,7 @@ const props = defineProps<{ identifier: string; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
 
 const issue = ref<IssueDetail | null>(null);
+const statuses = ref<ProjectStatusResource[]>([]);
 const labels = ref<LabelResource[]>([]);
 const deletedLabels = ref<LabelResource[]>([]);
 const comments = ref<IssueComment[]>([]);
@@ -59,6 +61,11 @@ const canUpdate = computed(() => issue.value?.allowed_actions.includes("update")
 const canDelete = computed(() => issue.value?.allowed_actions.includes("delete") ?? false);
 const canRestore = computed(() => issue.value?.allowed_actions.includes("restore") ?? false);
 const relationTargetCanWrite = computed(() => canCreateIssueRelation(issue.value, relationTarget.value));
+const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
+
+function statusDisplayName(key: StatusKey): string {
+  return statusMap.value.get(key)?.display_name ?? key;
+}
 
 function projectIsActive(scope = issueProjectScope): boolean {
   if (scope === null) return true;
@@ -74,6 +81,7 @@ function projectionIsCurrent(generation: number): boolean {
 
 function clearIssueProjection(): void {
   issue.value = null;
+  statuses.value = [];
   labels.value = [];
   deletedLabels.value = [];
   comments.value = [];
@@ -139,7 +147,10 @@ async function load(preserveLocalDrafts = editMode.value): Promise<void> {
     if (requestId !== loadRequestId || !projectionGeneration.isCurrent(generation) || !projectIsActive(resultScope)) {
       return;
     }
-    const [labelResult, commentResult, relationResult] = await Promise.all([
+    const [statusResult, labelResult, commentResult, relationResult] = await Promise.all([
+      apiRequest<ListResult<ProjectStatusResource>>(
+        `/api/v1/workspaces/${encodeURIComponent(result.workspace.key)}/projects/${encodeURIComponent(result.project.key)}/statuses`,
+      ),
       apiRequest<ListResult<LabelResource>>(
         `/api/v1/workspaces/${encodeURIComponent(result.workspace.key)}/projects/${encodeURIComponent(result.project.key)}/labels?limit=100`,
       ),
@@ -155,6 +166,7 @@ async function load(preserveLocalDrafts = editMode.value): Promise<void> {
       edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title };
     }
     emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject(result) });
+    statuses.value = statusResult.items;
     labels.value = labelResult.items;
     // Remote projections are replaced from the current first page. Local edit,
     // comment, completion, block, and relation drafts live in separate refs and
@@ -167,6 +179,7 @@ async function load(preserveLocalDrafts = editMode.value): Promise<void> {
     error.value = errorText(caught);
     if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
       issue.value = null;
+      statuses.value = [];
       labels.value = [];
       comments.value = [];
       commentNextCursor.value = null;
@@ -597,7 +610,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
 
         <aside class="issue-sidebar">
           <dl class="metadata-list">
-            <div><dt>{{ t("issue.status") }}</dt><dd><select v-if="canUpdate" :value="issue.status.key" @change="updateIssue({ status_key: ($event.target as HTMLSelectElement).value as StatusKey })"><option v-for="key in ['backlog','todo','in_progress','canceled']" :key="key" :value="key">{{ key }}</option><option v-if="issue.status.key === 'done'" value="done" disabled>done · {{ locale === "zh-CN" ? "通过完成记录进入" : "entered through completion" }}</option></select><span v-else>{{ issue.status.display_name }}</span></dd></div>
+            <div><dt>{{ t("issue.status") }}</dt><dd><select v-if="canUpdate" :value="issue.status.key" @change="updateIssue({ status_key: ($event.target as HTMLSelectElement).value as StatusKey })"><option v-for="status in statuses.filter((entry) => entry.key !== 'done')" :key="status.key" :value="status.key">{{ status.display_name }}</option><option v-if="issue.status.key === 'done'" value="done" disabled>{{ statusDisplayName("done") }} · {{ locale === "zh-CN" ? "通过完成记录进入" : "entered through completion" }}</option></select><span v-else>{{ issue.status.display_name }}</span></dd></div>
             <div><dt>{{ t("issue.priority") }}</dt><dd>{{ issue.priority }}</dd></div>
             <div><dt>{{ t("issue.assignee") }}</dt><dd>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}<button v-if="canUpdate && issue.assignee" class="text-button" type="button" @click="updateIssue({ assignee_principal_id: null })">{{ locale === "zh-CN" ? "取消指派" : "Unassign" }}</button></dd></div>
             <div><dt>{{ locale === "zh-CN" ? "更新时间" : "Updated" }}</dt><dd>{{ formatTime(issue.updated_at) }}</dd></div>
@@ -606,7 +619,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
           <div v-if="canUpdate" class="sidebar-actions">
             <button class="secondary-button" type="button" :disabled="busy" @click="runCommand('assign-to-me')">{{ locale === "zh-CN" ? "指派给我" : "Assign to me" }}</button>
             <form class="compact-inline-form" @submit.prevent="assignByPrincipalId"><input v-model="assigneePrincipalId" required :placeholder="locale === 'zh-CN' ? 'Principal ID' : 'Principal ID'" /><button class="text-button" type="submit" :disabled="busy">{{ locale === "zh-CN" ? "按 ID 指派" : "Assign by ID" }}</button></form>
-            <button v-if="issue.status.key === 'done'" class="secondary-button" type="button" :disabled="busy" @click="updateIssue({ status_key: 'todo' })">{{ locale === "zh-CN" ? "重新打开到待办" : "Reopen to todo" }}</button>
+            <button v-if="issue.status.key === 'done'" class="secondary-button" type="button" :disabled="busy" @click="updateIssue({ status_key: 'todo' })">{{ locale === "zh-CN" ? `重新打开到${statusDisplayName("todo")}` : `Reopen to ${statusDisplayName("todo")}` }}</button>
             <button v-else class="secondary-button" type="button" :disabled="busy" @click="showComplete = true">{{ t("complete.title") }}</button>
             <button v-if="issue.is_blocked" class="text-button" type="button" :disabled="busy" @click="runCommand('clear-blocked')">{{ locale === "zh-CN" ? "清除阻塞" : "Clear blocked" }}</button>
             <button v-else class="text-button" type="button" :disabled="busy" @click="showBlocked = true">{{ locale === "zh-CN" ? "报告阻塞" : "Report blocked" }}</button>

@@ -33,6 +33,7 @@ import {
   sameSessionBoundary,
   shouldClearAfterSessionRevalidation,
 } from "../../apps/web/src/lib/session-boundary.ts";
+import { scheduleSessionExpiry } from "../../apps/web/src/lib/session-expiry.ts";
 import {
   canAccessOwnerControlPlane,
   canCreateIssueRelation,
@@ -237,6 +238,46 @@ test("Passkey registration requires a supporting browser and Credential-source S
   assert.equal(canRegisterPasskeyFromSession(webSession({
     source: { id: "passkey", kind: "web_authenticator" },
   }), true), false);
+});
+
+test("Session expiry scheduling rejects stale values, fires once, and can be canceled", () => {
+  let now = Date.parse("2026-09-05T00:00:00.000Z");
+  let nextHandle = 0;
+  const callbacks = new Map();
+  const cleared = [];
+  const timer = {
+    clear(handle) {
+      cleared.push(handle);
+      callbacks.delete(handle);
+    },
+    now: () => now,
+    set(callback, delayMs) {
+      nextHandle += 1;
+      callbacks.set(nextHandle, { callback, delayMs });
+      return nextHandle;
+    },
+  };
+
+  let expirations = 0;
+  const stale = scheduleSessionExpiry("2026-09-04T23:59:59.999Z", () => { expirations += 1; }, timer);
+  assert.equal(stale.scheduled, false);
+  assert.equal(callbacks.size, 0);
+
+  const scheduled = scheduleSessionExpiry("2026-09-05T00:00:05.000Z", () => { expirations += 1; }, timer);
+  assert.equal(scheduled.scheduled, true);
+  assert.equal(callbacks.get(1).delayMs, 5_000);
+  now += 5_000;
+  callbacks.get(1).callback();
+  assert.equal(expirations, 1);
+  callbacks.get(1)?.callback();
+  assert.equal(expirations, 1);
+
+  now += 1_000;
+  const canceled = scheduleSessionExpiry("2026-09-05T00:00:10.000Z", () => { expirations += 1; }, timer);
+  assert.equal(canceled.scheduled, true);
+  canceled.cancel();
+  assert.deepEqual(cleared, [2]);
+  assert.equal(expirations, 1);
 });
 
 test("server-provided Web entry paths stay on the local app surface", () => {
@@ -1368,8 +1409,12 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   ]);
   assert.match(appSource, /shouldClearAfterSessionRevalidation\(caught\)/);
   assert.match(appSource, /sessionReloadPending = true/);
+  assert.match(appSource, /armSessionExpiry\(result\.expires_at\)/);
   assert.match(appSource, /route\.kind === 'owner' && canAccessOwnerControlPlane\(session\)/);
   assert.match(appHeaderSource, /canAccessOwnerControlPlane\(session\)/);
+  assert.match(appHeaderSource, /session\.expires_at/);
+  assert.match(appHeaderSource, /preferred_api_origin/);
+  assert.match(appHeaderSource, /target="_blank" rel="noreferrer noopener"/);
   assert.match(ownerSource, /initializeInvitationRecovery\(\)/);
   assert.match(ownerSource, /navigator\.locks\.request\(name, \{ mode: "exclusive" \}, callback\)/);
   assert.match(ownerSource, /coordinateIdempotencyIntent: async \(acquireIntent, execute\)/);
@@ -1397,6 +1442,8 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(issueDetailSource, /projectionGeneration\.isCurrent\(generation\)/);
   assert.match(issueDetailSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
   assert.match(issueDetailSource, /comments\.value = commentResult\.items/);
+  assert.match(issueDetailSource, /statuses\.value = statusResult\.items/);
+  assert.match(issueDetailSource, /:value="status\.key">\{\{ status\.display_name \}\}/);
   assert.match(issueDetailSource, /showCollaborationRecovery\.value = false/);
   assert.match(issueDetailSource, /void load\(true\)/);
   assert.match(issueDetailSource, /canCreateIssueRelation\(current, target\)/);
@@ -1404,6 +1451,8 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(profileSource, /canRegisterPasskeyFromSession\(props\.session, canUsePasskeys\)/);
   assert.match(publicHomeSource, /safeWebEntryPath\(result\.resource\.entry_path\)/);
   assert.match(publicHomeSource, /caught instanceof ApiProblem && caught\.status === 401/);
+  assert.match(publicHomeSource, /copyFallback\.value = \{ key, value \}/);
+  assert.match(publicHomeSource, /readonly rows="5"/);
   assert.match(projectBoardSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
   assert.match(issueDetailSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
 });

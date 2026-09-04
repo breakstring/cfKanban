@@ -32,7 +32,7 @@ assert.equal(workerConfig.routes, undefined, "source Worker config must not crea
 assert.equal(workerConfig.assets?.directory, "./apps/web/dist");
 assert.equal(workerConfig.assets?.binding, "ASSETS");
 assert.equal(workerConfig.assets?.not_found_handling, "single-page-application");
-for (const route of ["/api/*", "/healthz", "/openapi.json", "/invite", "/app/launch", "/.well-known/*"]) {
+for (const route of ["/api/*", "/healthz", "/openapi.json", "/invite", "/", "/app", "/app/*", "/.well-known/*"]) {
   assert.ok(workerConfig.assets?.run_worker_first?.includes(route), `dynamic route must run Worker first: ${route}`);
 }
 assert.deepEqual(
