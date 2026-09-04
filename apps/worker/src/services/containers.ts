@@ -684,7 +684,7 @@ export async function createWorkspace(
   displayNameValue: JsonValue,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth, true);
+  requireOwnerControl(auth);
   const key = requireWorkspaceKey(keyValue);
   const displayName = requireDisplayName(displayNameValue);
   const idempotencyKey = requireIdempotencyKey(request);
@@ -700,7 +700,7 @@ export async function createWorkspace(
   };
   const result = await runIdempotentOperation({
     authorize: async () => {
-      const current = await reauthenticateOwner(db, request, now, true);
+      const current = await reauthenticateOwner(db, request, now);
       if (current.principalId !== auth.principalId) throw forbidden();
     },
     db,
@@ -731,7 +731,7 @@ export async function createWorkspace(
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          await reauthenticateOwner(db, request, now, true);
+          await reauthenticateOwner(db, request, now);
           if (await readWorkspace(db, key, true)) throw conflict("WORKSPACE_KEY_CONFLICT", "choose_different_key");
         }
         throw error;
@@ -1057,7 +1057,7 @@ export async function createProject(
   contextValue: JsonValue | undefined,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth, true);
+  requireOwnerControl(auth);
   const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
   const key = requireProjectKey(keyValue);
   const displayName = requireDisplayName(displayNameValue);
@@ -1066,7 +1066,7 @@ export async function createProject(
   const projectId = crypto.randomUUID();
   const result = await runIdempotentOperation({
     authorize: async () => {
-      const current = await reauthenticateOwner(db, request, now, true);
+      const current = await reauthenticateOwner(db, request, now);
       if (current.principalId !== auth.principalId) throw forbidden();
     },
     db,
@@ -1123,7 +1123,7 @@ export async function createProject(
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          await reauthenticateOwner(db, request, now, true);
+          await reauthenticateOwner(db, request, now);
           if (await readWorkspace(db, workspaceKey) === null) throw notFound();
           if (await readProject(db, workspaceKey, key, true)) throw conflict("PROJECT_KEY_CONFLICT", "choose_different_key");
         }

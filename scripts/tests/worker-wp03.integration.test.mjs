@@ -625,6 +625,33 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(cookieUpdatedWorkspace.response.status, 200);
   assert.equal(cookieUpdatedWorkspace.body.resource.version, 5);
 
+  const cookieCreatedWorkspace = await jsonRequest("/api/v1/workspaces", {
+    body: { display_name: "Created via Owner Web", key: "owner-web" },
+    headers: {
+      cookie: `cfkanban_session=${ownerSessionToken}; cfkanban_csrf=${csrfToken}`,
+      "idempotency-key": "wp03-owner-web-create-workspace",
+      origin: discovery.body.observed_origin,
+      "x-csrf-token": csrfToken,
+    },
+    method: "POST",
+  });
+  assert.equal(cookieCreatedWorkspace.response.status, 200);
+  assertWriteResult(cookieCreatedWorkspace.body);
+  assert.equal(cookieCreatedWorkspace.body.resource.key, "owner-web");
+  const cookieCreatedProject = await jsonRequest("/api/v1/workspaces/owner-web/projects", {
+    body: { display_name: "Created via Owner Web", key: "WEB" },
+    headers: {
+      cookie: `cfkanban_session=${ownerSessionToken}; cfkanban_csrf=${csrfToken}`,
+      "idempotency-key": "wp03-owner-web-create-project",
+      origin: discovery.body.observed_origin,
+      "x-csrf-token": csrfToken,
+    },
+    method: "POST",
+  });
+  assert.equal(cookieCreatedProject.response.status, 200);
+  assertWriteResult(cookieCreatedProject.body);
+  assert.equal(cookieCreatedProject.body.resource.key, "WEB");
+
   const origin = await jsonRequest("/api/v1/admin/instance-origin", { headers: ownerHeaders() });
   assert.equal(origin.body.preferred_api_origin, "https://kanban.example.test");
   const updatedOrigin = await jsonRequest("/api/v1/admin/instance-origin", {

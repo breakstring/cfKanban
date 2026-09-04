@@ -1343,6 +1343,15 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   secrets.push(ownerIssueLaunch.code);
   const ownerIssueSession = await redeemLaunch(ownerIssueLaunch.code, "wp07-owner-issue-redeem");
   secrets.push(ownerIssueSession.cookies.session, ownerIssueSession.cookies.csrf);
+  const fixedOwnerCreateWorkspace = await request("/api/v1/workspaces", {
+    body: { display_name: "Must stay fixed", key: "fixed-owner-session" },
+    headers: cookieWriteHeaders(ownerIssueSession.cookies, {
+      "idempotency-key": "wp07-fixed-owner-create-workspace",
+    }),
+    method: "POST",
+  });
+  assert.equal(fixedOwnerCreateWorkspace.response.status, 403);
+  assert.equal(fixedOwnerCreateWorkspace.body.code, "FORBIDDEN");
   await assertRacedWebSessionScope({
     cookies: ownerIssueSession.cookies,
     expectGrantGuard: false,
