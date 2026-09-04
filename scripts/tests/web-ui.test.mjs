@@ -673,6 +673,30 @@ test("public-home copy keeps the Agent-first promise playful and concrete", asyn
   assert.doesNotMatch(chineseBlock, /canonical/i);
 });
 
+test("the self-hosted brand mark is wired to the favicon and both Web shells", async () => {
+  const [mark, indexHtml, publicHome, appHeader, stylesheet] = await Promise.all([
+    readFile(new URL("../../apps/web/src/assets/cfkanban-mark.png", import.meta.url)),
+    readFile(new URL("../../apps/web/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/PublicHomeView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/components/AppHeader.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/style.css", import.meta.url), "utf8"),
+  ]);
+  assert.deepEqual([...mark.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(mark.readUInt32BE(16), 256);
+  assert.equal(mark.readUInt32BE(20), 256);
+  assert.equal(mark[25], 6, "brand PNG must retain an alpha channel");
+  assert.match(indexHtml, /rel="icon"[^>]+cfkanban-mark\.png/);
+  assert.match(indexHtml, /rel="apple-touch-icon"[^>]+cfkanban-mark\.png/);
+  assert.match(indexHtml, /name="theme-color" content="#FAF8F4"/);
+  assert.match(publicHome, /import cfKanbanMarkUrl from "\.\.\/assets\/cfkanban-mark\.png"/);
+  assert.match(publicHome, /class="brand-logo"[^>]+alt=""/);
+  assert.match(publicHome, /class="footer-logo"[^>]+alt=""/);
+  assert.match(appHeader, /class="brand-mark"[^>]+alt=""/);
+  assert.match(stylesheet, /\.brand-logo \{/);
+  assert.match(stylesheet, /\.footer-logo \{/);
+  assert.doesNotMatch(indexHtml, /cloudflareinsights|https?:\/\/[^\s"']+\.(?:png|svg)/iu);
+});
+
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
   const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
   const documents = await Promise.all(paths.map((name) => readFile(
@@ -680,7 +704,7 @@ test("deployed deployment and joining guides are complete, paired, and non-execu
     "utf8",
   )));
   for (const [index, document] of documents.entries()) {
-    assert.match(document, /0\.1\.0-alpha\.34/);
+    assert.match(document, /0\.1\.0-alpha\.35/);
     assert.match(document, /cfkanban-agent-skills@cfkanban/);
     assert.doesNotMatch(document, /curl[^\n]*\|\s*(?:ba)?sh/iu, `${paths[index]} must not teach pipe-to-shell`);
   }

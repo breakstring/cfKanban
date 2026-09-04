@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
+import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
 import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest } from "../lib/api";
@@ -161,7 +162,10 @@ onMounted(load);
 <template>
   <main class="public-home">
     <header class="public-nav">
-      <a class="wordmark" href="/" @click.prevent="navigate('/')">cfKanban</a>
+      <a class="wordmark" href="/" @click.prevent="navigate('/')">
+        <img class="brand-logo" :src="cfKanbanMarkUrl" alt="" aria-hidden="true" />
+        <span>cfKanban</span>
+      </a>
       <LocaleSwitch />
     </header>
 
@@ -239,8 +243,11 @@ onMounted(load);
 
     <footer class="public-footer">
       <div class="footer-brand">
-        <strong>cfKanban</strong>
-        <span>{{ t("home.footerTagline") }}</span>
+        <img class="footer-logo" :src="cfKanbanMarkUrl" alt="" aria-hidden="true" />
+        <div class="footer-brand-copy">
+          <strong>cfKanban</strong>
+          <span>{{ t("home.footerTagline") }}</span>
+        </div>
       </div>
       <nav class="footer-links" :aria-label="locale === 'zh-CN' ? '页脚导航' : 'Footer navigation'">
         <a :href="deployGuideUrl">{{ t("home.deployGuide") }}</a>

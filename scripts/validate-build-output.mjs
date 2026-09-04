@@ -31,6 +31,10 @@ for (const guide of ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "joi
 }
 const webFiles = await filesUnder(webRoot);
 assert.ok(webFiles.some((name) => name.endsWith(".js")), "Web build must emit a JavaScript asset");
+assert.ok(webFiles.some((name) => name.endsWith(".png")), "Web build must emit the local brand mark");
+const indexHtml = await readFile(new URL("index.html", webRoot), "utf8");
+assert.match(indexHtml, /<link rel="icon"[^>]+\/assets\/cfkanban-mark-[^"/]+\.png/u, "Web build must fingerprint the favicon");
+assert.match(indexHtml, /<link rel="apple-touch-icon"[^>]+\/assets\/cfkanban-mark-[^"/]+\.png/u, "Web build must reuse the fingerprinted mark for touch icons");
 
 const workerFiles = await filesUnder(workerRoot);
 const workerEntry = new URL("index.js", workerRoot);
