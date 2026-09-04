@@ -19,6 +19,13 @@ const choices = ref<Choice[]>([]);
 const loading = ref(true);
 const error = ref("");
 
+function roleLabel(value: string): string {
+  if (locale.value !== "zh-CN") return value;
+  if (value === "writer") return "协作者";
+  if (value === "reader") return "只读者";
+  return value === "owner" ? "所有者" : value;
+}
+
 function load(): void {
   loading.value = true;
   error.value = "";
@@ -38,7 +45,7 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
 <template>
   <main class="page-shell narrow-page">
     <header class="page-title-block">
-      <p class="eyebrow">{{ locale === "zh-CN" ? "Project 范围" : "Project scope" }}</p>
+      <p class="eyebrow">{{ locale === "zh-CN" ? "项目范围" : "Project scope" }}</p>
       <h1>{{ t("project.choose") }}</h1>
       <p>{{ t("project.chooseHelp") }}</p>
     </header>
@@ -55,10 +62,10 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
           <small>{{ choice.workspaceKey }} / {{ choice.projectKey }}</small>
           <strong>{{ choice.displayName }}</strong>
         </span>
-        <span class="role-badge">{{ choice.role }}</span>
+        <span class="role-badge">{{ roleLabel(choice.role) }}</span>
       </button>
       <p v-if="choices.length === 0" class="empty-copy">
-        {{ locale === "zh-CN" ? "当前没有可访问的 Project。" : "No projects are currently available." }}
+        {{ locale === "zh-CN" ? "当前没有可访问的项目。" : "No projects are currently available." }}
       </p>
     </div>
   </main>

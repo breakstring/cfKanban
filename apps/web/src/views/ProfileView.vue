@@ -119,7 +119,7 @@ async function saveProfile(): Promise<void> {
     displayName.value = result.resource.display_name;
     dismissCasConflict();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, "Principal profile", { display_name: displayName.value })) {
+    if (!await recoverCasConflict(caught, locale.value === "zh-CN" ? "身份资料" : "Principal profile", { display_name: displayName.value })) {
       error.value = errorText(caught);
     }
   } finally {
@@ -162,7 +162,7 @@ async function revokePasskey(passkey: Passkey): Promise<void> {
     await apiRequest(`/api/v1/me/passkeys/${passkey.id}?expected_version=${passkey.version}`, { method: "DELETE" });
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `Passkey ${passkey.id}`, { action: "revoke" })) {
+    if (!await recoverCasConflict(caught, `${locale.value === "zh-CN" ? "通行密钥" : "Passkey"} ${passkey.id}`, { action: "revoke" })) {
       error.value = errorText(caught);
     }
   } finally {
@@ -182,7 +182,7 @@ onMounted(load);
 <template>
   <main class="page-shell profile-page">
     <header class="page-title-block">
-      <p class="eyebrow">{{ locale === "zh-CN" ? "Principal 身份" : "Principal" }}</p>
+      <p class="eyebrow">{{ locale === "zh-CN" ? "身份" : "Principal" }}</p>
       <h1>{{ t("profile.title") }}</h1>
     </header>
     <PageState :loading="loading" :error="error && !me ? error : ''" :action-label="t('action.refresh')" @retry="load" />
@@ -195,13 +195,13 @@ onMounted(load);
           <label>{{ locale === "zh-CN" ? "显示名称" : "Display name" }}<input v-model="displayName" maxlength="128" required /></label>
           <button class="primary-button" type="submit" :disabled="busy || displayName.trim() === me.display_name">{{ t("action.save") }}</button>
         </form>
-        <dl class="profile-facts"><div><dt>{{ t("profile.id") }}</dt><dd><code>{{ me.id }}</code></dd></div><div><dt>{{ locale === "zh-CN" ? "角色" : "Role" }}</dt><dd>{{ me.is_owner ? (locale === "zh-CN" ? "部署 Owner" : "Deployment Owner") : (locale === "zh-CN" ? "Project 参与者" : "Project participant") }}</dd></div><div><dt>{{ locale === "zh-CN" ? "版本" : "Version" }}</dt><dd>{{ me.version }}</dd></div></dl>
+        <dl class="profile-facts"><div><dt>{{ t("profile.id") }}</dt><dd><code>{{ me.id }}</code></dd></div><div><dt>{{ locale === "zh-CN" ? "角色" : "Role" }}</dt><dd>{{ me.is_owner ? (locale === "zh-CN" ? "部署所有者" : "Deployment Owner") : (locale === "zh-CN" ? "项目参与者" : "Project participant") }}</dd></div><div><dt>{{ locale === "zh-CN" ? "版本" : "Version" }}</dt><dd>{{ me.version }}</dd></div></dl>
       </section>
 
       <section class="profile-section">
         <div class="section-heading-row">
-          <div><h2>Passkeys</h2><p>{{ t("passkey.list") }}</p></div>
-          <button v-if="canRegisterPasskey" class="primary-button" type="button" :disabled="busy" @click="registerPasskey">{{ locale === "zh-CN" ? "登记 Passkey" : "Register Passkey" }}</button>
+          <div><h2>{{ locale === "zh-CN" ? "通行密钥" : "Passkeys" }}</h2><p>{{ t("passkey.list") }}</p></div>
+          <button v-if="canRegisterPasskey" class="primary-button" type="button" :disabled="busy" @click="registerPasskey">{{ locale === "zh-CN" ? "登记通行密钥" : "Register Passkey" }}</button>
         </div>
         <div class="passkey-list">
           <article v-for="passkey in passkeys" :key="passkey.id" class="passkey-row">
@@ -209,7 +209,7 @@ onMounted(load);
             <button v-if="passkey.revoked_at === null" class="danger-text-button" type="button" :disabled="busy" @click="revokePasskey(passkey)">{{ locale === "zh-CN" ? "撤销" : "Revoke" }}</button>
             <span v-else class="muted-copy">{{ locale === "zh-CN" ? "已撤销" : "revoked" }}</span>
           </article>
-          <p v-if="passkeys.length === 0" class="empty-copy">{{ locale === "zh-CN" ? "尚未登记 Passkey。" : "No Passkeys are registered." }}</p>
+          <p v-if="passkeys.length === 0" class="empty-copy">{{ locale === "zh-CN" ? "尚未登记通行密钥。" : "No Passkeys are registered." }}</p>
         </div>
       </section>
     </template>

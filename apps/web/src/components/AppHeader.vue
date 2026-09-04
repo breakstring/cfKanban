@@ -26,6 +26,14 @@ const preferredOrigin = computed(() => {
   return value && value !== window.location.origin ? value : null;
 });
 
+function roleLabel(value: string): string {
+  if (locale.value !== "zh-CN") return value;
+  if (value === "owner") return "所有者";
+  if (value === "writer") return "协作者";
+  if (value === "reader") return "只读者";
+  return value;
+}
+
 async function loadDiscovery(): Promise<void> {
   try {
     discovery.value = await apiRequest<InstanceDiscovery>("/.well-known/cfkanban-instance.json");
@@ -45,7 +53,7 @@ onMounted(loadDiscovery);
     </button>
     <div v-if="context" class="header-context">
       <strong>{{ context }}</strong>
-      <span v-if="role" class="role-badge">{{ role }}</span>
+      <span v-if="role" class="role-badge">{{ roleLabel(role) }}</span>
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
       <button v-if="canAccessOwnerControlPlane(session)" class="text-button" type="button" @click="navigate('/app/admin')">

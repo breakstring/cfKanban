@@ -81,7 +81,7 @@ function projectIsActive(): boolean {
 
 function cursorRestartText(): string {
   return locale.value === "zh-CN"
-    ? "列表范围或可见权限已变化，旧 cursor 已停用。请刷新当前列表后继续。"
+    ? "列表范围或可见权限已变化，原分页位置已失效。请刷新当前列表后继续。"
     : "The list scope or visibility changed, so the old cursor was retired. Refresh this list before continuing.";
 }
 
@@ -102,7 +102,7 @@ function clearProjectProjection(): void {
   showDeleted.value = false;
   showNewIssue.value = false;
   error.value = locale.value === "zh-CN"
-    ? "此 Project 已不在当前 active Project 列表中。"
+    ? "此项目已不在当前可用项目列表中。"
     : "This Project is no longer in the current active Project inventory.";
 }
 
@@ -242,7 +242,7 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, `${issue.identifier} status`, { status_key: status })) {
+    if (!await recoverCasConflict(caught, `${issue.identifier} ${locale.value === "zh-CN" ? "状态" : "status"}`, { status_key: status })) {
       error.value = errorText(caught);
     }
   } finally {
@@ -279,7 +279,7 @@ async function completeIssue(): Promise<void> {
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, `${issue.identifier} completion`, { summary: completionSummary.value })) {
+    if (!await recoverCasConflict(caught, `${issue.identifier} ${locale.value === "zh-CN" ? "完成记录" : "completion"}`, { summary: completionSummary.value })) {
       error.value = errorText(caught);
     }
   } finally {
@@ -352,10 +352,10 @@ async function loadDeleted(reset = true, throwOnFailure = false): Promise<void> 
 
 function restoreUnavailableText(issue: IssueTombstone): string {
   if (issue.parent_status.workspace === "deleted") {
-    return locale.value === "zh-CN" ? "请先恢复所属 Workspace" : "Restore the parent Workspace first";
+    return locale.value === "zh-CN" ? "请先恢复所属工作区" : "Restore the parent Workspace first";
   }
   if (issue.parent_status.project === "deleted") {
-    return locale.value === "zh-CN" ? "请先恢复所属 Project" : "Restore the parent Project first";
+    return locale.value === "zh-CN" ? "请先恢复所属项目" : "Restore the parent Project first";
   }
   if (issue.unavailability_reason !== null) return issue.unavailability_reason.code;
   return locale.value === "zh-CN" ? "当前不可恢复" : "Restore unavailable";
@@ -378,7 +378,7 @@ async function restoreIssue(issue: IssueTombstone): Promise<void> {
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, `${issue.identifier} restore`, { action: "restore" }, () => loadDeleted(true, true))) {
+    if (!await recoverCasConflict(caught, `${issue.identifier} ${locale.value === "zh-CN" ? "恢复" : "restore"}`, { action: "restore" }, () => loadDeleted(true, true))) {
       error.value = errorText(caught);
     }
   } finally {
@@ -389,6 +389,11 @@ async function restoreIssue(issue: IssueTombstone): Promise<void> {
 
 function issuesFor(status: StatusKey): IssueSummary[] {
   return issues.value.filter((issue) => issue.status.key === status);
+}
+
+function priorityLabel(priority: PriorityKey): string {
+  if (locale.value !== "zh-CN") return priority;
+  return ({ none: "无", low: "低", medium: "中", high: "高", urgent: "紧急" } as const)[priority];
 }
 
 function onDragStart(issue: IssueSummary, event: DragEvent): void {
@@ -419,7 +424,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
         <h1>{{ project?.display_name ?? projectKey }}</h1>
       </div>
       <form class="board-search" role="search" @submit.prevent="load()">
-        <input v-model="search" type="search" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索 Issues' : 'Search issues'" />
+        <input v-model="search" type="search" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'" />
       </form>
       <div class="board-toolbar-actions">
         <span v-if="!canWrite" class="read-only-badge">{{ t("board.readOnly") }}</span>
@@ -432,7 +437,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
-    <section v-if="!loading" class="kanban-board" :aria-label="locale === 'zh-CN' ? 'Project Kanban 看板' : 'Project Kanban board'">
+    <section v-if="!loading" class="kanban-board" :aria-label="locale === 'zh-CN' ? '项目看板' : 'Project Kanban board'">
       <article
         v-for="statusKey in statusOrder"
         :key="statusKey"
@@ -457,7 +462,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
             <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
               <span class="card-meta">
                 <code>{{ issue.identifier }}</code>
-                <span v-if="issue.priority !== 'none'" class="priority-mark">{{ issue.priority }}</span>
+                <span v-if="issue.priority !== 'none'" class="priority-mark">{{ priorityLabel(issue.priority) }}</span>
               </span>
               <strong>{{ issue.title }}</strong>
               <span v-if="issue.labels.length" class="label-line">
@@ -497,7 +502,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
         <label>{{ t("issue.body") }}<textarea v-model="newIssue.body" rows="7" :placeholder="t('comment.placeholder')" /></label>
         <div class="form-grid">
           <label>{{ t("issue.status") }}<select v-model="newIssue.status_key"><option v-for="key in statusOrder.filter((item) => item !== 'done')" :key="key" :value="key">{{ statusMap.get(key)?.display_name ?? key }}</option></select></label>
-          <label>{{ t("issue.priority") }}<select v-model="newIssue.priority_key"><option v-for="key in ['none','low','medium','high','urgent']" :key="key" :value="key">{{ key }}</option></select></label>
+          <label>{{ t("issue.priority") }}<select v-model="newIssue.priority_key"><option v-for="key in ['none','low','medium','high','urgent']" :key="key" :value="key">{{ priorityLabel(key as PriorityKey) }}</option></select></label>
         </div>
         <div class="form-actions"><button class="secondary-button" type="button" @click="showNewIssue = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="formBusy">{{ t("action.save") }}</button></div>
       </form>
@@ -511,15 +516,15 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
       </form>
     </ModalDialog>
 
-    <ModalDialog v-if="showDeleted" :busy="formBusy" :title="locale === 'zh-CN' ? '已删除 Issues' : 'Deleted issues'" @close="showDeleted = false">
+    <ModalDialog v-if="showDeleted" :busy="formBusy" :title="locale === 'zh-CN' ? '已删除事项' : 'Deleted issues'" @close="showDeleted = false">
       <div class="tombstone-list">
         <div v-for="issue in deletedIssues" :key="issue.id" class="tombstone-row">
           <span><code>{{ issue.identifier }}</code><strong>{{ issue.title }}</strong></span>
           <button v-if="issue.restorable && issue.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreIssue(issue)">{{ t("action.restore") }}</button>
           <small v-else class="warning-chip">{{ restoreUnavailableText(issue) }}</small>
         </div>
-        <p v-if="deletedIssues.length === 0" class="empty-copy">{{ locale === "zh-CN" ? "没有可恢复的 Issue。" : "No recoverable issues." }}</p>
-        <button v-if="deletedIssuesNextCursor" class="load-more" type="button" :disabled="deletedIssuesLoadingMore" @click="loadDeleted(false)">{{ deletedIssuesLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多已删除 Issue" : "Load more deleted issues") }}</button>
+        <p v-if="deletedIssues.length === 0" class="empty-copy">{{ locale === "zh-CN" ? "没有可恢复的事项。" : "No recoverable issues." }}</p>
+        <button v-if="deletedIssuesNextCursor" class="load-more" type="button" :disabled="deletedIssuesLoadingMore" @click="loadDeleted(false)">{{ deletedIssuesLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多已删除事项" : "Load more deleted issues") }}</button>
       </div>
     </ModalDialog>
   </main>
