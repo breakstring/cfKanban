@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
+import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
 import { apiRequest } from "../lib/api";
 import { locale, setLocale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
@@ -48,7 +49,7 @@ onMounted(loadDiscovery);
 <template>
   <header class="app-header">
     <button class="brand-button" type="button" @click="navigate('/app')">
-      <span class="brand-mark" aria-hidden="true">cf</span>
+      <img class="brand-mark" :src="cfKanbanMarkUrl" alt="" aria-hidden="true" />
       <span>cfKanban</span>
     </button>
     <div v-if="context" class="header-context">

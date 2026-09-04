@@ -1,7 +1,7 @@
 ---
 name: cfKanban
 status: frozen
-revision: 4
+revision: 5
 frozen_on: 2026-08-29
 revised_on: 2026-09-04
 selected_direction: warm-editorial-workbench
@@ -123,6 +123,12 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 - Default surfaces are flat. Cards use a 1px `border` and no shadow.
 - Menus and dialogs may use one restrained shadow plus a border. There are no multiple elevation tiers for ordinary content.
 - Avoid large rounded shells around the whole application, cards inside cards, and floating dashboard tiles.
+
+### 2.4 Brand mark
+
+- The cfKanban mark is a warm-ink board with one vivid-orange task card moving out of it: the board identifies the product, while the escaping card gives the Agent-first promise a small, playful motion cue. Orange is the mark's expressive accent; it does not replace blue's semantic role for primary actions inside the product UI.
+- Use the same self-hosted mark for the favicon, public wordmark, authenticated header, and compact footer lockup. Keep adjacent `cfKanban` text as live text rather than baking a wordmark into the image.
+- The mark must remain legible at 16px and 32px, keep its colored details within one warm-orange family, load no third-party resource, and carry an empty alt value when adjacent text already names the product.
 
 ## 3. Application shell
 

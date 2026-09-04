@@ -270,14 +270,11 @@ h3 {
 }
 
 .brand-mark {
-  display: grid;
+  display: block;
+  flex: 0 0 auto;
   width: 28px;
   height: 28px;
-  place-items: center;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 50%;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
+  object-fit: contain;
 }
 
 .header-context {
@@ -500,11 +497,21 @@ h3 {
 }
 
 .wordmark {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
   color: var(--color-text);
   font-family: var(--font-display);
   font-size: 1.35rem;
   font-weight: 650;
   text-decoration: none;
+}
+
+.brand-logo {
+  display: block;
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
 }
 
 .hero-section {
@@ -696,6 +703,20 @@ h3 {
 }
 
 .footer-brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.footer-logo {
+  display: block;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
+.footer-brand-copy {
   display: grid;
   gap: 3px;
 }
