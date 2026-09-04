@@ -1410,33 +1410,112 @@ textarea:disabled {
   gap: 3px;
 }
 
-.audit-list article {
+.audit-event {
   display: grid;
-  grid-template-columns: minmax(240px, 0.6fr) minmax(300px, 1fr);
-  gap: 8px 24px;
+  gap: 16px;
   padding: 18px 0;
   border-bottom: 1px solid var(--color-border);
 }
 
-.audit-list article > div {
-  display: grid;
-  gap: 5px;
+.audit-event:last-of-type {
+  border-bottom: 0;
 }
 
-.audit-list article p {
-  margin: 0;
+.audit-event-heading,
+.audit-event-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audit-event-heading {
+  justify-content: space-between;
+}
+
+.audit-event-title {
+  min-width: 0;
+}
+
+.audit-event-title code {
+  overflow-wrap: anywhere;
+  font-weight: 650;
+}
+
+.audit-event-heading time {
+  flex: none;
   color: var(--color-text-muted);
   font-size: 0.78rem;
 }
 
-.audit-list pre {
-  grid-column: 2;
-  max-width: 100%;
+.audit-stream-label {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.audit-stream-label[data-stream="security"] {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+
+.audit-event-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 24px;
   margin: 0;
+}
+
+.audit-event-facts > div,
+.audit-event-facts dd {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.audit-event-facts dt {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.audit-event-facts dd {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.audit-event-facts code {
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.audit-event-details {
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+}
+
+.audit-event-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--color-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.audit-event-details pre {
+  max-width: 100%;
+  max-height: 480px;
+  margin: 12px 0 0;
   padding: 12px;
-  overflow-x: auto;
+  overflow: auto;
   border-radius: var(--radius-control);
   font-size: 0.72rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
   background: var(--color-surface-muted);
 }
 
@@ -1717,8 +1796,13 @@ textarea:disabled {
   .overview-strip,
   .project-table-row,
   .data-row,
-  .audit-list article {
+  .audit-event-facts {
     grid-template-columns: 1fr;
+  }
+
+  .audit-event-heading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .overview-strip article:nth-child(even) {
@@ -1732,8 +1816,7 @@ textarea:disabled {
   }
 
   .project-table-row > div,
-  .data-row > :last-child,
-  .audit-list pre {
+  .data-row > :last-child {
     grid-row: auto;
     grid-column: auto;
   }

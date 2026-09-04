@@ -49,7 +49,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.27.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.28.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -3106,6 +3106,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.25.md",
     "../../release/notes/0.1.0-alpha.26.md",
     "../../release/notes/0.1.0-alpha.27.md",
+    "../../release/notes/0.1.0-alpha.28.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3132,6 +3133,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.25.json",
     "../../release/config/0.1.0-alpha.26.json",
     "../../release/config/0.1.0-alpha.27.json",
+    "../../release/config/0.1.0-alpha.28.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
