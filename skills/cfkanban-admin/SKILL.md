@@ -45,8 +45,8 @@ node scripts/cfkanban-tool.mjs <command>
 | Recover a participant | `invite create` with `kind=principal_recovery` | Bind the exact Principal ID and immutable `rotation | full_recovery` mode; show exact revocation scope first. |
 | Manage access | Principal, Credential, Project Grant, and Passkey admin endpoints | Display names are not identity selectors; read back every role change or revocation. |
 | Rotate Owner Credential | `credential prepare` with `purpose=owner_rotation`, then `owner rotate-credential` | Keep the same pending secret/Idempotency Key on uncertainty; promotion follows verified `/me` readback. |
-| Configure Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | One Project, explicit role, explicit public summary; disabling does not revoke existing Grants. |
-| Configure active quotas | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Explicit Issue/Comment/non-Owner Principal limits; 50/500/50 is a suggestion, never a silent default. |
+| Configure Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | Use `project.version` as `expected_version`, never `policy_version`; disabling does not revoke existing Grants. |
+| Configure active quotas | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Use the returned `project.version`; limits are explicit, and 50/500/50 is a suggestion rather than a silent default. |
 | Inspect request-rate settings | `GET /api/v1/admin/rate-limit-settings` | Read-only here; changing Worker bindings belongs to `cfkanban-deploy`. |
 | Restore content or a container | Stable resource read or explicit `deleted=only`, then one restore endpoint | Before container restore, show every enabled Public Join policy that will resume. |
 | Change preferred origin | `origin rebind-check`, then `GET/PUT /api/v1/admin/instance-origin` | Probe the candidate without a Credential, use expected version, then cross-read both origins. |
@@ -79,6 +79,7 @@ Audit reads without `project_id` or `stream` deliberately cover the whole Instan
 - **MUST:** Before Workspace/Project creation, case-normalize explicit user-chosen keys, validate the canonical forms, and show the exact immutable values that will be stored. Case normalization does not authorize deriving or otherwise rewriting a key.
 - **MUST:** Invite roles are always explicit. Recovery binds a stable Principal ID and immutable recovery mode; display names never select identity.
 - **MUST:** Create Invites with `invite create` and Browser Launches with `web launch`; generic `api request` must not expose either one-time capability. Prefer clipboard/direct-browser delivery. Use marked `stdout_once` only after the exact acknowledgement and never repeat its value.
+- **MUST:** Public Join enable, update, disable, and resource-limit writes use the current Project version returned as `project.version`. `policy_version` is policy history, not a write precondition.
 - **MUST:** Owner rotation first writes the replacement to the private pending slot. Web Sessions cannot rotate or revoke Owner Credentials.
 - **SHOULD:** Recommend `writer` only when no higher-level role exists; explicit read-only intent means `reader`. The API still receives the resolved role explicitly.
 - **DECIDES:** The user or higher-level Agent controls preview, confirmation, ordering, and continuation of multi-call goals.

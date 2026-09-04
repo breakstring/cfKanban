@@ -306,6 +306,8 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assertWriteResult(createdInvite.body);
   assert.equal(createdInvite.body.resource.secret_available, true);
   const projectInviteCode = invitationCode(createdInvite.body);
+  assert.match(createdInvite.body.resource.copy_text, /\/join\.md/);
+  assert.equal(createdInvite.body.resource.copy_text.includes(createdInvite.body.resource.invite_url), true);
   assert.equal(
     Date.parse(createdInvite.body.resource.expires_at) - Date.parse(createdInvite.body.resource.created_at),
     7 * 24 * 60 * 60 * 1_000,

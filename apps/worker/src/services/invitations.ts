@@ -788,12 +788,13 @@ export async function createInvitation(
   );
   const origin = await preferredOrigin(db);
   const inviteUrl = `${origin}/invite?code=${encodeURIComponent(committedCode)}`;
+  const joinGuideUrl = `${origin}/join.md`;
   return {
     ...finalized.body,
     idempotent_replay: false,
     resource: {
       ...(finalized.body.resource as { [key: string]: JsonValue }),
-      copy_text: `请仔细阅读 ${inviteUrl} 的说明，以便继续 cfKanban 邀请流程。`,
+      copy_text: `Read ${joinGuideUrl}, then use the cfKanban Skill to inspect and accept this one-time Project Invite: ${inviteUrl}`,
       invite_url: inviteUrl,
       secret_available: true,
     },

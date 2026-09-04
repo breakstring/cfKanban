@@ -7735,7 +7735,7 @@
         "schema": {
           "$ref": "#/components/schemas/Version"
         },
-        "description": "CAS precondition for DELETE operations."
+        "description": "CAS precondition for DELETE operations. For Public Join disable, use policy.project.version from the GET response; policy_version is not this CAS value."
       }
     },
     "headers": {
@@ -8961,7 +8961,8 @@
         ],
         "properties": {
           "expected_version": {
-            "$ref": "#/components/schemas/Version"
+            "$ref": "#/components/schemas/Version",
+            "description": "Current Project version from the policy response's project.version; policy_version is not this CAS value."
           },
           "public_summary": {
             "type": "string",
@@ -8996,7 +8997,8 @@
         ],
         "properties": {
           "expected_version": {
-            "$ref": "#/components/schemas/Version"
+            "$ref": "#/components/schemas/Version",
+            "description": "Current Project version from the resource-limits response's project.version; the Public Join policy_version is not this CAS value."
           },
           "issue_limit": {
             "type": "integer",

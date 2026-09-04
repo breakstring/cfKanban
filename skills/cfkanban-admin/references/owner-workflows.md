@@ -52,8 +52,8 @@ Accept user-chosen keys in either letter case and do not ask the user to retype 
 | Read/change/revoke Grant | `GET/PATCH/DELETE /api/v1/admin/grants/{grant_id}` | Role changes/revocation do not erase assignment/history. |
 | Read audit | `GET /api/v1/admin/audit-events` | Bounded pagination; optionally filter by one immutable `project_id` and/or `stream=domain|security`, and verify `resolved_filters`. |
 | Read/change preferred origin | `GET/PUT /api/v1/admin/instance-origin` | Credential-free candidate probe, CAS, old/new discovery readback. |
-| Manage Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | One Project and explicit role; disable does not revoke Grants. |
-| Read/change Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Explicit Issue/Comment/Principal limits and current usage. |
+| Manage Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | Use `project.version` as `expected_version`, not `policy_version`; disable does not revoke Grants. |
+| Read/change Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Use the returned `project.version`; submit explicit Issue/Comment/Principal limits. |
 | Inspect rate gates | `GET /api/v1/admin/rate-limit-settings` | Read-only; deploy Skill changes bindings. |
 | Revoke participant Passkey | `DELETE /api/v1/admin/passkeys/{passkey_id}` | Does not revoke API Credentials or Grants. |
 | Open Owner Web | dedicated `web launch` with `target.kind=admin` | Choose an explicit section; default delivery opens the system browser without stdout capability output. |
@@ -95,6 +95,8 @@ Before enabling or changing Public Join, read the Project, policy, active usage,
 - soft delete/Grant revoke releases active capacity, while restore/regrant consumes it;
 - disabling stops new self-join and quota enforcement but does not revoke existing Grants;
 - while a Project stays public, revoking a Grant does not create a rejoin blacklist.
+
+The policy response deliberately exposes two revisions. `project.version` is the CAS value for Public Join enable/update/disable and resource-limit writes. `policy_version` describes the policy record's own history and must never be copied into `expected_version`. On `VERSION_CONFLICT`, refresh the Project/Policy facts and ask the caller to reassess rather than retrying with a guessed version.
 
 ## Tombstone and container recovery
 

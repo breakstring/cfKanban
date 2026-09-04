@@ -7,7 +7,7 @@
 - Web 合同：[极简 Web UI SPEC](2026-08-29-web-ui-spec.md)（Frozen）
 - 架构基线：[Cloudflare 架构基线](../architecture/cloudflare-baseline.md)
 - 平台快照：[2026-08-28 Cloudflare 平台快照](../research/cloudflare-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-09-04（D-262）
+- 最近更新：2026-09-04（D-262、D-266）
 - 冻结日期：2026-08-29
 
 ## 1. 目的与边界
@@ -288,8 +288,8 @@ preferred origin 是实例级应用设置，不负责在 Cloudflare 或第三方
 | POST | `/api/v1/web-authentication/options` | Public | 创建短期单次 discoverable-credential assertion challenge |
 | POST | `/api/v1/web-authentication/verify` | WebAuthn assertion capability | 验证 assertion、消费 challenge并建立固定 8 小时 Session |
 | GET | `/api/v1/public-projects` | Public | 分页列出已开启 Project 的 public ID、display name、public summary 与固定 role choices |
-| GET/PUT/DELETE | `/api/v1/admin/projects/{project_id}/public-join` | Owner | 读取、带 Project expected version 开启/更新或关闭一个 Project Policy；开启请求必填 Project Issue/Comment/Principal active limits |
-| GET/PATCH | `/api/v1/admin/projects/{project_id}/resource-limits` | Owner | 读取 Policy 状态、active usage 与 limits；仅在 Public Join enabled 时带 expected version 修改三项 limits，允许新值低于当前 usage |
+| GET/PUT/DELETE | `/api/v1/admin/projects/{project_id}/public-join` | Owner | 读取、带 `project.version` 作为 `expected_version` 开启/更新或关闭一个 Project Policy；`policy_version` 不是 CAS 值；开启请求必填 Project Issue/Comment/Principal active limits |
+| GET/PATCH | `/api/v1/admin/projects/{project_id}/resource-limits` | Owner | 读取 Policy 状态、active usage 与 limits；仅在 Public Join enabled 时带响应中的 `project.version` 修改三项 limits，允许新值低于当前 usage |
 | GET | `/api/v1/admin/rate-limit-settings` | Owner | 读取当前生效的单 Principal、实例总请求和未认证敏感操作门槛、配置来源与安全的近期 429 摘要；v0 不提供修改端点 |
 | POST | `/api/v1/public-joins/{public_id}/redeem` | Public Join + conditional auth | 对一个公开 Project、一个显式 `reader|writer` 执行原子 self-join |
 

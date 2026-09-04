@@ -7,7 +7,7 @@ import { ApiProblem, apiRequest } from "../lib/api";
 import { locale, t } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart } from "../lib/pagination";
-import { publicJoinInstruction } from "../lib/public-join-instruction";
+import { deployAgentInstruction, publicGuideUrl, publicJoinInstruction } from "../lib/public-guide";
 import { navigate } from "../lib/router";
 import { safeWebEntryPath } from "../lib/session-capabilities";
 import { WriteFence } from "../lib/write-fence";
@@ -39,6 +39,10 @@ const preferredOrigin = computed(() => {
   if (meta.value === null || meta.value.preferred_api_origin === window.location.origin) return null;
   return meta.value.preferred_api_origin;
 });
+const guideOrigin = computed(() => meta.value?.preferred_api_origin ?? window.location.origin);
+const deployGuideUrl = computed(() => publicGuideUrl(guideOrigin.value, "deploy-guide", locale.value));
+const joinGuideUrl = computed(() => publicGuideUrl(guideOrigin.value, "join", locale.value));
+const deployInstruction = computed(() => deployAgentInstruction(guideOrigin.value, locale.value));
 
 async function load(reset = true): Promise<void> {
   if (!reset && projectsNextCursor.value === null) return;
@@ -87,7 +91,7 @@ async function copyText(value: string, key: string): Promise<void> {
 }
 
 function joinInstruction(project: PublicProject, role: "reader" | "writer"): string {
-  return publicJoinInstruction(window.location.origin, project.public_id, role, locale.value);
+  return publicJoinInstruction(guideOrigin.value, project.public_id, role, locale.value);
 }
 
 async function chooseRole(project: PublicProject, role: "reader" | "writer"): Promise<void> {
@@ -163,8 +167,8 @@ onMounted(load);
 
     <section class="hero-section">
       <div class="hero-copy">
-        <p class="eyebrow">{{ locale === "zh-CN" ? "Agent 优先 · 共享项目事实" : "Agent-first · Shared project truth" }}</p>
-        <h1>{{ t("home.heading") }}</h1>
+        <p class="eyebrow">{{ t("home.eyebrow") }}</p>
+        <h1><span>{{ t("home.headingFirst") }}</span><span>{{ t("home.headingSecond") }}</span></h1>
         <p class="hero-description">{{ t("home.description") }}</p>
         <p class="instance-note">{{ t("home.independent") }}</p>
         <a v-if="preferredOrigin" class="preferred-origin" :href="preferredOrigin">
@@ -172,11 +176,15 @@ onMounted(load);
         </a>
       </div>
       <aside class="agent-note">
-        <p class="note-kicker">{{ locale === "zh-CN" ? "交给你的智能体" : "Give this to your Agent" }}</p>
-        <p>{{ t("home.agentInstruction") }}</p>
-        <button class="primary-button" type="button" @click="copyText(t('home.agentInstruction'), 'deploy')">
-          {{ copied === "deploy" ? (locale === "zh-CN" ? "已复制" : "Copied") : t("action.copy") }}
-        </button>
+        <p class="note-kicker">{{ t("home.agentGuideTitle") }}</p>
+        <p class="agent-guide-description">{{ t("home.agentGuideDescription") }}</p>
+        <p class="agent-prompt">{{ deployInstruction }}</p>
+        <div class="agent-actions">
+          <button class="primary-button" type="button" @click="copyText(deployInstruction, 'deploy')">
+            {{ copied === "deploy" ? (locale === "zh-CN" ? "已复制" : "Copied") : t("home.copyDeploy") }}
+          </button>
+          <a class="guide-link" :href="deployGuideUrl">{{ t("home.deployGuide") }} ↗</a>
+        </div>
       </aside>
     </section>
 
@@ -230,8 +238,20 @@ onMounted(load);
     </section>
 
     <footer class="public-footer">
-      <span>{{ locale === "zh-CN" ? "服务版本" : "service" }} {{ meta?.service_version ?? "—" }}</span>
-      <span>{{ meta?.instance_id ? `${locale === "zh-CN" ? "实例" : "instance"} ${meta.instance_id.slice(0, 8)}` : "" }}</span>
+      <div class="footer-brand">
+        <strong>cfKanban</strong>
+        <span>{{ t("home.footerTagline") }}</span>
+      </div>
+      <nav class="footer-links" :aria-label="locale === 'zh-CN' ? '页脚导航' : 'Footer navigation'">
+        <a :href="deployGuideUrl">{{ t("home.deployGuide") }}</a>
+        <a :href="joinGuideUrl">{{ t("home.joinGuide") }}</a>
+        <a :href="`${guideOrigin}/openapi.json`">{{ t("home.openapi") }}</a>
+        <a href="https://github.com/breakstring/cfKanban" rel="noreferrer noopener">{{ t("home.github") }}</a>
+      </nav>
+      <div class="footer-meta">
+        <span>{{ locale === "zh-CN" ? "服务版本" : "service" }} {{ meta?.service_version ?? "—" }}</span>
+        <span>{{ meta?.instance_id ? `${locale === "zh-CN" ? "实例" : "instance"} ${meta.instance_id.slice(0, 8)}` : "" }}</span>
+      </div>
     </footer>
   </main>
 </template>

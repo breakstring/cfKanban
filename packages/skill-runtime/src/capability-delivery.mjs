@@ -231,7 +231,8 @@ function safeOperation(operation, resource) {
     operation.ok !== true
     || operation.status !== 200
     || typeof eventCursor !== "string"
-    || !/^[1-9][0-9]*$/u.test(eventCursor)
+    || eventCursor.trim().length === 0
+    || eventCursor.length > 4096
     || operation.data?.idempotent_replay !== !resource.secret_available
   ) {
     throw toolError("INVALID_CAPABILITY_RESPONSE", "The one-time capability response contained an inconsistent operation envelope");
@@ -504,7 +505,7 @@ export function assertGenericApiPathIsNonSensitive({ method = "GET", apiPath }) 
       ? "invite create"
       : null;
   if (dedicatedCommand !== null) {
-    throw toolError("SENSITIVE_DELIVERY_REQUIRED", "This operation can return a one-time bearer capability and must use its dedicated command", {
+    throw toolError("SENSITIVE_DELIVERY_REQUIRED", "This operation can return a one-time secret and must use its dedicated command", {
       command: dedicatedCommand,
     });
   }
