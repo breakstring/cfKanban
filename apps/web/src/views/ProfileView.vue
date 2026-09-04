@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
+import CasConflictNotice from "../components/CasConflictNotice.vue";
 import PageState from "../components/PageState.vue";
 import { apiRequest, errorText } from "../lib/api";
+import {
+  type CasConflictState,
+  captureCasConflict,
+  markCasReadbackComplete,
+  markCasReadbackFailed,
+} from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
 import { canRegisterPasskeyFromSession } from "../lib/session-capabilities";
 import { registrationCredential, registrationOptions } from "../lib/webauthn";
+import { WriteFence } from "../lib/write-fence";
 import type { Passkey, PrincipalResource, WebSessionView, WriteResult } from "../types";
 
 const props = defineProps<{ session: WebSessionView }>();
@@ -27,10 +35,15 @@ const displayName = ref("");
 const loading = ref(true);
 const busy = ref(false);
 const error = ref("");
+const casConflict = ref<CasConflictState | null>(null);
 const canUsePasskeys = typeof window !== "undefined" && "PublicKeyCredential" in window;
 const canRegisterPasskey = computed(() => canRegisterPasskeyFromSession(props.session, canUsePasskeys));
+const writeFence = new WriteFence();
+let casRecoveryGeneration = 0;
+let casReadback: (() => Promise<void>) | null = null;
+let casReadbackInFlight = false;
 
-async function load(): Promise<void> {
+async function load(preserveDisplayName = false, throwOnFailure = false): Promise<void> {
   loading.value = true;
   error.value = "";
   try {
@@ -39,18 +52,63 @@ async function load(): Promise<void> {
       apiRequest<PasskeyList>("/api/v1/me/passkeys"),
     ]);
     me.value = principal;
-    displayName.value = principal.display_name;
+    if (!preserveDisplayName) displayName.value = principal.display_name;
     passkeys.value = credentials.items;
     emit("context", { label: t("profile.title"), role: props.session.principal.is_owner ? "owner" : "member" });
   } catch (caught) {
     error.value = errorText(caught);
+    if (throwOnFailure) throw caught;
   } finally {
     loading.value = false;
   }
 }
 
+async function recoverCasConflict(caught: unknown, resource: string, draft: unknown): Promise<boolean> {
+  const conflict = captureCasConflict(caught, resource, draft);
+  if (conflict === null) return false;
+  const recoveryGeneration = casRecoveryGeneration + 1;
+  casRecoveryGeneration = recoveryGeneration;
+  casReadback = () => load(true, true);
+  casConflict.value = conflict;
+  error.value = t("error.conflict");
+  try {
+    await load(true, true);
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
+  } catch {
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(conflict);
+  }
+  return true;
+}
+
+function dismissCasConflict(): void {
+  casRecoveryGeneration += 1;
+  casConflict.value = null;
+  casReadback = null;
+}
+
+async function refreshCasFacts(): Promise<void> {
+  const conflict = casConflict.value;
+  const readback = casReadback;
+  if (conflict === null || readback === null || casReadbackInFlight) return;
+  const recoveryGeneration = casRecoveryGeneration + 1;
+  casRecoveryGeneration = recoveryGeneration;
+  const pending = { ...conflict, readbackState: "pending" as const };
+  casConflict.value = pending;
+  casReadbackInFlight = true;
+  try {
+    await readback();
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(pending);
+  } catch {
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(pending);
+  } finally {
+    casReadbackInFlight = false;
+  }
+}
+
 async function saveProfile(): Promise<void> {
   if (me.value === null || !displayName.value.trim()) return;
+  const fenceKey = "profile-update";
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     const result = await apiRequest<WriteResult<PrincipalResource>>("/api/v1/me", {
@@ -59,14 +117,20 @@ async function saveProfile(): Promise<void> {
     });
     me.value = result.resource;
     displayName.value = result.resource.display_name;
+    dismissCasConflict();
   } catch (caught) {
-    error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, "Principal profile", { display_name: displayName.value })) {
+      error.value = errorText(caught);
+    }
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
 
 async function registerPasskey(): Promise<void> {
+  const fenceKey = "passkey-register";
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   error.value = "";
   try {
@@ -85,18 +149,24 @@ async function registerPasskey(): Promise<void> {
   } catch (caught) {
     error.value = caught instanceof DOMException ? t("passkey.failed") : errorText(caught);
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
 
 async function revokePasskey(passkey: Passkey): Promise<void> {
+  const fenceKey = `passkey-revoke:${passkey.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/me/passkeys/${passkey.id}?expected_version=${passkey.version}`, { method: "DELETE" });
     await load();
   } catch (caught) {
-    error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, `Passkey ${passkey.id}`, { action: "revoke" })) {
+      error.value = errorText(caught);
+    }
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
@@ -117,6 +187,7 @@ onMounted(load);
     </header>
     <PageState :loading="loading" :error="error && !me ? error : ''" :action-label="t('action.refresh')" @retry="load" />
     <p v-if="error && me" class="inline-alert" role="alert">{{ error }}</p>
+    <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <template v-if="me">
       <section class="profile-section">
         <div class="section-heading-row"><div><h2>{{ locale === "zh-CN" ? "身份资料" : "Identity profile" }}</h2><p>{{ locale === "zh-CN" ? "显示名称不用于认证或去重。" : "Your display name is not used for authentication or deduplication." }}</p></div></div>

@@ -5,9 +5,11 @@ import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
+import { continuationCursor, cursorRequiresRestart } from "../lib/pagination";
 import { publicJoinInstruction } from "../lib/public-join-instruction";
 import { navigate } from "../lib/router";
 import { safeWebEntryPath } from "../lib/session-capabilities";
+import { WriteFence } from "../lib/write-fence";
 import {
   authenticationCredential,
   authenticationOptions,
@@ -20,33 +22,51 @@ interface CeremonyEnvelope {
 }
 
 const projects = ref<PublicProject[]>([]);
+const projectsNextCursor = ref<string | null>(null);
+const projectsLoadingMore = ref(false);
 const meta = ref<InstanceDiscovery | null>(null);
 const error = ref("");
 const loading = ref(true);
 const passkeyBusy = ref(false);
+const joinBusy = ref(false);
 const copied = ref("");
 const copyFallback = ref<{ key: string; value: string } | null>(null);
 const canUsePasskeys = typeof window !== "undefined" && "PublicKeyCredential" in window;
+const writeFence = new WriteFence();
 
 const preferredOrigin = computed(() => {
   if (meta.value === null || meta.value.preferred_api_origin === window.location.origin) return null;
   return meta.value.preferred_api_origin;
 });
 
-async function load(): Promise<void> {
-  loading.value = true;
+async function load(reset = true): Promise<void> {
+  if (!reset && projectsNextCursor.value === null) return;
+  if (reset) loading.value = true;
+  else projectsLoadingMore.value = true;
   error.value = "";
   try {
+    const params = new URLSearchParams({ limit: "20" });
+    if (!reset && projectsNextCursor.value !== null) params.set("cursor", projectsNextCursor.value);
     const [metaResult, publicResult] = await Promise.all([
       apiRequest<InstanceDiscovery>("/.well-known/cfkanban-instance.json"),
-      apiRequest<ListResult<PublicProject>>("/api/v1/public-projects?limit=20"),
+      apiRequest<ListResult<PublicProject>>(`/api/v1/public-projects?${params}`),
     ]);
     meta.value = metaResult;
-    projects.value = publicResult.items;
+    const merged = reset ? publicResult.items : [...projects.value, ...publicResult.items];
+    projects.value = [...new Map(merged.map((project) => [project.public_id, project])).values()];
+    projectsNextCursor.value = continuationCursor(publicResult);
   } catch (caught) {
-    error.value = errorText(caught);
+    if (!reset && cursorRequiresRestart(caught)) {
+      projectsNextCursor.value = null;
+      error.value = locale.value === "zh-CN"
+        ? "公开 Project 范围已变化，旧 cursor 已停用。请刷新后继续。"
+        : "The public Project scope changed, so the old cursor was retired. Refresh before continuing.";
+    } else {
+      error.value = errorText(caught);
+    }
   } finally {
-    loading.value = false;
+    if (reset) loading.value = false;
+    projectsLoadingMore.value = false;
   }
 }
 
@@ -69,6 +89,9 @@ function joinInstruction(project: PublicProject, role: "reader" | "writer"): str
 }
 
 async function chooseRole(project: PublicProject, role: "reader" | "writer"): Promise<void> {
+  const fenceKey = "public-join-redeem";
+  if (!writeFence.enter(fenceKey)) return;
+  joinBusy.value = true;
   try {
     const session = await apiRequest<WebSessionView>("/api/v1/web-session");
     const result = await apiRequest<WriteResult<{
@@ -86,10 +109,15 @@ async function chooseRole(project: PublicProject, role: "reader" | "writer"): Pr
       return;
     }
     error.value = errorText(caught);
+  } finally {
+    writeFence.leave(fenceKey);
+    joinBusy.value = false;
   }
 }
 
 async function signInWithPasskey(): Promise<void> {
+  const fenceKey = "passkey-sign-in";
+  if (!writeFence.enter(fenceKey)) return;
   passkeyBusy.value = true;
   error.value = "";
   try {
@@ -114,6 +142,7 @@ async function signInWithPasskey(): Promise<void> {
       ? t("passkey.failed")
       : errorText(caught);
   } finally {
+    writeFence.leave(fenceKey);
     passkeyBusy.value = false;
   }
 }
@@ -147,7 +176,7 @@ onMounted(load);
       </aside>
     </section>
 
-    <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load" />
+    <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load(true)" />
 
     <section v-if="copyFallback" class="copy-fallback" role="status">
       <label>
@@ -181,10 +210,10 @@ onMounted(load);
             <p>{{ project.public_summary }}</p>
           </div>
           <div class="role-actions">
-            <button class="secondary-button" type="button" @click="chooseRole(project, 'reader')">
+            <button class="secondary-button" type="button" :disabled="joinBusy" @click="chooseRole(project, 'reader')">
               {{ copied === `${project.public_id}:reader` ? (locale === "zh-CN" ? "话术已复制" : "Instruction copied") : t("home.reader") }}
             </button>
-            <button class="primary-button" type="button" @click="chooseRole(project, 'writer')">
+            <button class="primary-button" type="button" :disabled="joinBusy" @click="chooseRole(project, 'writer')">
               {{ copied === `${project.public_id}:writer` ? (locale === "zh-CN" ? "话术已复制" : "Instruction copied") : t("home.writer") }}
             </button>
           </div>
@@ -193,6 +222,7 @@ onMounted(load);
       <p v-else class="empty-copy">
         {{ locale === "zh-CN" ? "当前没有公开 Project。" : "No projects are public right now." }}
       </p>
+      <button v-if="projectsNextCursor" class="load-more" type="button" :disabled="projectsLoadingMore" @click="load(false)">{{ projectsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多公开 Project" : "Load more public projects") }}</button>
     </section>
 
     <footer class="public-footer">

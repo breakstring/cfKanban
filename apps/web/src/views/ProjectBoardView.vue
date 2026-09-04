@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
+import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "../lib/api";
+import {
+  type CasConflictState,
+  captureCasConflict,
+  markCasReadbackComplete,
+  markCasReadbackFailed,
+} from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
+import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { navigate } from "../lib/router";
+import { WriteFence } from "../lib/write-fence";
 import type {
   ContainerResource,
   IssueSummary,
@@ -31,6 +40,8 @@ const project = ref<ContainerResource | null>(null);
 const statuses = ref<ProjectStatusResource[]>([]);
 const issues = ref<IssueSummary[]>([]);
 const deletedIssues = ref<IssueTombstone[]>([]);
+const deletedIssuesNextCursor = ref<string | null>(null);
+const deletedIssuesLoadingMore = ref(false);
 const nextCursor = ref<string | null>(null);
 const loading = ref(true);
 const loadingMore = ref(false);
@@ -43,9 +54,14 @@ const completionSummary = ref("");
 const showNewIssue = ref(false);
 const showDeleted = ref(false);
 const formBusy = ref(false);
+const casConflict = ref<CasConflictState | null>(null);
 const newIssue = ref({ body: "", priority_key: "none" as PriorityKey, status_key: "backlog" as StatusKey, title: "" });
 const projectionGeneration = new ProjectionGeneration();
+const writeFence = new WriteFence();
 let loadRequestId = 0;
+let casRecoveryGeneration = 0;
+let casReadback: (() => Promise<void>) | null = null;
+let casReadbackInFlight = false;
 
 const role = computed(() => {
   if (props.session.principal.is_owner) return "owner";
@@ -63,6 +79,12 @@ function projectIsActive(): boolean {
   ));
 }
 
+function cursorRestartText(): string {
+  return locale.value === "zh-CN"
+    ? "列表范围或可见权限已变化，旧 cursor 已停用。请刷新当前列表后继续。"
+    : "The list scope or visibility changed, so the old cursor was retired. Refresh this list before continuing.";
+}
+
 function projectionIsCurrent(generation: number): boolean {
   return projectionGeneration.isCurrent(generation) && projectIsActive();
 }
@@ -72,6 +94,7 @@ function clearProjectProjection(): void {
   statuses.value = [];
   issues.value = [];
   deletedIssues.value = [];
+  deletedIssuesNextCursor.value = null;
   nextCursor.value = null;
   loading.value = false;
   loadingMore.value = false;
@@ -87,6 +110,7 @@ function refreshProjectInventory(): void {
   projectionGeneration.invalidate();
   loadRequestId += 1;
   deletedIssues.value = [];
+  deletedIssuesNextCursor.value = null;
   showDeleted.value = false;
   if (!projectIsActive()) {
     clearProjectProjection();
@@ -102,7 +126,7 @@ function query(cursor?: string): string {
   return `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues?${params}`;
 }
 
-async function load(reset = true): Promise<void> {
+async function load(reset = true, throwOnFailure = false): Promise<void> {
   if (!projectIsActive()) {
     clearProjectProjection();
     return;
@@ -122,18 +146,24 @@ async function load(reset = true): Promise<void> {
     if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
     project.value = projectResult;
     statuses.value = statusResult.items;
-    issues.value = reset ? issueResult.items : [...issues.value, ...issueResult.items];
-    nextCursor.value = issueResult.next_cursor;
+    issues.value = mergePageById(issues.value, issueResult.items, reset);
+    nextCursor.value = continuationCursor(issueResult);
     emit("context", { label: `${props.workspaceKey} / ${projectResult.display_name}`, role: role.value });
   } catch (caught) {
     if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
-    error.value = errorText(caught);
+    if (!reset && cursorRequiresRestart(caught)) {
+      nextCursor.value = null;
+      error.value = cursorRestartText();
+    } else {
+      error.value = errorText(caught);
+    }
     if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
       project.value = null;
       statuses.value = [];
       issues.value = [];
       nextCursor.value = null;
     }
+    if (throwOnFailure) throw caught;
   } finally {
     if (requestId === loadRequestId) {
       loading.value = false;
@@ -142,9 +172,58 @@ async function load(reset = true): Promise<void> {
   }
 }
 
+async function recoverCasConflict(
+  caught: unknown,
+  resource: string,
+  draft: unknown,
+  readback: () => Promise<void> = () => load(true, true),
+): Promise<boolean> {
+  const conflict = captureCasConflict(caught, resource, draft);
+  if (conflict === null) return false;
+  const recoveryGeneration = casRecoveryGeneration + 1;
+  casRecoveryGeneration = recoveryGeneration;
+  casReadback = readback;
+  casConflict.value = conflict;
+  error.value = t("error.conflict");
+  try {
+    await readback();
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
+  } catch {
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(conflict);
+  }
+  return true;
+}
+
+function dismissCasConflict(): void {
+  casRecoveryGeneration += 1;
+  casConflict.value = null;
+  casReadback = null;
+}
+
+async function refreshCasFacts(): Promise<void> {
+  const conflict = casConflict.value;
+  const readback = casReadback;
+  if (conflict === null || readback === null || casReadbackInFlight) return;
+  const recoveryGeneration = casRecoveryGeneration + 1;
+  casRecoveryGeneration = recoveryGeneration;
+  const pending = { ...conflict, readbackState: "pending" as const };
+  casConflict.value = pending;
+  casReadbackInFlight = true;
+  try {
+    await readback();
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(pending);
+  } catch {
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(pending);
+  } finally {
+    casReadbackInFlight = false;
+  }
+}
+
 async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void> {
-  if (!canWrite.value || issue.status.key === status || saving.value.has(issue.id)) return;
+  const fenceKey = `issue-status:${issue.id}`;
+  if (!canWrite.value || issue.status.key === status || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
   if (status === "done") {
+    writeFence.leave(fenceKey);
     completionIssue.value = issue;
     completionSummary.value = "";
     return;
@@ -158,15 +237,16 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
       method: "PATCH",
     });
     if (projectionIsCurrent(generation)) {
+      dismissCasConflict();
       issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
-      ? t("error.conflict")
-      : errorText(caught);
-    await load();
+    if (!await recoverCasConflict(caught, `${issue.identifier} status`, { status_key: status })) {
+      error.value = errorText(caught);
+    }
   } finally {
+    writeFence.leave(fenceKey);
     const current = new Set(saving.value);
     current.delete(issue.id);
     saving.value = current;
@@ -183,6 +263,8 @@ function onStatusSelection(issue: IssueSummary, event: Event): void {
 async function completeIssue(): Promise<void> {
   const issue = completionIssue.value;
   if (issue === null || !completionSummary.value.trim()) return;
+  const fenceKey = `issue-complete:${issue.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   formBusy.value = true;
   const generation = projectionGeneration.capture();
   try {
@@ -191,22 +273,25 @@ async function completeIssue(): Promise<void> {
       method: "POST",
     });
     if (projectionIsCurrent(generation)) {
+      dismissCasConflict();
       issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
       completionIssue.value = null;
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
-      ? t("error.conflict")
-      : errorText(caught);
-    await load();
+    if (!await recoverCasConflict(caught, `${issue.identifier} completion`, { summary: completionSummary.value })) {
+      error.value = errorText(caught);
+    }
   } finally {
+    writeFence.leave(fenceKey);
     formBusy.value = false;
   }
 }
 
 async function createIssue(): Promise<void> {
   if (!newIssue.value.title.trim()) return;
+  const fenceKey = "issue-create";
+  if (!writeFence.enter(fenceKey)) return;
   formBusy.value = true;
   const generation = projectionGeneration.capture();
   try {
@@ -231,21 +316,37 @@ async function createIssue(): Promise<void> {
     if (!projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
   } finally {
+    writeFence.leave(fenceKey);
     formBusy.value = false;
   }
 }
 
-async function loadDeleted(): Promise<void> {
+async function loadDeleted(reset = true, throwOnFailure = false): Promise<void> {
+  if (!reset && deletedIssuesNextCursor.value === null) return;
   showDeleted.value = true;
   const generation = projectionGeneration.capture();
+  deletedIssuesLoadingMore.value = !reset;
   try {
+    const params = new URLSearchParams({ deleted: "only", limit: "100" });
+    if (!reset && deletedIssuesNextCursor.value !== null) params.set("cursor", deletedIssuesNextCursor.value);
     const result = await apiRequest<ListResult<IssueTombstone>>(
-      `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues?deleted=only&limit=100`,
+      `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues?${params}`,
     );
-    if (projectionIsCurrent(generation)) deletedIssues.value = result.items;
+    if (projectionIsCurrent(generation)) {
+      deletedIssues.value = mergePageById(deletedIssues.value, result.items, reset);
+      deletedIssuesNextCursor.value = continuationCursor(result);
+    }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = errorText(caught);
+    if (!reset && cursorRequiresRestart(caught)) {
+      deletedIssuesNextCursor.value = null;
+      error.value = cursorRestartText();
+    } else {
+      error.value = errorText(caught);
+    }
+    if (throwOnFailure) throw caught;
+  } finally {
+    deletedIssuesLoadingMore.value = false;
   }
 }
 
@@ -262,6 +363,8 @@ function restoreUnavailableText(issue: IssueTombstone): string {
 
 async function restoreIssue(issue: IssueTombstone): Promise<void> {
   if (!issue.restorable || !issue.allowed_actions.includes("restore")) return;
+  const fenceKey = `issue-restore:${issue.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   formBusy.value = true;
   const generation = projectionGeneration.capture();
   try {
@@ -275,8 +378,11 @@ async function restoreIssue(issue: IssueTombstone): Promise<void> {
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, `${issue.identifier} restore`, { action: "restore" }, () => loadDeleted(true, true))) {
+      error.value = errorText(caught);
+    }
   } finally {
+    writeFence.leave(fenceKey);
     formBusy.value = false;
   }
 }
@@ -317,12 +423,13 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
       </form>
       <div class="board-toolbar-actions">
         <span v-if="!canWrite" class="read-only-badge">{{ t("board.readOnly") }}</span>
-        <button v-if="canWrite" class="text-button" type="button" @click="loadDeleted">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
+        <button v-if="canWrite" class="text-button" type="button" @click="loadDeleted(true)">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
         <button v-if="canWrite" class="primary-button" type="button" @click="showNewIssue = true">{{ t("action.newIssue") }}</button>
       </div>
     </header>
 
     <p v-if="error" class="inline-alert" role="alert">{{ error }}</p>
+    <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
     <section v-if="!loading" class="kanban-board" :aria-label="locale === 'zh-CN' ? 'Project Kanban 看板' : 'Project Kanban board'">
@@ -412,6 +519,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
           <small v-else class="warning-chip">{{ restoreUnavailableText(issue) }}</small>
         </div>
         <p v-if="deletedIssues.length === 0" class="empty-copy">{{ locale === "zh-CN" ? "没有可恢复的 Issue。" : "No recoverable issues." }}</p>
+        <button v-if="deletedIssuesNextCursor" class="load-more" type="button" :disabled="deletedIssuesLoadingMore" @click="loadDeleted(false)">{{ deletedIssuesLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多已删除 Issue" : "Load more deleted issues") }}</button>
       </div>
     </ModalDialog>
   </main>

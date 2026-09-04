@@ -905,6 +905,29 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     "SELECT COUNT(*) AS count FROM comments WHERE issue_id = ?1 AND kind = 'completion'",
   ).bind(issueA.body.resource.id).first();
   assert.equal(completionCount.count, 2);
+  const completionHistory = await jsonRequest(
+    `/api/v1/issues/${issueA.body.resource.identifier}/comments?limit=100`,
+    { headers: dualHeaders() },
+  );
+  assert.equal(completionHistory.response.status, 200, JSON.stringify(completionHistory.body));
+  const completionEntries = completionHistory.body.items.filter((entry) => entry.kind === "completion");
+  assert.equal(completionEntries.length, 2);
+  const firstCompletionEntry = completionEntries.find((entry) => entry.completion?.summary === completionBody.summary);
+  const secondCompletionEntry = completionEntries.find((entry) => entry.completion?.summary === "Application task completed again");
+  assert.ok(firstCompletionEntry);
+  assert.ok(secondCompletionEntry);
+  assert.deepEqual(firstCompletionEntry.completion, {
+    artifacts: completionBody.artifacts,
+    follow_ups: completionBody.follow_ups,
+    summary: completionBody.summary,
+    verification: completionBody.verification,
+  });
+  assert.deepEqual(secondCompletionEntry.completion, {
+    artifacts: [],
+    follow_ups: [],
+    summary: "Application task completed again",
+    verification: [],
+  });
 
   const crossWorkspace = await jsonRequest(`/api/v1/issues/${issueA.body.resource.identifier}/relations`, {
     body: {
