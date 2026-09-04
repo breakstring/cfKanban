@@ -14,13 +14,19 @@ interface ProblemLike {
   };
 }
 
+const CAS_CONFLICT_CODES = new Set([
+  "VERSION_CONFLICT",
+  "RESOURCE_DELETED",
+  "RESOURCE_NOT_DELETED",
+]);
+
 export function captureCasConflict(
   error: unknown,
   resource: string | LocalizedText,
   draft: unknown,
 ): CasConflictState | null {
   const problem = error as ProblemLike;
-  if (problem?.body?.code !== "VERSION_CONFLICT") return null;
+  if (typeof problem?.body?.code !== "string" || !CAS_CONFLICT_CODES.has(problem.body.code)) return null;
   const rawVersion = problem.body.details?.current_version;
   const currentVersion = typeof rawVersion === "number"
     && Number.isSafeInteger(rawVersion)

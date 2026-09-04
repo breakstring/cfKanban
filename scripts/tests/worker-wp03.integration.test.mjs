@@ -419,6 +419,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   );
   assert.equal(repeatedDeleteProject.response.status, 409);
   assert.equal(repeatedDeleteProject.body.code, "RESOURCE_DELETED");
+  assert.equal(repeatedDeleteProject.body.details.current_version, 4);
   const hiddenProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
     headers: ownerHeaders(),
   });
@@ -449,6 +450,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   );
   assert.equal(repeatedRestoreProject.response.status, 409);
   assert.equal(repeatedRestoreProject.body.code, "RESOURCE_NOT_DELETED");
+  assert.equal(repeatedRestoreProject.body.details.current_version, 5);
   const abandonedRestore = await db.prepare(
     `SELECT COUNT(*) AS count FROM idempotency_records
      WHERE state = 'pending' AND route_template = '/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore'`,

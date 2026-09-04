@@ -643,7 +643,11 @@ async function diagnoseWorkspaceCas(
   const current = await readWorkspace(db, key, true);
   if (current === null) throw notFound();
   if ((current.deleted_at !== null) !== expectedDeleted) {
-    throw conflict(expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED");
+    throw conflict(
+      expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED",
+      "refresh_resource",
+      { current_version: current.version },
+    );
   }
   throw versionConflict(current.version === expectedVersion ? undefined : current.version);
 }
@@ -663,7 +667,11 @@ async function diagnoseProjectCas(
   const current = await readProject(db, workspaceKey, projectKey, true);
   if (current === null) throw notFound();
   if ((current.deleted_at !== null) !== expectedDeleted) {
-    throw conflict(expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED");
+    throw conflict(
+      expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED",
+      "refresh_resource",
+      { current_version: current.version },
+    );
   }
   throw versionConflict(current.version === expectedVersion ? undefined : current.version);
 }

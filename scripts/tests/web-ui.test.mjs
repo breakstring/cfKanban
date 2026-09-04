@@ -352,18 +352,20 @@ test("Issue Relation creation requires distinct writable endpoints in one Worksp
 });
 
 test("shared CAS recovery preserves drafts and remote versions for every mutable Web surface", () => {
-  for (const resource of ["Issue", "Comment", "Label", "Relation", "Workspace", "Project", "Grant", "Public Join Policy"]) {
-    const draft = { action: "update", resource, value: `${resource} local draft` };
-    const conflict = captureCasConflict({
-      body: { code: "VERSION_CONFLICT", details: { current_version: 101 } },
-    }, resource, draft);
-    assert.ok(conflict);
-    assert.equal(conflict.resource, resource);
-    assert.equal(conflict.currentVersion, 101);
-    assert.match(conflict.draft, new RegExp(`${resource} local draft`));
-    assert.equal(conflict.readbackState, "pending");
-    assert.equal(markCasReadbackComplete(conflict).readbackState, "complete");
-    assert.equal(markCasReadbackFailed(conflict).readbackState, "failed");
+  for (const code of ["VERSION_CONFLICT", "RESOURCE_DELETED", "RESOURCE_NOT_DELETED"]) {
+    for (const resource of ["Issue", "Comment", "Label", "Relation", "Workspace", "Project", "Grant", "Public Join Policy"]) {
+      const draft = { action: "update", resource, value: `${resource} local draft` };
+      const conflict = captureCasConflict({
+        body: { code, details: { current_version: 101 } },
+      }, resource, draft);
+      assert.ok(conflict);
+      assert.equal(conflict.resource, resource);
+      assert.equal(conflict.currentVersion, 101);
+      assert.match(conflict.draft, new RegExp(`${resource} local draft`));
+      assert.equal(conflict.readbackState, "pending");
+      assert.equal(markCasReadbackComplete(conflict).readbackState, "complete");
+      assert.equal(markCasReadbackFailed(conflict).readbackState, "failed");
+    }
   }
   assert.equal(captureCasConflict({ body: { code: "FORBIDDEN", details: {} } }, "Issue", "draft"), null);
 });
