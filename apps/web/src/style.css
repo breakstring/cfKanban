@@ -6,10 +6,10 @@
   --color-text-muted: #6c6861;
   --color-border: #ddd8cf;
   --color-border-strong: #bdb7ad;
-  --color-primary: #2167d5;
-  --color-primary-hover: #1857bb;
-  --color-primary-pressed: #124794;
-  --color-focus: #0b5fcc;
+  --color-primary: #b84708;
+  --color-primary-hover: #9d3905;
+  --color-primary-pressed: #7d2c02;
+  --color-focus: #b84708;
   --color-danger: #b42318;
   --color-danger-soft: #fce8e6;
   --color-warning: #a15c00;
@@ -111,7 +111,7 @@ h3 {
 
 ::selection {
   color: var(--color-text);
-  background: #dbe8fb;
+  background: #f8d8c2;
 }
 
 .application-shell {
@@ -220,7 +220,7 @@ h3 {
 .locale-switch:hover:not(:disabled),
 .back-link:hover:not(:disabled) {
   color: var(--color-primary);
-  background: #edf3fc;
+  background: #fcece1;
 }
 
 .danger-text-button {
@@ -338,8 +338,8 @@ h3 {
 
 .role-badge,
 .read-only-badge {
-  color: #385579;
-  background: #e9eff7;
+  color: #71411f;
+  background: #f4e7dd;
 }
 
 .warning-chip,
@@ -990,8 +990,8 @@ h3 {
 
 .label-chip {
   min-height: 21px;
-  color: #385579;
-  background: #e9eff7;
+  color: #71411f;
+  background: #f4e7dd;
 }
 
 .column-empty {
@@ -1313,9 +1313,9 @@ textarea:disabled {
 }
 
 .label-toggle.active {
-  border-color: #9bb7db;
-  color: #174b8f;
-  background: #e9f1fb;
+  border-color: #d29a73;
+  color: #743a13;
+  background: #f9e8dc;
 }
 
 .relation-row {
