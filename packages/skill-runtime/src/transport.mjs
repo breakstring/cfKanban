@@ -1,35 +1,148 @@
+import { randomUUID } from "node:crypto";
+
 import { toolError } from "./errors.mjs";
 import { getInstancePaths, loadCurrentCredentialSecret } from "./state.mjs";
 import { readJson, requireString } from "./utils.mjs";
 import { resolveStateRoot } from "./paths.mjs";
 
+const ERROR_CATEGORIES = new Set([
+  "authentication", "authorization", "business_quota", "conflict", "not_found",
+  "platform_failure", "platform_quota", "rate_limit", "validation",
+]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function retryAfterSeconds(headers) {
   const raw = headers?.get?.("retry-after");
   if (!raw) return null;
-  if (/^\d+$/.test(raw)) return Number(raw);
+  if (/^\d+$/.test(raw)) {
+    const seconds = Number(raw);
+    return Number.isSafeInteger(seconds) ? seconds : null;
+  }
   const timestamp = Date.parse(raw);
   return Number.isFinite(timestamp) ? Math.max(0, Math.ceil((timestamp - Date.now()) / 1000)) : null;
 }
 
-function clientError({ code, category, source, retryable, recovery, response = null, details = {} }) {
+function categoryMatchesStatus(category, status) {
+  if (category === "authentication") return status === 401;
+  if (category === "authorization") return status === 403;
+  if (category === "not_found") return status === 404;
+  if (category === "validation") return status === 400 || status === 413;
+  if (category === "conflict") return status === 409 || status === 410;
+  if (category === "business_quota") return status === 409;
+  if (category === "rate_limit") return status === 429;
+  return status === 503;
+}
+
+function isErrorBody(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return typeof value.code === "string"
+    && value.code.length > 0
+    && typeof value.category === "string"
+    && ERROR_CATEGORIES.has(value.category)
+    && typeof value.message === "string"
+    && typeof value.recovery === "string"
+    && value.recovery.length > 0
+    && typeof value.request_id === "string"
+    && UUID_PATTERN.test(value.request_id)
+    && typeof value.retryable === "boolean"
+    && (value.source === "service" || value.source === "cloudflare_platform")
+    && typeof value.details === "object"
+    && value.details !== null
+    && !Array.isArray(value.details)
+    && (value.retry_after_seconds === undefined || (
+      typeof value.retry_after_seconds === "number"
+      && Number.isSafeInteger(value.retry_after_seconds)
+      && value.retry_after_seconds >= 0
+    ));
+}
+
+function isVerifiedServiceError(response, value) {
+  if (!isErrorBody(value)) return false;
+  const responseRequestId = response.headers.get("x-request-id");
+  const rawRetryAfter = response.headers.get("retry-after");
+  const parsedRetryAfter = retryAfterSeconds(response.headers);
+  const hasBodyRetryAfter = value.retry_after_seconds !== undefined;
+  const retryAfterIsConsistent = rawRetryAfter === null
+    ? !hasBodyRetryAfter
+    : parsedRetryAfter !== null
+      && hasBodyRetryAfter
+      && parsedRetryAfter === value.retry_after_seconds;
+  const sourceIsConsistent = value.source === "service"
+    || value.category === "platform_failure"
+    || value.category === "platform_quota";
+  return responseRequestId !== null
+    && UUID_PATTERN.test(responseRequestId)
+    && responseRequestId === value.request_id
+    && value.details.normalized_by !== "client"
+    && categoryMatchesStatus(value.category, response.status)
+    && sourceIsConsistent
+    && retryAfterIsConsistent
+    && value.retryable === hasBodyRetryAfter
+    && (value.category !== "rate_limit" || hasBodyRetryAfter);
+}
+
+function clientError({ code, category, source, retryable, recovery, response = null, details = {}, status = null }) {
+  const retryAfter = retryAfterSeconds(response?.headers);
   return {
     ok: false,
+    status: status ?? response?.status ?? 0,
     error: {
       code,
       category,
       source,
-      request_id: response?.headers?.get?.("x-request-id") || null,
+      message: "The service response could not be verified.",
+      request_id: randomUUID(),
       retryable,
-      retry_after_seconds: retryAfterSeconds(response?.headers),
       recovery,
       details: {
         normalized_by: "client",
-        http_status: response?.status ?? null,
-        ray_id: response?.headers?.get?.("cf-ray") || null,
+        ...(response?.headers?.get?.("cf-ray")
+          ? { provider_request_id: response.headers.get("cf-ray") }
+          : {}),
         ...details,
       },
+      ...(retryAfter === null ? {} : { retry_after_seconds: retryAfter }),
     },
   };
+}
+
+function normalizeOuterHttp(response, preview) {
+  const providerRequestId = response.headers.get("cf-ray");
+  const isCloudflare = providerRequestId !== null
+    || response.headers.get("server")?.toLowerCase().includes("cloudflare") === true;
+  const cloudflare1027 = isCloudflare && /(?:^|\D)1027(?:\D|$)/.test(preview);
+  if (cloudflare1027) {
+    return clientError({
+      code: "PLATFORM_QUOTA_EXCEEDED",
+      category: "platform_quota",
+      source: "cloudflare_platform",
+      retryable: true,
+      recovery: "wait_for_platform_reset",
+      response,
+      status: 503,
+      details: { component: "workers" },
+    });
+  }
+  if (response.status === 429) {
+    return clientError({
+      code: "RATE_LIMITED",
+      category: "rate_limit",
+      source: "cloudflare_platform",
+      retryable: true,
+      recovery: "retry_after",
+      response,
+      status: 429,
+    });
+  }
+  return clientError({
+    code: "PLATFORM_UNAVAILABLE",
+    category: "platform_failure",
+    source: "cloudflare_platform",
+    retryable: false,
+    recovery: "request_owner",
+    response,
+    status: 503,
+  });
 }
 
 export async function normalizeResponse(response) {
@@ -38,39 +151,27 @@ export async function normalizeResponse(response) {
     let payload;
     try {
       payload = await response.json();
-    } catch (error) {
-      return clientError({ code: "INVALID_JSON_RESPONSE", category: "platform", source: "client_transport", retryable: response.status >= 500, recovery: "retry_or_contact_owner", response });
+    } catch {
+      return normalizeOuterHttp(response, "");
     }
     if (response.ok) return { ok: true, status: response.status, data: payload };
-    if (payload?.code && payload?.category && payload?.source) {
+    if (isVerifiedServiceError(response, payload)) {
       return { ok: false, status: response.status, error: payload };
     }
-    return clientError({ code: "UNRECOGNIZED_JSON_ERROR", category: "platform", source: "client_transport", retryable: response.status >= 500, recovery: "retry_or_contact_owner", response });
+    return normalizeOuterHttp(response, (JSON.stringify(payload) ?? "").slice(0, 4096));
   }
   const preview = (await response.text()).slice(0, 4096);
-  const cloudflareCode = /(?:error\s*(?:code)?\s*[:#]?\s*|cf-error-code[^>]*>\s*)(\d{3,4})/i.exec(preview)?.[1] || null;
-  if (response.status === 429 || cloudflareCode === "1027" || response.headers.get("cf-ray")) {
-    return clientError({
-      code: cloudflareCode === "1027" ? "CLOUDFLARE_1027" : response.status === 429 ? "RATE_LIMITED" : "CLOUDFLARE_EDGE_FAILURE",
-      category: "platform",
-      source: "cloudflare_platform",
-      retryable: response.status === 429 || response.status >= 500,
-      recovery: response.status === 429 ? "wait_for_retry_after" : "inspect_cloudflare_capacity",
-      response,
-      details: cloudflareCode ? { cloudflare_error_code: cloudflareCode } : {},
-    });
-  }
-  return clientError({ code: "NON_JSON_HTTP_FAILURE", category: "platform", source: "client_transport", retryable: response.status >= 500, recovery: "retry_or_contact_owner", response });
+  return normalizeOuterHttp(response, preview);
 }
 
-export function normalizeNetworkFailure(error) {
+export function normalizeNetworkFailure() {
   return clientError({
-    code: "NETWORK_FAILURE",
-    category: "platform",
+    code: "PLATFORM_UNAVAILABLE",
+    category: "platform_failure",
     source: "client_transport",
     retryable: true,
-    recovery: "check_network_then_retry_idempotently",
-    details: { reason: error instanceof Error ? error.name : "unknown" },
+    recovery: "retry_after",
+    details: { component: "network" },
   });
 }
 
@@ -106,7 +207,15 @@ export async function trustedApiRequest({
     return normalizeNetworkFailure(error);
   }
   if (response.status >= 300 && response.status < 400) {
-    return clientError({ code: "CROSS_ORIGIN_REDIRECT_REJECTED", category: "security", source: "client_transport", retryable: false, recovery: "verify_trusted_origin", response });
+    return clientError({
+      code: "CROSS_ORIGIN_REDIRECT_REJECTED",
+      category: "platform_failure",
+      source: "client_transport",
+      retryable: false,
+      recovery: "verify_trusted_origin",
+      response,
+      status: 503,
+    });
   }
   return normalizeResponse(response);
 }

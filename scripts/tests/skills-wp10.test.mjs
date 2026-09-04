@@ -49,7 +49,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.24.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.25.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -794,15 +794,22 @@ test("current Principal Invite and Public Join redemption return the same safe o
     role: "reader",
     redeemAs: "current_principal",
     idempotencyKey: "current-principal-public-join-denied",
-    fetchImpl: async () => new Response(JSON.stringify({
-      code: "FORBIDDEN",
-      category: "authorization",
-      source: "service",
-      request_id: "request-one",
-      retryable: false,
-      recovery: "request_access",
-      details: {},
-    }), { status: 403, headers: { "content-type": "application/json" } }),
+    fetchImpl: async () => {
+      const requestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      return new Response(JSON.stringify({
+        code: "FORBIDDEN",
+        category: "authorization",
+        source: "service",
+        message: "The current Principal cannot perform this action.",
+        request_id: requestId,
+        retryable: false,
+        recovery: "request_access",
+        details: {},
+      }), {
+        status: 403,
+        headers: { "content-type": "application/json", "x-request-id": requestId },
+      });
+    },
   });
   assert.equal(denied.operation.ok, false);
   assert.equal(denied.operation.error.code, "FORBIDDEN");
@@ -1730,15 +1737,83 @@ test("failed origin cross-check preserves the old trusted origin", async (t) => 
   assert.equal(current.origin_version, 1);
 });
 
-test("transport preserves Service envelopes and marks client-normalized Cloudflare failures", async () => {
-  const service = await normalizeResponse(new Response(JSON.stringify({ code: "PROJECT_QUOTA_EXCEEDED", category: "quota", source: "cfkanban", retryable: false, recovery: "free_capacity_or_request_owner", details: {} }), { status: 409, headers: { "content-type": "application/json" } }));
-  assert.equal(service.error.code, "PROJECT_QUOTA_EXCEEDED");
+test("Skill transport preserves only verified Service envelopes", async () => {
+  const requestId = "99999999-9999-4999-8999-999999999999";
+  const envelope = {
+    code: "PROJECT_ISSUE_LIMIT_REACHED",
+    category: "business_quota",
+    source: "service",
+    message: "Server wording is not a machine contract.",
+    request_id: requestId,
+    retryable: false,
+    recovery: "free_capacity_or_request_owner",
+    details: { current_usage: 1, limit: 1 },
+  };
+  const service = await normalizeResponse(new Response(JSON.stringify(envelope), {
+    status: 409,
+    headers: { "content-type": "application/json", "x-request-id": requestId },
+  }));
+  assert.equal(service.status, 409);
+  assert.deepEqual(service.error, envelope);
   assert.equal(service.error.details.normalized_by, undefined);
-  const edge = await normalizeResponse(new Response("error code: 1027", { status: 429, headers: { "content-type": "text/html", "cf-ray": "ray-test", "retry-after": "12" } }));
-  assert.equal(edge.error.source, "cloudflare_platform");
-  assert.equal(edge.error.details.normalized_by, "client");
-  assert.equal(edge.error.retry_after_seconds, 12);
-  assert.equal(normalizeNetworkFailure(new TypeError("secret detail")).error.details.reason, "TypeError");
+
+  const unverified = await normalizeResponse(new Response(JSON.stringify(envelope), {
+    status: 409,
+    headers: { "content-type": "application/json", "x-request-id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+  }));
+  assert.equal(unverified.status, 503);
+  assert.equal(unverified.error.code, "PLATFORM_UNAVAILABLE");
+  assert.equal(unverified.error.category, "platform_failure");
+  assert.equal(unverified.error.source, "cloudflare_platform");
+  assert.equal(unverified.error.details.normalized_by, "client");
+  assert.notEqual(unverified.error.request_id, requestId);
+  assert.match(unverified.error.request_id, /^[0-9a-f-]{36}$/);
+});
+
+test("Skill transport uses the Web-compatible outer failure matrix", async () => {
+  const quota = await normalizeResponse(new Response("<html>Error code: 1027</html>", {
+    status: 500,
+    headers: { "content-type": "text/html", "cf-ray": "ray-1027", server: "cloudflare" },
+  }));
+  assert.equal(quota.status, 503);
+  assert.equal(quota.error.code, "PLATFORM_QUOTA_EXCEEDED");
+  assert.equal(quota.error.category, "platform_quota");
+  assert.equal(quota.error.source, "cloudflare_platform");
+  assert.equal(quota.error.recovery, "wait_for_platform_reset");
+  assert.equal(quota.error.details.component, "workers");
+  assert.equal(quota.error.details.provider_request_id, "ray-1027");
+  assert.equal(quota.error.details.normalized_by, "client");
+  assert.equal("retry_after_seconds" in quota.error, false);
+
+  const limited = await normalizeResponse(new Response("limited", {
+    status: 429,
+    headers: { "content-type": "text/html", "cf-ray": "ray-429", "retry-after": "12" },
+  }));
+  assert.equal(limited.status, 429);
+  assert.equal(limited.error.code, "RATE_LIMITED");
+  assert.equal(limited.error.category, "rate_limit");
+  assert.equal(limited.error.recovery, "retry_after");
+  assert.equal(limited.error.retryable, true);
+  assert.equal(limited.error.retry_after_seconds, 12);
+
+  const outer = await normalizeResponse(new Response("maintenance", {
+    status: 503,
+    headers: { "content-type": "text/html", "cf-ray": "ray-503" },
+  }));
+  assert.equal(outer.status, 503);
+  assert.equal(outer.error.code, "PLATFORM_UNAVAILABLE");
+  assert.equal(outer.error.category, "platform_failure");
+  assert.equal(outer.error.recovery, "request_owner");
+  assert.equal(outer.error.retryable, false);
+
+  const network = normalizeNetworkFailure(new TypeError("secret detail"));
+  assert.equal(network.status, 0);
+  assert.equal(network.error.code, "PLATFORM_UNAVAILABLE");
+  assert.equal(network.error.category, "platform_failure");
+  assert.equal(network.error.source, "client_transport");
+  assert.equal(network.error.recovery, "retry_after");
+  assert.equal(network.error.details.component, "network");
+  assert.equal(JSON.stringify(network).includes("secret detail"), false);
 });
 
 test("D1 exact-name readback returns one verified UUID without exposing account inventory", async () => {
@@ -2982,6 +3057,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.22.md",
     "../../release/notes/0.1.0-alpha.23.md",
     "../../release/notes/0.1.0-alpha.24.md",
+    "../../release/notes/0.1.0-alpha.25.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3005,6 +3081,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.22.json",
     "../../release/config/0.1.0-alpha.23.json",
     "../../release/config/0.1.0-alpha.24.json",
+    "../../release/config/0.1.0-alpha.25.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

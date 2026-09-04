@@ -110,3 +110,15 @@ Passkey 只能从 Agent-launch Session 开始登记。Passkey 只认证 Web，�
 - 只按 `code`、`category`、`source`、`retryable`、`retry_after_seconds`、`recovery` 解释错误，不能匹配人类 `message`。
 - 只有幂等安全时才按服务端延迟重试 `RATE_LIMITED`。Project active quota 需要容量或 Owner 处理；platform quota 需要等待或检查容量。
 - 本地归一化的 Cloudflare/transport failure 带 `normalized_by=client`，不能称为 OpenAPI response。
+
+| 稳定信号 | Agent 恢复动作 |
+| --- | --- |
+| `VERSION_CONFLICT` / `refresh_resource` | 读取当前资源和版本，保留用户尚未提交的输入，再重新判断或询问后发起新写入。 |
+| `business_quota` / `free_capacity_or_request_owner` | 释放对应的有效资源，或请部署实例所有者调整该项目限制；不能原样重试。 |
+| `rate_limit` / `retry_after` | 遵守 `retry_after_seconds`；只有操作可安全幂等重放时才重试，不使用固定轮询。 |
+| `platform_quota` / `wait_for_platform_reset` | 等待所示的平台重置时间，保留请求/供应商 ID 用于排查，不得误报成项目限额。 |
+| `platform_quota` / `request_owner` | 请部署实例所有者检查平台存储或容量；单纯等待不能恢复。 |
+| `platform_failure` | 只有同一操作可安全重放时才按 `retry_after` 处理；否则按 `request_owner` 联系所有者并保留请求 ID。 |
+| `authentication` / `reauthenticate` | 停止认证操作，通过正常流程重新建立有效 Session 或 Credential。 |
+| `authorization` / `request_access` | 刷新可见范围并申请缺少的 Grant；不得根据负责人或过去可见性推断权限。 |
+| `details.normalized_by=client` | 把 `request_id` 视为本地关联 ID；存在 `provider_request_id` 时将其视为 Cloudflare Ray ID，并明确说明这不是 cfKanban API 错误响应。 |

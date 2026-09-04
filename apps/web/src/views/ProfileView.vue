@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
+import ErrorNotice from "../components/ErrorNotice.vue";
 import PageState from "../components/PageState.vue";
 import { apiRequest } from "../lib/api";
 import {
@@ -188,7 +189,7 @@ onMounted(load);
       <h1>{{ t("profile.title") }}</h1>
     </header>
     <PageState :loading="loading" :error="error && !me ? error : ''" :action-label="t('action.refresh')" @retry="load" />
-    <p v-if="error && me" class="inline-alert" role="alert">{{ error }}</p>
+    <ErrorNotice v-if="error && me" :error="error" />
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <template v-if="me">
       <section class="profile-section">

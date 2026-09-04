@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ErrorNotice from "./ErrorNotice.vue";
 import { locale } from "../lib/i18n";
 
 withDefaults(defineProps<{
@@ -15,8 +16,8 @@ const emit = defineEmits<{ retry: [] }>();
     <span class="spinner" aria-hidden="true" />
     <span>{{ locale === "zh-CN" ? "加载中…" : "Loading…" }}</span>
   </div>
-  <div v-else-if="error" class="page-state error-state" role="alert">
-    <p>{{ error }}</p>
+  <div v-else-if="error" class="page-state error-state">
+    <ErrorNotice :error="error" />
     <button class="secondary-button" type="button" @click="emit('retry')">{{ actionLabel }}</button>
   </div>
 </template>
