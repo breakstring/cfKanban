@@ -1,9 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
+import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText } from "../lib/api";
+import {
+  type CasConflictState,
+  captureCasConflict,
+  markCasReadbackComplete,
+  markCasReadbackFailed,
+} from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
 import {
   canConfirmInvitationReview,
@@ -18,8 +25,10 @@ import {
   type InvitationRequestBody,
   isInvitationCreateWriteResult,
 } from "../lib/invitation-recovery";
+import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
 import { publicJoinRiskNotice } from "../lib/public-join-risk";
 import { navigate } from "../lib/router";
+import { WriteFence } from "../lib/write-fence";
 import type {
   ContainerResource,
   CredentialResource,
@@ -56,6 +65,7 @@ interface PolicyResource {
 const loading = ref(true);
 const busy = ref(false);
 const error = ref("");
+const casConflict = ref<CasConflictState | null>(null);
 const treeTruncated = ref(false);
 const meta = ref<MetaResource | null>(null);
 const rateSettings = ref<RateLimitSettings | null>(null);
@@ -64,6 +74,11 @@ const projects = ref<ProjectEntry[]>([]);
 const deletedWorkspaces = ref<ContainerResource[]>([]);
 const deletedProjects = ref<ProjectEntry[]>([]);
 const principals = ref<PrincipalResource[]>([]);
+const principalsHasMore = ref(false);
+const principalsNextCursor = ref<string | null>(null);
+const principalsLoadingMore = ref(false);
+const principalQuery = ref("");
+const principalProjectId = ref("");
 const invitations = ref<InvitationResource[]>([]);
 const audit = ref<EventResource[]>([]);
 const auditNextCursor = ref<string | null>(null);
@@ -101,8 +116,12 @@ const projectStatuses = ref<ProjectStatusResource[]>([]);
 const statusDrafts = ref<Record<string, string>>({});
 const restoreTarget = ref<{ kind: "workspace" | "project"; item: ContainerResource; workspace_key?: string } | null>(null);
 const selectedPrincipal = ref<PrincipalDetail | null>(null);
+const principalCredentialsNextCursor = ref<string | null>(null);
+const principalCredentialsLoadingMore = ref(false);
 const selectedGrantProject = ref<ProjectEntry | null>(null);
 const projectGrants = ref<GrantResource[]>([]);
+const projectGrantsNextCursor = ref<string | null>(null);
+const projectGrantsLoadingMore = ref(false);
 const grantForm = ref({ principal_id: "", role: "writer" as "reader" | "writer" });
 const recoveryForm = ref({ mode: "rotation" as "rotation" | "full_recovery", principal_id: "" });
 const recoveryConfirmed = ref(false);
@@ -112,9 +131,109 @@ let policyRequestId = 0;
 let invitationReviewGeneration = 0;
 let invitationRecoveryCoordinator: InvitationRecoveryCoordinator | null = null;
 let ownerViewMounted = false;
+const writeFence = new WriteFence();
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+let casRecoveryGeneration = 0;
+let casReadback: (() => Promise<void>) | null = null;
+let casReadbackInFlight = false;
 
 function ui(english: string, chinese: string): string {
   return locale.value === "zh-CN" ? chinese : english;
+}
+
+function handleCursorError(caught: unknown, retire: () => void): void {
+  if (cursorRequiresRestart(caught)) {
+    retire();
+    error.value = ui(
+      "The list scope or Owner visibility changed, so the old cursor was retired. Start a fresh read before continuing.",
+      "列表范围或 Owner 可见权限已变化，旧 cursor 已停用。请重新读取后再继续。",
+    );
+    return;
+  }
+  error.value = errorText(caught);
+}
+
+async function recoverCasConflict(
+  caught: unknown,
+  resource: string,
+  draft: unknown,
+  readback: () => Promise<void>,
+): Promise<boolean> {
+  const conflict = captureCasConflict(caught, resource, draft);
+  if (conflict === null) return false;
+  const recoveryGeneration = casRecoveryGeneration + 1;
+  casRecoveryGeneration = recoveryGeneration;
+  casReadback = readback;
+  casConflict.value = conflict;
+  error.value = t("error.conflict");
+  try {
+    await readback();
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
+  } catch {
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(conflict);
+  }
+  return true;
+}
+
+function dismissCasConflict(): void {
+  casRecoveryGeneration += 1;
+  casConflict.value = null;
+  casReadback = null;
+}
+
+async function refreshCasFacts(): Promise<void> {
+  const conflict = casConflict.value;
+  const readback = casReadback;
+  if (conflict === null || readback === null || casReadbackInFlight) return;
+  const recoveryGeneration = casRecoveryGeneration + 1;
+  casRecoveryGeneration = recoveryGeneration;
+  const pending = { ...conflict, readbackState: "pending" as const };
+  casConflict.value = pending;
+  casReadbackInFlight = true;
+  try {
+    await readback();
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(pending);
+  } catch {
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(pending);
+  } finally {
+    casReadbackInFlight = false;
+  }
+}
+
+async function loadPrincipals(reset = true): Promise<void> {
+  if (!reset && principalsNextCursor.value === null) return;
+  principalsLoadingMore.value = true;
+  try {
+    const query = principalQuery.value.trim();
+    if (reset && UUID_PATTERN.test(query) && principalProjectId.value === "") {
+      const exact = await apiRequest<PrincipalResource>(`/api/v1/admin/principals/${encodeURIComponent(query)}`);
+      principals.value = [exact];
+      principalsHasMore.value = false;
+      principalsNextCursor.value = null;
+      return;
+    }
+    const params = new URLSearchParams({ limit: "100" });
+    if (query) params.set("q", query);
+    if (principalProjectId.value) params.set("project_id", principalProjectId.value);
+    if (!reset && principalsNextCursor.value !== null) params.set("cursor", principalsNextCursor.value);
+    const result = await apiRequest<ListResult<PrincipalResource>>(`/api/v1/admin/principals?${params}`);
+    principals.value = mergePageById(principals.value, result.items, reset);
+    principalsHasMore.value = result.has_more;
+    principalsNextCursor.value = continuationCursor(result);
+  } catch (caught) {
+    if (!reset) handleCursorError(caught, () => {
+      principalsHasMore.value = false;
+      principalsNextCursor.value = null;
+    });
+    else error.value = errorText(caught);
+    if (reset) {
+      principals.value = [];
+      principalsHasMore.value = false;
+      principalsNextCursor.value = null;
+    }
+  } finally {
+    principalsLoadingMore.value = false;
+  }
 }
 
 async function copyText(value: string): Promise<void> {
@@ -243,7 +362,7 @@ async function readInvitationsForReview(reset = true): Promise<void> {
   const merged = reset ? result.items : [...invitations.value, ...result.items];
   invitations.value = [...new Map(merged.map((invitation) => [invitation.id, invitation])).values()];
   invitationsHasMore.value = result.has_more;
-  invitationsNextCursor.value = result.has_more ? result.next_cursor : null;
+  invitationsNextCursor.value = continuationCursor(result);
   inviteReviewReady.value = true;
 }
 
@@ -298,7 +417,7 @@ async function continueInvitationReview(): Promise<void> {
   try {
     await readInvitationsForReview(false);
   } catch (caught) {
-    error.value = errorText(caught);
+    handleCursorError(caught, invalidateInvitationReview);
   } finally {
     busy.value = false;
   }
@@ -534,6 +653,7 @@ async function acknowledgePresentedInvitation(): Promise<void> {
 }
 
 async function recoverInvitationOperation(): Promise<void> {
+  if (busy.value) return;
   const record = invitationRecoveryRecord.value;
   if (record === null || !invitationRecoveryCanRetry(record)) return;
   const coordinator = invitationRecoveryCoordinator;
@@ -579,25 +699,23 @@ async function load(): Promise<void> {
   error.value = "";
   try {
     if (props.section === "overview") {
-      const [metaResult, rateResult, workspaceResult, principalResult] = await Promise.all([
+      const [metaResult, rateResult, workspaceResult] = await Promise.all([
         apiRequest<MetaResource>("/api/v1/meta"),
         apiRequest<RateLimitSettings>("/api/v1/admin/rate-limit-settings"),
         apiRequest<ListResult<ContainerResource>>("/api/v1/workspaces?limit=100"),
-        apiRequest<ListResult<PrincipalResource>>("/api/v1/admin/principals?limit=100"),
+        loadPrincipals(true),
       ]);
       meta.value = metaResult;
       rateSettings.value = rateResult;
       workspaces.value = workspaceResult.items;
-      principals.value = principalResult.items;
     } else if (props.section === "workspaces") {
       await loadWorkspaceTree(true);
     } else if (props.section === "access") {
       await loadWorkspaceTree(false);
-      const [principalResult] = await Promise.all([
-        apiRequest<ListResult<PrincipalResource>>("/api/v1/admin/principals?limit=100"),
+      await Promise.all([
+        loadPrincipals(true),
         readInvitationsForReview(),
       ]);
-      principals.value = principalResult.items;
     } else {
       await loadAudit(true);
     }
@@ -616,28 +734,32 @@ async function loadAudit(reset = false): Promise<void> {
     const params = new URLSearchParams({ limit: "100" });
     if (!reset && auditNextCursor.value !== null) params.set("after", auditNextCursor.value);
     const result = await apiRequest<ListResult<EventResource>>(`/api/v1/admin/audit-events?${params}`);
-    const merged = reset ? result.items : [...audit.value, ...result.items];
-    audit.value = [...new Map(merged.map((event) => [event.id, event])).values()];
-    auditNextCursor.value = result.has_more ? result.next_cursor : null;
+    audit.value = mergePageById(audit.value, result.items, reset);
+    auditNextCursor.value = continuationCursor(result);
   } catch (caught) {
-    error.value = errorText(caught);
+    if (!reset) handleCursorError(caught, () => { auditNextCursor.value = null; });
+    else error.value = errorText(caught);
   } finally {
     auditLoadingMore.value = false;
   }
 }
 
 async function createWorkspace(): Promise<void> {
+  const fenceKey = "workspace-create";
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest("/api/v1/workspaces", { body: workspaceForm.value, method: "POST" });
     showWorkspace.value = false;
     workspaceForm.value = { display_name: "", key: "" };
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) { error.value = errorText(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function createProject(): Promise<void> {
   if (!selectedWorkspace.value) return;
+  const fenceKey = `project-create:${selectedWorkspace.value}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/workspaces/${encodeURIComponent(selectedWorkspace.value)}/projects`, {
@@ -646,11 +768,13 @@ async function createProject(): Promise<void> {
     showProject.value = false;
     projectForm.value = { context: "", display_name: "", key: "" };
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) { error.value = errorText(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function deleteContainer(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): Promise<void> {
   if (!window.confirm(`${t("action.delete")}: ${item.display_name}?`)) return;
+  const fenceKey = `container-delete:${item.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     const path = kind === "workspace"
@@ -658,7 +782,11 @@ async function deleteContainer(kind: "workspace" | "project", item: ContainerRes
       : `/api/v1/workspaces/${encodeURIComponent(workspaceKey ?? "")}/projects/${encodeURIComponent(item.key)}`;
     await apiRequest(`${path}?expected_version=${item.version}`, { method: "DELETE" });
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `${kind} ${item.key}`, { action: "delete" }, () => loadWorkspaceTree(true))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 function openContainerEdit(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): void {
@@ -671,9 +799,23 @@ function openContainerEdit(kind: "workspace" | "project", item: ContainerResourc
   showContainerEdit.value = true;
 }
 
+async function refreshContainerEditFacts(
+  target: { display_name: string; kind: "workspace" | "project"; item: ContainerResource; workspace_key?: string },
+): Promise<void> {
+  await loadWorkspaceTree(true);
+  const current = target.kind === "workspace"
+    ? workspaces.value.find((entry) => entry.id === target.item.id)
+    : projects.value.find((entry) => entry.id === target.item.id);
+  if (current !== undefined && containerEdit.value?.item.id === target.item.id) {
+    containerEdit.value = { ...target, item: current };
+  }
+}
+
 async function saveContainerEdit(): Promise<void> {
   const target = containerEdit.value;
   if (target === null || !target.display_name.trim()) return;
+  const fenceKey = `container-update:${target.item.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     const path = target.kind === "workspace"
@@ -683,9 +825,14 @@ async function saveContainerEdit(): Promise<void> {
       body: { display_name: target.display_name.trim(), expected_version: target.item.version },
       method: "PATCH",
     });
+    dismissCasConflict();
     showContainerEdit.value = false;
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `${target.kind} ${target.item.key}`, {
+      display_name: target.display_name,
+    }, () => refreshContainerEditFacts(target))) error.value = errorText(caught);
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function openProjectSettings(item: ProjectEntry): Promise<void> {
@@ -712,9 +859,25 @@ async function openProjectSettings(item: ProjectEntry): Promise<void> {
   } finally { if (requestId === projectSettingsRequestId) busy.value = false; }
 }
 
+async function refreshProjectSettingsFacts(item: ProjectEntry): Promise<void> {
+  const [projectResult, statusResult] = await Promise.all([
+    apiRequest<ContainerResource>(
+      `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}`,
+    ),
+    apiRequest<ListResult<ProjectStatusResource>>(
+      `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}/statuses`,
+    ),
+  ]);
+  if (selectedProject.value?.id !== item.id) return;
+  selectedProject.value = { ...projectResult, workspaceKey: item.workspaceKey };
+  projectStatuses.value = statusResult.items;
+}
+
 async function saveProjectSettings(): Promise<void> {
   const item = selectedProject.value;
   if (item === null || !projectSettingsForm.value.display_name.trim()) return;
+  const fenceKey = `project-settings:${item.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     const result = await apiRequest<WriteResult<ContainerResource>>(
@@ -728,24 +891,32 @@ async function saveProjectSettings(): Promise<void> {
         method: "PATCH",
       },
     );
+    dismissCasConflict();
     const updated = { ...result.resource, workspaceKey: item.workspaceKey };
     selectedProject.value = updated;
     projectStatuses.value = projectStatuses.value.map((status) => ({ ...status, version: updated.version }));
     projectSettingsForm.value = { context: updated.context ?? "", display_name: updated.display_name };
     await loadWorkspaceTree(true);
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Project ${item.workspaceKey}/${item.key}`, projectSettingsForm.value, () => refreshProjectSettingsFacts(item))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function saveStatusName(status: ProjectStatusResource): Promise<void> {
   const item = selectedProject.value;
   const displayName = statusDrafts.value[status.key]?.trim();
   if (item === null || !displayName || displayName === status.display_name) return;
+  const fenceKey = `project-status:${item.id}:${status.key}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     const result = await apiRequest<WriteResult<ProjectStatusResource>>(
       `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}/statuses/${status.key}`,
       { body: { display_name: displayName, expected_version: status.version }, method: "PATCH" },
     );
+    dismissCasConflict();
     projectStatuses.value = projectStatuses.value.map((entry) => (
       entry.key === status.key
         ? result.resource
@@ -754,7 +925,11 @@ async function saveStatusName(status: ProjectStatusResource): Promise<void> {
     statusDrafts.value = { ...statusDrafts.value, [status.key]: result.resource.display_name };
     if (selectedProject.value !== null) selectedProject.value.version = result.resource.version;
     projects.value = projects.value.map((entry) => entry.id === item.id ? { ...entry, version: result.resource.version } : entry);
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Project status ${status.key}`, { display_name: displayName }, () => refreshProjectSettingsFacts(item))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function openRestore(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): Promise<void> {
@@ -778,9 +953,22 @@ async function openRestore(kind: "workspace" | "project", item: ContainerResourc
   }
 }
 
+async function refreshRestoreTargetFacts(
+  target: { kind: "workspace" | "project"; item: ContainerResource; workspace_key?: string },
+): Promise<void> {
+  await loadWorkspaceTree(true);
+  const path = target.kind === "workspace"
+    ? `/api/v1/workspaces/${encodeURIComponent(target.item.key)}?deleted=only`
+    : `/api/v1/workspaces/${encodeURIComponent(target.workspace_key ?? "")}/projects/${encodeURIComponent(target.item.key)}?deleted=only`;
+  const current = await apiRequest<ContainerResource>(path);
+  if (restoreTarget.value?.item.id === target.item.id) restoreTarget.value = { ...target, item: current };
+}
+
 async function restoreContainer(): Promise<void> {
   const target = restoreTarget.value;
   if (target === null) return;
+  const fenceKey = `container-restore:${target.item.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     const path = target.kind === "workspace"
@@ -789,7 +977,11 @@ async function restoreContainer(): Promise<void> {
     await apiRequest(path, { body: { expected_version: target.item.version }, method: "POST" });
     showRestore.value = false;
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `${target.kind} ${target.item.key}`, { action: "restore" }, () => refreshRestoreTargetFacts(target))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function openPrincipal(principal: PrincipalResource): Promise<void> {
@@ -797,44 +989,98 @@ async function openPrincipal(principal: PrincipalResource): Promise<void> {
   error.value = "";
   try {
     oneTimeInvite.value = "";
-    selectedPrincipal.value = await apiRequest<PrincipalDetail>(`/api/v1/admin/principals/${principal.id}`);
+    await refreshPrincipalFacts(principal, false);
     recoveryForm.value = { mode: "rotation", principal_id: principal.id };
     recoveryConfirmed.value = false;
     showPrincipal.value = true;
   } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
 }
 
+async function refreshPrincipalFacts(principal: PrincipalResource, requireOpen = true): Promise<void> {
+  const [detail, credentialResult] = await Promise.all([
+    apiRequest<PrincipalDetail>(`/api/v1/admin/principals/${principal.id}`),
+    apiRequest<ListResult<CredentialResource>>(`/api/v1/admin/principals/${principal.id}/credentials?limit=100`),
+  ]);
+  if (requireOpen && selectedPrincipal.value?.id !== principal.id) return;
+  selectedPrincipal.value = {
+    ...detail,
+    credentials: credentialResult.items,
+    credentials_has_more: credentialResult.has_more,
+  };
+  principalCredentialsNextCursor.value = continuationCursor(credentialResult);
+}
+
+async function loadMorePrincipalCredentials(): Promise<void> {
+  const principal = selectedPrincipal.value;
+  if (principal === null || principalCredentialsNextCursor.value === null || principalCredentialsLoadingMore.value) return;
+  principalCredentialsLoadingMore.value = true;
+  try {
+    const result = await apiRequest<ListResult<CredentialResource>>(
+      `/api/v1/admin/principals/${principal.id}/credentials?limit=100&cursor=${encodeURIComponent(principalCredentialsNextCursor.value)}`,
+    );
+    if (selectedPrincipal.value?.id !== principal.id) return;
+    selectedPrincipal.value = {
+      ...selectedPrincipal.value,
+      credentials: mergePageById(selectedPrincipal.value.credentials, result.items),
+      credentials_has_more: result.has_more,
+    };
+    principalCredentialsNextCursor.value = continuationCursor(result);
+  } catch (caught) {
+    handleCursorError(caught, () => {
+      principalCredentialsNextCursor.value = null;
+      if (selectedPrincipal.value !== null) selectedPrincipal.value.credentials_has_more = false;
+    });
+  } finally {
+    principalCredentialsLoadingMore.value = false;
+  }
+}
+
 function closePrincipal(): void {
   oneTimeInvite.value = "";
   selectedPrincipal.value = null;
+  principalCredentialsNextCursor.value = null;
   recoveryConfirmed.value = false;
   showPrincipal.value = false;
 }
 
 async function revokeCredential(credential: CredentialResource): Promise<void> {
+  const fenceKey = `credential-revoke:${credential.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/credentials/${credential.id}?expected_version=${credential.version}`, { method: "DELETE" });
-    if (selectedPrincipal.value !== null) await openPrincipal(selectedPrincipal.value);
+    if (selectedPrincipal.value !== null) await refreshPrincipalFacts(selectedPrincipal.value);
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    const principal = selectedPrincipal.value;
+    if (!await recoverCasConflict(caught, `Credential ${credential.fingerprint}`, { action: "revoke" }, async () => {
+      if (principal !== null) await refreshPrincipalFacts(principal);
+    })) error.value = errorText(caught);
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function revokePrincipalPasskey(passkey: PrincipalPasskey): Promise<void> {
   const principal = selectedPrincipal.value;
   if (principal === null || !passkey.allowed_actions.includes("revoke")) return;
+  const fenceKey = `passkey-revoke:${passkey.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/passkeys/${passkey.id}?expected_version=${passkey.version}`, { method: "DELETE" });
-    await openPrincipal(principal);
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+    await refreshPrincipalFacts(principal);
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Passkey ${passkey.id}`, { action: "revoke" }, () => refreshPrincipalFacts(principal))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function createRecoveryInvite(): Promise<void> {
   if (!recoveryForm.value.principal_id
     || !recoveryConfirmed.value
     || inviteNeedsReview.value
-    || !invitationCoordinationReady.value) return;
+    || !invitationCoordinationReady.value
+    || busy.value) return;
   busy.value = true;
   oneTimeInvite.value = "";
   const body: InvitationRequestBody = {
@@ -853,29 +1099,65 @@ async function createRecoveryInvite(): Promise<void> {
 
 async function openProjectGrants(item: ProjectEntry): Promise<void> {
   selectedGrantProject.value = item;
+  projectGrants.value = [];
+  projectGrantsNextCursor.value = null;
   grantForm.value = { principal_id: "", role: "writer" };
   busy.value = true;
   try {
-    const result = await apiRequest<ListResult<GrantResource>>(`/api/v1/admin/projects/${item.id}/grants?limit=100`);
-    projectGrants.value = result.items;
+    await loadProjectGrants(item, true);
     showGrant.value = true;
   } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+}
+
+function closeProjectGrants(): void {
+  selectedGrantProject.value = null;
+  projectGrants.value = [];
+  projectGrantsNextCursor.value = null;
+  showGrant.value = false;
+}
+
+async function loadProjectGrants(item: ProjectEntry, reset: boolean): Promise<void> {
+  if (!reset && projectGrantsNextCursor.value === null) return;
+  const params = new URLSearchParams({ limit: "100" });
+  if (!reset && projectGrantsNextCursor.value !== null) params.set("cursor", projectGrantsNextCursor.value);
+  const result = await apiRequest<ListResult<GrantResource>>(`/api/v1/admin/projects/${item.id}/grants?${params}`);
+  if (selectedGrantProject.value?.id !== item.id) return;
+  projectGrants.value = mergePageById(projectGrants.value, result.items, reset);
+  projectGrantsNextCursor.value = continuationCursor(result);
+}
+
+async function loadMoreProjectGrants(): Promise<void> {
+  const item = selectedGrantProject.value;
+  if (item === null || projectGrantsNextCursor.value === null || projectGrantsLoadingMore.value) return;
+  projectGrantsLoadingMore.value = true;
+  try {
+    await loadProjectGrants(item, false);
+  } catch (caught) {
+    handleCursorError(caught, () => { projectGrantsNextCursor.value = null; });
+  } finally {
+    projectGrantsLoadingMore.value = false;
+  }
 }
 
 async function createGrant(): Promise<void> {
   const item = selectedGrantProject.value;
   if (item === null || !grantForm.value.principal_id.trim()) return;
+  const fenceKey = `grant-create:${item.id}:${grantForm.value.principal_id.trim()}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/projects/${item.id}/grants`, {
       body: { principal_id: grantForm.value.principal_id.trim(), role: grantForm.value.role },
       method: "POST",
     });
-    await openProjectGrants(item);
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+    grantForm.value = { principal_id: "", role: "writer" };
+    await loadProjectGrants(item, true);
+  } catch (caught) { error.value = errorText(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function setGrantRole(grant: GrantResource, role: "reader" | "writer"): Promise<void> {
+  const fenceKey = `grant-role:${grant.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     if (grant.revoked_at === null) {
@@ -889,20 +1171,32 @@ async function setGrantRole(grant: GrantResource, role: "reader" | "writer"): Pr
         body: { principal_id: grant.principal_id, role }, method: "POST",
       });
     }
-    if (selectedGrantProject.value !== null) await openProjectGrants(selectedGrantProject.value);
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+    if (selectedGrantProject.value !== null) await loadProjectGrants(selectedGrantProject.value, true);
+  } catch (caught) {
+    const item = selectedGrantProject.value;
+    if (!await recoverCasConflict(caught, `Grant ${grant.id}`, { role }, async () => {
+      if (item !== null) await loadProjectGrants(item, true);
+    })) error.value = errorText(caught);
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function revokeGrant(grant: GrantResource): Promise<void> {
+  const fenceKey = `grant-revoke:${grant.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/grants/${grant.id}?expected_version=${grant.version}`, { method: "DELETE" });
-    if (selectedGrantProject.value !== null) await openProjectGrants(selectedGrantProject.value);
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+    if (selectedGrantProject.value !== null) await loadProjectGrants(selectedGrantProject.value, true);
+  } catch (caught) {
+    const item = selectedGrantProject.value;
+    if (!await recoverCasConflict(caught, `Grant ${grant.id}`, { action: "revoke" }, async () => {
+      if (item !== null) await loadProjectGrants(item, true);
+    })) error.value = errorText(caught);
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function createInvite(): Promise<void> {
-  if (!inviteForm.value.project_id || inviteNeedsReview.value || !invitationCoordinationReady.value) return;
+  if (!inviteForm.value.project_id || inviteNeedsReview.value || !invitationCoordinationReady.value || busy.value) return;
   busy.value = true;
   oneTimeInvite.value = "";
   const body: InvitationRequestBody = {
@@ -919,11 +1213,17 @@ async function createInvite(): Promise<void> {
 }
 
 async function revokeInvite(invitation: InvitationResource): Promise<void> {
+  const fenceKey = `invite-revoke:${invitation.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/invitations/${invitation.id}?expected_version=${invitation.version}`, { method: "DELETE" });
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Invitation ${invitation.id}`, { action: "revoke" }, () => readInvitationsForReview(true))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function openPolicy(item: ProjectEntry): Promise<void> {
@@ -952,9 +1252,16 @@ async function openPolicy(item: ProjectEntry): Promise<void> {
   } finally { if (requestId === policyRequestId) busy.value = false; }
 }
 
+async function refreshPolicyFacts(item: ProjectEntry): Promise<void> {
+  const result = await apiRequest<PolicyResource>(`/api/v1/admin/projects/${item.id}/public-join`);
+  if (selectedProject.value?.id === item.id) policy.value = result;
+}
+
 async function savePolicy(): Promise<void> {
   const item = selectedProject.value;
   if (item === null || policy.value === null || !policyRiskConfirmed.value) return;
+  const fenceKey = `policy-save:${item.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/projects/${item.id}/public-join`, {
@@ -966,20 +1273,31 @@ async function savePolicy(): Promise<void> {
         public_summary: policyForm.value.public_summary,
       }, method: "PUT",
     });
+    dismissCasConflict();
     showPolicy.value = false;
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Public Join ${item.workspaceKey}/${item.key}`, policyForm.value, () => refreshPolicyFacts(item))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function disablePolicy(): Promise<void> {
   const item = selectedProject.value;
   if (item === null || policy.value === null) return;
+  const fenceKey = `policy-disable:${item.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/projects/${item.id}/public-join?expected_version=${policy.value.project.version}`, { method: "DELETE" });
     showPolicy.value = false;
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Public Join ${item.workspaceKey}/${item.key}`, { action: "disable" }, () => refreshPolicyFacts(item))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 function formatTime(value: string): string {
@@ -1005,13 +1323,14 @@ onUnmounted(() => {
       <nav class="owner-tabs" :aria-label="ui('Owner sections', 'Owner 分区')"><button v-for="tab in tabs" :key="tab.key" type="button" :class="{ active: section === tab.key }" @click="navigate(sectionPath(tab.key))">{{ tab.label }}</button></nav>
     </header>
     <p v-if="error" class="inline-alert" role="alert">{{ error }}</p>
+    <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
     <template v-if="!loading && section === 'overview'">
       <section class="overview-strip">
         <article><span>Service</span><strong>{{ meta?.service_version ?? "—" }}</strong><small>schema {{ meta?.schema_version ?? "—" }}</small></article>
         <article><span>Workspaces</span><strong>{{ workspaces.length }}</strong><small>{{ meta?.visible_scope.project_count ?? 0 }} Projects</small></article>
-        <article><span>Principals</span><strong>{{ principals.length }}</strong><small>{{ ui("visible now", "当前可见") }}</small></article>
+        <article><span>Principals</span><strong>{{ principals.length }}{{ principalsHasMore ? "+" : "" }}</strong><small>{{ ui("visible now", "当前可见") }}</small></article>
         <article><span>{{ ui("Recent 429", "近期 429") }}</span><strong>{{ rateSettings?.recent_429_summary.total ?? 0 }}</strong><small>{{ rateSettings?.recent_429_summary.window_seconds ?? 300 }}s {{ ui("window", "窗口") }}</small></article>
       </section>
       <section class="owner-section">
@@ -1054,7 +1373,7 @@ onUnmounted(() => {
         </div>
       </div>
       <p v-if="treeTruncated" class="warning-panel">{{ ui("Project access controls are limited to the first 20 Workspaces and first 20 Projects in each. Use cfkanban-admin with an explicit cursor for omitted Projects.", "Project 访问管理只显示前 20 个 Workspace，以及每个 Workspace 的前 20 个 Project；未显示的 Project 请让 cfkanban-admin 使用显式 cursor。") }}</p>
-      <section class="owner-section"><h2>Principals</h2><div class="data-list"><button v-for="principal in principals" :key="principal.id" class="data-row data-row-button" type="button" @click="openPrincipal(principal)"><span><strong>{{ principal.display_name }}</strong><code>{{ principal.id }}</code></span><span>{{ principal.is_owner ? 'Owner' : ui('Participant', '参与者') }}</span><span>{{ principal.active_credential_count ?? 0 }} Credentials · {{ principal.active_grant_count ?? 0 }} Grants</span></button></div></section>
+      <section class="owner-section"><div class="section-heading-row"><div><h2>Principals</h2><p>{{ ui("Search by exact stable ID or name text, optionally restricted to one visible Project.", "可按准确稳定 ID 或名称文本查找，也可限制到一个当前可见 Project。") }}</p></div></div><form class="principal-search" role="search" @submit.prevent="loadPrincipals(true)"><input v-model="principalQuery" type="search" :placeholder="ui('Principal ID or display name', 'Principal ID 或显示名称')" /><select v-model="principalProjectId"><option value="">{{ ui("Every visible Project", "全部可见 Project") }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.workspaceKey }}/{{ item.key }}</option></select><button class="secondary-button" type="submit" :disabled="principalsLoadingMore">{{ ui("Search", "查找") }}</button></form><div class="data-list"><button v-for="principal in principals" :key="principal.id" class="data-row data-row-button" type="button" @click="openPrincipal(principal)"><span><strong>{{ principal.display_name }}</strong><code>{{ principal.id }}</code></span><span>{{ principal.is_owner ? 'Owner' : ui('Participant', '参与者') }}</span><span>{{ principal.active_credential_count ?? 0 }} Credentials · {{ principal.active_grant_count ?? 0 }} Grants</span></button><p v-if="principals.length === 0" class="empty-copy">{{ ui("No matching Principals", "没有匹配的 Principal") }}</p></div><p v-if="principalsHasMore" class="warning-panel">{{ ui("More Principals match this exact query scope. Continue with the bound cursor; changing the query or Project starts a fresh search.", "此准确查询范围还有更多 Principal。请使用绑定 cursor 继续；修改查询或 Project 会开始一次新查找。") }}</p><button v-if="principalsNextCursor" class="load-more" type="button" :disabled="principalsLoadingMore" @click="loadPrincipals(false)">{{ principalsLoadingMore ? "…" : ui("Load more Principals", "加载更多 Principal") }}</button></section>
       <section class="owner-section"><h2>Project Grants</h2><div class="data-list"><button v-for="item in projects" :key="item.id" class="data-row data-row-button" type="button" @click="openProjectGrants(item)"><span><strong>{{ item.workspaceKey }}/{{ item.key }}</strong><small>{{ item.display_name }}</small></span><span>{{ ui("Manage explicit roles", "管理显式角色") }}</span></button></div></section>
       <section class="owner-section"><h2>{{ ui("Invitations", "邀请") }}</h2><div class="data-list"><div v-for="invitation in invitations" :key="invitation.id" class="data-row"><span><strong>{{ invitation.kind }}</strong><code>{{ invitation.code_fingerprint }}</code><small>{{ ui("Created", "创建于") }} {{ formatTime(invitation.created_at) }}</small></span><span><template v-if="invitation.kind === 'project_grant'">{{ invitation.grants.map((grant) => `${grant.workspace_key}/${grant.project_key}:${grant.role}`).join(" · ") }}</template><template v-else>{{ invitation.bound_principal?.display_name ?? invitation.bound_principal?.principal_id }} · {{ invitation.recovery_mode }}</template><small>{{ invitation.status }} · {{ ui("expires", "到期") }} {{ formatTime(invitation.expires_at) }}</small></span><button v-if="invitation.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokeInvite(invitation)">{{ ui("Revoke", "撤销") }}</button></div></div></section>
     </template>
@@ -1071,8 +1390,8 @@ onUnmounted(() => {
     <ModalDialog v-if="showProjectSettings && selectedProject" :busy="busy" :title="ui('Project settings', 'Project 设置')" @close="closeProjectSettings"><form class="form-stack" @submit.prevent="saveProjectSettings"><p><code>{{ selectedProject.workspaceKey }}/{{ selectedProject.key }}</code> · v{{ selectedProject.version }}</p><label>{{ ui("Display name", "显示名称") }}<input v-model="projectSettingsForm.display_name" required maxlength="128" /></label><label>Context<textarea v-model="projectSettingsForm.context" rows="6" /></label><button class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</button></form><section class="recovery-section"><h3>{{ ui("Workflow display names", "工作流显示名称") }}</h3><p class="muted-copy">{{ ui("Stable keys, order, and terminal semantics do not change.", "稳定 key、顺序和 terminal 语义不会改变。") }}</p><form v-for="status in projectStatuses" :key="status.key" class="compact-inline-form" @submit.prevent="saveStatusName(status)"><code>{{ status.key }}</code><input v-model="statusDrafts[status.key]" required maxlength="128" /><button class="text-button" type="submit" :disabled="busy || statusDrafts[status.key] === status.display_name">{{ t("action.save") }}</button></form></section></ModalDialog>
     <ModalDialog v-if="showRestore && restoreTarget" :busy="busy" :title="ui('Restore container?', '恢复容器？')" @close="showRestore = false"><p><code>{{ restoreTarget.item.key }}</code> · {{ restoreTarget.item.display_name }}</p><p class="warning-panel">{{ ui("Restoring reactivates every still-enabled Public Join policy shown below. Existing Grants remain unchanged.", "恢复会重新启用下列仍 enabled 的 Public Join Policy；既有 Grants 不会改变。") }}</p><p v-if="restoreTarget.item.resumed_public_projects?.has_more" class="inline-alert" role="alert">{{ ui("More than 100 Public Join Projects will resume. Only the first 100 are listed here; confirming still republishes every enabled policy in this container.", "将恢复超过 100 个 Public Join Project。此处只列出前 100 个；确认后仍会重新公开该容器内全部 enabled Policy。") }}</p><div class="data-list"><div v-for="publicProject in restoreTarget.item.resumed_public_projects?.projects ?? []" :key="publicProject.id" class="data-row"><span><strong>{{ publicProject.workspace_key ? `${publicProject.workspace_key}/` : '' }}{{ publicProject.key }}</strong><small>{{ publicProject.display_name ?? publicProject.id }}</small></span><span v-if="publicProject.resource_limits">{{ publicProject.role_choices?.join(' | ') }} · {{ publicProject.resource_limits.issues }}/{{ publicProject.resource_limits.comments }}/{{ publicProject.resource_limits.principals }}</span></div><p v-if="!(restoreTarget.item.resumed_public_projects?.projects.length)" class="empty-copy">{{ ui("No enabled Public Join policy will resume.", "没有 enabled Public Join Policy 会重新公开。") }}</p></div><div class="form-actions"><button class="secondary-button" type="button" @click="showRestore = false">{{ t("action.cancel") }}</button><button class="primary-button" type="button" :disabled="busy" @click="restoreContainer">{{ t("action.restore") }}</button></div></ModalDialog>
     <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建 Project Invite')" @close="closeInviteDialog"><form class="form-stack" @submit.prevent="createInvite"><label>Project<select v-model="inviteForm.project_id" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.workspaceKey }}/{{ item.key }} · {{ item.display_name }}</option></select></label><label>{{ ui("Role", "角色") }}<select v-model="inviteForm.role"><option value="reader">reader</option><option value="writer">writer</option></select></label><p class="muted-copy">{{ locale === "zh-CN" ? "完整 URL 只在创建响应中出现一次；页面不会保存它。" : "The full URL appears only in the create response; this page does not store it." }}</p><p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><div class="form-actions"><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved this one-time URL", "我已保存这个一次性 URL") }}</button><button class="primary-button" type="submit" :disabled="busy || inviteNeedsReview">{{ oneTimeInvite ? (locale === 'zh-CN' ? '再创建一个' : 'Create another') : t('action.save') }}</button></div></form></ModalDialog>
-    <ModalDialog v-if="showPrincipal && selectedPrincipal" :busy="busy" :title="ui('Principal access', 'Principal 访问')" @close="closePrincipal"><header class="modal-summary"><strong>{{ selectedPrincipal.display_name }}</strong><code>{{ selectedPrincipal.id }}</code><span>{{ selectedPrincipal.is_owner ? 'Owner' : ui('Participant', '参与者') }}</span><small>{{ ui('Created', '创建于') }} {{ selectedPrincipal.created_at ? formatTime(selectedPrincipal.created_at) : '—' }} · {{ selectedPrincipal.active_credential_count ?? 0 }} Credentials · {{ selectedPrincipal.active_grant_count ?? 0 }} Grants · {{ selectedPrincipal.assignee_count ?? 0 }} Assignees</small></header><section class="recovery-section"><h3>Credentials</h3><div class="data-list"><div v-for="credential in selectedPrincipal.credentials" :key="credential.id" class="data-row"><span><strong>{{ credential.fingerprint }}</strong><small>{{ credential.last_used_at ? formatTime(credential.last_used_at) : ui('never used', '尚未使用') }}</small></span><button v-if="credential.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokeCredential(credential)">{{ ui('Revoke', '撤销') }}</button></div></div><p v-if="selectedPrincipal.credentials_has_more" class="warning-panel">{{ ui('More Credentials exist; use cfkanban-admin with an explicit cursor.', '还有更多 Credential；请让 cfkanban-admin 使用显式 cursor。') }}</p></section><section class="recovery-section"><h3>Passkeys</h3><div class="data-list"><div v-for="passkey in selectedPrincipal.passkeys" :key="passkey.id" class="data-row"><span><strong>{{ passkey.algorithm === -7 ? 'ES256' : 'RS256' }}</strong><small>{{ passkey.rp_id }} · {{ passkey.last_used_at ? formatTime(passkey.last_used_at) : ui('never used', '尚未使用') }}</small></span><button v-if="passkey.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokePrincipalPasskey(passkey)">{{ ui('Revoke', '撤销') }}</button></div></div><p v-if="selectedPrincipal.passkeys_has_more" class="warning-panel">{{ ui('More Passkeys exist; use cfkanban-admin for the complete list.', '还有更多 Passkey；请使用 cfkanban-admin 查看完整列表。') }}</p></section><section class="recovery-section"><h3>Grants</h3><div class="data-list"><div v-for="grant in selectedPrincipal.grants" :key="grant.id" class="data-row"><span><strong>{{ grant.project.workspace_key }}/{{ grant.project.key }}</strong><small>{{ grant.role }} · {{ grant.revoked_at ? ui('revoked', '已撤销') : ui('active', 'active') }}</small></span></div></div><p v-if="selectedPrincipal.grants_has_more" class="warning-panel">{{ ui('More Grants exist; use cfkanban-admin with an explicit cursor.', '还有更多 Grant；请让 cfkanban-admin 使用显式 cursor。') }}</p></section><form v-if="!selectedPrincipal.is_owner" class="form-stack warning-panel" @submit.prevent="createRecoveryInvite"><h3>{{ ui('Principal recovery invite', 'Principal 恢复邀请') }}</h3><p><strong>{{ ui('Identity takeover warning:', '身份接管警告：') }}</strong> {{ ui('the redeemer becomes this same stable Principal and inherits every existing Grant, assignee relationship, and historical attribution.', '兑换者会成为这个相同的稳定 Principal，并继承其全部既有 Grant、assignee 关系和历史归属。') }}</p><label>{{ ui('Recovery mode', '恢复模式') }}<select v-model="recoveryForm.mode"><option value="rotation">rotation · {{ ui('revoke the credential used to redeem', '仅撤销本次兑换所用旧 Credential') }}</option><option value="full_recovery">full_recovery · {{ ui('revoke all prior credentials', '撤销全部 prior Credentials') }}</option></select></label><p>{{ recoveryForm.mode === 'rotation' ? ui('Rotation preserves every other existing Credential and Passkey.', 'rotation 会保留其他既有 Credential 与 Passkey。') : ui('Full recovery revokes all prior Credentials; existing Grants, assignments, history, and Passkeys remain tied to this Principal.', 'full_recovery 会撤销全部 prior Credential；既有 Grant、assignment、历史和 Passkey 仍绑定该 Principal。') }}</p><label class="confirmation-check"><input v-model="recoveryConfirmed" type="checkbox" />{{ ui('I verified the immutable Principal ID and understand the complete inheritance and revocation scope.', '我已核对不可变 Principal ID，并理解完整继承范围与撤销范围。') }}</label><p v-if="inviteNeedsReview" class="inline-alert" role="alert">{{ inviteRecoveryNotice || ui('Close this dialog and complete the Invitation safety review first.', '请先关闭此弹窗并完成 Invitation 安全复核。') }}</p><button class="primary-button" type="submit" :disabled="busy || !recoveryConfirmed || inviteNeedsReview">{{ ui('Create one-time recovery URL', '创建一次性恢复 URL') }}</button><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved this one-time URL", "我已保存这个一次性 URL") }}</button></form></ModalDialog>
-    <ModalDialog v-if="showGrant && selectedGrantProject" :busy="busy" :title="ui('Project Grants', 'Project Grants')" @close="showGrant = false"><p><code>{{ selectedGrantProject.workspaceKey }}/{{ selectedGrantProject.key }}</code> · {{ selectedGrantProject.display_name }}</p><form class="compact-inline-form" @submit.prevent="createGrant"><input v-model="grantForm.principal_id" required placeholder="Principal ID" /><select v-model="grantForm.role"><option value="reader">reader</option><option value="writer">writer</option></select><button class="primary-button" type="submit" :disabled="busy">{{ ui('Grant', '授予') }}</button></form><div class="data-list"><div v-for="grant in projectGrants" :key="grant.id" class="data-row"><span><strong>{{ grant.principal.display_name }}</strong><code>{{ grant.principal_id }}</code></span><select :value="grant.role" :disabled="busy || grant.revoked_at !== null" @change="setGrantRole(grant, ($event.target as HTMLSelectElement).value as 'reader' | 'writer')"><option value="reader">reader</option><option value="writer">writer</option></select><div><button v-if="grant.revoked_at === null" class="danger-text-button" type="button" @click="revokeGrant(grant)">{{ ui('Revoke', '撤销') }}</button><button v-else class="secondary-button" type="button" @click="setGrantRole(grant, grant.role)">{{ ui('Regrant', '重新授予') }}</button></div></div></div></ModalDialog>
+    <ModalDialog v-if="showPrincipal && selectedPrincipal" :busy="busy" :title="ui('Principal access', 'Principal 访问')" @close="closePrincipal"><header class="modal-summary"><strong>{{ selectedPrincipal.display_name }}</strong><code>{{ selectedPrincipal.id }}</code><span>{{ selectedPrincipal.is_owner ? 'Owner' : ui('Participant', '参与者') }}</span><small>{{ ui('Created', '创建于') }} {{ selectedPrincipal.created_at ? formatTime(selectedPrincipal.created_at) : '—' }} · {{ selectedPrincipal.active_credential_count ?? 0 }} Credentials · {{ selectedPrincipal.active_grant_count ?? 0 }} Grants · {{ selectedPrincipal.assignee_count ?? 0 }} Assignees</small></header><section class="recovery-section"><h3>Credentials</h3><div class="data-list"><div v-for="credential in selectedPrincipal.credentials" :key="credential.id" class="data-row"><span><strong>{{ credential.fingerprint }}</strong><small>{{ credential.last_used_at ? formatTime(credential.last_used_at) : ui('never used', '尚未使用') }}</small></span><button v-if="credential.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokeCredential(credential)">{{ ui('Revoke', '撤销') }}</button></div></div><p v-if="selectedPrincipal.credentials_has_more" class="warning-panel">{{ ui('More Credentials exist. Continue with the bound cursor; no secret value is returned.', '还有更多 Credential。请使用绑定 cursor 继续；列表不会返回秘密值。') }}</p><button v-if="principalCredentialsNextCursor" class="load-more" type="button" :disabled="principalCredentialsLoadingMore" @click="loadMorePrincipalCredentials">{{ principalCredentialsLoadingMore ? '…' : ui('Load more Credentials', '加载更多 Credential') }}</button></section><section class="recovery-section"><h3>Passkeys</h3><div class="data-list"><div v-for="passkey in selectedPrincipal.passkeys" :key="passkey.id" class="data-row"><span><strong>{{ passkey.algorithm === -7 ? 'ES256' : 'RS256' }}</strong><small>{{ passkey.rp_id }} · {{ passkey.last_used_at ? formatTime(passkey.last_used_at) : ui('never used', '尚未使用') }}</small></span><button v-if="passkey.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokePrincipalPasskey(passkey)">{{ ui('Revoke', '撤销') }}</button></div></div><p v-if="selectedPrincipal.passkeys_has_more" class="warning-panel">{{ ui('More Passkeys exist; this bounded projection has no continuation endpoint, so use cfkanban-admin for the complete list.', '还有更多 Passkey；此有界投影没有 continuation endpoint，请使用 cfkanban-admin 查看完整列表。') }}</p></section><section class="recovery-section"><h3>Grants</h3><div class="data-list"><div v-for="grant in selectedPrincipal.grants" :key="grant.id" class="data-row"><span><strong>{{ grant.project.workspace_key }}/{{ grant.project.key }}</strong><small>{{ grant.role }} · {{ grant.revoked_at ? ui('revoked', '已撤销') : ui('active', 'active') }}</small></span></div></div><p v-if="selectedPrincipal.grants_has_more" class="warning-panel">{{ ui('More Grants exist; this Principal detail projection has no continuation endpoint. Search by Project or use cfkanban-admin.', '还有更多 Grant；Principal 详情投影没有 continuation endpoint。请按 Project 查找或使用 cfkanban-admin。') }}</p></section><form v-if="!selectedPrincipal.is_owner" class="form-stack warning-panel" @submit.prevent="createRecoveryInvite"><h3>{{ ui('Principal recovery invite', 'Principal 恢复邀请') }}</h3><p><strong>{{ ui('Identity takeover warning:', '身份接管警告：') }}</strong> {{ ui('the redeemer becomes this same stable Principal and inherits every existing Grant, assignee relationship, and historical attribution.', '兑换者会成为这个相同的稳定 Principal，并继承其全部既有 Grant、assignee 关系和历史归属。') }}</p><label>{{ ui('Recovery mode', '恢复模式') }}<select v-model="recoveryForm.mode"><option value="rotation">rotation · {{ ui('revoke the credential used to redeem', '仅撤销本次兑换所用旧 Credential') }}</option><option value="full_recovery">full_recovery · {{ ui('revoke all prior credentials', '撤销全部 prior Credentials') }}</option></select></label><p>{{ recoveryForm.mode === 'rotation' ? ui('Rotation preserves every other existing Credential and Passkey.', 'rotation 会保留其他既有 Credential 与 Passkey。') : ui('Full recovery revokes all prior Credentials; existing Grants, assignments, history, and Passkeys remain tied to this Principal.', 'full_recovery 会撤销全部 prior Credential；既有 Grant、assignment、历史和 Passkey 仍绑定该 Principal。') }}</p><label class="confirmation-check"><input v-model="recoveryConfirmed" type="checkbox" />{{ ui('I verified the immutable Principal ID and understand the complete inheritance and revocation scope.', '我已核对不可变 Principal ID，并理解完整继承范围与撤销范围。') }}</label><p v-if="inviteNeedsReview" class="inline-alert" role="alert">{{ inviteRecoveryNotice || ui('Close this dialog and complete the Invitation safety review first.', '请先关闭此弹窗并完成 Invitation 安全复核。') }}</p><button class="primary-button" type="submit" :disabled="busy || !recoveryConfirmed || inviteNeedsReview">{{ ui('Create one-time recovery URL', '创建一次性恢复 URL') }}</button><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved this one-time URL", "我已保存这个一次性 URL") }}</button></form></ModalDialog>
+    <ModalDialog v-if="showGrant && selectedGrantProject" :busy="busy" :title="ui('Project Grants', 'Project Grants')" @close="closeProjectGrants"><p><code>{{ selectedGrantProject.workspaceKey }}/{{ selectedGrantProject.key }}</code> · {{ selectedGrantProject.display_name }}</p><form class="compact-inline-form" @submit.prevent="createGrant"><input v-model="grantForm.principal_id" required placeholder="Principal ID" /><select v-model="grantForm.role"><option value="reader">reader</option><option value="writer">writer</option></select><button class="primary-button" type="submit" :disabled="busy">{{ ui('Grant', '授予') }}</button></form><div class="data-list"><div v-for="grant in projectGrants" :key="grant.id" class="data-row"><span><strong>{{ grant.principal.display_name }}</strong><code>{{ grant.principal_id }}</code></span><select :value="grant.role" :disabled="busy || grant.revoked_at !== null" @change="setGrantRole(grant, ($event.target as HTMLSelectElement).value as 'reader' | 'writer')"><option value="reader">reader</option><option value="writer">writer</option></select><div><button v-if="grant.revoked_at === null" class="danger-text-button" type="button" @click="revokeGrant(grant)">{{ ui('Revoke', '撤销') }}</button><button v-else class="secondary-button" type="button" @click="setGrantRole(grant, grant.role)">{{ ui('Regrant', '重新授予') }}</button></div></div></div><button v-if="projectGrantsNextCursor" class="load-more" type="button" :disabled="projectGrantsLoadingMore" @click="loadMoreProjectGrants">{{ projectGrantsLoadingMore ? '…' : ui('Load more Grants', '加载更多 Grant') }}</button></ModalDialog>
     <ModalDialog v-if="showPolicy" :busy="busy" title="Public Join" @close="closePolicy"><form class="form-stack" @submit.prevent="savePolicy"><div class="warning-panel"><p v-for="paragraph in publicJoinRiskNotice(locale)" :key="paragraph">{{ paragraph }}</p></div><label>{{ ui("Public summary", "公开摘要") }}<textarea v-model="policyForm.public_summary" rows="4" required /></label><div class="form-grid"><label>Issues<input v-model.number="policyForm.issues" type="number" min="1" required /></label><label>Comments<input v-model.number="policyForm.comments" type="number" min="1" required /></label><label>Principals<input v-model.number="policyForm.principals" type="number" min="1" required /></label></div><p v-if="policy" class="muted-copy">{{ ui("Active", "当前 active") }}: {{ policy.active_usage.issues }} issues · {{ policy.active_usage.comments }} comments · {{ policy.active_usage.principals }} principals</p><label class="confirmation-check"><input v-model="policyRiskConfirmed" type="checkbox" />{{ ui('I understand the public writer, quota, recovery, and D1 storage consequences.', '我理解 public writer、quota、恢复与 D1 存储后果。') }}</label><div class="form-actions"><button v-if="policy?.enabled" class="danger-button" type="button" :disabled="busy" @click="disablePolicy">{{ ui("Disable", "关闭") }}</button><button class="primary-button" type="submit" :disabled="busy || policy === null || !policyRiskConfirmed">{{ policy?.enabled ? ui('Update policy', '更新 Policy') : ui('Enable Public Join', '开启 Public Join') }}</button></div></form></ModalDialog>
   </main>
 </template>

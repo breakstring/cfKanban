@@ -12,6 +12,15 @@ import {
 } from "../../apps/web/src/lib/api-core.ts";
 import { presentApiProblem } from "../../apps/web/src/lib/error-presentation.ts";
 import {
+  captureCasConflict,
+  markCasReadbackComplete,
+  markCasReadbackFailed,
+} from "../../apps/web/src/lib/cas-recovery.ts";
+import {
+  parseCompletionRecord,
+  safeArtifactHref,
+} from "../../apps/web/src/lib/completion-record.ts";
+import {
   canConfirmInvitationReview,
   InvitationRecoveryBlockedError,
   InvitationRecoveryCoordinator,
@@ -30,6 +39,11 @@ import { publicJoinInstruction } from "../../apps/web/src/lib/public-join-instru
 import { publicJoinRiskNotice } from "../../apps/web/src/lib/public-join-risk.ts";
 import { ProjectionGeneration } from "../../apps/web/src/lib/projection-generation.ts";
 import {
+  continuationCursor,
+  cursorRequiresRestart,
+  mergePageById,
+} from "../../apps/web/src/lib/pagination.ts";
+import {
   sameSessionBoundary,
   shouldClearAfterSessionRevalidation,
 } from "../../apps/web/src/lib/session-boundary.ts";
@@ -40,6 +54,7 @@ import {
   canRegisterPasskeyFromSession,
   safeWebEntryPath,
 } from "../../apps/web/src/lib/session-capabilities.ts";
+import { WriteFence } from "../../apps/web/src/lib/write-fence.ts";
 
 function apiError(category, code, requestId = "request-test", retryAfter = null, status = 503, overrides = {}) {
   return {
@@ -309,6 +324,71 @@ test("Issue Relation creation requires distinct writable endpoints in one Worksp
   assert.equal(canCreateIssueRelation(source, issueForRelation("CFK-2", "other")), false);
   assert.equal(canCreateIssueRelation(source, issueForRelation("CFK-1", "workspace")), false);
   assert.equal(canCreateIssueRelation(null, issueForRelation("CFK-2", "workspace")), false);
+});
+
+test("shared CAS recovery preserves drafts and remote versions for every mutable Web surface", () => {
+  for (const resource of ["Issue", "Comment", "Label", "Relation", "Workspace", "Project", "Grant", "Public Join Policy"]) {
+    const draft = { action: "update", resource, value: `${resource} local draft` };
+    const conflict = captureCasConflict({
+      body: { code: "VERSION_CONFLICT", details: { current_version: 101 } },
+    }, resource, draft);
+    assert.ok(conflict);
+    assert.equal(conflict.resource, resource);
+    assert.equal(conflict.currentVersion, 101);
+    assert.match(conflict.draft, new RegExp(`${resource} local draft`));
+    assert.equal(conflict.readbackState, "pending");
+    assert.equal(markCasReadbackComplete(conflict).readbackState, "complete");
+    assert.equal(markCasReadbackFailed(conflict).readbackState, "failed");
+  }
+  assert.equal(captureCasConflict({ body: { code: "FORBIDDEN", details: {} } }, "Issue", "draft"), null);
+});
+
+test("cursor pagination reaches item 101 without duplicating prior rows", () => {
+  const first = Array.from({ length: 100 }, (_, index) => ({ id: `item-${index + 1}` }));
+  const second = [{ id: "item-100", refreshed: true }, { id: "item-101" }];
+  const merged = mergePageById(first, second);
+  assert.equal(merged.length, 101);
+  assert.equal(merged.at(-1).id, "item-101");
+  assert.equal(merged.find((item) => item.id === "item-100").refreshed, true);
+  assert.equal(continuationCursor({ has_more: true, items: first, next_cursor: "cursor-100" }), "cursor-100");
+  assert.equal(continuationCursor({ has_more: false, items: second, next_cursor: null }), null);
+  assert.throws(
+    () => continuationCursor({ has_more: true, items: first, next_cursor: null }),
+    /without a continuation cursor/,
+  );
+  assert.equal(cursorRequiresRestart({ body: { code: "CURSOR_SCOPE_MISMATCH" } }), true);
+  assert.equal(cursorRequiresRestart({ body: { code: "INVALID_CURSOR" } }), true);
+  assert.equal(cursorRequiresRestart({ body: { code: "VERSION_CONFLICT" } }), false);
+});
+
+test("write fences reject a concurrent second submission until the first finishes", () => {
+  const fence = new WriteFence();
+  assert.equal(fence.enter("Grant:update"), true);
+  assert.equal(fence.active, true);
+  assert.equal(fence.enter("Grant:update"), false);
+  assert.equal(fence.has("Grant:update"), true);
+  fence.leave("Grant:update");
+  assert.equal(fence.active, false);
+  assert.equal(fence.enter("Grant:update"), true);
+});
+
+test("structured completion records retain history fields and allow only HTTP artifact links", () => {
+  const record = parseCompletionRecord({
+    artifacts: [
+      { kind: "commit", value: "abc123" },
+      { kind: "url", value: "https://example.test/build/1" },
+      { kind: "url", value: "javascript:alert(1)" },
+    ],
+    follow_ups: ["Observe the rollout"],
+    summary: "Released the fix",
+    verification: ["npm run validate"],
+  });
+  assert.ok(record);
+  assert.deepEqual(record.verification, ["npm run validate"]);
+  assert.deepEqual(record.follow_ups, ["Observe the rollout"]);
+  assert.equal(safeArtifactHref(record.artifacts[1]), "https://example.test/build/1");
+  assert.equal(safeArtifactHref(record.artifacts[2]), null);
+  assert.equal(parseCompletionRecord({ summary: "missing arrays" }), null);
 });
 
 test("Markdown rendering escapes raw HTML and unsafe links", () => {
@@ -1393,6 +1473,8 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   const [
     appSource,
     appHeaderSource,
+    casConflictSource,
+    completionRecordSource,
     ownerSource,
     profileSource,
     projectBoardSource,
@@ -1401,6 +1483,8 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   ] = await Promise.all([
     readFile(new URL("../../apps/web/src/App.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/components/AppHeader.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/components/CasConflictNotice.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/components/CompletionRecord.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/OwnerView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/ProfileView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/ProjectBoardView.vue", import.meta.url), "utf8"),
@@ -1433,11 +1517,22 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(ownerSource, /validateResponse: \(value\) => isInvitationCreateWriteResult\(value, record\.body\)/);
   assert.match(ownerSource, /lease\.markCommittedUnavailable\(response\.resource\.id\)/);
   assert.match(ownerSource, /readInvitationsForReview\(false\)/);
+  assert.match(ownerSource, /principalQuery/);
+  assert.match(ownerSource, /project_id/);
+  assert.match(ownerSource, /loadPrincipals\(false\)/);
+  assert.match(ownerSource, /loadMorePrincipalCredentials/);
+  assert.match(ownerSource, /loadMoreProjectGrants/);
+  assert.match(ownerSource, /recoverCasConflict/);
+  assert.match(ownerSource, /writeFence\.enter/);
+  assert.match(ownerSource, /cursorRequiresRestart/);
   assert.match(projectBoardSource, /projectionGeneration\.isCurrent\(generation\)/);
   assert.match(projectBoardSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
   assert.match(projectBoardSource, /deletedIssues\.value = \[\]/);
   assert.match(projectBoardSource, /issue\.restorable && issue\.allowed_actions\.includes\('restore'\)/);
   assert.match(projectBoardSource, /issue\.parent_status\.workspace === "deleted"/);
+  assert.match(projectBoardSource, /deletedIssuesNextCursor/);
+  assert.match(projectBoardSource, /recoverCasConflict/);
+  assert.match(projectBoardSource, /writeFence\.enter/);
   assert.match(projectBoardSource, /void load\(\)/);
   assert.match(issueDetailSource, /projectionGeneration\.isCurrent\(generation\)/);
   assert.match(issueDetailSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
@@ -1448,11 +1543,29 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(issueDetailSource, /void load\(true\)/);
   assert.match(issueDetailSource, /canCreateIssueRelation\(current, target\)/);
   assert.match(issueDetailSource, /!relationTargetCanWrite/);
+  assert.match(issueDetailSource, /CompletionRecord/);
+  assert.match(issueDetailSource, /labelsNextCursor/);
+  assert.match(issueDetailSource, /relationsNextCursor/);
+  assert.match(issueDetailSource, /deletedCommentsNextCursor/);
+  assert.match(issueDetailSource, /deletedLabelsNextCursor/);
+  assert.match(issueDetailSource, /deletedRelationsNextCursor/);
+  assert.match(issueDetailSource, /recoverCasConflict/);
+  assert.match(issueDetailSource, /writeFence\.enter/);
+  assert.match(casConflictSource, /currentVersion/);
+  assert.match(casConflictSource, /不会自动合并或重放/);
+  assert.match(completionRecordSource, /safeArtifactHref/);
+  assert.match(completionRecordSource, /completion\.verification/);
+  assert.match(completionRecordSource, /completion\.artifacts/);
+  assert.match(completionRecordSource, /completion\.follow_ups/);
   assert.match(profileSource, /canRegisterPasskeyFromSession\(props\.session, canUsePasskeys\)/);
+  assert.match(profileSource, /writeFence\.enter/);
+  assert.match(profileSource, /recoverCasConflict/);
   assert.match(publicHomeSource, /safeWebEntryPath\(result\.resource\.entry_path\)/);
   assert.match(publicHomeSource, /caught instanceof ApiProblem && caught\.status === 401/);
   assert.match(publicHomeSource, /copyFallback\.value = \{ key, value \}/);
   assert.match(publicHomeSource, /readonly rows="5"/);
+  assert.match(publicHomeSource, /projectsNextCursor/);
+  assert.match(publicHomeSource, /joinBusy/);
   assert.match(projectBoardSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
   assert.match(issueDetailSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
 });

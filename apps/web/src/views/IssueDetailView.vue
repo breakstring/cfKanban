@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
+import CasConflictNotice from "../components/CasConflictNotice.vue";
+import CompletionRecord from "../components/CompletionRecord.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "../lib/api";
+import {
+  type CasConflictState,
+  captureCasConflict,
+  markCasReadbackComplete,
+  markCasReadbackFailed,
+} from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
+import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { navigate } from "../lib/router";
 import { canCreateIssueRelation } from "../lib/session-capabilities";
+import { WriteFence } from "../lib/write-fence";
 import type {
   IssueComment,
   IssueDetail,
@@ -28,16 +38,25 @@ const emit = defineEmits<{ context: [value: { label: string; role: string }] }>(
 const issue = ref<IssueDetail | null>(null);
 const statuses = ref<ProjectStatusResource[]>([]);
 const labels = ref<LabelResource[]>([]);
+const labelsNextCursor = ref<string | null>(null);
+const labelsLoadingMore = ref(false);
 const deletedLabels = ref<LabelResource[]>([]);
+const deletedLabelsNextCursor = ref<string | null>(null);
 const comments = ref<IssueComment[]>([]);
 const commentNextCursor = ref<string | null>(null);
 const commentLoadingMore = ref(false);
 const deletedComments = ref<IssueComment[]>([]);
+const deletedCommentsNextCursor = ref<string | null>(null);
 const relations = ref<IssueRelation[]>([]);
+const relationsNextCursor = ref<string | null>(null);
+const relationsLoadingMore = ref(false);
 const deletedRelations = ref<IssueRelation[]>([]);
+const deletedRelationsNextCursor = ref<string | null>(null);
+const deletedCollectionLoading = ref<"comments" | "labels" | "relations" | null>(null);
 const loading = ref(true);
 const busy = ref(false);
 const error = ref("");
+const casConflict = ref<CasConflictState | null>(null);
 const editMode = ref(false);
 const edit = ref({ body: "", priority_key: "none" as PriorityKey, title: "" });
 const comment = ref("");
@@ -54,8 +73,12 @@ const relationTarget = ref<IssueDetail | null>(null);
 const assigneePrincipalId = ref("");
 const newLabel = ref({ color: "", name: "" });
 const projectionGeneration = new ProjectionGeneration();
+const writeFence = new WriteFence();
 let issueProjectScope: { projectKey: string; workspaceKey: string } | null = null;
 let loadRequestId = 0;
+let casRecoveryGeneration = 0;
+let casReadback: (() => Promise<void>) | null = null;
+let casReadbackInFlight = false;
 
 const canUpdate = computed(() => issue.value?.allowed_actions.includes("update") ?? false);
 const canDelete = computed(() => issue.value?.allowed_actions.includes("delete") ?? false);
@@ -65,6 +88,17 @@ const statusMap = computed(() => new Map(statuses.value.map((status) => [status.
 
 function statusDisplayName(key: StatusKey): string {
   return statusMap.value.get(key)?.display_name ?? key;
+}
+
+function handleCursorError(caught: unknown, retire: () => void): void {
+  if (cursorRequiresRestart(caught)) {
+    retire();
+    error.value = locale.value === "zh-CN"
+      ? "列表范围或可见权限已变化，旧 cursor 已停用。请刷新当前 Issue 后继续。"
+      : "The list scope or visibility changed, so the old cursor was retired. Refresh this Issue before continuing.";
+    return;
+  }
+  error.value = errorText(caught);
 }
 
 function projectIsActive(scope = issueProjectScope): boolean {
@@ -83,12 +117,17 @@ function clearIssueProjection(): void {
   issue.value = null;
   statuses.value = [];
   labels.value = [];
+  labelsNextCursor.value = null;
   deletedLabels.value = [];
+  deletedLabelsNextCursor.value = null;
   comments.value = [];
   deletedComments.value = [];
+  deletedCommentsNextCursor.value = null;
   commentNextCursor.value = null;
   relations.value = [];
+  relationsNextCursor.value = null;
   deletedRelations.value = [];
+  deletedRelationsNextCursor.value = null;
   relationTarget.value = null;
   loading.value = false;
   commentLoadingMore.value = false;
@@ -98,8 +137,11 @@ function refreshProjectInventory(): void {
   projectionGeneration.invalidate();
   loadRequestId += 1;
   deletedComments.value = [];
+  deletedCommentsNextCursor.value = null;
   deletedLabels.value = [];
+  deletedLabelsNextCursor.value = null;
   deletedRelations.value = [];
+  deletedRelationsNextCursor.value = null;
   relationTarget.value = null;
   showCollaborationRecovery.value = false;
   const current = issue.value;
@@ -135,7 +177,7 @@ function mergeComments(...groups: IssueComment[][]): IssueComment[] {
   ));
 }
 
-async function load(preserveLocalDrafts = editMode.value): Promise<void> {
+async function load(preserveLocalDrafts = editMode.value, throwOnFailure = false): Promise<void> {
   const generation = projectionGeneration.capture();
   const requestId = loadRequestId + 1;
   loadRequestId = requestId;
@@ -168,12 +210,14 @@ async function load(preserveLocalDrafts = editMode.value): Promise<void> {
     emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject(result) });
     statuses.value = statusResult.items;
     labels.value = labelResult.items;
+    labelsNextCursor.value = continuationCursor(labelResult);
     // Remote projections are replaced from the current first page. Local edit,
     // comment, completion, block, and relation drafts live in separate refs and
     // do not require retaining rows that the server no longer returns.
     comments.value = commentResult.items;
-    commentNextCursor.value = commentResult.has_more ? commentResult.next_cursor : null;
+    commentNextCursor.value = continuationCursor(commentResult);
     relations.value = relationResult.items;
+    relationsNextCursor.value = continuationCursor(relationResult);
   } catch (caught) {
     if (requestId !== loadRequestId || !projectionGeneration.isCurrent(generation)) return;
     error.value = errorText(caught);
@@ -181,10 +225,13 @@ async function load(preserveLocalDrafts = editMode.value): Promise<void> {
       issue.value = null;
       statuses.value = [];
       labels.value = [];
+      labelsNextCursor.value = null;
       comments.value = [];
       commentNextCursor.value = null;
       relations.value = [];
+      relationsNextCursor.value = null;
     }
+    if (throwOnFailure) throw caught;
   } finally {
     if (requestId === loadRequestId) loading.value = false;
   }
@@ -201,13 +248,100 @@ async function loadMoreComments(): Promise<void> {
     );
     if (projectionIsCurrent(generation)) {
       comments.value = mergeComments(comments.value, result.items);
-      commentNextCursor.value = result.has_more ? result.next_cursor : null;
+      commentNextCursor.value = continuationCursor(result);
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = errorText(caught);
+    handleCursorError(caught, () => { commentNextCursor.value = null; });
   } finally {
     commentLoadingMore.value = false;
+  }
+}
+
+async function loadMoreLabels(): Promise<void> {
+  const current = issue.value;
+  if (current === null || labelsNextCursor.value === null || labelsLoadingMore.value) return;
+  const generation = projectionGeneration.capture();
+  labelsLoadingMore.value = true;
+  try {
+    const result = await apiRequest<ListResult<LabelResource>>(
+      `/api/v1/workspaces/${encodeURIComponent(current.workspace.key)}/projects/${encodeURIComponent(current.project.key)}/labels?limit=100&cursor=${encodeURIComponent(labelsNextCursor.value)}`,
+    );
+    if (projectionIsCurrent(generation)) {
+      labels.value = mergePageById(labels.value, result.items);
+      labelsNextCursor.value = continuationCursor(result);
+    }
+  } catch (caught) {
+    if (projectionIsCurrent(generation)) handleCursorError(caught, () => { labelsNextCursor.value = null; });
+  } finally {
+    labelsLoadingMore.value = false;
+  }
+}
+
+async function loadMoreRelations(): Promise<void> {
+  const current = issue.value;
+  if (current === null || relationsNextCursor.value === null || relationsLoadingMore.value) return;
+  const generation = projectionGeneration.capture();
+  relationsLoadingMore.value = true;
+  try {
+    const result = await apiRequest<ListResult<IssueRelation>>(
+      `/api/v1/issues/${encodeURIComponent(current.identifier)}/relations?limit=100&cursor=${encodeURIComponent(relationsNextCursor.value)}`,
+    );
+    if (projectionIsCurrent(generation)) {
+      relations.value = mergePageById(relations.value, result.items);
+      relationsNextCursor.value = continuationCursor(result);
+    }
+  } catch (caught) {
+    if (projectionIsCurrent(generation)) handleCursorError(caught, () => { relationsNextCursor.value = null; });
+  } finally {
+    relationsLoadingMore.value = false;
+  }
+}
+
+async function recoverCasConflict(
+  caught: unknown,
+  resource: string,
+  draft: unknown,
+  readback: () => Promise<void> = () => load(true, true),
+): Promise<boolean> {
+  const conflict = captureCasConflict(caught, resource, draft);
+  if (conflict === null) return false;
+  const recoveryGeneration = casRecoveryGeneration + 1;
+  casRecoveryGeneration = recoveryGeneration;
+  casReadback = readback;
+  casConflict.value = conflict;
+  error.value = t("error.conflict");
+  try {
+    await readback();
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
+  } catch {
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(conflict);
+  }
+  return true;
+}
+
+function dismissCasConflict(): void {
+  casRecoveryGeneration += 1;
+  casConflict.value = null;
+  casReadback = null;
+}
+
+async function refreshCasFacts(): Promise<void> {
+  const conflict = casConflict.value;
+  const readback = casReadback;
+  if (conflict === null || readback === null || casReadbackInFlight) return;
+  const recoveryGeneration = casRecoveryGeneration + 1;
+  casRecoveryGeneration = recoveryGeneration;
+  const pending = { ...conflict, readbackState: "pending" as const };
+  casConflict.value = pending;
+  casReadbackInFlight = true;
+  try {
+    await readback();
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(pending);
+  } catch {
+    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(pending);
+  } finally {
+    casReadbackInFlight = false;
   }
 }
 
@@ -224,6 +358,8 @@ async function refreshCurrentFacts(): Promise<void> {
 async function updateIssue(payload: Record<string, unknown>): Promise<void> {
   const current = issue.value;
   if (current === null) return;
+  const fenceKey = `issue-update:${current.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   busy.value = true;
   error.value = "";
@@ -233,18 +369,17 @@ async function updateIssue(payload: Record<string, unknown>): Promise<void> {
       method: "PATCH",
     });
     if (projectionIsCurrent(generation)) {
+      dismissCasConflict();
       issue.value = result.resource;
       editMode.value = false;
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
-      ? t("error.conflict")
-      : errorText(caught);
-    if (caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT") {
-      try { await refreshCurrentFacts(); } catch { /* Keep the last visible fact and the local draft. */ }
+    if (!await recoverCasConflict(caught, current.identifier, payload, refreshCurrentFacts)) {
+      error.value = errorText(caught);
     }
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
@@ -260,6 +395,8 @@ async function saveEdit(): Promise<void> {
 async function runCommand(command: string, payload: Record<string, unknown> = {}): Promise<void> {
   const current = issue.value;
   if (current === null) return;
+  const fenceKey = `issue-command:${current.id}:${command}`;
+  if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   busy.value = true;
   error.value = "";
@@ -269,6 +406,7 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
       { body: { expected_version: current.version, ...payload }, method: "POST" },
     );
     if (!projectionIsCurrent(generation)) return;
+    dismissCasConflict();
     issue.value = result.resource;
     showComplete.value = false;
     showBlocked.value = false;
@@ -284,13 +422,11 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
-      ? t("error.conflict")
-      : errorText(caught);
-    if (caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT") {
-      try { await refreshCurrentFacts(); } catch { /* Keep the command draft for manual recovery. */ }
+    if (!await recoverCasConflict(caught, `${current.identifier} ${command}`, payload, refreshCurrentFacts)) {
+      error.value = errorText(caught);
     }
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
@@ -298,6 +434,8 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
 async function deleteOrRestore(): Promise<void> {
   const current = issue.value;
   if (current === null) return;
+  const fenceKey = `issue-delete-restore:${current.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   busy.value = true;
   try {
@@ -316,8 +454,11 @@ async function deleteOrRestore(): Promise<void> {
     if (projectionIsCurrent(generation)) await load();
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, `${current.identifier} ${current.deleted_at === null ? "delete" : "restore"}`, {
+      action: current.deleted_at === null ? "delete" : "restore",
+    })) error.value = errorText(caught);
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
@@ -325,6 +466,8 @@ async function deleteOrRestore(): Promise<void> {
 async function addComment(): Promise<void> {
   const current = issue.value;
   if (current === null || !comment.value.trim()) return;
+  const fenceKey = `comment-create:${current.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   busy.value = true;
   try {
@@ -339,6 +482,7 @@ async function addComment(): Promise<void> {
     if (!projectionIsCurrent(generation)) return;
     error.value = errorText(caught);
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
@@ -346,6 +490,8 @@ async function addComment(): Promise<void> {
 async function toggleLabel(labelId: string, add: boolean): Promise<void> {
   const current = issue.value;
   if (current === null) return;
+  const fenceKey = `issue-label:${current.id}:${labelId}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/issues/${current.identifier}/commands/${add ? "add-label" : "remove-label"}`, {
@@ -353,13 +499,18 @@ async function toggleLabel(labelId: string, add: boolean): Promise<void> {
     });
     await load();
   } catch (caught) {
-    error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, `${current.identifier} labels`, { action: add ? "add" : "remove", label_id: labelId })) {
+      error.value = errorText(caught);
+    }
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
 
 async function deleteComment(entry: IssueComment): Promise<void> {
+  const fenceKey = `comment-delete:${entry.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   busy.value = true;
   try {
@@ -369,13 +520,17 @@ async function deleteComment(entry: IssueComment): Promise<void> {
       await load();
     }
   } catch (caught) {
-    if (projectionIsCurrent(generation)) error.value = errorText(caught);
+    if (projectionIsCurrent(generation)
+      && !await recoverCasConflict(caught, `Comment ${entry.id}`, { action: "delete" })) {
+      error.value = errorText(caught);
+    }
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
 
-async function loadCollaborationRecovery(): Promise<void> {
+async function loadCollaborationRecovery(throwOnFailure = false): Promise<void> {
   const current = issue.value;
   if (current === null) return;
   const generation = projectionGeneration.capture();
@@ -391,18 +546,84 @@ async function loadCollaborationRecovery(): Promise<void> {
     ]);
     if (projectionIsCurrent(generation)) {
       deletedComments.value = commentResult.items;
+      deletedCommentsNextCursor.value = continuationCursor(commentResult);
       deletedLabels.value = labelResult.items;
+      deletedLabelsNextCursor.value = continuationCursor(labelResult);
       deletedRelations.value = relationResult.items;
+      deletedRelationsNextCursor.value = continuationCursor(relationResult);
       showCollaborationRecovery.value = true;
     }
   } catch (caught) {
     if (projectionIsCurrent(generation)) error.value = errorText(caught);
+    if (throwOnFailure) throw caught;
   } finally {
     busy.value = false;
   }
 }
 
+async function loadMoreDeletedComments(): Promise<void> {
+  const current = issue.value;
+  if (current === null || deletedCommentsNextCursor.value === null || deletedCollectionLoading.value !== null) return;
+  const generation = projectionGeneration.capture();
+  deletedCollectionLoading.value = "comments";
+  try {
+    const result = await apiRequest<ListResult<IssueComment>>(
+      `/api/v1/issues/${encodeURIComponent(current.identifier)}/comments?deleted=only&limit=100&cursor=${encodeURIComponent(deletedCommentsNextCursor.value)}`,
+    );
+    if (projectionIsCurrent(generation)) {
+      deletedComments.value = mergePageById(deletedComments.value, result.items);
+      deletedCommentsNextCursor.value = continuationCursor(result);
+    }
+  } catch (caught) {
+    if (projectionIsCurrent(generation)) handleCursorError(caught, () => { deletedCommentsNextCursor.value = null; });
+  } finally {
+    deletedCollectionLoading.value = null;
+  }
+}
+
+async function loadMoreDeletedLabels(): Promise<void> {
+  const current = issue.value;
+  if (current === null || deletedLabelsNextCursor.value === null || deletedCollectionLoading.value !== null) return;
+  const generation = projectionGeneration.capture();
+  deletedCollectionLoading.value = "labels";
+  try {
+    const result = await apiRequest<ListResult<LabelResource>>(
+      `/api/v1/workspaces/${encodeURIComponent(current.workspace.key)}/projects/${encodeURIComponent(current.project.key)}/labels?deleted=only&limit=100&cursor=${encodeURIComponent(deletedLabelsNextCursor.value)}`,
+    );
+    if (projectionIsCurrent(generation)) {
+      deletedLabels.value = mergePageById(deletedLabels.value, result.items);
+      deletedLabelsNextCursor.value = continuationCursor(result);
+    }
+  } catch (caught) {
+    if (projectionIsCurrent(generation)) handleCursorError(caught, () => { deletedLabelsNextCursor.value = null; });
+  } finally {
+    deletedCollectionLoading.value = null;
+  }
+}
+
+async function loadMoreDeletedRelations(): Promise<void> {
+  const current = issue.value;
+  if (current === null || deletedRelationsNextCursor.value === null || deletedCollectionLoading.value !== null) return;
+  const generation = projectionGeneration.capture();
+  deletedCollectionLoading.value = "relations";
+  try {
+    const result = await apiRequest<ListResult<IssueRelation>>(
+      `/api/v1/issues/${encodeURIComponent(current.identifier)}/relations?deleted=only&limit=100&cursor=${encodeURIComponent(deletedRelationsNextCursor.value)}`,
+    );
+    if (projectionIsCurrent(generation)) {
+      deletedRelations.value = mergePageById(deletedRelations.value, result.items);
+      deletedRelationsNextCursor.value = continuationCursor(result);
+    }
+  } catch (caught) {
+    if (projectionIsCurrent(generation)) handleCursorError(caught, () => { deletedRelationsNextCursor.value = null; });
+  } finally {
+    deletedCollectionLoading.value = null;
+  }
+}
+
 async function restoreComment(entry: IssueComment): Promise<void> {
+  const fenceKey = `comment-restore:${entry.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/comments/${entry.id}/commands/restore`, {
@@ -410,12 +631,18 @@ async function restoreComment(entry: IssueComment): Promise<void> {
     });
     await load();
     await loadCollaborationRecovery();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Comment ${entry.id}`, { action: "restore" }, () => loadCollaborationRecovery(true))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function createLabel(): Promise<void> {
   const current = issue.value;
   if (current === null || !newLabel.value.name.trim()) return;
+  const fenceKey = `label-create:${current.project.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(
@@ -430,18 +657,26 @@ async function createLabel(): Promise<void> {
     );
     newLabel.value = { color: "", name: "" };
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) { error.value = errorText(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function deleteLabel(label: LabelResource): Promise<void> {
+  const fenceKey = `label-delete:${label.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/labels/${label.id}?expected_version=${label.version}`, { method: "DELETE" });
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Label ${label.name}`, { action: "delete", label_id: label.id })) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function restoreLabel(label: LabelResource): Promise<void> {
+  const fenceKey = `label-restore:${label.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/labels/${label.id}/commands/restore`, {
@@ -449,7 +684,11 @@ async function restoreLabel(label: LabelResource): Promise<void> {
     });
     await load();
     await loadCollaborationRecovery();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Label ${label.name}`, { action: "restore", label_id: label.id }, () => loadCollaborationRecovery(true))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function previewRelationTarget(): Promise<void> {
@@ -468,6 +707,8 @@ async function previewRelationTarget(): Promise<void> {
 async function createRelation(): Promise<void> {
   const current = issue.value;
   if (current === null || !relation.value.target_identifier.trim()) return;
+  const fenceKey = `relation-create:${current.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   error.value = "";
   try {
@@ -497,15 +738,18 @@ async function createRelation(): Promise<void> {
     relationTarget.value = null;
     await load();
   } catch (caught) {
-    error.value = caught instanceof ApiProblem && caught.body.code === "VERSION_CONFLICT"
-      ? t("error.conflict")
-      : errorText(caught);
+    if (!await recoverCasConflict(caught, `${current.identifier} Relation`, relation.value)) {
+      error.value = errorText(caught);
+    }
   } finally {
+    writeFence.leave(fenceKey);
     busy.value = false;
   }
 }
 
 async function deleteRelation(item: IssueRelation): Promise<void> {
+  const fenceKey = `relation-delete:${item.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     const params = new URLSearchParams({
@@ -515,10 +759,16 @@ async function deleteRelation(item: IssueRelation): Promise<void> {
     });
     await apiRequest(`/api/v1/relations/${item.id}?${params}`, { method: "DELETE" });
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Relation ${item.id}`, { action: "delete", kind: item.kind })) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function restoreRelation(item: IssueRelation): Promise<void> {
+  const fenceKey = `relation-restore:${item.id}`;
+  if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/relations/${item.id}/commands/restore`, {
@@ -531,7 +781,11 @@ async function restoreRelation(item: IssueRelation): Promise<void> {
     });
     await load();
     await loadCollaborationRecovery();
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) {
+    if (!await recoverCasConflict(caught, `Relation ${item.id}`, { action: "restore", kind: item.kind }, () => loadCollaborationRecovery(true))) {
+      error.value = errorText(caught);
+    }
+  } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function assignByPrincipalId(): Promise<void> {
@@ -561,6 +815,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
     <template v-if="issue">
       <button class="back-link" type="button" @click="backToBoard">← {{ t("action.back") }}</button>
       <p v-if="error" class="inline-alert" role="alert">{{ error }}</p>
+      <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
 
       <header class="issue-title-row">
         <div>
@@ -596,7 +851,8 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
             <div class="comment-stream">
               <article v-for="entry in comments" :key="entry.id" class="comment-entry" :class="{ completion: entry.kind === 'completion' }">
                 <header><strong>{{ entry.author.display_name }}</strong><span>{{ formatTime(entry.created_at) }}</span><span v-if="entry.kind === 'completion'" class="success-chip">{{ locale === "zh-CN" ? "完成记录" : "completion" }}</span><button v-if="entry.allowed_actions.includes('delete')" class="danger-text-button" type="button" :disabled="busy" @click="deleteComment(entry)">{{ t("action.delete") }}</button></header>
-                <MarkdownContent :source="entry.body || ''" />
+                <CompletionRecord v-if="entry.kind === 'completion'" :value="entry.completion"><MarkdownContent :source="entry.body || ''" /></CompletionRecord>
+                <MarkdownContent v-else :source="entry.body || ''" />
               </article>
               <p v-if="!comments.length" class="empty-copy">{{ locale === "zh-CN" ? "还没有评论。" : "No comments yet." }}</p>
             </div>
@@ -631,13 +887,15 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
               <button v-for="label in labels" :key="label.id" class="label-toggle" :class="{ active: issue.labels.some((item) => item.id === label.id) }" type="button" :disabled="!canUpdate || busy" @click="toggleLabel(label.id, !issue.labels.some((item) => item.id === label.id))">{{ label.name }}</button>
               <span v-if="!labels.length" class="muted-copy">—</span>
             </div>
+            <button v-if="labelsNextCursor" class="text-button" type="button" :disabled="labelsLoadingMore" @click="loadMoreLabels">{{ labelsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多 Label" : "Load more labels") }}</button>
           </section>
 
           <section class="sidebar-section">
             <div class="section-heading-row compact"><h2>{{ locale === "zh-CN" ? "Relations（关系）" : "Relations" }}</h2><button v-if="canUpdate" class="text-button" type="button" @click="showRelation = true">+ {{ locale === "zh-CN" ? "添加" : "Add" }}</button></div>
             <div v-for="item in relations" :key="item.id" class="relation-row-wrap"><button class="relation-row" type="button" @click="navigate(`/app/issues/${item.source.identifier === issue.identifier ? item.target.identifier : item.source.identifier}`)"><span>{{ item.kind }}</span><code>{{ item.source.identifier === issue.identifier ? item.target.identifier : item.source.identifier }}</code></button><button v-if="item.allowed_actions.includes('delete')" class="danger-text-button" type="button" :disabled="busy" @click="deleteRelation(item)">{{ t("action.delete") }}</button></div>
             <p v-if="!relations.length" class="muted-copy">—</p>
-            <button v-if="canUpdate" class="text-button" type="button" @click="loadCollaborationRecovery">{{ locale === "zh-CN" ? "恢复已删除的协作项" : "Restore deleted collaboration items" }}</button>
+            <button v-if="relationsNextCursor" class="text-button" type="button" :disabled="relationsLoadingMore" @click="loadMoreRelations">{{ relationsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多 Relation" : "Load more relations") }}</button>
+            <button v-if="canUpdate" class="text-button" type="button" @click="loadCollaborationRecovery()">{{ locale === "zh-CN" ? "恢复已删除的协作项" : "Restore deleted collaboration items" }}</button>
           </section>
         </aside>
       </section>
@@ -659,9 +917,9 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
         <div class="data-list"><div v-for="label in labels" :key="label.id" class="data-row"><span><strong>{{ label.name }}</strong><code>{{ label.color ?? "—" }}</code></span><button v-if="label.allowed_actions.includes('delete')" class="danger-text-button" type="button" :disabled="busy" @click="deleteLabel(label)">{{ t("action.delete") }}</button></div></div>
       </ModalDialog>
       <ModalDialog v-if="showCollaborationRecovery" :busy="busy" :title="locale === 'zh-CN' ? '恢复协作项' : 'Restore collaboration items'" @close="showCollaborationRecovery = false">
-        <section class="recovery-section"><h3>{{ locale === "zh-CN" ? "评论" : "Comments" }}</h3><div class="data-list"><div v-for="entry in deletedComments" :key="entry.id" class="data-row"><span><code>{{ entry.id }}</code><small>{{ formatTime(entry.deleted_at ?? entry.created_at) }}</small></span><button v-if="entry.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreComment(entry)">{{ t("action.restore") }}</button></div><p v-if="!deletedComments.length" class="empty-copy">—</p></div></section>
-        <section class="recovery-section"><h3>Labels</h3><div class="data-list"><div v-for="label in deletedLabels" :key="label.id" class="data-row"><span><strong>{{ label.name }}</strong><code>{{ label.id }}</code></span><button v-if="label.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreLabel(label)">{{ t("action.restore") }}</button></div><p v-if="!deletedLabels.length" class="empty-copy">—</p></div></section>
-        <section class="recovery-section"><h3>Relations</h3><div class="data-list"><div v-for="item in deletedRelations" :key="item.id" class="data-row"><span><strong>{{ item.kind }}</strong><code>{{ item.source.identifier }} → {{ item.target.identifier }}</code></span><button v-if="item.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreRelation(item)">{{ t("action.restore") }}</button></div><p v-if="!deletedRelations.length" class="empty-copy">—</p></div></section>
+        <section class="recovery-section"><h3>{{ locale === "zh-CN" ? "评论" : "Comments" }}</h3><div class="data-list"><div v-for="entry in deletedComments" :key="entry.id" class="data-row"><span><code>{{ entry.id }}</code><small>{{ formatTime(entry.deleted_at ?? entry.created_at) }}</small></span><button v-if="entry.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreComment(entry)">{{ t("action.restore") }}</button></div><p v-if="!deletedComments.length" class="empty-copy">—</p><button v-if="deletedCommentsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedComments">{{ deletedCollectionLoading === "comments" ? "…" : (locale === "zh-CN" ? "加载更多已删除评论" : "Load more deleted comments") }}</button></div></section>
+        <section class="recovery-section"><h3>Labels</h3><div class="data-list"><div v-for="label in deletedLabels" :key="label.id" class="data-row"><span><strong>{{ label.name }}</strong><code>{{ label.id }}</code></span><button v-if="label.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreLabel(label)">{{ t("action.restore") }}</button></div><p v-if="!deletedLabels.length" class="empty-copy">—</p><button v-if="deletedLabelsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedLabels">{{ deletedCollectionLoading === "labels" ? "…" : (locale === "zh-CN" ? "加载更多已删除 Label" : "Load more deleted labels") }}</button></div></section>
+        <section class="recovery-section"><h3>Relations</h3><div class="data-list"><div v-for="item in deletedRelations" :key="item.id" class="data-row"><span><strong>{{ item.kind }}</strong><code>{{ item.source.identifier }} → {{ item.target.identifier }}</code></span><button v-if="item.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreRelation(item)">{{ t("action.restore") }}</button></div><p v-if="!deletedRelations.length" class="empty-copy">—</p><button v-if="deletedRelationsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedRelations">{{ deletedCollectionLoading === "relations" ? "…" : (locale === "zh-CN" ? "加载更多已删除 Relation" : "Load more deleted relations") }}</button></div></section>
       </ModalDialog>
     </template>
   </main>

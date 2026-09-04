@@ -376,6 +376,32 @@ h3 {
   background: var(--color-warning-soft);
 }
 
+.cas-conflict {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.cas-conflict p {
+  margin: 0;
+}
+
+.cas-conflict label,
+.completion-record,
+.completion-record section {
+  display: grid;
+  gap: 8px;
+}
+
+.completion-record p,
+.completion-record ul {
+  margin: 0;
+}
+
+.completion-record ul {
+  padding-left: 20px;
+}
+
 .page-state {
   display: flex;
   gap: 12px;
@@ -1321,6 +1347,13 @@ textarea:disabled {
   border-top: 1px solid var(--color-border);
 }
 
+.principal-search {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.7fr) auto;
+  gap: 10px;
+  margin: 18px 0;
+}
+
 .data-row > span:first-child {
   display: grid;
   gap: 3px;
@@ -1628,6 +1661,7 @@ textarea:disabled {
 
   .form-grid,
   .profile-form,
+  .principal-search,
   .overview-strip,
   .project-table-row,
   .data-row,
