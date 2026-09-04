@@ -26,6 +26,19 @@ function redactSecretValues(value, secrets) {
   return value;
 }
 
+function currentCredentialResult(operation, current) {
+  return {
+    operation,
+    credential: {
+      state: "current",
+      principal_id: current.metadata.principal_id,
+      credential_id: current.metadata.credential_id,
+      fingerprint: current.metadata.fingerprint,
+      secret_values_exposed: false,
+    },
+  };
+}
+
 async function verifyAndPromote({ stateRoot, instanceId, token, operation, fetchImpl, requireOwner = false }) {
   const verification = await trustedApiRequest({
     stateRoot,
@@ -106,7 +119,10 @@ export async function redeemInvitation({
       authorizationToken: current.token,
       fetchImpl,
     });
-    return redactSecretValues(operation, [current.token, body.invite_code]);
+    return currentCredentialResult(
+      redactSecretValues(operation, [current.token, body.invite_code]),
+      current,
+    );
   }
 
   const pending = await loadPendingCredentialSecret({ stateRoot, instanceId });
@@ -153,7 +169,7 @@ export async function redeemPublicJoin({
       authorizationToken: current.token,
       fetchImpl,
     });
-    return redactSecretValues(operation, [current.token]);
+    return currentCredentialResult(redactSecretValues(operation, [current.token]), current);
   }
 
   const pending = await loadPendingCredentialSecret({ stateRoot, instanceId });

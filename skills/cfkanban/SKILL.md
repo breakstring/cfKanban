@@ -47,8 +47,8 @@ The `.mjs` file is plain JavaScript using Node's explicit ES module format. It r
 | Edit, move, reopen, delete, or restore an Issue | `GET/PATCH/DELETE /api/v1/issues/{identifier}` or `POST .../commands/restore` | Read current state/version first; use CAS; read back after the mutation. |
 | Assign, block, unblock, or complete | `POST /api/v1/issues/{identifier}/commands/{assign-to-me|report-blocked|clear-blocked|complete}` | Completion requires its structured summary and creates an immutable completion comment. |
 | Work with Comments, Labels, or relations | Issue Comment endpoints; Project Label endpoints; Issue relation endpoints | Treat each write as a separate atomic operation with its own readback. |
-| Redeem an Invite | `credential prepare` when a new/recovery Credential is needed, then `invite redeem` | The dedicated command injects the pending secret, verifies `/me`, and promotes only after matching readback. |
-| Join a public Project | `credential prepare` when needed, then `public-join redeem` | Submit exactly one `publicId`, one explicit `reader | writer`, and one atomic join. |
+| Redeem an Invite | `credential prepare` when a new/recovery Credential is needed, then `invite redeem` | The dedicated command injects the pending secret, verifies `/me`, and returns the same `{ operation, credential }` shape for new or existing Principals. |
+| Join a public Project | `credential prepare` when needed, then `public-join redeem` | Submit exactly one `publicId`, one explicit `reader | writer`, and one atomic join; the result shape is stable across identity modes. |
 | Open the Web UI | `POST /api/v1/web-launches` through `api request` | Use one explicit Project or Issue target; never send the long-lived Credential to the browser. |
 
 The complete endpoint and recovery guide is [references/workflows.md](references/workflows.md).
