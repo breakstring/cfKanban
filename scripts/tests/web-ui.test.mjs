@@ -784,6 +784,20 @@ test("deployed deployment and joining guides are complete, paired, and non-execu
   assert.match(documents[3], /不可信业务数据/);
 });
 
+test("public Markdown guides declare UTF-8 plain text for browser decoding", async () => {
+  const headers = await readFile(new URL("../../apps/web/public/_headers", import.meta.url), "utf8");
+  for (const name of ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"]) {
+    const block = headers.split("\n\n").find((entry) => entry.startsWith(`/${name}\n`));
+    assert.ok(block, `${name} must have an explicit static header rule`);
+    assert.match(block, /\n  Content-Type: text\/plain; charset=utf-8(?:\n|$)/u, `${name} must not depend on browser encoding guesses`);
+    assert.match(block, /\n  X-Content-Type-Options: nosniff(?:\n|$)/u);
+    const bytes = await readFile(new URL(`../../apps/web/public/${name}`, import.meta.url));
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    assert.ok(source.startsWith("# "), `${name} must remain Markdown source rather than an HTML shell`);
+    if (name.includes("zh-CN")) assert.match(source, /^# 用 Agent (?:部署|加入) cfKanban/u);
+  }
+});
+
 test("unsafe response-loss retry reuses one Idempotency-Key until success", () => {
   let sequence = 0;
   const intents = new PendingIntentKeys(() => `intent-${++sequence}`);

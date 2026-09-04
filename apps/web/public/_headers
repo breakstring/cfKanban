@@ -17,18 +17,22 @@
   Cache-Control: no-store
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff
+  Content-Type: text/plain; charset=utf-8
 
 /deploy-guide.zh-CN.md
   Cache-Control: no-store
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff
+  Content-Type: text/plain; charset=utf-8
 
 /join.md
   Cache-Control: no-store
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff
+  Content-Type: text/plain; charset=utf-8
 
 /join.zh-CN.md
   Cache-Control: no-store
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff
+  Content-Type: text/plain; charset=utf-8

@@ -6,10 +6,10 @@
 
 ## 第一步：确认 `cfkanban` Skill 可用
 
-Codex 可以从不可变的 `0.1.0-alpha.41` ref 安装当前测试 plugin：
+Codex 可以从不可变的 `0.1.0-alpha.42` ref 安装当前测试 plugin：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.41
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.42
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
