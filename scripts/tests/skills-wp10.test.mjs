@@ -47,7 +47,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.16.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.17.json", import.meta.url), "utf8"));
 
 async function fixtureState() {
   const home = await mkdtemp(path.join(os.tmpdir(), "cfkanban-wp10-home-"));
@@ -622,6 +622,89 @@ test("Public Join promotes the Credential ID assigned by the Service", async (t)
   assert.equal(result.credential.credential_id, SERVER_CREDENTIAL_ID);
   assert.equal((await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID })).metadata.credential_id, SERVER_CREDENTIAL_ID);
   assert.equal(JSON.stringify(result).includes(secret.token), false);
+});
+
+test("current Principal Invite and Public Join redemption return the same safe operation envelope", async (t) => {
+  const { home, stateRoot } = await fixtureState();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const pending = await createPendingCredential({
+    stateRoot,
+    home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    operationId: OPERATION_ID,
+    idempotencyKey: "existing-principal-bootstrap",
+    purpose: "owner_bootstrap",
+  });
+  const currentSecret = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
+  await promotePendingCredential({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    fingerprint: pending.fingerprint,
+  });
+  const inviteCode = "current-principal-invite-code";
+  const publicId = "88888888-8888-4888-8888-888888888888";
+  const fetchImpl = async (url) => new Response(JSON.stringify({
+    resource: { route: url.pathname },
+    event_cursor: "2",
+    idempotent_replay: false,
+    unsafe_echo_fixture: url.pathname === "/api/v1/invitations/redeem"
+      ? `${currentSecret.token}:${inviteCode}`
+      : currentSecret.token,
+  }), { status: 200, headers: { "content-type": "application/json" } });
+
+  const invitation = await redeemInvitation({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    inviteCode,
+    redeemAs: "current_principal",
+    idempotencyKey: "current-principal-invite",
+    fetchImpl,
+  });
+  const publicJoin = await redeemPublicJoin({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    publicId,
+    role: "writer",
+    redeemAs: "current_principal",
+    idempotencyKey: "current-principal-public-join",
+    fetchImpl,
+  });
+  for (const result of [invitation, publicJoin]) {
+    assert.equal(result.operation.ok, true);
+    assert.equal(result.credential.state, "current");
+    assert.equal(result.credential.principal_id, PRINCIPAL_ID);
+    assert.equal(result.credential.credential_id, CREDENTIAL_ID);
+    assert.equal(result.credential.secret_values_exposed, false);
+    assert.equal(JSON.stringify(result).includes(currentSecret.token), false);
+    assert.equal(JSON.stringify(result).includes(inviteCode), false);
+  }
+
+  const denied = await redeemPublicJoin({
+    stateRoot,
+    instanceId: INSTANCE_ID,
+    publicId,
+    role: "reader",
+    redeemAs: "current_principal",
+    idempotencyKey: "current-principal-public-join-denied",
+    fetchImpl: async () => new Response(JSON.stringify({
+      code: "FORBIDDEN",
+      category: "authorization",
+      source: "service",
+      request_id: "request-one",
+      retryable: false,
+      recovery: "request_access",
+      details: {},
+    }), { status: 403, headers: { "content-type": "application/json" } }),
+  });
+  assert.equal(denied.operation.ok, false);
+  assert.equal(denied.operation.error.code, "FORBIDDEN");
+  assert.equal(denied.credential.state, "current");
+  assert.equal(denied.credential.credential_id, CREDENTIAL_ID);
 });
 
 test("Owner rotation keeps both current and replacement Credentials inside the bundled tool", async (t) => {
@@ -2125,6 +2208,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.14.md",
     "../../release/notes/0.1.0-alpha.15.md",
     "../../release/notes/0.1.0-alpha.16.md",
+    "../../release/notes/0.1.0-alpha.17.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -2140,6 +2224,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.14.json",
     "../../release/config/0.1.0-alpha.15.json",
     "../../release/config/0.1.0-alpha.16.json",
+    "../../release/config/0.1.0-alpha.17.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

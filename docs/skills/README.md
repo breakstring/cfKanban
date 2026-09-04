@@ -27,13 +27,13 @@ The user does not need to request release verification, read-only preflight, a d
 The first stable release has not been published. Today, Codex users can load the immutable testing tag:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.16
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.17
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
 The testing tag is immutable; use mutable `main` only for deliberate development-snapshot evaluation. After installation, start a new Codex task so the Skills are loaded. Installation only enables discovery; it does not create `.cfkanban/`, select a stable or prerelease deployment, or authorize local/cloud writes.
 
-The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.16/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
+The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.17/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
 
 Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three entrypoints deliberately share the bundled JavaScript source modules under `packages/skill-runtime`; despite the internal directory name, this is not an embedded Node.js executable or runtime distribution. A host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
 

@@ -82,7 +82,7 @@ For every non-idempotent operation, provide an independent `idempotencyKey`. For
 2. Validate the canonical Skill source and private `.cfkanban` storage. Reuse the current Principal when the Invite allows it.
 3. If a new or recovery Credential is required, run `credential prepare` with a stable operation ID and Idempotency Key. The secret is written directly to `pending`, not returned.
 4. Run `invite redeem` with `instanceId`, `inviteCode`, `redeemAs`, and `displayName` only for `new_principal`. For `current_principal`, also provide an explicit Idempotency Key.
-5. The command injects the pending secret when needed, reuses the pending Idempotency Key, verifies the result with `/api/v1/me`, and promotes only a matching Principal/fingerprint. The Service assigns the new Credential ID for Invite and recovery redemption; the verified `/me` ID becomes the local current ID.
+5. The command injects the pending secret when needed, reuses the pending Idempotency Key, verifies the result with `/api/v1/me`, and promotes only a matching Principal/fingerprint. The Service assigns the new Credential ID for Invite and recovery redemption; the verified `/me` ID becomes the local current ID. Both new and current Principal modes return `{ operation, credential }`; inspect `operation.ok` before using its data.
 6. On timeout or response loss, keep the pending state and rerun the same command. Use `credential clear` only after a structured response or readback proves non-commit.
 
 A Project Invite may grant one or more explicit Project roles. A Recovery Invite binds one stable Principal and one immutable `rotation | full_recovery` mode. Never choose identity by display name.
