@@ -1462,7 +1462,48 @@ onUnmounted(() => {
       <p class="muted-copy">{{ ui("Choose one immutable Project and/or one stream. Changing either filter starts a fresh cursor sequence.", "可按一个不可变项目和／或一种类型缩小范围；修改筛选会从新的分页位置重新读取。") }}</p>
       <p v-if="treeTruncated" class="warning-panel">{{ ui("The Project picker shows the first 20 Workspaces and first 20 Projects in each. Use cfkanban-admin with an explicit Project ID for omitted Projects.", "项目选择器只显示前 20 个工作区及每个工作区的前 20 个项目；未显示的项目请让 cfkanban-admin 使用明确的项目 ID。") }}</p>
       <p v-if="auditNextCursor" class="warning-panel">{{ ui("More Audit events are available. Load the next page to continue the sequence; this view never silently treats the first 100 as complete.", "还有更多审计事件。请继续加载后续记录；此页面不会把前 100 条静默当成完整结果。") }}</p>
-      <section class="audit-list"><article v-for="event in audit" :key="event.id"><div><code>{{ event.stream }} · {{ event.type }}</code><strong>{{ event.subject.type }} · {{ event.subject.id }}</strong><small v-if="event.project">{{ event.workspace?.key }}/{{ event.project.key }}</small></div><p>{{ event.actor?.display_name ?? ui('system', '系统') }} · {{ formatTime(event.created_at) }}</p><pre>{{ JSON.stringify(event.payload, null, 2) }}</pre></article><p v-if="audit.length === 0" class="empty-copy">{{ ui("No audit events match these filters", "没有符合当前筛选的审计事件") }}</p></section>
+      <section class="audit-list">
+        <article v-for="event in audit" :key="event.id" class="audit-event">
+          <header class="audit-event-heading">
+            <div class="audit-event-title">
+              <span class="audit-stream-label" :data-stream="event.stream">{{ event.stream === "security" ? ui("Security", "安全") : ui("Domain", "业务") }}</span>
+              <code>{{ event.type }}</code>
+            </div>
+            <time :datetime="event.created_at">{{ formatTime(event.created_at) }}</time>
+          </header>
+          <dl class="audit-event-facts">
+            <div>
+              <dt>{{ ui("Actor", "操作身份") }}</dt>
+              <dd><strong>{{ event.actor?.display_name ?? ui("system", "系统") }}</strong><code v-if="event.actor">{{ event.actor.principal_id }}</code></dd>
+            </div>
+            <div>
+              <dt>{{ ui("Resource", "资源") }}</dt>
+              <dd><strong>{{ event.subject.type }}</strong><code>{{ event.subject.id }}</code></dd>
+            </div>
+            <div v-if="event.project">
+              <dt>{{ ui("Project", "项目") }}</dt>
+              <dd><strong>{{ event.workspace?.key }}/{{ event.project.key }}</strong><code>{{ event.project.id }}</code></dd>
+            </div>
+            <div>
+              <dt>{{ ui("Operation", "操作") }}</dt>
+              <dd><code>{{ event.operation_id }}</code><small>#{{ event.event_index }}</small></dd>
+            </div>
+            <div>
+              <dt>{{ ui("Authorized via", "授权来源") }}</dt>
+              <dd><code>{{ event.authorized_via }}</code><code v-if="event.grant_id">{{ event.grant_id }}</code></dd>
+            </div>
+            <div>
+              <dt>{{ ui("Event", "事件") }}</dt>
+              <dd><code>{{ event.id }}</code></dd>
+            </div>
+          </dl>
+          <details class="audit-event-details">
+            <summary>{{ ui("Payload details", "载荷详情") }}</summary>
+            <pre>{{ JSON.stringify(event.payload, null, 2) }}</pre>
+          </details>
+        </article>
+        <p v-if="audit.length === 0" class="empty-copy">{{ ui("No audit events match these filters", "没有符合当前筛选的审计事件") }}</p>
+      </section>
       <button v-if="auditNextCursor" class="load-more" type="button" :disabled="auditLoadingMore" @click="loadAudit(false)">{{ auditLoadingMore ? "…" : ui("Load more Audit events", "加载更多审计事件") }}</button>
     </template>
 

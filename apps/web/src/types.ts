@@ -207,9 +207,13 @@ export interface PrincipalPasskey extends Passkey {
 }
 
 export interface EventResource {
-  actor: null | { display_name: string; principal_id: string };
+  actor: null | { credential_id: string | null; display_name: string; principal_id: string };
+  authorized_via: "deployment_owner" | "project_grant" | "public_join" | "invitation" | "browser_launch" | "web_session" | "webauthn" | "deployment_recovery";
   created_at: string;
+  event_index: number;
+  grant_id: string | null;
   id: string;
+  operation_id: string;
   payload: unknown;
   project: null | { display_name: string; id: string; key: string };
   stream?: "domain" | "security";

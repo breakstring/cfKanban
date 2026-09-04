@@ -1733,6 +1733,12 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(ownerSource, /params\.set\("project_id", auditProjectId\.value\)/);
   assert.match(ownerSource, /params\.set\("stream", auditStream\.value\)/);
   assert.match(ownerSource, /@submit\.prevent="loadAudit\(true\)"/);
+  assert.match(ownerSource, /class="audit-event-facts"/);
+  assert.match(ownerSource, /event\.operation_id/);
+  assert.match(ownerSource, /event\.event_index/);
+  assert.match(ownerSource, /event\.authorized_via/);
+  assert.match(ownerSource, /class="audit-event-details"/);
+  assert.match(ownerSource, /<summary>\{\{ ui\("Payload details", "载荷详情"\) \}\}<\/summary>/);
   assert.match(ownerSource, /loadMorePrincipalCredentials/);
   assert.match(ownerSource, /loadMoreProjectGrants/);
   assert.match(ownerSource, /recoverCasConflict/);
