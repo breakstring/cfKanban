@@ -272,6 +272,19 @@ test("Owner control-plane access requires both Owner identity and instance scope
   })), false);
 });
 
+test("Web input patterns compile with the HTML pattern v flag", async () => {
+  const sources = await Promise.all([
+    readFile(new URL("../../apps/web/src/views/IssueDetailView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/OwnerView.vue", import.meta.url), "utf8"),
+  ]);
+  const patterns = sources.flatMap((source) => [...source.matchAll(/pattern="([^"]+)"/gu)]
+    .map((match) => match[1]));
+  assert.ok(patterns.length > 0, "the regression must exercise actual Web pattern attributes");
+  for (const pattern of patterns) {
+    assert.doesNotThrow(() => new RegExp(`^(?:${pattern})$`, "v"), `invalid HTML pattern: ${pattern}`);
+  }
+});
+
 test("Passkey registration requires a supporting browser and Credential-source Session", () => {
   assert.equal(canRegisterPasskeyFromSession(webSession(), true), true);
   assert.equal(canRegisterPasskeyFromSession(webSession(), false), false);
@@ -704,7 +717,7 @@ test("deployed deployment and joining guides are complete, paired, and non-execu
     "utf8",
   )));
   for (const [index, document] of documents.entries()) {
-    assert.match(document, /0\.1\.0-alpha\.36/);
+    assert.match(document, /0\.1\.0-alpha\.37/);
     assert.match(document, /cfkanban-agent-skills@cfkanban/);
     assert.doesNotMatch(document, /curl[^\n]*\|\s*(?:ba)?sh/iu, `${paths[index]} must not teach pipe-to-shell`);
   }
