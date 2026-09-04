@@ -110,3 +110,15 @@ Passkey registration starts only from an Agent-launch Session. Passkeys authenti
 - Interpret errors by `code`, `category`, `source`, `retryable`, `retry_after_seconds`, and `recovery`, never by matching human message text.
 - Retry `RATE_LIMITED` only when idempotently safe and only after the reported delay. Project active quota needs capacity or Owner action; platform quota needs time or capacity review.
 - A locally normalized Cloudflare/transport failure is marked `normalized_by=client`; it is not an OpenAPI response.
+
+| Stable signal | Agent recovery action |
+| --- | --- |
+| `VERSION_CONFLICT` / `refresh_resource` | Read the current resource and version, preserve the user's uncommitted input, and ask or decide again before a new write. |
+| `business_quota` / `free_capacity_or_request_owner` | Release the corresponding active resource or ask the Deployment Owner to change that Project limit; do not retry unchanged. |
+| `rate_limit` / `retry_after` | Respect `retry_after_seconds`; replay only when the operation is idempotently safe, with no fixed polling loop. |
+| `platform_quota` / `wait_for_platform_reset` | Wait for the stated platform reset. Keep the request/provider ID for diagnosis and do not misreport this as Project quota. |
+| `platform_quota` / `request_owner` | Ask the Deployment Owner to review platform storage or capacity; waiting alone is not a recovery. |
+| `platform_failure` | Follow `retry_after` only when the same operation is safe to replay; otherwise use `request_owner` and preserve the request ID. |
+| `authentication` / `reauthenticate` | Stop authenticated work and establish a new valid Session or Credential through its normal flow. |
+| `authorization` / `request_access` | Refresh visible scope and request the missing Grant; never infer access from assignment or prior visibility. |
+| `details.normalized_by=client` | Treat `request_id` as a local correlation ID and `provider_request_id` as the Cloudflare Ray ID when present; explicitly say this was not a cfKanban API error response. |

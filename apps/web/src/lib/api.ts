@@ -94,11 +94,15 @@ function normalizedHttpFailure(response: Response, text: string, requestId: stri
   return new ApiProblem(normalized.status, normalized.body, normalized.retryAfter);
 }
 
-function notifyAuthorizationFailure(status: number, body: ApiErrorBody): void {
+function notifyAuthorizationFailure(problem: ApiProblem): void {
   if (typeof window === "undefined") return;
-  if (!isVerifiedServiceAccessFailure(status, body)) return;
-  if (status === 401) window.dispatchEvent(new CustomEvent("cfkanban:session-invalid"));
-  if (status === 403) window.dispatchEvent(new CustomEvent("cfkanban:authorization-stale"));
+  if (!isVerifiedServiceAccessFailure(problem.status, problem.body)) return;
+  if (problem.status === 401) {
+    window.dispatchEvent(new CustomEvent("cfkanban:session-invalid", { detail: problem }));
+  }
+  if (problem.status === 403) {
+    window.dispatchEvent(new CustomEvent("cfkanban:authorization-stale", { detail: problem }));
+  }
 }
 
 export class ApiProblem extends Error {
@@ -191,12 +195,12 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
         payload = await response.json();
       } catch {
         const problem = normalizedHttpFailure(response, "", localRequestId);
-        notifyAuthorizationFailure(problem.status, problem.body);
+        notifyAuthorizationFailure(problem);
         throw problem;
       }
     } else if (response.status !== 204) {
       const problem = normalizedHttpFailure(response, (await response.text()).slice(0, 16_384), localRequestId);
-      notifyAuthorizationFailure(problem.status, problem.body);
+      notifyAuthorizationFailure(problem);
       throw problem;
     }
 
@@ -207,7 +211,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
           (JSON.stringify(payload) ?? "").slice(0, 16_384),
           localRequestId,
         );
-        notifyAuthorizationFailure(problem.status, problem.body);
+        notifyAuthorizationFailure(problem);
         throw problem;
       }
       const headerRetryAfter = retryAfterSeconds(response.headers.get("retry-after"));
@@ -217,9 +221,9 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
         ? payload.retry_after_seconds
         : null;
       const retryAfter = headerRetryAfter ?? bodyRetryAfter;
-      const body = payload;
-      notifyAuthorizationFailure(response.status, body);
-      throw new ApiProblem(response.status, body, retryAfter);
+      const problem = new ApiProblem(response.status, payload, retryAfter);
+      notifyAuthorizationFailure(problem);
+      throw problem;
     }
     if (options.validateResponse !== undefined && !options.validateResponse(payload)) {
       throw new ApiProblem(503, normalizedFailure(crypto.randomUUID(), {

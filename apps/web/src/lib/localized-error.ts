@@ -43,7 +43,7 @@ export function useLocalizedError(): LocalizedErrorState {
   const error = computed(() => parts.value
     .map((part) => renderPart(part, locale.value))
     .filter(Boolean)
-    .join(" "));
+    .join("\n\n"));
 
   return {
     appendError(value) {

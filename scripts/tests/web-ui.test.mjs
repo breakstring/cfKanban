@@ -4,6 +4,11 @@ import test from "node:test";
 import { build } from "esbuild";
 
 import {
+  normalizeNetworkFailure as normalizeSkillNetworkFailure,
+  normalizeResponse as normalizeSkillResponse,
+} from "../../packages/skill-runtime/src/transport.mjs";
+
+import {
   normalizeOuterHttp,
   normalizedFailure,
   PendingIntentExpiredError,
@@ -66,6 +71,7 @@ function apiError(category, code, requestId = "request-test", retryAfter = null,
       recovery: category === "rate_limit" ? "retry_after" : "request_owner",
       request_id: requestId,
       retryable: category === "rate_limit",
+      source: "service",
       ...overrides,
     },
     retryAfter,
@@ -512,10 +518,12 @@ test("current errors and recovery text react to locale changes without losing st
 
 test("rate limit recovery includes the verified Retry-After value", () => {
   const limited = apiError("rate_limit", "RATE_LIMITED", "request-rate", 17, 429);
-  assert.equal(
-    presentApiProblem(limited, "en", translate),
-    "Too many requests. Wait before trying again. Try again in 17 seconds.",
-  );
+  const presentation = presentApiProblem(limited, "en", translate);
+  assert.match(presentation, /Try again in 17 seconds/);
+  assert.match(presentation, /Retry-After: 17 seconds/);
+  assert.match(presentation, /RATE_LIMITED/);
+  assert.match(presentation, /retry_after/);
+  assert.match(presentation, /request-rate/);
 });
 
 test("Retry-After rejects unbounded numeric values", () => {
@@ -537,6 +545,63 @@ test("platform quota presentation distinguishes reset and Owner recovery", () =>
   assert.match(presentApiProblem(daily, "en", translate), /reset at 2026-08-31/);
   assert.match(presentApiProblem(storage, "en", translate), /Deployment Owner/);
   assert.notEqual(presentApiProblem(daily, "zh-CN", translate), presentApiProblem(storage, "zh-CN", translate));
+});
+
+test("error presentation exposes stable diagnostics and localized recovery for the complete matrix", () => {
+  const cases = [
+    apiError("conflict", "VERSION_CONFLICT", "request-conflict", null, 409, {
+      details: { current_version: 7 },
+      recovery: "refresh_resource",
+      retryable: false,
+    }),
+    apiError("business_quota", "PROJECT_ISSUE_LIMIT_REACHED", "request-quota", null, 409, {
+      details: { current_usage: 50, limit: 50 },
+      recovery: "free_capacity_or_request_owner",
+      retryable: false,
+    }),
+    apiError("authentication", "UNAUTHORIZED", "request-session", null, 401, {
+      recovery: "reauthenticate",
+      retryable: false,
+    }),
+    apiError("authorization", "FORBIDDEN", "request-access", null, 403, {
+      recovery: "request_access",
+      retryable: false,
+    }),
+    apiError("platform_failure", "PLATFORM_UNAVAILABLE", "request-platform", null, 503, {
+      recovery: "request_owner",
+      retryable: false,
+      source: "cloudflare_platform",
+    }),
+  ];
+  for (const entry of cases) {
+    for (const selectedLocale of ["en", "zh-CN"]) {
+      const presentation = presentApiProblem(
+        entry,
+        selectedLocale,
+        (key) => selectedLocale === "zh-CN" ? "本地化错误说明。" : translate(key),
+      );
+      assert.match(presentation, new RegExp(entry.body.code));
+      assert.match(presentation, new RegExp(entry.body.category));
+      assert.match(presentation, new RegExp(entry.body.recovery));
+      assert.match(presentation, new RegExp(entry.body.request_id));
+      assert.match(presentation, /retryable=(?:true|false)/);
+      assert.doesNotMatch(presentation, /Raw server wording/);
+      if (selectedLocale === "zh-CN") assert.match(presentation, /诊断信息.*恢复/s);
+      else assert.match(presentation, /Diagnostic facts.*Recovery/s);
+    }
+  }
+
+  const normalized = apiError("rate_limit", "RATE_LIMITED", "local-correlation", 9, 429, {
+    details: { normalized_by: "client", provider_request_id: "ray-test" },
+    recovery: "retry_after",
+    retryable: true,
+    source: "cloudflare_platform",
+  });
+  const chinese = presentApiProblem(normalized, "zh-CN", () => "请求过于频繁。");
+  assert.match(chinese, /由当前浏览器归一化/);
+  assert.match(chinese, /非 cfKanban API 响应/);
+  assert.match(chinese, /本地关联 ID: local-correlation/);
+  assert.match(chinese, /Cloudflare Ray ID: ray-test/);
 });
 
 test("Public Join Agent instruction never embeds untrusted Project text", () => {
@@ -577,12 +642,13 @@ test("Public Join consent covers every quota, recovery, and rejoin consequence i
   ]) assert.match(chinese, phrase);
 });
 
-test("Chinese public-home copy states the Agent-first product value without distribution jargon", async () => {
+test("public-home copy keeps the Agent-first promise playful and concrete", async () => {
   const source = await readFile(new URL("../../apps/web/src/lib/i18n.ts", import.meta.url), "utf8");
   const chineseBlock = source.match(/"zh-CN": \{([\s\S]*?)\n  \},\n\} as const;/)?.[1];
   assert.ok(chineseBlock);
-  assert.match(chineseBlock, /"home\.heading": "让 Agent 推进，凭事实协作。"/);
-  assert.match(chineseBlock, /Agent 在明确权限内发现、分配、推进和交接工作/);
+  assert.match(chineseBlock, /"home\.heading": "活儿让 Agent 干，进度不用猜。"/);
+  assert.match(chineseBlock, /把活儿交给 Agent，把状态、责任和结果留在同一块看板上/);
+  assert.match(source, /"home\.heading": "Let Agents do the work\. Skip the guesswork\."/);
   assert.match(chineseBlock, /从项目声明的官方来源安装或更新 cfKanban 技能/);
   assert.doesNotMatch(chineseBlock, /canonical/i);
 });
@@ -1553,6 +1619,62 @@ test("a Worker error envelope is trusted only after its complete schema and HTTP
   }
 });
 
+test("verified Session and Grant failures carry the same ApiProblem into recovery events", async () => {
+  const { ApiProblem, apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const eventTarget = new EventTarget();
+  globalThis.window = eventTarget;
+  try {
+    const cases = [
+      {
+        category: "authentication",
+        code: "UNAUTHORIZED",
+        eventName: "cfkanban:session-invalid",
+        recovery: "reauthenticate",
+        requestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        status: 401,
+      },
+      {
+        category: "authorization",
+        code: "FORBIDDEN",
+        eventName: "cfkanban:authorization-stale",
+        recovery: "request_access",
+        requestId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        status: 403,
+      },
+    ];
+    for (const entry of cases) {
+      let eventProblem = null;
+      eventTarget.addEventListener(entry.eventName, (event) => { eventProblem = event.detail; }, { once: true });
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        category: entry.category,
+        code: entry.code,
+        details: {},
+        message: "Safe service explanation.",
+        recovery: entry.recovery,
+        request_id: entry.requestId,
+        retryable: false,
+        source: "service",
+      }), {
+        headers: { "content-type": "application/json", "x-request-id": entry.requestId },
+        status: entry.status,
+      });
+      let caughtProblem = null;
+      await assert.rejects(apiRequest(`/test/${entry.status}`), (error) => {
+        caughtProblem = error;
+        return error instanceof ApiProblem;
+      });
+      assert.equal(eventProblem, caughtProblem);
+      assert.equal(eventProblem.body.request_id, entry.requestId);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
+
 test("high-risk Session and Invitation recovery helpers remain wired into the Vue views", async () => {
   const [
     appSource,
@@ -1704,4 +1826,59 @@ test("client transport normalizes Cloudflare outer errors without prose branchin
   assert.equal(network.source, "client_transport");
   assert.equal(network.retryable, true);
   assert.equal(network.details?.normalized_by, "client");
+});
+
+test("Web and Skill transports keep one outer-error decision matrix", async () => {
+  const cases = [
+    {
+      body: "<html>Error code: 1027</html>",
+      headers: { "cf-ray": "ray-parity-1027", "content-type": "text/html", server: "cloudflare" },
+      status: 500,
+    },
+    {
+      body: "limited",
+      headers: { "cf-ray": "ray-parity-429", "content-type": "text/html", "retry-after": "21" },
+      status: 429,
+    },
+    {
+      body: "maintenance",
+      headers: { "content-type": "text/html" },
+      status: 503,
+    },
+    {
+      body: JSON.stringify({ outer: "unverified" }),
+      headers: { "content-type": "application/json" },
+      status: 403,
+    },
+  ];
+  for (const entry of cases) {
+    const web = normalizeOuterHttp(entry.status, new Headers(entry.headers), entry.body, "web-correlation");
+    const skill = await normalizeSkillResponse(new Response(entry.body, {
+      headers: entry.headers,
+      status: entry.status,
+    }));
+    assert.equal(skill.status, web.status);
+    for (const field of ["code", "category", "source", "retryable", "recovery"]) {
+      assert.equal(skill.error[field], web.body[field], `${field} drifted for HTTP ${entry.status}`);
+    }
+    assert.equal(skill.error.retry_after_seconds, web.body.retry_after_seconds);
+    assert.equal(skill.error.details.normalized_by, "client");
+    assert.equal(web.body.details.normalized_by, "client");
+    assert.equal(
+      skill.error.details.provider_request_id,
+      web.body.details.provider_request_id,
+    );
+  }
+
+  const webNetwork = normalizedFailure("web-network", {
+    category: "platform_failure",
+    code: "PLATFORM_UNAVAILABLE",
+    recovery: "retry_after",
+    retryable: true,
+    source: "client_transport",
+  });
+  const skillNetwork = normalizeSkillNetworkFailure(new TypeError("network failed")).error;
+  for (const field of ["code", "category", "source", "retryable", "recovery"]) {
+    assert.equal(skillNetwork[field], webNetwork[field], `${field} drifted for a network failure`);
+  }
 });

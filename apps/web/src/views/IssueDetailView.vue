@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import CompletionRecord from "../components/CompletionRecord.vue";
+import ErrorNotice from "../components/ErrorNotice.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
@@ -844,7 +845,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
     <PageState :loading="loading" :error="error && !issue ? error : ''" :action-label="t('action.refresh')" @retry="load" />
     <template v-if="issue">
       <button class="back-link" type="button" @click="backToBoard">← {{ t("action.back") }}</button>
-      <p v-if="error" class="inline-alert" role="alert">{{ error }}</p>
+      <ErrorNotice v-if="error" :error="error" />
       <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
 
       <header class="issue-title-row">

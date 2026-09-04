@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
+import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents } from "../lib/api";
@@ -1381,7 +1382,7 @@ onUnmounted(() => {
       <div><p class="eyebrow">{{ ui("Deployment Owner", "部署实例所有者") }}</p><h1>{{ t("admin.title") }}</h1></div>
       <nav class="owner-tabs" :aria-label="ui('Owner sections', '所有者分区')"><button v-for="tab in tabs" :key="tab.key" type="button" :class="{ active: section === tab.key }" @click="navigate(sectionPath(tab.key))">{{ tab.label }}</button></nav>
     </header>
-    <p v-if="error" class="inline-alert" role="alert">{{ error }}</p>
+    <ErrorNotice v-if="error" :error="error" />
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 

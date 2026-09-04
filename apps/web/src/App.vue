@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import AppHeader from "./components/AppHeader.vue";
+import ErrorNotice from "./components/ErrorNotice.vue";
 import LocaleSwitch from "./components/LocaleSwitch.vue";
 import PageState from "./components/PageState.vue";
 import { ApiProblem, apiRequest } from "./lib/api";
@@ -154,8 +155,15 @@ async function logout(): Promise<void> {
   navigate("/");
 }
 
-function sessionInvalid(): void {
-  if (authenticatedRoute.value) clearSession(true);
+function eventProblem(event: Event): ApiProblem | null {
+  return event instanceof CustomEvent && event.detail instanceof ApiProblem ? event.detail : null;
+}
+
+function sessionInvalid(event: Event): void {
+  if (!authenticatedRoute.value) return;
+  const problem = eventProblem(event);
+  clearSession(true);
+  if (problem !== null) setSessionError(problem);
 }
 
 function authorizationStale(): void {
@@ -216,8 +224,8 @@ watch(currentPath, () => {
     <main v-else-if="!session" class="session-gate">
       <div class="session-message">
         <p class="eyebrow">{{ locale === "zh-CN" ? "网页会话" : "Web Session" }}</p>
-        <h1>{{ sessionEnded ? t("error.session") : (locale === "zh-CN" ? "无法验证会话" : "Session could not be verified") }}</h1>
-        <p v-if="sessionError" class="inline-alert" role="alert">{{ sessionError }}</p>
+        <h1>{{ sessionEnded ? t("session.title") : (locale === "zh-CN" ? "无法验证会话" : "Session could not be verified") }}</h1>
+        <ErrorNotice v-if="sessionError" :error="sessionError" />
         <p>{{ locale === "zh-CN" ? "请返回实例首页使用通行密钥，或让智能体创建新的浏览器启动链接。" : "Return home to use a Passkey, or ask your Agent for a new Browser Launch." }}</p>
         <div class="form-actions">
           <button class="secondary-button" type="button" @click="loadSession(true)">{{ t("action.refresh") }}</button>
@@ -228,7 +236,7 @@ watch(currentPath, () => {
     </main>
 
     <template v-else>
-      <p v-if="sessionError" class="inline-alert" role="alert">{{ sessionError }}</p>
+      <ErrorNotice v-if="sessionError" :error="sessionError" />
       <ProjectSelectionView v-if="route.kind === 'selection'" :key="`${sessionViewGeneration}:${currentPath}`" :session="session" />
       <ProjectBoardView
         v-else-if="route.kind === 'project'"

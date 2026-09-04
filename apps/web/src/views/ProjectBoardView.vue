@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
+import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest } from "../lib/api";
@@ -436,7 +437,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
       </div>
     </header>
 
-    <p v-if="error" class="inline-alert" role="alert">{{ error }}</p>
+    <ErrorNotice v-if="error" :error="error" />
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 

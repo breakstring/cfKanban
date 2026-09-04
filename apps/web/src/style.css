@@ -370,6 +370,42 @@ h3 {
   background: var(--color-danger-soft);
 }
 
+.error-notice {
+  width: 100%;
+}
+
+.error-entry {
+  display: grid;
+  gap: 8px;
+}
+
+.error-entry + .error-entry {
+  padding-top: 10px;
+  margin-top: 10px;
+  border-top: 1px solid #edbdb8;
+}
+
+.error-entry p,
+.error-diagnostics {
+  margin: 0;
+}
+
+.error-diagnostics summary {
+  width: fit-content;
+  color: #63342f;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.error-diagnostics p {
+  padding-top: 8px;
+  color: #63342f;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
 .warning-panel {
   border: 1px solid #e9c78f;
   color: #754500;
