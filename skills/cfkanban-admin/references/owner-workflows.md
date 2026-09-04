@@ -23,22 +23,22 @@ Use it with `node scripts/cfkanban-tool.mjs api request`. The command reads the 
 Deployment creates no application container automatically. For the common first-use request:
 
 1. inspect local state and verify `/api/v1/me` returns the expected stable Principal with `is_owner=true`;
-2. obtain an explicit immutable Workspace key and display name from the user, preview the write, create it with one Idempotency Key, and read it back;
-3. obtain an explicit immutable Project key and display name, create it inside that Workspace with a different Idempotency Key, then read the Project and its fixed five statuses back;
+2. obtain an explicit immutable Workspace key and display name from the user, normalize the chosen key to lowercase, validate `[a-z][a-z0-9-]{1,31}`, show the canonical key in the preview, create it with one Idempotency Key, and read it back;
+3. obtain an explicit immutable Project key and display name, normalize the chosen key to uppercase, validate `[A-Z][A-Z0-9-]{1,15}`, show the canonical key in the preview, create it inside that Workspace with a different Idempotency Key, then read the Project and its fixed five statuses back;
 4. create an Owner Browser Launch with `target.kind=admin` and return the one-time URL only to the user;
 5. offer separate next actions: use `cfkanban` to create the first Issue, create an explicit-role Invite, or configure Public Join and all three quotas.
 
-Do not guess keys from a Repo, path, Git remote, hostname, or display name. Do not silently create a default Project, Label, Grant, Issue, Invite, or Public Join policy. If Workspace creation succeeds and Project creation fails, report the Workspace as committed rather than claiming the sequence rolled back.
+Accept user-chosen keys in either letter case and do not ask the user to retype them only for casing. Case normalization is not permission to slugify, derive, or otherwise rewrite a key. Do not guess keys from a Repo, path, Git remote, hostname, or display name. Do not silently create a default Project, Label, Grant, Issue, Invite, or Public Join policy. If Workspace creation succeeds and Project creation fails, report the Workspace as committed rather than claiming the sequence rolled back.
 
 ## Administration endpoint map
 
 | Task | Method and path | Required checks |
 | --- | --- | --- |
 | Verify Owner | `GET /api/v1/me` | Require stable Principal ID and `is_owner=true`. |
-| List/create Workspaces | `GET/POST /api/v1/workspaces` | Creation uses explicit immutable key, display name, and Idempotency Key. |
+| List/create Workspaces | `GET/POST /api/v1/workspaces` | Lowercase and validate the explicit immutable key before preview/submission; use a display name and Idempotency Key. |
 | Read/rename/pause Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}` | Use current version for rename/delete. |
 | Restore Workspace | `POST .../commands/restore` | Show every enabled Public Join Project that will resume first. |
-| List/create Projects | `GET/POST /api/v1/workspaces/{workspace_key}/projects` | Creation does not imply Grants, Labels, or another Project. |
+| List/create Projects | `GET/POST /api/v1/workspaces/{workspace_key}/projects` | Uppercase and validate the explicit immutable key before preview/submission; creation does not imply Grants, Labels, or another Project. |
 | Read/rename/pause Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}/projects/{project_key}` | Project key never changes. |
 | Restore Project | `POST .../commands/restore` | Show its resumed Public Join role/summary/limits. |
 | Read/rename status display | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Stable five keys and semantics cannot change. |

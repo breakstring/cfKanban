@@ -23,22 +23,22 @@
 部署不会自动创建应用容器。处理常见的首次使用请求时：
 
 1. 检查本地状态，并验证 `/api/v1/me` 返回预期稳定 Principal 且 `is_owner=true`；
-2. 从用户取得明确、不可变的 Workspace key 和 display name，预览写入，用一个 Idempotency Key 创建，再读回；
-3. 取得明确、不可变的 Project key 和 display name，用另一个 Idempotency Key 在该 Workspace 中创建，再读回 Project 和固定五个 statuses；
+2. 从用户取得明确、不可变的 Workspace key 和 display name，把所选 key 规范为小写，按 `[a-z][a-z0-9-]{1,31}` 校验，在预览中展示 canonical key，用一个 Idempotency Key 创建，再读回；
+3. 取得明确、不可变的 Project key 和 display name，把所选 key 规范为大写，按 `[A-Z][A-Z0-9-]{1,15}` 校验，在预览中展示 canonical key，用另一个 Idempotency Key 在该 Workspace 中创建，再读回 Project 和固定五个 statuses；
 4. 使用 `target.kind=admin` 创建 Owner Browser Launch，只把一次性 URL 返回给用户；
 5. 提供彼此独立的后续选项：用 `cfkanban` 创建第一条 Issue、创建显式 role Invite，或配置 Public Join 与全部三项 quotas。
 
-不得从 Repo、path、Git remote、hostname 或 display name 猜测 key；不得静默创建默认 Project、Label、Grant、Issue、Invite 或 Public Join policy。如果 Workspace 创建成功而 Project 创建失败，必须把 Workspace 报告为已提交，不能声称整组操作已回滚。
+用户选择的 key 可以使用任意字母大小写，不能仅因大小写要求用户重新输入。大小写规范化不代表可以 slugify、派生或以其他方式改写 key。不得从 Repo、path、Git remote、hostname 或 display name 猜测 key；不得静默创建默认 Project、Label、Grant、Issue、Invite 或 Public Join policy。如果 Workspace 创建成功而 Project 创建失败，必须把 Workspace 报告为已提交，不能声称整组操作已回滚。
 
 ## 管理端 endpoint 对照
 
 | 任务 | Method 与 path | 必要检查 |
 | --- | --- | --- |
 | 验证 Owner | `GET /api/v1/me` | 要求稳定 Principal ID 与 `is_owner=true`。 |
-| 列出/创建 Workspace | `GET/POST /api/v1/workspaces` | 创建时提交显式 immutable key、display name 与 Idempotency Key。 |
+| 列出/创建 Workspace | `GET/POST /api/v1/workspaces` | 预览/提交前把显式 immutable key 规范为小写并校验；同时提交 display name 与 Idempotency Key。 |
 | 读取/改名/暂停 Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}` | 改名/删除使用 current version。 |
 | 恢复 Workspace | `POST .../commands/restore` | 先展示所有会恢复公开的 enabled Public Join Projects。 |
-| 列出/创建 Project | `GET/POST /api/v1/workspaces/{workspace_key}/projects` | 创建不隐含 Grant、Label 或另一个 Project。 |
+| 列出/创建 Project | `GET/POST /api/v1/workspaces/{workspace_key}/projects` | 预览/提交前把显式 immutable key 规范为大写并校验；创建不隐含 Grant、Label 或另一个 Project。 |
 | 读取/改名/暂停 Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}/projects/{project_key}` | Project key 永不修改。 |
 | 恢复 Project | `POST .../commands/restore` | 展示会恢复的 Public Join role/summary/limits。 |
 | 读取/修改 status 显示名 | `GET .../statuses`、`PATCH .../statuses/{status_key}` | 固定五个 key 和语义不能改变。 |
