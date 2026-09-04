@@ -352,7 +352,13 @@ test("Issue Relation creation requires distinct writable endpoints in one Worksp
 });
 
 test("shared CAS recovery preserves drafts and remote versions for every mutable Web surface", () => {
-  for (const code of ["VERSION_CONFLICT", "RESOURCE_DELETED", "RESOURCE_NOT_DELETED"]) {
+  for (const code of [
+    "VERSION_CONFLICT",
+    "RESOURCE_DELETED",
+    "RESOURCE_NOT_DELETED",
+    "GRANT_REVOKED",
+    "PUBLIC_JOIN_DISABLED",
+  ]) {
     for (const resource of ["Issue", "Comment", "Label", "Relation", "Workspace", "Project", "Grant", "Public Join Policy"]) {
       const draft = { action: "update", resource, value: `${resource} local draft` };
       const conflict = captureCasConflict({
@@ -1745,6 +1751,9 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(ownerSource, /loadMoreProjectGrants/);
   assert.match(ownerSource, /recoverCasConflict/);
   assert.match(ownerSource, /writeFence\.enter/);
+  assert.match(ownerSource, /showWorkspace[\s\S]{0,900}type="submit" :disabled="busy"/);
+  assert.match(ownerSource, /showProject[\s\S]{0,1500}type="submit" :disabled="busy"/);
+  assert.match(ownerSource, /showContainerEdit[\s\S]{0,900}type="submit" :disabled="busy"/);
   assert.match(ownerSource, /cursorRequiresRestart/);
   assert.match(projectBoardSource, /projectionGeneration\.isCurrent\(generation\)/);
   assert.match(projectBoardSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);

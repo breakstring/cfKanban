@@ -923,6 +923,28 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     issues: 1,
     principals: 2,
   });
+  const repeatedDisable = await request(
+    `/api/v1/admin/projects/${projectId}/public-join?expected_version=3`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(repeatedDisable.response.status, 409);
+  assert.equal(repeatedDisable.body.code, "PUBLIC_JOIN_DISABLED");
+  assert.equal(repeatedDisable.body.recovery, "enable_public_join");
+  assert.deepEqual(repeatedDisable.body.details, { current_version: 4 });
+  const disabledLimitsUpdate = await request(`/api/v1/admin/projects/${projectId}/resource-limits`, {
+    body: {
+      comment_limit: 2,
+      expected_version: 4,
+      issue_limit: 2,
+      principal_limit: 2,
+    },
+    headers: ownerHeaders(),
+    method: "PATCH",
+  });
+  assert.equal(disabledLimitsUpdate.response.status, 409);
+  assert.equal(disabledLimitsUpdate.body.code, "PUBLIC_JOIN_DISABLED");
+  assert.equal(disabledLimitsUpdate.body.recovery, "enable_public_join");
+  assert.deepEqual(disabledLimitsUpdate.body.details, { current_version: 4 });
   assert.equal(await tableCount("project_usage", "project_id = ?1", projectId), 0);
   const hidden = await request("/api/v1/public-projects");
   assert.deepEqual(hidden.body.items.map((item) => item.public_id), [secondPublicId]);

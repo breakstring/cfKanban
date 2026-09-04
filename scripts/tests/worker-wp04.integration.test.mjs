@@ -798,6 +798,27 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   );
   assert.equal(revokedGrant.response.status, 200);
   assert.equal(revokedGrant.body.resource.revoked_at !== null, true);
+  const staleRevokedGrantUpdate = await jsonRequest(`/api/v1/admin/grants/${firstGrant.id}`, {
+    body: { expected_version: updatedGrant.body.resource.version, role: "reader" },
+    headers: ownerHeaders(),
+    method: "PATCH",
+  });
+  assert.equal(staleRevokedGrantUpdate.response.status, 409);
+  assert.equal(staleRevokedGrantUpdate.body.code, "GRANT_REVOKED");
+  assert.equal(staleRevokedGrantUpdate.body.recovery, "regrant");
+  assert.deepEqual(staleRevokedGrantUpdate.body.details, {
+    current_version: revokedGrant.body.resource.version,
+  });
+  const repeatedGrantRevoke = await jsonRequest(
+    `/api/v1/admin/grants/${firstGrant.id}?expected_version=${updatedGrant.body.resource.version}`,
+    { headers: ownerHeaders(), method: "DELETE" },
+  );
+  assert.equal(repeatedGrantRevoke.response.status, 409);
+  assert.equal(repeatedGrantRevoke.body.code, "GRANT_REVOKED");
+  assert.equal(repeatedGrantRevoke.body.recovery, "none");
+  assert.deepEqual(repeatedGrantRevoke.body.details, {
+    current_version: revokedGrant.body.resource.version,
+  });
   const hiddenProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
     headers: participantHeaders(participantToken),
   });

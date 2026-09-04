@@ -645,7 +645,9 @@ export async function disablePublicJoin(
   const current = await readPolicyControl(db, auth, projectId, now);
   if (current === null) throw notFound();
   if (current.enabled_at === null || current.disabled_at !== null) {
-    throw conflict("PUBLIC_JOIN_DISABLED", "enable_public_join");
+    throw conflict("PUBLIC_JOIN_DISABLED", "enable_public_join", {
+      current_version: current.project_version,
+    });
   }
   const updated = disabledPolicySnapshot(current, now);
   const operationId = crypto.randomUUID();
@@ -758,7 +760,9 @@ export async function disablePublicJoin(
       const latest = await readPolicyControl(db, auth, projectId, now);
       if (latest === null) throw notFound();
       if (latest.enabled_at === null || latest.disabled_at !== null) {
-        throw conflict("PUBLIC_JOIN_DISABLED", "enable_public_join");
+        throw conflict("PUBLIC_JOIN_DISABLED", "enable_public_join", {
+          current_version: latest.project_version,
+        });
       }
       throw versionConflict(latest.project_version);
     }
@@ -798,7 +802,9 @@ export async function updateProjectResourceLimits(
   const current = await readPolicyControl(db, auth, projectId, now);
   if (current === null) throw notFound();
   if (current.enabled_at === null || current.disabled_at !== null || current.usage_present !== 1) {
-    throw conflict("PUBLIC_JOIN_DISABLED", "enable_public_join");
+    throw conflict("PUBLIC_JOIN_DISABLED", "enable_public_join", {
+      current_version: current.project_version,
+    });
   }
   const updated: PolicySnapshot = {
     ...(current as PolicySnapshot),
@@ -897,7 +903,9 @@ export async function updateProjectResourceLimits(
       const latest = await readPolicyControl(db, auth, projectId, now);
       if (latest === null) throw notFound();
       if (latest.enabled_at === null || latest.disabled_at !== null || latest.usage_present !== 1) {
-        throw conflict("PUBLIC_JOIN_DISABLED", "enable_public_join");
+        throw conflict("PUBLIC_JOIN_DISABLED", "enable_public_join", {
+          current_version: latest.project_version,
+        });
       }
       throw versionConflict(latest.project_version);
     }
