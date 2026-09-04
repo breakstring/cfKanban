@@ -179,9 +179,14 @@ test("production Worker serves health/OpenAPI, structured misses, and Static Ass
   assert.equal(missingBody.code, "NOT_FOUND");
   assert.equal(missingBody.category, "not_found");
 
-  const asset = await server.fetch("/");
-  assert.equal(asset.status, 200);
-  assert.match(await asset.text(), /<div id="app"><\/div>/);
+  for (const path of ["/", "/app", "/app/w/validation/p/CORE", "/app/issues/CFK-1", "/app/admin?section=audit"]) {
+    const navigation = await server.fetch(path, { headers: { "sec-fetch-mode": "navigate" } });
+    assert.equal(navigation.status, 200, path);
+    assert.equal(navigation.headers.get("cache-control"), "no-store", path);
+    assert.equal(navigation.headers.get("referrer-policy"), "no-referrer", path);
+    const html = await navigation.text();
+    assert.match(html, /<div id="app"><\/div>/, path);
+  }
 });
 
 test("oversized JSON returns a redacted 413 and Worker logs retain no request secrets", async () => {

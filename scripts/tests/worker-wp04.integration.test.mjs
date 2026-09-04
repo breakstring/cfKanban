@@ -405,6 +405,9 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.match(invitationHtml, /<html lang="en">/);
   assert.match(invitationHtml, /data-select-locale="en"/);
   assert.match(invitationHtml, /data-select-locale="zh-CN"/);
+  assert.match(invitationHtml, /localStorage\.setItem\("cfkanban_locale"/);
+  assert.match(invitationHtml, /localStorage\.getItem\("cfkanban_locale"/);
+  assert.doesNotMatch(invitationHtml, /cfkanban\.locale/);
   assert.match(invitationHtml, /engineering\/CORE/);
   assert.match(invitationHtml, new RegExp(firstProjectId));
   const chineseInvitationPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {

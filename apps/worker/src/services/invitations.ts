@@ -903,7 +903,7 @@ function preferredInvitationLocale(acceptLanguage: string | null): "en" | "zh-CN
   return "en";
 }
 
-export const INVITATION_PAGE_SCRIPT = `(()=>{const apply=(locale)=>{const selected=locale==="zh-CN"?"zh-CN":"en";document.documentElement.lang=selected;document.querySelectorAll("[data-invitation-locale]").forEach((section)=>{section.hidden=section.dataset.invitationLocale!==selected});try{localStorage.setItem("cfkanban.locale",selected)}catch{}};document.querySelectorAll("[data-select-locale]").forEach((button)=>button.addEventListener("click",()=>apply(button.dataset.selectLocale)));try{const saved=localStorage.getItem("cfkanban.locale");if(saved)apply(saved)}catch{}history.replaceState({},document.title,"/invite")})()`;
+export const INVITATION_PAGE_SCRIPT = `(()=>{const apply=(locale)=>{const selected=locale==="zh-CN"?"zh-CN":"en";document.documentElement.lang=selected;document.querySelectorAll("[data-invitation-locale]").forEach((section)=>{section.hidden=section.dataset.invitationLocale!==selected});try{localStorage.setItem("cfkanban_locale",selected)}catch{}};document.querySelectorAll("[data-select-locale]").forEach((button)=>button.addEventListener("click",()=>apply(button.dataset.selectLocale)));try{const saved=localStorage.getItem("cfkanban_locale");if(saved)apply(saved)}catch{}history.replaceState({},document.title,"/invite")})()`;
 
 let invitationPageScriptHash: Promise<string> | null = null;
 

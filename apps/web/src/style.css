@@ -246,9 +246,10 @@ h3 {
   z-index: 20;
   display: grid;
   grid-template-columns: minmax(150px, auto) minmax(0, 1fr) auto;
+  grid-template-rows: minmax(52px, auto) auto;
   align-items: center;
   min-height: 64px;
-  padding: 0 28px;
+  padding: 0 28px 7px;
   border-bottom: 1px solid var(--color-border);
   background: rgb(250 248 244 / 94%);
   backdrop-filter: blur(12px);
@@ -301,6 +302,25 @@ h3 {
   gap: 4px;
   align-items: center;
   justify-content: flex-end;
+}
+
+.session-facts {
+  display: flex;
+  grid-row: 2;
+  grid-column: 1 / -1;
+  gap: 16px;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+
+.session-facts a {
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .role-badge,
@@ -469,6 +489,29 @@ h3 {
   line-height: 1.6;
   background: var(--color-canvas);
   overflow-wrap: anywhere;
+}
+
+.copy-fallback {
+  max-width: 760px;
+  margin: 0 auto 44px;
+  padding: 18px;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-card);
+  background: var(--color-warning-soft);
+}
+
+.copy-fallback label {
+  display: grid;
+  gap: 10px;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+
+.copy-fallback textarea {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 400;
 }
 
 .note-kicker {
@@ -1503,6 +1546,13 @@ textarea:disabled {
   .app-header {
     min-height: 58px;
     padding: 0 14px;
+  }
+
+  .session-facts {
+    gap: 2px;
+    align-items: flex-start;
+    flex-direction: column;
+    padding-bottom: 7px;
   }
 
   .brand-mark,

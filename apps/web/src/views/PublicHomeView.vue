@@ -25,6 +25,7 @@ const error = ref("");
 const loading = ref(true);
 const passkeyBusy = ref(false);
 const copied = ref("");
+const copyFallback = ref<{ key: string; value: string } | null>(null);
 const canUsePasskeys = typeof window !== "undefined" && "PublicKeyCredential" in window;
 
 const preferredOrigin = computed(() => {
@@ -52,14 +53,14 @@ async function load(): Promise<void> {
 async function copyText(value: string, key: string): Promise<void> {
   try {
     await window.navigator.clipboard.writeText(value);
+    copyFallback.value = null;
     copied.value = key;
     window.setTimeout(() => {
       if (copied.value === key) copied.value = "";
     }, 1800);
   } catch {
-    error.value = locale.value === "zh-CN"
-      ? "浏览器未允许复制，请手动选择这段话术。"
-      : "The browser did not allow copying. Select the instruction manually.";
+    copied.value = "";
+    copyFallback.value = { key, value };
   }
 }
 
@@ -147,6 +148,13 @@ onMounted(load);
     </section>
 
     <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load" />
+
+    <section v-if="copyFallback" class="copy-fallback" role="status">
+      <label>
+        {{ t("copy.manual") }}
+        <textarea :value="copyFallback.value" readonly rows="5" @focus="($event.target as HTMLTextAreaElement).select()" />
+      </label>
+    </section>
 
     <section v-if="!loading && !error" class="public-projects-section">
       <header class="section-heading-row">

@@ -10,6 +10,18 @@ const webRoot = new URL("../apps/web/dist/", import.meta.url);
 const workerRoot = new URL("../apps/worker/dist/", import.meta.url);
 
 assert.ok((await stat(new URL("index.html", webRoot))).isFile(), "Web build must emit index.html");
+assert.ok((await stat(new URL("_headers", webRoot))).isFile(), "Web build must emit Cloudflare Static Assets headers");
+const staticHeaders = await readFile(new URL("_headers", webRoot), "utf8");
+for (const route of ["/", "/app", "/app/*"]) {
+  assert.ok(
+    staticHeaders.includes(`${route}\n  Cache-Control: no-store\n  Referrer-Policy: no-referrer`),
+    `${route} must disable caching and referrer disclosure`,
+  );
+}
+assert.ok(
+  staticHeaders.includes("/assets/*\n  Cache-Control: public, max-age=31556952, immutable"),
+  "fingerprinted Web assets must be immutable",
+);
 const webFiles = await filesUnder(webRoot);
 assert.ok(webFiles.some((name) => name.endsWith(".js")), "Web build must emit a JavaScript asset");
 

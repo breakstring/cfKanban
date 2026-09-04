@@ -30,6 +30,7 @@ const translations = {
     "comment.placeholder": "Write Markdown…",
     "complete.summary": "Completion summary",
     "complete.title": "Complete issue",
+    "copy.manual": "Copy unavailable. Select this Agent instruction manually.",
     "error.conflict": "The issue changed on the server. Your draft is still here; refresh before saving again.",
     "error.authorization": "Your current session does not allow this action. Refresh or sign in again.",
     "error.businessQuota": "This Project has reached its active quota. Release capacity or ask the Owner to change the limit.",
@@ -65,6 +66,7 @@ const translations = {
     "project.choose": "Choose a project",
     "project.chooseHelp": "Your current session can open these projects. No aggregate issue query runs automatically.",
     "session.expires": "Session expires",
+    "session.preferred": "Preferred address",
   },
   "zh-CN": {
     "action.back": "返回",
@@ -92,6 +94,7 @@ const translations = {
     "comment.placeholder": "输入 Markdown…",
     "complete.summary": "完成摘要",
     "complete.title": "完成 Issue",
+    "copy.manual": "复制不可用，请手动选中这段 Agent 话术。",
     "error.conflict": "服务端 Issue 已变化。你的草稿仍保留在当前页面，请刷新后再决定是否保存。",
     "error.authorization": "当前 Session 不允许此操作，请刷新或重新登录。",
     "error.businessQuota": "此 Project 已达到 active quota。请释放容量，或请 Owner 调整限制。",
@@ -127,6 +130,7 @@ const translations = {
     "project.choose": "选择 Project",
     "project.chooseHelp": "当前 Session 可以打开这些 Projects；页面不会自动执行聚合 Issue 查询。",
     "session.expires": "Session 到期时间",
+    "session.preferred": "推荐访问地址",
   },
 } as const;
 

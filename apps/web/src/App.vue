@@ -7,6 +7,7 @@ import PageState from "./components/PageState.vue";
 import { ApiProblem, apiRequest, errorText } from "./lib/api";
 import { locale, t } from "./lib/i18n";
 import { currentPath, navigate, routePath } from "./lib/router";
+import { scheduleSessionExpiry } from "./lib/session-expiry";
 import { canAccessOwnerControlPlane } from "./lib/session-capabilities";
 import { sameSessionBoundary, shouldClearAfterSessionRevalidation } from "./lib/session-boundary";
 import type { WebSessionView } from "./types";
@@ -33,7 +34,7 @@ const sessionError = ref("");
 const sessionEnded = ref(false);
 const context = ref<{ label: string; role: string } | null>(null);
 const sessionViewGeneration = ref(0);
-let sessionExpiryTimer: number | null = null;
+let cancelSessionExpiry: (() => void) | null = null;
 let sessionLoadGeneration = 0;
 let sessionReloadPending = false;
 
@@ -71,8 +72,8 @@ const route = computed<AppRoute>(() => {
 const authenticatedRoute = computed(() => route.value.kind !== "home");
 
 function clearSession(ended = true): void {
-  if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
-  sessionExpiryTimer = null;
+  cancelSessionExpiry?.();
+  cancelSessionExpiry = null;
   sessionLoadGeneration += 1;
   sessionReloadPending = false;
   sessionViewGeneration.value += 1;
@@ -83,14 +84,15 @@ function clearSession(ended = true): void {
   sessionEnded.value = ended;
 }
 
-function scheduleSessionExpiry(expiresAt: string): boolean {
-  if (sessionExpiryTimer !== null) window.clearTimeout(sessionExpiryTimer);
-  const remaining = Date.parse(expiresAt) - Date.now();
-  if (!Number.isFinite(remaining) || remaining <= 0) {
+function armSessionExpiry(expiresAt: string): boolean {
+  cancelSessionExpiry?.();
+  cancelSessionExpiry = null;
+  const schedule = scheduleSessionExpiry(expiresAt, () => clearSession(true));
+  if (!schedule.scheduled) {
     clearSession(true);
     return false;
   }
-  sessionExpiryTimer = window.setTimeout(() => clearSession(true), Math.min(remaining, 2_147_483_647));
+  cancelSessionExpiry = schedule.cancel;
   return true;
 }
 
@@ -110,7 +112,7 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
       sessionViewGeneration.value += 1;
       context.value = null;
     }
-    if (scheduleSessionExpiry(result.expires_at)) session.value = result;
+    if (armSessionExpiry(result.expires_at)) session.value = result;
   } catch (caught) {
     if (generation !== sessionLoadGeneration) return;
     if (previous === null) {

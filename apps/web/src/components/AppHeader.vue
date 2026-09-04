@@ -1,16 +1,40 @@
 <script setup lang="ts">
+import { computed, onMounted, ref } from "vue";
+
+import { apiRequest } from "../lib/api";
 import { locale, setLocale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
 import { canAccessOwnerControlPlane } from "../lib/session-capabilities";
-import type { WebSessionView } from "../types";
+import type { InstanceDiscovery, WebSessionView } from "../types";
 
-defineProps<{
+const props = defineProps<{
   context?: string | undefined;
   role?: string | undefined;
   session: WebSessionView;
 }>();
 
 const emit = defineEmits<{ logout: [] }>();
+const discovery = ref<InstanceDiscovery | null>(null);
+const expiresLabel = computed(() => {
+  const value = new Date(props.session.expires_at);
+  return Number.isNaN(value.valueOf())
+    ? props.session.expires_at
+    : new Intl.DateTimeFormat(locale.value, { dateStyle: "medium", timeStyle: "short" }).format(value);
+});
+const preferredOrigin = computed(() => {
+  const value = discovery.value?.preferred_api_origin;
+  return value && value !== window.location.origin ? value : null;
+});
+
+async function loadDiscovery(): Promise<void> {
+  try {
+    discovery.value = await apiRequest<InstanceDiscovery>("/.well-known/cfkanban-instance.json");
+  } catch {
+    // The authenticated surface remains usable when public discovery is temporarily unavailable.
+  }
+}
+
+onMounted(loadDiscovery);
 </script>
 
 <template>
@@ -42,5 +66,11 @@ const emit = defineEmits<{ logout: [] }>();
         {{ t("action.logout") }}
       </button>
     </nav>
+    <div class="session-facts">
+      <span>{{ t("session.expires") }} · <time :datetime="session.expires_at">{{ expiresLabel }}</time></span>
+      <a v-if="preferredOrigin" :href="preferredOrigin" target="_blank" rel="noreferrer noopener">
+        {{ t("session.preferred") }} · {{ preferredOrigin }}
+      </a>
+    </div>
   </header>
 </template>
