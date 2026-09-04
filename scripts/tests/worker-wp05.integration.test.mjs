@@ -918,6 +918,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   );
   assert.equal(repeatedDelete.response.status, 409);
   assert.equal(repeatedDelete.body.code, "RESOURCE_DELETED");
+  assert.equal(repeatedDelete.body.details.current_version, deleted.body.resource.version);
   const hiddenTombstone = await jsonRequest(`/api/v1/issues/${quotaOne.body.resource.identifier}`, {
     headers: ownerHeaders(),
   });
@@ -1023,6 +1024,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   });
   assert.equal(repeatedRestore.response.status, 409);
   assert.equal(repeatedRestore.body.code, "RESOURCE_NOT_DELETED");
+  assert.equal(repeatedRestore.body.details.current_version, restored.body.resource.version);
   await db.prepare(
     "UPDATE projects SET issue_limit = 3, comment_limit = 1 WHERE id = ?1",
   ).bind(quotaProjectId).run();

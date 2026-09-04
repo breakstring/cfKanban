@@ -1952,7 +1952,11 @@ async function diagnoseIssueCas(
     ? await requireIssueRecoveryAccess(db, auth, identifier)
     : await requireIssueAccess(db, auth, identifier, "writer", true);
   if ((row.deleted_at !== null) !== expectedDeleted) {
-    throw conflict(expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED");
+    throw conflict(
+      expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED",
+      "refresh_resource",
+      { current_version: row.version },
+    );
   }
   if (row.version !== expectedVersion) throw versionConflict(row.version);
   if (expectedDeleted) requireActiveIssueParents(row);
@@ -2238,7 +2242,11 @@ async function setIssueDeleted(
         ? await requireIssueAccess(db, auth, identifier, "writer", true)
         : await requireIssueRecoveryAccess(db, auth, identifier);
       if ((latest.row.deleted_at !== null) !== (!deleted)) {
-        throw conflict(deleted ? "RESOURCE_DELETED" : "RESOURCE_NOT_DELETED");
+        throw conflict(
+          deleted ? "RESOURCE_DELETED" : "RESOURCE_NOT_DELETED",
+          "refresh_resource",
+          { current_version: latest.row.version },
+        );
       }
       if (latest.row.version !== expectedVersion) throw versionConflict(latest.row.version);
       if (!deleted) {

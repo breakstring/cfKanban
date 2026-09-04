@@ -649,7 +649,11 @@ async function diagnoseCommentCas(
   const { issue, row } = await requireCommentAccess(db, auth, commentId, "writer");
   if (row.kind === "completion") throw forbidden();
   if ((row.deleted_at !== null) !== expectedDeleted) {
-    throw conflict(expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED");
+    throw conflict(
+      expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED",
+      "refresh_resource",
+      { current_version: row.version },
+    );
   }
   if (row.version !== expectedVersion) throw versionConflict(row.version);
   if (expectedDeleted) await assertCommentCapacity(db, issue.projectId);

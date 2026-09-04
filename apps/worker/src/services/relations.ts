@@ -967,7 +967,11 @@ async function diagnoseRelationCas(
   await verifyCurrentAuth(db, auth, now);
   const { row } = await requireRelationAccess(db, auth, relationId, "writer");
   if ((row.deleted_at !== null) !== expectedDeleted) {
-    throw conflict(expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED");
+    throw conflict(
+      expectedDeleted ? "RESOURCE_NOT_DELETED" : "RESOURCE_DELETED",
+      "refresh_resource",
+      { current_version: row.version },
+    );
   }
   if (row.version !== expectedVersion) throw versionConflict(row.version);
   if (row.source_version !== sourceExpectedVersion) throw versionConflict(row.source_version);

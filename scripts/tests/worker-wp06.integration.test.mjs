@@ -630,6 +630,13 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(deletedLabel.response.status, 200, JSON.stringify(deletedLabel.body));
   assert.equal(deletedLabel.body.resource.version, 3);
   assert.notEqual(deletedLabel.body.resource.deleted_at, null);
+  const repeatedLabelDelete = await jsonRequest(`/api/v1/labels/${labelId}?expected_version=2`, {
+    headers: dualHeaders(),
+    method: "DELETE",
+  });
+  assert.equal(repeatedLabelDelete.response.status, 409);
+  assert.equal(repeatedLabelDelete.body.code, "RESOURCE_DELETED");
+  assert.equal(repeatedLabelDelete.body.details.current_version, 3);
   const hiddenDeletedLabel = await jsonRequest(`/api/v1/labels/${labelId}`, {
     headers: dualHeaders(),
   });
@@ -1399,6 +1406,13 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
   assert.equal(deletedRelation.response.status, 200, JSON.stringify(deletedRelation.body));
   assert.equal(deletedRelation.body.resource.version, 2);
+  const repeatedRelationDelete = await jsonRequest(
+    `/api/v1/relations/${relationId}?expected_version=1&source_expected_version=${issueBVersion}&target_expected_version=${issueAVersion}`,
+    { headers: dualHeaders(), method: "DELETE" },
+  );
+  assert.equal(repeatedRelationDelete.response.status, 409);
+  assert.equal(repeatedRelationDelete.body.code, "RESOURCE_DELETED");
+  assert.equal(repeatedRelationDelete.body.details.current_version, 2);
   issueBVersion = deletedRelation.body.resource.source.version;
   issueAVersion = deletedRelation.body.resource.target.version;
   const hiddenDeletedRelation = await jsonRequest(`/api/v1/relations/${relationId}`, {
@@ -1644,6 +1658,13 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     { headers: dualHeaders(), method: "DELETE" },
   );
   assert.equal(deletedReplayComment.response.status, 200, JSON.stringify(deletedReplayComment.body));
+  const repeatedCommentDelete = await jsonRequest(
+    `/api/v1/comments/${commentBeforeIssueDelete.body.resource.id}?expected_version=1`,
+    { headers: dualHeaders(), method: "DELETE" },
+  );
+  assert.equal(repeatedCommentDelete.response.status, 409);
+  assert.equal(repeatedCommentDelete.body.code, "RESOURCE_DELETED");
+  assert.equal(repeatedCommentDelete.body.details.current_version, 2);
   const deletedCommentReplayIssue = await jsonRequest(
     `/api/v1/issues/${commentReplayIssue.body.resource.identifier}?expected_version=1`,
     { headers: dualHeaders(), method: "DELETE" },
