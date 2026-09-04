@@ -4,8 +4,9 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import AppHeader from "./components/AppHeader.vue";
 import LocaleSwitch from "./components/LocaleSwitch.vue";
 import PageState from "./components/PageState.vue";
-import { ApiProblem, apiRequest, errorText } from "./lib/api";
+import { ApiProblem, apiRequest } from "./lib/api";
 import { locale, t } from "./lib/i18n";
+import { useLocalizedError } from "./lib/localized-error";
 import { currentPath, navigate, routePath } from "./lib/router";
 import { scheduleSessionExpiry } from "./lib/session-expiry";
 import { canAccessOwnerControlPlane } from "./lib/session-capabilities";
@@ -30,7 +31,11 @@ type AppRoute =
 
 const session = ref<WebSessionView | null>(null);
 const loadingSession = ref(false);
-const sessionError = ref("");
+const {
+  clearError: clearSessionError,
+  error: sessionError,
+  setError: setSessionError,
+} = useLocalizedError();
 const sessionEnded = ref(false);
 const context = ref<{ label: string; role: string } | null>(null);
 const sessionViewGeneration = ref(0);
@@ -80,7 +85,7 @@ function clearSession(ended = true): void {
   loadingSession.value = false;
   session.value = null;
   context.value = null;
-  sessionError.value = "";
+  clearSessionError();
   sessionEnded.value = ended;
 }
 
@@ -103,7 +108,7 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
   const generation = sessionLoadGeneration + 1;
   sessionLoadGeneration = generation;
   loadingSession.value = true;
-  sessionError.value = "";
+  clearSessionError();
   sessionEnded.value = false;
   try {
     const result = await apiRequest<WebSessionView>("/api/v1/web-session");
@@ -118,13 +123,12 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
     if (previous === null) {
       session.value = null;
       if (caught instanceof ApiProblem && caught.status === 401) sessionEnded.value = true;
-      else sessionError.value = errorText(caught);
+      else setSessionError(caught);
     } else if (caught instanceof ApiProblem && shouldClearAfterSessionRevalidation(caught)) {
-      const message = errorText(caught);
       clearSession(false);
-      sessionError.value = message;
+      setSessionError(caught);
     } else if (!(caught instanceof ApiProblem && caught.status === 401)) {
-      sessionError.value = errorText(caught);
+      setSessionError(caught);
     }
   } finally {
     if (generation === sessionLoadGeneration) {
@@ -142,7 +146,7 @@ async function logout(): Promise<void> {
     await apiRequest("/api/v1/web-session", { method: "DELETE" });
   } catch (caught) {
     if (!(caught instanceof ApiProblem && caught.status === 401)) {
-      sessionError.value = errorText(caught);
+      setSessionError(caught);
       return;
     }
   }

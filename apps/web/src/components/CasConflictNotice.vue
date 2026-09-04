@@ -3,6 +3,7 @@ import { ref } from "vue";
 
 import type { CasConflictState } from "../lib/cas-recovery";
 import { locale } from "../lib/i18n";
+import { resolveLocalizedText } from "../lib/localized-error";
 
 defineProps<{ busy?: boolean; conflict: CasConflictState }>();
 const emit = defineEmits<{ dismiss: []; refresh: [] }>();
@@ -20,7 +21,7 @@ async function copyDraft(value: string): Promise<void> {
 
 <template>
   <section class="warning-panel cas-conflict" role="alert">
-    <strong>{{ locale === "zh-CN" ? `${conflict.resource} 已被其他写入更新` : `${conflict.resource} changed remotely` }}</strong>
+    <strong>{{ locale === "zh-CN" ? `${resolveLocalizedText(conflict.resource, locale)} 已被其他写入更新` : `${resolveLocalizedText(conflict.resource, locale)} changed remotely` }}</strong>
     <p>
       {{ conflict.currentVersion === null
         ? (locale === "zh-CN" ? "服务端报告版本冲突。" : "The service reported a version conflict.")

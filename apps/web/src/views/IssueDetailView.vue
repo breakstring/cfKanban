@@ -6,7 +6,7 @@ import CompletionRecord from "../components/CompletionRecord.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
-import { ApiProblem, apiRequest, errorText } from "../lib/api";
+import { ApiProblem, apiRequest } from "../lib/api";
 import {
   type CasConflictState,
   captureCasConflict,
@@ -14,6 +14,7 @@ import {
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
+import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { navigate } from "../lib/router";
@@ -55,7 +56,7 @@ const deletedRelationsNextCursor = ref<string | null>(null);
 const deletedCollectionLoading = ref<"comments" | "labels" | "relations" | null>(null);
 const loading = ref(true);
 const busy = ref(false);
-const error = ref("");
+const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
 const casConflict = ref<CasConflictState | null>(null);
 const editMode = ref(false);
 const edit = ref({ body: "", priority_key: "none" as PriorityKey, title: "" });
@@ -104,25 +105,26 @@ function relationKindLabel(kind: string): string {
   return ({ blocks: "阻塞", parent: "父子", related: "相关", duplicate: "重复" } as Record<string, string>)[kind] ?? kind;
 }
 
-function commandLabel(command: string): string {
-  if (locale.value !== "zh-CN") return command;
-  return ({
+function commandConflictResource(identifier: string, command: string): LocalizedText {
+  const chinese = ({
     "assign-to-me": "指派给我",
     "clear-blocked": "清除阻塞",
     complete: "完成",
     "report-blocked": "报告阻塞",
   } as Record<string, string>)[command] ?? command;
+  return localizedText(`${identifier} ${command}`, `${identifier} ${chinese}`);
 }
 
 function handleCursorError(caught: unknown, retire: () => void): void {
   if (cursorRequiresRestart(caught)) {
     retire();
-    error.value = locale.value === "zh-CN"
-      ? "列表范围或可见权限已变化，原分页位置已失效。请刷新当前事项后继续。"
-      : "The list scope or visibility changed, so the old cursor was retired. Refresh this Issue before continuing.";
+    setLocalizedError(
+      "The list scope or visibility changed, so the old cursor was retired. Refresh this Issue before continuing.",
+      "列表范围或可见权限已变化，原分页位置已失效。请刷新当前事项后继续。",
+    );
     return;
   }
-  error.value = errorText(caught);
+  setError(caught);
 }
 
 function projectIsActive(scope = issueProjectScope): boolean {
@@ -175,9 +177,10 @@ function refreshProjectInventory(): void {
   const scope = props.session.allowed_scope.projects;
   if (issueProjectScope !== null && scope !== undefined && !projectIsActive()) {
     clearIssueProjection();
-    error.value = locale.value === "zh-CN"
-      ? "此事项所属项目已不在当前可用项目列表中。"
-      : "This Issue's Project is no longer in the current active Project inventory.";
+    setLocalizedError(
+      "This Issue's Project is no longer in the current active Project inventory.",
+      "此事项所属项目已不在当前可用项目列表中。",
+    );
     return;
   }
   void load(true);
@@ -206,7 +209,7 @@ async function load(preserveLocalDrafts = editMode.value, throwOnFailure = false
   const requestId = loadRequestId + 1;
   loadRequestId = requestId;
   loading.value = true;
-  error.value = "";
+  clearError();
   try {
     const result = await apiRequest<IssueDetail>(`/api/v1/issues/${encodeURIComponent(props.identifier)}`);
     const resultScope = { projectKey: result.project.key, workspaceKey: result.workspace.key };
@@ -244,7 +247,7 @@ async function load(preserveLocalDrafts = editMode.value, throwOnFailure = false
     relationsNextCursor.value = continuationCursor(relationResult);
   } catch (caught) {
     if (requestId !== loadRequestId || !projectionGeneration.isCurrent(generation)) return;
-    error.value = errorText(caught);
+    setError(caught);
     if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
       issue.value = null;
       statuses.value = [];
@@ -324,7 +327,7 @@ async function loadMoreRelations(): Promise<void> {
 
 async function recoverCasConflict(
   caught: unknown,
-  resource: string,
+  resource: string | LocalizedText,
   draft: unknown,
   readback: () => Promise<void> = () => load(true, true),
 ): Promise<boolean> {
@@ -334,7 +337,7 @@ async function recoverCasConflict(
   casRecoveryGeneration = recoveryGeneration;
   casReadback = readback;
   casConflict.value = conflict;
-  error.value = t("error.conflict");
+  setErrorKey("error.conflict");
   try {
     await readback();
     if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
@@ -386,7 +389,7 @@ async function updateIssue(payload: Record<string, unknown>): Promise<void> {
   if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     const result = await apiRequest<WriteResult<IssueDetail>>(`/api/v1/issues/${current.identifier}`, {
       body: { expected_version: current.version, ...payload },
@@ -400,7 +403,7 @@ async function updateIssue(payload: Record<string, unknown>): Promise<void> {
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
     if (!await recoverCasConflict(caught, current.identifier, payload, refreshCurrentFacts)) {
-      error.value = errorText(caught);
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -423,7 +426,7 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
   if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     const result = await apiRequest<WriteResult<IssueDetail & { completion_comment_id?: string }>>(
       `/api/v1/issues/${current.identifier}/commands/${command}`,
@@ -441,13 +444,13 @@ async function runCommand(command: string, payload: Record<string, unknown> = {}
         const completion = await apiRequest<IssueComment>(`/api/v1/comments/${result.resource.completion_comment_id}`);
         if (projectionIsCurrent(generation)) comments.value = mergeComments(comments.value, [completion]);
       } catch (caught) {
-        if (projectionIsCurrent(generation)) error.value = errorText(caught);
+        if (projectionIsCurrent(generation)) setError(caught);
       }
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, `${current.identifier} ${commandLabel(command)}`, payload, refreshCurrentFacts)) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, commandConflictResource(current.identifier, command), payload, refreshCurrentFacts)) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -478,9 +481,11 @@ async function deleteOrRestore(): Promise<void> {
     if (projectionIsCurrent(generation)) await load();
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, `${current.identifier} ${current.deleted_at === null ? ui("delete", "删除") : ui("restore", "恢复")}`, {
+    if (!await recoverCasConflict(caught, current.deleted_at === null
+      ? localizedText(`${current.identifier} delete`, `${current.identifier} 删除`)
+      : localizedText(`${current.identifier} restore`, `${current.identifier} 恢复`), {
       action: current.deleted_at === null ? "delete" : "restore",
-    })) error.value = errorText(caught);
+    })) setError(caught);
   } finally {
     writeFence.leave(fenceKey);
     busy.value = false;
@@ -504,7 +509,7 @@ async function addComment(): Promise<void> {
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = errorText(caught);
+    setError(caught);
   } finally {
     writeFence.leave(fenceKey);
     busy.value = false;
@@ -523,8 +528,8 @@ async function toggleLabel(labelId: string, add: boolean): Promise<void> {
     });
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${current.identifier} ${ui("labels", "标签")}`, { action: add ? "add" : "remove", label_id: labelId })) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`${current.identifier} labels`, `${current.identifier} 标签`), { action: add ? "add" : "remove", label_id: labelId })) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -545,8 +550,8 @@ async function deleteComment(entry: IssueComment): Promise<void> {
     }
   } catch (caught) {
     if (projectionIsCurrent(generation)
-      && !await recoverCasConflict(caught, `${ui("Comment", "评论")} ${entry.id}`, { action: "delete" })) {
-      error.value = errorText(caught);
+      && !await recoverCasConflict(caught, localizedText(`Comment ${entry.id}`, `评论 ${entry.id}`), { action: "delete" })) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -559,7 +564,7 @@ async function loadCollaborationRecovery(throwOnFailure = false): Promise<void> 
   if (current === null) return;
   const generation = projectionGeneration.capture();
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     const [commentResult, labelResult, relationResult] = await Promise.all([
       apiRequest<ListResult<IssueComment>>(`/api/v1/issues/${current.identifier}/comments?deleted=only&limit=100`),
@@ -578,7 +583,7 @@ async function loadCollaborationRecovery(throwOnFailure = false): Promise<void> 
       showCollaborationRecovery.value = true;
     }
   } catch (caught) {
-    if (projectionIsCurrent(generation)) error.value = errorText(caught);
+    if (projectionIsCurrent(generation)) setError(caught);
     if (throwOnFailure) throw caught;
   } finally {
     busy.value = false;
@@ -656,8 +661,8 @@ async function restoreComment(entry: IssueComment): Promise<void> {
     await load();
     await loadCollaborationRecovery();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Comment", "评论")} ${entry.id}`, { action: "restore" }, () => loadCollaborationRecovery(true))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`Comment ${entry.id}`, `评论 ${entry.id}`), { action: "restore" }, () => loadCollaborationRecovery(true))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -681,7 +686,7 @@ async function createLabel(): Promise<void> {
     );
     newLabel.value = { color: "", name: "" };
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
+  } catch (caught) { setError(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function deleteLabel(label: LabelResource): Promise<void> {
@@ -692,8 +697,8 @@ async function deleteLabel(label: LabelResource): Promise<void> {
     await apiRequest(`/api/v1/labels/${label.id}?expected_version=${label.version}`, { method: "DELETE" });
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Label", "标签")} ${label.name}`, { action: "delete", label_id: label.id })) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`Label ${label.name}`, `标签 ${label.name}`), { action: "delete", label_id: label.id })) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -709,8 +714,8 @@ async function restoreLabel(label: LabelResource): Promise<void> {
     await load();
     await loadCollaborationRecovery();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Label", "标签")} ${label.name}`, { action: "restore", label_id: label.id }, () => loadCollaborationRecovery(true))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`Label ${label.name}`, `标签 ${label.name}`), { action: "restore", label_id: label.id }, () => loadCollaborationRecovery(true))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -724,7 +729,7 @@ async function previewRelationTarget(): Promise<void> {
     const target = await apiRequest<IssueDetail>(`/api/v1/issues/${identifier}`);
     if (projectionIsCurrent(generation)) relationTarget.value = target;
   } catch (caught) {
-    if (projectionIsCurrent(generation)) error.value = errorText(caught);
+    if (projectionIsCurrent(generation)) setError(caught);
   }
 }
 
@@ -734,7 +739,7 @@ async function createRelation(): Promise<void> {
   const fenceKey = `relation-create:${current.id}`;
   if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     const targetIdentifier = relation.value.target_identifier.trim().toUpperCase();
     if (relationTarget.value?.identifier !== targetIdentifier) {
@@ -743,9 +748,10 @@ async function createRelation(): Promise<void> {
     const target = relationTarget.value;
     if (target === null || target.identifier !== targetIdentifier) return;
     if (!canCreateIssueRelation(current, target)) {
-      error.value = locale.value === "zh-CN"
-        ? "关系两端必须位于同一工作区，且当前会话必须能写入两端项目。"
-        : "Both Relation endpoints must be in one Workspace and writable in the current Session.";
+      setLocalizedError(
+        "Both Relation endpoints must be in one Workspace and writable in the current Session.",
+        "关系两端必须位于同一工作区，且当前会话必须能写入两端项目。",
+      );
       return;
     }
     await apiRequest(`/api/v1/issues/${current.identifier}/relations`, {
@@ -762,8 +768,8 @@ async function createRelation(): Promise<void> {
     relationTarget.value = null;
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${current.identifier} ${ui("Relation", "关系")}`, relation.value)) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`${current.identifier} Relation`, `${current.identifier} 关系`), relation.value)) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -784,8 +790,8 @@ async function deleteRelation(item: IssueRelation): Promise<void> {
     await apiRequest(`/api/v1/relations/${item.id}?${params}`, { method: "DELETE" });
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Relation", "关系")} ${item.id}`, { action: "delete", kind: item.kind })) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`Relation ${item.id}`, `关系 ${item.id}`), { action: "delete", kind: item.kind })) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -806,8 +812,8 @@ async function restoreRelation(item: IssueRelation): Promise<void> {
     await load();
     await loadCollaborationRecovery();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Relation", "关系")} ${item.id}`, { action: "restore", kind: item.kind }, () => loadCollaborationRecovery(true))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`Relation ${item.id}`, `关系 ${item.id}`), { action: "restore", kind: item.kind }, () => loadCollaborationRecovery(true))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }

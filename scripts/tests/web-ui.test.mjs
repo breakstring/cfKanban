@@ -186,6 +186,25 @@ async function importBundledWebModule(relativePath) {
   return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
 }
 
+async function importBundledWebSource(source) {
+  const result = await build({
+    bundle: true,
+    format: "esm",
+    logLevel: "silent",
+    platform: "node",
+    stdin: {
+      contents: source,
+      loader: "ts",
+      resolveDir: new URL("../..", import.meta.url).pathname,
+      sourcefile: "web-test-entry.ts",
+    },
+    write: false,
+  });
+  const output = result.outputFiles[0]?.text;
+  assert.ok(output);
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString("base64")}`);
+}
+
 test("locale preference uses the saved choice or the browser's first language", () => {
   assert.equal(resolveLocalePreference("zh-CN", ["en-US"]), "zh-CN");
   assert.equal(resolveLocalePreference("en", ["zh-CN"]), "en");
@@ -437,6 +456,58 @@ test("stable API errors become localized UI copy without echoing server messages
     translate,
   );
   assert.match(quota, /active quota/);
+});
+
+test("current errors and recovery text react to locale changes without losing stable facts", async () => {
+  const {
+    ApiProblem,
+    locale,
+    localizedText,
+    resolveLocalizedText,
+    useLocalizedError,
+  } = await importBundledWebSource(`
+    export { ApiProblem } from "./apps/web/src/lib/api.ts";
+    export { locale } from "./apps/web/src/lib/i18n.ts";
+    export { localizedText, resolveLocalizedText, useLocalizedError } from "./apps/web/src/lib/localized-error.ts";
+  `);
+  const originalLocale = locale.value;
+  try {
+    const source = apiError(
+      "platform_failure",
+      "PLATFORM_UNAVAILABLE",
+      "request-reactive",
+      null,
+      503,
+      { recovery: "request_owner", retryable: false },
+    );
+    const problem = new ApiProblem(source.status, { ...source.body, source: "service" });
+    const state = useLocalizedError();
+
+    locale.value = "zh-CN";
+    state.setError(problem);
+    const chinese = state.error.value;
+    assert.match(chinese, /实例所有者/);
+    assert.match(chinese, /request-reactive/);
+    assert.doesNotMatch(chinese, /Raw server wording/);
+
+    locale.value = "en";
+    const english = state.error.value;
+    assert.match(english, /Deployment Owner/);
+    assert.match(english, /request-reactive/);
+    assert.doesNotMatch(english, /Raw server wording/);
+    assert.notEqual(english, chinese);
+
+    state.setLocalizedError("Refresh the current list.", "请刷新当前列表。");
+    assert.equal(state.error.value, "Refresh the current list.");
+    locale.value = "zh-CN";
+    assert.equal(state.error.value, "请刷新当前列表。");
+
+    const resource = localizedText("Issue CFK-26", "事项 CFK-26");
+    assert.equal(resolveLocalizedText(resource, "en"), "Issue CFK-26");
+    assert.equal(resolveLocalizedText(resource, "zh-CN"), "事项 CFK-26");
+  } finally {
+    locale.value = originalLocale;
+  }
 });
 
 test("rate limit recovery includes the verified Retry-After value", () => {
@@ -1488,6 +1559,7 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
     appHeaderSource,
     casConflictSource,
     completionRecordSource,
+    localizedErrorSource,
     ownerSource,
     profileSource,
     projectBoardSource,
@@ -1498,6 +1570,7 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
     readFile(new URL("../../apps/web/src/components/AppHeader.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/components/CasConflictNotice.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/components/CompletionRecord.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/lib/localized-error.ts", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/OwnerView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/ProfileView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/ProjectBoardView.vue", import.meta.url), "utf8"),
@@ -1566,6 +1639,14 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(issueDetailSource, /writeFence\.enter/);
   assert.match(casConflictSource, /currentVersion/);
   assert.match(casConflictSource, /不会自动合并或重放/);
+  assert.match(casConflictSource, /resolveLocalizedText\(conflict\.resource, locale\)/);
+  assert.match(localizedErrorSource, /const error = computed/);
+  for (const source of [appSource, ownerSource, profileSource, projectBoardSource, publicHomeSource, issueDetailSource]) {
+    assert.match(source, /useLocalizedError\(\)/);
+    assert.doesNotMatch(source, /error\.value\s*=\s*errorText\(/);
+  }
+  assert.match(ownerSource, /setInviteRecoveryNotice/);
+  assert.doesNotMatch(ownerSource, /inviteRecoveryNotice\.value\s*=/);
   assert.match(completionRecordSource, /safeArtifactHref/);
   assert.match(completionRecordSource, /completion\.verification/);
   assert.match(completionRecordSource, /completion\.artifacts/);

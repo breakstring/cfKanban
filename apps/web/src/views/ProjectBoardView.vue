@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
-import { ApiProblem, apiRequest, errorText } from "../lib/api";
+import { ApiProblem, apiRequest } from "../lib/api";
 import {
   type CasConflictState,
   captureCasConflict,
@@ -12,6 +12,7 @@ import {
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
+import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { navigate } from "../lib/router";
@@ -45,7 +46,7 @@ const deletedIssuesLoadingMore = ref(false);
 const nextCursor = ref<string | null>(null);
 const loading = ref(true);
 const loadingMore = ref(false);
-const error = ref("");
+const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
 const search = ref("");
 const saving = ref(new Set<string>());
 const dragged = ref<IssueSummary | null>(null);
@@ -79,10 +80,11 @@ function projectIsActive(): boolean {
   ));
 }
 
-function cursorRestartText(): string {
-  return locale.value === "zh-CN"
-    ? "列表范围或可见权限已变化，原分页位置已失效。请刷新当前列表后继续。"
-    : "The list scope or visibility changed, so the old cursor was retired. Refresh this list before continuing.";
+function setCursorRestartError(): void {
+  setLocalizedError(
+    "The list scope or visibility changed, so the old cursor was retired. Refresh this list before continuing.",
+    "列表范围或可见权限已变化，原分页位置已失效。请刷新当前列表后继续。",
+  );
 }
 
 function projectionIsCurrent(generation: number): boolean {
@@ -101,9 +103,10 @@ function clearProjectProjection(): void {
   completionIssue.value = null;
   showDeleted.value = false;
   showNewIssue.value = false;
-  error.value = locale.value === "zh-CN"
-    ? "此项目已不在当前可用项目列表中。"
-    : "This Project is no longer in the current active Project inventory.";
+  setLocalizedError(
+    "This Project is no longer in the current active Project inventory.",
+    "此项目已不在当前可用项目列表中。",
+  );
 }
 
 function refreshProjectInventory(): void {
@@ -136,7 +139,7 @@ async function load(reset = true, throwOnFailure = false): Promise<void> {
   loadRequestId = requestId;
   if (reset) loading.value = true;
   else loadingMore.value = true;
-  error.value = "";
+  clearError();
   try {
     const [projectResult, statusResult, issueResult] = await Promise.all([
       apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}`),
@@ -153,9 +156,9 @@ async function load(reset = true, throwOnFailure = false): Promise<void> {
     if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
     if (!reset && cursorRequiresRestart(caught)) {
       nextCursor.value = null;
-      error.value = cursorRestartText();
+      setCursorRestartError();
     } else {
-      error.value = errorText(caught);
+      setError(caught);
     }
     if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
       project.value = null;
@@ -174,7 +177,7 @@ async function load(reset = true, throwOnFailure = false): Promise<void> {
 
 async function recoverCasConflict(
   caught: unknown,
-  resource: string,
+  resource: string | LocalizedText,
   draft: unknown,
   readback: () => Promise<void> = () => load(true, true),
 ): Promise<boolean> {
@@ -184,7 +187,7 @@ async function recoverCasConflict(
   casRecoveryGeneration = recoveryGeneration;
   casReadback = readback;
   casConflict.value = conflict;
-  error.value = t("error.conflict");
+  setErrorKey("error.conflict");
   try {
     await readback();
     if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
@@ -229,7 +232,7 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
     return;
   }
   saving.value = new Set(saving.value).add(issue.id);
-  error.value = "";
+  clearError();
   const generation = projectionGeneration.capture();
   try {
     const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}`, {
@@ -242,8 +245,8 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, `${issue.identifier} ${locale.value === "zh-CN" ? "状态" : "status"}`, { status_key: status })) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} status`, `${issue.identifier} 状态`), { status_key: status })) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -279,8 +282,8 @@ async function completeIssue(): Promise<void> {
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, `${issue.identifier} ${locale.value === "zh-CN" ? "完成记录" : "completion"}`, { summary: completionSummary.value })) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} completion`, `${issue.identifier} 完成记录`), { summary: completionSummary.value })) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -314,7 +317,7 @@ async function createIssue(): Promise<void> {
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    error.value = errorText(caught);
+    setError(caught);
   } finally {
     writeFence.leave(fenceKey);
     formBusy.value = false;
@@ -340,9 +343,9 @@ async function loadDeleted(reset = true, throwOnFailure = false): Promise<void> 
     if (!projectionIsCurrent(generation)) return;
     if (!reset && cursorRequiresRestart(caught)) {
       deletedIssuesNextCursor.value = null;
-      error.value = cursorRestartText();
+      setCursorRestartError();
     } else {
-      error.value = errorText(caught);
+      setError(caught);
     }
     if (throwOnFailure) throw caught;
   } finally {
@@ -378,8 +381,8 @@ async function restoreIssue(issue: IssueTombstone): Promise<void> {
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, `${issue.identifier} ${locale.value === "zh-CN" ? "恢复" : "restore"}`, { action: "restore" }, () => loadDeleted(true, true))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} restore`, `${issue.identifier} 恢复`), { action: "restore" }, () => loadDeleted(true, true))) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);

@@ -3,8 +3,9 @@ import { computed, onMounted, ref } from "vue";
 
 import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";
-import { ApiProblem, apiRequest, errorText } from "../lib/api";
+import { ApiProblem, apiRequest } from "../lib/api";
 import { locale, t } from "../lib/i18n";
+import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart } from "../lib/pagination";
 import { publicJoinInstruction } from "../lib/public-join-instruction";
 import { navigate } from "../lib/router";
@@ -25,7 +26,7 @@ const projects = ref<PublicProject[]>([]);
 const projectsNextCursor = ref<string | null>(null);
 const projectsLoadingMore = ref(false);
 const meta = ref<InstanceDiscovery | null>(null);
-const error = ref("");
+const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
 const loading = ref(true);
 const passkeyBusy = ref(false);
 const joinBusy = ref(false);
@@ -43,7 +44,7 @@ async function load(reset = true): Promise<void> {
   if (!reset && projectsNextCursor.value === null) return;
   if (reset) loading.value = true;
   else projectsLoadingMore.value = true;
-  error.value = "";
+  clearError();
   try {
     const params = new URLSearchParams({ limit: "20" });
     if (!reset && projectsNextCursor.value !== null) params.set("cursor", projectsNextCursor.value);
@@ -58,11 +59,12 @@ async function load(reset = true): Promise<void> {
   } catch (caught) {
     if (!reset && cursorRequiresRestart(caught)) {
       projectsNextCursor.value = null;
-      error.value = locale.value === "zh-CN"
-        ? "公开项目范围已变化，原分页位置已失效。请刷新后继续。"
-        : "The public Project scope changed, so the old cursor was retired. Refresh before continuing.";
+      setLocalizedError(
+        "The public Project scope changed, so the old cursor was retired. Refresh before continuing.",
+        "公开项目范围已变化，原分页位置已失效。请刷新后继续。",
+      );
     } else {
-      error.value = errorText(caught);
+      setError(caught);
     }
   } finally {
     if (reset) loading.value = false;
@@ -108,7 +110,7 @@ async function chooseRole(project: PublicProject, role: "reader" | "writer"): Pr
       await copyText(joinInstruction(project, role), `${project.public_id}:${role}`);
       return;
     }
-    error.value = errorText(caught);
+    setError(caught);
   } finally {
     writeFence.leave(fenceKey);
     joinBusy.value = false;
@@ -119,7 +121,7 @@ async function signInWithPasskey(): Promise<void> {
   const fenceKey = "passkey-sign-in";
   if (!writeFence.enter(fenceKey)) return;
   passkeyBusy.value = true;
-  error.value = "";
+  clearError();
   try {
     const options = await apiRequest<CeremonyEnvelope>("/api/v1/web-authentication/options", {
       body: {},
@@ -138,9 +140,11 @@ async function signInWithPasskey(): Promise<void> {
     window.dispatchEvent(new CustomEvent("cfkanban:session-exchanged"));
     navigate(entryPath);
   } catch (caught) {
-    error.value = caught instanceof DOMException || (caught instanceof ApiProblem && caught.status === 401)
-      ? t("passkey.failed")
-      : errorText(caught);
+    if (caught instanceof DOMException || (caught instanceof ApiProblem && caught.status === 401)) {
+      setErrorKey("passkey.failed");
+    } else {
+      setError(caught);
+    }
   } finally {
     writeFence.leave(fenceKey);
     passkeyBusy.value = false;
