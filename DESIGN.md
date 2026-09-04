@@ -138,6 +138,7 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 - Do not add a persistent left sidebar to the default Board. Workspace/Project scope, search, locale, session/role summary, profile, and the single primary `New issue` action fit in the top region.
 - At a 1440px desktop viewport, all five fixed columns should be visible without reducing card text below the typography rules.
 - Each column has a practical minimum width of 248px. Narrow viewports use horizontal board scrolling rather than compressing five columns into unreadable slivers.
+- On narrow viewports, keep that overflow inside a named, keyboard-focusable Board region and show a concise localized cue that all five columns continue sideways. The status selector beneath each writable card is the non-drag alternative and therefore uses a touch target of at least 44px.
 - Column separation uses spacing and a subtle vertical divider or surface step. Columns are not five large elevated cards.
 - The column footer does not repeat `Add issue` when the top-level `New issue` action is already visible.
 

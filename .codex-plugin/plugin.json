@@ -1,6 +1,6 @@
 {
   "name": "cfkanban-agent-skills",
-  "version": "0.1.0-alpha.37",
+  "version": "0.1.0-alpha.38",
   "description": "Portable cfKanban skills for daily collaboration, Owner administration, and safe Cloudflare deployment.",
   "author": {
     "name": "cfKanban maintainers"

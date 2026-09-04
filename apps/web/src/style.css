@@ -833,6 +833,26 @@ h3 {
   justify-content: flex-end;
 }
 
+.board-scroll-hint {
+  display: none;
+  margin: -10px 0 14px;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.kanban-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+
+.kanban-scroll:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 4px;
+}
+
 .kanban-board {
   display: grid;
   grid-template-columns: repeat(5, minmax(248px, 1fr));
@@ -840,10 +860,6 @@ h3 {
   border-top: 1px solid var(--color-border);
   border-bottom: 1px solid var(--color-border);
   overflow: hidden;
-}
-
-.board-page:has(.kanban-board) {
-  overflow-x: auto;
 }
 
 .kanban-column {
@@ -1752,6 +1768,18 @@ textarea:disabled {
     grid-column: 1 / -1;
   }
 
+  .board-scroll-hint {
+    display: block;
+  }
+
+  .kanban-scroll {
+    scroll-snap-type: x proximity;
+  }
+
+  .kanban-column {
+    scroll-snap-align: start;
+  }
+
   .issue-layout {
     grid-template-columns: 1fr;
   }
@@ -1891,6 +1919,10 @@ textarea:disabled {
 
   .board-toolbar-actions {
     justify-content: flex-start;
+  }
+
+  .card-status-select {
+    min-height: 44px;
   }
 
   .issue-title-row,
