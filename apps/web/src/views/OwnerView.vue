@@ -4,7 +4,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
-import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText } from "../lib/api";
+import { ApiProblem, apiRequest, clearPendingRequestIntents } from "../lib/api";
 import {
   type CasConflictState,
   captureCasConflict,
@@ -12,6 +12,7 @@ import {
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
+import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import {
   canConfirmInvitationReview,
   type InvitationCreateWriteResult,
@@ -64,7 +65,14 @@ interface PolicyResource {
 
 const loading = ref(true);
 const busy = ref(false);
-const error = ref("");
+const {
+  appendError,
+  clearError,
+  error,
+  setError,
+  setErrorKey,
+  setLocalizedError,
+} = useLocalizedError();
 const casConflict = ref<CasConflictState | null>(null);
 const treeTruncated = ref(false);
 const meta = ref<MetaResource | null>(null);
@@ -98,7 +106,11 @@ const inviteReviewReady = ref(false);
 const inviteReviewStartedAt = ref<number | null>(null);
 const invitationsHasMore = ref(false);
 const invitationsNextCursor = ref<string | null>(null);
-const inviteRecoveryNotice = ref("");
+const {
+  clearError: clearInviteRecoveryNotice,
+  error: inviteRecoveryNotice,
+  setLocalizedTextError: setInviteRecoveryNotice,
+} = useLocalizedError();
 const invitationCoordinationReady = ref(false);
 const invitationRecoveryRecord = ref<InvitationRecoveryRecord | null>(null);
 const invitationReviewRecord = ref<InvitationRecoveryRecord | null>(null);
@@ -141,10 +153,6 @@ function ui(english: string, chinese: string): string {
   return locale.value === "zh-CN" ? chinese : english;
 }
 
-function containerKindLabel(kind: "workspace" | "project"): string {
-  return ui(kind === "workspace" ? "Workspace" : "Project", kind === "workspace" ? "工作区" : "项目");
-}
-
 function roleLabel(role: string): string {
   if (locale.value !== "zh-CN") return role;
   if (role === "owner") return "所有者";
@@ -171,18 +179,18 @@ function rateScopeLabel(scope: string): string {
 function handleCursorError(caught: unknown, retire: () => void): void {
   if (cursorRequiresRestart(caught)) {
     retire();
-    error.value = ui(
+    setLocalizedError(
       "The list scope or Owner visibility changed, so the old cursor was retired. Start a fresh read before continuing.",
       "列表范围或所有者可见权限已变化，原分页位置已失效。请重新读取后再继续。",
     );
     return;
   }
-  error.value = errorText(caught);
+  setError(caught);
 }
 
 async function recoverCasConflict(
   caught: unknown,
-  resource: string,
+  resource: string | LocalizedText,
   draft: unknown,
   readback: () => Promise<void>,
 ): Promise<boolean> {
@@ -192,7 +200,7 @@ async function recoverCasConflict(
   casRecoveryGeneration = recoveryGeneration;
   casReadback = readback;
   casConflict.value = conflict;
-  error.value = t("error.conflict");
+  setErrorKey("error.conflict");
   try {
     await readback();
     if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
@@ -252,7 +260,7 @@ async function loadPrincipals(reset = true): Promise<void> {
       principalsHasMore.value = false;
       principalsNextCursor.value = null;
     });
-    else error.value = errorText(caught);
+    else setError(caught);
     if (reset) {
       principals.value = [];
       principalsHasMore.value = false;
@@ -267,9 +275,10 @@ async function copyText(value: string): Promise<void> {
   try {
     await window.navigator.clipboard.writeText(value);
   } catch {
-    error.value = locale.value === "zh-CN"
-      ? "浏览器未允许复制，请手动选择文本。"
-      : "Copy was not allowed; select the text manually.";
+    setLocalizedError(
+      "Copy was not allowed; select the text manually.",
+      "浏览器未允许复制，请手动选择文本。",
+    );
   }
 }
 
@@ -393,10 +402,10 @@ async function readInvitationsForReview(reset = true): Promise<void> {
   inviteReviewReady.value = true;
 }
 
-function lockInvitationCreation(message: string): void {
+function lockInvitationCreation(message: LocalizedText): void {
   inviteNeedsReview.value = true;
   invalidateInvitationReview();
-  inviteRecoveryNotice.value = message;
+  setInviteRecoveryNotice(message);
 }
 
 function committedInvitationResolved(): boolean {
@@ -422,16 +431,16 @@ async function confirmInvitationReview(): Promise<void> {
   }
   clearPendingRequestIntents("POST", "/api/v1/admin/invitations");
   inviteNeedsReview.value = false;
-  inviteRecoveryNotice.value = "";
+  clearInviteRecoveryNotice();
 }
 
 async function refreshInvitationReview(): Promise<void> {
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     await readInvitationsForReview(true);
   } catch (caught) {
-    error.value = errorText(caught);
+    setError(caught);
   } finally {
     busy.value = false;
   }
@@ -440,7 +449,7 @@ async function refreshInvitationReview(): Promise<void> {
 async function continueInvitationReview(): Promise<void> {
   if (invitationsNextCursor.value === null) return;
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     await readInvitationsForReview(false);
   } catch (caught) {
@@ -450,8 +459,8 @@ async function continueInvitationReview(): Promise<void> {
   }
 }
 
-function sharedInvitationRecoveryMessage(): string {
-  return ui(
+function sharedInvitationRecoveryMessage(): LocalizedText {
+  return localizedText(
     "Another tab or an earlier request has an Invitation operation whose result is not yet proven. Recover that exact operation before creating another capability.",
     "另一个标签页或先前请求仍有一项结果尚未确定的邀请操作。请先恢复该同一操作，再创建新的一次性权限。",
   );
@@ -467,7 +476,7 @@ function onInvitationRecoveryStorage(event: StorageEvent): void {
   if (coordinator === null || event.key !== coordinator.storageKey) return;
   if (event.newValue === null) {
     invitationRecoveryRecord.value = null;
-    lockInvitationCreation(ui(
+    lockInvitationCreation(localizedText(
       "The other tab proved the operation ended. Refresh and review the complete Invitation list before unlocking this tab.",
       "另一个标签页已证明该操作结束。请刷新并检查完整邀请列表，再解锁本标签页。",
     ));
@@ -476,7 +485,7 @@ function onInvitationRecoveryStorage(event: StorageEvent): void {
   const record = coordinator.readStorageValue(event.newValue);
   if (record === null) {
     invitationCoordinationReady.value = false;
-    lockInvitationCreation(ui(
+    lockInvitationCreation(localizedText(
       "The shared recovery state is invalid. Keep creation locked and use cfkanban-admin to inspect Invitations.",
       "共享恢复状态无效。请保持创建锁定，并使用 cfkanban-admin 检查邀请。",
     ));
@@ -508,7 +517,7 @@ function initializeInvitationRecovery(): void {
   } catch {
     invitationRecoveryCoordinator = null;
     invitationCoordinationReady.value = false;
-    lockInvitationCreation(ui(
+    lockInvitationCreation(localizedText(
       "This browser cannot maintain the non-secret shared recovery lock. Invitation creation stays disabled; use cfkanban-admin instead.",
       "此浏览器无法维护非秘密的共享恢复锁。邀请创建将保持禁用；请改用 cfkanban-admin。",
     ));
@@ -533,7 +542,7 @@ async function settleInvitationRecovery(record: InvitationRecoveryRecord): Promi
     return true;
   } catch {
     invitationCoordinationReady.value = false;
-    lockInvitationCreation(ui(
+    lockInvitationCreation(localizedText(
       "The shared recovery lock could not be safely cleared. Keep creation disabled and use cfkanban-admin.",
       "共享恢复锁无法安全清除。请保持创建禁用，并使用 cfkanban-admin。",
     ));
@@ -547,9 +556,8 @@ async function handleInvitationCreateFailure(
   recoveryAttempt = false,
   operationRecord: InvitationRecoveryRecord | null = null,
 ): Promise<void> {
-  error.value = caught instanceof InvitationRecoveryExpiredError
-    ? t("error.idempotencyExpired")
-    : errorText(caught);
+  if (caught instanceof InvitationRecoveryExpiredError) setErrorKey("error.idempotencyExpired");
+  else setError(caught);
   if (caught instanceof InvitationRecoveryBlockedError) {
     applySharedInvitationRecovery(caught.record);
   }
@@ -563,19 +571,19 @@ async function handleInvitationCreateFailure(
       try {
         await readInvitationsForReview(true);
       } catch (readbackFailure) {
-        error.value = `${error.value} ${errorText(readbackFailure)}`;
+        appendError(readbackFailure);
       }
     }
     return;
   }
-  lockInvitationCreation(ui(
+  lockInvitationCreation(localizedText(
     `The ${kind} result is uncertain and its bearer URL cannot be reconstructed. Retry the exact stored operation with the same Idempotency-Key; an immediate list snapshot cannot prove the original POST has ended.`,
     `${kind === "Invite" ? "邀请" : "恢复网址"}的提交结果不确定，一次性访问网址也无法重建。请使用相同的幂等键（Idempotency-Key）恢复已保存的同一操作；即时列表快照不能证明原创建请求已结束。`,
   ));
   try {
     await readInvitationsForReview(true);
   } catch (readbackFailure) {
-    error.value = `${error.value} ${errorText(readbackFailure)}`;
+    appendError(readbackFailure);
   }
 }
 
@@ -593,14 +601,14 @@ async function finishInvitationOperation(
   invalidateInvitationReview();
   if (!result.resource.secret_available) {
     invitationRecoveryRecord.value = committed;
-    lockInvitationCreation(ui(
+    lockInvitationCreation(localizedText(
       `The committed Invitation ${result.resource.id} cannot reproduce its bearer URL. Revoke that exact capability (or wait until it is no longer active), load the complete list, then confirm before creating another one.`,
       `已提交的邀请 ${result.resource.id} 无法重建一次性访问网址。请撤销这项权限（或等待其不再有效）、读完完整列表并确认后，再创建下一项。`,
     ));
   } else {
     oneTimeInvite.value = result.resource.copy_text;
     presentedInvitationRecord.value = committed;
-    lockInvitationCreation(ui(
+    lockInvitationCreation(localizedText(
       recovered
         ? "The exact operation was recovered and its one-time URL is shown below. Save it and explicitly confirm before this shared recovery lock is cleared."
         : "The Invitation committed and its one-time URL is shown below. Save it and explicitly confirm before this shared recovery lock is cleared.",
@@ -612,7 +620,7 @@ async function finishInvitationOperation(
   try {
     await readInvitationsForReview(true);
   } catch (caught) {
-    error.value = errorText(caught);
+    setError(caught);
   }
 }
 
@@ -676,7 +684,7 @@ async function acknowledgePresentedInvitation(): Promise<void> {
   clearPendingRequestIntents("POST", "/api/v1/admin/invitations");
   presentedInvitationRecord.value = null;
   inviteNeedsReview.value = false;
-  inviteRecoveryNotice.value = "";
+  clearInviteRecoveryNotice();
 }
 
 async function recoverInvitationOperation(): Promise<void> {
@@ -686,7 +694,7 @@ async function recoverInvitationOperation(): Promise<void> {
   const coordinator = invitationRecoveryCoordinator;
   if (coordinator === null) return;
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     let committedRecord: InvitationRecoveryRecord | null = null;
     const result = await coordinator.runExistingOperation(record, async (lease) => {
@@ -723,7 +731,7 @@ async function recoverInvitationOperation(): Promise<void> {
 
 async function load(): Promise<void> {
   loading.value = true;
-  error.value = "";
+  clearError();
   try {
     if (props.section === "overview") {
       const [metaResult, rateResult, workspaceResult] = await Promise.all([
@@ -748,7 +756,7 @@ async function load(): Promise<void> {
     }
     emit("context", { label: t("admin.title"), role: "owner" });
   } catch (caught) {
-    error.value = errorText(caught);
+    setError(caught);
   } finally {
     loading.value = false;
   }
@@ -765,7 +773,7 @@ async function loadAudit(reset = false): Promise<void> {
     auditNextCursor.value = continuationCursor(result);
   } catch (caught) {
     if (!reset) handleCursorError(caught, () => { auditNextCursor.value = null; });
-    else error.value = errorText(caught);
+    else setError(caught);
   } finally {
     auditLoadingMore.value = false;
   }
@@ -780,7 +788,7 @@ async function createWorkspace(): Promise<void> {
     showWorkspace.value = false;
     workspaceForm.value = { display_name: "", key: "" };
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
+  } catch (caught) { setError(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function createProject(): Promise<void> {
@@ -795,7 +803,7 @@ async function createProject(): Promise<void> {
     showProject.value = false;
     projectForm.value = { context: "", display_name: "", key: "" };
     await load();
-  } catch (caught) { error.value = errorText(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
+  } catch (caught) { setError(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function deleteContainer(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): Promise<void> {
@@ -810,8 +818,11 @@ async function deleteContainer(kind: "workspace" | "project", item: ContainerRes
     await apiRequest(`${path}?expected_version=${item.version}`, { method: "DELETE" });
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${containerKindLabel(kind)} ${item.key}`, { action: "delete" }, () => loadWorkspaceTree(true))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(
+      `${kind === "workspace" ? "Workspace" : "Project"} ${item.key}`,
+      `${kind === "workspace" ? "工作区" : "项目"} ${item.key}`,
+    ), { action: "delete" }, () => loadWorkspaceTree(true))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -856,9 +867,12 @@ async function saveContainerEdit(): Promise<void> {
     showContainerEdit.value = false;
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${containerKindLabel(target.kind)} ${target.item.key}`, {
+    if (!await recoverCasConflict(caught, localizedText(
+      `${target.kind === "workspace" ? "Workspace" : "Project"} ${target.item.key}`,
+      `${target.kind === "workspace" ? "工作区" : "项目"} ${target.item.key}`,
+    ), {
       display_name: target.display_name,
-    }, () => refreshContainerEditFacts(target))) error.value = errorText(caught);
+    }, () => refreshContainerEditFacts(target))) setError(caught);
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
@@ -880,7 +894,7 @@ async function openProjectSettings(item: ProjectEntry): Promise<void> {
     statusDrafts.value = Object.fromEntries(result.items.map((status) => [status.key, status.display_name]));
   } catch (caught) {
     if (requestId === projectSettingsRequestId) {
-      error.value = errorText(caught);
+      setError(caught);
       closeProjectSettings();
     }
   } finally { if (requestId === projectSettingsRequestId) busy.value = false; }
@@ -925,8 +939,11 @@ async function saveProjectSettings(): Promise<void> {
     projectSettingsForm.value = { context: updated.context ?? "", display_name: updated.display_name };
     await loadWorkspaceTree(true);
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Project", "项目")} ${item.workspaceKey}/${item.key}`, projectSettingsForm.value, () => refreshProjectSettingsFacts(item))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(
+      `Project ${item.workspaceKey}/${item.key}`,
+      `项目 ${item.workspaceKey}/${item.key}`,
+    ), projectSettingsForm.value, () => refreshProjectSettingsFacts(item))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -953,15 +970,18 @@ async function saveStatusName(status: ProjectStatusResource): Promise<void> {
     if (selectedProject.value !== null) selectedProject.value.version = result.resource.version;
     projects.value = projects.value.map((entry) => entry.id === item.id ? { ...entry, version: result.resource.version } : entry);
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Project status", "项目状态")} ${status.key}`, { display_name: displayName }, () => refreshProjectSettingsFacts(item))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(
+      `Project status ${status.key}`,
+      `项目状态 ${status.key}`,
+    ), { display_name: displayName }, () => refreshProjectSettingsFacts(item))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function openRestore(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): Promise<void> {
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     const path = kind === "workspace"
       ? `/api/v1/workspaces/${encodeURIComponent(item.key)}?deleted=only`
@@ -974,7 +994,7 @@ async function openRestore(kind: "workspace" | "project", item: ContainerResourc
     };
     showRestore.value = true;
   } catch (caught) {
-    error.value = errorText(caught);
+    setError(caught);
   } finally {
     busy.value = false;
   }
@@ -1005,22 +1025,25 @@ async function restoreContainer(): Promise<void> {
     showRestore.value = false;
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${containerKindLabel(target.kind)} ${target.item.key}`, { action: "restore" }, () => refreshRestoreTargetFacts(target))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(
+      `${target.kind === "workspace" ? "Workspace" : "Project"} ${target.item.key}`,
+      `${target.kind === "workspace" ? "工作区" : "项目"} ${target.item.key}`,
+    ), { action: "restore" }, () => refreshRestoreTargetFacts(target))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function openPrincipal(principal: PrincipalResource): Promise<void> {
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     oneTimeInvite.value = "";
     await refreshPrincipalFacts(principal, false);
     recoveryForm.value = { mode: "rotation", principal_id: principal.id };
     recoveryConfirmed.value = false;
     showPrincipal.value = true;
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) { setError(caught); } finally { busy.value = false; }
 }
 
 async function refreshPrincipalFacts(principal: PrincipalResource, requireOpen = true): Promise<void> {
@@ -1080,9 +1103,12 @@ async function revokeCredential(credential: CredentialResource): Promise<void> {
     await load();
   } catch (caught) {
     const principal = selectedPrincipal.value;
-    if (!await recoverCasConflict(caught, `${ui("Credential", "凭据")} ${credential.fingerprint}`, { action: "revoke" }, async () => {
+    if (!await recoverCasConflict(caught, localizedText(
+      `Credential ${credential.fingerprint}`,
+      `凭据 ${credential.fingerprint}`,
+    ), { action: "revoke" }, async () => {
       if (principal !== null) await refreshPrincipalFacts(principal);
-    })) error.value = errorText(caught);
+    })) setError(caught);
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
@@ -1096,8 +1122,8 @@ async function revokePrincipalPasskey(passkey: PrincipalPasskey): Promise<void> 
     await apiRequest(`/api/v1/admin/passkeys/${passkey.id}?expected_version=${passkey.version}`, { method: "DELETE" });
     await refreshPrincipalFacts(principal);
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Passkey", "通行密钥")} ${passkey.id}`, { action: "revoke" }, () => refreshPrincipalFacts(principal))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`Passkey ${passkey.id}`, `通行密钥 ${passkey.id}`), { action: "revoke" }, () => refreshPrincipalFacts(principal))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -1133,7 +1159,7 @@ async function openProjectGrants(item: ProjectEntry): Promise<void> {
   try {
     await loadProjectGrants(item, true);
     showGrant.value = true;
-  } catch (caught) { error.value = errorText(caught); } finally { busy.value = false; }
+  } catch (caught) { setError(caught); } finally { busy.value = false; }
 }
 
 function closeProjectGrants(): void {
@@ -1179,7 +1205,7 @@ async function createGrant(): Promise<void> {
     });
     grantForm.value = { principal_id: "", role: "writer" };
     await loadProjectGrants(item, true);
-  } catch (caught) { error.value = errorText(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
+  } catch (caught) { setError(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
 async function setGrantRole(grant: GrantResource, role: "reader" | "writer"): Promise<void> {
@@ -1201,9 +1227,9 @@ async function setGrantRole(grant: GrantResource, role: "reader" | "writer"): Pr
     if (selectedGrantProject.value !== null) await loadProjectGrants(selectedGrantProject.value, true);
   } catch (caught) {
     const item = selectedGrantProject.value;
-    if (!await recoverCasConflict(caught, `${ui("Grant", "授权")} ${grant.id}`, { role }, async () => {
+    if (!await recoverCasConflict(caught, localizedText(`Grant ${grant.id}`, `授权 ${grant.id}`), { role }, async () => {
       if (item !== null) await loadProjectGrants(item, true);
-    })) error.value = errorText(caught);
+    })) setError(caught);
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
@@ -1216,9 +1242,9 @@ async function revokeGrant(grant: GrantResource): Promise<void> {
     if (selectedGrantProject.value !== null) await loadProjectGrants(selectedGrantProject.value, true);
   } catch (caught) {
     const item = selectedGrantProject.value;
-    if (!await recoverCasConflict(caught, `${ui("Grant", "授权")} ${grant.id}`, { action: "revoke" }, async () => {
+    if (!await recoverCasConflict(caught, localizedText(`Grant ${grant.id}`, `授权 ${grant.id}`), { action: "revoke" }, async () => {
       if (item !== null) await loadProjectGrants(item, true);
-    })) error.value = errorText(caught);
+    })) setError(caught);
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
@@ -1247,8 +1273,8 @@ async function revokeInvite(invitation: InvitationResource): Promise<void> {
     await apiRequest(`/api/v1/admin/invitations/${invitation.id}?expected_version=${invitation.version}`, { method: "DELETE" });
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Invitation", "邀请")} ${invitation.id}`, { action: "revoke" }, () => readInvitationsForReview(true))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`Invitation ${invitation.id}`, `邀请 ${invitation.id}`), { action: "revoke" }, () => readInvitationsForReview(true))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -1273,7 +1299,7 @@ async function openPolicy(item: ProjectEntry): Promise<void> {
     };
   } catch (caught) {
     if (requestId === policyRequestId) {
-      error.value = errorText(caught);
+      setError(caught);
       closePolicy();
     }
   } finally { if (requestId === policyRequestId) busy.value = false; }
@@ -1304,8 +1330,11 @@ async function savePolicy(): Promise<void> {
     showPolicy.value = false;
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Public Join", "公开加入")} ${item.workspaceKey}/${item.key}`, policyForm.value, () => refreshPolicyFacts(item))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(
+      `Public Join ${item.workspaceKey}/${item.key}`,
+      `公开加入 ${item.workspaceKey}/${item.key}`,
+    ), policyForm.value, () => refreshPolicyFacts(item))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -1321,8 +1350,11 @@ async function disablePolicy(): Promise<void> {
     showPolicy.value = false;
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${ui("Public Join", "公开加入")} ${item.workspaceKey}/${item.key}`, { action: "disable" }, () => refreshPolicyFacts(item))) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(
+      `Public Join ${item.workspaceKey}/${item.key}`,
+      `公开加入 ${item.workspaceKey}/${item.key}`,
+    ), { action: "disable" }, () => refreshPolicyFacts(item))) {
+      setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }

@@ -1,8 +1,10 @@
+import type { LocalizedText } from "./localized-error";
+
 export interface CasConflictState {
   currentVersion: number | null;
   draft: string;
   readbackState: "complete" | "failed" | "pending";
-  resource: string;
+  resource: string | LocalizedText;
 }
 
 interface ProblemLike {
@@ -14,7 +16,7 @@ interface ProblemLike {
 
 export function captureCasConflict(
   error: unknown,
-  resource: string,
+  resource: string | LocalizedText,
   draft: unknown,
 ): CasConflictState | null {
   const problem = error as ProblemLike;

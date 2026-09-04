@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import PageState from "../components/PageState.vue";
-import { apiRequest, errorText } from "../lib/api";
+import { apiRequest } from "../lib/api";
 import {
   type CasConflictState,
   captureCasConflict,
@@ -11,6 +11,7 @@ import {
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
+import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { canRegisterPasskeyFromSession } from "../lib/session-capabilities";
 import { registrationCredential, registrationOptions } from "../lib/webauthn";
 import { WriteFence } from "../lib/write-fence";
@@ -34,7 +35,7 @@ const passkeys = ref<Passkey[]>([]);
 const displayName = ref("");
 const loading = ref(true);
 const busy = ref(false);
-const error = ref("");
+const { clearError, error, setError, setErrorKey } = useLocalizedError();
 const casConflict = ref<CasConflictState | null>(null);
 const canUsePasskeys = typeof window !== "undefined" && "PublicKeyCredential" in window;
 const canRegisterPasskey = computed(() => canRegisterPasskeyFromSession(props.session, canUsePasskeys));
@@ -45,7 +46,7 @@ let casReadbackInFlight = false;
 
 async function load(preserveDisplayName = false, throwOnFailure = false): Promise<void> {
   loading.value = true;
-  error.value = "";
+  clearError();
   try {
     const [principal, credentials] = await Promise.all([
       apiRequest<PrincipalResource>("/api/v1/me"),
@@ -56,21 +57,21 @@ async function load(preserveDisplayName = false, throwOnFailure = false): Promis
     passkeys.value = credentials.items;
     emit("context", { label: t("profile.title"), role: props.session.principal.is_owner ? "owner" : "member" });
   } catch (caught) {
-    error.value = errorText(caught);
+    setError(caught);
     if (throwOnFailure) throw caught;
   } finally {
     loading.value = false;
   }
 }
 
-async function recoverCasConflict(caught: unknown, resource: string, draft: unknown): Promise<boolean> {
+async function recoverCasConflict(caught: unknown, resource: string | LocalizedText, draft: unknown): Promise<boolean> {
   const conflict = captureCasConflict(caught, resource, draft);
   if (conflict === null) return false;
   const recoveryGeneration = casRecoveryGeneration + 1;
   casRecoveryGeneration = recoveryGeneration;
   casReadback = () => load(true, true);
   casConflict.value = conflict;
-  error.value = t("error.conflict");
+  setErrorKey("error.conflict");
   try {
     await load(true, true);
     if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
@@ -119,8 +120,8 @@ async function saveProfile(): Promise<void> {
     displayName.value = result.resource.display_name;
     dismissCasConflict();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, locale.value === "zh-CN" ? "身份资料" : "Principal profile", { display_name: displayName.value })) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText("Principal profile", "身份资料"), { display_name: displayName.value })) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -132,7 +133,7 @@ async function registerPasskey(): Promise<void> {
   const fenceKey = "passkey-register";
   if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
-  error.value = "";
+  clearError();
   try {
     const options = await apiRequest<CeremonyEnvelope>("/api/v1/me/passkeys/registration-options", {
       body: {}, method: "POST",
@@ -147,7 +148,8 @@ async function registerPasskey(): Promise<void> {
     });
     await load();
   } catch (caught) {
-    error.value = caught instanceof DOMException ? t("passkey.failed") : errorText(caught);
+    if (caught instanceof DOMException) setErrorKey("passkey.failed");
+    else setError(caught);
   } finally {
     writeFence.leave(fenceKey);
     busy.value = false;
@@ -162,8 +164,8 @@ async function revokePasskey(passkey: Passkey): Promise<void> {
     await apiRequest(`/api/v1/me/passkeys/${passkey.id}?expected_version=${passkey.version}`, { method: "DELETE" });
     await load();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, `${locale.value === "zh-CN" ? "通行密钥" : "Passkey"} ${passkey.id}`, { action: "revoke" })) {
-      error.value = errorText(caught);
+    if (!await recoverCasConflict(caught, localizedText(`Passkey ${passkey.id}`, `通行密钥 ${passkey.id}`), { action: "revoke" })) {
+      setError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
