@@ -397,6 +397,16 @@ export async function resolveCloudflareAuth({
   environment = process.env,
 }) {
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
+  if (typeof contextDirectory !== "string" || contextDirectory.trim().length === 0) {
+    throw toolError(
+      "CLOUDFLARE_AUTH_CONTEXT_REQUIRED",
+      "context_directory is required even with selected_profile so Wrangler can run from a controlled private directory",
+      {
+        field: "context_directory",
+        recovery: "Pass an absolute private cfKanban deployment or config directory outside every user repository; do not use process.cwd() or a user repository.",
+      },
+    );
+  }
   const context = safeAbsolute(contextDirectory, "context_directory");
   const requestedProfile = selectedProfile === null ? null : validateProfileName(selectedProfile);
   const versionProbe = await runAuthProbe(runner, executable, ["--version"], environment);

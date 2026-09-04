@@ -49,7 +49,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.26.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.27.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -516,6 +516,26 @@ test("Cloudflare auth resolution gives an explicitly selected profile precedence
   assert.deepEqual(calls.filter(({ args }) => args.slice(0, 2).join(" ") === "auth token").map(({ args }) => args.at(-1)), ["team-b"]);
 });
 
+test("Cloudflare auth resolution requires a private context directory even for an explicit profile", async () => {
+  let runnerCalled = false;
+  await assert.rejects(
+    resolveCloudflareAuth({
+      wranglerExecutable: "/opt/cfkanban/wrangler",
+      selectedProfile: "team-b",
+      environment: {},
+      runner: async () => {
+        runnerCalled = true;
+        throw new Error("runner must not be called without a controlled cwd");
+      },
+    }),
+    (error) => error.code === "CLOUDFLARE_AUTH_CONTEXT_REQUIRED"
+      && error.details.field === "context_directory"
+      && error.details.recovery.includes("outside every user repository")
+      && error.details.recovery.includes("do not use process.cwd()"),
+  );
+  assert.equal(runnerCalled, false);
+});
+
 test("Cloudflare auth resolution asks only for an account after one selected profile exposes several accounts", async () => {
   const contextDirectory = "/private/cfkanban/deploy-context";
   const result = await resolveCloudflareAuth({
@@ -611,6 +631,10 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
   assert.equal(names(deploy).includes("migrations assess-ledger-recovery"), true);
   assert.equal(names(deploy).includes("runtime plan-cloudflare-auth"), true);
   assert.equal(names(deploy).includes("runtime cloudflare-auth-action"), true);
+  assert.match(
+    deploy.commands.find((entry) => entry.name === "runtime resolve-cloudflare-auth").description,
+    /contextDirectory.*required even when selectedProfile/u,
+  );
   assert.equal(deploy.commands.find((entry) => entry.name === "runtime cloudflare-auth-action").input_fields.includes("completedActionIds"), true);
   assert.equal(names(deploy).includes("runtime wrangler-account-readback"), true);
   assert.equal(names(deploy).includes("runtime d1-resource-readback"), true);
@@ -3023,9 +3047,14 @@ test("deployment Skill directly documents the deterministic Cloudflare authentic
     assert.match(source, /owner_bootstrap_readback/u);
   }
   assert.match(deploy, /never enumerate profiles/u);
+  assert.match(deploy, /including with `selectedProfile`/u);
   assert.doesNotMatch(deploy, /profile_selection_required/u);
   assert.match(workflowEn, /never enumerates profiles/u);
+  assert.match(workflowEn, /Both fields are required even when `selectedProfile` is supplied/u);
+  assert.match(workflowEn, /CLOUDFLARE_AUTH_CONTEXT_REQUIRED/u);
   assert.match(workflowZh, /不会枚举 profiles/u);
+  assert.match(workflowZh, /即使提供了 `selectedProfile`，这两个字段仍然必填/u);
+  assert.match(workflowZh, /CLOUDFLARE_AUTH_CONTEXT_REQUIRED/u);
   assert.match(deploy, /global to every Wrangler profile for the current OS user/u);
   assert.match(workflowEn, /global for every Wrangler profile owned by the current OS user/u);
   assert.match(workflowZh, /当前 OS 用户拥有的所有 Wrangler profiles/u);
@@ -3076,6 +3105,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.24.md",
     "../../release/notes/0.1.0-alpha.25.md",
     "../../release/notes/0.1.0-alpha.26.md",
+    "../../release/notes/0.1.0-alpha.27.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3101,6 +3131,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.24.json",
     "../../release/config/0.1.0-alpha.25.json",
     "../../release/config/0.1.0-alpha.26.json",
+    "../../release/config/0.1.0-alpha.27.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

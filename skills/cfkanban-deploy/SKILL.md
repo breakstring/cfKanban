@@ -29,7 +29,7 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.26/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.27/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
 
 ## Choose the deployment source first
 
@@ -58,7 +58,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Inspect host support | `capabilities` | Read-only first step. Its Wrangler probe covers PATH only and cannot decide whether the cfKanban Tool Runtime is reusable. |
 | Verify a release | `release verify`, `release continuity` | Pin immutable manifest, artifact origins, versions, and digests; stop on source discontinuity. |
 | Resolve Wrangler | `runtime resolve-wrangler` | Mandatory before any install decision. Prefer an explicit compatible path, then PATH, then the active cfKanban Tool Runtime. |
-| Resolve Cloudflare auth | `runtime resolve-cloudflare-auth` | Let Wrangler use environment auth, an explicitly supplied profile, or the private deployment context. Never enumerate profiles or return tokens, email, bindings, resource inventories, or raw output. |
+| Resolve Cloudflare auth | `runtime resolve-cloudflare-auth` | Always pass the resolved Wrangler path and an absolute private cfKanban deployment/config `contextDirectory` outside user Repos, including with `selectedProfile`; the directory is a controlled Wrangler cwd and is not a second frozen auth source. Never enumerate profiles or return tokens, email, bindings, resource inventories, or raw output. |
 | Inspect Cloudflare login | `runtime inspect-cloudflare-auth` | Read exact Wrangler/profile/keyring/command/scope state without returning tokens or raw command output. |
 | Plan and perform login | `runtime plan-cloudflare-auth`, then `runtime cloudflare-auth-action` | Freeze separate process arguments, OAuth scopes, global keyring effects, profile operation, and task digest before opening a browser or saving auth. |
 | Verify Cloudflare account | `runtime wrangler-account-readback` | Run a read-only D1 listing against one exact account ID, with an explicit named profile when selected; return no database inventory. |
