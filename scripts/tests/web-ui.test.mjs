@@ -20,7 +20,11 @@ import {
   invitationOutcomeRequiresReview,
   isInvitationCreateWriteResult,
 } from "../../apps/web/src/lib/invitation-recovery.ts";
-import { resolveLocalePreference } from "../../apps/web/src/lib/locale-preference.ts";
+import {
+  readStoredLocale,
+  resolveLocalePreference,
+  writeStoredLocale,
+} from "../../apps/web/src/lib/locale-preference.ts";
 import { renderMarkdown } from "../../apps/web/src/lib/markdown.ts";
 import { publicJoinInstruction } from "../../apps/web/src/lib/public-join-instruction.ts";
 import { publicJoinRiskNotice } from "../../apps/web/src/lib/public-join-risk.ts";
@@ -29,6 +33,12 @@ import {
   sameSessionBoundary,
   shouldClearAfterSessionRevalidation,
 } from "../../apps/web/src/lib/session-boundary.ts";
+import {
+  canAccessOwnerControlPlane,
+  canCreateIssueRelation,
+  canRegisterPasskeyFromSession,
+  safeWebEntryPath,
+} from "../../apps/web/src/lib/session-capabilities.ts";
 
 function apiError(category, code, requestId = "request-test", retryAfter = null, status = 503, overrides = {}) {
   return {
@@ -168,6 +178,96 @@ test("locale preference uses the saved choice or the browser's first language", 
   assert.equal(resolveLocalePreference(null, ["en-US", "zh-CN"]), "en");
   assert.equal(resolveLocalePreference(null, ["zh-TW"]), "en");
   assert.equal(resolveLocalePreference("invalid", ["fr-FR", "zh-CN"]), "en");
+});
+
+test("locale persistence is best effort when storage access is unavailable", () => {
+  assert.equal(readStoredLocale(() => {
+    throw new DOMException("blocked", "SecurityError");
+  }, "locale"), null);
+  assert.equal(readStoredLocale(() => ({
+    getItem() { throw new Error("read blocked"); },
+    setItem() {},
+  }), "locale"), null);
+  assert.equal(writeStoredLocale(() => {
+    throw new DOMException("blocked", "SecurityError");
+  }, "locale", "en"), false);
+  assert.equal(writeStoredLocale(() => ({
+    getItem() { return null; },
+    setItem() { throw new Error("write blocked"); },
+  }), "locale", "zh-CN"), false);
+});
+
+function webSession(overrides = {}) {
+  const base = {
+    allowed_scope: { kind: "instance", projects: [] },
+    expires_at: "2026-09-05T00:00:00.000Z",
+    principal: { display_name: "Owner", id: "owner", is_owner: true, version: 1 },
+    session_id: "session",
+    source: { id: "credential", kind: "credential" },
+    target: { kind: "admin", section: "overview" },
+  };
+  return {
+    ...base,
+    ...overrides,
+    allowed_scope: { ...base.allowed_scope, ...overrides.allowed_scope },
+    principal: { ...base.principal, ...overrides.principal },
+    source: { ...base.source, ...overrides.source },
+    target: { ...base.target, ...overrides.target },
+  };
+}
+
+test("Owner control-plane access requires both Owner identity and instance scope", () => {
+  assert.equal(canAccessOwnerControlPlane(webSession()), true);
+  assert.equal(canAccessOwnerControlPlane(webSession({
+    allowed_scope: { kind: "project", project_id: "project" },
+    target: { kind: "project" },
+  })), false);
+  assert.equal(canAccessOwnerControlPlane(webSession({
+    allowed_scope: { kind: "project", project_id: "project" },
+    target: { kind: "issue" },
+  })), false);
+  assert.equal(canAccessOwnerControlPlane(webSession({
+    principal: { is_owner: false },
+  })), false);
+});
+
+test("Passkey registration requires a supporting browser and Credential-source Session", () => {
+  assert.equal(canRegisterPasskeyFromSession(webSession(), true), true);
+  assert.equal(canRegisterPasskeyFromSession(webSession(), false), false);
+  assert.equal(canRegisterPasskeyFromSession(webSession({
+    source: { id: "passkey", kind: "web_authenticator" },
+  }), true), false);
+});
+
+test("server-provided Web entry paths stay on the local app surface", () => {
+  for (const path of [
+    "/app",
+    "/app/admin?section=access",
+    "/app/issues/CFK-1",
+    "/app/w/workspace/p/PROJECT",
+  ]) assert.equal(safeWebEntryPath(path), path);
+  for (const unsafe of [
+    "https://evil.example/app",
+    "//evil.example/app",
+    "/\\\\evil.example/app",
+    "/application",
+    "/app/../../outside",
+    "/app#unexpected",
+    null,
+  ]) assert.equal(safeWebEntryPath(unsafe), null);
+});
+
+function issueForRelation(identifier, workspaceKey, allowedActions = ["update"]) {
+  return { allowed_actions: allowedActions, identifier, workspace: { key: workspaceKey } };
+}
+
+test("Issue Relation creation requires distinct writable endpoints in one Workspace", () => {
+  const source = issueForRelation("CFK-1", "workspace");
+  assert.equal(canCreateIssueRelation(source, issueForRelation("CFK-2", "workspace")), true);
+  assert.equal(canCreateIssueRelation(source, issueForRelation("CFK-2", "workspace", ["read"])), false);
+  assert.equal(canCreateIssueRelation(source, issueForRelation("CFK-2", "other")), false);
+  assert.equal(canCreateIssueRelation(source, issueForRelation("CFK-1", "workspace")), false);
+  assert.equal(canCreateIssueRelation(null, issueForRelation("CFK-2", "workspace")), false);
 });
 
 test("Markdown rendering escapes raw HTML and unsafe links", () => {
@@ -1249,14 +1349,27 @@ test("a Worker error envelope is trusted only after its complete schema and HTTP
 });
 
 test("high-risk Session and Invitation recovery helpers remain wired into the Vue views", async () => {
-  const [appSource, ownerSource, projectBoardSource, issueDetailSource] = await Promise.all([
+  const [
+    appSource,
+    appHeaderSource,
+    ownerSource,
+    profileSource,
+    projectBoardSource,
+    publicHomeSource,
+    issueDetailSource,
+  ] = await Promise.all([
     readFile(new URL("../../apps/web/src/App.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/components/AppHeader.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/OwnerView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/ProfileView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/ProjectBoardView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/PublicHomeView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/IssueDetailView.vue", import.meta.url), "utf8"),
   ]);
   assert.match(appSource, /shouldClearAfterSessionRevalidation\(caught\)/);
   assert.match(appSource, /sessionReloadPending = true/);
+  assert.match(appSource, /route\.kind === 'owner' && canAccessOwnerControlPlane\(session\)/);
+  assert.match(appHeaderSource, /canAccessOwnerControlPlane\(session\)/);
   assert.match(ownerSource, /initializeInvitationRecovery\(\)/);
   assert.match(ownerSource, /navigator\.locks\.request\(name, \{ mode: "exclusive" \}, callback\)/);
   assert.match(ownerSource, /coordinateIdempotencyIntent: async \(acquireIntent, execute\)/);
@@ -1278,12 +1391,19 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(projectBoardSource, /projectionGeneration\.isCurrent\(generation\)/);
   assert.match(projectBoardSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
   assert.match(projectBoardSource, /deletedIssues\.value = \[\]/);
+  assert.match(projectBoardSource, /issue\.restorable && issue\.allowed_actions\.includes\('restore'\)/);
+  assert.match(projectBoardSource, /issue\.parent_status\.workspace === "deleted"/);
   assert.match(projectBoardSource, /void load\(\)/);
   assert.match(issueDetailSource, /projectionGeneration\.isCurrent\(generation\)/);
   assert.match(issueDetailSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
   assert.match(issueDetailSource, /comments\.value = commentResult\.items/);
   assert.match(issueDetailSource, /showCollaborationRecovery\.value = false/);
   assert.match(issueDetailSource, /void load\(true\)/);
+  assert.match(issueDetailSource, /canCreateIssueRelation\(current, target\)/);
+  assert.match(issueDetailSource, /!relationTargetCanWrite/);
+  assert.match(profileSource, /canRegisterPasskeyFromSession\(props\.session, canUsePasskeys\)/);
+  assert.match(publicHomeSource, /safeWebEntryPath\(result\.resource\.entry_path\)/);
+  assert.match(publicHomeSource, /caught instanceof ApiProblem && caught\.status === 401/);
   assert.match(projectBoardSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
   assert.match(issueDetailSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
 });

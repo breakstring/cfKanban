@@ -1279,8 +1279,11 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     ownerHeaders(),
   );
   secrets.push(ownerLaunch.code);
+  assert.equal(ownerLaunch.body.resource.target.entry_path, "/app/admin");
   const ownerSession = await redeemLaunch(ownerLaunch.code, "wp07-owner-admin-redeem");
   secrets.push(ownerSession.cookies.session, ownerSession.cookies.csrf);
+  assert.equal(ownerSession.body.resource.entry_path, "/app/admin");
+  assert.equal(ownerSession.body.resource.target.section, "overview");
   assert.equal(ownerSession.body.resource.principal.is_owner, true);
   assert.equal(typeof ownerSession.body.resource.principal.is_owner, "boolean");
   const ownerSessionView = await request("/api/v1/web-session", {
@@ -1288,6 +1291,25 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
   assert.equal(ownerSessionView.body.allowed_scope.kind, "instance");
   assert.equal(ownerSessionView.body.principal.is_owner, true);
+  const adminEntryPaths = new Map([
+    ["workspaces-projects", "/app/admin?section=workspaces"],
+    ["access", "/app/admin?section=access"],
+    ["audit", "/app/admin?section=audit"],
+  ]);
+  for (const [section, entryPath] of adminEntryPaths) {
+    const launch = await createLaunch(
+      { kind: "admin", section },
+      `wp07-owner-admin-${section}-launch`,
+      ownerHeaders(),
+    );
+    secrets.push(launch.code);
+    assert.equal(launch.body.resource.target.entry_path, entryPath);
+    const redeemed = await redeemLaunch(launch.code, `wp07-owner-admin-${section}-redeem`);
+    secrets.push(redeemed.cookies.session, redeemed.cookies.csrf);
+    assert.equal(redeemed.body.resource.entry_path, entryPath);
+    assert.equal(redeemed.body.resource.target.section, section);
+    assert.equal(redeemed.body.resource.allowed_scope.kind, "instance");
+  }
   await assertRacedWebSessionScope({
     cookies: ownerSession.cookies,
     expectedStatus: 401,

@@ -8,6 +8,7 @@ import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { navigate } from "../lib/router";
+import { canCreateIssueRelation } from "../lib/session-capabilities";
 import type {
   IssueComment,
   IssueDetail,
@@ -57,6 +58,7 @@ let loadRequestId = 0;
 const canUpdate = computed(() => issue.value?.allowed_actions.includes("update") ?? false);
 const canDelete = computed(() => issue.value?.allowed_actions.includes("delete") ?? false);
 const canRestore = computed(() => issue.value?.allowed_actions.includes("restore") ?? false);
+const relationTargetCanWrite = computed(() => canCreateIssueRelation(issue.value, relationTarget.value));
 
 function projectIsActive(scope = issueProjectScope): boolean {
   if (scope === null) return true;
@@ -462,6 +464,12 @@ async function createRelation(): Promise<void> {
     }
     const target = relationTarget.value;
     if (target === null || target.identifier !== targetIdentifier) return;
+    if (!canCreateIssueRelation(current, target)) {
+      error.value = locale.value === "zh-CN"
+        ? "Relation 两端必须位于同一 Workspace，且当前 Session 必须能写入两端 Project。"
+        : "Both Relation endpoints must be in one Workspace and writable in the current Session.";
+      return;
+    }
     await apiRequest(`/api/v1/issues/${current.identifier}/relations`, {
       body: {
         kind: relation.value.kind,
@@ -631,7 +639,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
         <p>{{ issue.identifier }} · {{ issue.title }}</p><p class="muted-copy">{{ locale === "zh-CN" ? "这是可恢复的软删除。" : "This is a recoverable soft delete." }}</p><div class="form-actions"><button class="secondary-button" type="button" @click="showDelete = false">{{ t("action.cancel") }}</button><button class="danger-button" type="button" :disabled="busy" @click="deleteOrRestore">{{ t("action.delete") }}</button></div>
       </ModalDialog>
       <ModalDialog v-if="showRelation" :busy="busy" :title="locale === 'zh-CN' ? '添加 Relation' : 'Add relation'" @close="showRelation = false">
-        <form class="form-stack" @submit.prevent="createRelation"><label>{{ locale === "zh-CN" ? "类型" : "Kind" }}<select v-model="relation.kind"><option v-for="key in ['blocks','parent','related','duplicate']" :key="key" :value="key">{{ key }}</option></select></label><label>{{ locale === "zh-CN" ? "目标 Issue" : "Target Issue" }}<input v-model="relation.target_identifier" required pattern="CFK-[1-9][0-9]*" placeholder="CFK-42" @input="relationTarget = null" @blur="previewRelationTarget" /></label><article v-if="relationTarget" class="target-preview"><small>{{ relationTarget.workspace.key }} / {{ relationTarget.project.key }}</small><strong>{{ relationTarget.identifier }} · {{ relationTarget.title }}</strong></article><p v-else class="muted-copy">{{ locale === "zh-CN" ? "离开输入框后会先核对目标 Project 与标题。" : "Leave the field to verify the target Project and title before creating the relation." }}</p><div class="form-actions"><button class="secondary-button" type="button" @click="showRelation = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy || !relationTarget">{{ t("action.save") }}</button></div></form>
+        <form class="form-stack" @submit.prevent="createRelation"><label>{{ locale === "zh-CN" ? "类型" : "Kind" }}<select v-model="relation.kind"><option v-for="key in ['blocks','parent','related','duplicate']" :key="key" :value="key">{{ key }}</option></select></label><label>{{ locale === "zh-CN" ? "目标 Issue" : "Target Issue" }}<input v-model="relation.target_identifier" required pattern="CFK-[1-9][0-9]*" placeholder="CFK-42" @input="relationTarget = null" @blur="previewRelationTarget" /></label><article v-if="relationTarget" class="target-preview"><small>{{ relationTarget.workspace.key }} / {{ relationTarget.project.key }}</small><strong>{{ relationTarget.identifier }} · {{ relationTarget.title }}</strong></article><p v-else class="muted-copy">{{ locale === "zh-CN" ? "离开输入框后会先核对目标 Project 与标题。" : "Leave the field to verify the target Project and title before creating the relation." }}</p><p v-if="relationTarget && !relationTargetCanWrite" class="warning-panel">{{ locale === "zh-CN" ? "Relation 两端必须位于同一 Workspace，且当前 Session 必须能写入两端 Project。" : "Both Relation endpoints must be in one Workspace and writable in the current Session." }}</p><div class="form-actions"><button class="secondary-button" type="button" @click="showRelation = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy || !relationTargetCanWrite">{{ t("action.save") }}</button></div></form>
       </ModalDialog>
       <ModalDialog v-if="showLabelManager" :busy="busy" :title="locale === 'zh-CN' ? '管理 Labels' : 'Manage labels'" @close="showLabelManager = false">
         <form class="form-stack" @submit.prevent="createLabel"><label>{{ locale === "zh-CN" ? "名称" : "Name" }}<input v-model="newLabel.name" required maxlength="64" /></label><label>{{ locale === "zh-CN" ? "颜色（可选）" : "Color (optional)" }}<input v-model="newLabel.color" pattern="#[0-9A-Fa-f]{6}" placeholder="#2563EB" /></label><div class="form-actions"><button class="primary-button" type="submit" :disabled="busy">{{ locale === "zh-CN" ? "创建 Label" : "Create label" }}</button></div></form>

@@ -10,6 +10,7 @@ import { navigate } from "../lib/router";
 import type {
   ContainerResource,
   IssueSummary,
+  IssueTombstone,
   ListResult,
   PriorityKey,
   ProjectStatusResource,
@@ -29,7 +30,7 @@ const statusOrder: StatusKey[] = ["backlog", "todo", "in_progress", "done", "can
 const project = ref<ContainerResource | null>(null);
 const statuses = ref<ProjectStatusResource[]>([]);
 const issues = ref<IssueSummary[]>([]);
-const deletedIssues = ref<IssueSummary[]>([]);
+const deletedIssues = ref<IssueTombstone[]>([]);
 const nextCursor = ref<string | null>(null);
 const loading = ref(true);
 const loadingMore = ref(false);
@@ -238,7 +239,7 @@ async function loadDeleted(): Promise<void> {
   showDeleted.value = true;
   const generation = projectionGeneration.capture();
   try {
-    const result = await apiRequest<ListResult<IssueSummary>>(
+    const result = await apiRequest<ListResult<IssueTombstone>>(
       `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues?deleted=only&limit=100`,
     );
     if (projectionIsCurrent(generation)) deletedIssues.value = result.items;
@@ -248,7 +249,19 @@ async function loadDeleted(): Promise<void> {
   }
 }
 
-async function restoreIssue(issue: IssueSummary): Promise<void> {
+function restoreUnavailableText(issue: IssueTombstone): string {
+  if (issue.parent_status.workspace === "deleted") {
+    return locale.value === "zh-CN" ? "请先恢复所属 Workspace" : "Restore the parent Workspace first";
+  }
+  if (issue.parent_status.project === "deleted") {
+    return locale.value === "zh-CN" ? "请先恢复所属 Project" : "Restore the parent Project first";
+  }
+  if (issue.unavailability_reason !== null) return issue.unavailability_reason.code;
+  return locale.value === "zh-CN" ? "当前不可恢复" : "Restore unavailable";
+}
+
+async function restoreIssue(issue: IssueTombstone): Promise<void> {
+  if (!issue.restorable || !issue.allowed_actions.includes("restore")) return;
   formBusy.value = true;
   const generation = projectionGeneration.capture();
   try {
@@ -395,7 +408,8 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
       <div class="tombstone-list">
         <div v-for="issue in deletedIssues" :key="issue.id" class="tombstone-row">
           <span><code>{{ issue.identifier }}</code><strong>{{ issue.title }}</strong></span>
-          <button class="secondary-button" type="button" @click="restoreIssue(issue)">{{ t("action.restore") }}</button>
+          <button v-if="issue.restorable && issue.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreIssue(issue)">{{ t("action.restore") }}</button>
+          <small v-else class="warning-chip">{{ restoreUnavailableText(issue) }}</small>
         </div>
         <p v-if="deletedIssues.length === 0" class="empty-copy">{{ locale === "zh-CN" ? "没有可恢复的 Issue。" : "No recoverable issues." }}</p>
       </div>

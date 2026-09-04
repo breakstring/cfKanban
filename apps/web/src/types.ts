@@ -119,6 +119,24 @@ export interface IssueSummary {
   workspace: { display_name: string; key: string };
 }
 
+export interface IssueTombstone extends IssueSummary {
+  allowed_actions: Array<"restore">;
+  deleted_at: string;
+  deleted_by_principal_id: string | null;
+  parent_status: {
+    project: "active" | "deleted";
+    workspace: "active" | "deleted";
+  };
+  restorable: boolean;
+  unavailability_reason: null | {
+    code: string;
+    current_usage?: number;
+    limit?: number;
+    recovery: string;
+    resource_kind?: "issues" | "comments";
+  };
+}
+
 export interface IssueComment {
   allowed_actions: string[];
   author: { display_name: string; principal_id: string };
