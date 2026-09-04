@@ -67,17 +67,54 @@ export async function verifyReleaseArtifacts({ manifest, artifactFiles }) {
   return { verified: true, artifacts: results };
 }
 
+function receiptPublisherOrigin(receipt) {
+  const publisher = typeof receipt.publisher === "string"
+    ? receipt.publisher
+    : receipt.publisher?.canonical_origin;
+  try {
+    return requireHttpsOrigin(publisher, "current_receipt.publisher");
+  } catch (error) {
+    throw toolError("INVALID_RELEASE_RECEIPT", "Installed Skill receipt has no valid HTTPS publisher origin", { field: "publisher" }, error);
+  }
+}
+
+function receiptArtifactOrigins(receipt) {
+  if (receipt.artifact_origins !== undefined && !Array.isArray(receipt.artifact_origins)) {
+    throw toolError("INVALID_RELEASE_RECEIPT", "Installed Skill receipt artifact_origins must be an array", { field: "artifact_origins" });
+  }
+  if (receipt.artifact_origins?.length > 0) {
+    try {
+      return [...new Set(receipt.artifact_origins.map((origin) => requireHttpsOrigin(origin, "current_receipt.artifact_origin")))].sort();
+    } catch (error) {
+      throw toolError("INVALID_RELEASE_RECEIPT", "Installed Skill receipt contains an invalid HTTPS artifact origin", { field: "artifact_origins" }, error);
+    }
+  }
+
+  let source;
+  try {
+    source = new URL(requireString(receipt.source, "current_receipt.source"));
+  } catch (error) {
+    throw toolError("INVALID_RELEASE_RECEIPT", "Installed Skill receipt has no usable artifact-origin evidence", { field: "source" }, error);
+  }
+  if (source.protocol !== "https:" || source.username || source.password) {
+    throw toolError("INVALID_RELEASE_RECEIPT", "Installed Skill receipt source must be an HTTPS URL without credentials", { field: "source" });
+  }
+  return [source.origin];
+}
+
 export function verifyPublisherContinuity({ currentReceipt, targetManifest }) {
   if (currentReceipt === null || currentReceipt === undefined) return { continuous: true, first_install: true };
   const target = validateReleaseManifest(targetManifest);
   const targetOrigins = new Set(target.artifacts.flatMap((artifact) => artifact.allowed_origins));
-  const changed = currentReceipt.publisher?.canonical_origin !== target.publisher.canonical_origin
-    || !(currentReceipt.artifact_origins || []).every((origin) => targetOrigins.has(origin));
+  const currentPublisher = receiptPublisherOrigin(currentReceipt);
+  const currentArtifactOrigins = receiptArtifactOrigins(currentReceipt);
+  const changed = currentPublisher !== target.publisher.canonical_origin
+    || !currentArtifactOrigins.every((origin) => targetOrigins.has(origin));
   return {
     continuous: !changed,
     first_install: false,
     requires_explicit_rebind: changed,
-    before: { publisher: currentReceipt.publisher?.canonical_origin || null, artifact_origins: currentReceipt.artifact_origins || [] },
+    before: { publisher: currentPublisher, artifact_origins: currentArtifactOrigins },
     after: { publisher: target.publisher.canonical_origin, artifact_origins: [...targetOrigins].sort() },
   };
 }
