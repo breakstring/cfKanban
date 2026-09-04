@@ -57,6 +57,8 @@ The complete request and recovery guide is [references/owner-workflows.md](refer
 
 Audit reads without `project_id` or `stream` deliberately cover the whole Instance and both streams. Reuse `next_cursor` only with the exact same filters; changing either filter starts a fresh read.
 
+Classify an event's lifecycle resource by `subject.type` and `subject.id`. `authorized_via` and `grant_id` are historical authorization evidence: a participant's Issue write can carry the Project Grant that authorized it, while a Grant-management event can carry that same ID for the Grant subject. Never use `grant_id` alone to select Grant lifecycle events.
+
 ## First-use workflow after deployment
 
 1. Verify local state, trusted origin, `/api/v1/me`, and `is_owner=true`.

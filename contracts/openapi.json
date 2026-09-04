@@ -13401,6 +13401,7 @@
           },
           "authorized_via": {
             "type": "string",
+            "description": "Historical authorization path used for this Event; it does not identify the mutated resource.",
             "enum": [
               "deployment_owner",
               "project_grant",
@@ -13421,6 +13422,7 @@
             "minimum": 0
           },
           "grant_id": {
+            "description": "Project Grant involved in the Event's authorization context when one exists. On Grant-management Events it can also equal the Grant subject; use subject.type and subject.id to identify the mutated resource.",
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Uuid"
@@ -13473,6 +13475,7 @@
           },
           "subject": {
             "type": "object",
+            "description": "Stable type and ID of the resource whose lifecycle this Event records. Use this pair, not grant_id alone, to classify resource mutations.",
             "required": [
               "id",
               "type"

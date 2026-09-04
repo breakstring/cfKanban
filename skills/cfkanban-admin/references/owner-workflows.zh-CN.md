@@ -114,6 +114,8 @@ Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 op
 
 任务只涉及一个已知 Project 时使用 `project_id`，只关心一种事件时使用 `stream=domain|security`。两者都省略表示有意读取整个实例的业务与安全审计。响应会在 `resolved_filters` 中回显规范化的 `project_id` 与 stream 列表。只有筛选条件完全不变时才能继续使用 `next_cursor`；任何筛选变化都应开启新的分页序列。
 
+使用 `subject.type` 与 `subject.id` 判断 Event 记录的是哪个资源的生命周期；`authorized_via` 与 `grant_id` 是历史授权证据。参与者写 Issue、Comment、Label 或 Relation 时，Event 的 `grant_id` 可以指当时授权该写入的 Project Grant；管理 Grant 的 Event 也可以在同一字段记录作为 subject 的 Grant。因此只按 `grant_id` 筛选会混入其他资源的生命周期。定位 Grant 变更时先匹配 `subject.type=project_grant` 与准确 `subject.id`，再用 `grant_id` 和 `authorized_via` 解释操作如何获权。
+
 ## 错误与读回
 
 每个原子写操作独立使用 Idempotency Key。读回修改后的资源与相关 audit event。只按稳定机器字段解释错误，不匹配 `message`。后续步骤失败时，之前已提交的操作保持提交，必须单独汇报而不能声称回滚。

@@ -15,12 +15,12 @@
 
 ## 第一步：安装 Skills
 
-当前测试发行版是 `0.1.0-alpha.39`。它仍是预发行版，因此 Agent 必须明确告诉你这一点，并在选用前取得你对测试版本的明确选择。
+当前测试发行版是 `0.1.0-alpha.40`。它仍是预发行版，因此 Agent 必须明确告诉你这一点，并在选用前取得你对测试版本的明确选择。
 
-在 Codex 中，先让 Agent 展示这项宿主级安装计划：来源 `https://github.com/breakstring/cfKanban.git`、不可变 ref `0.1.0-alpha.39`、用户级安装范围，以及卸载 plugin 的回退方式。全新安装时使用：
+在 Codex 中，先让 Agent 展示这项宿主级安装计划：来源 `https://github.com/breakstring/cfKanban.git`、不可变 ref `0.1.0-alpha.40`、用户级安装范围，以及卸载 plugin 的回退方式。全新安装时使用：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.39
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.40
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -28,13 +28,13 @@ codex plugin add cfkanban-agent-skills@cfkanban
 
 在其他 Agent 宿主中，按该宿主正常的 Skill 安装方式，从已验证的 Skill bundle 安装 `cfkanban`、`cfkanban-admin`、`cfkanban-deploy` 三个目录。Agent 必须通过测试发行指针校验 immutable manifest 与 SHA-256，不能把本地 checkout、`main` 或 plugin cache 当作部署真相：
 
-<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.39/prerelease.json>
+<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.40/prerelease.json>
 
 ## 第二步：把部署意图交给 Agent
 
 新建任务后说：
 
-> 请使用 `$cfkanban-deploy` 和这份指南为我部署一个新的 cfKanban 实例。使用 `0.1.0-alpha.39` 测试发行版。先做只读检查；任何本地安装或 Cloudflare 写入前，先展示准确计划和所需授权。
+> 请使用 `$cfkanban-deploy` 和这份指南为我部署一个新的 cfKanban 实例。使用 `0.1.0-alpha.40` 测试发行版。先做只读检查；任何本地安装或 Cloudflare 写入前，先展示准确计划和所需授权。
 
 这一句就够了。你不需要自己编资源名、migration 命令、digest 或 Wrangler 参数。
 

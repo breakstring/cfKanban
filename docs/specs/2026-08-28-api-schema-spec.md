@@ -556,6 +556,8 @@ Relation 唯一性：
 
 `events` 是一个物理 append-only 表、两个逻辑读取面：参与者 Event feed 只查询 `stream='domain'` 且执行 Project 授权过滤；Owner audit endpoint 可以读取 domain + security 投影，并按一个 immutable Project ID 和／或一个 stream 做有界筛选。一个跨 Project 或安全敏感操作可以写多条具有同一 operation ID 的 Event；每条 domain Event 只绑定一个明确 Project，避免用 JSON Project 列表绕过授权查询。`operation_commits.last_event_sequence` 指向该操作最后一条 Event，作为写响应的 `event_cursor` 基础。
 
+`subject_type/id` 标识 Event 所记录的资源对象；`authorized_via` 与 `grant_id` 记录历史授权证据。非 Owner 的领域写入会在 `grant_id` 引用当时授权该操作的 Project Grant，而 Grant 管理事件也可以在同一字段记录作为 subject 的 Grant。因此调用方不得只凭 `grant_id` 推断资源类型或筛选 Grant 生命周期；必须先匹配 `subject.type=project_grant` 与准确 `subject.id`，再用授权字段解释操作当时如何获权。
+
 ## 9. 必需索引与查询形状
 
 索引只服务已知高频查询，避免为了“可能有用”增加每次写入成本。冻结验证已用 `EXPLAIN QUERY PLAN` 证明下列查询不做意外全表扫描：

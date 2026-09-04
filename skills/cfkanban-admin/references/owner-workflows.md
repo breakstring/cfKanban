@@ -114,6 +114,8 @@ An Owner Browser Launch uses the current Owner Credential only to create a five-
 
 Use `project_id` when the task concerns one known Project and `stream=domain|security` when only one event class is relevant. Omitting both is an intentional Instance-wide, both-stream read. The response repeats the normalized `project_id` and stream list in `resolved_filters`. Continue with `next_cursor` only while those filters stay unchanged; a changed filter invalidates the old cursor and starts a fresh sequence.
 
+Use `subject.type` and `subject.id` to identify the resource whose lifecycle the Event records. Treat `authorized_via` and `grant_id` as historical authorization evidence. In particular, a participant's Issue, Comment, Label, or Relation Event can reference the Project Grant that authorized the write, while a Grant-management Event can use the same `grant_id` for its Grant subject. Filtering only by `grant_id` therefore mixes resource lifecycles; select Grant mutations with `subject.type=project_grant` and the exact `subject.id`, then inspect `grant_id` and `authorized_via` to explain how the operation was authorized.
+
 ## Error and readback rules
 
 Use one Idempotency Key per atomic write. Read back the mutated resource and relevant audit event. Interpret errors by stable machine fields, not `message`. Earlier committed operations remain committed when a later step fails; report them separately rather than claiming rollback.
