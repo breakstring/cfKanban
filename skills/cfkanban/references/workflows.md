@@ -59,7 +59,7 @@ All entries below use `api request` unless a dedicated command is named.
 | View my profile | `GET /api/v1/me` | Confirm immutable Principal ID and Credential fingerprint. |
 | Rename myself | `PATCH /api/v1/me` | `display_name`, `expected_version`; then read `/me`. |
 | List all authorized Issues | `GET /api/v1/issues` | Prefer repeated explicit Workspace/Project filters; warn when scope expands. |
-| List deterministic candidates | `GET /api/v1/issues/candidates` | Same scope rule; ordering is server-defined. |
+| List deterministic candidates | `GET /api/v1/issues/candidates` | `assignment` is required; use workspace-qualified `project` filters and read back the resolved candidate policy. |
 | List/create in one Project | `GET/POST /api/v1/workspaces/{workspace_key}/projects/{project_key}/issues` | Create uses one Idempotency Key. |
 | Read/edit/delete one Issue | `GET/PATCH/DELETE /api/v1/issues/{identifier}` | Read `version` first; use CAS; read back. |
 | Restore one Issue | `POST /api/v1/issues/{identifier}/commands/restore` | Supply expected version; quota may block restoration. |
@@ -75,6 +75,8 @@ All entries below use `api request` unless a dedicated command is named.
 | Read/delete/restore a relation | `/api/v1/relations/{relation_id}` and `.../commands/restore` | Relation changes neither status nor permission automatically. |
 
 For every non-idempotent operation, provide an independent `idempotencyKey`. For CAS operations, put the current `expected_version` in the JSON body, or in the query string for DELETE, exactly as the OpenAPI operation defines.
+
+Candidate selection has no silent assignment default. Start from `/api/v1/issues/candidates?assignment=mine&blocked=exclude&project={workspace_key}%2F{project_key}` and choose the required `assignment` from the user's intent: `mine` for work assigned to the current Principal, `unassigned` for work available to pick up, or `needs_reassignment` for work whose assignee is no longer eligible. The endpoint returns only unstarted work in server-defined order. `blocked=exclude` is the normal default; set `blocked=include` when blocked candidates should remain visible. Repeat `project={workspace_key}%2F{project_key}` for multiple Projects. Echo `resolved_scope.candidate_policy` and the resolved Projects so the user can see the exact policy and scope that were applied.
 
 ## Invite redemption
 

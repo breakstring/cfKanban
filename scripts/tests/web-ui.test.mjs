@@ -727,12 +727,16 @@ test("the self-hosted brand mark is wired to the favicon and both Web shells", a
 
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
   const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
-  const documents = await Promise.all(paths.map((name) => readFile(
-    new URL(`../../apps/web/public/${name}`, import.meta.url),
-    "utf8",
-  )));
+  const [pluginManifest, ...documents] = await Promise.all([
+    readFile(new URL("../../.codex-plugin/plugin.json", import.meta.url), "utf8").then(JSON.parse),
+    ...paths.map((name) => readFile(
+      new URL(`../../apps/web/public/${name}`, import.meta.url),
+      "utf8",
+    )),
+  ]);
+  const releasePattern = new RegExp(pluginManifest.version.replaceAll(".", "\\."), "u");
   for (const [index, document] of documents.entries()) {
-    assert.match(document, /0\.1\.0-alpha\.38/);
+    assert.match(document, releasePattern);
     assert.match(document, /cfkanban-agent-skills@cfkanban/);
     assert.doesNotMatch(document, /curl[^\n]*\|\s*(?:ba)?sh/iu, `${paths[index]} must not teach pipe-to-shell`);
   }

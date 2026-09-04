@@ -59,7 +59,7 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 | 查看个人资料 | `GET /api/v1/me` | 确认 immutable Principal ID 与 Credential fingerprint。 |
 | 修改自己的名称 | `PATCH /api/v1/me` | `display_name`、`expected_version`；随后读回 `/me`。 |
 | 列出全部已授权 Issues | `GET /api/v1/issues` | 优先携带重复的显式 Workspace/Project filters；扩大范围时告警。 |
-| 列出确定性候选 | `GET /api/v1/issues/candidates` | 同样遵循 scope 规则；排序由服务端固定。 |
+| 列出确定性候选 | `GET /api/v1/issues/candidates` | `assignment` 必填；使用 Workspace-qualified `project` 过滤，并读回服务端解析后的候选策略。 |
 | 在一个 Project 列出/创建 | `GET/POST /api/v1/workspaces/{workspace_key}/projects/{project_key}/issues` | 创建使用一个 Idempotency Key。 |
 | 读取/编辑/删除 Issue | `GET/PATCH/DELETE /api/v1/issues/{identifier}` | 先读 `version`，使用 CAS，再读回。 |
 | 恢复一个 Issue | `POST /api/v1/issues/{identifier}/commands/restore` | 提交 expected version；quota 可能阻止恢复。 |
@@ -75,6 +75,8 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 | 读取/删除/恢复 relation | `/api/v1/relations/{relation_id}` 与 `.../commands/restore` | Relation 不自动改变 status 或权限。 |
 
 每个非幂等操作都要提供独立 `idempotencyKey`。CAS 操作按 OpenAPI operation 的准确合同，把 current `expected_version` 放进 JSON body；DELETE 则放进 query string。
+
+候选查询没有静默的 assignment 默认值。从 `/api/v1/issues/candidates?assignment=mine&blocked=exclude&project={workspace_key}%2F{project_key}` 这个模板开始，并根据用户意图显式选择必填的 `assignment`：`mine` 表示分配给当前 Principal 的工作，`unassigned` 表示可以领取的未分配工作，`needs_reassignment` 表示原负责人已不再具备资格的工作。该端点只返回未开始的工作，并按服务端固定顺序排列。普通工作队列使用 `blocked=exclude`；确实要看阻塞候选时改用 `blocked=include`。多个 Project 就重复 `project={workspace_key}%2F{project_key}`。向用户回显响应中的 `resolved_scope.candidate_policy` 与实际解析到的 Projects，不能靠调用方猜测服务端采用了什么策略和范围。
 
 ## Invite 兑换
 
