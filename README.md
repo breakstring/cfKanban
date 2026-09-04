@@ -151,4 +151,6 @@ npm run validate
 
 `npm run validate` runs typechecks, unit and integration tests, OpenAPI/error checks, generated-artifact drift checks, local D1 validation, credential-free CI policy checks, the Web build, and a Worker dry-run build. It does not log in to Cloudflare or write remote resources.
 
+Source maintainers can use the [release publication and interruption-recovery workflow](docs/release-publication.md) to verify a draft before publishing its assets. This is separate from user deployment and Skill updates.
+
 Start with the [documentation index](docs/README.md), [product brief](docs/product/product-brief.md), [user storyboard](docs/product/user-storyboard.md), [Agent Skills guide](docs/skills/README.md), and [implementation plan](docs/plans/2026-08-29-v0-implementation-plan.md). Frozen technical contracts live under [`docs/specs/`](docs/specs/).
