@@ -9,9 +9,9 @@ import { loadAndVerifyRelease, verifyPublisherContinuity } from "./release.mjs";
 import { mergeRepoScope, readRepoScope, resolveScope } from "./scope.mjs";
 import {
   clearPendingCredential,
-  createPendingCredential,
   inspectInstanceState,
   initializeStateRoot,
+  preparePendingCredential,
   putInstanceMetadata,
 } from "./state.mjs";
 import { apiRequest } from "./transport.mjs";
@@ -44,7 +44,7 @@ const COMMANDS = new Map([
   ["state init", command({ description: "Create and verify the private cfKanban user root.", effect: "local_write", inputFields: ["home", "repoRoot", "persistenceConfirmed"], run: initializeStateRoot })],
   ["state put-instance", command({ description: "Store non-secret metadata for one trusted instance.", effect: "local_write", inputFields: ["instanceId", "trustedApiOrigin", "originVersion"], surfaces: ["daily", "deploy"], run: putInstanceMetadata })],
   ["state inspect", command({ description: "Inspect one local instance slot without returning Credential values.", effect: "local_state_check", inputFields: ["instanceId"], run: inspectInstanceState })],
-  ["credential prepare", command({ description: "Generate a Credential directly into the private pending slot.", effect: "local_secret_write", inputFields: ["instanceId", "principalId", "operationId", "idempotencyKey", "purpose"], run: createPendingCredential })],
+  ["credential prepare", command({ description: "Generate a Credential directly into the private pending slot and return only its safe metadata view.", effect: "local_secret_write", inputFields: ["instanceId", "principalId", "operationId", "idempotencyKey", "purpose"], run: preparePendingCredential })],
   ["credential verify-and-promote", command({ description: "Authenticate with the pending Credential, require consistent /me Principal IDs, an explicit Owner flag, the exact fingerprint, and any plan-bound Credential ID before promotion.", effect: "authenticated_read_and_local_secret_write", inputFields: ["instanceId"], run: verifyPendingCredential })],
   ["credential clear", command({ description: "Clear a pending Credential only after remote non-commit is proven.", effect: "local_secret_delete", inputFields: ["instanceId", "committedStateKnownFalse"], run: clearPendingCredential })],
   ["invite redeem", command({ description: "Redeem one Project or recovery Invite while injecting any pending Credential internally.", effect: "single_remote_write_and_local_credential_promotion", inputFields: ["instanceId", "inviteCode", "redeemAs", "displayName", "idempotencyKey"], surfaces: ["daily"], run: redeemInvitation })],

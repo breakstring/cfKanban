@@ -49,7 +49,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.30.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.31.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -977,7 +977,20 @@ test("private state uses pending to current promotion, hides secrets, and reject
   const pendingSecret = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
   assert.match(pendingSecret.token, /^cfk_v1_[A-Za-z0-9]+_[A-Za-z0-9_-]{43}$/);
   const inspected = await inspectInstanceState({ stateRoot, home, persistenceConfirmed: true, instanceId: INSTANCE_ID });
-  assert.equal(JSON.stringify(inspected).includes(pendingSecret.token), false);
+  const inspectedPending = JSON.stringify(inspected);
+  for (const forbidden of [
+    pendingSecret.token,
+    pending.token_digest,
+    pending.idempotency_key,
+    "token_digest",
+    "idempotency_key",
+    "token_prefix",
+  ]) {
+    assert.equal(inspectedPending.includes(forbidden), false);
+  }
+  assert.equal(inspected.credential.pending.fingerprint, pending.fingerprint);
+  assert.equal(inspected.credential.pending.operation_id, OPERATION_ID);
+  assert.equal(inspected.credential.pending.secret_values_exposed, false);
   await assert.rejects(
     promotePendingCredential({ stateRoot, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, credentialId: "77777777-7777-4777-8777-777777777777", fingerprint: pending.fingerprint }),
     (error) => error.code === "STATE_SECRET_MISMATCH",
@@ -985,6 +998,10 @@ test("private state uses pending to current promotion, hides secrets, and reject
   const promoted = await promotePendingCredential({ stateRoot, instanceId: INSTANCE_ID, principalId: PRINCIPAL_ID, credentialId: pending.credential_id, fingerprint: pending.fingerprint });
   assert.equal(promoted.state, "current");
   assert.equal((await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID })).token, pendingSecret.token);
+  const inspectedCurrent = JSON.stringify(await inspectInstanceState({ stateRoot, home, persistenceConfirmed: true, instanceId: INSTANCE_ID }));
+  for (const forbidden of [pending.token_digest, pending.idempotency_key, "token_digest", "idempotency_key", "token_prefix"]) {
+    assert.equal(inspectedCurrent.includes(forbidden), false);
+  }
   if (process.platform !== "win32") {
     const paths = getInstancePaths({ stateRoot, instanceId: INSTANCE_ID });
     assert.equal((await stat(stateRoot)).mode & 0o077, 0);
@@ -994,6 +1011,38 @@ test("private state uses pending to current promotion, hides secrets, and reject
     createPendingCredential({ stateRoot, home, persistenceConfirmed: true, instanceId: INSTANCE_ID, principalId: OTHER_PRINCIPAL_ID }),
     (error) => error.code === "STATE_IDENTITY_CONFLICT",
   );
+});
+
+test("credential prepare command returns only a safe metadata view", async (t) => {
+  const { home, stateRoot } = await fixtureState();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const idempotencyKey = "prepare-command-private-key";
+  const prepared = await dispatch("credential prepare", {
+    stateRoot,
+    home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    credentialId: CREDENTIAL_ID,
+    operationId: OPERATION_ID,
+    idempotencyKey,
+  }, { surface: "daily" });
+  const stored = await loadPendingCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
+  const serialized = JSON.stringify(prepared);
+  for (const forbidden of [
+    stored.token,
+    stored.metadata.token_digest,
+    idempotencyKey,
+    "token_digest",
+    "idempotency_key",
+    "token_prefix",
+  ]) {
+    assert.equal(serialized.includes(forbidden), false);
+  }
+  assert.equal(prepared.fingerprint, stored.metadata.fingerprint);
+  assert.equal(prepared.operation_id, OPERATION_ID);
+  assert.equal(prepared.state, "pending");
+  assert.equal(prepared.secret_values_exposed, false);
 });
 
 test("state initialization rejects a symlink root", async (t) => {
@@ -3109,6 +3158,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.28.md",
     "../../release/notes/0.1.0-alpha.29.md",
     "../../release/notes/0.1.0-alpha.30.md",
+    "../../release/notes/0.1.0-alpha.31.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3138,6 +3188,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.28.json",
     "../../release/config/0.1.0-alpha.29.json",
     "../../release/config/0.1.0-alpha.30.json",
+    "../../release/config/0.1.0-alpha.31.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

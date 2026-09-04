@@ -166,6 +166,24 @@ function generateCredential() {
   };
 }
 
+export function credentialMetadataView(metadata) {
+  if (metadata === null) return null;
+  return {
+    schema_version: metadata.schema_version,
+    instance_id: metadata.instance_id,
+    principal_id: metadata.principal_id,
+    credential_id: metadata.credential_id,
+    credential_id_binding: metadata.credential_id_binding,
+    fingerprint: metadata.fingerprint,
+    operation_id: metadata.operation_id,
+    purpose: metadata.purpose,
+    state: metadata.state,
+    created_at: metadata.created_at,
+    ...(metadata.verified_at === undefined ? {} : { verified_at: metadata.verified_at }),
+    secret_values_exposed: false,
+  };
+}
+
 export async function createPendingCredential({
   stateRoot = resolveStateRoot(),
   home = os.homedir(),
@@ -222,6 +240,10 @@ export async function createPendingCredential({
     throw error;
   }
   return metadata;
+}
+
+export async function preparePendingCredential(input) {
+  return credentialMetadataView(await createPendingCredential(input));
 }
 
 export async function loadPendingCredentialSecret({ stateRoot = resolveStateRoot(), instanceId }) {
@@ -312,8 +334,8 @@ export async function inspectInstanceState({ stateRoot = resolveStateRoot(), hom
     schema_version: 1,
     instance,
     credential: {
-      current,
-      pending,
+      current: credentialMetadataView(current),
+      pending: credentialMetadataView(pending),
       secret_values_exposed: false,
     },
   };
