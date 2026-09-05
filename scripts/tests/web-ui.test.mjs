@@ -794,7 +794,31 @@ test("public Markdown guides declare UTF-8 plain text for browser decoding", asy
     const bytes = await readFile(new URL(`../../apps/web/public/${name}`, import.meta.url));
     const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     assert.ok(source.startsWith("# "), `${name} must remain Markdown source rather than an HTML shell`);
-    if (name.includes("zh-CN")) assert.match(source, /^# 用 Agent (?:部署|加入) cfKanban/u);
+    if (name.includes("zh-CN")) assert.match(source, /^# cfKanban (?:Project )?(?:部署|加入)指南（面向 Agent）/u);
+  }
+});
+
+test("public guides address Agents directly without human relay prompts", async () => {
+  const paths = [
+    "apps/web/public/deploy-guide.md", "apps/web/public/deploy-guide.zh-CN.md",
+    "apps/web/public/join.md", "apps/web/public/join.zh-CN.md",
+    "release/bootstrap/install.md", "release/bootstrap/install.zh-CN.md",
+  ];
+  for (const name of paths) {
+    const document = await readFile(new URL(`../../${name}`, import.meta.url), "utf8");
+    assert.match(document, /addresses you, the Agent|直接面向.*Agent/u, name);
+    assert.match(document, /node scripts\/cfkanban-tool\.mjs help/u, name);
+    assert.doesNotMatch(document, /Coding Agents?|your Agent|Have the Agent|ask the Agent|Then say:|Start a new task and say:|让你的 Agent|先让 Agent|安装前让 Agent|把部署意图交给 Agent|只给 Agent 一个准确目标|新建任务后说/iu, name);
+    assert.doesNotMatch(document, /^>\s*(?:Use|请使用)/mu, `${name} must execute the supplied intent, not request another prompt`);
+  }
+  const en = await readFile(new URL("../../apps/web/public/join.md", import.meta.url), "utf8");
+  const zh = await readFile(new URL("../../apps/web/public/join.zh-CN.md", import.meta.url), "utf8");
+  assert.match(en, /do not generate it yet/u);
+  assert.match(en, /After authorization, use `credential prepare`/u);
+  assert.match(zh, /此时尚不生成秘密/u);
+  assert.match(zh, /获得授权后，仅在需要新 Credential 时调用 `credential prepare`/u);
+  for (const name of ["README.md", "README.zh-CN.md"]) {
+    assert.doesNotMatch(await readFile(new URL(`../../${name}`, import.meta.url), "utf8"), /Coding Agents?/iu);
   }
 });
 
