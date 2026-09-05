@@ -1498,6 +1498,20 @@ textarea:disabled {
   border-top: 1px solid var(--color-border);
 }
 
+.public-restore-project {
+  display: grid;
+  gap: 8px;
+  padding: 16px 0;
+  border-top: 1px solid var(--color-border);
+  overflow-wrap: anywhere;
+}
+
+.public-restore-project p { margin: 0; }
+.public-restore-summary { display: grid; gap: 4px; white-space: pre-wrap; }
+.public-restore-quotas { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.public-restore-quotas caption { text-align: left; padding-bottom: 8px; }
+.public-restore-quotas th, .public-restore-quotas td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--color-border); }
+
 .principal-search,
 .audit-search {
   display: grid;
