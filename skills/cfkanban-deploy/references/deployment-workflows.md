@@ -173,6 +173,8 @@ A Skill update is local only:
 
 Failure before pointer switch leaves the active version unchanged. This operation never upgrades a deployed Instance.
 
+`release install-skill-bundle` performs steps 3–5 itself: before switching, it runs `help` through all three staged Skill entrypoints, checks their JSON catalogs and surfaces, and records a bounded `discovery_smoke` result in the receipt. Missing files, failed/malformed help, timeout, excessive output, or staged-file modification stop with `SKILL_DISCOVERY_SMOKE_FAILED`; raw child output is not returned. The probe uses the current Node executable without inherited secrets or Node hooks. This is a trusted-release health check, not a sandbox for untrusted code. Keep the post-install `help` and active-receipt readback as an independent check.
+
 ## Instance upgrade
 
 An Instance upgrade is a separate Cloudflare plan:

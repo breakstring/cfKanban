@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -29,7 +29,7 @@ import { checkTrustedOriginRebind } from "../../packages/skill-runtime/src/rebin
 import { verifyPublisherContinuity } from "../../packages/skill-runtime/src/release.mjs";
 import { generateReleaseMetadata } from "../generate-release-metadata.mjs";
 import { resolveScope, validateScopeDocument } from "../../packages/skill-runtime/src/scope.mjs";
-import { installVerifiedSkillBundle } from "../../packages/skill-runtime/src/skill-update.mjs";
+import { installVerifiedSkillBundle, treeDigest } from "../../packages/skill-runtime/src/skill-update.mjs";
 import { installVerifiedServiceBundle } from "../../packages/skill-runtime/src/service-bundle.mjs";
 import {
   createPendingCredential,
@@ -53,6 +53,96 @@ import {
 } from "../../packages/skill-runtime/src/tool-runtime.mjs";
 import { canonicalDigest, readJson, sha256Bytes } from "../../packages/skill-runtime/src/utils.mjs";
 import { writeDeterministicZip } from "../lib/deterministic-zip.mjs";
+
+async function copyRunnableSkillFixture(destination) {
+  const repo = new URL("../../", import.meta.url);
+  for (const directory of ["skills", "packages/skill-runtime"]) {
+    await cp(new URL(directory, repo), path.join(destination, directory), { recursive: true });
+  }
+}
+
+test("Skill update rejects broken discovery before replacing the active release", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "cfkanban-update-smoke-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = path.join(root, "source");
+  await copyRunnableSkillFixture(source);
+  const dailyEntry = path.join(source, "skills/cfkanban/scripts/cfkanban-tool.mjs");
+  const dailySource = await readFile(dailyEntry, "utf8");
+  // macOS may inject __CF_USER_TEXT_ENCODING even when spawn receives env:{}.
+  await writeFile(dailyEntry, `${dailySource}\nif (Object.keys(process.env).some(key => !/^(SystemRoot|__CF_USER_TEXT_ENCODING)$/i.test(key))) throw new Error("inherited environment");\n`);
+  const bundlePath = path.join(root, "skills.zip");
+  const releaseRoot = path.join(root, "install");
+  async function install(version) {
+    await writeDeterministicZip({ root: source, outputPath: bundlePath, prefix: "bundle/" });
+    return installVerifiedSkillBundle({ bundlePath, version, releaseRoot,
+      expectedSha256: sha256Bytes(await readFile(bundlePath)),
+      publisher: "https://releases.example.test", source: "https://releases.example.test/skills.zip" });
+  }
+  const good = await install("1.0.0");
+  const activeBefore = await readFile(path.join(releaseRoot, "active.json"), "utf8");
+  const treeBefore = await treeDigest(good.release_path);
+  const validCatalog = JSON.stringify({ ok: true, result: getCommandCatalog({ surface: "admin" }) });
+  const cases = [
+    ["daily crash", "cfkanban", 'throw new Error("DO_NOT_RETURN_CHILD_OUTPUT");'],
+    ["admin crash", "cfkanban-admin", 'throw new Error("DO_NOT_RETURN_CHILD_OUTPUT");'],
+    ["deploy crash", "cfkanban-deploy", 'throw new Error("DO_NOT_RETURN_CHILD_OUTPUT");'],
+    ["missing entrypoint", "cfkanban-admin", null],
+    ["missing Skill document", "cfkanban-admin", null],
+    ["invalid JSON", "cfkanban-admin", 'console.log("DO_NOT_RETURN_CHILD_OUTPUT")'],
+    ["wrong surface", "cfkanban-admin", `console.log(${JSON.stringify(JSON.stringify({ ok: true, result: getCommandCatalog({ surface: "daily" }) }))})`],
+    ["empty catalog", "cfkanban-admin", 'console.log(JSON.stringify({ok:true,result:{schema_version:1,surface:"admin",commands:[]}}))'],
+    ["oversized output", "cfkanban-admin", 'console.log("x".repeat(300000))'],
+    ["timeout", "cfkanban-admin", 'process.on("SIGTERM",()=>{}); setInterval(()=>{},1000)'],
+    ["self modification", "cfkanban-admin", `import {writeFileSync} from "node:fs"; writeFileSync(new URL("changed.txt",import.meta.url),"changed"); console.log(${JSON.stringify(validCatalog)})`],
+  ];
+  for (const [name, skill, content] of cases) {
+    await t.test(name, async () => {
+      const entrypoint = path.join(source, "skills", skill, name === "missing Skill document" ? "SKILL.md" : "scripts/cfkanban-tool.mjs");
+      const original = await readFile(entrypoint);
+      if (content === null) await rm(entrypoint);
+      else await writeFile(entrypoint, content);
+      try {
+        await assert.rejects(install("1.0.1"), (error) => {
+          assert.equal(error.code, "SKILL_DISCOVERY_SMOKE_FAILED");
+          assert.doesNotMatch(JSON.stringify(serializeError(error)), /DO_NOT_RETURN_CHILD_OUTPUT/);
+          return true;
+        });
+        assert.equal(await readFile(path.join(releaseRoot, "active.json"), "utf8"), activeBefore);
+        assert.equal(await treeDigest(good.release_path), treeBefore);
+        assert.deepEqual(await readdir(path.join(releaseRoot, "versions")), ["1.0.0"]);
+      } finally {
+        await writeFile(entrypoint, original);
+      }
+    });
+  }
+  const updated = await install("1.0.1");
+  const active = await readJson(path.join(releaseRoot, "active.json"));
+  assert.equal(active.version, "1.0.1");
+  assert.equal(active.previous.version, "1.0.0");
+  assert.equal(active.previous.tree_digest, treeBefore);
+  assert.equal(await treeDigest(good.release_path), treeBefore);
+  assert.equal(await treeDigest(updated.release_path), active.tree_digest);
+  const receipt = await readJson(path.join(updated.release_path, ".cfkanban-release.json"));
+  assert.deepEqual(receipt.discovery_smoke, updated.discovery_smoke);
+  assert.deepEqual(receipt.discovery_smoke.checked.map(({ surface }) => surface), ["daily", "admin", "deploy"]);
+});
+
+test("Skill first install rejects a document-only ZIP without creating an active pointer", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "cfkanban-first-smoke-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = path.join(root, "source");
+  await mkdir(source);
+  await writeFile(path.join(source, "SKILL.md"), "# Not a runnable Skill bundle\n");
+  const bundlePath = path.join(root, "skills.zip");
+  await writeDeterministicZip({ root: source, outputPath: bundlePath });
+  const releaseRoot = path.join(root, "install");
+  await assert.rejects(installVerifiedSkillBundle({ bundlePath, version: "1.0.0", releaseRoot,
+    expectedSha256: sha256Bytes(await readFile(bundlePath)),
+    publisher: "https://releases.example.test", source: "https://releases.example.test/skills.zip" }),
+  { code: "SKILL_DISCOVERY_SMOKE_FAILED" });
+  assert.equal(await readJson(path.join(releaseRoot, "active.json"), { allowMissing: true }), null);
+  assert.deepEqual(await readdir(path.join(releaseRoot, "versions")), []);
+});
 
 const INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID = "22222222-2222-4222-8222-222222222222";
@@ -1563,7 +1653,7 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
   const skillSource = path.join(home, "skill-source");
   await mkdir(artifactRoot);
   await mkdir(skillSource);
-  await writeFile(path.join(skillSource, "SKILL.md"), "---\nname: fixture\ndescription: fixture\n---\n", "utf8");
+  await copyRunnableSkillFixture(skillSource);
   const skillBundle = path.join(artifactRoot, "skills.zip");
   const serviceBundle = path.join(artifactRoot, "service.zip");
   await writeDeterministicZip({ root: skillSource, outputPath: skillBundle, prefix: "skills/" });
@@ -1878,7 +1968,7 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
   const skillSource = path.join(home, "upgrade-skill");
   await mkdir(artifactRoot);
   await mkdir(skillSource);
-  await writeFile(path.join(skillSource, "SKILL.md"), "---\nname: fixture\ndescription: fixture\n---\n", "utf8");
+  await copyRunnableSkillFixture(skillSource);
   const skillBundle = path.join(artifactRoot, "skills.zip");
   const serviceBundle = path.join(artifactRoot, "service.zip");
   await writeDeterministicZip({ root: skillSource, outputPath: skillBundle, prefix: "skills/" });
@@ -3347,7 +3437,7 @@ test("release metadata pins two artifacts, localized documents, and installable 
   const output = path.join(root, "output");
   await mkdir(source);
   await mkdir(output);
-  await writeFile(path.join(source, "SKILL.md"), "---\nname: demo\ndescription: demo\n---\n", "utf8");
+  await copyRunnableSkillFixture(source);
   const skillBundle = path.join(output, "skills.zip");
   const serviceBundle = path.join(output, "service.zip");
   await writeDeterministicZip({ root: source, outputPath: skillBundle, prefix: "bundle/" });

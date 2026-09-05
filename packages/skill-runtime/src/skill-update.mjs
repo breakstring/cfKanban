@@ -1,9 +1,42 @@
-import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { resolveSkillReleaseRoot } from "./paths.mjs";
 import { atomicWriteJson, canonicalDigest, ensurePrivateDirectory, readJson, requireHttpsOrigin, requireString, sha256Bytes } from "./utils.mjs";
 import { toolError } from "./errors.mjs";
+
+const execFileAsync = promisify(execFile);
+
+async function verifyDiscoverySmoke(bundleRoot) {
+  const checked = [];
+  // No inherited secrets or NODE_OPTIONS hooks. This checks trusted release
+  // health, not a security sandbox for code from an untrusted publisher.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^SystemRoot$/iu.test(key)));
+  for (const [skill, surface] of [["cfkanban", "daily"], ["cfkanban-admin", "admin"], ["cfkanban-deploy", "deploy"]]) {
+    try {
+      const skillRoot = path.join(bundleRoot, "skills", skill);
+      if (!(await lstat(path.join(skillRoot, "SKILL.md"))).isFile()) throw new Error();
+      const { stdout } = await execFileAsync(process.execPath, [path.join(skillRoot, "scripts", "cfkanban-tool.mjs"), "help"], {
+        cwd: skillRoot, env, timeout: 5000, killSignal: "SIGKILL", maxBuffer: 256 * 1024, encoding: "utf8", windowsHide: true,
+      });
+      const result = JSON.parse(stdout);
+      const catalog = result?.result;
+      const commands = catalog?.commands;
+      if (result?.ok !== true || catalog?.schema_version !== 1 || catalog?.surface !== surface
+        || !Array.isArray(commands) || commands.length === 0
+        || commands.some((command) => typeof command?.name !== "string" || !command.name.trim()
+          || typeof command.effect !== "string" || !Array.isArray(command.input_fields))
+        || new Set(commands.map((command) => command.name)).size !== commands.length) throw new Error();
+      checked.push({ skill, surface, command_count: commands.length });
+    } catch {
+      // Child stdout/stderr and spawn errors may contain arbitrary release
+      // content; report only our fixed classification and the failed surface.
+      throw toolError("SKILL_DISCOVERY_SMOKE_FAILED", "Skill discovery/help failed; the active release was not changed", { skill, surface });
+    }
+  }
+  return { passed: true, checked };
+}
 
 function safeArchiveName(name) {
   const normalized = name.replaceAll("\\", "/");
@@ -106,6 +139,10 @@ export async function installVerifiedSkillBundle({
     const digest = await treeDigest(temporaryPath);
     const existing = await readJson(path.join(targetPath, ".cfkanban-release.json"), { allowMissing: true }).catch(() => null);
     if (existing !== null) throw toolError("RELEASE_ALREADY_EXISTS", "Target Skill release directory already exists", { targetPath });
+    const discoverySmoke = await verifyDiscoverySmoke(singleRoot === null ? temporaryPath : path.join(temporaryPath, singleRoot));
+    if (await treeDigest(temporaryPath) !== digest) {
+      throw toolError("SKILL_DISCOVERY_SMOKE_FAILED", "Skill discovery/help modified the staged bundle; the active release was not changed");
+    }
     await atomicWriteJson(path.join(temporaryPath, ".cfkanban-release.json"), {
       schema_version: 1,
       kind: "skill_bundle",
@@ -115,6 +152,7 @@ export async function installVerifiedSkillBundle({
       artifact_origins: [sourceUrl.origin],
       artifact_sha256: actualSha256,
       tree_digest_before_receipt: digest,
+      discovery_smoke: discoverySmoke,
       installed_at: new Date().toISOString(),
     });
     const finalTreeDigest = await treeDigest(temporaryPath);
@@ -129,7 +167,7 @@ export async function installVerifiedSkillBundle({
       previous: active === null ? null : { version: active.version, path: active.path, release_path: active.release_path || active.path, tree_digest: active.tree_digest },
       switched_at: new Date().toISOString(),
     });
-    return { installed: true, version: safeVersion, path: singleRoot === null ? targetPath : path.join(targetPath, singleRoot), release_path: targetPath, file_count: fileCount, previous: active?.version || null };
+    return { installed: true, version: safeVersion, path: singleRoot === null ? targetPath : path.join(targetPath, singleRoot), release_path: targetPath, file_count: fileCount, previous: active?.version || null, discovery_smoke: discoverySmoke };
   } finally {
     await rm(temporaryPath, { recursive: true, force: true });
   }
