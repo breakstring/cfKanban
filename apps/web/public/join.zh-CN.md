@@ -17,14 +17,14 @@ Invite URL 是短期 Bearer capability，不得复述或保存到 Issue、Commen
 
 优先复用已有兼容且经过验证的安装。否则解析以下测试发行指针，校验不可变版本清单、工件允许来源和 Skill bundle 的 SHA-256 摘要：
 
-<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.46/prerelease.json>
+<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.47/prerelease.json>
 
 明确说明这是预发行版，并确认用户已明确选择测试版本。所需安装的来源、版本、用户级范围、本地路径和回退方式，必须在本地写入前纳入同一份加入计划。
 
-如果当前宿主是 Codex，获得授权后，全新 plugin 安装使用不可变 ref `0.1.0-alpha.46`：
+如果当前宿主是 Codex，获得授权后，全新 plugin 安装使用不可变 ref `0.1.0-alpha.47`：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.46
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.47
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 

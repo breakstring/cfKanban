@@ -17,14 +17,14 @@ An Invite URL is a short-lived bearer capability. Do not repeat or persist it in
 
 Reuse a compatible, verified installation if available. Otherwise resolve this testing release pointer and verify its immutable manifest, allowed artifact origins, and Skill bundle SHA-256:
 
-<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.46/prerelease.json>
+<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.47/prerelease.json>
 
 Disclose that this is a prerelease and require the user's explicit testing choice. Include any required installation's source, version, user-level scope, local paths, and rollback in the combined join plan before writing local state.
 
-If running in Codex, after authorization a fresh plugin installation uses the immutable `0.1.0-alpha.46` ref:
+If running in Codex, after authorization a fresh plugin installation uses the immutable `0.1.0-alpha.47` ref:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.46
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.47
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
