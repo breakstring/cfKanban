@@ -173,6 +173,8 @@ Skill update 只修改本地：
 
 pointer 切换前失败时 active version 不变。该操作绝不升级已部署 Instance。
 
+`release install-skill-bundle` 内部完成步骤 3–5：切换前依次运行暂存版本三个 Skill 入口的 `help`，验证 JSON catalog 与对应 surface，并在 receipt 中记录有界的 `discovery_smoke` 结果。文件缺失、help 失败或格式错误、超时、输出超限以及暂存文件被改写时，都以 `SKILL_DISCOVERY_SMOKE_FAILED` 停止，不返回子进程原始输出。探测使用当前 Node executable，不继承环境 secret 或 Node hooks。这是可信发行版的可用性检查，不是不可信代码的安全沙箱。安装后的 `help` 和 active receipt 读回仍保留为独立验证。
+
 ## Instance upgrade
 
 Instance upgrade 是独立 Cloudflare plan：
