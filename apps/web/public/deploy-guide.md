@@ -15,12 +15,12 @@ You do not need to pre-create a Worker, D1 database, Workspace, Project, or Cred
 
 ## 1. Install the Skills
 
-The current testing release is `0.1.0-alpha.43`. It is a prerelease, so the Agent must tell you that and get your explicit testing-release choice before selecting it.
+The current testing release is `0.1.0-alpha.44`. It is a prerelease, so the Agent must tell you that and get your explicit testing-release choice before selecting it.
 
-For Codex, ask the Agent to show this host-level installation plan first: source `https://github.com/breakstring/cfKanban.git`, immutable ref `0.1.0-alpha.43`, user scope, and removal of the plugin as the rollback. On a fresh Codex installation, the commands are:
+For Codex, ask the Agent to show this host-level installation plan first: source `https://github.com/breakstring/cfKanban.git`, immutable ref `0.1.0-alpha.44`, user scope, and removal of the plugin as the rollback. On a fresh Codex installation, the commands are:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.43
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.44
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -28,13 +28,13 @@ If a `cfkanban` marketplace entry already exists at another ref, do not overwrit
 
 For another Agent host, install the three directories `cfkanban`, `cfkanban-admin`, and `cfkanban-deploy` from the verified Skill bundle using that host's normal Skill mechanism. The Agent must verify the immutable manifest and SHA-256 from the testing release pointer instead of treating a checkout, `main`, or a plugin cache as deployment truth:
 
-<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.43/prerelease.json>
+<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.44/prerelease.json>
 
 ## 2. Give the deployment intent
 
 Start a new task and say:
 
-> Use `$cfkanban-deploy` and this guide to deploy a new cfKanban instance for me. Use the `0.1.0-alpha.43` testing release. Start with read-only checks, then show the exact plan and required authorization before any local installation or Cloudflare write.
+> Use `$cfkanban-deploy` and this guide to deploy a new cfKanban instance for me. Use the `0.1.0-alpha.44` testing release. Start with read-only checks, then show the exact plan and required authorization before any local installation or Cloudflare write.
 
 That request is enough. You should not need to invent resource names, migration commands, digests, or Wrangler flags.
 
