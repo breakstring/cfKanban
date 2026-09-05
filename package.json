@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "unit": "node --test scripts/tests/generated-artifacts.test.mjs scripts/tests/skills-wp10.test.mjs scripts/tests/release-publication.test.mjs && node --experimental-strip-types --test scripts/tests/worker-kernel.test.mjs && node --experimental-strip-types --test scripts/tests/web-ui.test.mjs",
+    "unit": "node --test scripts/tests/generated-artifacts.test.mjs scripts/tests/skills-wp10.test.mjs scripts/tests/release-publication.test.mjs && node --experimental-strip-types --test scripts/tests/worker-kernel.test.mjs && node --experimental-strip-types --test scripts/tests/web-ui.test.mjs scripts/tests/web-public-restore.test.mjs",
     "contracts:generate": "node scripts/generate-openapi.mjs",
     "contracts:verify-generated": "node scripts/generate-openapi.mjs --check",
     "contracts:check": "npm run contracts:verify-generated && node scripts/validate-openapi.mjs && node scripts/validate-error-contract.mjs && redocly lint contracts/openapi.json",
