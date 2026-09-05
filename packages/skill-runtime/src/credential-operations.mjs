@@ -1,12 +1,13 @@
 import { toolError } from "./errors.mjs";
 import { resolveStateRoot } from "./paths.mjs";
 import {
+  getInstancePaths,
   loadCurrentCredentialSecret,
   loadPendingCredentialSecret,
   promotePendingCredential,
 } from "./state.mjs";
 import { trustedApiRequest } from "./transport.mjs";
-import { requireString, requireUuid } from "./utils.mjs";
+import { pathType, requireString, requireUuid } from "./utils.mjs";
 
 function oneOf(value, name, values) {
   if (!values.includes(value)) {
@@ -37,6 +38,23 @@ function currentCredentialResult(operation, current) {
       secret_values_exposed: false,
     },
   };
+}
+
+async function loadOptionalCurrentCredentialSecret({ stateRoot, instanceId }) {
+  try {
+    return await loadCurrentCredentialSecret({ stateRoot, instanceId });
+  } catch (error) {
+    const paths = getInstancePaths({ stateRoot, instanceId });
+    const metadataType = await pathType(paths.currentMetadata);
+    const secretType = await pathType(paths.currentSecret);
+    if (
+      error?.code === "STATE_PATH_INVALID"
+      && error.details?.actualKind === "missing"
+      && metadataType === "missing"
+      && secretType === "missing"
+    ) return null;
+    throw error;
+  }
 }
 
 async function verifyAndPromote({ stateRoot, instanceId, token, operation, fetchImpl, requireOwner = false }) {
@@ -128,16 +146,29 @@ export async function redeemInvitation({
   const pending = await loadPendingCredentialSecret({ stateRoot, instanceId });
   if (mode === "new_principal") body.display_name = requireString(displayName, "display_name", { max: 128 });
   body.new_credential_token = pending.token;
-  const operation = await trustedApiRequest({
+  // A rotation recovery must prove possession of the current Principal's
+  // Credential; full recovery may intentionally proceed without one. When a
+  // local current Credential exists, try it first. An authentication or
+  // principal-mismatch response is safe to retry without Authorization: the
+  // Service rejects those cases before claiming the idempotent operation, and
+  // this is the only recovery mode that permits an unauthenticated fallback.
+  let current = null;
+  if (mode === "recovery") {
+    current = await loadOptionalCurrentCredentialSecret({ stateRoot, instanceId });
+  }
+  const request = {
     stateRoot,
     instanceId,
     method: "POST",
     apiPath: "/api/v1/invitations/redeem",
     body,
     idempotencyKey: pending.metadata.idempotency_key,
-    authorizationToken: null,
     fetchImpl,
-  });
+  };
+  let operation = await trustedApiRequest({ ...request, authorizationToken: current?.token ?? null });
+  if (mode === "recovery" && current !== null && !operation.ok && [401, 403].includes(operation.status)) {
+    operation = await trustedApiRequest({ ...request, authorizationToken: null });
+  }
   const safeOperation = redactSecretValues(operation, [pending.token, body.invite_code]);
   if (!operation.ok) return { operation: safeOperation, credential: { state: "pending", secret_values_exposed: false } };
   return verifyAndPromote({ stateRoot, instanceId, token: pending.token, operation: safeOperation, fetchImpl });

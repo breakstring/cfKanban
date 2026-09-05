@@ -150,7 +150,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.46.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.47.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -1267,6 +1267,120 @@ test("Invite redemption injects and verifies a pending Credential without exposi
   const current = await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
   assert.equal(current.metadata.credential_id, SERVER_CREDENTIAL_ID);
   assert.equal(current.token, secret.token);
+});
+
+test("Recovery redemption authenticates rotation and safely falls back for full recovery", async (t) => {
+  const rotation = await fixtureCurrentCredential();
+  const fullRecovery = await fixtureCurrentCredential();
+  t.after(() => Promise.all([
+    rm(rotation.home, { recursive: true, force: true }),
+    rm(fullRecovery.home, { recursive: true, force: true }),
+  ]));
+
+  const rotationPending = await createPendingCredential({
+    stateRoot: rotation.stateRoot,
+    home: rotation.home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    operationId: "88888888-8888-4888-8888-888888888888",
+    idempotencyKey: "recovery-rotation",
+    purpose: "principal_recovery",
+  });
+  const rotationSecret = await loadPendingCredentialSecret({ stateRoot: rotation.stateRoot, instanceId: INSTANCE_ID });
+  const rotationCalls = [];
+  const rotationFetch = async (url, options) => {
+    const headers = new Headers(options.headers);
+    rotationCalls.push({ headers, pathname: url.pathname, body: options.body === undefined ? null : JSON.parse(options.body) });
+    if (url.pathname === "/api/v1/invitations/redeem") {
+      return new Response(JSON.stringify({
+        resource: { principal: { principal_id: PRINCIPAL_ID } },
+        event_cursor: "1",
+        idempotent_replay: false,
+        unsafe_echo_fixture: rotationSecret.token,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({
+      id: PRINCIPAL_ID,
+      principal_id: PRINCIPAL_ID,
+      is_owner: false,
+      credential: { id: SERVER_CREDENTIAL_ID, fingerprint: rotationPending.fingerprint },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const rotated = await redeemInvitation({
+    stateRoot: rotation.stateRoot,
+    instanceId: INSTANCE_ID,
+    inviteCode: "rotation-code",
+    redeemAs: "recovery",
+    fetchImpl: rotationFetch,
+  });
+  assert.equal(rotated.operation.ok, true);
+  assert.equal(rotated.credential.state, "current");
+  assert.equal(rotationCalls.length, 2);
+  assert.equal(rotationCalls[0].pathname, "/api/v1/invitations/redeem");
+  assert.equal(rotationCalls[0].headers.get("authorization"), `Bearer ${rotation.token}`);
+  assert.equal(rotationCalls[0].body.new_credential_token, rotationSecret.token);
+  assert.equal(rotationCalls[1].headers.get("authorization"), `Bearer ${rotationSecret.token}`);
+  assert.equal(JSON.stringify(rotated).includes(rotation.token), false);
+  assert.equal(JSON.stringify(rotated).includes(rotationSecret.token), false);
+
+  const fullPending = await createPendingCredential({
+    stateRoot: fullRecovery.stateRoot,
+    home: fullRecovery.home,
+    persistenceConfirmed: true,
+    instanceId: INSTANCE_ID,
+    principalId: PRINCIPAL_ID,
+    operationId: "99999999-9999-4999-8999-999999999999",
+    idempotencyKey: "recovery-full",
+    purpose: "principal_recovery",
+  });
+  const fullSecret = await loadPendingCredentialSecret({ stateRoot: fullRecovery.stateRoot, instanceId: INSTANCE_ID });
+  const fullCalls = [];
+  const mismatchRequestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const fullFetch = async (url, options) => {
+    const headers = new Headers(options.headers);
+    fullCalls.push({ headers, pathname: url.pathname, body: options.body === undefined ? null : JSON.parse(options.body) });
+    if (url.pathname === "/api/v1/invitations/redeem" && headers.has("authorization")) {
+      return new Response(JSON.stringify({
+        category: "authorization",
+        code: "RECOVERY_PRINCIPAL_MISMATCH",
+        details: {},
+        message: "The recovery Principal did not match.",
+        recovery: "verify_target",
+        request_id: mismatchRequestId,
+        retryable: false,
+        source: "service",
+      }), { status: 403, headers: { "content-type": "application/json", "x-request-id": mismatchRequestId } });
+    }
+    if (url.pathname === "/api/v1/invitations/redeem") {
+      return new Response(JSON.stringify({
+        resource: { principal: { principal_id: PRINCIPAL_ID } },
+        event_cursor: "2",
+        idempotent_replay: false,
+        unsafe_echo_fixture: fullSecret.token,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({
+      id: PRINCIPAL_ID,
+      principal_id: PRINCIPAL_ID,
+      is_owner: false,
+      credential: { id: SERVER_CREDENTIAL_ID, fingerprint: fullPending.fingerprint },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const recovered = await redeemInvitation({
+    stateRoot: fullRecovery.stateRoot,
+    instanceId: INSTANCE_ID,
+    inviteCode: "full-recovery-code",
+    redeemAs: "recovery",
+    fetchImpl: fullFetch,
+  });
+  assert.equal(recovered.operation.ok, true);
+  assert.equal(recovered.credential.state, "current");
+  assert.equal(fullCalls.length, 3);
+  assert.equal(fullCalls[0].headers.get("authorization"), `Bearer ${fullRecovery.token}`);
+  assert.equal(fullCalls[1].headers.has("authorization"), false);
+  assert.equal(fullCalls[2].headers.get("authorization"), `Bearer ${fullSecret.token}`);
+  assert.equal(JSON.stringify(recovered).includes(fullSecret.token), false);
 });
 
 test("Public Join promotes the Credential ID assigned by the Service", async (t) => {
@@ -3757,6 +3871,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.41.md",
     "../../release/notes/0.1.0-alpha.42.md",
     "../../release/notes/0.1.0-alpha.46.md",
+    "../../release/notes/0.1.0-alpha.47.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3794,6 +3909,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.41.json",
     "../../release/config/0.1.0-alpha.42.json",
     "../../release/config/0.1.0-alpha.46.json",
+    "../../release/config/0.1.0-alpha.47.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

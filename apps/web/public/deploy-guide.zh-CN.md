@@ -16,12 +16,12 @@
 
 ## 第二步：加载或安装已验证的 Skills
 
-本指南链接的测试发行版是 `0.1.0-alpha.46`。明确说明它是预发行版，选用前确认用户已明确选择测试版本，不得静默替代 stable。已有兼容且经过验证的安装应优先复用；本地 Skill 安装或更新与云端实例部署或升级是不同操作。
+本指南链接的测试发行版是 `0.1.0-alpha.47`。明确说明它是预发行版，选用前确认用户已明确选择测试版本，不得静默替代 stable。已有兼容且经过验证的安装应优先复用；本地 Skill 安装或更新与云端实例部署或升级是不同操作。
 
-如果当前宿主是 Codex 且确需安装，先展示宿主级计划：来源 `https://github.com/breakstring/cfKanban.git`、不可变 ref `0.1.0-alpha.46`、用户级范围，以及卸载本次新装 plugin 的回退方式。获得授权后，全新安装使用：
+如果当前宿主是 Codex 且确需安装，先展示宿主级计划：来源 `https://github.com/breakstring/cfKanban.git`、不可变 ref `0.1.0-alpha.47`、用户级范围，以及卸载本次新装 plugin 的回退方式。获得授权后，全新安装使用：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.46
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.47
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -29,7 +29,7 @@ codex plugin add cfkanban-agent-skills@cfkanban
 
 在其他 Agent 宿主中，按其支持的 Skill 机制，从已验证的 Skill bundle 安装 `cfkanban`、`cfkanban-admin`、`cfkanban-deploy` 三个目录。解析以下测试发行指针，校验不可变版本清单、工件允许来源和 SHA-256 摘要。本地 checkout、`main` 或 plugin cache 不能作为部署版本依据：
 
-<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.46/prerelease.json>
+<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.47/prerelease.json>
 
 ## 第三步：运行部署 Skill
 

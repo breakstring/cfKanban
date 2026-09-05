@@ -16,12 +16,12 @@ Generate resource names and technical parameters during planning. Do not require
 
 ## 2. Load or install the verified Skills
 
-The testing release linked by this guide is `0.1.0-alpha.46`. Disclose that it is a prerelease and require the user's explicit testing choice before selecting it; do not silently substitute it for stable. Reuse an already compatible, verified installation. Installing or updating local Skills is a separate operation from deploying or upgrading an instance.
+The testing release linked by this guide is `0.1.0-alpha.47`. Disclose that it is a prerelease and require the user's explicit testing choice before selecting it; do not silently substitute it for stable. Reuse an already compatible, verified installation. Installing or updating local Skills is a separate operation from deploying or upgrading an instance.
 
-If running in Codex and installation is needed, first present this host-level plan: source `https://github.com/breakstring/cfKanban.git`, immutable ref `0.1.0-alpha.46`, user scope, and removal of the newly installed plugin as rollback. After authorization, use these commands for a fresh installation:
+If running in Codex and installation is needed, first present this host-level plan: source `https://github.com/breakstring/cfKanban.git`, immutable ref `0.1.0-alpha.47`, user scope, and removal of the newly installed plugin as rollback. After authorization, use these commands for a fresh installation:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.46
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.47
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -29,7 +29,7 @@ If a `cfkanban` marketplace entry already exists at another ref, inspect it and 
 
 For another Agent host, use its supported Skill mechanism to install the three directories `cfkanban`, `cfkanban-admin`, and `cfkanban-deploy` from the verified Skill bundle. Resolve the following testing release pointer and verify its immutable manifest, allowed artifact origins, and SHA-256 digests. A checkout, `main`, or plugin cache is not deployment truth:
 
-<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.46/prerelease.json>
+<https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.47/prerelease.json>
 
 ## 3. Run the deployment Skill
 
