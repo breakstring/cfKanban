@@ -2067,7 +2067,7 @@ textarea:disabled {
   margin: 16px 0 12px;
 }
 .workspace-block { margin-top: 14px; padding: 16px 20px; }
-.workspace-block > header { align-items: center; padding-bottom: 12px; gap: 12px; }
+.workspace-block > header { align-items: center; padding-bottom: 0; gap: 12px; }
 .workspace-block > header > div:last-child { display: flex; gap: 6px; }
 .workspace-block h2 { margin: 0; font-size: 1.1rem; }
 .workspace-projects {
@@ -2088,3 +2088,25 @@ textarea:disabled {
 .purge-counts { margin: 0; }
 .purge-counts > div { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--color-border); }
 .purge-counts dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+.workspace-toggle { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.workspace-toggle small { display: block; margin-top: 4px; font-size: 0.75rem; font-weight: 400; }
+.workspace-chevron { color: var(--color-text-muted); }
+.workspace-count { color: var(--color-text-muted); font-size: 0.75rem; font-weight: 400; }
+.workspace-block > header h2 { flex: 1; min-width: 0; }
+.workspace-block > header > div:last-child { align-items: center; }
+.workspace-block > .workspace-projects { margin-top: 12px; }
+.archived-project-row { grid-template-columns: minmax(0, 1fr) auto; }
+.archived-project-name { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .workspace-block > header h2 { flex-basis: 100%; }
+  .workspace-toggle { flex-wrap: wrap; }
+  .archived-project-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+.purge-confirmation { display: grid; gap: 8px; }
+.purge-name-prompt { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.purge-name-prompt label { display: inline; }
+.copy-name-button { max-width: 100%; padding: 4px 8px; border: 1px solid color-mix(in srgb, var(--color-primary) 25%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface)); color: var(--color-primary); font: inherit; font-weight: 600; overflow-wrap: anywhere; cursor: pointer; }
+.copy-name-button:hover { background: color-mix(in srgb, var(--color-primary) 15%, var(--color-surface)); }
+.copy-name-button span { margin-left: 4px; }

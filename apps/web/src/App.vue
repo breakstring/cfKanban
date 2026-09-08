@@ -20,7 +20,7 @@ import ProjectBoardView from "./views/ProjectBoardView.vue";
 import ProjectSelectionView from "./views/ProjectSelectionView.vue";
 import PublicHomeView from "./views/PublicHomeView.vue";
 
-type OwnerSection = "overview" | "workspaces" | "access" | "audit";
+type OwnerSection = "overview" | "workspaces" | "access" | "audit" | "archive";
 type AppRoute =
   | { kind: "home" }
   | { kind: "selection" }
@@ -59,7 +59,7 @@ const route = computed<AppRoute>(() => {
   if (path === "/app/profile") return { kind: "profile" };
   if (path === "/app/admin") {
     const raw = new URLSearchParams(currentPath.value.split("?", 2)[1] ?? "").get("section");
-    const section: OwnerSection = raw === "workspaces" || raw === "access" || raw === "audit"
+    const section: OwnerSection = raw === "workspaces" || raw === "access" || raw === "audit" || raw === "archive"
       ? raw
       : "overview";
     return { kind: "owner", section };

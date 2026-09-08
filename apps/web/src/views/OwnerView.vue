@@ -49,7 +49,7 @@ import type {
   WriteResult,
 } from "../types";
 
-type OwnerSection = "overview" | "workspaces" | "access" | "audit";
+type OwnerSection = "overview" | "workspaces" | "access" | "audit" | "archive";
 
 const props = defineProps<{ section: OwnerSection; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
@@ -66,6 +66,7 @@ const showPurge = ref(false);
 const purgePath = ref("");
 const purgePreview = ref<PurgePreview | null>(null);
 const purgeName = ref("");
+const purgeCopyStatus = ref<"" | "copied" | "failed">("");
 const purgeFailure = ref<unknown>(null);
 const purgeUncertain = ref(false);
 const purgeNeedsRefresh = ref(false);
@@ -99,6 +100,16 @@ const workspaces = ref<ContainerResource[]>([]);
 const projects = ref<ProjectEntry[]>([]);
 const deletedWorkspaces = ref<ContainerResource[]>([]);
 const deletedProjects = ref<ProjectEntry[]>([]);
+const expandedWorkspaces = ref<string[]>([]);
+const archivedGroups = computed(() => [...workspaces.value, ...deletedWorkspaces.value]
+  .map((workspace) => ({ workspace, projects: deletedProjects.value.filter((project) => project.workspaceKey === workspace.key) }))
+  .filter((group) => group.workspace.deleted_at !== null || group.projects.length > 0));
+
+function toggleWorkspace(id: string): void {
+  expandedWorkspaces.value = expandedWorkspaces.value.includes(id)
+    ? expandedWorkspaces.value.filter((value) => value !== id)
+    : [...expandedWorkspaces.value, id];
+}
 const principals = ref<PrincipalResource[]>([]);
 const principalsHasMore = ref(false);
 const principalsNextCursor = ref<string | null>(null);
@@ -337,6 +348,7 @@ const tabs = computed(() => [
   { key: "workspaces" as const, label: t("admin.workspaces") },
   { key: "access" as const, label: t("admin.access") },
   { key: "audit" as const, label: t("admin.audit") },
+  { key: "archive" as const, label: t("admin.archive") },
 ]);
 
 const sectionTitle = computed(() => tabs.value.find((tab) => tab.key === props.section)?.label ?? t("admin.overview"));
@@ -349,7 +361,7 @@ function sectionPath(section: OwnerSection): string {
   return section === "overview" ? "/app/admin" : `/app/admin?section=${section}`;
 }
 
-async function loadWorkspaceTree(includeDeleted = props.section === "workspaces"): Promise<void> {
+async function loadWorkspaceTree(includeDeleted = props.section === "archive"): Promise<void> {
   treeTruncated.value = false;
   const [result, deletedResult] = await Promise.all([
     apiRequest<ListResult<ContainerResource>>("/api/v1/workspaces?limit=20"),
@@ -772,8 +784,8 @@ async function load(): Promise<void> {
       meta.value = metaResult;
       rateSettings.value = rateResult;
       workspaces.value = workspaceResult.items;
-    } else if (props.section === "workspaces") {
-      await loadWorkspaceTree(true);
+    } else if (props.section === "workspaces" || props.section === "archive") {
+      await loadWorkspaceTree(props.section === "archive");
     } else if (props.section === "access") {
       await loadWorkspaceTree(false);
       await Promise.all([
@@ -885,12 +897,24 @@ async function refreshPurgePreview(): Promise<void> {
   busy.value = true;
   purgePreview.value = null;
   purgeName.value = "";
+  purgeCopyStatus.value = "";
   purgeFailure.value = null;
   purgeNeedsRefresh.value = false;
   try {
     purgePreview.value = await apiRequest<PurgePreview>(`${purgePath.value}/purge-preview`);
   } catch (caught) { purgeFailure.value = caught; }
   finally { busy.value = false; }
+}
+
+async function copyPurgeName(): Promise<void> {
+  const preview = purgePreview.value;
+  if (preview === null) return;
+  try {
+    await navigator.clipboard.writeText(preview.target.display_name);
+    if (purgePreview.value === preview) purgeCopyStatus.value = "copied";
+  } catch {
+    if (purgePreview.value === preview) purgeCopyStatus.value = "failed";
+  }
 }
 
 function closePurge(): void {
@@ -904,23 +928,24 @@ async function purgeContainer(): Promise<void> {
   if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   purgeFailure.value = null;
-  let completed = false;
   try {
     await apiRequest(`${purgePath.value}/commands/purge`, {
       method: "POST",
       body: { expected_version: preview.target.version, confirm_name: purgeName.value, preview_digest: preview.preview_digest },
     });
+    // 永久删除已由服务端确认，只移除对应行，保留列表和归档区的展开状态。
+    if (preview.target.kind === "workspace") {
+      deletedWorkspaces.value = deletedWorkspaces.value.filter((item) => item.id !== preview.target.id);
+    } else {
+      deletedProjects.value = deletedProjects.value.filter((item) => item.id !== preview.target.id);
+    }
     purgeUncertain.value = false;
     showPurge.value = false;
-    completed = true;
   } catch (caught) {
     purgeFailure.value = caught;
     purgeUncertain.value = !(caught instanceof ApiProblem) || caught.status === 0 || caught.status >= 500 || caught.body.retryable;
     purgeNeedsRefresh.value = !purgeUncertain.value;
   } finally { writeFence.leave(fenceKey); busy.value = false; }
-  if (completed) {
-    try { await load(); } catch (caught) { setError(caught); }
-  }
 }
 
 function openContainerEdit(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): void {
@@ -1491,7 +1516,10 @@ function formatTime(value: string): string {
 }
 
 watch(sectionTitle, (label) => emit("context", { label, role: "owner" }));
-watch(() => props.section, load);
+watch(() => props.section, () => {
+  expandedWorkspaces.value = [];
+  void load();
+});
 onMounted(() => {
   ownerViewMounted = true;
   initializeInvitationRecovery();
@@ -1547,10 +1575,30 @@ onUnmounted(() => {
       <p v-if="treeTruncated" class="warning-panel">{{ ui("This list may be incomplete: it shows up to 20 workspaces and 20 projects per workspace. Ask your Agent to find a missing project.", "列表可能未显示全部内容：最多展示 20 个工作区及各自的 20 个项目。找不到项目时，可以让智能体帮助查找。") }}</p>
       <p v-if="workspaces.length === 0" class="empty-copy">{{ ui("Create a workspace first, then add your first project.", "先创建一个工作区，再添加你的第一个项目。") }}</p>
       <section v-for="workspace in workspaces" :key="workspace.id" class="workspace-block">
-        <header><div><h2>{{ workspace.display_name }}</h2><small>{{ workspace.key }}</small></div><div><button class="secondary-button" type="button" @click="openCreateProject(workspace.key)">{{ ui("New project", "新建项目") }}</button><button class="text-button" type="button" @click="openContainerEdit('workspace', workspace)">{{ ui("Rename", "改名") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('workspace', workspace)">{{ ui("Archive", "归档") }}</button></div></header>
-        <div class="workspace-projects"><div class="project-table"><div v-for="item in projects.filter((project) => project.workspaceKey === workspace.key)" :key="item.id" class="project-table-row"><button class="project-link" type="button" @click="navigate(`/app/w/${workspace.key}/p/${item.key}`)"><strong>{{ item.display_name }}</strong><small>{{ item.key }}</small></button><span>{{ item.context ? `${item.context.slice(0, 60)}${item.context.length > 60 ? '…' : ''}` : '—' }}</span><div><button class="text-button" type="button" @click="openProjectSettings(item)">{{ ui("Settings", "设置") }}</button><button class="text-button" type="button" @click="openPolicy(item)">{{ ui("Public Join", "公开加入") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('project', item, workspace.key)">{{ ui("Archive", "归档") }}</button></div></div><p v-if="!projects.some((project) => project.workspaceKey === workspace.key)" class="empty-copy">{{ ui("No projects yet", "暂无项目") }}</p></div></div>
+        <header><h2><button class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(workspace.id)" :aria-controls="`workspace-projects-${workspace.id}`" @click="toggleWorkspace(workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(workspace.id) ? '▾' : '▸' }}</span><span>{{ workspace.display_name }}<small>{{ workspace.key }}</small></span><span class="workspace-count">{{ projects.filter(project => project.workspaceKey === workspace.key).length }} {{ ui('projects', '个项目') }}</span></button></h2><div><button class="secondary-button" type="button" @click="openCreateProject(workspace.key)">{{ ui("New project", "新建项目") }}</button><button class="text-button" type="button" @click="openContainerEdit('workspace', workspace)">{{ ui("Rename", "改名") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('workspace', workspace)">{{ ui("Archive", "归档") }}</button></div></header>
+        <div v-show="expandedWorkspaces.includes(workspace.id)" :id="`workspace-projects-${workspace.id}`" class="workspace-projects"><div class="project-table"><div v-for="item in projects.filter((project) => project.workspaceKey === workspace.key)" :key="item.id" class="project-table-row"><button class="project-link" type="button" @click="navigate(`/app/w/${workspace.key}/p/${item.key}`)"><strong>{{ item.display_name }}</strong><small>{{ item.key }}</small></button><span>{{ item.context ? `${item.context.slice(0, 60)}${item.context.length > 60 ? '…' : ''}` : '—' }}</span><div><button class="text-button" type="button" @click="openProjectSettings(item)">{{ ui("Settings", "设置") }}</button><button class="text-button" type="button" @click="openPolicy(item)">{{ ui("Public Join", "公开加入") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('project', item, workspace.key)">{{ ui("Archive", "归档") }}</button></div></div><p v-if="!projects.some((project) => project.workspaceKey === workspace.key)" class="empty-copy">{{ ui("No projects yet", "暂无项目") }}</p></div></div>
       </section>
-      <details v-if="deletedProjects.length || deletedWorkspaces.length" class="owner-section owner-disclosure"><summary>{{ ui("Archived workspaces & projects", "已归档的工作区与项目") }} · {{ deletedProjects.length + deletedWorkspaces.length }}</summary><div class="data-list"><div v-for="item in deletedProjects" :key="item.id" class="data-row"><span><strong>{{ item.workspaceKey }}/{{ item.key }}</strong><small>{{ item.display_name }}</small></span><span>{{ ui("Project", "项目") }} · v{{ item.version }}</span><div class="archive-actions"><button class="secondary-button" type="button" :disabled="busy || deletedWorkspaces.some(workspace => workspace.key === item.workspaceKey)" :title="deletedWorkspaces.some(workspace => workspace.key === item.workspaceKey) ? ui('Restore its workspace first', '请先恢复所属工作区') : undefined" @click="openRestore('project', item, item.workspaceKey)">{{ t("action.restore") }}</button><button class="danger-text-button" type="button" :disabled="busy" @click="openPurge('project', item, item.workspaceKey)">{{ ui("Delete permanently", "永久删除") }}</button></div></div><div v-for="workspace in deletedWorkspaces" :key="workspace.id" class="data-row"><span><strong>{{ workspace.key }}</strong><small>{{ workspace.display_name }}</small></span><span>{{ ui("Workspace", "工作区") }} · v{{ workspace.version }}</span><div class="archive-actions"><button class="secondary-button" type="button" :disabled="busy" @click="openRestore('workspace', workspace)">{{ t("action.restore") }}</button><button class="danger-text-button" type="button" :disabled="busy" @click="openPurge('workspace', workspace)">{{ ui("Delete permanently", "永久删除") }}</button></div></div></div></details>
+
+    </template>
+
+    <template v-if="!loading && section === 'archive'">
+      <p v-if="treeTruncated" class="warning-panel">{{ ui('This list may be incomplete: it shows up to 20 workspaces per state and 20 archived projects per workspace.', '列表可能未显示全部内容：使用中、已归档工作区各最多展示 20 个，每个工作区最多展示 20 个已归档项目。') }}</p>
+      <p v-if="archivedGroups.length === 0" class="empty-copy">{{ ui('No archived content', '暂无已归档内容') }}</p>
+      <section v-for="group in archivedGroups" :key="group.workspace.id" class="workspace-block">
+        <header>
+          <h2><button class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(group.workspace.id)" :aria-controls="`archived-projects-${group.workspace.id}`" @click="toggleWorkspace(group.workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(group.workspace.id) ? '▾' : '▸' }}</span><span>{{ group.workspace.display_name }}<small>{{ group.workspace.key }}</small></span><span class="workspace-count">{{ group.projects.length }} {{ ui('archived projects', '个已归档项目') }}</span></button></h2>
+          <div><span class="role-badge">{{ group.workspace.deleted_at ? ui('Archived', '已归档') : ui('Active', '使用中') }}</span><template v-if="group.workspace.deleted_at"><button class="secondary-button" type="button" :disabled="busy" @click="openRestore('workspace', group.workspace)">{{ t('action.restore') }}</button><button class="danger-text-button" type="button" :disabled="busy" @click="openPurge('workspace', group.workspace)">{{ ui('Delete permanently', '永久删除') }}</button></template></div>
+        </header>
+        <div v-show="expandedWorkspaces.includes(group.workspace.id)" :id="`archived-projects-${group.workspace.id}`" class="workspace-projects">
+          <div class="project-table">
+            <div v-for="item in group.projects" :key="item.id" class="project-table-row archived-project-row">
+              <span class="archived-project-name"><strong>{{ item.display_name }}</strong><small>{{ item.key }}</small></span>
+              <div class="archive-actions"><button class="secondary-button" type="button" :disabled="busy || !!group.workspace.deleted_at" :title="group.workspace.deleted_at ? ui('Restore its workspace first', '请先恢复所属工作区') : undefined" @click="openRestore('project', item, group.workspace.key)">{{ t('action.restore') }}</button><button class="danger-text-button" type="button" :disabled="busy" @click="openPurge('project', item, group.workspace.key)">{{ ui('Delete permanently', '永久删除') }}</button></div>
+            </div>
+            <p v-if="group.projects.length === 0" class="empty-copy">{{ ui('No archived projects', '暂无已归档项目') }}</p>
+          </div>
+        </div>
+      </section>
     </template>
 
     <template v-if="!loading && section === 'access'">
@@ -1655,7 +1703,11 @@ onUnmounted(() => {
         <p v-if="purgePreview.counts.shared_invitations">{{ ui('Shared invitations affected:', '涉及多项目的邀请：') }} {{ purgePreview.counts.shared_invitations }} · {{ ui('Unredeemed invitations will be revoked. Existing access to other projects is kept.', '尚未兑换的邀请将撤销，其他项目已授予的权限保留。') }}</p>
         <p v-if="purgePreview.target.kind === 'project'" class="muted-copy">{{ ui('Project settings and history will be cleared. Project login sessions and unused browser launch links will stop working. Reported storage may not decrease immediately.', '项目设置和历史记录也将清理，项目登录会话及未使用的浏览器登录链接将失效。平台显示的存储用量可能不会立即下降。') }}</p>
         <p v-if="!purgePreview.can_purge" class="inline-alert" role="alert">{{ purgePreview.blocking_reason === 'WORKSPACE_NOT_EMPTY' ? ui('Permanently delete the remaining projects first. If any are still active, restore this workspace and archive those projects first.', '请先逐个永久删除工作区内的项目。若仍有未归档项目，请先恢复工作区，再归档这些项目。') : ui('Archive this workspace or project before deleting it permanently.', '请先归档此工作区或项目，再永久删除。') }}</p>
-        <label v-if="purgePreview.can_purge">{{ ui('Type the full name to confirm', '输入完整名称以确认') }}<input v-model="purgeName" :disabled="busy || purgeUncertain || purgeNeedsRefresh" autocomplete="off" :placeholder="purgePreview.target.display_name" /></label>
+        <div v-if="purgePreview.can_purge" class="purge-confirmation">
+          <div class="purge-name-prompt"><label for="purge-confirm-name">{{ purgePreview.target.kind === 'project' ? ui('Enter the full project name', '输入完整项目名称') : ui('Enter the full workspace name', '输入完整工作区名称') }}</label><button class="copy-name-button" type="button" :title="ui('Click to copy name', '点击复制名称')" :aria-label="ui(`Copy name: ${purgePreview.target.display_name}`, `复制名称：${purgePreview.target.display_name}`)" @click="copyPurgeName">{{ purgePreview.target.display_name }} <span aria-hidden="true">⧉</span></button><span>{{ ui('to confirm.', '以确认。') }}</span></div>
+          <span v-if="purgeCopyStatus" class="muted-copy" role="status">{{ purgeCopyStatus === 'copied' ? ui('Copied', '已复制') : ui('Copy failed; select and copy the name manually.', '复制失败，请手动选择并复制名称。') }}</span>
+          <input id="purge-confirm-name" v-model="purgeName" :disabled="busy || purgeUncertain || purgeNeedsRefresh" autocomplete="off" :placeholder="purgePreview.target.display_name" />
+        </div>
         <p v-if="purgeUncertain" class="warning-panel">{{ ui('The result is not yet confirmed. Retry the same request to recover its result; do not start another deletion.', '尚未确认执行结果。请重试同一请求以取回结果，不要发起另一笔删除。') }}</p>
         <div class="form-actions"><button class="secondary-button" type="button" :disabled="busy || purgeUncertain" @click="closePurge">{{ t('action.cancel') }}</button><button v-if="purgeNeedsRefresh" class="secondary-button" type="button" :disabled="busy" @click="refreshPurgePreview">{{ ui('Refresh preview', '重新核对') }}</button><button class="danger-text-button" type="submit" :disabled="busy || !purgePreview.can_purge || purgeNeedsRefresh || purgeName !== purgePreview.target.display_name">{{ purgeUncertain ? ui('Retry same request', '重试同一请求') : ui('Delete permanently', '永久删除') }}</button></div>
       </form>
