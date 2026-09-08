@@ -441,13 +441,16 @@ Service deployment bundle 中的 D1 migration manifest 不能只是一组按文�
 - schema 已完整存在但 ledger 缺失时默认停止。唯一有界恢复是：同一已授权 task/operation/plan journal 已记录该非破坏性 migration apply 成功，其后的准确读回确认 manifest 与 migration digest 未漂移、全部预期 artifacts 存在、目标 ledger row 缺失、没有未知 ledger row/其他 drift，也不存在“ledger 写入显示成功但读回缺失”的矛盾；此时只可在同一 journal 补写这一条 insert-only checksum，再次读回并 reconcile。不得把任意既有 schema 当作 safe baseline；
 - Wrangler/D1 命令退出成功只是证据之一，不能替代 ledger、schema version 与 artifacts 的读回。
 
-远端 `wrangler d1 execute --file` 使用 D1 ingestion 自己的事务边界。Skill 生成的 migration checksum 与 Owner bootstrap SQL 文件不得包含显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`，也不得把这条规则错误套用到通过 `--command --json` 执行的只读 SELECT readback。
+2026-09-08 隔离复现确认：远端 `wrangler d1 execute --file` 的失败回滚不等于整文件共享同一 SQL 事务，不能依赖 `PRAGMA defer_foreign_keys` 在 ingestion 全程持续有效。已验证 canonical Service bundle 的公开升级 migration 必须以完整 SQL 单次 `wrangler d1 execute --remote --command=<SQL>` 提交到 `/query`；保留原始 SQL digest，不逐语句执行、不分块，也不在失败后回退 `--file`。每条 SQL 最多 24 KiB UTF-8（24,576 字节），这是兼顾 Windows argv 的保守限额，不是 D1 平台最大值；超限在远端写入前停止。
+
+该入口限定于已验证的公开升级 migration。Skill 生成的 migration checksum 与 Owner bootstrap SQL 继续使用原有受限文件路径，不把秘密送入命令参数；文件不得包含显式 `BEGIN`、`COMMIT`、`ROLLBACK` 或 `SAVEPOINT`。现有 bootstrap 读回及受保护重试、checksum 同 journal 缺行恢复条件保持不变。只读 SELECT readback 仍通过 `--command --json` 执行。
 
 upgrade plan 至少包含：
 
 - canonical immutable target release/version/digest，禁止直接执行浮动 `latest`；
 - 当前与目标 Skill/service/schema 兼容矩阵，必要的 Skill update 作为独立第一阶段；
 - Worker code/config/bindings delta，以及每条 D1 migration 的顺序、摘要和 `backward_compatible | destructive` 分类；
+- 公开升级 migration 的执行约束 `mode: single_query`、`max_sql_bytes: 24576`，纳入 plan digest 并在执行前核对，不允许旧计划隐式切换入口；
 - migration 前取得并验证的 D1 Time Travel bookmark 或等价 restore point、当前平台保留边界，以及 restore 会覆盖哪些时间之后的写入；
 - 预计中断、费用/domain/resource delta、验证步骤、Worker rollback 条件、数据库不可自动回退的风险；
 - 独立 plan digest、operation ID/journal 和去敏 before/after receipt。
@@ -539,7 +542,7 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 33. 已确认：D-254 要求三个分发 `SKILL.md` 直接呈现能力、切换边界、命令 catalog、任务到命令/API 对照、readback 与停止条件；详细文档维护 English/简体中文配对，不支持 locale 的 metadata 用英文。专用安全命令在内部注入 pending Credential；公开表面不显示内部阶段标签，`.mjs` 明确为 Node 原生 ESM JavaScript。
 34. 已确认：D-255 将 Cloudflare 官方 `cloudflare`/`wrangler` Skills 定位为可选上游参考而非依赖或授权来源；安装不自动发生，通用 latest/repo-local/npx 建议不覆盖 stable release 合同。Service bundle 携带 portable Wrangler template/schema，D1 创建后生成私有 Frozen config，并在正式 deploy 前用同一 Wrangler/config dry run。
 35. 已修订：D-256 曾将 Wrangler auth 收敛为当前上下文优先并只检查一个备用 profile；D-257 进一步从 auth resolver 移除自动 profile listing。当前顺序是“journal/receipt 准确目标 → 环境 Token → 用户明确给出的 `--profile` → 私有部署/config 上下文 → default profile → 新登录”，resolver 不通过枚举选择身份；准确 account 仍由读回和私有 `wrangler.jsonc.account_id` 固定。新登录候选的 exact collision preflight 不属于 profile 选择。
-36. 已确认：D-258 按 Wrangler/D1 ingestion 合同移除生成 SQL 中的显式事务控制；checksum 与 Owner bootstrap 文件由远端 `d1 execute --file` 提供事务边界。schema 完整但 ledger 缺行只允许在同一已授权 journal 证明 apply 成功、后继准确读回完整且无其他 drift 时补写单条 insert-only checksum，随后必须再次读回；任意既有 schema 仍不能自动 baseline。
+36. 已确认：D-258 按 Wrangler/D1 ingestion 合同移除生成 SQL 中的显式事务控制；checksum 与 Owner bootstrap 文件继续由远端 `d1 execute --file` 执行；2026-09-08 已澄清它不保证整文件 SQL 事务/PRAGMA 持续性，公开升级 migration 改用 8.3 的有界单次 query。schema 完整但 ledger 缺行只允许在同一已授权 journal 证明 apply 成功、后继准确读回完整且无其他 drift 时补写单条 insert-only checksum，随后必须再次读回；任意既有 schema 仍不能自动 baseline。
 37. 已修订：D-259 将首次 Owner Credential 准备、bootstrap SQL digest、远端尝试、discovery/`/meta`/`/me` 身份读回、pending → current 与脱敏 receipt 全部绑定到同一已授权 task/operation/plan。`/me` 必须核对 Principal resource ID、Owner flag、Credential ID/fingerprint；部署最终化还必须通过 discovery 与 `/meta` 核对 Instance/origin/Service/schema。局部最终化失败只复用准确 pending/current，不创建第二份 Credential。D-260 只修订了其中“每 operation 绝对单次执行”的恢复边界。
 38. 已确认：D-260 针对真实 Owner bootstrap `fetch failed` 且远端零写入的中断场景，引入同 task/operation/plan 的固定六表零状态 probe。只有更新 probe 精确证明全部为空时，才能对同一 SQL 重试一次；任何存在/部分/畸形状态继续保持停止或最终化，不生成新 Credential，也不扩大原部署授权。
 39. 已确认：D-261 要求 strict-zero plan 结构化声明零状态恢复属于同一完整计划授权，并禁止 Agent 自行把确认话术收窄为“一个命令”或“只尝试一次”。同 task/operation/plan/config/SQL/Credential/target 均无漂移且 probe 为 `absent` 时直接续做；用户亲自提出的更窄限制、新任务或任何 plan delta 仍需重新授权。
@@ -581,7 +584,7 @@ SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 31
 24. 合同修订 21 已固定 cfKanban 自管持久数据统一到 `.cfkanban/` 的三个分责子目录，宿主发现投影继续留在宿主目录；三个 Skills 以可自描述命令 catalog 和任务→命令/API 的 English/简体中文文档呈现，并以专用命令内部注入 pending Credential。
 25. 合同修订 22 已固定 Cloudflare 官方 Skills 只作可选事实参考，不能自动安装、替代 cfKanban 信任/授权或把通用 latest/repo-local 规则强加给 stable 部署；Service bundle 必须携带 portable Wrangler template/schema，并通过私有 Frozen config 与正式 deploy 前 dry run 证明可移植性。
 26. 合同修订 23 已固定 Wrangler auth 使用当前环境/config 上下文优先，只有失败后才列出 profile 名称并只检查唯一或明确选中的 profile；准确 account 由最终读回及私有 `wrangler.jsonc.account_id` 固定，无关 profile 不形成 blocker。
-27. 合同修订 24 已用 D-257 移除自动 profile listing：环境 Token 与用户明确给出的 profile 优先，其余由私有 config 目录/default 上下文决定；并以 D-258 固定远端 `--file` ingestion 的隐式事务边界及仅限同一已授权 journal 的缺 checksum 行恢复。
+27. 合同修订 24 已用 D-257 移除自动 profile listing：环境 Token 与用户明确给出的 profile 优先，其余由私有 config 目录/default 上下文决定；并以 D-258 固定远端 `--file` 不含显式事务控制及仅限同一已授权 journal 的缺 checksum 行恢复；其整文件事务/PRAGMA 假设已由 2026-09-08 的 8.3 修订纠正。
 28. 合同修订 25 已用 D-259 固定首次 Owner bootstrap 的完整最终化证据：专用 plan-bound Credential 准备、bootstrap SQL digest、单次执行、discovery/`/meta`/`/me` 准确读回、pending/current 恢复与幂等脱敏 receipt。
 29. 合同修订 26 已用 D-260 修订“单次执行”的中断边界：失败或响应不确定后，只有同一授权 journal 中更新的固定六表只读 probe 证明 bootstrap 状态完全为空，才允许对同一 SQL 重试一次；任何远端存在/部分状态继续停止或进入最终化。
 30. 合同修订 27 已用 D-261 固定完整 strict-zero plan 授权包含上述零状态恢复；Agent 不得自行用“只执行一次”类话术收窄授权并制造额外确认，除非更窄限制确实由用户提出。

@@ -5,6 +5,7 @@ import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { toolError } from "./errors.mjs";
 import { assessMigrationLedgerRecovery, reconcileMigrationState } from "./migrations.mjs";
 import { loadPendingCredentialSecret } from "./state.mjs";
+import { UPGRADE_MIGRATION_EXECUTION } from "./upgrade-plan.mjs";
 import { canonicalDigest, normalizeLf, readJson, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
 
 const MAX_MIGRATION_READBACK_SQL_BYTES = 4 * 1024;
@@ -90,6 +91,19 @@ export function buildWranglerAccountProbe({
   };
 }
 
+function assertMigrationQuery(plan, sql) {
+  const execution = plan.migrations?.execution;
+  if (plan.kind !== "deployed_instance_upgrade"
+    || execution?.mode !== UPGRADE_MIGRATION_EXECUTION.mode
+    || execution?.max_sql_bytes !== UPGRADE_MIGRATION_EXECUTION.max_sql_bytes) {
+    throw toolError("MIGRATION_EXECUTION_PLAN_REQUIRED", "Create and authorize a single-query migration plan before execution");
+  }
+  if (typeof sql !== "string" || sql.trim().length === 0 || sql.includes("\0")
+    || Buffer.byteLength(sql, "utf8") > execution.max_sql_bytes) {
+    throw toolError("MIGRATION_QUERY_REJECTED", "Public migration SQL must fit the authorized single-query byte limit; splitting and file fallback are not allowed");
+  }
+}
+
 export function buildWranglerInvocation({
   action,
   plan,
@@ -100,6 +114,7 @@ export function buildWranglerInvocation({
   migrationReadbackSqlPath = null,
   migrationReadbackSql = null,
   migrationSqlPath = null,
+  migrationSql = null,
   migrationRecordSqlPath = null,
   ownerBootstrapReadbackSql = null,
 }) {
@@ -117,8 +132,11 @@ export function buildWranglerInvocation({
       if (normalizedConfig === null) throw toolError("CONFIG_REQUIRED", "Migration apply requires a frozen generated Wrangler config");
       return withProfile(["d1", "migrations", "apply", requireString(d1Name, "d1_name", { max: 64 }), "--remote", "--config", normalizedConfig], plan, environment);
     case "apply_migration":
-      if (normalizedConfig === null || migrationSqlPath === null) throw toolError("MIGRATION_INPUT_REQUIRED", "Single migration apply requires frozen Wrangler config and one migration SQL path");
-      return withProfile(["d1", "execute", requireString(d1Name, "d1_name", { max: 64 }), "--remote", "--file", safeAbsolute(migrationSqlPath, "migration_sql_path"), "--config", normalizedConfig, "--json"], plan, environment);
+      if (normalizedConfig === null || migrationSql === null) throw toolError("MIGRATION_INPUT_REQUIRED", "Single migration apply requires frozen Wrangler config and verified public migration SQL");
+      assertMigrationQuery(plan, migrationSql);
+      // File ingestion can reset transaction-scoped PRAGMAs before the file finishes.
+      // The equals form also preserves SQL beginning with a -- comment in Wrangler's argv parser.
+      return withProfile(["d1", "execute", requireString(d1Name, "d1_name", { max: 64 }), "--remote", `--command=${migrationSql}`, "--config", normalizedConfig, "--json"], plan, environment);
     case "initialize_migration_checksum_ledger":
       if (normalizedConfig === null || migrationLedgerSchemaSqlPath === null) throw toolError("MIGRATION_LEDGER_INPUT_REQUIRED", "Migration checksum ledger initialization requires frozen Wrangler config and SQL paths");
       return withProfile(["d1", "execute", requireString(d1Name, "d1_name", { max: 64 }), "--remote", "--file", safeAbsolute(migrationLedgerSchemaSqlPath, "migration_ledger_schema_sql_path"), "--config", normalizedConfig, "--json"], plan, environment);
@@ -718,6 +736,8 @@ async function validateUpgradeAction({
     if (sha256Bytes(Buffer.from(normalizeLf(migrationText), "utf8")) !== migration.sha256) {
       throw toolError("UPGRADE_MIGRATION_SOURCE_DRIFT", "Migration SQL digest differs from the upgrade plan", { name });
     }
+    const migrationSql = normalizeLf(migrationText);
+    assertMigrationQuery(plan, migrationSql);
     const selected = migrationState.state.migrations.find((entry) => entry.sequence === migration.sequence && entry.name === migration.name);
     const earlierIncomplete = migrationState.state.migrations.some((entry) => entry.sequence < migration.sequence && entry.state !== "applied");
     if (selected?.state !== "pending" || earlierIncomplete) {
@@ -730,7 +750,7 @@ async function validateUpgradeAction({
     if (alreadyApplied) {
       throw toolError("UPGRADE_MIGRATION_ALREADY_ATTEMPTED", "Migration already succeeded in this journal; read back before continuing", { name });
     }
-    return { migration };
+    return { migration, migrationSql };
   }
 
   const incomplete = migrationState.state.migrations.filter((entry) => entry.state !== "applied");
@@ -912,6 +932,7 @@ export async function executeWranglerAction({
     migrationReadbackSqlPath,
     migrationReadbackSql,
     migrationSqlPath,
+    migrationSql: upgradeAction.migrationSql ?? null,
     migrationRecordSqlPath,
     ownerBootstrapReadbackSql,
   });
@@ -923,7 +944,8 @@ export async function executeWranglerAction({
       type: "command_started",
       action,
       executable,
-      args,
+      args: action === "apply_migration" ? args.map((arg) => arg.startsWith("--command=") ? "--command=[VERIFIED_PUBLIC_MIGRATION_SQL]" : arg) : args,
+      ...(action === "apply_migration" ? { migration_execution: { ...plan.migrations.execution, sql_bytes: Buffer.byteLength(upgradeAction.migrationSql, "utf8") } } : {}),
       ...(actionMigration === null ? {} : {
         migration: {
           sequence: actionMigration.sequence,

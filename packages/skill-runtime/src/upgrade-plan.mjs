@@ -4,6 +4,8 @@ import { toolError } from "./errors.mjs";
 import { satisfiesSimpleRange } from "./tool-runtime.mjs";
 import { requireHttpsOrigin, requireString, requireUuid } from "./utils.mjs";
 
+export const UPGRADE_MIGRATION_EXECUTION = Object.freeze({ mode: "single_query", max_sql_bytes: 24 * 1024 });
+
 const DEFAULT_RATE_LIMITS = Object.freeze({
   principal: { limit: 120, period_seconds: 60 },
   instance: { limit: 300, period_seconds: 60 },
@@ -394,6 +396,7 @@ export function createInstanceUpgradePlan({
       verified: true,
     },
     migrations: {
+      execution: { ...UPGRADE_MIGRATION_EXECUTION },
       ordered: orderedMigrations,
       allow_destructive: false,
       allow_breaking_change,

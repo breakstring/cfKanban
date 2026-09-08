@@ -152,7 +152,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.53.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.54.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -2119,7 +2119,7 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
     reentry: "wrangler_migration_ledger_only",
     expected_artifacts: { tables: [], indexes: [] },
   };
-  const upgradeSql = "CREATE TABLE project_context (project_id TEXT PRIMARY KEY);\n";
+  const upgradeSql = "-- public migration\nCREATE TABLE project_context (project_id TEXT PRIMARY KEY);\n";
   const upgradeMigration = {
     sequence: 2,
     name: "0002_project_context.sql",
@@ -2308,7 +2308,11 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
     configPath: config.wrangler_config_path,
     migrationName: upgradeMigration.name,
     migrationSqlPath: path.join(installedService.path, "migrations", upgradeMigration.name),
-    runner: async () => ({ code: 0, signal: null, stdout: "[]", stderr: "" }),
+    runner: async (_executable, args) => {
+      assert.deepEqual(args.filter((arg) => arg.startsWith("--command=")), [`--command=${upgradeSql}`]);
+      assert.equal(args.includes("--file"), false);
+      return { code: 0, signal: null, stdout: "[]", stderr: "" };
+    },
   });
   const postApplyReadback = JSON.stringify([
     {
@@ -3933,6 +3937,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.51.md",
     "../../release/notes/0.1.0-alpha.52.md",
     "../../release/notes/0.1.0-alpha.53.md",
+    "../../release/notes/0.1.0-alpha.54.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3974,6 +3979,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.51.json",
     "../../release/config/0.1.0-alpha.52.json",
     "../../release/config/0.1.0-alpha.53.json",
+    "../../release/config/0.1.0-alpha.54.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
@@ -4005,6 +4011,7 @@ test("breaking migration plans require explicit opt-in and forbid old Worker rol
   assert.throws(() => createInstanceUpgradePlan(input), { code: "BREAKING_MIGRATION_REQUIRES_EXPLICIT_PLAN" });
   const plan = createInstanceUpgradePlan({ ...input, allow_breaking_change: true });
   assert.equal(plan.migrations.allow_breaking_change, true);
+  assert.deepEqual(plan.migrations.execution, { mode: "single_query", max_sql_bytes: 24576 });
   assert.equal(plan.rollback_boundary.previous_worker_rollback_prohibited_after_migration, true);
   assert.equal(plan.expected_interruption, "service_unavailable_between_migration_and_compatible_worker_deploy");
   assert.deepEqual(plan.migrations.ordered[0].expected_artifacts.absent_columns, ["workspaces.key"]);
@@ -4050,4 +4057,22 @@ test("actual migration readback SQL emits columns and accepts breaking ledger ro
     result[0].results[0].classification = "unknown";
     assert.throws(() => parseMigrationReadbackOutput(JSON.stringify(result)), { code: "WRANGLER_MIGRATION_READBACK_INVALID" });
   } finally { database.close(); }
+});
+
+
+test("upgrade migration query binds execution mode and rejects oversized or invalid public SQL without fallback", async () => {
+  const sql = await readFile(new URL("../../migrations/0003_container_uuid.sql", import.meta.url), "utf8");
+  const plan = { kind: "deployed_instance_upgrade", resources: { d1: { name: "test-d1" } }, migrations: { execution: { mode: "single_query", max_sql_bytes: 24576 } } };
+  const input = { action: "apply_migration", plan, configPath: "/tmp/wrangler.jsonc", migrationSql: sql, environment: {} };
+  const args = buildWranglerInvocation(input);
+  assert.equal(args.filter((arg) => arg.startsWith("--command=")).length, 1);
+  assert.ok(args.includes(`--command=${sql}`));
+  assert.equal(args.includes("--file"), false);
+  for (const invalid of ["", " ", "SELECT 1;\0", "界".repeat(8193)]) {
+    assert.throws(() => buildWranglerInvocation({ ...input, migrationSql: invalid }), { code: "MIGRATION_QUERY_REJECTED" });
+  }
+  for (const execution of [undefined, { mode: "file", max_sql_bytes: 24576 }, { mode: "single_query", max_sql_bytes: 100000 }]) {
+    assert.throws(() => buildWranglerInvocation({ ...input, plan: { ...plan, migrations: { execution } } }), { code: "MIGRATION_EXECUTION_PLAN_REQUIRED" });
+  }
+  assert.throws(() => buildWranglerInvocation({ ...input, migrationSql: null, migrationSqlPath: "/tmp/migration.sql" }), { code: "MIGRATION_INPUT_REQUIRED" });
 });
