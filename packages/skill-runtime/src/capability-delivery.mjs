@@ -447,12 +447,17 @@ export async function relayToBrowser(targetUrl, openLocalUrl, { timeoutMs = 15_0
     delivered = resolve;
     rejectDelivery = reject;
   });
+  let consumed = false;
   const server = createServer((request, response) => {
-    if (request.method !== "GET" || request.url !== expectedPath) {
+    const expectedHost = `127.0.0.1:${server.address()?.port}`;
+    if (consumed || request.method !== "GET" || request.url !== expectedPath
+      || request.headers.host !== expectedHost || request.headers.origin
+      || request.headers["sec-fetch-site"] === "cross-site") {
       response.writeHead(404, { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" });
       response.end("Not found");
       return;
     }
+    consumed = true;
     try {
       response.writeHead(302, {
         "cache-control": "no-store",
@@ -477,16 +482,18 @@ export async function relayToBrowser(targetUrl, openLocalUrl, { timeoutMs = 15_0
   let timer;
   try {
     const localUrl = `http://127.0.0.1:${address.port}${expectedPath}`;
-    await openLocalUrl(localUrl);
     await Promise.race([
-      deliveredPromise,
+      Promise.resolve().then(() => openLocalUrl(localUrl)).then(() => deliveredPromise),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(toolError("BROWSER_OPEN_TIMEOUT", "The browser did not reach the local one-time relay before it expired")), timeoutMs);
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
   }
 }
 
@@ -525,15 +532,19 @@ export async function createBrowserLaunchAndDeliver({
   sensitiveOutputAcknowledgement,
   fetchImpl = globalThis.fetch,
   browserOpener = null,
+  onRelayReady = null,
 } = {}) {
-  const delivery = requireDelivery(requestedDelivery, ["system_browser", "stdout_once"], "system_browser");
+  const delivery = requireDelivery(requestedDelivery, ["system_browser", "host_browser", "stdout_once"], "system_browser");
+  if (delivery === "host_browser" && typeof onRelayReady !== "function") {
+    throw toolError("BROWSER_DELIVERY_UNAVAILABLE", "Host browser delivery requires an active relay event consumer before creating a launch");
+  }
   let resolvedBrowserOpener = browserOpener;
   if (delivery === "system_browser") {
     resolvedBrowserOpener ??= await resolveSystemBrowserOpener();
     if (typeof resolvedBrowserOpener?.open !== "function") {
       throw toolError("BROWSER_DELIVERY_UNAVAILABLE", "The browser opener is invalid before creating a Browser Launch");
     }
-  } else {
+  } else if (delivery === "stdout_once") {
     requireSensitiveStdoutAcknowledgement(sensitiveOutputAcknowledgement);
   }
   await checkTrustedOriginRebind({ stateRoot, instanceId, fetchImpl });
@@ -577,7 +588,15 @@ export async function createBrowserLaunchAndDeliver({
     };
   }
   try {
-    await relayToBrowser(launchUrl, resolvedBrowserOpener.open);
+    await relayToBrowser(launchUrl, delivery === "host_browser"
+      ? (localUrl) => onRelayReady({
+        event: "browser_relay_ready",
+        channel: "host_browser",
+        local_url: localUrl,
+        expires_in_seconds: 60,
+        classification: "local_one_time_browser_handoff",
+      })
+      : resolvedBrowserOpener.open, { timeoutMs: delivery === "host_browser" ? 60_000 : 15_000 });
   } catch (error) {
     throw toolError("BROWSER_DELIVERY_FAILED_AFTER_COMMIT", "The Browser Launch was created but could not be opened; its secret will expire without being returned", {
       committed: true,
@@ -588,7 +607,7 @@ export async function createBrowserLaunchAndDeliver({
   }
   return {
     ...safeResult,
-    delivery: { channel: "system_browser", delivered: true, capability_exposed: false },
+    delivery: { channel: delivery, delivered: true, capability_exposed: false },
   };
 }
 

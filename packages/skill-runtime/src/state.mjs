@@ -67,7 +67,7 @@ function windowsAclProbe(targetPath) {
   }
 }
 
-async function validatePrivatePath(targetPath, expectedKind) {
+export async function validatePrivatePath(targetPath, expectedKind) {
   const type = await pathType(targetPath);
   if (type !== expectedKind) {
     throw toolError("STATE_PATH_INVALID", "Stored state path has an unexpected type", { path: targetPath, expectedKind, actualKind: type });

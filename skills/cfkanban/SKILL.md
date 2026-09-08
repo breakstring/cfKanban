@@ -1,6 +1,6 @@
 ---
 name: cfkanban
-description: Use a cfKanban instance for daily identity, Project scope, Issue, Comment, relation, completion, invitation/public-join, and scoped Web launch workflows. Do not use for Owner administration or Cloudflare deployment.
+description: Use a cfKanban instance for daily identity, Project scope, Issue, Comment, relation, completion, invitation/public-join, and authenticated browser opening (including IAB) workflows. Do not use for Owner administration or Cloudflare deployment.
 ---
 
 # cfKanban
@@ -21,6 +21,10 @@ Use `cfkanban-admin` for Owner application administration. Use `cfkanban-deploy`
 ## Intent-first user experience
 
 Treat a plain request such as “Join this Project: `<Invite URL>`” as sufficient to begin. Do not require the user to ask for Invite inspection, identity reuse, pending-Credential handling, a combined join plan, or readback. Start with the required safe inspection, explain the Project and access level in plain language, ask only for missing choices or required approval, and then complete the verified workflow. Keep protocol terminology in technical evidence, not in a prompt the user must compose.
+
+Opening cfKanban means entering an authenticated page when a local Credential is available, including requests such as “open cfKanban”, “show the board”, or “open management in IAB”. Resolve the trusted instance with `web resolve`, verify `/api/v1/me`, then use `web launch`; opening the public homepage alone does not complete that request. Explicit instance/origin context wins, followed by a single Repo instance, then a single local instance. Ask once only when candidates remain ambiguous; never choose by recency or Owner status. An explicit unknown target must not fall back to another instance.
+
+For a verified Owner with no narrower target, route to `cfkanban-admin` and open admin Overview. For a participant, use the explicit Project/Issue, or read authorized Projects and select only a unique result; otherwise ask which Project. There is no participant-wide Web Session. Honor the requested browser: `host_browser` hands a short-lived local relay to the host's IAB/named-browser tool, while `system_browser` keeps the default opener. Read the Browser Launch section in the workflow reference before host-browser delivery. Verify the final authenticated target; reuse an existing Session only after its identity and scope are verified.
 
 ## Command entry point
 
@@ -49,7 +53,7 @@ The `.mjs` file is plain JavaScript using Node's explicit ES module format. It r
 | Work with Comments, Labels, or relations | Issue Comment endpoints; Project Label endpoints; Issue relation endpoints | Treat each write as a separate atomic operation with its own readback. |
 | Redeem an Invite | `credential prepare` when a new/recovery Credential is needed, then `invite redeem` | The dedicated command injects the pending secret, verifies `/me`, and returns the same `{ operation, credential }` shape for new or existing Principals. |
 | Join a public Project | `credential prepare` when needed, then `public-join redeem` | Submit exactly one `publicId`, one explicit `reader | writer`, and one atomic join; the result shape is stable across identity modes. |
-| Open the Web UI | `web launch` | Use one explicit Project or Issue target. The default `system_browser` delivery opens through a memory-only loopback relay and returns no code. |
+| Open the Web UI | `web resolve`, `/me`, then `web launch` | Resolve the instance and explicit Project/Issue; route Owner Overview to admin. Honor IAB/named browser with `host_browser`; otherwise use `system_browser`. |
 
 Candidate queries are intentionally explicit. Use `/api/v1/issues/candidates?assignment=mine&blocked=exclude&project={workspace_key}%2F{project_key}` as the scoped template, choosing exactly one required `assignment`: `mine`, `unassigned`, or `needs_reassignment`. Keep `blocked=exclude` for the normal work queue and use `blocked=include` only when blocked candidates are wanted. Repeat the workspace-qualified `project` parameter for multiple Projects, and report the response's `resolved_scope.candidate_policy` and resolved Projects instead of inferring what the server selected.
 

@@ -50,6 +50,7 @@
 
 - Agent/API-first 不等于 Agent-only。用户直接使用的 Agent 是主要调用载体，但不是 cfKanban 领域角色或受产品规定的工作流执行器；部署、Owner 管理、协调和 Coding 只是任务模式。v0 同时提供同一 Worker 托管的极简第一方 Web UI，用于人类直接查看 Kanban、低频 Issue 参与和 Owner 简单维护；它复用同一 REST/权限/并发/审计合同，不发展为重型产品表面或第二套领域实现。
 - 浏览器不能读取 `~/.cfkanban/`，也不能要求用户粘贴长期 Credential。已认证 Agent 为明确 Web target 创建固定 5 分钟、一次性的 Browser Launch URL，浏览器以 POST 兑换固定 8 小时、不滑动续期且无 refresh 的 `HttpOnly + Secure + SameSite` Session；Session 绑定 Principal、源 Credential 和 target scope。创建必须使用专用 `web launch`，默认经纯内存 loopback relay 直接打开且不输出远端 URL/code；通用 `api request` 在远端写入前拒绝该 endpoint。长期 Credential 不进入 URL、localStorage、页面脚本上下文或浏览器日志；CSRF 固定使用同源 Origin 校验与 double-submit cookie/header。
+- 打开 Web 默认解析本地可信实例并完成 `/me` 验证与登录；显式目标优先，其次 Repo 唯一实例，再其次本地唯一 current 实例，歧义才询问，不引入最近使用默认。指定 IAB/浏览器用 `host_browser` 将一次性、60 秒有效的本机 loopback URL 短暂交给宿主导航工具，保持 CLI 进程运行；不得复述、保存或预先 fetch 该入口，远端票据始终不输出。浏览器无法到达同一 loopback 时创建前停止，不静默换浏览器；最终核对已认证 target，参与者仍只使用单 Project Session。
 - Owner `admin` Web Session 具有实例级管理与数据面 scope，默认只打开 Overview，不自动查询全部 Issue；Owner 显式选择 Workspace/Project 后可进入任意 Project 看板。Project/Issue target 的普通 Session 仍严格限制在其单一 Project。
 - 未认证实例首页提供简短产品介绍，以及指向同实例双语专用 deployment guide 的可复制 Agent 话术；指南逐步说明安装、环境、授权和部署，但具体发行仍以 canonical pointer 与 immutable manifest 为真相，不要求 Agent 从通用 README 猜流程。Public Join 话术同样指向专用 join guide 后再携带准确 target/role。首页不提供 Credential 输入框、远程脚本执行或私有资源枚举，并以有意双行标题和克制页脚完成产品表面。首次 Agent Launch 后可登记 Passkey；Passkey 是 v0 唯一免 Agent 的 Web 直登方法。浏览器 capability detection 不能当作 credential existence detection；v0 按当前请求 hostname/完整 HTTPS origin 隔离 WebAuthn，失败或 hostname 变化时仍以 Agent Browser Launch 恢复。
 - Owner 可逐个 Project 开关 Public Join，并同时公开多个 Project；访客每次选择一个 Project 与 `reader | writer`，只执行一条 Grant 的原子 self-join。v0 不提供 Team Join、多 Project 公开授权、公开批量写入或逐 Principal 重入 blacklist；Project 仍公开时撤权者可再次加入。公开 writer 风险必须在 Owner 启用时明确提示。
@@ -116,7 +117,7 @@
 - 任何状态写入都要考虑并发前置条件、幂等重试、审计事件和结构化错误恢复。
 - v0 Web Board 支持固定五列间单卡拖拽。落到非 `done` 列立即执行带 expected version 的状态保存；拖入 `done` 自动使用 complete 合同，缺少 summary 时先收集完成摘要。失败或冲突回到服务端真实列；不提供多卡/批量写入或手工 rank。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG。
 - cfKanban 自管持久数据统一使用当前执行环境 home 下的 `.cfkanban/`，按 `instances/`、`skill-releases/`、`tool-runtime/` 分责；宿主 marketplace/plugin metadata、发现投影/cache 与 Cloudflare auth 仍留在各自所有者目录。分发 `SKILL.md` 必须直接说明能力、命令/API 对照、读回和停止条件；可本地化的操作文档维护 English/简体中文，不支持 locale 的 metadata 使用英文，公开表面不显示内部阶段标签。
-- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 与双语 deployment/join guides 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 30；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 Linear WP 推进，不得默补或改变公共合同。
+- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 与双语 deployment/join guides 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 31；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 Linear WP 推进，不得默补或改变公共合同。
 
 ## 文档路由
 

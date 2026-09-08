@@ -1,6 +1,6 @@
 ---
 name: cfkanban-admin
-description: Administer cfKanban Workspaces, Projects, invitations, Grants, participant Credentials, Public Join, quotas, tombstone recovery, preferred origin, and the Owner Web surface. Do not use for Cloudflare resource deployment.
+description: Administer cfKanban Workspaces, Projects, invitations, Grants, participant Credentials, Public Join, quotas, tombstone recovery, preferred origin, and authenticated Owner Web opening (including IAB). Do not use for Cloudflare resource deployment.
 ---
 
 # cfKanban Admin
@@ -21,6 +21,10 @@ This Skill uses the application REST API only. Use `cfkanban` for daily Issue wo
 ## Intent-first user experience
 
 Treat a plain request such as “Create my first cfKanban board” as sufficient to begin. Do not require the user to specify Owner verification, readback, Browser Launch, idempotency, or concurrency terminology. Verify the Owner and current state first, ask concisely for any missing Workspace and Project names/keys, explain the writes at the required authorization boundary, and carry the task through to a verified usable board. Keep implementation terminology in technical evidence, not in a prompt the user must compose.
+
+Opening cfKanban means entering an authenticated page when a local Credential is available, including requests such as “open cfKanban”, “show the board”, or “open management in IAB”. Resolve the trusted instance with `web resolve`, verify `/api/v1/me`, then use `web launch`; opening the public homepage alone does not complete that request. Explicit instance/origin context wins, followed by a single Repo instance, then a single local instance. Ask once only when candidates remain ambiguous; never choose by recency or Owner status. An explicit unknown target must not fall back to another instance.
+
+For a verified Owner with no narrower target, open admin Overview. For a participant, route to `cfkanban` to use the explicit Project/Issue, or read authorized Projects and select only a unique result; otherwise ask which Project. There is no participant-wide Web Session. Honor the requested browser: `host_browser` hands a short-lived local relay to the host's IAB/named-browser tool, while `system_browser` keeps the default opener. Read the Owner Web section in the workflow reference before host-browser delivery. Verify the final authenticated target; reuse an existing Session only after its identity and scope are verified.
 
 ## Command entry point
 
@@ -50,7 +54,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Inspect request-rate settings | `GET /api/v1/admin/rate-limit-settings` | Read-only here; changing Worker bindings belongs to `cfkanban-deploy`. |
 | Restore content or a container | Stable resource read or explicit `deleted=only`, then one restore endpoint | Before container restore, show every enabled Public Join policy that will resume. |
 | Change preferred origin | `origin rebind-check`, then `GET/PUT /api/v1/admin/instance-origin` | Probe the candidate without a Credential, use expected version, then cross-read both origins. |
-| Open Owner Web | `web launch` with an `admin` target | Default to Overview and direct system-browser delivery without returning the five-minute code. |
+| Open Owner Web | `web resolve`, `/me`, then `web launch` with an `admin` target | Verify Owner; default to Overview. Honor IAB/named browser with `host_browser`; otherwise use `system_browser`. |
 | Inspect audit history | `GET /api/v1/admin/audit-events` | Use bounded pagination; when the task has a known scope, pass one immutable `project_id` and/or `stream=domain|security`, then verify `resolved_filters`. |
 
 The complete request and recovery guide is [references/owner-workflows.md](references/owner-workflows.md).

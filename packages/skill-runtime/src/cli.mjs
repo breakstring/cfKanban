@@ -1,3 +1,4 @@
+import { resolveWebInstance } from "./web-resolve.mjs";
 import { buildCapabilityReport } from "./capabilities.mjs";
 import { createBrowserLaunchAndDeliver, createInvitationAndDeliver, guardedApiRequest } from "./capability-delivery.mjs";
 import { redeemInvitation, redeemPublicJoin, rotateOwnerCredential, verifyPendingCredential } from "./credential-operations.mjs";
@@ -58,7 +59,8 @@ const COMMANDS = new Map([
   ["scope merge", command({ description: "Merge explicit non-secret Repo scope targets.", effect: "local_write", inputFields: ["repoRoot", "targets"], surfaces: ["daily"], run: mergeRepoScope })],
   ["scope resolve", command({ description: "Resolve explicit, Repo, or warned aggregate Project scope.", effect: "read_only", inputFields: ["explicitTargets", "repoTargets", "validTargets", "allowUnfiltered"], surfaces: ["daily"], run: resolveScope })],
   ["origin rebind-check", command({ description: "Cross-check trusted and preferred origins without sending a Credential; update local metadata only after proof.", effect: "credential_free_network_and_local_write", inputFields: ["instanceId"], run: checkTrustedOriginRebind })],
-  ["web launch", command({ description: "Create one Browser Launch and open it through a memory-only loopback relay; explicit headless fallback may return the capability once.", effect: "authenticated_remote_write_and_browser_delivery", inputFields: ["instanceId", "target", "idempotencyKey", "delivery", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["daily", "admin"], run: createBrowserLaunchAndDeliver })],
+  ["web resolve", command({ description: "Resolve a trusted local instance for Web opening without reading secrets; return ambiguity instead of choosing a default.", effect: "read_only_local", inputFields: ["instanceId", "origin", "repoRoot"], surfaces: ["daily", "admin"], run: resolveWebInstance })],
+  ["web launch", command({ description: "Create one Browser Launch through a memory-only relay. host_browser streams a 60-second local handoff event for IAB or a named browser; system_browser opens directly. Explicit headless fallback may return the remote capability once.", effect: "authenticated_remote_write_and_browser_delivery", inputFields: ["instanceId", "target", "idempotencyKey", "delivery", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["daily", "admin"], run: createBrowserLaunchAndDeliver })],
   ["invite create", command({ description: "Create one Owner Invitation and copy it without stdout; explicit headless fallback may return the capability once.", effect: "authenticated_remote_write_and_invite_delivery", inputFields: ["instanceId", "body", "idempotencyKey", "delivery", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["admin"], run: createInvitationAndDeliver })],
   ["api request", command({ description: "Send one same-origin authenticated REST request using the private current Credential; one-time capability creation requires a dedicated command.", effect: "authenticated_remote_request", inputFields: ["instanceId", "method", "apiPath", "body", "idempotencyKey"], run: guardedApiRequest })],
   ["release verify", command({ description: "Verify a stable or prerelease pointer, immutable manifest, allowed origins, and both artifact digests.", effect: "read_only", inputFields: ["releasePointerPath", "manifestPath", "artifactFiles"], surfaces: ["deploy"], run: loadAndVerifyRelease })],
@@ -153,7 +155,12 @@ export async function main(argv = process.argv.slice(2), { surface = "all" } = {
     const commandName = requireCommand(argv);
     const result = commandName === "help"
       ? getCommandCatalog({ surface })
-      : await dispatch(commandName, await readStdinJson(), { surface });
+      : await dispatch(commandName, {
+        ...await readStdinJson(),
+        ...(commandName === "web launch" ? { onRelayReady: (event) => {
+          process.stdout.write(`${JSON.stringify(event)}\n`);
+        } } : {}),
+      }, { surface });
     process.stdout.write(`${JSON.stringify({ ok: true, result }, null, 2)}\n`);
     return 0;
   } catch (error) {

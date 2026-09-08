@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -870,6 +871,47 @@ test("one-time capability creation is blocked on generic API output and uses ded
   assert.equal(relayLocation, launchUrl);
   assert.deepEqual(launched.delivery, { channel: "system_browser", delivered: true, capability_exposed: false });
   assert.equal(JSON.stringify(launched).includes(launchCode), false);
+
+  let relayEvent;
+  const hostLaunch = await createBrowserLaunchAndDeliver({
+    stateRoot, instanceId: INSTANCE_ID,
+    target: { kind: "project", workspace_key: "team", project_key: "APP" },
+    idempotencyKey: "host-browser-launch", fetchImpl: browserFetch,
+    delivery: "host_browser",
+    onRelayReady: async (event) => {
+      relayEvent = event;
+      assert.equal(JSON.stringify(event).includes(launchCode), false);
+      assert.equal(event.expires_in_seconds, 60);
+      for (const options of [
+        { method: "POST" },
+        { headers: { host: "attacker.example" } },
+        { headers: { origin: "https://attacker.example" } },
+        { headers: { "sec-fetch-site": "cross-site" } },
+      ]) {
+        const denied = await new Promise((resolve, reject) => {
+          const req = httpRequest(event.local_url, options, (res) => { res.resume(); resolve(res); });
+          req.on("error", reject);
+          req.end();
+        });
+        assert.equal(denied.statusCode, 404);
+        assert.equal(denied.headers.location, undefined);
+      }
+      const response = await fetch(event.local_url, { redirect: "manual" });
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("location"), launchUrl);
+    },
+  });
+  assert.equal(relayEvent.event, "browser_relay_ready");
+  assert.equal(hostLaunch.delivery.channel, "host_browser");
+  assert.equal(hostLaunch.delivery.delivered, true);
+  assert.equal(JSON.stringify(hostLaunch).includes(launchCode), false);
+  assert.equal(JSON.stringify(hostLaunch).includes(relayEvent.local_url), false);
+  await assert.rejects(fetch(relayEvent.local_url));
+  const callsBeforeUnavailable = browserCalls.length;
+  await assert.rejects(createBrowserLaunchAndDeliver({
+    stateRoot, instanceId: INSTANCE_ID, delivery: "host_browser", fetchImpl: browserFetch,
+  }), (error) => error.code === "BROWSER_DELIVERY_UNAVAILABLE");
+  assert.equal(browserCalls.length, callsBeforeUnavailable);
 
   let replayOpenCalls = 0;
   const replayedLaunch = await createBrowserLaunchAndDeliver({
@@ -3650,7 +3692,8 @@ test("release metadata pins two artifacts, localized documents, and installable 
 test("plugin and Skill metadata stay English where localization is unsupported, while documents are paired", async () => {
   const plugin = JSON.parse(await readFile(new URL("../../.codex-plugin/plugin.json", import.meta.url), "utf8"));
   assert.equal(plugin.name, "cfkanban-agent-skills");
-  assert.equal(plugin.version, TESTING_RELEASE_CONFIG.version);
+  // Marketplace plugin updates and canonical bundle publication are independent.
+  assert.match(plugin.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u);
   assert.equal(/[\u3400-\u9fff]/u.test(JSON.stringify(plugin)), false);
   for (const skill of ["cfkanban", "cfkanban-admin", "cfkanban-deploy"]) {
     const yaml = await readFile(new URL(`../../skills/${skill}/agents/openai.yaml`, import.meta.url), "utf8");
@@ -3665,7 +3708,7 @@ test("plugin and Skill metadata stay English where localization is unsupported, 
   ]) {
     await Promise.all(pair.map((entry) => stat(new URL(entry, import.meta.url))));
   }
-  const releaseNotes = await readFile(new URL(`../../release/notes/${TESTING_RELEASE_CONFIG.version}.md`, import.meta.url), "utf8");
+  const releaseNotes = await readFile(new URL(`../../release/notes/${plugin.version}.md`, import.meta.url), "utf8");
   assert.match(releaseNotes, /## English/u);
   assert.match(releaseNotes, /## 简体中文/u);
 });

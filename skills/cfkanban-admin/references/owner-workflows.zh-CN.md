@@ -108,6 +108,18 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 修改 preferred origin 前，不带 Credential 探测目标 HTTPS origin，使用 current expected version 更新，再从新旧 origin 分别读取 public discovery document。认证请求不依赖跨 origin redirect。
 
+### 解析实例与已认证目标
+
+运行 `web resolve`，传入已知 `instanceId` 或 `origin`（仅 HTTPS origin，不含 path/query/fragment）；在 Repo 工作时可传 `repoRoot`。该命令只读本地可信实例 metadata 和 current 槽位是否存在，不鉴权、不输出 secret，状态为 `resolved`、`selection_required` 或 `credential_required`。用户明确指向的当前浏览器 origin 属于显式上下文；无关 ambient tab 不构成目标。优先显式目标，其次 Repo 唯一实例，再其次本地唯一 current 实例；Repo 有多个候选时保留歧义。只展示候选标识与域名、询问一次，不按第一项、最近使用或 Owner 身份选择。显式未知 origin 应转入可信登记/加入或恢复，不回退其他实例，也不向它发送 Credential。
+
+解析后以私有 current Credential 请求 `GET /api/v1/me`。凭据失效则停止 launch 并转入恢复。已验证 Owner 未指定更窄 target 时，经 `cfkanban-admin` 打开 admin Overview。参与者缺少明确 Project/Issue 时只读列出授权 Projects，唯一时进入该 Project，否则询问；不虚构跨 Project Session。已有浏览器 Session 只有核对 Principal 与 target scope 后才能复用。完成标准是进入准确的已认证页面，不是仅打开 tab 或完成 relay 跳转。
+
+### 交付到 IAB 或其他宿主控制的浏览器
+
+用户指定 IAB 或宿主可控制的浏览器时，先确认浏览器工具能够访问当前进程的 loopback，再使用 `delivery=host_browser`。以短 shell yield 启动 CLI，保留运行进程；CLI 先流式输出包含 `local_url` 的 `browser_relay_ready` event，等待浏览器 GET 后再输出最终结果。立即用指定浏览器的导航工具打开准确的本地 URL。不要先用 fetch、curl、预览或其他浏览器探测：GET 会消费本地交付能力。导航后收取仍在运行的 CLI 最终结果。
+
+随机路径的 loopback 入口只能使用一次，60 秒失效。它是短暂进入宿主工具上下文的敏感本地 capability，不在回复中复述，也不写文件、日志、receipt 或报告；远端 ticket URL/code 始终只在进程内存，不打印。远端票据仍为 5 分钟，兑换后 Session 仍为 8 小时，本地 60 秒不改变这些时效。若指定浏览器与进程处于不同宿主/网络空间，或缺少可用导航工具，应在创建票据前停止并解释交付限制，不静默换浏览器。relay 成功仅证明交付，还须检查最终页面；无法验证登录时如实说明。默认 `system_browser` 与显式确认的 `stdout_once` 行为保持不变。
+
 Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 opaque code。`web launch` 默认通过纯内存 loopback relay 打开系统浏览器，远端 URL 不进入 stdout 或进程参数；它兑换为实例级 admin Session，默认打开 Overview，不预取全部 Issues。用户随后可显式选择 Workspace/Project。长期 Credential 不进入浏览器。headless 输出沿用 Invite 的显式 `stdout_once` 确认与禁止留存规则。
 
 ## 审计筛选
