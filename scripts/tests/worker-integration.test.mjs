@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -163,7 +164,7 @@ test("production Worker serves health/OpenAPI, structured misses, and Static Ass
   assertRequestId(health);
   assert.deepEqual(await health.json(), {
     d1: "reachable",
-    schema_version: 1,
+    schema_version: JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8")).schema_version,
     service_version: "0.1.0",
   });
 

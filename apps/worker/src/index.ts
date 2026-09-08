@@ -1,4 +1,5 @@
 import openApiDocument from "../../../contracts/openapi.json";
+import migrationManifest from "../../../migrations/manifest.json" with { type: "json" };
 
 import { clearCsrfCookie, clearSessionCookie } from "./kernel/csrf.ts";
 import { ApiError, errorResponse, notFound, platformUnavailable } from "./kernel/errors.ts";
@@ -25,7 +26,7 @@ import { registerWp07Routes } from "./routes/wp07.ts";
 import { registerWp08Routes } from "./routes/wp08.ts";
 
 const SERVICE_VERSION = "0.1.0";
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = migrationManifest.schema_version;
 const openApiBody = JSON.stringify(openApiDocument);
 
 const router = registerWp08Routes(registerWp07Routes(registerWp06Routes(registerWp05Routes(registerWp04Routes(registerWp03Routes(new Router()
