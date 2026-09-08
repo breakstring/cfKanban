@@ -16,8 +16,9 @@ FROM sqlite_master
 WHERE type IN ('table', 'index')
   AND name NOT LIKE 'sqlite_%'
 UNION ALL
-SELECT 'column' AS type, schema.name || '.' || column_info.name AS name
-FROM sqlite_master AS schema
-JOIN pragma_table_info(schema.name) AS column_info
-WHERE schema.type = 'table' AND schema.name NOT LIKE 'sqlite_%'
+SELECT 'column' AS type, 'workspaces.' || name AS name FROM pragma_table_info('workspaces')
+UNION ALL
+SELECT 'column' AS type, 'projects.' || name AS name FROM pragma_table_info('projects')
+UNION ALL
+SELECT 'column' AS type, 'public_join_policies.' || name AS name FROM pragma_table_info('public_join_policies')
 ORDER BY type, name;

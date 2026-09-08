@@ -152,7 +152,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.52.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.53.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -3932,6 +3932,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.47.md",
     "../../release/notes/0.1.0-alpha.51.md",
     "../../release/notes/0.1.0-alpha.52.md",
+    "../../release/notes/0.1.0-alpha.53.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3972,6 +3973,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.47.json",
     "../../release/config/0.1.0-alpha.51.json",
     "../../release/config/0.1.0-alpha.52.json",
+    "../../release/config/0.1.0-alpha.53.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
@@ -4035,13 +4037,15 @@ test("removed columns distinguish pending migration from applied schema and miss
 test("actual migration readback SQL emits columns and accepts breaking ledger rows", async () => {
   const database = new DatabaseSync(":memory:");
   try {
-    database.exec("CREATE TABLE workspaces (id TEXT, key TEXT)");
+    database.exec("CREATE TABLE workspaces (id TEXT, key TEXT); CREATE TABLE projects (id TEXT, key TEXT); CREATE TABLE public_join_policies (project_id TEXT, project_key TEXT)");
     database.exec(await readFile(new URL("../../release/deployment/migration-ledger.sql", import.meta.url), "utf8"));
     database.prepare("INSERT INTO cfkanban_migration_ledger VALUES (3, '0003_uuid.sql', ?, 'breaking_non_destructive', 'wrangler_migration_ledger_only', ?, 1)").run("f".repeat(64), OPERATION_ID);
     const sql = await readFile(new URL("../../release/deployment/migration-readback.sql", import.meta.url), "utf8");
     const result = sql.split(";").map((statement) => statement.trim()).filter(Boolean).map((statement) => ({ success: true, results: database.prepare(statement).all() }));
     const parsed = parseMigrationReadbackOutput(JSON.stringify(result));
     assert.ok(parsed.schema.columns.includes("workspaces.key"));
+    assert.ok(parsed.schema.columns.includes("projects.key"));
+    assert.ok(parsed.schema.columns.includes("public_join_policies.project_key"));
     assert.equal(parsed.ledger[0].classification, "breaking_non_destructive");
     result[0].results[0].classification = "unknown";
     assert.throws(() => parseMigrationReadbackOutput(JSON.stringify(result)), { code: "WRANGLER_MIGRATION_READBACK_INVALID" });
