@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 1,
+  "schema_version": 2,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -84,6 +84,20 @@
           "idx_web_authenticators_principal_active",
           "idx_public_join_enabled",
           "idx_public_join_resume_enabled_workspace_project"
+        ]
+      }
+    },
+    {
+      "sequence": 2,
+      "name": "0002_container_purge.sql",
+      "sha256": "20efa238e6394b2694164a257190e0c1c9fbf79944bc2b121aeb2c7d868bbac9",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "indexes": [
+          "idx_workspaces_purge_state",
+          "idx_projects_workspace_purge_state"
         ]
       }
     }

@@ -1,5 +1,7 @@
 # cfKanban API & D1 Schema SPEC
 
+> 2026-09-08 增补：[工作区与项目归档及永久删除合同](2026-09-08-container-purge-spec.md) 已冻结。仅 Owner 可预览并永久删除已归档项目或已归档空工作区；该特例覆盖本文相应的 hard-delete 禁止及项目内历史永久保留表述，其余软删除、权限与恢复合同不变。
+
 - 文档状态：Frozen
 - Roadmap：R1 / R2
 - 上游合同：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)（Frozen）
@@ -35,7 +37,7 @@
 - Skill 文件、Node scripts 或部署 bundle 的具体代码；
 - Vectorize、Workers AI、Queues、R2、Durable Objects、远程 MCP 或重型 UI；极简第一方 Web 属于 v0 范围；
 - 完整 D1 导出、导入、本地恢复演练或整库灾难恢复；
-- 物理 purge、公共多租户或 v1 之后的兼容策略。
+- 增补合同以外的物理 purge、公共多租户或 v1 之后的兼容策略。
 
 ## 2. Cloudflare 约束如何进入设计
 

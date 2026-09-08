@@ -30,7 +30,14 @@ assert.equal(
   "migration manifest digest drifted",
 );
 const db = new DatabaseSync(":memory:");
-db.exec(migration);
+for (const entry of manifest.migrations) {
+  const sql = await readFile(new URL(`../migrations/${entry.name}`, import.meta.url), "utf8");
+  assert.equal(entry.sha256, sha256NormalizedText(sql), `migration digest drifted: ${entry.name}`);
+  db.exec(sql);
+}
+for (const table of ["workspaces", "projects"]) {
+  assert.ok(db.prepare(`PRAGMA table_info(${table})`).all().some((column) => column.name === "purged_at"));
+}
 
 const now = 1_787_966_400_000;
 const digest = (character) => character.repeat(64);

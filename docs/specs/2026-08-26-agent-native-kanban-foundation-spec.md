@@ -1,5 +1,7 @@
 # Agent-native Kanban Foundation SPEC
 
+> 2026-09-08 增补：[工作区与项目归档及永久删除合同](2026-09-08-container-purge-spec.md) 已冻结。仅 Owner 可预览并永久删除已归档项目或已归档空工作区；该特例覆盖本文相应的 hard-delete 禁止及项目内历史永久保留表述，其余软删除、权限与恢复合同不变。
+
 - 文档状态：Frozen
 - 合同修订：19
 - Roadmap：R0
@@ -145,7 +147,7 @@ Owner Credential 生命周期不能通过第一方 Web Session 管理。Web 只�
 - 默认查询、assignment 和普通写入排除 effective-deleted 资源；父容器删除也视为子资源 effective-deleted。Workspace key、Project key 和实例级 Issue number 在删除后不复用。
 - v0 在对应的单资源读取/列表能力上提供显式 `deleted=only` 恢复视图，不另建带隐藏时间窗的“最近删除”概念。它只返回资源自身带 `deleted_at` 的 tombstone，不能因为父容器暂停就展开或复制全部子资源；结果按 `deleted_at` 倒序并沿用普通 cursor/limit。
 - 恢复视图只向有权恢复该资源的调用者开放：Project 内容要求目标 Project `writer` 或 Owner，Workspace/Project 容器要求 Owner；Relation 仍执行两端 Project 的授权过滤。列表只返回恢复所需的有界摘要，包括资源类型、稳定 ID/identifier/key、显示名称或标题、`deleted_at`、`deleted_by`、version、父级状态以及 `restorable`/结构化不可恢复原因。已知标识时也可以直接读取单个 tombstone。
-- v0 不提供公开 hard-delete API。长期物理保留和受控 purge 策略延后到有真实容量需求时决定。
+- v0 不提供单个 Issue/Comment 等内容资源的 hard-delete API；已归档容器的 Owner 受控清理按 2026-09-08 永久删除增补合同执行。
 - v0 产品与 Skills 不提供完整 D1 导出、导入、本地恢复演练或整库灾难恢复能力。Cloudflare 自身的 Time Travel、控制台导出或其他平台运维功能属于部署者直接管理的外部能力，不进入 cfKanban 用户故事、API 或 Skill 合同。
 
 ### 4.4 Project 与代码仓库

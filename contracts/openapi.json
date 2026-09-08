@@ -1107,6 +1107,163 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
+    "/api/v1/workspaces/{workspace_key}/purge-preview": {
+      "get": {
+        "operationId": "previewWorkspacePurge",
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Preview Workspace Purge",
+        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerPurgePreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/workspaces/{workspace_key}/commands/purge": {
+      "post": {
+        "operationId": "purgeWorkspace",
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Purge Workspace",
+        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerPurgeWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerPurgeRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspace_key}/commands/restore": {
       "post": {
         "operationId": "restoreWorkspace",
@@ -1647,6 +1804,181 @@
         },
         "x-cfkanban-write-contract": "cas-delete",
         "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/purge-preview": {
+      "get": {
+        "operationId": "previewProjectPurge",
+        "tags": [
+          "projects"
+        ],
+        "summary": "Preview Project Purge",
+        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "project_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerPurgePreview"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/purge": {
+      "post": {
+        "operationId": "purgeProject",
+        "tags": [
+          "projects"
+        ],
+        "summary": "Purge Project",
+        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "project_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContainerPurgeWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContainerPurgeRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore": {
@@ -8005,6 +8337,223 @@
       },
       "EmptyRequest": {
         "type": "object",
+        "additionalProperties": false
+      },
+      "ContainerPurgeRequest": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "confirm_name",
+          "preview_digest"
+        ],
+        "properties": {
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "confirm_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "preview_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Permanently remove one archived container after an Owner preview. Requires the exact current display name and preview digest. Empty archived Workspaces only; no bulk purge."
+      },
+      "ContainerPurgePreview": {
+        "type": "object",
+        "required": [
+          "target",
+          "counts",
+          "can_purge",
+          "blocking_reason",
+          "preview_digest"
+        ],
+        "properties": {
+          "target": {
+            "type": "object",
+            "required": [
+              "kind",
+              "id",
+              "key",
+              "workspace_key",
+              "display_name",
+              "version"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "workspace",
+                  "project"
+                ]
+              },
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "key": {
+                "type": "string"
+              },
+              "workspace_key": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "version": {
+                "$ref": "#/components/schemas/Version"
+              }
+            },
+            "additionalProperties": false
+          },
+          "counts": {
+            "type": "object",
+            "required": [
+              "projects",
+              "issues",
+              "comments",
+              "labels",
+              "relations",
+              "cross_project_relations",
+              "grants",
+              "invitations",
+              "shared_invitations",
+              "browser_launches",
+              "web_sessions"
+            ],
+            "properties": {
+              "projects": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "issues": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "comments": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "labels": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "relations": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "cross_project_relations": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "grants": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "invitations": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "shared_invitations": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "browser_launches": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "web_sessions": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "can_purge": {
+            "type": "boolean"
+          },
+          "blocking_reason": {
+            "enum": [
+              null,
+              "ARCHIVE_REQUIRED",
+              "WORKSPACE_NOT_EMPTY"
+            ]
+          },
+          "preview_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PurgedContainer": {
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "kind",
+          "purged",
+          "purged_at",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "project"
+            ]
+          },
+          "purged": {
+            "const": true
+          },
+          "purged_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContainerPurgeWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/PurgedContainer"
+          }
+        },
         "additionalProperties": false
       },
       "ExpectedVersionRequest": {

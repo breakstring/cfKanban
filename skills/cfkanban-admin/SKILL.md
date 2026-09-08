@@ -44,6 +44,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Verify Owner identity | `state inspect`, then `api request` → `GET /api/v1/me` | Require `is_owner=true`; never infer Owner from display name. |
 | Create the first usable board | create one Workspace, create one Project, read both back, then `web launch` with an `admin` target | Ask for explicit immutable keys and display names; normalize the chosen Workspace key to lowercase and Project key to uppercase before preview and submission; each create is a separate atomic write. |
 | Manage Workspaces and Projects | Workspace/Project `GET/POST/PATCH/DELETE` plus single-resource `commands/restore` | Use explicit keys/IDs, CAS where defined, one Idempotency Key per atomic write, and readback. |
+| Permanently remove an archived container | `GET .../purge-preview`, then `POST .../commands/purge` | Owner only; inspect counts and shared invitations, require exact name/version/digest, one Idempotency Key; archived empty Workspace or archived Project only. Read the purge workflow first. |
 | Rename fixed status labels | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Only display names change; stable keys, order, category, and terminal meaning do not. |
 | Create or revoke an Invite | `invite create`; read/revoke through `api request` | Always submit explicit Project roles. Default clipboard delivery keeps the complete Invite URL out of stdout. |
 | Recover a participant | `invite create` with `kind=principal_recovery` | Bind the exact Principal ID and immutable `rotation | full_recovery` mode; show exact revocation scope first. |
@@ -81,6 +82,7 @@ Classify an event's lifecycle resource by `subject.type` and `subject.id`. `auth
 
 ## Contract and stop conditions
 
+- **MUST:** Purge needs explicit authorization for irreversible removal of the previewed target. Never treat archive/delete authorization as purge authorization. On changed preview/version, stop and obtain a fresh preview; on an uncertain result, retry the exact same payload and Idempotency Key.
 - **MUST:** Every mutation has an explicit target, expected version where defined, independent Idempotency Key, impact summary, and readback.
 - **MUST:** Before Workspace/Project creation, case-normalize explicit user-chosen keys, validate the canonical forms, and show the exact immutable values that will be stored. Case normalization does not authorize deriving or otherwise rewriting a key.
 - **MUST:** Invite roles are always explicit. Recovery binds a stable Principal ID and immutable recovery mode; display names never select identity.

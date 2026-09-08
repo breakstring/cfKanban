@@ -59,6 +59,8 @@ const operations = [
   ["get", "/api/v1/workspaces/{workspace_key}", "getWorkspace", "workspaces", authenticated, "read", "DeletedModeQuery"],
   ["patch", "/api/v1/workspaces/{workspace_key}", "updateWorkspace", "workspaces", authenticated, "cas", "UpdateDisplayNameRequest"],
   ["delete", "/api/v1/workspaces/{workspace_key}", "deleteWorkspace", "workspaces", authenticated, "cas-delete"],
+  ["get", "/api/v1/workspaces/{workspace_key}/purge-preview", "previewWorkspacePurge", "workspaces", authenticated, "read"],
+  ["post", "/api/v1/workspaces/{workspace_key}/commands/purge", "purgeWorkspace", "workspaces", authenticated, "idempotent-cas", "ContainerPurgeRequest"],
   ["post", "/api/v1/workspaces/{workspace_key}/commands/restore", "restoreWorkspace", "workspaces", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
 
   ["get", "/api/v1/workspaces/{workspace_key}/projects", "listProjects", "projects", authenticated, "read", "DeletedCursorQuery"],
@@ -66,6 +68,8 @@ const operations = [
   ["get", "/api/v1/workspaces/{workspace_key}/projects/{project_key}", "getProject", "projects", authenticated, "read", "DeletedModeQuery"],
   ["patch", "/api/v1/workspaces/{workspace_key}/projects/{project_key}", "updateProject", "projects", authenticated, "cas", "UpdateProjectRequest"],
   ["delete", "/api/v1/workspaces/{workspace_key}/projects/{project_key}", "deleteProject", "projects", authenticated, "cas-delete"],
+  ["get", "/api/v1/workspaces/{workspace_key}/projects/{project_key}/purge-preview", "previewProjectPurge", "projects", authenticated, "read"],
+  ["post", "/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/purge", "purgeProject", "projects", authenticated, "idempotent-cas", "ContainerPurgeRequest"],
   ["post", "/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore", "restoreProject", "projects", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
   ["get", "/api/v1/workspaces/{workspace_key}/projects/{project_key}/statuses", "listProjectStatuses", "projects", authenticated, "read"],
   ["patch", "/api/v1/workspaces/{workspace_key}/projects/{project_key}/statuses/{status_key}", "updateProjectStatusName", "projects", authenticated, "cas", "UpdateStatusNameRequest"],
@@ -307,6 +311,7 @@ const permissionGroups = {
   visible_scope_active_owner_tombstone: ["listWorkspaces", "getWorkspace", "listProjects", "getProject"],
   current_principal: ["getMe", "updateMe", "getWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey"],
   deployment_owner: [
+    "previewWorkspacePurge", "purgeWorkspace", "previewProjectPurge", "purgeProject",
     "createWorkspace", "updateWorkspace", "deleteWorkspace", "restoreWorkspace",
     "createProject", "updateProject", "deleteProject", "restoreProject", "updateProjectStatusName",
     "listInvitations", "createInvitation", "getInvitation", "revokeInvitation",
@@ -464,6 +469,38 @@ const schemas = {
   ProjectRole: string({ enum: ["reader", "writer"], description: "项目角色：只读或可写。" }),
   RelationKind: string({ enum: ["blocks", "parent", "related", "duplicate"] }),
   EmptyRequest: { type: "object", additionalProperties: false },
+  ContainerPurgeRequest: {
+    type: "object", required: ["expected_version", "confirm_name", "preview_digest"],
+    properties: { expected_version: ref("Version"), confirm_name: string({ minLength: 1, maxLength: 128 }), preview_digest: string({ pattern: "^[a-f0-9]{64}$" }) },
+    additionalProperties: false,
+    description: "Permanently remove one archived container after an Owner preview. Requires the exact current display name and preview digest. Empty archived Workspaces only; no bulk purge.",
+  },
+  ContainerPurgePreview: {
+    type: "object", required: ["target", "counts", "can_purge", "blocking_reason", "preview_digest"],
+    properties: {
+      target: {
+        type: "object", required: ["kind", "id", "key", "workspace_key", "display_name", "version"],
+        properties: { kind: string({ enum: ["workspace", "project"] }), id: ref("Uuid"), key: string(), workspace_key: string(), display_name: string(), version: ref("Version") },
+        additionalProperties: false,
+      },
+      counts: {
+        type: "object",
+        required: ["projects", "issues", "comments", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"],
+        properties: Object.fromEntries(["projects", "issues", "comments", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"].map((key) => [key, integer({ minimum: 0 })])),
+        additionalProperties: false,
+      },
+      can_purge: { type: "boolean" },
+      blocking_reason: { enum: [null, "ARCHIVE_REQUIRED", "WORKSPACE_NOT_EMPTY"] },
+      preview_digest: string({ pattern: "^[a-f0-9]{64}$" }),
+    },
+    additionalProperties: false,
+  },
+  PurgedContainer: {
+    type: "object", required: ["id", "key", "kind", "purged", "purged_at", "version"],
+    properties: { id: ref("Uuid"), key: string(), kind: string({ enum: ["workspace", "project"] }), purged: { const: true }, purged_at: ref("Timestamp"), version: ref("Version") },
+    additionalProperties: false,
+  },
+  ContainerPurgeWriteResult: containerWriteResult("PurgedContainer"),
   ExpectedVersionRequest: { type: "object", required: ["expected_version"], properties: { expected_version: ref("Version") }, additionalProperties: false },
   UpdateDisplayNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
   CreateWorkspaceRequest: { type: "object", required: ["key", "display_name"], properties: { key: string({ pattern: "^[a-z][a-z0-9-]{1,31}$" }), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
@@ -1909,6 +1946,10 @@ const querySets = {
 };
 
 const operationResponseSchemas = {
+  previewWorkspacePurge: ref("ContainerPurgePreview"),
+  previewProjectPurge: ref("ContainerPurgePreview"),
+  purgeWorkspace: ref("ContainerPurgeWriteResult"),
+  purgeProject: ref("ContainerPurgeWriteResult"),
   listWorkspaces: ref("WorkspaceListResult"),
   getWorkspace: { oneOf: [ref("WorkspaceActive"), ref("WorkspaceTombstoneDetail")] },
   createWorkspace: ref("WorkspaceActiveWriteResult"),

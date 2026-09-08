@@ -131,3 +131,12 @@ Use `subject.type` and `subject.id` to identify the resource whose lifecycle the
 ## Error and readback rules
 
 Use one Idempotency Key per atomic write. Read back the mutated resource and relevant audit event. Interpret errors by stable machine fields, not `message`. Earlier committed operations remain committed when a later step fails; report them separately rather than claiming rollback.
+
+## Archived container purge
+
+Archive (`DELETE`) remains reversible. Permanent removal is a separate Owner operation, limited to an archived Project or an archived Workspace with no non-purged Projects. Use the container path `/api/v1/workspaces/{workspace_key}` or its `/projects/{project_key}` child.
+
+1. Read `GET {container_path}/purge-preview`. Show the exact target, content counts, cross-project relations, affected invitations and shared invitations. Stop if `can_purge=false`.
+2. Obtain explicit authorization for the irreversible previewed removal. This clears Issues, completion and ordinary Comments, labels, relations, Grants, project sessions, and corresponding history/response caches. Shared pending invitations are revoked; existing Grants in other Projects remain. Minimal reserved keys and a compact purge audit remain; old cursors may require a fresh read. Do not promise an immediate reduction in Cloudflare storage metrics or deletion of platform backups.
+3. Send `POST {container_path}/commands/purge` through `api request` with `expected_version=target.version`, `confirm_name=target.display_name`, `preview_digest` and one new Idempotency Key. A stale preview requires fresh review; an uncertain response requires the same request/key, not a newly authorized target.
+4. Verify the `resource.purged=true` result and absence from the explicit `deleted=only` list/detail; optionally inspect the compact Owner audit. Purged containers cannot be restored and their keys cannot be reused. Never purge multiple containers implicitly or automatically.

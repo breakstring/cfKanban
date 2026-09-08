@@ -220,7 +220,7 @@ async function readWorkspace(
     return await db.prepare(
       `SELECT id, key, display_name, version, deleted_at, created_at, updated_at
        FROM workspaces
-       WHERE key = ?1 ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+       WHERE key = ?1 AND purged_at IS NULL ${includeDeleted ? "" : "AND deleted_at IS NULL"}
          ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        LIMIT 1`,
     ).bind(key, ...(currentAuth?.values ?? [])).first<WorkspaceRow>();
@@ -256,7 +256,7 @@ async function readProject(
        JOIN workspaces AS w ON w.id = p.workspace_id
        LEFT JOIN project_usage AS pu ON pu.project_id = p.id
        LEFT JOIN public_join_policies AS pjp ON pjp.project_id = p.id
-       WHERE w.key = ?1 AND p.key = ?2
+       WHERE w.key = ?1 AND p.key = ?2 AND p.purged_at IS NULL AND w.purged_at IS NULL
          ${includeDeleted ? "" : "AND w.deleted_at IS NULL AND p.deleted_at IS NULL"}
          ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        LIMIT 1`,
@@ -295,7 +295,7 @@ async function readWorkspacePage(
     const result = await db.prepare(
       `SELECT id, key, display_name, version, deleted_at, created_at, updated_at
        FROM workspaces ${deleted === "only" ? "INDEXED BY idx_workspaces_tombstones" : ""}
-       WHERE deleted_at IS ${deleted === "only" ? "NOT NULL" : "NULL"}
+       WHERE purged_at IS NULL AND deleted_at IS ${deleted === "only" ? "NOT NULL" : "NULL"}
          AND (?1 IS NULL OR id IN (
            SELECT DISTINCT project_row.workspace_id
            FROM projects AS project_row
@@ -346,7 +346,7 @@ async function readProjectPage(
        JOIN workspaces AS w ON w.id = p.workspace_id
        LEFT JOIN project_usage AS pu ON pu.project_id = p.id
        LEFT JOIN public_join_policies AS pjp ON pjp.project_id = p.id
-       WHERE w.key = ?1 AND p.deleted_at IS ${deleted === "only" ? "NOT NULL" : "NULL"}
+       WHERE w.key = ?1 AND w.purged_at IS NULL AND p.purged_at IS NULL AND p.deleted_at IS ${deleted === "only" ? "NOT NULL" : "NULL"}
          ${deleted === "only" ? "" : "AND w.deleted_at IS NULL"}
          AND (?2 IS NULL OR p.id IN (SELECT value FROM json_each(?2)))
          AND (?3 IS NULL OR ${deleted === "only"
@@ -721,7 +721,7 @@ export async function createWorkspace(
             workspaceEvent(db, auth, crypto.randomUUID(), operationId, "workspace.created", workspaceId, { key }, now),
           ],
           committedAt: now,
-          confirmBusinessRejection: async () => (await readWorkspace(db, key, true)) !== null
+          confirmBusinessRejection: async () => (await db.prepare("SELECT 1 FROM workspaces WHERE key = ?1").bind(key).first()) !== null
             || await ownerGuardRejected(db, auth, now),
           expectedEventCount: 1,
           operationId,
@@ -732,7 +732,7 @@ export async function createWorkspace(
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
           await reauthenticateOwner(db, request, now);
-          if (await readWorkspace(db, key, true)) throw conflict("WORKSPACE_KEY_CONFLICT", "choose_different_key");
+          if (await db.prepare("SELECT 1 FROM workspaces WHERE key = ?1").bind(key).first()) throw conflict("WORKSPACE_KEY_CONFLICT", "choose_different_key");
         }
         throw error;
       }
@@ -835,7 +835,7 @@ async function setWorkspaceDeleted(
                version = version + 1, updated_at = ?3,
                updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7
-             AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
+             AND purged_at IS NULL AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
              AND NOT EXISTS (
                SELECT 1
                FROM projects AS invariant_project
@@ -1113,7 +1113,7 @@ export async function createProject(
           ],
           committedAt: now,
           confirmBusinessRejection: async () => (await readWorkspace(db, workspaceKey)) === null
-            || (await readProject(db, workspaceKey, key, true)) !== null
+            || (await db.prepare("SELECT 1 FROM projects p JOIN workspaces w ON w.id = p.workspace_id WHERE w.key = ?1 AND p.key = ?2").bind(workspaceKey, key).first()) !== null
             || await ownerGuardRejected(db, auth, now),
           expectedEventCount: 1,
           operationId,
@@ -1125,7 +1125,7 @@ export async function createProject(
         if (error instanceof AtomicBatchRejectedError) {
           await reauthenticateOwner(db, request, now);
           if (await readWorkspace(db, workspaceKey) === null) throw notFound();
-          if (await readProject(db, workspaceKey, key, true)) throw conflict("PROJECT_KEY_CONFLICT", "choose_different_key");
+          if (await db.prepare("SELECT 1 FROM projects p JOIN workspaces w ON w.id = p.workspace_id WHERE w.key = ?1 AND p.key = ?2").bind(workspaceKey, key).first()) throw conflict("PROJECT_KEY_CONFLICT", "choose_different_key");
         }
         throw error;
       }
@@ -1272,7 +1272,7 @@ async function setProjectDeleted(
                version = version + 1, updated_at = ?3,
                updated_by_principal_id = ?4, last_operation_id = ?5
            WHERE id = ?6 AND version = ?7
-             AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
+             AND purged_at IS NULL AND deleted_at IS ${deleted ? "NULL" : "NOT NULL"}
              AND EXISTS (
                SELECT 1 FROM workspaces AS parent_workspace
                WHERE parent_workspace.id = projects.workspace_id

@@ -766,7 +766,7 @@ test("the Web interaction palette uses accessible orange without legacy blue the
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
   const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
   const [deploymentRelease, ...documents] = await Promise.all([
-    readFile(new URL("../../release/config/0.1.0-alpha.47.json", import.meta.url), "utf8").then(JSON.parse),
+    readFile(new URL("../../release/config/0.1.0-alpha.49.json", import.meta.url), "utf8").then(JSON.parse),
     ...paths.map((name) => readFile(
       new URL(`../../apps/web/public/${name}`, import.meta.url),
       "utf8",
@@ -1907,13 +1907,13 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(ownerSource, /event\.event_index/);
   assert.match(ownerSource, /event\.authorized_via/);
   assert.match(ownerSource, /class="audit-event-details"/);
-  assert.match(ownerSource, /<summary>\{\{ ui\("Payload details", "载荷详情"\) \}\}<\/summary>/);
+  assert.match(ownerSource, /<summary>\{\{ ui\("Change data", "变更数据"\) \}\}<\/summary>/);
   assert.match(ownerSource, /loadMorePrincipalCredentials/);
   assert.match(ownerSource, /loadMoreProjectGrants/);
   assert.match(ownerSource, /recoverCasConflict/);
   assert.match(ownerSource, /writeFence\.enter/);
-  assert.match(ownerSource, /showWorkspace[\s\S]{0,900}type="submit" :disabled="busy"/);
-  assert.match(ownerSource, /showProject[\s\S]{0,1500}type="submit" :disabled="busy"/);
+  assert.match(ownerSource, /showWorkspace[\s\S]{0,1500}type="submit" :disabled="busy"/);
+  assert.match(ownerSource, /showProject[\s\S]{0,2100}type="submit" :disabled="busy"/);
   assert.match(ownerSource, /showContainerEdit[\s\S]{0,900}type="submit" :disabled="busy"/);
   assert.match(ownerSource, /cursorRequiresRestart/);
   assert.match(projectBoardSource, /projectionGeneration\.isCurrent\(generation\)/);

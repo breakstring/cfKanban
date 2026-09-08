@@ -106,7 +106,7 @@ export async function bootstrapInstance(
   const preferredApiOrigin = requireHttpsOrigin(input.preferredApiOrigin);
   const credential = requireCredentialToken(input.ownerCredentialToken, "owner_credential_token");
   const serviceVersion = input.serviceVersion ?? "0.1.0";
-  const schemaVersion = input.schemaVersion ?? 1;
+  const schemaVersion = input.schemaVersion ?? 2;
   if (serviceVersion.trim().length === 0 || !Number.isSafeInteger(schemaVersion) || schemaVersion < 1) {
     throw validationError("invalid_bootstrap_version");
   }

@@ -204,6 +204,8 @@
 
 | D-270 | 打开 Web 自动解析本地可信实例并向指定浏览器交付登录 | Confirmed | 用户于 2026-09-08 明确授权优化：普通“打开”请求自动完成实例解析、`/me` 验证、换票和已认证页面读回；目标优先级为显式实例/origin、Repo 唯一实例、本地唯一 current 实例，歧义只问一次，未知显式目标不回退，不保存最近使用默认。Owner 默认 admin Overview，参与者只选明确或唯一授权 Project，不新增广域 Session。修订 D-263 的宿主交付边界：`host_browser` 可将随机路径、一次 GET、60 秒有效的本机 loopback URL 短暂交给宿主浏览器工具，进程持续到交付或超时；不得复述/持久化本地入口，不提前 fetch 消费，远端 ticket/长期 Credential 始终不输出。指定浏览器无法到达 loopback 时创建前停止，不静默切换；Service wire、5 分钟 ticket 与 8 小时 Session 不变。 |
 
+| D-271 | 容器采用归档/恢复与 Owner 受控永久删除两步操作 | Confirmed | 用户于 2026-09-08 明确授权实施，以回收不再使用项目的业务数据。已归档项目可逐个永久删除，工作区须已归档且业务上为空；清理内容、完成记录、关联、授权、会话和相关历史响应，保留最小 key 占位与精简审计。预览计数、准确名称、版本、摘要与幂等请求在 D1 原子批次内校验。具体边界见 [Frozen 增补合同](../specs/2026-09-08-container-purge-spec.md)。Web 去除层级教程和搜索框，使用紧凑父子分组；未授权线上清理或发布。 |
+
 ## 需要显式修订的决策
 
 Foundation、Agent Skills & Bootstrap、API/Schema、Web UI 和视觉设计合同均已完成 v0 实现前冻结。Foundation 当前为合同修订 19，Agent Skills & Bootstrap 为合同修订 31；D-251/D-252 固定 D1 原子提交证明与 Passkey 非零签名计数策略，D-253/D-254 固定统一 `.cfkanban/` 维护根、宿主投影边界和任务/命令导向的双语 Skill 表面，D-255 固定 Cloudflare 官方 Skills 的可选参考边界与 portable Wrangler config/dry-run，D-256/D-257 将 auth 进一步收敛为不自动枚举 profiles、由 Wrangler 上下文选择身份并由私有 config 固定 account，D-258 固定远端 file ingestion 事务与同 journal 缺 ledger 行恢复，D-259 固定首次 Owner bootstrap 的同 plan 最终化证据链，D-260 补充仅在同 journal 六表零状态证明后的同 SQL 重试，D-261 防止 Agent 用单次命令话术意外收窄完整计划授权，D-262 统一 Owner Audit 的 Project/stream 筛选、响应回显与 cursor scope，D-263 固定一次性 Invite/Browser Launch 的专用安全交付，D-264～D-269 补齐公开指南/页脚、opaque cursor、Public Join CAS 指引、HTML 边缘防改写、品牌标志与橙色交互主色。D-270 固定自动实例解析与 IAB/指定浏览器 loopback 交付。实施范围与依赖顺序进入 `docs/plans/2026-08-29-v0-implementation-plan.md` 和 Linear；冻结本身仍不代表任何实现 Issue 已完成，也不授权部署、迁移、提交或推送。

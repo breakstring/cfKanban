@@ -131,3 +131,12 @@ Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 op
 ## 错误与读回
 
 每个原子写操作独立使用 Idempotency Key。读回修改后的资源与相关 audit event。只按稳定机器字段解释错误，不匹配 `message`。后续步骤失败时，之前已提交的操作保持提交，必须单独汇报而不能声称回滚。
+
+## 已归档容器永久删除
+
+归档（`DELETE`）仍可恢复。永久删除是独立的 Owner 操作，只允许已归档项目，或不含未永久删除项目的已归档工作区。容器路径为 `/api/v1/workspaces/{workspace_key}` 或其 `/projects/{project_key}` 子路径。
+
+1. 读取 `GET {container_path}/purge-preview`，展示准确目标、内容计数、跨项目关系、受影响邀请和共享邀请。`can_purge=false` 时停止。
+2. 取得对本次预览范围不可恢复清理的明确授权；归档授权不等于永久删除授权。清理包括事项、普通及完成评论、标签、关系、Grants、项目会话和相关历史/响应缓存。共享未兑换邀请撤销，其他项目既有 Grants 保留。保留占用 key 的最小记录和精简审计；旧游标可能需要重新读取。不承诺 Cloudflare 存储指标即时下降，也不删除平台备份。
+3. 通过 `api request` 发送 `POST {container_path}/commands/purge`，携带 `expected_version=target.version`、`confirm_name=target.display_name`、`preview_digest` 与独立 Idempotency Key。预览过期需重新核对；结果未定时保持同一请求与 key 恢复，不能生成不同删除请求。
+4. 核对 `resource.purged=true`，并通过显式 `deleted=only` 列表/详情确认目标不可见，必要时读取精简 Owner 审计。永久删除后不能恢复或复用 key，不隐含逐个或定时清理其他容器。

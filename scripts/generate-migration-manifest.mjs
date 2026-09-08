@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 1,
+  schema_version: 2,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -33,6 +33,17 @@ const manifest = {
         indexes,
       },
     },
+    {
+      sequence: 2,
+      name: "0002_container_purge.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0002_container_purge.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        indexes: ["idx_workspaces_purge_state", "idx_projects_workspace_purge_state"],
+      },
+    },
   ],
 };
 
@@ -42,4 +53,4 @@ await syncGeneratedFile(
   renderGeneratedJson(manifest),
   { mode, regenerateCommand: "npm run migrations:generate" },
 );
-console.log(`${mode === "check" ? "Verified" : "Generated"} migrations/manifest.json for ${tables.length} tables and ${indexes.length} indexes.`);
+console.log(`${mode === "check" ? "Verified" : "Generated"} migrations/manifest.json for ${manifest.migrations.length} ordered migrations.`);

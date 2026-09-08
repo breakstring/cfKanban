@@ -48,6 +48,8 @@
 
 ## 安全下限与合同约束
 
+- 2026-09-08 已授权的容器清理特例以 `docs/specs/2026-09-08-container-purge-spec.md` 为 Frozen 合同：Web 使用归档/恢复，Owner 可永久删除已归档项目及已归档空工作区。项目整体清理可移除完成评论与历史事件，保留精简审计、不可复用 key 和单调 Issue 编号；不提供单内容 hard-delete 或批量清理。
+
 - Agent/API-first 不等于 Agent-only。用户直接使用的 Agent 是主要调用载体，但不是 cfKanban 领域角色或受产品规定的工作流执行器；部署、Owner 管理、协调和 Coding 只是任务模式。v0 同时提供同一 Worker 托管的极简第一方 Web UI，用于人类直接查看 Kanban、低频 Issue 参与和 Owner 简单维护；它复用同一 REST/权限/并发/审计合同，不发展为重型产品表面或第二套领域实现。
 - 浏览器不能读取 `~/.cfkanban/`，也不能要求用户粘贴长期 Credential。已认证 Agent 为明确 Web target 创建固定 5 分钟、一次性的 Browser Launch URL，浏览器以 POST 兑换固定 8 小时、不滑动续期且无 refresh 的 `HttpOnly + Secure + SameSite` Session；Session 绑定 Principal、源 Credential 和 target scope。创建必须使用专用 `web launch`，默认经纯内存 loopback relay 直接打开且不输出远端 URL/code；通用 `api request` 在远端写入前拒绝该 endpoint。长期 Credential 不进入 URL、localStorage、页面脚本上下文或浏览器日志；CSRF 固定使用同源 Origin 校验与 double-submit cookie/header。
 - 打开 Web 默认解析本地可信实例并完成 `/me` 验证与登录；显式目标优先，其次 Repo 唯一实例，再其次本地唯一 current 实例，歧义才询问，不引入最近使用默认。指定 IAB/浏览器用 `host_browser` 将一次性、60 秒有效的本机 loopback URL 短暂交给宿主导航工具，保持 CLI 进程运行；不得复述、保存或预先 fetch 该入口，远端票据始终不输出。浏览器无法到达同一 loopback 时创建前停止，不静默换浏览器；最终核对已认证 target，参与者仍只使用单 Project Session。

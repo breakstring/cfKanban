@@ -134,7 +134,7 @@ try {
   const tableCount = parsed[0]?.results?.[0]?.table_count;
   assert.equal(tableCount, 25, "Wrangler D1 should contain 25 application tables");
   await validateBatchWorker();
-  console.log("Wrangler local D1 applied 0001_initial.sql and returned the expected schema.");
+  console.log("Wrangler local D1 applied the ordered migrations and returned the expected schema.");
   console.log("Wrangler env.DB.batch() committed the valid operation and rolled back the quota failure.");
 } finally {
   await rm(validationRoot, { recursive: true, force: true });

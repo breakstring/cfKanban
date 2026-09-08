@@ -1,3 +1,4 @@
+import { getPurgePreview, purgeContainer } from "../services/container-purge.ts";
 import { requireVersion } from "../domain/model.ts";
 import { authenticateRequest } from "../kernel/auth.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
@@ -52,6 +53,26 @@ async function authenticated(request: Request, env: WorkerEnv, context: RequestC
 
 export function registerWp03Routes(router: Router): Router {
   router
+    .get("/api/v1/workspaces/{workspace_key}/purge-preview", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      return jsonResponse(await getPurgePreview(env.DB, auth, path(context, "workspace_key"), undefined, context.startedAt), context.requestId);
+    })
+    .post("/api/v1/workspaces/{workspace_key}/commands/purge", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      enforceCookieWriteProtection(request, auth);
+      const value = await body(request, ["expected_version", "confirm_name", "preview_digest"], ["expected_version", "confirm_name", "preview_digest"]);
+      return jsonResponse(await purgeContainer(env.DB, request, auth, path(context, "workspace_key"), undefined, requireVersion(value.expected_version as JsonValue), value.confirm_name as JsonValue, value.preview_digest as JsonValue, context.startedAt), context.requestId);
+    })
+    .get("/api/v1/workspaces/{workspace_key}/projects/{project_key}/purge-preview", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      return jsonResponse(await getPurgePreview(env.DB, auth, path(context, "workspace_key"), path(context, "project_key"), context.startedAt), context.requestId);
+    })
+    .post("/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/purge", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      enforceCookieWriteProtection(request, auth);
+      const value = await body(request, ["expected_version", "confirm_name", "preview_digest"], ["expected_version", "confirm_name", "preview_digest"]);
+      return jsonResponse(await purgeContainer(env.DB, request, auth, path(context, "workspace_key"), path(context, "project_key"), requireVersion(value.expected_version as JsonValue), value.confirm_name as JsonValue, value.preview_digest as JsonValue, context.startedAt), context.requestId);
+    })
     .get("/.well-known/cfkanban-instance.json", async (_request, env, context) => jsonResponse(
       await getInstanceDiscovery(env.DB, context.url.origin),
       context.requestId,
