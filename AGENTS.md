@@ -48,7 +48,9 @@
 
 ## 安全下限与合同约束
 
-- 2026-09-08 已授权的容器清理特例以 `docs/specs/2026-09-08-container-purge-spec.md` 为 Frozen 合同：Web 使用归档/恢复，Owner 可永久删除已归档项目及已归档空工作区。项目整体清理可移除完成评论与历史事件，保留精简审计、不可复用 key 和单调 Issue 编号；不提供单内容 hard-delete 或批量清理。
+- 2026-09-08 已授权 UUID 重构以 `docs/specs/2026-09-08-container-uuid-spec.md` 为 Frozen 合同；容器 key 已取消，不兼容旧 API/URL/scope。UI 只要求和展示名称；API、URL 和 Agent 使用服务端 UUID，同名不代表同一对象。
+
+- 2026-09-08 已授权的容器清理特例以 `docs/specs/2026-09-08-container-purge-spec.md` 为 Frozen 合同：Web 使用归档/恢复，Owner 可永久删除已归档项目及已归档空工作区。项目整体清理可移除完成评论与历史事件，保留精简审计、最小 UUID 墓碑和单调 Issue 编号；不提供单内容 hard-delete 或批量清理。
 
 - Agent/API-first 不等于 Agent-only。用户直接使用的 Agent 是主要调用载体，但不是 cfKanban 领域角色或受产品规定的工作流执行器；部署、Owner 管理、协调和 Coding 只是任务模式。v0 同时提供同一 Worker 托管的极简第一方 Web UI，用于人类直接查看 Kanban、低频 Issue 参与和 Owner 简单维护；它复用同一 REST/权限/并发/审计合同，不发展为重型产品表面或第二套领域实现。
 - 浏览器不能读取 `~/.cfkanban/`，也不能要求用户粘贴长期 Credential。已认证 Agent 为明确 Web target 创建固定 5 分钟、一次性的 Browser Launch URL，浏览器以 POST 兑换固定 8 小时、不滑动续期且无 refresh 的 `HttpOnly + Secure + SameSite` Session；Session 绑定 Principal、源 Credential 和 target scope。创建必须使用专用 `web launch`，默认经纯内存 loopback relay 直接打开且不输出远端 URL/code；通用 `api request` 在远端写入前拒绝该 endpoint。长期 Credential 不进入 URL、localStorage、页面脚本上下文或浏览器日志；CSRF 固定使用同源 Origin 校验与 double-submit cookie/header。
@@ -80,9 +82,9 @@
 - v0 的唯一主部署路径是用户的 Agent 调用 `cfkanban-deploy`；不提供持有 Cloudflare Token 并执行远端写入的 GitHub Actions workflow。无凭据、无远端写入的 CI 验证 workflow 可以作为源码工程设施；部署型 workflow 后置到下一阶段并需重新冻结 Token、审批、并发和恢复体验。
 - v0 产品、API 与 Skills 不提供完整 D1 导出、导入、本地恢复演练或整库灾难恢复。migration 前可以记录 Cloudflare restore point/bookmark 作为平台侧安全证据，但 deploy Skill 不执行 Time Travel restore；平台控制台运维属于部署者直接管理的外部能力。该边界不影响业务资源 soft-delete restore、Principal Recovery Invite 或幂等失败恢复。
 - 已确认产品层级为 `Deployment Instance → Workspace → Project`：一个部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project；Workspace 是同一 Worker/D1/域名/配额下的应用级逻辑命名空间，不是 hostile-tenant 基础设施隔离边界。
-- Workspace/Project 创建是 Owner-only 原子能力，请求必须显式携带所属 scope 与 key；key 从创建起不可修改，改名只修改 display name。cfKanban 不规定上层 Agent 的 action preview、二次确认、自然语言消歧或执行时机。创建 Workspace 不隐含创建 Project、Grant 或默认成员。
+- Workspace/Project 创建是 Owner-only 原子能力，创建只接受显示名称（Project 可选 context），服务端生成 UUID；Project 请求必须显式携带父 Workspace UUID，改名不改变身份。cfKanban 不规定上层 Agent 的 action preview、二次确认、自然语言消歧或执行时机。创建 Workspace 不隐含创建 Project、Grant 或默认成员。
 - Repo 不是权限边界；非秘密、多 Project 的本地 scope 配置只提供可选过滤能力，不构成服务端授权或强制默认。不得自动上传本地路径或 Git remote；canonical Repo URL 只能作为非授权 external reference，v0 不建立 Repository 实体。
-- 所有 Issue 使用部署实例级全局、单调递增且永不复用的 `CFK-<正整数>` identifier；Project key 不参与编号。identifier 在实例内唯一，不同实例的相同编号由 `instance_id` 消歧；单 Issue 寻址后仍按其所属 Project 校验权限。
+- 所有 Issue 使用部署实例级全局、单调递增且永不复用的 `CFK-<正整数>` identifier；Workspace/Project UUID 不参与编号。identifier 在实例内唯一，不同实例的相同编号由 `instance_id` 消歧；单 Issue 寻址后仍按其所属 Project 校验权限。
 - Project 创建后凭默认五状态立即可用，不设初始化门槛且不默认创建 Labels。v0 只有一个可选有界 Project context，由 Owner 修改、Project reader/writer 读取；它只是与稳定合同、本地 Repo 规则和当前授权分层呈现的非可信背景，不能成为 instruction/prompt 或任何外部操作的授权来源。
 - v0 不提供公开 batch/bulk 写入；每次 API 调用只表达一个原子领域操作，并提供该操作独立的 Idempotency-Key、readback 和结构化恢复合同。上层调用方可以自行组合多次调用；cfKanban 不规定拆分、顺序、停止、续做或汇报策略，也不自动回滚或删除其他已经成功的操作。服务端内部为单个领域操作使用 D1 transaction/batch 不属于公开批量 API。
 - 每个部署实例只有一个 Deployment Owner；只有 Owner 能创建 Workspace/Project，并管理 Project 邀请和授权。
@@ -101,7 +103,7 @@
 - `.cfkanban/` 可以保存多个上游实例，但每个执行环境对每个 `instance_id` 只维护一个当前本地 Principal/Credential 槽位；同一实例出现多个不同 Principal 是必须停止整理的冲突，不是常规身份选择。一个 Credential 不能跨实例复用，但可由用户自行复制到多个受信执行环境访问同一实例；服务端不绑定设备，所有副本共享同一撤销、轮换与审计身份。
 - 首次创建的 Credential 在服务端提交前只进入本地 pending 槽位；服务端成功并经 `/me` 读回后才原子提升为 current。明确未提交的不可重试失败清理 pending；响应是否提交不确定时保留同一 secret/Idempotency-Key 继续恢复，不能生成第二身份或让未验证 secret 占据 current。
 - 本地实例记录以 immutable `instance_id` 为稳定主键，但 Credential 只发送给记录中的当前 trusted API origin。每实例由 Owner 通过 Bearer-only 能力发布一个 `preferred_api_origin`；Worker 在每个可达 origin 动态生成公开、`no-store` 的 `/.well-known/cfkanban-instance.json`。Agent 从当前 trusted origin 获得更高 `origin_version` 的迁移指示，并在不发送 Credential 的情况下验证目标 HTTPS origin 返回相同 instance ID、准确 observed origin 和一致 preferred origin 后，可以原子自动 rebind；失败则继续旧地址。陌生 origin、Invite 或第三方单方面自报相同 ID 仍不能获得自动信任，无法经旧 trusted origin 交叉确认时必须显式授权。认证请求不依赖跨 origin redirect。
-- Repo 推荐范围可保存在根目录非秘密 `.cfkanban-scope.json`，只含 schema version 和 `instance_id + workspace_key + project_key` targets；Invite/discover 不自动写入。推荐 scope 顺序是“本次显式 targets → Repo targets → 无过滤并提示扩大”；它不构成服务端授权或强制默认。API 允许省略 Project filters，Skill 返回 resolved scope 与失效/扩大警告，且不保存 target 优先级或 last-used 默认。
+- Repo 推荐范围可保存在根目录非秘密 `.cfkanban-scope.json`，使用 schema_version 2，只含 `instance_id + workspace_id + project_id` targets；旧 key 格式明确拒绝，不自动回退无过滤；Invite/discover 不自动写入。推荐 scope 顺序是“本次显式 targets → Repo targets → 无过滤并提示扩大”；它不构成服务端授权或强制默认。API 允许省略 Project filters，Skill 返回 resolved scope 与失效/扩大警告，且不保存 target 优先级或 last-used 默认。
 - v0 workflow 固定五个稳定 status key：`backlog`、`todo`、`in_progress`、`done`、`canceled`。Project 只能覆盖显示名称且仅 Owner 可修改，不能改变 key、category、顺序或 terminal 语义，也不能增加、删除状态或自定义 transition graph。Owner 或 Project `writer` 可带 expected version 在固定状态间任意显式转换和 reopen；terminal 不表示不可逆，转入 `done` 不能绕过完成记录合同。
 - 转入 `done` 必须通过原子 complete 命令创建结构化、不可变且不可删除的 completion comment；reopen 保留旧记录，再次完成追加新记录，不建立独立 Completion 实体。
 - v0 Issue Relation 支持 `blocks / parent / related / duplicate`，允许同一 Workspace 内跨 Project，禁止跨 Workspace；跨 Project 关系写入要求调用者同时拥有两端 Project 的 `writer`，读取不得泄露无权端点。

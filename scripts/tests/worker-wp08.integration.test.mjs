@@ -38,6 +38,8 @@ function ownerHeaders(extra = {}) {
   return { authorization: `Bearer ${ownerToken}`, ...extra };
 }
 
+const fixtureIds = Object.create(null);
+
 async function request(path, { body, headers = {}, method = "GET" } = {}) {
   const response = await server.getWorker().fetch(`${origin}${path}`, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -47,7 +49,9 @@ async function request(path, { body, headers = {}, method = "GET" } = {}) {
     },
     method,
   });
-  return { body: await response.json(), response };
+  const result = await response.json();
+  if (response.ok && result.resource?.id && body?.display_name && method === "POST") fixtureIds[body.display_name] = result.resource.id;
+  return { body: result, response };
 }
 
 async function tableCount(table, where = "1 = 1", ...values) {
@@ -152,13 +156,13 @@ after(async () => {
 
 test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-visible rate settings", async () => {
   const workspace = await request("/api/v1/workspaces", {
-    body: { display_name: "Public Workspace", key: "public-space" },
+    body: { display_name: "Public Workspace" },
     headers: ownerHeaders({ "idempotency-key": "wp08-workspace" }),
     method: "POST",
   });
   assert.equal(workspace.response.status, 200);
-  const project = await request("/api/v1/workspaces/public-space/projects", {
-    body: { display_name: "Public Project", key: "PUB" },
+  const project = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects`, {
+    body: { display_name: "Public Project" },
     headers: ownerHeaders({ "idempotency-key": "wp08-project" }),
     method: "POST",
   });
@@ -191,8 +195,8 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.equal(enableReplay.body.idempotent_replay, true);
   assert.equal(enableReplay.body.resource.public_id, publicId);
 
-  const secondProject = await request("/api/v1/workspaces/public-space/projects", {
-    body: { display_name: "Independent Public Project", key: "AUX" },
+  const secondProject = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects`, {
+    body: { display_name: "Independent Public Project" },
     headers: ownerHeaders({ "idempotency-key": "wp08-project-aux" }),
     method: "POST",
   });
@@ -228,11 +232,11 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     active_usage: { comments: 0, issues: 0, principals: 0 },
     display_name: "Independent Public Project",
     id: secondProjectId,
-    key: "AUX",
     public_summary: "An updated independent public Project.",
     resource_limits: { comments: 3, issues: 3, principals: 3 },
     role_choices: ["reader", "writer"],
-    workspace_key: "public-space",
+    workspace_id: fixtureIds["Public Workspace"],
+    workspace_display_name: "Public Workspace",
   };
   const secondEventTypes = await db.prepare(
     `SELECT type FROM events
@@ -251,8 +255,8 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.equal(typeof publicList.body.next_cursor, "string");
   assert.deepEqual(publicList.body.items[0].role_choices, ["reader", "writer"]);
   assert.equal("id" in publicList.body.items[0], false);
-  assert.equal("workspace_key" in publicList.body.items[0], false);
-  assert.equal("project_key" in publicList.body.items[0], false);
+  assert.equal("workspace_id" in publicList.body.items[0], false);
+  assert.equal("project_id" in publicList.body.items[0], false);
   const publicListNext = await request(
     `/api/v1/public-projects?limit=1&cursor=${encodeURIComponent(publicList.body.next_cursor)}`,
   );
@@ -271,7 +275,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   );
   const operationCountBeforeInvariantFailure = await tableCount("operation_commits");
   const rejectedDeleteWithoutUsage = await request(
-    "/api/v1/workspaces/public-space/projects/AUX?expected_version=3",
+    `/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Independent Public Project"]}?expected_version=3`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(rejectedDeleteWithoutUsage.response.status, 503);
@@ -293,7 +297,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   ).bind(secondProjectId, Date.now()).run();
 
   const pausedSecond = await request(
-    "/api/v1/workspaces/public-space/projects/AUX?expected_version=3",
+    `/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Independent Public Project"]}?expected_version=3`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(pausedSecond.response.status, 200);
@@ -301,7 +305,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.deepEqual(pausedSecond.body.resource.resumed_public_projects.projects, [secondRecoverySummary]);
   assert.equal(await tableCount("project_usage", "project_id = ?1", secondProjectId), 1);
   const pausedSecondTombstone = await request(
-    "/api/v1/workspaces/public-space/projects?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects?deleted=only`,
     { headers: ownerHeaders() },
   );
   assert.deepEqual(
@@ -309,7 +313,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     [secondRecoverySummary],
   );
   const pausedSecondDetail = await request(
-    "/api/v1/workspaces/public-space/projects/AUX?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Independent Public Project"]}?deleted=only`,
     { headers: ownerHeaders() },
   );
   assert.deepEqual(pausedSecondDetail.body.resumed_public_projects.projects, [secondRecoverySummary]);
@@ -328,7 +332,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.equal(pausedRedeem.response.status, 404);
   await db.prepare("DELETE FROM project_usage WHERE project_id = ?1").bind(secondProjectId).run();
   const missingRecoveryUsage = await request(
-    "/api/v1/workspaces/public-space/projects?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects?deleted=only`,
     { headers: ownerHeaders() },
   );
   assert.equal(missingRecoveryUsage.response.status, 503);
@@ -341,7 +345,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   ).bind(secondProjectId, Date.now()).run();
 
   const restoredSecond = await request(
-    "/api/v1/workspaces/public-space/projects/AUX/commands/restore",
+    `/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Independent Public Project"]}/commands/restore`,
     {
       body: { expected_version: 4 },
       headers: ownerHeaders({ "idempotency-key": "wp08-restore-aux" }),
@@ -849,13 +853,13 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.equal(overLimitPromotion.body.resource.grant.role, "writer");
   assert.equal(await tableCount("project_usage", "project_id = ?1 AND active_principal_count = 2", projectId), 1);
 
-  const enabledIssue = await request("/api/v1/workspaces/public-space/projects/PUB/issues", {
+  const enabledIssue = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Public Project"]}/issues`, {
     body: { title: "Consumes the enabled Issue quota" },
     headers: ownerHeaders({ "idempotency-key": "wp08-enabled-issue" }),
     method: "POST",
   });
   assert.equal(enabledIssue.response.status, 200);
-  const enabledIssueRejected = await request("/api/v1/workspaces/public-space/projects/PUB/issues", {
+  const enabledIssueRejected = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Public Project"]}/issues`, {
     body: { title: "Exceeds the enabled Issue quota" },
     headers: ownerHeaders({ "idempotency-key": "wp08-enabled-issue-rejected" }),
     method: "POST",
@@ -950,12 +954,12 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.deepEqual(hidden.body.items.map((item) => item.public_id), [secondPublicId]);
   assert.equal(await tableCount("project_usage", "project_id = ?1", secondProjectId), 1);
 
-  const disabledIssueA = await request("/api/v1/workspaces/public-space/projects/PUB/issues", {
+  const disabledIssueA = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Public Project"]}/issues`, {
     body: { title: "Created while Public Join is disabled A" },
     headers: ownerHeaders({ "idempotency-key": "wp08-disabled-issue-a" }),
     method: "POST",
   });
-  const disabledIssueB = await request("/api/v1/workspaces/public-space/projects/PUB/issues", {
+  const disabledIssueB = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Public Project"]}/issues`, {
     body: { title: "Created while Public Join is disabled B" },
     headers: ownerHeaders({ "idempotency-key": "wp08-disabled-issue-b" }),
     method: "POST",
@@ -996,7 +1000,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   );
   assert.equal(usageInvariantTombstone.response.status, 200);
   await db.prepare("DELETE FROM project_usage WHERE project_id = ?1").bind(projectId).run();
-  const missingUsageCreate = await request("/api/v1/workspaces/public-space/projects/PUB/issues", {
+  const missingUsageCreate = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}/projects/${fixtureIds["Public Project"]}/issues`, {
     body: { title: "Must fail as an invariant error" },
     headers: ownerHeaders({ "idempotency-key": "wp08-missing-usage-create" }),
     method: "POST",
@@ -1062,7 +1066,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.ok(rateSettings.body.recent_429_summary.total <= 128);
 
   const pausedWorkspace = await request(
-    "/api/v1/workspaces/public-space?expected_version=1",
+    `/api/v1/workspaces/${fixtureIds["Public Workspace"]}?expected_version=1`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(pausedWorkspace.response.status, 200);
@@ -1075,18 +1079,18 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
       active_usage: { comments: 3, issues: 3, principals: 2 },
       display_name: "Public Project",
       id: projectId,
-      key: "PUB",
-      public_summary: "Re-enabled with explicit limits.",
+        public_summary: "Re-enabled with explicit limits.",
       resource_limits: { comments: 5, issues: 5, principals: 5 },
       role_choices: ["reader", "writer"],
-      workspace_key: "public-space",
+      workspace_id: fixtureIds["Public Workspace"],
+    workspace_display_name: "Public Workspace",
     },
-  ];
+  ].sort((left, right) => left.id.localeCompare(right.id));
   const pausedWorkspaceTombstone = await request("/api/v1/workspaces?deleted=only", {
     headers: ownerHeaders(),
   });
   assert.equal(pausedWorkspaceTombstone.body.items[0].resumed_public_projects, undefined);
-  const pausedWorkspaceDetail = await request("/api/v1/workspaces/public-space?deleted=only", {
+  const pausedWorkspaceDetail = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}?deleted=only`, {
     headers: ownerHeaders(),
   });
   assert.deepEqual(
@@ -1097,7 +1101,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.deepEqual(hiddenByWorkspace.body.items, []);
   assert.equal(await tableCount("project_usage", "project_id IN (?1, ?2)", projectId, secondProjectId), 2);
 
-  const restoredWorkspace = await request("/api/v1/workspaces/public-space/commands/restore", {
+  const restoredWorkspace = await request(`/api/v1/workspaces/${fixtureIds["Public Workspace"]}/commands/restore`, {
     body: { expected_version: 2 },
     headers: ownerHeaders({ "idempotency-key": "wp08-restore-workspace" }),
     method: "POST",
@@ -1128,28 +1132,27 @@ test("KENN-338 validates every enabled recovery row while bounding the displayed
   const now = Date.now();
   await db.prepare(
     `INSERT INTO workspaces
-      (id, key, display_name, created_at, updated_at, created_by_principal_id,
+      (id, display_name, created_at, updated_at, created_by_principal_id,
        updated_by_principal_id, created_operation_id)
-     VALUES ('kenn338-workspace', 'recovery-scale', 'Recovery Scale', ?1, ?1, ?2, ?2,
-             'kenn338-workspace-create')`,
+     VALUES ('30000000-0000-4000-8000-000000000001', 'Recovery Scale', ?1, ?1, ?2, ?2,
+             '30000000-0000-4000-8000-000000000001-create')`,
   ).bind(now, ids.ownerPrincipal).run();
   await db.prepare(
     `INSERT INTO workspaces
-      (id, key, display_name, created_at, updated_at, created_by_principal_id,
+      (id, display_name, created_at, updated_at, created_by_principal_id,
        updated_by_principal_id, created_operation_id)
-     VALUES ('kenn338-disabled-workspace', 'disabled-scale', 'Disabled Scale', ?1, ?1, ?2, ?2,
-             'kenn338-disabled-workspace-create')`,
+     VALUES ('30000000-0000-4000-8000-000000000002', 'Disabled Scale', ?1, ?1, ?2, ?2,
+             '30000000-0000-4000-8000-000000000002-create')`,
   ).bind(now, ids.ownerPrincipal).run();
   await db.prepare(
     `WITH RECURSIVE sequence(value) AS (
        SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < 101
      )
      INSERT INTO projects
-       (id, workspace_id, key, display_name, issue_limit, comment_limit, principal_limit,
+       (id, workspace_id, display_name, issue_limit, comment_limit, principal_limit,
         created_at, updated_at, created_by_principal_id, updated_by_principal_id,
         created_operation_id)
-     SELECT printf('kenn338-enabled-%03d', value), 'kenn338-workspace', printf('E%03d', value),
-            printf('Enabled %03d', value), 10, 10, 10, ?1, ?1, ?2, ?2,
+     SELECT printf('kenn338-enabled-%03d', value), '30000000-0000-4000-8000-000000000001', printf('Enabled %03d', value), 10, 10, 10, ?1, ?1, ?2, ?2,
             printf('kenn338-enabled-create-%03d', value)
      FROM sequence`,
   ).bind(now, ids.ownerPrincipal).run();
@@ -1158,43 +1161,42 @@ test("KENN-338 validates every enabled recovery row while bounding the displayed
        SELECT 1 UNION ALL SELECT value + 1 FROM sequence WHERE value < 10000
      )
      INSERT INTO projects
-       (id, workspace_id, key, display_name, created_at, updated_at,
+       (id, workspace_id, display_name, created_at, updated_at,
         created_by_principal_id, updated_by_principal_id, created_operation_id)
-     SELECT printf('kenn338-disabled-%05d', value), 'kenn338-disabled-workspace', printf('D%05d', value),
-            printf('Disabled %05d', value), ?1, ?1, ?2, ?2,
+     SELECT printf('kenn338-disabled-%05d', value), '30000000-0000-4000-8000-000000000002', printf('Disabled %05d', value), ?1, ?1, ?2, ?2,
             printf('kenn338-disabled-create-%05d', value)
      FROM sequence`,
   ).bind(now, ids.ownerPrincipal).run();
   await db.prepare(
     `INSERT INTO public_join_policies
-      (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
+      (project_id, workspace_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
        version, created_at, updated_at)
-     SELECT id, workspace_id, key, printf('public-%s', id), printf('Summary for %s', key), ?1, ?2, 1, ?1, ?1
-     FROM projects WHERE workspace_id = 'kenn338-workspace' AND key LIKE 'E%'`,
+     SELECT id, workspace_id, printf('public-%s', id), printf('Summary for %s', id), ?1, ?2, 1, ?1, ?1
+     FROM projects WHERE workspace_id = '30000000-0000-4000-8000-000000000001'`,
   ).bind(now, ids.ownerPrincipal).run();
   await db.prepare(
     `INSERT INTO public_join_policies
-      (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
+      (project_id, workspace_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
        disabled_at, disabled_by_principal_id, version, created_at, updated_at)
-     SELECT id, workspace_id, key, printf('public-%s', id), printf('Disabled summary for %s', key),
+     SELECT id, workspace_id, printf('public-%s', id), printf('Disabled summary for %s', id),
             ?1, ?2, ?1 + 1, ?2, 2, ?1, ?1 + 1
-     FROM projects WHERE workspace_id = 'kenn338-disabled-workspace'`,
+     FROM projects WHERE workspace_id = '30000000-0000-4000-8000-000000000002'`,
   ).bind(now, ids.ownerPrincipal).run();
   await db.prepare(
     `INSERT INTO project_usage
       (project_id, active_issue_count, active_comment_count, active_principal_count, updated_at)
      SELECT id, 0, 0, 0, ?1
      FROM projects
-     WHERE workspace_id = 'kenn338-workspace' AND key BETWEEN 'E001' AND 'E100'`,
+     WHERE workspace_id = '30000000-0000-4000-8000-000000000001' AND id BETWEEN 'kenn338-enabled-001' AND 'kenn338-enabled-100'`,
   ).bind(now).run();
 
   const deletedDisabledOnly = await request(
-    "/api/v1/workspaces/disabled-scale?expected_version=1",
+    "/api/v1/workspaces/30000000-0000-4000-8000-000000000002?expected_version=1",
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(deletedDisabledOnly.response.status, 200);
   const disabledOnlyTombstone = await request(
-    "/api/v1/workspaces/disabled-scale?deleted=only",
+    "/api/v1/workspaces/30000000-0000-4000-8000-000000000002?deleted=only",
     { headers: ownerHeaders() },
   );
   assert.deepEqual(disabledOnlyTombstone.body.resumed_public_projects, {
@@ -1204,21 +1206,21 @@ test("KENN-338 validates every enabled recovery row while bounding the displayed
 
   const eventCountBefore = await tableCount(
     "events",
-    "workspace_id = 'kenn338-workspace' AND type = 'workspace.deleted'",
+    "workspace_id = '30000000-0000-4000-8000-000000000001' AND type = 'workspace.deleted'",
   );
   const operationCountBefore = await tableCount("operation_commits");
   const rejectedAtRow101 = await request(
-    "/api/v1/workspaces/recovery-scale?expected_version=1",
+    "/api/v1/workspaces/30000000-0000-4000-8000-000000000001?expected_version=1",
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(rejectedAtRow101.response.status, 503);
   assert.equal(rejectedAtRow101.body.code, "PLATFORM_UNAVAILABLE");
   assert.deepEqual(
-    await db.prepare("SELECT deleted_at, version FROM workspaces WHERE id = 'kenn338-workspace'").first(),
+    await db.prepare("SELECT deleted_at, version FROM workspaces WHERE id = '30000000-0000-4000-8000-000000000001'").first(),
     { deleted_at: null, version: 1 },
   );
   assert.equal(
-    await tableCount("events", "workspace_id = 'kenn338-workspace' AND type = 'workspace.deleted'"),
+    await tableCount("events", "workspace_id = '30000000-0000-4000-8000-000000000001' AND type = 'workspace.deleted'"),
     eventCountBefore,
   );
   assert.equal(await tableCount("operation_commits"), operationCountBefore);
@@ -1229,19 +1231,19 @@ test("KENN-338 validates every enabled recovery row while bounding the displayed
      VALUES ('kenn338-enabled-101', 0, 0, 0, ?1)`,
   ).bind(now).run();
   const deleted = await request(
-    "/api/v1/workspaces/recovery-scale?expected_version=1",
+    "/api/v1/workspaces/30000000-0000-4000-8000-000000000001?expected_version=1",
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(deleted.response.status, 200);
   const tombstoneDetail = await request(
-    "/api/v1/workspaces/recovery-scale?deleted=only",
+    "/api/v1/workspaces/30000000-0000-4000-8000-000000000001?deleted=only",
     { headers: ownerHeaders() },
   );
   assert.equal(tombstoneDetail.response.status, 200);
   assert.equal(tombstoneDetail.body.resumed_public_projects.has_more, true);
   assert.equal(tombstoneDetail.body.resumed_public_projects.projects.length, 100);
   assert.deepEqual(
-    tombstoneDetail.body.resumed_public_projects.projects.map((project) => project.key),
-    Array.from({ length: 100 }, (_, index) => `E${String(index + 1).padStart(3, "0")}`),
+    tombstoneDetail.body.resumed_public_projects.projects.map((project) => project.id),
+    Array.from({ length: 100 }, (_, index) => `kenn338-enabled-${String(index + 1).padStart(3, "0")}`),
   );
 });

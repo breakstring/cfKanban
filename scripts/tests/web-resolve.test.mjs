@@ -27,7 +27,7 @@ async function addInstance(options, id, { current = true } = {}) {
 async function scope(options, ids) {
   const repoRoot = path.join(options.home, "repo");
   await mkdir(repoRoot);
-  await writeFile(path.join(repoRoot, ".cfkanban-scope.json"), JSON.stringify({ schema_version: 1, targets: ids.map((id) => ({ instance_id: id, workspace_key: "work", project_key: "PR" })) }));
+  await writeFile(path.join(repoRoot, ".cfkanban-scope.json"), JSON.stringify({ schema_version: 2, targets: ids.map((id) => ({ instance_id: id, workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" })) }));
   return repoRoot;
 }
 
@@ -73,7 +73,7 @@ test("repository scope is explicit, takes priority over inventory, and preserves
   assert.equal((await resolveWebInstance({ ...options, repoRoot, instanceId: first })).instance.instance_id, first);
   await rm(path.join(options.stateRoot, "instances", second), { recursive: true });
   assert.equal((await resolveWebInstance({ ...options, repoRoot })).status, "credential_required");
-  await writeFile(path.join(repoRoot, ".cfkanban-scope.json"), JSON.stringify({ schema_version: 1, targets: [first, second].map((id) => ({ instance_id: id, workspace_key: "work", project_key: "PR" })) }));
+  await writeFile(path.join(repoRoot, ".cfkanban-scope.json"), JSON.stringify({ schema_version: 2, targets: [first, second].map((id) => ({ instance_id: id, workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" })) }));
   const result = await resolveWebInstance({ ...options, repoRoot });
   assert.equal(result.status, "selection_required");
   assert.equal(result.candidates.length, 2);

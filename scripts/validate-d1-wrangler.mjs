@@ -125,14 +125,15 @@ try {
     "--persist-to",
     validationRoot,
     "--command",
-    "SELECT COUNT(*) AS table_count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('d1_migrations', '_cf_METADATA');",
+    "SELECT COUNT(*) AS table_count, (SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'key') + (SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name = 'key') AS container_key_count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('d1_migrations', '_cf_METADATA');",
     "--json",
   ]);
   const json = output.match(/\[\s*\{[\s\S]*$/)?.[0];
   assert.ok(json, `Wrangler did not return JSON: ${output}`);
   const parsed = JSON.parse(json);
   const tableCount = parsed[0]?.results?.[0]?.table_count;
-  assert.equal(tableCount, 25, "Wrangler D1 should contain 25 application tables");
+  assert.equal(tableCount, 26, "Wrangler D1 should contain 25 application tables and the migration ledger");
+  assert.equal(parsed[0]?.results?.[0]?.container_key_count, 0, "final local D1 schema must not contain container keys");
   await validateBatchWorker();
   console.log("Wrangler local D1 applied the ordered migrations and returned the expected schema.");
   console.log("Wrangler env.DB.batch() committed the valid operation and rolled back the quota failure.");

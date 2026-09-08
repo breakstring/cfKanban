@@ -1,5 +1,7 @@
 # Agent-native Kanban Foundation SPEC
 
+> 当前容器身份合同由 [工作区与项目 UUID 寻址重构](2026-09-08-container-uuid-spec.md)（Frozen，2026-09-08）覆盖：Workspace/Project 取消 key，创建仅使用名称，服务端生成 UUID；REST/Web 使用 UUID，本地 scope 使用 schema 2。用户明确授权开发阶段不兼容旧 API、URL 和配置。本文保留的早期 key/DDL 描述不再是当前实现依据；其他身份、权限、并发和安全合同保持有效。
+
 > 2026-09-08 增补：[工作区与项目归档及永久删除合同](2026-09-08-container-purge-spec.md) 已冻结。仅 Owner 可预览并永久删除已归档项目或已归档空工作区；该特例覆盖本文相应的 hard-delete 禁止及项目内历史永久保留表述，其余软删除、权限与恢复合同不变。
 
 - 文档状态：Frozen
@@ -74,7 +76,7 @@
 
 - Project Grant 不带 expiry；每个 `(principal_id, project_id)` 只有一条当前记录，角色、撤销和重新授予通过 version/CAS 更新并保留 Audit/Event 历史。
 - Project Invite 创建请求必须为每个 Project Grant 显式提交 `reader | writer`，服务端拒绝缺失或无效 role，且不从自然语言猜测。Agent Skills SPEC 另行规定可覆盖的产品建议：上层未指定 role 时推荐 `writer`，明确只读时使用 `reader`；该建议不改变 API 显式字段和服务端授权合同。
-- Workspace 列表由当前 Principal 有权访问的 Projects 反向推导；没有 Project Grant 时，不因知道 workspace key 而获得可见性。
+- Workspace 列表由当前 Principal 有权访问的 Projects 反向推导；没有 Project Grant 时，不因知道 Workspace UUID 而获得可见性。
 - Owner 的控制面和全量数据面权限都不依赖 Project Grant。所有参与者业务请求仍有明确 Workspace/Project 上下文，并根据有效 Project Grant 校验目标资源。
 - Board 是按状态、标签、assignee 等条件查询出来的视图，不单独持久化。
 
@@ -90,8 +92,8 @@ Owner Credential 生命周期不能通过第一方 Web Session 管理。Web 只�
 
 | 实体 | 职责 | 关键字段或约束 |
 | --- | --- | --- |
-| Workspace | 部署实例内的显式命名空间与候选隔离边界 | immutable ID、稳定 key、display name、deleted_at、deleted_by_principal_id、version |
-| Project | Workspace 内的 Issue 命名空间与权限边界 | immutable ID、workspace ID、稳定 key、name、可选有界 context、可选 Issue/Comment/Principal active limits、deleted_at、deleted_by_principal_id、version |
+| Workspace | 部署实例内的显式命名空间与候选隔离边界 | immutable UUID、display name、deleted_at、deleted_by_principal_id、version |
+| Project | Workspace 内的 Issue 命名空间与权限边界 | immutable UUID、workspace UUID、name、可选有界 context、可选 Issue/Comment/Principal active limits、deleted_at、deleted_by_principal_id、version |
 | Workflow Status | Issue 所处工作阶段 | 固定五个 key/category/position/terminal；Project-scoped display name override |
 | Issue | 可追踪工作单元 | immutable ID、实例级全局 issue number 与 `CFK-<number>` identifier、project ID、title、body、status、priority (`none | low | medium | high | urgent`)、可空 assignee principal ID、deleted_at、deleted_by_principal_id、version |
 | Label | 正交分类 | project scope、name 唯一、color 可选 |
@@ -134,19 +136,19 @@ Owner Credential 生命周期不能通过第一方 Web Session 管理。Web 只�
 ### 4.3 Workspace、Project 与 Issue 标识
 
 - 所有实体有不可变内部 ID。
-- Workspace 在部署实例内有唯一稳定 key；key 从创建起不可修改，改名只修改 display name。
-- Project 在 Workspace 内有唯一稳定短 key，例如 `APP`；不同 Workspace 可以复用同一 key。Project key 只用于 Project scope，不参与 Issue identifier。
+- Workspace 使用服务端生成的 UUID；改名只修改 display name，名称不唯一。
+- Project 使用服务端生成的 UUID，保留所属 Workspace UUID；名称不唯一，容器 ID 不参与 Issue identifier。
 - 每个部署实例共享一条 Issue number 序列。创建 Issue 时分配下一个正整数并生成 canonical `CFK-<number>` identifier，例如 `CFK-123`；序号单调递增、允许空洞且永不复用，因此 identifier 在部署实例内唯一。
 - 不同部署实例可以各自存在 `CFK-123`；跨实例寻址必须同时携带 `instance_id`。实例内部可以仅凭 identifier 定位候选 Issue，但仍必须按其所属 Project 做授权过滤，无权时按不存在返回。
-- Project key 从创建起不可修改；需要改名时只改 display name。
+- Project UUID 从创建起不可修改；需要改名时只改 display name。
 - v0 不允许 Project 或 Issue 直接移动到另一个 Workspace；Issue Relation 可以跨越同一 Workspace 内的 Project，但不能跨 Workspace。
 - Project 内容的“删除”不立即物理删除历史；统一写入 `deleted_at`、`deleted_by_principal_id`、version 和 Event/Audit，必要时由不可变 tombstone 表达，不设置单独 delete role。
 - `writer` 可以软删除和恢复 Issue、普通 Comment、Label、Relation 等 Project 内容，但不能软删除或恢复 Workspace/Project 容器。结构化 completion comment 是完成证据，不允许编辑或删除。
 - Workspace/Project 容器只能由 Owner 软删除和恢复。容器软删除只标记自身，不批量改写子行；子资源和 Project Grants 保留但在父容器删除期间不可用。
 - 恢复容器后，未被单独删除的子资源重新可见，未撤销的 Project Grants 自动恢复；单独软删除的子资源和已撤销 Grants 不会复活。容器暂停不改写 Public Join Policy；Project/Workspace 恢复时，此前仍 enabled 的 Policy 以同一 public ID、summary、limits 和 counters 自动恢复，已被 Owner 单独关闭的 Policy 不会复活。
-- 默认查询、assignment 和普通写入排除 effective-deleted 资源；父容器删除也视为子资源 effective-deleted。Workspace key、Project key 和实例级 Issue number 在删除后不复用。
+- 默认查询、assignment 和普通写入排除 effective-deleted 资源；父容器删除也视为子资源 effective-deleted。Workspace/Project UUID 和实例级 Issue number 在删除后不复用；容器显示名称可重复使用。
 - v0 在对应的单资源读取/列表能力上提供显式 `deleted=only` 恢复视图，不另建带隐藏时间窗的“最近删除”概念。它只返回资源自身带 `deleted_at` 的 tombstone，不能因为父容器暂停就展开或复制全部子资源；结果按 `deleted_at` 倒序并沿用普通 cursor/limit。
-- 恢复视图只向有权恢复该资源的调用者开放：Project 内容要求目标 Project `writer` 或 Owner，Workspace/Project 容器要求 Owner；Relation 仍执行两端 Project 的授权过滤。列表只返回恢复所需的有界摘要，包括资源类型、稳定 ID/identifier/key、显示名称或标题、`deleted_at`、`deleted_by`、version、父级状态以及 `restorable`/结构化不可恢复原因。已知标识时也可以直接读取单个 tombstone。
+- 恢复视图只向有权恢复该资源的调用者开放：Project 内容要求目标 Project `writer` 或 Owner，Workspace/Project 容器要求 Owner；Relation 仍执行两端 Project 的授权过滤。列表只返回恢复所需的有界摘要，包括资源类型、稳定 UUID/identifier、显示名称或标题、`deleted_at`、`deleted_by`、version、父级状态以及 `restorable`/结构化不可恢复原因。已知标识时也可以直接读取单个 tombstone。
 - v0 不提供单个 Issue/Comment 等内容资源的 hard-delete API；已归档容器的 Owner 受控清理按 2026-09-08 永久删除增补合同执行。
 - v0 产品与 Skills 不提供完整 D1 导出、导入、本地恢复演练或整库灾难恢复能力。Cloudflare 自身的 Time Travel、控制台导出或其他平台运维功能属于部署者直接管理的外部能力，不进入 cfKanban 用户故事、API 或 Skill 合同。
 
@@ -318,7 +320,7 @@ Recovery Invite 使用与 Project Invite 相同的一次性、短期、hash-only
 
 ### 5.5.1 Public Join
 
-Public Join 与一次性 Invitation 是两种不同能力。Owner 可以对多个 Project 分别开启或关闭 Public Join；公开发现只列出已开启 Project 的显示名称、有界 public summary、公开 opaque ID 和 `reader | writer` 选择，不泄露 Workspace/Project key、内部 context、Issue、成员或其他未公开事实。v0 不提供 Team Join、群组成员模型或一个动作授予多个 Project。
+Public Join 与一次性 Invitation 是两种不同能力。Owner 可以对多个 Project 分别开启或关闭 Public Join；公开发现只列出已开启 Project 的显示名称、有界 public summary、公开 opaque ID 和 `reader | writer` 选择，不泄露内部 Workspace/Project UUID、内部 context、Issue、成员或其他未公开事实。v0 不提供 Team Join、群组成员模型或一个动作授予多个 Project。
 
 一次 Public Join 请求只针对一个公开 Project 与一个显式 role。未认证的新参与者由可信 Agent 本地生成并保存 Principal/Credential 所需 secret，再执行原子 self-join；已有 Credential 或 Passkey Session 的 Principal 复用当前身份。服务端在一个业务原子单元内校验 Policy/Project 当前有效、认证或新身份材料、幂等键和现有 Grant，然后最多建立或更新一条 `(principal_id, project_id)` Grant 并写 Event/Audit。Public Join URL/话术不是 Bearer secret，Grant 不带 expiry。
 
@@ -485,19 +487,19 @@ OpenAPI 并不保证所有 Coding Agents 自动生成可用工具；Agent Skills
 - `GET /api/v1/issues`（部署级授权过滤聚合；支持一个或多个 Project scope）
 - `GET /api/v1/issues/candidates`（确定性候选列表；只读，不分配）
 - `GET /api/v1/workspaces`
-- `GET /api/v1/workspaces/{workspace_key}`
-- `GET /api/v1/workspaces/{workspace_key}/projects`
-- `GET /api/v1/workspaces/{workspace_key}/projects/{project_key}`
-- `GET /api/v1/workspaces/{workspace_key}/projects/{project_key}/issues`
+- `GET /api/v1/workspaces/{workspace_id}`
+- `GET /api/v1/workspaces/{workspace_id}/projects`
+- `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}`
+- `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues`
 - `GET /api/v1/issues/{identifier}`
 - `GET /api/v1/issues/{identifier}/context`
 - `GET /api/v1/events?after={cursor}&limit={n}`（部署级授权过滤；支持一个或多个 Project scope）
 
 列表使用 opaque cursor，不使用不断漂移的 offset。所有列表有服务端上限。
 
-部署级 `GET /api/v1/issues` 只聚合当前 Principal 可读 Projects 中的 Issue，支持按一个或多个 Project、Workspace、status、assignee、label 和关键词过滤。每个结果必须包含明确的 `workspace_key`、`project_key`、实例内唯一 Issue identifier 和 immutable ID，使 Agent 不因全局编号而丢失资源归属。它不提供跨范围批量写入、assign-next 或隐式默认 Project。
+部署级 `GET /api/v1/issues` 只聚合当前 Principal 可读 Projects 中的 Issue，支持按一个或多个 Project、Workspace、status、assignee、label 和关键词过滤。每个结果必须包含明确的 `workspace_id`、`project_id` 及名称摘要、实例内唯一 Issue identifier 和 immutable ID，使 Agent 不因全局编号而丢失资源归属。它不提供跨范围批量写入、assign-next 或隐式默认 Project。
 
-Project 过滤在 HTTP 合同上可省略，此时表示全部已授权 Projects，并仍受 limit/cursor 约束。v0 使用可重复的 `project={workspace_key}/{project_key}` query 参数表达一个或多个明确 Project，最多 20 个；值按 URL 规则编码，服务端去重并按内部 Project ID 规范化，因此参数顺序不改变 cursor scope。可重复的 `workspace={workspace_key}` 用于明确的 Workspace 级发现；同一过滤维度内是 OR，不同维度之间是 AND。cfKanban Skills 的推荐解析顺序是“本次显式 Project targets → Repo scope targets → 无过滤并提示扩大”，并始终呈现 resolved scope、失效 target 和范围扩大警告；允许一个 Repo 配置多个活跃 Project。上层调用方可以覆盖该建议，Skill 不拒绝合法的全授权范围查询。
+Project 过滤在 HTTP 合同上可省略，此时表示全部已授权 Projects，并仍受 limit/cursor 约束。v0 使用可重复的 `project={project_id}` query 参数表达一个或多个明确 Project，最多 20 个；值按 URL 规则编码，服务端去重并按内部 Project ID 规范化，因此参数顺序不改变 cursor scope。可重复的 `workspace={workspace_id}` 用于明确的 Workspace 级发现；同一过滤维度内是 OR，不同维度之间是 AND。cfKanban Skills 的推荐解析顺序是“本次显式 Project targets → Repo scope targets → 无过滤并提示扩大”，并始终呈现 resolved scope、失效 target 和范围扩大警告；允许一个 Repo 配置多个活跃 Project。上层调用方可以覆盖该建议，Skill 不拒绝合法的全授权范围查询。
 
 部署级 Event 读取沿用相同 Project scope 规则，只返回调用者当前可读 Projects 的领域事件。响应按内部 sequence 升序，返回 `next_cursor`、`has_more` 和 resolved scope；cursor 只能用于完全相同的规范化过滤与可读 Project 集合。安全 Audit 不混入参与者领域 Event feed，Owner 通过独立管理入口读取。
 
@@ -513,7 +515,7 @@ Workspace/Project 容器、列表和 Issue 创建继续使用 workspace/project-
 - `DELETE /api/v1/admin/invitations/{invitation_id}`（仅撤销未兑换 Invitation）
 - `POST /api/v1/invitations/redeem`（接受现有 Credential 或新 Credential bootstrap 材料）
 - `PATCH /api/v1/me`（带 `expected_version`，只修改当前 Principal 的 display name）
-- `POST /api/v1/workspaces/{workspace_key}/projects/{project_key}/issues`
+- `POST /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues`
 - `PATCH /api/v1/issues/{identifier}`
 - `POST /api/v1/issues/{identifier}/comments`
 - `POST /api/v1/issues/{identifier}/commands/assign-to-me`

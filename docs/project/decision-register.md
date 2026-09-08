@@ -1,5 +1,7 @@
 # cfKanban 决策登记表
 
+> 2026-09-08 当前合同补充：[工作区与项目 UUID 寻址重构](../specs/2026-09-08-container-uuid-spec.md) 已获用户明确授权并 Frozen。它覆盖下表早期关于容器 key、旧 project key-pair 过滤和 schema 1 scope 的决定；这些历史行保留作为决策过程，不应继续用于创建、路由或 UI 实现。当前创建只收名称、寻址使用服务端 UUID、本地 scope 为 schema 2；其他决定不变。
+
 - 文档状态：Draft
 - 最近更新：2026-08-29
 

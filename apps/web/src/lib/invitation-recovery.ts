@@ -143,9 +143,9 @@ function isInvitationGrant(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return typeof value.display_name === "string"
     && isUuid(value.project_id)
-    && typeof value.project_key === "string"
     && (value.role === "reader" || value.role === "writer")
-    && typeof value.workspace_key === "string";
+    && isUuid(value.workspace_id)
+    && typeof value.workspace_display_name === "string";
 }
 
 function isBoundPrincipal(value: unknown): boolean {

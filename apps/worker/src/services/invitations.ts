@@ -87,9 +87,9 @@ interface InvitationRow {
 interface InvitationGrantRow {
   display_name: string;
   project_id: string;
-  project_key: string;
   role: ProjectRole;
-  workspace_key: string;
+  workspace_id: string;
+  workspace_display_name: string;
 }
 
 interface RedemptionItemRow {
@@ -139,19 +139,17 @@ function invitationSnapshotJsonSql(extraFields = ""): string {
       SELECT json_group_array(json_object(
         'display_name', ordered_grant.display_name,
         'project_id', ordered_grant.project_id,
-        'project_key', ordered_grant.project_key,
         'role', ordered_grant.role,
-        'workspace_key', ordered_grant.workspace_key
+        'workspace_id', ordered_grant.workspace_id, 'workspace_display_name', ordered_grant.workspace_display_name
       ))
       FROM (
-        SELECT project.display_name, grant_row.project_id,
-               project.key AS project_key, grant_row.role,
-               workspace.key AS workspace_key
+        SELECT project.display_name, grant_row.project_id, grant_row.role,
+               workspace.id AS workspace_id, workspace.display_name AS workspace_display_name
         FROM invitation_project_grants grant_row
         JOIN projects project ON project.id = grant_row.project_id
         JOIN workspaces workspace ON workspace.id = project.workspace_id
         WHERE grant_row.invitation_id = invitation.id
-        ORDER BY workspace.key, project.key, project.id
+        ORDER BY workspace.id, project.id
       ) ordered_grant
     ), '[]'))${extraFields}
   )`;
@@ -229,8 +227,9 @@ function redemptionOperationSnapshotStatement(
              JOIN workspaces forbidden_workspace ON forbidden_workspace.id = forbidden_project.workspace_id
              WHERE forbidden_grant.invitation_id = invitation.id
                AND (instr(forbidden_project.display_name, ?3) > 0
-                    OR instr(forbidden_project.key, ?3) > 0
-                    OR instr(forbidden_workspace.key, ?3) > 0)
+                    OR instr(forbidden_project.id, ?3) > 0
+                    OR instr(forbidden_workspace.id, ?3) > 0
+                    OR instr(forbidden_workspace.display_name, ?3) > 0)
            )
          ))
          AND (?4 = '' OR (
@@ -242,8 +241,9 @@ function redemptionOperationSnapshotStatement(
              JOIN workspaces forbidden_workspace ON forbidden_workspace.id = forbidden_project.workspace_id
              WHERE forbidden_grant.invitation_id = invitation.id
                AND (instr(forbidden_project.display_name, ?4) > 0
-                    OR instr(forbidden_project.key, ?4) > 0
-                    OR instr(forbidden_workspace.key, ?4) > 0)
+                    OR instr(forbidden_project.id, ?4) > 0
+                    OR instr(forbidden_workspace.id, ?4) > 0
+                    OR instr(forbidden_workspace.display_name, ?4) > 0)
            )
          ))
      )
@@ -299,13 +299,13 @@ async function readInvitationByDigest(db: D1Database, digest: string): Promise<I
 async function readInvitationGrants(db: D1Database, invitationId: string): Promise<InvitationGrantRow[]> {
   try {
     const result = await db.prepare(
-      `SELECT ipg.project_id, ipg.role, p.key AS project_key,
-              p.display_name, w.key AS workspace_key
+      `SELECT ipg.project_id, ipg.role, p.id AS project_id,
+              p.display_name, w.id AS workspace_id, w.display_name AS workspace_display_name
        FROM invitation_project_grants AS ipg
        JOIN projects AS p ON p.id = ipg.project_id
        JOIN workspaces AS w ON w.id = p.workspace_id
        WHERE ipg.invitation_id = ?1
-       ORDER BY w.key, p.key, p.id`,
+       ORDER BY w.id, p.id`,
     ).bind(invitationId).all<InvitationGrantRow>();
     return result.results;
   } catch (error) {
@@ -337,8 +337,25 @@ async function assertRedemptionSnapshotInputsSafe(
   const grants = await readInvitationGrants(db, invitation.id);
   for (const grant of grants) {
     assertSecretNotInBusinessText(grant.display_name, "project_display_name", forbiddenValues);
-    assertSecretNotInBusinessText(grant.project_key, "project_key", forbiddenValues);
-    assertSecretNotInBusinessText(grant.workspace_key, "workspace_key", forbiddenValues);
+    assertSecretNotInBusinessText(grant.project_id, "project_id", forbiddenValues);
+    assertSecretNotInBusinessText(grant.workspace_id, "workspace_id", forbiddenValues);
+    assertSecretNotInBusinessText(grant.workspace_display_name, "workspace_display_name", forbiddenValues);
+  }
+}
+
+async function redemptionSnapshotInputsRejected(
+  db: D1Database,
+  invitation: InvitationRow,
+  principalDisplayName: string | null,
+  forbiddenValues: readonly string[],
+): Promise<boolean> {
+  try {
+    await assertRedemptionSnapshotInputsSafe(db, invitation, principalDisplayName, forbiddenValues);
+    return false;
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "VALIDATION_ERROR"
+      && error.details.reason === "secret_value_reused") return true;
+    throw error;
   }
 }
 
@@ -351,13 +368,13 @@ async function readInvitationGrantPages(
   if (invitationIds.length === 0) return grouped;
   try {
     const result = await db.prepare(
-      `SELECT ipg.invitation_id, ipg.project_id, ipg.role, p.key AS project_key,
-              p.display_name, w.key AS workspace_key
+      `SELECT ipg.invitation_id, ipg.project_id, ipg.role, p.id AS project_id,
+              p.display_name, w.id AS workspace_id, w.display_name AS workspace_display_name
        FROM invitation_project_grants AS ipg
        JOIN projects AS p ON p.id = ipg.project_id
        JOIN workspaces AS w ON w.id = p.workspace_id
        WHERE ipg.invitation_id IN (SELECT value FROM json_each(?1))
-       ORDER BY ipg.invitation_id, w.key, p.key, p.id`,
+       ORDER BY ipg.invitation_id, w.id, p.id, p.id`,
     ).bind(JSON.stringify(invitationIds)).all<InvitationGrantRow & { invitation_id: string }>();
     for (const row of result.results) grouped.get(row.invitation_id)?.push(row);
     return grouped;
@@ -387,9 +404,9 @@ async function invitationResource(
     grants: (providedGrants ?? await readInvitationGrants(db, row.id)).map((grant) => ({
       display_name: grant.display_name,
       project_id: grant.project_id,
-      project_key: grant.project_key,
       role: grant.role,
-      workspace_key: grant.workspace_key,
+      workspace_id: grant.workspace_id,
+      workspace_display_name: grant.workspace_display_name,
     })),
     id: row.id,
     kind: row.kind,
@@ -953,7 +970,7 @@ export async function getInvitationBootstrapHtml(
       ? role === "writer" ? "可写 writer" : "只读 reader"
       : role === "writer" ? "writer (read/write)" : "reader (read-only)";
     return row.kind === "project_grant"
-      ? `<h2>${isChinese ? "目标 Project" : "Target Projects"}</h2><ul>${grants.map((grant) => `<li><strong>${escapeHtml(grant.workspace_key)}/${escapeHtml(grant.project_key)}</strong> — ${escapeHtml(grant.display_name)} — ${roleLabel(grant.role)}<br><small>project_id: ${escapeHtml(grant.project_id)}</small></li>`).join("")}</ul>`
+      ? `<h2>${isChinese ? "目标 Project" : "Target Projects"}</h2><ul>${grants.map((grant) => `<li><strong>${escapeHtml(grant.workspace_display_name)} / ${escapeHtml(grant.display_name)}</strong> — ${roleLabel(grant.role)}</li>`).join("")}</ul>`
       : `<h2>${isChinese ? "身份恢复警告" : "Identity recovery warning"}</h2><p>${isChinese
         ? `此邀请绑定 Principal ${escapeHtml(row.bound_principal_id ?? "")}（${escapeHtml(row.bound_display_name ?? "")}）。兑换者将继承该身份的全部现有 Grants、assignment 与历史。${row.recovery_mode === "rotation" ? "rotation 成功后只撤销本次用于认证的旧 Credential，其他 active Credential 保持有效。" : "full_recovery 成功后撤销该 Principal 的全部先前 active Credentials。"}`
         : `This Invitation is bound to Principal ${escapeHtml(row.bound_principal_id ?? "")} (${escapeHtml(row.bound_display_name ?? "")}). The redeemer inherits all existing Grants, assignments, and history. ${row.recovery_mode === "rotation" ? "A successful rotation revokes only the old Credential used to authenticate this redemption; other active Credentials remain valid." : "A successful full recovery revokes every previously active Credential for this Principal."}`}</p>`;
@@ -963,9 +980,9 @@ export async function getInvitationBootstrapHtml(
     expires_at: timestamp(row.expires_at),
     grants: grants.map((grant) => ({
       project_id: grant.project_id,
-      project_key: grant.project_key,
       role: grant.role,
-      workspace_key: grant.workspace_key,
+      workspace_id: grant.workspace_id,
+      workspace_display_name: grant.workspace_display_name,
     })),
     kind: row.kind,
     recovery_mode: row.recovery_mode,
@@ -1333,7 +1350,8 @@ async function executeProjectInviteRedeem(
           || !(await invitationTargetsActive(db, invitation.id))
           || (auth !== null && await currentAuthRejected(db, auth, now))
           || (replacement !== null && await credentialDigestExists(db, replacement.digest))
-          || await projectQuotaExceeded(db, invitation.id, principalId) !== null;
+          || await projectQuotaExceeded(db, invitation.id, principalId) !== null
+          || await redemptionSnapshotInputsRejected(db, latest, displayName ?? auth?.displayName ?? null, forbiddenValues);
       },
       expectedEventCount: grants.length + 1,
       operationId: claim.operationId,
@@ -1475,7 +1493,8 @@ async function executeRecoveryRedeem(
         return latest === null || invitationStatus(latest, now) !== "active"
           || (invitation.recovery_mode === "rotation"
             && (auth === null || await currentAuthRejected(db, auth, now)))
-          || await credentialDigestExists(db, replacement.digest);
+          || await credentialDigestExists(db, replacement.digest)
+          || await redemptionSnapshotInputsRejected(db, latest, latest.bound_display_name, forbiddenValues);
       },
       expectedEventCount: 1,
       operationId: claim.operationId,

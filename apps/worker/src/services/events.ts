@@ -1,7 +1,5 @@
 import {
-  requireProjectKey,
   requireUuid,
-  requireWorkspaceKey,
   timestamp,
 } from "../domain/model.ts";
 import {
@@ -36,7 +34,6 @@ interface EventRow {
   payload_json: string;
   project_display_name: string | null;
   project_id: string | null;
-  project_key: string | null;
   relation_other_project_id: string | null;
   sequence: number;
   stream: "domain" | "security";
@@ -45,7 +42,6 @@ interface EventRow {
   type: string;
   workspace_display_name: string | null;
   workspace_id: string | null;
-  workspace_key: string | null;
 }
 
 interface EventScope {
@@ -69,9 +65,9 @@ function eventSelect(eventsSource: string): string {
   SELECT event.sequence, event.id, event.stream, event.type, event.operation_id,
          event.event_index, event.actor_principal_id, actor.display_name AS actor_display_name,
          event.actor_credential_id, event.authorized_via, event.grant_id,
-         event.workspace_id, workspace.key AS workspace_key,
+         event.workspace_id,
          workspace.display_name AS workspace_display_name,
-         event.project_id, project.key AS project_key,
+         event.project_id,
          project.display_name AS project_display_name,
          event.relation_other_project_id,
          event.subject_type, event.subject_id, event.payload_json, event.created_at
@@ -95,15 +91,8 @@ function repeatedTargets(url: URL, name: "project" | "workspace"): string[] {
   return [...new Set(values)].sort();
 }
 
-function parseProjectTarget(value: string): { projectKey: string; workspaceKey: string } {
-  const separator = value.indexOf("/");
-  if (separator <= 0 || separator !== value.lastIndexOf("/") || separator === value.length - 1) {
-    throw validationError("invalid_project_filter");
-  }
-  return {
-    projectKey: requireProjectKey(value.slice(separator + 1), "project"),
-    workspaceKey: requireWorkspaceKey(value.slice(0, separator), "project"),
-  };
+function parseProjectTarget(value: string): { projectId: string } {
+  return { projectId: requireUuid(value, "project") };
 }
 
 async function resolveEventScope(
@@ -116,28 +105,28 @@ async function resolveEventScope(
   const parsedProjects = projectTargets.map((target) => ({ target, ...parseProjectTarget(target) }));
   const parsedWorkspaces = workspaceTargets.map((target) => ({
     target,
-    workspaceKey: requireWorkspaceKey(target, "workspace"),
+    workspaceId: requireUuid(target, "workspace"),
   }));
   const visible = await resolveVisibleProjects(db, auth);
   let projects = visible;
   if (parsedProjects.length > 0) {
     projects = projects.filter((project) => parsedProjects.some(
-      (target) => target.workspaceKey === project.workspaceKey && target.projectKey === project.projectKey,
+      (target) => target.projectId === project.projectId,
     ));
   }
   if (parsedWorkspaces.length > 0) {
     projects = projects.filter((project) => parsedWorkspaces.some(
-      (target) => target.workspaceKey === project.workspaceKey,
+      (target) => target.workspaceId === project.workspaceId,
     ));
   }
   return {
     projectTargets,
     projects,
     unresolvedProjectTargets: parsedProjects.filter((target) => !visible.some(
-      (project) => target.workspaceKey === project.workspaceKey && target.projectKey === project.projectKey,
+      (project) => target.projectId === project.projectId,
     )).map((target) => target.target),
     unresolvedWorkspaceTargets: parsedWorkspaces.filter((target) => !visible.some(
-      (project) => target.workspaceKey === project.workspaceKey,
+      (project) => target.workspaceId === project.workspaceId,
     )).map((target) => target.target),
     visibleProjects: visible,
     workspaceTargets,
@@ -220,7 +209,6 @@ function eventResource(row: EventRow, includeStream = false): { [key: string]: J
     project: row.project_id === null ? null : {
       display_name: row.project_display_name ?? "",
       id: row.project_id,
-      key: row.project_key ?? "",
     },
     ...(includeStream ? { stream: row.stream } : {}),
     subject: { id: row.subject_id, type: row.subject_type },
@@ -228,7 +216,6 @@ function eventResource(row: EventRow, includeStream = false): { [key: string]: J
     workspace: row.workspace_id === null ? null : {
       display_name: row.workspace_display_name ?? "",
       id: row.workspace_id,
-      key: row.workspace_key ?? "",
     },
   };
 }
@@ -239,8 +226,9 @@ function resolvedEventScope(scope: EventScope): { [key: string]: JsonValue } {
       scope.projectTargets.length === 0 && scope.workspaceTargets.length === 0,
     projects: scope.projects.map((project) => ({
       project_id: project.projectId,
-      project_key: project.projectKey,
-      workspace_key: project.workspaceKey,
+      project_display_name: project.projectName,
+      workspace_display_name: project.workspaceName,
+      workspace_id: project.workspaceId,
     })),
     unresolved_project_targets: scope.unresolvedProjectTargets,
     unresolved_workspace_targets: scope.unresolvedWorkspaceTargets,

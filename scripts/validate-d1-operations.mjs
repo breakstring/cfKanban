@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 
-const migration = await readFile(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
+const manifest = JSON.parse(await readFile(new URL("../migrations/manifest.json", import.meta.url), "utf8"));
 const db = new DatabaseSync(":memory:");
-db.exec(migration);
+for (const entry of manifest.migrations) {
+  const sql = await readFile(new URL(`../migrations/${entry.name}`, import.meta.url), "utf8");
+  db.exec(`BEGIN;${sql}COMMIT;`);
+}
 
 const now = 1_787_966_400_000;
 const digest = (character) => character.repeat(64);
@@ -78,12 +81,12 @@ run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES ('
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES ('writer', 'Chen', ?, ?)", [now, now]);
 run("INSERT INTO instance_meta VALUES (1, 'instance-1', 'owner', '0.1.0', 1, ?)", [now]);
 run("INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id) VALUES ('cred-owner', 'owner', 'owner', ?, ?, 'seed-cred-owner')", [digest("a"), now]);
-run("INSERT INTO workspaces (id, key, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('workspace', 'agent-tools', 'Agent Tools', ?, ?, 'owner', 'owner', 'seed-workspace')", [now, now]);
-run("INSERT INTO projects (id, workspace_id, key, display_name, issue_limit, comment_limit, principal_limit, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('project-a', 'workspace', 'CORE', 'Core', 10, 1, 10, ?, ?, 'owner', 'owner', 'seed-project-a')", [now, now]);
-run("INSERT INTO projects (id, workspace_id, key, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('project-b', 'workspace', 'WEB', 'Web', ?, ?, 'owner', 'owner', 'seed-project-b')", [now, now]);
+run("INSERT INTO workspaces (id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('workspace', 'Agent Tools', ?, ?, 'owner', 'owner', 'seed-workspace')", [now, now]);
+run("INSERT INTO projects (id, workspace_id, display_name, issue_limit, comment_limit, principal_limit, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('project-a', 'workspace', 'Core', 10, 1, 10, ?, ?, 'owner', 'owner', 'seed-project-a')", [now, now]);
+run("INSERT INTO projects (id, workspace_id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('project-b', 'workspace', 'Web', ?, ?, 'owner', 'owner', 'seed-project-b')", [now, now]);
 run("INSERT INTO project_grants (id, principal_id, project_id, role, created_at, updated_at, created_operation_id) VALUES ('grant-a', 'writer', 'project-a', 'writer', ?, ?, 'seed-grant-a')", [now, now]);
 run("INSERT INTO project_grants (id, principal_id, project_id, role, created_at, updated_at, created_operation_id) VALUES ('grant-b', 'writer', 'project-b', 'writer', ?, ?, 'seed-grant-b')", [now, now]);
-run("INSERT INTO public_join_policies (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id, created_at, updated_at) VALUES ('project-a', 'workspace', 'CORE', 'public-a', 'Public Core', ?, 'owner', ?, ?)", [now, now, now]);
+run("INSERT INTO public_join_policies (project_id, workspace_id, public_id, public_summary, enabled_at, enabled_by_principal_id, created_at, updated_at) VALUES ('project-a', 'workspace', 'public-a', 'Public Core', ?, 'owner', ?, ?)", [now, now, now]);
 run("INSERT INTO project_usage VALUES ('project-a', 2, 0, 1, ?, 'seed-usage')", [now]);
 run("INSERT INTO issues (id, project_id, title, title_search, status_key, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('issue-a1', 'project-a', 'Complete me', 'complete me', 'todo', ?, ?, 'owner', 'owner', 'seed-issue-a1')", [now, now]);
 run("INSERT INTO issues (id, project_id, title, title_search, status_key, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('issue-a2', 'project-a', 'Assign me', 'assign me', 'todo', ?, ?, 'owner', 'owner', 'seed-issue-a2')", [now + 1, now + 1]);

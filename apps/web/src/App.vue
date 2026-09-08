@@ -27,7 +27,7 @@ type AppRoute =
   | { identifier: string; kind: "issue" }
   | { kind: "owner"; section: OwnerSection }
   | { kind: "profile" }
-  | { kind: "project"; projectKey: string; workspaceKey: string }
+  | { kind: "project"; projectId: string; workspaceId: string }
   | { kind: "unknown" };
 
 const session = ref<WebSessionView | null>(null);
@@ -66,9 +66,9 @@ const route = computed<AppRoute>(() => {
   }
   const project = /^\/app\/w\/([^/]+)\/p\/([^/]+)$/.exec(path);
   if (project !== null) {
-    const workspaceKey = decoded(project[1] ?? "");
-    const projectKey = decoded(project[2] ?? "");
-    if (workspaceKey !== null && projectKey !== null) return { kind: "project", projectKey, workspaceKey };
+    const workspaceId = decoded(project[1] ?? "");
+    const projectId = decoded(project[2] ?? "");
+    if (workspaceId !== null && projectId !== null) return { kind: "project", projectId, workspaceId };
   }
   const issue = /^\/app\/issues\/(CFK-[1-9][0-9]*)$/.exec(path);
   if (issue !== null) return { identifier: issue[1] ?? "", kind: "issue" };
@@ -241,9 +241,9 @@ watch(currentPath, () => {
       <ProjectBoardView
         v-else-if="route.kind === 'project'"
         :key="`${sessionViewGeneration}:${currentPath}`"
-        :project-key="route.projectKey"
+        :project-id="route.projectId"
         :session="session"
-        :workspace-key="route.workspaceKey"
+        :workspace-id="route.workspaceId"
         @context="context = $event"
       />
       <IssueDetailView

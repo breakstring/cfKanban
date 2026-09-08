@@ -23,23 +23,23 @@
 部署不会自动创建应用容器。处理常见的首次使用请求时：
 
 1. 检查本地状态，并验证 `/api/v1/me` 返回预期稳定 Principal 且 `is_owner=true`；
-2. 从用户取得明确、不可变的 Workspace key 和 display name，把所选 key 规范为小写，按 `[a-z][a-z0-9-]{1,31}` 校验，在预览中展示 canonical key，用一个 Idempotency Key 创建，再读回；
-3. 取得明确、不可变的 Project key 和 display name，把所选 key 规范为大写，按 `[A-Z][A-Z0-9-]{1,15}` 校验，在预览中展示 canonical key，用另一个 Idempotency Key 在该 Workspace 中创建，再读回 Project 和固定五个 statuses；
+2. 只询问 Workspace 显示名称，使用独立 Idempotency Key 创建并读回服务端生成的 UUID；Project 必须指定父 Workspace UUID。
+3. 只询问 Project 显示名称，使用独立 Idempotency Key 创建并读回服务端生成的 UUID；Project 必须指定父 Workspace UUID。
 4. 使用 `target.kind=admin` 运行 `web launch`；默认直接打开浏览器，不返回一次性 URL；
 5. 提供彼此独立的后续选项：用 `cfkanban` 创建第一条 Issue、创建显式 role Invite，或配置 Public Join 与全部三项 quotas。
 
-用户选择的 key 可以使用任意字母大小写，不能仅因大小写要求用户重新输入。大小写规范化不代表可以 slugify、派生或以其他方式改写 key。不得从 Repo、path、Git remote、hostname 或 display name 猜测 key；不得静默创建默认 Project、Label、Grant、Issue、Invite 或 Public Join policy。如果 Workspace 创建成功而 Project 创建失败，必须把 Workspace 报告为已提交，不能声称整组操作已回滚。
+名称不是唯一标识；通过授权读取确定既有容器，重名时先消歧，不猜测 UUID。不静默创建默认 Project、Label、Grant、Issue、Invite 或 Public Join policy。Project 创建失败不回滚已创建的 Workspace。
 
 ## 管理端 endpoint 对照
 
 | 任务 | Method 与 path | 必要检查 |
 | --- | --- | --- |
 | 验证 Owner | `GET /api/v1/me` | 要求稳定 Principal ID 与 `is_owner=true`。 |
-| 列出/创建 Workspace | `GET/POST /api/v1/workspaces` | 预览/提交前把显式 immutable key 规范为小写并校验；同时提交 display name 与 Idempotency Key。 |
-| 读取/改名/暂停 Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}` | 改名/删除使用 current version。 |
+| 列出/创建 Workspace | `GET/POST /api/v1/workspaces` | 使用显示名称创建，读回服务端生成的 UUID；名称不作为唯一标识。 |
+| 读取/改名/暂停 Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}` | 改名/删除使用 current version。 |
 | 恢复 Workspace | `POST .../commands/restore` | 先展示所有会恢复公开的 enabled Public Join Projects。 |
-| 列出/创建 Project | `GET/POST /api/v1/workspaces/{workspace_key}/projects` | 预览/提交前把显式 immutable key 规范为大写并校验；创建不隐含 Grant、Label 或另一个 Project。 |
-| 读取/改名/暂停 Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}/projects/{project_key}` | Project key 永不修改。 |
+| 列出/创建 Project | `GET/POST /api/v1/workspaces/{workspace_id}/projects` | 使用显示名称创建，读回服务端生成的 UUID；名称不作为唯一标识。 |
+| 读取/改名/暂停 Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}/projects/{project_id}` | UUID 永不修改；改名与归档使用 current version。 |
 | 恢复 Project | `POST .../commands/restore` | 展示会恢复的 Public Join role/summary/limits。 |
 | 读取/修改 status 显示名 | `GET .../statuses`、`PATCH .../statuses/{status_key}` | 固定五个 key 和语义不能改变。 |
 | 列出/创建 Invite | `GET /api/v1/admin/invitations`；专用 `invite create` | 显式 kind、准确 target(s)、每个 Project 显式 `reader | writer`。 |
@@ -134,9 +134,9 @@ Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 op
 
 ## 已归档容器永久删除
 
-归档（`DELETE`）仍可恢复。永久删除是独立的 Owner 操作，只允许已归档项目，或不含未永久删除项目的已归档工作区。容器路径为 `/api/v1/workspaces/{workspace_key}` 或其 `/projects/{project_key}` 子路径。
+归档（`DELETE`）仍可恢复。永久删除是独立的 Owner 操作，只允许已归档项目，或不含未永久删除项目的已归档工作区。容器路径为 `/api/v1/workspaces/{workspace_id}` 或其 `/projects/{project_id}` 子路径。
 
 1. 读取 `GET {container_path}/purge-preview`，展示准确目标、内容计数、跨项目关系、受影响邀请和共享邀请。`can_purge=false` 时停止。
-2. 取得对本次预览范围不可恢复清理的明确授权；归档授权不等于永久删除授权。清理包括事项、普通及完成评论、标签、关系、Grants、项目会话和相关历史/响应缓存。共享未兑换邀请撤销，其他项目既有 Grants 保留。保留占用 key 的最小记录和精简审计；旧游标可能需要重新读取。不承诺 Cloudflare 存储指标即时下降，也不删除平台备份。
+2. 取得对本次预览范围不可恢复清理的明确授权；归档授权不等于永久删除授权。清理包括事项、普通及完成评论、标签、关系、Grants、项目会话和相关历史/响应缓存。共享未兑换邀请撤销，其他项目既有 Grants 保留。保留最小 UUID 墓碑和精简审计；旧游标可能需要重新读取。不承诺 Cloudflare 存储指标即时下降，也不删除平台备份。
 3. 通过 `api request` 发送 `POST {container_path}/commands/purge`，携带 `expected_version=target.version`、`confirm_name=target.display_name`、`preview_digest` 与独立 Idempotency Key。预览过期需重新核对；结果未定时保持同一请求与 key 恢复，不能生成不同删除请求。
-4. 核对 `resource.purged=true`，并通过显式 `deleted=only` 列表/详情确认目标不可见，必要时读取精简 Owner 审计。永久删除后不能恢复或复用 key，不隐含逐个或定时清理其他容器。
+4. 核对 `resource.purged=true`，并通过显式 `deleted=only` 列表/详情确认目标不可见，必要时读取精简 Owner 审计。永久删除后不能恢复；同名新建会获得不同 UUID，不隐含逐个或定时清理其他容器。

@@ -156,9 +156,8 @@ function invitationWriteResult(secretAvailable = true, body = PROJECT_INVITATION
       grants: projectGrant === null ? [] : [{
         display_name: "Project",
         project_id: projectGrant.project_id,
-        project_key: "PROJ",
         role: projectGrant.role,
-        workspace_key: "workspace",
+        workspace_id: "22222222-2222-4222-8222-222222222222", workspace_display_name: "workspace",
       }],
       id: "11111111-1111-4111-8111-111111111111",
       kind: body.kind,
@@ -353,7 +352,7 @@ test("server-provided Web entry paths stay on the local app surface", () => {
     "/app",
     "/app/admin?section=access",
     "/app/issues/CFK-1",
-    "/app/w/workspace/p/PROJECT",
+    "/app/w/22222222-2222-4222-8222-222222222222/p/11111111-1111-4111-8111-111111111111",
   ]) assert.equal(safeWebEntryPath(path), path);
   for (const unsafe of [
     "https://evil.example/app",
@@ -366,8 +365,8 @@ test("server-provided Web entry paths stay on the local app surface", () => {
   ]) assert.equal(safeWebEntryPath(unsafe), null);
 });
 
-function issueForRelation(identifier, workspaceKey, allowedActions = ["update"]) {
-  return { allowed_actions: allowedActions, identifier, workspace: { key: workspaceKey } };
+function issueForRelation(identifier, workspaceId, allowedActions = ["update"]) {
+  return { allowed_actions: allowedActions, identifier, workspace: { id: workspaceId, display_name: "Same workspace name" } };
 }
 
 test("Issue Relation creation requires distinct writable endpoints in one Workspace", () => {
@@ -766,7 +765,7 @@ test("the Web interaction palette uses accessible orange without legacy blue the
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
   const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
   const [deploymentRelease, ...documents] = await Promise.all([
-    readFile(new URL("../../release/config/0.1.0-alpha.51.json", import.meta.url), "utf8").then(JSON.parse),
+    readFile(new URL("../../release/config/0.1.0-alpha.52.json", import.meta.url), "utf8").then(JSON.parse),
     ...paths.map((name) => readFile(
       new URL(`../../apps/web/public/${name}`, import.meta.url),
       "utf8",
@@ -884,8 +883,8 @@ test("session revalidation preserves the mounted view until the security boundar
     allowed_scope: {
       kind: "project_selection",
       projects: [
-        { project_id: "project-b", project_key: "B", role: "reader", workspace_key: "workspace" },
-        { project_id: "project-a", project_key: "A", role: "writer", workspace_key: "workspace" },
+        { project_id: "project-b", project_display_name: "B", role: "reader", workspace_id: "22222222-2222-4222-8222-222222222222", workspace_display_name: "workspace" },
+        { project_id: "project-a", project_display_name: "A", role: "writer", workspace_id: "22222222-2222-4222-8222-222222222222", workspace_display_name: "workspace" },
       ],
     },
     expires_at: "2026-08-31T00:00:00.000Z",
@@ -904,6 +903,15 @@ test("session revalidation preserves the mounted view until the security boundar
     ...session,
     allowed_scope: {
       ...session.allowed_scope,
+      projects: session.allowed_scope.projects.map((project) => ({
+        ...project, project_display_name: "Same name", workspace_display_name: "Renamed workspace",
+      })),
+    },
+  }), true);
+  assert.equal(sameSessionBoundary(session, {
+    ...session,
+    allowed_scope: {
+      ...session.allowed_scope,
       projects: session.allowed_scope.projects.map((project) => (
         project.project_id === "project-a" ? { ...project, role: "reader" } : project
       )),
@@ -917,7 +925,7 @@ test("Owner instance inventory refresh does not remount one-time local state", (
     allowed_scope: {
       kind: "instance",
       projects: [
-        { project_id: "project-a", project_key: "A", role: "owner", workspace_key: "workspace" },
+        { project_id: "project-a", project_display_name: "A", role: "owner", workspace_id: "22222222-2222-4222-8222-222222222222", workspace_display_name: "workspace" },
       ],
     },
     expires_at: "2026-08-31T00:00:00.000Z",
@@ -932,7 +940,7 @@ test("Owner instance inventory refresh does not remount one-time local state", (
       kind: "instance",
       projects: [
         ...session.allowed_scope.projects,
-        { project_id: "project-b", project_key: "B", role: "owner", workspace_key: "workspace" },
+        { project_id: "project-b", project_display_name: "B", role: "owner", workspace_id: "22222222-2222-4222-8222-222222222222", workspace_display_name: "workspace" },
       ],
     },
   }), true);
@@ -1965,8 +1973,8 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(publicHomeSource, /readonly rows="5"/);
   assert.match(publicHomeSource, /projectsNextCursor/);
   assert.match(publicHomeSource, /joinBusy/);
-  assert.match(projectBoardSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
-  assert.match(issueDetailSource, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
+  assert.match(projectBoardSource, /watch\(\(\) => projectInventoryBoundary\(props\.session\.allowed_scope\.projects\), refreshProjectInventory/);
+  assert.match(issueDetailSource, /watch\(\(\) => projectInventoryBoundary\(props\.session\.allowed_scope\.projects\), refreshProjectInventory/);
 });
 
 test("client transport normalizes Cloudflare outer errors without prose branching", async () => {
@@ -2063,5 +2071,45 @@ test("Web and Skill transports keep one outer-error decision matrix", async () =
   const skillNetwork = normalizeSkillNetworkFailure(new TypeError("network failed")).error;
   for (const field of ["code", "category", "source", "retryable", "recovery"]) {
     assert.equal(skillNetwork[field], webNetwork[field], `${field} drifted for a network failure`);
+  }
+});
+
+test("container choices disambiguate only colliding display names without changing UUID values", async () => {
+  const { containerChoiceLabels } = await import("../../apps/web/src/lib/container-choice.ts");
+  const choices = [
+    { id: "11111111-1111-4111-8111-111111111111", name: "Project", workspaceName: "Workspace" },
+    { id: "22222222-2222-4222-8222-222222222222", name: "Project", workspaceName: "Workspace" },
+    { id: "33333333-3333-4333-8333-333333333333", name: "Project", workspaceName: "Other" },
+  ];
+  const labels = containerChoiceLabels(choices);
+  assert.deepEqual(labels.get(choices[0].id), { label: "Workspace / Project (11111111)", title: choices[0].id });
+  assert.deepEqual(labels.get(choices[1].id), { label: "Workspace / Project (22222222)", title: choices[1].id });
+  assert.deepEqual(labels.get(choices[2].id), { label: "Other / Project" });
+  assert.deepEqual([...labels.keys()], choices.map((choice) => choice.id));
+  const workspaceLabels = containerChoiceLabels(choices.slice(0, 2).map(({ id }) => ({ id, name: "Workspace" })));
+  assert.match(workspaceLabels.get(choices[0].id).label, /\(11111111\)$/);
+});
+
+test("name-only session refresh preserves inventory generations and open drafts", async () => {
+  const { projectInventoryBoundary } = await import("../../apps/web/src/lib/session-boundary.ts");
+  const { ref, watch, nextTick } = await import("vue");
+  const projects = ref([{ project_id: "project", workspace_id: "workspace", project_display_name: "Before", workspace_display_name: "Before workspace", role: "writer" }]);
+  let invalidations = 0;
+  const stop = watch(() => projectInventoryBoundary(projects.value), () => { invalidations += 1; });
+  try {
+    projects.value = [{ ...projects.value[0], project_display_name: "After", workspace_display_name: "After workspace" }];
+    await nextTick();
+    assert.equal(invalidations, 0);
+    projects.value = [{ ...projects.value[0], role: "reader" }];
+    await nextTick();
+    assert.equal(invalidations, 1);
+    projects.value = [];
+    await nextTick();
+    assert.equal(invalidations, 2);
+  } finally { stop(); }
+  for (const view of ["ProjectBoardView", "IssueDetailView"]) {
+    const source = await readFile(new URL(`../../apps/web/src/views/${view}.vue`, import.meta.url), "utf8");
+    assert.match(source, /watch\(\(\) => projectInventoryBoundary\(props\.session\.allowed_scope\.projects\), refreshProjectInventory\)/);
+    assert.doesNotMatch(source, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
   }
 });

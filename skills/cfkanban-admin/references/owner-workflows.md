@@ -23,23 +23,23 @@ Use it with `node scripts/cfkanban-tool.mjs api request`. The command reads the 
 Deployment creates no application container automatically. For the common first-use request:
 
 1. inspect local state and verify `/api/v1/me` returns the expected stable Principal with `is_owner=true`;
-2. obtain an explicit immutable Workspace key and display name from the user, normalize the chosen key to lowercase, validate `[a-z][a-z0-9-]{1,31}`, show the canonical key in the preview, create it with one Idempotency Key, and read it back;
-3. obtain an explicit immutable Project key and display name, normalize the chosen key to uppercase, validate `[A-Z][A-Z0-9-]{1,15}`, show the canonical key in the preview, create it inside that Workspace with a different Idempotency Key, then read the Project and its fixed five statuses back;
+2. Ask only for the Workspace display name; create with a separate Idempotency Key and read back its server-generated UUID. Project creation requires the parent Workspace UUID.
+3. Ask only for the Project display name; create with a separate Idempotency Key and read back its server-generated UUID. Project creation requires the parent Workspace UUID.
 4. run `web launch` with `target.kind=admin`; its default direct-browser delivery returns no one-time URL;
 5. offer separate next actions: use `cfkanban` to create the first Issue, create an explicit-role Invite, or configure Public Join and all three quotas.
 
-Accept user-chosen keys in either letter case and do not ask the user to retype them only for casing. Case normalization is not permission to slugify, derive, or otherwise rewrite a key. Do not guess keys from a Repo, path, Git remote, hostname, or display name. Do not silently create a default Project, Label, Grant, Issue, Invite, or Public Join policy. If Workspace creation succeeds and Project creation fails, report the Workspace as committed rather than claiming the sequence rolled back.
+Names are not unique identifiers. Resolve existing containers through authorized reads and disambiguate duplicate names before writing; never guess a UUID. Do not silently create a default Project, Label, Grant, Issue, Invite, or Public Join policy. Project creation failure does not roll back a committed Workspace.
 
 ## Administration endpoint map
 
 | Task | Method and path | Required checks |
 | --- | --- | --- |
 | Verify Owner | `GET /api/v1/me` | Require stable Principal ID and `is_owner=true`. |
-| List/create Workspaces | `GET/POST /api/v1/workspaces` | Lowercase and validate the explicit immutable key before preview/submission; use a display name and Idempotency Key. |
-| Read/rename/pause Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}` | Use current version for rename/delete. |
+| List/create Workspaces | `GET/POST /api/v1/workspaces` | Create using display names and read back server-generated UUIDs; names are not unique identifiers. |
+| Read/rename/pause Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}` | Use current version for rename/delete. |
 | Restore Workspace | `POST .../commands/restore` | Show every enabled Public Join Project that will resume first. |
-| List/create Projects | `GET/POST /api/v1/workspaces/{workspace_key}/projects` | Uppercase and validate the explicit immutable key before preview/submission; creation does not imply Grants, Labels, or another Project. |
-| Read/rename/pause Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_key}/projects/{project_key}` | Project key never changes. |
+| List/create Projects | `GET/POST /api/v1/workspaces/{workspace_id}/projects` | Create using display names and read back server-generated UUIDs; names are not unique identifiers. |
+| Read/rename/pause Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}/projects/{project_id}` | The UUID never changes; rename/archive use the current version. |
 | Restore Project | `POST .../commands/restore` | Show its resumed Public Join role/summary/limits. |
 | Read/rename status display | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Stable five keys and semantics cannot change. |
 | List/create Invites | `GET /api/v1/admin/invitations`; dedicated `invite create` | Explicit kind, exact target(s), and explicit `reader | writer` per Project. |
@@ -134,9 +134,9 @@ Use one Idempotency Key per atomic write. Read back the mutated resource and rel
 
 ## Archived container purge
 
-Archive (`DELETE`) remains reversible. Permanent removal is a separate Owner operation, limited to an archived Project or an archived Workspace with no non-purged Projects. Use the container path `/api/v1/workspaces/{workspace_key}` or its `/projects/{project_key}` child.
+Archive (`DELETE`) remains reversible. Permanent removal is a separate Owner operation, limited to an archived Project or an archived Workspace with no non-purged Projects. Use the container path `/api/v1/workspaces/{workspace_id}` or its `/projects/{project_id}` child.
 
 1. Read `GET {container_path}/purge-preview`. Show the exact target, content counts, cross-project relations, affected invitations and shared invitations. Stop if `can_purge=false`.
-2. Obtain explicit authorization for the irreversible previewed removal. This clears Issues, completion and ordinary Comments, labels, relations, Grants, project sessions, and corresponding history/response caches. Shared pending invitations are revoked; existing Grants in other Projects remain. Minimal reserved keys and a compact purge audit remain; old cursors may require a fresh read. Do not promise an immediate reduction in Cloudflare storage metrics or deletion of platform backups.
+2. Obtain explicit authorization for the irreversible previewed removal. This clears Issues, completion and ordinary Comments, labels, relations, Grants, project sessions, and corresponding history/response caches. Shared pending invitations are revoked; existing Grants in other Projects remain. Minimal UUID tombstones and a compact purge audit remain; old cursors may require a fresh read. Do not promise an immediate reduction in Cloudflare storage metrics or deletion of platform backups.
 3. Send `POST {container_path}/commands/purge` through `api request` with `expected_version=target.version`, `confirm_name=target.display_name`, `preview_digest` and one new Idempotency Key. A stale preview requires fresh review; an uncertain response requires the same request/key, not a newly authorized target.
-4. Verify the `resource.purged=true` result and absence from the explicit `deleted=only` list/detail; optionally inspect the compact Owner audit. Purged containers cannot be restored and their keys cannot be reused. Never purge multiple containers implicitly or automatically.
+4. Verify the `resource.purged=true` result and absence from the explicit `deleted=only` list/detail; optionally inspect the compact Owner audit. Purged containers cannot be restored. A new container may reuse the name and receives a different UUID. Never purge multiple containers implicitly or automatically.

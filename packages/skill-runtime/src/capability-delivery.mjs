@@ -74,22 +74,6 @@ function safeTimestamp(value, field) {
   return timestamp;
 }
 
-function safeWorkspaceKey(value) {
-  const key = requireString(value, "workspace_key", { max: 32 });
-  if (!/^[a-z][a-z0-9-]{1,31}$/u.test(key)) {
-    throw toolError("INVALID_CAPABILITY_RESPONSE", "The Browser Launch response contained an invalid Workspace key");
-  }
-  return key;
-}
-
-function safeProjectKey(value) {
-  const key = requireString(value, "project_key", { max: 16 });
-  if (!/^[A-Z][A-Z0-9-]{1,15}$/u.test(key)) {
-    throw toolError("INVALID_CAPABILITY_RESPONSE", "The one-time capability response contained an invalid Project key");
-  }
-  return key;
-}
-
 function safeIssueIdentifier(value) {
   const identifier = requireString(value, "identifier", { max: 64 });
   if (!/^CFK-[1-9][0-9]*$/u.test(identifier)) {
@@ -130,24 +114,22 @@ function safeBrowserLaunchTarget(target) {
     throw toolError("INVALID_CAPABILITY_RESPONSE", "The Browser Launch response is missing its target");
   }
   if (target.kind === "project") {
-    const workspaceKey = safeWorkspaceKey(target.workspace_key);
-    const projectKey = safeProjectKey(target.project_key);
-    const entryPath = `/app/w/${workspaceKey}/p/${projectKey}`;
+    const workspaceId = requireUuid(target.workspace_id, "workspace_id");
+    const projectId = requireUuid(target.project_id, "project_id");
+    const entryPath = `/app/w/${workspaceId}/p/${projectId}`;
     if (target.entry_path !== entryPath) {
       throw toolError("INVALID_CAPABILITY_RESPONSE", "The Browser Launch response contained an inconsistent Project entry path");
     }
     return {
       kind: "project",
-      workspace_key: workspaceKey,
-      project_key: projectKey,
+      workspace_id: workspaceId,
       project_id: requireUuid(target.project_id, "project_id"),
       entry_path: entryPath,
     };
   }
   if (target.kind === "issue") {
     const identifier = safeIssueIdentifier(target.identifier);
-    const workspaceKey = safeWorkspaceKey(target.workspace_key);
-    const projectKey = safeProjectKey(target.project_key);
+    const workspaceId = requireUuid(target.workspace_id, "workspace_id");
     const entryPath = `/app/issues/${identifier}`;
     if (target.entry_path !== entryPath) {
       throw toolError("INVALID_CAPABILITY_RESPONSE", "The Browser Launch response contained an inconsistent Issue entry path");
@@ -157,8 +139,7 @@ function safeBrowserLaunchTarget(target) {
       identifier,
       issue_id: requireUuid(target.issue_id, "issue_id"),
       project_id: requireUuid(target.project_id, "project_id"),
-      workspace_key: workspaceKey,
-      project_key: projectKey,
+      workspace_id: workspaceId,
       entry_path: entryPath,
     };
   }
@@ -188,8 +169,9 @@ function safeInvitationGrant(grant) {
   }
   return {
     project_id: requireUuid(grant.project_id, "project_id"),
-    workspace_key: safeWorkspaceKey(grant.workspace_key),
-    project_key: safeProjectKey(grant.project_key),
+    workspace_id: requireUuid(grant.workspace_id, "workspace_id"),
+    display_name: requireString(grant.display_name, "display_name", { max: 128 }),
+    workspace_display_name: requireString(grant.workspace_display_name, "workspace_display_name", { max: 128 }),
     role: safeEnum(grant.role, ["reader", "writer"], "role"),
   };
 }
@@ -251,7 +233,7 @@ function assertBrowserLaunchTargetMatchesRequest(target, requestedTarget) {
     throw toolError("INVALID_CAPABILITY_RESPONSE", "The Browser Launch response did not match the requested target");
   }
   const matches = target.kind === "project"
-    ? target.workspace_key === requestedTarget.workspace_key && target.project_key === requestedTarget.project_key
+    ? target.workspace_id === requestedTarget.workspace_id && target.project_id === requestedTarget.project_id
     : target.kind === "issue"
       ? target.identifier === requestedTarget.identifier
       : target.section === requestedTarget.section;

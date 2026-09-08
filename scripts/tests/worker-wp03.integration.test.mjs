@@ -57,6 +57,8 @@ function participantHeaders(extra = {}) {
   return { authorization: `Bearer ${participantToken}`, ...extra };
 }
 
+const fixtureIds = Object.create(null);
+
 async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
   const response = await server.fetch(path, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -66,7 +68,9 @@ async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
     },
     method,
   });
-  return { body: await response.json(), response };
+  const result = await response.json();
+  if (response.ok && result.resource?.id && body?.display_name && method === "POST") fixtureIds[body.display_name] = result.resource.id;
+  return { body: result, response };
 }
 
 function assertWriteResult(value, replay = false) {
@@ -191,7 +195,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(renamedMe.body.resource.display_name, "Owner Renamed");
 
   const createWorkspaceRequest = {
-    body: { display_name: "Engineering", key: "engineering" },
+    body: { display_name: "Engineering" },
     headers: ownerHeaders({ "idempotency-key": "wp03-create-workspace" }),
     method: "POST",
   };
@@ -199,12 +203,12 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(createdWorkspace.response.status, 200);
   assertWriteResult(createdWorkspace.body);
   assertExactOpenApiObject(createdWorkspace.body.resource, "WorkspaceActive");
-  assert.equal(createdWorkspace.body.resource.key, "engineering");
+  assert.equal(createdWorkspace.body.resource.id, fixtureIds["Engineering"]);
   const replayedWorkspace = await jsonRequest("/api/v1/workspaces", createWorkspaceRequest);
   assert.equal(replayedWorkspace.body.resource.id, createdWorkspace.body.resource.id);
   assertWriteResult(replayedWorkspace.body, true);
   await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Operations", key: "operations" },
+    body: { display_name: "Operations" },
     headers: ownerHeaders({ "idempotency-key": "wp03-create-second-workspace" }),
     method: "POST",
   });
@@ -222,14 +226,14 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.notEqual(secondWorkspacePage.body.items[0].id, firstWorkspacePage.body.items[0].id);
 
   const unknownField = await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Bad", key: "bad-key", typo: true },
+    body: { display_name: "Bad", typo: true },
     headers: ownerHeaders({ "idempotency-key": "wp03-unknown-field" }),
     method: "POST",
   });
   assert.equal(unknownField.response.status, 400);
   assert.equal(unknownField.body.code, "VALIDATION_ERROR");
 
-  const staleWorkspace = await jsonRequest("/api/v1/workspaces/engineering", {
+  const staleWorkspace = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}`, {
     body: { display_name: "Stale", expected_version: 99 },
     headers: ownerHeaders(),
     method: "PATCH",
@@ -237,36 +241,36 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(staleWorkspace.response.status, 409);
   assert.equal(staleWorkspace.body.code, "VERSION_CONFLICT");
 
-  const updatedWorkspace = await jsonRequest("/api/v1/workspaces/engineering", {
+  const updatedWorkspace = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}`, {
     body: { display_name: "Engineering Team", expected_version: 1 },
     headers: ownerHeaders(),
     method: "PATCH",
   });
   assert.equal(updatedWorkspace.body.resource.version, 2);
 
-  const createdProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { context: "Trusted project context only.", display_name: "Core", key: "CORE" },
+  const createdProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { context: "Trusted project context only.", display_name: "Core" },
     headers: ownerHeaders({ "idempotency-key": "wp03-create-project" }),
     method: "POST",
   });
   assert.equal(createdProject.response.status, 200);
   assertWriteResult(createdProject.body);
-  assert.equal(createdProject.body.resource.workspace_key, "engineering");
+  assert.equal(createdProject.body.resource.workspace_id, fixtureIds["Engineering"]);
   const projectId = createdProject.body.resource.id;
   const ordinaryUsage = await db.prepare(
     "SELECT COUNT(*) AS count FROM project_usage WHERE project_id = ?1",
   ).bind(projectId).first();
   assert.equal(ordinaryUsage.count, 0);
 
-  const createdSecondProject = await jsonRequest("/api/v1/workspaces/operations/projects", {
-    body: { display_name: "Operations Board", key: "OPS" },
+  const createdSecondProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Operations"]}/projects`, {
+    body: { display_name: "Operations Board" },
     headers: ownerHeaders({ "idempotency-key": "wp03-create-second-project" }),
     method: "POST",
   });
   assert.equal(createdSecondProject.response.status, 200);
   const secondProjectId = createdSecondProject.body.resource.id;
 
-  const statuses = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/statuses", {
+  const statuses = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/statuses`, {
     headers: ownerHeaders(),
   });
   assert.deepEqual(statuses.body.items.map((status) => status.key), [
@@ -278,7 +282,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   ]);
   assert.deepEqual(statuses.body.items.map((status) => status.position), [1, 2, 3, 4, 5]);
 
-  const renamedStatus = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/statuses/done", {
+  const renamedStatus = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/statuses/done`, {
     body: { display_name: "Shipped", expected_version: 1 },
     headers: ownerHeaders(),
     method: "PATCH",
@@ -288,7 +292,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.match(renamedStatus.body.resource.id, /^[0-9a-f-]{36}$/i);
   assert.equal(renamedStatus.body.resource.version, 2);
 
-  const updatedProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
+  const updatedProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}`, {
     body: { context: null, display_name: "Core Board", expected_version: 2 },
     headers: ownerHeaders(),
     method: "PATCH",
@@ -345,8 +349,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
         issue_id: ids.targetIssue,
         kind: "issue",
         project_id: projectId,
-        project_key: "CORE",
-        workspace_key: "engineering",
+        workspace_id: fixtureIds["Engineering"],
       }),
       Date.now() + 60_000,
       Date.now(),
@@ -366,25 +369,25 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
       Date.now(),
     ).run(),
   );
-  const participantProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
+  const participantProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}`, {
     headers: participantHeaders(),
   });
   assert.equal(participantProject.response.status, 200);
   const participantWorkspaces = await jsonRequest("/api/v1/workspaces", {
     headers: participantHeaders(),
   });
-  assert.deepEqual(participantWorkspaces.body.items.map((workspace) => workspace.key), ["engineering", "operations"]);
+  assert.deepEqual(participantWorkspaces.body.items.map((workspace) => workspace.id), [fixtureIds["Engineering"], fixtureIds["Operations"]]);
   const issueTargetWorkspaces = await jsonRequest("/api/v1/workspaces", {
     headers: { cookie: `cfkanban_session=${issueSessionToken}` },
   });
   assert.equal(issueTargetWorkspaces.response.status, 200);
-  assert.deepEqual(issueTargetWorkspaces.body.items.map((workspace) => workspace.key), ["engineering"]);
-  const issueTargetOtherProject = await jsonRequest("/api/v1/workspaces/operations/projects", {
+  assert.deepEqual(issueTargetWorkspaces.body.items.map((workspace) => workspace.id), [fixtureIds["Engineering"]]);
+  const issueTargetOtherProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Operations"]}/projects`, {
     headers: { cookie: `cfkanban_session=${issueSessionToken}` },
   });
   assert.equal(issueTargetOtherProject.response.status, 404);
   const participantCreate = await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Forbidden", key: "forbidden" },
+    body: { display_name: "Forbidden" },
     headers: participantHeaders({ "idempotency-key": "wp03-participant-create" }),
     method: "POST",
   });
@@ -407,30 +410,30 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(malformedCursor.body.recovery, "refresh_cursor");
 
   const deletedProject = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE?expected_version=3",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}?expected_version=3`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(deletedProject.body.resource.deleted_at !== null, true);
   assert.equal(deletedProject.body.resource.version, 4);
   assertExactOpenApiObject(deletedProject.body.resource, "ProjectTombstoneWrite");
   const repeatedDeleteProject = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE?expected_version=4",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}?expected_version=4`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(repeatedDeleteProject.response.status, 409);
   assert.equal(repeatedDeleteProject.body.code, "RESOURCE_DELETED");
   assert.equal(repeatedDeleteProject.body.details.current_version, 4);
-  const hiddenProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
+  const hiddenProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}`, {
     headers: ownerHeaders(),
   });
   assert.equal(hiddenProject.response.status, 404);
-  const projectTombstones = await jsonRequest("/api/v1/workspaces/engineering/projects?deleted=only", {
+  const projectTombstones = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects?deleted=only`, {
     headers: ownerHeaders(),
   });
   assert.equal(projectTombstones.body.items.length, 1);
 
   const restoredProject = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/commands/restore`,
     {
       body: { expected_version: 4 },
       headers: ownerHeaders({ "idempotency-key": "wp03-restore-project" }),
@@ -441,7 +444,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.deepEqual(restoredProject.body.resource.resumed_public_projects.projects, []);
   assertExactOpenApiObject(restoredProject.body.resource, "ProjectRestoredWrite");
   const repeatedRestoreProject = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/commands/restore`,
     {
       body: { expected_version: 5 },
       headers: ownerHeaders({ "idempotency-key": "wp03-repeat-restore-project" }),
@@ -453,24 +456,24 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(repeatedRestoreProject.body.details.current_version, 5);
   const abandonedRestore = await db.prepare(
     `SELECT COUNT(*) AS count FROM idempotency_records
-     WHERE state = 'pending' AND route_template = '/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore'`,
+     WHERE state = 'pending' AND route_template = '/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/restore'`,
   ).first();
   assert.equal(abandonedRestore.count, 0);
 
   const deletedProjectBeforeParent = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE?expected_version=5",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}?expected_version=5`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(deletedProjectBeforeParent.body.resource.version, 6);
 
-  const deletedWorkspace = await jsonRequest("/api/v1/workspaces/engineering?expected_version=2", {
+  const deletedWorkspace = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}?expected_version=2`, {
     headers: ownerHeaders(),
     method: "DELETE",
   });
   assert.equal(deletedWorkspace.body.resource.version, 3);
   assertExactOpenApiObject(deletedWorkspace.body.resource, "WorkspaceTombstone");
   const childTombstoneUnderDeletedParent = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}?deleted=only`,
     { headers: ownerHeaders() },
   );
   assert.equal(childTombstoneUnderDeletedParent.response.status, 200);
@@ -483,7 +486,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     recovery: "restore_parent",
   });
   const childTombstonePageUnderDeletedParent = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects?deleted=only`,
     { headers: ownerHeaders() },
   );
   assert.equal(childTombstonePageUnderDeletedParent.response.status, 200);
@@ -534,23 +537,23 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
         (guardedDb) => getWorkspaceService(
           guardedDb,
           staleAuth,
-          "engineering",
-          new URL("https://kanban.example.test/api/v1/workspaces/engineering?deleted=only"),
+          fixtureIds["Engineering"],
+          new URL(`https://kanban.example.test/api/v1/workspaces/${fixtureIds["Engineering"]}?deleted=only`),
           staleOwnerNow,
         ),
         (guardedDb) => listProjectsService(
           guardedDb,
           staleAuth,
-          "engineering",
-          new URL("https://kanban.example.test/api/v1/workspaces/engineering/projects?deleted=only"),
+          fixtureIds["Engineering"],
+          new URL(`https://kanban.example.test/api/v1/workspaces/${fixtureIds["Engineering"]}/projects?deleted=only`),
           staleOwnerNow,
         ),
         (guardedDb) => getProjectService(
           guardedDb,
           staleAuth,
-          "engineering",
-          "CORE",
-          new URL("https://kanban.example.test/api/v1/workspaces/engineering/projects/CORE?deleted=only"),
+          fixtureIds["Engineering"],
+          fixtureIds["Core"],
+          new URL(`https://kanban.example.test/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}?deleted=only`),
           staleOwnerNow,
         ),
       ]) {
@@ -572,7 +575,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     await db.prepare("DELETE FROM web_sessions WHERE id = 'wp03-stale-owner-session'").run();
   }
   const childRestoreWhileParentDeleted = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/commands/restore`,
     {
       body: { expected_version: 6 },
       headers: ownerHeaders({ "idempotency-key": "wp03-restore-child-under-deleted-parent" }),
@@ -581,7 +584,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   );
   assert.equal(childRestoreWhileParentDeleted.response.status, 409);
   assert.equal(childRestoreWhileParentDeleted.body.code, "PARENT_WORKSPACE_DELETED");
-  const restoredWorkspace = await jsonRequest("/api/v1/workspaces/engineering/commands/restore", {
+  const restoredWorkspace = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/commands/restore`, {
     body: { expected_version: 3 },
     headers: ownerHeaders({ "idempotency-key": "wp03-restore-workspace" }),
     method: "POST",
@@ -589,7 +592,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(restoredWorkspace.body.resource.version, 4);
   assertExactOpenApiObject(restoredWorkspace.body.resource, "WorkspaceRestored");
   const restoredChildAfterParent = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE/commands/restore",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/commands/restore`,
     {
       body: { expected_version: 6 },
       headers: ownerHeaders({ "idempotency-key": "wp03-restore-child-after-parent" }),
@@ -613,7 +616,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     Date.now() + 60_000,
     Date.now(),
   ).run();
-  const cookieUpdatedWorkspace = await jsonRequest("/api/v1/workspaces/engineering", {
+  const cookieUpdatedWorkspace = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}`, {
     body: { display_name: "Engineering via Web", expected_version: 4 },
     headers: {
       cookie: `cfkanban_session=${ownerSessionToken}; cfkanban_csrf=${csrfToken}`,
@@ -626,7 +629,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(cookieUpdatedWorkspace.body.resource.version, 5);
 
   const cookieCreatedWorkspace = await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Created via Owner Web", key: "owner-web" },
+    body: { display_name: "Created via Owner Web" },
     headers: {
       cookie: `cfkanban_session=${ownerSessionToken}; cfkanban_csrf=${csrfToken}`,
       "idempotency-key": "wp03-owner-web-create-workspace",
@@ -637,9 +640,9 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   });
   assert.equal(cookieCreatedWorkspace.response.status, 200);
   assertWriteResult(cookieCreatedWorkspace.body);
-  assert.equal(cookieCreatedWorkspace.body.resource.key, "owner-web");
-  const cookieCreatedProject = await jsonRequest("/api/v1/workspaces/owner-web/projects", {
-    body: { display_name: "Created via Owner Web", key: "WEB" },
+  assert.equal(cookieCreatedWorkspace.body.resource.id, fixtureIds["Created via Owner Web"]);
+  const cookieCreatedProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Created via Owner Web"]}/projects`, {
+    body: { display_name: "Created via Owner Web" },
     headers: {
       cookie: `cfkanban_session=${ownerSessionToken}; cfkanban_csrf=${csrfToken}`,
       "idempotency-key": "wp03-owner-web-create-project",
@@ -650,7 +653,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   });
   assert.equal(cookieCreatedProject.response.status, 200);
   assertWriteResult(cookieCreatedProject.body);
-  assert.equal(cookieCreatedProject.body.resource.key, "WEB");
+  assert.equal(cookieCreatedProject.body.resource.id, fixtureIds["Created via Owner Web"]);
 
   const origin = await jsonRequest("/api/v1/admin/instance-origin", { headers: ownerHeaders() });
   assert.equal(origin.body.preferred_api_origin, "https://kanban.example.test");
@@ -695,4 +698,35 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   ).first();
   assert.equal(counts.operations, counts.events);
   assert.ok(counts.operations >= 10);
+});
+
+
+test("UUID containers allow duplicate names, replay creation, and reject obsolete keys and wrong parents", async () => {
+  const create = (path, body, idempotencyKey = crypto.randomUUID()) => jsonRequest(path, {
+    body, method: "POST", headers: ownerHeaders({ "idempotency-key": idempotencyKey }),
+  });
+  const workspaceBody = { display_name: "Same workspace name" };
+  const first = await create("/api/v1/workspaces", workspaceBody, "uuid-workspace-create");
+  const replay = await create("/api/v1/workspaces", workspaceBody, "uuid-workspace-create");
+  const second = await create("/api/v1/workspaces", workspaceBody);
+  assert.equal(first.response.status, 200);
+  assert.equal(replay.body.resource.id, first.body.resource.id);
+  assert.equal(replay.body.idempotent_replay, true);
+  assert.notEqual(second.body.resource.id, first.body.resource.id);
+  assert.equal("key" in first.body.resource, false);
+  const parent = `/api/v1/workspaces/${first.body.resource.id}`;
+  const projectBody = { display_name: "Same project name" };
+  const project = await create(`${parent}/projects`, projectBody, "uuid-project-create");
+  const projectReplay = await create(`${parent}/projects`, projectBody, "uuid-project-create");
+  const sibling = await create(`${parent}/projects`, projectBody);
+  assert.equal(project.response.status, 200);
+  assert.equal(projectReplay.body.resource.id, project.body.resource.id);
+  assert.equal(projectReplay.body.idempotent_replay, true);
+  assert.notEqual(sibling.body.resource.id, project.body.resource.id);
+  assert.equal("key" in project.body.resource, false);
+  const wrongParent = `/api/v1/workspaces/${second.body.resource.id}/projects/${project.body.resource.id}`;
+  assert.equal((await jsonRequest(wrongParent, { headers: ownerHeaders() })).response.status, 404);
+  assert.equal((await jsonRequest(wrongParent, { method: "PATCH", body: { display_name: "Wrong parent", expected_version: 1 }, headers: ownerHeaders() })).response.status, 404);
+  assert.equal((await create("/api/v1/workspaces", { ...workspaceBody, key: "obsolete" })).response.status, 400);
+  assert.equal((await create(`${parent}/projects`, { ...projectBody, key: "OLD" })).response.status, 400);
 });

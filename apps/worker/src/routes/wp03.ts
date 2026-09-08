@@ -53,25 +53,25 @@ async function authenticated(request: Request, env: WorkerEnv, context: RequestC
 
 export function registerWp03Routes(router: Router): Router {
   router
-    .get("/api/v1/workspaces/{workspace_key}/purge-preview", async (request, env, context) => {
+    .get("/api/v1/workspaces/{workspace_id}/purge-preview", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await getPurgePreview(env.DB, auth, path(context, "workspace_key"), undefined, context.startedAt), context.requestId);
+      return jsonResponse(await getPurgePreview(env.DB, auth, path(context, "workspace_id"), undefined, context.startedAt), context.requestId);
     })
-    .post("/api/v1/workspaces/{workspace_key}/commands/purge", async (request, env, context) => {
+    .post("/api/v1/workspaces/{workspace_id}/commands/purge", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const value = await body(request, ["expected_version", "confirm_name", "preview_digest"], ["expected_version", "confirm_name", "preview_digest"]);
-      return jsonResponse(await purgeContainer(env.DB, request, auth, path(context, "workspace_key"), undefined, requireVersion(value.expected_version as JsonValue), value.confirm_name as JsonValue, value.preview_digest as JsonValue, context.startedAt), context.requestId);
+      return jsonResponse(await purgeContainer(env.DB, request, auth, path(context, "workspace_id"), undefined, requireVersion(value.expected_version as JsonValue), value.confirm_name as JsonValue, value.preview_digest as JsonValue, context.startedAt), context.requestId);
     })
-    .get("/api/v1/workspaces/{workspace_key}/projects/{project_key}/purge-preview", async (request, env, context) => {
+    .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/purge-preview", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await getPurgePreview(env.DB, auth, path(context, "workspace_key"), path(context, "project_key"), context.startedAt), context.requestId);
+      return jsonResponse(await getPurgePreview(env.DB, auth, path(context, "workspace_id"), path(context, "project_id"), context.startedAt), context.requestId);
     })
-    .post("/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/purge", async (request, env, context) => {
+    .post("/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/purge", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const value = await body(request, ["expected_version", "confirm_name", "preview_digest"], ["expected_version", "confirm_name", "preview_digest"]);
-      return jsonResponse(await purgeContainer(env.DB, request, auth, path(context, "workspace_key"), path(context, "project_key"), requireVersion(value.expected_version as JsonValue), value.confirm_name as JsonValue, value.preview_digest as JsonValue, context.startedAt), context.requestId);
+      return jsonResponse(await purgeContainer(env.DB, request, auth, path(context, "workspace_id"), path(context, "project_id"), requireVersion(value.expected_version as JsonValue), value.confirm_name as JsonValue, value.preview_digest as JsonValue, context.startedAt), context.requestId);
     })
     .get("/.well-known/cfkanban-instance.json", async (_request, env, context) => jsonResponse(
       await getInstanceDiscovery(env.DB, context.url.origin),
@@ -104,51 +104,50 @@ export function registerWp03Routes(router: Router): Router {
     .post("/api/v1/workspaces", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
-      const value = await body(request, ["display_name", "key"], ["display_name", "key"]);
+      const value = await body(request, ["display_name"], ["display_name"]);
       return jsonResponse(await createWorkspace(
         env.DB,
         request,
         auth,
-        value.key as JsonValue,
         value.display_name as JsonValue,
         context.startedAt,
       ), context.requestId);
     })
-    .get("/api/v1/workspaces/{workspace_key}", async (request, env, context) => {
+    .get("/api/v1/workspaces/{workspace_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       return jsonResponse(await getWorkspace(
         env.DB,
         auth,
-        path(context, "workspace_key"),
+        path(context, "workspace_id"),
         context.url,
         context.startedAt,
       ), context.requestId);
     })
-    .patch("/api/v1/workspaces/{workspace_key}", async (request, env, context) => {
+    .patch("/api/v1/workspaces/{workspace_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const value = await body(request, ["display_name", "expected_version"], ["display_name", "expected_version"]);
       return jsonResponse(await updateWorkspace(
         env.DB,
         auth,
-        path(context, "workspace_key"),
+        path(context, "workspace_id"),
         value.display_name as JsonValue,
         requireVersion(value.expected_version as JsonValue),
         context.startedAt,
       ), context.requestId);
     })
-    .delete("/api/v1/workspaces/{workspace_key}", async (request, env, context) => {
+    .delete("/api/v1/workspaces/{workspace_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       return jsonResponse(await deleteWorkspace(
         env.DB,
         auth,
-        path(context, "workspace_key"),
+        path(context, "workspace_id"),
         expectedVersionFromQuery(context.url),
         context.startedAt,
       ), context.requestId);
     })
-    .post("/api/v1/workspaces/{workspace_key}/commands/restore", async (request, env, context) => {
+    .post("/api/v1/workspaces/{workspace_id}/commands/restore", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const value = await body(request, ["expected_version"], ["expected_version"]);
@@ -156,75 +155,74 @@ export function registerWp03Routes(router: Router): Router {
         env.DB,
         request,
         auth,
-        path(context, "workspace_key"),
+        path(context, "workspace_id"),
         requireVersion(value.expected_version as JsonValue),
         context.startedAt,
       ), context.requestId);
     })
-    .get("/api/v1/workspaces/{workspace_key}/projects", async (request, env, context) => {
+    .get("/api/v1/workspaces/{workspace_id}/projects", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       return jsonResponse(await listProjects(
         env.DB,
         auth,
-        path(context, "workspace_key"),
+        path(context, "workspace_id"),
         context.url,
         context.startedAt,
       ), context.requestId);
     })
-    .post("/api/v1/workspaces/{workspace_key}/projects", async (request, env, context) => {
+    .post("/api/v1/workspaces/{workspace_id}/projects", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
-      const value = await body(request, ["context", "display_name", "key"], ["display_name", "key"]);
+      const value = await body(request, ["context", "display_name"], ["display_name"]);
       return jsonResponse(await createProject(
         env.DB,
         request,
         auth,
-        path(context, "workspace_key"),
-        value.key as JsonValue,
+        path(context, "workspace_id"),
         value.display_name as JsonValue,
         value.context as JsonValue | undefined,
         context.startedAt,
       ), context.requestId);
     })
-    .get("/api/v1/workspaces/{workspace_key}/projects/{project_key}", async (request, env, context) => {
+    .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       return jsonResponse(await getProject(
         env.DB,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         context.url,
         context.startedAt,
       ), context.requestId);
     })
-    .patch("/api/v1/workspaces/{workspace_key}/projects/{project_key}", async (request, env, context) => {
+    .patch("/api/v1/workspaces/{workspace_id}/projects/{project_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const value = await body(request, ["context", "display_name", "expected_version"], ["expected_version"]);
       return jsonResponse(await updateProject(
         env.DB,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         value.display_name as JsonValue | undefined,
         value.context as JsonValue | undefined,
         requireVersion(value.expected_version as JsonValue),
         context.startedAt,
       ), context.requestId);
     })
-    .delete("/api/v1/workspaces/{workspace_key}/projects/{project_key}", async (request, env, context) => {
+    .delete("/api/v1/workspaces/{workspace_id}/projects/{project_id}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       return jsonResponse(await deleteProject(
         env.DB,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         expectedVersionFromQuery(context.url),
         context.startedAt,
       ), context.requestId);
     })
-    .post("/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore", async (request, env, context) => {
+    .post("/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/restore", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const value = await body(request, ["expected_version"], ["expected_version"]);
@@ -232,30 +230,30 @@ export function registerWp03Routes(router: Router): Router {
         env.DB,
         request,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         requireVersion(value.expected_version as JsonValue),
         context.startedAt,
       ), context.requestId);
     })
-    .get("/api/v1/workspaces/{workspace_key}/projects/{project_key}/statuses", async (request, env, context) => {
+    .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       return jsonResponse(await listStatuses(
         env.DB,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
       ), context.requestId);
     })
-    .patch("/api/v1/workspaces/{workspace_key}/projects/{project_key}/statuses/{status_key}", async (request, env, context) => {
+    .patch("/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_key}", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const value = await body(request, ["display_name", "expected_version"], ["display_name", "expected_version"]);
       return jsonResponse(await updateStatusName(
         env.DB,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         path(context, "status_key"),
         value.display_name as JsonValue,
         requireVersion(value.expected_version as JsonValue),

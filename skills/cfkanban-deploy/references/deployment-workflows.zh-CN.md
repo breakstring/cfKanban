@@ -195,3 +195,7 @@ Worker rollback 不会回滚 D1。D1 restore 是破坏性操作，绝不自动�
 ## 停止条件
 
 canonical origin/digest mismatch、publisher discontinuity、存储不可验证、未授权的 Node/Wrangler 不兼容、Windows/WSL 混用、当前或选中 Cloudflare auth 上下文不可读、auth preflight blockers、未明确批准重新认证的既有 profile 冲突、未预期 OAuth scope、account 歧义、Owner display name 缺失、未知资源所有权、plan drift、不符合准确同 journal 恢复规则的 migration checksum/schema drift、部分应用或 restore evidence 不可用时必须停止。自动流程绝不枚举 profiles，无关 profile 也不构成 blocker。加载 Skill 或安装 marketplace/plugin 入口从来不等于获得部署授权。
+
+## 不兼容开发迁移
+
+普通升级仍只接受向后兼容迁移。`breaking_non_destructive` 必须在计划输入显式设置 `allow_breaking_change: true` 并重新授权完整计划；预览旧 API/URL/scope 失效、旧操作快照清除、迁移到新 Worker 发布之间的服务中断。迁移后禁止回滚旧 Worker，只能继续部署兼容新 schema 的版本；restore point 必须验证，D1 restore 始终需要另行授权。`absent_columns` 以实际 table.column 读回证明，缺列证据时停止。

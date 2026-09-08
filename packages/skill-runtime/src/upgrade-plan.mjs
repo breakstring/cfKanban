@@ -159,7 +159,7 @@ function artifactNames(value, field) {
   return [...new Set(value)].sort();
 }
 
-function migrationDelta(values) {
+function migrationDelta(values, allowBreakingChange) {
   if (!Array.isArray(values)) throw toolError("INVALID_UPGRADE_MIGRATION", "migrations must be an array");
   const ordered = values.map((value, index) => {
     if (!Number.isSafeInteger(value?.sequence) || value.sequence < 1) {
@@ -172,20 +172,24 @@ function migrationDelta(values) {
     if (value.destructive === true || value.classification === "destructive") {
       throw toolError("DESTRUCTIVE_MIGRATION_REQUIRES_SEPARATE_PLAN", "Normal Instance upgrade rejects destructive migrations", { sequence: value.sequence, name });
     }
-    if (value.classification !== "backward_compatible") {
+    if (value.classification === "breaking_non_destructive" && !allowBreakingChange) {
+      throw toolError("BREAKING_MIGRATION_REQUIRES_EXPLICIT_PLAN", "Set allow_breaking_change only for an explicitly authorized incompatible upgrade plan", { sequence: value.sequence, name });
+    }
+    if (!["backward_compatible", "breaking_non_destructive"].includes(value.classification)) {
       throw toolError("INVALID_UPGRADE_MIGRATION", "Normal Instance upgrade accepts only backward-compatible migration deltas", { sequence: value.sequence, name });
     }
     return {
       sequence: value.sequence,
       name,
       sha256: digest(value.sha256, "migration.sha256"),
-      classification: "backward_compatible",
+      classification: value.classification,
       destructive: false,
       reentry: requireString(value.reentry, "migration.reentry", { max: 128 }),
       expected_artifacts: {
         tables: artifactNames(value.expected_artifacts?.tables, "migration.expected_artifacts.tables"),
         indexes: artifactNames(value.expected_artifacts?.indexes, "migration.expected_artifacts.indexes"),
         columns: artifactNames(value.expected_artifacts?.columns, "migration.expected_artifacts.columns"),
+        ...(value.expected_artifacts?.absent_columns ? { absent_columns: artifactNames(value.expected_artifacts.absent_columns, "migration.expected_artifacts.absent_columns") } : {}),
       },
     };
   });
@@ -250,6 +254,7 @@ export function createInstanceUpgradePlan({
   current,
   target,
   migrations = [],
+  allow_breaking_change = false,
   restorePoint: restorePointInput,
 }) {
   const instance = requireUuid(instanceId, "instance_id");
@@ -300,7 +305,9 @@ export function createInstanceUpgradePlan({
     || !satisfiesSimpleRange(normalizedTarget.service_api_version, normalizedTarget.compatibility.service_api)) {
     throw toolError("INCOMPATIBLE_SERVICE_API", "Current or target Service API is outside the target release compatibility range");
   }
-  const orderedMigrations = migrationDelta(migrations);
+  if (typeof allow_breaking_change !== "boolean") throw toolError("INVALID_UPGRADE_PLAN", "allow_breaking_change must be boolean");
+  const orderedMigrations = migrationDelta(migrations, allow_breaking_change);
+  const breakingChange = orderedMigrations.some((migration) => migration.classification === "breaking_non_destructive");
   if (normalizedTarget.schema_version < normalizedCurrent.schema_version
     || (orderedMigrations.length === 0 && normalizedTarget.schema_version !== normalizedCurrent.schema_version)
     || (orderedMigrations.length > 0 && normalizedTarget.schema_version <= normalizedCurrent.schema_version)) {
@@ -389,6 +396,7 @@ export function createInstanceUpgradePlan({
     migrations: {
       ordered: orderedMigrations,
       allow_destructive: false,
+      allow_breaking_change,
       require_ledger_and_schema_readback: true,
       checksum_ledger_table: "cfkanban_migration_ledger",
       restore_automatically: false,
@@ -400,11 +408,18 @@ export function createInstanceUpgradePlan({
     binding_changes_allowed: false,
     cost_delta: false,
     domain_delta: false,
-    expected_interruption: "single_worker_deploy",
+    expected_interruption: breakingChange ? "service_unavailable_between_migration_and_compatible_worker_deploy" : "single_worker_deploy",
+    ...(breakingChange ? { breaking_change: {
+      old_api_urls_and_scope_unsupported: true,
+      old_operation_snapshots_removed: true,
+      preserve_business_data_and_identity: true,
+      recovery: "deploy_a_worker_compatible_with_the_migrated_schema",
+    } } : {}),
     d1_restore_automatic: false,
     worker_rollback_rolls_back_d1: false,
     rollback_boundary: {
       worker_rollback_requires_compatible_current_schema: true,
+      previous_worker_rollback_prohibited_after_migration: breakingChange,
       worker_rollback_does_not_rollback_d1: true,
       d1_restore_requires_new_authorization: true,
     },

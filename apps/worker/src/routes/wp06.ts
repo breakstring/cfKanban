@@ -169,25 +169,25 @@ export function registerWp06Routes(router: Router): Router {
         context.startedAt,
       ), context.requestId);
     })
-    .get("/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels", async (request, env, context) => {
+    .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       return jsonResponse(await listLabels(
         env.DB,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         context.url,
       ), context.requestId);
     })
-    .post("/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels", async (request, env, context) => {
+    .post("/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels", async (request, env, context) => {
       const auth = await writeAuth(request, env, context);
       const value = await body(request, ["color", "name"], ["name"]);
       return jsonResponse(await createLabel(
         env.DB,
         request,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         value.name as JsonValue,
         value.color as JsonValue | undefined,
         context.startedAt,

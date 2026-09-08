@@ -1,5 +1,7 @@
 # cfKanban API & D1 Schema SPEC
 
+> 当前容器身份合同由 [工作区与项目 UUID 寻址重构](2026-09-08-container-uuid-spec.md)（Frozen，2026-09-08）覆盖：Workspace/Project 取消 key，创建仅使用名称，服务端生成 UUID；REST/Web 使用 UUID，本地 scope 使用 schema 2。用户明确授权开发阶段不兼容旧 API、URL 和配置。本文保留的早期 key/DDL 描述不再是当前实现依据；其他身份、权限、并发和安全合同保持有效。
+
 > 2026-09-08 增补：[工作区与项目归档及永久删除合同](2026-09-08-container-purge-spec.md) 已冻结。仅 Owner 可预览并永久删除已归档项目或已归档空工作区；该特例覆盖本文相应的 hard-delete 禁止及项目内历史永久保留表述，其余软删除、权限与恢复合同不变。
 
 - 文档状态：Frozen
@@ -115,12 +117,11 @@ Browser Launch 的 `expires_at` 固定为 `created_at + 5 minutes`，只能兑�
 - D1 布尔值使用带 `CHECK (value IN (0,1))` 的 `INTEGER`；API 使用 JSON boolean。
 - PATCH 中字段缺失表示不修改；只有 schema 明确可空的字段接受 `null`，不能用空字符串代替清除。
 
-### 3.4 稳定 key 与名称
+### 3.4 容器 UUID 与名称
 
-- Workspace key：`[a-z][a-z0-9-]{1,31}`，创建前转为小写，创建后不可修改。
-- Project key：`[A-Z][A-Z0-9-]{1,15}`，创建前转为大写，创建后不可修改。
-- Workspace key 在实例内唯一；Project key 在 Workspace 内唯一；soft delete 后仍保留唯一性，不允许复用。
-- display name 去除首尾空白后必须非空，最多 128 Unicode code points，不参与唯一性、认证或寻址。
+- Workspace/Project 由服务端生成 UUID，创建 body 不接受 key；Project 必须显式指定父 Workspace UUID。
+- 显示名称非空但不唯一，可修改；API 和 URL 按 UUID 寻址，服务端核对项目归属。
+- 重建同名容器获得不同 UUID；不保留名称占用规则。
 - Label name 去除首尾空白后最多 64 Unicode code points；同一 Project 内按 SQLite `NOCASE` 规则唯一，soft delete 后仍保留名称，避免创建替身导致恢复冲突。`NOCASE` 的大小写折叠只承诺 SQLite 的 ASCII 语义，非 ASCII 名称按原文本区分。
 
 ### 3.5 请求上限与幂等
@@ -172,7 +173,7 @@ cursor 不包含 secret，也不以保密性作为安全边界。服务端每次
 
 ### 4.3 Scope 与关键词
 
-- 可重复 `project={workspace_key}/{project_key}` 最多 20 个；可重复 `workspace={workspace_key}` 最多 20 个。同维度 OR、不同维度 AND。
+- 可重复 `project={project_id}` 最多 20 个；可重复 `workspace={workspace_id}` 最多 20 个。同维度 OR、不同维度 AND。
 - Project Invite 一次最多携带 20 个 Project grant specifications，以适配 Agent 上下文、D1 100 bound parameter 上限和单操作可审阅性。
 - `q` 经 Unicode NFKC、lowercase 和首尾空白清理后为 1～128 UTF-8 bytes。title 查询使用参数化的 `instr(title_search, ?1) > 0`，不把调用方文本解释成 `LIKE/GLOB` pattern。
 - v0 的 Issue `q` 只匹配 identifier exact 或规范化 title substring，不扫描 body/comment。substring 查询不承诺索引加速；它允许省略 Project filter，但响应必须在 `resolved_scope` 中警告 `broad_search=true`，超过应用扫描预算时返回 `QUERY_SCOPE_TOO_BROAD`。Skill 仍强烈推荐明确 Project。
@@ -200,13 +201,13 @@ cursor 不包含 secret，也不以保密性作为安全边界。服务端每次
 | Method | Path | 权限 | 语义 |
 | --- | --- | --- | --- |
 | GET/POST | `/api/v1/workspaces` | visible / Owner | 列表；创建一个 Workspace |
-| GET/PATCH/DELETE | `/api/v1/workspaces/{workspace_key}` | visible / Owner | 读取、改 display name、soft delete |
-| POST | `/api/v1/workspaces/{workspace_key}/commands/restore` | Owner | 原子恢复容器 |
-| GET/POST | `/api/v1/workspaces/{workspace_key}/projects` | visible / Owner | 列表；创建一个 Project |
-| GET/PATCH/DELETE | `/api/v1/workspaces/{workspace_key}/projects/{project_key}` | reader / Owner | 读取；修改 name/context；soft delete |
-| POST | `/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore` | Owner | 原子恢复 Project |
-| GET | `/api/v1/workspaces/{workspace_key}/projects/{project_key}/statuses` | reader | 五个固定状态及显示名 |
-| PATCH | `/api/v1/workspaces/{workspace_key}/projects/{project_key}/statuses/{status_key}` | Owner | 只改显示名，带 Project `expected_version` 并递增 Project version |
+| GET/PATCH/DELETE | `/api/v1/workspaces/{workspace_id}` | visible / Owner | 读取、改 display name、soft delete |
+| POST | `/api/v1/workspaces/{workspace_id}/commands/restore` | Owner | 原子恢复容器 |
+| GET/POST | `/api/v1/workspaces/{workspace_id}/projects` | visible / Owner | 列表；创建一个 Project |
+| GET/PATCH/DELETE | `/api/v1/workspaces/{workspace_id}/projects/{project_id}` | reader / Owner | 读取；修改 name/context；soft delete |
+| POST | `/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/restore` | Owner | 原子恢复 Project |
+| GET | `/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses` | reader | 五个固定状态及显示名 |
+| PATCH | `/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_key}` | Owner | 只改显示名，带 Project `expected_version` 并递增 Project version |
 
 容器列表支持 `deleted=exclude|only`，默认 `exclude`。容器 restore 不级联恢复单独删除的子资源或撤销的 Grants，但会让仍 enabled 的 Public Join Policy 随 Project 重新 effective-active；恢复响应必须返回 `resumed_public_projects` 有界摘要。软删除容器不修改 Policy、public ID、limits 或 `project_usage`，此前 disabled 的 Policy 不因恢复而启用。
 
@@ -216,7 +217,7 @@ cursor 不包含 secret，也不以保密性作为安全边界。服务端每次
 | --- | --- | --- | --- |
 | GET | `/api/v1/issues` | Authenticated | 跨授权 Project 聚合列表 |
 | GET | `/api/v1/issues/candidates` | Authenticated | 只读确定性候选列表 |
-| GET/POST | `/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues` | reader / writer | Project 列表；创建一个 Issue |
+| GET/POST | `/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues` | reader / writer | Project 列表；创建一个 Issue |
 | GET/PATCH/DELETE | `/api/v1/issues/{identifier}` | reader / writer | detail；普通字段/CAS 更新；soft delete |
 | POST | `/api/v1/issues/{identifier}/commands/restore` | writer | 恢复一个 Issue |
 | GET | `/api/v1/issues/{identifier}/context` | reader | 64 KiB 有界 Agent context |
@@ -229,7 +230,7 @@ cursor 不包含 secret，也不以保密性作为安全边界。服务端每次
 | GET/POST | `/api/v1/issues/{identifier}/comments` | reader / writer | 分页读取；追加一个 standard Comment |
 | GET/DELETE | `/api/v1/comments/{comment_id}` | reader / writer | 读取；只 soft delete standard Comment |
 | POST | `/api/v1/comments/{comment_id}/commands/restore` | writer | 只恢复 standard Comment |
-| GET/POST | `/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels` | reader / writer | 列表；创建一个 Label |
+| GET/POST | `/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels` | reader / writer | 列表；创建一个 Label |
 | GET/PATCH/DELETE | `/api/v1/labels/{label_id}` | reader / writer | 读取、改名/颜色、soft delete |
 | POST | `/api/v1/labels/{label_id}/commands/restore` | writer | 恢复一个 Label |
 | GET/POST | `/api/v1/issues/{identifier}/relations` | reader / writer on both ends | 可见关系；创建一个 Relation |
@@ -342,8 +343,8 @@ Policy disabled 期间不为普通写入维护 `project_usage` counter。重新�
   "id": "uuid",
   "number": 123,
   "identifier": "CFK-123",
-  "workspace": {"key": "agent-tools", "display_name": "Agent Tools"},
-  "project": {"id": "uuid", "key": "CORE", "display_name": "Core"},
+  "workspace": {"id": "workspace-uuid", "display_name": "Agent Tools"},
+  "project": {"id": "project-uuid", "display_name": "Core"},
   "title": "Implement invitation redeem",
   "status": {"key": "todo", "category": "unstarted", "display_name": "Todo", "terminal": false},
   "priority": "high",
@@ -513,8 +514,8 @@ Cloudflare 在 Worker 执行前生成的 Error 1027、平台 429 或 HTML 5xx �
 
 | 表 | 关键列 | 约束 |
 | --- | --- | --- |
-| `workspaces` | id, key, display_name, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | key unique，删除后不复用 |
-| `projects` | id, workspace_id, key, display_name, context, issue_limit, comment_limit, principal_limit, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | unique(workspace_id,key)，删除后不复用；context 最大 32 KiB；limits 为 null 或正整数，Public Join enabled 时三项必须非空 |
+| `workspaces` | id, display_name, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | UUID 唯一，名称可重复 |
+| `projects` | id, workspace_id, display_name, context, issue_limit, comment_limit, principal_limit, version, deleted_at/by, created/updated, created_operation_id, last_operation_id | UUID 唯一，workspace_id 外键，名称可重复；context 最大 32 KiB；limits 为 null 或正整数，Public Join enabled 时三项必须非空 |
 | `project_usage` | project_id, active_issue_count, active_comment_count, active_principal_count, updated_at, last_operation_id | project_id PK；只为 Public Join enabled Project 保持当前行，三个 counter 必须 >= 0；关闭时删除 counter 行，重新开启时从权威表原子重算；enabled 期间与 create/soft-delete/restore、grant/revoke/regrant 在同一 transaction 增减 |
 | `public_join_policies` | project_id, public_id, public_summary, enabled_at/by, disabled_at/by, version, created_at, updated_at, last_operation_id | project_id PK、public_id unique；summary 有界；一 Project 一条当前 Policy；关闭后 public_id 不复用 |
 | `project_status_names` | project_id, status_key, display_name, updated_at/by, last_operation_id | PK(project_id,status_key)；status_key 固定五值；并发前置条件使用所属 Project version |
@@ -570,8 +571,8 @@ Relation 唯一性：
 | unique `browser_launches(code_digest)`；`browser_launches(expires_at,redeemed_at,revoked_at)` | launch redeem 与有界清理 |
 | unique `web_sessions(token_digest)`；`web_sessions(principal_id,revoked_at,expires_at)`；`web_sessions(source_kind,source_id,revoked_at)` | cookie 鉴权、Principal/来源 Credential 或 Passkey 撤销联动 |
 | `web_authenticators(principal_id,revoked_at,created_at,id)` | 当前 Principal 的 Passkey 摘要列表与 active 过滤 |
-| unique `workspaces(key)` | Workspace path lookup |
-| unique `projects(workspace_id,key)`；`projects(workspace_id,deleted_at,display_name,id)` | Project path/list/tombstone |
+| unique `workspaces(id)` | Workspace path lookup |
+| unique `projects(id)`；`projects(workspace_id,deleted_at,display_name,id)` | Project path/list/tombstone |
 | unique `project_grants(principal_id,project_id)`；`project_grants(project_id,revoked_at,role,principal_id)` | 授权与 Project 成员查找 |
 | `issues(project_id,deleted_at,updated_at DESC,number DESC)` | 普通 Project Issue 列表 |
 | `issues(project_id,status_key,deleted_at,priority_rank,created_at,number)` | 候选列表 |
@@ -704,7 +705,7 @@ Worker 在 `db.batch()` 提交前无法在同一个 transaction callback 中读�
 
 D-215/D-216 已要求对两份 Frozen 上游 SPEC 做合同修订 3；本文相应新增 Web 会话落点。下列技术合同已经通过 [2026-08-29 API/D1 验证快照](../research/api-d1-contract-validation-2026-08-29.md) 复核并冻结：
 
-- Workspace key 小写 slug、Project key 大写短 key；
+- Workspace/Project UUID 寻址、名称创建、同名消歧及旧 key 字段拒绝；
 - Invite 单次最多 20 个 Project grants；
 - `q` 只做 identifier/title 搜索，不搜索 body/comment；
 - v0 不使用 FTS5；后期检索增强优先采用 Vectorize 可重建派生索引；

@@ -300,8 +300,9 @@ async function commentEvent(
                 'identifier', 'CFK-' || issue.number,
                 'project', json_object(
                   'id', project.id,
-                  'key', project.key,
-                  'workspace_key', workspace.key
+                  'display_name', project.display_name,
+                  'workspace_display_name', workspace.display_name,
+                  'workspace_id', workspace.id
                 ),
                 'title', issue.title,
                 'version', issue.version
@@ -371,8 +372,9 @@ async function readCommentOperationIssueReference(
     || typeof project !== "object"
     || Array.isArray(project)
     || typeof (project as Record<string, unknown>).id !== "string"
-    || typeof (project as Record<string, unknown>).key !== "string"
-    || typeof (project as Record<string, unknown>).workspace_key !== "string"
+    || typeof (project as Record<string, unknown>).display_name !== "string"
+    || typeof (project as Record<string, unknown>).workspace_display_name !== "string"
+    || typeof (project as Record<string, unknown>).workspace_id !== "string"
   ) throw new AtomicBatchRejectedError();
   return reference as { [key: string]: JsonValue };
 }

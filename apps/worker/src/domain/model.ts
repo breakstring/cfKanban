@@ -108,20 +108,6 @@ export function requireDisplayName(value: JsonValue, field = "display_name"): st
   return normalized;
 }
 
-export function requireWorkspaceKey(value: JsonValue, field = "key"): string {
-  if (typeof value !== "string" || !/^[a-z][a-z0-9-]{1,31}$/.test(value)) {
-    throw validationError("schema_validation_failed", { field });
-  }
-  return value;
-}
-
-export function requireProjectKey(value: JsonValue, field = "key"): string {
-  if (typeof value !== "string" || !/^[A-Z][A-Z0-9-]{1,15}$/.test(value)) {
-    throw validationError("schema_validation_failed", { field });
-  }
-  return value;
-}
-
 export function requireContext(value: JsonValue | undefined, field = "context"): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;

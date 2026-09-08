@@ -48,7 +48,6 @@ interface RelationRow {
   source_number: number;
   source_project_id: string;
   source_project_deleted_at: number | null;
-  source_project_key: string;
   source_project_name: string;
   source_title: string;
   source_version: number;
@@ -57,14 +56,12 @@ interface RelationRow {
   target_number: number;
   target_project_id: string;
   target_project_deleted_at: number | null;
-  target_project_key: string;
   target_project_name: string;
   target_title: string;
   target_version: number;
   version: number;
   workspace_id: string;
   workspace_deleted_at: number | null;
-  workspace_key: string;
   workspace_name: string;
 }
 
@@ -86,8 +83,9 @@ function endpointResource(row: RelationRow, source: boolean): { [key: string]: J
     identifier: `CFK-${row.source_number}`,
     project: {
       id: row.source_project_id,
-      key: row.source_project_key,
-      workspace_key: row.workspace_key,
+      display_name: row.source_project_name,
+      workspace_display_name: row.workspace_name,
+      workspace_id: row.workspace_id,
     },
     title: row.source_title,
     version: row.source_version,
@@ -96,8 +94,9 @@ function endpointResource(row: RelationRow, source: boolean): { [key: string]: J
     identifier: `CFK-${row.target_number}`,
     project: {
       id: row.target_project_id,
-      key: row.target_project_key,
-      workspace_key: row.workspace_key,
+      display_name: row.target_project_name,
+      workspace_display_name: row.workspace_name,
+      workspace_id: row.workspace_id,
     },
     title: row.target_title,
     version: row.target_version,
@@ -128,7 +127,6 @@ function relationResource(row: RelationRow, canWrite: boolean): { [key: string]:
     version: row.version,
     workspace: {
       id: row.workspace_id,
-      key: row.workspace_key,
     },
     ...(row.deleted_at === null ? {} : {
       parent_status: {
@@ -149,21 +147,19 @@ const RELATION_SELECT = `
          relation.version, relation.deleted_at, relation.deleted_by_principal_id,
          relation.created_at, relation.created_by_principal_id,
          relation.last_operation_id,
-         workspace.key AS workspace_key, workspace.display_name AS workspace_name,
+         workspace.display_name AS workspace_name,
          workspace.deleted_at AS workspace_deleted_at,
          source.id AS source_id, source.number AS source_number,
          source.deleted_at AS source_deleted_at,
          source.title AS source_title, source.version AS source_version,
          source.project_id AS source_project_id,
          source_project.deleted_at AS source_project_deleted_at,
-         source_project.key AS source_project_key,
          source_project.display_name AS source_project_name,
          target.id AS target_id, target.number AS target_number,
          target.deleted_at AS target_deleted_at,
          target.title AS target_title, target.version AS target_version,
          target.project_id AS target_project_id,
          target_project.deleted_at AS target_project_deleted_at,
-         target_project.key AS target_project_key,
          target_project.display_name AS target_project_name
   FROM issue_relations relation
   JOIN workspaces workspace ON workspace.id = relation.workspace_id
@@ -400,7 +396,6 @@ function relationSnapshotStatement(
          'source_number', source.number,
          'source_project_id', source.project_id,
          'source_project_deleted_at', source_project.deleted_at,
-         'source_project_key', source_project.key,
          'source_project_name', source_project.display_name,
          'source_title', source.title,
          'source_version', source.version,
@@ -409,14 +404,12 @@ function relationSnapshotStatement(
          'target_number', target.number,
          'target_project_id', target.project_id,
          'target_project_deleted_at', target_project.deleted_at,
-         'target_project_key', target_project.key,
          'target_project_name', target_project.display_name,
          'target_title', target.title,
          'target_version', target.version,
          'version', relation.version,
          'workspace_id', workspace.id,
          'workspace_deleted_at', workspace.deleted_at,
-         'workspace_key', workspace.key,
          'workspace_name', workspace.display_name
        )
        FROM issue_relations relation

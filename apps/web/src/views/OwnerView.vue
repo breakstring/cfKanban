@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
+import ContainerIdentityDetails from "../components/ContainerIdentityDetails.vue";
+import ContainerIcon from "../components/ContainerIcon.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
@@ -13,6 +15,7 @@ import {
   markCasReadbackComplete,
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
+import { containerChoiceLabels } from "../lib/container-choice";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import {
@@ -54,9 +57,9 @@ type OwnerSection = "overview" | "workspaces" | "access" | "audit" | "archive";
 const props = defineProps<{ section: OwnerSection; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
 
-interface ProjectEntry extends ContainerResource { workspaceKey: string }
+interface ProjectEntry extends ContainerResource { workspaceId: string; workspaceName: string }
 interface PurgePreview {
-  target: { kind: "workspace" | "project"; id: string; key: string; workspace_key: string | null; display_name: string; version: number };
+  target: { kind: "workspace" | "project"; id: string; workspace_id: string | null; display_name: string; version: number };
   counts: { projects: number; issues: number; comments: number; labels: number; relations: number; cross_project_relations: number; grants: number; invitations: number; shared_invitations: number; browser_launches: number; web_sessions: number };
   can_purge: boolean;
   blocking_reason: null | "ARCHIVE_REQUIRED" | "WORKSPACE_NOT_EMPTY";
@@ -77,7 +80,7 @@ interface PolicyResource {
   allowed_actions: string[];
   enabled: boolean;
   policy_version: number | null;
-  project: { display_name: string; id: string; key: string; version: number; workspace_key: string };
+  project: { display_name: string; id: string; version: number; workspace_id: string };
   public_summary: string | null;
   resource_limits: { comments: number | null; issues: number | null; principals: number | null };
 }
@@ -98,12 +101,26 @@ const meta = ref<MetaResource | null>(null);
 const rateSettings = ref<RateLimitSettings | null>(null);
 const workspaces = ref<ContainerResource[]>([]);
 const projects = ref<ProjectEntry[]>([]);
+const projectChoiceLabels = computed(() => containerChoiceLabels(projects.value.map((item) => ({ id: item.id, name: item.display_name, workspaceName: item.workspaceName }))));
+const workspaceChoiceLabels = computed(() => containerChoiceLabels(workspaces.value.map((item) => ({ id: item.id, name: item.display_name }))));
 const deletedWorkspaces = ref<ContainerResource[]>([]);
 const deletedProjects = ref<ProjectEntry[]>([]);
 const expandedWorkspaces = ref<string[]>([]);
+const archivedWorkspaceLabels = computed(() => containerChoiceLabels([...workspaces.value, ...deletedWorkspaces.value].map(item => ({ id: item.id, name: item.display_name }))));
+const archivedProjectLabels = computed(() => containerChoiceLabels(deletedProjects.value.map(item => ({ id: item.id, name: item.display_name, workspaceName: item.workspaceName }))));
+const purgeTargetLabel = computed(() => {
+  const target = purgePreview.value?.target;
+  if (!target) return "";
+  const labels = target.kind === "workspace" ? archivedWorkspaceLabels.value : archivedProjectLabels.value;
+  return labels.get(target.id)?.label ?? target.display_name;
+});
 const archivedGroups = computed(() => [...workspaces.value, ...deletedWorkspaces.value]
-  .map((workspace) => ({ workspace, projects: deletedProjects.value.filter((project) => project.workspaceKey === workspace.key) }))
+  .map((workspace) => ({ workspace, projects: deletedProjects.value.filter((project) => project.workspaceId === workspace.id) }))
   .filter((group) => group.workspace.deleted_at !== null || group.projects.length > 0));
+const archiveSections = computed(() => [
+  { kind: "projects", groups: archivedGroups.value.filter((group) => group.workspace.deleted_at === null) },
+  { kind: "workspaces", groups: archivedGroups.value.filter((group) => group.workspace.deleted_at !== null) },
+].filter((section) => section.groups.length > 0));
 
 function toggleWorkspace(id: string): void {
   expandedWorkspaces.value = expandedWorkspaces.value.includes(id)
@@ -148,16 +165,16 @@ const invitationReviewRecord = ref<InvitationRecoveryRecord | null>(null);
 const presentedInvitationRecord = ref<InvitationRecoveryRecord | null>(null);
 const selectedWorkspace = ref("");
 const selectedProject = ref<ProjectEntry | null>(null);
-const workspaceForm = ref({ display_name: "", key: "" });
-const projectForm = ref({ context: "", display_name: "", key: "" });
+const workspaceForm = ref({ display_name: "" });
+const projectForm = ref({ context: "", display_name: "" });
 const inviteForm = ref({ project_id: "", role: "writer" as "reader" | "writer" });
 const policy = ref<PolicyResource | null>(null);
 const policyForm = ref({ comments: 500, issues: 50, principals: 50, public_summary: "" });
-const containerEdit = ref<{ display_name: string; kind: "workspace" | "project"; item: ContainerResource; workspace_key?: string } | null>(null);
+const containerEdit = ref<{ display_name: string; kind: "workspace" | "project"; item: ContainerResource; workspace_id?: string } | null>(null);
 const projectSettingsForm = ref({ context: "", display_name: "" });
 const projectStatuses = ref<ProjectStatusResource[]>([]);
 const statusDrafts = ref<Record<string, string>>({});
-const restoreTarget = ref<{ kind: "workspace" | "project"; item: ContainerResource; workspace_key?: string } | null>(null);
+const restoreTarget = ref<{ kind: "workspace" | "project"; item: ContainerResource; workspace_id?: string } | null>(null);
 const selectedPrincipal = ref<PrincipalDetail | null>(null);
 const principalCredentialsNextCursor = ref<string | null>(null);
 const principalCredentialsLoadingMore = ref(false);
@@ -352,8 +369,8 @@ const tabs = computed(() => [
 ]);
 
 const sectionTitle = computed(() => tabs.value.find((tab) => tab.key === props.section)?.label ?? t("admin.overview"));
-function openCreateProject(workspaceKey = ""): void {
-  selectedWorkspace.value = workspaceKey;
+function openCreateProject(workspaceId = ""): void {
+  selectedWorkspace.value = workspaceId;
   showProject.value = true;
 }
 
@@ -376,17 +393,17 @@ async function loadWorkspaceTree(includeDeleted = props.section === "archive"): 
       workspace.deleted_at
         ? Promise.resolve<ListResult<ContainerResource>>({ has_more: false, items: [], next_cursor: null })
         : apiRequest<ListResult<ContainerResource>>(
-          `/api/v1/workspaces/${encodeURIComponent(workspace.key)}/projects?limit=20`,
+          `/api/v1/workspaces/${encodeURIComponent(workspace.id)}/projects?limit=20`,
         ),
       includeDeleted
         ? apiRequest<ListResult<ContainerResource>>(
-          `/api/v1/workspaces/${encodeURIComponent(workspace.key)}/projects?deleted=only&limit=20`,
+          `/api/v1/workspaces/${encodeURIComponent(workspace.id)}/projects?deleted=only&limit=20`,
         )
         : Promise.resolve<ListResult<ContainerResource>>({ has_more: false, items: [], next_cursor: null }),
     ]);
     return {
-      active: projectResult.items.map((item) => ({ ...item, workspaceKey: workspace.key })),
-      deleted: deletedProjectResult.items.map((item) => ({ ...item, workspaceKey: workspace.key })),
+      active: projectResult.items.map((item) => ({ ...item, workspaceId: workspace.id, workspaceName: workspace.display_name })),
+      deleted: deletedProjectResult.items.map((item) => ({ ...item, workspaceId: workspace.id, workspaceName: workspace.display_name })),
       truncated: projectResult.has_more || deletedProjectResult.has_more,
     };
   }));
@@ -839,7 +856,7 @@ async function createWorkspace(): Promise<void> {
   try {
     await apiRequest("/api/v1/workspaces", { body: workspaceForm.value, method: "POST" });
     showWorkspace.value = false;
-    workspaceForm.value = { display_name: "", key: "" };
+    workspaceForm.value = { display_name: "" };
     await load();
   } catch (caught) { setError(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
@@ -854,12 +871,12 @@ async function createProject(): Promise<void> {
       body: { ...projectForm.value, context: projectForm.value.context || null }, method: "POST",
     });
     showProject.value = false;
-    projectForm.value = { context: "", display_name: "", key: "" };
+    projectForm.value = { context: "", display_name: "" };
     await load();
   } catch (caught) { setError(caught); } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
-async function deleteContainer(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): Promise<void> {
+async function deleteContainer(kind: "workspace" | "project", item: ContainerResource, workspaceId?: string): Promise<void> {
   if (!window.confirm(ui(
     `Archive “${item.display_name}”? Access will stop until restored. Existing content and member permissions are kept.`,
     `归档“${item.display_name}”？归档后停止访问，已有内容与成员权限保留，可随时恢复。`,
@@ -869,25 +886,25 @@ async function deleteContainer(kind: "workspace" | "project", item: ContainerRes
   busy.value = true;
   try {
     const path = kind === "workspace"
-      ? `/api/v1/workspaces/${encodeURIComponent(item.key)}`
-      : `/api/v1/workspaces/${encodeURIComponent(workspaceKey ?? "")}/projects/${encodeURIComponent(item.key)}`;
+      ? `/api/v1/workspaces/${encodeURIComponent(item.id)}`
+      : `/api/v1/workspaces/${encodeURIComponent(workspaceId ?? "")}/projects/${encodeURIComponent(item.id)}`;
     await apiRequest(`${path}?expected_version=${item.version}`, { method: "DELETE" });
     await load();
   } catch (caught) {
     if (!await recoverCasConflict(caught, localizedText(
-      `${kind === "workspace" ? "Workspace" : "Project"} ${item.key}`,
-      `${kind === "workspace" ? "工作区" : "项目"} ${item.key}`,
+      `${kind === "workspace" ? "Workspace" : "Project"} ${item.display_name}`,
+      `${kind === "workspace" ? "工作区" : "项目"} ${item.display_name}`,
     ), { action: "delete" }, () => loadWorkspaceTree(true))) {
       setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
-async function openPurge(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): Promise<void> {
+async function openPurge(kind: "workspace" | "project", item: ContainerResource, workspaceId?: string): Promise<void> {
   if (busy.value) return;
   purgePath.value = kind === "workspace"
-    ? `/api/v1/workspaces/${encodeURIComponent(item.key)}`
-    : `/api/v1/workspaces/${encodeURIComponent(workspaceKey ?? "")}/projects/${encodeURIComponent(item.key)}`;
+    ? `/api/v1/workspaces/${encodeURIComponent(item.id)}`
+    : `/api/v1/workspaces/${encodeURIComponent(workspaceId ?? "")}/projects/${encodeURIComponent(item.id)}`;
   showPurge.value = true;
   await refreshPurgePreview();
 }
@@ -948,18 +965,18 @@ async function purgeContainer(): Promise<void> {
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
-function openContainerEdit(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): void {
+function openContainerEdit(kind: "workspace" | "project", item: ContainerResource, workspaceId?: string): void {
   containerEdit.value = {
     display_name: item.display_name,
     item,
     kind,
-    ...(workspaceKey === undefined ? {} : { workspace_key: workspaceKey }),
+    ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
   };
   showContainerEdit.value = true;
 }
 
 async function refreshContainerEditFacts(
-  target: { display_name: string; kind: "workspace" | "project"; item: ContainerResource; workspace_key?: string },
+  target: { display_name: string; kind: "workspace" | "project"; item: ContainerResource; workspace_id?: string },
 ): Promise<void> {
   await loadWorkspaceTree(true);
   const current = target.kind === "workspace"
@@ -978,8 +995,8 @@ async function saveContainerEdit(): Promise<void> {
   busy.value = true;
   try {
     const path = target.kind === "workspace"
-      ? `/api/v1/workspaces/${encodeURIComponent(target.item.key)}`
-      : `/api/v1/workspaces/${encodeURIComponent(target.workspace_key ?? "")}/projects/${encodeURIComponent(target.item.key)}`;
+      ? `/api/v1/workspaces/${encodeURIComponent(target.item.id)}`
+      : `/api/v1/workspaces/${encodeURIComponent(target.workspace_id ?? "")}/projects/${encodeURIComponent(target.item.id)}`;
     await apiRequest(path, {
       body: { display_name: target.display_name.trim(), expected_version: target.item.version },
       method: "PATCH",
@@ -989,8 +1006,8 @@ async function saveContainerEdit(): Promise<void> {
     await load();
   } catch (caught) {
     if (!await recoverCasConflict(caught, localizedText(
-      `${target.kind === "workspace" ? "Workspace" : "Project"} ${target.item.key}`,
-      `${target.kind === "workspace" ? "工作区" : "项目"} ${target.item.key}`,
+      `${target.kind === "workspace" ? "Workspace" : "Project"} ${target.item.display_name}`,
+      `${target.kind === "workspace" ? "工作区" : "项目"} ${target.item.display_name}`,
     ), {
       display_name: target.display_name,
     }, () => refreshContainerEditFacts(target))) setError(caught);
@@ -1008,7 +1025,7 @@ async function openProjectSettings(item: ProjectEntry): Promise<void> {
   busy.value = true;
   try {
     const result = await apiRequest<ListResult<ProjectStatusResource>>(
-      `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}/statuses`,
+      `/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}/statuses`,
     );
     if (requestId !== projectSettingsRequestId || selectedProject.value?.id !== item.id) return;
     projectStatuses.value = result.items;
@@ -1024,14 +1041,14 @@ async function openProjectSettings(item: ProjectEntry): Promise<void> {
 async function refreshProjectSettingsFacts(item: ProjectEntry): Promise<void> {
   const [projectResult, statusResult] = await Promise.all([
     apiRequest<ContainerResource>(
-      `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}`,
+      `/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}`,
     ),
     apiRequest<ListResult<ProjectStatusResource>>(
-      `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}/statuses`,
+      `/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}/statuses`,
     ),
   ]);
   if (selectedProject.value?.id !== item.id) return;
-  selectedProject.value = { ...projectResult, workspaceKey: item.workspaceKey };
+  selectedProject.value = { ...projectResult, workspaceId: item.workspaceId, workspaceName: item.workspaceName };
   projectStatuses.value = statusResult.items;
 }
 
@@ -1043,7 +1060,7 @@ async function saveProjectSettings(): Promise<void> {
   busy.value = true;
   try {
     const result = await apiRequest<WriteResult<ContainerResource>>(
-      `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}`,
+      `/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}`,
       {
         body: {
           context: projectSettingsForm.value.context || null,
@@ -1054,15 +1071,15 @@ async function saveProjectSettings(): Promise<void> {
       },
     );
     dismissCasConflict();
-    const updated = { ...result.resource, workspaceKey: item.workspaceKey };
+    const updated = { ...result.resource, workspaceId: item.workspaceId, workspaceName: item.workspaceName };
     selectedProject.value = updated;
     projectStatuses.value = projectStatuses.value.map((status) => ({ ...status, version: updated.version }));
     projectSettingsForm.value = { context: updated.context ?? "", display_name: updated.display_name };
     await loadWorkspaceTree(true);
   } catch (caught) {
     if (!await recoverCasConflict(caught, localizedText(
-      `Project ${item.workspaceKey}/${item.key}`,
-      `项目 ${item.workspaceKey}/${item.key}`,
+      `Project ${item.workspaceName} / ${item.display_name}`,
+      `项目 ${item.workspaceName} / ${item.display_name}`,
     ), projectSettingsForm.value, () => refreshProjectSettingsFacts(item))) {
       setError(caught);
     }
@@ -1078,7 +1095,7 @@ async function saveStatusName(status: ProjectStatusResource): Promise<void> {
   busy.value = true;
   try {
     const result = await apiRequest<WriteResult<ProjectStatusResource>>(
-      `/api/v1/workspaces/${encodeURIComponent(item.workspaceKey)}/projects/${encodeURIComponent(item.key)}/statuses/${status.key}`,
+      `/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}/statuses/${status.key}`,
       { body: { display_name: displayName, expected_version: status.version }, method: "PATCH" },
     );
     dismissCasConflict();
@@ -1100,18 +1117,18 @@ async function saveStatusName(status: ProjectStatusResource): Promise<void> {
   } finally { writeFence.leave(fenceKey); busy.value = false; }
 }
 
-async function openRestore(kind: "workspace" | "project", item: ContainerResource, workspaceKey?: string): Promise<void> {
+async function openRestore(kind: "workspace" | "project", item: ContainerResource, workspaceId?: string): Promise<void> {
   busy.value = true;
   clearError();
   try {
     const path = kind === "workspace"
-      ? `/api/v1/workspaces/${encodeURIComponent(item.key)}?deleted=only`
-      : `/api/v1/workspaces/${encodeURIComponent(workspaceKey ?? "")}/projects/${encodeURIComponent(item.key)}?deleted=only`;
+      ? `/api/v1/workspaces/${encodeURIComponent(item.id)}?deleted=only`
+      : `/api/v1/workspaces/${encodeURIComponent(workspaceId ?? "")}/projects/${encodeURIComponent(item.id)}?deleted=only`;
     const current = await apiRequest<ContainerResource>(path);
     restoreTarget.value = {
       item: current,
       kind,
-      ...(workspaceKey === undefined ? {} : { workspace_key: workspaceKey }),
+      ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
     };
     showRestore.value = true;
   } catch (caught) {
@@ -1122,12 +1139,12 @@ async function openRestore(kind: "workspace" | "project", item: ContainerResourc
 }
 
 async function refreshRestoreTargetFacts(
-  target: { kind: "workspace" | "project"; item: ContainerResource; workspace_key?: string },
+  target: { kind: "workspace" | "project"; item: ContainerResource; workspace_id?: string },
 ): Promise<void> {
   await loadWorkspaceTree(true);
   const path = target.kind === "workspace"
-    ? `/api/v1/workspaces/${encodeURIComponent(target.item.key)}?deleted=only`
-    : `/api/v1/workspaces/${encodeURIComponent(target.workspace_key ?? "")}/projects/${encodeURIComponent(target.item.key)}?deleted=only`;
+    ? `/api/v1/workspaces/${encodeURIComponent(target.item.id)}?deleted=only`
+    : `/api/v1/workspaces/${encodeURIComponent(target.workspace_id ?? "")}/projects/${encodeURIComponent(target.item.id)}?deleted=only`;
   const current = await apiRequest<ContainerResource>(path);
   if (restoreTarget.value?.item.id === target.item.id) restoreTarget.value = { ...target, item: current };
 }
@@ -1140,15 +1157,15 @@ async function restoreContainer(): Promise<void> {
   busy.value = true;
   try {
     const path = target.kind === "workspace"
-      ? `/api/v1/workspaces/${encodeURIComponent(target.item.key)}/commands/restore`
-      : `/api/v1/workspaces/${encodeURIComponent(target.workspace_key ?? "")}/projects/${encodeURIComponent(target.item.key)}/commands/restore`;
+      ? `/api/v1/workspaces/${encodeURIComponent(target.item.id)}/commands/restore`
+      : `/api/v1/workspaces/${encodeURIComponent(target.workspace_id ?? "")}/projects/${encodeURIComponent(target.item.id)}/commands/restore`;
     await apiRequest(path, { body: { expected_version: target.item.version }, method: "POST" });
     showRestore.value = false;
     await load();
   } catch (caught) {
     if (!await recoverCasConflict(caught, localizedText(
-      `${target.kind === "workspace" ? "Workspace" : "Project"} ${target.item.key}`,
-      `${target.kind === "workspace" ? "工作区" : "项目"} ${target.item.key}`,
+      `${target.kind === "workspace" ? "Workspace" : "Project"} ${target.item.display_name}`,
+      `${target.kind === "workspace" ? "工作区" : "项目"} ${target.item.display_name}`,
     ), { action: "restore" }, () => refreshRestoreTargetFacts(target))) {
       setError(caught);
     }
@@ -1452,8 +1469,8 @@ async function savePolicy(): Promise<void> {
     await load();
   } catch (caught) {
     if (!await recoverCasConflict(caught, localizedText(
-      `Public Join ${item.workspaceKey}/${item.key}`,
-      `公开加入 ${item.workspaceKey}/${item.key}`,
+      `Public Join ${item.workspaceName} / ${item.display_name}`,
+      `公开加入 ${item.workspaceName} / ${item.display_name}`,
     ), policyForm.value, () => refreshPolicyFacts(item))) {
       setError(caught);
     }
@@ -1472,8 +1489,8 @@ async function disablePolicy(): Promise<void> {
     await load();
   } catch (caught) {
     if (!await recoverCasConflict(caught, localizedText(
-      `Public Join ${item.workspaceKey}/${item.key}`,
-      `公开加入 ${item.workspaceKey}/${item.key}`,
+      `Public Join ${item.workspaceName} / ${item.display_name}`,
+      `公开加入 ${item.workspaceName} / ${item.display_name}`,
     ), { action: "disable" }, () => refreshPolicyFacts(item))) {
       setError(caught);
     }
@@ -1575,8 +1592,8 @@ onUnmounted(() => {
       <p v-if="treeTruncated" class="warning-panel">{{ ui("This list may be incomplete: it shows up to 20 workspaces and 20 projects per workspace. Ask your Agent to find a missing project.", "列表可能未显示全部内容：最多展示 20 个工作区及各自的 20 个项目。找不到项目时，可以让智能体帮助查找。") }}</p>
       <p v-if="workspaces.length === 0" class="empty-copy">{{ ui("Create a workspace first, then add your first project.", "先创建一个工作区，再添加你的第一个项目。") }}</p>
       <section v-for="workspace in workspaces" :key="workspace.id" class="workspace-block">
-        <header><h2><button class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(workspace.id)" :aria-controls="`workspace-projects-${workspace.id}`" @click="toggleWorkspace(workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(workspace.id) ? '▾' : '▸' }}</span><span>{{ workspace.display_name }}<small>{{ workspace.key }}</small></span><span class="workspace-count">{{ projects.filter(project => project.workspaceKey === workspace.key).length }} {{ ui('projects', '个项目') }}</span></button></h2><div><button class="secondary-button" type="button" @click="openCreateProject(workspace.key)">{{ ui("New project", "新建项目") }}</button><button class="text-button" type="button" @click="openContainerEdit('workspace', workspace)">{{ ui("Rename", "改名") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('workspace', workspace)">{{ ui("Archive", "归档") }}</button></div></header>
-        <div v-show="expandedWorkspaces.includes(workspace.id)" :id="`workspace-projects-${workspace.id}`" class="workspace-projects"><div class="project-table"><div v-for="item in projects.filter((project) => project.workspaceKey === workspace.key)" :key="item.id" class="project-table-row"><button class="project-link" type="button" @click="navigate(`/app/w/${workspace.key}/p/${item.key}`)"><strong>{{ item.display_name }}</strong><small>{{ item.key }}</small></button><span>{{ item.context ? `${item.context.slice(0, 60)}${item.context.length > 60 ? '…' : ''}` : '—' }}</span><div><button class="text-button" type="button" @click="openProjectSettings(item)">{{ ui("Settings", "设置") }}</button><button class="text-button" type="button" @click="openPolicy(item)">{{ ui("Public Join", "公开加入") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('project', item, workspace.key)">{{ ui("Archive", "归档") }}</button></div></div><p v-if="!projects.some((project) => project.workspaceKey === workspace.key)" class="empty-copy">{{ ui("No projects yet", "暂无项目") }}</p></div></div>
+        <header><h2><button class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(workspace.id)" :aria-controls="`workspace-projects-${workspace.id}`" @click="toggleWorkspace(workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(workspace.id) ? '▾' : '▸' }}</span><ContainerIcon kind="workspace" /><span>{{ workspace.display_name }}</span><span class="workspace-count">{{ projects.filter(project => project.workspaceId === workspace.id).length }} {{ ui('projects', '个项目') }}</span></button></h2><div><button class="secondary-button" type="button" @click="openCreateProject(workspace.id)">{{ ui("New project", "新建项目") }}</button><button class="text-button" type="button" @click="openContainerEdit('workspace', workspace)">{{ ui("Rename", "改名") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('workspace', workspace)">{{ ui("Archive", "归档") }}</button></div></header>
+        <div v-show="expandedWorkspaces.includes(workspace.id)" :id="`workspace-projects-${workspace.id}`" class="workspace-projects"><div class="project-table"><div v-for="item in projects.filter((project) => project.workspaceId === workspace.id)" :key="item.id" class="project-table-row"><button class="project-link" type="button" @click="navigate(`/app/w/${workspace.id}/p/${item.id}`)"><ContainerIcon kind="project" /><strong>{{ item.display_name }}</strong></button><span>{{ item.context ? `${item.context.slice(0, 60)}${item.context.length > 60 ? '…' : ''}` : '—' }}</span><div><button class="text-button" type="button" @click="openProjectSettings(item)">{{ ui("Settings", "设置") }}</button><button class="text-button" type="button" @click="openPolicy(item)">{{ ui("Public Join", "公开加入") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('project', item, workspace.id)">{{ ui("Archive", "归档") }}</button></div></div><p v-if="!projects.some((project) => project.workspaceId === workspace.id)" class="empty-copy">{{ ui("No projects yet", "暂无项目") }}</p></div></div>
       </section>
 
     </template>
@@ -1584,20 +1601,24 @@ onUnmounted(() => {
     <template v-if="!loading && section === 'archive'">
       <p v-if="treeTruncated" class="warning-panel">{{ ui('This list may be incomplete: it shows up to 20 workspaces per state and 20 archived projects per workspace.', '列表可能未显示全部内容：使用中、已归档工作区各最多展示 20 个，每个工作区最多展示 20 个已归档项目。') }}</p>
       <p v-if="archivedGroups.length === 0" class="empty-copy">{{ ui('No archived content', '暂无已归档内容') }}</p>
-      <section v-for="group in archivedGroups" :key="group.workspace.id" class="workspace-block">
+      <section v-for="archiveSection in archiveSections" :key="archiveSection.kind" class="archive-category">
+        <h2>{{ archiveSection.kind === 'projects' ? ui('Archived projects', '已归档项目') : ui('Archived workspaces', '已归档工作区') }}</h2>
+        <section v-for="group in archiveSection.groups" :key="group.workspace.id" class="workspace-block">
         <header>
-          <h2><button class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(group.workspace.id)" :aria-controls="`archived-projects-${group.workspace.id}`" @click="toggleWorkspace(group.workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(group.workspace.id) ? '▾' : '▸' }}</span><span>{{ group.workspace.display_name }}<small>{{ group.workspace.key }}</small></span><span class="workspace-count">{{ group.projects.length }} {{ ui('archived projects', '个已归档项目') }}</span></button></h2>
-          <div><span class="role-badge">{{ group.workspace.deleted_at ? ui('Archived', '已归档') : ui('Active', '使用中') }}</span><template v-if="group.workspace.deleted_at"><button class="secondary-button" type="button" :disabled="busy" @click="openRestore('workspace', group.workspace)">{{ t('action.restore') }}</button><button class="danger-text-button" type="button" :disabled="busy" @click="openPurge('workspace', group.workspace)">{{ ui('Delete permanently', '永久删除') }}</button></template></div>
+          <h3><button class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(group.workspace.id)" :aria-controls="`archived-projects-${group.workspace.id}`" @click="toggleWorkspace(group.workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(group.workspace.id) ? '▾' : '▸' }}</span><ContainerIcon kind="workspace" /><span>{{ archivedWorkspaceLabels.get(group.workspace.id)?.label ?? group.workspace.display_name }}</span><span class="workspace-count">{{ group.projects.length }} {{ ui('archived projects', '个已归档项目') }}</span></button></h3>
+          <div v-if="group.workspace.deleted_at"><button class="secondary-button" type="button" :disabled="busy" @click="openRestore('workspace', group.workspace)">{{ t('action.restore') }}</button><button class="secondary-button archive-delete-button" type="button" :disabled="busy" @click="openPurge('workspace', group.workspace)">{{ ui('Delete permanently', '永久删除') }}</button></div>
         </header>
+        <ContainerIdentityDetails :id="group.workspace.id" :language="locale" :created-at="group.workspace.created_at" />
         <div v-show="expandedWorkspaces.includes(group.workspace.id)" :id="`archived-projects-${group.workspace.id}`" class="workspace-projects">
           <div class="project-table">
             <div v-for="item in group.projects" :key="item.id" class="project-table-row archived-project-row">
-              <span class="archived-project-name"><strong>{{ item.display_name }}</strong><small>{{ item.key }}</small></span>
-              <div class="archive-actions"><button class="secondary-button" type="button" :disabled="busy || !!group.workspace.deleted_at" :title="group.workspace.deleted_at ? ui('Restore its workspace first', '请先恢复所属工作区') : undefined" @click="openRestore('project', item, group.workspace.key)">{{ t('action.restore') }}</button><button class="danger-text-button" type="button" :disabled="busy" @click="openPurge('project', item, group.workspace.key)">{{ ui('Delete permanently', '永久删除') }}</button></div>
+              <div><span class="archived-project-name"><ContainerIcon kind="project" /><strong>{{ item.display_name }}{{ archivedProjectLabels.get(item.id)?.title ? ` (${item.id.slice(-8)})` : '' }}</strong></span><ContainerIdentityDetails :id="item.id" :language="locale" :workspace-id="item.workspaceId" :workspace-name="item.workspaceName" :context="item.context" :created-at="item.created_at" /></div>
+              <div class="archive-actions"><button class="secondary-button" type="button" :disabled="busy || !!group.workspace.deleted_at" :title="group.workspace.deleted_at ? ui('Restore its workspace first', '请先恢复所属工作区') : undefined" @click="openRestore('project', item, group.workspace.id)">{{ t('action.restore') }}</button><button class="secondary-button archive-delete-button" type="button" :disabled="busy" @click="openPurge('project', item, group.workspace.id)">{{ ui('Delete permanently', '永久删除') }}</button></div>
             </div>
             <p v-if="group.projects.length === 0" class="empty-copy">{{ ui('No archived projects', '暂无已归档项目') }}</p>
           </div>
         </div>
+        </section>
       </section>
     </template>
 
@@ -1621,14 +1642,14 @@ onUnmounted(() => {
         </div>
       </div>
       <p v-if="treeTruncated" class="warning-panel">{{ ui("Project access controls are limited to the first 20 Workspaces and first 20 Projects in each. Use cfkanban-admin with an explicit cursor for omitted Projects.", "项目访问管理只显示前 20 个工作区，以及每个工作区的前 20 个项目；未显示的项目请让 cfkanban-admin 使用明确的分页位置。") }}</p>
-      <section class="owner-section"><div class="section-heading-row"><div><h2>{{ ui("Members", "成员") }}</h2><p>{{ ui("Search by exact stable ID or name text, optionally restricted to one visible Project.", "按名称查找成员，或选择项目查看其成员。重名时可使用成员 ID 区分。") }}</p></div></div><form class="principal-search" role="search" @submit.prevent="loadPrincipals(true)"><input v-model="principalQuery" type="search" :aria-label="ui('Find a member', '查找成员')" :placeholder="ui('Member name or ID', '成员名称或 ID')" /><select v-model="principalProjectId" :aria-label="ui('Filter members by project', '按项目筛选成员')"><option value="">{{ ui("Every visible Project", "全部可见项目") }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.workspaceKey }}/{{ item.key }}</option></select><button class="secondary-button" type="submit" :disabled="principalsLoadingMore">{{ ui("Search", "查找") }}</button></form><div class="data-list"><button v-for="principal in principals" :key="principal.id" class="data-row data-row-button" type="button" @click="openPrincipal(principal)"><span><strong>{{ principal.display_name }}</strong><code>{{ principal.id }}</code></span><span>{{ principal.is_owner ? ui('Owner', '所有者') : ui('Participant', '参与者') }}</span><span v-if="principal.is_owner">{{ ui("Access to all projects", "可管理全部项目") }}</span><span v-else>{{ principal.active_grant_count ?? 0 }} {{ ui("project permissions", "项项目权限") }}</span></button><p v-if="principals.length === 0" class="empty-copy">{{ ui("No matching Principals", "没有匹配的身份") }}</p></div><p v-if="principalsHasMore" class="warning-panel">{{ ui("More Principals match this exact query scope. Continue with the bound cursor; changing the query or Project starts a fresh search.", "此准确查询范围还有更多身份。请使用绑定的分页位置继续；修改查询或项目会开始一次新查找。") }}</p><button v-if="principalsNextCursor" class="load-more" type="button" :disabled="principalsLoadingMore" @click="loadPrincipals(false)">{{ principalsLoadingMore ? "…" : ui("Load more Principals", "加载更多身份") }}</button></section>
-      <section class="owner-section"><h2>{{ ui("Project access", "项目成员权限") }}</h2><div class="data-list"><button v-for="item in projects" :key="item.id" class="data-row data-row-button" type="button" @click="openProjectGrants(item)"><span><strong>{{ item.workspaceKey }}/{{ item.key }}</strong><small>{{ item.display_name }}</small></span><span>{{ ui("Manage members", "管理成员") }}</span></button></div></section>
-      <section class="owner-section"><h2>{{ ui("Invitations", "邀请") }}</h2><div class="data-list"><div v-for="invitation in invitations" :key="invitation.id" class="data-row"><span><strong>{{ invitationKindLabel(invitation.kind) }}</strong><code>{{ invitation.code_fingerprint }}</code><small>{{ ui("Created", "创建于") }} {{ formatTime(invitation.created_at) }}</small></span><span><template v-if="invitation.kind === 'project_grant'">{{ invitation.grants.map((grant) => `${grant.workspace_key}/${grant.project_key}:${roleLabel(grant.role)}`).join(" · ") }}</template><template v-else>{{ invitation.bound_principal?.display_name ?? invitation.bound_principal?.principal_id }} · {{ invitation.recovery_mode }}</template><small>{{ invitationStatusLabel(invitation.status) }} · {{ ui("expires", "到期") }} {{ formatTime(invitation.expires_at) }}</small></span><button v-if="invitation.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokeInvite(invitation)">{{ ui("Revoke", "撤销") }}</button></div></div></section>
+      <section class="owner-section"><div class="section-heading-row"><div><h2>{{ ui("Members", "成员") }}</h2><p>{{ ui("Search by exact stable ID or name text, optionally restricted to one visible Project.", "按名称查找成员，或选择项目查看其成员。重名时可使用成员 ID 区分。") }}</p></div></div><form class="principal-search" role="search" @submit.prevent="loadPrincipals(true)"><input v-model="principalQuery" type="search" :aria-label="ui('Find a member', '查找成员')" :placeholder="ui('Member name or ID', '成员名称或 ID')" /><select v-model="principalProjectId" :aria-label="ui('Filter members by project', '按项目筛选成员')"><option value="">{{ ui("Every visible Project", "全部可见项目") }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select><button class="secondary-button" type="submit" :disabled="principalsLoadingMore">{{ ui("Search", "查找") }}</button></form><div class="data-list"><button v-for="principal in principals" :key="principal.id" class="data-row data-row-button" type="button" @click="openPrincipal(principal)"><span><strong>{{ principal.display_name }}</strong><code>{{ principal.id }}</code></span><span>{{ principal.is_owner ? ui('Owner', '所有者') : ui('Participant', '参与者') }}</span><span v-if="principal.is_owner">{{ ui("Access to all projects", "可管理全部项目") }}</span><span v-else>{{ principal.active_grant_count ?? 0 }} {{ ui("project permissions", "项项目权限") }}</span></button><p v-if="principals.length === 0" class="empty-copy">{{ ui("No matching Principals", "没有匹配的身份") }}</p></div><p v-if="principalsHasMore" class="warning-panel">{{ ui("More Principals match this exact query scope. Continue with the bound cursor; changing the query or Project starts a fresh search.", "此准确查询范围还有更多身份。请使用绑定的分页位置继续；修改查询或项目会开始一次新查找。") }}</p><button v-if="principalsNextCursor" class="load-more" type="button" :disabled="principalsLoadingMore" @click="loadPrincipals(false)">{{ principalsLoadingMore ? "…" : ui("Load more Principals", "加载更多身份") }}</button></section>
+      <section class="owner-section"><h2>{{ ui("Project access", "项目成员权限") }}</h2><div class="data-list"><button v-for="item in projects" :key="item.id" class="data-row data-row-button" type="button" :title="projectChoiceLabels.get(item.id)?.title" @click="openProjectGrants(item)"><span><strong>{{ projectChoiceLabels.get(item.id)?.label }}</strong></span><span>{{ ui("Manage members", "管理成员") }}</span></button></div></section>
+      <section class="owner-section"><h2>{{ ui("Invitations", "邀请") }}</h2><div class="data-list"><div v-for="invitation in invitations" :key="invitation.id" class="data-row"><span><strong>{{ invitationKindLabel(invitation.kind) }}</strong><code>{{ invitation.code_fingerprint }}</code><small>{{ ui("Created", "创建于") }} {{ formatTime(invitation.created_at) }}</small></span><span><template v-if="invitation.kind === 'project_grant'">{{ invitation.grants.map((grant) => `${grant.workspace_display_name}/${grant.display_name}:${roleLabel(grant.role)}`).join(" · ") }}</template><template v-else>{{ invitation.bound_principal?.display_name ?? invitation.bound_principal?.principal_id }} · {{ invitation.recovery_mode }}</template><small>{{ invitationStatusLabel(invitation.status) }} · {{ ui("expires", "到期") }} {{ formatTime(invitation.expires_at) }}</small></span><button v-if="invitation.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokeInvite(invitation)">{{ ui("Revoke", "撤销") }}</button></div></div></section>
     </template>
 
     <template v-if="!loading && section === 'audit'">
       <form class="audit-search" role="search" @submit.prevent="loadAudit(true)">
-        <label><span>{{ ui("Project", "项目") }}</span><select v-model="auditProjectId" :disabled="auditLoadingMore" @change="resetAuditPagination"><option value="">{{ ui("Every Project", "全部项目") }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.workspaceKey }}/{{ item.key }}</option></select></label>
+        <label><span>{{ ui("Project", "项目") }}</span><select v-model="auditProjectId" :disabled="auditLoadingMore" @change="resetAuditPagination"><option value="">{{ ui("Every Project", "全部项目") }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select></label>
         <label><span>{{ ui("Stream", "类型") }}</span><select v-model="auditStream" :disabled="auditLoadingMore" @change="resetAuditPagination"><option value="">{{ ui("Domain + security", "业务与安全") }}</option><option value="domain">{{ ui("Domain only", "仅业务") }}</option><option value="security">{{ ui("Security only", "仅安全") }}</option></select></label>
         <button class="secondary-button" type="submit" :disabled="auditLoadingMore">{{ auditLoadingMore ? "…" : ui("Apply filters", "应用筛选") }}</button>
       </form>
@@ -1644,7 +1665,7 @@ onUnmounted(() => {
             </div>
             <time :datetime="event.created_at">{{ formatTime(event.created_at) }}</time>
           </header>
-          <p class="muted-copy">{{ event.actor?.display_name ?? ui("System", "系统") }}<template v-if="event.project"> · {{ event.workspace?.key }}/{{ event.project.key }}</template></p>
+          <p class="muted-copy">{{ event.actor?.display_name ?? ui("System", "系统") }}<template v-if="event.project"> · {{ event.workspace?.display_name }}/{{ event.project.display_name }}</template></p>
           <details class="audit-event-details">
             <summary>{{ ui("Technical details", "技术详情") }}</summary>
           <code>{{ event.type }}</code>
@@ -1659,7 +1680,7 @@ onUnmounted(() => {
             </div>
             <div v-if="event.project">
               <dt>{{ ui("Project", "项目") }}</dt>
-              <dd><strong>{{ event.workspace?.key }}/{{ event.project.key }}</strong><code>{{ event.project.id }}</code></dd>
+              <dd><strong>{{ event.workspace?.display_name }}/{{ event.project.display_name }}</strong></dd>
             </div>
             <div>
               <dt>{{ ui("Operation", "操作") }}</dt>
@@ -1685,16 +1706,16 @@ onUnmounted(() => {
       <button v-if="auditNextCursor" class="load-more" type="button" :disabled="auditLoadingMore" @click="loadAudit(false)">{{ auditLoadingMore ? "…" : ui("Load more Audit events", "加载更多审计事件") }}</button>
     </template>
 
-    <ModalDialog v-if="showWorkspace" :busy="busy" :title="ui('Create Workspace', '创建工作区')" @close="showWorkspace = false"><form class="form-stack" @submit.prevent="createWorkspace"><label>{{ ui("Name", "名称") }}<input v-model="workspaceForm.display_name" required maxlength="128" /></label><label>{{ ui("Short key", "英文简称") }}<input v-model="workspaceForm.key" required pattern="[a-z][a-z0-9\-]{1,31}" placeholder="team" aria-describedby="workspace-key-help" /><small id="workspace-key-help">{{ ui("2–32 lowercase letters, numbers or hyphens; start with a letter. Used in links and cannot be changed later.", "2–32 位小写字母、数字或短横线，以字母开头。用于项目链接，创建后不能修改。") }}</small></label><div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="showWorkspace = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ ui("Create", "创建") }}</button></div></form></ModalDialog>
-    <ModalDialog v-if="showProject" :busy="busy" :title="ui('Create Project', '创建项目')" @close="showProject = false"><form class="form-stack" @submit.prevent="createProject"><label>{{ ui("Workspace", "工作区") }}<select v-model="selectedWorkspace" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.key">{{ workspace.display_name }}</option></select></label><label>{{ ui("Name", "名称") }}<input v-model="projectForm.display_name" required maxlength="128" /></label><label>{{ ui("Short key", "英文简称") }}<input v-model="projectForm.key" required pattern="[A-Z][A-Z0-9\-]{1,15}" placeholder="WEBSITE" aria-describedby="project-key-help" /><small id="project-key-help">{{ ui("2–16 uppercase letters, numbers or hyphens; start with a letter. Used in links and cannot be changed later.", "2–16 位大写字母、数字或短横线，以字母开头。用于项目链接，创建后不能修改。") }}</small></label><label>{{ ui("Project notes (optional)", "项目说明（选填）") }}<textarea v-model="projectForm.context" rows="5" /></label><div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="showProject = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ ui("Create", "创建") }}</button></div></form></ModalDialog>
-    <ModalDialog v-if="showContainerEdit && containerEdit" :busy="busy" :title="ui('Change name', '修改名称')" @close="showContainerEdit = false"><form class="form-stack" @submit.prevent="saveContainerEdit"><p><code>{{ containerEdit.item.key }}</code></p><label>{{ ui("Display name", "显示名称") }}<input v-model="containerEdit.display_name" required maxlength="128" /></label><div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="showContainerEdit = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</button></div></form></ModalDialog>
-    <ModalDialog v-if="showProjectSettings && selectedProject" :busy="busy" :title="ui('Project settings', '项目设置')" @close="closeProjectSettings"><form class="form-stack" @submit.prevent="saveProjectSettings"><p><code>{{ selectedProject.workspaceKey }}/{{ selectedProject.key }}</code> · v{{ selectedProject.version }}</p><label>{{ ui("Display name", "显示名称") }}<input v-model="projectSettingsForm.display_name" required maxlength="128" /></label><label>{{ ui("Project notes (optional)", "项目说明（选填）") }}<textarea v-model="projectSettingsForm.context" rows="6" /></label><button class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</button></form><section class="recovery-section"><h3>{{ ui("Board column names", "看板列名称") }}</h3><p class="muted-copy">{{ ui("Stable keys, order, and terminal semantics do not change.", "可以修改看板列的显示名称；列的数量、顺序和用途保持不变。") }}</p><form v-for="status in projectStatuses" :key="status.key" class="compact-inline-form" @submit.prevent="saveStatusName(status)"><code>{{ status.key }}</code><input v-model="statusDrafts[status.key]" required maxlength="128" /><button class="text-button" type="submit" :disabled="busy || statusDrafts[status.key] === status.display_name">{{ t("action.save") }}</button></form></section></ModalDialog>
+    <ModalDialog v-if="showWorkspace" :busy="busy" :title="ui('Create Workspace', '创建工作区')" @close="showWorkspace = false"><form class="form-stack" @submit.prevent="createWorkspace"><label>{{ ui("Name", "名称") }}<input v-model="workspaceForm.display_name" required maxlength="128" /></label><div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="showWorkspace = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ ui("Create", "创建") }}</button></div></form></ModalDialog>
+    <ModalDialog v-if="showProject" :busy="busy" :title="ui('Create Project', '创建项目')" @close="showProject = false"><form class="form-stack" @submit.prevent="createProject"><label>{{ ui("Workspace", "工作区") }}<select v-model="selectedWorkspace" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="workspace in workspaces" :key="workspace.id" :value="workspace.id" :title="workspaceChoiceLabels.get(workspace.id)?.title">{{ workspaceChoiceLabels.get(workspace.id)?.label }}</option></select></label><label>{{ ui("Name", "名称") }}<input v-model="projectForm.display_name" required maxlength="128" /></label><label>{{ ui("Project notes (optional)", "项目说明（选填）") }}<textarea v-model="projectForm.context" rows="5" /></label><div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="showProject = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ ui("Create", "创建") }}</button></div></form></ModalDialog>
+    <ModalDialog v-if="showContainerEdit && containerEdit" :busy="busy" :title="ui('Change name', '修改名称')" @close="showContainerEdit = false"><form class="form-stack" @submit.prevent="saveContainerEdit"><label>{{ ui("Display name", "显示名称") }}<input v-model="containerEdit.display_name" required maxlength="128" /></label><div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="showContainerEdit = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</button></div></form></ModalDialog>
+    <ModalDialog v-if="showProjectSettings && selectedProject" :busy="busy" :title="ui('Project settings', '项目设置')" @close="closeProjectSettings"><form class="form-stack" @submit.prevent="saveProjectSettings"><p><code>{{ selectedProject.workspaceName }} / {{ selectedProject.display_name }}</code> · v{{ selectedProject.version }}</p><label>{{ ui("Display name", "显示名称") }}<input v-model="projectSettingsForm.display_name" required maxlength="128" /></label><label>{{ ui("Project notes (optional)", "项目说明（选填）") }}<textarea v-model="projectSettingsForm.context" rows="6" /></label><button class="primary-button" type="submit" :disabled="busy">{{ t("action.save") }}</button></form><section class="recovery-section"><h3>{{ ui("Board column names", "看板列名称") }}</h3><p class="muted-copy">{{ ui("Stable keys, order, and terminal semantics do not change.", "可以修改看板列的显示名称；列的数量、顺序和用途保持不变。") }}</p><form v-for="status in projectStatuses" :key="status.key" class="compact-inline-form" @submit.prevent="saveStatusName(status)"><code>{{ status.key }}</code><input v-model="statusDrafts[status.key]" required maxlength="128" /><button class="text-button" type="submit" :disabled="busy || statusDrafts[status.key] === status.display_name">{{ t("action.save") }}</button></form></section></ModalDialog>
     <ModalDialog v-if="showPurge" :busy="busy || purgeUncertain" :title="ui('Delete permanently?', '永久删除？')" @close="closePurge">
       <p v-if="purgeError" class="inline-alert" role="alert">{{ purgeError }}</p>
       <p v-if="busy && !purgePreview" class="muted-copy">{{ ui('Loading deletion preview…', '正在核对删除影响…') }}</p>
       <form v-if="purgePreview" class="form-stack" @submit.prevent="purgeContainer">
-        <div class="modal-summary"><strong>{{ purgePreview.target.display_name }}</strong><code>{{ purgePreview.target.kind === 'project' ? `${purgePreview.target.workspace_key}/` : '' }}{{ purgePreview.target.key }}</code></div>
-        <p class="warning-panel">{{ ui('This permanently removes the content below and cannot be undone. The short key cannot be reused.', '以下内容将被永久清除，无法恢复；英文简称也不能再次使用。') }}</p>
+        <div class="modal-summary"><strong>{{ purgeTargetLabel }}</strong><ContainerIdentityDetails :id="purgePreview.target.id" :language="locale" :workspace-id="purgePreview.target.kind === 'project' ? purgePreview.target.workspace_id ?? undefined : undefined" :workspace-name="deletedProjects.find(item => item.id === purgePreview?.target.id)?.workspaceName" /></div>
+        <p class="warning-panel">{{ ui('This permanently removes the content below and cannot be undone.', '以下内容将被永久清除，无法恢复。') }}</p>
         <dl class="purge-counts">
           <div v-if="purgePreview.target.kind === 'workspace'"><dt>{{ ui('Projects remaining', '剩余项目') }}</dt><dd>{{ purgePreview.counts.projects }}</dd></div>
           <template v-else><div><dt>{{ ui('Issues', '事项') }}</dt><dd>{{ purgePreview.counts.issues }}</dd></div><div><dt>{{ ui('Comments, including completions', '评论（含完成记录）') }}</dt><dd>{{ purgePreview.counts.comments }}</dd></div><div><dt>{{ ui('Labels', '标签') }}</dt><dd>{{ purgePreview.counts.labels }}</dd></div><div><dt>{{ ui('Issue relations', '事项关联') }}</dt><dd>{{ purgePreview.counts.relations }}</dd></div><div><dt>{{ ui('Member permissions', '成员权限') }}</dt><dd>{{ purgePreview.counts.grants }}</dd></div><div><dt>{{ ui('Affected invitations', '受影响的邀请') }}</dt><dd>{{ purgePreview.counts.invitations }}</dd></div></template>
@@ -1704,8 +1725,7 @@ onUnmounted(() => {
         <p v-if="purgePreview.target.kind === 'project'" class="muted-copy">{{ ui('Project settings and history will be cleared. Project login sessions and unused browser launch links will stop working. Reported storage may not decrease immediately.', '项目设置和历史记录也将清理，项目登录会话及未使用的浏览器登录链接将失效。平台显示的存储用量可能不会立即下降。') }}</p>
         <p v-if="!purgePreview.can_purge" class="inline-alert" role="alert">{{ purgePreview.blocking_reason === 'WORKSPACE_NOT_EMPTY' ? ui('Permanently delete the remaining projects first. If any are still active, restore this workspace and archive those projects first.', '请先逐个永久删除工作区内的项目。若仍有未归档项目，请先恢复工作区，再归档这些项目。') : ui('Archive this workspace or project before deleting it permanently.', '请先归档此工作区或项目，再永久删除。') }}</p>
         <div v-if="purgePreview.can_purge" class="purge-confirmation">
-          <div class="purge-name-prompt"><label for="purge-confirm-name">{{ purgePreview.target.kind === 'project' ? ui('Enter the full project name', '输入完整项目名称') : ui('Enter the full workspace name', '输入完整工作区名称') }}</label><button class="copy-name-button" type="button" :title="ui('Click to copy name', '点击复制名称')" :aria-label="ui(`Copy name: ${purgePreview.target.display_name}`, `复制名称：${purgePreview.target.display_name}`)" @click="copyPurgeName">{{ purgePreview.target.display_name }} <span aria-hidden="true">⧉</span></button><span>{{ ui('to confirm.', '以确认。') }}</span></div>
-          <span v-if="purgeCopyStatus" class="muted-copy" role="status">{{ purgeCopyStatus === 'copied' ? ui('Copied', '已复制') : ui('Copy failed; select and copy the name manually.', '复制失败，请手动选择并复制名称。') }}</span>
+          <div class="purge-name-prompt"><label for="purge-confirm-name">{{ purgePreview.target.kind === 'project' ? ui('Enter the full project name', '输入完整项目名称') : ui('Enter the full workspace name', '输入完整工作区名称') }}</label><button class="copy-name-button" type="button" :title="ui('Click to copy name', '点击复制名称')" :aria-label="ui(`Copy name: ${purgePreview.target.display_name}`, `复制名称：${purgePreview.target.display_name}`)" @click="copyPurgeName">{{ purgePreview.target.display_name }} <span aria-hidden="true">⧉</span></button><span>{{ ui('to confirm.', '以确认。') }}</span><span class="copy-name-feedback" role="status" :title="purgeCopyStatus === 'failed' ? ui('Select and copy the name manually.', '请手动选择并复制名称。') : undefined">{{ purgeCopyStatus === 'copied' ? ui('Copied', '已复制') : purgeCopyStatus === 'failed' ? ui('Copy failed', '复制失败') : '' }}</span></div>
           <input id="purge-confirm-name" v-model="purgeName" :disabled="busy || purgeUncertain || purgeNeedsRefresh" autocomplete="off" :placeholder="purgePreview.target.display_name" />
         </div>
         <p v-if="purgeUncertain" class="warning-panel">{{ ui('The result is not yet confirmed. Retry the same request to recover its result; do not start another deletion.', '尚未确认执行结果。请重试同一请求以取回结果，不要发起另一笔删除。') }}</p>
@@ -1714,14 +1734,14 @@ onUnmounted(() => {
       <div v-else-if="!busy" class="form-actions"><button class="secondary-button" type="button" @click="closePurge">{{ t('action.cancel') }}</button><button class="secondary-button" type="button" @click="refreshPurgePreview">{{ ui('Try again', '重试') }}</button></div>
     </ModalDialog>
     <ModalDialog v-if="showRestore && restoreTarget" :busy="busy" :title="ui('Restore workspace or project?', '恢复工作区或项目？')" @close="showRestore = false">
-      <p><code>{{ restoreTarget.item.key }}</code> · {{ restoreTarget.item.display_name }}</p>
+      <p>{{ restoreTarget.item.display_name }}</p>
       <p class="warning-panel">{{ ui("Restoring reactivates every still-enabled Public Join policy shown below. Existing Grants remain unchanged.", "恢复会重新启用下列仍然开启的公开加入策略；既有授权不会改变。") }}</p>
       <p v-if="restoreTarget.item.resumed_public_projects?.has_more" class="inline-alert" role="alert">{{ ui("More than 100 Public Join Projects will resume. Only the first 100 are listed here; confirming still republishes every enabled policy in this container.", "将恢复超过 100 个公开加入项目。此处只列出前 100 个；确认后仍会重新公开该容器内全部已开启策略。") }}</p>
       <PublicJoinRestorePreview :projects="restoreTarget.item.resumed_public_projects?.projects ?? []" :language="locale" />
       <p v-if="!(restoreTarget.item.resumed_public_projects?.projects.length)" class="empty-copy">{{ ui("No enabled Public Join policy will resume.", "没有已开启的公开加入策略会重新公开。") }}</p>
       <div class="form-actions"><button class="secondary-button" type="button" @click="showRestore = false">{{ t("action.cancel") }}</button><button class="primary-button" type="button" :disabled="busy" @click="restoreContainer">{{ t("action.restore") }}</button></div>
     </ModalDialog>
-    <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建项目邀请')" @close="closeInviteDialog"><form class="form-stack" @submit.prevent="createInvite"><label>{{ ui("Project", "项目") }}<select v-model="inviteForm.project_id" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.workspaceKey }}/{{ item.key }} · {{ item.display_name }}</option></select></label><label>{{ ui("Role", "角色") }}<select v-model="inviteForm.role"><option value="reader">{{ roleLabel('reader') }}</option><option value="writer">{{ roleLabel('writer') }}</option></select></label><p class="muted-copy">{{ locale === "zh-CN" ? "完整网址只在创建响应中出现一次；页面不会保存它。" : "The full URL appears only in the create response; this page does not store it." }}</p><p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><div class="form-actions"><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved this one-time URL", "我已保存这个一次性网址") }}</button><button class="primary-button" type="submit" :disabled="busy || inviteNeedsReview">{{ oneTimeInvite ? (locale === 'zh-CN' ? '再创建一个' : 'Create another') : t('action.save') }}</button></div></form></ModalDialog>
+    <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建项目邀请')" @close="closeInviteDialog"><form class="form-stack" @submit.prevent="createInvite"><label>{{ ui("Project", "项目") }}<select v-model="inviteForm.project_id" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select></label><label>{{ ui("Role", "角色") }}<select v-model="inviteForm.role"><option value="reader">{{ roleLabel('reader') }}</option><option value="writer">{{ roleLabel('writer') }}</option></select></label><p class="muted-copy">{{ locale === "zh-CN" ? "完整网址只在创建响应中出现一次；页面不会保存它。" : "The full URL appears only in the create response; this page does not store it." }}</p><p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><div class="form-actions"><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved this one-time URL", "我已保存这个一次性网址") }}</button><button class="primary-button" type="submit" :disabled="busy || inviteNeedsReview">{{ oneTimeInvite ? (locale === 'zh-CN' ? '再创建一个' : 'Create another') : t('action.save') }}</button></div></form></ModalDialog>
     <ModalDialog v-if="showPrincipal && selectedPrincipal" :busy="busy" :title="ui('Principal access', '身份访问')" @close="closePrincipal">
       <header class="modal-summary">
         <strong>{{ selectedPrincipal.display_name }}</strong>
@@ -1742,7 +1762,7 @@ onUnmounted(() => {
       </section>
       <section class="recovery-section">
         <h3>{{ ui('Grants', '授权') }}</h3>
-        <div class="data-list"><div v-for="grant in selectedPrincipal.grants" :key="grant.id" class="data-row"><span><strong>{{ grant.project.workspace_key }}/{{ grant.project.key }}</strong><small>{{ roleLabel(grant.role) }} · {{ grant.revoked_at ? ui('revoked', '已撤销') : ui('active', '有效') }}</small></span></div></div>
+        <div class="data-list"><div v-for="grant in selectedPrincipal.grants" :key="grant.id" class="data-row"><span><strong>{{ grant.project.workspace_display_name }} / {{ grant.project.display_name }}</strong><small>{{ roleLabel(grant.role) }} · {{ grant.revoked_at ? ui('revoked', '已撤销') : ui('active', '有效') }}</small></span></div></div>
         <p v-if="selectedPrincipal.grants_has_more" class="warning-panel">{{ ui('More Grants exist; this Principal detail projection has no continuation endpoint. Search by Project or use cfkanban-admin.', '还有更多授权；身份详情没有继续读取接口。请按项目查找或使用 cfkanban-admin。') }}</p>
       </section>
       <form v-if="!selectedPrincipal.is_owner" class="form-stack warning-panel" @submit.prevent="createRecoveryInvite">
@@ -1759,7 +1779,7 @@ onUnmounted(() => {
       </form>
     </ModalDialog>
     <ModalDialog v-if="showGrant && selectedGrantProject" :busy="busy" :title="ui('Project Grants', '项目授权')" @close="closeProjectGrants">
-      <p><code>{{ selectedGrantProject.workspaceKey }}/{{ selectedGrantProject.key }}</code> · {{ selectedGrantProject.display_name }}</p>
+      <p><code>{{ selectedGrantProject.workspaceName }} / {{ selectedGrantProject.display_name }}</code> · {{ selectedGrantProject.display_name }}</p>
       <form class="compact-inline-form" @submit.prevent="createGrant"><input v-model="grantForm.principal_id" required :placeholder="ui('Principal ID', '身份 ID')" /><select v-model="grantForm.role"><option value="reader">{{ roleLabel('reader') }}</option><option value="writer">{{ roleLabel('writer') }}</option></select><button class="primary-button" type="submit" :disabled="busy">{{ ui('Grant', '授予') }}</button></form>
       <div class="data-list"><div v-for="grant in projectGrants" :key="grant.id" class="data-row"><span><strong>{{ grant.principal.display_name }}</strong><code>{{ grant.principal_id }}</code></span><select :value="grant.role" :disabled="busy || grant.revoked_at !== null" @change="setGrantRole(grant, ($event.target as HTMLSelectElement).value as 'reader' | 'writer')"><option value="reader">{{ roleLabel('reader') }}</option><option value="writer">{{ roleLabel('writer') }}</option></select><div><button v-if="grant.revoked_at === null" class="danger-text-button" type="button" @click="revokeGrant(grant)">{{ ui('Revoke', '撤销') }}</button><button v-else class="secondary-button" type="button" @click="setGrantRole(grant, grant.role)">{{ ui('Regrant', '重新授予') }}</button></div></div></div>
       <button v-if="projectGrantsNextCursor" class="load-more" type="button" :disabled="projectGrantsLoadingMore" @click="loadMoreProjectGrants">{{ projectGrantsLoadingMore ? '…' : ui('Load more Grants', '加载更多授权') }}</button>

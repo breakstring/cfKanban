@@ -1,5 +1,7 @@
 # cfKanban 极简 Web UI SPEC
 
+> 当前容器身份合同由 [工作区与项目 UUID 寻址重构](2026-09-08-container-uuid-spec.md)（Frozen，2026-09-08）覆盖：Workspace/Project 取消 key，创建仅使用名称，服务端生成 UUID；REST/Web 使用 UUID，本地 scope 使用 schema 2。用户明确授权开发阶段不兼容旧 API、URL 和配置。本文保留的早期 key/DDL 描述不再是当前实现依据；其他身份、权限、并发和安全合同保持有效。
+
 > 2026-09-08 增补：[工作区与项目归档及永久删除合同](2026-09-08-container-purge-spec.md) 已冻结。仅 Owner 可预览并永久删除已归档项目或已归档空工作区；该特例覆盖本文相应的 hard-delete 禁止及项目内历史永久保留表述，其余软删除、权限与恢复合同不变。
 
 - 文档状态：Frozen
@@ -131,7 +133,7 @@ Web 不提供 Owner transfer、第二管理员、直接 D1 浏览、完整导出
 7. 成功兑换后服务设置 `HttpOnly + Secure + SameSite` Session cookie，使 launch code 失效，并用不含 code 的 URL 替换浏览器地址后进入 target。
 8. 页面之后通过同源 API 工作；退出登录只撤销当前 Web Session，不撤销长期 Credential。
 
-路由形态固定为 `/app`、`/app/w/{workspace_key}/p/{project_key}`、`/app/issues/{identifier}`、`/app/admin` 与 `/app/launch?code=...`。它们是 Web 信息架构入口，具体 API 调用仍以 Frozen API/Schema 合同为准。
+路由形态固定为 `/app`、`/app/w/{workspace_id}/p/{project_id}`、`/app/issues/{identifier}`、`/app/admin` 与 `/app/launch?code=...`。它们是 Web 信息架构入口，具体 API 调用仍以 Frozen API/Schema 合同为准。
 
 ### 4.2 target 与权限
 

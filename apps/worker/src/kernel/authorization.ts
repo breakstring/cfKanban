@@ -11,23 +11,19 @@ export interface SqlGuard {
 
 export interface VisibleProject {
   projectId: string;
-  projectKey: string;
   projectName: string;
   projectVersion: number;
   role: "owner" | "reader" | "writer";
   workspaceId: string;
-  workspaceKey: string;
   workspaceName: string;
 }
 
 interface VisibleProjectRow {
   project_id: string;
-  project_key: string;
   project_name: string;
   project_version: number;
   role: "owner" | "reader" | "writer";
   workspace_id: string;
-  workspace_key: string;
   workspace_name: string;
 }
 
@@ -125,8 +121,7 @@ interface FixedTarget {
   invalid: boolean;
   issueNumber: number | null;
   projectId: string | null;
-  projectKey: string | null;
-  workspaceKey: string | null;
+  workspaceId: string | null;
 }
 
 function fixedTarget(auth: AuthContext): FixedTarget | null {
@@ -141,34 +136,29 @@ function fixedTarget(auth: AuthContext): FixedTarget | null {
       invalid: !Number.isSafeInteger(issueNumber),
       issueNumber: Number.isSafeInteger(issueNumber) ? issueNumber : null,
       projectId: null,
-      projectKey: null,
-      workspaceKey: null,
+      workspaceId: null,
     };
   }
 
   const projectId = typeof auth.target.project_id === "string" ? auth.target.project_id : null;
-  const projectKey = typeof auth.target.project_key === "string" ? auth.target.project_key : null;
-  const workspaceKey = typeof auth.target.workspace_key === "string" ? auth.target.workspace_key : null;
-  const hasProjectId = projectId !== null && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(projectId);
-  const hasKeyPair = projectKey !== null && projectKey.length > 0 && workspaceKey !== null && workspaceKey.length > 0;
+  const workspaceId = typeof auth.target.workspace_id === "string" ? auth.target.workspace_id : null;
+  const hasProjectId = projectId !== null && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(projectId);
+  const hasScopeIds = hasProjectId && workspaceId !== null && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(workspaceId);
   return {
-    invalid: !hasProjectId && !hasKeyPair,
+    invalid: !hasScopeIds,
     issueNumber: null,
     projectId: hasProjectId ? projectId : null,
-    projectKey: hasKeyPair ? projectKey : null,
-    workspaceKey: hasKeyPair ? workspaceKey : null,
+    workspaceId: hasScopeIds ? workspaceId : null,
   };
 }
 
 function mapVisibleProject(row: VisibleProjectRow): VisibleProject {
   return {
     projectId: row.project_id,
-    projectKey: row.project_key,
     projectName: row.project_name,
     projectVersion: row.project_version,
     role: row.role,
     workspaceId: row.workspace_id,
-    workspaceKey: row.workspace_key,
     workspaceName: row.workspace_name,
   };
 }
@@ -182,33 +172,30 @@ async function queryVisibleProjects(
   const target = fixedTarget(auth);
   if (target?.invalid === true) return [];
   const targetProjectId = target?.projectId ?? null;
-  const targetWorkspaceKey = target?.workspaceKey ?? null;
-  const targetProjectKey = target?.projectKey ?? null;
+  const targetWorkspaceId = target?.workspaceId ?? null;
   const targetIssueNumber = target?.issueNumber ?? null;
   try {
     if (auth.isOwner) {
-      const currentAuth = currentAuthAt === null ? null : buildCurrentAuthGuard(auth, currentAuthAt, 5);
+      const currentAuth = currentAuthAt === null ? null : buildCurrentAuthGuard(auth, currentAuthAt, 4);
       const result = await db.prepare(
-        `SELECT p.id AS project_id, p.key AS project_key, p.display_name AS project_name,
-                p.version AS project_version, w.id AS workspace_id, w.key AS workspace_key,
+        `SELECT p.id AS project_id, p.display_name AS project_name,
+                p.version AS project_version, w.id AS workspace_id,
                 w.display_name AS workspace_name, 'owner' AS role
          FROM projects AS p
          JOIN workspaces AS w ON w.id = p.workspace_id
          WHERE ${includeEffectiveDeleted ? "1 = 1" : "p.deleted_at IS NULL AND w.deleted_at IS NULL"}
            AND (?1 IS NULL OR p.id = ?1)
-           AND (?2 IS NULL OR w.key = ?2)
-           AND (?3 IS NULL OR p.key = ?3)
-           AND (?4 IS NULL OR EXISTS (
+           AND (?2 IS NULL OR w.id = ?2)
+           AND (?3 IS NULL OR EXISTS (
              SELECT 1 FROM issues AS target_issue
-             WHERE target_issue.number = ?4 AND target_issue.project_id = p.id
+             WHERE target_issue.number = ?3 AND target_issue.project_id = p.id
                AND target_issue.deleted_at IS NULL
            ))
            ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
-         ORDER BY w.key, p.key`,
+         ORDER BY w.id, p.id`,
       ).bind(
         targetProjectId,
-        targetWorkspaceKey,
-        targetProjectKey,
+        targetWorkspaceId,
         targetIssueNumber,
         ...(currentAuth?.values ?? []),
       ).all<VisibleProjectRow>();
@@ -218,10 +205,10 @@ async function queryVisibleProjects(
       return result.results.map(mapVisibleProject);
     }
 
-    const currentAuth = currentAuthAt === null ? null : buildCurrentAuthGuard(auth, currentAuthAt, 6);
+    const currentAuth = currentAuthAt === null ? null : buildCurrentAuthGuard(auth, currentAuthAt, 5);
     const result = await db.prepare(
-      `SELECT p.id AS project_id, p.key AS project_key, p.display_name AS project_name,
-              p.version AS project_version, w.id AS workspace_id, w.key AS workspace_key,
+      `SELECT p.id AS project_id, p.display_name AS project_name,
+              p.version AS project_version, w.id AS workspace_id,
               w.display_name AS workspace_name, pg.role
        FROM project_grants AS pg
        JOIN projects AS p ON p.id = pg.project_id
@@ -229,20 +216,18 @@ async function queryVisibleProjects(
        WHERE pg.principal_id = ?1 AND pg.revoked_at IS NULL
          AND ${includeEffectiveDeleted ? "1 = 1" : "p.deleted_at IS NULL AND w.deleted_at IS NULL"}
          AND (?2 IS NULL OR p.id = ?2)
-         AND (?3 IS NULL OR w.key = ?3)
-         AND (?4 IS NULL OR p.key = ?4)
-         AND (?5 IS NULL OR EXISTS (
+         AND (?3 IS NULL OR w.id = ?3)
+         AND (?4 IS NULL OR EXISTS (
            SELECT 1 FROM issues AS target_issue
-           WHERE target_issue.number = ?5 AND target_issue.project_id = p.id
+           WHERE target_issue.number = ?4 AND target_issue.project_id = p.id
              AND target_issue.deleted_at IS NULL
          ))
          ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
-       ORDER BY w.key, p.key`,
+       ORDER BY w.id, p.id`,
     ).bind(
       auth.principalId,
       targetProjectId,
-      targetWorkspaceKey,
-      targetProjectKey,
+      targetWorkspaceId,
       targetIssueNumber,
       ...(currentAuth?.values ?? []),
     ).all<VisibleProjectRow>();
@@ -276,8 +261,8 @@ export async function resolveCurrentVisibleProjects(
 export async function requireProjectAuthorization(
   db: D1Database,
   auth: AuthContext,
-  workspaceKey: string,
-  projectKey: string,
+  workspaceId: string,
+  projectId: string,
   requiredRole: "reader" | "writer" = "reader",
   includeDeletedParentsForRecoveryView = false,
 ): Promise<VisibleProject> {
@@ -289,7 +274,7 @@ export async function requireProjectAuthorization(
     includeDeletedParentsForRecoveryView && auth.isOwner,
   );
   const project = projects.find(
-    (candidate) => candidate.workspaceKey === workspaceKey && candidate.projectKey === projectKey,
+    (candidate) => candidate.workspaceId === workspaceId && candidate.projectId === projectId,
   );
   if (project === undefined) throw notFound();
   if (requiredRole === "writer" && project.role === "reader") throw forbidden();
@@ -299,13 +284,13 @@ export async function requireProjectAuthorization(
 export async function requireVisibleProject(
   db: D1Database,
   auth: AuthContext,
-  workspaceKey: string,
-  projectKey: string,
+  workspaceId: string,
+  projectId: string,
   requiredRole: "reader" | "writer" = "reader",
 ): Promise<VisibleProject> {
   const visible = await resolveVisibleProjects(db, auth);
   const project = visible.find(
-    (candidate) => candidate.workspaceKey === workspaceKey && candidate.projectKey === projectKey,
+    (candidate) => candidate.workspaceId === workspaceId && candidate.projectId === projectId,
   );
   if (project === undefined) throw notFound();
   if (requiredRole === "writer" && project.role === "reader") throw forbidden();

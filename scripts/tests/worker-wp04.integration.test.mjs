@@ -51,8 +51,10 @@ function participantHeaders(currentToken, extra = {}) {
   return { authorization: `Bearer ${currentToken}`, ...extra };
 }
 
+const fixtureIds = Object.create(null);
+
 async function request(path, { body, headers = {}, method = "GET" } = {}) {
-  return server.fetch(path, {
+  const response = await server.fetch(path, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     headers: {
       ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -60,11 +62,15 @@ async function request(path, { body, headers = {}, method = "GET" } = {}) {
     },
     method,
   });
+  const result = await response.clone().json().catch(() => null);
+  if (response.ok && result?.resource?.id && body?.display_name && method === "POST") fixtureIds[body.display_name] = result.resource.id;
+  return response;
 }
 
 async function jsonRequest(path, options) {
   const response = await request(path, options);
-  return { body: await response.json(), response };
+  const result = await response.json();
+  return { body: result, response };
 }
 
 function invitationCode(writeBody) {
@@ -273,19 +279,19 @@ after(async () => {
 
 test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants, recovery, and Owner rotation", async () => {
   const workspace = await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Engineering", key: "engineering" },
+    body: { display_name: "Engineering" },
     headers: ownerHeaders({ "idempotency-key": "wp04-workspace" }),
     method: "POST",
   });
   assert.equal(workspace.response.status, 200);
 
-  const firstProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { display_name: "Core", key: "CORE" },
+  const firstProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { display_name: "Core" },
     headers: ownerHeaders({ "idempotency-key": "wp04-project-core" }),
     method: "POST",
   });
-  const secondProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { display_name: "Docs", key: "DOCS" },
+  const secondProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { display_name: "Docs" },
     headers: ownerHeaders({ "idempotency-key": "wp04-project-docs" }),
     method: "POST",
   });
@@ -410,7 +416,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.match(invitationHtml, /localStorage\.setItem\("cfkanban_locale"/);
   assert.match(invitationHtml, /localStorage\.getItem\("cfkanban_locale"/);
   assert.doesNotMatch(invitationHtml, /cfkanban\.locale/);
-  assert.match(invitationHtml, /engineering\/CORE/);
+  assert.match(invitationHtml, /Engineering \/ Core/);
   assert.match(invitationHtml, new RegExp(firstProjectId));
   const chineseInvitationPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
     headers: { "accept-language": "zh-CN,zh;q=0.9" },
@@ -507,13 +513,12 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const bulkCreatedAt = Date.now();
   await db.batch(bulkProjectIds.map((projectId, index) => db.prepare(
     `INSERT INTO projects
-      (id, workspace_id, key, display_name, version, created_at, updated_at,
+      (id, workspace_id, display_name, version, created_at, updated_at,
        created_by_principal_id, updated_by_principal_id, created_operation_id)
-     VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5, ?6, ?6, ?7)`,
+     VALUES (?1, ?2, ?3, 1, ?4, ?4, ?5, ?5, ?6)`,
   ).bind(
     projectId,
     workspace.body.resource.id,
-    `B${String(index + 1).padStart(2, "0")}`,
     index === 0 ? `cfk_v1_demo_${"X".repeat(43)}` : `Bulk ${index + 1}`,
     bulkCreatedAt,
     ids.ownerPrincipal,
@@ -768,7 +773,66 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     "UPDATE projects SET display_name = 'Core' WHERE id = ?1",
   ).bind(firstProjectId).run();
 
-  const participantProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
+  for (const secretKind of ["invite_code", "new_credential_token"]) {
+    for (const raced of [false, true]) {
+      const caseKey = `wp04-workspace-secret-${secretKind}-${raced}`;
+      const invitation = await createInvitation({
+        grants: [{ project_id: firstProjectId, role: "reader" }],
+        kind: "project_grant",
+      }, `${caseKey}-invite`);
+      const code = invitationCode(invitation.body);
+      const newToken = token(`workspace${raced ? "race" : "preflight"}`, secretKind === "invite_code" ? "J" : "K");
+      const secret = secretKind === "invite_code" ? code : newToken;
+      const beforeEffects = await redemptionSideEffects();
+      const beforeInvitation = await invitationRedemptionState(code);
+      const renameWorkspace = () => db.prepare(
+        "UPDATE workspaces SET display_name = ?1 WHERE id = ?2",
+      ).bind(`Unsafe ${secret}`, fixtureIds["Engineering"]).run();
+      const barrier = raced ? businessBatchBarrierDatabase(db, "SET redeemed_at = ?1") : null;
+      if (!raced) await renameWorkspace();
+      const redemption = redeemInvitationService(
+        barrier?.db ?? db,
+        new Request("https://kanban.example.test/api/v1/invitations/redeem", {
+          headers: { "idempotency-key": caseKey },
+          method: "POST",
+        }),
+        code,
+        "new_principal",
+        "Workspace Snapshot Safety Probe",
+        newToken,
+        Date.now(),
+      ).then(() => null, (error) => error);
+      try {
+        if (barrier !== null) {
+          await barrier.reached;
+          await renameWorkspace();
+          barrier.release();
+        }
+        const error = await redemption;
+        assert.equal(error?.status, 400);
+        assert.equal(error?.code, "VALIDATION_ERROR");
+        assert.equal(error?.details?.reason, "secret_value_reused");
+        assert.equal(error?.details?.field, "workspace_display_name");
+        assert.deepEqual(await redemptionSideEffects(), beforeEffects);
+        assert.deepEqual(await invitationRedemptionState(code), beforeInvitation);
+        const pending = await db.prepare(
+          "SELECT COUNT(*) AS count FROM idempotency_records WHERE idempotency_key = ?1",
+        ).bind(await sha256Hex(caseKey)).first();
+        assert.equal(pending.count, 0);
+        const leaked = await db.prepare(
+          "SELECT COUNT(*) AS count FROM idempotency_records WHERE instr(COALESCE(operation_snapshot_json, ''), ?1) > 0",
+        ).bind(secret).first();
+        assert.equal(leaked.count, 0);
+      } finally {
+        barrier?.release();
+        await db.prepare(
+          "UPDATE workspaces SET display_name = 'Engineering' WHERE id = ?1",
+        ).bind(fixtureIds["Engineering"]).run();
+      }
+    }
+  }
+
+  const participantProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}`, {
     headers: participantHeaders(participantToken),
   });
   assert.equal(participantProject.response.status, 200);
@@ -821,7 +885,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.deepEqual(repeatedGrantRevoke.body.details, {
     current_version: revokedGrant.body.resource.version,
   });
-  const hiddenProject = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE", {
+  const hiddenProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}`, {
     headers: participantHeaders(participantToken),
   });
   assert.equal(hiddenProject.response.status, 404);
@@ -1143,10 +1207,10 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   ).bind(secondProjectId, Date.now()).run();
   await db.prepare(
     `INSERT INTO public_join_policies
-      (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
+      (project_id, workspace_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
        version, created_at, updated_at, last_operation_id)
      VALUES (?1, (SELECT workspace_id FROM projects WHERE id = ?1),
-             (SELECT key FROM projects WHERE id = ?1),
+
              'wp04-public', 'Quota test', ?2, ?3, 1, ?2, ?2, 'wp04-policy')`,
   ).bind(secondProjectId, Date.now(), ids.ownerPrincipal).run();
   const activeDuplicateAtQuota = await jsonRequest(`/api/v1/admin/projects/${secondProjectId}/grants`, {

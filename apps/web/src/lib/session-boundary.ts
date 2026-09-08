@@ -3,10 +3,14 @@ import type { ApiErrorBody, ProjectScopeItem, WebSessionView } from "../types";
 function orderedProjects(projects: ProjectScopeItem[] | undefined): ProjectScopeItem[] {
   return [...(projects ?? [])].sort((left, right) => (
     left.project_id.localeCompare(right.project_id)
-      || left.workspace_key.localeCompare(right.workspace_key)
-      || left.project_key.localeCompare(right.project_key)
+      || left.workspace_id.localeCompare(right.workspace_id)
       || left.role.localeCompare(right.role)
   ));
+}
+
+export function projectInventoryBoundary(projects: ProjectScopeItem[] | undefined): string {
+  return JSON.stringify(projects === undefined ? null : orderedProjects(projects)
+    .map(({ project_id, workspace_id, role }) => ({ project_id, workspace_id, role })));
 }
 
 function boundaryValue(session: WebSessionView): Record<string, unknown> {
@@ -17,7 +21,7 @@ function boundaryValue(session: WebSessionView): Record<string, unknown> {
     allowed_scope: {
       kind: session.allowed_scope.kind,
       project_id: session.allowed_scope.project_id ?? null,
-      projects: scopeProjects,
+      projects: scopeProjects.map(({ project_id, workspace_id, role }) => ({ project_id, workspace_id, role })),
     },
     principal_id: session.principal.id,
     session_id: session.session_id,

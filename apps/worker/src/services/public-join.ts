@@ -66,14 +66,13 @@ interface PolicyRow {
   policy_version: number | null;
   principal_limit: number | null;
   project_id: string;
-  project_key: string;
   project_version: number;
   public_id: string | null;
   public_summary: string | null;
   updated_at: number;
   usage_present: number;
   workspace_id: string;
-  workspace_key: string;
+  workspace_display_name: string;
 }
 
 interface PolicySnapshot {
@@ -89,14 +88,13 @@ interface PolicySnapshot {
   policy_version: number;
   principal_limit: number;
   project_id: string;
-  project_key: string;
   project_version: number;
   public_id: string;
   public_summary: string;
   updated_at: number;
   usage_present: number;
   workspace_id: string;
-  workspace_key: string;
+  workspace_display_name: string;
 }
 
 interface ResourceLimits {
@@ -184,10 +182,10 @@ function policyResource(row: PolicyRow | PolicySnapshot): { [key: string]: JsonV
     project: {
       display_name: row.display_name,
       id: row.project_id,
-      key: row.project_key,
+
       version: row.project_version,
       workspace_id: row.workspace_id,
-      workspace_key: row.workspace_key,
+      workspace_display_name: row.workspace_display_name,
     },
     public_id: row.public_id,
     public_summary: row.public_summary,
@@ -289,10 +287,10 @@ async function readPolicyControl(
   const guard = buildCurrentAuthGuard(auth, now, 2, true);
   try {
     return await db.prepare(
-      `SELECT project.id AS project_id, project.key AS project_key,
+      `SELECT project.id AS project_id,
               project.display_name, project.version AS project_version,
               project.issue_limit, project.comment_limit, project.principal_limit,
-              workspace.id AS workspace_id, workspace.key AS workspace_key,
+              workspace.id AS workspace_id, workspace.display_name AS workspace_display_name,
               policy.public_id, policy.public_summary,
               policy.enabled_at, policy.disabled_at,
               policy.version AS policy_version, policy.created_at,
@@ -360,15 +358,12 @@ function policySnapshotStatement(
          'policy_version', policy.version,
          'principal_limit', project.principal_limit,
          'project_id', project.id,
-         'project_key', project.key,
          'project_version', project.version,
          'public_id', policy.public_id,
          'public_summary', policy.public_summary,
          'updated_at', policy.updated_at,
          'usage_present', 1,
-         'workspace_id', workspace.id,
-         'workspace_key', workspace.key
-       )
+         'workspace_display_name', workspace.display_name, 'workspace_id', workspace.id)
        FROM projects project
        JOIN workspaces workspace ON workspace.id = project.workspace_id
        JOIN public_join_policies policy ON policy.project_id = project.id
@@ -500,10 +495,10 @@ export async function enablePublicJoin(
             ),
             db.prepare(
               `INSERT INTO public_join_policies
-                (project_id, workspace_id, project_key, public_id, public_summary, enabled_at,
+                (project_id, workspace_id, public_id, public_summary, enabled_at,
                  enabled_by_principal_id, version, created_at, updated_at,
                  last_operation_id)
-               SELECT project.id, project.workspace_id, project.key, ?1, ?2, ?3, ?4, 1, ?3, ?3, ?5
+               SELECT project.id, project.workspace_id, ?1, ?2, ?3, ?4, 1, ?3, ?3, ?5
                FROM projects project
                WHERE project.id = ?6 AND project.last_operation_id = ?5
                ON CONFLICT(project_id) DO UPDATE SET
@@ -967,13 +962,11 @@ interface PublicJoinTargetRow {
   issue_limit: number | null;
   principal_limit: number | null;
   project_id: string;
-  project_key: string;
   public_id: string;
   public_summary: string;
   usage_present: number;
   workspace_display_name: string;
   workspace_id: string;
-  workspace_key: string;
   workspace_deleted_at: number | null;
   project_deleted_at: number | null;
 }
@@ -1004,10 +997,9 @@ interface PublicJoinSnapshot {
   project: {
     display_name: string;
     id: string;
-    key: string;
     public_summary: string;
     workspace_id: string;
-    workspace_key: string;
+    workspace_display_name: string;
   };
   public_id: string;
 }
@@ -1027,10 +1019,10 @@ async function readPublicJoinTarget(
     return await db.prepare(
       `SELECT policy.public_id, policy.public_summary,
               policy.enabled_at, policy.disabled_at,
-              project.id AS project_id, project.key AS project_key,
+              project.id AS project_id,
               project.display_name, project.deleted_at AS project_deleted_at,
               project.issue_limit, project.comment_limit, project.principal_limit,
-              workspace.id AS workspace_id, workspace.key AS workspace_key,
+              workspace.id AS workspace_id, workspace.display_name AS workspace_display_name,
               workspace.display_name AS workspace_display_name,
               workspace.deleted_at AS workspace_deleted_at,
               CASE WHEN usage.project_id IS NULL THEN 0 ELSE 1 END AS usage_present,
@@ -1254,11 +1246,8 @@ function publicJoinSnapshotStatement(
          'project', json_object(
            'display_name', project.display_name,
            'id', project.id,
-           'key', project.key,
            'public_summary', policy.public_summary,
-           'workspace_id', workspace.id,
-           'workspace_key', workspace.key
-         ),
+           'workspace_display_name', workspace.display_name, 'workspace_id', workspace.id),
          'public_id', policy.public_id
        )
        FROM public_join_policies policy
@@ -1288,9 +1277,9 @@ function publicJoinSnapshotStatement(
                          AND created_credential.created_operation_id = ?1)
            AND instr(principal.display_name, ?6) = 0
            AND instr(project.display_name, ?6) = 0
-           AND instr(project.key, ?6) = 0
+           AND instr(project.id, ?6) = 0
            AND instr(workspace.display_name, ?6) = 0
-           AND instr(workspace.key, ?6) = 0
+           AND instr(workspace.id, ?6) = 0
            AND instr(policy.public_summary, ?6) = 0
          ))
          AND ${authGuard?.sql ?? "1 = 1"}
@@ -1395,10 +1384,10 @@ function publicJoinResource(snapshot: PublicJoinSnapshot): { [key: string]: Json
     project: {
       display_name: snapshot.project.display_name,
       id: snapshot.project.id,
-      key: snapshot.project.key,
+
       public_summary: snapshot.project.public_summary,
       workspace_id: snapshot.project.workspace_id,
-      workspace_key: snapshot.project.workspace_key,
+      workspace_display_name: snapshot.project.workspace_display_name,
     },
     public_id: snapshot.public_id,
   };
@@ -1452,10 +1441,10 @@ export async function redeemPublicJoin(
   if (replacement !== null && publicJoinTargetEnabled(initialTarget)) {
     for (const [field, value] of [
       ["project_display_name", initialTarget.display_name],
-      ["project_key", initialTarget.project_key],
+      ["project_id", initialTarget.project_id],
       ["public_summary", initialTarget.public_summary],
       ["workspace_display_name", initialTarget.workspace_display_name],
-      ["workspace_key", initialTarget.workspace_key],
+      ["workspace_id", initialTarget.workspace_id],
     ] as const) {
       assertSecretNotInText(value, field, replacement.token);
     }
@@ -1484,10 +1473,10 @@ export async function redeemPublicJoin(
         }
         for (const [field, value] of [
           ["project_display_name", target.display_name],
-          ["project_key", target.project_key],
+          ["project_id", target.project_id],
           ["public_summary", target.public_summary],
           ["workspace_display_name", target.workspace_display_name],
-          ["workspace_key", target.workspace_key],
+          ["workspace_id", target.workspace_id],
         ] as const) {
           assertSecretNotInText(value, field, replacement.token);
         }
@@ -1518,9 +1507,9 @@ export async function redeemPublicJoin(
              AND usage.active_principal_count < project.principal_limit
              AND instr(?2, ?6) = 0
              AND instr(project.display_name, ?6) = 0
-             AND instr(project.key, ?6) = 0
+             AND instr(project.id, ?6) = 0
              AND instr(workspace.display_name, ?6) = 0
-             AND instr(workspace.key, ?6) = 0
+             AND instr(workspace.id, ?6) = 0
              AND instr(policy.public_summary, ?6) = 0`,
         ).bind(principalId, displayName, now, operationId, publicId, replacement.token));
         statements.push(db.prepare(
@@ -1695,10 +1684,10 @@ export async function redeemPublicJoin(
             if (replacement !== null) {
               const targetTexts = [
                 latestTarget.display_name,
-                latestTarget.project_key,
+                latestTarget.project_id,
                 latestTarget.public_summary,
                 latestTarget.workspace_display_name,
-                latestTarget.workspace_key,
+                latestTarget.workspace_id,
               ];
               if (targetTexts.some((value) => value.includes(replacement.token))) return true;
             }
@@ -1725,10 +1714,10 @@ export async function redeemPublicJoin(
           if (replacement !== null) {
             for (const [field, value] of [
               ["project_display_name", latestTarget.display_name],
-              ["project_key", latestTarget.project_key],
+              ["project_id", latestTarget.project_id],
               ["public_summary", latestTarget.public_summary],
               ["workspace_display_name", latestTarget.workspace_display_name],
-              ["workspace_key", latestTarget.workspace_key],
+              ["workspace_id", latestTarget.workspace_id],
             ] as const) {
               assertSecretNotInText(value, field, replacement.token);
             }

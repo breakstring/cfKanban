@@ -14,6 +14,7 @@ import {
   markCasReadbackComplete,
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
+import { projectInventoryBoundary } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
@@ -76,7 +77,7 @@ const assigneePrincipalId = ref("");
 const newLabel = ref({ color: "", name: "" });
 const projectionGeneration = new ProjectionGeneration();
 const writeFence = new WriteFence();
-let issueProjectScope: { projectKey: string; workspaceKey: string } | null = null;
+let issueProjectScope: { projectId: string; workspaceId: string } | null = null;
 let loadRequestId = 0;
 let casRecoveryGeneration = 0;
 let casReadback: (() => Promise<void>) | null = null;
@@ -132,7 +133,7 @@ function projectIsActive(scope = issueProjectScope): boolean {
   if (scope === null) return true;
   const projects = props.session.allowed_scope.projects;
   return projects === undefined || projects.some((item) => (
-    item.workspace_key === scope.workspaceKey && item.project_key === scope.projectKey
+    item.workspace_id === scope.workspaceId && item.project_id === scope.projectId
   ));
 }
 
@@ -160,6 +161,15 @@ function clearIssueProjection(): void {
   commentLoadingMore.value = false;
 }
 
+function refreshProjectNames(): void {
+  const current = issue.value;
+  if (current === null) return;
+  const scope = props.session.allowed_scope.projects?.find((item) => item.project_id === current.project.id && item.workspace_id === current.workspace.id);
+  if (scope === undefined) return;
+  issue.value = { ...current, project: { ...current.project, display_name: scope.project_display_name }, workspace: { ...current.workspace, display_name: scope.workspace_display_name } };
+  emit("context", { label: `${scope.workspace_display_name} / ${scope.project_display_name}`, role: roleForProject() });
+}
+
 function refreshProjectInventory(): void {
   projectionGeneration.invalidate();
   loadRequestId += 1;
@@ -173,7 +183,7 @@ function refreshProjectInventory(): void {
   showCollaborationRecovery.value = false;
   const current = issue.value;
   if (current !== null) {
-    issueProjectScope = { projectKey: current.project.key, workspaceKey: current.workspace.key };
+    issueProjectScope = { projectId: current.project.id, workspaceId: current.workspace.id };
   }
   const scope = props.session.allowed_scope.projects;
   if (issueProjectScope !== null && scope !== undefined && !projectIsActive()) {
@@ -195,7 +205,7 @@ function roleForProject(current = issue.value): string {
   if (props.session.principal.is_owner) return "owner";
   if (current === null) return "reader";
   return props.session.allowed_scope.projects?.find((item) => (
-    item.workspace_key === current.workspace.key && item.project_key === current.project.key
+    item.workspace_id === current.workspace.id && item.project_id === current.project.id
   ))?.role ?? "reader";
 }
 
@@ -213,16 +223,16 @@ async function load(preserveLocalDrafts = editMode.value, throwOnFailure = false
   clearError();
   try {
     const result = await apiRequest<IssueDetail>(`/api/v1/issues/${encodeURIComponent(props.identifier)}`);
-    const resultScope = { projectKey: result.project.key, workspaceKey: result.workspace.key };
+    const resultScope = { projectId: result.project.id, workspaceId: result.workspace.id };
     if (requestId !== loadRequestId || !projectionGeneration.isCurrent(generation) || !projectIsActive(resultScope)) {
       return;
     }
     const [statusResult, labelResult, commentResult, relationResult] = await Promise.all([
       apiRequest<ListResult<ProjectStatusResource>>(
-        `/api/v1/workspaces/${encodeURIComponent(result.workspace.key)}/projects/${encodeURIComponent(result.project.key)}/statuses`,
+        `/api/v1/workspaces/${encodeURIComponent(result.workspace.id)}/projects/${encodeURIComponent(result.project.id)}/statuses`,
       ),
       apiRequest<ListResult<LabelResource>>(
-        `/api/v1/workspaces/${encodeURIComponent(result.workspace.key)}/projects/${encodeURIComponent(result.project.key)}/labels?limit=100`,
+        `/api/v1/workspaces/${encodeURIComponent(result.workspace.id)}/projects/${encodeURIComponent(result.project.id)}/labels?limit=100`,
       ),
       apiRequest<ListResult<IssueComment>>(`/api/v1/issues/${encodeURIComponent(result.identifier)}/comments?limit=100`),
       apiRequest<ListResult<IssueRelation>>(`/api/v1/issues/${encodeURIComponent(result.identifier)}/relations?limit=100`),
@@ -235,7 +245,7 @@ async function load(preserveLocalDrafts = editMode.value, throwOnFailure = false
     if (!preserveLocalDrafts) {
       edit.value = { body: result.body ?? "", priority_key: result.priority, title: result.title };
     }
-    emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject(result) });
+    emit("context", { label: `${result.workspace.display_name} / ${result.project.display_name}`, role: roleForProject(result) });
     statuses.value = statusResult.items;
     labels.value = labelResult.items;
     labelsNextCursor.value = continuationCursor(labelResult);
@@ -293,7 +303,7 @@ async function loadMoreLabels(): Promise<void> {
   labelsLoadingMore.value = true;
   try {
     const result = await apiRequest<ListResult<LabelResource>>(
-      `/api/v1/workspaces/${encodeURIComponent(current.workspace.key)}/projects/${encodeURIComponent(current.project.key)}/labels?limit=100&cursor=${encodeURIComponent(labelsNextCursor.value)}`,
+      `/api/v1/workspaces/${encodeURIComponent(current.workspace.id)}/projects/${encodeURIComponent(current.project.id)}/labels?limit=100&cursor=${encodeURIComponent(labelsNextCursor.value)}`,
     );
     if (projectionIsCurrent(generation)) {
       labels.value = mergePageById(labels.value, result.items);
@@ -376,11 +386,11 @@ async function refreshCasFacts(): Promise<void> {
 async function refreshCurrentFacts(): Promise<void> {
   const generation = projectionGeneration.capture();
   const result = await apiRequest<IssueDetail>(`/api/v1/issues/${encodeURIComponent(props.identifier)}`);
-  const resultScope = { projectKey: result.project.key, workspaceKey: result.workspace.key };
+  const resultScope = { projectId: result.project.id, workspaceId: result.workspace.id };
   if (!projectionGeneration.isCurrent(generation) || !projectIsActive(resultScope)) return;
   issueProjectScope = resultScope;
   issue.value = result;
-  emit("context", { label: `${result.workspace.key} / ${result.project.display_name}`, role: roleForProject(result) });
+  emit("context", { label: `${result.workspace.display_name} / ${result.project.display_name}`, role: roleForProject(result) });
 }
 
 async function updateIssue(payload: Record<string, unknown>): Promise<void> {
@@ -471,7 +481,7 @@ async function deleteOrRestore(): Promise<void> {
       await apiRequest(`/api/v1/issues/${current.identifier}?expected_version=${current.version}`, { method: "DELETE" });
       if (projectionIsCurrent(generation)) {
         showDelete.value = false;
-        navigate(`/app/w/${encodeURIComponent(current.workspace.key)}/p/${encodeURIComponent(current.project.key)}`);
+        navigate(`/app/w/${encodeURIComponent(current.workspace.id)}/p/${encodeURIComponent(current.project.id)}`);
       }
       return;
     } else {
@@ -570,7 +580,7 @@ async function loadCollaborationRecovery(throwOnFailure = false): Promise<void> 
     const [commentResult, labelResult, relationResult] = await Promise.all([
       apiRequest<ListResult<IssueComment>>(`/api/v1/issues/${current.identifier}/comments?deleted=only&limit=100`),
       apiRequest<ListResult<LabelResource>>(
-        `/api/v1/workspaces/${encodeURIComponent(current.workspace.key)}/projects/${encodeURIComponent(current.project.key)}/labels?deleted=only&limit=100`,
+        `/api/v1/workspaces/${encodeURIComponent(current.workspace.id)}/projects/${encodeURIComponent(current.project.id)}/labels?deleted=only&limit=100`,
       ),
       apiRequest<ListResult<IssueRelation>>(`/api/v1/issues/${current.identifier}/relations?deleted=only&limit=100`),
     ]);
@@ -618,7 +628,7 @@ async function loadMoreDeletedLabels(): Promise<void> {
   deletedCollectionLoading.value = "labels";
   try {
     const result = await apiRequest<ListResult<LabelResource>>(
-      `/api/v1/workspaces/${encodeURIComponent(current.workspace.key)}/projects/${encodeURIComponent(current.project.key)}/labels?deleted=only&limit=100&cursor=${encodeURIComponent(deletedLabelsNextCursor.value)}`,
+      `/api/v1/workspaces/${encodeURIComponent(current.workspace.id)}/projects/${encodeURIComponent(current.project.id)}/labels?deleted=only&limit=100&cursor=${encodeURIComponent(deletedLabelsNextCursor.value)}`,
     );
     if (projectionIsCurrent(generation)) {
       deletedLabels.value = mergePageById(deletedLabels.value, result.items);
@@ -676,7 +686,7 @@ async function createLabel(): Promise<void> {
   busy.value = true;
   try {
     await apiRequest(
-      `/api/v1/workspaces/${encodeURIComponent(current.workspace.key)}/projects/${encodeURIComponent(current.project.key)}/labels`,
+      `/api/v1/workspaces/${encodeURIComponent(current.workspace.id)}/projects/${encodeURIComponent(current.project.id)}/labels`,
       {
         body: {
           color: newLabel.value.color.trim() || null,
@@ -829,7 +839,7 @@ async function assignByPrincipalId(): Promise<void> {
 function backToBoard(): void {
   const current = issue.value;
   if (current === null) return navigate("/app");
-  navigate(`/app/w/${encodeURIComponent(current.workspace.key)}/p/${encodeURIComponent(current.project.key)}`);
+  navigate(`/app/w/${encodeURIComponent(current.workspace.id)}/p/${encodeURIComponent(current.project.id)}`);
 }
 
 onMounted(load);
@@ -837,7 +847,8 @@ onUnmounted(() => {
   projectionGeneration.invalidate();
   loadRequestId += 1;
 });
-watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { deep: true });
+watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refreshProjectInventory);
+watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
 </script>
 
 <template>
@@ -941,7 +952,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { dee
         <p>{{ issue.identifier }} · {{ issue.title }}</p><p class="muted-copy">{{ locale === "zh-CN" ? "这是可恢复的软删除。" : "This is a recoverable soft delete." }}</p><div class="form-actions"><button class="secondary-button" type="button" @click="showDelete = false">{{ t("action.cancel") }}</button><button class="danger-button" type="button" :disabled="busy" @click="deleteOrRestore">{{ t("action.delete") }}</button></div>
       </ModalDialog>
       <ModalDialog v-if="showRelation" :busy="busy" :title="locale === 'zh-CN' ? '添加关系' : 'Add relation'" @close="showRelation = false">
-        <form class="form-stack" @submit.prevent="createRelation"><label>{{ locale === "zh-CN" ? "类型" : "Kind" }}<select v-model="relation.kind"><option v-for="key in ['blocks','parent','related','duplicate']" :key="key" :value="key">{{ relationKindLabel(key) }}</option></select></label><label>{{ locale === "zh-CN" ? "目标事项" : "Target Issue" }}<input v-model="relation.target_identifier" required pattern="CFK-[1-9][0-9]*" placeholder="CFK-42" @input="relationTarget = null" @blur="previewRelationTarget" /></label><article v-if="relationTarget" class="target-preview"><small>{{ relationTarget.workspace.key }} / {{ relationTarget.project.key }}</small><strong>{{ relationTarget.identifier }} · {{ relationTarget.title }}</strong></article><p v-else class="muted-copy">{{ locale === "zh-CN" ? "离开输入框后会先核对目标项目与标题。" : "Leave the field to verify the target Project and title before creating the relation." }}</p><p v-if="relationTarget && !relationTargetCanWrite" class="warning-panel">{{ locale === "zh-CN" ? "关系两端必须位于同一工作区，且当前会话必须能写入两端项目。" : "Both Relation endpoints must be in one Workspace and writable in the current Session." }}</p><div class="form-actions"><button class="secondary-button" type="button" @click="showRelation = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy || !relationTargetCanWrite">{{ t("action.save") }}</button></div></form>
+        <form class="form-stack" @submit.prevent="createRelation"><label>{{ locale === "zh-CN" ? "类型" : "Kind" }}<select v-model="relation.kind"><option v-for="key in ['blocks','parent','related','duplicate']" :key="key" :value="key">{{ relationKindLabel(key) }}</option></select></label><label>{{ locale === "zh-CN" ? "目标事项" : "Target Issue" }}<input v-model="relation.target_identifier" required pattern="CFK-[1-9][0-9]*" placeholder="CFK-42" @input="relationTarget = null" @blur="previewRelationTarget" /></label><article v-if="relationTarget" class="target-preview"><small>{{ relationTarget.workspace.display_name }} / {{ relationTarget.project.display_name }}</small><strong>{{ relationTarget.identifier }} · {{ relationTarget.title }}</strong></article><p v-else class="muted-copy">{{ locale === "zh-CN" ? "离开输入框后会先核对目标项目与标题。" : "Leave the field to verify the target Project and title before creating the relation." }}</p><p v-if="relationTarget && !relationTargetCanWrite" class="warning-panel">{{ locale === "zh-CN" ? "关系两端必须位于同一工作区，且当前会话必须能写入两端项目。" : "Both Relation endpoints must be in one Workspace and writable in the current Session." }}</p><div class="form-actions"><button class="secondary-button" type="button" @click="showRelation = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy || !relationTargetCanWrite">{{ t("action.save") }}</button></div></form>
       </ModalDialog>
       <ModalDialog v-if="showLabelManager" :busy="busy" :title="locale === 'zh-CN' ? '管理标签' : 'Manage labels'" @close="showLabelManager = false">
         <form class="form-stack" @submit.prevent="createLabel"><label>{{ locale === "zh-CN" ? "名称" : "Name" }}<input v-model="newLabel.name" required maxlength="64" /></label><label>{{ locale === "zh-CN" ? "颜色（可选）" : "Color (optional)" }}<input v-model="newLabel.color" pattern="#[0-9A-Fa-f]{6}" placeholder="#D97706" /></label><div class="form-actions"><button class="primary-button" type="submit" :disabled="busy">{{ locale === "zh-CN" ? "创建标签" : "Create label" }}</button></div></form>

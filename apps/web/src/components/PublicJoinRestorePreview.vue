@@ -13,8 +13,7 @@ const labels = { issues: ["Issues", "事项"], comments: ["Comments", "评论"],
 <template>
   <div class="public-restore-list">
     <section v-for="project in projects" :key="project.id" class="public-restore-project">
-      <strong>{{ project.workspace_key ? `${project.workspace_key}/` : '' }}{{ project.key }}</strong>
-      <span>{{ project.display_name ?? project.id }}</span>
+      <strong>{{ project.workspace_display_name ? `${project.workspace_display_name} / ` : '' }}{{ project.display_name ?? ui("Unavailable", "暂不可用") }}</strong>
       <p class="public-restore-summary"><strong>{{ ui("Public summary", "公开摘要") }}</strong><span>{{ project.public_summary ?? ui("Unavailable", "暂不可用") }}</span></p>
       <p>{{ ui("Public roles", "公开角色") }}：{{ project.role_choices?.map(role => role === 'writer' ? ui('Writer', '协作者') : ui('Reader', '只读者')).join(' / ') ?? '—' }}</p>
       <table class="public-restore-quotas">

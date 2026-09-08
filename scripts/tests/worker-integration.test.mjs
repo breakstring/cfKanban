@@ -74,11 +74,10 @@ async function seedDatabase() {
   const expiredSessionDigest = await sha256Hex(expiredSessionToken);
   const revokedSourceSessionDigest = await sha256Hex(revokedSourceSessionToken);
   const projectTarget = JSON.stringify({
-    entry_path: "/app/w/validation/p/CORE",
+    entry_path: `/app/w/${ids.workspace}/p/${ids.project}`,
     kind: "project",
     project_id: ids.project,
-    project_key: "CORE",
-    workspace_key: "validation",
+    workspace_id: ids.workspace,
   });
   await db.batch([
     db.prepare(
@@ -103,15 +102,15 @@ async function seedDatabase() {
     ).bind(ids.owner, revokedDigest, now),
     db.prepare(
       `INSERT INTO workspaces
-        (id, key, display_name, created_at, updated_at, created_by_principal_id,
+        (id, display_name, created_at, updated_at, created_by_principal_id,
          updated_by_principal_id, created_operation_id)
-       VALUES (?1, 'validation', 'Validation', ?2, ?2, ?3, ?3, 'seed-workspace')`,
+       VALUES (?1, 'Validation', ?2, ?2, ?3, ?3, 'seed-workspace')`,
     ).bind(ids.workspace, now, ids.owner),
     db.prepare(
       `INSERT INTO projects
-        (id, workspace_id, key, display_name, created_at, updated_at,
+        (id, workspace_id, display_name, created_at, updated_at,
          created_by_principal_id, updated_by_principal_id, created_operation_id)
-       VALUES (?1, ?2, 'CORE', 'Core', ?3, ?3, ?4, ?4, 'seed-project')`,
+       VALUES (?1, ?2, 'Core', ?3, ?3, ?4, ?4, 'seed-project')`,
     ).bind(ids.project, ids.workspace, now, ids.owner),
     db.prepare(
       "INSERT INTO project_usage VALUES (?1, 0, 0, 0, ?2, 'seed-usage')",
@@ -180,7 +179,7 @@ test("production Worker serves health/OpenAPI, structured misses, and Static Ass
   assert.equal(missingBody.code, "NOT_FOUND");
   assert.equal(missingBody.category, "not_found");
 
-  for (const path of ["/", "/app", "/app/w/validation/p/CORE", "/app/issues/CFK-1", "/app/admin?section=audit"]) {
+  for (const path of ["/", "/app", `/app/w/${ids.workspace}/p/${ids.project}`, "/app/issues/CFK-1", "/app/admin?section=audit"]) {
     const navigation = await server.fetch(path, { headers: { "sec-fetch-mode": "navigate" } });
     assert.equal(navigation.status, 200, path);
     assert.equal(navigation.headers.get("cache-control"), "no-store, no-transform", path);

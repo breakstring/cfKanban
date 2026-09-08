@@ -862,7 +862,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_key}": {
+    "/api/v1/workspaces/{workspace_id}": {
       "get": {
         "operationId": "getWorkspace",
         "tags": [
@@ -880,12 +880,11 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -967,12 +966,11 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1050,12 +1048,11 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1107,7 +1104,7 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
-    "/api/v1/workspaces/{workspace_key}/purge-preview": {
+    "/api/v1/workspaces/{workspace_id}/purge-preview": {
       "get": {
         "operationId": "previewWorkspacePurge",
         "tags": [
@@ -1125,12 +1122,11 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -1176,7 +1172,7 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
-    "/api/v1/workspaces/{workspace_key}/commands/purge": {
+    "/api/v1/workspaces/{workspace_id}/commands/purge": {
       "post": {
         "operationId": "purgeWorkspace",
         "tags": [
@@ -1194,12 +1190,11 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1264,7 +1259,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_key}/commands/restore": {
+    "/api/v1/workspaces/{workspace_id}/commands/restore": {
       "post": {
         "operationId": "restoreWorkspace",
         "tags": [
@@ -1282,12 +1277,11 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1352,7 +1346,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects": {
+    "/api/v1/workspaces/{workspace_id}/projects": {
       "get": {
         "operationId": "listProjects",
         "tags": [
@@ -1370,12 +1364,11 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1467,12 +1460,11 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1534,7 +1526,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects/{project_key}": {
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}": {
       "get": {
         "operationId": "getProject",
         "tags": [
@@ -1552,21 +1544,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1648,21 +1638,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1740,21 +1728,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1806,7 +1792,7 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/purge-preview": {
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/purge-preview": {
       "get": {
         "operationId": "previewProjectPurge",
         "tags": [
@@ -1824,21 +1810,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -1884,7 +1868,7 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/purge": {
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/purge": {
       "post": {
         "operationId": "purgeProject",
         "tags": [
@@ -1902,21 +1886,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -1981,7 +1963,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore": {
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/restore": {
       "post": {
         "operationId": "restoreProject",
         "tags": [
@@ -1999,21 +1981,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -2078,7 +2058,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/statuses": {
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses": {
       "get": {
         "operationId": "listProjectStatuses",
         "tags": [
@@ -2096,21 +2076,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           }
         ],
@@ -2156,7 +2134,7 @@
         "x-cfkanban-permission": "project_reader"
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/statuses/{status_key}": {
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_key}": {
       "patch": {
         "operationId": "updateProjectStatusName",
         "tags": [
@@ -2174,21 +2152,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -2564,7 +2540,7 @@
         "x-cfkanban-permission": "project_reader"
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues": {
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues": {
       "get": {
         "operationId": "listProjectIssues",
         "tags": [
@@ -2582,21 +2558,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -2758,21 +2732,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -4195,7 +4167,7 @@
         }
       }
     },
-    "/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels": {
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels": {
       "get": {
         "operationId": "listLabels",
         "tags": [
@@ -4213,21 +4185,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -4322,21 +4292,19 @@
         ],
         "parameters": [
           {
-            "name": "workspace_key",
+            "name": "workspace_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
-            "name": "project_key",
+            "name": "project_id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1
+              "$ref": "#/components/schemas/Uuid"
             }
           },
           {
@@ -8378,8 +8346,7 @@
             "required": [
               "kind",
               "id",
-              "key",
-              "workspace_key",
+              "workspace_id",
               "display_name",
               "version"
             ],
@@ -8394,11 +8361,8 @@
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "key": {
-                "type": "string"
-              },
-              "workspace_key": {
-                "type": "string"
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
               },
               "display_name": {
                 "type": "string"
@@ -8504,7 +8468,6 @@
         "type": "object",
         "required": [
           "id",
-          "key",
           "kind",
           "purged",
           "purged_at",
@@ -8513,9 +8476,6 @@
         "properties": {
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string"
           },
           "kind": {
             "type": "string",
@@ -8589,14 +8549,9 @@
       "CreateWorkspaceRequest": {
         "type": "object",
         "required": [
-          "key",
           "display_name"
         ],
         "properties": {
-          "key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
-          },
           "display_name": {
             "type": "string",
             "minLength": 1,
@@ -8608,14 +8563,9 @@
       "CreateProjectRequest": {
         "type": "object",
         "required": [
-          "key",
           "display_name"
         ],
         "properties": {
-          "key": {
-            "type": "string",
-            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
-          },
           "display_name": {
             "type": "string",
             "minLength": 1,
@@ -9224,18 +9174,18 @@
                 "type": "object",
                 "required": [
                   "kind",
-                  "workspace_key",
-                  "project_key"
+                  "workspace_id",
+                  "project_id"
                 ],
                 "properties": {
                   "kind": {
                     "const": "project"
                   },
-                  "workspace_key": {
-                    "type": "string"
+                  "workspace_id": {
+                    "$ref": "#/components/schemas/Uuid"
                   },
-                  "project_key": {
-                    "type": "string"
+                  "project_id": {
+                    "$ref": "#/components/schemas/Uuid"
                   }
                 },
                 "additionalProperties": false
@@ -9786,10 +9736,9 @@
             "required": [
               "display_name",
               "id",
-              "key",
               "version",
               "workspace_id",
-              "workspace_key"
+              "workspace_display_name"
             ],
             "properties": {
               "display_name": {
@@ -9800,16 +9749,13 @@
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "key": {
-                "type": "string"
-              },
               "version": {
                 "$ref": "#/components/schemas/Version"
               },
               "workspace_id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "workspace_key": {
+              "workspace_display_name": {
                 "type": "string"
               }
             },
@@ -10031,10 +9977,9 @@
             "required": [
               "display_name",
               "id",
-              "key",
               "public_summary",
               "workspace_id",
-              "workspace_key"
+              "workspace_display_name"
             ],
             "properties": {
               "display_name": {
@@ -10045,9 +9990,6 @@
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "key": {
-                "type": "string"
-              },
               "public_summary": {
                 "type": "string",
                 "minLength": 1,
@@ -10056,7 +9998,7 @@
               "workspace_id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "workspace_key": {
+              "workspace_display_name": {
                 "type": "string"
               }
             },
@@ -10440,8 +10382,7 @@
             "type": "object",
             "required": [
               "display_name",
-              "id",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
@@ -10449,9 +10390,6 @@
               },
               "id": {
                 "$ref": "#/components/schemas/Uuid"
-              },
-              "key": {
-                "type": "string"
               }
             },
             "additionalProperties": false
@@ -10500,14 +10438,14 @@
             "type": "object",
             "required": [
               "display_name",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
                 "type": "string"
               },
-              "key": {
-                "type": "string"
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false
@@ -10610,8 +10548,7 @@
             "type": "object",
             "required": [
               "display_name",
-              "id",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
@@ -10619,9 +10556,6 @@
               },
               "id": {
                 "$ref": "#/components/schemas/Uuid"
-              },
-              "key": {
-                "type": "string"
               }
             },
             "additionalProperties": false
@@ -10670,14 +10604,14 @@
             "type": "object",
             "required": [
               "display_name",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
                 "type": "string"
               },
-              "key": {
-                "type": "string"
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false
@@ -10882,8 +10816,7 @@
             "type": "object",
             "required": [
               "display_name",
-              "id",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
@@ -10891,9 +10824,6 @@
               },
               "id": {
                 "$ref": "#/components/schemas/Uuid"
-              },
-              "key": {
-                "type": "string"
               }
             },
             "additionalProperties": false
@@ -10942,14 +10872,14 @@
             "type": "object",
             "required": [
               "display_name",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
                 "type": "string"
               },
-              "key": {
-                "type": "string"
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false
@@ -11105,8 +11035,7 @@
             "type": "object",
             "required": [
               "display_name",
-              "id",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
@@ -11114,9 +11043,6 @@
               },
               "id": {
                 "$ref": "#/components/schemas/Uuid"
-              },
-              "key": {
-                "type": "string"
               }
             },
             "additionalProperties": false
@@ -11165,14 +11091,14 @@
             "type": "object",
             "required": [
               "display_name",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
                 "type": "string"
               },
-              "key": {
-                "type": "string"
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false
@@ -11353,17 +11279,21 @@
               "type": "object",
               "required": [
                 "project_id",
-                "project_key",
-                "workspace_key"
+                "project_display_name",
+                "workspace_id",
+                "workspace_display_name"
               ],
               "properties": {
                 "project_id": {
                   "$ref": "#/components/schemas/Uuid"
                 },
-                "project_key": {
+                "project_display_name": {
                   "type": "string"
                 },
-                "workspace_key": {
+                "workspace_id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "workspace_display_name": {
                   "type": "string"
                 }
               },
@@ -11546,8 +11476,7 @@
                 "type": "object",
                 "required": [
                   "display_name",
-                  "id",
-                  "key"
+                  "id"
                 ],
                 "properties": {
                   "display_name": {
@@ -11555,9 +11484,6 @@
                   },
                   "id": {
                     "$ref": "#/components/schemas/Uuid"
-                  },
-                  "key": {
-                    "type": "string"
                   }
                 },
                 "additionalProperties": false
@@ -11606,14 +11532,14 @@
                 "type": "object",
                 "required": [
                   "display_name",
-                  "key"
+                  "id"
                 ],
                 "properties": {
                   "display_name": {
                     "type": "string"
                   },
-                  "key": {
-                    "type": "string"
+                  "id": {
+                    "$ref": "#/components/schemas/Uuid"
                   }
                 },
                 "additionalProperties": false
@@ -11881,8 +11807,7 @@
             "type": "object",
             "required": [
               "display_name",
-              "id",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
@@ -11890,9 +11815,6 @@
               },
               "id": {
                 "$ref": "#/components/schemas/Uuid"
-              },
-              "key": {
-                "type": "string"
               }
             },
             "additionalProperties": false
@@ -11941,14 +11863,14 @@
             "type": "object",
             "required": [
               "display_name",
-              "key"
+              "id"
             ],
             "properties": {
               "display_name": {
                 "type": "string"
               },
-              "key": {
-                "type": "string"
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false
@@ -12093,17 +12015,21 @@
             "type": "object",
             "required": [
               "id",
-              "key",
-              "workspace_key"
+              "display_name",
+              "workspace_id",
+              "workspace_display_name"
             ],
             "properties": {
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "key": {
+              "display_name": {
                 "type": "string"
               },
-              "workspace_key": {
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "workspace_display_name": {
                 "type": "string"
               }
             },
@@ -12658,17 +12584,21 @@
             "type": "object",
             "required": [
               "id",
-              "key",
-              "workspace_key"
+              "display_name",
+              "workspace_id",
+              "workspace_display_name"
             ],
             "properties": {
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "key": {
+              "display_name": {
                 "type": "string"
               },
-              "workspace_key": {
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "workspace_display_name": {
                 "type": "string"
               }
             },
@@ -12741,17 +12671,21 @@
             "type": "object",
             "required": [
               "project_id",
-              "project_key",
-              "workspace_key"
+              "project_display_name",
+              "workspace_id",
+              "workspace_display_name"
             ],
             "properties": {
               "project_id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "project_key": {
+              "project_display_name": {
                 "type": "string"
               },
-              "workspace_key": {
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "workspace_display_name": {
                 "type": "string"
               }
             },
@@ -12801,17 +12735,21 @@
             "type": "object",
             "required": [
               "id",
-              "key",
-              "workspace_key"
+              "display_name",
+              "workspace_id",
+              "workspace_display_name"
             ],
             "properties": {
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "key": {
+              "display_name": {
                 "type": "string"
               },
-              "workspace_key": {
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "workspace_display_name": {
                 "type": "string"
               }
             },
@@ -12972,13 +12910,13 @@
             "type": "object",
             "required": [
               "id",
-              "key"
+              "display_name"
             ],
             "properties": {
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "key": {
+              "display_name": {
                 "type": "string"
               }
             },
@@ -13067,9 +13005,9 @@
         "required": [
           "display_name",
           "project_id",
-          "project_key",
           "role",
-          "workspace_key"
+          "workspace_id",
+          "workspace_display_name"
         ],
         "properties": {
           "display_name": {
@@ -13078,13 +13016,13 @@
           "project_id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "project_key": {
-            "type": "string"
-          },
           "role": {
             "$ref": "#/components/schemas/ProjectRole"
           },
-          "workspace_key": {
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_display_name": {
             "type": "string"
           }
         },
@@ -13994,8 +13932,7 @@
                 "type": "object",
                 "required": [
                   "display_name",
-                  "id",
-                  "key"
+                  "id"
                 ],
                 "properties": {
                   "display_name": {
@@ -14003,9 +13940,6 @@
                   },
                   "id": {
                     "$ref": "#/components/schemas/Uuid"
-                  },
-                  "key": {
-                    "type": "string"
                   }
                 },
                 "additionalProperties": false
@@ -14048,8 +13982,7 @@
                 "type": "object",
                 "required": [
                   "display_name",
-                  "id",
-                  "key"
+                  "id"
                 ],
                 "properties": {
                   "display_name": {
@@ -14057,9 +13990,6 @@
                   },
                   "id": {
                     "$ref": "#/components/schemas/Uuid"
-                  },
-                  "key": {
-                    "type": "string"
                   }
                 },
                 "additionalProperties": false
@@ -14090,17 +14020,21 @@
               "type": "object",
               "required": [
                 "project_id",
-                "project_key",
-                "workspace_key"
+                "project_display_name",
+                "workspace_id",
+                "workspace_display_name"
               ],
               "properties": {
                 "project_id": {
                   "$ref": "#/components/schemas/Uuid"
                 },
-                "project_key": {
+                "project_display_name": {
                   "type": "string"
                 },
-                "workspace_key": {
+                "workspace_id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "workspace_display_name": {
                   "type": "string"
                 }
               },
@@ -14230,8 +14164,7 @@
               "entry_path",
               "kind",
               "project_id",
-              "project_key",
-              "workspace_key"
+              "workspace_id"
             ],
             "properties": {
               "entry_path": {
@@ -14244,11 +14177,8 @@
               "project_id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "project_key": {
-                "type": "string"
-              },
-              "workspace_key": {
-                "type": "string"
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false
@@ -14261,8 +14191,7 @@
               "issue_id",
               "kind",
               "project_id",
-              "project_key",
-              "workspace_key"
+              "workspace_id"
             ],
             "properties": {
               "entry_path": {
@@ -14282,11 +14211,8 @@
               "project_id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "project_key": {
-                "type": "string"
-              },
-              "workspace_key": {
-                "type": "string"
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false
@@ -14414,15 +14340,16 @@
         "type": "object",
         "required": [
           "project_id",
-          "project_key",
+          "project_display_name",
           "role",
-          "workspace_key"
+          "workspace_id",
+          "workspace_display_name"
         ],
         "properties": {
           "project_id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "project_key": {
+          "project_display_name": {
             "type": "string"
           },
           "role": {
@@ -14433,7 +14360,10 @@
               "writer"
             ]
           },
-          "workspace_key": {
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_display_name": {
             "type": "string"
           }
         },
@@ -15052,8 +14982,8 @@
             "required": [
               "display_name",
               "id",
-              "key",
-              "workspace_key"
+              "workspace_id",
+              "workspace_display_name"
             ],
             "properties": {
               "display_name": {
@@ -15062,10 +14992,10 @@
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "key": {
-                "type": "string"
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
               },
-              "workspace_key": {
+              "workspace_display_name": {
                 "type": "string"
               }
             },
@@ -15435,11 +15365,11 @@
           "active_usage",
           "display_name",
           "id",
-          "key",
           "public_summary",
           "resource_limits",
           "role_choices",
-          "workspace_key"
+          "workspace_id",
+          "workspace_display_name"
         ],
         "properties": {
           "active_usage": {
@@ -15475,10 +15405,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string",
-            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
           },
           "public_summary": {
             "type": "string",
@@ -15519,9 +15445,11 @@
               "$ref": "#/components/schemas/ProjectRole"
             }
           },
-          "workspace_key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "workspace_display_name": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -15534,7 +15462,6 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "restorable",
           "updated_at",
           "version"
@@ -15564,10 +15491,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
           },
           "updated_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -15592,7 +15515,6 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "restorable",
           "updated_at",
           "version"
@@ -15623,10 +15545,6 @@
           "id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
-          },
           "updated_at": {
             "$ref": "#/components/schemas/Timestamp"
           },
@@ -15650,7 +15568,6 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "restorable",
           "updated_at",
           "version",
@@ -15681,10 +15598,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
           },
           "updated_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -15729,7 +15642,6 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "restorable",
           "updated_at",
           "version",
@@ -15760,10 +15672,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
           },
           "updated_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -15931,14 +15839,13 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "public_join_enabled",
           "resource_limits",
           "restorable",
           "updated_at",
           "version",
           "workspace_id",
-          "workspace_key",
+          "workspace_display_name",
           "active_usage"
         ],
         "properties": {
@@ -15978,10 +15885,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string",
-            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
           },
           "public_join_enabled": {
             "type": "boolean"
@@ -16042,9 +15945,8 @@
           "workspace_id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "workspace_key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          "workspace_display_name": {
+            "type": "string"
           },
           "active_usage": {
             "type": "object",
@@ -16090,14 +15992,13 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "public_join_enabled",
           "resource_limits",
           "restorable",
           "updated_at",
           "version",
           "workspace_id",
-          "workspace_key"
+          "workspace_display_name"
         ],
         "properties": {
           "allowed_actions": {
@@ -16136,10 +16037,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string",
-            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
           },
           "public_join_enabled": {
             "type": "boolean"
@@ -16200,9 +16097,8 @@
           "workspace_id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "workspace_key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          "workspace_display_name": {
+            "type": "string"
           },
           "deleted_at": {
             "type": "null"
@@ -16222,14 +16118,13 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "public_join_enabled",
           "resource_limits",
           "restorable",
           "updated_at",
           "version",
           "workspace_id",
-          "workspace_key",
+          "workspace_display_name",
           "active_usage",
           "parent_status",
           "resumed_public_projects",
@@ -16273,10 +16168,6 @@
           "id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "key": {
-            "type": "string",
-            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
-          },
           "public_join_enabled": {
             "type": "boolean"
           },
@@ -16336,9 +16227,8 @@
           "workspace_id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "workspace_key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          "workspace_display_name": {
+            "type": "string"
           },
           "active_usage": {
             "type": "object",
@@ -16443,14 +16333,13 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "public_join_enabled",
           "resource_limits",
           "restorable",
           "updated_at",
           "version",
           "workspace_id",
-          "workspace_key",
+          "workspace_display_name",
           "parent_status",
           "resumed_public_projects",
           "unavailability_reason"
@@ -16492,10 +16381,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string",
-            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
           },
           "public_join_enabled": {
             "type": "boolean"
@@ -16556,9 +16441,8 @@
           "workspace_id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "workspace_key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          "workspace_display_name": {
+            "type": "string"
           },
           "deleted_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -16637,14 +16521,13 @@
           "deleted_at",
           "display_name",
           "id",
-          "key",
           "public_join_enabled",
           "resource_limits",
           "restorable",
           "updated_at",
           "version",
           "workspace_id",
-          "workspace_key",
+          "workspace_display_name",
           "resumed_public_projects"
         ],
         "properties": {
@@ -16684,10 +16567,6 @@
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
-          },
-          "key": {
-            "type": "string",
-            "pattern": "^[A-Z][A-Z0-9-]{1,15}$"
           },
           "public_join_enabled": {
             "type": "boolean"
@@ -16748,9 +16627,8 @@
           "workspace_id": {
             "$ref": "#/components/schemas/Uuid"
           },
-          "workspace_key": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+          "workspace_display_name": {
+            "type": "string"
           },
           "deleted_at": {
             "type": "null"
@@ -16821,7 +16699,7 @@
             "type": "object",
             "required": [
               "deleted",
-              "workspace_key"
+              "workspace_id"
             ],
             "properties": {
               "deleted": {
@@ -16831,9 +16709,8 @@
                   "only"
                 ]
               },
-              "workspace_key": {
-                "type": "string",
-                "pattern": "^[a-z][a-z0-9-]{1,31}$"
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false

@@ -1,5 +1,7 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
+> 当前容器身份合同由 [工作区与项目 UUID 寻址重构](2026-09-08-container-uuid-spec.md)（Frozen，2026-09-08）覆盖：Workspace/Project 取消 key，创建仅使用名称，服务端生成 UUID；REST/Web 使用 UUID，本地 scope 使用 schema 2。用户明确授权开发阶段不兼容旧 API、URL 和配置。本文保留的早期 key/DDL 描述不再是当前实现依据；其他身份、权限、并发和安全合同保持有效。
+
 > 2026-09-08 增补：[工作区与项目归档及永久删除合同](2026-09-08-container-purge-spec.md) 已冻结。仅 Owner 可预览并永久删除已归档项目或已归档空工作区；该特例覆盖本文相应的 hard-delete 禁止及项目内历史永久保留表述，其余软删除、权限与恢复合同不变。
 
 - 文档状态：Frozen
@@ -401,7 +403,7 @@ Owner Credential 的本地文件风险提示必须额外说明它拥有整个部
 - 只有用户明确要求发布 canonical Repo URL 时，才把它作为服务端非授权 external reference 单独写入；v0 不建立 Repository 实体。
 - scope 配置与 Credential 必须分离。其用户级或 Repo 级位置、文件名、格式和优先级仍由 SB-11、SB-12 与 SB-19 共同确认，不能在实现中提前假定。
 
-Invite 兑换和 discover 都不自动修改 Repo；Skill 另行提供显式创建/合并 Repo 根目录 `.cfkanban-scope.json` 的 helper。文件只保存 schema version 和一个或多个 `instance_id + workspace_key + project_key` target，不保存 Credential、API origin、绝对路径、Git metadata、role 或权限快照。多个 target 平级，不保存优先级或 last-used 默认。API 允许一个、多个或省略 Project filters；Skill 推荐“本次显式 targets → Repo targets → 无过滤并提示扩大”的解析顺序，始终暴露无效 target 与 resolved scope，上层可以覆盖。跨实例 targets 分别请求并按实例分组，不声称服务端提供跨实例全局排序。单项写入的 wire request 必须携带一个明确 Project，上层负责目标解析。
+Invite 兑换和 discover 都不自动修改 Repo；Skill 另行提供显式创建/合并 Repo 根目录 `.cfkanban-scope.json` 的 helper。文件使用 schema_version 2，旧 key 配置明确拒绝而不静默扩大范围；只保存一个或多个 `instance_id + workspace_id + project_id` target，不保存 Credential、API origin、绝对路径、Git metadata、role 或权限快照。多个 target 平级，不保存优先级或 last-used 默认。API 允许一个、多个或省略 Project filters；Skill 推荐“本次显式 targets → Repo targets → 无过滤并提示扩大”的解析顺序，始终暴露无效 target 与 resolved scope，上层可以覆盖。跨实例 targets 分别请求并按实例分组，不声称服务端提供跨实例全局排序。单项写入的 wire request 必须携带一个明确 Project，上层负责目标解析。
 
 ## 8. 两类更新与兼容
 

@@ -8,9 +8,7 @@ import {
   requireIssueIdentifier,
   requireIssueTitle,
   requirePriorityKey,
-  requireProjectKey,
   requireUuid,
-  requireWorkspaceKey,
   timestamp,
   type PriorityKey,
   type StatusKey,
@@ -72,7 +70,6 @@ interface IssueRow {
   project_deleted_at: number | null;
   project_display_name: string;
   project_id: string;
-  project_key: string;
   status_display_name: string;
   status_key: StatusKey;
   title: string;
@@ -81,7 +78,6 @@ interface IssueRow {
   workspace_display_name: string;
   workspace_deleted_at: number | null;
   workspace_id: string;
-  workspace_key: string;
 }
 
 interface LabelRow {
@@ -170,10 +166,9 @@ const ISSUE_SELECT = `
          i.priority_key, i.priority_rank, i.assignee_principal_id,
          i.blocked_reason, i.version, i.deleted_at, i.created_at, i.updated_at,
          i.deleted_by_principal_id,
-         p.key AS project_key, p.display_name AS project_display_name,
+         p.display_name AS project_display_name,
          p.deleted_at AS project_deleted_at,
-         p.context AS project_context, w.id AS workspace_id,
-         w.key AS workspace_key, w.display_name AS workspace_display_name,
+         p.context AS project_context, w.id AS workspace_id, w.display_name AS workspace_display_name,
          w.deleted_at AS workspace_deleted_at,
          assignee.display_name AS assignee_display_name,
          COALESCE(status_name.display_name,
@@ -216,7 +211,7 @@ function issueTarget(auth: AuthContext): string | null {
   return typeof identifier === "string" && /^CFK-[1-9][0-9]*$/.test(identifier) ? identifier : "invalid";
 }
 
-function cookieTargetAllowsProject(auth: AuthContext, workspaceKey: string, projectKey: string): boolean {
+function cookieTargetAllowsProject(auth: AuthContext, workspaceId: string, projectId: string): boolean {
   if (auth.kind === "bearer") return true;
   if (auth.targetKind === "admin") return auth.isOwner;
   if (auth.targetKind === "project_selection") return true;
@@ -224,7 +219,7 @@ function cookieTargetAllowsProject(auth: AuthContext, workspaceKey: string, proj
   // project membership is resolved by resolveVisibleProjects; the identifier
   // only selects the initial Web page and is not a single-resource ACL.
   if (auth.targetKind === "issue") return true;
-  return auth.target.workspace_key === workspaceKey && auth.target.project_key === projectKey;
+  return auth.target.workspace_id === workspaceId && auth.target.project_id === projectId;
 }
 
 function roleCanWrite(role: ProjectAccessRole): boolean {
@@ -235,15 +230,8 @@ function projectRole(projects: readonly VisibleProject[], projectId: string): Pr
   return projects.find((project) => project.projectId === projectId)?.role ?? null;
 }
 
-function parseProjectTarget(value: string): { projectKey: string; workspaceKey: string } {
-  const separator = value.indexOf("/");
-  if (separator <= 0 || separator !== value.lastIndexOf("/") || separator === value.length - 1) {
-    throw validationError("invalid_project_filter");
-  }
-  return {
-    projectKey: requireProjectKey(value.slice(separator + 1), "project"),
-    workspaceKey: requireWorkspaceKey(value.slice(0, separator), "project"),
-  };
+function parseProjectTarget(value: string): { projectId: string } {
+  return { projectId: requireUuid(value, "project") };
 }
 
 function repeatedTargets(url: URL, name: "project" | "workspace"): string[] {
@@ -264,7 +252,7 @@ async function resolveIssueScope(
   const parsedProjects = projectTargets.map((target) => ({ target, ...parseProjectTarget(target) }));
   const parsedWorkspaces = workspaceTargets.map((target) => ({
     target,
-    workspaceKey: requireWorkspaceKey(target, "workspace"),
+    workspaceId: requireUuid(target, "workspace"),
   }));
   const relationProjects = recoveryView
     ? await resolveIssueRecoveryProjects(db, auth)
@@ -275,21 +263,21 @@ async function resolveIssueScope(
   const visibleBeforeQueryFilters = projects;
   if (parsedProjects.length > 0) {
     projects = projects.filter((project) => parsedProjects.some(
-      (target) => target.workspaceKey === project.workspaceKey && target.projectKey === project.projectKey,
+      (target) => target.projectId === project.projectId,
     ));
   }
   if (parsedWorkspaces.length > 0) {
     projects = projects.filter((project) => parsedWorkspaces.some(
-      (target) => target.workspaceKey === project.workspaceKey,
+      (target) => target.workspaceId === project.workspaceId,
     ));
   }
   const unresolvedProjectTargets = parsedProjects
     .filter((target) => !visibleBeforeQueryFilters.some(
-      (project) => project.workspaceKey === target.workspaceKey && project.projectKey === target.projectKey,
+      (project) => project.projectId === target.projectId,
     ))
     .map((target) => target.target);
   const unresolvedWorkspaceTargets = parsedWorkspaces
-    .filter((target) => !visibleBeforeQueryFilters.some((project) => project.workspaceKey === target.workspaceKey))
+    .filter((target) => !visibleBeforeQueryFilters.some((project) => project.workspaceId === target.workspaceId))
     .map((target) => target.target);
   return {
     broad: forcedProject === null && targetIdentifier === null && projectTargets.length === 0 && workspaceTargets.length === 0,
@@ -330,16 +318,14 @@ async function resolveIssueRecoveryProjects(
   onlyProjectId: string | null = null,
 ): Promise<VisibleProject[]> {
   let targetProjectId: string | null = null;
-  let targetWorkspaceKey: string | null = null;
-  let targetProjectKey: string | null = null;
+  let targetWorkspaceId: string | null = null;
   let targetIssueNumber: number | null = null;
   if (auth.kind === "cookie") {
     if (auth.targetKind === "admin" && !auth.isOwner) return [];
     if (auth.targetKind === "project") {
       targetProjectId = typeof auth.target.project_id === "string" ? auth.target.project_id : null;
-      targetWorkspaceKey = typeof auth.target.workspace_key === "string" ? auth.target.workspace_key : null;
-      targetProjectKey = typeof auth.target.project_key === "string" ? auth.target.project_key : null;
-      if (targetProjectId === null && (targetWorkspaceKey === null || targetProjectKey === null)) return [];
+      targetWorkspaceId = typeof auth.target.workspace_id === "string" ? auth.target.workspace_id : null;
+      if (targetProjectId === null || targetWorkspaceId === null) return [];
     }
     if (auth.targetKind === "issue") {
       const identifier = issueTarget(auth);
@@ -348,46 +334,40 @@ async function resolveIssueRecoveryProjects(
     }
   }
   const select = `
-    SELECT p.id AS project_id, p.key AS project_key, p.display_name AS project_name,
-           p.version AS project_version, w.id AS workspace_id, w.key AS workspace_key,
+    SELECT p.id AS project_id, p.display_name AS project_name,
+           p.version AS project_version, w.id AS workspace_id,
            w.display_name AS workspace_name, ?1 AS role
     FROM projects p
     JOIN workspaces w ON w.id = p.workspace_id
     WHERE (?2 IS NULL OR p.id = ?2)
       AND (?3 IS NULL OR p.id = ?3)
-      AND (?4 IS NULL OR w.key = ?4)
-      AND (?5 IS NULL OR p.key = ?5)
-      AND (?6 IS NULL OR EXISTS (
+      AND (?4 IS NULL OR w.id = ?4)
+      AND (?5 IS NULL OR EXISTS (
         SELECT 1 FROM issues target_issue
-        WHERE target_issue.number = ?6 AND target_issue.project_id = p.id
+        WHERE target_issue.number = ?5 AND target_issue.project_id = p.id
       ))`;
   try {
     if (auth.isOwner) {
-      const result = await db.prepare(`${select} ORDER BY w.key, p.key`).bind(
+      const result = await db.prepare(`${select} ORDER BY w.id, p.id`).bind(
         "owner",
         onlyProjectId,
         targetProjectId,
-        targetWorkspaceKey,
-        targetProjectKey,
+        targetWorkspaceId,
         targetIssueNumber,
       ).all<{
         project_id: string;
-        project_key: string;
         project_name: string;
         project_version: number;
         role: ProjectAccessRole;
         workspace_id: string;
-        workspace_key: string;
         workspace_name: string;
       }>();
       return result.results.map((row) => ({
         projectId: row.project_id,
-        projectKey: row.project_key,
         projectName: row.project_name,
         projectVersion: row.project_version,
         role: row.role,
         workspaceId: row.workspace_id,
-        workspaceKey: row.workspace_key,
         workspaceName: row.workspace_name,
       }));
     }
@@ -397,36 +377,31 @@ async function resolveIssueRecoveryProjects(
        AND EXISTS (
          SELECT 1 FROM project_grants recovery_grant
          WHERE recovery_grant.project_id = p.id
-           AND recovery_grant.principal_id = ?7
+           AND recovery_grant.principal_id = ?6
            AND recovery_grant.role = 'writer' AND recovery_grant.revoked_at IS NULL
        )
-       ORDER BY w.key, p.key`,
+       ORDER BY w.id, p.id`,
     ).bind(
       "writer",
       onlyProjectId,
       targetProjectId,
-      targetWorkspaceKey,
-      targetProjectKey,
+      targetWorkspaceId,
       targetIssueNumber,
       auth.principalId,
     ).all<{
       project_id: string;
-      project_key: string;
       project_name: string;
       project_version: number;
       role: ProjectAccessRole;
       workspace_id: string;
-      workspace_key: string;
       workspace_name: string;
     }>();
     return result.results.map((row) => ({
       projectId: row.project_id,
-      projectKey: row.project_key,
       projectName: row.project_name,
       projectVersion: row.project_version,
       role: row.role,
       workspaceId: row.workspace_id,
-      workspaceKey: row.workspace_key,
       workspaceName: row.workspace_name,
     }));
   } catch (error) {
@@ -583,7 +558,6 @@ function issueOperationSnapshotStatement(
            'project_deleted_at', p.deleted_at,
            'project_display_name', p.display_name,
            'project_id', p.id,
-           'project_key', p.key,
            'status_display_name', COALESCE(status_name.display_name,
              CASE i.status_key
                WHEN 'backlog' THEN 'Backlog' WHEN 'todo' THEN 'Todo'
@@ -595,9 +569,7 @@ function issueOperationSnapshotStatement(
            'version', i.version,
            'workspace_deleted_at', w.deleted_at,
            'workspace_display_name', w.display_name,
-           'workspace_id', w.id,
-           'workspace_key', w.key
-         ),
+           'workspace_id', w.id),
          'labels', json(COALESCE((
            SELECT json_group_array(json_object(
              'color', ordered_label.color,
@@ -734,7 +706,6 @@ function issueResource(
     project: {
       display_name: row.project_display_name,
       id: row.project_id,
-      key: row.project_key,
     },
     status: {
       category: status.category,
@@ -745,7 +716,7 @@ function issueResource(
     title: row.title,
     updated_at: timestamp(row.updated_at),
     version: row.version,
-    workspace: { display_name: row.workspace_display_name, key: row.workspace_key },
+    workspace: { display_name: row.workspace_display_name, id: row.workspace_id },
   };
   if (detail) {
     resource.allowed_actions = allowedIssueActions(role, row.deleted_at !== null);
@@ -881,7 +852,7 @@ async function requireIssueAccess(
 ): Promise<{ project: VisibleProject; row: IssueRow }> {
   const identifier = requireIssueIdentifier(identifierValue);
   const row = await readIssueRow(db, issueNumber(identifier), includeDeleted);
-  if (row === null || !cookieTargetAllowsProject(auth, row.workspace_key, row.project_key)) throw notFound();
+  if (row === null || !cookieTargetAllowsProject(auth, row.workspace_id, row.project_id)) throw notFound();
   const visible = await resolveVisibleProjects(db, auth);
   const project = visible.find((candidate) => candidate.projectId === row.project_id);
   if (project === undefined) throw notFound();
@@ -928,8 +899,9 @@ function resolvedScope(
     project_targets: scope.projectTargets,
     projects: scope.projects.map((project) => ({
       project_id: project.projectId,
-      project_key: project.projectKey,
-      workspace_key: project.workspaceKey,
+      project_display_name: project.projectName,
+      workspace_display_name: project.workspaceName,
+      workspace_id: project.workspaceId,
     })),
     ...(candidate !== null ? {
       candidate_policy: { ...candidate, status_category: "unstarted" },
@@ -1273,19 +1245,19 @@ export async function listIssueCandidates(
 export async function listProjectIssues(
   db: D1Database,
   auth: AuthContext,
-  workspaceKeyValue: JsonValue,
-  projectKeyValue: JsonValue,
+  workspaceIdValue: JsonValue,
+  projectIdValue: JsonValue,
   url: URL,
   now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
-  const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
-  const projectKey = requireProjectKey(projectKeyValue, "project_key");
+  const workspaceId = requireUuid(workspaceIdValue, "workspace_id");
+  const projectId = requireUuid(projectIdValue, "project_id");
   const deletionView = issueDeletionView(url);
   const project = deletionView === "only"
     ? (await resolveIssueRecoveryProjects(db, auth)).find(
-      (candidate) => candidate.workspaceKey === workspaceKey && candidate.projectKey === projectKey,
+      (candidate) => candidate.workspaceId === workspaceId && candidate.projectId === projectId,
     )
-    : await requireVisibleProject(db, auth, workspaceKey, projectKey);
+    : await requireVisibleProject(db, auth, workspaceId, projectId);
   if (project === undefined) throw notFound();
   return listIssuesInternal(db, auth, url, false, project, now);
 }
@@ -1464,7 +1436,7 @@ export async function getIssueContext(
       project_context: {
         content: projectContext.content,
         continuation: projectContext.truncated
-          ? `/api/v1/workspaces/${row.workspace_key}/projects/${row.project_key}`
+          ? `/api/v1/workspaces/${row.workspace_id}/projects/${row.project_id}`
           : null,
         omitted_bytes: projectContext.omittedBytes,
         truncated: projectContext.truncated,
@@ -1737,25 +1709,25 @@ function issueEvent(
 async function authorizeProjectWrite(
   db: D1Database,
   auth: AuthContext,
-  workspaceKey: string,
-  projectKey: string,
+  workspaceId: string,
+  projectId: string,
 ): Promise<VisibleProject> {
-  const project = await requireVisibleProject(db, auth, workspaceKey, projectKey, "writer");
-  if (!cookieTargetAllowsProject(auth, workspaceKey, projectKey)) throw notFound();
+  const project = await requireVisibleProject(db, auth, workspaceId, projectId, "writer");
+  if (!cookieTargetAllowsProject(auth, workspaceId, projectId)) throw notFound();
   return project;
 }
 
 async function diagnoseCreateIssue(
   db: D1Database,
   auth: AuthContext,
-  workspaceKey: string,
-  projectKey: string,
+  workspaceId: string,
+  projectId: string,
   assigneeId: string | null,
   labelIds: readonly string[],
   now: number,
 ): Promise<never> {
   await verifyCurrentAuth(db, auth, now);
-  const project = await authorizeProjectWrite(db, auth, workspaceKey, projectKey);
+  const project = await authorizeProjectWrite(db, auth, workspaceId, projectId);
   if (!(await assigneeEligible(db, project.projectId, assigneeId))) throw assigneeNotEligible();
   if (!(await activeLabelsExist(db, project.projectId, labelIds))) throw notFound();
   const quota = await issueQuotaExceeded(db, project.projectId);
@@ -1780,14 +1752,14 @@ export async function createIssue(
   db: D1Database,
   request: Request,
   auth: AuthContext,
-  workspaceKeyValue: JsonValue,
-  projectKeyValue: JsonValue,
+  workspaceIdValue: JsonValue,
+  projectIdValue: JsonValue,
   value: { [key: string]: JsonValue },
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
-  const projectKey = requireProjectKey(projectKeyValue, "project_key");
-  const project = await authorizeProjectWrite(db, auth, workspaceKey, projectKey);
+  const workspaceId = requireUuid(workspaceIdValue, "workspace_id");
+  const projectId = requireUuid(projectIdValue, "project_id");
+  const project = await authorizeProjectWrite(db, auth, workspaceId, projectId);
   const title = requireIssueTitle(value.title as JsonValue);
   const body = requireIssueBody(value.body ?? "");
   const statusKey = value.status_key === undefined
@@ -1801,10 +1773,10 @@ export async function createIssue(
   const labelIds = requireLabelIds(value.label_ids);
   const issueId = crypto.randomUUID();
   const idempotencyKey = requireIdempotencyKey(request);
-  const targetAllowed = cookieTargetAllowsProject(auth, workspaceKey, projectKey) ? 1 : 0;
+  const targetAllowed = cookieTargetAllowsProject(auth, workspaceId, projectId) ? 1 : 0;
   const result = await runIdempotentOperation({
     authorize: async () => {
-      const latest = await authorizeProjectWrite(db, auth, workspaceKey, projectKey);
+      const latest = await authorizeProjectWrite(db, auth, workspaceId, projectId);
       if (latest.projectId !== project.projectId) throw notFound();
     },
     db,
@@ -1880,14 +1852,14 @@ export async function createIssue(
             ),
             issueEvent(db, auth, operationId, issueId, "issue.created", {
               identifier_pending: true,
-              project_key: projectKey,
-              workspace_key: workspaceKey,
+              project_id: projectId,
+              workspace_id: workspaceId,
             }, now, { expectedLabelCount: labelIds.length, requireUsageCommit: true }),
           ],
           committedAt: now,
           confirmBusinessRejection: async () => {
             try {
-              await diagnoseCreateIssue(db, auth, workspaceKey, projectKey, assigneeId, labelIds, now);
+              await diagnoseCreateIssue(db, auth, workspaceId, projectId, assigneeId, labelIds, now);
             } catch (error) {
               return error instanceof ApiError && error.code !== "PLATFORM_UNAVAILABLE";
             }
@@ -1901,14 +1873,14 @@ export async function createIssue(
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          return diagnoseCreateIssue(db, auth, workspaceKey, projectKey, assigneeId, labelIds, now);
+          return diagnoseCreateIssue(db, auth, workspaceId, projectId, assigneeId, labelIds, now);
         }
         throw error;
       }
     },
     idempotencyKey,
     method: "POST",
-    normalizedResourceScope: `workspace:${workspaceKey}:project:${projectKey}:issue`,
+    normalizedResourceScope: `workspace:${workspaceId}:project:${projectId}:issue`,
     now,
     readback: async (operationId, commit) => {
       const snapshot = await readIssueOperationSnapshot(db, operationId);
@@ -1932,7 +1904,7 @@ export async function createIssue(
       status_key: statusKey,
       title,
     },
-    routeTemplate: "/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues",
+    routeTemplate: "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues",
     scopeKey: `principal:${auth.principalId}`,
   });
   return { ...(result.body as { [key: string]: JsonValue }), idempotent_replay: result.idempotentReplay };
@@ -2009,7 +1981,7 @@ export async function updateIssue(
   ]);
   await applyVisibleBlockedState(db, [row], visibleProjects.map((visibleProject) => visibleProject.projectId));
   const operationId = crypto.randomUUID();
-  const targetAllowed = cookieTargetAllowsProject(auth, row.workspace_key, row.project_key) ? 1 : 0;
+  const targetAllowed = cookieTargetAllowsProject(auth, row.workspace_id, row.project_id) ? 1 : 0;
   const guard = buildProjectWriterGuard(auth, now, 19, "issues.project_id");
   let commit: OperationCommit;
   try {
@@ -2129,7 +2101,7 @@ async function setIssueDeleted(
   const { row } = deleted
     ? await requireIssueAccess(db, auth, identifier, "writer", true)
     : await requireIssueRecoveryAccess(db, auth, identifier);
-  const targetAllowed = cookieTargetAllowsProject(auth, row.workspace_key, row.project_key) ? 1 : 0;
+  const targetAllowed = cookieTargetAllowsProject(auth, row.workspace_id, row.project_id) ? 1 : 0;
   const guard = buildProjectWriterGuard(auth, now, 9, "issues.project_id");
   try {
     const { commit } = await executeAtomicBatch(db, {
@@ -2364,8 +2336,8 @@ async function runIssueCommand(
   const idempotencyKey = requireIdempotencyKey(request);
   const targetAllowed = cookieTargetAllowsProject(
     auth,
-    initial.row.workspace_key,
-    initial.row.project_key,
+    initial.row.workspace_id,
+    initial.row.project_id,
   ) ? 1 : 0;
   const result = await runIdempotentOperation({
     authorize: async () => {

@@ -140,25 +140,25 @@ test("OpenAPI exposes exact Workspace and Project lifecycle response models", as
   assert.deepEqual(responseRef("/api/v1/workspaces", "get"), {
     $ref: "#/components/schemas/WorkspaceListResult",
   });
-  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_key}", "get").oneOf, [
+  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_id}", "get").oneOf, [
     { $ref: "#/components/schemas/WorkspaceActive" },
     { $ref: "#/components/schemas/WorkspaceTombstoneDetail" },
   ]);
-  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_key}/commands/restore", "post"), {
+  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_id}/commands/restore", "post"), {
     $ref: "#/components/schemas/WorkspaceRestoredWriteResult",
   });
-  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_key}/projects", "get"), {
+  assert.deepEqual(responseRef("/api/v1/workspaces/{workspace_id}/projects", "get"), {
     $ref: "#/components/schemas/ProjectListResult",
   });
   assert.deepEqual(
-    responseRef("/api/v1/workspaces/{workspace_key}/projects/{project_key}", "get").oneOf,
+    responseRef("/api/v1/workspaces/{workspace_id}/projects/{project_id}", "get").oneOf,
     [
       { $ref: "#/components/schemas/ProjectActiveRead" },
       { $ref: "#/components/schemas/ProjectTombstoneRead" },
     ],
   );
   assert.deepEqual(
-    responseRef("/api/v1/workspaces/{workspace_key}/projects/{project_key}/commands/restore", "post"),
+    responseRef("/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/restore", "post"),
     { $ref: "#/components/schemas/ProjectRestoredWriteResult" },
   );
   for (const schemaName of [
@@ -174,6 +174,8 @@ test("OpenAPI exposes exact Workspace and Project lifecycle response models", as
     "ResumedPublicProject",
   ]) {
     assert.equal(document.components.schemas[schemaName].additionalProperties, false, schemaName);
+    assert.equal("key" in document.components.schemas[schemaName].properties, false, schemaName);
+    assert.equal("workspace_key" in document.components.schemas[schemaName].properties, false, schemaName);
   }
   assert.deepEqual(
     document.components.schemas.ProjectTombstoneRead.required.filter((field) =>
@@ -218,7 +220,7 @@ test("OpenAPI distinguishes Comment lifecycle shapes and deleted-only permission
   );
   assert.match(relationWrite.description, /active writer Grants for both Relation endpoint Projects/);
   const commentRead = document.paths["/api/v1/comments/{comment_id}"].get;
-  const labelList = document.paths["/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels"].get;
+  const labelList = document.paths["/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels"].get;
   for (const operation of [commentRead, labelList]) {
     assert.match(operation.description, /deleted=only recovery view requires writer/);
     assert.equal(operation["x-cfkanban-permission"], "project_reader_active_writer_tombstone");

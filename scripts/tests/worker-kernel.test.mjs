@@ -603,7 +603,7 @@ test("canonical request hashing is stable and idempotency keys are bounded", asy
     method: "post",
     normalizedResourceScope: "workspace/example/project/CORE",
     requestBody: { title: "A", body: "B" },
-    routeTemplate: "/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues",
+    routeTemplate: "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues",
     scopeKey: "principal:test",
   });
   const second = await computeRequestHash({
@@ -611,7 +611,7 @@ test("canonical request hashing is stable and idempotency keys are bounded", asy
     method: "POST",
     normalizedResourceScope: "workspace/example/project/CORE",
     requestBody: { body: "B", title: "A" },
-    routeTemplate: "/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues",
+    routeTemplate: "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues",
     scopeKey: "principal:test",
   });
   assert.deepEqual(first, second);

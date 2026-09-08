@@ -3,9 +3,12 @@ import { createHash, randomUUID, subtle, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 
-const migration = await readFile(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
+const manifest = JSON.parse(await readFile(new URL("../migrations/manifest.json", import.meta.url), "utf8"));
 const db = new DatabaseSync(":memory:");
-db.exec(migration);
+for (const entry of manifest.migrations) {
+  const sql = await readFile(new URL(`../migrations/${entry.name}`, import.meta.url), "utf8");
+  db.exec(`BEGIN;${sql}COMMIT;`);
+}
 
 const now = 1_787_966_400_000;
 const launchSecret = "launch-secret-never-persisted";
@@ -31,6 +34,18 @@ for (const [id, target] of [
     "Browser Launch target values must fail closed in D1",
   );
 }
+const projectId = "11111111-1111-4111-8111-111111111111";
+const workspaceId = "22222222-2222-4222-8222-222222222222";
+const projectTarget = { kind: "project", project_id: projectId, workspace_id: workspaceId, entry_path: `/app/w/${workspaceId}/p/${projectId}` };
+const insertProjectLaunch = (id, target) => run("INSERT INTO browser_launches (id, code_prefix, code_digest, principal_id, source_credential_id, target_kind, target_json, expires_at, created_at, created_operation_id) VALUES (?, 'project', ?, 'owner', 'credential', 'project', ?, ?, ?, ?)", [id, digest(id), JSON.stringify(target), now + 300_000, now, `op-${id}`]);
+insertProjectLaunch("uuid-project-launch", projectTarget);
+assert.deepEqual(JSON.parse(get("SELECT target_json FROM browser_launches WHERE id = 'uuid-project-launch'").target_json), projectTarget);
+assert.throws(() => insertProjectLaunch("old-key-launch", {
+  ...projectTarget, workspace_key: "old-workspace", project_key: "OLD",
+}), /CHECK constraint failed/, "legacy key target fields must fail closed");
+assert.throws(() => insertProjectLaunch("wrong-entry-launch", {
+  ...projectTarget, entry_path: "/app/w/old-workspace/p/OLD",
+}), /CHECK constraint failed/, "Project entry path must match its UUID target");
 run("INSERT INTO browser_launches (id, code_prefix, code_digest, principal_id, source_credential_id, target_kind, target_json, expires_at, created_at, created_operation_id) VALUES ('launch', 'launch', ?, 'owner', 'credential', 'admin', ?, ?, ?, 'op-launch')", [digest(launchSecret), adminLaunchTarget, now + 300_000, now]);
 
 // Rendering GET /app/launch is a read: selecting the capability must not consume it.

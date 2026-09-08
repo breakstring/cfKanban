@@ -61,18 +61,18 @@ export function registerWp05Routes(router: Router): Router {
         context.startedAt,
       ), context.requestId);
     })
-    .get("/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues", async (request, env, context) => {
+    .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       return jsonResponse(await listProjectIssues(
         env.DB,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         context.url,
         context.startedAt,
       ), context.requestId);
     })
-    .post("/api/v1/workspaces/{workspace_key}/projects/{project_key}/issues", async (request, env, context) => {
+    .post("/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", async (request, env, context) => {
       const auth = await writeAuth(request, env, context);
       const value = await body(
         request,
@@ -83,8 +83,8 @@ export function registerWp05Routes(router: Router): Router {
         env.DB,
         request,
         auth,
-        path(context, "workspace_key"),
-        path(context, "project_key"),
+        path(context, "workspace_id"),
+        path(context, "project_id"),
         value,
         context.startedAt,
       ), context.requestId);

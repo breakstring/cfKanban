@@ -29,7 +29,7 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.51/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.52/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
 
 ## Choose the deployment source first
 
@@ -162,3 +162,7 @@ A verified Worker and D1 are the deployment result, but the user still has no bo
 - **DECIDES:** The user chooses Node installation method, ambiguous Cloudflare account, custom domain, paid capability, compliance location, non-stable source, and destructive recovery.
 
 Stop on origin/digest mismatch, publisher discontinuity, missing or unverified canonical Skill installation, an unreadable effective/selected Cloudflare auth context, unknown same-name resources, account ambiguity, missing Owner display name, unverified storage, incompatible Node/Wrangler without an approved plan, plan drift, migration checksum/schema drift outside the exact same-journal recovery rule, unavailable restore evidence, partial migration state, or any request to adopt an unknown resource silently. Unrelated profiles are outside the selected context and do not create a blocker.
+
+### Incompatible development migrations
+
+Normal `plan instance-upgrade` accepts backward-compatible deltas only. A release classified `breaking_non_destructive` requires explicit `allow_breaking_change: true` in the plan input and a fresh authorization for that complete plan. Preview the unsupported old API/URLs/scope, removed operation snapshots, and possible service interruption between migration and compatible Worker deployment. After applying it, never roll back the previous Worker; resume with a Worker compatible with the migrated schema. A verified restore point is required; D1 restore is never automatic and requires separate authorization. Readback must include `table.column` facts and prove all `expected_artifacts.absent_columns` are absent; missing column evidence is a stop, not proof of success.

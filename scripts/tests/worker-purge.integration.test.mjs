@@ -44,10 +44,10 @@ function confirmation(value) {
   return { expected_version: value.target.version, confirm_name: value.target.display_name, preview_digest: value.preview_digest };
 }
 async function fixture(key) {
-  const path = `/api/v1/workspaces/${key}`;
-  const workspace = await write("/api/v1/workspaces", { key, display_name: `Workspace ${key}` });
-  const project = await write(`${path}/projects`, { key: "TARGET", display_name: `Sensitive ${key}` });
-  return { workspace, project, path: `${path}/projects/TARGET`, workspacePath: path };
+  const workspace = await write("/api/v1/workspaces", { display_name: `Workspace ${key}` });
+  const path = `/api/v1/workspaces/${workspace.id}`;
+  const project = await write(`${path}/projects`, { display_name: `Sensitive ${key}` });
+  return { workspace, project, path: `${path}/projects/${project.id}`, workspacePath: path };
 }
 async function seedIssue(projectId, title) {
   const id = randomUUID();
@@ -111,7 +111,7 @@ test("purge requires Owner, archive, exact confirmation and an unchanged preview
 
 test("project purge atomically removes content and snapshots, preserves peers, and replays", async () => {
   const f = await fixture("purge-content");
-  const peer = await write(`${f.workspacePath}/projects`, { key: "PEER", display_name: "Keep this project" });
+  const peer = await write(`${f.workspacePath}/projects`, { display_name: "Keep this project" });
   const targetIssue = await seedIssue(f.project.id, "PURGE_PRIVATE_CONTENT");
   const peerIssue = await seedIssue(peer.id, "Keep this issue");
   const now = Date.now();
@@ -119,7 +119,7 @@ test("project purge atomically removes content and snapshots, preserves peers, a
   const inviteId = randomUUID();
   const labelId = randomUUID();
   const operationId = randomUUID();
-  const target = JSON.stringify({ kind: "project", project_id: f.project.id, project_key: "TARGET", workspace_key: "purge-content", entry_path: "/app/w/purge-content/p/TARGET" });
+  const target = JSON.stringify({ kind: "project", project_id: f.project.id, workspace_id: f.workspace.id, entry_path: `/app/w/${f.workspace.id}/p/${f.project.id}` });
   await db.batch([
     ...["standard", "completion"].map((kind) => db.prepare(`INSERT INTO comments
       (id, issue_id, kind, author_principal_id, body, completion_json, created_at, created_operation_id)
@@ -192,7 +192,7 @@ test("project purge atomically removes content and snapshots, preserves peers, a
   }
   assert.equal((await request(f.path)).status, 404);
   assert.equal((await request(`${f.path}/commands/restore`, { method: "POST", body: { expected_version: minimal.version } })).status, 404);
-  assert.equal((await request(`${f.workspacePath}/projects`, { method: "POST", body: { key: "TARGET", display_name: "Reuse forbidden" } })).status, 409);
+  assert.equal((await request(`${f.workspacePath}/projects`, { method: "POST", body: { display_name: f.project.display_name } })).status, 200);
   const next = await seedIssue(peer.id, "Next issue");
   assert.ok(next.number > targetIssue.number && next.number > peerIssue.number);
 });
@@ -216,7 +216,7 @@ test("archived workspace containing only purged project records can be permanent
     assert.equal(list.status, 200);
     assert.equal(list.body.items.some((item) => item.id === f.workspace.id), false);
   }
-  assert.equal((await request("/api/v1/workspaces", { method: "POST", body: { key: "purge-workspace", display_name: "Reuse forbidden" } })).status, 409);
+  assert.equal((await request("/api/v1/workspaces", { method: "POST", body: { display_name: f.workspace.display_name } })).status, 200);
 });
 
 

@@ -102,13 +102,13 @@ async function chooseRole(project: PublicProject, role: "reader" | "writer"): Pr
   try {
     const session = await apiRequest<WebSessionView>("/api/v1/web-session");
     const result = await apiRequest<WriteResult<{
-      project: { key: string; workspace_key: string };
+      project: { id: string; workspace_id: string };
     }>>(`/api/v1/public-joins/${project.public_id}/redeem`, {
       body: { redeem_as: "current_principal", role },
       method: "POST",
     });
     const target = result.resource.project;
-    navigate(`/app/w/${encodeURIComponent(target.workspace_key)}/p/${encodeURIComponent(target.key)}`);
+    navigate(`/app/w/${encodeURIComponent(target.workspace_id)}/p/${encodeURIComponent(target.id)}`);
     void session;
   } catch (caught) {
     if (caught instanceof ApiProblem && caught.status === 401) {

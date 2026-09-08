@@ -35,7 +35,7 @@ export function canCreateIssueRelation(
   return source !== null
     && target !== null
     && source.identifier !== target.identifier
-    && source.workspace.key === target.workspace.key
+    && source.workspace.id === target.workspace.id
     && source.allowed_actions.includes("update")
     && target.allowed_actions.includes("update");
 }

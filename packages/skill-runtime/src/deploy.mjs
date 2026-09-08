@@ -211,7 +211,7 @@ function normalizeMigrationLedgerRow(row) {
   if (!Number.isSafeInteger(sequence) || sequence < 1 || !Number.isSafeInteger(appliedAt) || appliedAt < 1) {
     throw migrationReadbackInvalid("Migration readback returned an invalid ledger sequence or timestamp");
   }
-  const classification = readbackString(row?.classification, "ledger classification", { max: 64, pattern: /^(?:bootstrap|backward_compatible|destructive)$/u });
+  const classification = readbackString(row?.classification, "ledger classification", { max: 64, pattern: /^(?:bootstrap|backward_compatible|breaking_non_destructive|destructive)$/u });
   let operationId;
   try {
     operationId = requireUuid(row?.operation_id, "operation_id");
@@ -247,22 +247,23 @@ export function parseMigrationReadbackOutput(value) {
   const ledger = ledgerRows.map(normalizeMigrationLedgerRow);
   const tables = [];
   const indexes = [];
+  const columns = [];
   const seen = new Set();
   for (const row of schemaRows) {
-    if (row?.type !== "table" && row?.type !== "index") {
+    if (row?.type !== "table" && row?.type !== "index" && row?.type !== "column") {
       throw migrationReadbackInvalid("Wrangler migration readback returned an unexpected schema artifact type");
     }
-    const name = readbackString(row?.name, "schema artifact name", { max: 128, pattern: /^[A-Za-z0-9_]+$/u });
+    const name = readbackString(row?.name, "schema artifact name", { max: 128, pattern: row.type === "column" ? /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/u : /^[A-Za-z0-9_]+$/u });
     const key = `${row.type}:${name}`;
     if (seen.has(key)) throw migrationReadbackInvalid("Wrangler migration readback returned duplicate schema artifacts");
     seen.add(key);
-    (row.type === "table" ? tables : indexes).push(name);
+    (row.type === "table" ? tables : row.type === "index" ? indexes : columns).push(name);
   }
   tables.sort();
   indexes.sort();
   return {
     ledger,
-    schema: { tables, indexes },
+    schema: { tables, indexes, ...(columns.length > 0 ? { columns: columns.sort() } : {}) },
     result_set_count: 2,
   };
 }
@@ -649,7 +650,12 @@ async function loadUpgradeMigrationState({ journal, plan, frozenConfigEvent }) {
     const frozen = manifest.migrations?.find((entry) => entry.sequence === migration.sequence && entry.name === migration.name);
     if (frozen?.sha256 !== migration.sha256
       || frozen?.destructive === true
-      || frozen?.classification !== "backward_compatible") {
+      || frozen?.classification !== migration.classification
+      || !["backward_compatible", "breaking_non_destructive"].includes(frozen?.classification)
+      || (frozen?.classification === "breaking_non_destructive" && (
+        plan.migrations?.allow_breaking_change !== true
+        || plan.rollback_boundary?.previous_worker_rollback_prohibited_after_migration !== true
+      ))) {
       throw toolError("UPGRADE_MIGRATION_MANIFEST_DRIFT", "Planned migration delta differs from the verified Service manifest", {
         sequence: migration.sequence,
         name: migration.name,

@@ -23,7 +23,6 @@ export interface CollaborationIssue {
   number: number;
   projectId: string;
   projectDeletedAt: number | null;
-  projectKey: string;
   projectName: string;
   role: CollaborationRole;
   statusKey: StatusKey;
@@ -31,7 +30,6 @@ export interface CollaborationIssue {
   version: number;
   workspaceId: string;
   workspaceDeletedAt: number | null;
-  workspaceKey: string;
   workspaceName: string;
 }
 
@@ -41,14 +39,12 @@ interface CollaborationIssueRow {
   number: number;
   project_deleted_at: number | null;
   project_id: string;
-  project_key: string;
   project_name: string;
   status_key: StatusKey;
   title: string;
   version: number;
   workspace_deleted_at: number | null;
   workspace_id: string;
-  workspace_key: string;
   workspace_name: string;
 }
 
@@ -66,7 +62,6 @@ function mapIssue(row: CollaborationIssueRow, role: CollaborationRole): Collabor
     number: row.number,
     projectId: row.project_id,
     projectDeletedAt: row.project_deleted_at,
-    projectKey: row.project_key,
     projectName: row.project_name,
     role,
     statusKey: row.status_key,
@@ -74,7 +69,6 @@ function mapIssue(row: CollaborationIssueRow, role: CollaborationRole): Collabor
     version: row.version,
     workspaceId: row.workspace_id,
     workspaceDeletedAt: row.workspace_deleted_at,
-    workspaceKey: row.workspace_key,
     workspaceName: row.workspace_name,
   };
 }
@@ -87,9 +81,9 @@ async function readIssueRow(
     return await db.prepare(
       `SELECT issue.id, issue.number, issue.project_id, issue.title,
               issue.status_key, issue.version, issue.deleted_at,
-              project.key AS project_key, project.display_name AS project_name,
+              project.display_name AS project_name,
               project.deleted_at AS project_deleted_at,
-              workspace.id AS workspace_id, workspace.key AS workspace_key,
+              workspace.id AS workspace_id,
               workspace.display_name AS workspace_name,
               workspace.deleted_at AS workspace_deleted_at
        FROM issues issue
@@ -157,9 +151,9 @@ export async function requireCollaborationIssueById(
     row = await db.prepare(
       `SELECT issue.id, issue.number, issue.project_id, issue.title,
               issue.status_key, issue.version, issue.deleted_at,
-              project.key AS project_key, project.display_name AS project_name,
+              project.display_name AS project_name,
               project.deleted_at AS project_deleted_at,
-              workspace.id AS workspace_id, workspace.key AS workspace_key,
+              workspace.id AS workspace_id,
               workspace.display_name AS workspace_name,
               workspace.deleted_at AS workspace_deleted_at
        FROM issues issue
@@ -198,9 +192,9 @@ export async function requireCollaborationIssueByIdAuthorization(
     row = await db.prepare(
       `SELECT issue.id, issue.number, issue.project_id, issue.title,
               issue.status_key, issue.version, issue.deleted_at,
-              project.key AS project_key, project.display_name AS project_name,
+              project.display_name AS project_name,
               project.deleted_at AS project_deleted_at,
-              workspace.id AS workspace_id, workspace.key AS workspace_key,
+              workspace.id AS workspace_id,
               workspace.display_name AS workspace_name,
               workspace.deleted_at AS workspace_deleted_at
        FROM issues issue
@@ -419,8 +413,9 @@ export function issueReference(issue: CollaborationIssue): { [key: string]: Json
     identifier: issue.identifier,
     project: {
       id: issue.projectId,
-      key: issue.projectKey,
-      workspace_key: issue.workspaceKey,
+      display_name: issue.projectName,
+      workspace_display_name: issue.workspaceName,
+      workspace_id: issue.workspaceId,
     },
     title: issue.title,
     version: issue.version,

@@ -64,10 +64,10 @@
 - Q-215 已于 2026-08-28 确认并由 D-208 更新命名：不新增 profile Skill；默认日常 Skill `cfkanban` 通过 `GET /api/v1/me` 查看身份，通过带 expected version 的 `PATCH /api/v1/me` 只修改自己的非空 display name。改名写 Audit/Event，不改变 ID、Credential、Grants、assignment 或历史；Owner 不能代改，本地非秘密 metadata 以服务端为准。
 - Q-216 已于 2026-08-28 确认并由 D-234 补充：`.cfkanban/` 可以保存多个上游实例，但每个执行环境对每个 `instance_id` 只维护一个当前本地 Principal/Credential 槽位。同一实例出现多个不同 Principal 是冲突；同一 Credential 在多个环境的副本不是多个身份，并共享撤销/轮换后果。
 - Q-217 已于 2026-08-28 确认：本地实例记录以 immutable `instance_id` 为稳定主键，trusted API origin 是可变安全 metadata。Credential 只发送给当前已信任 origin；陌生新 origin 只声称同一 ID 时，必须在认证前展示旧/新地址与影响并取得显式 rebind 授权。D-243 后续增加了可信旧 origin 发布更高版本指示、再经无 Credential 目标探测验证后的自动 rebind 例外。仅 Invite/展示域名变化而 API origin 未变时无需 rebind。
-- Q-218 已于 2026-08-28 确认并按 D-195 修订：Invite/discover 不自动修改 Repo；Skill 另行提供显式创建/合并 `.cfkanban-scope.json` 的本地能力。它只保存 schema version 与 `instance_id + workspace_key + project_key` targets，不保存 Credential、API origin、路径、Git metadata、role 或权限快照；何时调用和是否提交 Git 由上层决定。
+- Q-218 已于 2026-08-28 确认并按 D-195 修订：Invite/discover 不自动修改 Repo；Skill 另行提供显式创建/合并 `.cfkanban-scope.json` 的本地能力。它按 2026-09-08 UUID 修订使用 schema_version 2 与 `instance_id + workspace_id + project_id` targets（旧格式拒绝，不回退无过滤），不保存 Credential、API origin、路径、Git metadata、role 或权限快照；何时调用和是否提交 Git 由上层决定。
 - SB-12 已依据用户此前对 Project filter 的强烈推荐并按 D-195 修订：API 允许一个、多个或省略 Project filters，并返回 resolved scope；Skill 在已知工作上下文中强烈推荐 filters，暴露失效 target 与范围扩大警告，但不替上层选择 Project 或规定何时查询全部授权范围。多个 Repo target 平级，不保存优先级/last-used。
 - Q-219 的自然语言意图映射已被后续边界修订：候选读取、assign-to-me 与状态转换仍是独立能力，但 cfKanban 不规定“找工作”“开始”“接手”等话术应触发哪些调用；由上层 Agent 按用户意图、宿主审批和 Repo 规则协调。
-- Issue 引用格式已于 2026-08-28 确认：每个部署实例共享一条永不复用的全局 Issue number 序列，统一生成 `CFK-<正整数>`；Project key 不再作为前缀。不同实例的相同编号由 `instance_id` 消歧。
+- Issue 引用格式已于 2026-08-28 确认：每个部署实例共享一条永不复用的全局 Issue number 序列，统一生成 `CFK-<正整数>`；容器 ID 不作为前缀。不同实例的相同编号由 `instance_id` 消歧。
 - SB-14 已依据常规规则授权确认：64 KiB context pack 永远保留核心身份、scope、version、状态、负责人、阻塞和 allowed actions；正文、Project context、关系与评论有界返回，默认最近 10 条评论。所有裁剪都返回 section、遗漏计数和 continuation，不自动读取外部 artifact。
 - Q-220/D-194 已于 2026-08-28 否决：cfKanban 不规定执行 Agent 可以自主写哪些协作事实。服务提供并强制 Comment、Relation、blocked、assignment、status、complete 等原子动作的权限与数据合同；调用时机、组合和内容判断属于上层 Agent。
 - SB-16/SB-17 已依据该边界收敛：assignment 不捆绑 handoff Comment；complete/reopen 不以 assignee 为权限门槛，也不规定 Agent 何时调用。评论、assignment、complete 和 reopen 各自按独立服务合同执行和恢复。

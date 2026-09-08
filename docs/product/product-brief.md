@@ -99,7 +99,7 @@ MVP 优先 Workers + D1。只有真实需求和验证证据证明收益时，才
 - 一个部署者控制的部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project。
 - 每个部署实例只有一个 Deployment Owner；已确认的专属控制面操作是创建 Workspace/Project、邀请参与者和管理 Project Grants。
 - Workspace 是 Project 的上级资源命名空间，但不是 Principal、Credential 或日常业务授权边界。
-- Project 具有稳定 key，用于 API scope 和 Repo 推荐范围；它不参与 Issue 引用号。每个部署实例的 Issue 统一使用全局、只增不复用的 `CFK-<正整数>` 标识。
+- Workspace/Project 使用服务端生成的 UUID，用于 API scope 和 Repo 推荐范围；用户只需提供显示名称，名称可重复，容器 ID 不参与 Issue 引用号。每个部署实例的 Issue 统一使用全局、只增不复用的 `CFK-<正整数>` 标识。
 - Issue 包含标题、Markdown 正文、状态、优先级、可空 assignee、版本和时间信息。
 - priority 固定为 `none / low / medium / high / urgent` 且默认 `none`；v0 不保存手工 rank，候选按 priority 后 FIFO 稳定排序。
 - 每个 Project 使用固定五状态 workflow；Project 可以覆盖显示名称但只有 Owner 能修改。Owner 或 Project `writer` 可带 expected version 在固定状态间任意显式转换和 reopen；status key、category、顺序和 terminal 语义保持稳定。

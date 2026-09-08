@@ -1,4 +1,4 @@
-import { requireProjectKey, requireWorkspaceKey, timestamp } from "../domain/model.ts";
+import { requireUuid, timestamp } from "../domain/model.ts";
 import { buildCurrentAuthGuard, reauthenticateOwner, requireOwnerControl, verifyCurrentAuth } from "../kernel/authorization.ts";
 import { sha256Hex } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch } from "../kernel/d1.ts";
@@ -8,7 +8,7 @@ import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import { actorCredentialId, requireIdempotencyKey, writeResult } from "./shared.ts";
 
 type Kind = "workspace" | "project";
-interface Target { id: string; key: string; display_name: string; version: number; deleted_at: number | null; workspace_key: string }
+interface Target { id: string; display_name: string; version: number; deleted_at: number | null; workspace_id: string }
 type Counts = Record<string, number>;
 
 // Every query uses ?1 for the immutable container ID. The same expressions guard the write batch.
@@ -29,10 +29,10 @@ function countExpressions(kind: Kind): Record<string, string> {
   };
 }
 const emptyCounts = { projects: 0, issues: 0, comments: 0, labels: 0, relations: 0, cross_project_relations: 0, grants: 0, invitations: 0, shared_invitations: 0, browser_launches: 0, web_sessions: 0 };
-async function readTarget(db: D1Database, workspaceKey: string, projectKey?: string): Promise<Target> {
-  const row = projectKey === undefined
-    ? await db.prepare("SELECT id,key,display_name,version,deleted_at,key AS workspace_key FROM workspaces WHERE key = ?1 AND purged_at IS NULL").bind(workspaceKey).first<Target>()
-    : await db.prepare("SELECT p.id,p.key,p.display_name,p.version,p.deleted_at,w.key AS workspace_key FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE w.key=?1 AND p.key=?2 AND p.purged_at IS NULL AND w.purged_at IS NULL").bind(workspaceKey, projectKey).first<Target>();
+async function readTarget(db: D1Database, workspaceId: string, projectId?: string): Promise<Target> {
+  const row = projectId === undefined
+    ? await db.prepare("SELECT id,display_name,version,deleted_at,id AS workspace_id FROM workspaces WHERE id = ?1 AND purged_at IS NULL").bind(workspaceId).first<Target>()
+    : await db.prepare("SELECT p.id,p.display_name,p.version,p.deleted_at,w.id AS workspace_id FROM projects p JOIN workspaces w ON w.id=p.workspace_id WHERE w.id=?1 AND p.id=?2 AND p.purged_at IS NULL AND w.purged_at IS NULL").bind(workspaceId, projectId).first<Target>();
   if (row === null) throw notFound();
   return row;
 }
@@ -40,16 +40,16 @@ async function preview(db: D1Database, kind: Kind, target: Target) {
   const expressions = countExpressions(kind);
   const counts = { ...emptyCounts, ...await db.prepare(`SELECT ${Object.entries(expressions).map(([key, sql]) => `(${sql}) AS ${key}`).join(",")}`).bind(target.id).first<Counts>() };
   const blockingReason = target.deleted_at === null ? "ARCHIVE_REQUIRED" : kind === "workspace" && counts.projects > 0 ? "WORKSPACE_NOT_EMPTY" : null;
-  const data = { target: { kind, id: target.id, key: target.key, workspace_key: target.workspace_key, display_name: target.display_name, version: target.version }, counts, can_purge: blockingReason === null, blocking_reason: blockingReason };
+  const data = { target: { kind, id: target.id, workspace_id: target.workspace_id, display_name: target.display_name, version: target.version }, counts, can_purge: blockingReason === null, blocking_reason: blockingReason };
   return { ...data, preview_digest: await sha256Hex(canonicalJson(data)) };
 }
 export async function getPurgePreview(db: D1Database, auth: AuthContext, workspaceValue: JsonValue, projectValue: JsonValue | undefined, now: number): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
   await verifyCurrentAuth(db, auth, now);
-  const workspaceKey = requireWorkspaceKey(workspaceValue, "workspace_key");
-  const projectKey = projectValue === undefined ? undefined : requireProjectKey(projectValue, "project_key");
+  const workspaceId = requireUuid(workspaceValue, "workspace_id");
+  const projectId = projectValue === undefined ? undefined : requireUuid(projectValue, "project_id");
   try {
-    const result = await preview(db, projectKey === undefined ? "workspace" : "project", await readTarget(db, workspaceKey, projectKey));
+    const result = await preview(db, projectId === undefined ? "workspace" : "project", await readTarget(db, workspaceId, projectId));
     await verifyCurrentAuth(db, auth, now);
     return result;
   }
@@ -119,19 +119,19 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
 
 export async function purgeContainer(db: D1Database, request: Request, auth: AuthContext, workspaceValue: JsonValue, projectValue: JsonValue | undefined, expectedVersion: number, confirmName: JsonValue, previewDigest: JsonValue, now: number): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
-  const workspaceKey = requireWorkspaceKey(workspaceValue, "workspace_key");
-  const projectKey = projectValue === undefined ? undefined : requireProjectKey(projectValue, "project_key");
+  const workspaceId = requireUuid(workspaceValue, "workspace_id");
+  const projectId = projectValue === undefined ? undefined : requireUuid(projectValue, "project_id");
   if (typeof confirmName !== "string" || confirmName.length < 1 || confirmName.length > 128 || typeof previewDigest !== "string" || !/^[a-f0-9]{64}$/.test(previewDigest)) throw validationError("schema_validation_failed");
-  const kind: Kind = projectKey === undefined ? "workspace" : "project";
+  const kind: Kind = projectId === undefined ? "workspace" : "project";
   const result = await runIdempotentOperation({
     db, now, method: "POST", idempotencyKey: requireIdempotencyKey(request),
     scopeKey: `principal:${auth.principalId}`,
-    normalizedResourceScope: `workspace:${workspaceKey}${projectKey === undefined ? "" : `:project:${projectKey}`}:purge`,
-    routeTemplate: `/api/v1/workspaces/{workspace_key}${kind === "project" ? "/projects/{project_key}" : ""}/commands/purge`,
+    normalizedResourceScope: `workspace:${workspaceId}${projectId === undefined ? "" : `:project:${projectId}`}:purge`,
+    routeTemplate: `/api/v1/workspaces/{workspace_id}${kind === "project" ? "/projects/{project_id}" : ""}/commands/purge`,
     requestBody: { expected_version: expectedVersion, confirm_name: confirmName, preview_digest: previewDigest },
     authorize: async () => { if ((await reauthenticateOwner(db, request, now)).principalId !== auth.principalId) throw forbidden(); },
     execute: async (operationId) => {
-      const target = await readTarget(db, workspaceKey, projectKey);
+      const target = await readTarget(db, workspaceId, projectId);
       if (target.version !== expectedVersion) throw versionConflict(target.version);
       if (target.display_name !== confirmName) throw conflict("PURGE_CONFIRMATION_MISMATCH");
       const impact = await preview(db, kind, target);
@@ -141,10 +141,10 @@ export async function purgeContainer(db: D1Database, request: Request, auth: Aut
       const expressions = Object.entries(countExpressions(kind));
       const countGuard = expressions.map(([, sql], index) => `(${sql})=?${7 + index}`).join(" AND ");
       const guard = buildCurrentAuthGuard(auth, now, 7 + expressions.length, true);
-      const marker = db.prepare(`UPDATE ${table} SET purged_at=?2,display_name=key,version=version+1,updated_at=?2,updated_by_principal_id=?3,last_operation_id=?4${kind === "project" ? ",context=NULL,issue_limit=NULL,comment_limit=NULL,principal_limit=NULL" : ""}
+      const marker = db.prepare(`UPDATE ${table} SET purged_at=?2,display_name='Deleted',version=version+1,updated_at=?2,updated_by_principal_id=?3,last_operation_id=?4${kind === "project" ? ",context=NULL,issue_limit=NULL,comment_limit=NULL,principal_limit=NULL" : ""}
         WHERE id=?1 AND version=?5 AND display_name=?6 AND deleted_at IS NOT NULL AND purged_at IS NULL AND ${countGuard} AND ${guard.sql}`)
         .bind(target.id, now, auth.principalId, operationId, expectedVersion, confirmName, ...expressions.map(([key]) => (impact.counts as Counts)[key]), ...guard.values);
-      const resource = { id: target.id, key: target.key, kind, purged: true, purged_at: timestamp(now), version: expectedVersion + 1 };
+      const resource = { id: target.id, kind, purged: true, purged_at: timestamp(now), version: expectedVersion + 1 };
       const audit = db.prepare(`INSERT INTO events (id,stream,type,operation_id,event_index,actor_principal_id,actor_credential_id,authorized_via,subject_type,subject_id,payload_json,created_at)
         SELECT ?1,'security',?2,?3,0,?4,?5,'deployment_owner',?6,id,'{}',?7 FROM ${table} WHERE id=?8 AND last_operation_id=?3 AND purged_at=?7 AND ${expressions.map(([, sql]) => `(${sql.replaceAll("?1", "?8")})=0`).join(" AND ")}`)
         .bind(crypto.randomUUID(), `${kind}.purged`, operationId, auth.principalId, actorCredentialId(auth), kind, now, target.id);
@@ -158,7 +158,7 @@ export async function purgeContainer(db: D1Database, request: Request, auth: Aut
             const currentAuth = buildCurrentAuthGuard(auth, now, 1, true);
             if (await db.prepare(`SELECT 1 AS allowed WHERE ${currentAuth.sql}`).bind(...currentAuth.values).first() === null) return true;
             try {
-              const current = await readTarget(db, workspaceKey, projectKey);
+              const current = await readTarget(db, workspaceId, projectId);
               return current.version !== expectedVersion || (await preview(db, kind, current)).preview_digest !== previewDigest;
             } catch (error) {
               if (error instanceof ApiError && error.status === 404) return true;
@@ -169,7 +169,7 @@ export async function purgeContainer(db: D1Database, request: Request, auth: Aut
       } catch (error) {
         if (!(error instanceof AtomicBatchRejectedError)) throw error;
         await verifyCurrentAuth(db, auth, now);
-        const current = await readTarget(db, workspaceKey, projectKey);
+        const current = await readTarget(db, workspaceId, projectId);
         if (current.version !== expectedVersion) throw versionConflict(current.version);
         if ((await preview(db, kind, current)).preview_digest !== previewDigest) throw conflict("PURGE_PREVIEW_CHANGED");
         throw platformUnavailable("d1");

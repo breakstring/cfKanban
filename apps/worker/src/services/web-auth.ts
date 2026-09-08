@@ -1,7 +1,6 @@
 import {
   requireIssueIdentifier,
-  requireProjectKey,
-  requireWorkspaceKey,
+  requireUuid,
   timestamp,
 } from "../domain/model.ts";
 import {
@@ -60,8 +59,7 @@ type LaunchTarget =
     entry_path: string;
     kind: "project";
     project_id: string;
-    project_key: string;
-    workspace_key: string;
+    workspace_id: string;
   }
   | {
     entry_path: string;
@@ -69,8 +67,7 @@ type LaunchTarget =
     issue_id: string;
     kind: "issue";
     project_id: string;
-    project_key: string;
-    workspace_key: string;
+    workspace_id: string;
   };
 
 function resolvedAdminTarget(section: unknown): Extract<LaunchTarget, { kind: "admin" }> {
@@ -163,16 +160,14 @@ function launchTargetFromRow(row: BrowserLaunchRow): LaunchTarget {
   }
   if (
     typeof target.project_id !== "string"
-    || typeof target.project_key !== "string"
-    || typeof target.workspace_key !== "string"
+    || typeof target.workspace_id !== "string"
   ) throw platformUnavailable("d1");
   if (row.target_kind === "project") {
     return {
-      entry_path: `/app/w/${encodeURIComponent(target.workspace_key)}/p/${encodeURIComponent(target.project_key)}`,
+      entry_path: `/app/w/${encodeURIComponent(target.workspace_id)}/p/${encodeURIComponent(target.project_id)}`,
       kind: "project",
       project_id: target.project_id,
-      project_key: target.project_key,
-      workspace_key: target.workspace_key,
+      workspace_id: target.workspace_id,
     };
   }
   if (typeof target.identifier !== "string" || typeof target.issue_id !== "string") {
@@ -184,8 +179,7 @@ function launchTargetFromRow(row: BrowserLaunchRow): LaunchTarget {
     issue_id: target.issue_id,
     kind: "issue",
     project_id: target.project_id,
-    project_key: target.project_key,
-    workspace_key: target.workspace_key,
+    workspace_id: target.workspace_id,
   };
 }
 
@@ -197,18 +191,17 @@ async function resolveLaunchTarget(
   const target = parseObject(value);
   if (target.kind === "project") {
     validateJsonObject(target, {
-      allowedKeys: ["kind", "project_key", "workspace_key"],
-      requiredKeys: ["kind", "project_key", "workspace_key"],
+      allowedKeys: ["kind", "project_id", "workspace_id"],
+      requiredKeys: ["kind", "project_id", "workspace_id"],
     });
-    const workspaceKey = requireWorkspaceKey(target.workspace_key as JsonValue, "workspace_key");
-    const projectKey = requireProjectKey(target.project_key as JsonValue, "project_key");
-    const project = await requireProjectAuthorization(db, auth, workspaceKey, projectKey);
+    const workspaceId = requireUuid(target.workspace_id as JsonValue, "workspace_id");
+    const projectId = requireUuid(target.project_id as JsonValue, "project_id");
+    const project = await requireProjectAuthorization(db, auth, workspaceId, projectId);
     return {
-      entry_path: `/app/w/${encodeURIComponent(workspaceKey)}/p/${encodeURIComponent(projectKey)}`,
+      entry_path: `/app/w/${encodeURIComponent(workspaceId)}/p/${encodeURIComponent(projectId)}`,
       kind: "project",
       project_id: project.projectId,
-      project_key: project.projectKey,
-      workspace_key: project.workspaceKey,
+      workspace_id: project.workspaceId,
     };
   }
   if (target.kind === "issue") {
@@ -224,8 +217,7 @@ async function resolveLaunchTarget(
       issue_id: issue.id,
       kind: "issue",
       project_id: issue.projectId,
-      project_key: issue.projectKey,
-      workspace_key: issue.workspaceKey,
+      workspace_id: issue.workspaceId,
     };
   }
   if (target.kind === "admin") {
@@ -257,8 +249,8 @@ async function verifyResolvedLaunchTarget(
     const project = await requireProjectAuthorization(
       db,
       auth,
-      target.workspace_key,
-      target.project_key,
+      target.workspace_id,
+      target.project_id,
     );
     if (project.projectId !== target.project_id) throw notFound();
     return;
@@ -919,9 +911,10 @@ export async function redeemWebLaunch(
 function visibleScopeResource(projects: Awaited<ReturnType<typeof resolveVisibleProjects>>): JsonValue {
   return projects.map((project) => ({
     project_id: project.projectId,
-    project_key: project.projectKey,
+    project_display_name: project.projectName,
+    workspace_display_name: project.workspaceName,
     role: project.role,
-    workspace_key: project.workspaceKey,
+    workspace_id: project.workspaceId,
   }));
 }
 

@@ -24,9 +24,10 @@ export interface ListResult<T> {
 
 export interface ProjectScopeItem {
   project_id: string;
-  project_key: string;
+  project_display_name: string;
   role: "owner" | "reader" | "writer";
-  workspace_key: string;
+  workspace_id: string;
+  workspace_display_name: string;
 }
 
 export interface WebSessionView {
@@ -57,9 +58,9 @@ export interface InvitationResource {
   grants: Array<{
     display_name: string;
     project_id: string;
-    project_key: string;
     role: "reader" | "writer";
-    workspace_key: string;
+    workspace_id: string;
+    workspace_display_name: string;
   }>;
   id: string;
   kind: "project_grant" | "principal_recovery";
@@ -111,12 +112,12 @@ export interface IssueSummary {
   needs_reassignment: boolean;
   number: number;
   priority: PriorityKey;
-  project: { display_name: string; id: string; key: string };
+  project: { display_name: string; id: string };
   status: IssueStatus;
   title: string;
   updated_at: string;
   version: number;
-  workspace: { display_name: string; key: string };
+  workspace: { display_name: string; id: string };
 }
 
 export interface IssueTombstone extends IssueSummary {
@@ -152,7 +153,7 @@ export interface IssueComment {
 export interface LabelResource extends IssueLabel {
   allowed_actions: string[];
   deleted_at: string | null;
-  project: { id: string; key: string; workspace_key: string };
+  project: { id: string; display_name: string; workspace_id: string; workspace_display_name: string };
   version: number;
 }
 
@@ -165,18 +166,18 @@ export interface IssueRelation {
   restorable?: boolean;
   source: {
     identifier: string;
-    project: { id: string; key: string; workspace_key: string };
+    project: { id: string; display_name: string; workspace_id: string; workspace_display_name: string };
     title: string;
     version: number;
   };
   target: {
     identifier: string;
-    project: { id: string; key: string; workspace_key: string };
+    project: { id: string; display_name: string; workspace_id: string; workspace_display_name: string };
     title: string;
     version: number;
   };
   version: number;
-  workspace: { id: string; key: string };
+  workspace: { id: string; display_name: string };
 }
 
 export interface IssueDetail extends IssueSummary {
@@ -215,11 +216,11 @@ export interface EventResource {
   id: string;
   operation_id: string;
   payload: unknown;
-  project: null | { display_name: string; id: string; key: string };
+  project: null | { display_name: string; id: string };
   stream?: "domain" | "security";
   subject: { id: string; type: string };
   type: string;
-  workspace: null | { display_name: string; id: string; key: string };
+  workspace: null | { display_name: string; id: string };
 }
 
 export interface MetaResource {
@@ -264,22 +265,21 @@ export interface ContainerResource {
   deleted_at: string | null;
   display_name: string;
   id: string;
-  key: string;
   updated_at?: string;
   version: number;
   workspace_id?: string;
-  workspace_key?: string;
+  workspace_display_name?: string;
   resumed_public_projects?: {
     has_more: boolean;
     projects: Array<{
       active_usage?: { comments: number; issues: number; principals: number };
       display_name?: string;
       id: string;
-      key: string;
       public_summary?: string;
       resource_limits?: { comments: number; issues: number; principals: number };
       role_choices?: Array<"reader" | "writer">;
-      workspace_key?: string;
+      workspace_id?: string;
+      workspace_display_name?: string;
     }>;
   };
 }
@@ -314,7 +314,7 @@ export interface GrantResource {
   id: string;
   principal: { display_name: string; principal_id: string };
   principal_id: string;
-  project: { display_name: string; id: string; key: string; workspace_key: string };
+  project: { display_name: string; id: string; workspace_id: string; workspace_display_name: string };
   project_id: string;
   revoked_at: string | null;
   role: "reader" | "writer";

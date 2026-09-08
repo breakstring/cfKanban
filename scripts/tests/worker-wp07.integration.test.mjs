@@ -54,6 +54,8 @@ function participantHeaders(extra = {}) {
   return { authorization: `Bearer ${participantToken}`, ...extra };
 }
 
+const fixtureIds = { "Web Workspace": ids.workspace, "Application": ids.projectA, "Operations": ids.projectB };
+
 async function request(path, { body, headers = {}, method = "GET" } = {}) {
   const response = await server.getWorker().fetch(path.startsWith("http") ? path : `${origin}${path}`, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -671,21 +673,21 @@ before(async () => {
     ).bind(ids.participantCredential, ids.participantPrincipal, await sha256Hex(participantToken), now),
     db.prepare(
       `INSERT INTO workspaces
-        (id, key, display_name, created_at, updated_at, created_by_principal_id,
+        (id, display_name, created_at, updated_at, created_by_principal_id,
          updated_by_principal_id, created_operation_id)
-       VALUES (?1, 'web', 'Web Workspace', ?2, ?2, ?3, ?3, 'wp07-workspace')`,
+       VALUES (?1, 'Web Workspace', ?2, ?2, ?3, ?3, 'wp07-workspace')`,
     ).bind(ids.workspace, now, ids.ownerPrincipal),
     db.prepare(
       `INSERT INTO projects
-        (id, workspace_id, key, display_name, created_at, updated_at,
+        (id, workspace_id, display_name, created_at, updated_at,
          created_by_principal_id, updated_by_principal_id, created_operation_id)
-       VALUES (?1, ?2, 'APP', 'Application', ?3, ?3, ?4, ?4, 'wp07-project-a')`,
+       VALUES (?1, ?2, 'Application', ?3, ?3, ?4, ?4, 'wp07-project-a')`,
     ).bind(ids.projectA, ids.workspace, now, ids.ownerPrincipal),
     db.prepare(
       `INSERT INTO projects
-        (id, workspace_id, key, display_name, created_at, updated_at,
+        (id, workspace_id, display_name, created_at, updated_at,
          created_by_principal_id, updated_by_principal_id, created_operation_id)
-       VALUES (?1, ?2, 'OPS', 'Operations', ?3, ?3, ?4, ?4, 'wp07-project-b')`,
+       VALUES (?1, ?2, 'Operations', ?3, ?3, ?4, ?4, 'wp07-project-b')`,
     ).bind(ids.projectB, ids.workspace, now, ids.ownerPrincipal),
     db.prepare(
       `INSERT INTO project_grants
@@ -716,7 +718,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   const secrets = [];
 
   const unknownNestedField = await request("/api/v1/web-launches", {
-    body: { target: { kind: "project", project_key: "APP", redirect_url: "https://evil.example", workspace_key: "web" } },
+    body: { target: { kind: "project", project_id: fixtureIds["Application"], redirect_url: "https://evil.example", workspace_id: fixtureIds["Web Workspace"] } },
     headers: participantHeaders({ "idempotency-key": "wp07-reject-open-redirect" }),
     method: "POST",
   });
@@ -738,7 +740,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   await db.prepare("DELETE FROM instance_origin_settings WHERE singleton = 1").run();
   const missingOriginKey = "wp07-missing-preferred-origin";
   const missingOrigin = await request("/api/v1/web-launches", {
-    body: { target: { kind: "project", project_key: "APP", workspace_key: "web" } },
+    body: { target: { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] } },
     headers: participantHeaders({ "idempotency-key": missingOriginKey }),
     method: "POST",
   });
@@ -777,8 +779,8 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
         target_kind, target_json, expires_at, created_at, created_operation_id)
      SELECT 'wp07-old-launch-' || value, 'old', printf('%064x', value + 1000),
             ?1, ?2, 'project',
-            json_object('entry_path', '/app/w/web/p/APP', 'kind', 'project',
-                        'project_id', ?3, 'project_key', 'APP', 'workspace_key', 'web'),
+            json_object('entry_path', '/app/w/' || ?5 || '/p/' || ?3, 'kind', 'project',
+                        'project_id', ?3, 'workspace_id', ?5),
             ?4 + 300000, ?4, 'wp07-old-launch-operation-' || value
      FROM counter`,
   ).bind(
@@ -786,9 +788,10 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     ids.participantCredential,
     ids.projectA,
     oldLaunchCreatedAt,
+    ids.workspace,
   ).run();
   const projectLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-project-launch",
   );
   secrets.push(projectLaunch.code);
@@ -797,10 +800,10 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   ).first();
   assert.equal(oldLaunchesAfterCleanup.count, 1);
   assert.equal(projectLaunch.body.resource.target.project_id, ids.projectA);
-  assert.equal(projectLaunch.body.resource.target.entry_path, "/app/w/web/p/APP");
+  assert.equal(projectLaunch.body.resource.target.entry_path, `/app/w/${fixtureIds["Web Workspace"]}/p/${fixtureIds["Application"]}`);
 
   const replayedCreation = await request("/api/v1/web-launches", {
-    body: { target: { kind: "project", project_key: "APP", workspace_key: "web" } },
+    body: { target: { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] } },
     headers: participantHeaders({ "idempotency-key": "wp07-project-launch" }),
     method: "POST",
   });
@@ -814,7 +817,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   ).bind(Date.now(), ids.ownerPrincipal, ids.participantGrantA).run();
   try {
     const unauthorizedCreationReplay = await request("/api/v1/web-launches", {
-      body: { target: { kind: "project", project_key: "APP", workspace_key: "web" } },
+      body: { target: { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] } },
       headers: participantHeaders({ "idempotency-key": "wp07-project-launch" }),
       method: "POST",
     });
@@ -828,19 +831,19 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   }
 
   const sourceInvalidationLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-redeem-source-race-launch",
   );
   const grantInvalidationLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-redeem-grant-race-launch",
   );
   const projectInvalidationLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-redeem-project-race-launch",
   );
   const workspaceInvalidationLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-redeem-workspace-race-launch",
   );
   const issueInvalidationLaunch = await createLaunch(
@@ -912,7 +915,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
 
   const platformFailureLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-redeem-platform-failure-launch",
   );
   secrets.push(platformFailureLaunch.code);
@@ -970,7 +973,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
 
   const responseLossLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-response-loss-launch",
   );
   secrets.push(responseLossLaunch.code);
@@ -1021,7 +1024,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
 
   const concurrentLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-concurrent-redeem-launch",
   );
   secrets.push(concurrentLaunch.code);
@@ -1103,7 +1106,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     "SELECT COUNT(*) AS count FROM web_sessions WHERE id LIKE 'wp07-old-session-%'",
   ).first();
   assert.equal(oldSessionsAfterCleanup.count, 1);
-  assert.equal(projectSession.body.resource.entry_path, "/app/w/web/p/APP");
+  assert.equal(projectSession.body.resource.entry_path, `/app/w/${fixtureIds["Web Workspace"]}/p/${fixtureIds["Application"]}`);
   assert.deepEqual(projectSession.body.resource.allowed_scope, { kind: "project", project_id: ids.projectA });
   assert.equal(projectSession.body.resource.principal.is_owner, false);
   assert.equal(typeof projectSession.body.resource.principal.is_owner, "boolean");
@@ -1233,7 +1236,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
       "UPDATE workspaces SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
     ).bind(ids.workspace).run(),
   });
-  const outsideFixedScope = await request("/api/v1/workspaces/web/projects/OPS", {
+  const outsideFixedScope = await request(`/api/v1/workspaces/${fixtureIds["Web Workspace"]}/projects/${fixtureIds["Operations"]}`, {
     headers: { cookie: cookieHeader(projectSession.cookies) },
   });
   assert.equal(outsideFixedScope.response.status, 404);
@@ -1344,7 +1347,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   const ownerIssueSession = await redeemLaunch(ownerIssueLaunch.code, "wp07-owner-issue-redeem");
   secrets.push(ownerIssueSession.cookies.session, ownerIssueSession.cookies.csrf);
   const fixedOwnerCreateWorkspace = await request("/api/v1/workspaces", {
-    body: { display_name: "Must stay fixed", key: "fixed-owner-session" },
+    body: { display_name: "Must stay fixed" },
     headers: cookieWriteHeaders(ownerIssueSession.cookies, {
       "idempotency-key": "wp07-fixed-owner-create-workspace",
     }),
@@ -1364,7 +1367,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
 
   const sourceLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-source-revoke-launch",
   );
   secrets.push(sourceLaunch.code);
@@ -1393,7 +1396,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   ).bind(ids.participantCredential).run();
 
   const registrationLaunch = await createLaunch(
-    { kind: "project", project_key: "APP", workspace_key: "web" },
+    { kind: "project", project_id: fixtureIds["Application"], workspace_id: fixtureIds["Web Workspace"] },
     "wp07-registration-launch",
   );
   secrets.push(registrationLaunch.code);

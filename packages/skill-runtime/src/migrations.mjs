@@ -18,6 +18,16 @@ function sql(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
+const MIGRATION_CLASSIFICATIONS = new Set(["bootstrap", "backward_compatible", "breaking_non_destructive", "destructive"]);
+
+function classificationOf(value) {
+  const classification = value.classification ?? (value.destructive === true ? "destructive" : "backward_compatible");
+  if (!MIGRATION_CLASSIFICATIONS.has(classification) || (value.destructive === true && classification !== "destructive")) {
+    throw toolError("INVALID_MIGRATION_CLASSIFICATION", "Migration classification is unknown or inconsistent");
+  }
+  return classification;
+}
+
 function migrationRecord(value) {
   if (!Number.isSafeInteger(value?.sequence) || value.sequence < 1) {
     throw toolError("INVALID_MIGRATION_RECORD", "Migration sequence must be a positive integer");
@@ -27,9 +37,7 @@ function migrationRecord(value) {
   if (!/^[a-f0-9]{64}$/.test(sha256)) {
     throw toolError("INVALID_MIGRATION_RECORD", "Migration checksum must be a lowercase SHA-256 digest");
   }
-  const classification = value.destructive === true
-    ? "destructive"
-    : requireString(value.classification || "backward_compatible", "migration.classification", { max: 64 });
+  const classification = classificationOf(value);
   const reentry = requireString(value.reentry || "not_safe", "migration.reentry", { max: 128 });
   return { sequence: value.sequence, name, sha256, classification, reentry };
 }
@@ -146,6 +154,9 @@ export async function writeMigrationLedgerRecordSql({
 }
 
 function schemaHasArtifacts(schema, expected = {}) {
+  if ((expected.absent_columns?.length ?? 0) > 0 && !Array.isArray(schema.columns)) {
+    throw toolError("MIGRATION_COLUMN_READBACK_REQUIRED", "Column readback is required to prove removed schema columns");
+  }
   const tables = new Set(schema.tables || []);
   const indexes = new Set(schema.indexes || []);
   const columns = new Set(schema.columns || []);
@@ -153,6 +164,7 @@ function schemaHasArtifacts(schema, expected = {}) {
     tables: (expected.tables || []).filter((name) => !tables.has(name)),
     indexes: (expected.indexes || []).filter((name) => !indexes.has(name)),
     columns: (expected.columns || []).filter((name) => !columns.has(name)),
+    ...(expected.absent_columns ? { absent_columns: expected.absent_columns.filter((name) => columns.has(name)) } : {}),
   };
   return { complete: Object.values(missing).every((items) => items.length === 0), missing };
 }
@@ -164,6 +176,7 @@ export function reconcileMigrationState({ manifest, ledger = [], schema = {} }) 
   const manifestNames = new Set();
   const manifestSequences = new Set();
   for (const migration of manifest.migrations) {
+    classificationOf(migration);
     if (manifestNames.has(migration.name) || manifestSequences.has(migration.sequence)) {
       throw toolError("INVALID_MIGRATION_MANIFEST", "Migration manifest contains duplicate names or sequences");
     }
@@ -190,6 +203,9 @@ export function reconcileMigrationState({ manifest, ledger = [], schema = {} }) 
     if (row && (row.sequence !== undefined && Number(row.sequence) !== migration.sequence)) {
       state = "drift";
       reason = "ledger_sequence_mismatch";
+    } else if (row && row.classification !== undefined && classificationOf(row) !== classificationOf(migration)) {
+      state = "drift";
+      reason = "ledger_classification_mismatch";
     } else if (row && row.sha256 !== migration.sha256) {
       state = "drift";
       reason = "ledger_checksum_mismatch";
@@ -198,6 +214,10 @@ export function reconcileMigrationState({ manifest, ledger = [], schema = {} }) 
       reason = "ledger_present_schema_incomplete";
     } else if (row && artifacts.complete) {
       state = "applied";
+    } else if (!row && (artifacts.missing.absent_columns?.length ?? 0) > 0
+      && artifacts.missing.absent_columns.length < migration.expected_artifacts.absent_columns.length) {
+      state = "drift";
+      reason = "schema_partial_column_removal";
     } else if (!row && artifacts.complete) {
       state = migration.safe_baseline === true ? "baseline_candidate" : "drift";
       reason = migration.safe_baseline === true ? "explicit_safe_baseline_required" : "schema_present_ledger_missing";
@@ -209,7 +229,7 @@ export function reconcileMigrationState({ manifest, ledger = [], schema = {} }) 
       sequence: migration.sequence,
       name: migration.name,
       sha256: migration.sha256,
-      classification: migration.destructive ? "destructive" : migration.classification || "backward_compatible",
+      classification: classificationOf(migration),
       state,
       reason,
       missing_artifacts: artifacts.missing,

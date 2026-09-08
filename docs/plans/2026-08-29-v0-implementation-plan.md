@@ -103,7 +103,7 @@ docs/
 
 实现 instance bootstrap、Owner、`/me`、Workspace、Project、固定五状态显示名、preferred origin/discovery 和容器 soft-delete/restore。
 
-验收：只有 Owner 能创建/维护容器；Project 创建后立即可用；key 不可变；容器恢复正确恢复仍 enabled 的 Public Join 提示边界；discovery 动态、`no-store` 且不信任 forwarded host。
+验收：只有 Owner 能创建/维护容器；Project 创建后立即可用；UUID 不可变，创建只需名称；容器恢复正确恢复仍 enabled 的 Public Join 提示边界；discovery 动态、`no-store` 且不信任 forwarded host。
 
 依赖：WP-02。
 

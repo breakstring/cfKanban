@@ -1,7 +1,5 @@
 import {
-  requireProjectKey,
   requireUuid,
-  requireWorkspaceKey,
   timestamp,
 } from "../domain/model.ts";
 import {
@@ -58,13 +56,11 @@ interface LabelRow {
   name: string;
   project_id: string;
   project_deleted_at: number | null;
-  project_key: string;
   project_name: string;
   updated_at: number;
   version: number;
   workspace_id: string;
   workspace_deleted_at: number | null;
-  workspace_key: string;
   workspace_name: string;
 }
 
@@ -99,8 +95,9 @@ function labelResource(row: LabelRow, role: VisibleProject["role"]): { [key: str
     name: row.name,
     project: {
       id: row.project_id,
-      key: row.project_key,
-      workspace_key: row.workspace_key,
+      display_name: row.project_name,
+      workspace_display_name: row.workspace_name,
+      workspace_id: row.workspace_id,
     },
     updated_at: timestamp(row.updated_at),
     version: row.version,
@@ -118,9 +115,9 @@ async function readLabel(db: D1Database, labelId: string): Promise<LabelRow | nu
       `SELECT label.id, label.project_id, label.name, label.color,
               label.version, label.deleted_at, label.deleted_by_principal_id,
               label.created_at, label.updated_at, label.last_operation_id,
-              project.key AS project_key, project.display_name AS project_name,
+              project.display_name AS project_name,
               project.deleted_at AS project_deleted_at,
-              workspace.id AS workspace_id, workspace.key AS workspace_key,
+              workspace.id AS workspace_id,
               workspace.display_name AS workspace_name,
               workspace.deleted_at AS workspace_deleted_at
        FROM labels label
@@ -188,13 +185,11 @@ function labelSnapshotStatement(
          'name', label.name,
          'project_id', label.project_id,
          'project_deleted_at', project.deleted_at,
-         'project_key', project.key,
          'project_name', project.display_name,
          'updated_at', label.updated_at,
          'version', label.version,
          'workspace_id', workspace.id,
          'workspace_deleted_at', workspace.deleted_at,
-         'workspace_key', workspace.key,
          'workspace_name', workspace.display_name
        )
        FROM labels label
@@ -278,16 +273,16 @@ async function labelNameConflict(
 export async function listLabels(
   db: D1Database,
   auth: AuthContext,
-  workspaceKeyValue: JsonValue,
-  projectKeyValue: JsonValue,
+  workspaceIdValue: JsonValue,
+  projectIdValue: JsonValue,
   url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
-  const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
-  const projectKey = requireProjectKey(projectKeyValue, "project_key");
+  const workspaceId = requireUuid(workspaceIdValue, "workspace_id");
+  const projectId = requireUuid(projectIdValue, "project_id");
   const deletedMode = requireDeletedMode(url);
   const project = deletedMode === "only"
-    ? await requireProjectAuthorization(db, auth, workspaceKey, projectKey, "writer", true)
-    : await requireVisibleProject(db, auth, workspaceKey, projectKey);
+    ? await requireProjectAuthorization(db, auth, workspaceId, projectId, "writer", true)
+    : await requireVisibleProject(db, auth, workspaceId, projectId);
   const context = await createCursorContext(
     "labels",
     { deleted: deletedMode, project_id: project.projectId },
@@ -303,9 +298,9 @@ export async function listLabels(
         `SELECT label.id, label.project_id, label.name, label.color,
                 label.version, label.deleted_at, label.deleted_by_principal_id,
                 label.created_at, label.updated_at, label.last_operation_id,
-                project.key AS project_key, project.display_name AS project_name,
+                project.display_name AS project_name,
                 project.deleted_at AS project_deleted_at,
-                workspace.id AS workspace_id, workspace.key AS workspace_key,
+                workspace.id AS workspace_id,
                 workspace.display_name AS workspace_name,
                 workspace.deleted_at AS workspace_deleted_at
          FROM labels label
@@ -321,9 +316,9 @@ export async function listLabels(
         `SELECT label.id, label.project_id, label.name, label.color,
                 label.version, label.deleted_at, label.deleted_by_principal_id,
                 label.created_at, label.updated_at, label.last_operation_id,
-                project.key AS project_key, project.display_name AS project_name,
+                project.display_name AS project_name,
                 project.deleted_at AS project_deleted_at,
-                workspace.id AS workspace_id, workspace.key AS workspace_key,
+                workspace.id AS workspace_id,
                 workspace.display_name AS workspace_name,
                 workspace.deleted_at AS workspace_deleted_at
          FROM labels label
@@ -352,8 +347,9 @@ export async function listLabels(
       : null,
     resolved_scope: {
       project_id: project.projectId,
-      project_key: project.projectKey,
-      workspace_key: project.workspaceKey,
+      project_display_name: project.projectName,
+      workspace_display_name: project.workspaceName,
+      workspace_id: project.workspaceId,
     },
   };
 }
@@ -380,13 +376,13 @@ export async function getLabel(
 async function diagnoseLabelCreate(
   db: D1Database,
   auth: AuthContext,
-  workspaceKey: string,
-  projectKey: string,
+  workspaceId: string,
+  projectId: string,
   name: string,
   now: number,
 ): Promise<never> {
   await verifyCurrentAuth(db, auth, now);
-  const project = await requireVisibleProject(db, auth, workspaceKey, projectKey, "writer");
+  const project = await requireVisibleProject(db, auth, workspaceId, projectId, "writer");
   if (await labelNameConflict(db, project.projectId, name)) {
     throw conflict("LABEL_NAME_CONFLICT", "use_existing_or_restore");
   }
@@ -397,15 +393,15 @@ export async function createLabel(
   db: D1Database,
   request: Request,
   auth: AuthContext,
-  workspaceKeyValue: JsonValue,
-  projectKeyValue: JsonValue,
+  workspaceIdValue: JsonValue,
+  projectIdValue: JsonValue,
   nameValue: JsonValue,
   colorValue: JsonValue | undefined,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const workspaceKey = requireWorkspaceKey(workspaceKeyValue, "workspace_key");
-  const projectKey = requireProjectKey(projectKeyValue, "project_key");
-  const project = await requireProjectAuthorization(db, auth, workspaceKey, projectKey, "writer");
+  const workspaceId = requireUuid(workspaceIdValue, "workspace_id");
+  const projectId = requireUuid(projectIdValue, "project_id");
+  const project = await requireProjectAuthorization(db, auth, workspaceId, projectId, "writer");
   const name = requireLabelName(nameValue);
   const color = requireLabelColor(colorValue) ?? null;
   const labelId = crypto.randomUUID();
@@ -413,12 +409,12 @@ export async function createLabel(
   const result = await runIdempotentOperation({
     authorize: async () => {
       await verifyCurrentAuth(db, auth, now);
-      const latest = await requireProjectAuthorization(db, auth, workspaceKey, projectKey, "writer");
+      const latest = await requireProjectAuthorization(db, auth, workspaceId, projectId, "writer");
       if (latest.projectId !== project.projectId) throw notFound();
     },
     db,
     execute: async (operationId) => {
-      const activeProject = await requireVisibleProject(db, auth, workspaceKey, projectKey, "writer");
+      const activeProject = await requireVisibleProject(db, auth, workspaceId, projectId, "writer");
       if (activeProject.projectId !== project.projectId) throw notFound();
       const guard = buildProjectRoleGuard(auth, now, 8, "project.id");
       try {
@@ -453,7 +449,7 @@ export async function createLabel(
           ],
           committedAt: now,
           confirmBusinessRejection: () => deterministicRejection(
-            () => diagnoseLabelCreate(db, auth, workspaceKey, projectKey, name, now),
+            () => diagnoseLabelCreate(db, auth, workspaceId, projectId, name, now),
           ),
           expectedEventCount: 1,
           operationId,
@@ -463,7 +459,7 @@ export async function createLabel(
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          return diagnoseLabelCreate(db, auth, workspaceKey, projectKey, name, now);
+          return diagnoseLabelCreate(db, auth, workspaceId, projectId, name, now);
         }
         throw error;
       }
@@ -486,7 +482,7 @@ export async function createLabel(
       };
     },
     requestBody: { color, name },
-    routeTemplate: "/api/v1/workspaces/{workspace_key}/projects/{project_key}/labels",
+    routeTemplate: "/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels",
     scopeKey: `principal:${auth.principalId}`,
   });
   return { ...(result.body as { [key: string]: JsonValue }), idempotent_replay: result.idempotentReplay };

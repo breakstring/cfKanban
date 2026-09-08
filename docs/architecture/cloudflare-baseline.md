@@ -147,7 +147,7 @@ assign-to-me、report-blocked、clear-blocked、complete 等命令可能同时�
 - 首次部署只展示一次 Owner bootstrap Credential；全部 Owner Credential 丢失时，应用内无恢复端点，只有掌握 Cloudflare deployment 的操作者可通过部署外受控 Skill 脚本为同一 Principal 重新签发并写安全 Audit。
 - D1 按扫描行计量，索引是成本控制的一部分。
 - 单个数据库串行处理查询，慢 SQL 会降低整个实例吞吐。
-- 所有 Workspace 级查询都必须显式带隔离条件；常见约束和索引应覆盖 `(workspace_id, project_key)`、`workspace_id + project_id + status`、assignee/候选工作过滤、`updated_at`、Event 全局 sequence 与 Project scope、credential prefix、invitation code hash/expiry 和唯一 `(principal_id, project_id)` grant。
+- 所有 Workspace 级查询都必须显式带隔离条件；常见约束和索引应覆盖 `(workspace_id, id)`、`workspace_id + project_id + status`、assignee/候选工作过滤、`updated_at`、Event 全局 sequence 与 Project scope、credential prefix、invitation code hash/expiry 和唯一 `(principal_id, project_id)` grant。
 - Event 内部使用部署级单调 sequence；公开 opaque cursor 绑定 Principal、规范化过滤和实际可读 Project 集合。Grant 或容器变化导致集合变化时返回 `CURSOR_SCOPE_MISMATCH`，由客户端重新获取 snapshot cursor，不尝试跨 scope 拼接。
 - Free 单库容量是硬边界；大附件和长日志不进入 D1。
 

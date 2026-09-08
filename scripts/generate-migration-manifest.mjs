@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 2,
+  schema_version: 3,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -30,7 +30,8 @@ const manifest = {
       reentry: "wrangler_migration_ledger_only",
       expected_artifacts: {
         tables,
-        indexes,
+        // 读回核对当前 schema；0003 已移除这两个旧 key 索引，初始 SQL 指纹保持不变。
+        indexes: indexes.filter((name) => !["idx_workspaces_key", "idx_projects_workspace_key"].includes(name)),
       },
     },
     {
@@ -42,6 +43,19 @@ const manifest = {
       reentry: "wrangler_migration_ledger_only",
       expected_artifacts: {
         indexes: ["idx_workspaces_purge_state", "idx_projects_workspace_purge_state"],
+      },
+    },
+    {
+      sequence: 3,
+      name: "0003_container_uuid.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0003_container_uuid.sql", import.meta.url), "utf8")),
+      classification: "breaking_non_destructive",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        tables: ["workspaces", "projects", "public_join_policies", "browser_launches", "web_sessions", "cfkanban_migration_ledger"],
+        absent_columns: ["workspaces.key", "projects.key", "public_join_policies.project_key"],
+        indexes: ["idx_workspaces_purge_state", "idx_projects_workspace_purge_state", "idx_public_join_resume_enabled_workspace_project"],
       },
     },
   ],

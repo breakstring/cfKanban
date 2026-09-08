@@ -82,6 +82,8 @@ const cursorScopeMismatchError = matchesApiError({
   status: 409,
 });
 
+const fixtureIds = Object.create(null);
+
 async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
   const response = await server.fetch(path, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -91,7 +93,9 @@ async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
     },
     method,
   });
-  return { body: await response.json(), response };
+  const result = await response.json();
+  if (response.ok && result.resource?.id && body?.display_name && method === "POST") fixtureIds[body.display_name] = result.resource.id;
+  return { body: result, response };
 }
 
 function assertWriteResult(value, replay = false) {
@@ -186,7 +190,7 @@ function issueRecoveryScopeBarrierDatabase(database, pauseAtRead) {
       get(target, property) {
         if (property === "prepare") {
           return (sql) => {
-            const matchesScopeRead = sql.includes("recovery_grant") && sql.includes("ORDER BY w.key, p.key");
+            const matchesScopeRead = sql.includes("recovery_grant") && sql.includes("ORDER BY w.id, p.id");
             const matchesFinalQuery = sql.includes("WITH current_result_projects(id) AS MATERIALIZED")
               && sql.includes("FROM issues i");
             return wrapStatement(target.prepare(sql), matchesScopeRead, matchesFinalQuery);
@@ -246,7 +250,7 @@ function issueActiveScopeBarrierDatabase(database, pauseAtRead = 1) {
         if (property === "prepare") {
           return (sql) => {
             const matchesScopeRead = sql.includes("FROM project_grants AS pg")
-              && sql.includes("ORDER BY w.key, p.key");
+              && sql.includes("ORDER BY w.id, p.id");
             const matchesFinalQuery = (
               sql.includes("WITH current_result_projects(id) AS MATERIALIZED")
               || sql.includes("WITH current_visible_projects(id) AS MATERIALIZED")
@@ -367,17 +371,17 @@ after(async () => {
 
 test("WP-05 implements the authorization-filtered Issue ledger and atomic commands", async () => {
   await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Engineering", key: "engineering" },
+    body: { display_name: "Engineering" },
     headers: ownerHeaders({ "idempotency-key": "wp05-workspace" }),
     method: "POST",
   });
-  const core = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { context: "Project contract context", display_name: "Core", key: "CORE" },
+  const core = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { context: "Project contract context", display_name: "Core" },
     headers: ownerHeaders({ "idempotency-key": "wp05-core" }),
     method: "POST",
   });
-  const privateProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { display_name: "Private", key: "PRIVATE" },
+  const privateProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { display_name: "Private" },
     headers: ownerHeaders({ "idempotency-key": "wp05-private" }),
     method: "POST",
   });
@@ -417,7 +421,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     status_key: "backlog",
     title: "Ledger Élan",
   };
-  const first = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const first = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: createBody,
     headers: ownerHeaders({ "idempotency-key": "wp05-first-issue" }),
     method: "POST",
@@ -426,7 +430,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assertWriteResult(first.body);
   assert.equal(first.body.resource.identifier, "CFK-1");
   assert.deepEqual(first.body.resource.labels.map((label) => label.id), [ids.label]);
-  const replay = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const replay = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: createBody,
     headers: ownerHeaders({ "idempotency-key": "wp05-first-issue" }),
     method: "POST",
@@ -434,14 +438,14 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(replay.body.resource.identifier, "CFK-1");
   assertWriteResult(replay.body, true);
 
-  const second = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const second = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: { priority_key: "high", status_key: "todo", title: "Second candidate" },
     headers: writerHeaders({ "idempotency-key": "wp05-second-issue" }),
     method: "POST",
   });
   assert.equal(second.response.status, 200);
   assert.equal(second.body.resource.identifier, "CFK-2");
-  const privateIssue = await jsonRequest("/api/v1/workspaces/engineering/projects/PRIVATE/issues", {
+  const privateIssue = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}/issues`, {
     body: { title: "Hidden issue" },
     headers: ownerHeaders({ "idempotency-key": "wp05-private-issue" }),
     method: "POST",
@@ -520,13 +524,13 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(invalidCandidatePage.body.code, "INVALID_CURSOR");
   const emptyScopeCursorContext = await createCursorContext(
     "issues",
-    ordinaryCursorFilter(["engineering/MISSING"]),
+    ordinaryCursorFilter(["00000000-0000-4000-8000-000000000099"]),
     issueCursorScope([], [coreProjectId]),
     ids.writerPrincipal,
   );
   const invalidEmptyScopeCursor = encodeCursor(emptyScopeCursorContext, [0, 1.5]);
   const invalidEmptyScopePage = await jsonRequest(
-    `/api/v1/issues?project=engineering%2FMISSING&cursor=${encodeURIComponent(invalidEmptyScopeCursor)}`,
+    `/api/v1/issues?project=00000000-0000-4000-8000-000000000099&cursor=${encodeURIComponent(invalidEmptyScopeCursor)}`,
     { headers: writerHeaders() },
   );
   assert.equal(invalidEmptyScopePage.response.status, 400);
@@ -540,7 +544,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(mismatchedCursor.body.code, "CURSOR_SCOPE_MISMATCH");
   const hidden = await jsonRequest("/api/v1/issues/CFK-3", { headers: writerHeaders() });
   assert.equal(hidden.response.status, 404);
-  const readerCreate = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const readerCreate = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: { title: "Reader cannot write" },
     headers: readerHeaders({ "idempotency-key": "wp05-reader-create" }),
     method: "POST",
@@ -548,11 +552,11 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(readerCreate.response.status, 403);
 
   const scoped = await jsonRequest(
-    "/api/v1/issues?project=engineering%2FCORE&project=engineering%2FMISSING&q=%C3%A9lan",
+    `/api/v1/issues?project=${fixtureIds["Core"]}&project=00000000-0000-4000-8000-000000000099&q=%C3%A9lan`,
     { headers: writerHeaders() },
   );
   assert.deepEqual(scoped.body.items.map((issue) => issue.identifier), ["CFK-1"]);
-  assert.deepEqual(scoped.body.resolved_scope.unresolved_project_targets, ["engineering/MISSING"]);
+  assert.deepEqual(scoped.body.resolved_scope.unresolved_project_targets, ["00000000-0000-4000-8000-000000000099"]);
   const literalPattern = await jsonRequest("/api/v1/issues?q=%25", { headers: ownerHeaders() });
   assert.equal(literalPattern.body.items.length, 0);
   assert.equal(literalPattern.body.resolved_scope.broad_search, true);
@@ -722,7 +726,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
             ?2, ?2, ?3, ?3, json_extract(value, '$.operation')
      FROM json_each(?4)`,
   ).bind(coreProjectId, Date.now(), ids.ownerPrincipal, JSON.stringify(maximumLabels)).run();
-  const maximumLabelIssue = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const maximumLabelIssue = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: { label_ids: maximumLabels.map((label) => label.id), title: "Maximum label association" },
     headers: ownerHeaders({ "idempotency-key": "wp05-maximum-label-create" }),
     method: "POST",
@@ -744,12 +748,12 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     operation_id: maximumLabelOperation.operation_id,
   });
 
-  const contextProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { context: "p".repeat(20 * 1024), display_name: "Context", key: "CONTEXT" },
+  const contextProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { context: "p".repeat(20 * 1024), display_name: "Context" },
     headers: ownerHeaders({ "idempotency-key": "wp05-context-project" }),
     method: "POST",
   });
-  const contextIssue = await jsonRequest("/api/v1/workspaces/engineering/projects/CONTEXT/issues", {
+  const contextIssue = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Context"]}/issues`, {
     body: { body: "b".repeat(20 * 1024), title: "Context remains complete below the envelope limit" },
     headers: ownerHeaders({ "idempotency-key": "wp05-context-issue" }),
     method: "POST",
@@ -799,12 +803,12 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(context.body.sections.body.truncated, true);
   assert.equal(context.body.sections.project_context.content, "Project contract context");
   const concurrentCreates = await Promise.all([
-    jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
       body: { title: "Concurrent A" },
       headers: ownerHeaders({ "idempotency-key": "wp05-concurrent-a" }),
       method: "POST",
     }),
-    jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
       body: { title: "Concurrent B" },
       headers: writerHeaders({ "idempotency-key": "wp05-concurrent-b" }),
       method: "POST",
@@ -819,8 +823,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(coreProjectId).first();
   assert.equal(coreUsage, null, "disabled policies do not maintain usage rows");
 
-  const quotaProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { display_name: "Quota", key: "QUOTA" },
+  const quotaProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { display_name: "Quota" },
     headers: ownerHeaders({ "idempotency-key": "wp05-quota-project" }),
     method: "POST",
   });
@@ -830,10 +834,10 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(quotaProjectId).run();
   await db.prepare(
     `INSERT INTO public_join_policies
-      (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
+      (project_id, workspace_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
        version, created_at, updated_at)
      VALUES (?1, (SELECT workspace_id FROM projects WHERE id = ?1),
-             (SELECT key FROM projects WHERE id = ?1),
+
              'quota-public', 'Quota test', ?2, ?3, 1, ?2, ?2)`,
   ).bind(quotaProjectId, Date.now(), ids.ownerPrincipal).run();
   await db.prepare(
@@ -842,13 +846,13 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
        updated_at, last_operation_id)
      VALUES (?1, 0, 0, 0, ?2, 'wp05-policy')`,
   ).bind(quotaProjectId, Date.now()).run();
-  const quotaOne = await jsonRequest("/api/v1/workspaces/engineering/projects/QUOTA/issues", {
+  const quotaOne = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Quota"]}/issues`, {
     body: { title: "Quota one" },
     headers: ownerHeaders({ "idempotency-key": "wp05-quota-one" }),
     method: "POST",
   });
   assert.equal(quotaOne.response.status, 200);
-  const quotaOneReplayAtLimit = await jsonRequest("/api/v1/workspaces/engineering/projects/QUOTA/issues", {
+  const quotaOneReplayAtLimit = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Quota"]}/issues`, {
     body: { title: "Quota one" },
     headers: ownerHeaders({ "idempotency-key": "wp05-quota-one" }),
     method: "POST",
@@ -885,7 +889,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
       "UPDATE project_usage SET active_comment_count = 2 WHERE project_id = ?1",
     ).bind(quotaProjectId),
   ]);
-  const quotaTwoRejected = await jsonRequest("/api/v1/workspaces/engineering/projects/QUOTA/issues", {
+  const quotaTwoRejected = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Quota"]}/issues`, {
     body: { title: "Quota two" },
     headers: ownerHeaders({ "idempotency-key": "wp05-quota-two" }),
     method: "POST",
@@ -936,7 +940,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     headers: readerHeaders(),
   });
   assert.deepEqual(readerDeletedView.body.items, []);
-  const quotaTwo = await jsonRequest("/api/v1/workspaces/engineering/projects/QUOTA/issues", {
+  const quotaTwo = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Quota"]}/issues`, {
     body: { title: "Quota two" },
     headers: ownerHeaders({ "idempotency-key": "wp05-quota-two" }),
     method: "POST",
@@ -970,14 +974,14 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     { headers: ownerHeaders(), method: "DELETE" },
   );
   const deletedPageOne = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/QUOTA/issues?deleted=only&limit=1",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Quota"]}/issues?deleted=only&limit=1`,
     { headers: ownerHeaders() },
   );
   assert.equal(deletedPageOne.body.items.length, 1);
   assert.equal(deletedPageOne.body.has_more, true);
   assert.equal(deletedPageOne.body.items[0].identifier, quotaTwo.body.resource.identifier);
   const deletedPageTwo = await jsonRequest(
-    `/api/v1/workspaces/engineering/projects/QUOTA/issues?deleted=only&limit=1&cursor=${encodeURIComponent(deletedPageOne.body.next_cursor)}`,
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Quota"]}/issues?deleted=only&limit=1&cursor=${encodeURIComponent(deletedPageOne.body.next_cursor)}`,
     { headers: ownerHeaders() },
   );
   assert.deepEqual(
@@ -1065,8 +1069,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
       issue_id: first.body.resource.id,
       kind: "issue",
       project_id: coreProjectId,
-      project_key: "CORE",
-      workspace_key: "engineering",
+      workspace_id: fixtureIds["Engineering"],
     }),
     Date.now() + 60_000,
     Date.now(),
@@ -1081,7 +1084,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(issueTargetIdentifiers.has("CFK-3"), false);
   assert.equal(issueTargetIdentifiers.has(quotaOne.body.resource.identifier), false);
   const issueTargetProjectList = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE/issues",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`,
     { headers: cookieHeaders },
   );
   assert.equal(issueTargetProjectList.response.status, 200);
@@ -1150,7 +1153,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   await db.prepare(
     "UPDATE labels SET deleted_at = ?1, deleted_by_principal_id = ?2, version = version + 1 WHERE id = ?3",
   ).bind(Date.now(), ids.ownerPrincipal, ids.label).run();
-  const labelDriftReplay = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const labelDriftReplay = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: createBody,
     headers: ownerHeaders({ "idempotency-key": "wp05-first-issue" }),
     method: "POST",
@@ -1179,7 +1182,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     },
   ];
   for (const replayCase of commandReplayCases) {
-    const created = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+    const created = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
       body: { title: replayCase.title },
       headers: writerHeaders({ "idempotency-key": replayCase.createKey }),
       method: "POST",
@@ -1210,7 +1213,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     assert.deepEqual(replayed.body.resource, commanded.body.resource);
     assert.equal(replayed.body.idempotent_replay, true);
   }
-  const clearReplayIssue = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const clearReplayIssue = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: { title: "Clear blocked replay after delete" },
     headers: writerHeaders({ "idempotency-key": "wp05-command-replay-clear-create" }),
     method: "POST",
@@ -1252,7 +1255,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     assignee_principal_id: ids.writerPrincipal,
     title: "Assignee replay remains exact",
   };
-  const assignedCreate = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const assignedCreate = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: assignedCreateBody,
     headers: ownerHeaders({ "idempotency-key": "wp05-assignee-replay" }),
     method: "POST",
@@ -1262,7 +1265,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   await db.prepare(
     "UPDATE project_grants SET role = 'reader', version = version + 1 WHERE id = ?1",
   ).bind(ids.writerGrant).run();
-  const assigneeDriftReplay = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const assigneeDriftReplay = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: assignedCreateBody,
     headers: ownerHeaders({ "idempotency-key": "wp05-assignee-replay" }),
     method: "POST",
@@ -1270,7 +1273,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(assigneeDriftReplay.response.status, 200);
   assert.deepEqual(assigneeDriftReplay.body.resource, assignedCreate.body.resource);
   assert.equal(assigneeDriftReplay.body.idempotent_replay, true);
-  const callerDowngradedReplay = await jsonRequest("/api/v1/workspaces/engineering/projects/CORE/issues", {
+  const callerDowngradedReplay = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`, {
     body: { priority_key: "high", status_key: "todo", title: "Second candidate" },
     headers: writerHeaders({ "idempotency-key": "wp05-second-issue" }),
     method: "POST",
@@ -1294,7 +1297,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   );
   assert.deepEqual(reassignmentCandidates.body.items.map((issue) => issue.identifier), ["CFK-1"]);
 
-  const privateActive = await jsonRequest("/api/v1/workspaces/engineering/projects/PRIVATE/issues", {
+  const privateActive = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}/issues`, {
     body: { title: "Active child must not become a tombstone" },
     headers: ownerHeaders({ "idempotency-key": "wp05-private-active-child" }),
     method: "POST",
@@ -1339,9 +1342,9 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const racedProjectTombstones = listProjectIssuesService(
     projectRecoveryBarrier.db,
     recoveryRaceAuth,
-    "engineering",
-    "PRIVATE",
-    new URL("https://kanban.example.test/api/v1/workspaces/engineering/projects/PRIVATE/issues?deleted=only"),
+    fixtureIds["Engineering"],
+    fixtureIds["Private"],
+    new URL(`https://kanban.example.test/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}/issues?deleted=only`),
     Date.now(),
   );
   await projectRecoveryBarrier.reached;
@@ -1382,11 +1385,11 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   }
 
   const privateProjectCurrent = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/PRIVATE",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}`,
     { headers: ownerHeaders() },
   );
   const privateProjectDeleted = await jsonRequest(
-    `/api/v1/workspaces/engineering/projects/PRIVATE?expected_version=${privateProjectCurrent.body.version}`,
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}?expected_version=${privateProjectCurrent.body.version}`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(privateProjectDeleted.response.status, 200);
@@ -1410,7 +1413,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     false,
   );
   const participantPausedProjectPath = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/PRIVATE/issues?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}/issues?deleted=only`,
     { headers: writerHeaders() },
   );
   assert.equal(participantPausedProjectPath.response.status, 404);
@@ -1420,7 +1423,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   );
   assert.equal(activeChildIsNotTombstone.response.status, 404);
   const pausedProjectTombstoneList = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/PRIVATE/issues?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}/issues?deleted=only`,
     { headers: ownerHeaders() },
   );
   assert.deepEqual(pausedProjectTombstoneList.body.items.map((issue) => issue.identifier), ["CFK-3"]);
@@ -1433,7 +1436,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(restoreUnderDeletedProject.body.code, "PARENT_PROJECT_DELETED");
   assert.equal(restoreUnderDeletedProject.body.recovery, "restore_parent");
   const privateProjectRestored = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/PRIVATE/commands/restore",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}/commands/restore`,
     {
       body: { expected_version: privateProjectDeleted.body.resource.version },
       headers: ownerHeaders({ "idempotency-key": "wp05-restore-private-project" }),
@@ -1452,11 +1455,11 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     `/api/v1/issues/CFK-3?expected_version=${privateIssueRestored.body.resource.version}`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
-  const engineeringCurrent = await jsonRequest("/api/v1/workspaces/engineering", {
+  const engineeringCurrent = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}`, {
     headers: ownerHeaders(),
   });
   const engineeringDeleted = await jsonRequest(
-    `/api/v1/workspaces/engineering?expected_version=${engineeringCurrent.body.version}`,
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}?expected_version=${engineeringCurrent.body.version}`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(engineeringDeleted.response.status, 200);
@@ -1473,7 +1476,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     false,
   );
   const participantPausedWorkspacePath = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/PRIVATE/issues?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Private"]}/issues?deleted=only`,
     { headers: writerHeaders() },
   );
   assert.equal(participantPausedWorkspacePath.response.status, 404);
@@ -1484,7 +1487,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   });
   assert.equal(restoreUnderDeletedWorkspace.response.status, 409);
   assert.equal(restoreUnderDeletedWorkspace.body.code, "PARENT_WORKSPACE_DELETED");
-  const engineeringRestored = await jsonRequest("/api/v1/workspaces/engineering/commands/restore", {
+  const engineeringRestored = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/commands/restore`, {
     body: { expected_version: engineeringDeleted.body.resource.version },
     headers: ownerHeaders({ "idempotency-key": "wp05-restore-engineering-workspace" }),
     method: "POST",
@@ -1502,17 +1505,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(Date.now(), ids.ownerPrincipal, crossProjectGrantId).run();
 
   await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Relation Scope", key: "relation-scope" },
+    body: { display_name: "Relation Scope" },
     headers: ownerHeaders({ "idempotency-key": "wp05-relation-scope-workspace" }),
     method: "POST",
   });
-  const relationProjectA = await jsonRequest("/api/v1/workspaces/relation-scope/projects", {
-    body: { display_name: "Relation A", key: "RA" },
+  const relationProjectA = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Relation Scope"]}/projects`, {
+    body: { display_name: "Relation A" },
     headers: ownerHeaders({ "idempotency-key": "wp05-relation-project-a" }),
     method: "POST",
   });
-  const relationProjectB = await jsonRequest("/api/v1/workspaces/relation-scope/projects", {
-    body: { display_name: "Relation B", key: "RB" },
+  const relationProjectB = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Relation Scope"]}/projects`, {
+    body: { display_name: "Relation B" },
     headers: ownerHeaders({ "idempotency-key": "wp05-relation-project-b" }),
     method: "POST",
   });
@@ -1542,17 +1545,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
       "wp05-relation-scope-grant-b",
     ),
   ]);
-  const relationTarget = await jsonRequest("/api/v1/workspaces/relation-scope/projects/RA/issues", {
+  const relationTarget = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Relation Scope"]}/projects/${fixtureIds["Relation A"]}/issues`, {
     body: { status_key: "todo", title: "Visible target with cross-project blocker" },
     headers: writerHeaders({ "idempotency-key": "wp05-relation-target" }),
     method: "POST",
   });
-  await jsonRequest("/api/v1/workspaces/relation-scope/projects/RA/issues", {
+  await jsonRequest(`/api/v1/workspaces/${fixtureIds["Relation Scope"]}/projects/${fixtureIds["Relation A"]}/issues`, {
     body: { title: "Second scoped issue for cursor validation" },
     headers: writerHeaders({ "idempotency-key": "wp05-relation-target-second" }),
     method: "POST",
   });
-  const relationBlocker = await jsonRequest("/api/v1/workspaces/relation-scope/projects/RB/issues", {
+  const relationBlocker = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Relation Scope"]}/projects/${fixtureIds["Relation B"]}/issues`, {
     body: { status_key: "in_progress", title: "Visible cross-project blocker" },
     headers: writerHeaders({ "idempotency-key": "wp05-relation-blocker" }),
     method: "POST",
@@ -1578,7 +1581,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     "wp05-relation-scope-blocker",
   ).run();
   const explicitRelationScope = await jsonRequest(
-    "/api/v1/issues?project=relation-scope%2FRA",
+    `/api/v1/issues?project=${fixtureIds["Relation A"]}`,
     { headers: writerHeaders() },
   );
   assert.equal(
@@ -1588,12 +1591,12 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     true,
   );
   const blockedExplicitCandidate = await jsonRequest(
-    "/api/v1/issues/candidates?assignment=unassigned&project=relation-scope%2FRA",
+    `/api/v1/issues/candidates?assignment=unassigned&project=${fixtureIds["Relation A"]}`,
     { headers: writerHeaders() },
   );
   assert.deepEqual(blockedExplicitCandidate.body.items, []);
   const relationScopePage = await jsonRequest(
-    "/api/v1/issues?project=relation-scope%2FRA&limit=1",
+    `/api/v1/issues?project=${fixtureIds["Relation A"]}&limit=1`,
     { headers: writerHeaders() },
   );
   assert.equal(relationScopePage.body.has_more, true);
@@ -1612,7 +1615,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
        version = version + 1 WHERE id = ?3`,
   ).bind(Date.now(), ids.ownerPrincipal, relationProjectBGrant).run();
   const changedRelationVisibilityCursor = await jsonRequest(
-    `/api/v1/issues?project=relation-scope%2FRA&limit=1&cursor=${encodeURIComponent(relationScopePage.body.next_cursor)}`,
+    `/api/v1/issues?project=${fixtureIds["Relation A"]}&limit=1&cursor=${encodeURIComponent(relationScopePage.body.next_cursor)}`,
     { headers: writerHeaders() },
   );
   assert.equal(changedRelationVisibilityCursor.response.status, 409);
@@ -1629,7 +1632,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.equal(replayAfterBlockerGrantRevoke.body.idempotent_replay, true);
   assert.equal(replayAfterBlockerGrantRevoke.body.resource.is_blocked, false);
   const visibleCandidateAfterGrantRevoke = await jsonRequest(
-    "/api/v1/issues/candidates?assignment=mine&project=relation-scope%2FRA",
+    `/api/v1/issues/candidates?assignment=mine&project=${fixtureIds["Relation A"]}`,
     { headers: writerHeaders() },
   );
   assert.deepEqual(
@@ -1638,7 +1641,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   );
 
   const finalizeInterruptionIssue = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/CORE/issues",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Core"]}/issues`,
     {
       body: { title: "Finalize interruption must not become a write lock" },
       headers: ownerHeaders({ "idempotency-key": "wp05-finalize-interruption-create" }),
@@ -1730,17 +1733,17 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.deepEqual(finalizedRecord, { operation_snapshot_json: null, state: "committed" });
 
   await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Authorization races", key: "auth-races" },
+    body: { display_name: "Authorization races" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-workspace" }),
     method: "POST",
   });
-  const raceProjectA = await jsonRequest("/api/v1/workspaces/auth-races/projects", {
-    body: { display_name: "Race A", key: "RA" },
+  const raceProjectA = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects`, {
+    body: { display_name: "Race A" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-project-a" }),
     method: "POST",
   });
-  const raceProjectB = await jsonRequest("/api/v1/workspaces/auth-races/projects", {
-    body: { display_name: "Race B", key: "RB" },
+  const raceProjectB = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects`, {
+    body: { display_name: "Race B" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-project-b" }),
     method: "POST",
   });
@@ -1757,12 +1760,12 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     Date.now(),
     "wp05-auth-race-grant-a",
   ).run();
-  await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+  await jsonRequest(`/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects/${fixtureIds["Race A"]}/issues`, {
     body: { status_key: "todo", title: "Race baseline A" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-issue-a" }),
     method: "POST",
   });
-  await jsonRequest("/api/v1/workspaces/auth-races/projects/RB/issues", {
+  await jsonRequest(`/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects/${fixtureIds["Race B"]}/issues`, {
     body: { status_key: "todo", title: "Race baseline B" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-issue-b" }),
     method: "POST",
@@ -1783,11 +1786,10 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     ids.writerPrincipal,
     ids.writerCredential,
     JSON.stringify({
-      entry_path: "/app/w/auth-races/p/RA",
+      entry_path: `/app/w/${fixtureIds["Authorization races"]}/p/${fixtureIds["Race A"]}`,
       kind: "project",
       project_id: raceProjectA.body.resource.id,
-      project_key: "RA",
-      workspace_key: "auth-races",
+      workspace_id: fixtureIds["Authorization races"],
     }),
     raceSessionExpiresAt,
     raceSessionCreatedAt,
@@ -1805,7 +1807,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const revokedSessionList = listIssuesService(
     revokedSessionBarrier.db,
     raceSessionAuth,
-    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    new URL(`https://kanban.example.test/api/v1/issues?project=${fixtureIds["Race A"]}`),
     raceSessionCreatedAt + 1,
   );
   await revokedSessionBarrier.reached;
@@ -1824,7 +1826,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const revokedSessionSourceList = listIssuesService(
     revokedSessionSourceBarrier.db,
     raceSessionAuth,
-    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    new URL(`https://kanban.example.test/api/v1/issues?project=${fixtureIds["Race A"]}`),
     raceSessionCreatedAt + 1,
   );
   await revokedSessionSourceBarrier.reached;
@@ -1846,7 +1848,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const expiredSessionList = listIssuesService(
     expiredSessionBarrier.db,
     raceSessionAuth,
-    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    new URL(`https://kanban.example.test/api/v1/issues?project=${fixtureIds["Race A"]}`),
     expiredSessionStartedAt,
   );
   await expiredSessionBarrier.reached;
@@ -1866,14 +1868,14 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const credentialRacedList = listIssuesService(
     credentialRaceBarrier.db,
     activeListAuth,
-    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    new URL(`https://kanban.example.test/api/v1/issues?project=${fixtureIds["Race A"]}`),
     Date.now(),
   );
   await credentialRaceBarrier.reached;
   await db.prepare(
     "UPDATE credentials SET revoked_at = ?1, revoked_by_principal_id = ?2 WHERE id = ?3",
   ).bind(Date.now(), ids.ownerPrincipal, ids.writerCredential).run();
-  await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+  await jsonRequest(`/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects/${fixtureIds["Race A"]}/issues`, {
     body: { title: "Created after credential revoke" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-after-credential-revoke" }),
     method: "POST",
@@ -1893,9 +1895,9 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const projectRacedList = listProjectIssuesService(
     projectRaceBarrier.db,
     projectListAuth,
-    "auth-races",
-    "RA",
-    new URL("https://kanban.example.test/api/v1/workspaces/auth-races/projects/RA/issues"),
+    fixtureIds["Authorization races"],
+    fixtureIds["Race A"],
+    new URL(`https://kanban.example.test/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects/${fixtureIds["Race A"]}/issues`),
     Date.now(),
   );
   await projectRaceBarrier.reached;
@@ -1903,7 +1905,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
        version = version + 1 WHERE id = ?3`,
   ).bind(Date.now(), ids.ownerPrincipal, raceGrantA).run();
-  await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+  await jsonRequest(`/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects/${fixtureIds["Race A"]}/issues`, {
     body: { title: "Created after Project Grant revoke" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-after-grant-revoke" }),
     method: "POST",
@@ -1924,7 +1926,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const pausedProjectList = listIssuesService(
     pausedProjectBarrier.db,
     pausedProjectAuth,
-    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA"),
+    new URL(`https://kanban.example.test/api/v1/issues?project=${fixtureIds["Race A"]}`),
     Date.now(),
   );
   await pausedProjectBarrier.reached;
@@ -1945,16 +1947,16 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   }
 
   const raceWorkspace = await db.prepare(
-    "SELECT id FROM workspaces WHERE key = 'auth-races'",
+    "SELECT id FROM workspaces WHERE display_name = 'Authorization races'",
   ).first();
   const pausedWorkspaceAuth = await authenticateBearer(db, `Bearer ${writerToken}`);
   const pausedWorkspaceBarrier = issueActiveScopeBarrierDatabase(db, 2);
   const pausedWorkspaceProjectList = listProjectIssuesService(
     pausedWorkspaceBarrier.db,
     pausedWorkspaceAuth,
-    "auth-races",
-    "RA",
-    new URL("https://kanban.example.test/api/v1/workspaces/auth-races/projects/RA/issues"),
+    fixtureIds["Authorization races"],
+    fixtureIds["Race A"],
+    new URL(`https://kanban.example.test/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects/${fixtureIds["Race A"]}/issues`),
     Date.now(),
   );
   await pausedWorkspaceBarrier.reached;
@@ -1971,7 +1973,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     ).bind(raceWorkspace.id).run();
   }
 
-  const raceDeletedIssue = await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+  const raceDeletedIssue = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects/${fixtureIds["Race A"]}/issues`, {
     body: { title: "Race tombstone" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-tombstone" }),
     method: "POST",
@@ -1985,7 +1987,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const downgradedRecoveryList = listIssuesService(
     downgradedRecoveryBarrier.db,
     downgradedRecoveryAuth,
-    new URL("https://kanban.example.test/api/v1/issues?deleted=only&project=auth-races%2FRA"),
+    new URL(`https://kanban.example.test/api/v1/issues?deleted=only&project=${fixtureIds["Race A"]}`),
     Date.now(),
   );
   await downgradedRecoveryBarrier.reached;
@@ -2011,7 +2013,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     candidateRaceBarrier.db,
     candidateAuth,
     new URL(
-      "https://kanban.example.test/api/v1/issues/candidates?assignment=unassigned&project=auth-races%2FRA",
+      `https://kanban.example.test/api/v1/issues/candidates?assignment=unassigned&project=${fixtureIds["Race A"]}`,
     ),
     Date.now(),
   );
@@ -2020,7 +2022,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
        version = version + 1 WHERE id = ?3`,
   ).bind(Date.now(), ids.ownerPrincipal, raceGrantA).run();
-  await jsonRequest("/api/v1/workspaces/auth-races/projects/RA/issues", {
+  await jsonRequest(`/api/v1/workspaces/${fixtureIds["Authorization races"]}/projects/${fixtureIds["Race A"]}/issues`, {
     body: { status_key: "todo", title: "Candidate created after Grant revoke" },
     headers: ownerHeaders({ "idempotency-key": "wp05-auth-race-candidate-after-revoke" }),
     method: "POST",
@@ -2044,7 +2046,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   const expandedAfterQuery = listIssuesService(
     finalQueryBarrier.db,
     finalQueryAuth,
-    new URL("https://kanban.example.test/api/v1/issues?project=auth-races%2FRA&limit=1"),
+    new URL(`https://kanban.example.test/api/v1/issues?project=${fixtureIds["Race A"]}&limit=1`),
     Date.now(),
   );
   await finalQueryBarrier.reached;
@@ -2077,7 +2079,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
        version = version + 1 WHERE id = ?1`,
   ).bind(raceGrantB).run();
   const continuationSeed = await jsonRequest(
-    "/api/v1/issues?project=auth-races%2FRA&limit=1",
+    `/api/v1/issues?project=${fixtureIds["Race A"]}&limit=1`,
     { headers: writerHeaders() },
   );
   assert.equal(continuationSeed.response.status, 200, JSON.stringify(continuationSeed.body));
@@ -2088,7 +2090,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     continuationBarrier.db,
     continuationAuth,
     new URL(
-      `https://kanban.example.test/api/v1/issues?project=auth-races%2FRA&limit=1&cursor=${encodeURIComponent(continuationSeed.body.next_cursor)}`,
+      `https://kanban.example.test/api/v1/issues?project=${fixtureIds["Race A"]}&limit=1&cursor=${encodeURIComponent(continuationSeed.body.next_cursor)}`,
     ),
     Date.now(),
   );

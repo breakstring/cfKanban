@@ -195,3 +195,7 @@ Worker rollback does not roll back D1. D1 restore is destructive, never automati
 ## Stop conditions
 
 Stop on canonical origin/digest mismatch, publisher discontinuity, unverified storage, Node/Wrangler incompatibility without an approved plan, mixed Windows/WSL tooling, an unreadable effective or selected Cloudflare auth context, authentication preflight blockers, existing-profile collision without explicit re-authentication approval, unexpected OAuth scope, account ambiguity, missing Owner display name, unknown resource ownership, plan drift, migration checksum/schema drift outside the exact same-journal recovery rule, partial application, or unavailable restore evidence. Profiles are never enumerated, and unrelated profiles do not create blockers. Loading the Skill or installing its marketplace/plugin entry is never deployment authorization.
+
+## Incompatible development migrations
+
+For `breaking_non_destructive`, explicitly pass `allow_breaking_change: true` and authorize the complete plan. Ordinary upgrades remain backward-compatible only. Preview old API/URL/scope incompatibility, removed operation snapshots and service interruption until the compatible Worker deploys. Never roll back the old Worker after migration; resume with a schema-compatible Worker. Require a verified restore point, but never restore D1 automatically. Verify `absent_columns` using actual table.column readback; missing column evidence stops the operation.

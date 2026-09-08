@@ -57,12 +57,12 @@ interface GrantRow {
   principal_id: string;
   project_display_name: string;
   project_id: string;
-  project_key: string;
   revoked_at: number | null;
   role: ProjectRole;
   updated_at: number;
   version: number;
-  workspace_key: string;
+  workspace_id: string;
+  workspace_display_name: string;
 }
 
 interface PrincipalRow {
@@ -97,6 +97,7 @@ interface ProjectControlRow {
   public_join_enabled: number;
   usage_present: number;
   workspace_id: string;
+  workspace_display_name: string;
 }
 
 function credentialVersion(row: CredentialRow): number {
@@ -138,8 +139,8 @@ function grantResource(row: GrantRow): { [key: string]: JsonValue } {
     project: {
       display_name: row.project_display_name,
       id: row.project_id,
-      key: row.project_key,
-      workspace_key: row.workspace_key,
+      workspace_id: row.workspace_id,
+      workspace_display_name: row.workspace_display_name,
     },
     project_id: row.project_id,
     revoked_at: timestamp(row.revoked_at),
@@ -206,12 +207,11 @@ function grantOperationSnapshotStatement(
          'principal_id', g.principal_id,
          'project_display_name', project.display_name,
          'project_id', g.project_id,
-         'project_key', project.key,
          'revoked_at', g.revoked_at,
          'role', g.role,
          'updated_at', g.updated_at,
          'version', g.version,
-         'workspace_key', workspace.key
+         'workspace_display_name', workspace.display_name, 'workspace_id', workspace.id
        ))
        FROM project_grants g
        JOIN principals principal ON principal.id = g.principal_id
@@ -249,8 +249,8 @@ async function readGrant(db: D1Database, grantId: string): Promise<GrantRow | nu
   try {
     return await db.prepare(
       `SELECT g.id, g.principal_id, pr.display_name AS principal_display_name,
-              g.project_id, p.key AS project_key, p.display_name AS project_display_name,
-              w.key AS workspace_key, g.role, g.revoked_at, g.version,
+              g.project_id, p.display_name AS project_display_name,
+              w.id AS workspace_id, w.display_name AS workspace_display_name, g.role, g.revoked_at, g.version,
               g.created_at, g.updated_at
        FROM project_grants AS g
        JOIN principals AS pr ON pr.id = g.principal_id
@@ -272,8 +272,8 @@ async function readGrantForPrincipalProject(
   try {
     return await db.prepare(
       `SELECT g.id, g.principal_id, pr.display_name AS principal_display_name,
-              g.project_id, p.key AS project_key, p.display_name AS project_display_name,
-              w.key AS workspace_key, g.role, g.revoked_at, g.version,
+              g.project_id, p.display_name AS project_display_name,
+              w.id AS workspace_id, w.display_name AS workspace_display_name, g.role, g.revoked_at, g.version,
               g.created_at, g.updated_at
        FROM project_grants AS g
        JOIN principals AS pr ON pr.id = g.principal_id
@@ -426,8 +426,8 @@ export async function getPrincipal(
     const [grantResult, credentialResult, passkeyResult] = await Promise.all([
       db.prepare(
         `SELECT g.id, g.principal_id, pr.display_name AS principal_display_name,
-                g.project_id, p.key AS project_key, p.display_name AS project_display_name,
-                w.key AS workspace_key, g.role, g.revoked_at, g.version,
+                g.project_id, p.display_name AS project_display_name,
+                w.id AS workspace_id, w.display_name AS workspace_display_name, g.role, g.revoked_at, g.version,
                 g.created_at, g.updated_at
          FROM project_grants AS g
          JOIN principals AS pr ON pr.id = g.principal_id
@@ -802,8 +802,8 @@ export async function listProjectGrants(
   try {
     const result = await db.prepare(
       `SELECT g.id, g.principal_id, pr.display_name AS principal_display_name,
-              g.project_id, p.key AS project_key, p.display_name AS project_display_name,
-              w.key AS workspace_key, g.role, g.revoked_at, g.version,
+              g.project_id, p.display_name AS project_display_name,
+              w.id AS workspace_id, w.display_name AS workspace_display_name, g.role, g.revoked_at, g.version,
               g.created_at, g.updated_at
        FROM project_grants AS g
        JOIN principals AS pr ON pr.id = g.principal_id

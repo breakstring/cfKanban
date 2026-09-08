@@ -18,25 +18,21 @@ import {
 } from "../apps/worker/src/services/containers.ts";
 import { sha256NormalizedText } from "./lib/generated-artifacts.mjs";
 
-const migration = await readFile(new URL("../migrations/0001_initial.sql", import.meta.url), "utf8");
 const eventServiceSource = await readFile(
   new URL("../apps/worker/src/services/events.ts", import.meta.url),
   "utf8",
 );
 const manifest = JSON.parse(await readFile(new URL("../migrations/manifest.json", import.meta.url), "utf8"));
-assert.equal(
-  manifest.migrations[0].sha256,
-  sha256NormalizedText(migration),
-  "migration manifest digest drifted",
-);
 const db = new DatabaseSync(":memory:");
 for (const entry of manifest.migrations) {
   const sql = await readFile(new URL(`../migrations/${entry.name}`, import.meta.url), "utf8");
   assert.equal(entry.sha256, sha256NormalizedText(sql), `migration digest drifted: ${entry.name}`);
-  db.exec(sql);
+  db.exec(`BEGIN;${sql}COMMIT;`);
 }
 for (const table of ["workspaces", "projects"]) {
-  assert.ok(db.prepare(`PRAGMA table_info(${table})`).all().some((column) => column.name === "purged_at"));
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name);
+  assert.ok(columns.includes("purged_at"));
+  assert.ok(!columns.includes("key"), `${table} must only use UUID identity`);
 }
 
 const now = 1_787_966_400_000;
@@ -52,14 +48,14 @@ const expectConstraint = (label, action) => {
 
 assert.equal(get("PRAGMA foreign_keys").foreign_keys, 1, "foreign keys must be enabled");
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
-assert.equal(tables.length, 25, "unexpected application table count");
+assert.equal(tables.length, 26, "expected 25 application tables and the deployment migration ledger");
 assert.deepEqual(
   tables.map((row) => row.name).sort(),
-  [...manifest.migrations[0].expected_artifacts.tables].sort(),
+  [...new Set(manifest.migrations.flatMap((entry) => entry.expected_artifacts.tables ?? []))].sort(),
   "manifest table artifacts differ from applied schema",
 );
 const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'").all();
-for (const index of manifest.migrations[0].expected_artifacts.indexes) {
+for (const index of new Set(manifest.migrations.flatMap((entry) => entry.expected_artifacts.indexes ?? []))) {
   assert.ok(indexes.some((row) => row.name === index), `missing manifest index ${index}`);
 }
 const indexColumns = (name) => db.prepare(`PRAGMA index_info(${name})`).all()
@@ -80,8 +76,8 @@ assert.deepEqual(indexColumns("idx_webauthn_challenges_expiry"), ["expires_at", 
 assert.deepEqual(indexColumns("idx_webauthn_challenges_consumed"), ["consumed_at", "id"]);
 assert.deepEqual(
   indexColumns("idx_public_join_resume_enabled_workspace_project"),
-  ["workspace_id", "project_key", "project_id"],
-  "recovery preview index must bound one Workspace page in display order",
+  ["workspace_id", "project_id"],
+  "recovery preview index must bound one Workspace page in UUID order",
 );
 
 run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["owner", "Lin", now, now]);
@@ -89,15 +85,19 @@ run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?
 run("INSERT INTO instance_meta VALUES (1, ?, ?, ?, ?, ?)", ["instance-1", "owner", "0.1.0", 1, now]);
 run("INSERT INTO instance_origin_settings VALUES (1, ?, 1, ?, ?, ?)", ["https://example.workers.dev", now, "owner", "op-origin"]);
 run("INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id) VALUES (?, ?, ?, ?, ?, ?)", ["cred-owner", "owner", "owner", digest("a"), now, "op-cred-owner"]);
-run("INSERT INTO workspaces (id, key, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ["workspace", "agent-tools", "Agent Tools", now, now, "owner", "owner", "op-workspace"]);
-run("INSERT INTO projects (id, workspace_id, key, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", ["project", "workspace", "CORE", "Core", now, now, "owner", "owner", "op-project"]);
+run("INSERT INTO workspaces (id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES (?, ?, ?, ?, ?, ?, ?)", ["workspace", "Agent Tools", now, now, "owner", "owner", "op-workspace"]);
+run("INSERT INTO projects (id, workspace_id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ["project", "workspace", "Core", now, now, "owner", "owner", "op-project"]);
+run("INSERT INTO workspaces (id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('same-name-workspace', 'Agent Tools', ?, ?, 'owner', 'owner', 'op-same-workspace')", [now, now]);
+run("INSERT INTO projects (id, workspace_id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('same-name-project', 'workspace', 'Core', ?, ?, 'owner', 'owner', 'op-same-project')", [now, now]);
+assert.equal(get("SELECT COUNT(*) AS count FROM workspaces WHERE display_name = 'Agent Tools'").count, 2);
+assert.equal(get("SELECT COUNT(*) AS count FROM projects WHERE workspace_id = 'workspace' AND display_name = 'Core'").count, 2);
+assert.ok(!db.prepare("PRAGMA table_info(public_join_policies)").all().some((column) => column.name === "project_key"));
 run("INSERT INTO project_grants (id, principal_id, project_id, role, created_at, updated_at, created_operation_id) VALUES (?, ?, ?, ?, ?, ?, ?)", ["grant", "writer", "project", "writer", now, now, "op-grant"]);
 run("INSERT INTO issues (id, project_id, title, title_search, status_key, priority_key, priority_rank, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", ["issue-1", "project", "First issue", "first issue", "todo", "high", 1, now, now, "owner", "owner", "op-issue-1"]);
 run("INSERT INTO issues (id, project_id, title, title_search, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", ["issue-2", "project", "Second issue", "second issue", now + 1, now + 1, "owner", "owner", "op-issue-2"]);
 assert.deepEqual(db.prepare("SELECT number FROM issues ORDER BY number").all().map((row) => row.number), [1, 2]);
 
-expectConstraint("workspace key", () => run("INSERT INTO workspaces (id, key, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('bad-workspace', 'Bad Key', 'Bad', ?, ?, 'owner', 'owner', 'op-bad-workspace')", [now, now]));
-expectConstraint("foreign key", () => run("INSERT INTO projects (id, workspace_id, key, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('bad-project', 'missing', 'BAD', 'Bad', ?, ?, 'owner', 'owner', 'op-bad-project')", [now, now]));
+expectConstraint("foreign key", () => run("INSERT INTO projects (id, workspace_id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('bad-project', 'missing', 'Bad', ?, ?, 'owner', 'owner', 'op-bad-project')", [now, now]));
 expectConstraint("grant role", () => run("INSERT INTO project_grants (id, principal_id, project_id, role, created_at, updated_at, created_operation_id) VALUES ('bad-grant', 'writer', 'project', 'admin', ?, ?, 'op-bad-grant')", [now, now]));
 expectConstraint("priority pair", () => run("INSERT INTO issues (id, project_id, title, title_search, priority_key, priority_rank, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('bad-priority', 'project', 'Bad', 'bad', 'urgent', 4, ?, ?, 'owner', 'owner', 'op-bad-priority')", [now, now]));
 

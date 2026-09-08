@@ -111,21 +111,21 @@
 
 - **任务触发**：林对自己的 Agent 说“创建一个名为个人产品的 Workspace”。
 - **起点**：Owner 已连接，实例中还没有 Workspace。
-- **上层调用示例**：林的 Agent 可以自行从目标中形成 display name 与稳定 key，再调用 Workspace 创建能力；如何解析话术、预览或确认由林的 Agent/宿主规则决定。
-- **能力边界**：服务只接受 Owner Credential，并校验目标实例、显式 display name、显式唯一 key、幂等键和资源上限；它不解释林的话术，也不决定 Agent 是否应执行。
-- **成功反馈**：返回 Workspace 摘要、稳定 key 和创建者；不会隐式创建 Project、Grant 或默认成员。
-- **失败恢复**：key 冲突时返回结构化冲突和可用 key 候选；重复请求用 Idempotency-Key 返回原结果。上层调用方自行决定怎样处理候选。
-- **已修订**：v0 的 Workspace key 一经创建不可修改，display name 可以修改；创建不隐含 Project、Grant 或默认成员。action preview、自然语言消歧和二次确认不是 cfKanban 合同。
+- **上层调用示例**：林的 Agent 可以自行从目标中形成 display name，再调用 Workspace 创建能力；如何解析话术、预览或确认由林的 Agent/宿主规则决定。
+- **能力边界**：服务只接受 Owner Credential，并校验目标实例、显式 display name、幂等键和资源上限；它不解释林的话术，也不决定 Agent 是否应执行。
+- **成功反馈**：返回 Workspace 摘要、服务端生成的 UUID 和创建者；不会隐式创建 Project、Grant 或默认成员。
+- **失败恢复**：同名允许创建为不同 UUID；同一个 Idempotency-Key 的重复请求返回原结果，结果未定时不换 key 创建第二个对象。
+- **已修订**：Workspace UUID 由服务端生成且不可修改，display name 可以修改；创建不隐含 Project、Grant 或默认成员。action preview、自然语言消歧和二次确认不是 cfKanban 合同。
 
 ### SB-05：创建第一个 Project
 
 - **任务触发**：林对自己的 Agent 说“在个人产品 Workspace 中创建 cfKanban Project，用来跟踪这个仓库”。
 - **起点**：Workspace 存在且 active。
-- **上层调用示例**：林的 Agent 可以自行解析目标 Workspace、Project display name 与稳定短 key，再调用 Project 创建能力；服务端自动使用固定五状态 workflow 和默认显示名称。Issue identifier 统一由实例级 `CFK-<正整数>` 序列生成，不使用 Project key。
-- **能力边界**：服务只接受 Owner Credential，并要求一个明确 Workspace 与显式 Project key。Repo reference 是独立的非授权 external reference 字段；创建 Project 不读取或上传本地路径、Git remote，也不把“跟踪这个仓库”解释成 Repo 写入授权。
-- **成功反馈**：返回无歧义的 `workspace_key/project_key`、空 Project 摘要和可供上层使用的 scope target；不会自动写 Repo。该映射不保存 Credential，并允许同一 Repo 配置多个 Project。
-- **失败恢复**：同 Workspace 内 key 冲突时拒绝并建议替代值；不自动开放给任何已有参与者，也不创建 Label、Issue 或 Repo 实体。
-- **已修订**：Project key 从创建起不可修改，display name 可修改。Repo 与 Project 可以用本地、可选、多值 scope 配置表达；canonical Repo URL 只能通过独立字段写入服务端，v0 不建立 Repository 实体。上层 Agent 如何解析、预览和确认创建请求不属于 cfKanban 合同。
+- **上层调用示例**：林的 Agent 可以自行解析目标 Workspace、Project display name，再调用 Project 创建能力；服务端自动使用固定五状态 workflow 和默认显示名称。Issue identifier 统一由实例级 `CFK-<正整数>` 序列生成，不使用容器 ID。
+- **能力边界**：服务只接受 Owner Credential，并要求明确父 Workspace UUID 与 Project 显示名称。Repo reference 是独立的非授权 external reference 字段；创建 Project 不读取或上传本地路径、Git remote，也不把“跟踪这个仓库”解释成 Repo 写入授权。
+- **成功反馈**：返回无歧义的 `workspace_id/project_id`、空 Project 摘要和可供上层使用的 scope target；不会自动写 Repo。该映射不保存 Credential，并允许同一 Repo 配置多个 Project。
+- **失败恢复**：同名对象按 UUID 区分，已有目标先通过授权读取与上下文消歧；不自动开放给任何已有参与者，也不创建 Label、Issue 或 Repo 实体。
+- **已修订**：Project UUID 从创建起不可修改，display name 可修改。Repo 与 Project 可以用本地、可选、多值 scope 配置表达；canonical Repo URL 只能通过独立字段写入服务端，v0 不建立 Repository 实体。上层 Agent 如何解析、预览和确认创建请求不属于 cfKanban 合同。
 
 ### SB-06：建立最少的 Project 约定
 
@@ -189,7 +189,7 @@
 - **能力边界**：discover 是只读操作；Invite 兑换或发现 Project 不自动修改当前 Repo。scope helper 只接收显式 targets，拒绝覆盖不兼容配置，并返回变更摘要；何时调用、是否提交 Git 由上层 Agent/用户决定。
 - **成功反馈**：不会显示无权 Project；能够清楚区分 reader 与 writer。
 - **失败恢复**：Project 被暂停或 Grant 随后撤销时，旧列表不会被当作当前权限，下一次操作按 D1 当前事实拒绝并提示请求 Owner。
-- **已修订**：Repo 根目录可使用单个 `.cfkanban-scope.json`，只保存 schema version 与 `instance_id + workspace_key + project_key` targets；不保存 secret、API origin、role 或权限快照。文件只是上层可选用的过滤输入，Invite/discover 不自动创建或修改它。
+- **已修订**：Repo 根目录可使用单个 `.cfkanban-scope.json`，只保存 schema version 与 `instance_id + workspace_id + project_id` targets；不保存 secret、API origin、role 或权限快照。文件只是上层可选用的过滤输入，Invite/discover 不自动创建或修改它。
 
 ### SB-12：Agent 在十几个 Project 中找到相关工作
 
@@ -210,7 +210,7 @@
 - **成功反馈**：分别返回 assignment/status 的新 version、assignee 摘要和 Event cursor，并明确记录实际完成了哪些动作。
 - **失败恢复**：并发冲突返回当前 version 与刷新指引，不会改为操作另一条 Issue；两个原子调用之间失败时不回滚已成功动作，并可读取当前 assignee/status。是否刷新、换目标或续做由上层决定。
 - **已修订**：候选读取、assign-to-me、一般 assignment 与状态转换都是独立能力；何时及怎样组合完全属于上层 Agent。cfKanban 不提供复合 `start`/assign-next，也不把自然语言触发策略写入 Skill 或服务合同。
-- **已确认（Issue 引用）**：所有 Project 的 Issue 都使用实例级全局 `CFK-<正整数>` identifier；序号单调递增、允许空洞、删除后不复用。Project key 不再进入 Issue 编号；跨实例引用时由 `instance_id` 消歧。
+- **已确认（Issue 引用）**：所有 Project 的 Issue 都使用实例级全局 `CFK-<正整数>` identifier；序号单调递增、允许空洞、删除后不复用。容器 ID 不进入 Issue 编号；跨实例引用时由 `instance_id` 消歧。
 
 ### SB-14：读取刚好够用的执行上下文
 

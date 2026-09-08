@@ -93,6 +93,8 @@ const cursorScopeMismatchError = matchesApiError({
   status: 409,
 });
 
+const fixtureIds = Object.create(null);
+
 async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
   const response = await server.fetch(path, {
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -102,7 +104,9 @@ async function jsonRequest(path, { body, headers = {}, method = "GET" } = {}) {
     },
     method,
   });
-  return { body: await response.json(), response };
+  const result = await response.json();
+  if (response.ok && result.resource?.id && body?.display_name && method === "POST") fixtureIds[body.display_name] = result.resource.id;
+  return { body: result, response };
 }
 
 function assertWriteResult(value, replay = false) {
@@ -219,7 +223,7 @@ function eventScopeBarrierDatabase(database) {
             rawEventRows = result.results;
           }
           if (!paused && sql.includes("FROM project_grants AS pg")
-              && sql.includes("ORDER BY w.key, p.key")) {
+              && sql.includes("ORDER BY w.id, p.id")) {
             paused = true;
             signalReached();
             await released;
@@ -287,7 +291,7 @@ function relationScopeBarrierDatabase(database) {
         if (property === "prepare") {
           return (sql) => wrapStatement(
             target.prepare(sql),
-            sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.key, p.key"),
+            sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.id, p.id"),
           );
         }
         const value = Reflect.get(target, property, target);
@@ -416,7 +420,7 @@ function relationDetailBarrierDatabase(database) {
         return (...values) => wrapStatement(target.bind(...values), sql);
       }
       if (property === "all" && sql.includes("FROM project_grants AS pg")
-          && sql.includes("ORDER BY w.key, p.key")) {
+          && sql.includes("ORDER BY w.id, p.id")) {
         return async (...args) => {
           const result = await target.all(...args);
           if (!scopeRead) {
@@ -518,30 +522,30 @@ after(async () => {
 
 test("WP-06 implements atomic collaboration resources, completion, and scoped Event feeds", async () => {
   const engineering = await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Engineering", key: "engineering" },
+    body: { display_name: "Engineering" },
     headers: ownerHeaders({ "idempotency-key": "wp06-engineering" }),
     method: "POST",
   });
   const operations = await jsonRequest("/api/v1/workspaces", {
-    body: { display_name: "Operations", key: "operations" },
+    body: { display_name: "Operations" },
     headers: ownerHeaders({ "idempotency-key": "wp06-operations" }),
     method: "POST",
   });
   assert.equal(engineering.response.status, 200);
   assert.equal(operations.response.status, 200);
 
-  const projectA = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { display_name: "Application", key: "APP" },
+  const projectA = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { display_name: "Application" },
     headers: ownerHeaders({ "idempotency-key": "wp06-project-app" }),
     method: "POST",
   });
-  const projectB = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { display_name: "Backend", key: "BACK" },
+  const projectB = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { display_name: "Backend" },
     headers: ownerHeaders({ "idempotency-key": "wp06-project-back" }),
     method: "POST",
   });
-  const projectC = await jsonRequest("/api/v1/workspaces/operations/projects", {
-    body: { display_name: "Runbooks", key: "RUN" },
+  const projectC = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Operations"]}/projects`, {
+    body: { display_name: "Runbooks" },
     headers: ownerHeaders({ "idempotency-key": "wp06-project-run" }),
     method: "POST",
   });
@@ -577,15 +581,15 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     tokenValue: dualReaderToken,
   });
 
-  const issueA = await createIssue("engineering", "APP", "Application task", "wp06-issue-a", dualHeaders());
-  const issueA2 = await createIssue("engineering", "APP", "Quota completion task", "wp06-issue-a2", dualHeaders());
-  const issueB = await createIssue("engineering", "BACK", "Backend blocker", "wp06-issue-b", dualHeaders());
-  const issueC = await createIssue("operations", "RUN", "Cross workspace task", "wp06-issue-c");
+  const issueA = await createIssue(fixtureIds["Engineering"], fixtureIds["Application"], "Application task", "wp06-issue-a", dualHeaders());
+  const issueA2 = await createIssue(fixtureIds["Engineering"], fixtureIds["Application"], "Quota completion task", "wp06-issue-a2", dualHeaders());
+  const issueB = await createIssue(fixtureIds["Engineering"], fixtureIds["Backend"], "Backend blocker", "wp06-issue-b", dualHeaders());
+  const issueC = await createIssue(fixtureIds["Operations"], fixtureIds["Runbooks"], "Cross workspace task", "wp06-issue-c");
   let issueAVersion = issueA.body.resource.version;
   let issueA2Version = issueA2.body.resource.version;
   let issueBVersion = issueB.body.resource.version;
 
-  const label = await jsonRequest("/api/v1/workspaces/engineering/projects/APP/labels", {
+  const label = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Application"]}/labels`, {
     body: { color: "#1a2b3c", name: "Security" },
     headers: dualHeaders({ "idempotency-key": "wp06-label-create" }),
     method: "POST",
@@ -646,7 +650,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   });
   assert.equal(readerDeletedLabel.response.status, 403);
   const deletedLabelList = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/APP/labels?deleted=only",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Application"]}/labels?deleted=only`,
     { headers: dualHeaders() },
   );
   assert.deepEqual(deletedLabelList.body.items.map((item) => item.id), [labelId]);
@@ -730,8 +734,8 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(secondCommentPage.body.items[0].id, replyId);
 
   const snapshotIssue = await createIssue(
-    "engineering",
-    "APP",
+    fixtureIds["Engineering"],
+    fixtureIds["Application"],
     "Comment snapshot title",
     "wp06-comment-snapshot-issue",
     dualHeaders(),
@@ -825,10 +829,10 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     db.prepare("UPDATE projects SET comment_limit = 1 WHERE id = ?1").bind(projectAId),
     db.prepare(
       `INSERT INTO public_join_policies
-        (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
+        (project_id, workspace_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
          version, created_at, updated_at, last_operation_id)
        VALUES (?1, (SELECT workspace_id FROM projects WHERE id = ?1),
-               (SELECT key FROM projects WHERE id = ?1),
+
                'wp06-comment-preview', 'Comment quota preview', ?2, ?3, 1, ?2, ?2, 'wp06-preview-policy')`,
     ).bind(projectAId, quotaPreviewAt, ids.ownerPrincipal),
     db.prepare(
@@ -993,7 +997,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     2,
   );
   const projectFilteredRelationEvents = await jsonRequest(
-    "/api/v1/events?project=engineering%2FAPP&limit=100",
+    `/api/v1/events?project=${fixtureIds["Application"]}&limit=100`,
     { headers: dualHeaders() },
   );
   assert.equal(projectFilteredRelationEvents.response.status, 200, JSON.stringify(projectFilteredRelationEvents.body));
@@ -1055,7 +1059,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   const postQueryScopeExpansion = listEventsService(
     postQueryEventBarrier.db,
     postQueryEventAuth,
-    new URL("https://kanban.example.test/api/v1/events?project=engineering%2FAPP&limit=1"),
+    new URL(`https://kanban.example.test/api/v1/events?project=${fixtureIds["Application"]}&limit=1`),
     Date.now(),
   );
   await postQueryEventBarrier.reached;
@@ -1595,14 +1599,14 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     new Set([false, true]),
   );
 
-  const replayProject = await jsonRequest("/api/v1/workspaces/engineering/projects", {
-    body: { display_name: "Replay Scope", key: "REPLAY" },
+  const replayProject = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects`, {
+    body: { display_name: "Replay Scope" },
     headers: ownerHeaders({ "idempotency-key": "wp06-replay-project" }),
     method: "POST",
   });
   assert.equal(replayProject.response.status, 200, JSON.stringify(replayProject.body));
   const replayLabelBody = { color: "#334455", name: "Replay Label" };
-  const replayLabel = await jsonRequest("/api/v1/workspaces/engineering/projects/REPLAY/labels", {
+  const replayLabel = await jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Replay Scope"]}/labels`, {
     body: replayLabelBody,
     headers: ownerHeaders({ "idempotency-key": "wp06-replay-label-create" }),
     method: "POST",
@@ -1614,7 +1618,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
   assert.equal(deletedReplayLabel.response.status, 200, JSON.stringify(deletedReplayLabel.body));
   const pausedReplayProject = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/REPLAY?expected_version=1",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Replay Scope"]}?expected_version=1`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(pausedReplayProject.response.status, 200, JSON.stringify(pausedReplayProject.body));
@@ -1627,7 +1631,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.deepEqual(pausedReplayLabelTombstone.body.allowed_actions, ["read"]);
   assert.equal(pausedReplayLabelTombstone.body.parent_status.project, "deleted");
   const replayedLabelAfterProjectDelete = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/REPLAY/labels",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Replay Scope"]}/labels`,
     {
       body: replayLabelBody,
       headers: ownerHeaders({ "idempotency-key": "wp06-replay-label-create" }),
@@ -1637,8 +1641,8 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(replayedLabelAfterProjectDelete.response.status, 404, JSON.stringify(replayedLabelAfterProjectDelete.body));
 
   const commentReplayIssue = await createIssue(
-    "engineering",
-    "APP",
+    fixtureIds["Engineering"],
+    fixtureIds["Application"],
     "Comment replay tombstone",
     "wp06-comment-replay-issue",
     dualHeaders(),
@@ -1690,8 +1694,8 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(replayedCommentAfterIssueDelete.body.resource.id, commentBeforeIssueDelete.body.resource.id);
 
   const completeReplayIssue = await createIssue(
-    "engineering",
-    "APP",
+    fixtureIds["Engineering"],
+    fixtureIds["Application"],
     "Complete replay tombstone",
     "wp06-complete-replay-issue",
     dualHeaders(),
@@ -1727,15 +1731,15 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
 
   const relationReplaySource = await createIssue(
-    "engineering",
-    "APP",
+    fixtureIds["Engineering"],
+    fixtureIds["Application"],
     "Relation replay source",
     "wp06-relation-replay-source",
     dualHeaders(),
   );
   const relationReplayTarget = await createIssue(
-    "engineering",
-    "BACK",
+    fixtureIds["Engineering"],
+    fixtureIds["Backend"],
     "Relation replay target",
     "wp06-relation-replay-target",
     dualHeaders(),
@@ -1797,7 +1801,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
      WHERE id = ?3`,
   ).bind(Date.now(), ids.ownerPrincipal, "60000000-0000-4000-8000-000000000012").run();
   const filteredCursorAfterRelationGrantRevoke = await jsonRequest(
-    `/api/v1/events?project=engineering%2FAPP&after=${encodeURIComponent(projectFilteredRelationEvents.body.next_cursor)}`,
+    `/api/v1/events?project=${fixtureIds["Application"]}&after=${encodeURIComponent(projectFilteredRelationEvents.body.next_cursor)}`,
     { headers: dualHeaders() },
   );
   assert.equal(filteredCursorAfterRelationGrantRevoke.response.status, 409);
@@ -1896,10 +1900,10 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     ).bind(usage.comment_count, projectAId),
     db.prepare(
       `INSERT INTO public_join_policies
-        (project_id, workspace_id, project_key, public_id, public_summary, enabled_at, enabled_by_principal_id,
+        (project_id, workspace_id, public_id, public_summary, enabled_at, enabled_by_principal_id,
          version, created_at, updated_at)
        VALUES (?1, (SELECT workspace_id FROM projects WHERE id = ?1),
-               (SELECT key FROM projects WHERE id = ?1),
+
                ?2, 'Public test project', ?3, ?4, 1, ?3, ?3)`,
     ).bind(projectAId, "wp06-public-app", now, ids.ownerPrincipal),
     db.prepare(
@@ -1958,11 +1962,11 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   assert.equal(finalUsage.active_comment_count, authoritativeComments.count);
 
   const currentProjectA = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/APP",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Application"]}`,
     { headers: ownerHeaders() },
   );
   const pausedProjectA = await jsonRequest(
-    `/api/v1/workspaces/engineering/projects/APP?expected_version=${currentProjectA.body.version}`,
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Application"]}?expected_version=${currentProjectA.body.version}`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(pausedProjectA.response.status, 200, JSON.stringify(pausedProjectA.body));
@@ -1977,7 +1981,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
       headers: dualHeaders({ "idempotency-key": "wp06-complete-first" }),
       method: "POST",
     }),
-    jsonRequest("/api/v1/workspaces/engineering/projects/APP/labels", {
+    jsonRequest(`/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Application"]}/labels`, {
       body: { color: "#1a2b3c", name: "Security" },
       headers: dualHeaders({ "idempotency-key": "wp06-label-create" }),
       method: "POST",
@@ -2003,7 +2007,7 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   }
 
   const restoredProjectA = await jsonRequest(
-    "/api/v1/workspaces/engineering/projects/APP/commands/restore",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}/projects/${fixtureIds["Application"]}/commands/restore`,
     {
       body: { expected_version: pausedProjectA.body.resource.version },
       headers: ownerHeaders({ "idempotency-key": "wp06-restore-project-after-replay-auth" }),
@@ -2012,11 +2016,11 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
   );
   assert.equal(restoredProjectA.response.status, 200, JSON.stringify(restoredProjectA.body));
   const currentEngineering = await jsonRequest(
-    "/api/v1/workspaces/engineering",
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}`,
     { headers: ownerHeaders() },
   );
   const pausedEngineering = await jsonRequest(
-    `/api/v1/workspaces/engineering?expected_version=${currentEngineering.body.version}`,
+    `/api/v1/workspaces/${fixtureIds["Engineering"]}?expected_version=${currentEngineering.body.version}`,
     { headers: ownerHeaders(), method: "DELETE" },
   );
   assert.equal(pausedEngineering.response.status, 200, JSON.stringify(pausedEngineering.body));

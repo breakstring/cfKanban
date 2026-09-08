@@ -12,6 +12,7 @@ import {
   markCasReadbackComplete,
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
+import { projectInventoryBoundary } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
@@ -31,9 +32,9 @@ import type {
 } from "../types";
 
 const props = defineProps<{
-  projectKey: string;
+  projectId: string;
   session: WebSessionView;
-  workspaceKey: string;
+  workspaceId: string;
 }>();
 
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
@@ -68,7 +69,7 @@ let casReadbackInFlight = false;
 const role = computed(() => {
   if (props.session.principal.is_owner) return "owner";
   return props.session.allowed_scope.projects?.find((item) => (
-    item.workspace_key === props.workspaceKey && item.project_key === props.projectKey
+    item.workspace_id === props.workspaceId && item.project_id === props.projectId
   ))?.role ?? "reader";
 });
 const canWrite = computed(() => projectIsActive() && (role.value === "writer" || role.value === "owner"));
@@ -77,7 +78,7 @@ const statusMap = computed(() => new Map(statuses.value.map((status) => [status.
 function projectIsActive(): boolean {
   const scope = props.session.allowed_scope.projects;
   return scope === undefined || scope.some((item) => (
-    item.workspace_key === props.workspaceKey && item.project_key === props.projectKey
+    item.workspace_id === props.workspaceId && item.project_id === props.projectId
   ));
 }
 
@@ -110,6 +111,13 @@ function clearProjectProjection(): void {
   );
 }
 
+function refreshProjectNames(): void {
+  const scope = props.session.allowed_scope.projects?.find((item) => item.project_id === props.projectId && item.workspace_id === props.workspaceId);
+  if (scope === undefined || project.value === null) return;
+  project.value = { ...project.value, display_name: scope.project_display_name, workspace_display_name: scope.workspace_display_name };
+  emit("context", { label: `${scope.workspace_display_name} / ${scope.project_display_name}`, role: role.value });
+}
+
 function refreshProjectInventory(): void {
   projectionGeneration.invalidate();
   loadRequestId += 1;
@@ -127,7 +135,7 @@ function query(cursor?: string): string {
   const params = new URLSearchParams({ limit: "100" });
   if (search.value.trim()) params.set("q", search.value.trim());
   if (cursor) params.set("cursor", cursor);
-  return `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues?${params}`;
+  return `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues?${params}`;
 }
 
 async function load(reset = true, throwOnFailure = false): Promise<void> {
@@ -143,8 +151,8 @@ async function load(reset = true, throwOnFailure = false): Promise<void> {
   clearError();
   try {
     const [projectResult, statusResult, issueResult] = await Promise.all([
-      apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}`),
-      apiRequest<ListResult<ProjectStatusResource>>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/statuses`),
+      apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}`),
+      apiRequest<ListResult<ProjectStatusResource>>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/statuses`),
       apiRequest<ListResult<IssueSummary>>(query(reset ? undefined : nextCursor.value ?? undefined)),
     ]);
     if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
@@ -152,7 +160,7 @@ async function load(reset = true, throwOnFailure = false): Promise<void> {
     statuses.value = statusResult.items;
     issues.value = mergePageById(issues.value, issueResult.items, reset);
     nextCursor.value = continuationCursor(issueResult);
-    emit("context", { label: `${props.workspaceKey} / ${projectResult.display_name}`, role: role.value });
+    emit("context", { label: `${projectResult.workspace_display_name} / ${projectResult.display_name}`, role: role.value });
   } catch (caught) {
     if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
     if (!reset && cursorRequiresRestart(caught)) {
@@ -300,7 +308,7 @@ async function createIssue(): Promise<void> {
   const generation = projectionGeneration.capture();
   try {
     const result = await apiRequest<WriteResult<IssueSummary>>(
-      `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues`,
+      `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues`,
       {
         body: {
           body: newIssue.value.body,
@@ -334,7 +342,7 @@ async function loadDeleted(reset = true, throwOnFailure = false): Promise<void> 
     const params = new URLSearchParams({ deleted: "only", limit: "100" });
     if (!reset && deletedIssuesNextCursor.value !== null) params.set("cursor", deletedIssuesNextCursor.value);
     const result = await apiRequest<ListResult<IssueTombstone>>(
-      `/api/v1/workspaces/${encodeURIComponent(props.workspaceKey)}/projects/${encodeURIComponent(props.projectKey)}/issues?${params}`,
+      `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues?${params}`,
     );
     if (projectionIsCurrent(generation)) {
       deletedIssues.value = mergePageById(deletedIssues.value, result.items, reset);
@@ -417,15 +425,16 @@ onUnmounted(() => {
   projectionGeneration.invalidate();
   loadRequestId += 1;
 });
-watch(() => props.session.allowed_scope.projects, refreshProjectInventory, { deep: true });
+watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refreshProjectInventory);
+watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
 </script>
 
 <template>
   <main class="board-page">
     <header class="board-toolbar">
       <div class="board-title">
-        <p class="eyebrow">{{ workspaceKey }} / {{ projectKey }}</p>
-        <h1>{{ project?.display_name ?? projectKey }}</h1>
+        <p class="eyebrow">{{ project?.workspace_display_name }}</p>
+        <h1>{{ project?.display_name ?? "" }}</h1>
       </div>
       <form class="board-search" role="search" @submit.prevent="load()">
         <input v-model="search" type="search" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'" />

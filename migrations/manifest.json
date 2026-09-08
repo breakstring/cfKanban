@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 2,
+  "schema_version": 3,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -51,9 +51,7 @@
           "idx_web_sessions_principal_active",
           "idx_web_sessions_source_active",
           "idx_web_sessions_cleanup",
-          "idx_workspaces_key",
           "idx_workspaces_tombstones",
-          "idx_projects_workspace_key",
           "idx_projects_list",
           "idx_projects_workspace_tombstones",
           "idx_project_grants_principal_project",
@@ -98,6 +96,34 @@
         "indexes": [
           "idx_workspaces_purge_state",
           "idx_projects_workspace_purge_state"
+        ]
+      }
+    },
+    {
+      "sequence": 3,
+      "name": "0003_container_uuid.sql",
+      "sha256": "e947635c2dde77995eea4397291f3e7089578d9c5a91ba0499a364cbb8abd242",
+      "classification": "breaking_non_destructive",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "tables": [
+          "workspaces",
+          "projects",
+          "public_join_policies",
+          "browser_launches",
+          "web_sessions",
+          "cfkanban_migration_ledger"
+        ],
+        "absent_columns": [
+          "workspaces.key",
+          "projects.key",
+          "public_join_policies.project_key"
+        ],
+        "indexes": [
+          "idx_workspaces_purge_state",
+          "idx_projects_workspace_purge_state",
+          "idx_public_join_resume_enabled_workspace_project"
         ]
       }
     }

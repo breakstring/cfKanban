@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { request as httpRequest } from "node:http";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -151,7 +152,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.51.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.52.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -841,10 +842,9 @@ test("one-time capability creation is blocked on generic API output and uses ded
         secret_available: true,
         target: {
           kind: "project",
-          workspace_key: "team",
-          project_key: "APP",
-          project_id: "99999999-9999-4999-8999-999999999999",
-          entry_path: "/app/w/team/p/APP",
+          workspace_id: "77777777-7777-4777-8777-777777777777",
+                    project_id: "99999999-9999-4999-8999-999999999999",
+          entry_path: "/app/w/77777777-7777-4777-8777-777777777777/p/99999999-9999-4999-8999-999999999999",
         },
       },
     }), { status: 200, headers: { "content-type": "application/json" } });
@@ -852,7 +852,7 @@ test("one-time capability creation is blocked on generic API output and uses ded
   const launched = await createBrowserLaunchAndDeliver({
     stateRoot,
     instanceId: INSTANCE_ID,
-    target: { kind: "project", workspace_key: "team", project_key: "APP" },
+    target: { kind: "project", workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" },
     idempotencyKey: "browser-launch-one",
     fetchImpl: browserFetch,
     browserOpener: {
@@ -872,10 +872,31 @@ test("one-time capability creation is blocked on generic API output and uses ded
   assert.deepEqual(launched.delivery, { channel: "system_browser", delivered: true, capability_exposed: false });
   assert.equal(JSON.stringify(launched).includes(launchCode), false);
 
+  for (const mismatch of ["workspace", "project", "path"]) {
+    let delivered = false;
+    await assert.rejects(createBrowserLaunchAndDeliver({
+      stateRoot, instanceId: INSTANCE_ID,
+      target: { kind: "project", workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" },
+      idempotencyKey: `mismatched-launch-${mismatch}`,
+      fetchImpl: async (url, options) => {
+        const response = await browserFetch(url, options);
+        if (url.pathname === "/.well-known/cfkanban-instance.json") return response;
+        const body = await response.json();
+        const target = body.resource.target;
+        if (mismatch === "workspace") target.workspace_id = "66666666-6666-4666-8666-666666666666";
+        if (mismatch === "project") target.project_id = "66666666-6666-4666-8666-666666666666";
+        target.entry_path = mismatch === "path" ? "/app/admin" : `/app/w/${target.workspace_id}/p/${target.project_id}`;
+        return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+      },
+      browserOpener: { open: async () => { delivered = true; } },
+    }), { code: "INVALID_CAPABILITY_RESPONSE" });
+    assert.equal(delivered, false);
+  }
+
   let relayEvent;
   const hostLaunch = await createBrowserLaunchAndDeliver({
     stateRoot, instanceId: INSTANCE_ID,
-    target: { kind: "project", workspace_key: "team", project_key: "APP" },
+    target: { kind: "project", workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" },
     idempotencyKey: "host-browser-launch", fetchImpl: browserFetch,
     delivery: "host_browser",
     onRelayReady: async (event) => {
@@ -917,7 +938,7 @@ test("one-time capability creation is blocked on generic API output and uses ded
   const replayedLaunch = await createBrowserLaunchAndDeliver({
     stateRoot,
     instanceId: INSTANCE_ID,
-    target: { kind: "project", workspace_key: "team", project_key: "APP" },
+    target: { kind: "project", workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" },
     idempotencyKey: "browser-launch-one",
     fetchImpl: async (url) => url.pathname === "/.well-known/cfkanban-instance.json"
       ? discoveryResponse(url)
@@ -931,10 +952,9 @@ test("one-time capability creation is blocked on generic API output and uses ded
           secret_available: false,
           target: {
             kind: "project",
-            workspace_key: "team",
-            project_key: "APP",
+            workspace_id: "77777777-7777-4777-8777-777777777777",
             project_id: "99999999-9999-4999-8999-999999999999",
-            entry_path: "/app/w/team/p/APP",
+            entry_path: "/app/w/77777777-7777-4777-8777-777777777777/p/99999999-9999-4999-8999-999999999999",
           },
         },
       }), { status: 200, headers: { "content-type": "application/json" } }),
@@ -975,9 +995,9 @@ test("one-time capability creation is blocked on generic API output and uses ded
           grants: [{
             display_name: "App",
             project_id: "99999999-9999-4999-8999-999999999999",
-            project_key: "APP",
             role: "writer",
-            workspace_key: "team",
+            workspace_id: "77777777-7777-4777-8777-777777777777",
+            workspace_display_name: "Team",
           }],
           id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
           invite_url: inviteUrl,
@@ -1016,10 +1036,11 @@ test("one-time capability creation is blocked on generic API output and uses ded
           created_at: "2026-09-04T00:00:00.000Z",
           expires_at: "2026-09-11T00:00:00.000Z",
           grants: [{
+            display_name: "App",
             project_id: "99999999-9999-4999-8999-999999999999",
-            project_key: "APP",
             role: "writer",
-            workspace_key: "team",
+            workspace_id: "77777777-7777-4777-8777-777777777777",
+            workspace_display_name: "Team",
           }],
           id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
           kind: "project_grant",
@@ -1105,7 +1126,7 @@ test("headless delivery stops before remote creation and stdout fallback require
     createBrowserLaunchAndDeliver({
       stateRoot,
       instanceId: INSTANCE_ID,
-      target: { kind: "project", workspace_key: "team", project_key: "APP" },
+      target: { kind: "project", workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" },
       idempotencyKey: "invalid-browser-opener",
       browserOpener: {},
       fetchImpl: async () => { requests += 1; },
@@ -1128,7 +1149,7 @@ test("headless delivery stops before remote creation and stdout fallback require
     createBrowserLaunchAndDeliver({
       stateRoot,
       instanceId: INSTANCE_ID,
-      target: { kind: "project", workspace_key: "team", project_key: "APP" },
+      target: { kind: "project", workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" },
       idempotencyKey: "browser-launch-headless",
       delivery: "stdout_once",
       sensitiveOutputAcknowledgement: "yes",
@@ -1176,7 +1197,7 @@ test("post-commit Browser and Invite delivery failures expose only safe recovery
     await createBrowserLaunchAndDeliver({
       stateRoot,
       instanceId: INSTANCE_ID,
-      target: { kind: "project", workspace_key: "team", project_key: "APP" },
+      target: { kind: "project", workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" },
       idempotencyKey: "browser-delivery-failure",
       fetchImpl: async (url) => url.pathname === "/.well-known/cfkanban-instance.json"
         ? discoveryResponse(url)
@@ -1191,10 +1212,9 @@ test("post-commit Browser and Invite delivery failures expose only safe recovery
             secret_available: true,
             target: {
               kind: "project",
-              workspace_key: "team",
-              project_key: "APP",
-              project_id: "99999999-9999-4999-8999-999999999999",
-              entry_path: "/app/w/team/p/APP",
+              workspace_id: "77777777-7777-4777-8777-777777777777",
+                project_id: "99999999-9999-4999-8999-999999999999",
+              entry_path: "/app/w/77777777-7777-4777-8777-777777777777/p/99999999-9999-4999-8999-999999999999",
             },
           },
         }), { status: 200, headers: { "content-type": "application/json" } }),
@@ -1230,10 +1250,11 @@ test("post-commit Browser and Invite delivery failures expose only safe recovery
             created_at: "2026-09-04T00:00:00.000Z",
             expires_at: "2026-09-11T00:00:00.000Z",
             grants: [{
+              display_name: "App",
               project_id: "99999999-9999-4999-8999-999999999999",
-              project_key: "APP",
-              role: "writer",
-              workspace_key: "team",
+                role: "writer",
+              workspace_id: "77777777-7777-4777-8777-777777777777",
+              workspace_display_name: "Team",
             }],
             id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
             invite_url: inviteUrl,
@@ -2472,14 +2493,20 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
 });
 
 test("scope resolution prefers explicit, then Repo, then warned aggregate", () => {
-  const explicit = [{ instance_id: INSTANCE_ID, workspace_key: "team", project_key: "APP" }];
-  const repository = [{ instance_id: INSTANCE_ID, workspace_key: "team", project_key: "OPS" }];
-  assert.equal(resolveScope({ explicitTargets: explicit, repoTargets: repository }).resolved_scope[0].project_key, "APP");
-  assert.equal(resolveScope({ repoTargets: repository }).resolved_scope[0].project_key, "OPS");
+  const explicit = [{ instance_id: INSTANCE_ID, workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "99999999-9999-4999-8999-999999999999" }];
+  const repository = [{ instance_id: INSTANCE_ID, workspace_id: "77777777-7777-4777-8777-777777777777", project_id: "66666666-6666-4666-8666-666666666666" }];
+  assert.equal(resolveScope({ explicitTargets: explicit, repoTargets: repository }).resolved_scope[0].project_id, "99999999-9999-4999-8999-999999999999");
+  assert.equal(resolveScope({ repoTargets: repository }).resolved_scope[0].project_id, "66666666-6666-4666-8666-666666666666");
   const expanded = resolveScope();
   assert.equal(expanded.source, "unfiltered");
   assert.equal(expanded.warnings[0].code, "SCOPE_EXPANDED_TO_AUTHORIZED_AGGREGATE");
-  assert.deepEqual(validateScopeDocument({ schema_version: 1, targets: [...explicit, ...explicit] }).targets, explicit);
+  assert.deepEqual(validateScopeDocument({ schema_version: 2, targets: [...explicit, ...explicit] }).targets, explicit);
+  assert.equal(validateScopeDocument({ schema_version: 2, targets: [...explicit, ...repository] }).targets.length, 2);
+  assert.throws(() => validateScopeDocument({ schema_version: 1, targets: [] }), { code: "INVALID_SCOPE" });
+  assert.throws(() => validateScopeDocument({ schema_version: 2, targets: [{ instance_id: INSTANCE_ID, workspace_key: "team", project_key: "APP" }] }), { code: "INVALID_SCOPE" });
+  const invalid = resolveScope({ explicitTargets: explicit, validTargets: repository });
+  assert.equal(invalid.warnings[0].code, "INVALID_SCOPE_TARGET");
+  assert.equal(invalid.warnings[1].code, "SCOPE_EXPANDED_TO_AUTHORIZED_AGGREGATE");
 });
 
 test("trusted origin rebind sends no Credential and requires old-to-new cross-check", async (t) => {
@@ -3763,12 +3790,12 @@ test("daily Skill documents an executable deterministic candidate query contract
     readFile(new URL("../../skills/cfkanban/references/workflows.zh-CN.md", import.meta.url), "utf8"),
   ]);
   for (const source of sources) {
-    const example = source.match(/`(\/api\/v1\/issues\/candidates\?assignment=mine&blocked=exclude&project=\{workspace_key\}%2F\{project_key\})`/u);
+    const example = source.match(/`(\/api\/v1\/issues\/candidates\?assignment=mine&blocked=exclude&project=\{project_id\})`/u);
     assert.ok(example, "candidate guidance must include one directly reusable scoped query template");
     const parsed = new URL(example[1], "https://cfkanban.example");
     assert.equal(parsed.searchParams.get("assignment"), "mine");
     assert.equal(parsed.searchParams.get("blocked"), "exclude");
-    assert.equal(parsed.searchParams.get("project"), "{workspace_key}/{project_key}");
+    assert.equal(parsed.searchParams.get("project"), "{project_id}");
     for (const assignment of ["mine", "unassigned", "needs_reassignment"]) {
       assert.match(source, new RegExp(`\\b${assignment}\\b`, "u"));
     }
@@ -3777,23 +3804,11 @@ test("daily Skill documents an executable deterministic candidate query contract
   }
 });
 
-test("admin Skill canonicalizes user-chosen Workspace and Project key casing before creation", async () => {
-  const [admin, workflowEn, workflowZh] = await Promise.all([
-    readFile(new URL("../../skills/cfkanban-admin/SKILL.md", import.meta.url), "utf8"),
-    readFile(new URL("../../skills/cfkanban-admin/references/owner-workflows.md", import.meta.url), "utf8"),
-    readFile(new URL("../../skills/cfkanban-admin/references/owner-workflows.zh-CN.md", import.meta.url), "utf8"),
-  ]);
-  for (const source of [admin, workflowEn]) {
-    assert.match(source, /Workspace key[^\n]*lowercase/u);
-    assert.match(source, /Project key[^\n]*uppercase/u);
-    assert.match(source, /\[a-z\]\[a-z0-9-\]\{1,31\}/u);
-    assert.match(source, /\[A-Z\]\[A-Z0-9-\]\{1,15\}/u);
-  }
-  assert.match(workflowZh, /Workspace key[^\n]*规范为小写/u);
-  assert.match(workflowZh, /Project key[^\n]*规范为大写/u);
-  for (const source of [admin, workflowEn, workflowZh]) {
-    assert.match(source, /canonical|不可变/u);
-    assert.match(source, /retype|重新输入/u);
+test("admin Skill creates named containers using server UUIDs", async () => {
+  for (const file of ["SKILL.md", "references/owner-workflows.md", "references/owner-workflows.zh-CN.md"]) {
+    const source = await readFile(new URL(`../../skills/cfkanban-admin/${file}`, import.meta.url), "utf8");
+    assert.match(source, /UUID/u);
+    assert.doesNotMatch(source, /Workspace key|Project key|immutable key/u);
   }
 });
 
@@ -3916,6 +3931,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.46.md",
     "../../release/notes/0.1.0-alpha.47.md",
     "../../release/notes/0.1.0-alpha.51.md",
+    "../../release/notes/0.1.0-alpha.52.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3955,6 +3971,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.46.json",
     "../../release/config/0.1.0-alpha.47.json",
     "../../release/config/0.1.0-alpha.51.json",
+    "../../release/config/0.1.0-alpha.52.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
@@ -3975,4 +3992,58 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     const visibleText = source.replace(/\]\([^)]+\)/g, "]()");
     assert.doesNotMatch(visibleText, /\bv0\b/i, entry);
   }
+});
+
+
+test("breaking migration plans require explicit opt-in and forbid old Worker rollback", async () => {
+  const base = upgradePlanInput();
+  const input = { ...base, target: { ...base.target, schema_version: 3, compatibility: { ...base.target.compatibility, schema_version: 3 } },
+    migrations: [{ sequence: 3, name: "0003_uuid.sql", sha256: "f".repeat(64), classification: "breaking_non_destructive", destructive: false, reentry: "wrangler_migration_ledger_only", expected_artifacts: { tables: ["workspaces"], absent_columns: ["workspaces.key"] } }],
+    restorePoint: { required: true, verified: true, bookmark: "bookmark", observed_at: "2026-09-08T01:00:00.000Z", retention_boundary: "verified_plan_retention", reason: "pre_migration" } };
+  assert.throws(() => createInstanceUpgradePlan(input), { code: "BREAKING_MIGRATION_REQUIRES_EXPLICIT_PLAN" });
+  const plan = createInstanceUpgradePlan({ ...input, allow_breaking_change: true });
+  assert.equal(plan.migrations.allow_breaking_change, true);
+  assert.equal(plan.rollback_boundary.previous_worker_rollback_prohibited_after_migration, true);
+  assert.equal(plan.expected_interruption, "service_unavailable_between_migration_and_compatible_worker_deploy");
+  assert.deepEqual(plan.migrations.ordered[0].expected_artifacts.absent_columns, ["workspaces.key"]);
+  assert.equal(plan.d1_restore_automatic, false);
+  const dispatched = await dispatch("plan instance-upgrade", { ...input, allow_breaking_change: true }, { surface: "deploy" });
+  assert.equal(dispatched.plan.migrations.allow_breaking_change, true);
+  assert.notEqual(dispatched.plan_digest, canonicalDigest({ ...plan, migrations: { ...plan.migrations, allow_breaking_change: false } }));
+  assert.throws(() => createInstanceUpgradePlan({ ...input, allow_breaking_change: true, migrations: [{ ...input.migrations[0], classification: "unknown" }] }), { code: "INVALID_UPGRADE_MIGRATION" });
+  const help = getCommandCatalog({ surface: "deploy" });
+  assert.ok(help.commands.find((command) => command.name === "plan instance-upgrade").input_fields.includes("allow_breaking_change"));
+});
+
+test("removed columns distinguish pending migration from applied schema and missing ledger", () => {
+  const migration = { sequence: 3, name: "0003_uuid.sql", sha256: "f".repeat(64), classification: "breaking_non_destructive", expected_artifacts: { tables: ["workspaces"], absent_columns: ["workspaces.key"] } };
+  const manifest = { manifest_version: 1, migrations: [migration] };
+  const before = { tables: ["workspaces"], columns: ["workspaces.id", "workspaces.key"] };
+  const after = { tables: ["workspaces"], columns: ["workspaces.id"] };
+  assert.equal(reconcileMigrationState({ manifest, schema: before }).migrations[0].state, "pending");
+  const missing = reconcileMigrationState({ manifest, schema: after });
+  const partialManifest = { ...manifest, migrations: [{ ...migration, expected_artifacts: { tables: ["workspaces"], absent_columns: ["workspaces.key", "projects.key"] } }] };
+  assert.equal(reconcileMigrationState({ manifest: partialManifest, schema: before }).migrations[0].reason, "schema_partial_column_removal");
+  assert.equal(missing.safe_to_continue, false);
+  assert.equal(missing.migrations[0].reason, "schema_present_ledger_missing");
+  assert.equal(reconcileMigrationState({ manifest, schema: after, ledger: [migration] }).migrations[0].state, "applied");
+  assert.equal(reconcileMigrationState({ manifest, schema: before, ledger: [migration] }).safe_to_continue, false);
+  assert.throws(() => reconcileMigrationState({ manifest, schema: { tables: ["workspaces"] } }), { code: "MIGRATION_COLUMN_READBACK_REQUIRED" });
+  assert.throws(() => reconcileMigrationState({ manifest: { ...manifest, migrations: [{ ...migration, classification: "unknown" }] }, schema: after }), { code: "INVALID_MIGRATION_CLASSIFICATION" });
+});
+
+test("actual migration readback SQL emits columns and accepts breaking ledger rows", async () => {
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec("CREATE TABLE workspaces (id TEXT, key TEXT)");
+    database.exec(await readFile(new URL("../../release/deployment/migration-ledger.sql", import.meta.url), "utf8"));
+    database.prepare("INSERT INTO cfkanban_migration_ledger VALUES (3, '0003_uuid.sql', ?, 'breaking_non_destructive', 'wrangler_migration_ledger_only', ?, 1)").run("f".repeat(64), OPERATION_ID);
+    const sql = await readFile(new URL("../../release/deployment/migration-readback.sql", import.meta.url), "utf8");
+    const result = sql.split(";").map((statement) => statement.trim()).filter(Boolean).map((statement) => ({ success: true, results: database.prepare(statement).all() }));
+    const parsed = parseMigrationReadbackOutput(JSON.stringify(result));
+    assert.ok(parsed.schema.columns.includes("workspaces.key"));
+    assert.equal(parsed.ledger[0].classification, "breaking_non_destructive");
+    result[0].results[0].classification = "unknown";
+    assert.throws(() => parseMigrationReadbackOutput(JSON.stringify(result)), { code: "WRANGLER_MIGRATION_READBACK_INVALID" });
+  } finally { database.close(); }
 });

@@ -42,7 +42,7 @@ node scripts/cfkanban-tool.mjs <command>
 | Goal | Command or REST operation | Required handling |
 | --- | --- | --- |
 | Verify Owner identity | `state inspect`, then `api request` → `GET /api/v1/me` | Require `is_owner=true`; never infer Owner from display name. |
-| Create the first usable board | create one Workspace, create one Project, read both back, then `web launch` with an `admin` target | Ask for explicit immutable keys and display names; normalize the chosen Workspace key to lowercase and Project key to uppercase before preview and submission; each create is a separate atomic write. |
+| Create the first usable board | create one Workspace, create one Project, read both back, then `web launch` with an `admin` target | Create using display names and read back server-generated UUIDs; names are not unique identifiers. |
 | Manage Workspaces and Projects | Workspace/Project `GET/POST/PATCH/DELETE` plus single-resource `commands/restore` | Use explicit keys/IDs, CAS where defined, one Idempotency Key per atomic write, and readback. |
 | Permanently remove an archived container | `GET .../purge-preview`, then `POST .../commands/purge` | Owner only; inspect counts and shared invitations, require exact name/version/digest, one Idempotency Key; archived empty Workspace or archived Project only. Read the purge workflow first. |
 | Rename fixed status labels | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Only display names change; stable keys, order, category, and terminal meaning do not. |
@@ -67,8 +67,8 @@ Classify an event's lifecycle resource by `subject.type` and `subject.id`. `auth
 ## First-use workflow after deployment
 
 1. Verify local state, trusted origin, `/api/v1/me`, and `is_owner=true`.
-2. Ask only for the missing Workspace key/name and Project key/name; do not derive keys from a filesystem path, Git remote, hostname, or display name without explicit user choice. Accept the user's chosen keys in either letter case, normalize the Workspace key to lowercase and the Project key to uppercase, then validate `[a-z][a-z0-9-]{1,31}` and `[A-Z][A-Z0-9-]{1,15}` respectively.
-3. Show the normalized immutable keys in the preview, create one Workspace, then read it back. Create one Project in that Workspace with a new Idempotency Key, then read it and its five fixed statuses back. Do not ask the user to retype a key only to satisfy letter case.
+2. Ask only for the Workspace display name; create with a separate Idempotency Key and read back its server-generated UUID. Project creation requires the parent Workspace UUID.
+3. Ask only for the Project display name; create with a separate Idempotency Key and read back its server-generated UUID. Project creation requires the parent Workspace UUID.
 4. Create an Owner Browser Launch only after both resources exist. Deployment does not create a default Workspace, Project, Label, Grant, or Issue.
 5. Offer, but do not silently perform, the next independent actions: create the first Issue with `cfkanban`, create an explicit-role Invite, or configure Public Join with explicit quotas.
 
