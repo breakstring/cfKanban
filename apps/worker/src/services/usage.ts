@@ -52,22 +52,51 @@ type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue { if (!value || typeof value !== "object" || Array.isArray(value)) throw new AnalyticsError("invalid_response"); return value as ObjectValue; }
 function number(value: unknown): number | null { if (value === null) return null; if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new AnalyticsError("invalid_response"); return value; }
 function first(value: unknown): ObjectValue | null { if (!Array.isArray(value) || value.length > 1) throw new AnalyticsError("invalid_response"); return value.length ? object(value[0]) : null; }
-async function query(queryText: string, variables: ObjectValue, token: string, fetcher: typeof fetch): Promise<ObjectValue> {
+async function readAnalyticsBody(response: Response): Promise<ObjectValue> {
+  if (!response.body) throw new AnalyticsError("invalid_response");
+  const reader = response.body.getReader();
+  let bytes = 0, text = ""; const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      bytes += result.value.byteLength;
+      if (bytes > MAX_RESPONSE_BYTES) { await reader.cancel(); throw new AnalyticsError("invalid_response"); }
+      text += decoder.decode(result.value, { stream: true });
+    }
+  } finally { reader.releaseLock(); }
+  text += decoder.decode();
+  try { return object(JSON.parse(text)); } catch { throw new AnalyticsError("invalid_response"); }
+}
+function providerCodes(payload: ObjectValue): number[] {
+  if (!Array.isArray(payload.errors)) return [];
+  return payload.errors.flatMap((entry: unknown) => {
+    if (!entry || typeof entry !== "object") return [];
+    const code = (entry as ObjectValue).code;
+    return typeof code === "number" && Number.isSafeInteger(code) && code >= 0 ? [code] : [];
+  }).slice(0, 16);
+}
+async function query(dataset: "d1" | "r2", queryText: string, variables: ObjectValue, token: string, fetcher: typeof fetch): Promise<ObjectValue> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10_000);
+  let httpStatus: number | null = null;
+  let codes: number[] = [];
   try {
     const response = await fetcher(ENDPOINT, { method: "POST", redirect: "error", signal: controller.signal, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ query: queryText, variables }) });
-    if (!response.ok) throw new AnalyticsError(response.status === 429 ? "rate_limited" : response.status === 401 || response.status === 403 ? "permission_denied" : "upstream_error");
-    if (!response.body) throw new AnalyticsError("invalid_response");
-    const reader = response.body.getReader();
-    let bytes = 0, text = ""; const decoder = new TextDecoder();
-    try { while (true) { const result = await reader.read(); if (result.done) break; bytes += result.value.byteLength; if (bytes > MAX_RESPONSE_BYTES) { await reader.cancel(); throw new AnalyticsError("invalid_response"); } text += decoder.decode(result.value, { stream: true }); } } finally { reader.releaseLock(); }
-    text += decoder.decode();
-    let payload: ObjectValue; try { payload = object(JSON.parse(text)); } catch { throw new AnalyticsError("invalid_response"); }
+    httpStatus = response.status;
+    if (!response.ok) {
+      // 错误体仅提取有界数码；读取失败不能把已知 HTTP 分类替换成解析或超时错误。
+      try { codes = providerCodes(await readAnalyticsBody(response)); } catch { /* 保留 HTTP 状态。 */ }
+      throw new AnalyticsError(response.status === 429 ? "rate_limited" : response.status === 401 || response.status === 403 ? "permission_denied" : "upstream_error");
+    }
+    const payload = await readAnalyticsBody(response);
+    codes = providerCodes(payload);
     if (payload.errors !== undefined && payload.errors !== null && (!Array.isArray(payload.errors) || payload.errors.length)) throw new AnalyticsError("graphql_error");
     const accounts = object(object(payload.data).viewer).accounts;
     const account = first(accounts); if (!account) throw new AnalyticsError("invalid_response"); return account;
   } catch (error) {
+    const transportName = error instanceof Error && (error.name === "TypeError" || error.name === "AbortError") ? error.name : "Other";
+    console.warn({ operation: "usage_analytics", dataset, phase: httpStatus === null ? "transport" : "http", http_status: httpStatus, provider_codes: codes, transport_name: httpStatus === null ? transportName : null });
     if (error instanceof AnalyticsError) throw error;
     throw new AnalyticsError(controller.signal.aborted ? "timeout" : "upstream_error");
   } finally { clearTimeout(timer); }
@@ -100,9 +129,9 @@ export async function collectUsageStatistics(env: WorkerEnv, now = Date.now(), f
   const storageStart = new Date(now - 24 * HOUR).toISOString(), storageEnd = new Date(Math.floor(now / HOUR) * HOUR).toISOString();
   try {
     const shared = { account: configuration.account, start, end, storageStart, storageEnd };
-    const d1 = await query(d1Query, { account: configuration.account, date: end.slice(0, 10), storageStart, storageEnd, database: configuration.database }, configuration.token, fetcher);
+    const d1 = await query("d1", d1Query, { account: configuration.account, date: end.slice(0, 10), storageStart, storageEnd, database: configuration.database }, configuration.token, fetcher);
     const values = metrics(d1, "d1", start, end, storageStart, storageEnd);
-    if (configuration.bucket) values.push(...metrics(await query(r2Query, { ...shared, bucket: configuration.bucket }, configuration.token, fetcher), "r2", start, end, storageStart, storageEnd));
+    if (configuration.bucket) values.push(...metrics(await query("r2", r2Query, { ...shared, bucket: configuration.bucket }, configuration.token, fetcher), "r2", start, end, storageStart, storageEnd));
     await env.DB.prepare("UPDATE usage_statistics SET collected_at = ?1, metrics_json = ?2, error = NULL WHERE singleton = 1 AND attempted_at = ?1 AND config_key = ?3").bind(now, JSON.stringify(values), key).run();
   } catch (error) {
     await env.DB.prepare("UPDATE usage_statistics SET error = ?2 WHERE singleton = 1 AND attempted_at = ?1 AND config_key = ?3").bind(now, error instanceof AnalyticsError ? error.code : "collection_failed", key).run();

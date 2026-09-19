@@ -128,3 +128,33 @@ test("HTTP owner bearer/admin cookie access, no-store, CSRF and validation", asy
   await collectUsageStatistics(env,now,async () => new Response(JSON.stringify({data:{viewer:{accounts:[{activity:[],storage:[]}]}}})),"stale");
   assert.equal((await readUsage(env,owner,now)).cloudflare.collected_at,new Date(now).toISOString());
 });
+
+test("analytics diagnostics expose only fixed fields and numeric provider codes", async (t) => {
+  const logs=[];
+  t.mock.method(console,"warn",(...args)=>logs.push(args));
+  const secret=configuration.USAGE_ANALYTICS_TOKEN;
+  const reset=()=>env.DB.prepare("UPDATE usage_statistics SET attempted_at=NULL,collected_at=NULL,error=NULL,metrics_json=NULL,config_key=NULL").run();
+  await reset();
+  await collectUsageStatistics(env,now,async()=>new Response(JSON.stringify({errors:[{code:9109,message:secret,extra:{token:secret}},{code:secret},{code:{value:secret}}],query:secret,headers:{authorization:secret}}),{status:400}));
+  assert.deepEqual(logs.pop(),[{operation:"usage_analytics",dataset:"d1",phase:"http",http_status:400,provider_codes:[9109],transport_name:null}]);
+  assert.equal((await read()).cloudflare.error,"upstream_error");
+  await reset();
+  let canceled=false;
+  const oversized=new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode(secret+"x".repeat(65537)));},cancel(){canceled=true;}});
+  await collectUsageStatistics(env,now,async()=>new Response(oversized,{status:403}));
+  assert.equal(canceled,true);
+  assert.deepEqual(logs.pop(),[{operation:"usage_analytics",dataset:"d1",phase:"http",http_status:403,provider_codes:[],transport_name:null}]);
+  assert.equal((await read()).cloudflare.error,"permission_denied");
+  await reset();
+  await collectUsageStatistics(env,now,async()=>{throw new TypeError(secret);});
+  assert.deepEqual(logs.pop(),[{operation:"usage_analytics",dataset:"d1",phase:"transport",http_status:null,provider_codes:[],transport_name:"TypeError"}]);
+  assert.equal((await read()).cloudflare.error,"upstream_error");
+  await reset();
+  await collectUsageStatistics(env,now,async()=>{const error=new Error(secret);error.name=secret;throw error;});
+  assert.deepEqual(logs.pop(),[{operation:"usage_analytics",dataset:"d1",phase:"transport",http_status:null,provider_codes:[],transport_name:"Other"}]);
+  await reset();
+  await collectUsageStatistics(env,now,async(url,options)=>JSON.parse(options.body).query.includes("UsageD1")?success(url,options):new Response(secret,{status:400}));
+  assert.deepEqual(logs.pop(),[{operation:"usage_analytics",dataset:"r2",phase:"http",http_status:400,provider_codes:[],transport_name:null}]);
+  assert.equal((await read()).cloudflare.error,"upstream_error");
+  assert.equal(logs.length,0);
+});

@@ -765,7 +765,7 @@ test("the Web interaction palette uses accessible orange without legacy blue the
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
   const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
   const [deploymentRelease, ...documents] = await Promise.all([
-    readFile(new URL("../../release/config/0.1.0-alpha.58.json", import.meta.url), "utf8").then(JSON.parse),
+    readFile(new URL("../../release/config/0.1.0-alpha.59.json", import.meta.url), "utf8").then(JSON.parse),
     ...paths.map((name) => readFile(
       new URL(`../../apps/web/public/${name}`, import.meta.url),
       "utf8",
