@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import ContainerIdentityDetails from "../components/ContainerIdentityDetails.vue";
 import ContainerIcon from "../components/ContainerIcon.vue";
+import CopyForAgentButton from "../components/CopyForAgentButton.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
@@ -319,17 +320,6 @@ async function loadPrincipals(reset = true): Promise<void> {
     }
   } finally {
     principalsLoadingMore.value = false;
-  }
-}
-
-async function copyText(value: string): Promise<void> {
-  try {
-    await window.navigator.clipboard.writeText(value);
-  } catch {
-    setLocalizedError(
-      "Copy was not allowed; select the text manually.",
-      "浏览器未允许复制，请手动选择文本。",
-    );
   }
 }
 
@@ -745,6 +735,8 @@ async function acknowledgePresentedInvitation(): Promise<void> {
   presentedInvitationRecord.value = null;
   inviteNeedsReview.value = false;
   clearInviteRecoveryNotice();
+  closeInviteDialog();
+  if (showPrincipal.value) closePrincipal();
 }
 
 async function recoverInvitationOperation(): Promise<void> {
@@ -1594,7 +1586,7 @@ onUnmounted(() => {
         <article><span>{{ ui("Recent 429", "近期限流") }}</span><strong>{{ rateSettings?.recent_429_summary.total ?? 0 }}</strong><small>{{ rateSettings?.recent_429_summary.window_seconds ?? 300 }} {{ ui("second window", "秒窗口") }}</small></article>
       </section>
       <section class="owner-section">
-        <div class="section-heading-row"><div><h2>{{ ui("Origin & instance", "访问地址与实例") }}</h2><p>{{ meta?.instance_id }}</p></div><button class="secondary-button" type="button" @click="copyText(locale === 'zh-CN' ? '请使用 cfkanban-admin 检查首选 API 地址，并按明确计划修改。' : 'Use cfkanban-admin to inspect and update the preferred API origin with an explicit plan.')">{{ t("action.copy") }}</button></div>
+        <div class="section-heading-row"><div><h2>{{ ui("Origin & instance", "访问地址与实例") }}</h2><p>{{ meta?.instance_id }}</p></div><CopyForAgentButton :text="locale === 'zh-CN' ? '请使用 cfkanban-admin 检查首选 API 地址，并按明确计划修改。' : 'Use cfkanban-admin to inspect and update the preferred API origin with an explicit plan.'" /></div>
         <dl class="settings-list"><div><dt>{{ ui("Observed", "本次访问") }}</dt><dd>{{ meta?.observed_origin }}</dd></div><div><dt>{{ ui("Preferred", "首选地址") }}</dt><dd>{{ meta?.preferred_api_origin }}</dd></div><div><dt>{{ ui("Origin version", "地址版本") }}</dt><dd>{{ meta?.origin_version }}</dd></div></dl>
       </section>
       <section class="owner-section">
@@ -1653,8 +1645,8 @@ onUnmounted(() => {
           <button class="secondary-button" type="button" :disabled="busy" @click="refreshInvitationReview">{{ ui("Refresh Invitation list", "刷新邀请列表") }}</button>
           <button v-if="invitationsHasMore && invitationsNextCursor" class="secondary-button" type="button" :disabled="busy" @click="continueInvitationReview">{{ ui("Load next review page", "加载下一复核页") }}</button>
           <button v-if="invitationRecoveryRecord && invitationRecoveryCanRetry(invitationRecoveryRecord)" class="primary-button" type="button" :disabled="busy" @click="recoverInvitationOperation">{{ ui("Recover exact operation", "恢复同一操作") }}</button>
-          <button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button>
-          <button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved this one-time URL", "我已保存这个一次性网址") }}</button>
+          <CopyForAgentButton v-if="oneTimeInvite" :text="oneTimeInvite" />
+          <button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved it · Done", "我已保存，完成") }}</button>
           <button class="primary-button" type="button" :disabled="busy || !invitationCoordinationReady || !canConfirmInvitationReview(inviteReviewReady, invitationsHasMore, invitationRecoveryRecord, inviteReviewStartedAt, Date.now(), committedInvitationResolved())" @click="confirmInvitationReview">{{ ui("I reviewed the complete list", "我已检查完整列表") }}</button>
         </div>
       </div>
@@ -1758,7 +1750,7 @@ onUnmounted(() => {
       <p v-if="!(restoreTarget.item.resumed_public_projects?.projects.length)" class="empty-copy">{{ ui("No enabled Public Join policy will resume.", "没有已开启的公开加入策略会重新公开。") }}</p>
       <div class="form-actions"><button class="secondary-button" type="button" @click="showRestore = false">{{ t("action.cancel") }}</button><button class="primary-button" type="button" :disabled="busy" @click="restoreContainer">{{ t("action.restore") }}</button></div>
     </ModalDialog>
-    <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建项目邀请')" @close="closeInviteDialog"><form class="form-stack" @submit.prevent="createInvite"><label>{{ ui("Project", "项目") }}<select v-model="inviteForm.project_id" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select></label><label>{{ ui("Role", "角色") }}<select v-model="inviteForm.role"><option value="reader">{{ roleLabel('reader') }}</option><option value="writer">{{ roleLabel('writer') }}</option></select></label><p class="muted-copy">{{ locale === "zh-CN" ? "完整网址只在创建响应中出现一次；页面不会保存它。" : "The full URL appears only in the create response; this page does not store it." }}</p><p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><div class="form-actions"><button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved this one-time URL", "我已保存这个一次性网址") }}</button><button class="primary-button" type="submit" :disabled="busy || inviteNeedsReview">{{ oneTimeInvite ? (locale === 'zh-CN' ? '再创建一个' : 'Create another') : t('action.save') }}</button></div></form></ModalDialog>
+    <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建项目邀请')" @close="closeInviteDialog"><form class="form-stack" @submit.prevent="createInvite"><label>{{ ui("Project", "项目") }}<select v-model="inviteForm.project_id" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select></label><label>{{ ui("Role", "角色") }}<select v-model="inviteForm.role"><option value="reader">{{ roleLabel('reader') }}</option><option value="writer">{{ roleLabel('writer') }}</option></select></label><p class="muted-copy">{{ locale === "zh-CN" ? "完整网址只在创建响应中出现一次；页面不会保存它。" : "The full URL appears only in the create response; this page does not store it." }}</p><p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><div class="form-actions"><CopyForAgentButton v-if="oneTimeInvite" :text="oneTimeInvite" /><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved it · Done", "我已保存，完成") }}</button><button class="primary-button" type="submit" :disabled="busy || inviteNeedsReview">{{ oneTimeInvite ? (locale === 'zh-CN' ? '再创建一个' : 'Create another') : t('action.save') }}</button></div></form></ModalDialog>
     <ModalDialog v-if="showPrincipal && selectedPrincipal" :busy="busy" :title="ui('Principal access', '身份访问')" @close="closePrincipal">
       <header class="modal-summary">
         <strong>{{ selectedPrincipal.display_name }}</strong>
@@ -1791,8 +1783,8 @@ onUnmounted(() => {
         <p v-if="inviteNeedsReview" class="inline-alert" role="alert">{{ inviteRecoveryNotice || ui('Close this dialog and complete the Invitation safety review first.', '请先关闭此弹窗并完成邀请安全复核。') }}</p>
         <button class="primary-button" type="submit" :disabled="busy || !recoveryConfirmed || inviteNeedsReview">{{ ui('Create one-time recovery URL', '创建一次性恢复网址') }}</button>
         <textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" />
-        <button v-if="oneTimeInvite" class="secondary-button" type="button" @click="copyText(oneTimeInvite)">{{ t("action.copy") }}</button>
-        <button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved this one-time URL", "我已保存这个一次性网址") }}</button>
+        <CopyForAgentButton v-if="oneTimeInvite" :text="oneTimeInvite" />
+        <button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved it · Done", "我已保存，完成") }}</button>
       </form>
     </ModalDialog>
     <ModalDialog v-if="showGrant && selectedGrantProject" :busy="busy" :title="ui('Project Grants', '项目授权')" @close="closeProjectGrants">

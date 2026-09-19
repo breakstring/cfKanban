@@ -1,7 +1,7 @@
 {
   "name": "cfkanban-agent-skills",
-  "version": "1.0.0-rc.1",
-  "description": "Portable cfKanban skills for daily collaboration, Owner administration, and safe Cloudflare deployment.",
+  "version": "1.0.0-rc.2",
+  "description": "Portable cfKanban guidance and skills for daily collaboration, Owner administration, and safe Cloudflare deployment.",
   "author": {
     "name": "cfKanban maintainers"
   },
@@ -18,8 +18,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "cfKanban Agent Skills",
-    "shortDescription": "Use, administer, and deploy cfKanban with portable Agent Skills",
-    "longDescription": "Three portable Agent Skills for daily cfKanban issue collaboration, Deployment Owner application administration, and canonical-manifest-based Cloudflare deployment and upgrades.",
+    "shortDescription": "Learn, use, administer, and deploy cfKanban with Agent Skills",
+    "longDescription": "Four portable Agent Skills: a read-only onboarding guide plus daily cfKanban issue collaboration, Deployment Owner application administration, and canonical-manifest-based Cloudflare deployment and upgrades.",
     "developerName": "cfKanban maintainers",
     "category": "Developer Tools",
     "capabilities": [
@@ -28,6 +28,7 @@
     ],
     "websiteURL": "https://github.com/breakstring/cfKanban",
     "defaultPrompt": [
+      "Use $cfkanban-howto to explain how to use cfKanban and which Skill to choose.",
       "Use $cfkanban to help me work in this cfKanban Project.",
       "Use $cfkanban-admin to create my first cfKanban board.",
       "Use $cfkanban-deploy to deploy cfKanban for me."

@@ -10,11 +10,11 @@ It runs as one Cloudflare Worker plus one D1 database, with optional private R2 
 
 cfKanban is currently a **public testing preview**, not a stable end-user release.
 
-- The Worker, D1 schema, Web UI, and three Agent Skills are implemented in this repository.
+- The Worker, D1 schema, Web UI, and four Agent Skills are implemented in this repository.
 - You can install the Codex plugin from this public repository today and inspect or evaluate the Skills.
-- The [`1.0.0-rc.1` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/1.0.0-rc.1) packages immutable Skill and Service bundles for cross-system release-candidate testing, including visible Public Join status and correctly sized risk-confirmation checkboxes.
+- The [`1.0.0-rc.2` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/1.0.0-rc.2) packages immutable Skill and Service bundles for cross-system release-candidate testing, including participant project switching, clearer invitation completion, copy feedback, and the new Howto Skill.
 - After upgrading, the Owner must explicitly choose attachment capacity before new uploads; existing files remain accessible. Cloudflare analytics requires a separately configured read-only Token.
-- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.1/prerelease.json).
+- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.2/prerelease.json).
 - The stable release pointer and real multi-environment deployment acceptance are not published yet.
 - Do not treat `main`, a local checkout, or a marketplace snapshot as a canonical stable release or production-ready deployment.
 
@@ -41,7 +41,7 @@ For a future Cloudflare deployment you will also need:
 The repository is a Codex plugin marketplace. From the command line, add the immutable testing tag and install its plugin:
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.1
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.2
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -57,13 +57,14 @@ codex plugin add cfkanban-agent-skills@cfkanban
 
 Then start a **new Codex task**. Plugin installation does not modify Cloudflare, create `~/.cfkanban/`, deploy the Service, or authorize any later operation.
 
-The plugin contains three Skills:
+`1.0.0-rc.2` contains four Skills: an onboarding guide and three operational Skills:
 
 | Skill | Ask it to help with |
 | --- | --- |
-| `$cfkanban-deploy` | Deploy, update, resume, or recover a cfKanban installation. |
-| `$cfkanban-admin` | Create boards and manage Projects, invitations, access, and Owner settings. |
+| `$cfkanban-howto` | Learn daily use, Owner administration, and deployment, with example prompts. |
 | `$cfkanban` | Join a Project and work with Issues, Comments, and the Web board. |
+| `$cfkanban-admin` | Create boards and manage Projects, invitations, access, and Owner settings. |
+| `$cfkanban-deploy` | Deploy, update, resume, or recover a cfKanban installation. |
 
 You normally talk to the Skill in natural language. The bundled `.mjs` commands are deterministic tools for the Agent; ordinary users do not need to run them manually.
 
@@ -77,7 +78,7 @@ You do not need to know or mention manifests, digests, preflight, deployment pla
 
 If Cloudflare login is needed, the Skill shows that as its own small plan and then opens the appropriate browser or device flow after approval. Completing login does not create a Worker or D1 database; the deployment plan remains a later, separate approval.
 
-At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `1.0.0-rc.1` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
+At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `1.0.0-rc.2` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
 
 For the complete step-by-step path, give your Agent the [deployment guide](apps/web/public/deploy-guide.md). It covers Skill installation, environment checks, authorization, deployment, readback, and recovery instead of asking the Agent to infer the workflow from this general README.
 

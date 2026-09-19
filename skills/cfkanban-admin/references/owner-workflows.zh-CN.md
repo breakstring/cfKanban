@@ -112,7 +112,7 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 运行 `web resolve`，传入已知 `instanceId` 或 `origin`（仅 HTTPS origin，不含 path/query/fragment）；在 Repo 工作时可传 `repoRoot`。该命令只读本地可信实例 metadata 和 current 槽位是否存在，不鉴权、不输出 secret，状态为 `resolved`、`selection_required` 或 `credential_required`。用户明确指向的当前浏览器 origin 属于显式上下文；无关 ambient tab 不构成目标。优先显式目标，其次 Repo 唯一实例，再其次本地唯一 current 实例；Repo 有多个候选时保留歧义。只展示候选标识与域名、询问一次，不按第一项、最近使用或 Owner 身份选择。显式未知 origin 应转入可信登记/加入或恢复，不回退其他实例，也不向它发送 Credential。
 
-解析后以私有 current Credential 请求 `GET /api/v1/me`。凭据失效则停止 launch 并转入恢复。已验证 Owner 未指定更窄 target 时，经 `cfkanban-admin` 打开 admin Overview。参与者缺少明确 Project/Issue 时只读列出授权 Projects，唯一时进入该 Project，否则询问；不虚构跨 Project Session。已有浏览器 Session 只有核对 Principal 与 target scope 后才能复用。完成标准是进入准确的已认证页面，不是仅打开 tab 或完成 relay 跳转。
+解析后以私有 current Credential 请求 `GET /api/v1/me`。凭据失效则停止 launch 并转入恢复。已验证 Owner 未指定更窄 target 时，经 `cfkanban-admin` 打开 admin Overview。参与者缺少明确 Project/Issue 时只读列出授权 Projects，唯一时进入该 Project，否则询问；这决定初始页面。支持新合同的 Service 将新兑换的非 Owner launch 签发为 `project_selection`，只允许当前实时授权项目；既有固定 scope Session 和 Owner Project/Issue Session 不扩大。不可从本地 Skill 版本推断线上已支持。已有浏览器 Session 只有核对 Principal 与 target scope 后才能复用。完成标准是进入准确的已认证页面，不是仅打开 tab 或完成 relay 跳转。
 
 ### 交付到 IAB 或其他宿主控制的浏览器
 

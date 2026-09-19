@@ -1,5 +1,7 @@
 # Agent-native Kanban Foundation SPEC
 
+> 2026-09-19 增量：参与者 Agent Launch 会话的项目切换以 [D-272 Frozen 合同](2026-09-19-participant-project-switching-spec.md) 为准；旧固定 scope 会话和 Owner 明确 Project/Issue 会话不扩大。
+
 > 2026-09-19 增量修订：[Issue 私有附件](2026-09-19-issue-attachments-spec.md) 将 R2 附件纳入可选增强；下文附件后置说明由该合同替代，默认 strict-zero 与核心 D1 真相源不变。
 
 > 当前容器身份合同由 [工作区与项目 UUID 寻址重构](2026-09-08-container-uuid-spec.md)（Frozen，2026-09-08）覆盖：Workspace/Project 取消 key，创建仅使用名称，服务端生成 UUID；REST/Web 使用 UUID，本地 scope 使用 schema 2。用户明确授权开发阶段不兼容旧 API、URL 和配置。本文保留的早期 key/DDL 描述不再是当前实现依据；其他身份、权限、并发和安全合同保持有效。
@@ -348,7 +350,7 @@ Launch 页面 GET 只读且不消费 capability，避免链接预览或安全扫
 
 Browser Launch 固定在创建后 5 分钟内可兑换且只能成功一次。Web Session 固定有效 8 小时，不滑动续期且无 refresh token；它绑定 `principal_id + source_kind + source_id`。Agent Launch Session 的 source 是发起 launch 的 Credential，Passkey Session 的 source 是完成认证的 Web Authenticator；对应 source revoke、Session 显式 revoke 或固定 expiry 到达都使其立即失效。Project Grant 与容器状态始终逐请求读取当前事实。
 
-Session 还绑定 launch target scope：Project target 只访问该 Project；Issue target 只访问该 Issue 所属 Project，并以该 Issue 为初始页面；只有 Owner `admin` target 具有实例级管理与数据面 scope。Owner admin Session 默认进入 Overview，不自动读取全部 Issue，但可以在显式选择 Workspace/Project 后进入任意 Project 看板。普通 Project/Issue Session 的页面导航不能扩大 scope，切换范围时由 Agent 创建新的 Browser Launch。完整 launch URL、code、cookie、长期 Credential 及其 hash 不进入日志、Audit payload、analytics、错误或浏览器可读存储。cookie-auth 写入必须有 CSRF 防护，业务 Markdown 与外部链接仍按不可信输入处理。
+新兑换的非 Owner Agent Project/Issue Launch Session 使用已有 `project_selection` scope，初始仍进入指定目标，可在当前实时授权项目之间切换；逐项目校验 reader/writer。既有固定 scope Session 和 Owner 明确 Project/Issue target Session 不扩大，Owner admin 与 Passkey 规则保持不变。 详见 [Frozen 增量合同](2026-09-19-participant-project-switching-spec.md)。Owner admin 默认 Overview，不自动读取全部 Issue。完整 launch URL、code、cookie、长期 Credential 及其 hash 不进入日志、Audit payload、analytics、错误或浏览器可读存储。cookie-auth 写入必须有 CSRF 防护，业务 Markdown 与外部链接仍按不可信输入处理。
 
 首次 Agent-launch Session 建立后，当前 Principal 可以显式登记一个或多个 Passkey。首次与补充登记都要求 Session 的来源是 Agent Browser Launch；D1 只保存 WebAuthn credential ID、公钥和验证 metadata，浏览器/OS authenticator 保存私钥。当前 Principal 可以列举并撤销自己的 Passkey，Owner 可以撤销参与者的 Passkey；登记、成功认证和撤销写安全 Audit。Passkey 撤销立即使以该 authenticator 为 source 的未过期 Sessions 失效，但不撤销 API Credential 或 Project Grants。
 
@@ -678,7 +680,7 @@ Invite bootstrap 页面是公开说明与 Invitation 兑换入口，不是日常
 7. D-215/D-216 已通过合同修订 3 固定极简第一方 Web UI 与 Browser Launch/HttpOnly Session 的方向；D-217 通过修订 4 固定 5 分钟 launch、8 小时固定 Session、源 Credential 失效联动与 target scope。具体 CSRF/schema 已由 2026-08-29 Frozen Web UI 与 API/Schema SPEC 固定，不能在实现中默补。
 8. D-219 通过合同修订 5 移除 v0 Principal disable/enable/delete；Credential revoke、Grant revoke 与 Recovery Invite 分别承担认证停止、Project 撤权和身份连续性恢复。
 9. D-221 通过合同修订 6 固定 Owner Credential 的防锁死边界：Web 不撤销或轮换 Owner Credential，正常轮换由 `cfkanban-admin` 先安全落盘替代 secret 后执行 Bearer-only 原子 rotation，全部丢失才走 `cfkanban-deploy` 部署外恢复。
-10. D-222 通过合同修订 7 固定 Owner admin Session 的范围：默认不加载全部数据，但可在显式选择后进入实例内任意 Project；Project/Issue Session 仍严格限制在单一 Project。
+10. D-222 通过合同修订 7 固定 Owner admin Session 的范围：默认不加载全部数据，但可在显式选择后进入实例内任意 Project；Owner Project/Issue 和既有固定 scope Session 仍限制单 Project；非 Owner 新兑换 Session 后由 D-272 增量修订。
 11. D-224/D-226 通过合同修订 8 固定 Passkey 为唯一免 Agent Web 直登方式，并固定单 Project Public Join：Owner 可同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer`；Team Join 与多 Project 公开授权不进入 v0。当时留出的 Q-230 重入问题已由合同修订 9 解决。
 12. D-227/D-228 通过合同修订 9 取消逐 Principal 重入阻止，并首次要求 Owner 开启 Public Join 前显式设置 Project Issue/Comment limits；其中“tombstone 永久占用、删除不释放”的旧语义已由合同修订 10 替代。
 13. D-229～D-231 通过合同修订 10 固定 Project Issue、Comment、Principal 三项 active quota，以及 Owner 可见的实例级请求门控。软删除/revoke 释放额度，restore/regrant 重新占用；精确 quota 由 D1 原子强制。当时未确定的限流修改载体已由合同修订 11 解决。

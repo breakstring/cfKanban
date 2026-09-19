@@ -1,5 +1,7 @@
 # cfKanban 极简 Web UI SPEC
 
+> 2026-09-19 增量：参与者 Agent Launch 会话的项目切换以 [D-272 Frozen 合同](2026-09-19-participant-project-switching-spec.md) 为准；旧固定 scope 会话和 Owner 明确 Project/Issue 会话不扩大。
+
 > 2026-09-19 增量修订：[管理员用量与限额](2026-09-19-usage-statistics-spec.md) 定义 Owner 只读统计、schema 6 快照与可选云端采集；默认部署不增加统计凭据。
 
 > 2026-09-19 增量修订：[Issue 私有附件](2026-09-19-issue-attachments-spec.md) 增加详情附件区域、单文件上传/下载、安全图片预览与删除恢复；取代下文“附件管理不包含”的范围。默认部署不启用 R2。视觉层级按 DESIGN.md 的当前修订。
@@ -102,7 +104,7 @@ Owner 管理面按四个简单分区组织：Overview、Workspaces/Projects、Ac
 
 Audit 默认读取实例级 domain + security 最近事件，同时提供一个 Project 与一个 stream 的可选筛选。页面显示当前事件的 stream 与 Project scope；改变筛选会清空旧列表并开始新的 cursor 序列，不能把旧 `next_cursor` 接到新筛选上。Project 选择器仍遵守 Owner 页面既有的有界容器清单；超出 Web 清单的 Project 由 `cfkanban-admin` 使用 immutable Project ID 精确读取。
 
-Owner `admin` Session 默认落在 Overview，不自动读取全部 Project 或 Issue。Owner 显式选择 Workspace/Project 后可以在同一 Session 进入任意 Project Board/Issue 数据面，再返回管理区；这是 Owner 已有隐式数据面权限的 Web 呈现，不创建 Grant。普通 Project/Issue Session 仍不能导航到其他 Project 或管理区。
+Owner `admin` Session 默认落在 Overview，不自动读取全部 Project 或 Issue。Owner 显式选择 Workspace/Project 后可以在同一 Session 进入任意 Project Board/Issue 数据面，再返回管理区；这是 Owner 已有隐式数据面权限的 Web 呈现，不创建 Grant。Owner Project/Issue 和既有固定 scope Session 仍不能导航到其他 Project 或管理区；D-272 允许新兑换非 Owner Session 切换当前实时授权 Projects，但仍不能进入管理区。
 
 Web 不提供 Owner transfer、第二管理员、直接 D1 浏览、完整导出/导入、Time Travel restore、Cloudflare 资源删除、DNS 或计费设置。这些不属于应用内维护面。
 
@@ -155,7 +157,7 @@ Browser Launch 只保存服务端可校验的 target，例如 Project、Issue �
 - 页面内容视为不可信业务数据，Markdown 渲染必须去除脚本、事件属性、危险 URL 与任意 HTML 执行能力。
 - 不在 Service Worker、IndexedDB、localStorage 或 sessionStorage 保存长期 Credential、launch code 或 Web Session secret。
 
-launch/Session 生命周期、源 Credential 失效联动与 target scope 已按 D-217 确认；§8 只保留确认结果和后置增强。
+launch/Session 生命周期、源 Credential 失效联动已按 D-217 确认；参与者选择 scope 由 D-272 增量修订；§8 只保留确认结果和后置增强。
 
 ### 4.4 Passkey 直接登录
 
@@ -256,9 +258,9 @@ v0 不包含：自定义列/工作流、手工 rank、批量选择/编辑、复�
 
 v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次；Web Session 固定有效 8 小时，不滑动续期、不提供 refresh token。Session 绑定 `principal_id + source_kind + source_id`：Agent Launch Session 的 source 是发起 launch 的 Credential，Passkey Session 的 source 是完成认证的 Web Authenticator；对应 source revoke 或 Session 显式 revoke 都立即使其失效，Project Grant 始终按请求实时校验。
 
-Agent Launch Session 同时按 launch target 限定 Web scope：Project target 只访问该 Project；Issue target 只访问该 Issue 所属 Project，并以该 Issue 为初始页面；Owner `admin` target 才允许访问实例级管理与数据面。普通 Project/Issue Session 即使对应 Principal 还有其他 Grants，也不能靠导航扩大 scope，需要切换时由 Agent 创建新的 Browser Launch。Passkey Session 没有旧 launch target：参与者先选择当前有权 Project，Owner 先进入 Overview 并可以显式选择任意 Workspace/Project；两者都不自动执行无 Project filter 的 Issue 聚合读取。
+新兑换的非 Owner Agent Project/Issue Launch Session 使用已有 `project_selection` scope，初始仍进入指定目标，可在当前实时授权项目之间切换；逐项目校验 reader/writer。既有固定 scope Session 和 Owner 明确 Project/Issue target Session 不扩大，Owner admin 与 Passkey 规则保持不变。 详见 [Frozen 增量合同](2026-09-19-participant-project-switching-spec.md)。所有入口都不自动执行无 Project filter 的 Issue 聚合读取。
 
-五分钟给普通浏览器复制/切换留出余量，一次性与 target scope 又限制了暴露；八小时覆盖一个工作日而不形成长期网页登录。到期时已打开页面清除已渲染的远端业务数据；刷新或下一次 API 请求返回稳定的 Session 过期错误并清除 cookie。页面只引导用户让 Agent 重新打开当前 target，不显示密码框或 Credential 粘贴入口。写入到期失败时不自动重放；尚未提交的本地表单文本可以暂存在当前页面内存中，待新 Session 建立后由用户重新判断并提交，但不能写入 Web Storage。
+五分钟给普通浏览器复制/切换留出余量，一次性与实时授权范围限制了暴露；八小时覆盖一个工作日而不形成长期网页登录。到期时已打开页面清除已渲染的远端业务数据；刷新或下一次 API 请求返回稳定的 Session 过期错误并清除 cookie。页面只引导用户让 Agent 重新打开当前 target，不显示密码框或 Credential 粘贴入口。写入到期失败时不自动重放；尚未提交的本地表单文本可以暂存在当前页面内存中，待新 Session 建立后由用户重新判断并提交，但不能写入 Web Storage。
 
 ### Q-WEB-02：后置增强
 

@@ -10,11 +10,11 @@ cfKanban 是一套面向 Agent 协作方式的轻量自托管 Kanban。你让 Ag
 
 cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳定发行版。
 
-- Worker、D1 schema、Web UI 和三个 Agent Skills 已经在本仓库中实现。
+- Worker、D1 schema、Web UI 和四个 Agent Skills 已经在本仓库中实现。
 - 你现在可以从这个公开仓库安装 Codex plugin，并检查或试用这些 Skills。
-- [`1.0.0-rc.1` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/1.0.0-rc.1) 提供用于跨系统候选版验收的不可变 Skill 与 Service bundle，补齐项目公开加入状态标识并修复风险确认复选框的布局。
+- [`1.0.0-rc.2` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/1.0.0-rc.2) 提供用于跨系统候选版验收的不可变 Skill 与 Service bundle，新增参与者项目切换、邀请完成后关闭弹窗、复制反馈和 Howto 入门技能。
 - 升级后 Owner 需明确设置附件容量才能新增上传，已有文件保持可访问；Cloudflare 统计需单独配置只读 Token。
-- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.1/prerelease.json)。
+- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.2/prerelease.json)。
 - 稳定发行指针和真实多环境部署验收尚未发布。
 - 不要把 `main`、本地 checkout 或 marketplace snapshot 当成 canonical stable release 或生产就绪部署。
 
@@ -41,7 +41,7 @@ cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳�
 本仓库本身就是一个 Codex plugin marketplace。可以在命令行添加不可变的测试 tag，并安装其中的 plugin：
 
 ```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.1
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.2
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -57,13 +57,14 @@ codex plugin add cfkanban-agent-skills@cfkanban
 
 安装后请**新建一个 Codex 任务**。安装 plugin 不会修改 Cloudflare、创建 `~/.cfkanban/`、部署 Service，也不代表已经授权任何后续操作。
 
-plugin 包含三个 Skills：
+`1.0.0-rc.2` 包含四个 Skills：一个入门指南和三个操作技能：
 
 | Skill | 适合交给它的任务 |
 | --- | --- |
-| `$cfkanban-deploy` | 部署、更新、续做或恢复一套 cfKanban。 |
-| `$cfkanban-admin` | 创建看板，以及管理 Project、邀请、访问权限和 Owner 设置。 |
+| `$cfkanban-howto` | 先了解日常使用、Owner 管理和部署分别能做什么，以及应该如何提问。 |
 | `$cfkanban` | 加入 Project，并处理 Issue、Comment 和 Web 看板中的日常工作。 |
+| `$cfkanban-admin` | 创建看板，以及管理 Project、邀请、访问权限和 Owner 设置。 |
+| `$cfkanban-deploy` | 部署、更新、续做或恢复一套 cfKanban。 |
 
 通常你只需用自然语言告诉 Skill 想做什么。内置 `.mjs` 命令是 Agent 使用的确定性工具，普通用户无需手工运行。
 
@@ -77,7 +78,7 @@ plugin 包含三个 Skills：
 
 如果需要登录 Cloudflare，Skill 会把它作为一份独立的小计划展示；获批后再打开对应的浏览器或 device flow。完成登录不会创建 Worker 或 D1 数据库，真正的部署计划仍会在后面单独请求确认。
 
-当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `1.0.0-rc.1` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
+当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `1.0.0-rc.2` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
 
 需要完整的逐步路径时，请把[部署指南](apps/web/public/deploy-guide.zh-CN.md)交给 Agent。它会明确说明 Skill 安装、环境检查、授权、部署、读回和恢复，不要求 Agent 从这份通用 README 自己猜流程。
 

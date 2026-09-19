@@ -437,7 +437,7 @@ async function assertRacedRedemptionUnavailable({ idempotencyKey, launch, mutate
 
 async function assertRacedWebSessionScope({
   cookies,
-  expectedRole = null,
+  expectedProjects = null,
   expectedStatus = 404,
   expectGrantGuard = true,
   mutate,
@@ -460,13 +460,16 @@ async function assertRacedWebSessionScope({
     assert.match(barrier.guardedSql, /target_issue\.deleted_at IS NULL/u);
     await mutate(now);
     barrier.release();
-    if (expectedRole === null) {
+    if (expectedProjects === null) {
       await assert.rejects(view, (error) => error?.status === expectedStatus);
       assert.deepEqual(barrier.rawRows, []);
     } else {
       const resource = await view;
-      assert.equal(barrier.rawRows.length, 1);
-      assert.deepEqual(resource.allowed_scope.projects.map((project) => project.role), [expectedRole]);
+      assert.equal(barrier.rawRows.length, expectedProjects.length);
+      assert.deepEqual(
+        resource.allowed_scope.projects.map((project) => [project.project_id, project.role]).sort(),
+        expectedProjects.toSorted(),
+      );
     }
   } finally {
     barrier.release();
@@ -714,7 +717,7 @@ after(async () => {
   await server.close();
 });
 
-test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and source revocation", async () => {
+test("WP-07 enforces one-shot Browser Launch, current participant Grants, fixed Owner scope, WebAuthn, and source revocation", async () => {
   const secrets = [];
 
   const unknownNestedField = await request("/api/v1/web-launches", {
@@ -1107,7 +1110,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   ).first();
   assert.equal(oldSessionsAfterCleanup.count, 1);
   assert.equal(projectSession.body.resource.entry_path, `/app/w/${fixtureIds["Web Workspace"]}/p/${fixtureIds["Application"]}`);
-  assert.deepEqual(projectSession.body.resource.allowed_scope, { kind: "project", project_id: ids.projectA });
+  assert.deepEqual(projectSession.body.resource.allowed_scope, { kind: "project_selection" });
   assert.equal(projectSession.body.resource.principal.is_owner, false);
   assert.equal(typeof projectSession.body.resource.principal.is_owner, "boolean");
 
@@ -1163,8 +1166,8 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
     headers: { cookie: cookieHeader(projectSession.cookies) },
   });
   assert.equal(sessionView.response.status, 200);
-  assert.equal(sessionView.body.allowed_scope.kind, "project");
-  assert.deepEqual(sessionView.body.allowed_scope.projects.map((project) => project.project_id), [ids.projectA]);
+  assert.equal(sessionView.body.allowed_scope.kind, "project_selection");
+  assert.deepEqual(new Set(sessionView.body.allowed_scope.projects.map((project) => project.project_id)), new Set([ids.projectA, ids.projectB]));
   await assertRacedWebSessionScope({
     cookies: projectSession.cookies,
     expectedStatus: 401,
@@ -1199,7 +1202,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
   await assertRacedWebSessionScope({
     cookies: projectSession.cookies,
-    expectedRole: "reader",
+    expectedProjects: [[ids.projectA, "reader"], [ids.projectB, "reader"]],
     mutate: () => db.prepare(
       "UPDATE project_grants SET role = 'reader', version = version + 1 WHERE id = ?1",
     ).bind(ids.participantGrantA).run(),
@@ -1209,6 +1212,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
   await assertRacedWebSessionScope({
     cookies: projectSession.cookies,
+    expectedProjects: [[ids.projectB, "reader"]],
     mutate: () => db.prepare(
       `UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2,
          version = version + 1 WHERE id = ?3`,
@@ -1220,6 +1224,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
   await assertRacedWebSessionScope({
     cookies: projectSession.cookies,
+    expectedProjects: [[ids.projectB, "reader"]],
     mutate: () => db.prepare(
       "UPDATE projects SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
     ).bind(Date.now(), ids.ownerPrincipal, ids.projectA).run(),
@@ -1229,6 +1234,7 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   });
   await assertRacedWebSessionScope({
     cookies: projectSession.cookies,
+    expectedProjects: [],
     mutate: () => db.prepare(
       "UPDATE workspaces SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
     ).bind(Date.now(), ids.ownerPrincipal, ids.workspace).run(),
@@ -1236,10 +1242,66 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
       "UPDATE workspaces SET deleted_at = NULL, deleted_by_principal_id = NULL WHERE id = ?1",
     ).bind(ids.workspace).run(),
   });
-  const outsideFixedScope = await request(`/api/v1/workspaces/${fixtureIds["Web Workspace"]}/projects/${fixtureIds["Operations"]}`, {
+  const otherAuthorizedProject = await request(`/api/v1/workspaces/${fixtureIds["Web Workspace"]}/projects/${fixtureIds["Operations"]}`, {
     headers: { cookie: cookieHeader(projectSession.cookies) },
   });
-  assert.equal(outsideFixedScope.response.status, 404);
+  assert.equal(otherAuthorizedProject.response.status, 200);
+
+  // A project switch changes navigation only; every write still uses that project's Grant.
+  for (const [projectId, status] of [[ids.projectB, 403], [ids.projectA, 200]]) {
+    const created = await request(`/api/v1/workspaces/${ids.workspace}/projects/${projectId}/issues`, {
+      body: { title: "Session project role check" },
+      headers: cookieWriteHeaders(projectSession.cookies, {
+        "idempotency-key": `wp07-switch-role-${projectId}`,
+      }),
+      method: "POST",
+    });
+    assert.equal(created.response.status, status, JSON.stringify(created.body));
+  }
+  const switchParticipantAdmin = await request("/api/v1/admin/principals", {
+    headers: { cookie: cookieHeader(projectSession.cookies) },
+  });
+  assert.equal(switchParticipantAdmin.response.status, 403);
+
+  await db.prepare(
+    "UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2 WHERE id = ?3",
+  ).bind(Date.now(), ids.ownerPrincipal, ids.participantGrantB).run();
+  try {
+    const revokedProject = await request(`/api/v1/workspaces/${ids.workspace}/projects/${ids.projectB}`, {
+      headers: { cookie: cookieHeader(projectSession.cookies) },
+    });
+    assert.equal(revokedProject.response.status, 404);
+    const currentProjects = await request("/api/v1/web-session", {
+      headers: { cookie: cookieHeader(projectSession.cookies) },
+    });
+    assert.deepEqual(currentProjects.body.allowed_scope.projects.map((project) => project.project_id), [ids.projectA]);
+  } finally {
+    await db.prepare(
+      "UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.participantGrantB).run();
+  }
+
+  // Existing pre-upgrade rows keep their original scope until a fresh launch is redeemed.
+  await db.prepare("UPDATE web_sessions SET target_kind = 'project', target_json = ?1 WHERE id = ?2")
+    .bind(JSON.stringify(projectLaunch.body.resource.target), projectSession.body.resource.session_id).run();
+  const legacySession = await request("/api/v1/web-session", {
+    headers: { cookie: cookieHeader(projectSession.cookies) },
+  });
+  assert.equal(legacySession.body.allowed_scope.kind, "project");
+  assert.deepEqual(legacySession.body.allowed_scope.projects.map((project) => project.project_id), [ids.projectA]);
+  const legacyOtherProject = await request(`/api/v1/workspaces/${ids.workspace}/projects/${ids.projectB}`, {
+    headers: { cookie: cookieHeader(projectSession.cookies) },
+  });
+  assert.equal(legacyOtherProject.response.status, 404);
+  await assertRacedWebSessionScope({
+    cookies: projectSession.cookies,
+    mutate: () => db.prepare(
+      "UPDATE project_grants SET revoked_at = ?1, revoked_by_principal_id = ?2 WHERE id = ?3",
+    ).bind(Date.now(), ids.ownerPrincipal, ids.participantGrantA).run(),
+    restore: () => db.prepare(
+      "UPDATE project_grants SET revoked_at = NULL, revoked_by_principal_id = NULL WHERE id = ?1",
+    ).bind(ids.participantGrantA).run(),
+  });
 
   const missingCsrf = await request("/api/v1/web-session", {
     headers: { cookie: cookieHeader(projectSession.cookies) },
@@ -1265,9 +1327,10 @@ test("WP-07 enforces one-shot Browser Launch, fixed Session scope, WebAuthn, and
   const issueSession = await redeemLaunch(issueLaunch.code, "wp07-issue-redeem");
   secrets.push(issueSession.cookies.session, issueSession.cookies.csrf);
   assert.equal(issueSession.body.resource.entry_path, "/app/issues/CFK-1");
-  assert.equal(issueSession.body.resource.allowed_scope.project_id, ids.projectA);
+  assert.deepEqual(issueSession.body.resource.allowed_scope, { kind: "project_selection" });
   await assertRacedWebSessionScope({
     cookies: issueSession.cookies,
+    expectedProjects: [[ids.projectA, "writer"], [ids.projectB, "reader"]],
     mutate: () => db.prepare(
       "UPDATE issues SET deleted_at = ?1, deleted_by_principal_id = ?2 WHERE id = ?3",
     ).bind(Date.now(), ids.ownerPrincipal, ids.issue).run(),

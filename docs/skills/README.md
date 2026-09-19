@@ -2,22 +2,24 @@
 
 Language: [English](README.md) | [简体中文](README.zh-CN.md)
 
-cfKanban packages three Skills in one portable, verified bundle:
+`1.0.0-rc.2` contains four Skills: one onboarding guide and three operational Skills:
 
+- `cfkanban-howto`: explain daily use → Owner administration → deployment, who each is for, and example prompts; teaching only, without executing operations.
 - `cfkanban`: daily identity, scope, Issue collaboration, Invite/Public Join, and Project/Issue Web launch.
 - `cfkanban-admin`: Deployment Owner application administration.
 - `cfkanban-deploy`: canonical release verification, local Skill lifecycle, Cloudflare deployment, resume, migration, and upgrade safety.
 
-Each `SKILL.md` starts with what the Skill can do, when to use a different Skill, a task-to-command map, the required workflow, and stop conditions. The paired reference guide provides the detailed English or Simplified Chinese endpoint and recovery instructions.
+Each operational `SKILL.md` starts with what the Skill can do, when to use a different Skill, a task-to-command map, the required workflow, and stop conditions. The paired reference guide provides the detailed English or Simplified Chinese endpoint and recovery instructions.
 
 ## What users need to say
 
 Users describe the result; the Skills own the safety workflow. These prompts are enough:
 
 ```text
-Use $cfkanban-deploy to deploy cfKanban for me.
-Use $cfkanban-admin to create my first cfKanban board.
+Use $cfkanban-howto to explain what cfKanban can do and where I should start.
 Use $cfkanban to join this Project: <Invite URL>
+Use $cfkanban-admin to create my first cfKanban board.
+Use $cfkanban-deploy to deploy cfKanban for me.
 ```
 
 The user does not need to request release verification, read-only preflight, a deployment plan, version checks, readback, or recovery handling. Each Skill starts with the safe discovery required for that intent, asks only for missing choices, and presents side effects at the correct authorization boundary.
@@ -27,7 +29,7 @@ The user does not need to request release verification, read-only preflight, a d
 The first stable release has not been published. Today, Codex users can load the immutable testing tag:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.1
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.2
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -35,13 +37,13 @@ The testing tag is immutable; use mutable `main` only for deliberate development
 
 Alpha.57 adds Owner usage reads and on-demand refresh with a shared 15-minute cache, plus explicit Owner attachment capacity settings. The schema 7 upgrade pauses new upload reservations until the Owner chooses a limit or unlimited capacity; existing files remain available. Analytics Token setup is separate from Skill installation and instance upgrade.
 
-The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.1/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
+The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.2/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
 
-Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three entrypoints deliberately share the bundled JavaScript source modules under `packages/skill-runtime`; despite the internal directory name, this is not an embedded Node.js executable or runtime distribution. A host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
+Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three operational entrypoints deliberately share the bundled JavaScript source modules under `packages/skill-runtime`; despite the internal directory name, this is not an embedded Node.js executable or runtime distribution. A host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
 
-## Commands included with each Skill
+## Commands included with the three operational Skills
 
-From any Skill directory, inspect that Skill's exact command surface:
+`cfkanban-howto` has no command helper. From one of the three operational Skill directories, inspect its exact command surface:
 
 ```text
 node scripts/cfkanban-tool.mjs help
@@ -99,6 +101,6 @@ Metadata schemas that accept only one string—`SKILL.md` frontmatter, `agents/o
 
 ## Shared helper modules
 
-The three Skills route into the same dependency-free JavaScript modules in `packages/skill-runtime`. These are source files executed by the user's compatible Node.js, not a bundled Node.js runtime. Sharing them keeps path validation, trusted-origin handling, secret injection, error normalization, release verification, plan digests, and migration readback consistent without publishing a standalone cfKanban CLI or copying business rules out of the Service.
+The three operational Skills route into the same dependency-free JavaScript modules in `packages/skill-runtime`. These are source files executed by the user's compatible Node.js, not a bundled Node.js runtime. Sharing them keeps path validation, trusted-origin handling, secret injection, error normalization, release verification, plan digests, and migration readback consistent without publishing a standalone cfKanban CLI or copying business rules out of the Service.
 
 The separate Service archive contains the built Worker, Web assets, migrations, contracts, a pinned Wrangler configuration schema, and `wrangler.template.json`. That JSON file is a non-deployable skeleton with placeholder resource identities. After the exact deployment plan is authorized and D1 exists, `deployment write-wrangler-config` writes a private actual configuration outside the immutable archive; the template is never deployed unchanged.

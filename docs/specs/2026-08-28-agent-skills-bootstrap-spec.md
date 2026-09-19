@@ -1,5 +1,7 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
+> 2026-09-19 增量：参与者 Agent Launch 会话的项目切换以 [D-272 Frozen 合同](2026-09-19-participant-project-switching-spec.md) 为准；旧固定 scope 会话和 Owner 明确 Project/Issue 会话不扩大。
+
 > 2026-09-19 增量修订：[管理员用量与限额](2026-09-19-usage-statistics-spec.md) 定义 Owner 只读统计、schema 6 快照与可选云端采集；默认部署不增加统计凭据。
 
 > 2026-09-19 增量修订：[Issue 私有附件](2026-09-19-issue-attachments-spec.md) 定义可选 R2 profile、专用文件传输和部署绑定连续性；默认 strict-zero 不变，已有实例启用附件必须显式列入完整 upgrade plan。
@@ -175,7 +177,7 @@ v0 固定拆成三个按工作场景发现的能力，而不是一个塞满所�
 - 所有会使用身份的 Skills 都直接说明 `.cfkanban/` 是用户级状态根、Credential 不进入 Agent 正常上下文；`cfkanban-deploy` 还直接说明 Tool Runtime、Skill update 与 Instance upgrade 分离，以及部署安全边界。
 - `cfkanban` 直接说明 `.cfkanban-scope.json`、Project filters 强烈推荐但可省略、原子写操作和 context 不可信；打开 Web 时只为明确 target 创建 5 分钟一次性 Browser Launch，不向浏览器传递长期 Credential。Project/Issue launch 的 8 小时固定 Session 只覆盖对应 Project，切换范围时重新创建 launch。Browser Launch 创建必须使用专用 `web launch`，通用 `api request` 在远端写入前拒绝该 endpoint。
 - “打开 cfKanban / 看看看板 / 在 IAB 进入管理”等自然语言请求，在本地已有可用 Credential 时默认包含实例解析、身份验证和登录，不以公开首页打开作为完成。只读 `web resolve` 接受 `instanceId`、HTTPS `origin`、`repoRoot`，返回 `resolved | selection_required | credential_required` 与不含 secret 的候选；显式目标优先，其次 Repo 唯一实例，再其次本地唯一 current 实例。显式未知目标不回退，Repo 多实例保留歧义，只在不能唯一确定时展示实例标识/域名并询问一次，不引入 last-used 默认或按 Owner 身份选实例。当前页面只有被用户明确指向才构成显式上下文，陌生 origin 自报同实例仍不获得信任。
-- 解析后必须经 `/me` 验证本地 current 身份；Owner 未指定更窄 target 时默认 admin Overview，参与者使用明确 Project/Issue，或只读授权 Project 清单后在唯一时选择、多个时询问。不引入广域参与者 Session。已有 Session 只有验证身份与 target scope 后才复用；浏览器选择与身份解析分离，最后核对准确的已认证落点，relay 成功本身不证明登录成功。
+- 解析后必须经 `/me` 验证本地 current 身份；Owner 未指定更窄 target 时默认 admin Overview，参与者使用明确 Project/Issue，或只读授权 Project 清单后在唯一时选择、多个时询问。D-272 允许新兑换非 Owner Session 使用 `project_selection`，只访问当前实时授权项目，初始仍进入明确 target。已有 Session 只有验证身份与 target scope 后才复用；浏览器选择与身份解析分离，最后核对准确的已认证落点，relay 成功本身不证明登录成功。
 - `cfkanban` 在用户选择 Passkey 登记时必须确认当前 Web Session 来自 Agent Launch，并说明 Passkey 只用于 Web、不会替代 `.cfkanban/` Credential。Skill 不把浏览器 WebAuthn/平台认证器能力探测或服务端登记清单解释成“当前设备已有可用 Passkey”；登录未完成时只说明可能是取消、超时、无匹配 credential、认证器不可用或策略拒绝，并提供 Browser Launch 恢复入口。hostname 变化时，v0 在新地址重新登记，不尝试跨 hostname 复用 Passkey，也不把 API Credential 粘贴或上传到网页。
 - `cfkanban` 处理 Public Join 时必须解析一个明确公开 Project 和一个显式 `reader | writer`，并只执行一次单 Project 原子 self-join。若本地已有该实例身份就复用；没有时按既有规则询问 display name、生成并安全保存新 Credential。Skill 不提供 Team Join、多 Project join 或隐藏循环批量授权，也不能把用户选择的 `writer` 静默改为 `reader`。
 - `cfkanban` 处理首次 Project Invite 或 Public Join 时，把可信 Skill 来源/本地写入、Principal/Credential 创建、secret 保存位置和目标 Project/role 合并为一份简短计划；用户一次确认后可以连续完成无漂移的计划内动作。来源、目标、role、保存位置或权限影响变化时重新计划；Agent 宿主/OS 的权限提示仍按各自机制处理。
@@ -521,10 +523,10 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 8. 已确认：v0 以官方 canonical HTTPS 作为首次信任根；不可覆盖的版本清单逐工件固定允许来源和 SHA-256 文件指纹，本地 receipt 保存发布来源与清单/工件摘要，update/downgrade 必须保持来源连续。marketplace/plugin 不能覆盖 canonical 来源，安装、更新和降级均不得自动执行。该机制不防 canonical publisher 整体失陷；独立签名及密钥轮换/撤销延后到公共分发、自动更新或托管分离出现时再评估。
 9. 已修订：D-213 取消原 SB-24 的完整 D1 导出/整库恢复产品能力；Cloudflare 平台原生 Time Travel 与控制台运维不包装成 cfKanban Skill capability。
 10. 已修订：D-215/D-216 要求 `cfkanban`/`cfkanban-admin` 为明确 target 创建短期一次性 Browser Launch；浏览器只兑换 HttpOnly Session，流程不把长期 Credential 传入浏览器。具体从 Agent 到浏览器的 capability 交付边界由 D-263 收紧。
-11. 已确认：D-217 固定 launch 为 5 分钟一次性，Session 为 8 小时固定且无 refresh；Session 绑定源 Credential 和 target scope。过期或源 Credential revoke 后只引导用户让 Agent 重新打开，不回退到网页粘贴 Credential。
+11. 已确认：D-217 固定 launch 为 5 分钟一次性，Session 为 8 小时固定且无 refresh；Session 绑定源 Credential 和服务端 scope，参与者新兑换 scope 由 D-272 修订。过期或源 Credential revoke 后只引导用户让 Agent 重新打开，不回退到网页粘贴 Credential。
 12. 已确认：D-219 移除 v0 Principal disable/enable/delete。Owner 按目标使用 Credential revoke、Project Grant revoke 或 Principal Recovery Invite；Skill 不再暴露不可逆身份停用动作。
 13. 已确认：D-221 禁止 Web 管理 Owner Credential 生命周期。`cfkanban-admin` 负责先本地落盘替代 secret、再执行 Bearer-only 原子轮换；`cfkanban-deploy` 只负责全部 Owner Credential 丢失后的部署外恢复。Web 只能撤销参与者 Credential。
-14. 已确认：D-222 允许 Owner `admin` Session 在显式选择后进入实例内任意 Project 数据面；默认 Overview 不自动加载全部 Issue，普通 Project/Issue Session 仍限制单 Project。
+14. 已确认：D-222 允许 Owner `admin` Session 在显式选择后进入实例内任意 Project 数据面；默认 Overview 不自动加载全部 Issue，Owner Project/Issue Session 仍限制单 Project；非 Owner 新兑换规则由 [D-272 增量合同](2026-09-19-participant-project-switching-spec.md) 修订，既有固定 scope Session 不扩大。
 15. 已确认：D-224 固定 Passkey 为 v0 唯一免 Agent 的 Web 直登方法；首次/补充登记都从 Agent-launch Session 开始，失败或 hostname 变化仍由 Browser Launch 恢复，不允许网页 Credential 输入。精确可检测性与 hostname 边界随后由 D-244 补充。
 16. 已确认：D-225 否决 Team Join；D-226 只保留单 Project Public Join。Owner 可以同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer`；Skill 每次只执行一条 Grant 的原子 self-join。
 17. 已确认：D-227 不建立逐 Principal 重入阻止；D-228 首次要求开启 Public Join 前提交 Project limits，其中“删除不释放”的旧语义已被 D-230 替代。
@@ -571,7 +573,7 @@ SB-01～SB-34 的主要产品体验与安全边界已经确认；合同修订 31
 7. 合同修订 3 已固定 Browser Launch 的 Agent 侧职责、宿主无关打开方式和长期 Credential 隔离；合同修订 4 固定 5 分钟 launch、8 小时 Session、源 Credential 失效联动与 target scope。
 8. 合同修订 5 已移除 Principal disable/enable/delete；离场、泄露与恢复只使用已有 Credential、Grant 和 Recovery Invite 能力。
 9. 合同修订 6 已固定 Owner Credential 不经 Web 撤销或轮换；正常轮换由 `cfkanban-admin` 在本地替代 secret 已安全落盘后执行，全部丢失才进入 `cfkanban-deploy` 的部署外恢复。
-10. 合同修订 7 已固定 Owner admin Session 可在显式选择后进入实例内任意 Project 数据面，同时保持默认 Overview 与普通 Project/Issue Session 的窄 scope。
+10. 合同修订 7 已固定 Owner admin Session 可在显式选择后进入实例内任意 Project 数据面，同时保持默认 Overview；非 Owner 新兑换 Session scope 后由 D-272 增量修订，Owner Project/Issue 和既有固定 scope Session 不扩大。
 11. 合同修订 8 已固定 Passkey 的 Agent 登记/恢复边界，以及 Public Join 的单 Project、显式 role、复用/创建本地身份与非批量调用合同；Team Join 已明确取消。
 12. 合同修订 9 已固定 Public Join 不使用逐 Principal blacklist，并要求 `cfkanban-admin` 在开启前取得 Owner 显式提交的 Project Issue/Comment row limits 与风险确认。
 13. 合同修订 10 已用三项 active quota 替代修订 9 的单调 row quota：soft delete/revoke 释放额度，restore/regrant 重新占用；同时要求 Skills 向 Owner 呈现生效的实例级请求门控。当时未冻结的配置载体已由合同修订 11 解决。

@@ -1,5 +1,7 @@
 # cfKanban API & D1 Schema SPEC
 
+> 2026-09-19 增量：参与者 Agent Launch 会话的项目切换以 [D-272 Frozen 合同](2026-09-19-participant-project-switching-spec.md) 为准；旧固定 scope 会话和 Owner 明确 Project/Issue 会话不扩大。
+
 > 2026-09-19 增量修订：[管理员用量与限额](2026-09-19-usage-statistics-spec.md) 定义 Owner 只读统计、schema 6 快照与可选云端采集；默认部署不增加统计凭据。
 
 > 2026-09-19 增量修订：[Issue 私有附件](2026-09-19-issue-attachments-spec.md) 定义 schema 4 与附件端点；仅附件 content PUT/GET 使用有界二进制，其余 JSON、鉴权、CAS、幂等与错误合同不变。
@@ -108,7 +110,7 @@ Invitation 与 Browser Launch code 同样至少 256 bit 随机熵，D1 只保存
 
 Cookie-auth 写请求必须同时通过受支持 Origin/同源校验与 double-submit CSRF cookie/header；GET/HEAD 不产生业务写入。Web Session 只能由服务端 `Set-Cookie` 建立，使用 `HttpOnly; Secure; SameSite=Strict; Path=/`，页面脚本不能读取认证 token。第二个随机 CSRF cookie 不设 HttpOnly，前端只把它复制到自定义 header，不持久化到 Web Storage；服务端要求 header 与 cookie 定时安全相等。
 
-Browser Launch 的 `expires_at` 固定为 `created_at + 5 minutes`，只能兑换一次。Web Session 的 `expires_at` 固定为 `created_at + 8 hours`，不因 `last_seen` 或请求活动延长，也不签发 refresh token。鉴权必须同时校验 Session 未撤销/未过期、Principal 存在、`source_kind + source_id` 当前 active 和 Session scope；Grant 与容器状态逐请求查询。Project/Issue launch target 解析为一个固定 Project scope；Owner `admin` launch 与 Owner Passkey Session 解析为实例级管理与数据面 scope。参与者 Passkey Session 解析为当前 Principal 的授权 Project 选择 scope。所有入口默认页面都不自动发起无 Project filter 的 Issue 查询。
+Browser Launch 的 `expires_at` 固定为 `created_at + 5 minutes`，只能兑换一次。Web Session 的 `expires_at` 固定为 `created_at + 8 hours`，不因 `last_seen` 或请求活动延长，也不签发 refresh token。鉴权必须同时校验 Session 未撤销/未过期、Principal 存在、`source_kind + source_id` 当前 active 和 Session scope；Grant 与容器状态逐请求查询。新兑换的非 Owner Project/Issue launch 使用已有 `project_selection` scope，target 只决定初始页面；Owner 的 Project/Issue launch 及既有固定 scope Session 仍限制单 Project（见 [D-272 增量合同](2026-09-19-participant-project-switching-spec.md)）；Owner `admin` launch 与 Owner Passkey Session 解析为实例级管理与数据面 scope。参与者 Passkey Session 解析为当前 Principal 的授权 Project 选择 scope。所有入口默认页面都不自动发起无 Project filter 的 Issue 查询。
 
 响应总是带 `X-Request-ID`。429/503 中存在安全重试窗口时带 `Retry-After`；不暴露 D1 bookmark、内部 SQL、表名或 Cloudflare 原始错误详情。
 

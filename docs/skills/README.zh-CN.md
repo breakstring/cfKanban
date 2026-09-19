@@ -2,22 +2,24 @@
 
 语言：[English](README.md) | [简体中文](README.zh-CN.md)
 
-cfKanban 把三个 Skills 放在同一个 portable、可验证 bundle 中交付：
+`1.0.0-rc.2` 包含四个 Skills：一个入门指南和三个操作技能：
 
+- `cfkanban-howto`：按日常使用 → Owner 管理 → 部署的顺序介绍能力、适用人群和可直接使用的话术；只读讲解，不执行操作。
 - `cfkanban`：日常身份、scope、Issue 协作、Invite/Public Join 和 Project/Issue Web launch。
 - `cfkanban-admin`：Deployment Owner 应用管理。
 - `cfkanban-deploy`：canonical release 校验、本地 Skill 生命周期、Cloudflare 部署、续做、migration 与升级安全。
 
-每个 `SKILL.md` 都先说明“能做什么”、何时应使用另一个 Skill、任务到命令对照、必须遵循的流程与停止条件；配对的 English/简体中文 reference 再提供详细 endpoint 和恢复说明。
+三个操作技能的 `SKILL.md` 都先说明“能做什么”、何时应使用另一个 Skill、任务到命令对照、必须遵循的流程与停止条件；配对的 English/简体中文 reference 再提供详细 endpoint 和恢复说明。
 
 ## 用户只需要怎么说
 
 用户只描述想要的结果，安全流程由 Skills 负责。下面这些提示词已经足够：
 
 ```text
-请使用 $cfkanban-deploy 为我部署一套 cfKanban。
-请使用 $cfkanban-admin 创建我的第一个 cfKanban 看板。
+请使用 $cfkanban-howto 介绍 cfKanban 能做什么，我应该从哪里开始。
 请使用 $cfkanban 加入这个 Project：<邀请链接>
+请使用 $cfkanban-admin 创建我的第一个 cfKanban 看板。
+请使用 $cfkanban-deploy 为我部署一套 cfKanban。
 ```
 
 用户不需要主动要求 release 校验、只读预检、部署计划、版本检查、读回或恢复处理。每个 Skill 会根据用户意图自动从安全的只读检查开始，只询问缺少的选择，并在正确的授权边界说明副作用。
@@ -27,7 +29,7 @@ cfKanban 把三个 Skills 放在同一个 portable、可验证 bundle 中交付�
 首个稳定发行版还没有发布。目前 Codex 用户可以加载不可变的测试 tag：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.1
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.2
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -35,13 +37,13 @@ codex plugin add cfkanban-agent-skills@cfkanban
 
 Alpha.57 新增 Owner 用量读取、共享 15 分钟缓存的按需刷新及 Owner 附件容量设置。升级到 schema 7 后，Owner 选择容量上限或不限制之前暂停新上传预留，已有文件保持可用。统计 Token 配置独立于技能安装和实例升级。
 
-当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.1/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
+当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.2/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
 
-应安装完整 plugin/bundle，不能只复制某个 `SKILL.md` 或单独的 `skills/<name>/` 目录。三个 entrypoints 按设计共用 bundle 内 `packages/skill-runtime` 下的 JavaScript 源码模块；尽管内部目录名包含 `runtime`，它并不是内嵌的 Node.js 可执行程序或运行时发行包。宿主投影必须保留这套已验证 bundle layout。当前测试预览只支持 Codex plugin 路径；其他宿主的 projection 属于稳定发行安装流程，不能用不完整的目录复制冒充。
+应安装完整 plugin/bundle，不能只复制某个 `SKILL.md` 或单独的 `skills/<name>/` 目录。三个操作技能的 entrypoints 按设计共用 bundle 内 `packages/skill-runtime` 下的 JavaScript 源码模块；尽管内部目录名包含 `runtime`，它并不是内嵌的 Node.js 可执行程序或运行时发行包。宿主投影必须保留这套已验证 bundle layout。当前测试预览只支持 Codex plugin 路径；其他宿主的 projection 属于稳定发行安装流程，不能用不完整的目录复制冒充。
 
-## 每个 Skill 内置的命令
+## 三个操作技能内置的命令
 
-在任意 Skill 目录运行下面的命令，即可查看该 Skill 的准确命令边界：
+`cfkanban-howto` 没有命令脚本。在三个操作技能之一的目录运行下面的命令，即可查看该 Skill 的准确命令边界：
 
 ```text
 node scripts/cfkanban-tool.mjs help
@@ -99,6 +101,6 @@ cfKanban 自己拥有的所有持久文件统一放在当前执行环境用户�
 
 ## 共享 helper modules
 
-三个 Skills 都路由到 `packages/skill-runtime` 中同一套无第三方依赖 JavaScript modules。这些是由用户已有兼容 Node.js 执行的源码文件，不是打包进来的 Node.js runtime。共享这些模块可以让路径校验、trusted-origin 处理、secret 注入、错误归一化、release 验证、plan digest 与 migration readback 保持一致，同时不发布独立 cfKanban CLI，也不把 Service 的业务规则复制到本地。
+三个操作技能路由到 `packages/skill-runtime` 中同一套无第三方依赖 JavaScript modules。这些是由用户已有兼容 Node.js 执行的源码文件，不是打包进来的 Node.js runtime。共享这些模块可以让路径校验、trusted-origin 处理、secret 注入、错误归一化、release 验证、plan digest 与 migration readback 保持一致，同时不发布独立 cfKanban CLI，也不把 Service 的业务规则复制到本地。
 
 独立的 Service 压缩包包含构建后的 Worker、Web assets、migrations、contracts、固定的 Wrangler 配置 schema，以及 `wrangler.template.json`。这个 JSON 文件只是带占位资源身份的不可直接部署配置骨架。准确部署计划获批且 D1 已创建后，`deployment write-wrangler-config` 才会在 immutable archive 外写入私有的实际配置；模板绝不能原样部署。

@@ -70,7 +70,7 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
         <span class="selection-row-end"><span class="role-badge">{{ roleLabel(choice.role) }}</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></span>
       </button>
       <p v-if="choices.length === 0" class="empty-copy">
-        {{ locale === "zh-CN" ? "当前没有可访问的项目。" : "No projects are currently available." }}
+        {{ locale === "zh-CN" ? "当前没有可访问的项目，请联系所有者获取项目权限。" : "No projects are currently available. Contact the Owner for project access." }}
       </p>
     </div>
   </main>

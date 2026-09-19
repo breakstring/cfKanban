@@ -205,6 +205,7 @@ watch(currentPath, () => {
   context.value = null;
   if (!authenticatedRoute.value) clearSession(false);
   else if (session.value === null && !loadingSession.value) void loadSession();
+  else if (route.value.kind === "selection") authorizationStale();
 });
 </script>
 

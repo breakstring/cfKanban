@@ -727,8 +727,14 @@ async function redeemLaunchBatch(
              target_json, expires_at, created_at, created_operation_id,
              last_operation_id)
            SELECT ?1, ?2, launch.principal_id, 'credential', launch.source_credential_id,
-                  launch.target_kind, launch.target_json, ?3, ?4, ?5, ?5
+                  CASE WHEN instance.owner_principal_id = launch.principal_id
+                    THEN launch.target_kind ELSE 'project_selection' END,
+                  CASE WHEN instance.owner_principal_id = launch.principal_id
+                    THEN launch.target_json
+                    ELSE json_object('kind', 'project_selection', 'entry_path', '/app') END,
+                  ?3, ?4, ?5, ?5
            FROM browser_launches launch
+           JOIN instance_meta instance ON instance.singleton = 1
            WHERE launch.id = ?6 AND launch.last_operation_id = ?5`,
         ).bind(
           sessionId,
