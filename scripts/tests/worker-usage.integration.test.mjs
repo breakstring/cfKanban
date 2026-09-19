@@ -29,7 +29,7 @@ test("fixed endpoint, scope, UTC windows, latest capacity, zero vs unknown", asy
   Object.assign(env, configuration);
   assert.equal((await read()).cloudflare.status, "pending");
   const calls = [];
-  await collectUsageStatistics(env, now, async (url, options) => { calls.push(JSON.parse(options.body)); assert.equal(url, "https://api.cloudflare.com/client/v4/graphql"); assert.equal(options.redirect, "error"); return success(url, options); });
+  await collectUsageStatistics(env, now, async (url, options) => { calls.push(JSON.parse(options.body)); assert.equal(url, "https://api.cloudflare.com/client/v4/graphql"); assert.equal(options.redirect, "manual"); return success(url, options); });
   assert.equal(calls.length, 2); assert.equal(calls[0].variables.database, "database"); assert.equal(calls[0].variables.date, "2026-09-19"); assert.equal(calls[1].variables.bucket, "bucket"); assert.equal(calls[1].variables.start, "2026-09-19T00:00:00.000Z"); assert.equal(calls[1].variables.storageEnd, "2026-09-19T12:00:00.000Z");
   const result = await read(); assert.equal(result.cloudflare.status, "fresh"); assert.deepEqual(result.cloudflare.metrics.map((item) => item.value), [100, 0, 12, 22, 1, 3]); assert.equal(result.cloudflare.metrics[0].observed_at, "2026-09-19T11:00:00.000Z"); assert.equal(result.cloudflare.metrics[1].observed_at, null);
   assert.equal((await read(now + 7200001)).cloudflare.status, "stale");
@@ -157,4 +157,46 @@ test("analytics diagnostics expose only fixed fields and numeric provider codes"
   assert.deepEqual(logs.pop(),[{operation:"usage_analytics",dataset:"r2",phase:"http",http_status:400,provider_codes:[],transport_name:null}]);
   assert.equal((await read()).cloudflare.error,"upstream_error");
   assert.equal(logs.length,0);
+});
+
+test("production analytics fetch options run in workerd and never follow redirects", async () => {
+  const { createServer } = await import("node:http");
+  const { Miniflare, convertV4MiniflareOptions } = await import("miniflare");
+  const { build } = await import("esbuild");
+  let redirectedRequests = 0, sourceRequests = 0;
+  const sink = createServer((_request, response) => { redirectedRequests++; response.end("must not receive credentials"); });
+  const source = createServer((request, response) => {
+    sourceRequests++;
+    assert.equal(request.headers.authorization,"Bearer local-test-only");
+    if (request.url === "/redirect") {
+      response.writeHead(302,{location:`http://127.0.0.1:${sink.address().port}/sink`}); response.end();
+    } else {
+      response.writeHead(200,{"content-type":"application/json"}); response.end(JSON.stringify(data()));
+    }
+  });
+  const listen = server => new Promise(resolve => server.listen(0,"127.0.0.1",resolve));
+  let runtime;
+  try {
+    await listen(sink); await listen(source);
+    const output = await build({
+      stdin: { resolveDir:fileURLToPath(new URL("../../",import.meta.url)), contents: `
+        import { collectUsageStatistics } from './apps/worker/src/services/usage.ts';
+        export default { async fetch(request) {
+          let error=null,metrics=null;
+          const env={USAGE_ACCOUNT_ID:'local-account',USAGE_D1_DATABASE_ID:'local-db',USAGE_ANALYTICS_TOKEN:'local-test-only',DB:{prepare(sql){return {bind(...values){this.values=values;return this;},async run(){if(sql.includes('SET error ='))error=this.values[1];if(sql.includes('SET collected_at ='))metrics=JSON.parse(this.values[1]);return {meta:{changes:1}};}};}}};
+          await collectUsageStatistics(env,${now},(_url,options)=>fetch('http://127.0.0.1:${source.address().port}'+new URL(request.url).pathname,options));
+          return Response.json({error,metrics});
+        }};
+      ` }, bundle:true,format:"esm",platform:"browser",write:false,
+    });
+    runtime = new Miniflare(convertV4MiniflareOptions({modules:true,compatibilityDate:"2026-08-29",script:output.outputFiles[0].text}));
+    const success = await (await runtime.dispatchFetch("http://localhost/success")).json();
+    assert.equal(success.error,null); assert.deepEqual(success.metrics.map(metric=>metric.value),[100,0,12]);
+    const redirected = await (await runtime.dispatchFetch("http://localhost/redirect")).json();
+    assert.deepEqual(redirected,{error:"upstream_error",metrics:null});
+    assert.equal(sourceRequests,2); assert.equal(redirectedRequests,0);
+  } finally {
+    await runtime?.dispose();
+    await Promise.all([source,sink].map(server=>new Promise(resolve=>server.close(resolve))));
+  }
 });

@@ -82,7 +82,8 @@ async function query(dataset: "d1" | "r2", queryText: string, variables: ObjectV
   let httpStatus: number | null = null;
   let codes: number[] = [];
   try {
-    const response = await fetcher(ENDPOINT, { method: "POST", redirect: "error", signal: controller.signal, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ query: queryText, variables }) });
+    // workerd 不支持 redirect:error；manual 返回的 3xx 由下方拒绝，不转发凭据。
+    const response = await fetcher(ENDPOINT, { method: "POST", redirect: "manual", signal: controller.signal, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ query: queryText, variables }) });
     httpStatus = response.status;
     if (!response.ok) {
       // 错误体仅提取有界数码；读取失败不能把已知 HTTP 分类替换成解析或超时错误。
