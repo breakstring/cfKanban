@@ -35,6 +35,6 @@
 - [Roadmap](project/roadmap.md)：方向真相和推荐顺序。
 - [决策登记表](project/decision-register.md)：确认、建议和延后项。
 - [待讨论问题](project/open-questions.md)：会实质改变合同的选择。
-- [Linear 协作约定](project/linear.md)：在线项目绑定、真相边界和同步规则。
+- [cfKanban 协作约定](project/cfkanban.md)：线上项目、真相边界与 Linear 历史迁移映射。
 
 当前不采用独立 progress log。进入实现阶段后，再根据实际协作强度决定是否启用。

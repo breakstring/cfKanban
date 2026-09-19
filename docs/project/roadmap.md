@@ -2,18 +2,17 @@
 
 - 文档状态：Draft
 - 方向真相：本文件
-- 执行真相：[Linear cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f)
-- 最近讨论：2026-09-01
+- 执行真相：[cfKanban Development](cfkanban.md)
+- 最近校准：2026-09-19
 
 ## 当前基线
 
-2026-09-19 增量：用户已授权 Web/Skills 体验优化与可选私有 Issue 附件，范围以 [Issue 附件 Frozen SPEC](../specs/2026-09-19-issue-attachments-spec.md) 为准。下文历史阶段中“暂缓 R2 附件”的表述由该合同覆盖；不改变其他增强能力的暂缓状态，也不表示更新了 Linear 的动态执行状态。
+2026-09-19 增量：用户已授权 Web/Skills 体验优化与可选私有 Issue 附件，范围以 [Issue 附件 Frozen SPEC](../specs/2026-09-19-issue-attachments-spec.md) 为准。下文历史阶段中“暂缓 R2 附件”的表述由该合同覆盖；不改变其他增强能力的暂缓状态，也不替代线上任务的实际验收。
 
 - 产品定位为面向 Coding Agents 的轻量工作协调账本。
 - 已明确用户的 Agent 是主要调用载体，但不是唯一界面；人类也可以在极简第一方 Web 中直接查看、轻量参与和维护。部署、Owner 管理、协调和 Coding 只是 Agent 的任务模式，不是不同 Agent 类型。
-- 当前已有 Frozen 产品/技术合同、可执行 OpenAPI/D1 合同、Worker/D1 业务实现和极简双语 Web；WP-01～WP-09 已完成，三个 portable Skills、部署/更新流程和 release candidate 尚未实现或验收。
-- Linear 项目已于 2026-09-01 在线读回并校准为 In Progress：`v0 可部署闭环` Milestone 进度为 67%，15 个 Issues 中 10 个 Done、其余 5 个为 Backlog。未完成范围为 WP-10、WP-11，以及 KENN-335～KENN-337 三个 release-blocking 加固任务；动态状态仍以 Linear 为准。
-- KENN-338 的容器恢复、usage invariant、OpenAPI 投影和 D1 查询预算加固已完成；当前实现主线进入 WP-10，其余 Web 加固完成后才进入 WP-11。
+- 已具备 Frozen 产品/技术合同、Worker/D1/Web、三个 portable Skills 和部署/更新链路，并已进行多次测试发行与真实 dogfood；这不代表所有跨宿主、跨 OS 和真人验收已完成。
+- 2026-09-19 起，执行与完成证据统一在 cfKanban Development 跟踪；Linear 仅保留历史来源。迁移采用已有任务承接，映射见 [协作约定](cfkanban.md)，本文件不保存动态 Issue 计数。
 - 已确认一个部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project。
 - 已确认 Credential 只认证 Principal；v0 业务权限按 Project 显式授予，不从 Workspace 继承。
 - 已确认每个部署实例只有一个 Owner；只有 Owner 能创建 Workspace/Project 和管理 Project Grants，参与者只有 reader/writer。
@@ -57,7 +56,7 @@
 - 已确认小而明确的应用级资源上限：请求 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB、列表默认 20/最大 100、context 64 KiB。
 - 已确认源码/发行工程采用锁文件约束的根级验证/构建入口，以及包含顺序、checksum、分类、重入边界和预期 schema artifacts 的 D1 migration manifest；deploy Skill 以 ledger + 实际 schema 双重 readback，不把文件名或退出码当成应用完成。
 - 已确认 v0 不提供持有 Cloudflare Token 的 GitHub Actions 部署路径，继续由用户的 Agent 通过 `cfkanban-deploy` 完成唯一主部署流程。无 Cloudflare 凭据的 CI 验证 workflow 可以作为正常工程设施；远端部署 workflow 后置到下一阶段重新冻结授权与恢复体验。
-- Foundation、Agent Skills & Bootstrap、API/Schema、Web UI 与 `DESIGN.md` 均已冻结为 v0 实现基线；Foundation 当前为修订 19，Agent Skills & Bootstrap 为修订 27。实现状态以 Linear 为准，合同冻结本身不表示对应 Issue 已完成。
+- Foundation、Agent Skills & Bootstrap、API/Schema、Web UI 与 `DESIGN.md` 均已冻结为 v0 实现基线；Foundation 当前为修订 19，Agent Skills & Bootstrap 为修订 27。实现状态以 cfKanban 为准，合同冻结本身不表示对应 Issue 已完成。
 - 已确认 SB-01：canonical 官网 bootstrap document 把 stable pointer 解析到 immutable release manifest，由 manifest 分别固定 Skill bundle 与 Service deployment bundle；manifest 逐工件限制来源并记录 SHA-256 文件指纹，本地更新校验来源连续性。marketplace/plugin 只作便捷入口，宿主差异由安装规则和 Skill 内置 scripts 吸收，不建 Host Adapter 角色。
 - 已确认 SB-02 环境准备和 SB-03 首次部署：strict-zero 默认每实例一个 Worker + 一个 D1、先使用 `workers.dev`，同名资源只有本地/远端 marker 一致时才恢复。更新拆成 SB-03A 本地 Skill update 与 SB-03B 云端 Instance upgrade；前者采用 immutable bundle/原子切换，后者采用固定目标、兼容矩阵、逐条 migration journal 和可验证 restore point，且 deploy Skill 不执行 D1 restore。SB-04～SB-24 已按三层边界复核：Service/安全脚本强制 MUST，Skills 提供可覆盖 SHOULD，上层最终 DECIDES。cfKanban 保持原子合同，同时通过相关 `SKILL.md` 告知本地状态位置、Invite 未指定 role 时推荐 writer、已知上下文中强烈推荐 Project filters、幂等/readback 组合范式、Recovery Invite 固定 mode 与 `deleted=only` tombstone 入口。D-213 已取消原 SB-24 的完整导出/整库恢复产品能力；Storyboard 已完成一轮。
 - [API & D1 Schema SPEC](../specs/2026-08-28-api-schema-spec.md) 与 [Web UI SPEC](../specs/2026-08-29-web-ui-spec.md) 已于 2026-08-29 冻结；91 个 OpenAPI operations、25 张 D1 表、28 个索引、关键原子操作和 Web 安全骨架已通过本地验证。
@@ -78,7 +77,7 @@
 - 用 Agent-first Storyboard 走通人类意图、Agent 执行和关键授权边界。
 - 形成可实现、可验证的 Foundation SPEC 与 Agent Skills & Bootstrap SPEC。
 
-R0 及全部 v0 实现前合同已完成冻结。实施 PLAN 和 Linear Work Packages 已建立；业务代码仍需用户明确开始实施。
+R0 及全部 v0 实现前合同已完成冻结。实施 PLAN 和初始 Work Packages 的历史映射保留在仓库；后续工作由 cfKanban 任务与具体用户授权共同约束。
 
 ### R1 核心工作账本
 
@@ -163,15 +162,15 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 
 ## 推荐顺序
 
-1. 推进 [KENN-326 / WP-10](https://linear.app/kennzhang/issue/KENN-326)，实现三个 portable Skills、strict-zero 部署和两个独立更新平面。
-2. 按风险依次收口 KENN-336、KENN-335 与 KENN-337；这些加固任务和 WP-10 全部完成后，才能进入 [KENN-327 / WP-11](https://linear.app/kennzhang/issue/KENN-327) 的端到端 release candidate 验证。
-3. Web、Skills 和最终 release candidate 继续复用同一 Frozen API/migration/release 合同，不建立第二套事实源或部署路径。
-4. 只有真实 Agent、IAB/浏览器、OS、并发与 Free profile 证据出现后，才决定 R5 的可选 Cloudflare 增强投入。
+1. 按 cfKanban 线上任务及 Frozen 合同推进可独立交付的工作，不重复实现已有完成证据覆盖的范围。
+2. WP-11 的剩余端到端验收由 CFK-7 汇总，真人、多宿主、多 OS 场景由 CFK-28 及其子卡承接；详细条件在线维护。
+3. Web、Skills 和 release candidate 继续复用同一 Frozen API/migration/release 合同，不建立第二套事实源或部署路径。
+4. 可选 Cloudflare 增强按对应增量 Frozen 合同、真实使用证据与独立成本授权推进。
 
 ## 明确暂缓
 
 - 为了看起来完整而照搬 Linear 全部概念。
-- 把 Roadmap 逐条复制成 Linear backlog。
+- 把 Roadmap 逐条复制成执行工具 backlog。
 - 在 v0 或没有对应版本的已冻结设计前引入 KV、DO、Queues、R2、Vectorize 和 AI。
 - 在没有明确开始对应 WP、也没有重读 Frozen 合同前做 UI、服务或部署实现。
 - 在下一阶段合同冻结前引入持有 Cloudflare Token、由 push 或 workflow_dispatch 执行远端写入的 GitHub Actions 部署 workflow。

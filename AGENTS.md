@@ -8,7 +8,7 @@
 
 - 默认使用简体中文沟通和维护文档；代码标识、协议字段和外部标准保留英文。
 - 根目录 `README.md` 默认使用英文；简体中文版本使用 `README.zh-CN.md`，两者顶部互相链接。后续语言版本沿用 `README.<locale>.md`，并同步维护顶部语言导航。
-- 项目已完成 v0 实现前产品发现与架构冻结，当前处于 implementation-ready、尚未开始业务编码的阶段。`Draft` 文档仍只表示讨论基线，不是实现授权。
+- 项目已进入实现、测试发行与自身 dogfood 阶段；当前执行进展以 cfKanban 线上项目为准。`Draft` 文档仍只表示讨论基线，不是实现授权。
 - 未得到用户明确授权前，不开始业务实现、部署、迁移、提交或推送。
 - 开始实现前必须重读相关 SPEC；只有 `Frozen` 合同才能作为稳定实现依据。若用户明确要求基于 Draft 试验，应在交付中标明偏差和未冻结项。
 
@@ -30,25 +30,27 @@
 | Web 视觉设计合同 | `DESIGN.md` | warm editorial workbench 的 tokens、排版、布局、组件与无障碍约束；Frozen |
 | API / Schema 合同 | `docs/specs/2026-08-28-api-schema-spec.md` | v0 HTTP/OpenAPI、D1 schema、索引与原子写入；Frozen |
 | Roadmap | `docs/project/roadmap.md` | 方向、基线、推荐顺序与暂缓项；不保存动态 backlog |
-| 执行跟踪 | Linear 项目 `cfKanban` | Issue、状态、优先级、负责人、排期与执行评论 |
+| 执行跟踪 | cfkanban.dev 的 `cfKanban Development` 项目；入口见 `docs/project/cfkanban.md` | Issue、状态、优先级、负责人、关系与执行证据；Linear 仅保留历史来源 |
 | 决策记录 | `docs/project/decision-register.md` | 已确认、建议和延后决策；不得把建议写成已冻结事实 |
-| SPEC / PLAN | `docs/specs/`、`docs/plans/` | 公共合同与高风险实施配方；不复制 Linear 动态状态 |
-| v0 实施计划 | `docs/plans/2026-08-29-v0-implementation-plan.md` | WP-01～WP-11 的范围、依赖、验收与停止条件；状态仍以 Linear 为准 |
-| 完成证据 | 暂不采用独立 progress log | 在项目进入实现阶段后再由用户确认是否启用 |
+| SPEC / PLAN | `docs/specs/`、`docs/plans/` | 公共合同与高风险实施配方；不复制线上动态状态 |
+| v0 实施计划 | `docs/plans/2026-08-29-v0-implementation-plan.md` | WP-01～WP-11 的范围、依赖、验收与停止条件；状态以 cfKanban 为准 |
+| 完成证据 | cfKanban Issue 的结构化完成记录与相关验证链接 | 暂不采用独立 progress log |
 
-涉及治理接入或迁移、Roadmap 方向变化、Linear 同步、SPEC/PLAN 合同位置变化或 progress log 采用方式时，使用项目管理治理技能。该技能提供方法，不扩大 Linear 写入、文件修改、提交或推送权限。
+涉及治理接入或迁移、Roadmap 方向变化、执行工具同步、SPEC/PLAN 合同位置变化或 progress log 采用方式时，使用项目管理治理技能；线上任务操作使用 cfkanban 技能。技能提供方法，不扩大外部写入、文件修改、提交或推送权限。
 
-## Linear 规则
+## cfKanban 项目管理规则
 
-- 机器绑定为 `.linear/project.json`，人类可读规则为 `docs/project/linear.md`。
-- Linear 是执行真相，仓库文档是产品与技术合同真相；两者通过链接关联，不复制动态状态。
-- Linear 写入前先在线查重并确认 workspace、team、project 和目标 Issue。
+- 2026-09-19 起，全仓采用 cfkanban.dev 的 `cfKanban Development` 项目进行项目管理与 dogfood。准确实例、Workspace/Project UUID 和迁移映射见 `docs/project/cfkanban.md`。
+- cfKanban 是执行真相，仓库文档是产品与技术合同真相；两者通过链接关联，不复制动态 backlog。
+- 本地 `.cfkanban-scope.json` 仅作非秘密推荐过滤，保持 Git ignored；缺失时按治理文档中的准确 UUID 查询，不退回无过滤全实例搜索，也不重新建立 `.linear/`。
+- 开始工作前在线确认实例身份、目标项目及已有 Issue；复用已有任务，按实际证据更新状态。完成使用 complete 写结构化摘要、验证、产物与后续事项，不把未验证工作标为完成。
+- Linear 原任务仅保留为历史来源，不再作为执行入口；除用户另行要求，不双向同步、自动关闭或删除原记录。
 - v0 方向已冻结并按实施 PLAN 建立 WP-01～WP-11；后续新增 Issue 仍须先查重，只按可独立交付和验证的范围补充，不把 Roadmap 机械复制成 backlog。
-- 不在仓库中保存 Linear token、OAuth、cookie 或其他凭据。
+- 不在仓库中保存 Credential、token、OAuth、cookie 或其他凭据。cfKanban 凭据只由 Skill 在用户私有 `.cfkanban/` 中管理。
 
 ## 安全下限与合同约束
 
-- 2026-09-19 已授权技能与 UI 优化、Issue 附件增强；附件以 `docs/specs/2026-09-19-issue-attachments-spec.md` 为增量 Frozen 合同。默认 strict-zero 仍只有 Worker/D1；附件 profile 显式启用私有 R2、固定应用预算和有界定时清理，R2 订阅/费用及新的 Cloudflare 权限须单独确认。该增量优先于下文旧有的附件后置范围。
+- 2026-09-19 已授权技能与 UI 优化、Issue 附件增强；附件以 `docs/specs/2026-09-19-issue-attachments-spec.md` 为增量 Frozen 合同。默认 strict-zero 仍只有 Worker/D1；附件 profile 显式启用私有 R2、Owner 明确选择的应用容量上限（或不限制）和有界定时清理，R2 订阅/费用及新的 Cloudflare 权限须单独确认。该增量优先于下文旧有的附件后置范围。
 
 - 2026-09-08 已授权 UUID 重构以 `docs/specs/2026-09-08-container-uuid-spec.md` 为 Frozen 合同；容器 key 已取消，不兼容旧 API/URL/scope。UI 只要求和展示名称；API、URL 和 Agent 使用服务端 UUID，同名不代表同一对象。
 
@@ -123,7 +125,7 @@
 - 任何状态写入都要考虑并发前置条件、幂等重试、审计事件和结构化错误恢复。
 - v0 Web Board 支持固定五列间单卡拖拽。落到非 `done` 列立即执行带 expected version 的状态保存；拖入 `done` 自动使用 complete 合同，缺少 summary 时先收集完成摘要。失败或冲突回到服务端真实列；不提供多卡/批量写入或手工 rank。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG。
 - cfKanban 自管持久数据统一使用当前执行环境 home 下的 `.cfkanban/`，按 `instances/`、`skill-releases/`、`tool-runtime/` 分责；宿主 marketplace/plugin metadata、发现投影/cache 与 Cloudflare auth 仍留在各自所有者目录。分发 `SKILL.md` 必须直接说明能力、命令/API 对照、读回和停止条件；可本地化的操作文档维护 English/简体中文，不支持 locale 的 metadata 使用英文，公开表面不显示内部阶段标签。
-- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 与双语 deployment/join guides 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 31；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 Linear WP 推进，不得默补或改变公共合同。
+- Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 与双语 deployment/join guides 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 31；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 cfKanban 关联任务推进，不得默补或改变公共合同。
 
 ## 文档路由
 

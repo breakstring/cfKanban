@@ -3,16 +3,18 @@
 - 文档状态：Ready
 - 日期：2026-08-29
 - Roadmap：R1～R4 的首个可部署闭环
-- Linear Project：[cfKanban](https://linear.app/kennzhang/project/cfkanban-567c4995296f)
+- 当前执行入口：[cfKanban 协作约定](../project/cfkanban.md)；下方 Linear 映射仅保留历史来源
 - 产品合同：[Foundation SPEC](../specs/2026-08-26-agent-native-kanban-foundation-spec.md)（Frozen）
 - Agent 合同：[Agent Skills & Bootstrap SPEC](../specs/2026-08-28-agent-skills-bootstrap-spec.md)（Frozen）
 - API 合同：[API & D1 Schema SPEC](../specs/2026-08-28-api-schema-spec.md)（Frozen）
 - Web 合同：[Web UI SPEC](../specs/2026-08-29-web-ui-spec.md)（Frozen）
 - 视觉合同：[DESIGN.md](../../DESIGN.md)（Frozen）
 - 验证基线：[API / D1 合同验证快照](../research/api-d1-contract-validation-2026-08-29.md)
-- 实施授权：本计划与 Linear 任务获准建立；业务编码、部署和远端 migration 尚未开始
+- 初始授权记录（2026-08-29）：当时仅批准建立计划与 Linear 任务；后续实现按各次用户授权推进，本文不提供新的部署或 migration 授权。
 
-## Linear 映射
+## 历史 Linear 映射
+
+2026-09-19 起，WP-11 的剩余目标与验收由 CFK-7 / CFK-28 承接；以当前 cfKanban 记录为执行真相，不把下列历史映射当作待实施清单。
 
 Milestone：[v0 可部署闭环](https://linear.app/kennzhang/project/cfkanban-567c4995296f/overview)
 
@@ -173,7 +175,7 @@ docs/
 
 ## 5. 实施规则
 
-- 每个 Linear Issue 开始前重读其直接依赖的 Frozen SPEC；发现合同冲突先停下修订，不在实现中默补。
+- 每个实施 Issue 开始前重读其直接依赖的 Frozen SPEC；发现合同冲突先停下修订，不在实现中默补。
 - shared schema、migration、OpenAPI、认证权限、错误 envelope 和根配置由单一实现 owner 串行修改；并行工作按 Worker/Web/Skills 或独立验证模块分区。
 - 每个切片先证明最小垂直行为，再扩充同类端点；禁止一次性生成 91 个空 handler 后声称 API 已实现。
 - D1 migration 一旦进入首个发布 bundle 即不可改写；发布前 prototype `0001_initial` 可以随 Frozen 合同校准一次。
@@ -193,7 +195,7 @@ docs/
 
 ## 7. 交付与停止条件
 
-每个 WP 只有在其验收证据读回后才能在 Linear 完成。以下情况必须停止并回到合同层：
+每个 WP 只有在其验收证据读回后才能在 cfKanban 使用 complete 完成。以下情况必须停止并回到合同层：
 
 - 需要增加业务角色、Workspace 权限继承、公开 batch、第二事实源或新的 Cloudflare 付费依赖；
 - 无法在 D1 单个原子单元内保证已冻结的并发/配额/恢复语义；
