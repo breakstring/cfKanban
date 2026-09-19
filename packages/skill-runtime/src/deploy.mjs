@@ -11,6 +11,9 @@ import { UPGRADE_MIGRATION_EXECUTION } from "./upgrade-plan.mjs";
 import { canonicalDigest, normalizeLf, readJson, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
 
 const MAX_MIGRATION_READBACK_SQL_BYTES = 4 * 1024;
+// alpha.57 omitted attachment_storage columns from its immutable readback SQL.
+const ALPHA57_READBACK_SHA256 = "1aee968287724dfa5b083fd53e92e0e8e93eaf3a9dd81474fcc165e62adefacb";
+
 const MAX_MIGRATION_LEDGER_ROWS = 1024;
 const MAX_MIGRATION_SCHEMA_ARTIFACTS = 4096;
 const OWNER_BOOTSTRAP_READBACK_FIELDS = Object.freeze([
@@ -909,6 +912,7 @@ export async function executeWranglerAction({
     CLOUDFLARE_ACCOUNT_ID: requireString(plan.target?.cloudflare_account_id, "cloudflare_account_id", { max: 128 }),
   };
   let migrationReadbackSql = null;
+  let migrationReadbackSource = null;
   let ownerBootstrapReadbackSql = null;
   if (action === "migration_ledger_readback") {
     if (migrationReadbackSqlPath === null) {
@@ -926,6 +930,22 @@ export async function executeWranglerAction({
       throw toolError("MIGRATION_READBACK_SQL_INVALID", "Migration readback SQL is empty, oversized, or contains a NUL byte");
     }
     migrationReadbackSql = bytes.toString("utf8");
+    const sourceSha256 = sha256Bytes(bytes);
+    const compatibilityFix = plan.kind === "deployed_instance_upgrade"
+      && plan.release?.service_bundle_version === "0.1.0-alpha.57"
+      && plan.target?.service_bundle_version === "0.1.0-alpha.57"
+      && plan.target?.service_bundle_sha256 === "20b5002cde2b8e8df6986d05f72600b5657f2965c406aa126f851b3d9d985d9e"
+      && plan.target?.schema_version === 7
+      && sourceSha256 === ALPHA57_READBACK_SHA256;
+    if (compatibilityFix) {
+      migrationReadbackSql = migrationReadbackSql.replace("ORDER BY type, name;", "UNION ALL\nSELECT 'column' AS type, 'attachment_storage.' || name AS name FROM pragma_table_info('attachment_storage')\nORDER BY type, name;");
+    }
+    migrationReadbackSource = {
+      source: "journal_frozen_service_bundle",
+      source_sql_sha256: sourceSha256,
+      executed_sql_sha256: sha256Bytes(Buffer.from(migrationReadbackSql, "utf8")),
+      compatibility_fix: compatibilityFix ? "alpha57_attachment_storage_columns" : null,
+    };
   }
   if (action === "owner_bootstrap_readback") {
     const priorAttempt = journal.events.find((event) => event?.type === "command_started" && event.action === "bootstrap_owner") || null;
@@ -973,6 +993,7 @@ export async function executeWranglerAction({
     event: {
       type: "command_started",
       action,
+      ...(migrationReadbackSource === null ? {} : { migration_readback_source: migrationReadbackSource }),
       executable,
       args: action === "apply_migration" ? args.map((arg) => arg.startsWith("--command=") ? "--command=[VERIFIED_PUBLIC_MIGRATION_SQL]" : arg) : args,
       ...(action === "apply_migration" ? { migration_execution: { ...plan.migrations.execution, sql_bytes: Buffer.byteLength(upgradeAction.migrationSql, "utf8") } } : {}),
@@ -1046,6 +1067,7 @@ export async function executeWranglerAction({
     event: {
       type: "command_finished",
       action,
+      ...(migrationReadbackSource === null ? {} : { migration_readback_source: migrationReadbackSource }),
       exit_code: result.code,
       signal: result.signal,
       stdout_summary: stdoutSummary,
@@ -1068,6 +1090,7 @@ export async function executeWranglerAction({
   return {
     command_succeeded: true,
     action,
+    ...(migrationReadbackSource === null ? {} : { migration_readback_source: migrationReadbackSource }),
     readback_required: true,
     stdout_summary: stdoutSummary,
     ...(migrationReadback === null ? {} : { migration_readback: migrationReadback }),

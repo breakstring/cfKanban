@@ -21,6 +21,8 @@ UNION ALL
 SELECT 'column' AS type, 'projects.' || name AS name FROM pragma_table_info('projects')
 UNION ALL
 SELECT 'column' AS type, 'public_join_policies.' || name AS name FROM pragma_table_info('public_join_policies')
+UNION ALL
+SELECT 'column' AS type, 'attachment_storage.' || name AS name FROM pragma_table_info('attachment_storage')
 ORDER BY type, name;
 
 SELECT COUNT(*) AS row_count, MAX(schema_version) AS schema_version
