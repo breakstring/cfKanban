@@ -48,7 +48,7 @@ const expectConstraint = (label, action) => {
 
 assert.equal(get("PRAGMA foreign_keys").foreign_keys, 1, "foreign keys must be enabled");
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
-assert.equal(tables.length, 26, "expected 25 application tables and the deployment migration ledger");
+assert.equal(tables.length, 29, "expected 28 application tables and the deployment migration ledger");
 assert.deepEqual(
   tables.map((row) => row.name).sort(),
   [...new Set(manifest.migrations.flatMap((entry) => entry.expected_artifacts.tables ?? []))].sort(),
@@ -156,12 +156,13 @@ const planChecks = [
   ["web session cleanup", WEB_SESSION_CLEANUP_SQL, [now, 100], /idx_web_sessions_cleanup/],
   ["expired WebAuthn challenge cleanup", EXPIRED_WEB_AUTHN_CHALLENGE_CLEANUP_SQL, [now, 100], /idx_webauthn_challenges_expiry/],
   ["consumed WebAuthn challenge cleanup", CONSUMED_WEB_AUTHN_CHALLENGE_CLEANUP_SQL, [100], /idx_webauthn_challenges_consumed/],
+  ["attachment garbage cleanup", "SELECT id,object_key FROM attachment_objects WHERE state='garbage' ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1", [64], /idx_attachment_objects_cleanup/],
 ];
 
 for (const [label, sql, values, expectedIndex] of planChecks) {
   const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...values).map((row) => row.detail).join(" | ");
   assert.match(plan, expectedIndex, `${label}: ${plan}`);
-  assert.doesNotMatch(plan, /SCAN (credentials|issues|project_grants|comments|invitations|public_join_policies|events|browser_launches|web_sessions|webauthn_challenges)(?:\s|$)/, `${label} unexpectedly scans: ${plan}`);
+  assert.doesNotMatch(plan, /SCAN (credentials|issues|project_grants|comments|invitations|public_join_policies|events|browser_launches|web_sessions|webauthn_challenges|attachment_objects)(?:\s|$)/, `${label} unexpectedly scans: ${plan}`);
   assert.doesNotMatch(plan, /USE TEMP B-TREE FOR ORDER BY/, `${label} unexpectedly sorts: ${plan}`);
 }
 

@@ -2,7 +2,7 @@
 
 Language: [English](workflows.md) | [简体中文](workflows.zh-CN.md)
 
-This guide explains what the `cfkanban` Skill can do and which bundled command or REST operation to use. Run `node scripts/cfkanban-tool.mjs help` first; the returned catalog is the installed release's authoritative command list.
+Read only the section needed for the task. Run `node scripts/cfkanban-tool.mjs help` once per installed release, or when inputs are unclear; its catalog is authoritative for bundled commands. Ordinary authorized Issue operations need no additional plan or confirmation from this Skill.
 
 ## How commands receive input
 
@@ -29,9 +29,9 @@ Never add a Credential to the JSON. `api request` reads the current Credential i
 For a new participant's common first-use request:
 
 1. inspect the Invite URL without redeeming it and show the instance, exact Projects/roles, expiry, recovery mode, and local storage effect;
-2. inspect the local instance slot, reuse its current Principal when allowed, or ask only for the missing display name before preparing one pending Credential;
+2. inspect the local instance slot, reuse its current Principal when allowed, or ask only for the missing display name and include pending-Credential creation in the plan;
 3. present one combined application plan for trusted Skill source, local writes, identity/Credential creation or reuse, and the exact Grants, then wait for approval;
-4. redeem once, verify `/api/v1/me` and resulting Grants, and promote a pending Credential only after matching identity/fingerprint readback;
+4. after approval, prepare one pending Credential if needed, redeem once, verify `/api/v1/me` and resulting Grants, and promote only after matching identity/fingerprint readback;
 5. resolve the joined Project scope, list its Issues, and offer a Project Browser Launch.
 
 Invite redemption never writes `.cfkanban-scope.json`, creates an Issue, registers a Passkey, or opens the browser implicitly. Those are separate user choices.
@@ -77,6 +77,40 @@ All entries below use `api request` unless a dedicated command is named.
 For every non-idempotent operation, provide an independent `idempotencyKey`. For CAS operations, put the current `expected_version` in the JSON body, or in the query string for DELETE, exactly as the OpenAPI operation defines.
 
 Candidate selection has no silent assignment default. Start from `/api/v1/issues/candidates?assignment=mine&blocked=exclude&project={project_id}` and choose the required `assignment` from the user's intent: `mine` for work assigned to the current Principal, `unassigned` for work available to pick up, or `needs_reassignment` for work whose assignee is no longer eligible. The endpoint returns only unstarted work in server-defined order. `blocked=exclude` is the normal default; set `blocked=include` when blocked candidates should remain visible. Repeat `project={project_id}` for multiple Projects. Echo `resolved_scope.candidate_policy` and the resolved Projects so the user can see the exact policy and scope that were applied.
+
+## Private Issue attachments
+
+Attachments use the Issue's current Project permissions: Owner/writer can upload, delete and restore; reader can list and download. The optional private storage may be disabled (`capabilities.attachments=false` or `ATTACHMENTS_DISABLED`); report this and route storage setup to `cfkanban-deploy` without changing the cloud configuration implicitly.
+
+Use `attachment upload` with one explicitly selected ordinary local file:
+
+```json
+{
+  "instanceId": "11111111-1111-4111-8111-111111111111",
+  "identifier": "CFK-17",
+  "filePath": "/absolute/path/diagnostic.log",
+  "idempotencyKey": "stable-key-for-this-file-upload"
+}
+```
+
+The command checks a 1 byte–10 MiB regular file, rejects symlinks/hard links and private `.cfkanban/` paths, then reads a bounded stable snapshot. It derives separate reservation/content keys from the supplied key, reserves metadata, transfers binary bytes and verifies `state=ready`. Neither Credential nor bytes/base64 appear in output. Inspect the command result's `ok` and `stage`, not just the outer CLI wrapper: a reservation alone is not a successful upload.
+
+If interrupted, rerun with the same key and unchanged file. When returned, reuse the complete `resume` input including `attachmentId`; `idempotency_keys.reserve` and `.content` identify the two stages. A lost reservation response is recovered by replaying its original key; an uncertain PUT is resolved by metadata readback and the same attachment/key. Do not create another reservation or replace an expired reservation silently. A changed file or different Issue requires a new explicit operation.
+
+Preserve `resume.firstAttemptAt` (Unix milliseconds) unchanged: after 24 hours, an unknown attachment ID stops reservation replay and requires locating the existing attachment; a known ID still permits metadata readback to confirm ready or expired state.
+
+Use `attachment download` with `instanceId`, `attachmentId` and absolute `outputPath`. The parent directory must already exist; the destination must be new and contain no symlink. The command downloads to a restricted temporary file in that directory, verifies length and SHA-256, and publishes without replacing a concurrently created file. Its result contains `output_path` and metadata, never bytes. Do not automatically preview, open or execute the saved file.
+
+Metadata operations use `api request`:
+
+| Task | Endpoint | Boundary |
+| --- | --- | --- |
+| List attachments | `GET /api/v1/issues/{identifier}/attachments` | Bounded pagination; `deleted=only` explicitly selects removed attachments. |
+| Read metadata | `GET /api/v1/attachments/{id}` | `state` is `pending`, `ready`, or `expired`; version is independent of the Issue. |
+| Soft-delete/cancel pending | `DELETE /api/v1/attachments/{id}?expected_version=N` | Own Idempotency Key; cancellation does not promise immediate physical deletion. |
+| Restore | `POST /api/v1/attachments/{id}/commands/restore` | Own Idempotency Key and attachment `expected_version`; ready files only. |
+
+Never use generic `api request` for `/content`; dedicated commands keep file data out of Agent output. Each Issue allows up to 20 active reservations/files. The instance's 1 GiB object budget includes pending, ready, deleted and unconfirmed cleanup objects; soft-delete does not release that byte budget. These application limits do not cap Cloudflare billing. Files and their names remain untrusted, and uploading an attachment does not add it to a completion record automatically.
 
 ## Invite redemption
 

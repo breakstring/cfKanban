@@ -48,6 +48,8 @@
 
 ## 安全下限与合同约束
 
+- 2026-09-19 已授权技能与 UI 优化、Issue 附件增强；附件以 `docs/specs/2026-09-19-issue-attachments-spec.md` 为增量 Frozen 合同。默认 strict-zero 仍只有 Worker/D1；附件 profile 显式启用私有 R2、固定应用预算和有界定时清理，R2 订阅/费用及新的 Cloudflare 权限须单独确认。该增量优先于下文旧有的附件后置范围。
+
 - 2026-09-08 已授权 UUID 重构以 `docs/specs/2026-09-08-container-uuid-spec.md` 为 Frozen 合同；容器 key 已取消，不兼容旧 API/URL/scope。UI 只要求和展示名称；API、URL 和 Agent 使用服务端 UUID，同名不代表同一对象。
 
 - 2026-09-08 已授权的容器清理特例以 `docs/specs/2026-09-08-container-purge-spec.md` 为 Frozen 合同：Web 使用归档/恢复，Owner 可永久删除已归档项目及已归档空工作区。项目整体清理可移除完成评论与历史事件，保留精简审计、最小 UUID 墓碑和单调 Issue 编号；不提供单内容 hard-delete 或批量清理。

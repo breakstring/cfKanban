@@ -757,7 +757,7 @@ test("the Web interaction palette uses accessible orange without legacy blue the
   });
   assert.deepEqual(blueDominant, [], `stylesheet retains blue-dominant literals: ${blueDominant.join(", ")}`);
   assert.doesNotMatch(issueDetail, /#2563EB/iu);
-  assert.match(design, /revision:\s*6/u);
+  assert.match(design, /revision:\s*7/u);
   assert.match(design, /One filled deep-orange primary button per visible task region\./u);
   assert.match(webSpec, /以单一深橙色主操作色组织的工作台/u);
 });
@@ -765,7 +765,7 @@ test("the Web interaction palette uses accessible orange without legacy blue the
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
   const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
   const [deploymentRelease, ...documents] = await Promise.all([
-    readFile(new URL("../../release/config/0.1.0-alpha.54.json", import.meta.url), "utf8").then(JSON.parse),
+    readFile(new URL("../../release/config/0.1.0-alpha.55.json", import.meta.url), "utf8").then(JSON.parse),
     ...paths.map((name) => readFile(
       new URL(`../../apps/web/public/${name}`, import.meta.url),
       "utf8",
@@ -2111,5 +2111,44 @@ test("name-only session refresh preserves inventory generations and open drafts"
     const source = await readFile(new URL(`../../apps/web/src/views/${view}.vue`, import.meta.url), "utf8");
     assert.match(source, /watch\(\(\) => projectInventoryBoundary\(props\.session\.allowed_scope\.projects\), refreshProjectInventory\)/);
     assert.doesNotMatch(source, /watch\(\(\) => props\.session\.allowed_scope\.projects, refreshProjectInventory/);
+  }
+});
+
+test("binary attachment uploads preserve bytes, CSRF and the explicit retry key", async () => {
+  const { ApiProblem, apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const originalFetch = globalThis.fetch;
+  const originalDocument = globalThis.document;
+  const bytes = new Blob([new Uint8Array([0, 255, 128, 10, 13, 42])]);
+  const seen = [];
+  globalThis.document = { cookie: "cfkanban_csrf=csrf-fixture" };
+  globalThis.fetch = async (path, init) => {
+    seen.push({ path, init, bytes: new Uint8Array(await init.body.arrayBuffer()) });
+    if (seen.length === 1) throw new Error("response lost");
+    return Response.json({ resource: { state: "ready" } });
+  };
+  try {
+    const options = { method: "PUT", rawBody: bytes, idempotencyKey: "same-upload-operation" };
+    await assert.rejects(apiRequest("/api/v1/attachments/fixture/content", options), ApiProblem);
+    const result = await apiRequest("/api/v1/attachments/fixture/content", options);
+    assert.equal(result.resource.state, "ready");
+    assert.equal(seen.length, 2);
+    for (const entry of seen) {
+      assert.equal(entry.init.body, bytes);
+      assert.deepEqual(entry.bytes, new Uint8Array([0, 255, 128, 10, 13, 42]));
+      assert.equal(entry.init.credentials, "same-origin");
+      assert.equal(entry.init.headers.get("content-type"), "application/octet-stream");
+      assert.equal(entry.init.headers.get("x-csrf-token"), "csrf-fixture");
+      assert.equal(entry.init.headers.get("idempotency-key"), "same-upload-operation");
+    }
+    for (const invalid of [
+      { method: "PUT", rawBody: bytes },
+      { method: "POST", rawBody: bytes, idempotencyKey: "key" },
+      { method: "PUT", rawBody: bytes, body: {}, idempotencyKey: "key" },
+    ]) await assert.rejects(apiRequest("/api/v1/attachments/fixture/content", invalid), /Binary uploads require/);
+    assert.equal(seen.length, 2, "invalid binary requests stop before fetch");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
   }
 });

@@ -2,7 +2,7 @@
 
 Language: [English](owner-workflows.md) | [简体中文](owner-workflows.zh-CN.md)
 
-Run `node scripts/cfkanban-tool.mjs help` from the Skill directory to inspect the installed admin command surface. Use `api request` for ordinary REST operations, `invite create` and `web launch` for one-time capability delivery, and `owner rotate-credential` for secret rotation.
+Read the relevant section only. Run `node scripts/cfkanban-tool.mjs help` once per installed release, or when inputs are unclear, to inspect the admin command surface. Use `api request` for ordinary REST operations, `invite create` and `web launch` for one-time capability delivery, and `owner rotate-credential` for secret rotation.
 
 ## Common request pattern
 
@@ -23,8 +23,8 @@ Use it with `node scripts/cfkanban-tool.mjs api request`. The command reads the 
 Deployment creates no application container automatically. For the common first-use request:
 
 1. inspect local state and verify `/api/v1/me` returns the expected stable Principal with `is_owner=true`;
-2. Ask only for the Workspace display name; create with a separate Idempotency Key and read back its server-generated UUID. Project creation requires the parent Workspace UUID.
-3. Ask only for the Project display name; create with a separate Idempotency Key and read back its server-generated UUID. Project creation requires the parent Workspace UUID.
+2. reuse supplied display names and any explicitly selected existing Workspace; ask together for missing names and resolve duplicate existing names before writing;
+3. create a Workspace only when requested or needed for the first board, read its server-generated UUID, then create the requested Project under that UUID with a separate Idempotency Key and read it back;
 4. run `web launch` with `target.kind=admin`; its default direct-browser delivery returns no one-time URL;
 5. offer separate next actions: use `cfkanban` to create the first Issue, create an explicit-role Invite, or configure Public Join and all three quotas.
 
@@ -96,7 +96,7 @@ Before enabling or changing Public Join, read the Project, policy, active usage,
 - disabling stops new self-join and quota enforcement but does not revoke existing Grants;
 - while a Project stays public, revoking a Grant does not create a rejoin blacklist.
 
-The policy response deliberately exposes two revisions. `project.version` is the CAS value for Public Join enable/update/disable and resource-limit writes. `policy_version` describes the policy record's own history and must never be copied into `expected_version`. On `VERSION_CONFLICT`, refresh the Project/Policy facts and ask the caller to reassess rather than retrying with a guessed version.
+The policy response deliberately exposes two revisions. `project.version` is the CAS value for Public Join enable/update/disable and resource-limit writes. `policy_version` describes the policy record's own history and must never be copied into `expected_version`. On `VERSION_CONFLICT`, refresh the Project/Policy facts and reassess the requested change. Ask only if concurrent changes materially alter its target or consequences; never retry with a guessed version.
 
 ## Tombstone and container recovery
 
@@ -130,7 +130,7 @@ Use `subject.type` and `subject.id` to identify the resource whose lifecycle the
 
 ## Error and readback rules
 
-Use one Idempotency Key per atomic write. Read back the mutated resource and relevant audit event. Interpret errors by stable machine fields, not `message`. Earlier committed operations remain committed when a later step fails; report them separately rather than claiming rollback.
+Use one Idempotency Key per atomic write and read back the mutated resource. Inspect relevant audit events when checking authorization or lifecycle history. Ordinary writes follow existing user/host authorization; this Skill does not impose a new approval for each call. Interpret errors by stable machine fields, not `message`. Earlier committed operations remain committed when a later step fails; report them separately rather than claiming rollback.
 
 ## Archived container purge
 

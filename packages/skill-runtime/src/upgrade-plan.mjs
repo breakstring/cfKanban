@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
 import { satisfiesSimpleRange } from "./tool-runtime.mjs";
+import { ATTACHMENT_CLEANUP_CRON, attachmentBucketName } from "./r2-storage.mjs";
 import { requireHttpsOrigin, requireString, requireUuid } from "./utils.mjs";
 
 export const UPGRADE_MIGRATION_EXECUTION = Object.freeze({ mode: "single_query", max_sql_bytes: 24 * 1024 });
@@ -103,8 +104,9 @@ function sortedBindings(values) {
   return [...values].sort((left, right) => (left.type + ":" + left.name).localeCompare(right.type + ":" + right.name));
 }
 
-function expectedBindings({ d1DatabaseId, rateLimits: limits }) {
+function expectedBindings({ d1DatabaseId, rateLimits: limits, attachments = null }) {
   return sortedBindings([
+    ...(attachments === null ? [] : [{ type: "r2_bucket", name: "ATTACHMENTS", bucket_name: attachments.bucket_name }]),
     { type: "assets", name: "ASSETS", value_redacted: true },
     { type: "d1", name: "DB", database_id: d1DatabaseId },
     { type: "ratelimit", name: "INSTANCE_RATE_LIMITER", namespace_id: "1002" },
@@ -119,7 +121,7 @@ function expectedBindings({ d1DatabaseId, rateLimits: limits }) {
   ]);
 }
 
-function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits }) {
+function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits, attachments = null }) {
   if (!Array.isArray(value)) {
     throw toolError("UPGRADE_BINDING_READBACK_REQUIRED", "Instance upgrade requires the redacted binding inventory from the current Worker version");
   }
@@ -131,6 +133,7 @@ function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits }) {
     const name = requireString(binding.name, "worker_binding.name", { max: 128 });
     if (type === "assets") return { type, name, value_redacted: binding.value_redacted === true };
     if (type === "d1") return { type, name, database_id: requireUuid(binding.database_id, "worker_binding.database_id") };
+    if (type === "r2_bucket") return { type, name, bucket_name: resourceName(binding.bucket_name, "worker_binding.bucket_name") };
     if (type === "ratelimit") {
       return {
         type,
@@ -143,7 +146,7 @@ function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits }) {
     }
     throw toolError("UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN", "Current Worker has an unsupported binding that the normal upgrade would remove or replace", { type, name });
   }));
-  const expected = expectedBindings({ d1DatabaseId, rateLimits: limits });
+  const expected = expectedBindings({ d1DatabaseId, rateLimits: limits, attachments });
   if (JSON.stringify(observed) !== JSON.stringify(expected)) {
     throw toolError("UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN", "Current Worker bindings do not exactly match the frozen normal-upgrade target", {
       observed: observed.map(({ type, name }) => ({ type, name })),
@@ -256,6 +259,7 @@ export function createInstanceUpgradePlan({
   current,
   target,
   migrations = [],
+  attachments = undefined,
   allow_breaking_change = false,
   restorePoint: restorePointInput,
 }) {
@@ -294,13 +298,28 @@ export function createInstanceUpgradePlan({
   if (bindings?.d1 !== "DB" || bindings?.assets !== "ASSETS") {
     throw toolError("INVALID_UPGRADE_BINDINGS", "Normal Instance upgrade requires the existing DB and ASSETS binding names");
   }
+  const priorStorage = resources.r2 ? {
+    bucket_name: attachmentBucketName(resources.r2.bucket_name), create: false,
+  } : null;
+  if (priorStorage && resources.r2.instance_id !== instance) {
+    throw toolError("R2_OWNERSHIP_REQUIRED", "Existing attachment storage needs a receipt-bound Instance ID");
+  }
+  const storage = attachments === undefined ? priorStorage : {
+    bucket_name: attachmentBucketName(attachments?.bucket_name),
+    create: attachments?.create === true,
+  };
+  if ((priorStorage && (storage.bucket_name !== priorStorage.bucket_name || storage.create))
+    || (!priorStorage && storage && !storage.create)) {
+    throw toolError("R2_RESOURCE_DELTA_REJECTED", "Attachment storage cannot adopt, replace, or silently remove an existing bucket");
+  }
   const normalizedCurrent = serviceRelease(current, "current");
   const normalizedTarget = serviceRelease(target, "target", { isTarget: true });
+  if (storage && normalizedTarget.schema_version < 4) throw toolError("R2_RELEASE_UNSUPPORTED", "Attachment storage requires a Service release with schema version 4 or later");
   if (normalizedCurrent.publisher !== normalizedTarget.publisher
     || new URL(normalizedCurrent.service_bundle_source).origin !== new URL(normalizedTarget.service_bundle_source).origin) {
     throw toolError("PUBLISHER_DISCONTINUITY", "Instance upgrade target changes the canonical publisher or artifact origin");
   }
-  if (normalizedCurrent.service_bundle_sha256 === normalizedTarget.service_bundle_sha256) {
+  if (normalizedCurrent.service_bundle_sha256 === normalizedTarget.service_bundle_sha256 && !storage?.create) {
     throw toolError("UPGRADE_TARGET_ALREADY_CURRENT", "Target Service bundle matches the current deployment");
   }
   if (!satisfiesSimpleRange(normalizedCurrent.service_api_version, normalizedTarget.compatibility.service_api)
@@ -330,6 +349,7 @@ export function createInstanceUpgradePlan({
   const observedBindings = currentBindingReadback(resources.worker?.bindings, {
     d1DatabaseId,
     rateLimits: normalizedRateLimits,
+    attachments: priorStorage,
   });
   const accountId = requireString(cloudflare.account_id, "cloudflare.account_id", { max: 128 });
   const apiOrigin = requireHttpsOrigin(cloudflare.api_origin, "cloudflare.api_origin");
@@ -372,7 +392,7 @@ export function createInstanceUpgradePlan({
       routes: [],
       pages: false,
       kv: false,
-      r2: false,
+      r2: storage === null ? false : { ...storage, instance_id: instance, storage_class: "Standard", public_access: false },
       queues: false,
       durable_objects: false,
       vectorize: false,
@@ -382,6 +402,7 @@ export function createInstanceUpgradePlan({
       d1: "DB",
       assets: "ASSETS",
       rate_limits: normalizedRateLimits,
+      ...(storage === null ? {} : { attachments: "ATTACHMENTS", cleanup_cron: ATTACHMENT_CLEANUP_CRON }),
     },
     owner: normalizedOwner,
     compatibility: {
@@ -408,8 +429,18 @@ export function createInstanceUpgradePlan({
     requires_cloudflare_authorization: true,
     skill_update_included: false,
     resource_replacement_allowed: false,
-    binding_changes_allowed: false,
-    cost_delta: false,
+    binding_changes_allowed: storage?.create === true,
+    cost_delta: storage?.create === true,
+    ...(storage === null ? {} : { attachment_storage: {
+      max_file_bytes: 10485760, max_active_per_issue: 20, max_storage_bytes: 1073741824,
+      subscription_required: true, usage_beyond_free_tier_is_billable: true,
+      application_budget_is_not_a_billing_cap: true,
+      automatic_bucket_deletion: false,
+      previous_bucket: priorStorage?.bucket_name ?? null,
+      previous_cleanup_crons: priorStorage ? [ATTACHMENT_CLEANUP_CRON] : [],
+      cleanup_crons: [ATTACHMENT_CLEANUP_CRON],
+      cleanup_schedule_replaces_prior_schedules: true,
+    } }),
     domain_delta: false,
     expected_interruption: breakingChange ? "service_unavailable_between_migration_and_compatible_worker_deploy" : "single_worker_deploy",
     ...(breakingChange ? { breaking_change: {
@@ -428,6 +459,8 @@ export function createInstanceUpgradePlan({
     },
     steps: [
       "verify_existing_resource_markers_bindings_and_instance",
+      ...(storage?.create ? ["provision_private_attachment_storage"] : []),
+      ...(storage ? ["verify_attachment_storage_ownership_and_privacy"] : []),
       "install_verified_service_bundle",
       "write_frozen_wrangler_config",
       "read_migration_checksum_ledger_and_schema",

@@ -235,6 +235,7 @@ test("OpenAPI distinguishes Comment lifecycle shapes and deleted-only permission
     ["getIssue", "project_reader_active_writer_tombstone"],
     ["listComments", "project_reader_active_writer_tombstone"],
     ["getComment", "project_reader_active_writer_tombstone"],
+    ["listAttachments", "project_reader_active_writer_tombstone"],
     ["listLabels", "project_reader_active_writer_tombstone"],
     ["getLabel", "project_reader_active_writer_tombstone"],
     ["listIssueRelations", "relation_endpoints_reader_active_writer_tombstone"],

@@ -6,6 +6,7 @@ import ErrorNotice from "./components/ErrorNotice.vue";
 import LocaleSwitch from "./components/LocaleSwitch.vue";
 import PageState from "./components/PageState.vue";
 import { ApiProblem, apiRequest } from "./lib/api";
+import { clearAttachmentUploadDrafts } from "./lib/attachment-upload-drafts";
 import { locale, t } from "./lib/i18n";
 import { useLocalizedError } from "./lib/localized-error";
 import { currentPath, navigate, routePath } from "./lib/router";
@@ -78,6 +79,7 @@ const route = computed<AppRoute>(() => {
 const authenticatedRoute = computed(() => route.value.kind !== "home");
 
 function clearSession(ended = true): void {
+  clearAttachmentUploadDrafts();
   cancelSessionExpiry?.();
   cancelSessionExpiry = null;
   sessionLoadGeneration += 1;
@@ -115,6 +117,7 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
     const result = await apiRequest<WebSessionView>("/api/v1/web-session");
     if (generation !== sessionLoadGeneration || !authenticatedRoute.value) return;
     if (previous !== null && !sameSessionBoundary(previous, result)) {
+      clearAttachmentUploadDrafts();
       sessionViewGeneration.value += 1;
       context.value = null;
     }

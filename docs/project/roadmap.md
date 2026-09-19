@@ -7,6 +7,8 @@
 
 ## 当前基线
 
+2026-09-19 增量：用户已授权 Web/Skills 体验优化与可选私有 Issue 附件，范围以 [Issue 附件 Frozen SPEC](../specs/2026-09-19-issue-attachments-spec.md) 为准。下文历史阶段中“暂缓 R2 附件”的表述由该合同覆盖；不改变其他增强能力的暂缓状态，也不表示更新了 Linear 的动态执行状态。
+
 - 产品定位为面向 Coding Agents 的轻量工作协调账本。
 - 已明确用户的 Agent 是主要调用载体，但不是唯一界面；人类也可以在极简第一方 Web 中直接查看、轻量参与和维护。部署、Owner 管理、协调和 Coding 只是 Agent 的任务模式，不是不同 Agent 类型。
 - 当前已有 Frozen 产品/技术合同、可执行 OpenAPI/D1 合同、Worker/D1 业务实现和极简双语 Web；WP-01～WP-09 已完成，三个 portable Skills、部署/更新流程和 release candidate 尚未实现或验收。

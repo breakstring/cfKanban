@@ -488,6 +488,11 @@ export function assertGenericApiPathIsNonSensitive({ method = "GET", apiPath }) 
   } catch (error) {
     throw toolError("INVALID_API_PATH", "API path must be a same-origin absolute path", {}, error);
   }
+  if (/^\/api\/v1\/attachments\/[^/]+\/content$/u.test(pathname)) {
+    throw toolError("ATTACHMENT_COMMAND_REQUIRED", "Attachment bytes must use a dedicated file command and cannot enter generic API output", {
+      command: normalizedMethod === "PUT" ? "attachment upload" : "attachment download",
+    });
+  }
   const dedicatedCommand = normalizedMethod === "POST" && pathname === "/api/v1/web-launches"
     ? "web launch"
     : normalizedMethod === "POST" && pathname === "/api/v1/admin/invitations"

@@ -1,5 +1,7 @@
 # cfKanban 极简 Web UI SPEC
 
+> 2026-09-19 增量修订：[Issue 私有附件](2026-09-19-issue-attachments-spec.md) 增加详情附件区域、单文件上传/下载、安全图片预览与删除恢复；取代下文“附件管理不包含”的范围。默认部署不启用 R2。视觉层级按 DESIGN.md 的当前修订。
+
 > 当前容器身份合同由 [工作区与项目 UUID 寻址重构](2026-09-08-container-uuid-spec.md)（Frozen，2026-09-08）覆盖：Workspace/Project 取消 key，创建仅使用名称，服务端生成 UUID；REST/Web 使用 UUID，本地 scope 使用 schema 2。用户明确授权开发阶段不兼容旧 API、URL 和配置。本文保留的早期 key/DDL 描述不再是当前实现依据；其他身份、权限、并发和安全合同保持有效。
 
 > 2026-09-08 增补：[工作区与项目归档及永久删除合同](2026-09-08-container-purge-spec.md) 已冻结。仅 Owner 可预览并永久删除已归档项目或已归档空工作区；该特例覆盖本文相应的 hard-delete 禁止及项目内历史永久保留表述，其余软删除、权限与恢复合同不变。

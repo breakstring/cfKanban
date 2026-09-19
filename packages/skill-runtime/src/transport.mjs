@@ -81,7 +81,7 @@ function isVerifiedServiceError(response, value) {
     && (value.category !== "rate_limit" || hasBodyRetryAfter);
 }
 
-function clientError({ code, category, source, retryable, recovery, response = null, details = {}, status = null }) {
+export function clientError({ code, category, source, retryable, recovery, response = null, details = {}, status = null }) {
   const retryAfter = retryAfterSeconds(response?.headers);
   return {
     ok: false,

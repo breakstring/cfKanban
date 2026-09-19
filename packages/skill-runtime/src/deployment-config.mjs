@@ -4,6 +4,7 @@ import { getInstancePaths } from "./state.mjs";
 import { toolError } from "./errors.mjs";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
+import { ATTACHMENT_CLEANUP_CRON, assertAttachmentStoragePlan } from "./r2-storage.mjs";
 import {
   assertNoSymlinkPath,
   atomicWriteJson,
@@ -89,6 +90,7 @@ export async function writeFrozenWranglerConfig({
     throw toolError("INVALID_DEPLOYMENT_PLAN", "Frozen Wrangler config requires a strict-zero or Instance upgrade plan");
   }
   await assertJournalAuthorization({ stateRoot, instanceId: instance, operationId: operation, taskId, plan });
+  assertAttachmentStoragePlan(plan);
   const bundleRoot = absolutePath(serviceBundleRoot, "service_bundle_root");
   if (await pathType(bundleRoot) !== "directory") {
     throw toolError("SERVICE_BUNDLE_INCOMPLETE", "Verified Service bundle root is not a directory", { service_bundle_root: bundleRoot });
@@ -137,6 +139,10 @@ export async function writeFrozenWranglerConfig({
       database_id: databaseId,
       migrations_dir: migrationsPath,
     }],
+    ...(plan.resources?.r2 ? {
+      r2_buckets: [{ binding: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }],
+      triggers: { crons: [ATTACHMENT_CLEANUP_CRON] },
+    } : {}),
     vars: buildRateLimitVars(plan),
     ratelimits: buildRateLimitConfig(plan),
   };

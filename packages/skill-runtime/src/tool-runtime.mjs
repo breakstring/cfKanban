@@ -13,6 +13,12 @@ const CFKANBAN_OAUTH_SCOPES = Object.freeze([
   "d1:write",
 ]);
 
+function oauthScopes(attachmentStorage = false) {
+  if (typeof attachmentStorage !== "boolean") throw toolError("INVALID_ATTACHMENT_STORAGE", "attachmentStorage must be boolean");
+  // Pinned Wrangler exposes R2 through legacy workers:write, not an R2-only OAuth scope.
+  return [...CFKANBAN_OAUTH_SCOPES, ...(attachmentStorage ? ["workers:write"] : [])];
+}
+
 const AUTH_MODES = Object.freeze([
   "named_profile_browser",
   "default_profile_browser",
@@ -171,10 +177,12 @@ export async function resolveWrangler({ explicitPath = null, requiredRange, runt
 export async function inspectCloudflareAuth({
   wranglerExecutable,
   profileName,
+  attachmentStorage = false,
   runner = spawnCaptured,
   environment = process.env,
   platform = process.platform,
 }) {
+  const requiredScopes = oauthScopes(attachmentStorage);
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
   const profile = validateProfileName(profileName);
   const probes = [
@@ -210,9 +218,9 @@ export async function inspectCloudflareAuth({
     : /No profiles found\./i.test(profileText)
       ? false
       : new RegExp(`(^|[^A-Za-z0-9_-])${escapedProfile}(?=$|[^A-Za-z0-9_-])`, "m").test(profileText);
-  const availableRequiredScopes = CFKANBAN_OAUTH_SCOPES.filter((scope) => {
+  const availableRequiredScopes = requiredScopes.filter((scope) => {
     const escaped = scope.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(^|[^A-Za-z0-9_:-])${escaped}(?=$|[^A-Za-z0-9_:-])`, "m").test(scopesProbe.stdout);
+    return new RegExp(`(^|[^A-Za-z0-9_:-])${escaped}(?=$|[^A-Za-z0-9_:-])`, "m").test(`${scopesProbe.stdout}\n${scopesProbe.stderr}`);
   });
   const authEnvironmentVariables = environmentAuthNames(environment);
   const keyringOverride = environment.CLOUDFLARE_AUTH_USE_KEYRING;
@@ -222,7 +230,7 @@ export async function inspectCloudflareAuth({
   if (keyringProbe.code !== 0 || keyringEnabled === null || persistedKeyringEnabled === null) blockers.push("WRANGLER_KEYRING_STATE_UNKNOWN");
   if (profilesProbe.code !== 0 || profileExists === null) blockers.push("WRANGLER_PROFILE_STATE_UNKNOWN");
   if (loginHelp.code !== 0 || !/--device\b/.test(loginHelp.stdout)) blockers.push("WRANGLER_DEVICE_FLOW_UNSUPPORTED");
-  if (scopesProbe.code !== 0 || availableRequiredScopes.length !== CFKANBAN_OAUTH_SCOPES.length) blockers.push("WRANGLER_REQUIRED_OAUTH_SCOPE_UNAVAILABLE");
+  if (scopesProbe.code !== 0 || availableRequiredScopes.length !== requiredScopes.length) blockers.push("WRANGLER_REQUIRED_OAUTH_SCOPE_UNAVAILABLE");
   if (authEnvironmentVariables.length > 0) blockers.push("WRANGLER_PROFILE_SHADOWED_BY_ENV");
   if (String(keyringOverride).toLowerCase() === "false") blockers.push("WRANGLER_KEYRING_DISABLED_BY_ENV");
 
@@ -242,8 +250,9 @@ export async function inspectCloudflareAuth({
       named_profiles: !blockers.includes("WRANGLER_NAMED_PROFILE_UNSUPPORTED"),
       browser_callback: true,
       device_flow: !blockers.includes("WRANGLER_DEVICE_FLOW_UNSUPPORTED"),
-      scoped_oauth: availableRequiredScopes.length === CFKANBAN_OAUTH_SCOPES.length,
+      scoped_oauth: availableRequiredScopes.length === requiredScopes.length,
     },
+    attachment_storage: attachmentStorage,
     required_scopes_available: availableRequiredScopes,
     environment_auth_variables: authEnvironmentVariables,
     blockers,
@@ -526,8 +535,8 @@ export async function resolveCloudflareAuth({
   });
 }
 
-function buildOAuthArgs(mode, profileName) {
-  const scopes = [...CFKANBAN_OAUTH_SCOPES];
+function buildOAuthArgs(mode, profileName, attachmentStorage = false) {
+  const scopes = oauthScopes(attachmentStorage);
   if (mode === "named_profile_browser") {
     return [
       "auth", "create", profileName,
@@ -554,6 +563,7 @@ export function createCloudflareAuthPlan({
   mode = "named_profile_browser",
   preflight,
   allowExistingProfile = false,
+  attachmentStorage = false,
 }) {
   if (!AUTH_MODES.includes(mode)) throw toolError("INVALID_WRANGLER_AUTH_MODE", "Unknown Wrangler authentication mode", { mode });
   if (preflight?.safe_to_plan !== true || preflight.blockers?.length !== 0) {
@@ -564,8 +574,8 @@ export function createCloudflareAuthPlan({
   if (!satisfiesSimpleRange(version, WRANGLER_AUTH_CONTRACT_RANGE)) {
     throw toolError("WRANGLER_AUTH_CONTRACT_UNSUPPORTED", "Wrangler version is outside the verified authentication command range", { version, requiredRange: WRANGLER_AUTH_CONTRACT_RANGE });
   }
-  const expectedScopes = [...CFKANBAN_OAUTH_SCOPES];
-  if (JSON.stringify(preflight.required_scopes_available) !== JSON.stringify(expectedScopes)) {
+  const expectedScopes = oauthScopes(attachmentStorage);
+  if ((preflight.attachment_storage ?? false) !== attachmentStorage || JSON.stringify(preflight.required_scopes_available) !== JSON.stringify(expectedScopes)) {
     throw toolError("WRANGLER_REQUIRED_OAUTH_SCOPE_UNAVAILABLE", "Wrangler does not expose every OAuth scope required by this cfKanban release");
   }
   if (typeof preflight.keyring?.persisted_enabled !== "boolean" || typeof preflight.profile?.exists !== "boolean") {
@@ -596,7 +606,7 @@ export function createCloudflareAuthPlan({
   }
   actions.push({
     id: "oauth_login",
-    args: buildOAuthArgs(mode, profileName),
+    args: buildOAuthArgs(mode, profileName, attachmentStorage),
     effect: namedProfile
       ? `${preflight.profile.exists ? "re-authenticate" : "create"} the named Wrangler OAuth profile and complete Cloudflare consent in a browser`
       : `${preflight.profile.exists ? "re-authenticate" : "create"} the default Wrangler OAuth profile and complete Cloudflare consent`,
@@ -629,6 +639,8 @@ export function createCloudflareAuthPlan({
     oauth: {
       mode,
       requested_scopes: expectedScopes,
+      attachment_storage: attachmentStorage,
+      ...(attachmentStorage ? { permission_expansion: "workers:write includes R2 and broad Workers data access, including KV, scripts, and routes; it is not bucket-scoped", r2_access_readback_required: true } : {}),
       automatically_added_scopes: ["offline_access"],
       browser_confirmation_required: true,
       callback: mode === "default_profile_device" ? null : { host: "localhost", port: 8976 },
@@ -659,7 +671,7 @@ function validateAuthAction(plan, action) {
   }
   const expectedArgs = action.id === "enable_keyring"
     ? ["auth", "keyring", "enable"]
-    : buildOAuthArgs(plan.oauth?.mode, plan.profile?.name);
+    : buildOAuthArgs(plan.oauth?.mode, plan.profile?.name, plan.oauth?.attachment_storage ?? false);
   if (JSON.stringify(action.args) !== JSON.stringify(expectedArgs)) {
     throw toolError("WRANGLER_AUTH_PLAN_INVALID", "Wrangler authentication arguments do not match the fixed action contract", { actionId: action.id });
   }
@@ -696,7 +708,7 @@ export async function executeCloudflareAuthAction({
   if (plan?.kind !== "cloudflare_oauth_login" || authorizedTaskId !== plan.task_id || authorizedPlanDigest !== digest) {
     throw toolError("PLAN_NOT_AUTHORIZED", "Cloudflare authentication authorization does not match the frozen task and plan digest");
   }
-  if (!AUTH_MODES.includes(plan.oauth?.mode) || JSON.stringify(plan.oauth?.requested_scopes) !== JSON.stringify(CFKANBAN_OAUTH_SCOPES)) {
+  if (!AUTH_MODES.includes(plan.oauth?.mode) || JSON.stringify(plan.oauth?.requested_scopes) !== JSON.stringify(oauthScopes(plan.oauth?.attachment_storage ?? false))) {
     throw toolError("WRANGLER_AUTH_PLAN_INVALID", "Cloudflare authentication plan has drifted from the verified scope or mode contract");
   }
   validateAuthPlanActions(plan);

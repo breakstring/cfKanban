@@ -1,9 +1,9 @@
 ---
 name: cfKanban
 status: frozen
-revision: 6
+revision: 7
 frozen_on: 2026-08-29
-revised_on: 2026-09-05
+revised_on: 2026-09-19
 selected_direction: warm-editorial-workbench
 applies_to:
   - first-party-web-ui
@@ -135,10 +135,11 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 ### 3.1 Project Board
 
 - Use a full-width application surface with a compact top bar and a quiet project header.
+- Group the Project title and the primary `New issue` action on the first row; search and secondary recovery controls share a quieter utility row below. Search has an explicit submit control in addition to Enter.
 - Do not add a persistent left sidebar to the default Board. Workspace/Project scope, search, locale, session/role summary, profile, and the single primary `New issue` action fit in the top region.
 - At a 1440px desktop viewport, all five fixed columns should be visible without reducing card text below the typography rules.
 - Each column has a practical minimum width of 248px. Narrow viewports use horizontal board scrolling rather than compressing five columns into unreadable slivers.
-- On narrow viewports, keep that overflow inside a named, keyboard-focusable Board region and show a concise localized cue that all five columns continue sideways. The status selector beneath each writable card is the non-drag alternative and therefore uses a touch target of at least 44px.
+- When the five columns need to scroll, keep that overflow inside a named, keyboard-focusable Board region and show a concise localized cue that all five columns continue sideways. The status selector in each writable card's footer is the non-drag alternative and therefore uses a touch target of at least 44px on narrow viewports.
 - Column separation uses spacing and a subtle vertical divider or surface step. Columns are not five large elevated cards.
 - The column footer does not repeat `Add issue` when the top-level `New issue` action is already visible.
 
@@ -151,7 +152,8 @@ The visual order is:
 3. labels or exceptional markers when present;
 4. assignee or `Unassigned`.
 
-- Cards use `surface`, a 1px border, 8px radius, and 12px padding.
+- Cards use `surface`, a 1px border, 8px radius, and 16px padding. Labels wrap between chips, never between ordinary characters within a chip; exceptionally long labels truncate with their full text available as the title.
+- Put assignee and the always-visible status selector in one footer row separated from content by a quiet rule. The selector uses a transparent resting surface and a compact 32px desktop height; it does not compete with the card title as a second large form field. It remains disabled while that card is saving.
 - A card title normally occupies no more than three lines on the board. Full content belongs in Issue detail.
 - Empty columns remain visually quiet. Do not fill them with a permanent dashed drop box; show a drop target only during an active drag.
 - `saving` disables repeated movement of the same card and shows a compact progress cue.
@@ -165,6 +167,9 @@ The visual order is:
 - Markdown rendering uses the same typography and warm surfaces. Code blocks use `--font-mono`, a muted surface, and horizontal scrolling rather than page overflow.
 - Comments are a single chronological stream with light row separation. Do not wrap every comment in an elevated card.
 - Completion comments are visually recognizable as immutable records but remain part of the same comment stream.
+- The title region includes a compact status, priority, and assignee summary. At tablet widths the property rail remains beside the description; below 780px it follows the reading column, with an explicit `View properties` anchor in the summary.
+- Issue deletion stays a tertiary text action until the confirmation dialog. Comment deletion also recedes within its activity row.
+- Attachments occupy their own section between description and activity. The file picker and single-file drop target share one calm surface; upload progress and retry remain local to the selected file. Use verified image thumbnails, readable file names and sizes, and explicit download/delete/restore actions. No R2 capability yields a short local explanation, never a page-level failure.
 
 ### 3.4 Owner maintenance
 
@@ -172,6 +177,8 @@ The visual order is:
 - Use simple lists, tables, forms, and compact summaries for Overview, Workspaces/Projects, Access, and Audit.
 - Avoid metric tiles unless a value is both actionable and required by the product contract. Health and quota summaries should read as operational facts, not an analytics dashboard.
 - Destructive or security-sensitive actions use explicit labels and confirmation copy; red is not used as general decoration.
+- Overview uses the already-loaded Workspace inventory as a short list of direct entry points, alongside two simple navigation rows for members/invitations and activity. Choosing a Workspace opens the existing maintenance view with that Workspace expanded. It does not load additional Projects or Issues before the user chooses a destination.
+- Service versions, origins, and rate limits remain available in a disclosure below daily navigation. Do not fill unused space with invented analytics, activity, or decorative tiles.
 
 ### 3.5 Public and authentication pages
 
@@ -221,6 +228,7 @@ The visual order is:
 - Target WCAG 2.2 AA contrast for text, controls, focus, and semantic states.
 - Keyboard focus is always visible. Board drag operations have a status selector/menu equivalent.
 - Icon-only controls require accessible names and tooltips where meaning is not obvious.
+- Small screens retain an explicit sign-out action in the session information row; moving account controls must not remove access to them.
 - Error, priority, role, saving, and read-only states use text or icons in addition to color.
 - English and Simplified Chinese layouts must tolerate ordinary text expansion without truncating primary actions.
 - Stable workflow keys and default column labels remain English as required by the product contract; surrounding UI copy follows the selected locale.
@@ -252,3 +260,21 @@ The visual order is:
 - [getdesign.md's Notion analysis](https://getdesign.md/notion/design-md) informed the warm, paper-calm mood; it is inspiration only and is not a runtime dependency or a license to clone Notion branding.
 - [TypeUI](https://github.com/bergside/typeui) informed the idea of testable, Agent-readable design rules. cfKanban does not depend on TypeUI's hosted MCP, CLI, registry, or paid assets.
 - When implementation begins, screenshots of the real application override generated-image accidents but do not silently override this contract. Any intentional change to the visual system must update this file and its evidence together.
+
+## 8. Revision 7 evidence
+
+The 2026-09-19 review compared the stored warm-editorial reference set with the real Owner, Board, and Issue screens. The initial browser capture showed fragmented Overview actions, label chips compressed into vertical text, prominent native status fields on every card, and a filled-red Issue delete button. This revision changes hierarchy and control placement while retaining the frozen palette, system typography, five-column workflow, and permissions.
+
+The revised UI was rendered in the Codex in-app browser against an isolated local Worker/D1/R2 fixture. The visual comparison covered the Owner overview, a 1440px five-column Board, a 390px horizontally scrolling Board, and Issue detail at 1440px and 390px. Source reference images and actual before/after captures were inspected with `view_image` in the same review. Attachment upload, verified image preview, soft deletion, and restoration were exercised in that local fixture. The fixture supplies example content only; it is not evidence of production authentication or production data.
+
+| Comparison | Evidence and resulting rule |
+| --- | --- |
+| Information hierarchy | Overview now groups real Workspace navigation with member/activity entry points instead of scattering three unrelated buttons across empty space. |
+| Card anatomy | Labels remain horizontal; assignee and status share a footer. At 1440px all five columns remain visible, with readable titles and no raised column shells. |
+| Typography and palette | Page headings remain restrained system serif in English and sans in Chinese; warm neutrals and the accessible deep-orange action color remain unchanged. |
+| Detail and destructive actions | Status, priority, and assignee are available before the body; deletion becomes red only in the explicit confirmation. |
+| Narrow layout and controls | At 390px overflow belongs to the named Board region. Touch controls remain at least 44px tall; the property shortcut and sign-out action stay available. |
+| Attachment placement | Upload and recovery live immediately after the description. File rows use a small verified preview or file mark, readable filename and size, with download and recovery controls alongside. Mobile screenshots exposed excess vertical space in compact section headings; those headings retain a left title and right action/count. |
+| Copy inventory | Existing business content and default workflow names are unchanged. Intentional additions are the search submit label, property shortcut, brief Overview navigation descriptions, and attachment copy required by the new attachment SPEC; each has English and Chinese text. |
+
+Generated reference artwork remains a mood and hierarchy guide. No avatars, fake counters, decorative dates, extra columns, or unsupported controls were introduced from it.

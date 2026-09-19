@@ -11,6 +11,7 @@ const tags = [
   "projects",
   "issues",
   "comments",
+  "attachments",
   "labels",
   "relations",
   "invitations",
@@ -26,6 +27,7 @@ const tagDescriptions = {
   workspaces: "Owner-created logical namespaces.",
   projects: "Project containers and the fixed five-status display model.",
   issues: "Issue reads and single-resource atomic commands.",
+  attachments: "Optional private Issue files with bounded reservations, authenticated transfer, and recovery.",
   comments: "Chronological standard and immutable completion comments.",
   labels: "Project-scoped labels and single-Issue associations.",
   relations: "Same-Workspace Issue relations, including cross-Project relations.",
@@ -89,6 +91,14 @@ const operations = [
   ["post", "/api/v1/issues/{identifier}/commands/complete", "completeIssue", "issues", authenticated, "idempotent-cas", "CompleteIssueRequest"],
   ["post", "/api/v1/issues/{identifier}/commands/add-label", "addIssueLabel", "issues", authenticated, "idempotent-cas", "IssueLabelRequest"],
   ["post", "/api/v1/issues/{identifier}/commands/remove-label", "removeIssueLabel", "issues", authenticated, "idempotent-cas", "IssueLabelRequest"],
+
+  ["get", "/api/v1/issues/{identifier}/attachments", "listAttachments", "attachments", authenticated, "read", "DeletedCursorQuery"],
+  ["post", "/api/v1/issues/{identifier}/attachments", "reserveAttachment", "attachments", authenticated, "idempotent", "ReserveAttachmentRequest"],
+  ["get", "/api/v1/attachments/{id}", "getAttachment", "attachments", authenticated, "read"],
+  ["put", "/api/v1/attachments/{id}/content", "uploadAttachment", "attachments", authenticated, "idempotent", "AttachmentBytes"],
+  ["get", "/api/v1/attachments/{id}/content", "downloadAttachment", "attachments", authenticated, "read"],
+  ["delete", "/api/v1/attachments/{id}", "deleteAttachment", "attachments", authenticated, "idempotent-cas-delete"],
+  ["post", "/api/v1/attachments/{id}/commands/restore", "restoreAttachment", "attachments", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
 
   ["get", "/api/v1/issues/{identifier}/comments", "listComments", "comments", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/issues/{identifier}/comments", "createComment", "comments", authenticated, "idempotent", "CreateCommentRequest"],
@@ -321,12 +331,13 @@ const permissionGroups = {
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
     "updateProjectResourceLimits", "getRateLimitSettings",
   ],
-  project_reader: ["listProjectStatuses", "listIssueCandidates", "getIssueContext"],
+  project_reader: ["downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
-    "listComments", "getComment", "listLabels", "getLabel",
+    "listAttachments", "listComments", "getComment", "listLabels", "getLabel",
   ],
   project_writer: [
+    "reserveAttachment", "uploadAttachment", "deleteAttachment", "restoreAttachment",
     "createIssue", "updateIssue", "deleteIssue", "restoreIssue", "assignIssueToMe", "reportIssueBlocked",
     "clearIssueBlocked", "completeIssue", "addIssueLabel", "removeIssueLabel", "createComment", "deleteComment",
     "restoreComment", "createLabel", "updateLabel", "deleteLabel", "restoreLabel",
@@ -483,8 +494,8 @@ const schemas = {
       },
       counts: {
         type: "object",
-        required: ["projects", "issues", "comments", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"],
-        properties: Object.fromEntries(["projects", "issues", "comments", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"].map((key) => [key, integer({ minimum: 0 })])),
+        required: ["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"],
+        properties: Object.fromEntries(["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"].map((key) => [key, integer({ minimum: 0 })])),
         additionalProperties: false,
       },
       can_purge: { type: "boolean" },
@@ -495,10 +506,32 @@ const schemas = {
   },
   PurgedContainer: {
     type: "object", required: ["id", "kind", "purged", "purged_at", "version"],
-    properties: { id: ref("Uuid"), kind: string({ enum: ["workspace", "project"] }), purged: { const: true }, purged_at: ref("Timestamp"), version: ref("Version") },
+    properties: { id: ref("Uuid"), kind: string({ enum: ["workspace", "project"] }), purged: { const: true }, purged_at: ref("Timestamp"), version: ref("Version"), storage_cleanup_pending: { type: "boolean", description: "Private attachment objects remain queued for asynchronous deletion." } },
     additionalProperties: false,
   },
   ContainerPurgeWriteResult: containerWriteResult("PurgedContainer"),
+  ReserveAttachmentRequest: {
+    type: "object", required: ["filename", "content_type", "size_bytes", "sha256"],
+    properties: { filename: string({ minLength: 1, maxLength: 180, description: "Untrusted display filename; paths and control characters are rejected." }), content_type: string({ minLength: 3, maxLength: 127 }), size_bytes: integer({ minimum: 1, maximum: 10485760 }), sha256: string({ pattern: "^[a-f0-9]{64}$" }) }, additionalProperties: false,
+  },
+  AttachmentBytes: { type: "string", format: "binary", description: "One raw file matching the reservation size and SHA-256; maximum 10 MiB." },
+  Attachment: {
+    type: "object", required: ["id", "issue", "filename", "content_type", "size_bytes", "sha256", "state", "version", "created_at", "expires_at", "deleted_at", "uploaded_by", "preview_content_type", "allowed_actions"],
+    properties: {
+      id: ref("Uuid"), issue: ref("IssueReference"), filename: string(), content_type: string(), size_bytes: integer({ minimum: 1, maximum: 10485760 }), sha256: string({ pattern: "^[a-f0-9]{64}$" }),
+      state: string({ enum: ["pending", "ready", "expired"] }), version: ref("Version"), created_at: ref("Timestamp"), expires_at: ref("Timestamp"), deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      uploaded_by: { type: "object", required: ["principal_id", "display_name"], properties: { principal_id: ref("Uuid"), display_name: string() }, additionalProperties: false },
+      preview_content_type: { enum: [null, "image/png", "image/jpeg", "image/gif", "image/webp"] }, allowed_actions: { type: "array", items: string({ enum: ["read", "upload", "download", "delete", "restore"] }) },
+    }, additionalProperties: false,
+  },
+  AttachmentListResult: {
+    type: "object", required: ["items", "has_more", "next_cursor", "resolved_scope", "capabilities", "limits"],
+    properties: { items: { type: "array", items: ref("Attachment") }, has_more: { type: "boolean" }, next_cursor: nullableString(),
+      resolved_scope: { type: "object", required: ["issue"], properties: { issue: ref("IssueReference") }, additionalProperties: false },
+      capabilities: { type: "object", required: ["attachments"], properties: { attachments: { type: "boolean" } }, additionalProperties: false },
+      limits: { type: "object", required: ["max_file_bytes", "max_active_per_issue", "max_storage_bytes"], properties: { max_file_bytes: { const: 10485760 }, max_active_per_issue: { const: 20 }, max_storage_bytes: { const: 1073741824 } }, additionalProperties: false } }, additionalProperties: false,
+  },
+  AttachmentWriteResult: containerWriteResult("Attachment"),
   ExpectedVersionRequest: { type: "object", required: ["expected_version"], properties: { expected_version: ref("Version") }, additionalProperties: false },
   UpdateDisplayNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
   CreateWorkspaceRequest: { type: "object", required: ["display_name"], properties: { display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
@@ -1940,6 +1973,12 @@ const querySets = {
 };
 
 const operationResponseSchemas = {
+  listAttachments: ref("AttachmentListResult"),
+  getAttachment: ref("Attachment"),
+  reserveAttachment: ref("AttachmentWriteResult"),
+  uploadAttachment: ref("AttachmentWriteResult"),
+  deleteAttachment: ref("AttachmentWriteResult"),
+  restoreAttachment: ref("AttachmentWriteResult"),
   previewWorkspacePurge: ref("ContainerPurgePreview"),
   previewProjectPurge: ref("ContainerPurgePreview"),
   purgeWorkspace: ref("ContainerPurgeWriteResult"),
@@ -2022,7 +2061,7 @@ const pathParameter = (name) => ({
   required: true,
   schema: name === "identifier"
     ? string({ pattern: "^CFK-[1-9][0-9]*$" })
-    : name.endsWith("_id")
+    : name === "id" || name.endsWith("_id")
       ? ref("Uuid")
       : string({ minLength: 1 }),
 });
@@ -2077,6 +2116,19 @@ function buildOperation([method, path, operationId, tag, security, mode, request
     const schemaName = requestOrQuery ?? "EmptyRequest";
     operation.requestBody = { required: true, content: { "application/json": { schema: ref(schemaName) } } };
     operation.responses["413"] = { $ref: "#/components/responses/PayloadTooLarge" };
+  }
+  if (operationId === "uploadAttachment") {
+    operation.requestBody = { required: true, content: { "application/octet-stream": { schema: ref("AttachmentBytes") } } };
+    operation.description += " Only the reservation creator or Deployment Owner may upload. The reservation fixes the byte length and SHA-256. R2 and D1 are separate stages; retry with the same attachment and Idempotency-Key.";
+  }
+  if (operationId === "downloadAttachment") {
+    operation.parameters.push({ name: "preview", in: "query", required: false, schema: { type: "string", enum: ["1"] }, description: "Inline only when a PNG, JPEG, GIF, or WebP file header was verified." });
+    operation.responses["200"].content = Object.fromEntries(["application/octet-stream", "image/png", "image/jpeg", "image/gif", "image/webp"].map((type) => [type, { schema: ref("AttachmentBytes") }]));
+    Object.assign(operation.responses["200"].headers, {
+      "Cache-Control": { required: true, schema: { type: "string", const: "private, no-store" } },
+      "X-Content-Type-Options": { required: true, schema: { type: "string", const: "nosniff" } },
+      "Content-Disposition": { required: true, schema: string(), description: "Defaults to attachment; explicit verified image preview uses inline." },
+    });
   }
   return operation;
 }
@@ -2169,7 +2221,7 @@ const document = {
       NotFound: errorResponse("Resource is absent, deleted, or hidden by authorization."),
       Conflict: errorResponse("Version, transition, uniqueness, or business quota conflict."),
       Gone: errorResponse("A short-lived capability expired, was revoked, or was already consumed."),
-      PayloadTooLarge: errorResponse("JSON request exceeds the 128 KiB application limit."),
+      PayloadTooLarge: errorResponse("JSON request exceeds 128 KiB, or attachment bytes exceed the fixed reservation or 10 MiB application limit."),
       RateLimited: errorResponse("Application rate limit reached.", true),
       PlatformUnavailable: errorResponse("Cloudflare platform quota or availability failure.", true),
     },

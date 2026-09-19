@@ -4,17 +4,19 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import CompletionRecord from "../components/CompletionRecord.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
+import IssueAttachments from "../components/IssueAttachments.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import { ApiProblem, apiRequest } from "../lib/api";
+import { forgetIssueAttachmentUploadDraft } from "../lib/attachment-upload-drafts";
 import {
   type CasConflictState,
   captureCasConflict,
   markCasReadbackComplete,
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
-import { projectInventoryBoundary } from "../lib/session-boundary";
+import { isVerifiedServiceAccessFailure, projectInventoryBoundary } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
@@ -260,6 +262,9 @@ async function load(preserveLocalDrafts = editMode.value, throwOnFailure = false
     if (requestId !== loadRequestId || !projectionGeneration.isCurrent(generation)) return;
     setError(caught);
     if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
+      if (isVerifiedServiceAccessFailure(caught.status, caught.body)) {
+        forgetIssueAttachmentUploadDraft(props.session.session_id, props.session.principal.id, props.identifier);
+      }
       issue.value = null;
       statuses.value = [];
       labels.value = [];
@@ -855,7 +860,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
   <main class="issue-page page-shell">
     <PageState :loading="loading" :error="error && !issue ? error : ''" :action-label="t('action.refresh')" @retry="load" />
     <template v-if="issue">
-      <button class="back-link" type="button" @click="backToBoard">← {{ t("action.back") }}</button>
+      <button class="back-link button-with-icon" type="button" @click="backToBoard"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4-6 6 6 6M2 10h15" /></svg>{{ t("action.back") }}</button>
       <ErrorNotice v-if="error" :error="error" />
       <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
 
@@ -864,11 +869,17 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           <p class="issue-identifier">{{ issue.identifier }}</p>
           <h1>{{ issue.title }}</h1>
           <p class="issue-subtitle">{{ issue.workspace.display_name }} / {{ issue.project.display_name }} · v{{ issue.version }}</p>
+          <div class="issue-summary">
+            <span class="status-summary" :data-status="issue.status.key">{{ issue.status.display_name }}</span>
+            <span v-if="issue.priority !== 'none'" class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
+            <span>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
+            <a class="issue-properties-link" href="#issue-properties">{{ locale === 'zh-CN' ? '查看属性' : 'View properties' }}</a>
+          </div>
         </div>
         <div class="issue-actions">
           <button v-if="canUpdate" class="secondary-button" type="button" @click="editMode = !editMode">{{ t("action.edit") }}</button>
           <button v-if="canRestore" class="primary-button" type="button" @click="deleteOrRestore">{{ t("action.restore") }}</button>
-          <button v-else-if="canDelete" class="danger-button" type="button" @click="showDelete = true">{{ t("action.delete") }}</button>
+          <button v-else-if="canDelete" class="text-button muted" type="button" @click="showDelete = true">{{ t("action.delete") }}</button>
         </div>
       </header>
 
@@ -884,6 +895,8 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             <h2>{{ t("issue.body") }}</h2>
             <MarkdownContent :source="issue.body || ''" />
           </section>
+
+          <IssueAttachments :key="`${session.session_id}:${issue.identifier}`" :identifier="issue.identifier" :can-upload="canUpdate" :session-id="session.session_id" :principal-id="session.principal.id" />
 
           <section class="content-section">
             <div class="section-heading-row compact">
@@ -906,7 +919,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           </section>
         </div>
 
-        <aside class="issue-sidebar">
+        <aside id="issue-properties" class="issue-sidebar" :aria-label="locale === 'zh-CN' ? '事项属性' : 'Issue properties'">
           <dl class="metadata-list">
             <div><dt>{{ t("issue.status") }}</dt><dd><select v-if="canUpdate" :value="issue.status.key" @change="updateIssue({ status_key: ($event.target as HTMLSelectElement).value as StatusKey })"><option v-for="status in statuses.filter((entry) => entry.key !== 'done')" :key="status.key" :value="status.key">{{ status.display_name }}</option><option v-if="issue.status.key === 'done'" value="done" disabled>{{ statusDisplayName("done") }} · {{ locale === "zh-CN" ? "通过完成记录进入" : "entered through completion" }}</option></select><span v-else>{{ issue.status.display_name }}</span></dd></div>
             <div><dt>{{ t("issue.priority") }}</dt><dd>{{ priorityLabel(issue.priority) }}</dd></div>

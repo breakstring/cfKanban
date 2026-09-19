@@ -60,7 +60,8 @@ onMounted(loadDiscovery);
       <button v-if="canAccessOwnerControlPlane(session)" class="text-button" type="button" @click="navigate('/app/admin')">
         {{ t("admin.overview") }}
       </button>
-      <button class="text-button" type="button" @click="navigate('/app/profile')">
+      <button class="text-button profile-button" type="button" @click="navigate('/app/profile')">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6.5" r="3" /><path d="M4 17v-1a6 6 0 0 1 12 0v1" /></svg>
         {{ session.principal.display_name }}
       </button>
       <button
@@ -80,6 +81,7 @@ onMounted(loadDiscovery);
       <a v-if="preferredOrigin" :href="preferredOrigin" target="_blank" rel="noreferrer noopener">
         {{ t("session.preferred") }} · {{ preferredOrigin }}
       </a>
+      <button class="text-button muted mobile-sign-out" type="button" @click="emit('logout')">{{ t("action.logout") }}</button>
     </div>
   </header>
 </template>

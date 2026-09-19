@@ -64,9 +64,10 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
         @click="navigate(`/app/w/${encodeURIComponent(choice.workspaceId)}/p/${encodeURIComponent(choice.projectId)}`)"
       >
         <span>
+          <small>{{ choice.workspaceName }}</small>
           <strong>{{ choiceLabels.get(choice.projectId)?.label }}</strong>
         </span>
-        <span class="role-badge">{{ roleLabel(choice.role) }}</span>
+        <span class="selection-row-end"><span class="role-badge">{{ roleLabel(choice.role) }}</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></span>
       </button>
       <p v-if="choices.length === 0" class="empty-copy">
         {{ locale === "zh-CN" ? "当前没有可访问的项目。" : "No projects are currently available." }}

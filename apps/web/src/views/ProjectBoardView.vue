@@ -436,13 +436,17 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
         <p class="eyebrow">{{ project?.workspace_display_name }}</p>
         <h1>{{ project?.display_name ?? "" }}</h1>
       </div>
-      <form class="board-search" role="search" @submit.prevent="load()">
-        <input v-model="search" type="search" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'" />
-      </form>
       <div class="board-toolbar-actions">
         <span v-if="!canWrite" class="read-only-badge">{{ t("board.readOnly") }}</span>
-        <button v-if="canWrite" class="text-button" type="button" @click="loadDeleted(true)">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
-        <button v-if="canWrite" class="primary-button" type="button" @click="showNewIssue = true">{{ t("action.newIssue") }}</button>
+        <button v-if="canWrite" class="primary-button button-with-icon" type="button" @click="showNewIssue = true"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ t("action.newIssue") }}</button>
+      </div>
+      <div class="board-utility-bar">
+        <form class="board-search" role="search" @submit.prevent="load()">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
+          <input v-model="search" type="search" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'" />
+          <button class="text-button board-search-submit" type="submit">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</button>
+        </form>
+        <button v-if="canWrite" class="text-button muted" type="button" @click="loadDeleted(true)">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
       </div>
     </header>
 
@@ -468,6 +472,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           v-for="statusKey in statusOrder"
           :key="statusKey"
           class="kanban-column"
+          :data-status="statusKey"
           @dragover.prevent
           @drop="onDrop(statusKey)"
         >
@@ -488,23 +493,25 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
               <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
                 <span class="card-meta">
                   <code>{{ issue.identifier }}</code>
-                  <span v-if="issue.priority !== 'none'" class="priority-mark">{{ priorityLabel(issue.priority) }}</span>
+                  <span v-if="issue.priority !== 'none'" class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
                 </span>
                 <strong>{{ issue.title }}</strong>
                 <span v-if="issue.labels.length" class="label-line">
-                  <span v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip">{{ label.name }}</span>
+                  <span v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip" :title="label.name">{{ label.name }}</span>
                 </span>
-                <span class="card-footer">
-                  <span>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
+                <span v-if="issue.is_blocked || issue.needs_reassignment" class="card-exceptions">
                   <span v-if="issue.is_blocked" class="warning-chip">{{ locale === "zh-CN" ? "已阻塞" : "blocked" }}</span>
                   <span v-if="issue.needs_reassignment" class="warning-chip">{{ locale === "zh-CN" ? "需重新指派" : "reassign" }}</span>
                 </span>
               </button>
+              <div class="card-footer">
+                <span class="card-assignee" :title="issue.assignee?.display_name ?? t('issue.unassigned')">{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
               <select
                 v-if="canWrite"
                 class="card-status-select"
                 :value="issue.status.key"
-                :aria-label="locale === 'zh-CN' ? '变更状态' : 'Change status'"
+                :disabled="saving.has(issue.id)"
+                :aria-label="`${issue.identifier} · ${locale === 'zh-CN' ? '变更状态' : 'Change status'}`"
                 @click.stop
                 @change.stop="onStatusSelection(issue, $event)"
               >
@@ -512,6 +519,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
                   {{ statusMap.get(option)?.display_name ?? option }}
                 </option>
               </select>
+              </div>
             </article>
             <p v-if="issuesFor(statusKey).length === 0" class="column-empty">{{ t("board.empty") }}</p>
           </div>

@@ -86,6 +86,8 @@ Project 是工作协调命名空间，不是 Repo 的镜像。系统不强制一
 
 Vectorize、Workers AI、Queues、R2、Durable Objects、Cloudflare Access 和远程 MCP 都是可选能力。关闭或超限时，Project、Issue、评论、状态、assignment 和历史仍然可用。
 
+2026-09-19 的[附件合同](../specs/2026-09-19-issue-attachments-spec.md)明确可选私有 R2 附件：用于 Issue 中的截图、日志等协作材料，复用 Project 权限，不提供公开对象链接。默认部署仍仅依赖 Worker + D1；启用附件需要单独列明存储、权限和费用影响。
+
 v0 只提供 D1 结构化过滤与基础标题搜索。后期检索增强优先使用 Cloudflare Vectorize 的可重建派生索引；它不能参与权限、唯一约束、CAS 或刚写即读的核心判断。
 
 ### 少组件就是能力

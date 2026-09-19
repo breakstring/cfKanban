@@ -2,7 +2,7 @@
 
 语言：[English](deployment-workflows.md) | [简体中文](deployment-workflows.zh-CN.md)
 
-制定计划前，先在 Skill 目录运行 `node scripts/cfkanban-tool.mjs help`。catalog 会列出当前 release 的全部 deploy commands、effect 与输入字段。
+按请求只读对应流程：本地安装使用 **Skill update**，新实例使用 **首次部署**，已验证既有资源使用 **Instance upgrade**，journal 中断操作使用 **中断与续做**。本地 Skill 更新不需要 Cloudflare 登录；既有实例升级不要求资源不存在。每个已安装 release 首次使用或输入不明确时运行 `node scripts/cfkanban-tool.mjs help`，查看命令 effect 和输入字段。
 
 ## 存储归属
 
@@ -14,11 +14,13 @@ cfKanban 自己拥有的持久数据统一放在当前执行环境用户的一�
     credentials/
     journals/
     receipts/
+  service-releases/
   skill-releases/
   tool-runtime/
 ```
 
 - `instances/` 保存 trusted-origin metadata、私有 Credentials、operation journals 与脱敏 receipts。
+- `service-releases/` 保存部署/升级计划使用的已验证 immutable Service 工件，与当前 Skill 独立。
 - `skill-releases/` 保存已验证的 immutable Skill bundle versions、atomic active pointer 与上一 known-good version。
 - `tool-runtime/` 在没有兼容的用户自有 Wrangler 时保存准确的 cfKanban-managed Wrangler npm package 及其依赖；它使用当前环境中用户已有的兼容 Node.js，绝不包含或安装 Node.js，也不会加入 PATH。
 
@@ -77,7 +79,7 @@ Cloudflare 在自己的仓库维护了两个有用的可选协作 Skill：
 | 远程 SSH 或容器 | `default_profile_device` | 执行 `login --device --browser=false` | Wrangler 4.127.1 的 `auth create` 没有 device flow，因此只能使用 default profile，也不能带 callback host/port。 |
 | 非交互/headless | 已有环境 API token | 不计划 OAuth action | token 由用户或宿主在 Skill 输入之外提供；不能请求、回显、持久化或复制。它会遮蔽 profile。 |
 
-OAuth 计划只请求下面四个 scope，并在单个 `--scopes` 后把每个 scope 作为独立进程参数传递：
+默认 strict-zero OAuth 计划只请求下面四个 scope，并在单个 `--scopes` 后把每个 scope 作为独立进程参数传递：
 
 | Scope | cfKanban 使用原因 |
 | --- | --- |
@@ -86,7 +88,9 @@ OAuth 计划只请求下面四个 scope，并在单个 `--scopes` 后把每个 s
 | `workers_scripts:write` | 上传 verified Service bundle 的 Worker、内置 Static Assets、bindings、subdomain 与 triggers。 |
 | `d1:write` | 创建、迁移、查询并绑定唯一 D1 数据库。 |
 
-Cloudflare 会自动增加 `offline_access`，供 Wrangler 刷新 OAuth 登录。计划明确不申请宽泛的 `workers:write`，也不申请 KV、routes、Pages、zone、AI、Queue、R2、DNS 或其他产品 scope。如果 Wrangler 不再提供上述四项中的任意一项，或者 Cloudflare consent 页面要求未预期的 scope，必须停止并等待修正后的发行版，不能现场扩大权限。
+Cloudflare 会自动增加 `offline_access`，供 Wrangler 刷新 OAuth 登录。默认计划不申请宽泛的 `workers:write`，也不申请 KV、routes、Pages、zone、AI、Queue、DNS 或其他产品 scope。明确要求可选 R2 附件存储时，向 `runtime inspect-cloudflare-auth` 和 `runtime plan-cloudflare-auth` 同时传入 `attachmentStorage: true`，只额外加入 `workers:write`。固定 Wrangler 4.127.1 没有 R2 专属 OAuth scope；该权限会扩大 Workers 数据访问（包括 KV、scripts 和 routes），并不限于一个 bucket。Cloudflare [官方 bindings MCP](https://github.com/cloudflare/mcp-server-cloudflare/blob/main/apps/workers-bindings/src/bindings.app.ts) 也用这一 legacy scope 调用 R2 工具。既有 profile 还要传入 `allowExistingProfile: true`，并明确授权重新认证。不能猜造 `r2:write`，也不能把 403/code 10000 直接解释为未开通订阅。完成 consent 后，用 `runtime r2-storage-readback` 读回准确 account/bucket；OAuth 成功不等于 R2 权限和订阅已验证。
+
+如果 Wrangler 不再提供所需 scope，或者 Cloudflare consent 页面要求未预期的 scope，必须停止并等待修正后的发行版，不能现场扩大权限。
 
 Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profiles。持久偏好关闭时，计划会把启用动作单独列出；既有明文 profile 在后继访问时可能迁移为加密文件。macOS 使用 Keychain，Linux 需要可用的 secret-service backend，Windows 可能会一次性下载 Wrangler 固定版本的 keyring binding。这些变化都发生在 `~/.cfkanban/` 之外。不能把关闭 keyring 当作自动回滚，因为 Wrangler 可能删除其他 profile 的加密 Credential；删除 profile/logout 与任何 keyring 修改都必须作为新的独立清理动作授权。
 
@@ -128,7 +132,7 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 2. 对 Skill 与 Service deployment bundles 运行 `release verify`，再与既有 receipt 比较 publisher/origin continuity。
 3. 运行 `capabilities`。把已验证的 Skill artifact 与 `installed_skill_bundle` 比较；首次安装时，`plan skill-update` 必须使用 `current: null`，更新时只使用脱敏后的 current receipt。即使 plugin 或 marketplace cache 完全匹配，它也只是宿主投影，绝不能跳过本步骤。`capabilities.tools.wrangler` 只探测 PATH，`installed_tool_runtime` 也只是未经验证的提示。必须使用 manifest 的准确兼容范围调用 `runtime resolve-wrangler`；它会依次检查显式 candidate、PATH 与 active cfKanban Tool Runtime。任何兼容结果都应直接复用。只有 resolver 明确返回 unavailable/incompatible 时才能生成 `runtime plan-install`。
 4. 展示 Skill 计划的 canonical source/version/digest、`.cfkanban/skill-releases` 目标、atomic switch 与 rollback。若两项本地前置条件都缺失，必须把 Skill 与 Tool Runtime 两份计划及其 digest 一起展示，再请求一次只覆盖这些准确写入的用户决定。授权后先安装 canonical Skill bundle，从返回的 installed path 运行 `help`，并核对 active receipt；只有此前 resolver 已证明确有必要时才安装 Wrangler。安装完成后必须再次 resolve，并要求兼容读回。
-5. 先复用 journal/receipt 中的准确认证目标；否则在私有部署/config 上下文运行 `runtime resolve-cloudflare-auth`，让 Wrangler 解析环境/当前上下文身份且不列出 profiles。只有用户明确给出的 named profile 才单独检查。只询问尚未确定的 account。`unavailable` 允许显式 profile 重试或生成绑定 task 的 OAuth 计划，`blocked` 必须停止。登录计划展示 profile operation、四个 scopes、全局 keyring 影响、browser/device 交互、本地存储归属和准确 digest。禁止版本化 profile 名称、`login --profile`、组合 scopes 参数、Repo 绑定或宽泛产品 scopes。
+5. 先复用 journal/receipt 中的准确认证目标；否则在私有部署/config 上下文运行 `runtime resolve-cloudflare-auth`，让 Wrangler 解析环境/当前上下文身份且不列出 profiles。只有用户明确给出的 named profile 才单独检查。只询问尚未确定的 account。`unavailable` 允许显式 profile 重试或生成绑定 task 的 OAuth 计划，`blocked` 必须停止。登录计划展示 profile operation、所需 scopes 与明确的可选存储扩权、全局 keyring 影响、browser/device 交互、本地存储归属和准确 digest。禁止版本化 profile 名称、`login --profile`、组合 scopes 参数、Repo 绑定或计划外产品 scopes。
 6. 使用准确 account ID 运行 `runtime wrangler-account-readback`。明确选择 named/default profile 时传入它；否则让 Wrangler 使用当前环境/config 目录上下文。该命令使用只读 `d1 list --json`，通过 `CLOUDFLARE_ACCOUNT_ID` 固定账户并丢弃数据库清单；环境 Credential 遮蔽显式 profile 时停止。仍禁止裸 `npx`，因为它可能下载未固定的最新 Wrangler。
 7. 运行 `plan strict-zero`。默认候选包含一个 Worker、一个 D1、bundled Static Assets、`workers.dev`、不包含可选 Cloudflare 产品，并使用每 60 秒 120/300/30 request gates。冻结准确 account 与任何明确选择的 profile，并在 digest 前解决 Owner display name；生成的私有 `wrangler.jsonc` 固定 `account_id`。
 8. 展示计划前，对其中两个准确名称分别运行 `runtime d1-resource-readback` 与 `runtime worker-resource-readback`。两者都必须返回 `absent`；present 或无法分类的结果都要停止，更换名称需要新计划。这些只读 wrapper 会关闭 Wrangler 磁盘日志，且不返回账户清单。
@@ -199,3 +203,11 @@ canonical origin/digest mismatch、publisher discontinuity、存储不可验证�
 ## 不兼容开发迁移
 
 普通升级仍只接受向后兼容迁移。`breaking_non_destructive` 必须在计划输入显式设置 `allow_breaking_change: true` 并重新授权完整计划；预览旧 API/URL/scope 失效、旧操作快照清除、迁移到新 Worker 发布之间的服务中断。迁移后禁止回滚旧 Worker，只能继续部署兼容新 schema 的版本；restore point 必须验证，D1 restore 始终需要另行授权。`absent_columns` 以实际 table.column 读回证明，缺列证据时停止。
+
+## 可选附件存储
+
+默认首次部署仍只有一个 Worker 和一个 D1。通过显式实例升级启用附件：向 `plan instance-upgrade` 传入 `attachments: {"bucket_name":"<准确名称>","create":true}`，目标发行必须支持 schema 4 或更高版本。计划固定一个 private Standard R2 bucket、`ATTACHMENTS`、每小时 `17 * * * *` 清理触发器、订阅与超免费额度计费影响，以及应用限额。1 GiB 应用预算不是 Cloudflare 账单上限；该计划不授权开通或变更订阅。
+
+先用 `runtime r2-storage-readback` 核对准确 bucket/account。新名称必须不存在；未知 bucket 即使带有看似匹配的 marker 也不能接管。授权计划后，`deployment provision-r2-storage` 记录创建 journal，写入并读回 Instance marker，并拒绝公开访问。升级既有附件 bucket 时省略 `attachments` 以保留原桶，通过 provision 命令验证时传入私有 `currentReceiptPath`。marker 缺失或不合法必须停止，不得推定归属后补写。
+
+Worker 部署前检查当前 deployment、bindings 与 Cron，部署后核对真实 R2 binding、清理计划和 bucket 才能 finalize。未知 Cron 会在 Wrangler 覆盖前被阻止；新 receipt 保留原 bucket。只在读回后恢复同一个已授权 operation；创建响应不确定且 journal 没有成功记录时停止。不会自动替换、移除、清空或删除 bucket。

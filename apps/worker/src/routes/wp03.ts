@@ -79,7 +79,7 @@ export function registerWp03Routes(router: Router): Router {
     ))
     .get("/api/v1/meta", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await getMeta(env.DB, auth, context.url.origin), context.requestId);
+      return jsonResponse(await getMeta(env.DB, auth, context.url.origin, env.ATTACHMENTS !== undefined), context.requestId);
     })
     .get("/api/v1/me", async (request, env, context) => {
       const auth = await authenticated(request, env, context);

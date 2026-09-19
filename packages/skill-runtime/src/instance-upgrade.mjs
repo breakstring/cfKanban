@@ -13,6 +13,7 @@ import { resolveStateRoot } from "./paths.mjs";
 import { fetchDiscovery, validateDiscovery } from "./rebind.mjs";
 import { loadAndVerifyRelease } from "./release.mjs";
 import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
+import { ATTACHMENT_CLEANUP_CRON, assertAttachmentStoragePlan } from "./r2-storage.mjs";
 import {
   getInstancePaths,
   loadCurrentCredentialSecret,
@@ -54,6 +55,7 @@ function assertPriorReceipt(receipt, plan) {
     || receipt.owner?.principal_id !== plan.owner.principal_id
     || receipt.owner?.credential_id !== plan.owner.credential_id
     || receipt.owner?.credential_fingerprint !== plan.owner.credential_fingerprint
+    || (receipt.cloudflare?.r2?.bucket_name ?? null) !== (plan.attachment_storage?.previous_bucket ?? null)
     || before?.publisher !== plan.current.publisher
     || before?.manifest_version !== plan.current.manifest_version
     || before?.manifest_sha256 !== plan.current.manifest_sha256
@@ -65,6 +67,7 @@ function assertPriorReceipt(receipt, plan) {
 }
 
 function assertUpgradeConfig(config, event, plan, configPath) {
+  assertAttachmentStoragePlan(plan);
   if (event === null
     || event.config_path !== configPath
     || event.config_digest !== canonicalDigest(config)
@@ -75,7 +78,9 @@ function assertUpgradeConfig(config, event, plan, configPath) {
     || config.d1_databases[0]?.database_name !== plan.resources.d1.name
     || config.d1_databases[0]?.database_id !== plan.resources.d1.database_id
     || config.assets?.binding !== plan.bindings.assets
-    || config.workers_dev !== true) {
+    || config.workers_dev !== true
+    || JSON.stringify(config.r2_buckets ?? []) !== JSON.stringify(plan.resources.r2 ? [{ binding: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }] : [])
+    || JSON.stringify(config.triggers?.crons ?? []) !== JSON.stringify(plan.resources.r2 ? [ATTACHMENT_CLEANUP_CRON] : [])) {
     throw toolError("WRANGLER_CONFIG_DRIFT", "Upgrade Wrangler config does not match the frozen target");
   }
 }
@@ -158,6 +163,7 @@ export async function finalizeInstanceUpgrade({
     throw toolError("WORKER_DEPLOYMENT_READBACK_REQUIRED", "Upgrade finalization requires a successful post-deploy Worker readback");
   }
   const afterWorker = workerReadback.event.worker_deployment_readback;
+  if (plan.resources.r2 && JSON.stringify(afterWorker.attachment_configuration) !== JSON.stringify({ bucket_name: plan.resources.r2.bucket_name, crons: [ATTACHMENT_CLEANUP_CRON], binding_verified: true })) throw toolError("R2_READBACK_REQUIRED", "Upgrade finalization requires post-deploy attachment binding and Cron readback");
   if (afterWorker.deployment_id === plan.resources.worker.current_deployment_id
     || afterWorker.version_id === plan.resources.worker.current_version_id) {
     throw toolError("WORKER_DEPLOYMENT_NOT_UPDATED", "Post-deploy Worker readback still identifies the prior deployment or version");
@@ -195,6 +201,7 @@ export async function finalizeInstanceUpgrade({
     requestJson(origin, "/api/v1/meta", { token: currentCredential.token, fetchImpl }),
     requestJson(origin, "/api/v1/me", { token: currentCredential.token, fetchImpl }),
   ]);
+  if (Boolean(meta.capabilities?.attachments) !== Boolean(plan.resources.r2)) throw toolError("R2_CAPABILITY_DRIFT", "Deployed attachment capability differs from the plan");
   const discovery = validateDiscovery(rawDiscovery, origin);
   const identity = assertReadback({
     health,
@@ -240,6 +247,7 @@ export async function finalizeInstanceUpgrade({
         after_deployment_id: afterWorker.deployment_id,
         after_version_id: afterWorker.version_id,
       },
+      ...(plan.resources.r2 ? { r2: { bucket_name: plan.resources.r2.bucket_name, instance_id: instance, public_access: false } } : {}),
       d1: {
         name: plan.resources.d1.name,
         database_id: plan.resources.d1.database_id,

@@ -128,6 +128,7 @@ export async function getMeta(
   db: D1Database,
   auth: AuthContext,
   observedOrigin: string,
+  attachmentsEnabled = false,
 ): Promise<{ [key: string]: JsonValue }> {
   const [instance, projects] = await Promise.all([
     readInstance(db),
@@ -136,6 +137,7 @@ export async function getMeta(
   const workspaceIds = [...new Set(projects.map((project) => project.workspaceId))];
   return {
     capabilities: {
+      attachments: attachmentsEnabled,
       browser_launch: true,
       fixed_workflow: true,
       passkey: true,

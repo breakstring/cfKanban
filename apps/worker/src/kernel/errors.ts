@@ -111,12 +111,12 @@ export function validationError(reason: string, details: Record<string, unknown>
   });
 }
 
-export function payloadTooLarge(): ApiError {
+export function payloadTooLarge(limitBytes = 128 * 1_024, bodyKind: "JSON" | "attachment" = "JSON"): ApiError {
   return new ApiError({
     category: "validation",
     code: "PAYLOAD_TOO_LARGE",
-    details: { limit_bytes: 128 * 1_024 },
-    message: "The JSON request body exceeds the allowed size.",
+    details: { limit_bytes: limitBytes },
+    message: `The ${bodyKind} request body exceeds the allowed size.`,
     recovery: "none",
     retryable: false,
     status: 413,
@@ -360,7 +360,7 @@ export function d1PlatformQuotaExceeded(quotaKind: D1QuotaKind, now = Date.now()
 }
 
 export function platformUnavailable(
-  component: "d1" | "worker" = "worker",
+  component: "d1" | "worker" | "r2" = "worker",
   cause?: unknown,
   now = Date.now(),
 ): ApiError {
@@ -376,7 +376,7 @@ export function platformUnavailable(
     message: "The service is temporarily unavailable.",
     recovery: "request_owner",
     retryable: false,
-    source: component === "d1" ? "cloudflare_platform" : "service",
+    source: component === "d1" || component === "r2" ? "cloudflare_platform" : "service",
     status: 503,
   });
 }

@@ -2,7 +2,7 @@
 
 Language: [English](deployment-workflows.md) | [简体中文](deployment-workflows.zh-CN.md)
 
-Run `node scripts/cfkanban-tool.mjs help` from the Skill directory before planning. The catalog reports every deploy command, its effect, and accepted input fields for the installed release.
+Read only the workflow matching the request: **Skill update** for local installation, **First deployment** for a new Instance, **Instance upgrade** for verified existing resources, or **Interruption and resume** for a journaled operation. Local Skill updates do not require Cloudflare login; existing-instance upgrades do not require resource absence. Run `node scripts/cfkanban-tool.mjs help` once per installed release, or when inputs are unclear, for its command effects and accepted fields.
 
 ## Storage ownership
 
@@ -14,11 +14,13 @@ All persistent state owned by cfKanban uses one current-environment user root:
     credentials/
     journals/
     receipts/
+  service-releases/
   skill-releases/
   tool-runtime/
 ```
 
 - `instances/` contains trusted-origin metadata, private Credentials, operation journals, and redacted receipts.
+- `service-releases/` contains verified immutable Service artifacts used by deployment/upgrade plans; it is independent of active Skills.
 - `skill-releases/` contains verified immutable Skill bundle versions plus an atomic active pointer and previous known-good version.
 - `tool-runtime/` contains the exact cfKanban-managed Wrangler npm package and its dependencies when a compatible user-owned Wrangler is unavailable. It uses the current environment's compatible user-owned Node.js, never contains or installs Node.js, and is never added to PATH.
 
@@ -77,7 +79,7 @@ The modes are:
 | Remote SSH or container | `default_profile_device` | `login --device --browser=false` | Wrangler 4.127.1 does not offer device flow on `auth create`, so this uses the default profile and no callback host/port. |
 | Non-interactive/headless | existing environment API token | No OAuth action is planned | The user or host supplies it outside Skill input. Never request, echo, persist, or copy the token. It shadows profiles. |
 
-The OAuth plan requests only these four scopes, each as a separate process argument after one `--scopes` flag:
+The default strict-zero OAuth plan requests only these four scopes, each as a separate process argument after one `--scopes` flag:
 
 | Scope | Why cfKanban needs it |
 | --- | --- |
@@ -86,7 +88,9 @@ The OAuth plan requests only these four scopes, each as a separate process argum
 | `workers_scripts:write` | Upload the Worker, bundled Static Assets, bindings, subdomain, and triggers used by the verified Service bundle. |
 | `d1:write` | Create, migrate, query, and bind the single D1 database. |
 
-Cloudflare automatically adds `offline_access` so Wrangler can refresh the OAuth login. The plan deliberately omits the broad `workers:write` scope and separate KV, routes, Pages, zone, AI, Queue, R2, DNS, and other product scopes. If Wrangler no longer exposes one of the four required scopes, or the Cloudflare consent surface requires an unexpected scope, stop and require a corrected release; do not widen access in place.
+Cloudflare automatically adds `offline_access` so Wrangler can refresh the OAuth login. The default plan omits the broad `workers:write` scope and separate KV, routes, Pages, zone, AI, Queue, DNS, and other product scopes. For explicitly requested R2 attachment storage, pass `attachmentStorage: true` to both `runtime inspect-cloudflare-auth` and `runtime plan-cloudflare-auth`. This adds only `workers:write`, because pinned Wrangler 4.127.1 exposes no R2-only OAuth scope. It grants broad Workers data access (including KV, scripts, and routes), not one-bucket access. Cloudflare’s [official bindings MCP](https://github.com/cloudflare/mcp-server-cloudflare/blob/main/apps/workers-bindings/src/bindings.app.ts) uses this legacy OAuth scope for its R2 tools. Existing profiles also require `allowExistingProfile: true` and explicit re-authentication approval. Do not invent `r2:write` or treat a 403/code 10000 as proof that the subscription is absent. After consent, read back the exact account and R2 bucket with `runtime r2-storage-readback`; success of OAuth alone is insufficient.
+
+If Wrangler no longer exposes a required scope, or the Cloudflare consent surface requires an unexpected scope, stop and require a corrected release; do not widen access in place.
 
 Wrangler's keyring setting is global for every Wrangler profile owned by the current OS user. Enabling it is therefore shown as a separate action when the persisted preference is off. Existing plaintext profiles may migrate to encrypted files when next accessed; macOS uses Keychain, Linux requires a reachable secret-service backend, and Windows may perform a one-time download of Wrangler's pinned keyring binding. These effects are outside `~/.cfkanban/`. Never disable keyring automatically on rollback: Wrangler can delete encrypted credentials belonging to unrelated profiles. Profile deletion/logout and any keyring change are separate, newly authorized cleanup actions.
 
@@ -128,7 +132,7 @@ Commands accept structured JSON on stdin. Credential generation and loading rema
 2. Run `release verify` for both Skill and Service deployment bundles, then compare publisher/origin continuity with any receipt.
 3. Run `capabilities`. Compare the verified Skill artifact with `installed_skill_bundle`; on a first install, `plan skill-update` must use `current: null`, while an update uses only the redacted current receipt. A matching plugin or marketplace cache remains only a host projection and never allows this step to be skipped. `capabilities.tools.wrangler` probes PATH only, and `installed_tool_runtime` is an unverified hint. Always invoke `runtime resolve-wrangler` with the manifest's exact compatibility range; it checks an explicit candidate, PATH, then the active cfKanban Tool Runtime. Reuse any compatible result. Only an unavailable/incompatible resolver result permits `runtime plan-install`.
 4. Show the Skill plan's canonical source/version/digest, `.cfkanban/skill-releases` target, atomic switch, and rollback. If both local prerequisites are needed, show the Skill and Tool Runtime plans together, including both digests, before requesting one user decision covering those exact writes. After authorization, install the canonical Skill bundle first, run `help` from the returned installed path, and verify the active receipt. Install Wrangler only when the earlier resolver result proved installation necessary; resolve again after installation and require a compatible readback.
-5. Reuse an exact journal/receipt auth target first. Otherwise run `runtime resolve-cloudflare-auth` in the private deployment/config context and let Wrangler resolve environment/current-context identity without listing profiles. Only a named profile explicitly supplied by the user is checked separately. Ask only for an unresolved account choice. `unavailable` permits an explicit-profile retry or a task-bound OAuth plan; `blocked` stops. Show login profile operation, four requested scopes, global keyring effect, browser/device interaction, local storage owner, and exact digest. Never use a versioned profile name, `login --profile`, one quoted argument for all scopes, a Repo binding, or broad product scopes.
+5. Reuse an exact journal/receipt auth target first. Otherwise run `runtime resolve-cloudflare-auth` in the private deployment/config context and let Wrangler resolve environment/current-context identity without listing profiles. Only a named profile explicitly supplied by the user is checked separately. Ask only for an unresolved account choice. `unavailable` permits an explicit-profile retry or a task-bound OAuth plan; `blocked` stops. Show login profile operation, requested scopes and any explicit optional-storage expansion, global keyring effect, browser/device interaction, local storage owner, and exact digest. Never use a versioned profile name, `login --profile`, one quoted argument for all scopes, a Repo binding, or unplanned product scopes.
 6. Run `runtime wrangler-account-readback` with the exact account ID. Pass a named/default profile only when it was explicitly selected; otherwise allow Wrangler's effective environment/config-directory context. The command uses read-only `d1 list --json`, fixes the account through `CLOUDFLARE_ACCOUNT_ID`, discards the database inventory, and stops when an environment credential would shadow an explicitly selected profile. A bare `npx` remains forbidden because it may download an unpinned latest Wrangler.
 7. Run `plan strict-zero`. The default candidate contains one Worker, one D1, bundled Static Assets, `workers.dev`, no optional Cloudflare products, and 120/300/30 request gates per 60 seconds. Freeze the exact Cloudflare account and any explicitly selected profile, then resolve missing Owner display name before freezing the digest. The generated private `wrangler.jsonc` pins `account_id`.
 8. Before presenting the plan, run `runtime d1-resource-readback` and `runtime worker-resource-readback` for its exact names. Both must return `absent`; present or unclassifiable results stop, and a new name requires a new plan. These read-only wrappers disable Wrangler disk logs and return no account inventory.
@@ -199,3 +203,11 @@ Stop on canonical origin/digest mismatch, publisher discontinuity, unverified st
 ## Incompatible development migrations
 
 For `breaking_non_destructive`, explicitly pass `allow_breaking_change: true` and authorize the complete plan. Ordinary upgrades remain backward-compatible only. Preview old API/URL/scope incompatibility, removed operation snapshots and service interruption until the compatible Worker deploys. Never roll back the old Worker after migration; resume with a schema-compatible Worker. Require a verified restore point, but never restore D1 automatically. Verify `absent_columns` using actual table.column readback; missing column evidence stops the operation.
+
+## Optional attachment storage
+
+Default first deployment remains one Worker and one D1. Enable attachments through an explicit Instance upgrade (`plan instance-upgrade`, `attachments: {"bucket_name":"<exact-name>","create":true}`) with a compatible release (schema 4 or later). Freeze one private Standard R2 bucket, `ATTACHMENTS`, the hourly `17 * * * *` cleanup trigger, subscription and billable usage, and the application limits; the 1 GiB application budget is not a Cloudflare billing cap. This does not authorize subscription changes.
+
+First read the exact bucket/account with `runtime r2-storage-readback`. New names must be absent; an unknown bucket cannot be adopted, even if it has a matching-looking marker. After plan authorization, `deployment provision-r2-storage` journals creation, writes and verifies the Instance marker, and rejects public access. For an existing bucket, omit `attachments` to preserve it and supply its private `currentReceiptPath` when verifying through the provision command. A missing or invalid marker stops; it is never repaired by assuming ownership.
+
+Worker deployment checks current deployment/bindings and Cron schedules before writing, then verifies the actual deployed R2 binding, schedule and bucket before finalization. Unexpected Cron triggers stop before Wrangler can overwrite them. The new receipt preserves the bucket. Resume only the same authorized operation after readback; uncertain creation without a successful journal record stops. Buckets are never automatically replaced, removed, emptied or deleted.

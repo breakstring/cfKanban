@@ -17,6 +17,8 @@ function countExpressions(kind: Kind): Record<string, string> {
   return {
     projects: "SELECT 0",
     issues: "SELECT COUNT(*) FROM issues WHERE project_id = ?1",
+    attachments: "SELECT COUNT(*) FROM issue_attachments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1)",
+    attachment_bytes: "SELECT COALESCE(SUM(size_bytes),0) FROM attachment_objects WHERE id IN (SELECT id FROM issue_attachments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1))",
     comments: "SELECT COUNT(*) FROM comments WHERE issue_id IN (SELECT id FROM issues WHERE project_id = ?1)",
     labels: "SELECT COUNT(*) FROM labels WHERE project_id = ?1",
     relations: "SELECT COUNT(*) FROM issue_relations WHERE source_project_id = ?1 OR target_project_id = ?1",
@@ -28,7 +30,7 @@ function countExpressions(kind: Kind): Record<string, string> {
     web_sessions: "SELECT COUNT(*) FROM web_sessions WHERE json_extract(target_json, '$.project_id') = ?1",
   };
 }
-const emptyCounts = { projects: 0, issues: 0, comments: 0, labels: 0, relations: 0, cross_project_relations: 0, grants: 0, invitations: 0, shared_invitations: 0, browser_launches: 0, web_sessions: 0 };
+const emptyCounts = { projects: 0, issues: 0, comments: 0, attachments: 0, attachment_bytes: 0, labels: 0, relations: 0, cross_project_relations: 0, grants: 0, invitations: 0, shared_invitations: 0, browser_launches: 0, web_sessions: 0 };
 async function readTarget(db: D1Database, workspaceId: string, projectId?: string): Promise<Target> {
   const row = projectId === undefined
     ? await db.prepare("SELECT id,display_name,version,deleted_at,id AS workspace_id FROM workspaces WHERE id = ?1 AND purged_at IS NULL").bind(workspaceId).first<Target>()
@@ -70,6 +72,7 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
     (primary_subject_type IN ('project','public_join_policy') AND primary_subject_id=?1)
     OR (primary_subject_type='project_grant' AND primary_subject_id IN (SELECT id FROM project_grants WHERE project_id=?1))
     OR (primary_subject_type='issue' AND primary_subject_id IN (SELECT id FROM issues WHERE project_id=?1))
+    OR (primary_subject_type='attachment' AND primary_subject_id IN (SELECT id FROM issue_attachments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1)))
     OR (primary_subject_type='comment' AND primary_subject_id IN (SELECT id FROM comments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1)))
     OR (primary_subject_type='label' AND primary_subject_id IN (SELECT id FROM labels WHERE project_id=?1))
     OR (primary_subject_type='relation' AND primary_subject_id IN (SELECT id FROM issue_relations WHERE source_project_id=?1 OR target_project_id=?1))
@@ -83,6 +86,8 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
     stmt(`DELETE FROM events WHERE (${eventScope}) AND operation_id<>?2 AND ${gate}`),
   ];
   if (kind === "workspace") return result;
+  result.push(db.prepare(`UPDATE attachment_objects SET state='garbage',garbage_at=COALESCE(garbage_at,?3)
+    WHERE id IN (SELECT id FROM issue_attachments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1)) AND ${gate}`).bind(targetId, operationId, now));
   // One event per removed cross-project relation, with no deleted target identifier or content.
   result.push(db.prepare(`INSERT INTO events (id,stream,type,operation_id,event_index,actor_principal_id,actor_credential_id,authorized_via,workspace_id,project_id,subject_type,subject_id,payload_json,created_at)
     SELECT lower(hex(randomblob(4)))||'-'||lower(hex(randomblob(2)))||'-4'||substr(lower(hex(randomblob(2))),2)||'-a'||substr(lower(hex(randomblob(2))),2)||'-'||lower(hex(randomblob(6))),
@@ -103,6 +108,7 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
     ["invitation_project_grants", "project_id=?1"],
     ["issue_labels", "issue_id IN (SELECT id FROM issues WHERE project_id=?1) OR label_id IN (SELECT id FROM labels WHERE project_id=?1)"],
     ["issue_relations", "source_project_id=?1 OR target_project_id=?1"],
+    ["issue_attachments", "issue_id IN (SELECT id FROM issues WHERE project_id=?1)"],
     ["comments", "issue_id IN (SELECT id FROM issues WHERE project_id=?1)"],
     ["issues", "project_id=?1"],
     ["labels", "project_id=?1"],
@@ -144,7 +150,7 @@ export async function purgeContainer(db: D1Database, request: Request, auth: Aut
       const marker = db.prepare(`UPDATE ${table} SET purged_at=?2,display_name='Deleted',version=version+1,updated_at=?2,updated_by_principal_id=?3,last_operation_id=?4${kind === "project" ? ",context=NULL,issue_limit=NULL,comment_limit=NULL,principal_limit=NULL" : ""}
         WHERE id=?1 AND version=?5 AND display_name=?6 AND deleted_at IS NOT NULL AND purged_at IS NULL AND ${countGuard} AND ${guard.sql}`)
         .bind(target.id, now, auth.principalId, operationId, expectedVersion, confirmName, ...expressions.map(([key]) => (impact.counts as Counts)[key]), ...guard.values);
-      const resource = { id: target.id, kind, purged: true, purged_at: timestamp(now), version: expectedVersion + 1 };
+      const resource = { id: target.id, kind, purged: true, purged_at: timestamp(now), version: expectedVersion + 1, storage_cleanup_pending: impact.counts.attachments > 0 };
       const audit = db.prepare(`INSERT INTO events (id,stream,type,operation_id,event_index,actor_principal_id,actor_credential_id,authorized_via,subject_type,subject_id,payload_json,created_at)
         SELECT ?1,'security',?2,?3,0,?4,?5,'deployment_owner',?6,id,'{}',?7 FROM ${table} WHERE id=?8 AND last_operation_id=?3 AND purged_at=?7 AND ${expressions.map(([, sql]) => `(${sql.replaceAll("?1", "?8")})=0`).join(" AND ")}`)
         .bind(crypto.randomUUID(), `${kind}.purged`, operationId, auth.principalId, actorCredentialId(auth), kind, now, target.id);

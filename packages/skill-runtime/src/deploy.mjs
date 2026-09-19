@@ -1,3 +1,4 @@
+import { verifyPlannedAttachmentWorker, verifyPlannedR2Storage } from "./r2-storage.mjs";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -498,6 +499,7 @@ function parseWorkerVersion(value, expectedVersionId) {
   const bindings = version.resources.bindings.map((binding) => {
     const type = workerVersionString(binding?.type, "binding type", { max: 64, pattern: /^[A-Za-z0-9_-]+$/u });
     const name = workerVersionString(binding?.name, "binding name", { max: 128, pattern: /^[A-Za-z0-9_]+$/u });
+    if (type === "r2_bucket") return { type, name, bucket_name: workerVersionString(binding.bucket_name, "R2 bucket name", { max: 63, pattern: /^[a-z0-9][a-z0-9-]+[a-z0-9]$/u }) };
     if (type === "d1") {
       return { type, name, database_id: workerVersionUuid(binding.database_id, "binding database ID") };
     }
@@ -827,9 +829,21 @@ export async function executeWranglerAction({
   migrationName = null,
   migrationRecordSqlPath = null,
   runner = spawnCaptured,
+  fetchImpl = globalThis.fetch,
+  environment: controlEnvironment = process.env,
+  tokenRunner,
 }) {
   const journal = await assertJournalAuthorization({ stateRoot, instanceId, operationId, taskId, plan });
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
+  if (plan.resources?.r2 && action === "deploy_worker_and_static_assets") {
+    if (!journal.events.some((event) => event.type === "r2_storage_verified" && event.bucket_name === plan.resources.r2.bucket_name && event.instance_id === instanceId)) throw toolError("R2_READBACK_REQUIRED", "Verify authorized attachment storage before deploying the binding");
+    const current = await readWorkerResourceByName({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, runner, environment: controlEnvironment });
+    if (current.version_id !== plan.resources.worker.current_version_id || current.deployment_id !== plan.resources.worker.current_deployment_id) throw toolError("UPGRADE_WORKER_DRIFT", "Current Worker deployment changed after the attachment plan was frozen");
+    const version = await readWorkerVersionById({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, versionId: current.version_id, runner, environment: controlEnvironment });
+    if (canonicalDigest(version.bindings) !== canonicalDigest(plan.resources.worker.current_bindings)) throw toolError("UPGRADE_BINDING_DRIFT", "Current Worker bindings changed after the attachment plan was frozen");
+    await verifyPlannedR2Storage({ plan, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+    await verifyPlannedAttachmentWorker({ plan, phase: "before", wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+  }
   let frozenConfigEvent = null;
   if (configPath !== null) {
     const normalizedConfig = safeAbsolute(configPath, "config_path");
@@ -875,7 +889,7 @@ export async function executeWranglerAction({
     actionMigration = recordEvent.migration;
   }
   const environment = {
-    ...process.env,
+    ...controlEnvironment,
     CLOUDFLARE_ACCOUNT_ID: requireString(plan.target?.cloudflare_account_id, "cloudflare_account_id", { max: 128 }),
   };
   let migrationReadbackSql = null;
@@ -994,8 +1008,16 @@ export async function executeWranglerAction({
   if (result.code === 0 && action === "worker_deployment_readback") {
     try {
       workerDeploymentReadback = parseWorkerDeployment(result.stdout);
+      if (plan.resources?.r2) {
+        const version = await readWorkerVersionById({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, versionId: workerDeploymentReadback.version_id, runner, environment: controlEnvironment });
+        const expectedBindings = [...plan.resources.worker.current_bindings.filter((binding) => binding.type !== "r2_bucket"), { type: "r2_bucket", name: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }].sort((left, right) => (left.type + ":" + left.name).localeCompare(right.type + ":" + right.name));
+        if (canonicalDigest(version.bindings) !== canonicalDigest(expectedBindings)) throw toolError("UPGRADE_BINDING_DRIFT", "Deployed Worker bindings differ from the planned attachment-only binding delta");
+        await verifyPlannedR2Storage({ plan, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+        workerDeploymentReadback.attachment_configuration = await verifyPlannedAttachmentWorker({ plan, phase: "after", version, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+      }
       stdoutSummary = JSON.stringify(workerDeploymentReadback);
     } catch (error) {
+      workerDeploymentReadback = null;
       readbackError = error;
       stdoutSummary = "[WORKER_DEPLOYMENT_READBACK_REJECTED]";
     }

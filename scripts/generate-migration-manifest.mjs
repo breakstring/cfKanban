@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 3,
+  schema_version: 4,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -56,6 +56,18 @@ const manifest = {
         tables: ["workspaces", "projects", "public_join_policies", "browser_launches", "web_sessions", "cfkanban_migration_ledger"],
         absent_columns: ["workspaces.key", "projects.key", "public_join_policies.project_key"],
         indexes: ["idx_workspaces_purge_state", "idx_projects_workspace_purge_state", "idx_public_join_resume_enabled_workspace_project"],
+      },
+    },
+    {
+      sequence: 4,
+      name: "0004_issue_attachments.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0004_issue_attachments.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        tables: ["attachment_storage", "attachment_objects", "issue_attachments"],
+        indexes: ["idx_attachment_objects_cleanup", "idx_attachment_objects_expiry", "idx_issue_attachments_issue_created"],
       },
     },
   ],

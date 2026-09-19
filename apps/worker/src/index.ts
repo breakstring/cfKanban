@@ -1,4 +1,4 @@
-import openApiDocument from "../../../contracts/openapi.json";
+import openApiDocument from "../../../contracts/openapi.json" with { type: "json" };
 import migrationManifest from "../../../migrations/manifest.json" with { type: "json" };
 
 import { clearCsrfCookie, clearSessionCookie } from "./kernel/csrf.ts";
@@ -18,6 +18,8 @@ import {
 } from "./kernel/rate-limit.ts";
 import { Router } from "./kernel/router.ts";
 import type { WorkerEnv } from "./kernel/types.ts";
+import { registerAttachmentRoutes } from "./routes/attachments.ts";
+import { collectAttachmentGarbage } from "./services/attachments.ts";
 import { registerWp03Routes } from "./routes/wp03.ts";
 import { registerWp04Routes } from "./routes/wp04.ts";
 import { registerWp05Routes } from "./routes/wp05.ts";
@@ -29,7 +31,7 @@ const SERVICE_VERSION = "0.1.0";
 const SCHEMA_VERSION = migrationManifest.schema_version;
 const openApiBody = JSON.stringify(openApiDocument);
 
-const router = registerWp08Routes(registerWp07Routes(registerWp06Routes(registerWp05Routes(registerWp04Routes(registerWp03Routes(new Router()
+const router = registerAttachmentRoutes(registerWp08Routes(registerWp07Routes(registerWp06Routes(registerWp05Routes(registerWp04Routes(registerWp03Routes(new Router()
   .get("/healthz", async (_request, env, context) => {
     try {
       await env.DB.prepare("SELECT 1 AS reachable").first();
@@ -48,7 +50,7 @@ const router = registerWp08Routes(registerWp07Routes(registerWp06Routes(register
       "content-type": "application/json; charset=utf-8",
       "x-request-id": context.requestId,
     },
-  }))))))));
+  })))))))));
 
 function mayHaveJsonBody(request: Request): boolean {
   return request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
@@ -103,6 +105,9 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
 }
 
 export default {
+  async scheduled(_controller, env): Promise<void> {
+    await collectAttachmentGarbage(env);
+  },
   fetch(request, env): Promise<Response> {
     return fetchWorker(request, env);
   },

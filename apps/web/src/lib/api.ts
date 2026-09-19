@@ -121,6 +121,7 @@ export class ApiProblem extends Error {
 
 export interface ApiRequestOptions<T = unknown> {
   body?: unknown;
+  rawBody?: Blob;
   coordinateIdempotencyIntent?: (
     acquire: () => AcquiredPendingIntent,
     execute: (intent: AcquiredPendingIntent) => Promise<T>,
@@ -137,8 +138,12 @@ export function clearPendingRequestIntents(method: string, path: string): void {
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> = {}): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
+  if (options.rawBody !== undefined && (options.body !== undefined || options.idempotencyKey === undefined || method !== "PUT")) {
+    throw new Error("Binary uploads require PUT, an explicit Idempotency-Key, and no JSON body.");
+  }
   const headers = new Headers({ accept: "application/json" });
   if (options.body !== undefined) headers.set("content-type", "application/json");
+  if (options.rawBody !== undefined) headers.set("content-type", "application/octet-stream");
   let requestIntent: AcquiredPendingIntent | null = null;
   const acquirePendingIntent = (): AcquiredPendingIntent => {
     try {
@@ -174,7 +179,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
         credentials: "same-origin",
         headers,
         method,
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        ...(options.rawBody !== undefined ? { body: options.rawBody } : options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
     } catch {

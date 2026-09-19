@@ -2,7 +2,7 @@
 
 语言：[English](owner-workflows.md) | [简体中文](owner-workflows.zh-CN.md)
 
-在 Skill 目录运行 `node scripts/cfkanban-tool.mjs help`，查看当前 release 的 admin 命令边界。普通 REST 操作使用 `api request`，一次性 capability 分别使用 `invite create` 与 `web launch`，secret 轮换使用专用 `owner rotate-credential`。
+只读取相关章节。每个已安装 release 首次使用或输入不明确时，在 Skill 目录运行 `node scripts/cfkanban-tool.mjs help` 查看 admin 命令边界。普通 REST 操作使用 `api request`，一次性 capability 分别使用 `invite create` 与 `web launch`，secret 轮换使用专用 `owner rotate-credential`。
 
 ## 通用请求方式
 
@@ -23,8 +23,8 @@
 部署不会自动创建应用容器。处理常见的首次使用请求时：
 
 1. 检查本地状态，并验证 `/api/v1/me` 返回预期稳定 Principal 且 `is_owner=true`；
-2. 只询问 Workspace 显示名称，使用独立 Idempotency Key 创建并读回服务端生成的 UUID；Project 必须指定父 Workspace UUID。
-3. 只询问 Project 显示名称，使用独立 Idempotency Key 创建并读回服务端生成的 UUID；Project 必须指定父 Workspace UUID。
+2. 复用已给出的显示名称和明确选定的既有 Workspace；一次询问缺失名称，写入前消歧已有重名对象；
+3. 仅在用户要求或第一个看板需要时创建 Workspace，读回服务端生成的 UUID，再在该 UUID 下用独立 Idempotency Key 创建请求的 Project 并读回；
 4. 使用 `target.kind=admin` 运行 `web launch`；默认直接打开浏览器，不返回一次性 URL；
 5. 提供彼此独立的后续选项：用 `cfkanban` 创建第一条 Issue、创建显式 role Invite，或配置 Public Join 与全部三项 quotas。
 
@@ -96,7 +96,7 @@ Web Session 不能轮换或撤销 Owner Credential。全部 Owner Credential 丢
 - 关闭后阻止新 self-join 并停止 quota 强制，但不撤销既有 Grants；
 - Project 仍公开时，撤销 Grant 不会建立 rejoin blacklist。
 
-Policy 响应会有意展示两个版本号：Public Join 开启、更新、关闭和 resource-limit 写入的 CAS 值是 `project.version`；`policy_version` 只表示 Policy 记录自己的历史，绝不能复制到 `expected_version`。遇到 `VERSION_CONFLICT` 时重新读取 Project/Policy 事实并重新判断，不能猜一个版本继续重试。
+Policy 响应会有意展示两个版本号：Public Join 开启、更新、关闭和 resource-limit 写入的 CAS 值是 `project.version`；`policy_version` 只表示 Policy 记录自己的历史，绝不能复制到 `expected_version`。遇到 `VERSION_CONFLICT` 时重新读取 Project/Policy 事实并判断原请求；只有并发改动实质改变目标或影响时才询问，不能猜一个版本继续重试。
 
 ## Tombstone 与容器恢复
 
@@ -130,7 +130,7 @@ Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 op
 
 ## 错误与读回
 
-每个原子写操作独立使用 Idempotency Key。读回修改后的资源与相关 audit event。只按稳定机器字段解释错误，不匹配 `message`。后续步骤失败时，之前已提交的操作保持提交，必须单独汇报而不能声称回滚。
+每个原子写操作独立使用 Idempotency Key，并读回修改后的资源；核对授权或生命周期历史时再检查相关 audit event。普通写入遵循已有用户/宿主授权，本 Skill 不为每次调用增加审批。只按稳定机器字段解释错误，不匹配 `message`。后续步骤失败时，之前已提交的操作保持提交，必须单独汇报而不能声称回滚。
 
 ## 已归档容器永久删除
 

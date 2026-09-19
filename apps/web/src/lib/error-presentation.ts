@@ -147,6 +147,15 @@ export function presentApiProblem(
   let message: string | undefined;
   if (body.code === "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED") message = translate("error.idempotencyExpired");
   else if (body.code === "VERSION_CONFLICT") message = translate("error.conflict");
+  else if (body.code === "ISSUE_ATTACHMENT_LIMIT_REACHED") message = locale === "zh-CN"
+    ? "此事项的附件数量已达上限。请删除不需要的附件或取消未完成的上传后重试。"
+    : "This issue has reached its attachment limit. Delete an unneeded attachment or cancel a pending upload before retrying.";
+  else if (body.code === "ATTACHMENT_STORAGE_LIMIT_REACHED") message = locale === "zh-CN"
+    ? "实例的附件存储预算已用满。请联系所有者检查存储；软删除附件不会释放存储预算。"
+    : "The instance attachment storage budget is full. Ask the Owner to review storage; soft-deleting files does not release this budget.";
+  else if (body.code === "ATTACHMENTS_DISABLED") message = locale === "zh-CN"
+    ? "附件存储尚未启用，请联系所有者开启。其他事项功能仍可使用。"
+    : "Attachment storage is not enabled. Ask the Owner to enable it; other issue features remain available.";
   if (
     message === undefined
     &&

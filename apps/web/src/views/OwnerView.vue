@@ -105,7 +105,8 @@ const projectChoiceLabels = computed(() => containerChoiceLabels(projects.value.
 const workspaceChoiceLabels = computed(() => containerChoiceLabels(workspaces.value.map((item) => ({ id: item.id, name: item.display_name }))));
 const deletedWorkspaces = ref<ContainerResource[]>([]);
 const deletedProjects = ref<ProjectEntry[]>([]);
-const expandedWorkspaces = ref<string[]>([]);
+const initialWorkspace = new URLSearchParams(window.location.search).get("workspace");
+const expandedWorkspaces = ref<string[]>(initialWorkspace ? [initialWorkspace] : []);
 const archivedWorkspaceLabels = computed(() => containerChoiceLabels([...workspaces.value, ...deletedWorkspaces.value].map(item => ({ id: item.id, name: item.display_name }))));
 const archivedProjectLabels = computed(() => containerChoiceLabels(deletedProjects.value.map(item => ({ id: item.id, name: item.display_name, workspaceName: item.workspaceName }))));
 const purgeTargetLabel = computed(() => {
@@ -1559,14 +1560,28 @@ onUnmounted(() => {
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
     <template v-if="!loading && section === 'overview'">
-      <div class="section-action-bar">
-        <p>{{ ui("Open a board, organize your projects, or manage who can join.", "打开看板、整理项目，或管理谁可以参与协作。") }}</p>
-        <button class="primary-button" type="button" @click="navigate(sectionPath('workspaces'))">{{ ui("Browse projects", "查看项目") }}</button>
-      </div>
-      <div class="owner-shortcuts">
-        <button class="secondary-button" type="button" @click="navigate(sectionPath('access'))">{{ ui("Members & invitations", "成员与邀请") }}</button>
-        <button class="text-button" type="button" @click="navigate(sectionPath('audit'))">{{ ui("View activity", "查看操作记录") }}</button>
-      </div>
+      <p class="overview-intro">{{ ui("Open a board, organize your projects, or manage who can join.", "打开看板、整理项目，或管理谁可以参与协作。") }}</p>
+      <section class="overview-workbench">
+        <div class="overview-workspaces">
+          <div class="section-heading-row compact">
+            <h2>{{ ui("Workspaces & projects", "工作区与项目") }}</h2>
+            <button class="primary-button" type="button" @click="navigate(sectionPath('workspaces'))">{{ ui("Browse projects", "查看项目") }}</button>
+          </div>
+          <div class="overview-workspace-list">
+            <button v-for="workspace in workspaces.slice(0, 6)" :key="workspace.id" class="overview-workspace-row" type="button" @click="navigate(`${sectionPath('workspaces')}&workspace=${encodeURIComponent(workspace.id)}`)">
+              <ContainerIcon kind="workspace" />
+              <strong>{{ workspace.display_name }}</strong>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg>
+            </button>
+            <p v-if="!workspaces.length" class="empty-copy">{{ ui("Create a workspace first, then add your first project.", "先创建一个工作区，再添加你的第一个项目。") }}</p>
+          </div>
+          <p class="overview-resource-note">{{ meta?.visible_scope.project_count ?? 0 }} {{ ui("Projects", "个项目") }} · {{ principals.length }}{{ principalsHasMore ? "+" : "" }} {{ ui("visible members", "位可见成员") }}</p>
+        </div>
+        <nav class="owner-shortcuts" :aria-label="ui('Administration shortcuts', '管理快捷入口')">
+          <button class="owner-shortcut" type="button" @click="navigate(sectionPath('access'))"><span><strong>{{ ui("Members & invitations", "成员与邀请") }}</strong><small>{{ ui("Review access and invite collaborators.", "查看访问权限，邀请协作者。") }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></button>
+          <button class="owner-shortcut" type="button" @click="navigate(sectionPath('audit'))"><span><strong>{{ ui("View activity", "查看操作记录") }}</strong><small>{{ ui("Follow changes across your instance.", "追踪实例中的业务与安全变更。") }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></button>
+        </nav>
+      </section>
       <details class="owner-section owner-disclosure">
         <summary>{{ ui("Service information & access limits", "服务信息与访问限制") }}</summary>
         <p class="muted-copy">{{ ui("Version, addresses, and request limits for troubleshooting. These settings are read-only.", "排查问题时可查看版本、访问地址和请求限制；这里的设置均为只读。") }}</p>
