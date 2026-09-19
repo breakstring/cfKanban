@@ -10,6 +10,8 @@ import { collectAttachmentGarbage, uploadAttachment, readAttachmentBytes } from 
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const server = createTestHarness({ root, workers: [{ configPath: "wrangler.attachments-test.jsonc" }] });
+// Wrangler 开发代理在提前 413 后会使下一请求连接失败；直接分发仍运行真实 Worker、D1 和 R2。
+const worker = server.getWorker();
 const ownerToken = `cfk_v1_owner_${"A".repeat(43)}`;
 const writerToken = `cfk_v1_writer_${"B".repeat(43)}`;
 const otherWriterToken = `cfk_v1_otherwriter_${"D".repeat(43)}`;
@@ -19,7 +21,7 @@ const ownerId = randomUUID(), credentialId = randomUUID();
 let db, env, auth, workspace, project, issue, writerId, writerCredentialId;
 const headers = (token = ownerToken) => ({ authorization: `Bearer ${token}` });
 async function json(path, { method = "GET", body, key = randomUUID(), token = ownerToken, extraHeaders = {} } = {}) {
-  const response = await server.fetch(path, { method, headers: { ...headers(token), ...(body === undefined ? {} : { "content-type": "application/json" }), "idempotency-key": key, ...extraHeaders }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const response = await worker.fetch(path, { method, headers: { ...headers(token), ...(body === undefined ? {} : { "content-type": "application/json" }), "idempotency-key": key, ...extraHeaders }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text();
   assert.ok(response.headers.get("content-type")?.includes("application/json"), `${method} ${path} response ${response.status}: ${text}`);
   return { status: response.status, data: JSON.parse(text), response };
@@ -32,7 +34,7 @@ async function reserve(bytes, { identifier = issue.identifier, token = ownerToke
   return json(`/api/v1/issues/${identifier}/attachments`, { method: "POST", key, token, body: { filename, content_type: contentType, size_bytes: bytes.length, sha256: hash(bytes) } });
 }
 async function upload(id, bytes, { token = ownerToken, key = randomUUID() } = {}) {
-  const response = await server.fetch(`/api/v1/attachments/${id}/content`, { method: "PUT", headers: { ...headers(token), "idempotency-key": key, "content-type": "application/octet-stream" }, body: bytes });
+  const response = await worker.fetch(`/api/v1/attachments/${id}/content`, { method: "PUT", headers: { ...headers(token), "idempotency-key": key, "content-type": "application/octet-stream" }, body: bytes });
   const text = await response.text();
   assert.ok(response.headers.get("content-type")?.includes("application/json"), `upload response ${response.status}: ${text}`);
   return { status: response.status, data: JSON.parse(text) };
@@ -53,7 +55,6 @@ async function seed(token, role) {
 }
 before(async () => {
   await server.listen();
-  const worker = server.getWorker();
   await worker.applyD1Migrations("DB");
   env = await worker.getEnv(); db = env.DB;
   await bootstrapInstance(db, { instanceId: randomUUID(), operationId: randomUUID(), ownerCredentialId: credentialId, ownerCredentialToken: ownerToken, ownerDisplayName: "Attachment Owner", ownerPrincipalId: ownerId, preferredApiOrigin: "https://attachments.example.test" });
@@ -72,14 +73,14 @@ test("reservation and upload are independently idempotent, private, and preserve
   const two = await reserve(bytes, { key }); assert.equal(two.data.resource.id, one.data.resource.id); assert.equal(two.data.idempotent_replay, true);
   const conflict = await reserve(Buffer.from("different"), { key }); assert.equal(conflict.status, 409); assert.equal(conflict.data.code, "IDEMPOTENCY_CONFLICT");
   const id = one.data.resource.id;
-  assert.equal((await server.fetch(`/api/v1/attachments/${id}/content`, { headers: headers() })).status, 404);
+  assert.equal((await worker.fetch(`/api/v1/attachments/${id}/content`, { headers: headers() })).status, 404);
   const putKey = randomUUID(), put = await upload(id, bytes, { key: putKey }); assert.equal(put.status, 200, JSON.stringify(put.data)); assert.equal(put.data.resource.state, "ready");
   assert.equal(put.data.resource.version, 2);
   const replay = await upload(id, bytes, { key: putKey }); assert.equal(replay.data.idempotent_replay, true); assert.equal(replay.data.resource.version, 2);
-  const download = await server.fetch(`/api/v1/attachments/${id}/content`, { headers: headers(readerToken) });
+  const download = await worker.fetch(`/api/v1/attachments/${id}/content`, { headers: headers(readerToken) });
   assert.equal(download.status, 200); assert.equal(download.headers.get("cache-control"), "private, no-store"); assert.equal(download.headers.get("x-content-type-options"), "nosniff");
   assert.match(download.headers.get("content-disposition"), /^attachment;/); assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
-  assert.equal((await server.fetch(`/api/v1/attachments/${id}/content`)).status, 401);
+  assert.equal((await worker.fetch(`/api/v1/attachments/${id}/content`)).status, 401);
   const info = await success(`/api/v1/attachments/${id}`, { token: readerToken }); assert.equal(info.sha256, hash(bytes)); assert.ok(!("object_key" in info)); assert.deepEqual(info.allowed_actions, ["read", "download"]);
   assert.equal((await success(`/api/v1/issues/${issue.identifier}`)).version, issue.version);
   assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM events WHERE subject_id=?1 AND type='attachment.uploaded'").bind(id).first()).n, 1);
@@ -107,10 +108,10 @@ test("only signature-verified raster images allow explicit inline preview", asyn
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==", "base64");
   const file = await uploaded(png, { filename: "图.png", contentType: "image/png" });
   assert.equal(file.preview_content_type, "image/png");
-  const response = await server.fetch(`/api/v1/attachments/${file.id}/content?preview=1`, { headers: headers(readerToken) });
+  const response = await worker.fetch(`/api/v1/attachments/${file.id}/content?preview=1`, { headers: headers(readerToken) });
   assert.equal(response.status, 200); assert.equal(response.headers.get("content-type"), "image/png"); assert.match(response.headers.get("content-disposition"), /^inline;/);
   const svg = await uploaded(Buffer.from('<svg onload="alert(1)"></svg>'), { filename: "fake.png", contentType: "image/png" });
-  assert.equal(svg.preview_content_type, null); assert.equal((await server.fetch(`/api/v1/attachments/${svg.id}/content?preview=1`, { headers: headers() })).status, 400);
+  assert.equal(svg.preview_content_type, null); assert.equal((await worker.fetch(`/api/v1/attachments/${svg.id}/content?preview=1`, { headers: headers() })).status, 400);
 });
 
 test("attachment CAS deletion retains budget, restores only ready files and enforces capacity", async () => {
@@ -119,7 +120,7 @@ test("attachment CAS deletion retains budget, restores only ready files and enfo
   assert.equal((await json(`/api/v1/attachments/${file.id}?expected_version=1`, { method: "DELETE" })).status, 409);
   const removed = await success(`/api/v1/attachments/${file.id}?expected_version=${file.version}`, { method: "DELETE" });
   assert.equal((await db.prepare("SELECT reserved_bytes FROM attachment_storage").first()).reserved_bytes, beforeBytes);
-  assert.equal((await server.fetch(`/api/v1/attachments/${file.id}/content`, { headers: headers() })).status, 404);
+  assert.equal((await worker.fetch(`/api/v1/attachments/${file.id}/content`, { headers: headers() })).status, 404);
   assert.equal((await json(`/api/v1/attachments/${file.id}`, { token: readerToken })).status, 404);
   assert.ok((await success(`/api/v1/issues/${issue.identifier}/attachments?deleted=only`)).items.some((entry) => entry.id === file.id));
   const restored = await success(`/api/v1/attachments/${file.id}/commands/restore`, { method: "POST", body: { expected_version: removed.resource.version } }); assert.equal(restored.resource.deleted_at, null);

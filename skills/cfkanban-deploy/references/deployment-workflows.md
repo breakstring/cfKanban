@@ -198,6 +198,8 @@ Worker rollback does not roll back D1. D1 restore is destructive, never automati
 
 ## Stop conditions
 
+Schema 5 repairs the persisted Instance version omitted by alpha.55. Its manifest declares a minimum Instance schema version, which readback verifies alongside the ledger and schema artifacts. Missing or malformed data evidence is not proof. Only an explicitly allowed uninitialized database may have no Instance row before Owner bootstrap; existing-instance finalization still requires the exact target schema, Instance and Owner. Never rewrite a published migration or checksum to repair metadata.
+
 Stop on canonical origin/digest mismatch, publisher discontinuity, unverified storage, Node/Wrangler incompatibility without an approved plan, mixed Windows/WSL tooling, an unreadable effective or selected Cloudflare auth context, authentication preflight blockers, existing-profile collision without explicit re-authentication approval, unexpected OAuth scope, account ambiguity, missing Owner display name, unknown resource ownership, plan drift, migration checksum/schema drift outside the exact same-journal recovery rule, partial application, or unavailable restore evidence. Profiles are never enumerated, and unrelated profiles do not create blockers. Loading the Skill or installing its marketplace/plugin entry is never deployment authorization.
 
 ## Incompatible development migrations

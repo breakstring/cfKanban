@@ -1,5 +1,7 @@
 # 部署与更新工作流
 
+Schema 5 通过新增迁移修复 alpha.55 遗漏的实例版本更新。manifest 显式声明实例版本下限，读回同时校验该值、迁移 ledger 和 schema artifacts；缺失或异常数据不能视为通过。只有明确允许的未初始化数据库可在 Owner bootstrap 前没有实例行；既有实例最终仍须核对准确目标版本、实例和 Owner。不得重写已发布迁移或校验值。
+
 语言：[English](deployment-workflows.md) | [简体中文](deployment-workflows.zh-CN.md)
 
 按请求只读对应流程：本地安装使用 **Skill update**，新实例使用 **首次部署**，已验证既有资源使用 **Instance upgrade**，journal 中断操作使用 **中断与续做**。本地 Skill 更新不需要 Cloudflare 登录；既有实例升级不要求资源不存在。每个已安装 release 首次使用或输入不明确时运行 `node scripts/cfkanban-tool.mjs help`，查看命令 effect 和输入字段。

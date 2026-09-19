@@ -152,7 +152,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.55.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/0.1.0-alpha.56.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -3938,7 +3938,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.52.md",
     "../../release/notes/0.1.0-alpha.53.md",
     "../../release/notes/0.1.0-alpha.54.md",
-    "../../release/notes/0.1.0-alpha.55.md",
+    "../../release/notes/0.1.0-alpha.56.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3981,7 +3981,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.52.json",
     "../../release/config/0.1.0-alpha.53.json",
     "../../release/config/0.1.0-alpha.54.json",
-    "../../release/config/0.1.0-alpha.55.json",
+    "../../release/config/0.1.0-alpha.56.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
@@ -4047,6 +4047,7 @@ test("actual migration readback SQL emits columns and accepts breaking ledger ro
   const database = new DatabaseSync(":memory:");
   try {
     database.exec("CREATE TABLE workspaces (id TEXT, key TEXT); CREATE TABLE projects (id TEXT, key TEXT); CREATE TABLE public_join_policies (project_id TEXT, project_key TEXT)");
+    database.exec("CREATE TABLE instance_meta (schema_version INTEGER)");
     database.exec(await readFile(new URL("../../release/deployment/migration-ledger.sql", import.meta.url), "utf8"));
     database.prepare("INSERT INTO cfkanban_migration_ledger VALUES (3, '0003_uuid.sql', ?, 'breaking_non_destructive', 'wrangler_migration_ledger_only', ?, 1)").run("f".repeat(64), OPERATION_ID);
     const sql = await readFile(new URL("../../release/deployment/migration-readback.sql", import.meta.url), "utf8");
@@ -4056,9 +4057,113 @@ test("actual migration readback SQL emits columns and accepts breaking ledger ro
     assert.ok(parsed.schema.columns.includes("projects.key"));
     assert.ok(parsed.schema.columns.includes("public_join_policies.project_key"));
     assert.equal(parsed.ledger[0].classification, "breaking_non_destructive");
+    assert.deepEqual(parsed.schema.data.instance_meta, { row_count: 0, schema_version: null });
     result[0].results[0].classification = "unknown";
     assert.throws(() => parseMigrationReadbackOutput(JSON.stringify(result)), { code: "WRANGLER_MIGRATION_READBACK_INVALID" });
   } finally { database.close(); }
+});
+
+test("data-only migration distinguishes required updates, verified data, and missing readback", () => {
+  const migration = {
+    sequence: 5, name: "0005_schema_version.sql", sha256: "f".repeat(64), classification: "backward_compatible",
+    expected_artifacts: {}, expected_data: { instance_meta_schema_version_at_least: 5, allow_uninitialized: true },
+  };
+  const manifest = { manifest_version: 1, migrations: [migration] };
+  const schema = (version) => ({ tables: ["instance_meta"], indexes: [], data: { instance_meta: { row_count: version === null ? 0 : 1, schema_version: version } } });
+  for (const version of [3, 4]) {
+    assert.equal(reconcileMigrationState({ manifest, schema: schema(version) }).migrations[0].state, "pending");
+    const falselyRecorded = reconcileMigrationState({ manifest, schema: schema(version), ledger: [migration] });
+    assert.equal(falselyRecorded.safe_to_continue, false);
+    assert.equal(falselyRecorded.migrations[0].reason, "ledger_present_data_incomplete");
+  }
+  for (const version of [5, 6]) {
+    assert.equal(reconcileMigrationState({ manifest, schema: schema(version), ledger: [migration] }).migrations[0].state, "applied");
+    assert.equal(reconcileMigrationState({ manifest, schema: schema(version) }).migrations[0].reason, "schema_present_ledger_missing");
+  }
+  const fresh = reconcileMigrationState({ manifest, schema: schema(null) });
+  assert.equal(fresh.migrations[0].state, "pending");
+  assert.equal(fresh.migrations[0].reason, "uninitialized_data_ledger_missing");
+  assert.equal(reconcileMigrationState({ manifest, schema: schema(null), ledger: [migration] }).migrations[0].state, "applied");
+  const initializedOnly = { ...manifest, migrations: [{ ...migration, expected_data: { instance_meta_schema_version_at_least: 5 } }] };
+  assert.equal(reconcileMigrationState({ manifest: initializedOnly, schema: schema(null), ledger: [migration] }).migrations[0].reason, "ledger_present_data_incomplete");
+  assert.throws(() => reconcileMigrationState({ manifest, schema: { tables: ["instance_meta"], indexes: [] } }), { code: "MIGRATION_DATA_READBACK_REQUIRED" });
+  assert.throws(() => reconcileMigrationState({ manifest, schema: { tables: ["instance_meta"], indexes: [], data: { instance_meta: { row_count: 2, schema_version: 5 } } } }), { code: "MIGRATION_DATA_READBACK_INVALID" });
+  const legacy = { ...migration };
+  delete legacy.expected_data;
+  assert.equal(reconcileMigrationState({ manifest: { manifest_version: 1, migrations: [legacy] }, ledger: [legacy], schema: { tables: [], indexes: [] } }).migrations[0].state, "applied");
+});
+
+test("migration metadata readback is bounded and retains legacy two-result release compatibility", () => {
+  const legacy = [{ success: true, results: [] }, { success: true, results: [] }];
+  assert.equal(parseMigrationReadbackOutput(JSON.stringify(legacy)).result_set_count, 2);
+  for (const version of [null, 5, 6]) {
+    const instance = { row_count: version === null ? 0 : 1, schema_version: version, token: "must-not-project" };
+    const parsed = parseMigrationReadbackOutput(JSON.stringify([...legacy, { success: true, results: [instance] }]));
+    assert.equal(parsed.result_set_count, 3);
+    assert.deepEqual(parsed.schema.data.instance_meta, { row_count: instance.row_count, schema_version: version });
+    assert.equal(JSON.stringify(parsed).includes("must-not-project"), false);
+  }
+  for (const rows of [[], [{ row_count: 2, schema_version: 5 }], [{ row_count: "1", schema_version: 5 }], [{ row_count: 0, schema_version: 5 }], [{ row_count: 1, schema_version: null }], [{ row_count: 1, schema_version: "5" }], [{ row_count: 1, schema_version: 1.5 }], [{ row_count: 1, schema_version: -1 }], [{ row_count: 0, schema_version: null }, { row_count: 0, schema_version: null }]]) {
+    assert.throws(() => parseMigrationReadbackOutput(JSON.stringify([...legacy, { success: true, results: rows }])), { code: "WRANGLER_MIGRATION_READBACK_INVALID" });
+  }
+});
+
+test("upgrade plans freeze the fixed metadata assertion and reject arbitrary data conditions", () => {
+  const base = upgradePlanInput();
+  const input = {
+    ...base,
+    target: { ...base.target, schema_version: 5, compatibility: { ...base.target.compatibility, schema_version: 5 } },
+    migrations: [{ sequence: 5, name: "0005_schema_version.sql", sha256: "f".repeat(64), classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only", expected_artifacts: {}, expected_data: { instance_meta_schema_version_at_least: 5, allow_uninitialized: true } }],
+    restorePoint: { required: true, verified: true, bookmark: "bookmark", observed_at: "2026-09-19T01:00:00.000Z", retention_boundary: "verified_plan_retention", reason: "pre_migration" },
+  };
+  const plan = createInstanceUpgradePlan(input);
+  assert.deepEqual(plan.migrations.ordered[0].expected_data, input.migrations[0].expected_data);
+  for (const expected_data of [{}, { instance_meta_schema_version_at_least: 0 }, { instance_meta_schema_version_at_least: "5" }, { instance_meta_schema_version_at_least: 5, allow_uninitialized: "true" }, { instance_meta_schema_version_at_least: 5, sql: "SELECT 1" }]) {
+    assert.throws(() => createInstanceUpgradePlan({ ...input, migrations: [{ ...input.migrations[0], expected_data }] }), { code: "INVALID_MIGRATION_DATA_ASSERTION" });
+  }
+});
+
+test("data-only migration ledger recovery requires successful same-journal apply and satisfied metadata", async (t) => {
+  const { home, stateRoot } = await fixtureState();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const serviceRoot = path.join(home, "data-migration-service");
+  const migrationRoot = path.join(serviceRoot, "migrations");
+  await mkdir(migrationRoot, { recursive: true });
+  const migrationText = "UPDATE instance_meta SET schema_version = 5 WHERE schema_version IN (3, 4);\n";
+  const migration = {
+    sequence: 5, name: "0005_schema_version.sql", sha256: sha256Bytes(Buffer.from(migrationText)), classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+    expected_artifacts: {}, expected_data: { instance_meta_schema_version_at_least: 5, allow_uninitialized: true },
+  };
+  const manifestPath = path.join(migrationRoot, "manifest.json");
+  await writeFile(path.join(migrationRoot, migration.name), migrationText);
+  await writeFile(manifestPath, JSON.stringify({ manifest_version: 1, schema_version: 5, migrations: [migration] }));
+  const plan = createStrictZeroPlan({
+    taskId: "data-migration-recovery", accountId: "account-one", ownerDisplayName: "Example Owner",
+    release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
+    instanceId: INSTANCE_ID, ownerPrincipalId: PRINCIPAL_ID, ownerCredentialId: CREDENTIAL_ID, operationId: OPERATION_ID,
+  }).plan;
+  const operation = { stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID };
+  await createJournal({ ...operation, plan });
+  await authorizeJournal({ ...operation, taskId: plan.task_id, planDigest: canonicalDigest(plan) });
+  await appendJournalEvent({ ...operation, event: { type: "wrangler_config_written", service_bundle_root: serviceRoot } });
+  const readback = (version) => appendJournalEvent({ ...operation, event: {
+    type: "command_finished", action: "migration_ledger_readback", exit_code: 0,
+    migration_readback: { ledger: [], schema: { tables: ["instance_meta"], indexes: [], data: { instance_meta: { row_count: version === null ? 0 : 1, schema_version: version } } }, result_set_count: 3 },
+  } });
+  const assess = () => assessMigrationLedgerRecovery({ ...operation, taskId: plan.task_id, plan, migrationManifestPath: manifestPath });
+  await readback(null);
+  assert.ok((await assess()).blockers.includes("SAME_JOURNAL_SUCCESSFUL_MIGRATION_APPLY_REQUIRED"));
+  await appendJournalEvent({ ...operation, event: { type: "command_finished", action: "apply_migration", exit_code: 0, migration } });
+  await readback(null);
+  assert.equal((await assess()).safe_to_record_missing_checksum, true, "uninitialized bootstrap permits the journal-proven data no-op");
+  await readback(4);
+  assert.equal((await assess()).safe_to_record_missing_checksum, false, "successful SQL alone cannot substitute for the required data state");
+  await readback(5);
+  assert.equal((await assess()).safe_to_record_missing_checksum, true);
+  const written = await writeMigrationLedgerRecordSql({ ...operation, taskId: plan.task_id, plan, migration, migrationManifestPath: manifestPath });
+  assert.match(await readFile(written.migration_record_sql_path, "utf8"), /INSERT INTO cfkanban_migration_ledger/);
+  await writeFile(path.join(migrationRoot, migration.name), migrationText + "-- changed\n");
+  assert.ok((await assess()).blockers.includes("MIGRATION_FILE_DIGEST_MISMATCH"));
 });
 
 

@@ -169,6 +169,39 @@ function schemaHasArtifacts(schema, expected = {}) {
   return { complete: Object.values(missing).every((items) => items.length === 0), missing };
 }
 
+export function normalizeExpectedMigrationData(value) {
+  if (value === undefined) return null;
+  if (value === null || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).some((key) => !["instance_meta_schema_version_at_least", "allow_uninitialized"].includes(key))
+    || !Number.isSafeInteger(value.instance_meta_schema_version_at_least) || value.instance_meta_schema_version_at_least < 1
+    || (value.allow_uninitialized !== undefined && typeof value.allow_uninitialized !== "boolean")) {
+    throw toolError("INVALID_MIGRATION_DATA_ASSERTION", "Migration data assertions only support a minimum Instance schema version and an explicit uninitialized allowance");
+  }
+  return {
+    instance_meta_schema_version_at_least: value.instance_meta_schema_version_at_least,
+    allow_uninitialized: value.allow_uninitialized === true,
+  };
+}
+
+function migrationDataState(schema, expectedValue) {
+  const expected = normalizeExpectedMigrationData(expectedValue);
+  if (expected === null) return { complete: true, uninitialized: false };
+  const observed = schema.data?.instance_meta;
+  if (observed === undefined) {
+    throw toolError("MIGRATION_DATA_READBACK_REQUIRED", "This migration requires the Instance metadata result from its verified readback SQL");
+  }
+  if (observed === null || ![0, 1].includes(observed.row_count)
+    || (observed.row_count === 0 && observed.schema_version !== null)
+    || (observed.row_count === 1 && (!Number.isSafeInteger(observed.schema_version) || observed.schema_version < 1))) {
+    throw toolError("MIGRATION_DATA_READBACK_INVALID", "Instance metadata readback must contain zero or one row with an exact schema version");
+  }
+  const uninitialized = observed.row_count === 0;
+  return {
+    complete: uninitialized ? expected.allow_uninitialized : observed.schema_version >= expected.instance_meta_schema_version_at_least,
+    uninitialized,
+  };
+}
+
 export function reconcileMigrationState({ manifest, ledger = [], schema = {} }) {
   if (manifest?.manifest_version !== 1 || !Array.isArray(manifest.migrations)) {
     throw toolError("INVALID_MIGRATION_MANIFEST", "Migration manifest must use manifest_version 1");
@@ -198,6 +231,7 @@ export function reconcileMigrationState({ manifest, ledger = [], schema = {} }) 
   for (const migration of [...manifest.migrations].sort((a, b) => a.sequence - b.sequence)) {
     const row = ledgerByName.get(migration.name);
     const artifacts = schemaHasArtifacts(schema, migration.expected_artifacts);
+    const data = migrationDataState(schema, migration.expected_data);
     let state;
     let reason = null;
     if (row && (row.sequence !== undefined && Number(row.sequence) !== migration.sequence)) {
@@ -212,16 +246,23 @@ export function reconcileMigrationState({ manifest, ledger = [], schema = {} }) 
     } else if (row && !artifacts.complete) {
       state = "drift";
       reason = "ledger_present_schema_incomplete";
+    } else if (row && !data.complete) {
+      state = "drift";
+      reason = "ledger_present_data_incomplete";
     } else if (row && artifacts.complete) {
       state = "applied";
     } else if (!row && (artifacts.missing.absent_columns?.length ?? 0) > 0
       && artifacts.missing.absent_columns.length < migration.expected_artifacts.absent_columns.length) {
       state = "drift";
       reason = "schema_partial_column_removal";
-    } else if (!row && artifacts.complete) {
+    } else if (!row && artifacts.complete && data.complete && data.uninitialized) {
+      // 空实例的数据修复是 no-op；只有同一 journal 的 apply 证据能证明它已执行。
+      state = "pending";
+      reason = "uninitialized_data_ledger_missing";
+    } else if (!row && artifacts.complete && data.complete) {
       state = migration.safe_baseline === true ? "baseline_candidate" : "drift";
       reason = migration.safe_baseline === true ? "explicit_safe_baseline_required" : "schema_present_ledger_missing";
-    } else if (!row && Object.values(artifacts.missing).some((items) => items.length > 0)) {
+    } else if (!row && (!data.complete || Object.values(artifacts.missing).some((items) => items.length > 0))) {
       state = "pending";
     }
     if (state === "drift") stopped = true;
@@ -279,7 +320,7 @@ function isNormalizedMigrationReadback(value) {
     && typeof value.schema === "object"
     && Array.isArray(value.schema.tables)
     && Array.isArray(value.schema.indexes)
-    && value.result_set_count === 2;
+    && (value.result_set_count === 2 || value.result_set_count === 3);
 }
 
 export async function assessMigrationLedgerRecovery({
@@ -329,7 +370,8 @@ export async function assessMigrationLedgerRecovery({
     ledger: latestReadback.event.migration_readback.ledger,
     schema: latestReadback.event.migration_readback.schema,
   });
-  const recoveryCandidates = state.migrations.filter((migration) => migration.state === "drift" && migration.reason === "schema_present_ledger_missing");
+  const recoveryCandidates = state.migrations.filter((migration) => (migration.state === "drift" && migration.reason === "schema_present_ledger_missing")
+    || (migration.state === "pending" && migration.reason === "uninitialized_data_ledger_missing"));
   const otherDrift = state.migrations.filter((migration) => migration.state === "drift" && migration.reason !== "schema_present_ledger_missing");
   const blockers = [];
   if (state.unknown_ledger_rows.length > 0) blockers.push("UNKNOWN_MIGRATION_LEDGER_ROWS");

@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 4,
+  schema_version: 5,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -68,6 +68,19 @@ const manifest = {
       expected_artifacts: {
         tables: ["attachment_storage", "attachment_objects", "issue_attachments"],
         indexes: ["idx_attachment_objects_cleanup", "idx_attachment_objects_expiry", "idx_issue_attachments_issue_created"],
+      },
+    },
+    {
+      sequence: 5,
+      name: "0005_attachment_schema_version.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0005_attachment_schema_version.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {},
+      expected_data: {
+        instance_meta_schema_version_at_least: 5,
+        allow_uninitialized: true,
       },
     },
   ],

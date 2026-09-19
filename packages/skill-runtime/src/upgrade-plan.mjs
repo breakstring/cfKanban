@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
+import { normalizeExpectedMigrationData } from "./migrations.mjs";
 import { satisfiesSimpleRange } from "./tool-runtime.mjs";
 import { ATTACHMENT_CLEANUP_CRON, attachmentBucketName } from "./r2-storage.mjs";
 import { requireHttpsOrigin, requireString, requireUuid } from "./utils.mjs";
@@ -196,6 +197,7 @@ function migrationDelta(values, allowBreakingChange) {
         columns: artifactNames(value.expected_artifacts?.columns, "migration.expected_artifacts.columns"),
         ...(value.expected_artifacts?.absent_columns ? { absent_columns: artifactNames(value.expected_artifacts.absent_columns, "migration.expected_artifacts.absent_columns") } : {}),
       },
+      ...(value.expected_data === undefined ? {} : { expected_data: normalizeExpectedMigrationData(value.expected_data) }),
     };
   });
   for (let index = 1; index < ordered.length; index += 1) {

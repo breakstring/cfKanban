@@ -41,7 +41,7 @@ Issue 详情增加独立附件区域：文件选择/拖入、上传中及失败�
 
 ## 部署与发行
 
-新增 schema 4 migration，仅增加附件与清理/预算所需表和索引，不修改旧 migration digest。API 路径版本继续 v1；全局 JSON 上限不放宽。OpenAPI 明确二进制 PUT/GET 例外。新 Service 在未配置 R2 时仍兼容 strict-zero。
+schema 4 migration 增加附件与清理/预算所需表和索引。schema 5 追加版本标记修复，兼容已应用附件表但仍保留 schema 3 标记的实例，以及标记已修复为 4 的实例；所有已发布 SQL 指纹保持不变。迁移读回显式验证持久化实例版本下限，不能仅凭表结构认定完成。API 路径版本继续 v1；全局 JSON 上限不放宽。OpenAPI 明确二进制 PUT/GET 例外。新 Service 在未配置 R2 时仍兼容 strict-zero。
 
 可选附件 profile 明确固定一个私有 Standard R2 bucket、`ATTACHMENTS` binding、每小时清理 trigger及费用说明。已有实例升级必须准确保存当前 R2 binding，不得丢失。禁用 R2 不删除 bucket/对象；重新启用只能使用原 receipt/journal 证明属于同一实例的 bucket。创建前核对确切 account/name 不存在；创建与对象 marker 绑定同一 journal，未知资源绝不自动接管。启用前独立展示具体资源、存储上限、费用影响与计划摘要。
 

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { toolError } from "./errors.mjs";
-import { assessMigrationLedgerRecovery, reconcileMigrationState } from "./migrations.mjs";
+import { assessMigrationLedgerRecovery, normalizeExpectedMigrationData, reconcileMigrationState } from "./migrations.mjs";
 import { loadPendingCredentialSecret } from "./state.mjs";
 import { UPGRADE_MIGRATION_EXECUTION } from "./upgrade-plan.mjs";
 import { canonicalDigest, normalizeLf, readJson, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
@@ -255,8 +255,8 @@ export function parseMigrationReadbackOutput(value) {
   } catch {
     throw migrationReadbackInvalid("Wrangler returned invalid JSON for migration readback");
   }
-  if (!Array.isArray(parsed) || parsed.length !== 2 || parsed.some((entry) => entry?.success !== true || !Array.isArray(entry.results))) {
-    throw migrationReadbackInvalid("Wrangler migration readback did not return the two expected successful result sets");
+  if (!Array.isArray(parsed) || ![2, 3].includes(parsed.length) || parsed.some((entry) => entry?.success !== true || !Array.isArray(entry.results))) {
+    throw migrationReadbackInvalid("Wrangler migration readback did not return the expected successful result sets");
   }
   const ledgerRows = parsed[0].results;
   const schemaRows = parsed[1].results;
@@ -280,10 +280,21 @@ export function parseMigrationReadbackOutput(value) {
   }
   tables.sort();
   indexes.sort();
+  let data;
+  if (parsed.length === 3) {
+    const rows = parsed[2].results;
+    const instance = rows[0];
+    if (rows.length !== 1 || ![0, 1].includes(instance?.row_count)
+      || (instance.row_count === 0 && instance.schema_version !== null)
+      || (instance.row_count === 1 && (!Number.isSafeInteger(instance.schema_version) || instance.schema_version < 1))) {
+      throw migrationReadbackInvalid("Instance metadata readback must contain zero or one row with an exact schema version");
+    }
+    data = { instance_meta: { row_count: instance.row_count, schema_version: instance.schema_version } };
+  }
   return {
     ledger,
-    schema: { tables, indexes, ...(columns.length > 0 ? { columns: columns.sort() } : {}) },
-    result_set_count: 2,
+    schema: { tables, indexes, ...(columns.length > 0 ? { columns: columns.sort() } : {}), ...(data === undefined ? {} : { data }) },
+    result_set_count: parsed.length,
   };
 }
 
@@ -671,6 +682,7 @@ async function loadUpgradeMigrationState({ journal, plan, frozenConfigEvent }) {
     if (frozen?.sha256 !== migration.sha256
       || frozen?.destructive === true
       || frozen?.classification !== migration.classification
+      || canonicalDigest(normalizeExpectedMigrationData(frozen?.expected_data)) !== canonicalDigest(normalizeExpectedMigrationData(migration.expected_data))
       || !["backward_compatible", "breaking_non_destructive"].includes(frozen?.classification)
       || (frozen?.classification === "breaking_non_destructive" && (
         plan.migrations?.allow_breaking_change !== true
