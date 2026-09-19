@@ -346,3 +346,26 @@ test("R2 OAuth scope expansion is explicit, disclosed, task-bound, and shell-fre
   assert.equal(unavailable.safe_to_plan, false);
   assert.ok(unavailable.blockers.includes("WRANGLER_REQUIRED_OAUTH_SCOPE_UNAVAILABLE"));
 });
+
+test("schema 7 attachment plans require Owner capacity choice without changing the setting", () => {
+  const input = upgradePlanInput({ attachments: { bucket_name: bucketName, create: true } });
+  input.current.schema_version = 7;
+  input.target.schema_version = 7;
+  input.target.compatibility.schema_version = 7;
+  const plan = createInstanceUpgradePlan(input);
+  assert.equal(plan.attachment_storage.capacity_policy, "owner_configured");
+  assert.equal(plan.attachment_storage.capacity_setting, "application");
+  assert.equal(plan.attachment_storage.unconfigured_blocks_uploads, true);
+  assert.equal(plan.attachment_storage.deployment_changes_capacity, false);
+  assert.equal(Object.hasOwn(plan.attachment_storage, "max_storage_bytes"), false);
+  assertAttachmentStoragePlan(plan);
+  for (const delta of [{ max_storage_bytes: 1073741824 }, { deployment_changes_capacity: true }, { unconfigured_blocks_uploads: false }]) {
+    assert.throws(() => assertAttachmentStoragePlan({ ...plan, attachment_storage: { ...plan.attachment_storage, ...delta } }), { code: "R2_PLAN_REQUIRED" });
+  }
+  input.resources.r2 = { bucket_name: bucketName, instance_id: INSTANCE_ID };
+  input.resources.worker.bindings.push({ type: "r2_bucket", name: "ATTACHMENTS", bucket_name: bucketName });
+  delete input.attachments;
+  const existing = createInstanceUpgradePlan(input);
+  assert.equal(existing.attachment_storage.deployment_changes_capacity, false);
+  assertAttachmentStoragePlan(existing);
+});

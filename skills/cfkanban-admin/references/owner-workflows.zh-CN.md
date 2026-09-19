@@ -140,3 +140,25 @@ Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 op
 2. 取得对本次预览范围不可恢复清理的明确授权；归档授权不等于永久删除授权。清理包括事项、普通及完成评论、标签、关系、Grants、项目会话和相关历史/响应缓存。共享未兑换邀请撤销，其他项目既有 Grants 保留。保留最小 UUID 墓碑和精简审计；旧游标可能需要重新读取。不承诺 Cloudflare 存储指标即时下降，也不删除平台备份。
 3. 通过 `api request` 发送 `POST {container_path}/commands/purge`，携带 `expected_version=target.version`、`confirm_name=target.display_name`、`preview_digest` 与独立 Idempotency Key。预览过期需重新核对；结果未定时保持同一请求与 key 恢复，不能生成不同删除请求。
 4. 核对 `resource.purged=true`，并通过显式 `deleted=only` 列表/详情确认目标不可见，必要时读取精简 Owner 审计。永久删除后不能恢复；同名新建会获得不同 UUID，不隐含逐个或定时清理其他容器。
+
+## Owner 用量与限额
+
+通过 `api request` 调用 `POST /api/v1/admin/usage/refresh`，与 Web 刷新使用同一 Owner-only 投影和服务端缓存。附件 `reserved_bytes` 包含上传中、就绪、软删除和未确认回收对象，是应用预留预算，不是 R2 计费容量。Cloudflare 数据可选且仅限本实例；明确展示 `not_configured`、`pending`、`error`、`stale` 和 null，不把未知改写为零，也不从实例推算账户剩余额度。日操作量采用 UTC 当日窗口；容量采用最近 24 小时最后观测桶，默认只展示一次简短更新时间；需要核对时再区分观测时间、采集时间和准确 UTC 区间。统计 Token/资源配置交由 cfkanban-deploy；附件容量仍由下节应用设置管理，凭据不得进入 API 请求体或 Issue。
+
+每次技能查询都调用与页面“刷新用量”相同的刷新入口。`{ "mode": "stale" }` 和 `{ "mode": "manual" }` 统一复用不足 15 分钟的成功快照，manual 不绕过缓存。缺少、过期、失败或中断的采集可重试，但共用实例级 60 秒尝试冷却。并发请求返回当前投影并以 `refreshing` 标记；不轮询。每次响应仍实时读取附件预留与设置。该派生缓存刷新不要求 Idempotency-Key，不写领域 Event/Audit。
+
+每次查询运行 `node scripts/cfkanban-tool.mjs api request`，通过 stdin 提交已解析的可信实例 UUID：
+
+```json
+{"instanceId":"<trusted-instance-uuid>","method":"POST","apiPath":"/api/v1/admin/usage/refresh","body":{"mode":"manual"}}
+```
+
+无需先 GET。只有用户明确要求仅查看已存快照时才用 `GET /api/v1/admin/usage`。刷新请求可能命中有效缓存，应报告实际采集时间，不把本次查询时间当作采集时间。
+
+汇报附件 `reserved_bytes`、`limit_configured` 和 `limit_bytes`。仅已配置有限上限时计算剩余应用容量 `max(0, limit_bytes - reserved_bytes)`；不限制没有剩余容量数值，未设置则暂停新上传。云端有数据时概括 D1 容量/当日读写行数、R2 容量/对象数/当日操作量。本 API 不提供账户账单、账户剩余免费额度或 Worker 请求量。
+
+`not_configured` 仍可返回有效的附件数据；说明统计配置缺失或禁用，不因此创建 Token 或启用采集。`refreshing=true` 或冷却期间返回旧快照时如实说明，不能宣称刚刚采集成功。旧服务不支持接口时说明能力未上线（用量需要 schema 6；容量设置需要 schema 7），将另行授权的升级交由 cfkanban-deploy；不回退直接查询 Cloudflare，也不自动升级。
+
+## 附件容量设置
+
+Owner 修改前先读取 `GET /api/v1/admin/attachment-settings`。`configured=false` 表示尚未选择策略，不等于不限制；此时暂停新上传预留。通过 `PATCH /api/v1/admin/attachment-settings` 提交 `{limit_bytes: <正安全整数字节值或 null>, expected_version: <读回版本>}`，携带独立 Idempotency-Key，然后读回设置。null 明确表示 Owner 选择不限制。此操作改变应用设置，遵循普通领域写入的权限、CAS 与幂等合同，不属于统计缓存刷新例外。不得推断不限制，也不静默选择旧有 1 GiB。从旧固定策略迁移后需要 Owner 重新明确选择，部署不能代选或覆盖。已有对象仍计入预留字节，包括软删除但尚未实际回收的对象。应用容量不是 Cloudflare 账单上限。

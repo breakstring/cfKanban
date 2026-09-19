@@ -6,6 +6,11 @@ export interface WorkerEnv {
   ASSETS: Fetcher;
   ATTACHMENTS?: R2Bucket;
   DB: D1Database;
+  USAGE_ANALYTICS_ENABLED?: string;
+  USAGE_ACCOUNT_ID?: string;
+  USAGE_D1_DATABASE_ID?: string;
+  USAGE_R2_BUCKET_NAME?: string;
+  USAGE_ANALYTICS_TOKEN?: string;
   INSTANCE_RATE_LIMITER: RateLimit;
   PRINCIPAL_RATE_LIMITER: RateLimit;
   RATE_LIMIT_INSTANCE_LIMIT: string;

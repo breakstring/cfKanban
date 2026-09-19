@@ -8461,6 +8461,302 @@
         }
       }
     },
+    "/api/v1/admin/attachment-settings": {
+      "get": {
+        "operationId": "getAttachmentSettings",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Attachment Settings",
+        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      },
+      "patch": {
+        "operationId": "updateAttachmentSettings",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Update Attachment Settings",
+        "description": "Owner-only explicit capacity choice: positive safe integer bytes or null for unlimited. Requires expected_version and Idempotency-Key; Cookie requests require CSRF. Lowering the limit preserves files and existing reservations. New reservations require configured=true and available capacity. An unset limit is not implicit unlimited capacity.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentSettingsWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAttachmentSettingsRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/usage": {
+      "get": {
+        "operationId": "getUsage",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Usage",
+        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/admin/usage/refresh": {
+      "post": {
+        "operationId": "refreshUsage",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Refresh Usage",
+        "description": "Owner-only derived-cache refresh; Cookie requests require CSRF. No business mutation, domain event, or Idempotency-Key is required. Both modes reuse snapshots younger than 15 minutes; manual does not bypass the shared Web/Skill cache. All attempts share a 60-second cooldown. Concurrent or cooling-down requests return the existing projection. Cloudflare failures are represented in cloudflare.status/error with the last successful snapshot retained.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "cache-refresh",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshUsageRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/rate-limit-settings": {
       "get": {
         "operationId": "getRateLimitSettings",
@@ -9366,7 +9662,8 @@
             "required": [
               "max_file_bytes",
               "max_active_per_issue",
-              "max_storage_bytes"
+              "max_storage_bytes",
+              "storage_limit_configured"
             ],
             "properties": {
               "max_file_bytes": {
@@ -9376,7 +9673,15 @@
                 "const": 20
               },
               "max_storage_bytes": {
-                "const": 1073741824
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "storage_limit_configured": {
+                "type": "boolean"
               }
             },
             "additionalProperties": false
@@ -10914,6 +11219,281 @@
           },
           "resource": {
             "$ref": "#/components/schemas/PublicJoinRedemptionResource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AttachmentSettings": {
+        "type": "object",
+        "required": [
+          "limit_bytes",
+          "configured",
+          "version",
+          "reserved_bytes"
+        ],
+        "properties": {
+          "limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "reserved_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateAttachmentSettingsRequest": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "limit_bytes"
+        ],
+        "properties": {
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "limit_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
+      "AttachmentSettingsWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/AttachmentSettings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RefreshUsageRequest": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "stale",
+              "manual"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "UsageMetric": {
+        "type": "object",
+        "required": [
+          "key",
+          "value",
+          "unit",
+          "source",
+          "scope",
+          "period_start",
+          "period_end",
+          "observed_at"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "d1_storage_bytes",
+              "d1_rows_read",
+              "d1_rows_written",
+              "r2_storage_bytes",
+              "r2_objects",
+              "r2_operations"
+            ]
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "bytes",
+              "count"
+            ]
+          },
+          "source": {
+            "const": "cloudflare"
+          },
+          "scope": {
+            "const": "instance"
+          },
+          "period_start": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "Usage": {
+        "type": "object",
+        "required": [
+          "generated_at",
+          "attachments",
+          "cloudflare"
+        ],
+        "properties": {
+          "generated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "attachments": {
+            "type": "object",
+            "required": [
+              "enabled",
+              "reserved_bytes",
+              "limit_bytes",
+              "limit_configured",
+              "settings_version"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "reserved_bytes": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0
+              },
+              "limit_bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "limit_configured": {
+                "type": "boolean"
+              },
+              "settings_version": {
+                "$ref": "#/components/schemas/Version"
+              }
+            },
+            "additionalProperties": false
+          },
+          "cloudflare": {
+            "type": "object",
+            "required": [
+              "status",
+              "refreshing",
+              "collected_at",
+              "attempted_at",
+              "error",
+              "metrics"
+            ],
+            "properties": {
+              "refreshing": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "not_configured",
+                  "pending",
+                  "fresh",
+                  "stale",
+                  "error"
+                ]
+              },
+              "collected_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "attempted_at": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Timestamp"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 64
+              },
+              "metrics": {
+                "type": "array",
+                "maxItems": 6,
+                "items": {
+                  "$ref": "#/components/schemas/UsageMetric"
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "additionalProperties": false

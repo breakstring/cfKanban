@@ -1,3 +1,4 @@
+import { readAttachmentStorage } from "./attachment-settings.ts";
 import { requireUuid, timestamp } from "../domain/model.ts";
 import { verifyCurrentAuth } from "../kernel/authorization.ts";
 import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
@@ -9,7 +10,7 @@ import type { AuthContext, JsonValue, WorkerEnv } from "../kernel/types.ts";
 import { buildProjectRoleGuard, issueReference, requireCollaborationIssue, requireCollaborationIssueAuthorization, requireCollaborationIssueById, requireCollaborationIssueByIdAuthorization, roleCanWrite, type CollaborationIssue } from "./collaboration-shared.ts";
 import { actorCredentialId, authorizedVia, requireDeletedMode, requireIdempotencyKey, requireLimit, writeResult } from "./shared.ts";
 
-export const ATTACHMENT_LIMITS = { max_file_bytes: 10 * 1024 * 1024, max_active_per_issue: 20, max_storage_bytes: 1024 * 1024 * 1024 };
+export const ATTACHMENT_LIMITS = { max_file_bytes: 10 * 1024 * 1024, max_active_per_issue: 20 };
 const RESERVATION_TTL = 24 * 60 * 60 * 1000;
 const CLEANUP_BATCH = 64;
 
@@ -41,8 +42,8 @@ function storage(env: WorkerEnv): R2Bucket {
   if (env.ATTACHMENTS === undefined) throw new ApiError({ category: "platform_failure", code: "ATTACHMENTS_DISABLED", details: { component: "r2" }, message: "Attachment storage is not enabled.", recovery: "request_owner", retryable: false, status: 503 });
   return env.ATTACHMENTS;
 }
-function quota(kind: "count" | "bytes"): ApiError {
-  return new ApiError({ category: "business_quota", code: kind === "count" ? "ISSUE_ATTACHMENT_LIMIT_REACHED" : "ATTACHMENT_STORAGE_LIMIT_REACHED", details: { limit: kind === "count" ? ATTACHMENT_LIMITS.max_active_per_issue : ATTACHMENT_LIMITS.max_storage_bytes }, message: "The attachment capacity is exhausted.", recovery: "free_capacity_or_request_owner", retryable: false, status: 409 });
+function quota(kind: "count" | "bytes", limit: number | null = null): ApiError {
+  return new ApiError({ category: "business_quota", code: kind === "count" ? "ISSUE_ATTACHMENT_LIMIT_REACHED" : "ATTACHMENT_STORAGE_LIMIT_REACHED", details: { limit: kind === "count" ? ATTACHMENT_LIMITS.max_active_per_issue : limit }, message: "The attachment capacity is exhausted.", recovery: "free_capacity_or_request_owner", retryable: false, status: 409 });
 }
 async function first<T>(statement: D1PreparedStatement): Promise<T | null> {
   try { return await statement.first<T>(); } catch (error) { throw platformUnavailable("d1", error); }
@@ -77,13 +78,14 @@ function resource(row: AttachmentRow, issue: CollaborationIssue, auth: AuthConte
   };
 }
 async function ensureCapacity(db: D1Database, issueId: string, size = 0): Promise<void> {
-  const counts = await first<{ count: number; reserved_bytes: number }>(db.prepare(`SELECT
+  const counts = await first<{ count: number; reserved_bytes: number; limit_bytes: number | null; limit_configured: number }>(db.prepare(`SELECT
     (SELECT COUNT(*) FROM issue_attachments a JOIN attachment_objects o ON o.id=a.id
      WHERE a.issue_id=?1 AND a.deleted_at IS NULL AND o.state IN ('pending','ready')) AS count,
-    reserved_bytes FROM attachment_storage WHERE singleton=1`).bind(issueId));
+    reserved_bytes,limit_bytes,limit_configured FROM attachment_storage WHERE singleton=1`).bind(issueId));
   if (counts === null) throw platformUnavailable("d1");
   if (counts.count >= ATTACHMENT_LIMITS.max_active_per_issue) throw quota("count");
-  if (size > 0 && counts.reserved_bytes + size > ATTACHMENT_LIMITS.max_storage_bytes) throw quota("bytes");
+  if (size > 0 && counts.limit_configured !== 1) throw new ApiError({ category: "business_quota", code: "ATTACHMENT_STORAGE_NOT_CONFIGURED", details: {}, message: "The Owner must choose an attachment storage limit before uploading.", recovery: "request_owner", retryable: false, status: 409 });
+  if (size > 0 && counts.limit_bytes !== null && counts.reserved_bytes + size > counts.limit_bytes) throw quota("bytes", counts.limit_bytes);
 }
 function eventStatement(db: D1Database, auth: AuthContext, issue: CollaborationIssue, id: string, operationId: string, type: string, now: number) {
   return db.prepare(`INSERT INTO events
@@ -140,7 +142,7 @@ export async function reserveAttachment(env: WorkerEnv, request: Request, auth: 
               SELECT ?1,?2,?3,?4,'pending',?5,?6,?1,?1 FROM issues issue
               JOIN projects project ON project.id=issue.project_id JOIN workspaces workspace ON workspace.id=project.workspace_id
               WHERE issue.id=?7 AND issue.deleted_at IS NULL AND project.deleted_at IS NULL AND workspace.deleted_at IS NULL AND ${guard.sql}
-                AND (SELECT reserved_bytes FROM attachment_storage WHERE singleton=1) <= ${ATTACHMENT_LIMITS.max_storage_bytes}-?3
+                AND EXISTS (SELECT 1 FROM attachment_storage WHERE singleton=1 AND limit_configured=1 AND (limit_bytes IS NULL OR reserved_bytes<=limit_bytes-?3))
                 AND (SELECT COUNT(*) FROM issue_attachments a JOIN attachment_objects o ON o.id=a.id WHERE a.issue_id=issue.id AND a.deleted_at IS NULL AND o.state IN ('pending','ready')) < ${ATTACHMENT_LIMITS.max_active_per_issue}`)
               .bind(id, row.object_key, value.size, value.sha256, row.expires_at, now, issue.id, ...guard.values),
             db.prepare(`INSERT INTO issue_attachments (id,issue_id,filename,content_type,uploaded_by_principal_id,created_at,created_operation_id,last_operation_id)
@@ -173,10 +175,11 @@ export async function listAttachments(env: WorkerEnv, auth: AuthContext, identif
       AND (?2 IS NULL OR a.created_at>?2 OR (a.created_at=?2 AND a.id>?3)) ORDER BY a.created_at,a.id LIMIT ?4`)
       .bind(issue.id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<AttachmentRow>()).results;
   } catch (error) { throw platformUnavailable("d1", error); }
+  const settings = await readAttachmentStorage(env.DB);
   const page = rows.slice(0, limit), tail = page.at(-1), more = rows.length > limit;
   await verifyCurrentAuth(env.DB, auth, Date.now());
   return { items: page.map((row) => resource(row, issue, auth, env.ATTACHMENTS !== undefined, now)), has_more: more, next_cursor: more && tail ? encodeCursor(context, [tail.created_at, tail.id]) : null,
-    resolved_scope: { issue: issueReference(issue) }, capabilities: { attachments: env.ATTACHMENTS !== undefined }, limits: ATTACHMENT_LIMITS };
+    resolved_scope: { issue: issueReference(issue) }, capabilities: { attachments: env.ATTACHMENTS !== undefined }, limits: { ...ATTACHMENT_LIMITS, max_storage_bytes: settings.limit_bytes, storage_limit_configured: settings.limit_configured === 1 } };
 }
 export async function getAttachment(env: WorkerEnv, auth: AuthContext, id: JsonValue, now: number): Promise<Resource> {
   const { row, issue } = await access(env.DB, auth, id);

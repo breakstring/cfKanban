@@ -27,13 +27,15 @@ cfKanban 把三个 Skills 放在同一个 portable、可验证 bundle 中交付�
 首个稳定发行版还没有发布。目前 Codex 用户可以加载不可变的测试 tag：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.56
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 0.1.0-alpha.57
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
 测试 tag 不会变化；只有明确评估开发快照时才使用可变的 `main`。安装后新建一个 Codex 任务，让 Skills 被加载。安装只启用发现能力；它不会创建 `.cfkanban/`、选择稳定版或测试版部署，也不授权本地或云端写入。
 
-当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.56/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
+Alpha.57 新增 Owner 用量读取、共享 15 分钟缓存的按需刷新及 Owner 附件容量设置。升级到 schema 7 后，Owner 选择容量上限或不限制之前暂停新上传预留，已有文件保持可用。统计 Token 配置独立于技能安装和实例升级。
+
+当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/0.1.0-alpha.57/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
 
 应安装完整 plugin/bundle，不能只复制某个 `SKILL.md` 或单独的 `skills/<name>/` 目录。三个 entrypoints 按设计共用 bundle 内 `packages/skill-runtime` 下的 JavaScript 源码模块；尽管内部目录名包含 `runtime`，它并不是内嵌的 Node.js 可执行程序或运行时发行包。宿主投影必须保留这套已验证 bundle layout。当前测试预览只支持 Codex plugin 路径；其他宿主的 projection 属于稳定发行安装流程，不能用不完整的目录复制冒充。
 

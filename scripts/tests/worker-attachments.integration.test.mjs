@@ -59,6 +59,7 @@ before(async () => {
   env = await worker.getEnv(); db = env.DB;
   await bootstrapInstance(db, { instanceId: randomUUID(), operationId: randomUUID(), ownerCredentialId: credentialId, ownerCredentialToken: ownerToken, ownerDisplayName: "Attachment Owner", ownerPrincipalId: ownerId, preferredApiOrigin: "https://attachments.example.test" });
   auth = await authenticateBearer(db, `Bearer ${ownerToken}`);
+  await success("/api/v1/admin/attachment-settings", { method: "PATCH", body: { expected_version: 1, limit_bytes: 1073741824 } });
   workspace = (await success("/api/v1/workspaces", { method: "POST", body: { display_name: "Attachments" } })).resource;
   project = (await success(`/api/v1/workspaces/${workspace.id}/projects`, { method: "POST", body: { display_name: "File tests" } })).resource;
   issue = await makeIssue();

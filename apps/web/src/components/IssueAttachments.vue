@@ -15,7 +15,7 @@ import type { ListResult, WriteResult } from "../types";
 
 interface AttachmentList extends ListResult<Attachment> {
   capabilities: { attachments: boolean };
-  limits: { max_file_bytes: number; max_active_per_issue: number; max_storage_bytes: number };
+  limits: { max_file_bytes: number; max_active_per_issue: number; max_storage_bytes: number | null; storage_limit_configured: boolean };
 }
 const props = defineProps<{ identifier: string; canUpload: boolean; sessionId: string; principalId: string }>();
 let savedDraft = captureAttachmentUploadDraft(props.sessionId, props.principalId, props.identifier);
@@ -23,6 +23,7 @@ if (!props.canUpload) savedDraft.set(null);
 const attachments = ref<Attachment[]>([]);
 const nextCursor = ref<string | null>(null);
 const enabled = ref<boolean | null>(null);
+const storageLimitConfigured = ref(false);
 const maxFileBytes = ref(10 * 1024 * 1024);
 const maxFiles = ref(20);
 const loading = ref(false);
@@ -38,7 +39,7 @@ const generation = new ProjectionGeneration();
 const writeFence = new WriteFence();
 let controller = new AbortController();
 let listRequestId = 0;
-const canChoose = computed(() => props.canUpload && enabled.value === true && !busy.value && draft.value === null);
+const canChoose = computed(() => props.canUpload && enabled.value === true && storageLimitConfigured.value && !busy.value && draft.value === null);
 const progressText = computed(() => ({
   selected: ui("Ready to upload", "准备上传"),
   hashing: ui("Checking file…", "正在校验文件…"),
@@ -73,6 +74,7 @@ async function load(reset = true): Promise<void> {
     attachments.value = mergePageById(attachments.value, result.items, reset);
     nextCursor.value = continuationCursor(result);
     enabled.value = result.capabilities.attachments;
+    storageLimitConfigured.value = result.limits.storage_limit_configured;
     maxFileBytes.value = Math.min(result.limits.max_file_bytes, 10 * 1024 * 1024);
     maxFiles.value = result.limits.max_active_per_issue;
   } catch (caught) {
@@ -115,7 +117,7 @@ function onDrop(event: DragEvent): void {
 
 async function upload(): Promise<void> {
   const attempt = draft.value;
-  if (!attempt || !props.canUpload || !enabled.value || !writeFence.enter("upload")) return;
+  if (!attempt || !props.canUpload || !enabled.value || (!storageLimitConfigured.value && !attempt.reserveStarted) || !writeFence.enter("upload")) return;
   const stamp = generation.capture();
   busy.value = true;
   clearError();
@@ -250,6 +252,7 @@ onUnmounted(() => { generation.invalidate(); controller.abort(); });
     <ErrorNotice v-if="error" :error="error" />
     <p v-if="enabled === false" class="attachment-note">{{ ui("Attachment storage is not enabled. Ask the Owner to enable it.", "附件存储尚未启用，请联系所有者开启。") }}</p>
     <template v-else-if="enabled">
+      <p v-if="!storageLimitConfigured" class="attachment-note">{{ ui("New uploads require the Owner to set a storage limit or explicitly choose unlimited. Existing files remain accessible.", "所有者需先设置存储上限或明确选择不限制，才能上传新文件。已有文件仍可访问。") }}</p>
       <div v-if="canUpload && !deletedOnly" class="attachment-dropzone" :class="{ 'is-dragging': dropping, 'is-disabled': !canChoose }" @dragover.prevent="dropping = canChoose" @dragleave.prevent="dropping = false" @drop.prevent="onDrop">
         <input ref="fileInput" type="file" class="attachment-file-input" tabindex="-1" :disabled="!canChoose" @change="onSelect" />
         <button class="secondary-button button-with-icon" type="button" :disabled="!canChoose" @click="fileInput?.click()"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 10 5-5a3 3 0 0 1 4 4l-7 7a4.5 4.5 0 0 1-6-6l7-7" /></svg>{{ ui("Choose a file", "选择文件") }}</button>
@@ -258,7 +261,7 @@ onUnmounted(() => { generation.invalidate(); controller.abort(); });
       <div v-if="canUpload && draft" class="attachment-upload" role="status" :aria-busy="busy">
         <div><strong>{{ draft.file.name }}</strong><small>{{ sizeLabel(draft.file.size) }} · {{ progressText }}</small></div>
         <div class="attachment-row-actions">
-          <button v-if="!busy" class="primary-button" type="button" @click="upload">{{ uploadPhase === 'failed' ? ui('Retry upload', '重试上传') : ui('Upload', '上传') }}</button>
+          <button v-if="!busy" class="primary-button" type="button" :disabled="!storageLimitConfigured && !draft.reserveStarted" @click="upload">{{ uploadPhase === 'failed' ? ui('Retry upload', '重试上传') : ui('Upload', '上传') }}</button>
           <button v-if="!busy && !draft.reserveStarted" class="text-button" type="button" @click="draft = null">{{ t("action.cancel") }}</button>
           <button v-if="!busy && draft.attachment?.allowed_actions.includes('delete')" class="text-button muted" type="button" @click="deleteTarget = draft.attachment">{{ ui("Cancel upload", "取消上传") }}</button>
         </div>

@@ -1,3 +1,4 @@
+import { USAGE_VARS, targetWorkerBindings } from "./usage-config.mjs";
 import { verifyPlannedAttachmentWorker, verifyPlannedR2Storage } from "./r2-storage.mjs";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -521,6 +522,9 @@ function parseWorkerVersion(value, expectedVersionId) {
         namespace_id: workerVersionString(binding.namespace_id, "rate-limit namespace ID", { max: 64, pattern: /^[A-Za-z0-9_-]+$/u }),
       };
     }
+    if (type === "plain_text" && USAGE_VARS.has(name)) {
+      return { type, name, text: workerVersionString(binding.text ?? binding.value, "usage configuration", { max: 128, pattern: /^[A-Za-z0-9_-]+$/u }) };
+    }
     if (type === "plain_text" && PUBLIC_RATE_LIMIT_VARS.has(name)) {
       return {
         type,
@@ -847,14 +851,14 @@ export async function executeWranglerAction({
 }) {
   const journal = await assertJournalAuthorization({ stateRoot, instanceId, operationId, taskId, plan });
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
-  if (plan.resources?.r2 && action === "deploy_worker_and_static_assets") {
-    if (!journal.events.some((event) => event.type === "r2_storage_verified" && event.bucket_name === plan.resources.r2.bucket_name && event.instance_id === instanceId)) throw toolError("R2_READBACK_REQUIRED", "Verify authorized attachment storage before deploying the binding");
+  if ((plan.resources?.r2 || plan.usage_analytics) && action === "deploy_worker_and_static_assets") {
+    if (plan.resources?.r2 && !journal.events.some((event) => event.type === "r2_storage_verified" && event.bucket_name === plan.resources.r2.bucket_name && event.instance_id === instanceId)) throw toolError("R2_READBACK_REQUIRED", "Verify authorized attachment storage before deploying the binding");
     const current = await readWorkerResourceByName({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, runner, environment: controlEnvironment });
-    if (current.version_id !== plan.resources.worker.current_version_id || current.deployment_id !== plan.resources.worker.current_deployment_id) throw toolError("UPGRADE_WORKER_DRIFT", "Current Worker deployment changed after the attachment plan was frozen");
+    if (current.version_id !== plan.resources.worker.current_version_id || current.deployment_id !== plan.resources.worker.current_deployment_id) throw toolError("UPGRADE_WORKER_DRIFT", "Current Worker deployment changed after the deployment plan was frozen");
     const version = await readWorkerVersionById({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, versionId: current.version_id, runner, environment: controlEnvironment });
-    if (canonicalDigest(version.bindings) !== canonicalDigest(plan.resources.worker.current_bindings)) throw toolError("UPGRADE_BINDING_DRIFT", "Current Worker bindings changed after the attachment plan was frozen");
+    if (canonicalDigest(version.bindings) !== canonicalDigest(plan.resources.worker.current_bindings)) throw toolError("UPGRADE_BINDING_DRIFT", "Current Worker bindings changed after the deployment plan was frozen");
     await verifyPlannedR2Storage({ plan, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
-    await verifyPlannedAttachmentWorker({ plan, phase: "before", wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+    if (plan.resources?.r2) await verifyPlannedAttachmentWorker({ plan, phase: "before", wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
   }
   let frozenConfigEvent = null;
   if (configPath !== null) {
@@ -1020,12 +1024,13 @@ export async function executeWranglerAction({
   if (result.code === 0 && action === "worker_deployment_readback") {
     try {
       workerDeploymentReadback = parseWorkerDeployment(result.stdout);
-      if (plan.resources?.r2) {
+      if (plan.resources?.r2 || plan.usage_analytics) {
         const version = await readWorkerVersionById({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, versionId: workerDeploymentReadback.version_id, runner, environment: controlEnvironment });
-        const expectedBindings = [...plan.resources.worker.current_bindings.filter((binding) => binding.type !== "r2_bucket"), { type: "r2_bucket", name: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }].sort((left, right) => (left.type + ":" + left.name).localeCompare(right.type + ":" + right.name));
-        if (canonicalDigest(version.bindings) !== canonicalDigest(expectedBindings)) throw toolError("UPGRADE_BINDING_DRIFT", "Deployed Worker bindings differ from the planned attachment-only binding delta");
+        const expectedBindings = targetWorkerBindings(plan);
+        if (canonicalDigest(version.bindings) !== canonicalDigest(expectedBindings)) throw toolError("UPGRADE_BINDING_DRIFT", "Deployed Worker bindings differ from the planned binding delta");
         await verifyPlannedR2Storage({ plan, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
-        workerDeploymentReadback.attachment_configuration = await verifyPlannedAttachmentWorker({ plan, phase: "after", version, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+        if (plan.usage_analytics) workerDeploymentReadback.usage_configuration = { binding_verified: true };
+        if (plan.resources?.r2) workerDeploymentReadback.attachment_configuration = await verifyPlannedAttachmentWorker({ plan, phase: "after", version, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
       }
       stdoutSummary = JSON.stringify(workerDeploymentReadback);
     } catch (error) {

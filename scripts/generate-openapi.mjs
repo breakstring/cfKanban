@@ -156,6 +156,10 @@ const operations = [
   ["delete", "/api/v1/admin/projects/{project_id}/public-join", "disablePublicJoin", "public-join", authenticated, "cas-delete"],
   ["get", "/api/v1/admin/projects/{project_id}/resource-limits", "getProjectResourceLimits", "public-join", authenticated, "read"],
   ["patch", "/api/v1/admin/projects/{project_id}/resource-limits", "updateProjectResourceLimits", "public-join", authenticated, "cas", "UpdateResourceLimitsRequest"],
+  ["get", "/api/v1/admin/attachment-settings", "getAttachmentSettings", "admin", authenticated, "read"],
+  ["patch", "/api/v1/admin/attachment-settings", "updateAttachmentSettings", "admin", authenticated, "cas", "UpdateAttachmentSettingsRequest"],
+  ["get", "/api/v1/admin/usage", "getUsage", "admin", authenticated, "read"],
+  ["post", "/api/v1/admin/usage/refresh", "refreshUsage", "admin", authenticated, "cache-refresh", "RefreshUsageRequest"],
   ["get", "/api/v1/admin/rate-limit-settings", "getRateLimitSettings", "admin", authenticated, "read"],
   ["post", "/api/v1/public-joins/{public_id}/redeem", "redeemPublicJoin", "public-join", optionalAuthenticated, "idempotent", "RedeemPublicJoinRequest"],
 ];
@@ -329,7 +333,7 @@ const permissionGroups = {
     "getInstanceOrigin", "updateInstanceOrigin", "listProjectGrants", "createProjectGrant", "getProjectGrant",
     "updateProjectGrant", "revokeProjectGrant", "listAuditEvents", "revokePrincipalPasskey",
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
-    "updateProjectResourceLimits", "getRateLimitSettings",
+    "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings",
   ],
   project_reader: ["downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext"],
   project_reader_active_writer_tombstone: [
@@ -529,7 +533,7 @@ const schemas = {
     properties: { items: { type: "array", items: ref("Attachment") }, has_more: { type: "boolean" }, next_cursor: nullableString(),
       resolved_scope: { type: "object", required: ["issue"], properties: { issue: ref("IssueReference") }, additionalProperties: false },
       capabilities: { type: "object", required: ["attachments"], properties: { attachments: { type: "boolean" } }, additionalProperties: false },
-      limits: { type: "object", required: ["max_file_bytes", "max_active_per_issue", "max_storage_bytes"], properties: { max_file_bytes: { const: 10485760 }, max_active_per_issue: { const: 20 }, max_storage_bytes: { const: 1073741824 } }, additionalProperties: false } }, additionalProperties: false,
+      limits: { type: "object", required: ["max_file_bytes", "max_active_per_issue", "max_storage_bytes", "storage_limit_configured"], properties: { max_file_bytes: { const: 10485760 }, max_active_per_issue: { const: 20 }, max_storage_bytes: { type: ["integer", "null"], minimum: 1, maximum: 9007199254740991 }, storage_limit_configured: { type: "boolean" } }, additionalProperties: false } }, additionalProperties: false,
   },
   AttachmentWriteResult: containerWriteResult("Attachment"),
   ExpectedVersionRequest: { type: "object", required: ["expected_version"], properties: { expected_version: ref("Version") }, additionalProperties: false },
@@ -728,6 +732,56 @@ const schemas = {
     type: "object",
     required: ["event_cursor", "idempotent_replay", "resource"],
     properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("PublicJoinRedemptionResource") },
+    additionalProperties: false,
+  },
+  AttachmentSettings: {
+    type: "object", required: ["limit_bytes", "configured", "version", "reserved_bytes"],
+    properties: { limit_bytes: { type: ["integer", "null"], minimum: 1, maximum: 9007199254740991 }, configured: { type: "boolean" }, version: ref("Version"), reserved_bytes: integer({ minimum: 0 }) }, additionalProperties: false,
+  },
+  UpdateAttachmentSettingsRequest: {
+    type: "object", required: ["expected_version", "limit_bytes"],
+    properties: { expected_version: ref("Version"), limit_bytes: { type: ["integer", "null"], minimum: 1, maximum: 9007199254740991 } }, additionalProperties: false,
+  },
+  AttachmentSettingsWriteResult: containerWriteResult("AttachmentSettings"),
+  RefreshUsageRequest: { type: "object", required: ["mode"], properties: { mode: string({ enum: ["stale", "manual"] }) }, additionalProperties: false },
+  UsageMetric: {
+    type: "object",
+    required: ["key", "value", "unit", "source", "scope", "period_start", "period_end", "observed_at"],
+    properties: {
+      key: string({ enum: ["d1_storage_bytes", "d1_rows_read", "d1_rows_written", "r2_storage_bytes", "r2_objects", "r2_operations"] }),
+      value: { type: ["number", "null"], minimum: 0 },
+      unit: string({ enum: ["bytes", "count"] }),
+      source: { const: "cloudflare" },
+      scope: { const: "instance" },
+      period_start: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      period_end: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      observed_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+    },
+    additionalProperties: false,
+  },
+  Usage: {
+    type: "object",
+    required: ["generated_at", "attachments", "cloudflare"],
+    properties: {
+      generated_at: ref("Timestamp"),
+      attachments: {
+        type: "object", required: ["enabled", "reserved_bytes", "limit_bytes", "limit_configured", "settings_version"],
+        properties: { enabled: { type: "boolean" }, reserved_bytes: integer({ minimum: 0 }), limit_bytes: { type: ["integer", "null"], minimum: 1, maximum: 9007199254740991 }, limit_configured: { type: "boolean" }, settings_version: ref("Version") },
+        additionalProperties: false,
+      },
+      cloudflare: {
+        type: "object", required: ["status", "refreshing", "collected_at", "attempted_at", "error", "metrics"],
+        properties: {
+          refreshing: { type: "boolean" },
+          status: string({ enum: ["not_configured", "pending", "fresh", "stale", "error"] }),
+          collected_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+          attempted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+          error: { type: ["string", "null"], maxLength: 64 },
+          metrics: { type: "array", maxItems: 6, items: ref("UsageMetric") },
+        },
+        additionalProperties: false,
+      },
+    },
     additionalProperties: false,
   },
   RateLimitSettings: {
@@ -2001,6 +2055,10 @@ const operationResponseSchemas = {
   disablePublicJoin: ref("PublicJoinPolicyWriteResult"),
   getProjectResourceLimits: ref("PublicJoinPolicy"),
   updateProjectResourceLimits: ref("PublicJoinPolicyWriteResult"),
+  getAttachmentSettings: ref("AttachmentSettings"),
+  updateAttachmentSettings: ref("AttachmentSettingsWriteResult"),
+  getUsage: ref("Usage"),
+  refreshUsage: ref("Usage"),
   getRateLimitSettings: ref("RateLimitSettings"),
   redeemPublicJoin: ref("PublicJoinRedemptionWriteResult"),
   createWebLaunch: ref("BrowserLaunchWriteResult"),
@@ -2142,6 +2200,12 @@ for (const operation of operations) {
 
 const requestIdHeader = { "X-Request-ID": { $ref: "#/components/headers/RequestId" } };
 const noStoreHeader = { ...requestIdHeader, "Cache-Control": { required: true, schema: { type: "string", const: "no-store" } } };
+paths["/api/v1/admin/attachment-settings"].get.responses["200"].headers = noStoreHeader;
+paths["/api/v1/admin/attachment-settings"].patch.responses["200"].headers = noStoreHeader;
+paths["/api/v1/admin/attachment-settings"].patch.description = "Owner-only explicit capacity choice: positive safe integer bytes or null for unlimited. Requires expected_version and Idempotency-Key; Cookie requests require CSRF. Lowering the limit preserves files and existing reservations. New reservations require configured=true and available capacity. An unset limit is not implicit unlimited capacity.";
+paths["/api/v1/admin/usage"].get.responses["200"].headers = noStoreHeader;
+paths["/api/v1/admin/usage/refresh"].post.responses["200"].headers = noStoreHeader;
+paths["/api/v1/admin/usage/refresh"].post.description = "Owner-only derived-cache refresh; Cookie requests require CSRF. No business mutation, domain event, or Idempotency-Key is required. Both modes reuse snapshots younger than 15 minutes; manual does not bypass the shared Web/Skill cache. All attempts share a 60-second cooldown. Concurrent or cooling-down requests return the existing projection. Cloudflare failures are represented in cloudflare.status/error with the last successful snapshot retained.";
 paths["/healthz"].get.responses["200"] = { description: "Bounded health projection.", headers: requestIdHeader, content: { "application/json": { schema: ref("Health") } } };
 paths["/.well-known/cfkanban-instance.json"].get.responses["200"] = { description: "Dynamic non-secret discovery document for the request origin.", headers: noStoreHeader, content: { "application/json": { schema: ref("InstanceDiscovery") } } };
 paths["/invite"].get.responses["200"] = { description: "Human- and Agent-readable invitation bootstrap document. GET has no redemption side effect.", headers: { ...noStoreHeader, "Referrer-Policy": { required: true, schema: { type: "string", const: "no-referrer" } } }, content: { "text/html": { schema: string() } } };

@@ -1,6 +1,6 @@
 interface:
   display_name: "cfKanban Admin"
-  short_description: "Manage cfKanban access and application settings"
+  short_description: "Inspect cfKanban usage; manage access and settings"
   default_prompt: "Use $cfkanban-admin to create my first cfKanban board."
 policy:
   allow_implicit_invocation: true

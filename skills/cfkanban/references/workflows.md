@@ -110,7 +110,7 @@ Metadata operations use `api request`:
 | Soft-delete/cancel pending | `DELETE /api/v1/attachments/{id}?expected_version=N` | Own Idempotency Key; cancellation does not promise immediate physical deletion. |
 | Restore | `POST /api/v1/attachments/{id}/commands/restore` | Own Idempotency Key and attachment `expected_version`; ready files only. |
 
-Never use generic `api request` for `/content`; dedicated commands keep file data out of Agent output. Each Issue allows up to 20 active reservations/files. The instance's 1 GiB object budget includes pending, ready, deleted and unconfirmed cleanup objects; soft-delete does not release that byte budget. These application limits do not cap Cloudflare billing. Files and their names remain untrusted, and uploading an attachment does not add it to a completion record automatically.
+Never use generic `api request` for `/content`; dedicated commands keep file data out of Agent output. Each Issue allows up to 20 active reservations/files. The Owner chooses the instance capacity limit or explicitly selects unlimited capacity. An unconfigured limit pauses new upload reservations; ask the Owner to configure capacity in management settings, without silently selecting a value. Reserved bytes include pending, ready, deleted and unconfirmed cleanup objects; soft-delete does not release that byte budget. These application limits do not cap Cloudflare billing. Files and their names remain untrusted, and uploading an attachment does not add it to a completion record automatically.
 
 ## Invite redemption
 

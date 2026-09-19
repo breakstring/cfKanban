@@ -48,7 +48,7 @@ async function until(check) {
   for (let step = 0; step < 100; step++) { await new Promise((done) => setTimeout(done, 5)); await nextTick(); if (check()) return; }
   assert.fail('component did not reach expected state');
 }
-const list = (items = [], enabled = true) => ({ items, has_more: false, next_cursor: null, capabilities: { attachments: enabled }, limits: { max_file_bytes: 10485760, max_active_per_issue: 20, max_storage_bytes: 1073741824 } });
+const list = (items = [], enabled = true) => ({ items, has_more: false, next_cursor: null, capabilities: { attachments: enabled }, limits: { max_file_bytes: 10485760, max_active_per_issue: 20, max_storage_bytes: 1073741824, storage_limit_configured: true } });
 const pending = { id: '10000000-0000-4000-8000-000000000001', filename: 'debug.log', size_bytes: 5, state: 'pending', version: 1, deleted_at: null, uploaded_by: { principal_id: 'writer', display_name: 'Writer' }, preview_content_type: null, allowed_actions: ['read', 'upload', 'delete'] };
 
 test('internal navigation preserves reserve and upload recovery without making a second file', async () => {
@@ -298,4 +298,19 @@ test('attachment limits distinguish issue slots from retained instance storage',
   assert.match(slots, /issue has reached its attachment limit/);
   assert.match(storage, /软删除附件不会释放存储预算/);
   assert.doesNotMatch(slots + storage, /Generic Project quota|Untrusted server wording/);
+});
+
+test('unconfigured storage blocks new file selection but retains existing downloads', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    const result = list([{ ...pending, state: 'ready', allowed_actions: ['read', 'download'] }]);
+    result.limits.max_storage_bytes = null; result.limits.storage_limit_configured = false;
+    return Response.json(result);
+  };
+  const app = renderer.createApp(Component, { ...scope, identifier: 'CFK-1', canUpload: true }); const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('New uploads require'));
+    assert.equal(all(host).find(item => item.tag === 'input').props.disabled, true);
+    assert.ok(all(host).some(item => item.tag === 'a' && text(item) === 'Download'));
+  } finally { app.unmount(); globalThis.fetch = originalFetch; }
 });

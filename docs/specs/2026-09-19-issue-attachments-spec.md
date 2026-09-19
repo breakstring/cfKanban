@@ -11,7 +11,7 @@ Issue 可以保存私有文件，D1 保存元数据，R2 保存原始字节。�
 
 附件独立版本，不改变 Issue version。完成评论里的 artifacts 外部引用继续可用；附件不自动成为完成记录。无 R2 binding 时附件能力关闭，已有看板、评论、完成和权限功能仍工作。R2 故障只影响附件操作，错误标识 component=r2。
 
-首版固定限制：单文件 10 MiB、每个 Issue 最多 20 个未删除附件（包括上传中的预留）、每个实例 1 GiB 总对象预算。总预算包括 ready、pending、soft-deleted 和尚未确认回收的对象；软删除不释放字节预算，恢复必须重新检查 active 数量。这些是应用上限，不是 Cloudflare 账单硬封顶，也不抵扣该账户其他 R2 使用量。拒绝空文件。文件名最多 180 字符，拒绝路径、控制字符及空名。
+单文件 10 MiB、每个 Issue 最多 20 个未删除附件（包括上传中的预留）。2026-09-19 用户明确纠正并授权：实例总容量必须由 Owner 自行设置正整数 byte 上限，或明确选择不限制，取消固定 1 GiB 产品限制。总预算包括 ready、pending、soft-deleted 和尚未确认回收的对象；软删除不释放字节预算，恢复必须重新检查 active 数量。这些是应用上限，不是 Cloudflare 账单硬封顶，也不抵扣该账户其他 R2 使用量。拒绝空文件。文件名最多 180 字符，拒绝路径、控制字符及空名。
 
 ## HTTP 与恢复
 
@@ -46,3 +46,13 @@ schema 4 migration 增加附件与清理/预算所需表和索引。schema 5 追
 可选附件 profile 明确固定一个私有 Standard R2 bucket、`ATTACHMENTS` binding、每小时清理 trigger及费用说明。已有实例升级必须准确保存当前 R2 binding，不得丢失。禁用 R2 不删除 bucket/对象；重新启用只能使用原 receipt/journal 证明属于同一实例的 bucket。创建前核对确切 account/name 不存在；创建与对象 marker 绑定同一 journal，未知资源绝不自动接管。启用前独立展示具体资源、存储上限、费用影响与计划摘要。
 
 验证覆盖权限与 CSRF、流式大小、digest、同键冲突、并发限额、R2/D1 失败恢复、撤权/归档、删除/恢复、purge/晚到 PUT、无 R2 降级、部署绑定连续性，以及真实 Web 与 Skill 的上传下载读回。
+
+## Owner 容量设置（2026-09-19 授权修订）
+
+新增 `GET/PATCH /api/v1/admin/attachment-settings`，仅 Owner Bearer/admin target Session；Cookie 写入要求 CSRF。GET 返回 `{limit_bytes: number|null, configured: boolean, version: number, reserved_bytes: number}`；PATCH 必须显式提供 `{expected_version, limit_bytes}`（正安全整数，最大 9007199254740991；null 表示明确不限制），使用独立 Idempotency-Key、CAS、原子审计/事件与标准 WriteResult。读回确认服务端设置，不提供重置为未设置的操作。
+
+schema 7 在 attachment_storage 增加 limit_bytes、limit_configured、version、last_operation_id，保留全部预留计数和对象。新实例和从旧固定限制升级的实例均初始未设置；不得将旧 1 GiB 伪装为用户选择，也不得静默改成无限制。未设置只暂停新的上传预留，既有预留可完成，已有文件可访问、删除、恢复和回收。Owner 可在无 R2 时预先设置预算；部署启用 R2 不隐含设置容量。
+
+新预留在同一 D1 原子操作内校验已设置以及有限预算，统计延迟不能影响保护；未设置返回 ATTACHMENT_STORAGE_NOT_CONFIGURED，超限仍返回 ATTACHMENT_STORAGE_LIMIT_REACHED。调低上限不会删除文件或撤销已经获得的预留；已有占用超限时仅拒绝新增预留，直到释放容量或提高上限。无限制仍维护精确预留计数和单文件/每 Issue 数量限制。附件列表 limits.max_storage_bytes 可为 null，并通过 storage_limit_configured 区分未设置和不限制。
+
+Owner 管理面板提供明确模式选择与容量输入，不预填 1 GiB；显示当前占用、未设置/不限制/已设上限。修改说明达到上限暂停新增上传、降低不删除已有内容、已删除未回收继续占用。应用容量保护不是账户免费额度或账单保证。部署计划和 Skills 不再声明固定总预算；普通升级保留 Owner 后续设置，不自动调用 settings API。

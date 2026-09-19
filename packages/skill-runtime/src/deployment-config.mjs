@@ -1,10 +1,11 @@
+import { deploymentCrons, usageVars } from "./usage-config.mjs";
 import path from "node:path";
 import { resolveStateRoot } from "./paths.mjs";
 import { getInstancePaths } from "./state.mjs";
 import { toolError } from "./errors.mjs";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
-import { ATTACHMENT_CLEANUP_CRON, assertAttachmentStoragePlan } from "./r2-storage.mjs";
+import { assertAttachmentStoragePlan } from "./r2-storage.mjs";
 import {
   assertNoSymlinkPath,
   atomicWriteJson,
@@ -141,9 +142,9 @@ export async function writeFrozenWranglerConfig({
     }],
     ...(plan.resources?.r2 ? {
       r2_buckets: [{ binding: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }],
-      triggers: { crons: [ATTACHMENT_CLEANUP_CRON] },
     } : {}),
-    vars: buildRateLimitVars(plan),
+    ...(deploymentCrons(plan).length ? { triggers: { crons: deploymentCrons(plan) } } : {}),
+    vars: { ...buildRateLimitVars(plan), ...usageVars(plan.usage_analytics?.configuration) },
     ratelimits: buildRateLimitConfig(plan),
   };
   if (config.workers_dev !== true || plan.resources?.custom_domain !== null || plan.resources?.pages !== false) {

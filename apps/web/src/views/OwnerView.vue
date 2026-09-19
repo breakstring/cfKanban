@@ -7,6 +7,7 @@ import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
+import UsagePanel from "../components/UsagePanel.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText } from "../lib/api";
 import {
@@ -1582,6 +1583,7 @@ onUnmounted(() => {
           <button class="owner-shortcut" type="button" @click="navigate(sectionPath('audit'))"><span><strong>{{ ui("View activity", "查看操作记录") }}</strong><small>{{ ui("Follow changes across your instance.", "追踪实例中的业务与安全变更。") }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></button>
         </nav>
       </section>
+      <UsagePanel />
       <details class="owner-section owner-disclosure">
         <summary>{{ ui("Service information & access limits", "服务信息与访问限制") }}</summary>
         <p class="muted-copy">{{ ui("Version, addresses, and request limits for troubleshooting. These settings are read-only.", "排查问题时可查看版本、访问地址和请求限制；这里的设置均为只读。") }}</p>

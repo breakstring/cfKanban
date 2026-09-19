@@ -35,6 +35,13 @@ for (const table of ["workspaces", "projects"]) {
   assert.ok(!columns.includes("key"), `${table} must only use UUID identity`);
 }
 
+for (const qualified of new Set(manifest.migrations.flatMap((entry) => entry.expected_artifacts.columns ?? []))) {
+  const [table, column] = qualified.split(".");
+  assert.match(table, /^[a-z_]+$/u);
+  assert.ok(db.prepare(`PRAGMA table_info(${table})`).all().some((entry) => entry.name === column), `missing manifest column ${qualified}`);
+}
+assert.deepEqual({ ...db.prepare("SELECT reserved_bytes,limit_bytes,limit_configured,version FROM attachment_storage WHERE singleton=1").get() }, { reserved_bytes: 0, limit_bytes: null, limit_configured: 0, version: 1 });
+
 const now = 1_787_966_400_000;
 const digest = (character) => character.repeat(64);
 const run = (sql, values = []) => db.prepare(sql).run(...values);
@@ -48,7 +55,7 @@ const expectConstraint = (label, action) => {
 
 assert.equal(get("PRAGMA foreign_keys").foreign_keys, 1, "foreign keys must be enabled");
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
-assert.equal(tables.length, 29, "expected 28 application tables and the deployment migration ledger");
+assert.equal(tables.length, 30, "expected 29 application tables and the deployment migration ledger");
 assert.deepEqual(
   tables.map((row) => row.name).sort(),
   [...new Set(manifest.migrations.flatMap((entry) => entry.expected_artifacts.tables ?? []))].sort(),

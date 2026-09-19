@@ -150,6 +150,9 @@ export function presentApiProblem(
   else if (body.code === "ISSUE_ATTACHMENT_LIMIT_REACHED") message = locale === "zh-CN"
     ? "此事项的附件数量已达上限。请删除不需要的附件或取消未完成的上传后重试。"
     : "This issue has reached its attachment limit. Delete an unneeded attachment or cancel a pending upload before retrying.";
+  else if (body.code === "ATTACHMENT_STORAGE_NOT_CONFIGURED") message = locale === "zh-CN"
+    ? "请先由所有者设置附件容量上限或明确选择不限制，再上传新附件。已有附件仍可访问。"
+    : "Ask the Owner to set an attachment capacity limit or explicitly choose unlimited before uploading new files. Existing attachments remain accessible.";
   else if (body.code === "ATTACHMENT_STORAGE_LIMIT_REACHED") message = locale === "zh-CN"
     ? "实例的附件存储预算已用满。请联系所有者检查存储；软删除附件不会释放存储预算。"
     : "The instance attachment storage budget is full. Ask the Owner to review storage; soft-deleting files does not release this budget.";

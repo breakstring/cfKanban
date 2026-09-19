@@ -1,3 +1,4 @@
+import { deploymentCrons, usageVars } from "./usage-config.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -78,9 +79,10 @@ function assertUpgradeConfig(config, event, plan, configPath) {
     || config.d1_databases[0]?.database_name !== plan.resources.d1.name
     || config.d1_databases[0]?.database_id !== plan.resources.d1.database_id
     || config.assets?.binding !== plan.bindings.assets
+    || Object.entries(usageVars(plan.usage_analytics?.configuration)).some(([name, value]) => config.vars?.[name] !== value)
     || config.workers_dev !== true
     || JSON.stringify(config.r2_buckets ?? []) !== JSON.stringify(plan.resources.r2 ? [{ binding: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }] : [])
-    || JSON.stringify(config.triggers?.crons ?? []) !== JSON.stringify(plan.resources.r2 ? [ATTACHMENT_CLEANUP_CRON] : [])) {
+    || JSON.stringify(config.triggers?.crons ?? []) !== JSON.stringify(deploymentCrons(plan))) {
     throw toolError("WRANGLER_CONFIG_DRIFT", "Upgrade Wrangler config does not match the frozen target");
   }
 }
@@ -163,6 +165,7 @@ export async function finalizeInstanceUpgrade({
     throw toolError("WORKER_DEPLOYMENT_READBACK_REQUIRED", "Upgrade finalization requires a successful post-deploy Worker readback");
   }
   const afterWorker = workerReadback.event.worker_deployment_readback;
+  if (plan.usage_analytics && JSON.stringify(afterWorker.usage_configuration) !== JSON.stringify({ binding_verified: true })) throw toolError("USAGE_READBACK_REQUIRED", "Upgrade finalization requires usage binding readback");
   if (plan.resources.r2 && JSON.stringify(afterWorker.attachment_configuration) !== JSON.stringify({ bucket_name: plan.resources.r2.bucket_name, crons: [ATTACHMENT_CLEANUP_CRON], binding_verified: true })) throw toolError("R2_READBACK_REQUIRED", "Upgrade finalization requires post-deploy attachment binding and Cron readback");
   if (afterWorker.deployment_id === plan.resources.worker.current_deployment_id
     || afterWorker.version_id === plan.resources.worker.current_version_id) {
@@ -247,6 +250,7 @@ export async function finalizeInstanceUpgrade({
         after_deployment_id: afterWorker.deployment_id,
         after_version_id: afterWorker.version_id,
       },
+      ...(plan.usage_analytics ? { usage_analytics: plan.usage_analytics.configuration } : {}),
       ...(plan.resources.r2 ? { r2: { bucket_name: plan.resources.r2.bucket_name, instance_id: instance, public_access: false } } : {}),
       d1: {
         name: plan.resources.d1.name,

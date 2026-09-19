@@ -208,8 +208,18 @@ canonical origin/digest mismatch、publisher discontinuity、存储不可验证�
 
 ## 可选附件存储
 
-默认首次部署仍只有一个 Worker 和一个 D1。通过显式实例升级启用附件：向 `plan instance-upgrade` 传入 `attachments: {"bucket_name":"<准确名称>","create":true}`，目标发行必须支持 schema 4 或更高版本。计划固定一个 private Standard R2 bucket、`ATTACHMENTS`、每小时 `17 * * * *` 清理触发器、订阅与超免费额度计费影响，以及应用限额。1 GiB 应用预算不是 Cloudflare 账单上限；该计划不授权开通或变更订阅。
+默认首次部署仍只有一个 Worker 和一个 D1。通过显式实例升级启用附件：向 `plan instance-upgrade` 传入 `attachments: {"bucket_name":"<准确名称>","create":true}`，目标发行必须支持 schema 4 或更高版本。计划固定一个 private Standard R2 bucket、`ATTACHMENTS`、每小时 `17 * * * *` 清理触发器、订阅与超免费额度计费影响，以及与目标发行一致的应用容量策略。部署不代选字节上限，也不修改既有 Owner 设置；应用预算不是 Cloudflare 账单上限；该计划不授权开通或变更订阅。
 
 先用 `runtime r2-storage-readback` 核对准确 bucket/account。新名称必须不存在；未知 bucket 即使带有看似匹配的 marker 也不能接管。授权计划后，`deployment provision-r2-storage` 记录创建 journal，写入并读回 Instance marker，并拒绝公开访问。升级既有附件 bucket 时省略 `attachments` 以保留原桶，通过 provision 命令验证时传入私有 `currentReceiptPath`。marker 缺失或不合法必须停止，不得推定归属后补写。
 
 Worker 部署前检查当前 deployment、bindings 与 Cron，部署后核对真实 R2 binding、清理计划和 bucket 才能 finalize。未知 Cron 会在 Wrangler 覆盖前被阻止；新 receipt 保留原 bucket。只在读回后恢复同一个已授权 operation；创建响应不确定且 journal 没有成功记录时停止。不会自动替换、移除、清空或删除 bucket。
+
+附件容量属于应用设置而非部署参数。启用 R2 后提示 Owner 到管理面板明确选择正整数字节上限或不限制；未配置时只暂停新上传预留。从旧固定 1 GiB 策略迁移的实例同样要求 Owner 显式选择，不静默改成不限制。部署不得写入该 D1 设置或覆盖既有 Owner 选择。该 Owner 配置策略适用于 schema 7 及以上；旧 schema 4–6 发行计划仍保留其历史固定 1 GiB 合同，不能宣称旧版本已经支持新设置。
+
+## 可选 Cloudflare 用量配置
+
+统计默认启用、按需刷新，不设置统计 Cron。默认部署不需要统计 Token、不新增资源；配置不完整时 API 返回 `not_configured`，附件应用预算仍可读取。只有既有附件清理保留小时触发器。
+
+`plan instance-upgrade` 接受非秘密 `usageAnalytics: { enabled: true, account_id, d1_database_id, r2_bucket_name: null }`。资源必须与本实例一致，省略账户/数据库时从冻结目标解析。显式 `enabled: false` 关闭云端统计；省略整个参数保留原有启用或关闭配置及现有 `USAGE_ANALYTICS_TOKEN` secret binding。允许没有 Secret，此时表示未配置而非零用量。配置变化仍须部署授权；仅改变统计配置时可复用当前 Service 工件。
+
+生成 `USAGE_ANALYTICS_ENABLED`、`USAGE_ACCOUNT_ID`、`USAGE_D1_DATABASE_ID` 和可选 `USAGE_R2_BUCKET_NAME`。Token 值不得进入输入、plan、CLI 参数、journal、receipt、Issue 或普通输出。本工具不提供 Secret 写入命令，需通过单独授权的安全 Cloudflare 输入配置独立只读 Worker Secret，不复用或上传本机 Wrangler OAuth。准确账户与最小 Analytics 权限须另行验证。preflight 核对 Worker 身份及脱敏 bindings 无漂移；部署后证明准确 vars 和既有 secret binding 被保留，binding 存在并不证明 Analytics 查询可用。授权部署后显式调用 Owner 刷新 API 验证，并记录尚未完成的权限验证。

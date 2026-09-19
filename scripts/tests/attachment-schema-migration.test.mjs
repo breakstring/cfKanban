@@ -79,8 +79,8 @@ test("attachment fix preserves all four published migration digests", async () =
     assert.equal(sha256NormalizedText(await migration(name)), digest, name);
     assert.equal(manifest.migrations.find((entry) => entry.name === name).sha256, digest, name);
   }
-  assert.equal(manifest.schema_version, 5);
-  assert.deepEqual(manifest.migrations.at(-1).expected_data, {
+  assert.ok(manifest.schema_version >= 5);
+  assert.deepEqual(manifest.migrations.find((entry) => entry.sequence === 5).expected_data, {
     instance_meta_schema_version_at_least: 5,
     allow_uninitialized: true,
   });
@@ -107,18 +107,19 @@ for (const version of [3, 4]) {
   });
 }
 
-test("empty database applies all migrations before the real bootstrap initializes schema 5", async () => {
+test("empty database applies all migrations before the real bootstrap initializes the current schema", async () => {
   const db = await historicalDatabase();
   try {
     await apply(db, "0004_issue_attachments.sql");
     await apply(db, "0005_attachment_schema_version.sql");
+    for (const entry of manifest.migrations.filter((entry) => entry.sequence > 5)) await apply(db, entry.name);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM instance_meta").get().count, 0);
     const input = bootstrapInput();
     const result = await bootstrapInstance(sqliteD1(db), input, 5678);
-    assert.equal(result.schemaVersion, 5);
+    assert.equal(result.schemaVersion, manifest.schema_version);
     assert.equal(result.instanceId, input.instanceId);
     assert.equal(result.ownerPrincipalId, input.ownerPrincipalId);
-    assert.equal(instance(db).schema_version, 5);
+    assert.equal(instance(db).schema_version, manifest.schema_version);
     assert.deepEqual(await bootstrapInstance(sqliteD1(db), input, 5679), { ...result, recovered: true });
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   } finally { db.close(); }
@@ -132,5 +133,22 @@ test("attachment schema repair never downgrades a future instance version", asyn
     const before = instance(db);
     await apply(db, "0005_attachment_schema_version.sql");
     assert.deepEqual(instance(db), before);
+  } finally { db.close(); }
+});
+
+test("owner capacity migration preserves old reservations without inventing a choice", async () => {
+  const db = await historicalDatabase();
+  try {
+    for (const entry of manifest.migrations.filter((entry) => entry.sequence >= 4 && entry.sequence <= 6)) await apply(db, entry.name);
+    await bootstrapInstance(sqliteD1(db), bootstrapInput(6), 1234);
+    db.prepare("UPDATE attachment_storage SET reserved_bytes=123").run();
+    db.prepare("INSERT INTO attachment_objects(id,object_key,size_bytes,sha256,state,expires_at,created_at,created_operation_id) VALUES ('object','attachments/object',123,?,'pending',9999,1234,'operation')").run("a".repeat(64));
+    const before=db.prepare("SELECT * FROM attachment_objects").all();
+    await apply(db,"0007_attachment_settings.sql");
+    assert.deepEqual({...db.prepare("SELECT * FROM attachment_storage").get()},{singleton:1,reserved_bytes:123,limit_bytes:null,limit_configured:0,version:1,last_operation_id:null});
+    assert.deepEqual(db.prepare("SELECT * FROM attachment_objects").all(),before);
+    assert.equal(instance(db).schema_version,7);
+    for (const invalid of [0,-1,1.5,9007199254740992]) assert.throws(()=>db.prepare("UPDATE attachment_storage SET limit_bytes=?").run(invalid),/CHECK constraint/);
+    assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(),[]);
   } finally { db.close(); }
 });

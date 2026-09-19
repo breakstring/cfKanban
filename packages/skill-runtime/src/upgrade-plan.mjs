@@ -1,3 +1,4 @@
+import { existingUsageConfig, normalizeUsageConfig, usageBindings, USAGE_SECRET, USAGE_VARS } from "./usage-config.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
@@ -105,8 +106,9 @@ function sortedBindings(values) {
   return [...values].sort((left, right) => (left.type + ":" + left.name).localeCompare(right.type + ":" + right.name));
 }
 
-function expectedBindings({ d1DatabaseId, rateLimits: limits, attachments = null }) {
+function expectedBindings({ d1DatabaseId, rateLimits: limits, attachments = null, usage = null, usageSecret = false }) {
   return sortedBindings([
+    ...usageBindings(usage, usageSecret),
     ...(attachments === null ? [] : [{ type: "r2_bucket", name: "ATTACHMENTS", bucket_name: attachments.bucket_name }]),
     { type: "assets", name: "ASSETS", value_redacted: true },
     { type: "d1", name: "DB", database_id: d1DatabaseId },
@@ -122,7 +124,7 @@ function expectedBindings({ d1DatabaseId, rateLimits: limits, attachments = null
   ]);
 }
 
-function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits, attachments = null }) {
+function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits, attachments = null, usageSecret = false }) {
   if (!Array.isArray(value)) {
     throw toolError("UPGRADE_BINDING_READBACK_REQUIRED", "Instance upgrade requires the redacted binding inventory from the current Worker version");
   }
@@ -132,6 +134,7 @@ function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits, attac
     }
     const type = requireString(binding.type, "worker_binding.type", { max: 64 });
     const name = requireString(binding.name, "worker_binding.name", { max: 128 });
+    if (type === "secret_text" && name === USAGE_SECRET && binding.value_redacted === true) return { type, name, value_redacted: true };
     if (type === "assets") return { type, name, value_redacted: binding.value_redacted === true };
     if (type === "d1") return { type, name, database_id: requireUuid(binding.database_id, "worker_binding.database_id") };
     if (type === "r2_bucket") return { type, name, bucket_name: resourceName(binding.bucket_name, "worker_binding.bucket_name") };
@@ -143,11 +146,13 @@ function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits, attac
       };
     }
     if (type === "plain_text") {
-      return { type, name, text: requireString(binding.text, "worker_binding.text", { max: 32 }) };
+      return { type, name, text: requireString(binding.text, "worker_binding.text", { max: USAGE_VARS.has(name) ? 128 : 32 }) };
     }
     throw toolError("UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN", "Current Worker has an unsupported binding that the normal upgrade would remove or replace", { type, name });
   }));
-  const expected = expectedBindings({ d1DatabaseId, rateLimits: limits, attachments });
+  const expected = expectedBindings({ d1DatabaseId, rateLimits: limits, attachments, usage: null, usageSecret });
+  expected.push(...observed.filter((item) => item.type === "plain_text" && USAGE_VARS.has(item.name)));
+  expected.sort((a, b) => (a.type + ":" + a.name).localeCompare(b.type + ":" + b.name));
   if (JSON.stringify(observed) !== JSON.stringify(expected)) {
     throw toolError("UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN", "Current Worker bindings do not exactly match the frozen normal-upgrade target", {
       observed: observed.map(({ type, name }) => ({ type, name })),
@@ -262,6 +267,7 @@ export function createInstanceUpgradePlan({
   target,
   migrations = [],
   attachments = undefined,
+  usageAnalytics = undefined,
   allow_breaking_change = false,
   restorePoint: restorePointInput,
 }) {
@@ -314,14 +320,20 @@ export function createInstanceUpgradePlan({
     || (!priorStorage && storage && !storage.create)) {
     throw toolError("R2_RESOURCE_DELTA_REJECTED", "Attachment storage cannot adopt, replace, or silently remove an existing bucket");
   }
+  if (usageAnalytics === null) throw toolError("INVALID_USAGE_CONFIG", "Use an explicit enabled boolean to change usage configuration");
+  const usageTarget = { accountId: cloudflare.account_id, databaseId: d1DatabaseId, bucketName: priorStorage?.bucket_name ?? null };
+  const previousUsage = existingUsageConfig(resources.worker?.bindings, usageTarget);
+  const usage = usageAnalytics === undefined ? previousUsage : normalizeUsageConfig(usageAnalytics, { ...usageTarget, bucketName: storage?.bucket_name ?? null });
+  const usageSecret = resources.worker?.bindings?.some((item) => item.name === USAGE_SECRET && item.type === "secret_text" && item.value_redacted === true) === true;
   const normalizedCurrent = serviceRelease(current, "current");
   const normalizedTarget = serviceRelease(target, "target", { isTarget: true });
+  if (usage && normalizedTarget.schema_version < 6) throw toolError("USAGE_RELEASE_UNSUPPORTED", "Usage analytics requires schema version 6 or later");
   if (storage && normalizedTarget.schema_version < 4) throw toolError("R2_RELEASE_UNSUPPORTED", "Attachment storage requires a Service release with schema version 4 or later");
   if (normalizedCurrent.publisher !== normalizedTarget.publisher
     || new URL(normalizedCurrent.service_bundle_source).origin !== new URL(normalizedTarget.service_bundle_source).origin) {
     throw toolError("PUBLISHER_DISCONTINUITY", "Instance upgrade target changes the canonical publisher or artifact origin");
   }
-  if (normalizedCurrent.service_bundle_sha256 === normalizedTarget.service_bundle_sha256 && !storage?.create) {
+  if (normalizedCurrent.service_bundle_sha256 === normalizedTarget.service_bundle_sha256 && !storage?.create && JSON.stringify(usage) === JSON.stringify(previousUsage)) {
     throw toolError("UPGRADE_TARGET_ALREADY_CURRENT", "Target Service bundle matches the current deployment");
   }
   if (!satisfiesSimpleRange(normalizedCurrent.service_api_version, normalizedTarget.compatibility.service_api)
@@ -352,6 +364,7 @@ export function createInstanceUpgradePlan({
     d1DatabaseId,
     rateLimits: normalizedRateLimits,
     attachments: priorStorage,
+    usageSecret,
   });
   const accountId = requireString(cloudflare.account_id, "cloudflare.account_id", { max: 128 });
   const apiOrigin = requireHttpsOrigin(cloudflare.api_origin, "cloudflare.api_origin");
@@ -406,6 +419,7 @@ export function createInstanceUpgradePlan({
       rate_limits: normalizedRateLimits,
       ...(storage === null ? {} : { attachments: "ATTACHMENTS", cleanup_cron: ATTACHMENT_CLEANUP_CRON }),
     },
+    ...(usage || usageSecret ? { usage_analytics: { configuration: usage, previous_configuration: previousUsage, secret_binding: USAGE_SECRET, secret_value_in_plan: false } } : {}),
     owner: normalizedOwner,
     compatibility: {
       current: {
@@ -431,10 +445,14 @@ export function createInstanceUpgradePlan({
     requires_cloudflare_authorization: true,
     skill_update_included: false,
     resource_replacement_allowed: false,
-    binding_changes_allowed: storage?.create === true,
+    binding_changes_allowed: storage?.create === true || JSON.stringify(usage) !== JSON.stringify(previousUsage),
     cost_delta: storage?.create === true,
     ...(storage === null ? {} : { attachment_storage: {
-      max_file_bytes: 10485760, max_active_per_issue: 20, max_storage_bytes: 1073741824,
+      max_file_bytes: 10485760, max_active_per_issue: 20,
+      ...(normalizedTarget.schema_version >= 7 ? {
+        capacity_policy: "owner_configured", capacity_setting: "application",
+        unconfigured_blocks_uploads: true, deployment_changes_capacity: false,
+      } : { max_storage_bytes: 1073741824 }),
       subscription_required: true, usage_beyond_free_tier_is_billable: true,
       application_budget_is_not_a_billing_cap: true,
       automatic_bucket_deletion: false,
