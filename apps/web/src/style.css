@@ -1158,6 +1158,24 @@ textarea:disabled {
   font-weight: 650;
 }
 
+.form-stack .confirmation-check {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+
+.confirmation-check input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 1px 0 0;
+  padding: 0;
+  accent-color: var(--color-primary);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2196,6 +2214,9 @@ textarea:disabled {
   border-left: 2px solid var(--color-border);
 }
 .workspace-projects .project-table-row { min-height: 58px; gap: 12px; }
+.project-name-and-state { display: grid; gap: 5px; min-width: 0; padding: 8px 0; overflow-wrap: anywhere; }
+.public-join-badge { justify-self: start; padding: 2px 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-muted); color: var(--color-text-muted); font-size: 0.72rem; font-weight: 500; line-height: 1.5; }
+.public-join-badge[data-enabled="true"] { border-color: var(--color-success); background: var(--color-success-soft); color: var(--color-success); }
 .workspace-projects .empty-copy { margin: 12px 0; }
 @media (max-width: 700px) {
   .workspace-block { padding: 14px; }

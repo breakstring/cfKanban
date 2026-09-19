@@ -269,6 +269,7 @@ export interface ContainerResource {
   version: number;
   workspace_id?: string;
   workspace_display_name?: string;
+  public_join_enabled?: boolean;
   resumed_public_projects?: {
     has_more: boolean;
     projects: Array<{
