@@ -15,22 +15,28 @@ An Invite URL is a short-lived bearer capability. Do not repeat or persist it in
 
 ## 2. Load or install the `cfkanban` Skill
 
-Reuse a compatible, verified installation if available. Otherwise resolve this testing release pointer and verify its immutable manifest, allowed artifact origins, and Skill bundle SHA-256:
+Reuse an existing trusted installation that is compatible with the target instance. If no installation or explicit update check/update is needed, skip the release discovery and installation paragraphs below: read the installed `cfkanban/SKILL.md`, run its `help`, and proceed to the combined join plan. This path does not query GitHub or require the latest release to be available.
 
-<https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.7/prerelease.json>
+Only for a required first installation or an explicitly requested update check/update, discover the latest stable release through the canonical pointer:
 
-Disclose that this is a prerelease and require the user's explicit testing choice. Include any required installation's source, version, user-level scope, local paths, and rollback in the combined join plan before writing local state.
+<https://github.com/breakstring/cfKanban/releases/latest/download/stable.json>
 
-If running in Codex, after authorization a fresh plugin installation uses the immutable `1.0.0-rc.7` ref:
+Resolve and pin the immutable manifest URL, SHA-256, and exact version; verify the publisher, allowed artifact origins, and required bundle digests. The pointer is discovery only: keep this snapshot for the operation. For this release-discovery path, stop on missing or failed verification instead of falling back to a prerelease, cache, or development source; this does not block joining with an already verified compatible installation. Prereleases and historical versions require an explicit choice. If a trusted installed deployment Skill supports `release discover`, use stdin `{}` for read-only stable discovery, then `release verify` to check downloaded artifacts; otherwise inspect the HTTPS documents as above rather than installing an update merely to check.
+
+When installation is needed, include the source, exact version, user scope, local paths, and rollback in the plan. For a fresh Codex installation, the Agent replaces `<resolved-version>` below with the verified release tag and executes after the applicable authorization. Do not ask the user to fill the placeholder, execute it literally, or omit `--ref`:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.7
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref <resolved-version>
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-If an older `cfkanban` marketplace already exists, inspect it and specify the exact update and rollback; do not delete or replace it silently. Check discovery after installation. If Codex requires a new task to load the plugin, report that specific handoff and the remaining step without repeating the Invite URL or claiming the Skill is loaded.
+If the `cfkanban` marketplace already exists, inspect its old source/ref and present the exact switch and rollback. Refreshing an old tag does not move it to a newer tag; never silently delete or overwrite it. Install the complete Skill bundle, preserving all four Skills, shared `packages/skill-runtime`, and relative layout. Other hosts must preserve this verified layout too; copying a single Skill directory is insufficient. Report a host limitation if it cannot support that projection.
 
-On another Agent host, use its supported Skill mechanism to install the `cfkanban` directory from the verified bundle. A checkout, mutable branch, or plugin cache is not release truth. Read the installed `cfkanban/SKILL.md` and its workflow reference; from that Skill directory, run:
+Check the canonical active receipt, host plugin/Skill projection, and current task loaded version separately. Updating the canonical bundle does not update the host; an installed host projection does not prove this task loaded it. Explain the specific handoff and remaining step if a new task is required, and mark unverifiable loading as unverified.
+
+Checking for updates and executing them are separate; local Skill updates and cloud Instance upgrades are independent. If the latest Skills are incompatible with an older target instance, reuse a verified compatible installation or explain the limitation and propose an explicit compatible historical stable release. Never force a server upgrade to join a Project or update Skills.
+
+Include any required installation in the combined join plan below; reusing a compatible installation requires no update. Do not repeat the Invite URL. Read the installed `cfkanban/SKILL.md` and its workflow reference, then run from that directory:
 
 ```text
 node scripts/cfkanban-tool.mjs help

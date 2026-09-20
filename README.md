@@ -10,58 +10,37 @@ It runs as one Cloudflare Worker plus one D1 database, with optional private R2 
 
 https://github.com/user-attachments/assets/82e0eac9-43b1-4fd5-ae25-d3e11338c734
 
-## Availability
+## Stable releases
 
-cfKanban is currently a **public testing preview**, not a stable end-user release.
+First installations and new deployments use the latest stable release by default. You do not need to choose or enter a version: your Agent discovers it through the [official stable release entry](https://github.com/breakstring/cfKanban/releases/latest/download/stable.json), verifies and pins the exact artifacts, then prepares the installation or deployment plan. Existing trusted, compatible Skills can be reused; joining a Project does not upgrade its server.
 
-- The Worker, D1 schema, Web UI, and four Agent Skills are implemented in this repository.
-- You can install the Codex plugin from this public repository today and inspect or evaluate the Skills.
-- The [`1.0.0-rc.7` GitHub prerelease](https://github.com/breakstring/cfKanban/releases/tag/1.0.0-rc.7) packages immutable Skill and Service bundles for cross-system release-candidate testing, adding searchable administrator selection and bilingual product introduction videos while retaining schema 10.
-- After upgrading, the Owner must explicitly choose attachment capacity before new uploads; existing files remain accessible. Cloudflare analytics requires a separately configured read-only Token.
-- Its machine-readable testing entry is [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.7/prerelease.json).
-- The stable release pointer and real multi-environment deployment acceptance are not published yet.
-- Do not treat `main`, a local checkout, or a marketplace snapshot as a canonical stable release or production-ready deployment.
+Local Skill updates and cloud Instance upgrades are separate actions. Prereleases, historical versions, and source development require an explicit choice. If stable is unavailable or verification fails, the Agent reports the problem instead of substituting a development snapshot.
 
-This distinction matters: the plugin helps Codex discover the Skills, while a canonical release manifest will identify and verify the exact Skill and Service bundles that may be deployed.
-
-The release archives do not contain a Node.js executable. The Skill bundle contains ordinary `.mjs` helper modules that run with a compatible Node.js already available on the user's computer. The Service bundle contains the built Worker, Web assets, migrations, contracts, and a `wrangler.template.json` configuration skeleton; the deployment Skill replaces its placeholder resource values by generating a private, plan-bound Wrangler configuration before use. Users do not need to unpack either archive manually.
+Release archives do not contain a Node.js executable. The Skill bundle includes four Skills and shared JavaScript helpers that run with your compatible Node.js; the Service bundle includes the built Worker, Web assets, migrations, contracts, and a Wrangler configuration skeleton. The Agent generates private configuration from the approved plan; users do not need to unpack or edit the artifacts manually.
 
 ## What you need
 
-For the current testing-preview path:
+For Codex:
 
 - Codex desktop or Codex CLI with plugin support;
 - Git access to this repository;
 - a new Codex task after plugin installation, so the new Skills are loaded.
 
-For a future Cloudflare deployment you will also need:
+For your own Cloudflare deployment you will also need:
 
 - a Cloudflare account that can create one Worker and one D1 database;
 - a compatible Node.js and Wrangler environment. `cfkanban-deploy` checks what already exists first. If Wrangler is unavailable, it must show a separate installation plan before adding a pinned Wrangler package under `~/.cfkanban/tool-runtime/`; it does not bundle or install Node.js;
 - the Owner display name you want cfKanban to use. The Agent must not guess it from your operating-system or Git identity.
 
-## Install the testing-preview Skills in Codex
+## Install the Skills
 
-The repository is a Codex plugin marketplace. From the command line, add the immutable testing tag and install its plugin:
+Give your Agent this request:
 
-```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.7
-codex plugin add cfkanban-agent-skills@cfkanban
-```
+> Read https://github.com/breakstring/cfKanban/releases/latest/download/install.md and install the latest stable cfKanban Skills for me.
 
-`--ref` is optional. It is included above only to pin the installation to the immutable testing tag. If you deliberately want the latest mutable development snapshot, omit `--ref`; Codex will then use the repository's default branch, currently `main`.
+The Agent checks existing installations, explains the required local changes, and handles host installation. In Codex, it resolves the exact tag from the verified release and internally installs with `--ref <resolved-version>`; you do not need to maintain that parameter. If the host needs a new task to load the Skills, the Agent will say so. Installation does not deploy or upgrade a Cloudflare instance or grant application permissions.
 
-If you already have a local checkout, register that exact checkout instead:
-
-```sh
-cd /absolute/path/to/cfKanban
-codex plugin marketplace add .
-codex plugin add cfkanban-agent-skills@cfkanban
-```
-
-Then start a **new Codex task**. Plugin installation does not modify Cloudflare, create `~/.cfkanban/`, deploy the Service, or authorize any later operation.
-
-`1.0.0-rc.7` contains four Skills: an onboarding guide and three operational Skills:
+cfKanban contains four Skills: an onboarding guide and three operational Skills:
 
 | Skill | Ask it to help with |
 | --- | --- |
@@ -98,21 +77,13 @@ You do not need to know or mention manifests, digests, preflight, deployment pla
 
 If Cloudflare login is needed, the Skill shows that as its own small plan and then opens the appropriate browser or device flow after approval. Completing login does not create a Worker or D1 database; the deployment plan remains a later, separate approval.
 
-At the current testing-preview stage, no stable deployment target is published. The Skill should say that clearly and may offer the `1.0.0-rc.7` prerelease as an explicit testing choice; it must never select a prerelease, a marketplace cache, or the current working tree silently.
+The Agent discovers the latest stable release and pins its exact version, source, and digests in the plan. A newer release appearing during execution does not change that target.
 
 For the complete step-by-step path, give your Agent the [deployment guide](apps/web/public/deploy-guide.md). It covers Skill installation, environment checks, authorization, deployment, readback, and recovery instead of asking the Agent to infer the workflow from this general README.
 
-If you deliberately want to evaluate a source revision, say so explicitly:
-
-> Use `$cfkanban-deploy` to evaluate this source checkout for a cfKanban deployment.
-
-A source evaluation is an engineering path, not the stable installation path. The Skill must explain that distinction and its consequences; the user should not have to formulate the warning themselves.
-
-The current Skill does not provide a source-specific remote deployment plan that freezes all of those facts, so a correct source evaluation stops before Cloudflare writes. Use the published prerelease for the supported testing flow below.
-
 ## What the deployment Skill handles for you
 
-Whether you use the testing prerelease now or a stable release later, the same short prompt remains the entry point. The Skill is responsible for:
+The Skill is responsible for:
 
 1. confirming the exact release and checking that its files have not changed;
 2. checking the computer and reusing compatible Node.js and Wrangler installations when possible;
@@ -163,6 +134,20 @@ cfKanban-owned persistent local data uses the current execution environment user
 Codex marketplace configuration and plugin caches remain in Codex-owned directories because Codex must discover them there. They are disposable host projections, not cfKanban state and not canonical release truth. Windows native and WSL2 use separate user homes and are never mixed automatically.
 
 ## For contributors
+
+### Source development and test environments
+
+For deliberate development, register the exact checkout:
+
+```sh
+cd /absolute/path/to/cfKanban
+codex plugin marketplace add .
+codex plugin add cfkanban-agent-skills@cfkanban
+```
+
+Record the commit and dirty state. A checkout, `main`, or local modification is not a stable release. Select prereleases or historical versions explicitly; published tags and artifacts are immutable. The current Skill has no remote deployment plan that freezes source-checkout facts, so source evaluation stops before Cloudflare writes.
+
+Use local development, an independent remote test instance, and a production instance for their respective purposes. Remote testing needs separate Worker, D1, instance ID, Credentials, and attachment storage; a test Project alone cannot isolate deployment or migration. Select the exact instance and Project to switch operation targets. One compatible Skill installation can access multiple instances; it does not need reinstalling when the target changes. Development tracking can remain in the production instance.
 
 Install the exact lockfile and run the complete repository validation:
 

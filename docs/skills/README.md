@@ -2,7 +2,7 @@
 
 Language: [English](README.md) | [简体中文](README.zh-CN.md)
 
-`1.0.0-rc.7` contains four Skills: one usage guide and three operational Skills:
+cfKanban contains four Skills: one usage guide and three operational Skills:
 
 - `cfkanban-howto`: explain user goals with reusable prompts and expected results; start with daily work for already joined users. Teaching only, without executing operations.
 - `cfkanban`: find, create, edit, assign, change status, complete/reopen, and comment on Issues; manage Labels, relations, private attachments and soft-delete/restore; open boards, manage your profile, or join when needed.
@@ -40,22 +40,17 @@ Use $cfkanban-deploy to deploy cfKanban for me.
 
 Joining an existing Project does not require your own deployment. The user does not need to request release verification, preflight, readback, or recovery handling. Each Skill performs the checks relevant to that intent, asks only for missing choices, and presents effects at the applicable authorization boundary. Local Skill updates and cloud Instance upgrades are separate actions; installation alone grants neither application nor Cloudflare permissions.
 
-## Current testing-preview entry
+## Installation and updates
 
-The first stable release has not been published. Today, Codex users can load the immutable testing tag:
+Users do not need to enter a version. Ask your Agent to read the [installation guide](https://github.com/breakstring/cfKanban/releases/latest/download/install.md) and install the latest stable Skills. First installations and new deployments discover their target through the [canonical stable pointer](https://github.com/breakstring/cfKanban/releases/latest/download/stable.json), then pin the immutable manifest, exact version, and digests. Prereleases and historical versions require an explicit choice.
 
-```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.7
-codex plugin add cfkanban-agent-skills@cfkanban
-```
+Reuse existing trusted, compatible installations. Joining a Project implies neither a Skill update nor a server upgrade. Checking updates only reports availability and compatibility. For an explicit update, the Agent verifies the target and publisher continuity, then presents a local installation plan and rollback. If the latest Skills are incompatible with an older instance, reuse a compatible installation or propose an explicit compatible historical stable release; do not force a server upgrade.
 
-The testing tag is immutable; use mutable `main` only for deliberate development-snapshot evaluation. After installation, start a new Codex task so the Skills are loaded. Installation only enables discovery; it does not create `.cfkanban/`, select a stable or prerelease deployment, or authorize local/cloud writes.
+For Codex, the Agent resolves the exact tag from the verified release and installs with `--ref <resolved-version>`; never omit ref to follow the default development branch. A marketplace pinned to an old tag needs an explicit switch to the exact new ref. Refreshing the old tag does not discover the latest stable release.
 
-Alpha.57 adds Owner usage reads and on-demand refresh with a shared 15-minute cache, plus explicit Owner attachment capacity settings. The schema 7 upgrade pauses new upload reservations until the Owner chooses a limit or unlimited capacity; existing files remain available. Analytics Token setup is separate from Skill installation and instance upgrade.
+Install the complete plugin/bundle, preserving all four Skills, shared `packages/skill-runtime`, and relative layout. Copying one `SKILL.md` or Skill directory is insufficient. The shared modules are JavaScript source, not an embedded Node.js executable. Other hosts must support discovery projections of the complete bundle; an incomplete directory copy is not a substitute.
 
-The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.7/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
-
-Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three operational entrypoints deliberately share the bundled JavaScript source modules under `packages/skill-runtime`; despite the internal directory name, this is not an embedded Node.js executable or runtime distribution. A host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
+Verify and report the canonical active receipt, host plugin/Skill projection, and current task's loaded version separately. Updating one does not synchronize all three. Explain the handoff when the host requires a new task, and retain an unverified status when loading cannot be checked. Installation itself grants no Cloudflare or application permissions.
 
 ## Commands included with the three operational Skills
 
@@ -71,7 +66,7 @@ Before proposing Cloudflare login, `cfkanban-deploy` first reuses an exact profi
 
 The `.mjs` extension means plain JavaScript in Node's explicit ES module format. These files run directly with `node`, need no compile step, and remain unambiguous when a portable Skill is installed outside a `package.json` tree.
 
-## Marketplace and plugin installation
+## Development: marketplace and source plugin installation
 
 The repository root is a Codex plugin, and `.agents/plugins/marketplace.json` provides a named local marketplace entry. An already downloaded checkout can be registered and installed for development or validation with:
 

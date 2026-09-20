@@ -2,7 +2,7 @@
 
 语言：[English](README.md) | [简体中文](README.zh-CN.md)
 
-`1.0.0-rc.7` 包含四个 Skills：一个使用指南和三个操作技能：
+cfKanban 包含四个 Skills：一个使用指南和三个操作技能：
 
 - `cfkanban-howto`：以用户目标、可复用话术和预期结果介绍能力，已加入用户优先了解日常工作；只读讲解，不执行操作。
 - `cfkanban`：查找、创建、编辑、分配、改变状态、完成或重新打开 Issue，以及追加评论；管理标签、关系、私有附件及软删除/恢复；打开看板、修改个人资料或在需要时加入项目。
@@ -40,22 +40,17 @@
 
 加入既有项目无需自己部署。用户不必主动要求发行验证、预检、读回或恢复处理；每个 Skill 会执行与意图相关的检查，只询问缺少的选择，并在适用授权边界说明影响。本地技能更新与云端实例升级是独立动作，安装本身不授予应用或 Cloudflare 权限。
 
-## 当前测试预览入口
+## 安装与更新
 
-首个稳定发行版还没有发布。目前 Codex 用户可以加载不可变的测试 tag：
+普通用户无需填写版本号。请让 Agent 阅读[安装引导](https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md)，安装最新正式发行的 Skills。首次安装和新部署从 [canonical stable pointer](https://github.com/breakstring/cfKanban/releases/latest/download/stable.json) 发现目标，随后固定 immutable manifest、准确版本与摘要；测试版和历史版须明确选择。
 
-```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.7
-codex plugin add cfkanban-agent-skills@cfkanban
-```
+已有可信且兼容的安装可以复用；加入项目不隐含技能更新或实例升级。检查更新只报告可用版本与兼容性。明确更新时，Agent 校验目标及来源连续性，展示本地安装计划和回退边界。若最新 Skills 不兼容旧实例，复用兼容版本，或提出明确的兼容历史正式版方案，不强制升级服务器。
 
-测试 tag 不会变化；只有明确评估开发快照时才使用可变的 `main`。安装后新建一个 Codex 任务，让 Skills 被加载。安装只启用发现能力；它不会创建 `.cfkanban/`、选择稳定版或测试版部署，也不授权本地或云端写入。
+Codex 安装由 Agent 从已验证发行解析准确 tag，再使用 `--ref <resolved-version>`；不要省略 ref 来跟随默认开发分支。已固定旧 tag 的 marketplace 要明确切换到准确新 ref；刷新旧 tag 不等于更新到最新正式版。
 
-Alpha.57 新增 Owner 用量读取、共享 15 分钟缓存的按需刷新及 Owner 附件容量设置。升级到 schema 7 后，Owner 选择容量上限或不限制之前暂停新上传预留，已有文件保持可用。统计 Token 配置独立于技能安装和实例升级。
+安装完整 plugin/bundle，保留四个 Skills、共享 `packages/skill-runtime` 和相对目录，不能只复制某个 `SKILL.md` 或单个 Skill 目录。共享模块是 JavaScript 源码，不是内嵌 Node.js 可执行程序。其他宿主必须支持完整 bundle 的发现投影，不能以不完整复制代替。
 
-当前测试发行指针是 <https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.7/prerelease.json>。只有用户明确选择测试发行版后，`cfkanban-deploy` 才能使用它。
-
-应安装完整 plugin/bundle，不能只复制某个 `SKILL.md` 或单独的 `skills/<name>/` 目录。三个操作技能的 entrypoints 按设计共用 bundle 内 `packages/skill-runtime` 下的 JavaScript 源码模块；尽管内部目录名包含 `runtime`，它并不是内嵌的 Node.js 可执行程序或运行时发行包。宿主投影必须保留这套已验证 bundle layout。当前测试预览只支持 Codex plugin 路径；其他宿主的 projection 属于稳定发行安装流程，不能用不完整的目录复制冒充。
+分别验证并报告 canonical active receipt、宿主 plugin/Skill 投影和当前任务实际加载的版本。更新一个不代表其他两个已同步；宿主要求新任务加载时给出接续说明，无法验证的加载状态保留为未验证。安装本身不授权 Cloudflare 或应用操作。
 
 ## 三个操作技能内置的命令
 
@@ -71,7 +66,7 @@ node scripts/cfkanban-tool.mjs help
 
 `.mjs` 表示使用 Node 显式 ES module 格式的普通 JavaScript。这些文件可直接由 `node` 运行、无需编译，并且 portable Skill 安装到没有 `package.json` 的目录时仍不会产生模块语义歧义。
 
-## Marketplace 与 plugin 安装
+## 开发：Marketplace 与 plugin 源码安装
 
 仓库根目录是一个 Codex plugin，`.agents/plugins/marketplace.json` 提供具名的本地 marketplace entry。已经下载源码 checkout 时，可以注册并用于开发或验证：
 

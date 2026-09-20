@@ -1,6 +1,8 @@
 import openApiDocument from "../../../contracts/openapi.json" with { type: "json" };
 import migrationManifest from "../../../migrations/manifest.json" with { type: "json" };
 
+import { RELEASE_VERSION } from "./release-version.ts";
+
 import { clearCsrfCookie, clearSessionCookie } from "./kernel/csrf.ts";
 import { ApiError, errorResponse, notFound, platformUnavailable } from "./kernel/errors.ts";
 import {
@@ -44,6 +46,7 @@ const router = registerUsageRoutes(registerAttachmentRoutes(registerWp08Routes(r
       d1: "reachable",
       schema_version: SCHEMA_VERSION,
       service_version: SERVICE_VERSION,
+      release_version: RELEASE_VERSION,
     }, context.requestId);
   })
   .get("/openapi.json", (_request, _env, context) => new Response(openApiBody, {

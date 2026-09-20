@@ -1629,7 +1629,7 @@ onUnmounted(() => {
         <summary>{{ ui("Service information & access limits", "服务信息与访问限制") }}</summary>
         <p class="muted-copy">{{ ui("Version, addresses, and request limits for troubleshooting. These settings are read-only.", "排查问题时可查看版本、访问地址和请求限制；这里的设置均为只读。") }}</p>
       <section class="overview-strip">
-        <article><span>{{ ui("Service", "服务") }}</span><strong>{{ meta?.service_version ?? "—" }}</strong><small>{{ ui("schema", "数据架构") }} {{ meta?.schema_version ?? "—" }}</small></article>
+        <article><span>{{ ui("Release", "发行版本") }}</span><strong>{{ meta?.release_version ?? "—" }}</strong><small>API {{ meta?.service_version ?? "—" }} · {{ ui("schema", "数据架构") }} {{ meta?.schema_version ?? "—" }}</small></article>
         <article><span>{{ ui("Workspaces", "工作区") }}</span><strong>{{ workspaces.length }}</strong><small>{{ meta?.visible_scope.project_count ?? 0 }} {{ ui("Projects", "个项目") }}</small></article>
         <article><span>{{ ui("Members", "成员") }}</span><strong>{{ principals.length }}{{ principalsHasMore ? "+" : "" }}</strong><small>{{ ui("visible now", "当前可见") }}</small></article>
         <article><span>{{ ui("Recent 429", "近期限流") }}</span><strong>{{ rateSettings?.recent_429_summary.total ?? 0 }}</strong><small>{{ rateSettings?.recent_429_summary.window_seconds ?? 300 }} {{ ui("second window", "秒窗口") }}</small></article>

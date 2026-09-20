@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256Bytes } from "../packages/skill-runtime/src/utils.mjs";
 import { validateReleaseManifest } from "../packages/skill-runtime/src/release.mjs";
+import { readReleaseVersion } from "./lib/release-version.mjs";
 
 function httpsUrl(value, name) {
   const url = new URL(value);
@@ -109,6 +110,8 @@ if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
     process.exitCode = 2;
   } else {
     const config = JSON.parse(await readFile(configPath, "utf8"));
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    if (config.version !== await readReleaseVersion(repoRoot)) throw new Error("Release config version does not match release/version.json");
     const result = await generateReleaseMetadata(config);
     process.stdout.write(`${JSON.stringify({ manifestPath: result.manifestPath, pointerPath: result.pointerPath }, null, 2)}\n`);
   }

@@ -19,6 +19,8 @@
 - [Web 视觉设计合同](../DESIGN.md)：已冻结的 warm editorial workbench 颜色、排版、布局、组件状态与无障碍约束。
 - [v0 Implementation Plan](plans/2026-08-29-v0-implementation-plan.md)：WP-01～WP-11 的范围、依赖、验收和停止条件；执行状态以 Linear 为准。
 
+- [正式发行生命周期](specs/2026-09-20-stable-release-lifecycle-spec.md)：版本无关用户入口、stable 发现、准确发行版本展示和开发环境边界。
+
 ## 技术与研究
 
 - [Cloudflare 架构基线](architecture/cloudflare-baseline.md)：稳定组件职责和演进边界。

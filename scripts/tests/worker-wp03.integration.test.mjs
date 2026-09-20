@@ -182,6 +182,12 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(meta.response.status, 200);
   assert.equal(meta.body.principal.is_owner, true);
   assert.equal(meta.body.visible_scope.project_count, 0);
+  const health = await jsonRequest("/healthz");
+  const release = JSON.parse(await readFile(new URL("../../release/version.json", import.meta.url), "utf8"));
+  for (const body of [health.body, discovery.body, meta.body]) {
+    assert.equal(body.release_version, release.version);
+    assert.equal(body.service_version, "0.1.0");
+  }
 
   const me = await jsonRequest("/api/v1/me", { headers: ownerHeaders() });
   assert.equal(me.body.display_name, "Deployment_Owner");

@@ -81,11 +81,15 @@ Use this Skill when hosting an instance or maintaining local Skills/cloud resour
 | Check readiness / 检查准备情况 | “Check what I need to deploy cfKanban.” / “检查部署 cfKanban 还需要准备什么。” | Read-only environment and verified-release findings; no installation. / 只读检查环境与可验证发行，不安装。 |
 | Deploy / 部署 | “Deploy cfKanban for me.” / “为我部署一套 cfKanban。” | Discovery, missing Owner name if needed, exact plan, then authorized deployment and readback. / 先检查、补齐必要 Owner 名称并展示准确计划，获准后部署和读回。 |
 | Check versions / 检查版本 | “Check local Skill and instance versions without updating.” / “检查本地技能和实例版本，先不要更新。” | Report the two versions separately without upgrading either. / 分别报告两个版本，不更新任一方。 |
-| Update Skills / 更新技能 | “Update my local cfKanban Skills to <verified version>.” / “将本地 cfKanban 技能更新到 <已验证版本>。” | Authorized local Skill update; the deployed Instance stays unchanged. / 按授权更新本地技能，线上实例不变。 |
-| Upgrade Service / 升级实例 | “Plan an upgrade of this instance to <verified version>.” / “制定将此实例升级到 <已验证版本> 的计划。” | Exact resource/migration effects for approval; planning alone does not execute. / 展示准确资源和迁移影响供批准，仅计划不执行。 |
+| Update Skills / 更新技能 | “Update my local cfKanban Skills to the latest stable release.” / “将本地 cfKanban 技能更新到最新正式版。” | Authorized local Skill update; the deployed Instance stays unchanged. / 按授权更新本地技能，线上实例不变。 |
+| Upgrade Service / 升级实例 | “Plan an upgrade of this instance to the latest stable release.” / “制定将此实例升级到最新正式版的计划。” | Exact resource/migration effects for approval; planning alone does not execute. / 展示准确资源和迁移影响供批准，仅计划不执行。 |
 | Resume / 继续中断部署 | “Check and resume my interrupted deployment.” / “检查并继续我中断的部署。” | Read back the journaled operation and continue only within valid authorization. / 读回已记录操作，仅在有效授权范围内继续。 |
 
 Prefix these with `$cfkanban-deploy`. Default deployment is one Worker and one D1; optional private R2 attachments and custom domains need explicit plans. Local Skill update and cloud Instance upgrade are separate. Do not describe a prerelease as stable or infer availability from a plugin version. After deployment, use `cfkanban-admin` to create the first Workspace/Project, then `cfkanban` for Issues; these are separate requested actions.
+
+Users do not need to supply version numbers. First installation and new deployment discover latest stable, then pin and verify the exact release. Existing trusted, compatible Skills can be reused; joining a Project does not update Skills or its server. Checking updates is read-only; installation, host projection, and current-task loading have separate verification states. An incompatible older instance needs an explained compatibility choice, never a forced upgrade. Switching between test and production instances selects an exact instance/Project; it does not require changing compatible Skills.
+
+用户无需填写版本号。首次安装和新部署默认发现最新正式发行，再固定并校验准确版本。已有可信兼容 Skills 可以复用，加入项目不更新技能或服务器。检查更新只读；canonical 安装、宿主投影与当前任务加载分别验证。旧实例不兼容时说明选择，不强制升级。测试与正式环境通过准确实例和 Project 切换，同一套兼容技能无需重装。
 
 For execution, read [cfkanban-deploy](../cfkanban-deploy/SKILL.md).
 

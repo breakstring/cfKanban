@@ -259,7 +259,7 @@ onMounted(load);
         <a href="https://github.com/breakstring/cfKanban" rel="noreferrer noopener">{{ t("home.github") }}</a>
       </nav>
       <div class="footer-meta">
-        <span>{{ locale === "zh-CN" ? "服务版本" : "service" }} {{ meta?.service_version ?? "—" }}</span>
+        <span>cfKanban {{ meta?.release_version ?? "—" }}</span>
         <span>{{ meta?.instance_id ? `${locale === "zh-CN" ? "实例" : "instance"} ${meta.instance_id.slice(0, 8)}` : "" }}</span>
       </div>
     </footer>

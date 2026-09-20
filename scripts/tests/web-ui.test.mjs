@@ -767,16 +767,15 @@ test("the Web interaction palette uses accessible orange without legacy blue the
 
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
   const paths = ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "join.zh-CN.md"];
-  const [deploymentRelease, ...documents] = await Promise.all([
-    readFile(new URL("../../release/config/1.0.0-rc.7.json", import.meta.url), "utf8").then(JSON.parse),
+  const documents = await Promise.all([
     ...paths.map((name) => readFile(
       new URL(`../../apps/web/public/${name}`, import.meta.url),
       "utf8",
     )),
   ]);
-  const releasePattern = new RegExp(deploymentRelease.version.replaceAll(".", "\\."), "u");
   for (const [index, document] of documents.entries()) {
-    assert.match(document, releasePattern);
+    assert.ok(document.includes("https://github.com/breakstring/cfKanban/releases/latest/download/stable.json"));
+    assert.doesNotMatch(document, /releases\/download\/\d+\.\d+\.\d+/u, `${paths[index]} must discover a current release rather than bind an old one`);
     assert.match(document, /cfkanban-agent-skills@cfkanban/);
     assert.doesNotMatch(document, /curl[^\n]*\|\s*(?:ba)?sh/iu, `${paths[index]} must not teach pipe-to-shell`);
   }

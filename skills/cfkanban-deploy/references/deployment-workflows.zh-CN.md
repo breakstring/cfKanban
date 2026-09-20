@@ -60,7 +60,7 @@ marketplace/plugin 是受支持的便利安装入口，但不能覆盖 canonical
 
 只读检查时，应明确报告缺少 canonical bootstrap/manifest 并停止。不得编造 release URL、向 `release verify` 提供伪造的 HTTPS manifest、把 plugin cache 当作 Service bundle，也不能静默退回当前 working tree。
 
-明确的源码评估属于另一种工程模式。生成任何计划前，记录 repository URL、准确 commit、仅作人类辅助说明的 branch/tag、dirty/untracked 状态、lockfile 状态、验证命令/结果，以及不具备 publisher continuity 和 canonical release 保证这一事实。只有可变 branch name 不构成可复现来源。如果当前 Skill release 没有能够冻结这些事实的源码专用计划，必须在本地安装、Credential 生成或 Cloudflare 写入前停止。不得把源码试验作为无标记的既有 Instance upgrade。
+明确的源码评估属于另一种工程模式。明确获准的宿主本地开发投影可以注册准确 checkout 用于 Skill 调试；记录来源、commit、dirty/untracked 状态、本地目标和回退，保留共享 bundle layout，并标明非 canonical。该本地投影不要求源码专用云端部署计划，也不生成 Credential 或云资源。生成源码部署计划前，还须记录 lockfile 状态、验证命令/结果，以及不具备 publisher continuity 和 canonical release 保证这一事实；branch/tag 仅作人类辅助说明，只有可变 branch name 不构成可复现来源。如果当前 Skill release 没有能够冻结这些事实的源码专用部署计划，必须在 Credential 生成或 Cloudflare 写入前停止。不得把开发投影称为 canonical release，也不得把源码试验作为无标记的既有 Instance upgrade。
 
 ## 与 Cloudflare 上游对齐
 
@@ -131,7 +131,7 @@ Issue、Project、Owner 管理页及加入/部署/恢复后的应用访问统一
 | 阶段 | 命令 | 结果 |
 | --- | --- | --- |
 | 宿主 preflight | `capabilities` | 只读环境与 PATH 报告；其中的 Wrangler 观察不是最终 resolver 结果。 |
-| Release trust | `release verify`、`release continuity` | 已验证 immutable manifest/artifacts 与 publisher continuity 决策。 |
+| Release trust | `release discover`、`release verify`、`release continuity` | 已验证 immutable manifest/artifacts 与 publisher continuity 决策。 |
 | Canonical Skill 安装 | `plan skill-update`、`release install-skill-bundle` | 准确的首次安装/更新计划、immutable version 目录、atomic active pointer 与 `.cfkanban/skill-releases` 读回。 |
 | Wrangler 选择 | `runtime resolve-wrangler` | 在显式、PATH 与 active Tool Runtime candidates 中作出必须执行的兼容性判断。 |
 | 既有 Cloudflare auth | `runtime resolve-cloudflare-auth` | 让 Wrangler 解析环境/当前上下文身份；只有用户明确给出时才检查一个 named profile，绝不列出 profiles。不返回 token、邮箱、目录绑定、资源清单或原始输出。 |
@@ -158,7 +158,7 @@ Issue、Project、Owner 管理页及加入/部署/恢复后的应用访问统一
 
 ## 首次部署
 
-1. 把 canonical bootstrap 当作文档读取，将 stable pointer 解析为一个 immutable release manifest；只有用户明确选择测试版时才可改用 prerelease pointer。
+1. 把 canonical bootstrap 作为文档读取。用 stdin `{}` 调用 `release discover`，从 `https://github.com/breakstring/cfKanban/releases/latest/download/stable.json` 解析并固定 immutable manifest、摘要和版本。只有用户明确选择历史版或测试版时才传入可选 `version` 字段。后续计划沿用该快照；发现不下载或校验工件字节，仍须下一步 `release verify`。stable 缺失或校验失败时停止，不回退其他来源。
 2. 对 Skill 与 Service deployment bundles 运行 `release verify`，再与既有 receipt 比较 publisher/origin continuity。
 3. 运行 `capabilities`。把已验证的 Skill artifact 与 `installed_skill_bundle` 比较；首次安装时，`plan skill-update` 必须使用 `current: null`，更新时只使用脱敏后的 current receipt。即使 plugin 或 marketplace cache 完全匹配，它也只是宿主投影，绝不能跳过本步骤。`capabilities.tools.wrangler` 只探测 PATH，`installed_tool_runtime` 也只是未经验证的提示。必须使用 manifest 的准确兼容范围调用 `runtime resolve-wrangler`；它会依次检查显式 candidate、PATH 与 active cfKanban Tool Runtime。任何兼容结果都应直接复用。只有 resolver 明确返回 unavailable/incompatible 时才能生成 `runtime plan-install`。
 4. 展示 Skill 计划的 canonical source/version/digest、`.cfkanban/skill-releases` 目标、atomic switch 与 rollback。若两项本地前置条件都缺失，必须把 Skill 与 Tool Runtime 两份计划及其 digest 一起展示，再请求一次只覆盖这些准确写入的用户决定。授权后先安装 canonical Skill bundle，从返回的 installed path 运行 `help`，并核对 active receipt；只有此前 resolver 已证明确有必要时才安装 Wrangler。安装完成后必须再次 resolve，并要求兼容读回。
@@ -209,18 +209,21 @@ Wrangler 原始输出必须先脱敏，不能直接记日志。前一次 create 
 
 ## Skill update
 
-Skill update 只修改本地：
+先区分“检查更新”和“更新技能”。检查时读取现有 canonical active receipt、宿主投影和当前任务加载来源，用 `release discover` 的 stdin `{}` 查询最新 stable；显式历史版或测试版使用准确 `version`。旧版 Skill 没有该命令时，可只读解析 canonical HTTPS pointer/manifest，不为了检查而先安装新版。比较目标与当前实例 API/schema 的兼容性，报告可用更新，不做写入。旧实例不兼容时复用可信兼容安装，或提出准确兼容历史正式版方案，不强制升级实例。
 
-1. 验证 target manifest、bundle digest、compatibility 与 publisher continuity。
-2. 创建 `plan skill-update`，结果必须明确没有 Cloudflare writes。
-3. 安装到 `.cfkanban/skill-releases` 下新的 immutable version 目录。
+获准的 Skill update 只修改本地：
+
+1. 固定目标 manifest、bundle digest、兼容矩阵并验证 publisher continuity；执行中不再解析 latest。
+2. 创建 `plan skill-update`，明确无 Cloudflare writes。
+3. 安装完整 bundle 到 `.cfkanban/skill-releases` 的新 immutable 目录，保留共享 `packages/skill-runtime` 和相对路径。
 4. 运行无副作用 discovery/help smoke。
-5. 原子切换 active pointer，并保留上一 known-good version。
-6. 只有作为明确安装步骤时才更新宿主管理的 marketplace/plugin/Skill 投影。
+5. 原子切换 active pointer，保留上一已知良好版本。
+6. 仅在明确安装范围内更新宿主投影。Codex 全新安装从已验证发行取准确 tag，并以 `codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref <resolved-version>` 和 `codex plugin add cfkanban-agent-skills@cfkanban` 安装。占位符由 Agent 替换，不原样执行。已有 marketplace 先检查旧来源/ref 与宿主支持的切换方式，计划固定新 ref 和旧 ref 回退，不能静默删除或覆盖，也不能以刷新旧 tag 冒充升级。历史版回退同样验证来源连续性、准确版本和摘要。
+7. 分别读回 canonical active receipt、宿主投影与当前任务加载状态。当前任务可能仍使用旧 Skill；需要新任务时说明接续，只有新任务确认来源/版本才报告已加载。不能用 `help` smoke 代替宿主跨任务加载验证。
 
-pointer 切换前失败时 active version 不变。该操作绝不升级已部署 Instance。
+切换 pointer 前失败时 active 版本保持不变。本地回退不回退云端实例；已安装 bundle 或宿主投影成功也不代表第三层加载成功。
 
-`release install-skill-bundle` 内部完成步骤 3–5：切换前依次运行暂存版本三个 Skill 入口的 `help`，验证 JSON catalog 与对应 surface，并在 receipt 中记录有界的 `discovery_smoke` 结果。文件缺失、help 失败或格式错误、超时、输出超限以及暂存文件被改写时，都以 `SKILL_DISCOVERY_SMOKE_FAILED` 停止，不返回子进程原始输出。探测使用当前 Node executable，不继承环境 secret 或 Node hooks。这是可信发行版的可用性检查，不是不可信代码的安全沙箱。安装后的 `help` 和 active receipt 读回仍保留为独立验证。
+`release install-skill-bundle` 自行执行步骤 3–5：切换前通过三个暂存 Skill entrypoints 运行 `help`，检查 JSON catalogs 和 surfaces，并在 receipt 写入有界 `discovery_smoke`。缺失文件、失败/格式异常、超时、输出过大或暂存文件变化时以 `SKILL_DISCOVERY_SMOKE_FAILED` 停止，不返回原始子进程输出。探测使用当前 Node，不继承秘密或 Node hooks；这是可信发行健康检查，不是不可信代码沙箱。安装后仍独立检查 `help` 和 active receipt。
 
 ## Instance upgrade
 

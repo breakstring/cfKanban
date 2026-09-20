@@ -10,6 +10,10 @@
 4. 使用已安装并完成 GitHub 登录的 `gh`。脚本复用 gh 身份，不读取或输出 Token，不执行 OAuth 登录，不把 Cloudflare Credential 传给 gh。网络失败、权限失败和读取超时都不是“Release 不存在”的证据。
 5. 创建非秘密 config JSON，字段为 `repository`（固定 `breakstring/cfKanban`）、准确 `version`、40 位 `commit`、上传 `directory` 的绝对路径、完整 `notes` 字符串。配置不放进上传目录，不提交本机绝对路径。
 
+产品版本以 `release/version.json` 为源码声明。同步 plugin metadata 与当次 `release/config/<version>.json`，重新构建 Worker/Web；打包会拒绝错版本、缺失或变化的构建入口。API 的 `service_version`/OpenAPI `info.version` 与 schema 不随产品版本机械递增。历史 tag、migration SQL、发行配置和已发布工件不原地修改。
+
+普通用户 README 和双语部署/加入/安装指南保持版本无关，不为每次发行替换数字。开发后续功能前将声明切到下一个准确预发行版本，并在独立测试实例验收；仅在正式发行时推进 stable。
+
 ## 三个独立动作
 
 ```text
@@ -26,6 +30,8 @@ node scripts/publish-github-release.mjs publish <config.json>
 
 `publish` 不补传附件。仅当当前 draft 的六份附件全部匹配、tag 未漂移时才公开。随后重新读取公开状态，匿名下载六份文件，核对 size/SHA-256，并用**刚下载的** pointer、manifest 和两个 bundle 执行同一 `loadAndVerifyRelease`。bootstrap 两份 MD 的摘要也独立核对。GitHub signed redirect 仅在内存使用，不进入报告。
 
+正式版公开时设置 GitHub `make_latest=true`，预发行版保持 `false`。正式 `publish` 还从固定 `https://github.com/breakstring/cfKanban/releases/latest/download/stable.json` 发现入口重新读取并校验 manifest，要求准确版本与本次工件一致。该入口只负责发现；安装/部署计划继续固定不可变目标。Latest 校验失败不能报告完整发布成功，不删除或覆盖已公开发行；先只读检查，不能自动将已经前进的 Latest 降回旧版。`inspect` 对历史正式版只校验其不可变资产，不要求它仍是 Latest。
+
 ## 中断与恢复
 
 - 创建、单附件上传或 publish 超时：保持相同输入，先重新 `inspect`。不把 CLI 非零当作远端未提交，不自动换版本、删除 draft 或重建 Release。
@@ -40,5 +46,7 @@ node scripts/publish-github-release.mjs publish <config.json>
 `node --test scripts/tests/release-publication.test.mjs` 使用隔离假 GitHub 后端覆盖创建/上传/发布提交前后中断、每个附件缺失恢复、读失败、tag 漂移、摘要/数量/状态冲突、本地漂移、重复执行，以及匿名下载的实际字节校验；它不会写 GitHub。
 
 故障注入单测不是 GitHub 真实上传中断演练。首次实际使用时仍应记录 draft Release ID、每个附件读回和公开下载结果；CFK-27 在真实恢复证据补齐前保持进行中。此源码工具不包含在 Skill/Service bundle 白名单里，单独新增它不要求升级 Worker 或用户 Skill。
+
+正式发行专项：`node --test scripts/tests/release-discovery.test.mjs scripts/tests/release-version.test.mjs scripts/tests/release-publication.test.mjs`。它覆盖 stable/显式 RC 发现、来源/摘要/重定向与大小限制、无静默回退、正式 Latest 推进与读回、历史发行检查、构建与声明版本一致性。完整跨任务 Codex 加载及宿主回退仍使用 CFK-149 的真实验收，不能由 mock 结果替代。
 
 平台依据（2026-09-05）：[GitHub Release API](https://docs.github.com/en/rest/releases/releases)、[Release asset 的 state/size/digest 合同](https://docs.github.com/en/rest/releases/assets)、[gh release upload 的 clobber 删除语义](https://cli.github.com/manual/gh_release_upload)。工具使用 GitHub API 版本 `2022-11-28`，不依赖 gh 的人类错误文案判断提交结果。

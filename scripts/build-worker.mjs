@@ -1,10 +1,13 @@
 import { mkdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { readReleaseVersion, writeBuildVersion } from "./lib/release-version.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const outputRoot = new URL("../apps/worker/dist/", import.meta.url);
 const wranglerCli = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
+
+const version = await readReleaseVersion(repositoryRoot);
 
 await rm(outputRoot, { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
@@ -31,3 +34,5 @@ const result = spawnSync(process.execPath, [
 
 if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
+
+await writeBuildVersion({ repositoryRoot, outputDirectory: fileURLToPath(outputRoot), entry: "index.js", version });

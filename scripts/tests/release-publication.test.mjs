@@ -6,10 +6,9 @@ import path from "node:path";
 import { digest, publicationPlan, publishRelease } from "../lib/release-publication.mjs";
 import { githubClient, verifyPublicDownload } from "../lib/github-release.mjs";
 
-async function fixture(t) {
+async function fixture(t, version = "0.1.0-alpha.99") {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cfkanban-publish-test-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const version = "0.1.0-alpha.99";
   const repository = "breakstring/cfKanban";
   const commit = "a".repeat(40);
   const base = `https://github.com/${repository}/releases/download/${version}/`;
@@ -18,12 +17,14 @@ async function fixture(t) {
   const publisher = { id: "cfkanban", canonical_origin: "https://github.com" };
   const manifest = {
     schema_version: 1, product: "cfkanban", publisher, release: { version, immutable: true }, documents,
+    compatibility: { node: ">=22.12.0 <27", wrangler: ">=4.127.1 <5", service_api: ">=0.1.0 <0.2.0", schema_version: 10 },
     artifacts: names.map((name, index) => ({ kind: index ? "service_deployment_bundle" : "skill_bundle", version, url: `${base}${name}`, allowed_origins: ["https://github.com"], sha256: digest(name) })),
   };
   const manifestBytes = JSON.stringify(manifest);
   const manifestName = `cfkanban-release-${version}.json`;
-  const pointer = { schema_version: 1, product: "cfkanban", publisher, release_version: version, channel: "prerelease", manifest_url: `${base}${manifestName}`, manifest_sha256: digest(manifestBytes), documents };
-  for (const [name, bytes] of [["prerelease.json", JSON.stringify(pointer)], [manifestName, manifestBytes], ...names.map((name) => [name, name]), ["install.md", "# Install"], ["install.zh-CN.md", "# 安装"]]) await writeFile(path.join(directory, name), bytes);
+  const channel = version.includes("-") ? "prerelease" : "stable";
+  const pointer = { schema_version: 1, product: "cfkanban", publisher, release_version: version, channel, manifest_url: `${base}${manifestName}`, manifest_sha256: digest(manifestBytes), documents };
+  for (const [name, bytes] of [[`${channel}.json`, JSON.stringify(pointer)], [manifestName, manifestBytes], ...names.map((name) => [name, name]), ["install.md", "# Install"], ["install.zh-CN.md", "# 安装"]]) await writeFile(path.join(directory, name), bytes);
   const config = { repository, version, commit, directory, notes: "测试发布恢复" };
   return { config, plan: await publicationPlan(config) };
 }
@@ -202,7 +203,36 @@ test("gh adapter binds IDs, uploads one file without clobber, and sanitizes time
   assert.equal(calls[1].args[1], "https://uploads.github.com/repos/breakstring/cfKanban/releases/123/assets?name=test.zip");
   assert.equal(calls[1].args.includes("--input"), true);
   assert.equal(calls[2].args.includes("draft=false"), true);
+  assert.equal(calls[2].args.includes("make_latest=false"), true);
+  await client.publish({ ...plan, version: "1.0.0", prerelease: false }, 456);
+  assert.equal(calls[3].args.includes("make_latest=true"), true);
   assert.equal(calls.every(({ args }) => !args.includes("DELETE") && !args.includes("--clobber")), true);
   const failing = githubClient({ run: async () => { throw new Error("secret supplier body"); } });
   await assert.rejects(failing.readRelease(plan, 123), (error) => !error.message.includes("secret supplier body") && error.message.includes("re-inspect"));
+});
+
+test("stable publication verifies Latest discovery while historical inspection only verifies immutable assets", async (t) => {
+  const { plan } = await fixture(t, "1.0.0");
+  const latest = "https://github.com/breakstring/cfKanban/releases/latest/download/stable.json";
+  const calls = [];
+  let latestMissing = false;
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url === latest && latestMissing) return new Response("not found", { status: 404 });
+    return new Response(await readFile(plan.assets.find((asset) => url.endsWith(asset.name)).file));
+  };
+  const verified = await verifyPublicDownload(plan, { fetchImpl, verifyLatest: true });
+  assert.equal(verified.latest_verified, true);
+  assert.equal(calls.filter((url) => url === latest).length, 1);
+  latestMissing = true;
+  await assert.rejects(verifyPublicDownload(plan, { fetchImpl, verifyLatest: true }), { code: "RELEASE_DISCOVERY_UNAVAILABLE" });
+  calls.length = 0;
+  assert.equal((await verifyPublicDownload(plan, { fetchImpl })).verified, true);
+  assert.equal(calls.includes(latest), false, "Inspecting an older release must not require or move Latest");
+  const next = await fixture(t, "1.0.1");
+  const differentLatest = async (url) => {
+    const target = url === latest || url.includes("/1.0.1/") ? next.plan : plan;
+    return new Response(await readFile(target.assets.find((asset) => url.endsWith(asset.name)).file));
+  };
+  await assert.rejects(verifyPublicDownload(plan, { fetchImpl: differentLatest, verifyLatest: true }), /Latest stable discovery differs/);
 });

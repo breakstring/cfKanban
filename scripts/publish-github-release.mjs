@@ -7,9 +7,9 @@ try {
   if (!configPath || extra || !["inspect", "stage", "publish"].includes(mode)) throw new Error("Usage: node scripts/publish-github-release.mjs <inspect|stage|publish> <config.json>");
   const config = JSON.parse(await readFile(configPath, "utf8"));
   const plan = await publicationPlan(config);
-  console.log(JSON.stringify({ mode, repository: plan.repository, version: plan.version, commit: plan.commit, plan_digest: plan.digest, assets: plan.assets.map(({ file, ...asset }) => asset) }));
+  console.log(JSON.stringify({ mode, repository: plan.repository, version: plan.version, commit: plan.commit, make_latest_on_publish: !plan.prerelease, plan_digest: plan.digest, assets: plan.assets.map(({ file, ...asset }) => asset) }));
   if (mode !== "inspect" && config.approvedPlanDigest !== plan.digest) throw new Error("Run inspect and explicitly approve that exact plan digest before a remote write");
-  const result = await publishRelease({ plan, mode, github: githubClient(), verifyPublic: verifyPublicDownload, onEvent: (event) => console.log(JSON.stringify(event)) });
+  const result = await publishRelease({ plan, mode, github: githubClient(), verifyPublic: (approvedPlan) => verifyPublicDownload(approvedPlan, { verifyLatest: mode === "publish" }), onEvent: (event) => console.log(JSON.stringify(event)) });
   console.log(JSON.stringify(result));
 } catch (error) {
   // Do not serialize arbitrary exception objects, gh stderr, command arguments or remote bodies.

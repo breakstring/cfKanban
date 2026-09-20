@@ -165,6 +165,7 @@ test("production Worker serves health/OpenAPI, structured misses, and Static Ass
     d1: "reachable",
     schema_version: JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8")).schema_version,
     service_version: "0.1.0",
+    release_version: JSON.parse(await readFile(new URL("../../release/version.json", import.meta.url), "utf8")).version,
   });
 
   const openapi = await server.fetch("/openapi.json");

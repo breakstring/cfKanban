@@ -16,20 +16,24 @@ Generate resource names and technical parameters during planning. Do not require
 
 ## 2. Load or install the verified Skills
 
-The testing release linked by this guide is `1.0.0-rc.7`. Disclose that it is a prerelease and require the user's explicit testing choice before selecting it; do not silently substitute it for stable. Reuse an already compatible, verified installation. Installing or updating local Skills is a separate operation from deploying or upgrading an instance.
+First installation discovers the latest stable release by default; reuse an existing trusted, compatible installation. Read the canonical stable pointer:
 
-If running in Codex and installation is needed, first present this host-level plan: source `https://github.com/breakstring/cfKanban.git`, immutable ref `1.0.0-rc.7`, user scope, and removal of the newly installed plugin as rollback. After authorization, use these commands for a fresh installation:
+<https://github.com/breakstring/cfKanban/releases/latest/download/stable.json>
+
+Resolve and pin the immutable manifest URL, SHA-256, and exact version; verify the publisher, allowed artifact origins, and required bundle digests. The pointer is discovery only: keep this snapshot for the operation. Stop on missing or failed verification instead of falling back to a prerelease, cache, or development source. Prereleases and historical versions require an explicit choice. If a trusted installed deployment Skill supports `release discover`, use stdin `{}` for read-only stable discovery, then `release verify` to check downloaded artifacts; otherwise inspect the HTTPS documents as above rather than installing an update merely to check.
+
+When installation is needed, include the source, exact version, user scope, local paths, and rollback in the plan. For a fresh Codex installation, the Agent replaces `<resolved-version>` below with the verified release tag and executes after the applicable authorization. Do not ask the user to fill the placeholder, execute it literally, or omit `--ref`:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.7
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref <resolved-version>
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-If a `cfkanban` marketplace entry already exists at another ref, inspect it and present the exact update and rollback before changing it. Do not delete or overwrite it silently. Check Skill discovery after installation; if the host requires a new task to load the plugin, report that specific handoff with the target version and remaining step. Do not claim the Skills are loaded before they are discoverable.
+If the `cfkanban` marketplace already exists, inspect its old source/ref and present the exact switch and rollback. Refreshing an old tag does not move it to a newer tag; never silently delete or overwrite it. Install the complete Skill bundle, preserving all four Skills, shared `packages/skill-runtime`, and relative layout. Other hosts must preserve this verified layout too; copying a single Skill directory is insufficient. Report a host limitation if it cannot support that projection.
 
-For another Agent host, use its supported Skill mechanism to install the three directories `cfkanban`, `cfkanban-admin`, and `cfkanban-deploy` from the verified Skill bundle. Resolve the following testing release pointer and verify its immutable manifest, allowed artifact origins, and SHA-256 digests. A checkout, `main`, or plugin cache is not deployment truth:
+Check the canonical active receipt, host plugin/Skill projection, and current task loaded version separately. Updating the canonical bundle does not update the host; an installed host projection does not prove this task loaded it. Explain the specific handoff and remaining step if a new task is required, and mark unverifiable loading as unverified.
 
-<https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.7/prerelease.json>
+Checking for updates and executing them are separate; local Skill updates and cloud Instance upgrades are independent. If the latest Skills are incompatible with an older target instance, reuse a verified compatible installation or explain the limitation and propose an explicit compatible historical stable release. Never force a server upgrade to join a Project or update Skills.
 
 ## 3. Run the deployment Skill
 
@@ -39,7 +43,7 @@ Read the installed `cfkanban-deploy/SKILL.md` and its deployment workflow refere
 node scripts/cfkanban-tool.mjs help
 ```
 
-Call the catalog's commands with structured JSON on stdin; do not invent command flags or include secrets in the input. Use `capabilities`, `release verify`, `runtime resolve-wrangler`, and the authentication/readback commands for preflight; use `plan strict-zero`, journal commands, and `deploy wrangler-action` for the approved deployment. Follow the Skill's complete phase order, with these checkpoints:
+Call the catalog's commands with structured JSON on stdin; do not invent command flags or include secrets in the input. Use `capabilities`, `release discover`, `release verify`, `runtime resolve-wrangler`, and the authentication/readback commands for preflight; use `plan strict-zero`, journal commands, and `deploy wrangler-action` for the approved deployment. Follow the Skill's complete phase order, with these checkpoints:
 
 1. Run the Skill capability checks and inspect existing private cfKanban state without printing credentials or Cloudflare tokens.
 2. Verify the release pointer, immutable manifest, publisher, artifact origins, Skill bundle digest, Service bundle digest, Node range, Wrangler range, API range, and schema version.

@@ -37,7 +37,9 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.7/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The canonical stable pointer is `https://github.com/breakstring/cfKanban/releases/latest/download/stable.json`. Run `release discover` with stdin `{}` for read-only discovery, then `release verify` to validate the downloaded artifacts. Discovery verifies the pointer/immutable manifest and fixes the manifest digest/version; it does not install bundles or prove artifact bytes. Pin that snapshot for the entire plan. A missing stable release or failed verification stops; never substitute a plugin cache or source checkout. The optional `version` field selects an exact historical or prerelease target only when the user explicitly chooses it.
+
+Reuse trusted, compatible installed Skills for joining or routine work. If the latest Skills cannot operate the target's API/schema, explain the limit and reuse a compatible installation or propose an explicit compatible historical stable version. Updating local Skills never requires silently upgrading a server. Detailed host installation and update checks are in the reference's **Skill update** section.
 
 ## Choose the deployment source first
 
@@ -153,7 +155,7 @@ The companion Skills cannot choose a different Cloudflare product, install `wran
 
 ## First-deployment workflow
 
-1. Verify bootstrap, immutable manifest, origins, digests, compatibility, and publisher continuity.
+1. Discover the latest stable target with `release discover` unless an exact version was explicitly selected. Freeze that manifest snapshot, then verify bootstrap, immutable manifest, origins, digests, compatibility, and publisher continuity.
 2. Run `capabilities` and `runtime resolve-wrangler` using the verified release range. Reuse a compatible Wrangler. If the exact canonical Skill release is not active, plan its installation with `current: null` for first install or the redacted current receipt for update. A plugin cache is only a projection. Present any needed Skill/Tool Runtime plans together, covering each digest, path, atomic switch, and rollback; after authorization install and read back the canonical release, then run its `help`.
 3. Resolve and verify Cloudflare auth using the contract above. Generate the strict-zero plan after resolving account ambiguity and the Owner display name. Read back its exact D1 and Worker names; both must be `absent` for a new Instance. Unknown or ambiguous resources cannot be adopted.
 4. Create the journal and obtain one approval for the complete task/operation/digest, including `owner_bootstrap.recovery_authorization`. Do not phrase the authorization as a one-command or one-attempt approval. Honor any independently stated narrower user limit.
@@ -186,6 +188,7 @@ A verified Worker and D1 are the deployment result, but the user still has no bo
 - **MUST:** Any cost, account, permission, DNS/domain, destructive migration, resource adoption/replacement, secret, binding, or plan-digest delta requires new authorization.
 - **MUST:** Worker rollback never claims to roll back D1. D1 restore is destructive, never automatic, and needs new authorization.
 - **MUST:** Skill update and Instance upgrade are separate planes; checking both never authorizes or executes either.
+- **MUST:** Install the full verified bundle, retaining shared `packages/skill-runtime` and relative layout. For Codex, resolve the accurate release tag and use `--ref <resolved-version>`; refreshing a pinned old tag does not switch versions. Report canonical active receipt, host projection, and current-task loading separately; do not claim a new version is loaded without evidence.
 - **SHOULD:** Reuse compatible installed tools and verified current-task evidence. Show one concise plan for the requested operation; ask only for unresolved choices or effects beyond existing authorization.
 - **DECIDES:** The user chooses Node installation method, ambiguous Cloudflare account, custom domain, paid capability, compliance location, non-stable source, and destructive recovery.
 

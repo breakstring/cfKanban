@@ -58,7 +58,7 @@ A repository marketplace can make this Skill discoverable before the project pub
 
 For a read-only check, report the missing canonical bootstrap/manifest plainly and stop. Do not invent a release URL, give `release verify` a synthetic HTTPS manifest, treat a plugin cache as the Service bundle, or fall back to the current working tree.
 
-An explicit source evaluation is a separate engineering mode. Before any plan, record the repository URL, exact commit, branch/tag only as a human-readable aid, dirty/untracked state, lockfile state, validation command/result, and the fact that publisher continuity and canonical release guarantees do not apply. A mutable branch name alone is not a reproducible source. If the installed Skill release does not provide a source-specific plan that freezes those facts, stop before local installation, Credential generation, or Cloudflare writes. Never reuse a source experiment as an unlabelled upgrade of an existing Instance.
+An explicit source evaluation is a separate engineering mode. An explicitly authorized host-local development projection may register an exact checkout for Skill debugging; record its source, commit, dirty/untracked state, local target, and rollback, preserve the shared bundle layout, and label it as non-canonical. This local projection does not require a source-specific cloud deployment plan and creates no Credential or cloud resource. Before a source deployment plan, also record the lockfile state, validation command/result, and the fact that publisher continuity and canonical release guarantees do not apply; branch/tag is only a human-readable aid, and a mutable branch alone is not a reproducible source. If the installed Skill release does not provide a source-specific deployment plan that freezes those facts, stop before Credential generation or Cloudflare writes. Never claim the development projection is a canonical release or reuse a source experiment as an unlabelled upgrade of an existing Instance.
 
 ## Cloudflare upstream alignment
 
@@ -129,7 +129,7 @@ An opened consent page or zero process exit code is not sufficient: require the 
 | Phase | Commands | Result |
 | --- | --- | --- |
 | Host preflight | `capabilities` | Read-only environment and PATH report; its Wrangler observation is not a final resolver result. |
-| Release trust | `release verify`, `release continuity` | Verified immutable manifest/artifacts and publisher continuity decision. |
+| Release trust | `release discover`, `release verify`, `release continuity` | Verified immutable manifest/artifacts and publisher continuity decision. |
 | Canonical Skill install | `plan skill-update`, `release install-skill-bundle` | Exact first-install/update plan, immutable version directory, atomic active pointer, and readback under `.cfkanban/skill-releases`. |
 | Wrangler selection | `runtime resolve-wrangler` | Mandatory compatibility decision across explicit, PATH, and active Tool Runtime candidates. |
 | Existing Cloudflare auth | `runtime resolve-cloudflare-auth` | Lets Wrangler resolve environment/current-context identity; checks one named profile only when explicitly supplied and never lists profiles. No token, email, directory binding, resource inventory, or raw output. |
@@ -156,7 +156,7 @@ Commands accept structured JSON on stdin. Credential generation and loading rema
 
 ## First deployment
 
-1. Read the canonical bootstrap as a document. Resolve the stable pointer to one immutable release manifest, or use a prerelease pointer only after the user explicitly chooses testing.
+1. Read the canonical bootstrap as a document. Run `release discover` with stdin `{}` to resolve `https://github.com/breakstring/cfKanban/releases/latest/download/stable.json` into one immutable manifest and fixed digest/version. The optional `version` field is for an explicitly selected historical or prerelease target. Keep the resolved snapshot for the plan; discovery does not download or validate artifact bytes. A missing stable release or failed verification stops without a fallback.
 2. Run `release verify` for both Skill and Service deployment bundles, then compare publisher/origin continuity with any receipt.
 3. Run `capabilities`. Compare the verified Skill artifact with `installed_skill_bundle`; on a first install, `plan skill-update` must use `current: null`, while an update uses only the redacted current receipt. A matching plugin or marketplace cache remains only a host projection and never allows this step to be skipped. `capabilities.tools.wrangler` probes PATH only, and `installed_tool_runtime` is an unverified hint. Always invoke `runtime resolve-wrangler` with the manifest's exact compatibility range; it checks an explicit candidate, PATH, then the active cfKanban Tool Runtime. Reuse any compatible result. Only an unavailable/incompatible resolver result permits `runtime plan-install`.
 4. Show the Skill plan's canonical source/version/digest, `.cfkanban/skill-releases` target, atomic switch, and rollback. If both local prerequisites are needed, show the Skill and Tool Runtime plans together, including both digests, before requesting one user decision covering those exact writes. After authorization, install the canonical Skill bundle first, run `help` from the returned installed path, and verify the active receipt. Install Wrangler only when the earlier resolver result proved installation necessary; resolve again after installation and require a compatible readback.
@@ -207,16 +207,19 @@ There is one bounded exception to the general missing-ledger stop. Run `migratio
 
 ## Skill update
 
-A Skill update is local only:
+Distinguish “check for updates” from “update Skills”. For a check, inspect the canonical active receipt, host projection, and current task's loaded source; call `release discover` with stdin `{}` for latest stable, or `version` for an explicitly selected historical or prerelease target. If an older installed Skill lacks this command, read the canonical HTTPS pointer/manifest without installing an update just to check. Compare compatibility with the target instance's API/schema and report availability without writes. For an incompatible old instance, reuse a trusted compatible installation or propose an exact compatible historical stable release; never force an instance upgrade.
 
-1. Verify target manifest, bundle digest, compatibility, and publisher continuity.
+An authorized Skill update is local only:
+
+1. Pin and verify the target manifest, bundle digest, compatibility matrix, and publisher continuity; do not re-resolve latest during execution.
 2. Create `plan skill-update`; it must report no Cloudflare writes.
-3. Install into a new immutable directory under `.cfkanban/skill-releases`.
+3. Install the complete bundle into a new immutable directory under `.cfkanban/skill-releases`, preserving shared `packages/skill-runtime` and relative paths.
 4. Run a no-side-effect discovery/help smoke.
 5. Atomically switch the active pointer and retain the previous known-good version.
-6. Update the host-owned marketplace/plugin/Skill projection only as an explicit install step.
+6. Update the host projection only within the explicit installation scope. For a fresh Codex installation, resolve the exact release tag and use `codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref <resolved-version>` followed by `codex plugin add cfkanban-agent-skills@cfkanban`. The Agent substitutes the placeholder; never execute it literally. For an existing marketplace, inspect the old source/ref and the host's supported switch mechanism, then plan the exact new ref and old-ref rollback. Never silently remove or overwrite it, or describe refreshing an old tag as an upgrade. Historical-version rollback also verifies publisher continuity, exact version, and digests.
+7. Read back the canonical active receipt, host projection, and current task's loading separately. This task may still use the old Skill; explain any new-task handoff, and report loaded only after that task verifies its source/version. A `help` smoke does not prove cross-task host loading.
 
-Failure before pointer switch leaves the active version unchanged. This operation never upgrades a deployed Instance.
+Failure before pointer switch leaves the active version unchanged. A local rollback does not roll back a cloud Instance. Successful bundle or host installation does not prove the third, loading state.
 
 `release install-skill-bundle` performs steps 3–5 itself: before switching, it runs `help` through all three staged Skill entrypoints, checks their JSON catalogs and surfaces, and records a bounded `discovery_smoke` result in the receipt. Missing files, failed/malformed help, timeout, excessive output, or staged-file modification stop with `SKILL_DISCOVERY_SMOKE_FAILED`; raw child output is not returned. The probe uses the current Node executable without inherited secrets or Node hooks. This is a trusted-release health check, not a sandbox for untrusted code. Keep the post-install `help` and active-receipt readback as an independent check.
 

@@ -10,58 +10,37 @@ cfKanban 是一套面向 Agent 协作方式的轻量自托管 Kanban。你让 Ag
 
 https://github.com/user-attachments/assets/94b3d30b-a1a7-4ad2-9924-838a8317d3bb
 
-## 当前可用状态
+## 正式发行
 
-cfKanban 目前是**公开测试预览版**，还不是面向普通用户的稳定发行版。
+首次安装和新部署默认使用最新正式发行。你不需要选择或填写版本号；Agent 从[官方稳定发行入口](https://github.com/breakstring/cfKanban/releases/latest/download/stable.json)发现版本，校验并固定准确工件后，再准备安装或部署计划。已有可信且兼容的 Skills 可以继续复用，加入项目不会顺带升级服务器。
 
-- Worker、D1 schema、Web UI 和四个 Agent Skills 已经在本仓库中实现。
-- 你现在可以从这个公开仓库安装 Codex plugin，并检查或试用这些 Skills。
-- [`1.0.0-rc.7` GitHub 测试发行版](https://github.com/breakstring/cfKanban/releases/tag/1.0.0-rc.7) 提供用于跨系统候选版验收的不可变 Skill 与 Service bundle，新增可搜索的管理员下拉选择和中英文产品介绍视频，继续使用 schema 10。
-- 升级后 Owner 需明确设置附件容量才能新增上传，已有文件保持可访问；Cloudflare 统计需单独配置只读 Token。
-- 机器可读的测试入口是 [`prerelease.json`](https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.7/prerelease.json)。
-- 稳定发行指针和真实多环境部署验收尚未发布。
-- 不要把 `main`、本地 checkout 或 marketplace snapshot 当成 canonical stable release 或生产就绪部署。
+本地技能更新与云端实例升级是独立动作。测试版、历史版和源码开发仅在明确选择时使用；稳定发行不可用或校验失败时，Agent 会说明原因，不会改用开发快照。
 
-这个区别很重要：plugin 只帮助 Codex 发现 Skills；未来的 canonical release manifest 才会固定并校验真正允许部署的 Skill bundle 与 Service bundle。
-
-发行压缩包不包含 Node.js 可执行程序。Skill bundle 里是普通 `.mjs` helper modules，由用户电脑上已有的兼容 Node.js 运行。Service bundle 里是构建后的 Worker、Web assets、migrations、contracts，以及一份 `wrangler.template.json` 配置骨架；部署 Skill 不会直接使用其中的占位资源值，而是在部署前根据已批准计划生成一份私有的实际 Wrangler 配置。普通用户不需要手工解压这两个文件。
+发行压缩包不包含 Node.js 可执行程序。Skill bundle 包含四个 Skills 和共享 JavaScript helper modules，由用户已有的兼容 Node.js 运行；Service bundle 包含构建后的 Worker、Web assets、migrations、contracts 和 Wrangler 配置骨架。Agent 会根据获准计划生成私有配置，普通用户无需手动解压或修改工件。
 
 ## 你需要准备什么
 
-当前测试预览路径需要：
+在 Codex 中使用需要：
 
 - 支持 plugin 的 Codex 桌面应用或 Codex CLI；
 - 能够访问本仓库的 Git 环境；
 - 安装 plugin 后新建一个 Codex 任务，让新 Skills 被加载。
 
-未来部署到 Cloudflare 时还需要：
+自行部署到 Cloudflare 时还需要：
 
 - 一个有权创建一个 Worker 和一个 D1 数据库的 Cloudflare 账户；
 - 兼容的 Node.js 与 Wrangler 环境。`cfkanban-deploy` 会先检查已有工具；Wrangler 不可用时，只有在展示并获得独立安装计划授权后，才能把固定版本的 Wrangler package 安装到 `~/.cfkanban/tool-runtime/`。它不会内嵌或安装 Node.js；
 - 你希望 cfKanban 使用的 Owner display name。Agent 不能从操作系统账号或 Git identity 猜测这个名称。
 
-## 在 Codex 中安装测试预览 Skills
+## 安装 Skills
 
-本仓库本身就是一个 Codex plugin marketplace。可以在命令行添加不可变的测试 tag，并安装其中的 plugin：
+把下面这句话交给你的 Agent：
 
-```sh
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.7
-codex plugin add cfkanban-agent-skills@cfkanban
-```
+> 请阅读 https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md，为我安装 cfKanban 最新正式发行的 Skills。
 
-`--ref` 不是必填参数；上面特意使用它，只是为了把安装固定在不可变的测试 tag。只有在你明确想试用最新、可能变化的开发快照时，才省略 `--ref`；此时 Codex 会使用仓库的默认分支，当前为 `main`。
+Agent 会检查已有安装、解释所需本地变更，并处理宿主安装。如果使用 Codex，Agent 会从已验证发行解析准确 tag，再内部使用 `--ref <resolved-version>` 安装；你不需要维护这个参数。若宿主需要新任务才能加载，Agent 会明确告知。安装本身不会部署或升级 Cloudflare 实例，也不授予应用权限。
 
-如果你已经有本地 checkout，也可以注册这个准确的 checkout：
-
-```sh
-cd /absolute/path/to/cfKanban
-codex plugin marketplace add .
-codex plugin add cfkanban-agent-skills@cfkanban
-```
-
-安装后请**新建一个 Codex 任务**。安装 plugin 不会修改 Cloudflare、创建 `~/.cfkanban/`、部署 Service，也不代表已经授权任何后续操作。
-
-`1.0.0-rc.7` 包含四个 Skills：一个入门指南和三个操作技能：
+cfKanban 包含四个 Skills：一个入门指南和三个操作技能：
 
 | Skill | 适合交给它的任务 |
 | --- | --- |
@@ -98,21 +77,13 @@ Howto 是推荐的入门入口，不是必经的初始化步骤；如果已经�
 
 如果需要登录 Cloudflare，Skill 会把它作为一份独立的小计划展示；获批后再打开对应的浏览器或 device flow。完成登录不会创建 Worker 或 D1 数据库，真正的部署计划仍会在后面单独请求确认。
 
-当前测试预览阶段还没有稳定部署目标。Skill 应该直接说明这一点，并可以把 `1.0.0-rc.7` 作为需要你明确选择的测试版本；它不能静默选择测试版、marketplace cache 或当前工作目录。
+Agent 默认发现最新正式发行，在计划中固定准确版本、来源和摘要；执行途中不会因出现新版而更换目标。
 
 需要完整的逐步路径时，请把[部署指南](apps/web/public/deploy-guide.zh-CN.md)交给 Agent。它会明确说明 Skill 安装、环境检查、授权、部署、读回和恢复，不要求 Agent 从这份通用 README 自己猜流程。
 
-如果你明确想评估某个源码修订，请把这一点说清楚：
-
-> 请使用 `$cfkanban-deploy` 评估当前源码能否用于部署 cfKanban。
-
-源码评估属于工程路径，不是稳定安装路径。两者的区别和影响应该由 Skill 解释，不应该要求用户自己组织这段警告。
-
-当前 Skill 还没有能够冻结上述全部事实的源码专用远端部署计划，因此正确的源码评估会在 Cloudflare 写入前停止。请使用已发布的 prerelease 执行下方受支持的测试流程。
-
 ## 部署 Skill 会替你处理什么
 
-无论现在使用测试版，还是以后使用稳定版，入口都可以是上面同一句话。Skill 负责：
+Skill 负责：
 
 1. 确认准确的发行版本，并检查文件没有被替换；
 2. 检查当前电脑，尽量复用已有的兼容 Node.js 与 Wrangler；
@@ -163,6 +134,20 @@ cfKanban 自己拥有的持久本地数据统一使用当前执行环境用户�
 Codex marketplace 配置和 plugin cache 仍放在 Codex 自己管理的目录，因为 Codex 只能在那里发现它们。这些内容是可丢弃的宿主投影，不是 cfKanban 状态，也不是 canonical release 真相源。Windows 原生和 WSL2 使用各自独立的用户目录，绝不自动混用。
 
 ## 参与开发
+
+### 源码开发与测试环境
+
+开发时可显式注册准确 checkout：
+
+```sh
+cd /absolute/path/to/cfKanban
+codex plugin marketplace add .
+codex plugin add cfkanban-agent-skills@cfkanban
+```
+
+记录 commit 和未提交状态；源码 checkout、`main` 与本地修改不代表正式发行。测试版或历史版必须明确选择，已发布 tag 和工件不可覆盖。当前 Skill 不提供冻结源码事实的远端部署计划，源码评估应在 Cloudflare 写入前停止。
+
+建议区分本地开发、独立远端测试实例和正式实例。远端测试使用独立 Worker、D1、instance ID、凭据及附件存储；仅创建测试 Project 不能隔离部署和迁移。通过准确实例和 Project 切换操作目标，同一套兼容 Skills 可以操作多套实例，无需跟着环境重装。开发管理项目可以继续放在正式实例。
 
 按准确 lockfile 安装依赖并运行完整仓库验证：
 

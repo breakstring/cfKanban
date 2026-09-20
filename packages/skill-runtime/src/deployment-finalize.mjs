@@ -113,12 +113,14 @@ export async function loadActiveSkillEvidence(stateRoot) {
 
 export function assertReadback({ health, discovery, meta, me, facts, contract, origin }) {
   if (health?.d1 !== "reachable"
+    || (contract.releaseVersion != null && health.release_version !== contract.releaseVersion)
     || health.service_version !== contract.serviceVersion
     || health.schema_version !== contract.schemaVersion) {
     throw toolError("DEPLOYMENT_HEALTH_MISMATCH", "Worker health does not match the verified Service bundle");
   }
   if (discovery.instance_id !== facts.instance
     || discovery.preferred_api_origin !== origin
+    || (contract.releaseVersion != null && discovery.release_version !== contract.releaseVersion)
     || discovery.service_version !== contract.serviceVersion
     || discovery.origin_version < 1) {
     throw toolError("DEPLOYMENT_DISCOVERY_MISMATCH", "Public discovery does not match the authorized deployment");
@@ -127,6 +129,7 @@ export function assertReadback({ health, discovery, meta, me, facts, contract, o
     || meta.observed_origin !== origin
     || meta.preferred_api_origin !== origin
     || meta.origin_version !== discovery.origin_version
+    || (contract.releaseVersion != null && meta.release_version !== contract.releaseVersion)
     || meta.service_version !== contract.serviceVersion
     || meta.schema_version !== contract.schemaVersion
     || meta.principal?.id !== facts.principalId

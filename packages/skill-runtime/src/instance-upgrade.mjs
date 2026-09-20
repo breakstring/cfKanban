@@ -1,3 +1,4 @@
+import { readServiceReleaseVersion } from "./service-release-version.mjs";
 import { deploymentCrons, usageVars } from "./usage-config.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -146,6 +147,8 @@ export async function finalizeInstanceUpgrade({
     expectedSource: plan.target.service_bundle_source,
   });
 
+  const releaseVersion = await readServiceReleaseVersion(configEvent.service_bundle_root, plan.release.service_bundle_version);
+
   const targetManifestPath = path.join(configEvent.service_bundle_root, "migrations", "manifest.json");
   const manifestBytes = await readFile(targetManifestPath);
   if (sha256Bytes(manifestBytes) !== plan.target.migration_manifest_sha256) {
@@ -218,6 +221,7 @@ export async function finalizeInstanceUpgrade({
       displayName: plan.owner.display_name,
     },
     contract: {
+      releaseVersion,
       serviceVersion: plan.target.service_api_version,
       schemaVersion: plan.target.schema_version,
     },

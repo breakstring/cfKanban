@@ -1,3 +1,4 @@
+import { readServiceReleaseVersion } from "./service-release-version.mjs";
 import { normalizePrincipalDisplayName } from "./principal-name.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -166,6 +167,7 @@ export async function loadAuthorizedDeploymentContract({ stateRoot, facts, taskI
   await assertNoSymlinkPath(migrationManifestPath, bundleRoot);
   const [openapi, migrationManifest] = await Promise.all([readJson(openapiPath), readJson(migrationManifestPath)]);
   const serviceVersion = requireString(openapi?.info?.version, "service_version", { max: 128 });
+  const releaseVersion = await readServiceReleaseVersion(bundleRoot, plan.release?.service_bundle_version);
   const schemaVersion = migrationManifest?.schema_version;
   if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 1) {
     throw toolError("SERVICE_BUNDLE_INCOMPLETE", "Service bundle migration manifest has an invalid schema version");
@@ -186,7 +188,7 @@ export async function loadAuthorizedDeploymentContract({ stateRoot, facts, taskI
   if (workerDeploy?.exit_code !== 0) {
     throw toolError("WORKER_DEPLOYMENT_REQUIRED", "Owner bootstrap requires a successful Worker deployment in the same authorized journal");
   }
-  return { journal, config, configEvent, bundleRoot, serviceVersion, schemaVersion };
+  return { journal, config, configEvent, bundleRoot, serviceVersion, releaseVersion, schemaVersion };
 }
 
 export async function writeOwnerBootstrapSql({

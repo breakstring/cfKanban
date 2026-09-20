@@ -3824,13 +3824,14 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
     readFile(new URL("../../skills/cfkanban-admin/agents/openai.yaml", import.meta.url), "utf8"),
     readFile(new URL("../../skills/cfkanban-deploy/agents/openai.yaml", import.meta.url), "utf8"),
   ]);
-  const installCommand = `codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref ${TESTING_RELEASE_CONFIG.version}`;
   for (const source of [readmeEn, readmeZh, skillsEn, skillsZh]) {
-    assert.match(source, new RegExp(installCommand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(source, /codex plugin add cfkanban-agent-skills@cfkanban/u);
+    assert.ok(source.includes("https://github.com/breakstring/cfKanban/releases/latest/download/stable.json"));
+    assert.doesNotMatch(source, /--ref \d+\.\d+\.\d+/u, "Ordinary installation guidance must not pin a release that will become stale");
   }
-  assert.match(readmeEn, /public testing preview/u);
-  assert.match(readmeZh, /公开测试预览版/u);
+  assert.ok(readmeEn.includes("https://github.com/breakstring/cfKanban/releases/latest/download/install.md"));
+  assert.ok(readmeZh.includes("https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md"));
+  assert.doesNotMatch(readmeEn, /public testing preview/u);
+  assert.doesNotMatch(readmeZh, /公开测试预览版/u);
   assert.match(skillsEn, /complete plugin\/bundle/u);
   assert.match(skillsZh, /完整 plugin\/bundle/u);
   assert.match(readmeEn, /> Use `\$cfkanban-deploy` to deploy cfKanban for me\./u);
@@ -4017,6 +4018,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/1.0.0-rc.5.md",
     "../../release/notes/1.0.0-rc.6.md",
     "../../release/notes/1.0.0-rc.7.md",
+    "../../release/notes/1.0.0.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -4071,6 +4073,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/1.0.0-rc.5.json",
     "../../release/config/1.0.0-rc.6.json",
     "../../release/config/1.0.0-rc.7.json",
+    "../../release/config/1.0.0.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",

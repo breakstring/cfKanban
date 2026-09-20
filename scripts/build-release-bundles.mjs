@@ -2,6 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/pro
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyReleaseBuild } from "./lib/release-version.mjs";
 import { writeDeterministicZip } from "./lib/deterministic-zip.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,6 +18,7 @@ async function copyEntries(entries, targetRoot) {
 
 export async function buildReleaseBundles({ outputDirectory, version }) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error("version must be strict semver without build metadata");
+  await verifyReleaseBuild({ repositoryRoot: repoRoot, version });
   const output = path.resolve(outputDirectory);
   await mkdir(output, { recursive: true });
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "cfkanban-release-"));
@@ -34,15 +36,12 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
       "docs/skills/README.md",
       "docs/skills/README.zh-CN.md",
     ], skillRoot);
-    const pluginManifestPath = path.join(skillRoot, ".codex-plugin", "plugin.json");
-    const pluginManifest = JSON.parse(await readFile(pluginManifestPath, "utf8"));
-    pluginManifest.version = version;
-    await writeFile(pluginManifestPath, `${JSON.stringify(pluginManifest, null, 2)}\n`, "utf8");
     await copyEntries([
       "apps/web/dist",
       "contracts/openapi.json",
       "migrations",
       "release/deployment",
+      "release/version.json",
       "wrangler.jsonc",
     ], serviceRoot);
     await mkdir(path.join(serviceRoot, "dist"), { recursive: true });

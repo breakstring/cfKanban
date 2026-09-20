@@ -50,6 +50,8 @@
 
 ## 安全下限与合同约束
 
+- 2026-09-20 已授权正式发行生命周期，以 `docs/specs/2026-09-20-stable-release-lifecycle-spec.md` 为 Frozen 增量合同：用户入口版本无关，默认发现最新 stable，执行时固定 immutable manifest/tag/digest；产品 `release_version` 独立于现有 API/schema 兼容字段。测试版和源码使用显式选择，Skill 更新与实例升级继续独立。
+
 - 2026-09-20 已授权工作区/项目多人管理员，以 `docs/specs/2026-09-20-scoped-administrators-spec.md` 为 Frozen 增量合同：唯一 Owner 保留，工作区管理员继承全部子项目，局部管理员按固定能力矩阵管理；管理员计入 Public Join 非 Owner 人数并集配额。覆盖下文仅 Owner 管理、工作区无继承权限的旧条款，身份恢复、公开加入/限额设置、永久删除和部署权限不下放。
 
 - 2026-09-20 已授权 Principal 名称规则以 `docs/specs/2026-09-20-principal-names-spec.md` 为 Frozen 增量合同：用户显示名全实例规范化唯一，收紧字符和保留词，schema 8 迁移空格为下划线；覆盖下文非唯一旧表述，容器名称不变。

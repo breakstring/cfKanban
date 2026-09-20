@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from "../release-version.ts";
 import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
 import { managementGrantsResource } from "./scoped-administrators.ts";
 import { principalDisplayNameKey, requirePrincipalDisplayName, requireHttpsOrigin, timestamp } from "../domain/model.ts";
@@ -122,6 +123,7 @@ export async function getInstanceDiscovery(
     origin_version: instance.origin_version,
     preferred_api_origin: instance.preferred_api_origin,
     service_version: instance.service_version,
+    release_version: RELEASE_VERSION,
     updated_at: timestamp(instance.origin_updated_at),
   };
 }
@@ -156,6 +158,7 @@ export async function getMeta(
     },
     schema_version: instance.schema_version,
     service_version: instance.service_version,
+    release_version: RELEASE_VERSION,
     visible_scope: {
       project_count: projects.length,
       projects: projects.map((project) => ({

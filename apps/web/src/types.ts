@@ -232,6 +232,7 @@ export interface MetaResource {
   preferred_api_origin: string;
   schema_version: number;
   service_version: string;
+  release_version?: string;
   visible_scope: { project_count: number; workspace_count: number };
 }
 
@@ -242,6 +243,7 @@ export interface InstanceDiscovery {
   origin_version: number;
   preferred_api_origin: string;
   service_version: string;
+  release_version?: string;
   updated_at: string;
 }
 

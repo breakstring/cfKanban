@@ -216,6 +216,8 @@
 
 | D-275 | 工作区与项目支持多位范围管理员 | Confirmed | 用户于 2026-09-20 同意分级管理员方案并授权文档、任务及实现。Owner 唯一；Owner 任免工作区管理员，Owner/工作区管理员任免项目管理员；各范围允许 0..N 人，同级不可任免。工作区管理员动态继承全部现有及未来子项目，独立 reader/writer 与管理授权并存；实例身份恢复、Public Join/限额设置、永久删除和部署不下放。管理员计入项目非 Owner 有效成员并集人数，工作区授权任一有效公开项目满额则整个操作失败。邀请绑定具体授权代次，撤销后重新授权不复活旧邀请。见 [Frozen SPEC](../specs/2026-09-20-scoped-administrators-spec.md) 和 [PLAN](../plans/2026-09-20-scoped-administrators-plan.md)；源码实现不等于发布/部署。 |
 
+| D-276 | 普通用户入口版本无关，默认最新正式发行 | Confirmed | 用户于 2026-09-20 确认并授权优化及发行。README、部署/加入/安装指南使用固定 stable 发现入口；Agent 解析后固定准确 tag、manifest 和工件摘要，不删除 ref 跟随 main，不因加入项目强制升级兼容技能或实例。产品 release_version 独立展示，既有 API/schema 保持兼容；源码开发与正式实例分离。见 [Frozen 增量合同](../specs/2026-09-20-stable-release-lifecycle-spec.md)，执行证据保存在 CFK-425。 |
+
 ## 需要显式修订的决策
 
 Foundation、Agent Skills & Bootstrap、API/Schema、Web UI 和视觉设计合同均已完成 v0 实现前冻结。Foundation 当前为合同修订 19，Agent Skills & Bootstrap 为合同修订 31；D-251/D-252 固定 D1 原子提交证明与 Passkey 非零签名计数策略，D-253/D-254 固定统一 `.cfkanban/` 维护根、宿主投影边界和任务/命令导向的双语 Skill 表面，D-255 固定 Cloudflare 官方 Skills 的可选参考边界与 portable Wrangler config/dry-run，D-256/D-257 将 auth 进一步收敛为不自动枚举 profiles、由 Wrangler 上下文选择身份并由私有 config 固定 account，D-258 固定远端 file ingestion 事务与同 journal 缺 ledger 行恢复，D-259 固定首次 Owner bootstrap 的同 plan 最终化证据链，D-260 补充仅在同 journal 六表零状态证明后的同 SQL 重试，D-261 防止 Agent 用单次命令话术意外收窄完整计划授权，D-262 统一 Owner Audit 的 Project/stream 筛选、响应回显与 cursor scope，D-263 固定一次性 Invite/Browser Launch 的专用安全交付，D-264～D-269 补齐公开指南/页脚、opaque cursor、Public Join CAS 指引、HTML 边缘防改写、品牌标志与橙色交互主色。D-270 固定自动实例解析与 IAB/指定浏览器 loopback 交付。实施范围与依赖顺序进入 `docs/plans/2026-08-29-v0-implementation-plan.md` 和 Linear；冻结本身仍不代表任何实现 Issue 已完成，也不授权部署、迁移、提交或推送。

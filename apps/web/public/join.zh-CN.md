@@ -15,22 +15,28 @@ Invite URL 是短期 Bearer capability，不得复述或保存到 Issue、Commen
 
 ## 第二步：加载或安装 `cfkanban` Skill
 
-优先复用已有兼容且经过验证的安装。否则解析以下测试发行指针，校验不可变版本清单、工件允许来源和 Skill bundle 的 SHA-256 摘要：
+优先复用已有可信且与目标实例兼容的安装。无需安装且没有明确要求检查或执行更新时，跳过下方发行发现与安装段落：读取已安装的 `cfkanban/SKILL.md`、运行其 `help`，直接进入合并加入计划。这条路径不查询 GitHub，也不要求最新发行可用。
 
-<https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.7/prerelease.json>
+只有确需首次安装，或用户明确要求检查/执行更新时，才从 canonical pointer 发现最新正式发行：
 
-明确说明这是预发行版，并确认用户已明确选择测试版本。所需安装的来源、版本、用户级范围、本地路径和回退方式，必须在本地写入前纳入同一份加入计划。
+<https://github.com/breakstring/cfKanban/releases/latest/download/stable.json>
 
-如果当前宿主是 Codex，获得授权后，全新 plugin 安装使用不可变 ref `1.0.0-rc.7`：
+解析并固定不可变 manifest URL、SHA-256 和准确版本，验证 publisher、工件允许来源及所需 bundle 摘要。指针仅用于发现，后续操作沿用同一快照；这条发行发现路径缺失或校验失败时停止，不回退测试版、本地 cache 或开发源码；这不阻塞使用已有已验证兼容安装加入项目。测试版和历史版只有在用户明确选择时才可使用。若已有可信 deploy Skill 支持 `release discover`，以 stdin `{}` 只读发现正式目标，再用 `release verify` 校验下载工件；没有该命令时按上述 HTTPS 文档流程检查，不为了检查而先更新技能。
+
+需要安装时，把来源、准确版本、用户级 scope、本地路径和回退写入计划。Codex 全新安装由 Agent 把下方 `<resolved-version>` 替换为已验证版本对应的准确 tag，获得相应授权后执行；不要把占位符交给用户填写或原样执行，也不要省略 `--ref`：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.7
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref <resolved-version>
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-若已经存在旧版 `cfkanban` marketplace，先检查并说明准确更新与回退，不得静默删除或覆盖。安装后检查发现状态；Codex 确实需要新任务加载 plugin 时，说明这一具体接续操作和剩余步骤，不重复 Invite URL，也不能声称 Skill 已加载。
+已存在 `cfkanban` marketplace 时，先检查旧来源/ref，展示准确切换和回退；刷新旧 tag 不会自动切换到新 tag，不得静默删除或覆盖。安装完整 Skill bundle，保留四个 Skills、共享 `packages/skill-runtime` 和相对目录；其他宿主也须保留完整已验证 layout，不能只复制某个 Skill 目录。宿主不支持所需投影时说明限制。
 
-其他 Agent 宿主按其支持的 Skill 机制，从已验证 bundle 安装 `cfkanban` 目录。本地 checkout、可变分支和 plugin cache 不能作为发行版本依据。完整读取已安装的 `cfkanban/SKILL.md` 及其流程参考，并在该 Skill 目录运行：
+分别核对 canonical active receipt、宿主 plugin/Skill 投影和当前任务实际加载状态。更新 canonical bundle 不等于更新宿主，宿主已安装也不等于当前任务已加载。需要新任务时说明具体接续操作和剩余步骤；无法验证时明确标为未验证。
+
+检查更新与执行更新分开；本地技能更新与云端实例升级独立。若最新 Skills 与目标旧实例不兼容，复用已验证兼容安装，或说明限制并提出明确的兼容历史正式版方案；不得为了加入或更新技能强制升级服务器。
+
+所需安装应纳入下面同一份加入计划；复用兼容安装时无需更新。不要重复 Invite URL。读取已安装 `cfkanban/SKILL.md` 及其流程参考，在该目录运行：
 
 ```text
 node scripts/cfkanban-tool.mjs help

@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { loadAndVerifyRelease } from "../../packages/skill-runtime/src/release.mjs";
+import { discoverRelease } from "../../packages/skill-runtime/src/release-discovery.mjs";
 import { digest } from "./release-publication.mjs";
 
 const exec = promisify(execFile);
@@ -56,11 +57,11 @@ export function githubClient({ executable = "gh", timeout = 60_000, run = exec }
     listAssets: (plan, id) => pages(`repos/${plan.repository}/releases/${id}/assets`),
     createDraft: (plan) => api(`repos/${plan.repository}/releases`, { method: "POST", body: { tag_name: plan.version, target_commitish: plan.commit, name: plan.version, body: plan.notes, draft: true, prerelease: plan.prerelease } }),
     upload: (plan, id, asset) => api(`https://uploads.github.com/repos/${plan.repository}/releases/${id}/assets?name=${encodeURIComponent(asset.name)}`, { method: "POST", file: asset.file }),
-    publish: (plan, id) => api(`repos/${plan.repository}/releases/${id}`, { method: "PATCH", body: { draft: false, make_latest: "false" } }),
+    publish: (plan, id) => api(`repos/${plan.repository}/releases/${id}`, { method: "PATCH", body: { draft: false, make_latest: plan.prerelease ? "false" : "true" } }),
   };
 }
 
-export async function verifyPublicDownload(plan, { fetchImpl = fetch } = {}) {
+export async function verifyPublicDownload(plan, { fetchImpl = fetch, verifyLatest = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "cfkanban-public-release-"));
   try {
     for (const asset of plan.assets) {
@@ -106,7 +107,14 @@ export async function verifyPublicDownload(plan, { fetchImpl = fetch } = {}) {
       artifactFiles: { skill_bundle: path.join(root, plan.assets[2].name), service_deployment_bundle: path.join(root, plan.assets[3].name) },
     });
     if (!checked.verified) throw new Error("Public release verification failed");
-    return { verified: true, assets: plan.assets.length, version: checked.manifest.release.version };
+    if (verifyLatest && !plan.prerelease) {
+      const discovered = await discoverRelease({}, { fetchImpl });
+      if (discovered.release_version !== plan.version || discovered.manifest_sha256 !== plan.assets[1].sha256
+        || digest(JSON.stringify(discovered.pointer)) !== digest(JSON.stringify(checked.pointer))) {
+        throw new Error("Latest stable discovery differs from the published release; inspect without changing published assets");
+      }
+    }
+    return { verified: true, assets: plan.assets.length, version: checked.manifest.release.version, latest_verified: verifyLatest && !plan.prerelease };
   } finally {
     // Only this invocation's generated, non-secret download directory is removed.
     await rm(root, { recursive: true, force: true });
