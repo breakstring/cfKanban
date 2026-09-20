@@ -123,7 +123,7 @@
 - 核心 Kanban 在 Vectorize、Workers AI、Queues、R2 或 Durable Objects 不可用时仍应完整工作。
 - 后期检索增强优先考虑 Cloudflare Vectorize 可重建派生索引；v0 只提供 D1 结构化过滤与基础 title 搜索。Vectorize 不得参与权限、CAS、唯一约束或刚写即读的核心判断，费用、embedding 和同步合同进入对应版本时另行冻结。
 - 任何状态写入都要考虑并发前置条件、幂等重试、审计事件和结构化错误恢复。
-- v0 Web Board 支持固定五列间单卡拖拽。落到非 `done` 列立即执行带 expected version 的状态保存；拖入 `done` 自动使用 complete 合同，缺少 summary 时先收集完成摘要。失败或冲突回到服务端真实列；不提供多卡/批量写入或手工 rank。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG。
+- v0 Web Board 支持固定五列间单卡拖拽。落到非 `done` 列立即执行带 expected version 的状态保存；拖入 `done` 自动使用 complete 合同，默认直接完成，summary 选填；仅显式选择“填写完成说明”时打开表单。失败或冲突回到服务端真实列；不提供多卡/批量写入或手工 rank。正文与 Comment 使用 Markdown 源码编辑和安全渲染，不引入 WYSIWYG。
 - cfKanban 自管持久数据统一使用当前执行环境 home 下的 `.cfkanban/`，按 `instances/`、`skill-releases/`、`tool-runtime/` 分责；宿主 marketplace/plugin metadata、发现投影/cache 与 Cloudflare auth 仍留在各自所有者目录。分发 `SKILL.md` 必须直接说明能力、命令/API 对照、读回和停止条件；可本地化的操作文档维护 English/简体中文，不支持 locale 的 metadata 使用英文，公开表面不显示内部阶段标签。
 - Workers + D1、D1 单一事实源和 REST/OpenAPI/Agent Skills/Web 分层已经确认，远程 MCP 后置。canonical source 采用 monorepo；v0 实例仍只部署一个 Worker + 一个 D1，预构建 Web assets 与双语 deployment/join guides 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace。Foundation SPEC 为合同修订 19，Agent Skills & Bootstrap SPEC 为合同修订 31；API/Schema、Web UI 与 `DESIGN.md` 已冻结。实现按 v0 PLAN 和 cfKanban 关联任务推进，不得默补或改变公共合同。
 

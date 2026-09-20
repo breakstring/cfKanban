@@ -153,7 +153,7 @@ docs/
 
 实现 public home、Launch/Passkey、Project selection、固定五列 Board、Issue detail、常用原子写、Owner Overview/Workspaces/Access/Audit、个人资料、Passkey 管理和 English/简体中文切换。
 
-验收：reader/writer/Owner 能力不超出 API；拖拽 saving/冲突回滚和 done 完成框符合合同；Markdown 渲染防 XSS；Session 失效清除远端数据；无 Credential 输入框、无 Web Storage secret；Codex IAB 与普通浏览器均可用。
+验收：reader/writer/Owner 能力不超出 API；拖拽 saving/冲突回滚、done 直接完成与可选说明符合合同；Markdown 渲染防 XSS；Session 失效清除远端数据；无 Credential 输入框、无 Web Storage secret；Codex IAB 与普通浏览器均可用。
 
 依赖：WP-05、WP-06、WP-07、WP-08。
 

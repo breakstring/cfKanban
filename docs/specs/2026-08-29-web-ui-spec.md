@@ -62,7 +62,7 @@ Project 是 Web 的默认工作范围。看板固定展示五列：`backlog`、`
 
 v0 支持 writer 在五列之间拖拽单张卡片。落到新列就是一次明确的状态写意图，前端立即使用该卡当前 `expected_version` 保存；卡片在请求期间显示 `saving`，但只有服务端确认后才算成功。失败、无权或 `VERSION_CONFLICT` 时读取服务端当前事实并把卡片放回真实列，不静默覆盖，也不改变列内 rank。
 
-拖入 `done` 时 UI 自动路由到原子 complete 合同，不能调用普通 status PATCH 绕过完成记录。若本次拖拽尚无必填 `summary`，立即打开极简完成框；提交后执行 complete 并最终落入 `done`，取消则回原列。拖入其他列使用普通单 Issue CAS 状态更新；从 terminal 列拖出按既有 reopen/status 合同执行。卡片菜单和详情页 status selector 保留为键盘、触屏和辅助技术的等价操作入口。
+拖入 `done` 时 UI 自动路由到原子 complete 合同，不能调用普通 status PATCH 绕过完成记录。2026-09-20 用户授权修订：拖拽、状态选择和默认完成按钮直接执行 complete，不强制弹窗或填写说明。完成前可显式选择“填写完成说明”打开选填表单，提交说明与 complete 为同一次原子操作，取消不改变状态。空摘要的历史记录显示“已完成”，不生成虚构说明；完成后补充信息使用普通 Comment，不修改不可变记录。拖入其他列使用普通单 Issue CAS 状态更新；从 terminal 列拖出按既有 reopen/status 合同执行。卡片菜单和详情页 status selector 保留为键盘、触屏和辅助技术的等价操作入口。
 
 ### 3.2 Issue 详情与常用参与
 

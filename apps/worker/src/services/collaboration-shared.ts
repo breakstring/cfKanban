@@ -333,10 +333,11 @@ function requireStringArray(
 }
 
 export function requireCompletionPayload(value: { [key: string]: JsonValue }): CompletionPayload {
-  const summary = requireCommentBody(value.summary as JsonValue, "summary");
-  if (Array.from(summary).length > 8_192) {
+  const rawSummary = value.summary === undefined ? "" : value.summary;
+  if (typeof rawSummary !== "string" || Array.from(rawSummary).length > 8_192) {
     throw validationError("schema_validation_failed", { field: "summary" });
   }
+  const summary = rawSummary.trim().length === 0 ? "" : rawSummary;
   const verification = requireStringArray(value.verification, "verification", 1_024);
   const followUps = requireStringArray(value.follow_ups, "follow_ups", 2_048);
   const artifactValue = value.artifacts;

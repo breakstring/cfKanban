@@ -78,7 +78,7 @@ export function registerWp06Routes(router: Router): Router {
       const value = await body(
         request,
         ["artifacts", "expected_version", "follow_ups", "summary", "verification"],
-        ["expected_version", "summary"],
+        ["expected_version"],
       );
       return jsonResponse(await completeIssue(
         env.DB,

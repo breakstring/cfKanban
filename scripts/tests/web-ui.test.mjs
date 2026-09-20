@@ -449,6 +449,9 @@ test("structured completion records retain history fields and allow only HTTP ar
   assert.equal(safeArtifactHref(record.artifacts[1]), "https://example.test/build/1");
   assert.equal(safeArtifactHref(record.artifacts[2]), null);
   assert.equal(parseCompletionRecord({ summary: "missing arrays" }), null);
+  assert.deepEqual(parseCompletionRecord({
+    artifacts: [], follow_ups: [], summary: "", verification: [],
+  }), { artifacts: [], follow_ups: [], summary: "", verification: [] });
 });
 
 test("Markdown rendering escapes raw HTML and unsafe links", () => {

@@ -121,7 +121,7 @@ Owner Credential 生命周期不能通过第一方 Web Session 管理。Web 只�
 
 - JSON 请求体最大 128 KiB；超出返回 `PAYLOAD_TOO_LARGE`，不进入业务处理。
 - Issue title 去除首尾空白后为 1～256 个 Unicode code points；Markdown body 最大 64 KiB UTF-8。
-- 普通 Comment body 最大 32 KiB UTF-8；completion comment 的完整结构化 payload 最大 32 KiB，其中 `summary` 仍必填。
+- 普通 Comment body 最大 32 KiB UTF-8；completion comment 的完整结构化 payload 最大 32 KiB，其中 `summary` 可省略或为空，存储时统一保留字符串字段。
 - display name 最大 128 个 Unicode code points；Label name 最大 64 个，单个 Issue 最多绑定 20 个 active Labels。
 - 普通列表默认 `limit=20`、最大 `limit=100`。Agent context 响应最大 64 KiB JSON；超出时按字段优先级截断并返回 `truncated=true` 与后续 cursor。
 
@@ -225,7 +225,7 @@ Event 内部使用部署级严格单调 sequence，跨 Workspace/Project 共享�
 
 普通 Comment 创建后不允许原地编辑。写错时追加一条带 `reply_to_comment_id` 的普通 Comment 说明纠正；服务端不建立 Comment revision 子系统。目标 Project `writer` 可以按既有数据面权限软删除或恢复普通 Comment，读取以 tombstone 表达删除但不无痕覆盖历史。
 
-`kind=completion` 的结构化 Comment 进一步禁止软删除或恢复操作。其公开 payload 是一个经过 schema 校验的 JSON object：`summary` 必填，`verification`、`artifacts`、`follow_ups` 为可空列表。D1 可以把它保存为规范 JSON 或拆列，但这只是实施细节，不能改变公开字段语义。reopen 不删除旧 completion comment，再次完成会追加新记录，因此同一 Issue 可以保留多轮完成历史。写错时可以追加普通纠正 Comment；完成结论失效时应 reopen 后重新 complete。
+`kind=completion` 的结构化 Comment 进一步禁止软删除或恢复操作。其公开 payload 是一个经过 schema 校验的 JSON object：`summary` 选填（2026-09-20 用户授权修订；省略或纯空白归一为空字符串），`verification`、`artifacts`、`follow_ups` 为可空列表。D1 可以把它保存为规范 JSON 或拆列，但这只是实施细节，不能改变公开字段语义。reopen 不删除旧 completion comment，再次完成会追加新记录，因此同一 Issue 可以保留多轮完成历史。写错时可以追加普通纠正 Comment；完成结论失效时应 reopen 后重新 complete。
 
 ## 5. 身份、鉴权与授权
 
@@ -460,7 +460,7 @@ context pack 总上限仍为 64 KiB。identifier、workspace/project scope、ver
 - report-blocked 必须包含人工原因，可选同时创建 blocker relation；任何 `writer` 都可调用，不要求自己是 assignee，也不改变 status。
 - clear-blocked 只清除人工 `blocked_reason`；未完成的 `blocked_by` 关系仍会让 `is_blocked=true`。解除依赖应通过完成 blocker 或修改关系表达。
 - complete 应在一个原子业务命令中校验 version、写 completion record、转换状态并追加事件；任何 `writer` 都可调用，不要求自己是 assignee。
-- completion record 使用不可变且不可删除的 `kind=completion` Comment，不建立独立 Completion 实体；`summary` 必填，`verification`、`artifacts`、`follow_ups` 可为空。
+- completion record 使用不可变且不可删除的 `kind=completion` Comment，不建立独立 Completion 实体；`summary` 选填（2026-09-20 用户授权修订；省略或纯空白归一为空字符串），`verification`、`artifacts`、`follow_ups` 可为空。
 - 普通 PATCH 或状态转换不能直接把 Issue 写为 `done`，必须调用幂等 complete 命令。在同一业务原子单元内完成权限与 version 校验、追加 completion comment、更新 status/version 和写 Event。
 - reopen 只显式转换状态并写 Event，保留既有 completion comment；再次 complete 追加新的完成记录。
 

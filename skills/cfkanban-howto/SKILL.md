@@ -20,7 +20,7 @@ Participants and Owners use `cfkanban` for ordinary Issue work. For a general �
 | Create / 创建 | “Create ‘Fix login error’ in Release with this description: <details>.” / “在 Release 创建‘修复登录错误’，描述为：<说明>。” | One new Issue and its identifier in the resolved Project. / 在准确项目创建一项任务并返回编号。 |
 | Edit / 编辑 | “Change CFK-123's title to ‘Fix mobile login’.” / “把 CFK-123 的标题改为‘修复移动端登录’。” | The requested field changes, followed by readback. / 只修改指定字段并读回确认。 |
 | Change status / 改变状态 | “Move CFK-123 to in progress.” / “把 CFK-123 改为进行中。” | An explicit workflow change; it does not claim the work was performed. / 显式更新状态，不表示已代为执行任务内容。 |
-| Complete / 完成 | “Record CFK-123 as complete: result <summary>, validation <evidence>.” / “将 CFK-123 记为完成，结果：<摘要>，验证：<证据>。” | Done plus an immutable completion record based on actual evidence. / 标为完成并保存基于实际证据的不可变完成记录。 |
+| Complete / 完成 | “Mark CFK-123 complete; optionally include result <summary> and validation <evidence>.” / “将 CFK-123 标为完成；可选附上结果<摘要>、验证<证据>。” | Done plus an immutable completion record based on actual evidence. / 标为完成并保存基于实际证据的不可变完成记录。 |
 | Reopen / 重新打开 | “Reopen CFK-123 as todo; the problem returned.” / “问题复现了，将 CFK-123 重新打开为待办。” | Status changes to todo and earlier completion records remain. / 状态改为待办，保留此前完成记录。 |
 | Comment / 评论 | “Add this progress note to CFK-123: <text>.” / “给 CFK-123 添加进展评论：<内容>。” | One appended Comment; corrections use another Comment. / 追加一条评论，纠错再追加新评论。 |
 | Delete/restore a Comment / 删除或恢复评论 | “Restore Comment <ID> on CFK-123.” / “恢复 CFK-123 的评论 <ID>。” | Ordinary Comments support soft-delete/restore; completion records cannot be deleted. / 普通评论可软删除/恢复，完成记录不可删除。 |

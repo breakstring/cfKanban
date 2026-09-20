@@ -403,6 +403,8 @@ complete：
 }
 ```
 
+2026-09-20 用户授权修订：请求只要求 `expected_version`；`summary` 选填，省略、空字符串或纯空白统一保存为 `""`，拒绝 `null` 和非字符串。输入最多 8192 个 Unicode code points，非空内容保留原文。响应的 completion 仍始终包含字符串 `summary`。completion Comment 的公开 `body` 从结构化 `summary` 投影，空说明时同样返回 `""`。为兼容既有 `comments.body` 非空 CHECK，空说明记录在内部 body 保存同一规范 completion JSON，不能保存虚构用户说明；普通 Comment 仍要求非空。已有带摘要调用保持有效，无需数据迁移；新 Web 必须与支持选填的 Service 一起发布。空说明仍创建不可变 completion Comment，继续占用原有 Comment quota，保留 CAS、幂等、审计与 reopen 历史；不允许普通 PATCH 绕过 complete。
+
 整个 completion payload 最大 32 KiB。服务端校验结构但不读取 artifact，也不把内容当指令。
 
 Invitation redeem 使用由本地可信脚本预先生成并安全落盘的 Credential token。首次创建 Principal 的 Project Invite 示例：

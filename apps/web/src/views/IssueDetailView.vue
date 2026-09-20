@@ -400,7 +400,7 @@ async function refreshCurrentFacts(): Promise<void> {
 
 async function updateIssue(payload: Record<string, unknown>): Promise<void> {
   const current = issue.value;
-  if (current === null) return;
+  if (current === null || busy.value || !canUpdate.value) return;
   const fenceKey = `issue-update:${current.id}`;
   if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
@@ -427,6 +427,16 @@ async function updateIssue(payload: Record<string, unknown>): Promise<void> {
   }
 }
 
+function onStatusSelection(event: Event): void {
+  const select = event.target as HTMLSelectElement;
+  const status = select.value as StatusKey;
+  if (issue.value === null) return;
+  select.value = issue.value.status.key;
+  if (status === issue.value.status.key) return;
+  if (status === "done") void runCommand("complete");
+  else void updateIssue({ status_key: status });
+}
+
 async function saveEdit(): Promise<void> {
   await updateIssue({
     body: edit.value.body,
@@ -437,7 +447,7 @@ async function saveEdit(): Promise<void> {
 
 async function runCommand(command: string, payload: Record<string, unknown> = {}): Promise<void> {
   const current = issue.value;
-  if (current === null) return;
+  if (current === null || busy.value || !canUpdate.value) return;
   const fenceKey = `issue-command:${current.id}:${command}`;
   if (!writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
@@ -921,7 +931,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
 
         <aside id="issue-properties" class="issue-sidebar" :aria-label="locale === 'zh-CN' ? '事项属性' : 'Issue properties'">
           <dl class="metadata-list">
-            <div><dt>{{ t("issue.status") }}</dt><dd><select v-if="canUpdate" :value="issue.status.key" @change="updateIssue({ status_key: ($event.target as HTMLSelectElement).value as StatusKey })"><option v-for="status in statuses.filter((entry) => entry.key !== 'done')" :key="status.key" :value="status.key">{{ status.display_name }}</option><option v-if="issue.status.key === 'done'" value="done" disabled>{{ statusDisplayName("done") }} · {{ locale === "zh-CN" ? "通过完成记录进入" : "entered through completion" }}</option></select><span v-else>{{ issue.status.display_name }}</span></dd></div>
+            <div><dt>{{ t("issue.status") }}</dt><dd><select v-if="canUpdate" :value="issue.status.key" :disabled="busy" @change="onStatusSelection"><option v-for="status in statuses" :key="status.key" :value="status.key">{{ status.display_name }}</option></select><span v-else>{{ issue.status.display_name }}</span></dd></div>
             <div><dt>{{ t("issue.priority") }}</dt><dd>{{ priorityLabel(issue.priority) }}</dd></div>
             <div><dt>{{ t("issue.assignee") }}</dt><dd>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}<button v-if="canUpdate && issue.assignee" class="text-button" type="button" @click="updateIssue({ assignee_principal_id: null })">{{ locale === "zh-CN" ? "取消指派" : "Unassign" }}</button></dd></div>
             <div><dt>{{ locale === "zh-CN" ? "更新时间" : "Updated" }}</dt><dd>{{ formatTime(issue.updated_at) }}</dd></div>
@@ -931,7 +941,10 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             <button class="secondary-button" type="button" :disabled="busy" @click="runCommand('assign-to-me')">{{ locale === "zh-CN" ? "指派给我" : "Assign to me" }}</button>
             <form class="compact-inline-form" @submit.prevent="assignByPrincipalId"><input v-model="assigneePrincipalId" required :placeholder="locale === 'zh-CN' ? '身份 ID' : 'Principal ID'" /><button class="text-button" type="submit" :disabled="busy">{{ locale === "zh-CN" ? "按 ID 指派" : "Assign by ID" }}</button></form>
             <button v-if="issue.status.key === 'done'" class="secondary-button" type="button" :disabled="busy" @click="updateIssue({ status_key: 'todo' })">{{ locale === "zh-CN" ? `重新打开到${statusDisplayName("todo")}` : `Reopen to ${statusDisplayName("todo")}` }}</button>
-            <button v-else class="secondary-button" type="button" :disabled="busy" @click="showComplete = true">{{ t("complete.title") }}</button>
+            <template v-else>
+              <button class="secondary-button" type="button" :disabled="busy" @click="runCommand('complete')">{{ t("complete.title") }}</button>
+              <button class="text-button" type="button" :disabled="busy" @click="showComplete = true">{{ t("complete.withNote") }}</button>
+            </template>
             <button v-if="issue.is_blocked" class="text-button" type="button" :disabled="busy" @click="runCommand('clear-blocked')">{{ locale === "zh-CN" ? "清除阻塞" : "Clear blocked" }}</button>
             <button v-else class="text-button" type="button" :disabled="busy" @click="showBlocked = true">{{ locale === "zh-CN" ? "报告阻塞" : "Report blocked" }}</button>
           </div>
@@ -956,7 +969,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
       </section>
 
       <ModalDialog v-if="showComplete" :busy="busy" :title="t('complete.title')" @close="showComplete = false">
-        <form class="form-stack" @submit.prevent="runCommand('complete', { summary: completionSummary.trim() })"><label>{{ t("complete.summary") }}<textarea v-model="completionSummary" required rows="6" maxlength="8192" /></label><div class="form-actions"><button class="secondary-button" type="button" @click="showComplete = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy || !completionSummary.trim()">{{ t("complete.title") }}</button></div></form>
+        <form class="form-stack" @submit.prevent="runCommand('complete', { summary: completionSummary.trim() })"><label>{{ t("complete.summary") }}<textarea v-model="completionSummary" rows="6" maxlength="8192" /></label><div class="form-actions"><button class="secondary-button" type="button" @click="showComplete = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy">{{ t("complete.title") }}</button></div></form>
       </ModalDialog>
       <ModalDialog v-if="showBlocked" :busy="busy" :title="locale === 'zh-CN' ? '报告阻塞' : 'Report blocked'" @close="showBlocked = false">
         <form class="form-stack" @submit.prevent="runCommand('report-blocked', { reason: blockReason.trim() })"><label>{{ locale === "zh-CN" ? "阻塞原因" : "Reason" }}<textarea v-model="blockReason" required rows="5" /></label><div class="form-actions"><button class="secondary-button" type="button" @click="showBlocked = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy || !blockReason.trim()">{{ t("action.save") }}</button></div></form>

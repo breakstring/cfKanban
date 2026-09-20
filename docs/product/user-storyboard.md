@@ -336,7 +336,7 @@
 
 - **任务触发**：陈在网页中浏览看板；若拥有 writer 权限，也可能新建 Issue、改状态、追加 Comment、调整 assignee/label/relation 或完成工作。
 - **起点**：浏览器已有有效 Session，Project Grant 可能是 `reader` 或 `writer`。
-- **页面行动**：reader 只能读取；writer 只对单个资源执行服务已有的原子动作。看板固定五列且不保存手工 rank；writer 可以拖拽一张卡，落列后立即用 expected version 自动保存状态。拖入 `done` 自动改走 complete；没有 summary 时先弹出极简完成框，提交后落列，取消则回原列。菜单/selector 保留为非拖拽等价入口。
+- **页面行动**：reader 只能读取；writer 只对单个资源执行服务已有的原子动作。看板固定五列且不保存手工 rank；writer 可以拖拽一张卡，落列后立即用 expected version 自动保存状态。拖入 `done` 自动改走 complete；默认直接完成，不要求 summary；仅显式选择“填写完成说明”时打开选填表单，取消不改变状态。菜单/selector 保留为非拖拽等价入口。
 - **个人资料**：任何已认证 Principal 都可以从页面身份摘要进入“我的资料”，查看只读 principal ID 和当前 display name，并原子修改自己的非空 display name。它不受 Project `reader | writer` 差异影响，也不允许修改他人资料；Passkey 管理仍是独立的认证设置。
 - **能力边界**：页面按服务端 `allowed_actions` 展示操作，但服务端仍逐请求校验真实权限、expected version、幂等与软删除规则。Web 不提供多选、批量编辑、隐藏批量循环或第二套业务写入。
 - **成功反馈**：读取与 Agent API 看到相同事实；写入返回新 version/Event，并即时反映 assignee、blocked 与 completion 结果。

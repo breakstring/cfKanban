@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { requireCompletionPayload } from "../../apps/worker/src/services/collaboration-shared.ts";
 import test from "node:test";
 
 import {
@@ -631,4 +632,23 @@ test("canonical request hashing is stable and idempotency keys are bounded", asy
     () => validateIdempotencyKey(`request-${sessionSecret}`, [sessionSecret]),
     (error) => error.code === "VALIDATION_ERROR",
   );
+});
+
+
+test("completion summary is optional with stable string and payload limits", () => {
+  for (const value of [{}, { summary: "" }, { summary: " \t\n" }]) {
+    assert.deepEqual(requireCompletionPayload(value), {
+      artifacts: [], follow_ups: [], summary: "", verification: [],
+    });
+  }
+  const summary = "  Completed with context\n";
+  assert.equal(requireCompletionPayload({ summary }).summary, summary);
+  assert.equal(requireCompletionPayload({ summary: "x".repeat(8192) }).summary.length, 8192);
+  for (const summary of [null, 0, false, [], {}, "x".repeat(8193), " ".repeat(8193)]) {
+    assert.throws(() => requireCompletionPayload({ summary }),
+      (error) => error.code === "VALIDATION_ERROR");
+  }
+  assert.throws(() => requireCompletionPayload({
+    verification: Array.from({ length: 40 }, () => "x".repeat(1024)),
+  }), (error) => error.code === "VALIDATION_ERROR");
 });

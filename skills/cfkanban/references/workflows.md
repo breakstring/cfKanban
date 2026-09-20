@@ -209,3 +209,5 @@ Passkey registration starts only from an Agent-launch Session. Passkeys authenti
 | `authentication` / `reauthenticate` | Stop authenticated work and establish a new valid Session or Credential through its normal flow. |
 | `authorization` / `request_access` | Refresh visible scope and request the missing Grant; never infer access from assignment or prior visibility. |
 | `details.normalized_by=client` | Treat `request_id` as a local correlation ID and `provider_request_id` as the Cloudflare Ray ID when present; explicitly say this was not a cfKanban API error response. |
+
+Completion notes are optional on Services supporting the 2026-09-20 contract: omit `summary` or send an empty string to complete without a note. Older Services still require a nonempty summary; do not fabricate one or bypass complete. Meaningful summaries and verification remain recommended when available. An empty note still creates an immutable completion Comment and consumes the same quota.

@@ -10,7 +10,7 @@ const completion = computed(() => parseCompletionRecord(props.value));
 
 <template>
   <div v-if="completion" class="completion-record">
-    <p>{{ completion.summary }}</p>
+    <p>{{ completion.summary || (locale === "zh-CN" ? "已完成" : "Completed") }}</p>
     <section v-if="completion.verification.length">
       <strong>{{ locale === "zh-CN" ? "验证" : "Verification" }}</strong>
       <ul><li v-for="item in completion.verification" :key="item">{{ item }}</li></ul>

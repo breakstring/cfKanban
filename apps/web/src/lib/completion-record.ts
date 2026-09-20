@@ -16,7 +16,7 @@ function stringList(value: unknown): value is string[] {
 export function parseCompletionRecord(value: unknown): CompletionRecord | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (typeof record.summary !== "string" || record.summary.length === 0
+  if (typeof record.summary !== "string"
     || !stringList(record.verification)
     || !stringList(record.follow_ups)
     || !Array.isArray(record.artifacts)) return null;

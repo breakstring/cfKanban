@@ -2038,3 +2038,68 @@ test("WP-06 implements atomic collaboration resources, completion, and scoped Ev
     JSON.stringify(workspacePausedCommentReplay.body),
   );
 });
+
+
+test("optional completion summaries preserve atomic completion, replay, and reopen history", async () => {
+  const workspace = await jsonRequest("/api/v1/workspaces", {
+    body: { display_name: "Optional completion" },
+    headers: ownerHeaders({ "idempotency-key": "optional-completion-workspace" }),
+    method: "POST",
+  });
+  assert.equal(workspace.response.status, 200, JSON.stringify(workspace.body));
+  const project = await jsonRequest(`/api/v1/workspaces/${workspace.body.resource.id}/projects`, {
+    body: { display_name: "Completion history" },
+    headers: ownerHeaders({ "idempotency-key": "optional-completion-project" }),
+    method: "POST",
+  });
+  assert.equal(project.response.status, 200, JSON.stringify(project.body));
+  const issue = await createIssue(workspace.body.resource.id, project.body.resource.id,
+    "Finish without a note", "optional-completion-issue");
+  const issuePath = `/api/v1/issues/${issue.body.resource.identifier}`;
+  const expectedSummaries = ["", "", "", "  Meaningful note\n"];
+  const summaries = [undefined, "", " \t\n", expectedSummaries[3]];
+  let version = issue.body.resource.version;
+  const commentIds = [];
+  for (const [index, summary] of summaries.entries()) {
+    const body = { expected_version: version, ...(summary === undefined ? {} : { summary }) };
+    const headers = ownerHeaders({ "idempotency-key": `optional-completion-${index}` });
+    const result = await jsonRequest(`${issuePath}/commands/complete`, { body, headers, method: "POST" });
+    assert.equal(result.response.status, 200, JSON.stringify(result.body));
+    assertWriteResult(result.body);
+    assert.equal(result.body.resource.status.key, "done");
+    assert.equal(result.body.resource.version, version + 1);
+    commentIds.push(result.body.resource.completion_comment_id);
+    const replay = await jsonRequest(`${issuePath}/commands/complete`, { body, headers, method: "POST" });
+    assert.equal(replay.response.status, 200, JSON.stringify(replay.body));
+    assertWriteResult(replay.body, true);
+    assert.equal(replay.body.resource.completion_comment_id, commentIds[index]);
+    const comment = await jsonRequest(`/api/v1/comments/${commentIds[index]}`, { headers: ownerHeaders() });
+    assert.equal(comment.response.status, 200, JSON.stringify(comment.body));
+    assert.equal(comment.body.body, expectedSummaries[index]);
+    assert.deepEqual(comment.body.completion, {
+      artifacts: [], follow_ups: [], summary: expectedSummaries[index], verification: [],
+    });
+    const deletion = await jsonRequest(`/api/v1/comments/${commentIds[index]}?expected_version=1`, {
+      headers: ownerHeaders(), method: "DELETE",
+    });
+    assert.equal(deletion.response.status, 403, JSON.stringify(deletion.body));
+    version = result.body.resource.version;
+    const reopen = await jsonRequest(issuePath, {
+      body: { expected_version: version, status_key: "todo" }, headers: ownerHeaders(), method: "PATCH",
+    });
+    assert.equal(reopen.response.status, 200, JSON.stringify(reopen.body));
+    version = reopen.body.resource.version;
+    const staleComplete = await jsonRequest(`${issuePath}/commands/complete`, {
+      body, headers: ownerHeaders({ "idempotency-key": `optional-completion-stale-${index}` }), method: "POST",
+    });
+    assert.equal(staleComplete.response.status, 409, JSON.stringify(staleComplete.body));
+    const history = await jsonRequest(`${issuePath}/comments?limit=100`, { headers: ownerHeaders() });
+    assert.equal(history.response.status, 200, JSON.stringify(history.body));
+    assert.equal(history.body.items.length, index + 1);
+    for (const [historyIndex, id] of commentIds.entries()) {
+      assert.equal(history.body.items.find((entry) => entry.id === id)?.completion.summary,
+        expectedSummaries[historyIndex]);
+    }
+  }
+  assert.equal(new Set(commentIds).size, summaries.length);
+});

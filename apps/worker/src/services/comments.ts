@@ -105,14 +105,19 @@ function commentResource(
     && row.kind === "standard"
     && roleCanWrite(issue.role)
     && unavailabilityReason === null;
+  const completion = row.deleted_at === null ? completionPayload(row.completion_json) : null;
+  const completionSummary = completion !== null && typeof completion === "object" && !Array.isArray(completion)
+    ? completion.summary : undefined;
   return {
     allowed_actions: commentAllowedActions(row, issue, restorable),
     author: {
       display_name: row.author_display_name,
       principal_id: row.author_principal_id,
     },
-    body: row.deleted_at === null ? row.body : null,
-    completion: row.deleted_at === null ? completionPayload(row.completion_json) : null,
+    body: row.deleted_at === null
+      ? (row.kind === "completion" && typeof completionSummary === "string" ? completionSummary : row.body)
+      : null,
+    completion,
     created_at: timestamp(row.created_at),
     deleted_at: timestamp(row.deleted_at),
     deleted_by_principal_id: row.deleted_by_principal_id,
@@ -920,7 +925,8 @@ export async function completeIssue(
             ).bind(
               commentId,
               auth.principalId,
-              payload.summary,
+              // comments.body 的既有非空约束适用于所有 kind；空说明保存真实结构化内容，公开正文从 completion_json 投影。
+              payload.summary || JSON.stringify(payload),
               JSON.stringify(payload),
               now,
               operationId,

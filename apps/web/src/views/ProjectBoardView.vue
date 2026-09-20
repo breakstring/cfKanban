@@ -231,30 +231,30 @@ async function refreshCasFacts(): Promise<void> {
   }
 }
 
-async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void> {
+async function saveStatus(issue: IssueSummary, status: StatusKey, summary?: string): Promise<void> {
   const fenceKey = `issue-status:${issue.id}`;
   if (!canWrite.value || issue.status.key === status || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
-  if (status === "done") {
-    writeFence.leave(fenceKey);
-    completionIssue.value = issue;
-    completionSummary.value = "";
-    return;
-  }
   saving.value = new Set(saving.value).add(issue.id);
   clearError();
   const generation = projectionGeneration.capture();
   try {
-    const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}`, {
-      body: { expected_version: issue.version, status_key: status },
-      method: "PATCH",
+    const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}${status === "done" ? "/commands/complete" : ""}`, {
+      body: status === "done" ? { expected_version: issue.version, ...(summary === undefined ? {} : { summary }) } : { expected_version: issue.version, status_key: status },
+      method: status === "done" ? "POST" : "PATCH",
     });
     if (projectionIsCurrent(generation)) {
       dismissCasConflict();
       issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
+      if (status === "done" && completionIssue.value?.id === issue.id) completionIssue.value = null;
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} status`, `${issue.identifier} 状态`), { status_key: status })) {
+    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} status`, `${issue.identifier} 状态`), { status_key: status, ...(summary === undefined ? {} : { summary }) }, async () => {
+      await load(true, true);
+      if (status !== "done" || completionIssue.value?.id !== issue.id) return;
+      const current = await apiRequest<IssueSummary>(`/api/v1/issues/${issue.identifier}`);
+      if (projectionIsCurrent(generation)) completionIssue.value = current.status.key === "done" ? null : current;
+    })) {
       setError(caught);
     }
   } finally {
@@ -272,30 +272,19 @@ function onStatusSelection(issue: IssueSummary, event: Event): void {
   void saveStatus(issue, status);
 }
 
+function openCompletion(issue: IssueSummary): void {
+  if (!canWrite.value || saving.value.has(issue.id) || issue.status.key === "done") return;
+  completionIssue.value = issue;
+  completionSummary.value = "";
+}
+
 async function completeIssue(): Promise<void> {
   const issue = completionIssue.value;
-  if (issue === null || !completionSummary.value.trim()) return;
-  const fenceKey = `issue-complete:${issue.id}`;
-  if (!writeFence.enter(fenceKey)) return;
+  if (issue === null || formBusy.value) return;
   formBusy.value = true;
-  const generation = projectionGeneration.capture();
   try {
-    const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}/commands/complete`, {
-      body: { expected_version: issue.version, summary: completionSummary.value.trim() },
-      method: "POST",
-    });
-    if (projectionIsCurrent(generation)) {
-      dismissCasConflict();
-      issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
-      completionIssue.value = null;
-    }
-  } catch (caught) {
-    if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} completion`, `${issue.identifier} 完成记录`), { summary: completionSummary.value })) {
-      setError(caught);
-    }
+    await saveStatus(issue, "done", completionSummary.value.trim());
   } finally {
-    writeFence.leave(fenceKey);
     formBusy.value = false;
   }
 }
@@ -520,6 +509,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
                 </option>
               </select>
               </div>
+              <button v-if="canWrite && issue.status.key !== 'done'" class="text-button" type="button" :disabled="saving.has(issue.id)" @click.stop="openCompletion(issue)">{{ t("complete.withNote") }}</button>
             </article>
             <p v-if="issuesFor(statusKey).length === 0" class="column-empty">{{ t("board.empty") }}</p>
           </div>
@@ -546,7 +536,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
     <ModalDialog v-if="completionIssue" :busy="formBusy" :title="t('complete.title')" @close="completionIssue = null">
       <form class="form-stack" @submit.prevent="completeIssue">
         <p><code>{{ completionIssue.identifier }}</code> · {{ completionIssue.title }}</p>
-        <label>{{ t("complete.summary") }}<textarea v-model="completionSummary" required rows="6" maxlength="8192" /></label>
+        <label>{{ t("complete.summary") }}<textarea v-model="completionSummary" rows="6" maxlength="8192" /></label>
         <div class="form-actions"><button class="secondary-button" type="button" @click="completionIssue = null">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="formBusy">{{ t("complete.title") }}</button></div>
       </form>
     </ModalDialog>

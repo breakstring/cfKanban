@@ -10,6 +10,24 @@ import {
   syncGeneratedFile,
 } from "../lib/generated-artifacts.mjs";
 
+test("OpenAPI permits empty completion notes without allowing empty standard comments", async () => {
+  const document = JSON.parse(await readFile(
+    new URL("../../contracts/openapi.json", import.meta.url), "utf8",
+  ));
+  const schemas = document.components.schemas;
+  assert.equal(schemas.CompleteIssueRequest.required.includes("summary"), false);
+  for (const schema of [
+    schemas.CompleteIssueRequest.properties.summary,
+    schemas.CompletionPayload.properties.summary,
+    schemas.CompletionComment.properties.body,
+  ]) {
+    assert.equal(schema.type, "string");
+    assert.equal(schema.minLength ?? 0, 0);
+  }
+  assert.equal(schemas.ActiveStandardComment.properties.body.minLength, 1);
+  assert.equal(schemas.CreateCommentRequest.properties.body.minLength, 1);
+});
+
 test("normalizes migration line endings before hashing", () => {
   assert.equal(normalizeLineEndings("one\r\ntwo\rthree\n"), "one\ntwo\nthree\n");
   assert.equal(sha256NormalizedText("one\r\ntwo\n"), sha256NormalizedText("one\ntwo\n"));

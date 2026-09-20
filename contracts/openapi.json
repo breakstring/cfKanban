@@ -9935,8 +9935,7 @@
       "CompleteIssueRequest": {
         "type": "object",
         "required": [
-          "expected_version",
-          "summary"
+          "expected_version"
         ],
         "properties": {
           "expected_version": {
@@ -9944,8 +9943,9 @@
           },
           "summary": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 8192
+            "maxLength": 8192,
+            "default": "",
+            "description": "Optional completion note. Omitted, empty, or whitespace-only values are stored as an empty string."
           },
           "verification": {
             "type": "array",
@@ -13558,7 +13558,7 @@
           },
           "summary": {
             "type": "string",
-            "minLength": 1
+            "maxLength": 8192
           },
           "verification": {
             "type": "array",
@@ -13714,7 +13714,7 @@
           },
           "body": {
             "type": "string",
-            "minLength": 1
+            "description": "Completion summary; empty when no completion note was supplied."
           },
           "completion": {
             "$ref": "#/components/schemas/CompletionPayload"
