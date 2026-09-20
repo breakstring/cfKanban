@@ -456,11 +456,10 @@ export async function listComments(
          FROM comments comment
          JOIN principals author ON author.id = comment.author_principal_id
          WHERE comment.issue_id = ?1 AND comment.deleted_at IS NOT NULL
-           AND (?2 IS NULL OR comment.deleted_at < ?2
-                OR (comment.deleted_at = ?2 AND comment.id < ?3))
+           ${cursor === null ? "" : "AND (comment.deleted_at, comment.id) < (?3, ?4)"}
          ORDER BY comment.deleted_at DESC, comment.id DESC
-         LIMIT ?4`,
-      ).bind(issue.id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<CommentRow>()
+         LIMIT ?2`,
+      ).bind(issue.id, limit + 1, ...(cursor ?? [])).all<CommentRow>()
       : await db.prepare(
         `SELECT comment.id, comment.issue_id, comment.kind,
                 comment.author_principal_id, author.display_name AS author_display_name,
@@ -470,11 +469,10 @@ export async function listComments(
          FROM comments comment
          JOIN principals author ON author.id = comment.author_principal_id
          WHERE comment.issue_id = ?1 AND comment.deleted_at IS NULL
-           AND (?2 IS NULL OR comment.created_at > ?2
-                OR (comment.created_at = ?2 AND comment.id > ?3))
+           ${cursor === null ? "" : "AND (comment.created_at, comment.id) > (?3, ?4)"}
          ORDER BY comment.created_at ASC, comment.id ASC
-         LIMIT ?4`,
-      ).bind(issue.id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<CommentRow>();
+         LIMIT ?2`,
+      ).bind(issue.id, limit + 1, ...(cursor ?? [])).all<CommentRow>();
     rows = result.results;
   } catch (error) {
     throw platformUnavailable("d1", error);

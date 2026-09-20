@@ -7,7 +7,8 @@ import { parseMigrationReadbackOutput } from "../../packages/skill-runtime/src/d
 import { reconcileMigrationState } from "../../packages/skill-runtime/src/migrations.mjs";
 import { sha256NormalizedText } from "../lib/generated-artifacts.mjs";
 
-const manifest = JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8"));
+const publishedManifest = JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8"));
+const manifest = { ...publishedManifest, schema_version: 9, migrations: publishedManifest.migrations.filter((entry) => entry.sequence <= 9) };
 const migration = manifest.migrations.find((entry) => entry.sequence === 9);
 const sql = await readFile(new URL(`../../migrations/${migration.name}`, import.meta.url), "utf8");
 const readbackSql = await readFile(new URL("../../release/deployment/migration-readback.sql", import.meta.url), "utf8");

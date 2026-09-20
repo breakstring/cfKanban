@@ -78,7 +78,7 @@ async function snapshot(client, target) {
     || new Set(ids).size !== ids.length || JSON.stringify([...ids].sort()) !== JSON.stringify(ids)) fail("OWNER_RECOVERY_READBACK_INVALID", "Credential inventory is invalid or exceeds the supported recovery bound");
   ids.forEach((id) => requireUuid(id, "credential_id"));
   if (row.instance_id !== target.instanceId || requireHttpsOrigin(row.preferred_api_origin) !== target.apiOrigin) fail();
-  if (!Number.isSafeInteger(row.schema_version) || row.schema_version < 1 || row.schema_version > 9) fail("OWNER_RECOVERY_SCHEMA_UNSUPPORTED", "This Skill does not support the deployed schema for Owner recovery");
+  if (!Number.isSafeInteger(row.schema_version) || row.schema_version < 1 || row.schema_version > 10) fail("OWNER_RECOVERY_SCHEMA_UNSUPPORTED", "This Skill does not support the deployed schema for Owner recovery");
   if (!Number.isSafeInteger(row.origin_version) || row.origin_version < 1 || !Number.isSafeInteger(row.principal_version) || row.principal_version < 1) fail();
   return {
     instance_id: target.instanceId,

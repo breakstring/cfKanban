@@ -496,11 +496,15 @@ export async function listInvitations(
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;
   const tail = page.at(-1);
-  for (const row of page) await requireInvitationManagement(db, auth, row, now);
+  if (managedIds !== null) {
+    for (const row of page) await requireInvitationManagement(db, auth, row, now);
+  }
   const grants = await readInvitationGrantPages(db, page.map((row) => row.id));
+  const items = await Promise.all(page.map((row) => invitationResource(db, row, now, grants.get(row.id) ?? [])));
+  if (managedIds === null) await verifyCurrentAuth(db, auth, now);
   return {
     has_more: hasMore,
-    items: await Promise.all(page.map((row) => invitationResource(db, row, now, grants.get(row.id) ?? []))),
+    items,
     next_cursor: hasMore && tail ? encodeCursor(cursorContext, [tail.created_at, tail.id]) : null,
     resolved_scope: managedIds === null ? { owner_principal_id: auth.principalId } : { principal_id: auth.principalId, project_ids: managedIds, project_id: projectFilter },
   };

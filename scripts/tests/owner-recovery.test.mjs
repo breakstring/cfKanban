@@ -333,11 +333,12 @@ for (const failure of ['response', 'exception']) test(`Cloudflare ${failure} 回
 });
 
 
-test('schema 9 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份', async t => {
+for (const schemaVersion of [9, 10]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
   const f = await fixture(t);
   for (const name of ['0002_container_purge', '0003_container_uuid', '0004_issue_attachments', '0005_attachment_schema_version', '0006_usage_statistics', '0007_attachment_settings', '0008_principal_names', '0009_scoped_administrators']) {
     f.db.exec(await readFile(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'));
   }
+  if (schemaVersion === 10) f.db.exec(await readFile(new URL('../../migrations/0010_query_indexes.sql', import.meta.url), 'utf8'));
   const workspace = f.db.prepare('SELECT id FROM workspaces').get().id;
   const project = randomUUID(), manager = randomUUID();
   f.db.prepare('INSERT INTO principals(id,display_name,display_name_key,created_at,updated_at) VALUES (?, ?, ?, 1, 1)').run(manager, 'Scoped_Manager', 'scoped_manager');
@@ -353,11 +354,11 @@ test('schema 9 恢复保留唯一 Owner、两级管理员授权和全部已有 P
     const response = await fetch(url, options);
     if (new URL(url).origin !== f.input.apiOrigin) return response;
     const body = await response.json();
-    if ('schema_version' in body) body.schema_version = 9;
+    if ('schema_version' in body) body.schema_version = schemaVersion;
     return json(body, response.status);
   };
   await f.prepare();
-  assert.equal(f.plan.observed.schema_version, 9);
+  assert.equal(f.plan.observed.schema_version, schemaVersion);
   const output = await f.execute();
   assert.equal(output.owner_principal_id, f.owner);
   assert.equal(f.db.prepare('SELECT owner_principal_id FROM instance_meta').get().owner_principal_id, f.owner);
@@ -366,14 +367,14 @@ test('schema 9 恢复保留唯一 Owner、两级管理员授权和全部已有 P
   assert.deepEqual(f.db.prepare('SELECT * FROM effective_project_grants ORDER BY principal_id,project_id').all(), beforeAccess);
   assert.equal(f.db.prepare('SELECT count(*) AS n FROM credentials WHERE principal_id = ? AND revoked_at IS NULL').get(f.owner).n, 1);
   assert.equal(f.db.prepare('SELECT count(*) AS n FROM web_authenticators WHERE revoked_at IS NULL').get().n, 1);
-  assert.equal(f.db.prepare('SELECT schema_version FROM instance_meta').get().schema_version, 9);
+  assert.equal(f.db.prepare('SELECT schema_version FROM instance_meta').get().schema_version, schemaVersion);
   assert.equal(f.count('workspaces'), 1);
   assert.equal(f.count('projects'), 1);
 });
 
-test('schema 10 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
+test('schema 11 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
   const f = await fixture(t);
-  f.db.prepare('UPDATE instance_meta SET schema_version = 10').run();
+  f.db.prepare('UPDATE instance_meta SET schema_version = 11').run();
   await assert.rejects(inspectOwnerRecovery(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   await assert.rejects(createOwnerRecoveryPlan(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   assert.equal(f.writes, 0);

@@ -373,7 +373,19 @@ export async function listPrincipals(
   let rows: PrincipalRow[];
   try {
     const result = await db.prepare(
-      `SELECT p.id, p.display_name, p.version, p.created_at, p.updated_at,
+      `WITH principal_page AS MATERIALIZED (
+         SELECT p.* FROM principals AS p
+         WHERE ${projectId === null ? "1 = 1" : `EXISTS (
+         SELECT 1 FROM project_grants filter_grant
+         WHERE filter_grant.principal_id = p.id AND filter_grant.project_id = ?1
+           AND filter_grant.revoked_at IS NULL
+       )`}
+         ${q === "" ? "" : "AND (p.id = ?2 OR instr(lower(p.display_name), ?3) > 0)"}
+         ${position === null ? "" : "AND (p.created_at, p.id) > (?4, ?5)"}
+         ORDER BY p.created_at, p.id
+         LIMIT ?6
+       )
+       SELECT p.id, p.display_name, p.version, p.created_at, p.updated_at,
               CASE WHEN im.owner_principal_id = p.id THEN 1 ELSE 0 END AS is_owner,
               (SELECT COUNT(*) FROM credentials c
                WHERE c.principal_id = p.id AND c.revoked_at IS NULL) AS active_credential_count,
@@ -381,18 +393,9 @@ export async function listPrincipals(
                WHERE g.principal_id = p.id AND g.revoked_at IS NULL) AS active_grant_count,
               (SELECT COUNT(*) FROM issues i
                WHERE i.assignee_principal_id = p.id AND i.deleted_at IS NULL) AS assignee_count
-       FROM principals AS p
+       FROM principal_page AS p
        JOIN instance_meta AS im ON im.singleton = 1
-       WHERE (?1 IS NULL OR EXISTS (
-         SELECT 1 FROM project_grants filter_grant
-         WHERE filter_grant.principal_id = p.id
-           AND filter_grant.project_id = ?1
-           AND filter_grant.revoked_at IS NULL
-       ))
-         AND (?2 = '' OR p.id = ?2 OR instr(lower(p.display_name), ?3) > 0)
-         AND (?4 IS NULL OR p.created_at > ?4 OR (p.created_at = ?4 AND p.id > ?5))
-       ORDER BY p.created_at, p.id
-       LIMIT ?6`,
+       ORDER BY p.created_at, p.id`,
     ).bind(projectId, q, q.toLocaleLowerCase(), position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<PrincipalRow>();
     rows = result.results;
   } catch (error) {

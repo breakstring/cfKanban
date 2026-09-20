@@ -343,15 +343,15 @@ export async function collectAttachmentGarbage(env: WorkerEnv, now = Date.now())
     WHERE id IN (SELECT id FROM attachment_objects WHERE state='pending' AND expires_at<=?1 ORDER BY expires_at,id LIMIT ?2)`).bind(now, CLEANUP_BATCH).run();
   // garbage 状态的 CHECK 保证 garbage_at 非空；新垃圾按进入时间排队，
   // 避免持续的新记录饿死已检查墓碑，使晚到 PUT 永久留在预算之外。
-  const candidates = (await db.prepare(`SELECT id,object_key FROM attachment_objects WHERE state='garbage'
-    ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1`).bind(CLEANUP_BATCH).all<{ id: string; object_key: string }>()).results;
+  const candidates = (await db.prepare(`SELECT id,object_key,budget_released_at FROM attachment_objects WHERE state='garbage'
+    ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1`).bind(CLEANUP_BATCH).all<{ id: string; object_key: string; budget_released_at: number | null }>()).results;
   let deleted = 0;
   for (const object of candidates) {
     await db.prepare("UPDATE attachment_objects SET last_checked_at=?2 WHERE id=?1 AND state='garbage'").bind(object.id, now).run();
     try {
       await bucket.delete(object.object_key);
       if (await bucket.head(object.object_key) !== null) continue;
-      await db.batch([
+      if (object.budget_released_at === null) await db.batch([
         db.prepare(`UPDATE attachment_storage SET reserved_bytes=reserved_bytes-(SELECT size_bytes FROM attachment_objects WHERE id=?1)
           WHERE singleton=1 AND EXISTS (SELECT 1 FROM attachment_objects WHERE id=?1 AND state='garbage' AND budget_released_at IS NULL)`).bind(object.id),
         db.prepare("UPDATE attachment_objects SET budget_released_at=?2 WHERE id=?1 AND state='garbage' AND budget_released_at IS NULL").bind(object.id, now),

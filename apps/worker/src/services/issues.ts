@@ -859,10 +859,7 @@ async function requireIssueAccess(
   const identifier = requireIssueIdentifier(identifierValue);
   const row = await readIssueRow(db, issueNumber(identifier), includeDeleted);
   if (row === null || !cookieTargetAllowsProject(auth, row.workspace_id, row.project_id)) throw notFound();
-  const visible = await resolveVisibleProjects(db, auth);
-  const project = visible.find((candidate) => candidate.projectId === row.project_id);
-  if (project === undefined) throw notFound();
-  if (requiredRole === "writer" && !roleCanWrite(project.role)) throw forbidden();
+  const project = await requireVisibleProject(db, auth, row.workspace_id, row.project_id, requiredRole);
   return { project, row };
 }
 
@@ -1026,11 +1023,9 @@ async function listIssueRows(
                AND blocker.project_id IN (SELECT id FROM current_visible_projects)
                AND blocker_project.deleted_at IS NULL AND blocker_workspace.deleted_at IS NULL
            )` : ""}
-           AND (
-             (?7 = 'unassigned' AND i.assignee_principal_id IS NULL)
-             OR (?7 = 'mine' AND i.assignee_principal_id = ?8)
-             OR (?7 = 'needs_reassignment'
-                 AND i.assignee_principal_id IS NOT NULL
+           AND ${candidate.assignment === "unassigned" ? "i.assignee_principal_id IS NULL"
+             : candidate.assignment === "mine" ? "i.assignee_principal_id = ?8"
+             : `(i.assignee_principal_id IS NOT NULL
                  AND i.assignee_principal_id != (SELECT owner_principal_id FROM instance_meta WHERE singleton = 1)
                  AND NOT EXISTS (
                    SELECT 1 FROM effective_project_grants candidate_grant
@@ -1038,12 +1033,9 @@ async function listIssueRows(
                      AND candidate_grant.principal_id = i.assignee_principal_id
                      AND candidate_grant.role = 'writer'
                      AND candidate_grant.revoked_at IS NULL
-                 ))
-           )
-           AND (?3 IS NULL OR (?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)
-           AND (?4 IS NULL OR i.priority_rank > ?4
-                OR (i.priority_rank = ?4 AND i.created_at > ?5)
-                OR (i.priority_rank = ?4 AND i.created_at = ?5 AND i.number > ?6))
+                 ))`}
+           ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
+           ${cursor === null ? "" : "AND (i.priority_rank, i.created_at, i.number) > (?4, ?5, ?6)"}
          ORDER BY i.priority_rank ASC, i.created_at ASC, i.number ASC
          LIMIT ?9`,
       );
@@ -1115,9 +1107,11 @@ async function listIssueRows(
                WHERE relation_grant.project_id = relation_project.id
                  AND relation_grant.principal_id = ?9 AND relation_grant.revoked_at IS NULL
              ))
-         )
-         ${ISSUE_SELECT}
-         WHERE i.project_id IN (SELECT id FROM current_result_projects)
+         ), issue_page(number) AS MATERIALIZED (
+         SELECT i.number FROM issues i
+         WHERE ${projectIds.length === 1
+           ? "i.project_id = (SELECT id FROM current_result_projects)"
+           : "i.project_id IN (SELECT id FROM current_result_projects)"}
            ${issueFilter.blocked === null ? "" : `AND ${issueFilter.blocked === "exclude" ? "NOT" : ""} (
              i.blocked_reason IS NOT NULL OR (i.deleted_at IS NULL
                AND i.project_id IN (SELECT id FROM current_relation_projects)
@@ -1131,14 +1125,20 @@ async function listIssueRows(
                ))
            )`}
            AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
-           ${deletionView === "only" ? "" : "AND p.deleted_at IS NULL AND w.deleted_at IS NULL"}
-           AND (?3 IS NULL OR (?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)
-           AND (?6 IS NULL OR i.status_key IN (SELECT value FROM json_each(?6)))
-           AND (?7 IS NULL OR i.assignee_principal_id IN (SELECT value FROM json_each(?7)))
-           AND (?4 IS NULL OR ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} < ?4
-                OR (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} = ?4 AND i.number < ?5))
+           ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
+           ${issueFilter.statuses.length === 0 ? "" : issueFilter.statuses.length === 1
+             ? "AND i.status_key = json_extract(?6, '$[0]')"
+             : "AND i.status_key IN (SELECT value FROM json_each(?6))"}
+           ${issueFilter.assignees.length === 0 ? "" : issueFilter.assignees.length === 1
+             ? "AND i.assignee_principal_id = json_extract(?7, '$[0]')"
+             : "AND i.assignee_principal_id IN (SELECT value FROM json_each(?7))"}
+           ${cursor === null ? "" : `AND (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"}, i.number) < (?4, ?5)`}
          ORDER BY ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} DESC, i.number DESC
-         LIMIT ?8`,
+         LIMIT ?8
+         )
+         ${ISSUE_SELECT}
+         JOIN issue_page ON issue_page.number = i.number
+         ORDER BY ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} DESC, i.number DESC`,
       );
       const bindings = [
         JSON.stringify(projectIds), search.number, search.normalized,

@@ -172,69 +172,42 @@ async function queryVisibleProjects(
   auth: AuthContext,
   includeEffectiveDeleted = false,
   currentAuthAt: number | null = null,
+  projectScope?: { projectId: string; workspaceId: string },
 ): Promise<VisibleProject[]> {
   const target = fixedTarget(auth);
   if (target?.invalid === true) return [];
-  const targetProjectId = target?.projectId ?? null;
-  const targetWorkspaceId = target?.workspaceId ?? null;
-  const targetIssueNumber = target?.issueNumber ?? null;
+  const values: BindValue[] = [];
+  const bind = (value: BindValue) => { values.push(value); return parameter(values.length); };
+  const predicates = [includeEffectiveDeleted ? "1 = 1" : "p.deleted_at IS NULL AND w.deleted_at IS NULL"];
+  if (!auth.isOwner) predicates.push(`pg.principal_id = ${bind(auth.principalId)} AND pg.revoked_at IS NULL`);
+  // 请求资源只收窄固定 Session 的目标，不能替换或扩大其范围。
+  if (target?.projectId !== null && target?.projectId !== undefined) predicates.push(`p.id = ${bind(target.projectId)}`);
+  if (target?.workspaceId !== null && target?.workspaceId !== undefined) predicates.push(`w.id = ${bind(target.workspaceId)}`);
+  if (target?.issueNumber !== null && target?.issueNumber !== undefined) {
+    predicates.push(`p.id = (
+      SELECT target_issue.project_id FROM issues AS target_issue
+      WHERE target_issue.number = ${bind(target.issueNumber)} AND target_issue.deleted_at IS NULL
+    )`);
+  }
+  if (projectScope !== undefined) {
+    predicates.push(`p.id = ${bind(projectScope.projectId)}`, `w.id = ${bind(projectScope.workspaceId)}`);
+  }
+  if (currentAuthAt !== null) {
+    const currentAuth = buildCurrentAuthGuard(auth, currentAuthAt, values.length + 1);
+    predicates.push(currentAuth.sql);
+    values.push(...currentAuth.values);
+  }
   try {
-    if (auth.isOwner) {
-      const currentAuth = currentAuthAt === null ? null : buildCurrentAuthGuard(auth, currentAuthAt, 4);
-      const result = await db.prepare(
-        `SELECT p.id AS project_id, p.display_name AS project_name,
-                p.version AS project_version, w.id AS workspace_id,
-                w.display_name AS workspace_name, 'owner' AS role
-         FROM projects AS p
-         JOIN workspaces AS w ON w.id = p.workspace_id
-         WHERE ${includeEffectiveDeleted ? "1 = 1" : "p.deleted_at IS NULL AND w.deleted_at IS NULL"}
-           AND (?1 IS NULL OR p.id = ?1)
-           AND (?2 IS NULL OR w.id = ?2)
-           AND (?3 IS NULL OR EXISTS (
-             SELECT 1 FROM issues AS target_issue
-             WHERE target_issue.number = ?3 AND target_issue.project_id = p.id
-               AND target_issue.deleted_at IS NULL
-           ))
-           ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
-         ORDER BY w.id, p.id`,
-      ).bind(
-        targetProjectId,
-        targetWorkspaceId,
-        targetIssueNumber,
-        ...(currentAuth?.values ?? []),
-      ).all<VisibleProjectRow>();
-      if (currentAuthAt !== null && result.results.length === 0) {
-        await verifyCurrentAuth(db, auth, currentAuthAt);
-      }
-      return result.results.map(mapVisibleProject);
-    }
-
-    const currentAuth = currentAuthAt === null ? null : buildCurrentAuthGuard(auth, currentAuthAt, 5);
     const result = await db.prepare(
       `SELECT p.id AS project_id, p.display_name AS project_name,
               p.version AS project_version, w.id AS workspace_id,
-              w.display_name AS workspace_name, pg.role
-       FROM effective_project_grants AS pg
-       JOIN projects AS p ON p.id = pg.project_id
+              w.display_name AS workspace_name, ${auth.isOwner ? "'owner'" : "pg.role"} AS role
+       ${auth.isOwner ? "FROM projects AS p" : `FROM effective_project_grants AS pg
+       JOIN projects AS p ON p.id = pg.project_id`}
        JOIN workspaces AS w ON w.id = p.workspace_id
-       WHERE pg.principal_id = ?1 AND pg.revoked_at IS NULL
-         AND ${includeEffectiveDeleted ? "1 = 1" : "p.deleted_at IS NULL AND w.deleted_at IS NULL"}
-         AND (?2 IS NULL OR p.id = ?2)
-         AND (?3 IS NULL OR w.id = ?3)
-         AND (?4 IS NULL OR EXISTS (
-           SELECT 1 FROM issues AS target_issue
-           WHERE target_issue.number = ?4 AND target_issue.project_id = p.id
-             AND target_issue.deleted_at IS NULL
-         ))
-         ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
+       WHERE ${predicates.join(" AND ")}
        ORDER BY w.id, p.id`,
-    ).bind(
-      auth.principalId,
-      targetProjectId,
-      targetWorkspaceId,
-      targetIssueNumber,
-      ...(currentAuth?.values ?? []),
-    ).all<VisibleProjectRow>();
+    ).bind(...values).all<VisibleProjectRow>();
     if (currentAuthAt !== null && result.results.length === 0) {
       await verifyCurrentAuth(db, auth, currentAuthAt);
     }
@@ -272,10 +245,12 @@ export async function requireProjectAuthorization(
 ): Promise<VisibleProject> {
   // Idempotent replay may ignore a child resource's later tombstone, but a
   // retained Grant is not effective while its Project or Workspace is paused.
-  const projects = await resolveVisibleProjects(
+  const projects = await queryVisibleProjects(
     db,
     auth,
     includeDeletedParentsForRecoveryView && auth.isOwner,
+    null,
+    { projectId, workspaceId },
   );
   const project = projects.find(
     (candidate) => candidate.workspaceId === workspaceId && candidate.projectId === projectId,
@@ -292,7 +267,7 @@ export async function requireVisibleProject(
   projectId: string,
   requiredRole: "reader" | "writer" = "reader",
 ): Promise<VisibleProject> {
-  const visible = await resolveVisibleProjects(db, auth);
+  const visible = await queryVisibleProjects(db, auth, false, null, { projectId, workspaceId });
   const project = visible.find(
     (candidate) => candidate.workspaceId === workspaceId && candidate.projectId === projectId,
   );
