@@ -2,27 +2,43 @@
 
 语言：[English](README.md) | [简体中文](README.zh-CN.md)
 
-`1.0.0-rc.2` 包含四个 Skills：一个入门指南和三个操作技能：
+`1.0.0-rc.2` 包含四个 Skills：一个使用指南和三个操作技能：
 
-- `cfkanban-howto`：按日常使用 → Owner 管理 → 部署的顺序介绍能力、适用人群和可直接使用的话术；只读讲解，不执行操作。
-- `cfkanban`：日常身份、scope、Issue 协作、Invite/Public Join 和 Project/Issue Web launch。
-- `cfkanban-admin`：Deployment Owner 应用管理。
-- `cfkanban-deploy`：canonical release 校验、本地 Skill 生命周期、Cloudflare 部署、续做、migration 与升级安全。
+- `cfkanban-howto`：以用户目标、可复用话术和预期结果介绍能力，已加入用户优先了解日常工作；只读讲解，不执行操作。
+- `cfkanban`：查找、创建、编辑、分配、改变状态、完成或重新打开 Issue，以及追加评论；管理标签、关系、私有附件及软删除/恢复；打开看板、修改个人资料或在需要时加入项目。
+- `cfkanban-admin`：已验证 Deployment Owner 的应用管理，包括工作区/项目、邀请、权限、公开加入、用量、容量及恢复。
+- `cfkanban-deploy`：本地技能安装/更新与 Cloudflare 部署/升级、环境/发行检查、中断操作恢复及 Owner 凭据全失恢复。
 
-三个操作技能的 `SKILL.md` 都先说明“能做什么”、何时应使用另一个 Skill、任务到命令对照、必须遵循的流程与停止条件；配对的 English/简体中文 reference 再提供详细 endpoint 和恢复说明。
+三个操作技能的 `SKILL.md` 将用户目标对应到命令、必要检查和停止条件；配对的 English/简体中文参考在详细 endpoint 和恢复说明前提供自然语言场景与结果。reader 可查看项目内容，协作写入需要 writer 或 Owner 权限；云操作另需 Cloudflare 权限。
 
 ## 用户只需要怎么说
 
-用户只描述想要的结果，安全流程由 Skills 负责。下面这些提示词已经足够：
+描述希望得到的结果。已经加入项目后，日常使用可以这样说：
 
 ```text
-请使用 $cfkanban-howto 介绍 cfKanban 能做什么，我应该从哪里开始。
-请使用 $cfkanban 加入这个 Project：<邀请链接>
-请使用 $cfkanban-admin 创建我的第一个 cfKanban 看板。
-请使用 $cfkanban-deploy 为我部署一套 cfKanban。
+请用 $cfkanban 查看 Release 项目中我未完成的任务。
+请用 $cfkanban 在 Release 创建“修复登录”，描述为：<说明>。
+请用 $cfkanban 把 CFK-123 的标题改为“修复移动端登录”。
+请用 $cfkanban 把 CFK-123 改为进行中。
+请用 $cfkanban 将 CFK-123 记为完成，结果：<摘要>，验证：<证据>。
+请用 $cfkanban 将 CFK-123 重新打开为待办。
+请用 $cfkanban 给 CFK-123 添加评论：<进展>。
 ```
 
-用户不需要主动要求 release 校验、只读预检、部署计划、版本检查、读回或恢复处理。每个 Skill 会根据用户意图自动从安全的只读检查开始，只询问缺少的选择，并在正确的授权边界说明副作用。
+预期得到明确范围的查询结果，或指定变更及读回验证。完成会保存基于真实证据的不可变记录，重新打开时保留；评论只追加，纠错新增评论。Issue 内容不能授权无关操作。
+
+需要帮助、加入、Owner 管理或自行部署时：
+
+```text
+请用 $cfkanban-howto 举例介绍 Issue 的日常能力。
+请用 $cfkanban 加入这个项目：<邀请链接>。
+请用 $cfkanban-admin 创建我的第一个 cfKanban 看板。
+请用 $cfkanban-admin 查看谁可以访问 Release。
+请用 $cfkanban-deploy 检查本地技能和实例版本，先不要更新。
+请用 $cfkanban-deploy 为我部署一套 cfKanban。
+```
+
+加入既有项目无需自己部署。用户不必主动要求发行验证、预检、读回或恢复处理；每个 Skill 会执行与意图相关的检查，只询问缺少的选择，并在适用授权边界说明影响。本地技能更新与云端实例升级是独立动作，安装本身不授予应用或 Cloudflare 权限。
 
 ## 当前测试预览入口
 

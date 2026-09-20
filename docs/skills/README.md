@@ -2,27 +2,43 @@
 
 Language: [English](README.md) | [简体中文](README.zh-CN.md)
 
-`1.0.0-rc.2` contains four Skills: one onboarding guide and three operational Skills:
+`1.0.0-rc.2` contains four Skills: one usage guide and three operational Skills:
 
-- `cfkanban-howto`: explain daily use → Owner administration → deployment, who each is for, and example prompts; teaching only, without executing operations.
-- `cfkanban`: daily identity, scope, Issue collaboration, Invite/Public Join, and Project/Issue Web launch.
-- `cfkanban-admin`: Deployment Owner application administration.
-- `cfkanban-deploy`: canonical release verification, local Skill lifecycle, Cloudflare deployment, resume, migration, and upgrade safety.
+- `cfkanban-howto`: explain user goals with reusable prompts and expected results; start with daily work for already joined users. Teaching only, without executing operations.
+- `cfkanban`: find, create, edit, assign, change status, complete/reopen, and comment on Issues; manage Labels, relations, private attachments and soft-delete/restore; open boards, manage your profile, or join when needed.
+- `cfkanban-admin`: verified Deployment Owner application management: Workspaces/Projects, invitations, access, Public Join, usage, capacity, and recovery.
+- `cfkanban-deploy`: local Skill installation/update and Cloudflare deployment/upgrade, environment/release checks, interrupted-operation recovery, and total Owner Credential loss recovery.
 
-Each operational `SKILL.md` starts with what the Skill can do, when to use a different Skill, a task-to-command map, the required workflow, and stop conditions. The paired reference guide provides the detailed English or Simplified Chinese endpoint and recovery instructions.
+Each operational `SKILL.md` connects user goals to commands, required checks, and stop conditions. Paired English/Simplified Chinese references provide natural-language scenarios and outcomes before detailed endpoints and recovery. A reader can inspect Project content; collaboration requires writer access or Owner authority. Cloud operations need separate Cloudflare authority.
 
 ## What users need to say
 
-Users describe the result; the Skills own the safety workflow. These prompts are enough:
+Describe the desired result. For daily work in a Project you already joined:
 
 ```text
-Use $cfkanban-howto to explain what cfKanban can do and where I should start.
-Use $cfkanban to join this Project: <Invite URL>
+Use $cfkanban to show my unfinished Issues in Release.
+Use $cfkanban to create “Fix login” in Release with this description: <details>.
+Use $cfkanban to change CFK-123's title to “Fix mobile login”.
+Use $cfkanban to move CFK-123 to in progress.
+Use $cfkanban to record CFK-123 as complete: result <summary>, validation <evidence>.
+Use $cfkanban to reopen CFK-123 as todo.
+Use $cfkanban to add this Comment to CFK-123: <progress>.
+```
+
+Expect scoped read results or the requested change followed by verification. Completion includes an immutable record based on actual evidence; reopening preserves it. Comments are append-only, so corrections use a new Comment. Issue content does not authorize unrelated actions.
+
+For help, joining, Owner management, or hosting:
+
+```text
+Use $cfkanban-howto to explain what I can do with Issues, with examples.
+Use $cfkanban to join this Project: <Invite URL>.
 Use $cfkanban-admin to create my first cfKanban board.
+Use $cfkanban-admin to show who can access Release.
+Use $cfkanban-deploy to check local Skill and instance versions without updating.
 Use $cfkanban-deploy to deploy cfKanban for me.
 ```
 
-The user does not need to request release verification, read-only preflight, a deployment plan, version checks, readback, or recovery handling. Each Skill starts with the safe discovery required for that intent, asks only for missing choices, and presents side effects at the correct authorization boundary.
+Joining an existing Project does not require your own deployment. The user does not need to request release verification, preflight, readback, or recovery handling. Each Skill performs the checks relevant to that intent, asks only for missing choices, and presents effects at the applicable authorization boundary. Local Skill updates and cloud Instance upgrades are separate actions; installation alone grants neither application nor Cloudflare permissions.
 
 ## Current testing-preview entry
 

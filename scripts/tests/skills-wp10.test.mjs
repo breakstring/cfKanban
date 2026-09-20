@@ -3782,7 +3782,7 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
   assert.match(deploy, /owner_bootstrap_readback/u);
   assert.match(deploy, /Do not phrase the authorization as a one-command or one-attempt approval/u);
   for (const skill of [daily, admin, deploy]) assert.match(skill, /Intent-first user experience/u);
-  assert.match(dailyYaml, /Use \$cfkanban to help me work in this cfKanban Project\./u);
+  assert.match(dailyYaml, /^\s+default_prompt: "Use \$cfkanban to [^"\n]+"$/mu);
   assert.match(adminYaml, /Use \$cfkanban-admin to create my first cfKanban board\./u);
   assert.match(deployYaml, /Use \$cfkanban-deploy to deploy cfKanban for me\./u);
 });

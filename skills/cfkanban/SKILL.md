@@ -7,6 +7,12 @@ description: Find, create, and update cfKanban Issues, Comments, relations, and 
 
 Use this Skill for ordinary work in a cfKanban instance. Read the relevant section of [English](references/workflows.md) or [简体中文](references/workflows.zh-CN.md) for detailed inputs or recovery. Choose one language; ordinary operations do not require loading the whole guide.
 
+## Start with the user's daily goal
+
+For an already joined user, lead with finding, creating, editing, changing status, completing/reopening, and commenting; do not restart onboarding. Examples: “Show my unfinished Issues in this Project”, “Create an Issue with this description”, “Move CFK-123 to in progress”, or “Add this progress Comment to CFK-123”. The expected result is the requested scoped read or verified change, not a mandatory workflow through all capabilities.
+
+“Record CFK-123 as complete” needs actual result/validation evidence and an immutable completion record. “Finish CFK-123” can request the underlying work as well: follow the user's intent and existing authority, and never substitute a status update for implementation. For reopening, preserve previous completion records and select the requested non-done status. Read **Common daily requests** in the workflow reference for bilingual examples, expected results, and query choices.
+
 ## What this Skill can do
 
 - Inspect the local instance identity and show the authenticated Principal without exposing a Credential.

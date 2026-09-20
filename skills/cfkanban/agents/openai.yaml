@@ -1,6 +1,6 @@
 interface:
   display_name: "cfKanban"
   short_description: "Use cfKanban for daily issue collaboration"
-  default_prompt: "Use $cfkanban to help me work in this cfKanban Project."
+  default_prompt: "Use $cfkanban to show my unfinished Issues in this Project."
 policy:
   allow_implicit_invocation: true

@@ -1,4 +1,4 @@
 interface:
   display_name: "cfKanban Howto"
   short_description: "Learn cfKanban usage, administration, and deployment"
-  default_prompt: "Use $cfkanban-howto to explain how I can use cfKanban and which Skill to choose."
+  default_prompt: "Use $cfkanban-howto to show common Issue tasks with example prompts and expected results."

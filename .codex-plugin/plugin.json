@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "cfKanban Agent Skills",
     "shortDescription": "Learn, use, administer, and deploy cfKanban with Agent Skills",
-    "longDescription": "Four portable Agent Skills: a read-only onboarding guide plus daily cfKanban issue collaboration, Deployment Owner application administration, and canonical-manifest-based Cloudflare deployment and upgrades.",
+    "longDescription": "Use cfkanban-howto for examples and guidance; cfkanban to find, create, edit, complete, reopen, and comment on Issues; cfkanban-admin for Owner project, access, and capacity management; and cfkanban-deploy for Cloudflare deployment, upgrades, and recovery. Project writers can change Issues; application administration requires the Deployment Owner, and deployment requires Cloudflare authorization.",
     "developerName": "cfKanban maintainers",
     "category": "Developer Tools",
     "capabilities": [
@@ -28,10 +28,9 @@
     ],
     "websiteURL": "https://github.com/breakstring/cfKanban",
     "defaultPrompt": [
-      "Use $cfkanban-howto to explain how to use cfKanban and which Skill to choose.",
-      "Use $cfkanban to help me work in this cfKanban Project.",
-      "Use $cfkanban-admin to create my first cfKanban board.",
-      "Use $cfkanban-deploy to deploy cfKanban for me."
+      "Use $cfkanban-howto to show how to create Issues, change status, and add comments.",
+      "Use $cfkanban-admin to explain how I can manage projects and invite teammates as Owner.",
+      "Use $cfkanban-deploy to check what I need to deploy or upgrade my instance."
     ],
     "brandColor": "#D86F45"
   }

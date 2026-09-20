@@ -7,6 +7,12 @@ description: Inspect cfKanban usage and capacity; manage Workspaces, Projects, a
 
 Use this Skill only with a verified Deployment Owner Credential. Read the relevant section of [English](references/owner-workflows.md) or [简体中文](references/owner-workflows.zh-CN.md) when a task needs detailed inputs or recovery. Choose one language; ordinary operations do not require loading the whole guide.
 
+## Start with the Owner's management goal
+
+Examples: “Create a Release Project in Product”, “Invite someone to Release as a reader”, “Show who can access Release”, or “Show usage and attachment capacity”. Expect a verified container, safely delivered invitation, access listing, or usage report respectively; one request does not authorize the other actions. Read **Common Owner requests** in the workflow reference for examples and outcomes.
+
+The audience is the verified single Deployment Owner, including when managing an existing installation. Application access, containers, quotas, and attachment capacity belong here. Enabling cloud attachment storage or changing deployed request-rate settings belongs to `cfkanban-deploy`; ordinary Issue status, Comments, and completion belong to `cfkanban`.
+
 ## What this Skill can do
 
 - Create, inspect, rename, pause, and restore Workspaces and Projects; rename fixed status display labels.

@@ -4,6 +4,22 @@ Language: [English](deployment-workflows.md) | [简体中文](deployment-workflo
 
 Read only the workflow matching the request: **Skill update** for local installation, **First deployment** for a new Instance, **Instance upgrade** for verified existing resources, or **Interruption and resume** for a journaled operation. Local Skill updates do not require Cloudflare login; existing-instance upgrades do not require resource absence. Run `node scripts/cfkanban-tool.mjs help` once per installed release, or when inputs are unclear, for its command effects and accepted fields.
 
+## Common maintenance requests
+
+Local Skill maintenance and Cloudflare Service maintenance are separate goals. Verify Cloudflare authority for cloud actions; an application Owner Credential alone is insufficient.
+
+| User request | Expected result |
+| --- | --- |
+| “Check what I need to deploy.” | Read-only environment and release findings, with missing choices or blockers; no installation or cloud writes. |
+| “Deploy cfKanban for me.” | Resolve a verified release and environment, ask for missing Owner display name, present an exact plan, then perform only authorized writes and readback. No default Workspace/Project. |
+| “Check versions without updating.” | Separate local Skill and deployed Instance version findings; no update to either plane. |
+| “Update only my local Skills to <version>.” | Verified local update plan and authorized atomic switch; no Cloudflare login or Service upgrade is implied. |
+| “Plan an instance upgrade to <version>.” | Verified existing-resource and migration effects; planning does not authorize execution or a local Skill update. |
+| “Resume my interrupted deployment.” | Read journal and remote state, compare the plan, then continue within valid task-bound authorization; drift requires renewed authorization. |
+| “All my Owner Credentials are lost.” | Verified control-plane recovery plan for the same Owner identity, not a new Owner or application-level reset. |
+
+After deployment, offer `cfkanban-admin` for a first board and `cfkanban` for daily work. Do not perform those independent actions merely because the Service is deployed.
+
 ## Storage ownership
 
 All persistent state owned by cfKanban uses one current-environment user root:

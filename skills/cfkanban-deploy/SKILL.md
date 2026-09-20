@@ -7,6 +7,12 @@ description: Install or update cfKanban Skills, deploy or upgrade Cloudflare ins
 
 Use this Skill for the Cloudflare control plane and local Skill lifecycle. Read only the relevant workflow in [English](references/deployment-workflows.md) or [简体中文](references/deployment-workflows.zh-CN.md); choose one language. A local Skill update does not need the Cloudflare login or first-deployment workflow.
 
+## Start with the maintenance goal
+
+Examples: “Check what is needed to deploy”, “Update only my local Skills”, “Plan an instance upgrade”, or “Resume the interrupted deployment”. These mean a readiness report, a local-only update, a reviewable upgrade plan, or readback of an existing journal before authorized continuation. Read **Common maintenance requests** in the workflow reference for examples and outcomes; do not restart first deployment for a local update or an existing-instance upgrade.
+
+The audience is the person maintaining local Skills or hosting the Service. Cloud actions need verified Cloudflare authority; an application Owner Credential does not confer it. Creating Projects and managing members belong to `cfkanban-admin`, while daily Issue work belongs to `cfkanban`.
+
 ## What this Skill can do
 
 - Verify a canonical bootstrap pointer, immutable release manifest, allowed artifact origins, SHA-256 digests, and publisher continuity.
