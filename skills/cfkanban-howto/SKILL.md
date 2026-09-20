@@ -28,6 +28,18 @@ Example prompts:
 
 For execution, read [cfkanban](../cfkanban/SKILL.md), which owns identity, joining, scope, and collaboration workflows.
 
+### Work regularly from one folder / 在固定目录里长期协作
+
+Recommend an optional directory association when the user regularly handles one or more Projects from the same repository or ordinary folder. It helps future Issue lists/searches use the intended Projects without repeatedly naming them. It is unnecessary for a one-off Issue lookup and is not a prerequisite for joining or daily work.
+
+- “Show which cfKanban Projects this folder is associated with.” / “查看当前目录关联了哪些 cfKanban 项目。”
+- “Use $cfkanban to associate this folder with Release.” / “请用 $cfkanban 将当前目录关联到 Release 项目。”
+- “Also associate this folder with Mobile.” / “将 Mobile 项目也关联到当前目录。”
+
+Explain that `~/.cfkanban/` stores private instance/identity state, while the optional `.cfkanban-scope.json` in the chosen working directory stores non-secret Project identifiers. Joining does not create it automatically. On an explicit association request, route to `cfkanban` to verify the exact Projects and create or merge the file, preserving existing associations. Users need not supply UUIDs themselves. A local folder is distinct from a cfKanban Workspace.
+
+This is a recommended query scope, not access control: explicit targets take precedence, followed by directory recommendations, then a warned aggregate of authorized Projects. It neither grants permissions nor prevents an explicit authorized Issue lookup outside those recommendations. Do not repeatedly suggest setup when an association already exists or the user has declined.
+
 ## 2. Owner administration — cfkanban-admin
 
 For the instance's single Deployment Owner, use `cfkanban-admin`:

@@ -50,6 +50,14 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 
 `.cfkanban-scope.json` 只包含 `schema_version` 与 `instance_id + workspace_id + project_id` targets，不包含 API origin、本地路径、Git metadata、role、权限快照、Invite 或 Credential。 旧 key 配置明确拒绝，不自动回退无过滤；当前 schema_version 为 2。
 
+## Working-directory association / 工作目录关联
+
+用户问“当前目录关联了哪些项目”时，用 `scope read`，显式将绝对路径 `repoRoot` 指向用户的工作目录，而不是 Skill 目录。普通文件夹也可使用，不依赖 Git；脚本只读取指定目录，不向父目录搜索。缺少配置表示“没有保存目录推荐范围”，不表示“没有项目权限”。根据已验证的授权项目资料展示名称与保存的 ID，标出失效目标。
+
+用户要求“将当前目录关联到 Release”时，核对可信实例与已授权项目的 Workspace/Project UUID；仅在目标有歧义时询问。先读现有 scope，再以相同 `repoRoot` 和用户要求的 `targets` 调用 `scope merge`：创建 schema version 2 文件，或去重追加目标，保留既有关联。随后用 `scope read` 读回并报告文件路径与关联项目。merge 不代表替换，不静默修复无效配置；不根据文件夹名称或 Git remote 猜项目、不上传本地路径、不修改 Grants。
+
+保存需要用户明确提出目录关联要求；要求已清晰且获授权时，不额外设置确认步骤。只读查询配置或加入项目本身不授权写文件。该文件只保存非秘密推荐过滤，与 `~/.cfkanban/` 私有身份状态分开；Git 跟踪遵循 Repo 规则，不静默修改 ignore 设置。本次明确目标优先于目录推荐，按明确编号访问有权限的 Issue 不受该文件限制。
+
 ## 身份与 Issue 操作
 
 除明确列出专用命令外，下表操作都使用 `api request`。

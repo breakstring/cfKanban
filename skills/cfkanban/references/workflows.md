@@ -50,6 +50,14 @@ Invite redemption never writes `.cfkanban-scope.json`, creates an Issue, registe
 
 `.cfkanban-scope.json` contains only `schema_version` and `instance_id + workspace_id + project_id` targets. It never contains an API origin, local path, Git metadata, role, permission snapshot, Invite, or Credential. Use schema_version 2; reject old key configurations rather than silently falling back to unfiltered reads.
 
+## Working-directory association
+
+For “show this folder’s Projects”, use `scope read` with an explicit absolute `repoRoot` pointing to the user's working directory, not the Skill directory. An ordinary folder works without Git. The helper reads exactly that directory and does not search parents. Explain missing configuration as “no saved directory recommendation”, not “no Project access”; use verified authorized Project metadata to display names alongside saved IDs and flag stale targets.
+
+For “associate this folder with Release”, verify the trusted instance and the authorized Project's Workspace/Project UUIDs, asking only if the target is ambiguous. Read existing scope, then use `scope merge` with the same `repoRoot` and requested `targets`; it creates schema version 2 or adds deduplicated targets without removing existing associations. Read back with `scope read` and report the file path and associated Projects. Do not interpret merge as replacement, or silently repair invalid configuration. Never infer a Project from a folder name or Git remote, upload local paths, or change Grants.
+
+Saving scope requires the user's explicit association request; no extra confirmation is imposed for an already clear, authorized request. Reading scope or joining a Project alone does not authorize writing it. The file is non-secret recommended filtering, separate from private `~/.cfkanban/` identity state. Follow Repo rules for Git tracking; do not silently edit ignore settings. Explicit targets override recommendations, and explicit authorized Issue access is not restricted by this file.
+
 ## Identity and Issue operations
 
 All entries below use `api request` unless a dedicated command is named.
