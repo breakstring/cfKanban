@@ -112,6 +112,18 @@ Wrangler's keyring setting is global for every Wrangler profile owned by the cur
 
 Do not run `wrangler auth activate` or create a Repo binding automatically. When a user selects a named profile, cfKanban carries it explicitly with `--profile`; otherwise Wrangler resolves the environment/config-directory context itself. The generated private `wrangler.jsonc` always pins `account_id`, so identity selection and target-account selection stay separate. Cloudflare login alone creates no Worker, D1, deployment, cfKanban Credential, or Repo file.
 
+### Browser delivery and OAuth recovery
+
+Application pages (Issue, Project, Owner management, and post-join/deployment/recovery access) use the daily/Admin Browser Launch workflow. OAuth consent uses Wrangler's own opener, state validation, and `localhost:8976` callback, or the separately planned device flow. Do not exchange Cloudflare OAuth URLs through the cfKanban relay, copy OAuth codes into Skill input, or infer Cloudflare authentication from a cfKanban Session.
+
+For an unverified local browser environment, run `web preflight` with `{"delivery":"system_browser"}` through this Skill before starting OAuth. It is a non-sensitive loopback probe with no auth or remote requests. Inspect `reachable` and verify the actual browser page; it does not test the fixed callback port, hostname resolution, OAuth permissions, or completion. Honor an explicitly requested browser; if the verified default differs, stop and resolve the browser choice before login rather than silently using it. For a host navigation diagnosis, `host_browser` emits a non-sensitive probe URL; only that probe URL may be given to the user for a manual comparison. Keep the process alive and collect the final result.
+
+If the system opener works outside the sandbox but fails inside it, request only the execution permission supported by the host, then repeat the harmless probe. Never bypass a tool policy denial. `ERR_BLOCKED_BY_CLIENT` does not identify a particular extension or prove credential failure. Do not disable extensions/security or weaken relay checks automatically.
+
+On `WRANGLER_AUTH_ACTION_FAILED`, including safe process codes `EACCES`, `EPERM`, or `ENOENT`, retain the same target and inspect auth before retrying. A failure or timeout can follow partial keyring/profile changes; do not delete profiles, roll back keyring, create another profile, or restart login blindly. Run the existing inspect/resolve/account-readback sequence. Process permission errors are evidence to investigate, not proof that sandbox escalation is always appropriate. Changes to profile, browser/device mode, scopes, or other plan effects require a new exact authorized plan. Remote/WSL/container callback reachability must be checked in that environment; success of a local probe does not justify crossing OS/network boundaries. Do not run an OAuth login solely as a browser diagnostic.
+
+An opened consent page or zero process exit code is not sufficient: require the exact account and auth readback, and any planned R2 permission readback, before proceeding. After deployment or recovery, opening cfKanban is a separate application workflow with its own authenticated target check.
+
 ## Command map
 
 | Phase | Commands | Result |

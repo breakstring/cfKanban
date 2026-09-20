@@ -1,3 +1,4 @@
+import { preflightBrowser } from "./browser-preflight.mjs";
 import { discoverOwnerRecoveryCandidates } from "./owner-recovery-discovery.mjs";
 import { createOwnerRecoveryPlan, executeOwnerRecovery, inspectOwnerRecovery } from "./owner-recovery.mjs";
 import { resolveWebInstance } from "./web-resolve.mjs";
@@ -70,6 +71,7 @@ const COMMANDS = new Map([
   ["scope resolve", command({ description: "Resolve explicit, Repo, or warned aggregate Project scope.", effect: "read_only", inputFields: ["explicitTargets", "repoTargets", "validTargets", "allowUnfiltered"], surfaces: ["daily"], run: resolveScope })],
   ["origin rebind-check", command({ description: "Cross-check trusted and preferred origins without sending a Credential; update local metadata only after proof.", effect: "credential_free_network_and_local_write", inputFields: ["instanceId"], run: checkTrustedOriginRebind })],
   ["web resolve", command({ description: "Resolve a trusted local instance for Web opening without reading secrets; return ambiguity instead of choosing a default.", effect: "read_only_local", inputFields: ["instanceId", "origin", "repoRoot"], surfaces: ["daily", "admin"], run: resolveWebInstance })],
+  ["web preflight", command({ description: "Probe local browser delivery without credentials, redirects, or remote writes; verify the requested browser visually.", effect: "local_browser_probe", inputFields: ["delivery"], surfaces: ["daily", "admin", "deploy"], run: preflightBrowser })],
   ["web launch", command({ description: "Create one Browser Launch through a memory-only relay. host_browser streams a 60-second local handoff event for IAB or a named browser; system_browser opens directly. Explicit headless fallback may return the remote capability once.", effect: "authenticated_remote_write_and_browser_delivery", inputFields: ["instanceId", "target", "idempotencyKey", "delivery", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["daily", "admin"], run: createBrowserLaunchAndDeliver })],
   ["invite create", command({ description: "Create one scope-authorized Invitation and copy it without stdout; scoped administrators invite one Project as reader/writer, while identity recovery remains Owner-only. Explicit headless fallback may return the capability once.", effect: "authenticated_remote_write_and_invite_delivery", inputFields: ["instanceId", "body", "idempotencyKey", "delivery", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["admin"], run: createInvitationAndDeliver })],
   ["api request", command({ description: "Send one same-origin authenticated REST request using the private current Credential; one-time capability creation requires a dedicated command.", effect: "authenticated_remote_request", inputFields: ["instanceId", "method", "apiPath", "body", "idempotencyKey"], run: guardedApiRequest })],
@@ -169,7 +171,7 @@ export async function main(argv = process.argv.slice(2), { surface = "all" } = {
       ? getCommandCatalog({ surface })
       : await dispatch(commandName, {
         ...await readStdinJson(),
-        ...(commandName === "web launch" ? { onRelayReady: (event) => {
+        ...(["web launch", "web preflight"].includes(commandName) ? { onRelayReady: (event) => {
           process.stdout.write(`${JSON.stringify(event)}\n`);
         } } : {}),
       }, { surface });

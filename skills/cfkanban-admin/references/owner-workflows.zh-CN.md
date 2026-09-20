@@ -63,7 +63,7 @@
 1. 检查本地状态，并验证 `/api/v1/me` 返回预期稳定 Principal 且 `is_owner=true`；
 2. 复用已给出的显示名称和明确选定的既有 Workspace；一次询问缺失名称，写入前消歧已有重名对象；
 3. 仅在用户要求或第一个看板需要时创建 Workspace，读回服务端生成的 UUID，再在该 UUID 下用独立 Idempotency Key 创建请求的 Project 并读回；
-4. 使用 `target.kind=admin` 运行 `web launch`；默认直接打开浏览器，不返回一次性 URL；
+4. 请求打开时先按下文 Owner Web 流程完成交付预检，再使用 `target.kind=admin` 运行 `web launch`；直接浏览器交付不返回一次性 URL；
 5. 提供彼此独立的后续选项：用 `cfkanban` 创建第一条 Issue、创建显式 role Invite，或配置 Public Join 与全部三项 quotas。
 
 名称不是唯一标识；通过授权读取确定既有容器，重名时先消歧，不猜测 UUID。不静默创建默认 Project、Label、Grant、Issue、Invite 或 Public Join policy。Project 创建失败不回滚已创建的 Workspace。
@@ -152,9 +152,24 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 解析后以私有 current Credential 请求 `GET /api/v1/me`。凭据失效则停止 launch 并转入恢复。已验证 Owner 未指定更窄 target 时，经 `cfkanban-admin` 打开 admin Overview。参与者缺少明确 Project/Issue 时只读列出授权 Projects，唯一时进入该 Project，否则询问；这决定初始页面。支持新合同的 Service 将新兑换的非 Owner launch 签发为 `project_selection`，只允许当前实时授权项目；既有固定 scope Session 和 Owner Project/Issue Session 不扩大。不可从本地 Skill 版本推断线上已支持。已有浏览器 Session 只有核对 Principal 与 target scope 后才能复用。完成标准是进入准确的已认证页面，不是仅打开 tab 或完成 relay 跳转。
 
+
+### 无秘密交付预检与失败恢复
+
+以下流程同样适用于 Issue、Project 看板、Owner 管理页及加入/首次建板/恢复后的页面打开；不是仅针对 Issue 的例外。只有用户请求打开时才执行，邀请创建仍走剪贴板交付，不能为检查邀请而自动打开一次性链接。
+
+对未经验证的浏览器交付路径，创建票据前运行 `node scripts/cfkanban-tool.mjs web preflight`，stdin 为 `{"delivery":"host_browser"}` 或 `{"delivery":"system_browser"}`。它只启动最长 60 秒的 loopback 测试服务，不读取凭据、不访问实例、不创建票据，也不重定向。复用同一任务内未变化的成功预检，不为每次打开重复测试。
+
+`host_browser` 输出 `browser_probe_ready` 和标为 `non_sensitive_connectivity_probe` 的 `/probe` 地址。让指定浏览器访问并核对成功页面，再收取结果。只有这个无秘密地址可以交给用户手动粘贴来做对照；正式 `browser_relay_ready` 的一次性入口仍不得复述。预检 `reachable=true` 只证明有符合中转校验的请求到达，不能证明浏览器身份、页面可见或已登录；必须核对实际浏览器和页面。不要用 curl/fetch 的成功冒充浏览器预检。
+
+- 指定浏览器恰好是经过核验的系统默认浏览器时，可选择 `system_browser`，不必强制经过自动化导航。默认未知或不匹配时不能静默换浏览器；IAB 不能用系统浏览器代替。
+- 自动化报 `ERR_BLOCKED_BY_CLIENT` 时停止生成票据。若宿主允许，可用无秘密测试页做用户手动导航对照；不得绕过工具明确的安全拒绝。`rejected_cross_site=true` 只说明观察到过被拒绝的跨站请求，不能断言它就是顶层导航，也不能据此移除中转的 Origin/Host/Fetch Metadata 检查。
+- opener 存在不等于可执行。`DELIVERY_HELPER_FAILED` 或 `DELIVERY_HELPER_UNAVAILABLE` 先在同一执行环境跑无秘密 `system_browser` 预检。若证据指向沙箱限制，按宿主审批机制申请准确操作并重新预检；不自动提权、不关闭安全保护、不把所有 helper 失败都归因于沙箱或 LaunchServices。
+- `reachable=false` 表示预检未通过，即使 CLI 外层 `ok=true` 也不能创建票据。`BROWSER_DELIVERY_FAILED_AFTER_COMMIT` 表示票据已经创建；`details.channel` 与白名单 `details.cause_code` 用于定位交付阶段。保留安全 metadata，先解决交付并重新预检，再按恢复合同创建新票据；未知提交结果仍复用原幂等键核实，不循环创建。
+- `delivered=true` 只证明本机中转已交付，最终必须看到准确 target 和登录身份。正常身份已被 `/me` 验证时，不因浏览器交付失败清理凭据或创建新身份。
+
 ### 交付到 IAB 或其他宿主控制的浏览器
 
-用户指定 IAB 或宿主可控制的浏览器时，先确认浏览器工具能够访问当前进程的 loopback，再使用 `delivery=host_browser`。以短 shell yield 启动 CLI，保留运行进程；CLI 先流式输出包含 `local_url` 的 `browser_relay_ready` event，等待浏览器 GET 后再输出最终结果。立即用指定浏览器的导航工具打开准确的本地 URL。不要先用 fetch、curl、预览或其他浏览器探测：GET 会消费本地交付能力。导航后收取仍在运行的 CLI 最终结果。
+使用 IAB 或宿主导航（而非经过核验的同名系统默认浏览器）时，先确认浏览器工具能够访问当前进程的 loopback，再使用 `delivery=host_browser`。以短 shell yield 启动 CLI，保留运行进程；CLI 先流式输出包含 `local_url` 的 `browser_relay_ready` event，等待浏览器 GET 后再输出最终结果。立即用指定浏览器的导航工具打开准确的本地 URL。不要先用 fetch、curl、预览或其他浏览器探测：GET 会消费本地交付能力。导航后收取仍在运行的 CLI 最终结果。
 
 随机路径的 loopback 入口只能使用一次，60 秒失效。它是短暂进入宿主工具上下文的敏感本地 capability，不在回复中复述，也不写文件、日志、receipt 或报告；远端 ticket URL/code 始终只在进程内存，不打印。远端票据仍为 5 分钟，兑换后 Session 仍为 8 小时，本地 60 秒不改变这些时效。若指定浏览器与进程处于不同宿主/网络空间，或缺少可用导航工具，应在创建票据前停止并解释交付限制，不静默换浏览器。relay 成功仅证明交付，还须检查最终页面；无法验证登录时如实说明。默认 `system_browser` 与显式确认的 `stdout_once` 行为保持不变。
 

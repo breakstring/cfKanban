@@ -35,6 +35,8 @@ Prefix any example with “Use $cfkanban to…” / “请用 $cfkanban …” w
 
 Joining is for people who do not yet have access: “Use $cfkanban to join this Project: <Invite URL>.” / “请用 $cfkanban 加入这个项目：<邀请链接>。” Expect inspection of the exact Project and role, one combined join plan, and verified access after approval. Joining an existing instance needs no personal Cloudflare deployment. Web project switching selects already authorized Projects; explain support according to the deployed Service, not a source-only feature.
 
+When explaining browser access, distinguish API identity from browser-session delivery. Opening a board, Issue, or administration page routes to the operational Skill's browser preflight and authenticated-target verification. A failed browser handoff alone does not mean the user needs a new Credential or identity. Honor the requested browser; explain a concrete supported recovery path without promising that every host can automate it. Cloudflare OAuth belongs to `cfkanban-deploy` and is a separate login, not a cfKanban Browser Launch.
+
 ### Work regularly from one folder / 在固定目录里长期协作
 
 Recommend an optional directory association when the user regularly handles one or more Projects from the same repository or ordinary folder. It helps future Issue lists/searches use the intended Projects without repeatedly naming them. It is unnecessary for a one-off Issue lookup and is not a prerequisite for joining or daily work.

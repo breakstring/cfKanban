@@ -723,14 +723,24 @@ export async function executeCloudflareAuthAction({
   }
   const action = plan.actions[actionIndex];
   const executable = safeAbsolute(plan.wrangler?.executable, "wrangler_executable");
-  const result = await runner(executable, [...action.args], {
-    env: { ...process.env, WRANGLER_WRITE_LOGS: "false" },
-    shell: false,
-    windowsHide: true,
-    stdio: "inherit",
-  });
+  let result;
+  try {
+    result = await runner(executable, [...action.args], {
+      env: { ...process.env, WRANGLER_WRITE_LOGS: "false" },
+      shell: false,
+      windowsHide: true,
+      stdio: "inherit",
+    });
+  } catch (error) {
+    throw toolError("WRANGLER_AUTH_ACTION_FAILED", "Wrangler authentication action could not complete; inspect current auth state before retrying", {
+      actionId,
+      cause_code: ["EACCES", "EPERM", "ENOENT"].includes(error?.code) ? error.code : "AUTH_EXECUTION_FAILED",
+      readback_required: true,
+      recovery: "inspect_auth_before_retry",
+    });
+  }
   if (result.code !== 0) {
-    throw toolError("WRANGLER_AUTH_ACTION_FAILED", "Wrangler authentication action failed; inspect current auth state before retrying", { actionId, exitCode: result.code, signal: result.signal || null });
+    throw toolError("WRANGLER_AUTH_ACTION_FAILED", "Wrangler authentication action failed; inspect current auth state before retrying", { actionId, exitCode: result.code, signal: result.signal || null, readback_required: true, recovery: "inspect_auth_before_retry" });
   }
   return {
     action_completed: true,

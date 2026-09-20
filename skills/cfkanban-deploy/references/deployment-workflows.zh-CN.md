@@ -114,6 +114,18 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 
 不要自动运行 `wrangler auth activate`，也不要创建 Repo 绑定。用户明确选中 named profile 时，cfKanban 后继命令显式携带 `--profile`；否则由 Wrangler 自己解析环境/config 目录上下文。生成的私有 `wrangler.jsonc` 始终固定 `account_id`，因此“使用哪个身份”和“操作哪个账户”保持分离。Cloudflare 登录本身不会创建 Worker、D1、deployment、cfKanban Credential 或 Repo 文件。
 
+### 浏览器交付与 OAuth 恢复
+
+Issue、Project、Owner 管理页及加入/部署/恢复后的应用访问统一使用 daily/Admin 的 Browser Launch 工作流。OAuth consent 使用 Wrangler 自己的 opener、state 校验和 `localhost:8976` callback，或另行计划的 device flow。不能把 Cloudflare OAuth URL 交给 cfKanban 中转、把 OAuth code 放入技能输入，或用 cfKanban Session 证明 Cloudflare 已登录。
+
+本地浏览器环境尚未验证时，在 OAuth 前通过本技能运行 `web preflight`，stdin 为 `{"delivery":"system_browser"}`。这是不认证、不访问远端的无秘密 loopback 探测。检查 `reachable` 并核对实际浏览器页面；成功不证明固定 callback 端口、hostname 解析、OAuth 权限或流程完成。尊重用户指定浏览器；已验证默认浏览器不一致时，在登录前解决选择，不能静默替换。诊断宿主导航时可用 `host_browser` 输出无秘密探测地址，只有这个探测地址可以交给用户手动对照；保持进程运行并收取最终结果。
+
+如果系统 opener 在沙箱外正常、沙箱内失败，按宿主支持的审批机制仅申请必要执行权限，再跑无秘密探测；不得绕过工具策略拒绝。`ERR_BLOCKED_BY_CLIENT` 不能确定具体扩展，也不证明凭据失效。不能自动关闭扩展/安全保护或放宽中转校验。
+
+遇到 `WRANGLER_AUTH_ACTION_FAILED`（包括安全进程原因码 `EACCES`、`EPERM`、`ENOENT`）时，保留原目标，先检查认证状态再重试。失败或超时之前可能已经改变部分 keyring/profile 状态；不能盲目删除 profile、回退 keyring、另建 profile 或重启登录。执行已有 inspect/resolve/account-readback 流程；权限错误只提供排查线索，不能一律推断需要提权。profile、browser/device mode、scopes 或其他计划副作用变化时，重新生成并授权准确计划。远程/WSL/容器的 callback 要按其实际环境核对；本机探测成功不允许跨 OS/网络边界操作。不得仅为浏览器诊断发起真实 OAuth 登录。
+
+打开 consent 页或进程零退出码均不足以证明完成；进入后续步骤前，仍须准确账户和认证读回，以及计划要求的 R2 权限读回。部署或恢复后的 cfKanban 页面打开是独立应用流程，也要核对最终登录 target。
+
 ## 命令对照
 
 | 阶段 | 命令 | 结果 |
