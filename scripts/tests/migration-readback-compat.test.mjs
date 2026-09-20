@@ -3,7 +3,8 @@ import test from "node:test";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { executeWranglerAction } from "../../packages/skill-runtime/src/deploy.mjs";
+import { DatabaseSync } from "node:sqlite";
+import { executeWranglerAction, parseMigrationReadbackOutput } from "../../packages/skill-runtime/src/deploy.mjs";
 import { createJournal, authorizeJournal, appendJournalEvent, assertJournalAuthorization } from "../../packages/skill-runtime/src/journal.mjs";
 import { canonicalDigest, sha256Bytes } from "../../packages/skill-runtime/src/utils.mjs";
 const oldSql = "SELECT\n  sequence,\n  name,\n  sha256,\n  classification,\n  reentry,\n  operation_id,\n  applied_at\nFROM cfkanban_migration_ledger\nORDER BY sequence;\n\nSELECT\n  type,\n  name\nFROM sqlite_master\nWHERE type IN ('table', 'index')\n  AND name NOT LIKE 'sqlite_%'\nUNION ALL\nSELECT 'column' AS type, 'workspaces.' || name AS name FROM pragma_table_info('workspaces')\nUNION ALL\nSELECT 'column' AS type, 'projects.' || name AS name FROM pragma_table_info('projects')\nUNION ALL\nSELECT 'column' AS type, 'public_join_policies.' || name AS name FROM pragma_table_info('public_join_policies')\nORDER BY type, name;\n\nSELECT COUNT(*) AS row_count, MAX(schema_version) AS schema_version\nFROM instance_meta;\n";
@@ -61,4 +62,34 @@ test("another service artifact cannot use the alpha57 compatibility exception", 
   const result = await f.execute();
   assert.equal(result.migration_readback_source.compatibility_fix, null);
   assert.equal(f.getSql(), oldSql);
+});
+
+test("current readback stays within D1 compound SELECT limits and includes all migration evidence", async () => {
+  const sql = await readFile(new URL("../../release/deployment/migration-readback.sql", import.meta.url), "utf8");
+  const statements = sql.split(";").map((statement) => statement.trim()).filter(Boolean);
+  for (const statement of statements) {
+    // 真实 D1 在第六个复合 SELECT 项返回 SQLITE_ERROR，普通本地 SQLite 不会复现此限制。
+    const compounds = statement.match(/\b(?:UNION(?:\s+ALL)?|INTERSECT|EXCEPT)\b/giu) || [];
+    assert.ok(compounds.length < 5, "D1 accepts at most five terms in a compound SELECT");
+  }
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec(await readFile(new URL("../../release/deployment/migration-ledger.sql", import.meta.url), "utf8"));
+    database.exec("CREATE TABLE instance_meta (schema_version INTEGER); INSERT INTO instance_meta VALUES (7)");
+    for (const name of ["workspaces", "projects", "public_join_policies", "attachment_storage", "principals"]) {
+      database.exec(`CREATE TABLE ${name} (id TEXT)`);
+    }
+    const readback = () => parseMigrationReadbackOutput(JSON.stringify(statements.map((statement) => ({ success: true, results: database.prepare(statement).all() }))));
+    const before = readback();
+    for (const name of ["workspaces", "projects", "public_join_policies", "attachment_storage", "principals"]) {
+      assert.ok(before.schema.columns.includes(`${name}.id`));
+    }
+    assert.ok(!before.schema.columns.includes("principals.display_name_key"));
+    database.exec("ALTER TABLE principals ADD COLUMN display_name_key TEXT; CREATE UNIQUE INDEX idx_principals_display_name_key ON principals(display_name_key); CREATE TRIGGER principal_name_key_insert BEFORE INSERT ON principals BEGIN SELECT RAISE(ABORT, 'guard'); END; UPDATE instance_meta SET schema_version = 8");
+    const after = readback();
+    assert.ok(after.schema.columns.includes("principals.display_name_key"));
+    assert.ok(after.schema.indexes.includes("idx_principals_display_name_key"));
+    assert.ok(after.schema.triggers.includes("principal_name_key_insert"));
+    assert.equal(after.schema.data.instance_meta.schema_version, 8);
+  } finally { database.close(); }
 });
