@@ -6,6 +6,7 @@ import ContainerIcon from "../components/ContainerIcon.vue";
 import CopyForAgentButton from "../components/CopyForAgentButton.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
+import InvitationRows from "../components/InvitationRows.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import UsagePanel from "../components/UsagePanel.vue";
@@ -55,7 +56,7 @@ import type {
   WriteResult,
 } from "../types";
 
-type OwnerSection = "overview" | "workspaces" | "access" | "audit" | "archive";
+type OwnerSection = "overview" | "workspaces" | "access" | "invitations" | "audit" | "archive";
 
 const props = defineProps<{ section: OwnerSection; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
@@ -137,7 +138,16 @@ const principalsNextCursor = ref<string | null>(null);
 const principalsLoadingMore = ref(false);
 const principalQuery = ref("");
 const principalProjectId = ref("");
+// Complete safety review and ordinary history must never share pagination state.
 const invitations = ref<InvitationResource[]>([]);
+const showInvitationReview = ref(false);
+const invitationHistory = ref<InvitationResource[]>([]);
+const invitationHistoryPage = ref(0);
+const invitationHistoryCursors = ref<(string | null)[]>([null]);
+const invitationHistoryNextCursor = ref<string | null>(null);
+const invitationHistoryLoading = ref(false);
+const invitationHistoryLoaded = ref(false);
+let invitationHistoryRequestId = 0;
 const audit = ref<EventResource[]>([]);
 const auditNextCursor = ref<string | null>(null);
 const auditLoadingMore = ref(false);
@@ -212,16 +222,6 @@ function roleLabel(role: string): string {
   if (role === "writer") return "协作者";
   if (role === "reader") return "只读者";
   return role;
-}
-
-function invitationKindLabel(kind: string): string {
-  if (locale.value !== "zh-CN") return kind;
-  return kind === "project_grant" ? "项目授权邀请" : kind === "principal_recovery" ? "身份恢复邀请" : kind;
-}
-
-function invitationStatusLabel(status: string): string {
-  if (locale.value !== "zh-CN") return status;
-  return ({ active: "有效", expired: "已过期", redeemed: "已兑换", revoked: "已撤销" } as Record<string, string>)[status] ?? status;
 }
 
 function rateScopeLabel(scope: string): string {
@@ -325,7 +325,11 @@ async function loadPrincipals(reset = true): Promise<void> {
 }
 
 function openInviteDialog(): void {
-  if (inviteNeedsReview.value) return;
+  if (inviteNeedsReview.value) {
+    showInvitationReview.value = true;
+    if (!inviteReviewReady.value) void refreshInvitationReview();
+    return;
+  }
   oneTimeInvite.value = "";
   showInvite.value = true;
 }
@@ -361,7 +365,9 @@ const tabs = computed(() => [
   { key: "archive" as const, label: t("admin.archive") },
 ]);
 
-const sectionTitle = computed(() => tabs.value.find((tab) => tab.key === props.section)?.label ?? t("admin.overview"));
+const sectionTitle = computed(() => props.section === "invitations"
+  ? ui("Invitation history", "邀请历史")
+  : tabs.value.find((tab) => tab.key === props.section)?.label ?? t("admin.overview"));
 function openCreateProject(workspaceId = ""): void {
   selectedWorkspace.value = workspaceId;
   showProject.value = true;
@@ -403,6 +409,41 @@ async function loadWorkspaceTree(includeDeleted = props.section === "archive"): 
   projects.value = groups.flatMap((group) => group.active);
   deletedProjects.value = groups.flatMap((group) => group.deleted);
   treeTruncated.value = result.has_more || deletedResult.has_more || groups.some((group) => group.truncated);
+}
+
+async function loadInvitationHistory(page = 0, propagateError = false): Promise<void> {
+  const cursor = page === invitationHistoryPage.value + 1
+    ? invitationHistoryNextCursor.value
+    : invitationHistoryCursors.value[page];
+  if (page < 0 || (page > 0 && !cursor)) return;
+  const requestId = ++invitationHistoryRequestId;
+  invitationHistoryLoading.value = true;
+  clearError();
+  try {
+    const params = new URLSearchParams({ limit: "20" });
+    if (page > 0 && cursor) params.set("cursor", cursor);
+    const result = await apiRequest<ListResult<InvitationResource>>(`/api/v1/admin/invitations?${params}`);
+    if (requestId !== invitationHistoryRequestId) return;
+    const nextCursor = continuationCursor(result);
+    invitationHistory.value = result.items;
+    invitationHistoryPage.value = page;
+    invitationHistoryCursors.value = page === 0 ? [null] : invitationHistoryCursors.value.slice(0, page);
+    invitationHistoryCursors.value[page] = page === 0 ? null : cursor ?? null;
+    invitationHistoryNextCursor.value = nextCursor;
+    invitationHistoryLoaded.value = true;
+  } catch (caught) {
+    if (requestId !== invitationHistoryRequestId) return;
+    handleCursorError(caught, () => {
+      invitationHistory.value = [];
+      invitationHistoryPage.value = 0;
+      invitationHistoryCursors.value = [null];
+      invitationHistoryNextCursor.value = null;
+      invitationHistoryLoaded.value = false;
+    });
+    if (propagateError) throw caught;
+  } finally {
+    if (requestId === invitationHistoryRequestId) invitationHistoryLoading.value = false;
+  }
 }
 
 function invalidateInvitationReview(): void {
@@ -455,6 +496,7 @@ async function readInvitationsForReview(reset = true): Promise<void> {
 
 function lockInvitationCreation(message: LocalizedText): void {
   inviteNeedsReview.value = true;
+  showInvitationReview.value = true;
   invalidateInvitationReview();
   setInviteRecoveryNotice(message);
 }
@@ -800,10 +842,9 @@ async function load(): Promise<void> {
       await loadWorkspaceTree(props.section === "archive");
     } else if (props.section === "access") {
       await loadWorkspaceTree(false);
-      await Promise.all([
-        loadPrincipals(true),
-        readInvitationsForReview(),
-      ]);
+      await loadPrincipals(true);
+    } else if (props.section === "invitations") {
+      await loadInvitationHistory();
     } else {
       await Promise.all([loadWorkspaceTree(false), loadAudit(true)]);
     }
@@ -1398,15 +1439,21 @@ async function createInvite(): Promise<void> {
   } finally { busy.value = false; }
 }
 
+async function refreshInvitationsAfterRevoke(): Promise<void> {
+  invalidateInvitationReview();
+  if (props.section === "invitations") await loadInvitationHistory(0, true);
+  else if (showInvitationReview.value) await readInvitationsForReview(true);
+}
+
 async function revokeInvite(invitation: InvitationResource): Promise<void> {
   const fenceKey = `invite-revoke:${invitation.id}`;
   if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
   try {
     await apiRequest(`/api/v1/admin/invitations/${invitation.id}?expected_version=${invitation.version}`, { method: "DELETE" });
-    await load();
+    await refreshInvitationsAfterRevoke();
   } catch (caught) {
-    if (!await recoverCasConflict(caught, localizedText(`Invitation ${invitation.id}`, `邀请 ${invitation.id}`), { action: "revoke" }, () => readInvitationsForReview(true))) {
+    if (!await recoverCasConflict(caught, localizedText(`Invitation ${invitation.id}`, `邀请 ${invitation.id}`), { action: "revoke" }, refreshInvitationsAfterRevoke)) {
       setError(caught);
     }
   } finally { writeFence.leave(fenceKey); busy.value = false; }
@@ -1539,6 +1586,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   ownerViewMounted = false;
+  invitationHistoryRequestId += 1;
   window.removeEventListener("storage", onInvitationRecoveryStorage);
 });
 </script>
@@ -1547,7 +1595,7 @@ onUnmounted(() => {
   <main class="owner-page page-shell">
     <header class="owner-heading">
       <div><p class="eyebrow">{{ ui("Administration", "管理中心") }}</p><h1>{{ sectionTitle }}</h1></div>
-      <nav class="owner-tabs" :aria-label="ui('Owner sections', '所有者分区')"><button v-for="tab in tabs" :key="tab.key" type="button" :class="{ active: section === tab.key }" :aria-current="section === tab.key ? 'page' : undefined" @click="navigate(sectionPath(tab.key))">{{ tab.label }}</button></nav>
+      <nav class="owner-tabs" :aria-label="ui('Owner sections', '所有者分区')"><button v-for="tab in tabs" :key="tab.key" type="button" :class="{ active: section === tab.key || (section === 'invitations' && tab.key === 'access') }" :aria-current="section === tab.key ? 'page' : undefined" @click="navigate(sectionPath(tab.key))">{{ tab.label }}</button></nav>
     </header>
     <ErrorNotice v-if="error" :error="error" />
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
@@ -1633,10 +1681,10 @@ onUnmounted(() => {
     </template>
 
     <template v-if="!loading && section === 'access'">
-      <div class="section-action-bar"><p>{{ locale === "zh-CN" ? "邀请成员加入项目，或查看和调整现有成员的权限。" : "Invite members to a project or review and change their access." }}</p><button class="primary-button" type="button" :disabled="busy || inviteNeedsReview" @click="openInviteDialog">+ {{ ui("Invite", "邀请") }}</button></div>
-      <div v-if="inviteNeedsReview" class="warning-panel">
+      <div class="section-action-bar"><p>{{ locale === "zh-CN" ? "邀请成员加入项目，或查看和调整现有成员的权限。" : "Invite members to a project or review and change their access." }}</p><div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="navigate(sectionPath('invitations'))">{{ ui("Invitation history", "邀请历史") }}</button><button class="primary-button" type="button" :disabled="busy" @click="openInviteDialog">+ {{ ui("Invite", "邀请") }}</button></div></div>
+      <div v-if="showInvitationReview && inviteNeedsReview" class="warning-panel">
         <p><strong>{{ ui("Check existing invitations before creating another", "创建新邀请前，请先检查已有邀请") }}</strong></p>
-        <p>{{ ui("Check the invitation list below for invitations you still need. This avoids creating duplicate links. If an earlier creation was interrupted, finish recovering that invitation first.", "请检查下方列表中是否已有需要使用的邀请，避免重复创建链接。如果上次创建中途断开，请先处理那次邀请。") }}</p>
+        <p>{{ ui("Review every page below before creating a new invitation. Browsing Invitation history does not complete this check. If an earlier creation was interrupted, recover that operation first.", "创建新邀请前，请检查下方全部复核页。浏览邀请历史不会完成这项检查。如果上次创建中途断开，请先处理那次邀请。") }}</p>
         <p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p>
         <textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" />
         <p v-if="invitationRecoveryRecord && invitationRecoveryCanRetry(invitationRecoveryRecord)" class="muted-copy">{{ ui("The original operation is still inside its safe replay window. Changing Project, role, recovery mode, tab, or page cannot start a new capability.", "原操作仍处于安全重放窗口内。更改项目、角色、恢复模式、标签页或页面，都不能开始新的一次性权限。") }}</p>
@@ -1650,11 +1698,31 @@ onUnmounted(() => {
           <button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved it · Done", "我已保存，完成") }}</button>
           <button class="primary-button" type="button" :disabled="busy || !invitationCoordinationReady || !canConfirmInvitationReview(inviteReviewReady, invitationsHasMore, invitationRecoveryRecord, inviteReviewStartedAt, Date.now(), committedInvitationResolved())" @click="confirmInvitationReview">{{ ui("I reviewed the complete list", "我已检查完整列表") }}</button>
         </div>
+        <InvitationRows v-if="inviteReviewReady || invitations.length" :items="invitations" :busy="busy" @revoke="revokeInvite" />
       </div>
       <p v-if="treeTruncated" class="warning-panel">{{ ui("Project access controls are limited to the first 20 Workspaces and first 20 Projects in each. Use cfkanban-admin with an explicit cursor for omitted Projects.", "项目访问管理只显示前 20 个工作区，以及每个工作区的前 20 个项目；未显示的项目请让 cfkanban-admin 使用明确的分页位置。") }}</p>
       <section class="owner-section"><div class="section-heading-row"><div><h2>{{ ui("Members", "成员") }}</h2><p>{{ ui("Search by exact stable ID or name text, optionally restricted to one visible Project.", "按名称查找成员，或选择项目查看其成员。重名时可使用成员 ID 区分。") }}</p></div></div><form class="principal-search" role="search" @submit.prevent="loadPrincipals(true)"><input v-model="principalQuery" type="search" :aria-label="ui('Find a member', '查找成员')" :placeholder="ui('Member name or ID', '成员名称或 ID')" /><select v-model="principalProjectId" :aria-label="ui('Filter members by project', '按项目筛选成员')"><option value="">{{ ui("Every visible Project", "全部可见项目") }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select><button class="secondary-button" type="submit" :disabled="principalsLoadingMore">{{ ui("Search", "查找") }}</button></form><div class="data-list"><button v-for="principal in principals" :key="principal.id" class="data-row data-row-button" type="button" @click="openPrincipal(principal)"><span><strong>{{ principal.display_name }}</strong><code>{{ principal.id }}</code></span><span>{{ principal.is_owner ? ui('Owner', '所有者') : ui('Participant', '参与者') }}</span><span v-if="principal.is_owner">{{ ui("Access to all projects", "可管理全部项目") }}</span><span v-else>{{ principal.active_grant_count ?? 0 }} {{ ui("project permissions", "项项目权限") }}</span></button><p v-if="principals.length === 0" class="empty-copy">{{ ui("No matching Principals", "没有匹配的身份") }}</p></div><p v-if="principalsHasMore" class="warning-panel">{{ ui("More Principals match this exact query scope. Continue with the bound cursor; changing the query or Project starts a fresh search.", "此准确查询范围还有更多身份。请使用绑定的分页位置继续；修改查询或项目会开始一次新查找。") }}</p><button v-if="principalsNextCursor" class="load-more" type="button" :disabled="principalsLoadingMore" @click="loadPrincipals(false)">{{ principalsLoadingMore ? "…" : ui("Load more Principals", "加载更多身份") }}</button></section>
       <section class="owner-section"><h2>{{ ui("Project access", "项目成员权限") }}</h2><div class="data-list"><button v-for="item in projects" :key="item.id" class="data-row data-row-button" type="button" :title="projectChoiceLabels.get(item.id)?.title" @click="openProjectGrants(item)"><span><strong>{{ projectChoiceLabels.get(item.id)?.label }}</strong></span><span>{{ ui("Manage members", "管理成员") }}</span></button></div></section>
-      <section class="owner-section"><h2>{{ ui("Invitations", "邀请") }}</h2><div class="data-list"><div v-for="invitation in invitations" :key="invitation.id" class="data-row"><span><strong>{{ invitationKindLabel(invitation.kind) }}</strong><code>{{ invitation.code_fingerprint }}</code><small>{{ ui("Created", "创建于") }} {{ formatTime(invitation.created_at) }}</small></span><span><template v-if="invitation.kind === 'project_grant'">{{ invitation.grants.map((grant) => `${grant.workspace_display_name}/${grant.display_name}:${roleLabel(grant.role)}`).join(" · ") }}</template><template v-else>{{ invitation.bound_principal?.display_name ?? invitation.bound_principal?.principal_id }} · {{ invitation.recovery_mode }}</template><small>{{ invitationStatusLabel(invitation.status) }} · {{ ui("expires", "到期") }} {{ formatTime(invitation.expires_at) }}</small></span><button v-if="invitation.allowed_actions.includes('revoke')" class="danger-text-button" type="button" @click="revokeInvite(invitation)">{{ ui("Revoke", "撤销") }}</button></div></div></section>
+
+    </template>
+
+    <template v-if="!loading && section === 'invitations'">
+      <div class="section-action-bar">
+        <p>{{ ui("Review invitation status and revoke unused links. Each page shows up to 20 invitations.", "查看邀请状态、撤销不再使用的链接，每页最多显示 20 条。") }}</p>
+        <div class="form-actions">
+          <button class="text-button" type="button" :disabled="busy" @click="navigate(sectionPath('access'))">← {{ ui("Back to members", "返回成员管理") }}</button>
+          <button class="secondary-button" type="button" :disabled="busy || invitationHistoryLoading" @click="loadInvitationHistory()">{{ ui("Refresh", "刷新") }}</button>
+        </div>
+      </div>
+      <section class="owner-section" :aria-busy="invitationHistoryLoading">
+        <PageState :loading="invitationHistoryLoading" />
+        <InvitationRows v-if="!invitationHistoryLoading && invitationHistoryLoaded" :items="invitationHistory" :busy="busy" @revoke="revokeInvite" />
+        <nav class="form-actions" :aria-label="ui('Invitation history pages', '邀请历史分页')">
+          <button class="secondary-button" type="button" :disabled="busy || invitationHistoryLoading || invitationHistoryPage === 0" @click="loadInvitationHistory(invitationHistoryPage - 1)">{{ ui("Previous", "上一页") }}</button>
+          <span aria-live="polite">{{ ui("Page", "第") }} {{ invitationHistoryPage + 1 }} {{ locale === 'zh-CN' ? '页' : '' }}</span>
+          <button class="secondary-button" type="button" :disabled="busy || invitationHistoryLoading || !invitationHistoryNextCursor" @click="loadInvitationHistory(invitationHistoryPage + 1)">{{ ui("Next", "下一页") }}</button>
+        </nav>
+      </section>
     </template>
 
     <template v-if="!loading && section === 'audit'">
@@ -1781,7 +1849,10 @@ onUnmounted(() => {
         <label>{{ ui('Recovery mode', '恢复模式') }}<select v-model="recoveryForm.mode"><option value="rotation">rotation · {{ ui('revoke the credential used to redeem', '仅撤销本次兑换所用旧凭据') }}</option><option value="full_recovery">full_recovery · {{ ui('revoke all prior credentials', '撤销此前全部凭据') }}</option></select></label>
         <p>{{ recoveryForm.mode === 'rotation' ? ui('Rotation preserves every other existing Credential and Passkey.', '轮换会保留其他既有凭据与通行密钥。') : ui('Full recovery revokes all prior Credentials; existing Grants, assignments, history, and Passkeys remain tied to this Principal.', '完全恢复会撤销此前全部凭据；既有授权、指派、历史和通行密钥仍绑定此身份。') }}</p>
         <label class="confirmation-check"><input v-model="recoveryConfirmed" type="checkbox" />{{ ui('I verified the immutable Principal ID and understand the complete inheritance and revocation scope.', '我已核对不可变身份 ID，并理解完整继承范围与撤销范围。') }}</label>
-        <p v-if="inviteNeedsReview" class="inline-alert" role="alert">{{ inviteRecoveryNotice || ui('Close this dialog and complete the Invitation safety review first.', '请先关闭此弹窗并完成邀请安全复核。') }}</p>
+        <template v-if="inviteNeedsReview">
+          <p class="inline-alert" role="alert">{{ inviteRecoveryNotice || ui('Complete the Invitation safety review first.', '请先完成邀请安全复核。') }}</p>
+          <button class="secondary-button" type="button" :disabled="busy" @click="showPrincipal = false; openInviteDialog()">{{ ui('Review invitations', '检查已有邀请') }}</button>
+        </template>
         <button class="primary-button" type="submit" :disabled="busy || !recoveryConfirmed || inviteNeedsReview">{{ ui('Create one-time recovery URL', '创建一次性恢复网址') }}</button>
         <textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" />
         <CopyForAgentButton v-if="oneTimeInvite" :text="oneTimeInvite" />

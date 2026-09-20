@@ -51,10 +51,9 @@ const loading = ref(true);
 const loadingMore = ref(false);
 const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
 const search = ref("");
+const blockedFilter = ref<"" | "only" | "exclude">("");
 const saving = ref(new Set<string>());
 const dragged = ref<IssueSummary | null>(null);
-const completionIssue = ref<IssueSummary | null>(null);
-const completionSummary = ref("");
 const showNewIssue = ref(false);
 const showDeleted = ref(false);
 const formBusy = ref(false);
@@ -103,7 +102,6 @@ function clearProjectProjection(): void {
   nextCursor.value = null;
   loading.value = false;
   loadingMore.value = false;
-  completionIssue.value = null;
   showDeleted.value = false;
   showNewIssue.value = false;
   setLocalizedError(
@@ -135,6 +133,7 @@ function refreshProjectInventory(): void {
 function query(cursor?: string): string {
   const params = new URLSearchParams({ limit: "100" });
   if (search.value.trim()) params.set("q", search.value.trim());
+  if (blockedFilter.value) params.set("blocked", blockedFilter.value);
   if (cursor) params.set("cursor", cursor);
   return `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues?${params}`;
 }
@@ -232,7 +231,7 @@ async function refreshCasFacts(): Promise<void> {
   }
 }
 
-async function saveStatus(issue: IssueSummary, status: StatusKey, summary?: string): Promise<void> {
+async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void> {
   const fenceKey = `issue-status:${issue.id}`;
   if (!canWrite.value || issue.status.key === status || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
   saving.value = new Set(saving.value).add(issue.id);
@@ -240,21 +239,18 @@ async function saveStatus(issue: IssueSummary, status: StatusKey, summary?: stri
   const generation = projectionGeneration.capture();
   try {
     const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}${status === "done" ? "/commands/complete" : ""}`, {
-      body: status === "done" ? { expected_version: issue.version, ...(summary === undefined ? {} : { summary }) } : { expected_version: issue.version, status_key: status },
+      body: status === "done" ? { expected_version: issue.version } : { expected_version: issue.version, status_key: status },
       method: status === "done" ? "POST" : "PATCH",
     });
     if (projectionIsCurrent(generation)) {
       dismissCasConflict();
-      issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item);
-      if (status === "done" && completionIssue.value?.id === issue.id) completionIssue.value = null;
+      issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item)
+        .filter(item => blockedFilter.value === "only" ? item.is_blocked : blockedFilter.value === "exclude" ? !item.is_blocked : true);
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} status`, `${issue.identifier} 状态`), { status_key: status, ...(summary === undefined ? {} : { summary }) }, async () => {
+    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} status`, `${issue.identifier} 状态`), { status_key: status }, async () => {
       await load(true, true);
-      if (status !== "done" || completionIssue.value?.id !== issue.id) return;
-      const current = await apiRequest<IssueSummary>(`/api/v1/issues/${issue.identifier}`);
-      if (projectionIsCurrent(generation)) completionIssue.value = current.status.key === "done" ? null : current;
     })) {
       setError(caught);
     }
@@ -271,23 +267,6 @@ function onStatusSelection(issue: IssueSummary, event: Event): void {
   const status = select.value as StatusKey;
   if (status === "done") select.value = issue.status.key;
   void saveStatus(issue, status);
-}
-
-function openCompletion(issue: IssueSummary): void {
-  if (!canWrite.value || saving.value.has(issue.id) || issue.status.key === "done") return;
-  completionIssue.value = issue;
-  completionSummary.value = "";
-}
-
-async function completeIssue(): Promise<void> {
-  const issue = completionIssue.value;
-  if (issue === null || formBusy.value) return;
-  formBusy.value = true;
-  try {
-    await saveStatus(issue, "done", completionSummary.value.trim());
-  } finally {
-    formBusy.value = false;
-  }
 }
 
 async function createIssue(): Promise<void> {
@@ -437,6 +416,11 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           <input v-model="search" type="search" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'" />
           <button class="text-button board-search-submit" type="submit">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</button>
         </form>
+        <label class="board-blocked-filter"><span>{{ locale === 'zh-CN' ? '阻塞' : 'Blockers' }}</span><select v-model="blockedFilter" :aria-label="locale === 'zh-CN' ? '阻塞' : 'Blockers'" :disabled="loading || loadingMore" @change="load()">
+          <option value="">{{ locale === 'zh-CN' ? '全部事项' : 'All issues' }}</option>
+          <option value="only">{{ locale === 'zh-CN' ? '仅阻塞' : 'Blocked only' }}</option>
+          <option value="exclude">{{ locale === 'zh-CN' ? '排除阻塞' : 'Exclude blocked' }}</option>
+        </select></label>
         <button v-if="canWrite" class="text-button muted" type="button" @click="loadDeleted(true)">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
       </div>
     </header>
@@ -511,7 +495,6 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
                 </option>
               </select>
               </div>
-              <button v-if="canWrite && issue.status.key !== 'done'" class="text-button" type="button" :disabled="saving.has(issue.id)" @click.stop="openCompletion(issue)">{{ t("complete.withNote") }}</button>
             </article>
             <p v-if="issuesFor(statusKey).length === 0" class="column-empty">{{ t("board.empty") }}</p>
           </div>
@@ -532,14 +515,6 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           <label>{{ t("issue.priority") }}<select v-model="newIssue.priority_key"><option v-for="key in ['none','low','medium','high','urgent']" :key="key" :value="key">{{ priorityLabel(key as PriorityKey) }}</option></select></label>
         </div>
         <div class="form-actions"><button class="secondary-button" type="button" @click="showNewIssue = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="formBusy">{{ t("action.save") }}</button></div>
-      </form>
-    </ModalDialog>
-
-    <ModalDialog v-if="completionIssue" :busy="formBusy" :title="t('complete.title')" @close="completionIssue = null">
-      <form class="form-stack" @submit.prevent="completeIssue">
-        <p><code>{{ completionIssue.identifier }}</code> · {{ completionIssue.title }}</p>
-        <label>{{ t("complete.summary") }}<textarea v-model="completionSummary" rows="6" maxlength="8192" /></label>
-        <div class="form-actions"><button class="secondary-button" type="button" @click="completionIssue = null">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="formBusy">{{ t("complete.title") }}</button></div>
       </form>
     </ModalDialog>
 

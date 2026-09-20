@@ -23,9 +23,9 @@ Owner bootstrap、普通 Invite 新身份、Public Join 新身份、`PATCH /api/
 
 ## Agent 名称解析
 
-新增 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees?display_name=<name>`。参数必填，按相同规范化 key 精确匹配，仅允许当前有权读取目标 Project 的调用者访问，并遵循 Browser Session scope。
+新增 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees?display_name=<name>`。提供 `display_name` 时按相同规范化 key 精确匹配，仅允许当前有权读取目标 Project 的调用者访问，并遵循 Browser Session scope。2026-09-20 用户追加授权：省略该参数时返回当前 Project 的可指派人员分页列表，使用 `limit/cursor`（默认 20，上限 100）与 Principal ID keyset；仅含 `principal_id/display_name`，不返回凭据、授权来源或其他项目资料。候选为 Owner 与 effective writer（含两级管理员），排除纯 reader、已撤权和其他项目人员；读调用者仍须具有当前 Project reader 权限，窄 Session 不扩大。分页后授权再次校验，cursor 绑定调用者、项目和查询模式。
 
-返回 `{items:[{principal_id,display_name}],has_more:false,next_cursor:null}`，items 为零或一项，只包含该项目当前可分配的 Owner/有效 writer；不存在、无资格或无权候选不做区分。Skill 可以在用户已授权的指派任务内直接用唯一匹配的 ID 更新 Issue，不为名字消歧重复确认；零匹配时不模糊猜测。服务端执行指派时仍重新校验资格。
+精确查询返回 `{items:[{principal_id,display_name}],has_more:false,next_cursor:null}`，items 为零或一项，只包含该项目当前可分配的 Owner/有效 writer；不存在、无资格或无权候选不做区分。Skill 可以在用户已授权的指派任务内直接用唯一匹配的 ID 更新 Issue，不为名字消歧重复确认；零匹配时不模糊猜测。服务端执行指派时仍重新校验资格。
 
 ## schema 8 与已有名称
 

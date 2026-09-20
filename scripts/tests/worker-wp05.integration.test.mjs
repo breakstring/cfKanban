@@ -642,6 +642,16 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     method: "POST",
   });
   assert.equal(blocked.body.resource.is_blocked, true);
+  const blockedList = await jsonRequest("/api/v1/issues?blocked=only", { headers: writerHeaders() });
+  assert.equal(blockedList.response.status, 200);
+  assert.deepEqual(blockedList.body.items.map((issue) => issue.identifier), ["CFK-2"]);
+  assert.equal(blockedList.body.resolved_scope.filters.blocked, "only");
+  const unblockedList = await jsonRequest("/api/v1/issues?blocked=exclude&limit=1", { headers: writerHeaders() });
+  assert.equal(unblockedList.response.status, 200);
+  assert.equal(unblockedList.body.items.length, 1);
+  assert.ok(unblockedList.body.items.every((issue) => issue.is_blocked === false));
+  assert.equal((await jsonRequest("/api/v1/issues?blocked=include", { headers: writerHeaders() })).response.status, 400);
+  assert.equal((await jsonRequest("/api/v1/issues?blocked=only&blocked=exclude", { headers: writerHeaders() })).response.status, 400);
   const blockedReplay = await jsonRequest("/api/v1/issues/CFK-2/commands/report-blocked", {
     body: { expected_version: second.body.resource.version, reason: "Waiting for upstream" },
     headers: writerHeaders({ "idempotency-key": "wp05-blocked" }),
@@ -683,6 +693,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   assert.deepEqual(newlyAvailableCandidate.body.items.map((issue) => issue.identifier), ["CFK-2"]);
   const hiddenBlockerProjection = await jsonRequest("/api/v1/issues/CFK-2", { headers: writerHeaders() });
   assert.equal(hiddenBlockerProjection.body.is_blocked, false);
+  assert.deepEqual((await jsonRequest("/api/v1/issues?blocked=only", { headers: writerHeaders() })).body.items, []);
+  assert.ok((await jsonRequest("/api/v1/issues?blocked=exclude", { headers: writerHeaders() })).body.items.some((issue) => issue.identifier === "CFK-2"));
   const crossProjectGrantId = "50000000-0000-4000-8000-000000000016";
   await db.prepare(
     `INSERT INTO project_grants
@@ -697,6 +709,8 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).run();
   const visibleBlockerProjection = await jsonRequest("/api/v1/issues/CFK-2", { headers: writerHeaders() });
   assert.equal(visibleBlockerProjection.body.is_blocked, true);
+  assert.ok((await jsonRequest("/api/v1/issues?blocked=only", { headers: writerHeaders() })).body.items.some((issue) => issue.identifier === "CFK-2"));
+  assert.ok((await jsonRequest("/api/v1/issues?blocked=exclude", { headers: writerHeaders() })).body.items.every((issue) => issue.identifier !== "CFK-2"));
   const visibleBlockerCandidates = await jsonRequest(
     "/api/v1/issues/candidates?assignment=unassigned",
     { headers: writerHeaders() },
@@ -707,6 +721,7 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
   ).bind(Date.now(), ids.ownerPrincipal, crossProjectGrantId).run();
   const revokedBlockerProjection = await jsonRequest("/api/v1/issues/CFK-2", { headers: writerHeaders() });
   assert.equal(revokedBlockerProjection.body.is_blocked, false);
+  assert.deepEqual((await jsonRequest("/api/v1/issues?blocked=only", { headers: writerHeaders() })).body.items, []);
   const revokedBlockerCandidates = await jsonRequest(
     "/api/v1/issues/candidates?assignment=unassigned",
     { headers: writerHeaders() },
@@ -1590,6 +1605,20 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     ).is_blocked,
     true,
   );
+  const blockedProjectPage = await jsonRequest(
+    `/api/v1/workspaces/${fixtureIds["Relation Scope"]}/projects/${fixtureIds["Relation A"]}/issues?blocked=only&limit=1`,
+    { headers: writerHeaders() },
+  );
+  assert.equal(blockedProjectPage.response.status, 200);
+  assert.deepEqual(blockedProjectPage.body.items.map((issue) => issue.identifier), [relationTarget.body.resource.identifier]);
+  assert.equal(blockedProjectPage.body.has_more, false);
+  const unblockedProjectPage = await jsonRequest(
+    `/api/v1/issues?project=${fixtureIds["Relation A"]}&blocked=exclude&limit=1`,
+    { headers: writerHeaders() },
+  );
+  assert.equal(unblockedProjectPage.body.items.length, 1);
+  assert.equal(unblockedProjectPage.body.items[0].is_blocked, false);
+  assert.equal(unblockedProjectPage.body.has_more, false);
   const blockedExplicitCandidate = await jsonRequest(
     `/api/v1/issues/candidates?assignment=unassigned&project=${fixtureIds["Relation A"]}`,
     { headers: writerHeaders() },
@@ -1600,6 +1629,12 @@ test("WP-05 implements the authorization-filtered Issue ledger and atomic comman
     { headers: writerHeaders() },
   );
   assert.equal(relationScopePage.body.has_more, true);
+  const mismatchedBlockedCursor = await jsonRequest(
+    `/api/v1/issues?project=${fixtureIds["Relation A"]}&blocked=only&limit=1&cursor=${encodeURIComponent(relationScopePage.body.next_cursor)}`,
+    { headers: writerHeaders() },
+  );
+  assert.equal(mismatchedBlockedCursor.response.status, 409);
+  assert.equal(mismatchedBlockedCursor.body.code, "CURSOR_SCOPE_MISMATCH");
   const scopedCommandBody = { expected_version: relationTarget.body.resource.version };
   const scopedCommand = await jsonRequest(
     `/api/v1/issues/${relationTarget.body.resource.identifier}/commands/assign-to-me`,

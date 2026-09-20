@@ -2103,9 +2103,30 @@
           {
             "name": "display_name",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "$ref": "#/components/schemas/PrincipalDisplayNameInput"
+            },
+            "description": "Optional normalized exact match returning zero or one candidate; omission lists current Project Owner, administrators and writers. Only principal_id and display_name are exposed; readers are excluded. Requires Project read access and respects Browser Session scope."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
             }
           }
         ],
@@ -2982,6 +3003,19 @@
         ],
         "parameters": [
           {
+            "name": "blocked",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "only",
+                "exclude"
+              ]
+            },
+            "description": "Filter by the caller-visible blocked projection before pagination; omission includes both blocked and unblocked Issues."
+          },
+          {
             "name": "deleted",
             "in": "query",
             "required": false,
@@ -3301,6 +3335,19 @@
             "schema": {
               "$ref": "#/components/schemas/Uuid"
             }
+          },
+          {
+            "name": "blocked",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "only",
+                "exclude"
+              ]
+            },
+            "description": "Filter by the caller-visible blocked projection before pagination; omission includes both blocked and unblocked Issues."
           },
           {
             "name": "deleted",
@@ -10491,14 +10538,21 @@
         "additionalProperties": false,
         "properties": {
           "has_more": {
-            "const": false
+            "type": "boolean"
           },
           "next_cursor": {
-            "type": "null"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "items": {
             "type": "array",
-            "maxItems": 1,
+            "maxItems": 100,
             "items": {
               "type": "object",
               "required": [
@@ -13925,6 +13979,13 @@
                 "items": {
                   "$ref": "#/components/schemas/Uuid"
                 }
+              },
+              "blocked": {
+                "type": "string",
+                "enum": [
+                  "only",
+                  "exclude"
+                ]
               },
               "statuses": {
                 "type": "array",

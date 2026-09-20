@@ -735,3 +735,8 @@ D-215/D-216 已要求对两份 Frozen 上游 SPEC 做合同修订 3；本文相�
 - 实例只保存一个 Owner 推荐的 `preferred_api_origin`；公开 well-known 文档按当前请求动态返回 observed origin 与递增版本。只有 Owner Bearer 能修改设置，服务不做认证重定向；可信旧 origin 发布的更高版本与无 Credential 目标探测共同构成 Agent 自动迁移证据。
 
 这些选择没有增加新角色、权限或产品模块。若后续实现证据证明某项无法在 D1 上可靠实现，应先显式修订本文 Frozen 合同；不得通过引入 Durable Objects、KV 或隐藏批量 API 绕过 Frozen Foundation。
+
+
+### 2026-09-20 普通 Issue 列表阻塞筛选增量
+
+普通部署级/Project Issue 列表增加可选 `blocked=only|exclude`，省略时返回全部；候选 endpoint 的既有 `include|exclude` 语义不变。使用与返回 `is_blocked` 一致的人工 reason 或当前调用者可见的未完成前置 blocks 关系，在 keyset 分页之前过滤；隐藏关系不能通过筛选泄露。cursor 绑定该筛选，换筛选必须从首页开始，响应 `resolved_scope.filters` 回显。此变更不增加状态、不迁移 schema，也不改变 blocked 写入语义。

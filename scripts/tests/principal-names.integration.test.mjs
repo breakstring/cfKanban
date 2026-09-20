@@ -118,7 +118,41 @@ test("Principal names are normalized, unique, atomic, and resolved only inside a
   assert.equal((await request(endpoint(otherId, "Elsewhere"), { headers: bearer(writer.token) })).status, 404);
   assert.equal((await request(endpoint(projectId, writerName), { headers: {} })).status, 401);
   assert.equal((await request(endpoint(projectId, writerName), { headers: bearer(elsewhere.token) })).status, 404);
-  assert.equal((await request(`/api/v1/workspaces/${workspaceId}/projects/${projectId}/assignees`)).status, 400);
+  const listEndpoint = `/api/v1/workspaces/${workspaceId}/projects/${projectId}/assignees`;
+  const admin = await seed("ProjectAdmin", otherId, "reader");
+  const workspaceAdmin = await seed("WorkspaceAdmin", otherId, "reader");
+  for (const [principal, target] of [[admin, projectId], [workspaceAdmin, null], [writer, projectId]]) {
+    const result = await write(target === null
+      ? `/api/v1/workspaces/${workspaceId}/administrators`
+      : `/api/v1/workspaces/${workspaceId}/projects/${target}/administrators`,
+    { principal_id: principal.id, expected_version: 0 });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+  }
+  const expectedIds = [ownerId, writer.id, admin.id, workspaceAdmin.id].sort();
+  const collected = [];
+  let nextCursor = null;
+  let firstCursor;
+  do {
+    const result = await request(`${listEndpoint}?limit=1${nextCursor ? `&cursor=${nextCursor}` : ""}`, { headers: bearer(reader.token) });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.items.length, 1);
+    assert.deepEqual(Object.keys(result.body.items[0]).sort(), ["display_name", "principal_id"]);
+    collected.push(result.body.items[0].principal_id);
+    nextCursor = result.body.next_cursor;
+    firstCursor ??= nextCursor;
+    assert.equal(result.body.has_more, nextCursor !== null);
+  } while (nextCursor);
+  assert.deepEqual(collected, expectedIds);
+  assert.equal((await request(`${listEndpoint}?limit=101`)).status, 400);
+  assert.equal((await request(`${listEndpoint}?cursor=invalid`)).status, 400);
+  assert.equal((await request(`${endpoint(projectId, writerName)}&cursor=${firstCursor}`, { headers: bearer(reader.token) })).status, 409);
+  assert.equal((await request(`${listEndpoint}?cursor=${firstCursor}`)).status, 409);
+  assert.equal((await request(`/api/v1/workspaces/${workspaceId}/projects/${otherId}/assignees?cursor=${firstCursor}`, { headers: bearer(workspaceAdmin.token) })).status, 409);
+  assert.equal((await request(listEndpoint, { headers: bearer(elsewhere.token) })).status, 404);
+  assert.equal((await request(listEndpoint, { headers: {} })).status, 401);
+  await db.prepare("UPDATE project_grants SET revoked_at=?1,revoked_by_principal_id=?3 WHERE id=?2").bind(Date.now(), reader.grantId, ownerId).run();
+  assert.equal((await request(`${listEndpoint}?cursor=${firstCursor}`, { headers: bearer(reader.token) })).status, 404);
+  await db.prepare("UPDATE project_grants SET revoked_at=NULL,revoked_by_principal_id=NULL WHERE id=?1").bind(reader.grantId).run();
   assert.equal((await request(`${endpoint(projectId, writerName)}&display_name=Kenn`)).status, 400);
   const session = "S".repeat(43);
   await db.prepare(`INSERT INTO web_sessions
@@ -130,6 +164,8 @@ test("Principal names are normalized, unique, atomic, and resolved only inside a
   const cookies = { cookie: `cfkanban_session=${session}` };
   assert.equal((await request(endpoint(projectId, writerName), { headers: cookies })).status, 200);
   assert.equal((await request(endpoint(otherId, "Elsewhere"), { headers: cookies })).status, 404);
+  assert.equal((await request(listEndpoint, { headers: cookies })).status, 200);
+  assert.equal((await request(`/api/v1/workspaces/${workspaceId}/projects/${otherId}/assignees`, { headers: cookies })).status, 404);
 
   const invite = await write("/api/v1/admin/invitations", { kind: "project_grant", grants: [{ project_id: projectId, role: "writer" }] });
   assert.equal(invite.status, 200, JSON.stringify(invite.body));

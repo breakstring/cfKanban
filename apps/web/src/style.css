@@ -2393,3 +2393,22 @@ textarea:disabled {
   .profile-button { gap: 5px; margin-left: 0; }
   .profile-button svg { display: none; }
 }
+
+/* Keep Issue properties aligned; secondary blocker guidance stays below the main action. */
+.assignee-control { display: grid; gap: 8px; min-width: 0; }
+.assignee-control select { min-width: 0; }
+.assignee-control small { font-size: 0.78rem; line-height: 1.5; }
+.issue-blocking .blocked-reason { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.issue-blocking .muted-copy { font-size: 0.8rem; line-height: 1.6; }
+.issue-blocking a { font-size: 0.8rem; }
+.board-blocked-filter { display: flex; align-items: center; gap: 8px; color: var(--color-text-muted); font-size: 0.84rem; }
+.board-blocked-filter select { width: auto; min-width: 130px; }
+
+@media (max-width: 779px) {
+  .board-utility-bar { flex-wrap: wrap; }
+  .board-search { width: 100%; }
+  .board-blocked-filter { flex: 1; }
+  .issue-sidebar .section-heading-row.compact { flex-direction: row; align-items: center; gap: 8px; }
+}
+
+.invitation-row > span { display: grid; gap: 5px; overflow-wrap: anywhere; }

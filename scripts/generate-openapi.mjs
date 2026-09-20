@@ -555,8 +555,8 @@ const schemas = {
   ProjectAssigneeResult: {
     type: "object", required: ["items", "has_more", "next_cursor"], additionalProperties: false,
     properties: {
-      has_more: { const: false }, next_cursor: { type: "null" },
-      items: { type: "array", maxItems: 1, items: { type: "object", required: ["principal_id", "display_name"], properties: { principal_id: ref("Uuid"), display_name: string() }, additionalProperties: false } },
+      has_more: { type: "boolean" }, next_cursor: nullableString(),
+      items: { type: "array", maxItems: 100, items: { type: "object", required: ["principal_id", "display_name"], properties: { principal_id: ref("Uuid"), display_name: string() }, additionalProperties: false } },
     },
   },
   UpdateDisplayNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
@@ -1007,6 +1007,7 @@ const schemas = {
         required: ["assignees", "statuses"],
         properties: {
           assignees: { type: "array", maxItems: 20, items: ref("Uuid") },
+          blocked: string({ enum: ["only", "exclude"] }),
           statuses: { type: "array", maxItems: 5, items: ref("StatusKey") },
         },
         additionalProperties: false,
@@ -2087,7 +2088,7 @@ const schemas = {
 };
 
 const querySets = {
-  AssigneeNameQuery: [{ name: "display_name", in: "query", required: true, schema: ref("PrincipalDisplayNameInput") }],
+  AssigneeNameQuery: [{ name: "display_name", in: "query", required: false, schema: ref("PrincipalDisplayNameInput"), description: "Optional normalized exact match returning zero or one candidate; omission lists current Project Owner, administrators and writers. Only principal_id and display_name are exposed; readers are excluded. Requires Project read access and respects Browser Session scope." }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   InviteCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 1 }), description: "一次性 Invite code。" }],
   LaunchCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 59, maxLength: 59, pattern: "^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$" }), description: "一次性 Browser Launch code；GET 不消费该 code。" }],
   EventQuery: [
@@ -2106,7 +2107,7 @@ const querySets = {
   CursorQuery: [{ name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   DeletedModeQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],
   DeletedCursorQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
-  IssueListQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "status", in: "query", required: false, schema: { type: "array", maxItems: 5, items: ref("StatusKey") }, style: "form", explode: true }, { name: "assignee", in: "query", required: false, schema: { type: "array", maxItems: 20, items: ref("Uuid") }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: utf8String(128, { minLength: 1, description: "Normalized title/identifier search." }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
+  IssueListQuery: [{ name: "blocked", in: "query", required: false, schema: string({ enum: ["only", "exclude"] }), description: "Filter by the caller-visible blocked projection before pagination; omission includes both blocked and unblocked Issues." }, { name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "status", in: "query", required: false, schema: { type: "array", maxItems: 5, items: ref("StatusKey") }, style: "form", explode: true }, { name: "assignee", in: "query", required: false, schema: { type: "array", maxItems: 20, items: ref("Uuid") }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: utf8String(128, { minLength: 1, description: "Normalized title/identifier search." }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   IssueDetailQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],
   CandidateListQuery: [{ name: "assignment", in: "query", required: true, schema: string({ enum: ["unassigned", "mine", "needs_reassignment"] }) }, { name: "blocked", in: "query", required: false, schema: string({ enum: ["exclude", "include"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: utf8String(128, { minLength: 1, description: "Normalized title/identifier search." }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   PrincipalListQuery: [{ name: "q", in: "query", required: false, schema: string({ maxLength: 128 }) }, { name: "project_id", in: "query", required: false, schema: ref("Uuid") }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],

@@ -142,6 +142,7 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 - Each column has a practical minimum width of 248px. Narrow viewports use horizontal board scrolling rather than compressing five columns into unreadable slivers.
 - When the five columns need to scroll, keep that overflow inside a named, keyboard-focusable Board region and show a concise localized cue that all five columns continue sideways. The status selector in each writable card's footer is the non-drag alternative and therefore uses a touch target of at least 44px on narrow viewports.
 - Column separation uses spacing and a subtle vertical divider or surface step. Columns are not five large elevated cards.
+- Issue cards do not repeat a completion-note action; optional completion notes belong in Issue detail.
 - The column footer does not repeat `Add issue` when the top-level `New issue` action is already visible.
 
 ### 3.2 Issue cards
@@ -169,6 +170,7 @@ The visual order is:
 - Comments are a single chronological stream with light row separation. Do not wrap every comment in an elevated card.
 - Completion comments are visually recognizable as immutable records but remain part of the same comment stream.
 - The title region includes a compact status, priority, and assignee summary. At tablet widths the property rail remains beside the description; below 780px it follows the reading column, with an explicit `View properties` anchor in the summary.
+- The property rail groups status and a named assignee selector (including Unassigned), followed by one completion action. Completion opens one optional-note dialog. Blocker reasons and dependency guidance occupy a quieter separate section; no raw Principal ID input or redundant self-assignment button.
 - Issue deletion stays a tertiary text action until the confirmation dialog. Comment deletion also recedes within its activity row.
 - Attachments occupy their own section between description and activity. The file picker and single-file drop target share one calm surface; upload progress and retry remain local to the selected file. Use verified image thumbnails, readable file names and sizes, and explicit download/delete/restore actions. No R2 capability yields a short local explanation, never a page-level failure.
 
@@ -177,6 +179,7 @@ The visual order is:
 - Owner pages use the same shell and tokens. They are not a separate admin theme.
 - Use simple lists, tables, forms, and compact summaries for Overview, Workspaces/Projects, Access, and Audit.
 - Avoid metric tiles unless a value is both actionable and required by the product contract. Health and quota summaries should read as operational facts, not an analytics dashboard.
+- Invitation history is reached from Access through a dedicated link and shows a bounded page with previous/next controls. Daily browsing stays separate from the full safety review needed for uncertain Invitation operations.
 - Destructive or security-sensitive actions use explicit labels and confirmation copy; red is not used as general decoration.
 - Overview uses the already-loaded Workspace inventory as a short list of direct entry points, alongside two simple navigation rows for members/invitations and activity. Choosing a Workspace opens the existing maintenance view with that Workspace expanded. It does not load additional Projects or Issues before the user chooses a destination.
 - Service versions, origins, and rate limits remain available in a disclosure below daily navigation. Do not fill unused space with invented analytics, activity, or decorative tiles.
@@ -279,3 +282,12 @@ The revised UI was rendered in the Codex in-app browser against an isolated loca
 | Copy inventory | Existing business content and default workflow names are unchanged. Intentional additions are the search submit label, property shortcut, brief Overview navigation descriptions, and attachment copy required by the new attachment SPEC; each has English and Chinese text. |
 
 Generated reference artwork remains a mood and hierarchy guide. No avatars, fake counters, decorative dates, extra columns, or unsupported controls were introduced from it.
+
+
+## 2026-09-20 Issue 操作与邀请历史验证
+
+本次延续现有 tokens，用名称选择器替换详情页的重复指派按钮和 UUID 输入；完成操作合并为一个选填说明弹窗，卡片不再重复显示说明入口。阻塞原因与前置关系说明独立呈现，看板提供服务端阻塞筛选。邀请历史按需进入独立页面，普通分页与完整安全复核使用独立状态。
+
+本次按用户要求以桌面与 IAB 常见半屏为主要验收基准，不扩大窄屏专项范围。Web 保持低频查看、确认和手动调整，日常执行以 Code Agents 为主。
+
+本地 Vite + Playwright/Chrome 模拟 API 验证覆盖 1440×1000、800×1000、720×1000，另已做 390×844 基本检查：候选分页、切换/取消指派及同值不写入，完成取消/空摘要/reopen，人工阻塞解除与依赖阻塞区别，看板筛选与无重复卡片按钮，人员页不加载邀请、历史上下页替换数据和按需安全复核。检查无横向页面溢出、空页面、框架错误或控制台错误。Worker 权限和分页由独立本地 D1 集成测试验证；浏览器截图使用测试内容，不代表生产发布或认证验收。

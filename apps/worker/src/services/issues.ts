@@ -158,6 +158,7 @@ interface CandidateFilter {
 
 interface IssueListFilter {
   assignees: string[];
+  blocked: "only" | "exclude" | null;
   statuses: StatusKey[];
 }
 
@@ -889,7 +890,11 @@ function requireIssueListFilter(url: URL): IssueListFilter {
     return status as StatusKey;
   }).sort();
   const assignees = [...new Set(rawAssignees.map((assignee) => requireUuid(assignee, "assignee")))].sort();
-  return { assignees, statuses };
+  const blocked = url.searchParams.get("blocked");
+  if (url.searchParams.getAll("blocked").length > 1 || (blocked !== null && blocked !== "only" && blocked !== "exclude")) {
+    throw validationError("schema_validation_failed", { field: "blocked" });
+  }
+  return { assignees, statuses, blocked };
 }
 
 function resolvedScope(
@@ -913,6 +918,7 @@ function resolvedScope(
     } : {}),
     filters: {
       assignees: issueFilter.assignees,
+      ...(issueFilter.blocked === null ? {} : { blocked: issueFilter.blocked }),
       statuses: issueFilter.statuses,
     },
     target_identifier: scope.targetIdentifier,
@@ -941,6 +947,7 @@ async function listIssueRows(
     candidate_blocked: candidate?.blocked ?? null,
     deleted: deletionView,
     assignees: issueFilter.assignees,
+    ...(issueFilter.blocked === null ? {} : { blocked: issueFilter.blocked }),
     project_targets: [...scope.projectTargets].sort(),
     q: search.normalized,
     statuses: issueFilter.statuses,
@@ -1062,7 +1069,7 @@ async function listIssueRows(
       }
     } else {
       const cursor = parsedCursor as [number, number] | null;
-      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 10);
+      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 11);
       const statement = db.prepare(
         `WITH current_result_projects(id) AS MATERIALIZED (
            SELECT current_project.id
@@ -1095,9 +1102,34 @@ async function listIssueRows(
                    AND current_grant.revoked_at IS NULL
                )
              )`}
+         ), current_relation_projects(id) AS MATERIALIZED (
+           SELECT relation_project.id
+           FROM projects relation_project
+           JOIN workspaces relation_workspace ON relation_workspace.id = relation_project.workspace_id
+           JOIN instance_meta relation_instance ON relation_instance.singleton = 1
+           WHERE relation_project.id IN (SELECT value FROM json_each(?10))
+             AND relation_project.deleted_at IS NULL AND relation_workspace.deleted_at IS NULL
+             AND ${currentAuthGuard.sql}
+             AND (relation_instance.owner_principal_id = ?9 OR EXISTS (
+               SELECT 1 FROM effective_project_grants relation_grant
+               WHERE relation_grant.project_id = relation_project.id
+                 AND relation_grant.principal_id = ?9 AND relation_grant.revoked_at IS NULL
+             ))
          )
          ${ISSUE_SELECT}
          WHERE i.project_id IN (SELECT id FROM current_result_projects)
+           ${issueFilter.blocked === null ? "" : `AND ${issueFilter.blocked === "exclude" ? "NOT" : ""} (
+             i.blocked_reason IS NOT NULL OR (i.deleted_at IS NULL
+               AND i.project_id IN (SELECT id FROM current_relation_projects)
+               AND EXISTS (
+                 SELECT 1 FROM issue_relations blocked_relation
+                 JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
+                 WHERE blocked_relation.target_issue_id = i.id
+                   AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
+                   AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
+                   AND blocker.project_id IN (SELECT id FROM current_relation_projects)
+               ))
+           )`}
            AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
            ${deletionView === "only" ? "" : "AND p.deleted_at IS NULL AND w.deleted_at IS NULL"}
            AND (?3 IS NULL OR (?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)
@@ -1118,6 +1150,7 @@ async function listIssueRows(
       const result = await statement.bind(
         ...bindings,
         auth.principalId,
+        JSON.stringify(scope.relationProjects.map((project) => project.projectId)),
         ...currentAuthGuard.values,
       ).all<IssueRow>();
       rows = result.results;
@@ -1154,7 +1187,7 @@ async function listIssuesInternal(
   }
   const search = searchFilter(url);
   const candidate = candidates ? requireCandidateFilter(url) : null;
-  const issueFilter = candidates ? { assignees: [], statuses: [] } : requireIssueListFilter(url);
+  const issueFilter = candidates ? { assignees: [], statuses: [], blocked: null } : requireIssueListFilter(url);
   let page = await listIssueRows(
     db,
     scope,

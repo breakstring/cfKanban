@@ -309,7 +309,7 @@ test("OpenAPI exposes concrete Issue contracts and reserves done for complete", 
   assert.deepEqual(
     listOperation.parameters.filter((parameter) => parameter.in === "query")
       .map((parameter) => parameter.name),
-    ["deleted", "project", "workspace", "status", "assignee", "q", "cursor", "limit"],
+    ["blocked", "deleted", "project", "workspace", "status", "assignee", "q", "cursor", "limit"],
   );
   assert.equal(
     listOperation.responses["200"].content["application/json"].schema.$ref,
