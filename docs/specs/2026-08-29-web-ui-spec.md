@@ -51,6 +51,8 @@
 
 ### 3.0 未认证首页
 
+2026-09-20 用户授权增补：介绍与部署入口下方提供简洁的产品介绍视频，随 Web locale 选择英文或简体中文版。视频由同一 Service bundle 的静态资源承载，使用内容指纹缓存；仅展示简短标题、封面与原生播放控件，不添加时长、演示说明或直接打开链接，默认不自动播放、不预加载视频，并在语言切换时停止旧版播放。README 使用同源仓库资源的封面链接，不依赖第三方播放器。
+
 任何人直接打开实例根地址时先看到一个极简公开首页，而不是 Credential 输入框或空白错误页。首页说明 cfKanban 是 Agent-first Kanban、当前地址是一个独立部署实例，并在视觉中心提供一段可以直接复制给 Agent 的短话术；话术指向同实例、同语言的专用 `deploy-guide.md`，由该指南逐步说明 Skill 安装、环境前置、计划/授权、Cloudflare 部署和读回，并继续把具体发行真相交给项目声明的 canonical HTTPS pointer 与 immutable manifest。首页不把通用 README 当作部署指南，也不内嵌可执行 shell、远程脚本或 secret。
 
 首页可以显示 Owner 明确开启 Public Join 的多个 Project 卡片，每张只包含 Project 显示名称、有界公开摘要与 `reader | writer` 选择，不得枚举未公开 Workspace/Project、内部 context、成员、Issue 数量或其他实例事实。canonical 项目站点可以复用产品介绍和部署话术，但没有某个部署实例的登录状态或 Public Join。

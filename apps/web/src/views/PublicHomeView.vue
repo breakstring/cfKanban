@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from "vue";
 import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
 import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";
+import ProductIntro from "../components/ProductIntro.vue";
 import { ApiProblem, apiRequest } from "../lib/api";
 import { locale, t } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
@@ -191,6 +192,8 @@ onMounted(load);
         </div>
       </aside>
     </section>
+
+    <ProductIntro />
 
     <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load(true)" />
 
