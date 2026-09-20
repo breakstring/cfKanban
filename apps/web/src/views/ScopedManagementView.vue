@@ -13,6 +13,8 @@ import { locale, t } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor } from "../lib/pagination";
 import { navigate } from "../lib/router";
+import { protectNavigationDraft } from "../lib/navigation-draft";
+import { projectReturnTarget } from "../lib/project-navigation";
 import { hasManagementActions, managementPath, remainingAccessSources, sourceLabel } from "../lib/scoped-management";
 import type { AccessSource, AdministratorCandidate, AdministratorResource, ContainerResource, GrantResource, ListResult, MemberCandidate, ProjectMember, ProjectStatusResource, WebSessionView } from "../types";
 
@@ -34,6 +36,9 @@ const busy = ref(false);
 const archived = ref(false);
 const draft = ref({ display_name: "", context: "" });
 const projectName = ref("");
+const section = ref<"projects" | "members" | "settings">("projects");
+const returnPath = new URLSearchParams(window.location.search).get("from");
+const returnProject = computed(() => projectReturnTarget(returnPath, props.session.allowed_scope.projects ?? []));
 const administratorCandidate = ref<AdministratorCandidate | null>(null);
 const memberCandidate = ref<MemberCandidate | null>(null);
 const memberRole = ref<"reader" | "writer">("writer");
@@ -44,6 +49,7 @@ let mounted = true;
 let generation = 0;
 const can = (action: string) => resource.value?.allowed_actions?.includes(action) ?? false;
 const active = computed(() => resource.value?.deleted_at === null);
+protectNavigationDraft(() => busy.value || !!projectName.value.trim() || (!!resource.value && (draft.value.display_name !== resource.value.display_name || draft.value.context !== (resource.value.context ?? ""))));
 const grantsPath = `/api/v1/admin/projects/${encodeURIComponent(props.projectId ?? "")}/grants`;
 const endpoints: Record<string, string> = {
   administrators: `${resourcePath}/administrators`, members: `${resourcePath}/members`, grants: grantsPath,
@@ -216,11 +222,22 @@ async function toggleArchive(): Promise<void> {
 }
 onMounted(() => { archived.value = new URLSearchParams(window.location.search).get("archived") === "1"; void load(true).catch(() => {}); });
 onUnmounted(() => { mounted = false; generation += 1; clearFacts(); });
+
+async function returnToProject(): Promise<void> {
+  if (!returnProject.value || !returnPath) return;
+  try {
+    const latest = await apiRequest<WebSessionView>("/api/v1/web-session");
+    const target = projectReturnTarget(returnPath, latest.allowed_scope.projects ?? []);
+    if (!target) { setError(new Error(ui("The source project is no longer accessible.", "来源项目已不可访问。"))); return; }
+    navigate(`/app/w/${target.workspace_id}/p/${target.project_id}`);
+  } catch (caught) { setError(caught); }
+}
 </script>
 
 <template>
   <main class="page-shell scoped-management">
     <header class="page-title-block">
+      <button v-if="returnProject" class="text-button" type="button" @click="returnToProject">← {{ ui('Back to', '返回') }} {{ returnProject.workspace_display_name }} / {{ returnProject.project_display_name }}</button>
       <p class="eyebrow">{{ props.projectId ? ui('Project management', '项目管理') : ui('Workspace management', '工作区管理') }}</p>
       <h1>{{ resource?.display_name ?? ui('Management', '管理') }}</h1>
       <div class="form-actions">
@@ -234,7 +251,10 @@ onUnmounted(() => { mounted = false; generation += 1; clearFacts(); });
     <PageState :loading="loading" />
     <p v-if="!loading && resource && !hasManagementActions(resource)">{{ ui('Management is unavailable in this session.', '当前会话没有此范围的管理权限。') }}</p>
     <template v-if="!loading && resource && hasManagementActions(resource)">
-      <form v-if="active && can('update')" class="form-stack management-section" @submit.prevent="saveSettings">
+      <nav v-if="!projectId" class="management-tabs" :aria-label="ui('Workspace management sections', '工作区管理分区')">
+        <button v-for="key in (['projects', 'members', 'settings'] as const)" :key="key" type="button" class="text-button" :aria-current="section === key ? 'page' : undefined" @click="section = key">{{ key === 'projects' ? ui('Projects', '项目') : key === 'members' ? ui('Members and permissions', '成员与权限') : ui('Workspace settings', '工作区设置') }}</button>
+      </nav>
+      <form v-if="active && can('update')" v-show="projectId || section === 'settings'" class="form-stack management-section" @submit.prevent="saveSettings">
         <h2>{{ ui('Settings', '设置') }}</h2>
         <label>{{ ui('Name', '名称') }}<input v-model="draft.display_name" required maxlength="128" /></label>
         <label v-if="projectId">{{ ui('Project context', '项目说明') }}<textarea v-model="draft.context" rows="4" /></label>
@@ -247,7 +267,7 @@ onUnmounted(() => { mounted = false; generation += 1; clearFacts(); });
           <button class="secondary-button" type="submit" :disabled="busy">{{ t('action.save') }}</button>
         </form>
       </section>
-      <section v-if="!projectId && can('create_project')" class="management-section">
+      <section v-if="!projectId && can('create_project')" v-show="section === 'projects'" class="management-section">
         <h2>{{ ui('Projects', '项目') }}</h2>
         <form class="management-row" @submit.prevent="write(`${workspacePath}/projects`, 'POST', { display_name: projectName.trim() })">
           <label>{{ ui('New project name', '新项目名称') }}<input v-model="projectName" required maxlength="128" /></label>
@@ -256,13 +276,13 @@ onUnmounted(() => { mounted = false; generation += 1; clearFacts(); });
         <button class="text-button" :disabled="busy" type="button" @click="toggleArchive">{{ archived ? ui('Show active projects', '显示有效项目') : ui('Show archived projects', '显示归档项目') }}</button>
         <div v-for="project in projects" :key="project.id" class="management-row">
           <strong>{{ project.display_name }}</strong>
-          <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, project.id)}${project.deleted_at ? '&archived=1' : ''}`)">{{ ui('Manage', '管理') }}</button>
+          <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, project.id)}${project.deleted_at ? '&archived=1' : ''}${returnProject && returnPath ? `&from=${encodeURIComponent(returnPath)}` : ''}`)">{{ ui('Manage', '管理') }}</button>
           <button v-if="project.allowed_actions?.includes('delete')" class="text-button" type="button" :disabled="busy" @click="confirmArchive(project, false)">{{ ui('Archive', '归档') }}</button>
           <button v-if="project.allowed_actions?.includes('restore')" class="secondary-button" type="button" :disabled="busy" @click="confirmArchive(project, true)">{{ t('action.restore') }}</button>
         </div>
         <button v-if="cursors.projects" class="secondary-button" type="button" :disabled="busy" @click="more('projects')">{{ ui('Load more', '加载更多') }}</button>
       </section>
-      <section v-if="active" class="management-section">
+      <section v-if="active" v-show="projectId || section === 'members'" class="management-section">
         <h2>{{ ui('Administrators', '管理员') }}</h2>
         <p>{{ projectId ? ui('Workspace administrators also inherit management access. Project administrators cannot appoint or remove peers.', '工作区管理员也继承本项目管理权；项目管理员不能任免同级管理员。') : ui('Only the Owner can appoint or remove workspace administrators. All current and future projects inherit this access.', '只有实例所有者可以任免工作区管理员；授权覆盖现在和未来的全部子项目。') }}</p>
         <form v-if="can('manage_administrators')" class="management-person-form" @submit.prevent="grantAdministrator()">

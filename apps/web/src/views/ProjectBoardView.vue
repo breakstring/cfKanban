@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
-import { ApiProblem, apiRequest } from "../lib/api";
+import PrioritySelect from "../components/PrioritySelect.vue";
+import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import {
   type CasConflictState,
   captureCasConflict,
@@ -16,7 +17,10 @@ import { projectInventoryBoundary } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
+import { ColumnPagination } from "../lib/column-pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
+import { protectNavigationDraft } from "../lib/navigation-draft";
+import { priorityOrder, prioritySaveIsUncertain, priorityText } from "../lib/priority";
 import { navigate } from "../lib/router";
 import { hasManagementActions, managementPath } from "../lib/scoped-management";
 import { WriteFence } from "../lib/write-fence";
@@ -42,17 +46,16 @@ const emit = defineEmits<{ context: [value: { label: string; role: string }] }>(
 const statusOrder: StatusKey[] = ["backlog", "todo", "in_progress", "done", "canceled"];
 const project = ref<ContainerResource | null>(null);
 const statuses = ref<ProjectStatusResource[]>([]);
-const issues = ref<IssueSummary[]>([]);
+const columns = reactive(Object.fromEntries(statusOrder.map(key => [key, new ColumnPagination<IssueSummary>()])) as Record<StatusKey, ColumnPagination<IssueSummary>>);
+const appliedSearch = ref("");
 const deletedIssues = ref<IssueTombstone[]>([]);
 const deletedIssuesNextCursor = ref<string | null>(null);
 const deletedIssuesLoadingMore = ref(false);
-const nextCursor = ref<string | null>(null);
 const loading = ref(true);
-const loadingMore = ref(false);
 const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
 const search = ref("");
-const blockedFilter = ref<"" | "only" | "exclude">("");
 const saving = ref(new Set<string>());
+const pendingPriorities = ref<Record<string, { issue: IssueSummary; priority: PriorityKey }>>({});
 const dragged = ref<IssueSummary | null>(null);
 const showNewIssue = ref(false);
 const showDeleted = ref(false);
@@ -73,6 +76,7 @@ const role = computed(() => {
   ))?.role ?? "reader";
 });
 const canWrite = computed(() => projectIsActive() && (role.value === "writer" || role.value === "owner"));
+protectNavigationDraft(() => formBusy.value || saving.value.size > 0 || Object.keys(pendingPriorities.value).length > 0 || (showNewIssue.value && (!!newIssue.value.title.trim() || !!newIssue.value.body.trim() || newIssue.value.priority_key !== "none" || newIssue.value.status_key !== "backlog")));
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 
 function projectIsActive(): boolean {
@@ -94,14 +98,15 @@ function projectionIsCurrent(generation: number): boolean {
 }
 
 function clearProjectProjection(): void {
+  projectionGeneration.invalidate();
+  loadRequestId += 1;
   project.value = null;
+  pendingPriorities.value = {};
   statuses.value = [];
-  issues.value = [];
+  for (const column of Object.values(columns)) column.reset();
   deletedIssues.value = [];
   deletedIssuesNextCursor.value = null;
-  nextCursor.value = null;
   loading.value = false;
-  loadingMore.value = false;
   showDeleted.value = false;
   showNewIssue.value = false;
   setLocalizedError(
@@ -130,58 +135,61 @@ function refreshProjectInventory(): void {
   void load();
 }
 
-function query(cursor?: string): string {
-  const params = new URLSearchParams({ limit: "100" });
-  if (search.value.trim()) params.set("q", search.value.trim());
-  if (blockedFilter.value) params.set("blocked", blockedFilter.value);
+function query(status: StatusKey, cursor?: string): string {
+  const params = new URLSearchParams({ limit: "20", status });
+  if (appliedSearch.value) params.set("q", appliedSearch.value);
   if (cursor) params.set("cursor", cursor);
   return `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues?${params}`;
 }
 
-async function load(reset = true, throwOnFailure = false): Promise<void> {
-  if (!projectIsActive()) {
+async function loadColumn(status: StatusKey, reset = false, throwOnFailure = false): Promise<void> {
+  if (!projectIsActive()) return;
+  const generation = projectionGeneration.capture();
+  const column = columns[status];
+  if (reset) {
+    const element = document.getElementById(`board-column-${status}`);
+    if (element) element.scrollTop = 0;
+  }
+  await column.load(cursor => apiRequest<ListResult<IssueSummary>>(query(status, cursor)), reset);
+  if (!projectionIsCurrent(generation)) return;
+  if (column.error instanceof ApiProblem && [403, 404].includes(column.error.status)) {
     clearProjectProjection();
     return;
   }
+  if (throwOnFailure && column.error) throw column.error;
+}
+
+function onColumnScroll(status: StatusKey, event: Event): void {
+  const target = event.target as HTMLElement;
+  const column = columns[status];
+  if (!column.error && column.cursor && target.scrollTop > 0 && target.scrollHeight - target.clientHeight - target.scrollTop < 200) void loadColumn(status);
+}
+
+async function load(_reset = true, throwOnFailure = false): Promise<void> {
+  if (!projectIsActive()) { clearProjectProjection(); return; }
+  projectionGeneration.invalidate();
   const generation = projectionGeneration.capture();
-  const requestId = loadRequestId + 1;
-  loadRequestId = requestId;
-  if (reset) loading.value = true;
-  else loadingMore.value = true;
+  const requestId = ++loadRequestId;
+  appliedSearch.value = search.value.trim();
+  for (const column of Object.values(columns)) column.reset();
+  loading.value = true;
   clearError();
   try {
-    const [projectResult, statusResult, issueResult] = await Promise.all([
+    const [projectResult, statusResult] = await Promise.all([
       apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}`),
       apiRequest<ListResult<ProjectStatusResource>>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/statuses`),
-      apiRequest<ListResult<IssueSummary>>(query(reset ? undefined : nextCursor.value ?? undefined)),
+      ...statusOrder.map(status => loadColumn(status, false, throwOnFailure)),
     ]);
     if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
     project.value = projectResult;
     statuses.value = statusResult.items;
-    issues.value = mergePageById(issues.value, issueResult.items, reset);
-    nextCursor.value = continuationCursor(issueResult);
     emit("context", { label: `${projectResult.workspace_display_name} / ${projectResult.display_name}`, role: role.value });
   } catch (caught) {
     if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
-    if (!reset && cursorRequiresRestart(caught)) {
-      nextCursor.value = null;
-      setCursorRestartError();
-    } else {
-      setError(caught);
-    }
-    if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) {
-      project.value = null;
-      statuses.value = [];
-      issues.value = [];
-      nextCursor.value = null;
-    }
+    setError(caught);
+    if (caught instanceof ApiProblem && (caught.status === 403 || caught.status === 404)) clearProjectProjection();
     if (throwOnFailure) throw caught;
-  } finally {
-    if (requestId === loadRequestId) {
-      loading.value = false;
-      loadingMore.value = false;
-    }
-  }
+  } finally { if (requestId === loadRequestId) loading.value = false; }
 }
 
 async function recoverCasConflict(
@@ -233,7 +241,7 @@ async function refreshCasFacts(): Promise<void> {
 
 async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void> {
   const fenceKey = `issue-status:${issue.id}`;
-  if (!canWrite.value || issue.status.key === status || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
+  if (!canWrite.value || pendingPriorities.value[issue.id] || issue.status.key === status || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
   saving.value = new Set(saving.value).add(issue.id);
   clearError();
   const generation = projectionGeneration.capture();
@@ -244,8 +252,7 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
     });
     if (projectionIsCurrent(generation)) {
       dismissCasConflict();
-      issues.value = issues.value.map((item) => item.id === issue.id ? result.resource : item)
-        .filter(item => blockedFilter.value === "only" ? item.is_blocked : blockedFilter.value === "exclude" ? !item.is_blocked : true);
+      await Promise.all([...new Set([issue.status.key, result.resource.status.key])].map(key => loadColumn(key, true)));
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
@@ -269,6 +276,34 @@ function onStatusSelection(issue: IssueSummary, event: Event): void {
   void saveStatus(issue, status);
 }
 
+async function savePriority(issue: IssueSummary, priority: PriorityKey): Promise<void> {
+  const fenceKey = `issue-priority:${issue.id}`;
+  const pending = pendingPriorities.value[issue.id];
+  if (pending && (pending.issue.version !== issue.version || pending.priority !== priority)) return;
+  if (!canWrite.value || issue.priority === priority || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
+  const generation = projectionGeneration.capture();
+  saving.value = new Set(saving.value).add(issue.id);
+  clearError();
+  try {
+    const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}`, {
+      method: "PATCH", body: { expected_version: issue.version, priority_key: priority },
+    });
+    if (projectionIsCurrent(generation)) {
+      dismissCasConflict();
+      delete pendingPriorities.value[issue.id];
+      await loadColumn(result.resource.status.key, true);
+    }
+  } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
+    if (prioritySaveIsUncertain(caught)) pendingPriorities.value[issue.id] = { issue, priority };
+    else delete pendingPriorities.value[issue.id];
+    if (!await recoverCasConflict(caught, issue.identifier, { priority_key: priority })) setError(caught);
+  } finally {
+    writeFence.leave(fenceKey);
+    const current = new Set(saving.value); current.delete(issue.id); saving.value = current;
+  }
+}
+
 async function createIssue(): Promise<void> {
   if (!newIssue.value.title.trim()) return;
   const fenceKey = "issue-create";
@@ -289,7 +324,7 @@ async function createIssue(): Promise<void> {
       },
     );
     if (projectionIsCurrent(generation)) {
-      issues.value = [result.resource, ...issues.value];
+      await loadColumn(result.resource.status.key, true);
       newIssue.value = { body: "", priority_key: "none", status_key: "backlog", title: "" };
       showNewIssue.value = false;
     }
@@ -369,15 +404,15 @@ async function restoreIssue(issue: IssueTombstone): Promise<void> {
 }
 
 function issuesFor(status: StatusKey): IssueSummary[] {
-  return issues.value.filter((issue) => issue.status.key === status);
+  return columns[status].items;
 }
 
 function priorityLabel(priority: PriorityKey): string {
-  if (locale.value !== "zh-CN") return priority;
-  return ({ none: "无", low: "低", medium: "中", high: "高", urgent: "紧急" } as const)[priority];
+  return priorityText(priority, locale.value === "zh-CN");
 }
 
 function onDragStart(issue: IssueSummary, event: DragEvent): void {
+  if ((event.target as HTMLElement)?.closest("select, option, .priority-control")) { event.preventDefault(); return; }
   dragged.value = issue;
   event.dataTransfer?.setData("text/plain", issue.identifier);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
@@ -393,6 +428,7 @@ onMounted(() => load());
 onUnmounted(() => {
   projectionGeneration.invalidate();
   loadRequestId += 1;
+  for (const column of Object.values(columns)) column.reset();
 });
 watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refreshProjectInventory);
 watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
@@ -406,26 +442,24 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
         <h1>{{ project?.display_name ?? "" }}</h1>
       </div>
       <div class="board-toolbar-actions">
-        <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(managementPath(workspaceId, projectId))">{{ locale === 'zh-CN' ? '项目管理' : 'Manage project' }}</button>
+        <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, projectId)}&from=${encodeURIComponent(`/app/w/${workspaceId}/p/${projectId}`)}`)">{{ locale === 'zh-CN' ? '项目管理' : 'Manage project' }}</button>
+        <button v-if="canWrite" class="text-button" type="button" @click="navigate(`/app/w/${workspaceId}/p/${projectId}/labels`)">{{ locale === "zh-CN" ? "标签管理" : "Manage labels" }}</button>
         <span v-if="!canWrite" class="read-only-badge">{{ t("board.readOnly") }}</span>
         <button v-if="canWrite" class="primary-button button-with-icon" type="button" @click="showNewIssue = true"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ t("action.newIssue") }}</button>
       </div>
       <div class="board-utility-bar">
         <form class="board-search" role="search" @submit.prevent="load()">
           <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
-          <input v-model="search" type="search" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'" />
-          <button class="text-button board-search-submit" type="submit">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</button>
+          <input v-model="search" type="search" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'" />
+          <button class="text-button board-search-submit" type="submit" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</button>
         </form>
-        <label class="board-blocked-filter"><span>{{ locale === 'zh-CN' ? '阻塞' : 'Blockers' }}</span><select v-model="blockedFilter" :aria-label="locale === 'zh-CN' ? '阻塞' : 'Blockers'" :disabled="loading || loadingMore" @change="load()">
-          <option value="">{{ locale === 'zh-CN' ? '全部事项' : 'All issues' }}</option>
-          <option value="only">{{ locale === 'zh-CN' ? '仅阻塞' : 'Blocked only' }}</option>
-          <option value="exclude">{{ locale === 'zh-CN' ? '排除阻塞' : 'Exclude blocked' }}</option>
-        </select></label>
+
         <button v-if="canWrite" class="text-button muted" type="button" @click="loadDeleted(true)">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
       </div>
     </header>
 
     <ErrorNotice v-if="error" :error="error" />
+    <p v-for="pending in pendingPriorities" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '优先级保存结果尚未确认，请核实原操作后继续。' : 'Priority save is unconfirmed. Verify the original operation before continuing.' }} <button class="text-button" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="savePriority(pending.issue, pending.priority)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</button></p>
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
@@ -453,29 +487,29 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
         >
           <header class="column-header">
             <h2>{{ statusMap.get(statusKey)?.display_name ?? statusKey }}</h2>
-            <span>{{ issuesFor(statusKey).length }}</span>
+            <span :title="locale === 'zh-CN' ? '已加载事项数量，非项目总数' : 'Loaded issues, not the project total'">{{ locale === "zh-CN" ? "已加载" : "Loaded" }} {{ issuesFor(statusKey).length }}{{ columns[statusKey].cursor ? "+" : "" }}</span>
           </header>
-          <div class="column-content">
+          <div :id="`board-column-${statusKey}`" class="column-content" tabindex="0" :aria-label="`${statusMap.get(statusKey)?.display_name ?? statusKey} · ${locale === 'zh-CN' ? '事项列表' : 'Issues'}`" @scroll="onColumnScroll(statusKey, $event)">
             <article
               v-for="issue in issuesFor(statusKey)"
               :key="issue.id"
               class="issue-card"
-              :class="{ saving: saving.has(issue.id), blocked: issue.is_blocked }"
-              :draggable="canWrite && !saving.has(issue.id)"
+              :class="{ saving: saving.has(issue.id) }"
+              :draggable="canWrite && !saving.has(issue.id) && !pendingPriorities[issue.id]"
               :aria-busy="saving.has(issue.id)"
               @dragstart="onDragStart(issue, $event)"
             >
-              <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
-                <span class="card-meta">
+                <div class="card-meta">
                   <code>{{ issue.identifier }}</code>
-                  <span v-if="issue.priority !== 'none'" class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
-                </span>
+                  <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
+                  <span v-else class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
+                </div>
+              <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
                 <strong>{{ issue.title }}</strong>
                 <span v-if="issue.labels.length" class="label-line">
                   <span v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip" :title="label.name">{{ label.name }}</span>
                 </span>
-                <span v-if="issue.is_blocked || issue.needs_reassignment" class="card-exceptions">
-                  <span v-if="issue.is_blocked" class="warning-chip">{{ locale === "zh-CN" ? "已阻塞" : "blocked" }}</span>
+                <span v-if="issue.needs_reassignment" class="card-exceptions">
                   <span v-if="issue.needs_reassignment" class="warning-chip">{{ locale === "zh-CN" ? "需重新指派" : "reassign" }}</span>
                 </span>
               </button>
@@ -485,7 +519,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
                 v-if="canWrite"
                 class="card-status-select"
                 :value="issue.status.key"
-                :disabled="saving.has(issue.id)"
+                :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]"
                 :aria-label="`${issue.identifier} · ${locale === 'zh-CN' ? '变更状态' : 'Change status'}`"
                 @click.stop
                 @change.stop="onStatusSelection(issue, $event)"
@@ -496,15 +530,16 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
               </select>
               </div>
             </article>
-            <p v-if="issuesFor(statusKey).length === 0" class="column-empty">{{ t("board.empty") }}</p>
+            <p v-if="columns[statusKey].loading" role="status" class="column-empty">{{ locale === "zh-CN" ? "加载中…" : "Loading…" }}</p>
+            <div v-else-if="columns[statusKey].error" class="column-page-error" role="alert"><p>{{ errorText(columns[statusKey].error) }}</p><button class="text-button" type="button" @click="loadColumn(statusKey)">{{ locale === "zh-CN" ? "重试" : "Retry" }}</button></div>
+            <button v-else-if="columns[statusKey].cursor" class="load-more" type="button" @click="loadColumn(statusKey)">{{ locale === "zh-CN" ? "加载更多" : "Load more" }}</button>
+            <p v-else-if="columns[statusKey].loaded" class="column-empty">{{ issuesFor(statusKey).length === 0 ? t("board.empty") : (locale === "zh-CN" ? "已加载完毕" : "All issues loaded") }}</p>
           </div>
         </article>
       </section>
     </div>
 
-    <button v-if="nextCursor" class="load-more" type="button" :disabled="loadingMore" @click="load(false)">
-      {{ loadingMore ? "…" : (locale === "zh-CN" ? "加载更多" : "Load more") }}
-    </button>
+
 
     <ModalDialog v-if="showNewIssue" :busy="formBusy" :title="t('action.newIssue')" @close="showNewIssue = false">
       <form class="form-stack" @submit.prevent="createIssue">
@@ -512,7 +547,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
         <label>{{ t("issue.body") }}<textarea v-model="newIssue.body" rows="7" :placeholder="t('comment.placeholder')" /></label>
         <div class="form-grid">
           <label>{{ t("issue.status") }}<select v-model="newIssue.status_key"><option v-for="key in statusOrder.filter((item) => item !== 'done')" :key="key" :value="key">{{ statusMap.get(key)?.display_name ?? key }}</option></select></label>
-          <label>{{ t("issue.priority") }}<select v-model="newIssue.priority_key"><option v-for="key in ['none','low','medium','high','urgent']" :key="key" :value="key">{{ priorityLabel(key as PriorityKey) }}</option></select></label>
+          <label>{{ t("issue.priority") }}<select v-model="newIssue.priority_key" :aria-label="t('issue.priority')"><option v-for="key in priorityOrder" :key="key" :value="key">{{ priorityLabel(key) }}</option></select></label>
         </div>
         <div class="form-actions"><button class="secondary-button" type="button" @click="showNewIssue = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="formBusy">{{ t("action.save") }}</button></div>
       </form>

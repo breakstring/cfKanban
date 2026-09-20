@@ -165,12 +165,12 @@ The visual order is:
 ### 3.3 Issue detail and Markdown
 
 - Keep editing and rendered reading modes visually distinct without introducing a WYSIWYG toolbar.
-- Text fields use explicit `Save`; only a Board status drop is saved immediately as defined by the Web UI SPEC.
+- Text fields use explicit `Save`; status changes and the dedicated priority selectors save their single explicit choice immediately as defined by the Web UI SPEC.
 - Markdown rendering uses the same typography and warm surfaces. Code blocks use `--font-mono`, a muted surface, and horizontal scrolling rather than page overflow.
 - Comments are a single chronological stream with light row separation. Do not wrap every comment in an elevated card.
 - Completion comments are visually recognizable as immutable records but remain part of the same comment stream.
 - The title region includes a compact status, priority, and assignee summary. At tablet widths the property rail remains beside the description; below 780px it follows the reading column, with an explicit `View properties` anchor in the summary.
-- The property rail groups status and a named assignee selector (including Unassigned), followed by one completion action. Completion opens one optional-note dialog. Blocker reasons and dependency guidance occupy a quieter separate section; no raw Principal ID input or redundant self-assignment button.
+- The property rail groups status and a named assignee selector (including Unassigned), followed by one completion action. Completion opens one optional-note dialog. Blocker flags, reasons, and manual actions are temporarily hidden under CFK-430; dependency relations remain available; no raw Principal ID input or redundant self-assignment button.
 - Issue deletion stays a tertiary text action until the confirmation dialog. Comment deletion also recedes within its activity row.
 - Attachments occupy their own section between description and activity. The file picker and single-file drop target share one calm surface; upload progress and retry remain local to the selected file. Use verified image thumbnails, readable file names and sizes, and explicit download/delete/restore actions. No R2 capability yields a short local explanation, never a page-level failure.
 

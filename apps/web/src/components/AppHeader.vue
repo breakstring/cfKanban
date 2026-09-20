@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 
 import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
+import ProjectSwitcher from "./ProjectSwitcher.vue";
 import { apiRequest } from "../lib/api";
 import { locale, setLocale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
@@ -11,10 +12,12 @@ import type { InstanceDiscovery, WebSessionView } from "../types";
 const props = defineProps<{
   context?: string | undefined;
   role?: string | undefined;
+  projectId?: string | undefined;
+  workspaceId?: string | undefined;
   session: WebSessionView;
 }>();
 
-const emit = defineEmits<{ logout: [] }>();
+const emit = defineEmits<{ logout: []; verified: [session: WebSessionView] }>();
 const discovery = ref<InstanceDiscovery | null>(null);
 const expiresLabel = computed(() => {
   const value = new Date(props.session.expires_at);
@@ -52,14 +55,11 @@ onMounted(loadDiscovery);
       <img class="brand-mark" :src="cfKanbanMarkUrl" alt="" aria-hidden="true" />
       <span>cfKanban</span>
     </button>
-    <div v-if="context" class="header-context">
-      <strong>{{ context }}</strong>
+    <div class="header-context">
+      <ProjectSwitcher :session="session" :context="context" :project-id="projectId" :workspace-id="workspaceId" @verified="emit('verified', $event)" />
       <span v-if="role" class="role-badge">{{ roleLabel(role) }}</span>
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
-      <button v-if="session.allowed_scope.kind === 'project_selection' || session.allowed_scope.kind === 'workspace'" class="text-button" type="button" @click="navigate('/app')">
-        {{ locale === "zh-CN" ? "切换项目" : "Switch project" }}
-      </button>
       <button v-if="canAccessOwnerControlPlane(session)" class="text-button" type="button" @click="navigate('/app/admin')">
         {{ t("admin.overview") }}
       </button>

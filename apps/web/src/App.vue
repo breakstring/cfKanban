@@ -17,6 +17,7 @@ import type { WebSessionView } from "./types";
 import IssueDetailView from "./views/IssueDetailView.vue";
 import OwnerView from "./views/OwnerView.vue";
 import ProfileView from "./views/ProfileView.vue";
+import ProjectLabelsView from "./views/ProjectLabelsView.vue";
 import ProjectBoardView from "./views/ProjectBoardView.vue";
 import ProjectSelectionView from "./views/ProjectSelectionView.vue";
 import PublicHomeView from "./views/PublicHomeView.vue";
@@ -29,7 +30,7 @@ type AppRoute =
   | { identifier: string; kind: "issue" }
   | { kind: "owner"; section: OwnerSection }
   | { kind: "profile" }
-  | { kind: "project"; projectId: string; workspaceId: string }
+  | { kind: "project" | "labels"; projectId: string; workspaceId: string }
   | { kind: "manage"; workspaceId: string; projectId?: string }
   | { kind: "unknown" };
 
@@ -41,7 +42,7 @@ const {
   setError: setSessionError,
 } = useLocalizedError();
 const sessionEnded = ref(false);
-const context = ref<{ label: string; role: string } | null>(null);
+const context = ref<{ label: string; role: string; workspaceId?: string; projectId?: string } | null>(null);
 const sessionViewGeneration = ref(0);
 let cancelSessionExpiry: (() => void) | null = null;
 let sessionLoadGeneration = 0;
@@ -77,11 +78,11 @@ const route = computed<AppRoute>(() => {
       : "overview";
     return { kind: "owner", section };
   }
-  const project = /^\/app\/w\/([^/]+)\/p\/([^/]+)$/.exec(path);
+  const project = /^\/app\/w\/([^/]+)\/p\/([^/]+)(\/labels)?$/.exec(path);
   if (project !== null) {
     const workspaceId = decoded(project[1] ?? "");
     const projectId = decoded(project[2] ?? "");
-    if (workspaceId !== null && projectId !== null) return { kind: "project", projectId, workspaceId };
+    if (workspaceId !== null && projectId !== null) return { kind: project[3] ? "labels" : "project", projectId, workspaceId };
   }
   const issue = /^\/app\/issues\/(CFK-[1-9][0-9]*)$/.exec(path);
   if (issue !== null) return { identifier: issue[1] ?? "", kind: "issue" };
@@ -114,6 +115,15 @@ function armSessionExpiry(expiresAt: string): boolean {
   }
   cancelSessionExpiry = schedule.cancel;
   return true;
+}
+
+function acceptVerifiedSession(result: WebSessionView): void {
+  if (session.value && !sameSessionBoundary(session.value, result)) {
+    clearAttachmentUploadDrafts();
+    sessionViewGeneration.value += 1;
+    context.value = null;
+  }
+  if (armSessionExpiry(result.expires_at)) session.value = result;
 }
 
 async function loadSession(resetBeforeRequest = session.value === null): Promise<void> {
@@ -230,6 +240,9 @@ watch(currentPath, () => {
       :context="context?.label"
       :role="context?.role"
       :session="session"
+      :project-id="route.kind === 'project' || route.kind === 'labels' ? route.projectId : context?.projectId"
+      :workspace-id="route.kind === 'project' || route.kind === 'labels' ? route.workspaceId : context?.workspaceId"
+      @verified="acceptVerifiedSession"
       @logout="logout"
     />
 
@@ -262,6 +275,7 @@ watch(currentPath, () => {
         :workspace-id="route.workspaceId"
         @context="context = $event"
       />
+      <ProjectLabelsView v-else-if="route.kind === 'labels'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" @context="context = $event" />
       <IssueDetailView
         v-else-if="route.kind === 'issue'"
         :key="`${sessionViewGeneration}:${currentPath}`"

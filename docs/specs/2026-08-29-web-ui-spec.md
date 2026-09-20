@@ -67,7 +67,7 @@
 
 Project 是 Web 的默认工作范围。看板固定展示五列：`backlog`、`todo`、`in_progress`、`done`、`canceled`，列标题使用 Project 的显示名称覆盖，但状态 key、顺序与 terminal 语义不可改变。
 
-卡片保持有界，只显示：`CFK-<number>`、标题、priority、assignee、labels 摘要、blocked/needs-reassignment 标记和 version 对应的当前状态。v0 不保存手工 rank，因此列内使用公开稳定排序。
+卡片保持有界，只显示：`CFK-<number>`、标题、priority、assignee、labels 摘要、needs-reassignment 标记和 version 对应的当前状态。v0 不保存手工 rank，因此列内使用公开稳定排序。
 
 v0 支持 writer 在五列之间拖拽单张卡片。落到新列就是一次明确的状态写意图，前端立即使用该卡当前 `expected_version` 保存；卡片在请求期间显示 `saving`，但只有服务端确认后才算成功。失败、无权或 `VERSION_CONFLICT` 时读取服务端当前事实并把卡片放回真实列，不静默覆盖，也不改变列内 rank。
 
@@ -85,7 +85,7 @@ SB-26 的 v0 交互进一步固定为：
 
 - Project header 始终展示 Workspace/Project、当前 Principal display name、`reader | writer | owner` 摘要和 Session 到期时间；reader 页面醒目标记“只读”，不渲染无效写按钮。
 - 当前 Principal display name 提供轻量“我的资料”入口。所有已认证 Principal，不论 Owner、reader 或 writer，都可以查看只读 principal ID、当前 display name 与身份摘要，并通过同一 `PATCH /api/v1/me` + `expected_version` 合同修改自己的非空 display name；v0 不增加头像、邮箱、简介或他人资料编辑。Passkey 列举/撤销属于认证设置，不与资料修改合并成隐藏复合写入。
-- Board 卡片点击进入同页 Issue 详情；writer 可以从 Board 创建单个 Issue，但 priority、assignee、labels、relations 等编辑集中在详情，避免卡片堆满快捷控件。
+- Board 卡片点击进入同页 Issue 详情；writer 可以从 Board 创建单个 Issue，卡片 priority 支持独立快捷修改（CFK-434）；assignee、labels、relations 等编辑集中在详情。
 - 拖拽落列采用状态自动保存；Issue title/body 等文本编辑仍使用普通文本框/textarea 和显式 Save，不做后台 autosave，避免输入过程持续写 D1。正文与 Comment 以 Markdown 源码编辑，并在详情、评论流和可选预览中安全渲染；不引入 WYSIWYG 富文本编辑器。
 - 每次保存只提交一个资源的显式改动，并等待服务端成功后更新页面。`VERSION_CONFLICT` 保留尚未提交的当前页草稿，展示远端新 version 与刷新/复制草稿选项，不做自动 merge 或自动重放。
 - 普通 Comment 只有追加、软删除和恢复，没有编辑；completion Comment 只读。评论输入使用普通 Markdown textarea，不做 WYSIWYG。
@@ -292,7 +292,25 @@ v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次�
 ## 2026-09-20 Issue 操作与邀请历史优化
 
 - 负责人字段使用项目可指派人员名称下拉框，含“未指派”，保留当前不可用负责人提示及有界候选分页；移除“指派给我”和手输 UUID。选中同一个人不发送重复写入，写入继续采用当前 version/CAS 与服务端资格复核。候选可见范围以 Principal names 增量合同为准。
-- 阻塞是附加标记，不是第六种状态。详情显示人工原因，人工解除只清除 reason；依赖关系造成的阻塞需完成前置事项或移除 blocks 关系，canceled 不自动解除。界面区分“前置依赖”和“阻塞下游”，不暗示清除人工原因会解除全部依赖。
-- 看板增加“全部事项 / 仅阻塞 / 排除阻塞”筛选，服务端分页前依照当前可见关系推导并过滤，筛选变更重置分页；不以首屏本地过滤冒充全项目结果。
+- CFK-430（2026-09-20 用户授权）：暂时隐藏 Web 阻塞筛选整体、卡片与详情的阻塞标识、原因及人工标记/解除入口。看板请求不发送 blocked 条件，旧 URL 不启用隐藏筛选，已有阻塞事项照常展示。后端字段、API、Agent 能力、依赖关系与 workflow 语义保持不变。
 - Owner 人员页默认只展示人员与权限，不读取或铺陈历史邀请。入口打开 `/app/admin?section=invitations`，20 条一页，提供上一页/下一页、空态、失败重试和撤销。
 - 日常历史分页与邀请创建中断后的完整安全复核独立。按需展开完整复核仍须遍历全部页；普通历史翻页不解锁邀请创建，不清除待恢复操作或自动确认。
+
+## 2026-09-20 标签输入与管理（CFK-431）
+
+- 详情仅显示当前 Issue 的标签；writer 输入名称后按 Enter 复用或创建一个标签，再以独立原子操作关联。空白不写入，组合输入确认不提交，重复不重复写入；匹配建议仅在输入后出现。名称长度与 ASCII NOCASE 沿用 API 合同。
+- 查找覆盖服务端分页；同名创建冲突重新读取并复用获胜标签。创建成功而关联失败时保留输入和已创建标签，重试复用既有资源；不自动恢复软删除标签或扩大权限。移除仅删除 Issue association。
+- 独立 `/app/w/{workspace_id}/p/{project_id}/labels` 标签管理页由看板主操作区和详情标签区进入，沿用 reader/writer 能力，维护名称和颜色。CAS 冲突保留草稿并要求重新核对；中英文及键盘操作可用。
+
+## 2026-09-20 看板渐进加载（CFK-433）
+
+- 每个固定状态列独立通过既有 `status` + `limit=20` + `cursor` 请求；首屏每列一页，不自动遍历后续页。列内有界滚动，接近末尾后追加，也提供键盘可达的“加载更多”按钮。
+- 每列独立呈现加载中、失败重试、已加载完毕；列头明确标注已加载数量，不冒充总数。搜索在服务端分页前执行，改变搜索/项目会重置各列并丢弃旧响应；尚在编辑而未提交的搜索不改变后续页过滤。
+- 相同列只允许一个分页请求，按 Issue ID 去重；过期游标重新加载首屏。状态移动与完成重置来源/目标列，新建重置目标列，恢复或返回看板重新读取；按既有更新时间排序，CAS/幂等和权限不变。
+- 首屏最多渲染 100 张卡片。后续 DOM 随用户加载累积；当前不引入虚拟列表，不宣称无限追加解决所有规模性能问题。
+
+## 2026-09-20 优先级快捷修改（CFK-434）
+
+- 详情侧栏与看板卡片提供同一组 none/low/medium/high/urgent 选项；无优先级也显示明确入口。原编辑表单保留，选项及排序复用同一来源。
+- 选择不同值仅提交 priority_key 和 expected_version；同值、取消和保存中的重复输入不写入。卡片选择器独立于详情打开按钮，并隔离点击和拖拽。reader 仅查看；writer 能力来自实时服务端项目投影，详情继续使用 allowed_actions。
+- 服务端确认后更新视图；看板按既有更新时间排序重新读取当前列。失败不展示未保存的值，CAS 冲突读取新事实并保留草稿。详情快捷修改不关闭或覆盖 title/body 等未保存内容；编辑表单未独立改动的优先级随已确认快捷修改同步。

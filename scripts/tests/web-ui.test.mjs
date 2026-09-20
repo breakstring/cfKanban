@@ -738,7 +738,8 @@ test("the Web interaction palette uses accessible orange without legacy blue the
   assert.match(stylesheet, /--color-primary-hover:\s*#9d3905;/iu);
   assert.match(stylesheet, /--color-primary-pressed:\s*#7d2c02;/iu);
   assert.match(stylesheet, /--color-focus:\s*#b84708;/iu);
-  assert.match(issueDetail, /placeholder="#D97706"/u);
+  const labelManagement = await readFile(new URL("../../apps/web/src/views/ProjectLabelsView.vue", import.meta.url), "utf8");
+  assert.match(labelManagement, /placeholder="#B84708"/u);
 
   const relativeLuminance = (hex) => {
     const channels = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
