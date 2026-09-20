@@ -1,5 +1,7 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
+> 2026-09-20 增量：[Owner Credential 全失恢复](2026-09-20-owner-credential-recovery-spec.md) 固定同 Owner 受控恢复、撤销全部旧 API Credential、保留 Passkey 与独立计划/journal。
+
 > 2026-09-19 增量：参与者 Agent Launch 会话的项目切换以 [D-272 Frozen 合同](2026-09-19-participant-project-switching-spec.md) 为准；旧固定 scope 会话和 Owner 明确 Project/Issue 会话不扩大。
 
 > 2026-09-19 增量修订：[管理员用量与限额](2026-09-19-usage-statistics-spec.md) 定义 Owner 只读统计、schema 6 快照与可选云端采集；默认部署不增加统计凭据。

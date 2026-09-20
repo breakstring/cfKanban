@@ -79,6 +79,19 @@ Use this Skill when hosting an instance or maintaining local Skills/cloud resour
 | Upgrade Service / 升级实例 | “Plan an upgrade of this instance to <verified version>.” / “制定将此实例升级到 <已验证版本> 的计划。” | Exact resource/migration effects for approval; planning alone does not execute. / 展示准确资源和迁移影响供批准，仅计划不执行。 |
 | Resume / 继续中断部署 | “Check and resume my interrupted deployment.” / “检查并继续我中断的部署。” | Read back the journaled operation and continue only within valid authorization. / 读回已记录操作，仅在有效授权范围内继续。 |
 
-Prefix these with `$cfkanban-deploy`. Default deployment is one Worker and one D1; optional private R2 attachments and custom domains need explicit plans. Local Skill update and cloud Instance upgrade are separate. When all Owner Credentials are lost, control-plane recovery can restore the same Owner identity; it cannot transfer ownership. Do not describe a prerelease as stable or infer availability from a plugin version. After deployment, use `cfkanban-admin` to create the first Workspace/Project, then `cfkanban` for Issues; these are separate requested actions.
+Prefix these with `$cfkanban-deploy`. Default deployment is one Worker and one D1; optional private R2 attachments and custom domains need explicit plans. Local Skill update and cloud Instance upgrade are separate. Do not describe a prerelease as stable or infer availability from a plugin version. After deployment, use `cfkanban-admin` to create the first Workspace/Project, then `cfkanban` for Issues; these are separate requested actions.
 
 For execution, read [cfkanban-deploy](../cfkanban-deploy/SKILL.md).
+
+### Lost access / 凭据丢失时如何恢复
+
+Choose the recovery route by identity and remaining access:
+
+- An Owner with a usable API Credential uses [cfkanban-admin](../cfkanban-admin/SKILL.md) for normal Credential rotation. A participant asks the Owner for a Principal Recovery Invite; ordinary Project invitations do not recover an existing identity.
+- When every Owner API Credential is lost, use [cfkanban-deploy](../cfkanban-deploy/SKILL.md) with verified Cloudflare control of the existing Worker/D1. Recover the same Owner; do not create a new Owner or redeploy an empty instance. A surviving Passkey still permits its supported Web access, but does not replace Cloudflare authority for this recovery.
+
+Example: “Use $cfkanban-deploy to check recovery options for my lost Owner credentials, including when local state is gone. Show the target and effects before making changes.” / “我的 Owner 凭据全部丢失了，本地记录也可能没有了。请用 $cfkanban-deploy 先检查恢复条件，展示目标和影响，暂不执行恢复。”
+
+Reuse a trusted deployment record when available. If local records are gone, inspect the confirmed Cloudflare account: exclude Workers without cfKanban markers, present verified instances for selection, and retain unresolved candidates instead of assuming a unique target. Users need not remember resource UUIDs or provide a new Owner name. Discovery and planning are read-only; execute only after approval of the exact recovery plan.
+
+Explain the effects before approval: one replacement Credential is saved privately for the same Owner; every old Owner API Credential copy and dependent browser session becomes invalid. Independent Passkeys and their sessions, business data, and access Grants remain. Route the operational details to the deployment Skill's Owner recovery workflow. Verify that the installed release includes recovery support; a repository change does not update the installed plugin or publish a release.

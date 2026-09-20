@@ -1,13 +1,10 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { createCloudflareControlClient } from "./cloudflare-control.mjs";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { resolveStateRoot } from "./paths.mjs";
 import { assertNoSymlinkPath, readJson, requireString, requireUuid } from "./utils.mjs";
 
-const execFileAsync = promisify(execFile);
-const API_ORIGIN = "https://api.cloudflare.com";
 const MARKER_KEY = "cfkanban-instance.json";
 export const ATTACHMENT_CLEANUP_CRON = "17 * * * *";
 
@@ -17,56 +14,6 @@ export function attachmentBucketName(value) {
   return name;
 }
 
-async function authHeaders({ wranglerExecutable, cloudflareProfile = null, contextDirectory = null, environment = process.env, tokenRunner = execFileAsync }) {
-  if (cloudflareProfile && contextDirectory) throw toolError("AMBIGUOUS_WRANGLER_AUTH_CONTEXT", "Choose the frozen profile or context, not both");
-  if (cloudflareProfile && !/^[A-Za-z0-9_-]{1,128}$/u.test(cloudflareProfile)) throw toolError("INVALID_WRANGLER_PROFILE", "The frozen profile name is invalid");
-  if (cloudflareProfile && (environment.CLOUDFLARE_API_TOKEN || environment.CLOUDFLARE_API_KEY)) throw toolError("WRANGLER_PROFILE_SHADOWED_BY_ENV", "Environment authentication shadows the frozen profile");
-  if (!cloudflareProfile && environment.CLOUDFLARE_API_TOKEN) return { Authorization: `Bearer ${environment.CLOUDFLARE_API_TOKEN}` };
-  if (!cloudflareProfile && environment.CLOUDFLARE_API_KEY && environment.CLOUDFLARE_EMAIL) return { "X-Auth-Key": environment.CLOUDFLARE_API_KEY, "X-Auth-Email": environment.CLOUDFLARE_EMAIL };
-  if (environment.CLOUDFLARE_API_KEY || environment.CLOUDFLARE_EMAIL) throw toolError("R2_AUTH_UNAVAILABLE", "Cloudflare environment authentication is incomplete");
-  if (!cloudflareProfile && !contextDirectory) throw toolError("R2_AUTH_CONTEXT_REQUIRED", "Use the frozen profile or private authentication context directory");
-  if (!path.isAbsolute(wranglerExecutable ?? "")) throw toolError("ABSOLUTE_PATH_REQUIRED", "Wrangler must be an absolute executable path");
-  if (contextDirectory && !path.isAbsolute(contextDirectory)) throw toolError("ABSOLUTE_PATH_REQUIRED", "Cloudflare context must be an absolute path");
-  const args = ["auth", "token", "--json", ...(cloudflareProfile ? ["--profile", cloudflareProfile] : []), ...(contextDirectory ? ["--cwd", contextDirectory] : [])];
-  try {
-    const result = await tokenRunner(wranglerExecutable, args, { env: { ...environment, WRANGLER_WRITE_LOGS: "false" }, timeout: 30_000, maxBuffer: 64 * 1024, windowsHide: true });
-    const parsed = JSON.parse(result.stdout);
-    if (!["oauth", "api_token"].includes(parsed?.type) || typeof parsed.token !== "string" || !parsed.token) throw new Error();
-    return { Authorization: `Bearer ${parsed.token}` };
-  } catch {
-    throw toolError("R2_AUTH_UNAVAILABLE", "The frozen Cloudflare authentication could not be read; no login or profile change was performed");
-  }
-}
-
-async function controlClient(input, resourcePath = "/r2/buckets") {
-  const account = requireString(input.accountId, "account_id", { max: 128 });
-  if (!/^[A-Za-z0-9_-]+$/u.test(account)) throw toolError("INVALID_ACCOUNT_ID", "Account ID is invalid");
-  const headers = await authHeaders(input);
-  const base = `/client/v4/accounts/${account}${resourcePath}`;
-  const fetchImpl = input.fetchImpl ?? globalThis.fetch;
-  return async (suffix, { method = "GET", body, raw = false, allowMissing = false } = {}) => {
-    let response;
-    try {
-      response = await fetchImpl(`${API_ORIGIN}${base}${suffix}`, { method, redirect: "error", signal: AbortSignal.timeout(30_000), headers: { ...headers, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    } catch {
-      throw toolError("R2_CONTROL_UNAVAILABLE", "Cloudflare R2 response is uncertain; read back before retrying", { method });
-    }
-    let text;
-    try {
-      const reader = response.body?.getReader();
-      const chunks = []; let size = 0;
-      if (reader) for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > 64 * 1024) { await reader.cancel(); throw new Error(); } chunks.push(part.value); }
-      text = Buffer.concat(chunks).toString("utf8");
-    } catch { throw toolError("R2_CONTROL_READBACK_INVALID", "R2 readback exceeded its bound or could not be read"); }
-    let value;
-    try { value = text ? JSON.parse(text) : null; } catch { throw toolError("R2_CONTROL_READBACK_INVALID", "R2 returned an invalid readback"); }
-    if (allowMissing && response.status === 404 && (raw || value?.errors?.some((error) => error.code === 10006))) return null;
-    if (!response.ok || (!raw && value?.success !== true)) {
-      throw toolError("R2_CONTROL_FAILED", "Cloudflare R2 request failed; check subscription and the selected account's permissions", { status: response.status, codes: Array.isArray(value?.errors) ? value.errors.map((entry) => Number(entry.code)).filter(Number.isSafeInteger) : [] });
-    }
-    return raw ? value : value.result;
-  };
-}
 
 async function inspect(client, name, instanceId = null, accountId) {
   const segment = `/${name}`;
@@ -92,7 +39,7 @@ async function inspect(client, name, instanceId = null, accountId) {
 
 export async function readR2Storage(input) {
   const name = attachmentBucketName(input.bucketName);
-  const client = await controlClient(input);
+  const client = await createCloudflareControlClient(input);
   const result = await inspect(client, name, input.instanceId ? requireUuid(input.instanceId, "instance_id") : null, input.accountId);
   return { ...result, account_id: input.accountId, secret_values_exposed: false };
 }
@@ -104,7 +51,7 @@ export async function provisionR2Storage(input) {
   const journal = await assertJournalAuthorization({ stateRoot, instanceId, operationId, taskId, plan });
   assertAttachmentStoragePlan(plan);
   const name = attachmentBucketName(plan.resources.r2.bucket_name);
-  const client = await controlClient(plannedConnection(input));
+  const client = await createCloudflareControlClient(plannedConnection(input));
   const record = (event) => appendJournalEvent({ stateRoot, instanceId, operationId, event });
   if (!plan.resources.r2.create) {
     const receiptPath = requireString(input.currentReceiptPath, "current_receipt_path");
@@ -178,7 +125,7 @@ export async function verifyPlannedAttachmentWorker(input) {
   if (!plan.resources?.r2 || !["before", "after"].includes(phase)) throw toolError("R2_PLAN_REQUIRED", "Attachment Worker verification requires an exact phase and R2 plan");
   const name = requireString(plan.resources.worker.name, "worker_name", { max: 63 });
   if (!/^[a-z0-9][a-z0-9-]*$/u.test(name)) throw toolError("INVALID_RESOURCE_NAME", "Worker name is invalid");
-  const client = await controlClient(plannedConnection(input), `/workers/scripts/${name}/schedules`);
+  const client = await createCloudflareControlClient(plannedConnection(input), `/workers/scripts/${name}/schedules`);
   const result = await client("");
   const expected = phase === "before" && plan.resources.r2.create ? [] : [ATTACHMENT_CLEANUP_CRON];
   if (!Array.isArray(result?.schedules) || result.schedules.length !== expected.length || result.schedules.some((schedule, index) => schedule?.cron !== expected[index])) throw toolError("R2_CLEANUP_SCHEDULE_DRIFT", "Worker Cron triggers do not match the planned attachment cleanup schedule");

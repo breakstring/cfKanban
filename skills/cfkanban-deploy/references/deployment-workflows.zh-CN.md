@@ -166,6 +166,19 @@ Wrangler keyring 设置作用于当前 OS 用户拥有的所有 Wrangler profile
 
 首次部署只创建基础设施和 Deployment Owner，按设计不会创建 Workspace、Project、Label、Grant 或 Issue。最终报告必须提供一条简单的下一步提示词：“请使用 `$cfkanban-admin` 创建我的第一个 cfKanban 看板。”Owner 验证、缺失名称询问、两个独立创建与读回以及 Browser Launch 流程都由 Admin Skill 负责；不能要求用户把这些步骤写进提示词，也不能把这些应用写入隐藏在 Cloudflare deployment authorization 里面。
 
+## Owner 凭据全失恢复
+
+本流程恢复原 Owner API 访问，保留原 Owner Principal、名称、业务数据、历史与 Passkey；撤销全部旧 Owner API Credential，关联 Launch/Session 访问随之失效。Passkey Session 仍按独立认证源校验。本地 current secret 仍存在时应转 `cfkanban-admin` 正常轮换；metadata 尚在但 secret 丢失可以恢复。目标未知时先在已确认的 Cloudflare 账户中发现候选，再让用户选择准确实例；不猜账户、资源或信任 origin。
+
+目标未知时调用 `owner-recovery discover`，输入 `accountId`、`wranglerExecutable` 与二选一的 `cloudflareProfile`/`contextDirectory`；可选 `workerNames` 限定准确 Worker 名称。只在该账户内检查 bindings、D1 表标记及实例身份，再核对公开入口，不靠名称前缀识别。无 DB binding 或无实例标记表才排除；已有标记但 schema 不完整、权限失败、超时、多个 DB 等放入 `unresolved`，不能当作无关。只返回 cfKanban 候选与无法确认的 Worker 名称/原因，不输出其他 Worker 配置或业务数据。默认最多检查 100 个 Worker，响应超过 64 KiB 时停止并请求缩小范围，不截断后假定唯一。`selection_required` 时展示候选名称、入口和 instance ID，请用户选择；`incomplete` 说明仍有无法确认项，不自动选唯一候选；`single_candidate` 只能在后续恢复计划中提议目标，不能跳过授权。已知准确目标可跳过发现。
+
+1. 先用 `help` 核实当前可信 Skill 发行包含 `owner-recovery discover`、`owner-recovery inspect`、`plan owner-recovery`、`owner-recovery execute`。仓库文档更新不代表当前插件已更新；安装或更新到含这些命令的发行仍须用户授权。
+2. `owner-recovery inspect` 输入 `instanceId`、`accountId`、`workerName`、`d1Name`、`databaseId`、`apiOrigin`、`wranglerExecutable`，以及二选一的 `cloudflareProfile` 或 `contextDirectory`；不含 `taskId`。它只读核对准确 Cloudflare 资源和 Worker DB binding、D1 Instance/原 Owner/preferred origin、公开 discovery/health。控制面权限与全部身份事实必须一致，仅同名不足以通过。
+3. `plan owner-recovery` 使用相同字段并增加 `taskId`，再次执行只读 preflight，冻结准确目标和恢复影响。授权前展示 plan/digest、同一 Owner、撤销全部旧 API Credential、保留 Passkey 和替代凭据私有保存位置。计划阶段不生成 secret，也不远端写入。
+4. 以 `instanceId`、`plan.operation_id` 作为 `operationId`、`plan` 调用 `journal create`；获授权后，以 `instanceId`、`operationId`、`taskId`、返回的 `plan_digest` 作为 `planDigest` 调用 `journal authorize`。不能用首次部署/bootstrap journal 或另一 operation 代替专用恢复计划。
+5. `owner-recovery execute` 输入 `instanceId`、`operationId`、`taskId`、`plan`。脚本先把替代 secret 保存到私有 pending，使用参数化 Cloudflare D1 REST query batch 写入，再准确读回 operation commit、`owner.credential_recovered` Audit 与 Credential，完成认证身份校验后才提升本地 current。Cloudflare 认证只在 helper 内存中使用，明文 Credential 和认证 header 不进入命令参数、普通输出、日志或 journal。此流程不部署 Worker、不迁移 schema、不创建新 Owner，也不增加应用恢复 endpoint。
+6. 中断或响应不确定后，只用同一已授权 plan、journal 和 pending/current secret 重跑 execute。读回决定最终化已提交操作，或续做尚未写入的状态；partial state/drift 必须停止。不能生成第二 secret 或重跑首次部署 bootstrap。进程被硬杀留下 `owner-recovery.lock` 时，必须先确认锁中 PID 已不在运行，再仅删除这个准确锁；保留 pending/current 与 journal。
+
 ## 中断与续做
 
 一个 Agent task、normalized plan digest 与 operation ID 共同定义一次授权。同一任务可以续做无漂移的计划内步骤，其中包括 `owner_bootstrap.recovery_authorization` 已声明、且经零状态证明安全的重试；不能按每次进程执行重复索要确认。新任务、任何 plan delta 或用户亲自提出的更窄限制都需要新授权。

@@ -92,10 +92,18 @@ Choose the requested operation before planning:
 | Verify migrations | `migrations reconcile`, `migrations assess-ledger-recovery`, `migrations write-ledger-record-sql` | Check ordered manifest + insert-only checksum ledger + bounded schema artifacts. Checksum SQL is accepted only for the exact missing row proven recoverable by the same authorized journal and is fixed to that journal's private path. |
 | Install or update canonical Skills | `plan skill-update`, `release install-skill-bundle` | Required before a canonical first deployment when no matching verified release is active; local-only atomic version switch, with no Cloudflare or D1 write. |
 | Upgrade an Instance | `release install-service-bundle`, `plan instance-upgrade`, journal/deploy commands, `deployment finalize-upgrade` | Cache and re-verify the immutable Service bundle; freeze exact existing resources/current bindings, migration and restore evidence, deploy, then verify the unchanged Owner Credential and write an idempotent redacted before/after receipt. Do not update local Skills implicitly. |
-| Recover lost Owner access | deployment plan/journal plus the same pending-secret and bootstrap primitives | Restore the same Principal only; this is not a Web/application endpoint. |
+| Recover lost Owner access | `owner-recovery discover` when the target is unknown, then `owner-recovery inspect`, `plan owner-recovery`, and authorized `owner-recovery execute` | Dedicated recovery plan/journal; preserve the same Owner and Passkeys, revoke every previous Owner API Credential, verify the operation and promote the replacement secret. Never reuse first-deployment bootstrap commands. |
 | Hand off to first-use setup | `cfkanban-admin` after deployment verification | Deployment alone creates no Workspace or Project; offer the next prompt but do not silently perform application writes. |
 
 The full phase, path, recovery, and marketplace/plugin guide is [references/deployment-workflows.md](references/deployment-workflows.md).
+
+## Total Owner Credential loss
+
+Use the dedicated [Owner recovery workflow](references/deployment-workflows.md#owner-recovery) only when the current secret is lost; a present current secret belongs to normal `cfkanban-admin` rotation. Metadata without its secret can be recovered. If the target is unknown, run `owner-recovery discover` in the already selected Cloudflare account, optionally narrowed by `workerNames`. Exclude only confirmed unrelated Workers and show unresolved checks separately. Multiple verified instances require the user to select one; a single candidate may be proposed in the recovery plan, never silently trusted or recovered. Do not identify cfKanban by a naming prefix or return unrelated resource configuration.
+
+`owner-recovery inspect` and `plan owner-recovery` perform read-only Cloudflare/Instance preflight. Show the recovery plan before `journal create` / `journal authorize` and `owner-recovery execute`: it preserves the same Owner Principal and Passkeys, revokes all previous Owner API Credentials (including their usable Launch/Session access), and creates one replacement. It uses parameterized Cloudflare D1 REST query batches, with no Worker deployment, schema migration, application recovery endpoint, or secret in command arguments/output. Resume with the same plan, journal and pending/current secret; partial state or drift stops. A stale `owner-recovery.lock` may be removed only after proving its recorded PID is no longer running; never clear pending/journal state or generate another secret to bypass it.
+
+These commands require a verified Skill release containing them. Updating repository documentation does not update an installed plugin or authorize a Skill update.
 
 ## Cloudflare login contract
 
