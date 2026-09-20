@@ -8,9 +8,7 @@ cfKanban 是一套面向 Agent 协作方式的轻量自托管 Kanban。你让 Ag
 
 ## 看看它如何工作
 
-[![观看 cfKanban 产品介绍](apps/web/src/assets/intro/cfkanban-intro-zh-CN.jpg)](apps/web/src/assets/intro/cfkanban-intro-zh-CN.mp4)
-
-[观看中文版](apps/web/src/assets/intro/cfkanban-intro-zh-CN.mp4) · [English](apps/web/src/assets/intro/cfkanban-intro-en.mp4) — 51 秒，1080p，无声。通过模拟 Agent 对话，展示 Issue 从创建、更新到完成的过程，以及对应的 Web 看板。
+https://github.com/user-attachments/assets/94b3d30b-a1a7-4ad2-9924-838a8317d3bb
 
 ## 当前可用状态
 

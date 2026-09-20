@@ -8,9 +8,7 @@ It runs as one Cloudflare Worker plus one D1 database, with optional private R2 
 
 ## See it in action
 
-[![Watch the cfKanban introduction](apps/web/src/assets/intro/cfkanban-intro-en.jpg)](apps/web/src/assets/intro/cfkanban-intro-en.mp4)
-
-[Watch in English](apps/web/src/assets/intro/cfkanban-intro-en.mp4) · [简体中文](apps/web/src/assets/intro/cfkanban-intro-zh-CN.mp4) — 51 seconds, 1080p, silent. Follow a simulated Agent conversation from issue creation to completion, then see the Web board.
+https://github.com/user-attachments/assets/82e0eac9-43b1-4fd5-ae25-d3e11338c734
 
 ## Availability
 
