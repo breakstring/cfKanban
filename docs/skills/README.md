@@ -16,8 +16,8 @@ Each operational `SKILL.md` connects user goals to commands, required checks, an
 Describe the desired result. For daily work in a Project you already joined:
 
 ```text
-Use $cfkanban to show my unfinished Issues in Release.
-Use $cfkanban to create “Fix login” in Release with this description: <details>.
+Use $cfkanban to show my unfinished Issues in DemoProject.
+Use $cfkanban to create “Fix login” in DemoProject with this description: <details>.
 Use $cfkanban to change CFK-123's title to “Fix mobile login”.
 Use $cfkanban to move CFK-123 to in progress.
 Use $cfkanban to record CFK-123 as complete: result <summary>, validation <evidence>.
@@ -33,7 +33,7 @@ For help, joining, Owner management, or hosting:
 Use $cfkanban-howto to explain what I can do with Issues, with examples.
 Use $cfkanban to join this Project: <Invite URL>.
 Use $cfkanban-admin to create my first cfKanban board.
-Use $cfkanban-admin to show who can access Release.
+Use $cfkanban-admin to show who can access DemoProject.
 Use $cfkanban-deploy to check local Skill and instance versions without updating.
 Use $cfkanban-deploy to deploy cfKanban for me.
 ```

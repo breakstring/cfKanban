@@ -39,7 +39,7 @@ For a verified Owner with no narrower target, route to `cfkanban-admin` and open
 
 **SHOULD:** After a successful Invite/Public Join, when a clear working directory has no scope configuration, briefly offer to associate that directory with the joined Project(s). Likewise, when a list/search has neither explicit targets nor directory recommendations, explain the authorized aggregate scope and offer either a one-off Project selection or a saved association. These are overridable suggestions, not setup gates: continue the requested operation within its resolved scope, and avoid repeated prompts when configured or declined. A direct Issue lookup does not need directory setup.
 
-Example: “For regular work here, ask me to associate this folder with Release.” / “如果以后主要在这个目录处理 Release 项目，可以让我建立目录关联。” Only an explicit request to save an association authorizes `scope merge`; joining or naming a Project for one request does not. Preserve existing targets and resolve ambiguous names against authorized Projects rather than guessing. Read **Working-directory association** in the workflow reference when inspecting or saving an association.
+Example: “For regular work here, ask me to associate this folder with DemoProject.” / “如果以后主要在这个目录处理 DemoProject 项目，可以让我建立目录关联。” Only an explicit request to save an association authorizes `scope merge`; joining or naming a Project for one request does not. Preserve existing targets and resolve ambiguous names against authorized Projects rather than guessing. Read **Working-directory association** in the workflow reference when inspecting or saving an association.
 
 ## Command entry point
 

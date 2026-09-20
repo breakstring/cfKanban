@@ -15,9 +15,9 @@ Participants and Owners use `cfkanban` for ordinary Issue work. For a general �
 
 | Goal / 目标 | Example prompt / 自然语言示例 | Expected result / 预期结果 |
 | --- | --- | --- |
-| Find work / 查找任务 | “Show my unfinished Issues in Release.” / “查看 Release 项目中我未完成的任务。” | Scoped results with identifiers and status; no writes. / 返回明确项目范围内的编号与状态，不修改任务。 |
-| Search / 搜索 | “Find Issues with ‘login’ in Release.” / “在 Release 项目查找标题含‘登录’的任务。” | Title/identifier matches; no promise of full-text Comment or attachment search. / 按标题或编号匹配，不承诺搜索评论或附件全文。 |
-| Create / 创建 | “Create ‘Fix login error’ in Release with this description: <details>.” / “在 Release 创建‘修复登录错误’，描述为：<说明>。” | One new Issue and its identifier in the resolved Project. / 在准确项目创建一项任务并返回编号。 |
+| Find work / 查找任务 | “Show my unfinished Issues in DemoProject.” / “查看 DemoProject 项目中我未完成的任务。” | Scoped results with identifiers and status; no writes. / 返回明确项目范围内的编号与状态，不修改任务。 |
+| Search / 搜索 | “Find Issues with ‘login’ in DemoProject.” / “在 DemoProject 项目查找标题含‘登录’的任务。” | Title/identifier matches; no promise of full-text Comment or attachment search. / 按标题或编号匹配，不承诺搜索评论或附件全文。 |
+| Create / 创建 | “Create ‘Fix login error’ in DemoProject with this description: <details>.” / “在 DemoProject 创建‘修复登录错误’，描述为：<说明>。” | One new Issue and its identifier in the resolved Project. / 在准确项目创建一项任务并返回编号。 |
 | Edit / 编辑 | “Change CFK-123's title to ‘Fix mobile login’.” / “把 CFK-123 的标题改为‘修复移动端登录’。” | The requested field changes, followed by readback. / 只修改指定字段并读回确认。 |
 | Change status / 改变状态 | “Move CFK-123 to in progress.” / “把 CFK-123 改为进行中。” | An explicit workflow change; it does not claim the work was performed. / 显式更新状态，不表示已代为执行任务内容。 |
 | Complete / 完成 | “Mark CFK-123 complete; optionally include result <summary> and validation <evidence>.” / “将 CFK-123 标为完成；可选附上结果<摘要>、验证<证据>。” | Done plus an immutable completion record based on actual evidence. / 标为完成并保存基于实际证据的不可变完成记录。 |
@@ -28,7 +28,7 @@ Participants and Owners use `cfkanban` for ordinary Issue work. For a general �
 | Organize / 整理关联 | “Add the existing ‘bug’ Label to CFK-123.” / “给 CFK-123 添加已有的 bug 标签。”; “Record that CFK-123 blocks CFK-124.” / “记录 CFK-123 阻塞 CFK-124。” | Project Labels or supported relations; relations do not change status or access. / 使用项目标签或受支持关系，关系不会改变状态或权限。 |
 | Attach evidence / 附件 | “Attach <absolute file path> to CFK-123.” / “将 <文件绝对路径> 附加到 CFK-123。” | One selected file when attachment storage and capacity permit; no implicit upload of other files. / 存储及容量允许时上传一个指定文件，不自动上传其它文件。 |
 | Recover deleted work / 恢复已删除任务 | “Restore the deleted CFK-123.” / “恢复已删除的 CFK-123。” | One soft-deleted Issue is restored if permissions and quotas allow. / 权限和配额允许时恢复一项软删除任务。 |
-| Open the board / 打开看板 | “Open the Release board in IAB.” / “在 IAB 打开 Release 看板。” | Verified authenticated target in the requested browser, if supported. / 在受支持的指定浏览器进入已验证的登录页面。 |
+| Open the board / 打开看板 | “Open the DemoProject board in IAB.” / “在 IAB 打开 DemoProject 看板。” | Verified authenticated target in the requested browser, if supported. / 在受支持的指定浏览器进入已验证的登录页面。 |
 | My profile / 我的资料 | “Change my display name to <name>.” / “将我的显示名称改为 <名称>。” | Your name changes; stable identity and access remain unchanged. / 修改自己的名称，稳定身份与权限不变。 |
 
 Prefix any example with “Use $cfkanban to…” / “请用 $cfkanban …” when explicit Skill selection helps. `reader` can read; `writer` can collaborate within its Project. Assignment and display names never grant access. Status keys are `backlog`, `todo`, `in_progress`, `done`, and `canceled`; completion uses the dedicated completion operation, not an ordinary status edit. Do not invent validation results when recording completion. “Finish this task” may also request implementation: follow the user's context and authority rather than merely marking it done.
@@ -40,7 +40,7 @@ Joining is for people who do not yet have access: “Use $cfkanban to join this 
 Recommend an optional directory association when the user regularly handles one or more Projects from the same repository or ordinary folder. It helps future Issue lists/searches use the intended Projects without repeatedly naming them. It is unnecessary for a one-off Issue lookup and is not a prerequisite for joining or daily work.
 
 - “Show which cfKanban Projects this folder is associated with.” / “查看当前目录关联了哪些 cfKanban 项目。”
-- “Use $cfkanban to associate this folder with Release.” / “请用 $cfkanban 将当前目录关联到 Release 项目。”
+- “Use $cfkanban to associate this folder with DemoProject.” / “请用 $cfkanban 将当前目录关联到 DemoProject 项目。”
 - “Also associate this folder with Mobile.” / “将 Mobile 项目也关联到当前目录。”
 
 Explain that `~/.cfkanban/` stores private instance/identity state, while the optional `.cfkanban-scope.json` in the chosen working directory stores non-secret Project identifiers. Joining does not create it automatically. On an explicit association request, route to `cfkanban` to verify the exact Projects and create or merge the file, preserving existing associations. Users need not supply UUIDs themselves. A local folder is distinct from a cfKanban Workspace.
@@ -55,12 +55,12 @@ Only the instance's verified Deployment Owner uses this Skill for application ad
 
 | Goal / 目标 | Example prompt / 自然语言示例 | Expected result / 预期结果 |
 | --- | --- | --- |
-| First board / 第一个看板 | “Create Release in workspace Product.” / “在 Product 工作区创建 Release 项目。” | Resolved containers and their identifiers; open the board when requested, with no automatic members or Issues. / 创建或定位准确容器并返回标识，按请求打开看板，不自动添加成员或任务。 |
-| Invite / 邀请 | “Create a read-only invitation to Release.” / “创建 Release 项目的只读邀请。” | An explicit reader invitation, safely delivered; sending it to another person is a separate action. / 创建明确 reader 权限的邀请并安全交付，向他人发送是独立操作。 |
-| Access / 权限 | “Show who can access Release.” / “查看谁可以访问 Release 项目。” | Current access; no permission changes unless requested. / 展示当前权限，未要求时不改动。 |
+| First board / 第一个看板 | “Create DemoProject in workspace Product.” / “在 Product 工作区创建 DemoProject 项目。” | Resolved containers and their identifiers; open the board when requested, with no automatic members or Issues. / 创建或定位准确容器并返回标识，按请求打开看板，不自动添加成员或任务。 |
+| Invite / 邀请 | “Create a read-only invitation to DemoProject.” / “创建 DemoProject 项目的只读邀请。” | An explicit reader invitation, safely delivered; sending it to another person is a separate action. / 创建明确 reader 权限的邀请并安全交付，向他人发送是独立操作。 |
+| Access / 权限 | “Show who can access DemoProject.” / “查看谁可以访问 DemoProject 项目。” | Current access; no permission changes unless requested. / 展示当前权限，未要求时不改动。 |
 | Usage / 用量 | “Show usage and attachment capacity.” / “查看用量与附件容量。” | Cache-aware usage refresh and separate application capacity/platform metrics. / 按缓存规则刷新用量，区分应用容量与平台指标。 |
-| Public Join / 公开加入 | “Explain the effects of enabling Public Join for Release.” / “解释开启 Release 项目公开加入的影响。” | Explain that visitors can select reader or writer, and enabling needs three explicit quotas; explanation makes no change. / 说明访客可选 reader 或 writer、开启须明确三项配额；讲解不修改设置。 |
-| Archive / 归档 | “Archive the old Release project.” / “归档旧 Release 项目。” | Reversible container archive; permanent removal is a separate explicit request and preview. / 可恢复地归档容器，永久删除需要独立明确请求与预览。 |
+| Public Join / 公开加入 | “Explain the effects of enabling Public Join for DemoProject.” / “解释开启 DemoProject 项目公开加入的影响。” | Explain that visitors can select reader or writer, and enabling needs three explicit quotas; explanation makes no change. / 说明访客可选 reader 或 writer、开启须明确三项配额；讲解不修改设置。 |
+| Archive / 归档 | “Archive the old DemoProject project.” / “归档旧 DemoProject 项目。” | Reversible container archive; permanent removal is a separate explicit request and preview. / 可恢复地归档容器，永久删除需要独立明确请求与预览。 |
 
 Prefix these with `$cfkanban-admin`. It also handles container rename/restore, fixed status display names, participant recovery, Owner Credential rotation, and application settings. Public writer access permits content changes; disabling Public Join does not revoke existing Grants. Restoring a container can resume its enabled Public Join policies and must explain that effect. Cloudflare request-rate configuration and enabling private attachment storage belong to deployment; selecting application attachment capacity belongs here.
 

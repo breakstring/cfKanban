@@ -9,7 +9,7 @@ Use this Skill only with a verified Deployment Owner Credential. Read the releva
 
 ## Start with the Owner's management goal
 
-Examples: “Create a Release Project in Product”, “Invite someone to Release as a reader”, “Show who can access Release”, or “Show usage and attachment capacity”. Expect a verified container, safely delivered invitation, access listing, or usage report respectively; one request does not authorize the other actions. Read **Common Owner requests** in the workflow reference for examples and outcomes.
+Examples: “Create a DemoProject Project in Product”, “Invite someone to DemoProject as a reader”, “Show who can access DemoProject”, or “Show usage and attachment capacity”. Expect a verified container, safely delivered invitation, access listing, or usage report respectively; one request does not authorize the other actions. Read **Common Owner requests** in the workflow reference for examples and outcomes.
 
 The audience is the verified single Deployment Owner, including when managing an existing installation. Application access, containers, quotas, and attachment capacity belong here. Enabling cloud attachment storage or changing deployed request-rate settings belongs to `cfkanban-deploy`; ordinary Issue status, Comments, and completion belong to `cfkanban`.
 

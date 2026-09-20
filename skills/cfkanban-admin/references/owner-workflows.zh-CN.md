@@ -10,12 +10,12 @@
 
 | 用户请求 | 预期结果 |
 | --- | --- |
-| “在 Product 工作区创建 Release 项目。” | 解析既有名称或创建请求的容器，读回 UUID 并报告项目，用户请求时再打开看板；不自动创建 Issue、添加成员或开启公开加入。 |
-| “创建 Release 的只读邀请。” | 创建明确 `reader` 权限的 Invite 并安全交付，不自动发送给他人。 |
-| “查看谁可以访问 Release。” | 展示当前 Grants 与 Owner 权限及稳定 Principal 标识，不撤权或改角色。 |
-| “解释开启 Release 公开加入的影响。” | 说明访客可选择 reader 或 writer，开启需要三项明确配额；讲解不隐含修改策略，以后关闭不撤销既有 Grants。 |
+| “在 Product 工作区创建 DemoProject 项目。” | 解析既有名称或创建请求的容器，读回 UUID 并报告项目，用户请求时再打开看板；不自动创建 Issue、添加成员或开启公开加入。 |
+| “创建 DemoProject 的只读邀请。” | 创建明确 `reader` 权限的 Invite 并安全交付，不自动发送给他人。 |
+| “查看谁可以访问 DemoProject。” | 展示当前 Grants 与 Owner 权限及稳定 Principal 标识，不撤权或改角色。 |
+| “解释开启 DemoProject 公开加入的影响。” | 说明访客可选择 reader 或 writer，开启需要三项明确配额；讲解不隐含修改策略，以后关闭不撤销既有 Grants。 |
 | “查看用量和剩余附件容量。” | 按缓存规则刷新，区分应用预留量/上限与平台指标；未知不是零，不限制不是未配置。 |
-| “归档旧 Release 项目。” | 可恢复地归档准确项目；恢复时提示仍 enabled 的 Public Join 会恢复，永久清理需要独立预览及明确授权。 |
+| “归档旧 DemoProject 项目。” | 可恢复地归档准确项目；恢复时提示仍 enabled 的 Public Join 会恢复，永久清理需要独立预览及明确授权。 |
 | “帮助这个参与者恢复访问。” | 先明确稳定 Principal、准确恢复模式及撤销影响，再创建 Recovery Invite；Owner 凭据全失交给 `cfkanban-deploy`。 |
 
 ## 通用请求方式

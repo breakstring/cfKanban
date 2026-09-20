@@ -10,12 +10,12 @@ Verify `is_owner=true` first. These are application operations, not Cloudflare d
 
 | User request | Expected result |
 | --- | --- |
-| “Create Release in workspace Product.” | Resolve existing names or create requested containers; read back UUIDs and report the Project. Open the board when requested. No automatic Issue, membership, or Public Join. |
-| “Create a read-only invitation to Release.” | An explicit `reader` Invite delivered safely; no automatic sending to another person. |
-| “Show who can access Release.” | Current Grants and Owner access, with stable Principal identifiers; no revocation or role changes. |
-| “Explain the effects of enabling Public Join for Release.” | Explain that visitors can choose reader or writer and enabling requires three explicit quotas. No policy change is implied by explanation; disabling later does not revoke existing Grants. |
+| “Create DemoProject in workspace Product.” | Resolve existing names or create requested containers; read back UUIDs and report the Project. Open the board when requested. No automatic Issue, membership, or Public Join. |
+| “Create a read-only invitation to DemoProject.” | An explicit `reader` Invite delivered safely; no automatic sending to another person. |
+| “Show who can access DemoProject.” | Current Grants and Owner access, with stable Principal identifiers; no revocation or role changes. |
+| “Explain the effects of enabling Public Join for DemoProject.” | Explain that visitors can choose reader or writer and enabling requires three explicit quotas. No policy change is implied by explanation; disabling later does not revoke existing Grants. |
 | “Show usage and remaining attachment capacity.” | Cache-aware refresh and a distinction between application reservations/limit and platform metrics; unknown is not zero and unlimited is not unset. |
-| “Archive the old Release project.” | Reversible archive of the resolved Project. Restore warns about enabled Public Join resuming; permanent purge needs its separate preview and explicit authorization. |
+| “Archive the old DemoProject project.” | Reversible archive of the resolved Project. Restore warns about enabled Public Join resuming; permanent purge needs its separate preview and explicit authorization. |
 | “Help this participant recover access.” | Resolve the stable Principal and exact recovery mode/revocation effects before creating a Recovery Invite. Total Owner Credential loss goes to `cfkanban-deploy`. |
 
 ## Common request pattern

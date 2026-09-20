@@ -16,8 +16,8 @@
 描述希望得到的结果。已经加入项目后，日常使用可以这样说：
 
 ```text
-请用 $cfkanban 查看 Release 项目中我未完成的任务。
-请用 $cfkanban 在 Release 创建“修复登录”，描述为：<说明>。
+请用 $cfkanban 查看 DemoProject 项目中我未完成的任务。
+请用 $cfkanban 在 DemoProject 创建“修复登录”，描述为：<说明>。
 请用 $cfkanban 把 CFK-123 的标题改为“修复移动端登录”。
 请用 $cfkanban 把 CFK-123 改为进行中。
 请用 $cfkanban 将 CFK-123 记为完成，结果：<摘要>，验证：<证据>。
@@ -33,7 +33,7 @@
 请用 $cfkanban-howto 举例介绍 Issue 的日常能力。
 请用 $cfkanban 加入这个项目：<邀请链接>。
 请用 $cfkanban-admin 创建我的第一个 cfKanban 看板。
-请用 $cfkanban-admin 查看谁可以访问 Release。
+请用 $cfkanban-admin 查看谁可以访问 DemoProject。
 请用 $cfkanban-deploy 检查本地技能和实例版本，先不要更新。
 请用 $cfkanban-deploy 为我部署一套 cfKanban。
 ```
