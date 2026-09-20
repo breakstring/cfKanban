@@ -63,6 +63,7 @@ Public Join 的 `principal_limit` 统计该项目有效直接成员、项目管�
 - `GET/POST /api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators`：查看/授予本项目管理员；写入只允许 Owner/工作区管理员。
 - 对应 Project administrators 子资源 `DELETE .../{administrator_id}?expected_version=...` 撤销。
 - 授予 body 为 `{principal_id, expected_version}`；返回沿用 WriteResult、资源 version、allowed_actions 和有效来源。列表使用既有 limit/cursor 合同；撤销记录可用于显式重新授予。
+- 工作区和项目新增 `GET .../administrator-candidates`：任免权限与对应 POST 一致；支持 `q` 姓名子串搜索及 `limit/cursor` 分页，返回 `principal_id/display_name/expected_version`。分页前排除 Owner、有效直接管理员及工作区继承管理员。实例级 Owner 可选择全部既有用户；窄范围会话及局部管理员只看到本范围有效成员及已有管理员记录中的用户，不扩大人员可见范围。首次授予版本为 0，已撤销的直接授权返回当前版本；候选结果不替代 POST 的实时鉴权、CAS 和配额检查。
 - `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/members`：供当前项目管理员读取有界、分页的有效成员和授权来源；不返回跨范围身份细节。
 - 既有项目 Grant 与普通 Invitation 管理端点按目标扩展局部管理授权；`/admin` 路径不等于全实例授权，实例身份/安全端点继续 Owner-only。
 - 工作区/项目读回使用 allowed_actions 表达改名、建项、状态名、归档/恢复、成员及管理员管理。列表包含当前管理员有权管理的空工作区。
@@ -71,7 +72,7 @@ Public Join 的 `principal_limit` 统计该项目有效直接成员、项目管�
 
 ## Web 与 Skills
 
-第一方 Web 提供工作区/项目的管理入口与成员/管理员列表，清楚显示继承来源、直接授权和移除后的剩余访问；支持多人、CAS 冲突、归档恢复提示、中英文。Owner 仍使用实例管理页面；局部管理员只进入自己范围的管理界面，不展示全实例身份、凭据、用量和安全审计。
+第一方 Web 通过姓名搜索和人员下拉框添加管理员，不要求手输 UUID；排除已有有效管理权限的人员，普通 reader/writer 仍可提升，已撤销者可重新添加。提供工作区/项目的管理入口与成员/管理员列表，清楚显示继承来源、直接授权和移除后的剩余访问；支持多人、CAS 冲突、归档恢复提示、中英文。Owner 仍使用实例管理页面；局部管理员只进入自己范围的管理界面，不展示全实例身份、凭据、用量和安全审计。
 
 沿用新参与者 project_selection Session 的实时权限；管理请求必须同时满足当前角色和 Session 允许范围。既有固定 Project/Issue Session 不扩大为工作区管理范围，Owner 窄 scope Session 也不提升成实例管理。局部管理员用既有 Project/Issue Launch 进入界面，空工作区管理提供明确受限入口；不得复用 Owner admin scope。
 

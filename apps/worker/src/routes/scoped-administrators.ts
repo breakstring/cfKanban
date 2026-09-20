@@ -6,7 +6,7 @@ import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.t
 import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { RequestContext, WorkerEnv } from "../kernel/types.ts";
-import { changeAdministrator, listAdministrators, listProjectMembers } from "../services/scoped-administrators.ts";
+import { changeAdministrator, listAdministratorCandidates, listAdministrators, listProjectMembers } from "../services/scoped-administrators.ts";
 
 function scope(context: RequestContext) {
   const workspaceId = requireUuid(context.params.workspace_id ?? "", "workspace_id");
@@ -23,6 +23,10 @@ async function authenticated(request: Request, env: WorkerEnv, context: RequestC
 
 export function registerScopedAdministratorRoutes(router: Router): Router {
   for (const base of ["/api/v1/workspaces/{workspace_id}", "/api/v1/workspaces/{workspace_id}/projects/{project_id}"]) {
+    router.get(`${base}/administrator-candidates`, async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      return jsonResponse(await listAdministratorCandidates(env.DB, auth, scope(context), context.url, context.startedAt), context.requestId);
+    });
     router.get(`${base}/administrators`, async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       return jsonResponse(await listAdministrators(env.DB, auth, scope(context), context.url, context.startedAt), context.requestId);

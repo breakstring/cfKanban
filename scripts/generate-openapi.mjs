@@ -77,9 +77,11 @@ const operations = [
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses", "listProjectStatuses", "projects", authenticated, "read"],
   ["patch", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_key}", "updateProjectStatusName", "projects", authenticated, "cas", "UpdateStatusNameRequest"],
 
+  ["get", "/api/v1/workspaces/{workspace_id}/administrator-candidates", "listWorkspaceAdministratorCandidates", "workspaces", authenticated, "read", "AdministratorCandidateQuery"],
   ["get", "/api/v1/workspaces/{workspace_id}/administrators", "listWorkspaceAdministrators", "workspaces", authenticated, "read", "CursorQuery"],
   ["post", "/api/v1/workspaces/{workspace_id}/administrators", "createWorkspaceAdministrator", "workspaces", authenticated, "idempotent-cas", "CreateAdministratorRequest"],
   ["delete", "/api/v1/workspaces/{workspace_id}/administrators/{administrator_id}", "revokeWorkspaceAdministrator", "workspaces", authenticated, "idempotent-cas-delete"],
+  ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrator-candidates", "listProjectAdministratorCandidates", "projects", authenticated, "read", "AdministratorCandidateQuery"],
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators", "listProjectAdministrators", "projects", authenticated, "read", "CursorQuery"],
   ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators", "createProjectAdministrator", "projects", authenticated, "idempotent-cas", "CreateAdministratorRequest"],
   ["delete", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators/{administrator_id}", "revokeProjectAdministrator", "projects", authenticated, "idempotent-cas-delete"],
@@ -339,13 +341,13 @@ const permissionGroups = {
   deployment_owner: [
     "previewWorkspacePurge", "purgeWorkspace", "previewProjectPurge", "purgeProject",
     "createWorkspace", "deleteWorkspace", "restoreWorkspace",
-    "createWorkspaceAdministrator", "revokeWorkspaceAdministrator",
+    "createWorkspaceAdministrator", "revokeWorkspaceAdministrator", "listWorkspaceAdministratorCandidates",
     "listPrincipals", "getPrincipal", "listPrincipalCredentials", "revokeCredential", "rotateOwnerCredential",
     "getInstanceOrigin", "updateInstanceOrigin", "listAuditEvents", "revokePrincipalPasskey",
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
     "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings",
   ],
-  workspace_administrator: ["updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
+  workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
   scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
   project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext"],
@@ -608,6 +610,18 @@ const schemas = {
     type: "object", required: ["has_more", "items", "next_cursor", "resolved_scope"],
     properties: {
       has_more: { type: "boolean" }, items: { type: "array", maxItems: 100, items: ref("Administrator") }, next_cursor: nullableString(),
+      resolved_scope: { type: "object", required: ["workspace_id", "project_id"], properties: { workspace_id: ref("Uuid"), project_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
+    }, additionalProperties: false,
+  },
+  AdministratorCandidate: {
+    type: "object", required: ["principal_id", "display_name", "expected_version"],
+    properties: { principal_id: ref("Uuid"), display_name: string(), expected_version: integer({ minimum: 0 }) }, additionalProperties: false,
+  },
+  AdministratorCandidateListResult: {
+    type: "object", required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    description: "Excludes Owner and active direct or inherited administrators before pagination. Instance-scoped Owner may select any existing Principal; narrower callers see only current scope members and previously listed administrators. expected_version is 0 for a first grant or the revoked direct grant version. Eligibility is advisory; POST rechecks authorization, CAS and quotas.",
+    properties: {
+      has_more: { type: "boolean" }, items: { type: "array", maxItems: 100, items: ref("AdministratorCandidate") }, next_cursor: nullableString(),
       resolved_scope: { type: "object", required: ["workspace_id", "project_id"], properties: { workspace_id: ref("Uuid"), project_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
     }, additionalProperties: false,
   },
@@ -2104,6 +2118,11 @@ const querySets = {
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],
   InvitationListQuery: [{ name: "project_id", in: "query", required: false, schema: ref("Uuid"), description: "Filter to Invitations containing this Project. Every target must still be manageable by the current Principal; partial visibility never reveals an Invitation." }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
+  AdministratorCandidateQuery: [
+    { name: "q", in: "query", required: false, schema: string({ maxLength: 100 }), description: "Optional normalized display name substring." },
+    { name: "cursor", in: "query", required: false, schema: string() },
+    { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
+  ],
   CursorQuery: [{ name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   DeletedModeQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],
   DeletedCursorQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
@@ -2116,6 +2135,8 @@ const querySets = {
 
 const operationResponseSchemas = {
   getMe: ref("CurrentPrincipal"),
+  listWorkspaceAdministratorCandidates: ref("AdministratorCandidateListResult"),
+  listProjectAdministratorCandidates: ref("AdministratorCandidateListResult"),
   listWorkspaceAdministrators: ref("AdministratorListResult"),
   listProjectAdministrators: ref("AdministratorListResult"),
   createWorkspaceAdministrator: ref("AdministratorWriteResult"),

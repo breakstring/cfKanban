@@ -165,3 +165,68 @@ test("workspace Browser Launch supports empty workspaces and respects Owner work
   assert.equal((await call(s, w.path)).status, 404);
   assert.deepEqual(ok(await call(s, "/api/v1/web-session")).management_grants, []);
 });
+
+test("administrator candidates filter existing access before pagination and preserve scope, search and regrant CAS", async () => {
+  const w = await workspace("CandidateWorkspace");
+  const p = await project(w, "CandidateProject");
+  const sibling = await project(w, "CandidateSibling");
+  const hidden = await workspace("CandidateHidden");
+  const hiddenProject = await project(hidden, "CandidateHiddenProject");
+  const lead = await person("CandidateLead");
+  const admin = await person("CandidateAdmin");
+  const reader = await person("CandidateReader");
+  const writer = await person("CandidateWriter");
+  const former = await person("CandidateFormer");
+  const outside = await person("CandidateOutside");
+  const siblingMember = await person("CandidateSiblingMember");
+  const wa = ok(await grant(w, lead));
+  ok(await grant(p, admin));
+  const revoked = ok(await revoke(p, ok(await grant(p, former))));
+  for (const [target, member, role] of [[p,reader,"reader"],[p,writer,"writer"],[hiddenProject,outside,"writer"],[sibling,siblingMember,"reader"]]) {
+    ok(await call(owner, `/api/v1/admin/projects/${target.id}/grants`, "POST", { principal_id: member.id, role }));
+  }
+  const path = `${p.path}/administrator-candidates`;
+  const all = ok(await call(owner, `${path}?q=Candidate&limit=100`)).items;
+  for (const excluded of [owner, lead, admin]) assert.ok(!all.some(item => item.principal_id === excluded.id));
+  for (const included of [reader,writer,former,outside,siblingMember]) assert.ok(all.some(item => item.principal_id === included.id));
+  assert.equal(all.find(item => item.principal_id === former.id).expected_version, revoked.version);
+  const scoped = ok(await call(lead, `${path}?limit=100`)).items;
+  assert.deepEqual(scoped.map(item => item.principal_id).sort(), [reader.id,writer.id,former.id].sort());
+  const first = ok(await call(lead, `${path}?limit=1`));
+  assert.equal(first.items.length, 1); assert.equal(first.has_more, true);
+  let cursor = first.next_cursor;
+  const paged = [...first.items];
+  while (cursor) {
+    const page = ok(await call(lead, `${path}?limit=1&cursor=${encodeURIComponent(cursor)}`));
+    paged.push(...page.items); cursor = page.next_cursor;
+  }
+  assert.deepEqual(paged.map(item => item.principal_id).sort(), scoped.map(item => item.principal_id).sort());
+  assert.equal((await call(lead, `${path}?q=reader&cursor=${encodeURIComponent(first.next_cursor)}`)).status, 409);
+  const search = ok(await call(lead, `${path}?q=%EF%BC%B2%EF%BC%A5%EF%BC%A1%EF%BC%A4%EF%BC%A5%EF%BC%B2`));
+  assert.deepEqual(search.items.map(item => item.principal_id), [reader.id]);
+  assert.equal(ok(await call(lead, `${path}?q=%25`)).items.length, 0);
+  assert.equal((await call(lead, `${path}?q=${"a".repeat(101)}`)).status, 400);
+  assert.equal((await call(admin, path)).status, 403);
+  assert.equal((await call(reader, path)).status, 403);
+  assert.equal((await call(lead, `${w.path}/administrator-candidates`)).status, 403);
+  assert.equal((await call(lead, `${hiddenProject.path}/administrator-candidates`)).status, 403);
+  const narrowOwner = await session(owner, { kind: "workspace", workspace_id: w.id });
+  const narrowCandidates = ok(await call(narrowOwner, `${w.path}/administrator-candidates?limit=100`)).items;
+  assert.ok(!narrowCandidates.some(item => [outside.id,lead.id].includes(item.principal_id)));
+  for (const included of [reader,writer,admin,siblingMember]) assert.ok(narrowCandidates.some(item => item.principal_id === included.id));
+  assert.ok(!ok(await call(narrowOwner, `${path}?limit=100`)).items.some(item => item.principal_id === siblingMember.id));
+  assert.equal((await call(narrowOwner, `${hidden.path}/administrator-candidates`)).status, 403);
+  const projectSession = await session(lead, { kind: "project", workspace_id: w.id, project_id: p.id });
+  assert.deepEqual(ok(await call(projectSession, `${path}?limit=100`)).items, scoped);
+  assert.equal((await call(projectSession, `${sibling.path}/administrator-candidates`)).status, 200);
+  await db.prepare("UPDATE web_sessions SET target_kind='project', target_json=?1 WHERE id=?2")
+    .bind(JSON.stringify({ kind: "project", workspace_id: w.id, project_id: p.id, entry_path: `/app/w/${w.id}/p/${p.id}` }), projectSession.resource.session_id).run();
+  assert.deepEqual(ok(await call(projectSession, `${path}?limit=100`)).items, scoped);
+  assert.equal((await call(projectSession, `${sibling.path}/administrator-candidates`)).status, 403);
+  const restored = ok(await grant(p, former, lead, revoked.version));
+  assert.equal(restored.version, revoked.version + 1);
+  assert.ok(!ok(await call(lead, `${path}?limit=100`)).items.some(item => item.principal_id === former.id));
+  assert.equal((await grant(p, former, lead, revoked.version)).status, 409);
+  ok(await revoke(w, wa));
+  assert.equal((await call(lead, `${path}?cursor=${encodeURIComponent(first.next_cursor)}`)).status, 403);
+});

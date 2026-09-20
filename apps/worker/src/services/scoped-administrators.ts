@@ -65,6 +65,54 @@ export async function listAdministrators(db: D1Database, auth: AuthContext, scop
   };
 }
 
+export async function listAdministratorCandidates(db: D1Database, auth: AuthContext, scope: ManagementScope, url: URL, now: number) {
+  const authorization = await requireManagementAuthorization(db, auth, scope, "manage_administrators", now);
+  const limit = requireLimit(url);
+  const query = (url.searchParams.get("q") ?? "").trim().normalize("NFKC").toLowerCase();
+  if (query.length > 100) throw validationError("invalid_search_query");
+  const globalOwner = auth.isOwner && (auth.kind === "bearer" || auth.targetKind === "admin");
+  const cursor = await createCursorContext("administrator-candidates", {
+    workspace_id: scope.workspaceId, project_id: scope.projectId ?? null, q: query, global_owner: globalOwner,
+  }, [authorization.administratorGrantId ?? "owner", authorization.administratorGeneration ?? "owner"], auth.principalId);
+  const after = cursorPosition(decodeCursor(url.searchParams.get("cursor"), cursor));
+  const guard = buildManagementGuard(auth, now, 6, scope, "manage_administrators");
+  // 从已可见的成员/管理员出发，避免窄范围请求逐个扫描实例中的无关用户；撤销记录仍可重新授予。
+  const people = globalOwner ? "principals p" : `(
+    SELECT a.principal_id FROM scoped_administrator_grants a
+      WHERE a.workspace_id=?1 AND a.project_id IS ?2
+    UNION
+    SELECT g.principal_id FROM projects project JOIN project_grants g ON g.project_id=project.id
+      WHERE project.workspace_id=?1 AND (?2 IS NULL OR project.id=?2)
+        AND project.deleted_at IS NULL AND g.revoked_at IS NULL
+    UNION
+    SELECT a.principal_id FROM projects project JOIN scoped_administrator_grants a ON a.project_id=project.id
+      WHERE ?2 IS NULL AND project.workspace_id=?1 AND a.workspace_id=?1
+        AND a.revoked_at IS NULL AND project.deleted_at IS NULL
+  ) visible JOIN principals p ON p.id=visible.principal_id`;
+  const result = await db.prepare(`
+    SELECT p.id AS principal_id, p.display_name, COALESCE(direct.version, 0) AS expected_version
+    FROM ${people}
+    LEFT JOIN scoped_administrator_grants direct ON direct.principal_id=p.id
+      AND direct.workspace_id=?1 AND direct.project_id IS ?2
+    WHERE p.id != (SELECT owner_principal_id FROM instance_meta WHERE singleton=1)
+      AND (direct.id IS NULL OR direct.revoked_at IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM scoped_administrator_grants inherited
+        WHERE inherited.workspace_id=?1 AND inherited.project_id IS NULL
+          AND inherited.principal_id=p.id AND inherited.revoked_at IS NULL)
+      AND (?3 IS NULL OR p.id > ?3) AND instr(p.display_name_key, ?4) > 0
+      AND ${guard.sql}
+    ORDER BY p.id LIMIT ?5
+  `).bind(scope.workspaceId, scope.projectId ?? null, after, query, limit + 1, ...guard.values)
+    .all<{ principal_id: string; display_name: string; expected_version: number }>();
+  await requireManagementAuthorization(db, auth, scope, "manage_administrators", now);
+  const rows = result.results.slice(0, limit);
+  const hasMore = result.results.length > limit;
+  return {
+    items: rows, has_more: hasMore, next_cursor: hasMore ? encodeCursor(cursor, [rows.at(-1)!.principal_id]) : null,
+    resolved_scope: { workspace_id: scope.workspaceId, project_id: scope.projectId ?? null },
+  };
+}
+
 async function readAdministrator(db: D1Database, scope: ManagementScope, principalId: string): Promise<AdministratorRow | null> {
   return db.prepare(
     `SELECT a.*, p.display_name FROM scoped_administrator_grants a JOIN principals p ON p.id=a.principal_id

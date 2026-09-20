@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import AdministratorSelect from "../components/AdministratorSelect.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
@@ -13,7 +14,7 @@ import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor } from "../lib/pagination";
 import { navigate } from "../lib/router";
 import { hasManagementActions, managementPath, remainingAccessSources, sourceLabel } from "../lib/scoped-management";
-import type { AccessSource, AdministratorResource, ContainerResource, GrantResource, ListResult, ProjectMember, ProjectStatusResource, WebSessionView } from "../types";
+import type { AccessSource, AdministratorCandidate, AdministratorResource, ContainerResource, GrantResource, ListResult, ProjectMember, ProjectStatusResource, WebSessionView } from "../types";
 
 const props = defineProps<{ workspaceId: string; projectId?: string | undefined; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
@@ -33,7 +34,7 @@ const busy = ref(false);
 const archived = ref(false);
 const draft = ref({ display_name: "", context: "" });
 const projectName = ref("");
-const administratorId = ref("");
+const administratorCandidate = ref<AdministratorCandidate | null>(null);
 const memberForm = ref({ principal_id: "", role: "writer" as "reader" | "writer" });
 const conflict = ref<CasConflictState | null>(null);
 const confirmation = ref<{ title: string; message: string; run: () => Promise<void>; restore?: ContainerResource } | null>(null);
@@ -50,6 +51,7 @@ const endpoints: Record<string, string> = {
 
 function clearFacts(): void {
   resource.value = null;
+  administratorCandidate.value = null;
   administrators.value = []; members.value = []; grants.value = []; projects.value = []; statuses.value = [];
   cursors.value = {}; confirmation.value = null;
 }
@@ -149,12 +151,15 @@ function saveSettings(): void {
 }
 function grantAdministrator(item?: AdministratorResource): void {
   if (!can("manage_administrators")) return;
-  const id = item?.principal_id ?? administratorId.value.trim();
-  const existing = item ?? administrators.value.find(row => row.principal_id === id);
+  const candidate = administratorCandidate.value;
+  if (!item && !candidate) return;
+  const id = item?.principal_id ?? candidate!.principal_id;
+  const displayName = item?.principal.display_name ?? candidate!.display_name;
+  const expectedVersion = item?.version ?? candidate!.expected_version;
   confirmation.value = {
     title: ui("Grant administrator access", "授予管理员权限"),
-    message: `${id} — ${props.projectId ? ui("Can manage this project's settings and ordinary members. Counts toward its participant quota.", "可维护本项目设置和普通成员，计入项目人数配额。") : ui("Can read, write and manage all current and future projects in this workspace. Counts toward every project's participant quota; any full public project blocks the entire grant.", "可读写并管理本工作区现在及未来的全部项目，计入各项目人数配额；任一公开项目满额将使整次授权失败。")}`,
-    run: () => write(`${resourcePath}/administrators`, "POST", { principal_id: id, expected_version: existing?.version ?? 0 }),
+    message: `${displayName} — ${props.projectId ? ui("Can manage this project's settings and ordinary members. Counts toward its participant quota.", "可维护本项目设置和普通成员，计入项目人数配额。") : ui("Can read, write and manage all current and future projects in this workspace. Counts toward every project's participant quota; any full public project blocks the entire grant.", "可读写并管理本工作区现在及未来的全部项目，计入各项目人数配额；任一公开项目满额将使整次授权失败。")}`,
+    run: () => write(`${resourcePath}/administrators`, "POST", { principal_id: id, expected_version: expectedVersion }),
   };
 }
 function sourcesText(sources: AccessSource[]): string {
@@ -255,8 +260,8 @@ onUnmounted(() => { mounted = false; generation += 1; clearFacts(); });
         <h2>{{ ui('Administrators', '管理员') }}</h2>
         <p>{{ projectId ? ui('Workspace administrators also inherit management access. Project administrators cannot appoint or remove peers.', '工作区管理员也继承本项目管理权；项目管理员不能任免同级管理员。') : ui('Only the Owner can appoint or remove workspace administrators. All current and future projects inherit this access.', '只有实例所有者可以任免工作区管理员；授权覆盖现在和未来的全部子项目。') }}</p>
         <form v-if="can('manage_administrators')" class="management-row" @submit.prevent="grantAdministrator()">
-          <label>{{ ui('Principal UUID', '用户 UUID') }}<input v-model="administratorId" required pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" /></label>
-          <button class="secondary-button" type="submit" :disabled="busy">{{ ui('Grant administrator access', '授予管理员权限') }}</button>
+          <AdministratorSelect :resource-path="resourcePath" :disabled="busy" @select="administratorCandidate = $event" />
+          <button class="secondary-button" type="submit" :disabled="busy || !administratorCandidate">{{ ui('Grant administrator access', '授予管理员权限') }}</button>
         </form>
         <div v-for="administrator in administrators" :key="administrator.id" class="management-row">
           <div><strong>{{ administrator.principal.display_name }}</strong><p><code>{{ administrator.principal_id }}</code> · {{ administrator.revoked_at ? ui('Revoked', '已撤销') : ui('Active', '有效') }}</p></div>

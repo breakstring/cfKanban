@@ -349,6 +349,12 @@ export interface ManagementGrant {
   version: number;
 }
 
+export interface AdministratorCandidate {
+  principal_id: string;
+  display_name: string;
+  expected_version: number;
+}
+
 export interface AdministratorResource extends ManagementGrant {
   principal: { id: string; display_name: string };
   allowed_actions: string[];

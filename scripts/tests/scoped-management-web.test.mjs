@@ -69,7 +69,7 @@ test("scoped surfaces avoid instance control endpoints and reuse invitation reco
   assert.doesNotMatch(view, /\/api\/v1\/admin\/(?:principals|credentials|audit-events|rate-limit-settings)/);
   assert.doesNotMatch(view, /public-join-policy/);
   assert.match(view, /can\('manage_administrators'\)/);
-  assert.match(view, /expected_version: existing\?\.version \?\? 0/);
+  assert.match(view, /expected_version: expectedVersion/);
   assert.match(view, /remainingAccessSources\(member\.sources, item\.id\)/);
   assert.match(view, /captureCasConflict/);
   assert.match(view, /PublicJoinRestorePreview/);
