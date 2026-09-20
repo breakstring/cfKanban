@@ -57,7 +57,7 @@ onMounted(loadDiscovery);
       <span v-if="role" class="role-badge">{{ roleLabel(role) }}</span>
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
-      <button v-if="session.allowed_scope.kind === 'project_selection'" class="text-button" type="button" @click="navigate('/app')">
+      <button v-if="session.allowed_scope.kind === 'project_selection' || session.allowed_scope.kind === 'workspace'" class="text-button" type="button" @click="navigate('/app')">
         {{ locale === "zh-CN" ? "切换项目" : "Switch project" }}
       </button>
       <button v-if="canAccessOwnerControlPlane(session)" class="text-button" type="button" @click="navigate('/app/admin')">

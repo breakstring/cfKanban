@@ -32,10 +32,12 @@ export interface ProjectScopeItem {
 
 export interface WebSessionView {
   allowed_scope: {
-    kind: "instance" | "project" | "project_selection";
+    kind: "instance" | "workspace" | "project" | "project_selection";
+    workspace_id?: string;
     project_id?: string;
     projects?: ProjectScopeItem[];
   };
+  management_grants?: ManagementGrant[];
   expires_at: string;
   principal: {
     display_name: string;
@@ -335,4 +337,33 @@ export interface WriteResult<T> {
   event_cursor?: string;
   idempotent_replay?: boolean;
   resource: T;
+}
+
+export interface ManagementGrant {
+  id: string;
+  principal_id: string;
+  workspace_id: string;
+  project_id: string | null;
+  generation: string;
+  revoked_at: string | null;
+  version: number;
+}
+
+export interface AdministratorResource extends ManagementGrant {
+  principal: { id: string; display_name: string };
+  allowed_actions: string[];
+}
+
+export interface AccessSource {
+  kind: "workspace_admin" | "project_admin" | "project_grant" | "deployment_owner";
+  id: string | null;
+  version: number | null;
+  role?: ProjectRole;
+}
+
+export interface ProjectMember {
+  principal_id: string;
+  display_name: string;
+  effective_role: ProjectRole;
+  sources: AccessSource[];
 }

@@ -1062,6 +1062,52 @@ test("one-time capability creation is blocked on generic API output and uses ded
   assert.equal(JSON.stringify(replayedInvite).includes(inviteCode), false);
 });
 
+test("Workspace Browser Launch delivers only the exact requested management target", async (t) => {
+  const { home, stateRoot } = await fixtureCurrentCredential();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const workspaceId = "77777777-7777-4777-8777-777777777777";
+  const otherWorkspaceId = "99999999-9999-4999-8999-999999999999";
+  const launchCode = `cfl_v1_abcdefgh_${"W".repeat(43)}`;
+  const launchUrl = `https://old.example.test/app/launch?code=${launchCode}`;
+  const requestedTarget = { kind: "workspace", workspace_id: workspaceId };
+  let browserCalls = 0;
+  const run = (responseTarget) => createBrowserLaunchAndDeliver({
+    stateRoot, instanceId: INSTANCE_ID, target: requestedTarget, idempotencyKey: "workspace-launch",
+    fetchImpl: async (url, options) => {
+      if (url.pathname === "/.well-known/cfkanban-instance.json") return discoveryResponse(url);
+      assert.equal(url.pathname, "/api/v1/web-launches");
+      assert.deepEqual(JSON.parse(options.body), { target: requestedTarget });
+      return new Response(JSON.stringify({
+        event_cursor: "workspace-launch-cursor", idempotent_replay: false,
+        resource: {
+          id: "88888888-8888-4888-8888-888888888888", created_at: "2026-09-20T00:00:00.000Z",
+          expires_at: "2026-09-20T00:05:00.000Z", launch_url: launchUrl, secret_available: true,
+          target: responseTarget,
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+    browserOpener: { open: async (localUrl) => {
+      browserCalls += 1;
+      assert.equal(localUrl.includes(launchCode), false);
+      const response = await fetch(localUrl, { redirect: "manual" });
+      assert.equal(response.headers.get("location"), launchUrl);
+    } },
+  });
+  const resourceTarget = { ...requestedTarget, entry_path: `/app/manage?workspace=${workspaceId}` };
+  const result = await run(resourceTarget);
+  assert.deepEqual(result.resource.target, resourceTarget);
+  assert.equal(result.delivery.delivered, true);
+  assert.equal(JSON.stringify(result).includes(launchCode), false);
+  for (const target of [
+    { ...resourceTarget, entry_path: "/app/admin" },
+    { ...resourceTarget, entry_path: `/app/manage?workspace=${workspaceId}&section=admin` },
+    { kind: "workspace", workspace_id: otherWorkspaceId, entry_path: `/app/manage?workspace=${otherWorkspaceId}` },
+  ]) {
+    await assert.rejects(run(target), (error) => error.code === "INVALID_CAPABILITY_RESPONSE");
+  }
+  assert.equal(browserCalls, 1);
+});
+
 test("browser and clipboard delivery preflight covers macOS, Windows, WSL2, and Linux", async () => {
   const available = async () => undefined;
   assert.equal((await resolveSystemBrowserOpener({ platform: "darwin", release: "25.0.0", env: {}, accessImpl: available })).kind, "system_browser");
@@ -4261,4 +4307,25 @@ test("Principal-name upgrade states its exact breaking boundary without claiming
   });
   assert.equal(plan.rollback_boundary.previous_worker_rollback_prohibited_after_migration, true);
   assert.equal(plan.expected_interruption, "service_unavailable_between_migration_and_compatible_worker_deploy");
+});
+
+
+test("schema 9 upgrade preserves view assertions and prohibits old Worker rollback", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8"));
+  const migration = manifest.migrations.find((entry) => entry.sequence === 9);
+  const base = upgradePlanInput();
+  const input = {
+    ...base,
+    current: { ...base.current, schema_version: 8 },
+    target: { ...base.target, schema_version: 9, compatibility: { ...base.target.compatibility, schema_version: 9 } },
+    migrations: [migration],
+    restorePoint: { required: true, verified: true, bookmark: "bookmark", observed_at: "2026-09-20T01:00:00.000Z", retention_boundary: "verified_plan_retention", reason: "pre_migration" },
+  };
+  assert.throws(() => createInstanceUpgradePlan(input), { code: "BREAKING_MIGRATION_REQUIRES_EXPLICIT_PLAN" });
+  const plan = createInstanceUpgradePlan({ ...input, allow_breaking_change: true });
+  assert.deepEqual(plan.migrations.ordered[0].expected_artifacts.views, [...migration.expected_artifacts.views].sort());
+  assert.equal(plan.rollback_boundary.previous_worker_rollback_prohibited_after_migration, true);
+  assert.equal(plan.expected_interruption, "service_unavailable_between_migration_and_compatible_worker_deploy");
+  assert.equal(plan.migrations.execution.mode, "single_query");
+  assert.equal(plan.migrations.execution.max_sql_bytes, 24576);
 });

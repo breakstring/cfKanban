@@ -1,6 +1,6 @@
 ---
 name: cfkanban
-description: Find, create, and update cfKanban Issues, Comments, relations, and completion records; join Projects and open authenticated boards. Use for daily collaboration and your profile, not Owner administration or Cloudflare deployment.
+description: Find, create, and update cfKanban Issues, Comments, relations, and completion records; join Projects and open authenticated boards. Use for daily collaboration and your profile, not scoped administration or Cloudflare deployment.
 ---
 
 # cfKanban
@@ -25,7 +25,9 @@ For an already joined user, lead with finding, creating, editing, changing statu
 - Redeem one Project Invite, Principal Recovery Invite, or Public Join safely.
 - Create a five-minute, one-time Browser Launch for one explicit Project or Issue.
 
-Use `cfkanban-admin` for Owner application administration. Use `cfkanban-deploy` for local Skill lifecycle, Cloudflare resources, migrations, deployment, upgrades, or out-of-band Owner recovery.
+Use `cfkanban-admin` for Owner or scoped Workspace/Project administration. Use `cfkanban-deploy` for local Skill lifecycle, Cloudflare resources, migrations, deployment, upgrades, or out-of-band Owner recovery.
+
+Scoped administrators (schema 9+) have effective writer access in their managed Projects; Workspace administration includes present and future child Projects. `/me.management_grants` describes management separately from the compatible reader/writer data-plane projection. Direct Grants and inherited administration are independent: losing one source does not erase another, and assignment/history survive loss of writer eligibility. Use `cfkanban-admin` for administrator appointments or effective-member management, including an empty Workspace's `{kind:"workspace",workspace_id}` Web target; never substitute an Owner `admin` target.
 
 ## Intent-first user experience
 
@@ -35,7 +37,7 @@ For ordinary Issue work, resolve the requested target and carry out the authoriz
 
 Opening cfKanban means entering an authenticated page when a local Credential is available, including requests such as “open cfKanban”, “show the board”, or “open management in IAB”. Resolve the trusted instance with `web resolve`, verify `/api/v1/me`, then use `web launch`; opening the public homepage alone does not complete that request. Explicit instance/origin context wins, followed by a single Repo instance, then a single local instance. Ask once only when candidates remain ambiguous; never choose by recency or Owner status. An explicit unknown target must not fall back to another instance.
 
-For a verified Owner with no narrower target, route to `cfkanban-admin` and open admin Overview. For a participant, use the explicit Project/Issue, or read authorized Projects and select only a unique result; otherwise ask which Project. On Services implementing participant project switching, a newly exchanged non-Owner Launch Session uses `project_selection`: the requested target is its initial page, and later access follows live Project Grants. Existing fixed-scope Sessions and Owner Project/Issue Launch Sessions stay fixed; do not infer deployed support from the local Skill version. Honor the requested browser: `host_browser` hands a short-lived local relay to the host's IAB/named-browser tool, while `system_browser` keeps the default opener. Read the Browser Launch section in the workflow reference before host-browser delivery. Verify the final authenticated target; reuse an existing Session only after its identity and scope are verified.
+For a verified Owner with no narrower target, route to `cfkanban-admin` and open admin Overview. For a participant, use the explicit Project/Issue, or read authorized Projects and select only a unique result; otherwise ask which Project. On Services implementing participant project switching, a newly exchanged non-Owner Launch Session uses `project_selection`: the requested target is its initial page, and later access follows live effective Project access. Existing fixed-scope Sessions and Owner Project/Issue Launch Sessions stay fixed; do not infer deployed support from the local Skill version. Honor the requested browser: `host_browser` hands a short-lived local relay to the host's IAB/named-browser tool, while `system_browser` keeps the default opener. Read the Browser Launch section in the workflow reference before host-browser delivery. Verify the final authenticated target; reuse an existing Session only after its identity and scope are verified.
 
 ## Optional working-directory association
 

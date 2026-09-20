@@ -215,3 +215,9 @@ Passkey 只能从 Agent-launch Session 开始登记。Passkey 只认证 Web，�
 Principal 名称从 schema 8 起在整个实例内唯一。首尾去空白并 NFKC 规范化保存，使用非 locale 的 `toLowerCase()` 判重；显示名和判重 key 均为 1–128 个 Unicode 码点。仅允许 Unicode 字母、组合标记、数字和 `_`、`-`、`·`，拒绝内部空白、默认不可见字符及其他符号；精确保留词为 `admin`、`administrator`、`owner`、`system`、`管理员`、`所有者`、`系统`。遇到 `PRINCIPAL_DISPLAY_NAME_CONFLICT` 请用户选择其他名称，不能擅自加后缀。名称不授予权限，写操作仍提交稳定 Principal ID。
 
 按名字指派 Issue 时，调用 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees?display_name=<URL编码的准确名称>`（schema 8+）。名称必填，由服务端规范化精确匹配；仅返回当前项目可指派的 Owner/writer，`items` 为零或一项，包含 `principal_id` 和 `display_name`。唯一命中即可携带该 ID 和当前 Issue version 写入，无需额外身份消歧确认。未命中时询问有效候选名称，不模糊猜测、不枚举无关项目、不从历史 Issue 文本推断身份。旧服务无此接口时使用明确提供且已验证的 ID 或澄清，不假定名称唯一。
+
+## 有效权限与分级管理（schema 9+）
+
+当前工作区或项目管理员在日常 Issue、评论、附件、指派与关系操作中具有有效 writer 权限。工作区管理动态继承到当前和未来全部子项目。`/api/v1/me.management_grants` 与资源 `allowed_actions` 单独表达管理能力，数据面 reader/writer 投影不授予管理权。直接 Grant 与管理来源独立取并集；失去一条来源不删除其他授权，失去全部 writer 权限只让现有 assignment 标记不可用，保留历史。关系仍要求同工作区且两端有效授权。
+
+管理员任免、有效成员列表、范围内设置和空工作区管理交给 `cfkanban-admin`，后者可用 `{kind:"workspace",workspace_id:"<UUID>"}` 打开准确管理页。普通加入与 Invite 仍只授予明确 reader/writer。局部管理员签发的邀请如果准确签发管理授权在兑换前撤销，会永久失效；请获取新的获授权邀请，不原样重试或更换原邀请的签发来源。Owner 专属身份恢复边界不变。

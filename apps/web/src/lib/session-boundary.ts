@@ -21,8 +21,12 @@ function boundaryValue(session: WebSessionView): Record<string, unknown> {
     allowed_scope: {
       kind: session.allowed_scope.kind,
       project_id: session.allowed_scope.project_id ?? null,
+      workspace_id: session.allowed_scope.workspace_id ?? null,
       projects: scopeProjects.map(({ project_id, workspace_id, role }) => ({ project_id, workspace_id, role })),
     },
+    management_grants: [...(session.management_grants ?? [])]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map(({ id, workspace_id, project_id, version, generation, revoked_at }) => ({ id, workspace_id, project_id, version, generation, revoked_at })),
     principal_id: session.principal.id,
     session_id: session.session_id,
     source: { id: session.source.id, kind: session.source.kind },

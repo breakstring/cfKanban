@@ -26,6 +26,8 @@ interface EventRow {
   actor_display_name: string | null;
   actor_principal_id: string | null;
   authorized_via: string;
+  administrator_grant_id: string | null;
+  administrator_grant_version: number | null;
   created_at: number;
   event_index: number;
   grant_id: string | null;
@@ -65,6 +67,7 @@ function eventSelect(eventsSource: string): string {
   SELECT event.sequence, event.id, event.stream, event.type, event.operation_id,
          event.event_index, event.actor_principal_id, actor.display_name AS actor_display_name,
          event.actor_credential_id, event.authorized_via, event.grant_id,
+         event.administrator_grant_id, event.administrator_grant_version,
          event.workspace_id,
          workspace.display_name AS workspace_display_name,
          event.project_id,
@@ -82,6 +85,7 @@ const EVENT_SELECT = eventSelect("events event");
 const EVENT_CANDIDATE_COLUMNS = `
   sequence, id, stream, type, operation_id, event_index,
   actor_principal_id, actor_credential_id, authorized_via, grant_id,
+  administrator_grant_id, administrator_grant_version,
   workspace_id, project_id, relation_other_project_id,
   subject_type, subject_id, payload_json, created_at`;
 
@@ -200,6 +204,8 @@ function eventResource(row: EventRow, includeStream = false): { [key: string]: J
       principal_id: row.actor_principal_id,
     },
     authorized_via: row.authorized_via,
+    administrator_grant_id: row.administrator_grant_id,
+    administrator_grant_version: row.administrator_grant_version,
     created_at: timestamp(row.created_at),
     event_index: row.event_index,
     grant_id: row.grant_id,
@@ -274,7 +280,7 @@ export async function listEvents(
            AND (
              current_instance.owner_principal_id = ?5
              OR EXISTS (
-               SELECT 1 FROM project_grants current_grant
+               SELECT 1 FROM effective_project_grants current_grant
                WHERE current_grant.project_id = current_project.id
                  AND current_grant.principal_id = ?5
                  AND current_grant.revoked_at IS NULL

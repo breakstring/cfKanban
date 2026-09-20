@@ -1,4 +1,4 @@
-# Owner workflows
+# Administration workflows
 
 Language: [English](owner-workflows.md) | [简体中文](owner-workflows.zh-CN.md)
 
@@ -6,13 +6,13 @@ Read the relevant section only. Run `node scripts/cfkanban-tool.mjs help` once p
 
 ## Common Owner requests
 
-Verify `is_owner=true` first. These are application operations, not Cloudflare deployment. Daily Issue work remains in `cfkanban` even for an Owner.
+Verify `/api/v1/me`, its `is_owner` and `management_grants`, then target `allowed_actions`. Require `is_owner=true` for Owner-exclusive operations. These are application operations, not Cloudflare deployment. Daily Issue work remains in `cfkanban` even for an Owner.
 
 | User request | Expected result |
 | --- | --- |
 | “Create DemoProject in workspace Product.” | Resolve existing names or create requested containers; read back UUIDs and report the Project. Open the board when requested. No automatic Issue, membership, or Public Join. |
 | “Create a read-only invitation to DemoProject.” | An explicit `reader` Invite delivered safely; no automatic sending to another person. |
-| “Show who can access DemoProject.” | Current Grants and Owner access, with stable Principal identifiers; no revocation or role changes. |
+| “Show who can access DemoProject.” | Paginated effective members with direct/inherited sources and stable Principal identifiers; no revocation or role changes. |
 | “Explain the effects of enabling Public Join for DemoProject.” | Explain that visitors can choose reader or writer and enabling requires three explicit quotas. No policy change is implied by explanation; disabling later does not revoke existing Grants. |
 | “Show usage and remaining attachment capacity.” | Cache-aware refresh and a distinction between application reservations/limit and platform metrics; unknown is not zero and unlimited is not unset. |
 | “Archive the old DemoProject project.” | Reversible archive of the resolved Project. Restore warns about enabled Public Join resuming; permanent purge needs its separate preview and explicit authorization. |
@@ -30,7 +30,31 @@ Provide one JSON object on stdin, not in process arguments:
 }
 ```
 
-Use it with `node scripts/cfkanban-tool.mjs api request`. The command reads the current Owner Credential internally. Never add a Credential, pending secret, complete Invite URL, or recovery code to generic request input.
+Use it with `node scripts/cfkanban-tool.mjs api request`. The command reads the current Principal Credential internally. Never add a Credential, pending secret, complete Invite URL, or recovery code to generic request input.
+
+## Scoped administrators and effective members (schema 9+)
+
+Resolve current `/api/v1/me.management_grants` and exact UUIDs before selecting an operation. Owner's array is empty because Owner access is implicit. A management grant contains `id`, `principal_id`, `principal:{id,display_name}`, `workspace_id`, nullable `project_id`, `version`, UUID `generation`, `revoked_at`, timestamps and `allowed_actions`. A null `project_id` identifies Workspace administration. Data-plane `grants.role=writer` alone does not identify an administrator. Session scope remains an additional limit.
+
+| Capability | Workspace administrator | Project administrator |
+| --- | --- | --- |
+| Rename own Workspace / create child Project | Yes | No |
+| Project name, context, fixed status labels | All child Projects | Own Project |
+| Archive/restore Project | All child Projects, when Workspace active | No |
+| Ordinary reader/writer members and single-Project Invites | All child Projects | Own Project |
+| Appoint/revoke Project administrators | All child Projects | No |
+| Appoint/revoke Workspace administrators | Owner only | Owner only |
+| Create/archive/restore Workspace; Public Join/quotas; instance usage/audit; permanent purge; identity recovery or other Credentials/Passkeys | Owner only | Owner only |
+
+Read/manage Workspace administrators at `/api/v1/workspaces/{workspace_id}/administrators`. Read/manage Project administrators at `/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators`. Lists use `limit`/`cursor` and include revoked rows for explicit regrant. POST body is `{principal_id,expected_version}`: first grant uses `0`; regrant uses the revoked row's current version. DELETE appends `/{administrator_id}?expected_version=<version>`. Each mutation uses a separate Idempotency-Key and readback; stale versions require a fresh read. Multiple administrators are supported with no last-local-administrator constraint; only superiors appoint/revoke, not peers.
+
+Use `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/members?limit=20` and bounded pagination for effective membership. Each item contains `principal_id`, `display_name`, `effective_role` (`owner|writer|reader`) and `sources` (`deployment_owner|workspace_admin|project_admin|project_grant`, source ID/version and optional role). Show inherited and direct sources and the remaining access before revocation. Ordinary Grant CRUD still uses `/api/v1/admin/projects/{project_id}/grants` and `/api/v1/admin/grants/{grant_id}` with scope checks; the `/admin` prefix is not authority to use instance identity endpoints.
+
+A Workspace administrator inherits all current and future child Projects dynamically. Revoking a management source preserves independent ordinary Grants and other management sources; assignment/history remain and assignee availability follows effective writer access. A public Project counts the union of non-Owner effective members, including both administrator levels, once per Principal. Adding a Workspace administrator checks every affected active public Project atomically; one newly exceeded quota rejects the whole grant. Existing over-limit membership is not removed and duplicate sources do not consume another slot. Paused Projects retain membership counts; an archived Workspace pauses management and data access.
+
+Only ordinary reader/writer access is invitational. Non-Owner `invite create` accepts exactly one managed Project; Owner retains multi-Project invitations. A local administrator can list/read/revoke only normal Invites whose complete targets are managed; no recovery or partly out-of-scope invitation visibility. The exact issuing management grant ID/generation is checked at create and redemption. Revocation permanently invalidates unredeemed Invites; another source or regrant never revives them. Existing redeemed members remain. Archive only pauses redemption, subject to original expiry and grant validity. Recovery and Credential/Passkey management remain Owner-only.
+
+Open an existing Project with `web launch` and a Project/Issue target. For an empty or explicit managed Workspace use `{kind:"workspace",workspace_id:"<UUID>"}`, whose initial path is `/app/manage?workspace=<UUID>`. It does not grant instance scope. Fresh non-Owner Sessions use live `project_selection`; fixed Project/Issue Sessions never gain Workspace scope. Owner defaults to admin Overview only when no narrower target was requested. Check returned scope and target; never infer deployed support from the installed Skill version.
 
 ## First usable board after deployment
 
@@ -49,25 +73,25 @@ Names are not unique identifiers. Resolve existing containers through authorized
 | Task | Method and path | Required checks |
 | --- | --- | --- |
 | Verify Owner | `GET /api/v1/me` | Require stable Principal ID and `is_owner=true`. |
-| List/create Workspaces | `GET/POST /api/v1/workspaces` | Create using display names and read back server-generated UUIDs; names are not unique identifiers. |
+| List/create Workspaces (creation Owner only) | `GET/POST /api/v1/workspaces` | Create using display names and read back server-generated UUIDs; names are not unique identifiers. |
 | Read/rename/pause Workspace | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}` | Use current version for rename/delete. |
-| Restore Workspace | `POST .../commands/restore` | Show every enabled Public Join Project that will resume first. |
+| Restore Workspace (Owner only) | `POST .../commands/restore` | Show every enabled Public Join Project that will resume first. |
 | List/create Projects | `GET/POST /api/v1/workspaces/{workspace_id}/projects` | Create using display names and read back server-generated UUIDs; names are not unique identifiers. |
 | Read/rename/pause Project | `GET/PATCH/DELETE /api/v1/workspaces/{workspace_id}/projects/{project_id}` | The UUID never changes; rename/archive use the current version. |
 | Restore Project | `POST .../commands/restore` | Show its resumed Public Join role/summary/limits. |
 | Read/rename status display | `GET .../statuses`, `PATCH .../statuses/{status_key}` | Stable five keys and semantics cannot change. |
 | List/create Invites | `GET /api/v1/admin/invitations`; dedicated `invite create` | Explicit kind, exact target(s), and explicit `reader | writer` per Project. |
 | Read/revoke Invite | `GET/DELETE /api/v1/admin/invitations/{invitation_id}` | Use stable ID; never retain the complete Bearer URL. |
-| List/read Principals | `GET /api/v1/admin/principals`, `GET .../{principal_id}` | Display names are non-unique and never identify a target. |
+| List/read Principals | `GET /api/v1/admin/principals`, `GET .../{principal_id}` | Owner-only directory; use verified stable Principal IDs for writes. |
 | List participant Credentials | `GET /api/v1/admin/principals/{principal_id}/credentials` | Show fingerprint/status, never secret. |
 | Revoke participant Credential | `DELETE /api/v1/admin/credentials/{credential_id}` | Read back exact Credential and audit result. Owner Credentials are excluded. |
 | Rotate Owner Credential | dedicated `credential prepare` + `owner rotate-credential` | See the rotation workflow below. |
 | List/create Project Grants | `GET/POST /api/v1/admin/projects/{project_id}/grants` | One stable Principal and explicit role. |
 | Read/change/revoke Grant | `GET/PATCH/DELETE /api/v1/admin/grants/{grant_id}` | Role changes/revocation do not erase assignment/history. |
-| Read audit | `GET /api/v1/admin/audit-events` | Bounded pagination; optionally filter by one immutable `project_id` and/or `stream=domain|security`, and verify `resolved_filters`. |
+| Read audit (Owner only) | `GET /api/v1/admin/audit-events` | Bounded pagination; optionally filter by one immutable `project_id` and/or `stream=domain|security`, and verify `resolved_filters`. |
 | Read/change preferred origin | `GET/PUT /api/v1/admin/instance-origin` | Credential-free candidate probe, CAS, old/new discovery readback. |
-| Manage Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | Use `project.version` as `expected_version`, not `policy_version`; disable does not revoke Grants. |
-| Read/change Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Use the returned `project.version`; submit explicit Issue/Comment/Principal limits. |
+| Manage Public Join (Owner only) | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | Use `project.version` as `expected_version`, not `policy_version`; disable does not revoke Grants. |
+| Read/change Project limits (Owner only) | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Use the returned `project.version`; submit explicit Issue/Comment/Principal limits. |
 | Inspect rate gates | `GET /api/v1/admin/rate-limit-settings` | Read-only; deploy Skill changes bindings. |
 | Revoke participant Passkey | `DELETE /api/v1/admin/passkeys/{passkey_id}` | Does not revoke API Credentials or Grants. |
 | Open Owner Web | dedicated `web launch` with `target.kind=admin` | Choose an explicit section; default delivery opens the system browser without stdout capability output. |

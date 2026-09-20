@@ -47,12 +47,12 @@ export async function findProjectAssignee(
        WHERE principal.display_name_key = ?1
          AND project.deleted_at IS NULL AND workspace.deleted_at IS NULL
          AND (?4 = 1 OR EXISTS (
-           SELECT 1 FROM project_grants caller_grant
+           SELECT 1 FROM effective_project_grants caller_grant
            WHERE caller_grant.project_id = project.id AND caller_grant.principal_id = ?5
              AND caller_grant.revoked_at IS NULL
          ))
          AND (principal.id = instance.owner_principal_id OR EXISTS (
-           SELECT 1 FROM project_grants candidate_grant
+           SELECT 1 FROM effective_project_grants candidate_grant
            WHERE candidate_grant.project_id = project.id AND candidate_grant.principal_id = principal.id
              AND candidate_grant.role = 'writer' AND candidate_grant.revoked_at IS NULL
          ))

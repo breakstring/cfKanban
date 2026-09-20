@@ -309,7 +309,7 @@ async function readPolicyControl(
                   AND comment_issue.deleted_at IS NULL AND comment.deleted_at IS NULL
               )) AS active_comment_count,
               COALESCE(usage.active_principal_count, (
-                SELECT COUNT(*) FROM project_grants grant_row
+                SELECT COUNT(*) FROM effective_project_grants grant_row
                 WHERE grant_row.project_id = project.id AND grant_row.revoked_at IS NULL
               )) AS active_principal_count
        FROM projects project
@@ -537,7 +537,7 @@ export async function enablePublicJoin(
                        WHERE comment_issue.project_id = project.id
                          AND comment_issue.deleted_at IS NULL
                          AND comment.deleted_at IS NULL),
-                      (SELECT COUNT(*) FROM project_grants grant_row
+                      (SELECT COUNT(*) FROM effective_project_grants grant_row
                        WHERE grant_row.project_id = project.id
                          AND grant_row.revoked_at IS NULL),
                       ?1, ?2
@@ -716,7 +716,7 @@ export async function disablePublicJoin(
                                    WHERE comment_issue.project_id = project.id
                                      AND comment_issue.deleted_at IS NULL
                                      AND comment.deleted_at IS NULL),
-                      'principals', (SELECT COUNT(*) FROM project_grants grant_row
+                      'principals', (SELECT COUNT(*) FROM effective_project_grants grant_row
                                     WHERE grant_row.project_id = project.id
                                       AND grant_row.revoked_at IS NULL)
                     )
@@ -1177,6 +1177,15 @@ function fixedSessionTargetGuard(
   if (auth?.kind !== "cookie" || auth.targetKind === "project_selection") {
     return { sql: "1 = 1", values: [] };
   }
+  if (auth.targetKind === "workspace") {
+    return {
+      sql: `EXISTS (SELECT 1 FROM web_sessions fixed_session
+        JOIN projects scoped_project ON scoped_project.workspace_id = json_extract(fixed_session.target_json, '$.workspace_id')
+        WHERE fixed_session.id = ?${startIndex} AND fixed_session.target_kind = 'workspace'
+          AND scoped_project.id = ${projectExpression})`,
+      values: [auth.sessionId],
+    };
+  }
   if (auth.targetKind === "project") {
     return {
       sql: `EXISTS (
@@ -1487,6 +1496,7 @@ export async function redeemPublicJoin(
       expectedOutcome = publicJoinOutcome(expectedGrant, requestedRole);
       if (
         expectedOutcome.usageDelta === 1
+        && !(await db.prepare("SELECT 1 FROM effective_project_grants WHERE project_id = ?1 AND principal_id = ?2").bind(target.project_id, principalId).first())
         && (target.active_principal_count ?? Number.MAX_SAFE_INTEGER) >= (target.principal_limit ?? 0)
       ) {
         throw businessQuotaExceeded("principals");
@@ -1546,7 +1556,7 @@ export async function redeemPublicJoin(
              AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
              AND project.deleted_at IS NULL AND workspace.deleted_at IS NULL
              AND project.principal_limit IS NOT NULL
-             AND usage.active_principal_count < project.principal_limit
+             AND (usage.active_principal_count < project.principal_limit OR EXISTS (SELECT 1 FROM effective_project_grants effective WHERE effective.project_id = project.id AND effective.principal_id = ?2))
              AND NOT EXISTS (SELECT 1 FROM project_grants existing
                              WHERE existing.principal_id = principal.id
                                AND existing.project_id = project.id)
@@ -1582,7 +1592,7 @@ export async function redeemPublicJoin(
                  AND project.id = project_grants.project_id
                  AND project.deleted_at IS NULL AND workspace.deleted_at IS NULL
                  AND project.principal_limit IS NOT NULL
-                 AND usage.active_principal_count < project.principal_limit
+                 AND (usage.active_principal_count < project.principal_limit OR EXISTS (SELECT 1 FROM effective_project_grants effective WHERE effective.project_id = project.id AND effective.principal_id = ?7))
              )
              AND ${guard?.sql ?? "1 = 1"}`,
         ).bind(
@@ -1627,18 +1637,11 @@ export async function redeemPublicJoin(
       if (expectedOutcome.usageDelta === 1) {
         statements.push(db.prepare(
           `UPDATE project_usage
-           SET active_principal_count = active_principal_count + 1,
+           SET active_principal_count = (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = project_usage.project_id),
                updated_at = ?1, last_operation_id = ?2
            WHERE project_id = (
              SELECT project_id FROM public_join_policies WHERE public_id = ?3
            )
-             AND active_principal_count < (
-               SELECT project.principal_limit
-               FROM projects project
-               JOIN public_join_policies policy ON policy.project_id = project.id
-               WHERE policy.public_id = ?3
-                 AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
-             )
              AND EXISTS (
                SELECT 1 FROM project_grants grant_row
                WHERE grant_row.project_id = project_usage.project_id

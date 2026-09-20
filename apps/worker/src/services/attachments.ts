@@ -91,7 +91,7 @@ function eventStatement(db: D1Database, auth: AuthContext, issue: CollaborationI
   return db.prepare(`INSERT INTO events
     (id,stream,type,operation_id,event_index,actor_principal_id,actor_credential_id,authorized_via,grant_id,workspace_id,project_id,subject_type,subject_id,payload_json,created_at)
     SELECT ?1,'domain',?2,?3,0,?4,?5,?6,
-      CASE WHEN ?7=1 THEN NULL ELSE (SELECT id FROM project_grants WHERE project_id=?8 AND principal_id=?4 AND role='writer' AND revoked_at IS NULL) END,
+      CASE WHEN ?7=1 THEN NULL ELSE (SELECT id FROM effective_project_grants WHERE project_id=?8 AND principal_id=?4 AND role='writer' AND revoked_at IS NULL) END,
       ?9,?8,'attachment',a.id,json_object('attachment_id',a.id,'attachment_version',a.version),?10
     FROM issue_attachments a WHERE a.id=?11 AND a.last_operation_id=?3`)
     .bind(crypto.randomUUID(), type, operationId, auth.principalId, actorCredentialId(auth), authorizedVia(auth), auth.isOwner ? 1 : 0, issue.projectId, issue.workspaceId, now, id);

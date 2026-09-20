@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import PageState from "../components/PageState.vue";
+import { apiRequest } from "../lib/api";
+import { hasManagementActions, managedWorkspaceIds, managementPath } from "../lib/scoped-management";
 import { containerChoiceLabels } from "../lib/container-choice";
 import { locale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
-import type { WebSessionView } from "../types";
+import type { ContainerResource, WebSessionView } from "../types";
 
 const props = defineProps<{ session: WebSessionView }>();
 
@@ -18,6 +20,16 @@ interface Choice {
 }
 
 const choices = ref<Choice[]>([]);
+const managedWorkspaces = ref<ContainerResource[]>([]);
+let managementGeneration = 0;
+async function loadManagement(): Promise<void> {
+  const generation = ++managementGeneration;
+  managedWorkspaces.value = [];
+  const results = await Promise.allSettled(managedWorkspaceIds(props.session).map(id => apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(id)}`)));
+  if (generation !== managementGeneration) return;
+  managedWorkspaces.value = results.flatMap(result => result.status === "fulfilled" && hasManagementActions(result.value) ? [result.value] : []);
+}
+
 const choiceLabels = computed(() => containerChoiceLabels(choices.value.map((choice) => ({ id: choice.projectId, name: choice.displayName, workspaceName: choice.workspaceName }))));
 const loading = ref(true);
 const error = ref("");
@@ -42,7 +54,9 @@ function load(): void {
   loading.value = false;
 }
 
-onMounted(load);
+onMounted(() => { load(); void loadManagement(); });
+onUnmounted(() => { managementGeneration += 1; });
+watch(() => [props.session.management_grants, props.session.allowed_scope.kind, props.session.allowed_scope.workspace_id], () => { void loadManagement(); }, { deep: true });
 watch(() => props.session.allowed_scope.projects, load, { deep: true });
 </script>
 
@@ -54,6 +68,10 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
       <p>{{ t("project.chooseHelp") }}</p>
     </header>
     <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load" />
+    <section v-if="managedWorkspaces.length" class="selection-list">
+      <h2>{{ locale === 'zh-CN' ? '工作区管理' : 'Workspace management' }}</h2>
+      <button v-for="workspace in managedWorkspaces" :key="workspace.id" class="selection-row" type="button" @click="navigate(managementPath(workspace.id))"><strong>{{ workspace.display_name }}</strong><span>{{ locale === 'zh-CN' ? '管理工作区和项目' : 'Manage workspace and projects' }}</span></button>
+    </section>
     <div v-if="!loading && !error" class="selection-list">
       <button
         v-for="choice in choices"

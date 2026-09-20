@@ -13,7 +13,7 @@ type Counts = Record<string, number>;
 
 // Every query uses ?1 for the immutable container ID. The same expressions guard the write batch.
 function countExpressions(kind: Kind): Record<string, string> {
-  if (kind === "workspace") return { projects: "SELECT COUNT(*) FROM projects WHERE workspace_id = ?1 AND purged_at IS NULL" };
+  if (kind === "workspace") return { projects: "SELECT COUNT(*) FROM projects WHERE workspace_id = ?1 AND purged_at IS NULL", administrators: "SELECT COUNT(*) FROM scoped_administrator_grants WHERE workspace_id = ?1" };
   return {
     projects: "SELECT 0",
     issues: "SELECT COUNT(*) FROM issues WHERE project_id = ?1",
@@ -24,13 +24,14 @@ function countExpressions(kind: Kind): Record<string, string> {
     relations: "SELECT COUNT(*) FROM issue_relations WHERE source_project_id = ?1 OR target_project_id = ?1",
     cross_project_relations: "SELECT COUNT(*) FROM issue_relations WHERE (source_project_id = ?1 OR target_project_id = ?1) AND source_project_id <> target_project_id",
     grants: "SELECT COUNT(*) FROM project_grants WHERE project_id = ?1",
+    administrators: "SELECT COUNT(*) FROM scoped_administrator_grants WHERE project_id = ?1",
     invitations: "SELECT COUNT(*) FROM invitation_project_grants WHERE project_id = ?1",
     shared_invitations: "SELECT COUNT(*) FROM invitation_project_grants a WHERE a.project_id = ?1 AND EXISTS (SELECT 1 FROM invitation_project_grants b WHERE b.invitation_id = a.invitation_id AND b.project_id <> ?1)",
     browser_launches: "SELECT COUNT(*) FROM browser_launches WHERE json_extract(target_json, '$.project_id') = ?1",
     web_sessions: "SELECT COUNT(*) FROM web_sessions WHERE json_extract(target_json, '$.project_id') = ?1",
   };
 }
-const emptyCounts = { projects: 0, issues: 0, comments: 0, attachments: 0, attachment_bytes: 0, labels: 0, relations: 0, cross_project_relations: 0, grants: 0, invitations: 0, shared_invitations: 0, browser_launches: 0, web_sessions: 0 };
+const emptyCounts = { projects: 0, issues: 0, comments: 0, attachments: 0, attachment_bytes: 0, labels: 0, relations: 0, cross_project_relations: 0, grants: 0, administrators: 0, invitations: 0, shared_invitations: 0, browser_launches: 0, web_sessions: 0 };
 async function readTarget(db: D1Database, workspaceId: string, projectId?: string): Promise<Target> {
   const row = projectId === undefined
     ? await db.prepare("SELECT id,display_name,version,deleted_at,id AS workspace_id FROM workspaces WHERE id = ?1 AND purged_at IS NULL").bind(workspaceId).first<Target>()
@@ -64,12 +65,15 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
   const stmt = (sql: string) => db.prepare(sql).bind(targetId, operationId);
   const eventScope = kind === "project"
     ? `project_id=?1 OR relation_other_project_id=?1 OR grant_id IN (SELECT id FROM project_grants WHERE project_id=?1)
+      OR administrator_grant_id IN (SELECT id FROM scoped_administrator_grants WHERE project_id=?1)
       OR subject_id IN (SELECT invitation_id FROM invitation_project_grants WHERE project_id=?1)
       OR subject_id IN (SELECT id FROM browser_launches WHERE json_extract(target_json,'$.project_id')=?1)
       OR subject_id IN (SELECT id FROM web_sessions WHERE json_extract(target_json,'$.project_id')=?1)`
-    : "workspace_id=?1";
+    : `workspace_id=?1 OR administrator_grant_id IN (SELECT id FROM scoped_administrator_grants WHERE workspace_id=?1)
+      OR (subject_type='scoped_administrator' AND subject_id IN (SELECT id FROM scoped_administrator_grants WHERE workspace_id=?1))`;
   const subjectScope = kind === "project" ? `
     (primary_subject_type IN ('project','public_join_policy') AND primary_subject_id=?1)
+    OR (primary_subject_type='scoped_administrator' AND primary_subject_id IN (SELECT id FROM scoped_administrator_grants WHERE project_id=?1))
     OR (primary_subject_type='project_grant' AND primary_subject_id IN (SELECT id FROM project_grants WHERE project_id=?1))
     OR (primary_subject_type='issue' AND primary_subject_id IN (SELECT id FROM issues WHERE project_id=?1))
     OR (primary_subject_type='attachment' AND primary_subject_id IN (SELECT id FROM issue_attachments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1)))
@@ -78,14 +82,18 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
     OR (primary_subject_type='relation' AND primary_subject_id IN (SELECT id FROM issue_relations WHERE source_project_id=?1 OR target_project_id=?1))
     OR primary_subject_id IN (SELECT invitation_id FROM invitation_project_grants WHERE project_id=?1)
     OR primary_subject_id IN (SELECT id FROM browser_launches WHERE json_extract(target_json,'$.project_id')=?1)
-    OR primary_subject_id IN (SELECT id FROM web_sessions WHERE json_extract(target_json,'$.project_id')=?1)` : "primary_subject_type='workspace' AND primary_subject_id=?1";
+    OR primary_subject_id IN (SELECT id FROM web_sessions WHERE json_extract(target_json,'$.project_id')=?1)` : `(primary_subject_type='workspace' AND primary_subject_id=?1)
+      OR (primary_subject_type='scoped_administrator' AND primary_subject_id IN (SELECT id FROM scoped_administrator_grants WHERE workspace_id=?1))`;
   const oldOperations = `SELECT operation_id FROM events WHERE (${eventScope}) AND operation_id<>?2 UNION SELECT operation_id FROM operation_commits WHERE (${subjectScope}) AND operation_id<>?2`;
   const result = [
     stmt(`DELETE FROM idempotency_records WHERE operation_id IN (${oldOperations}) AND ${gate}`),
     stmt(`DELETE FROM operation_commits WHERE operation_id IN (${oldOperations}) AND ${gate}`),
     stmt(`DELETE FROM events WHERE (${eventScope}) AND operation_id<>?2 AND ${gate}`),
   ];
-  if (kind === "workspace") return result;
+  if (kind === "workspace") {
+    result.push(stmt(`DELETE FROM scoped_administrator_grants WHERE workspace_id=?1 AND ${gate}`));
+    return result;
+  }
   result.push(db.prepare(`UPDATE attachment_objects SET state='garbage',garbage_at=COALESCE(garbage_at,?3)
     WHERE id IN (SELECT id FROM issue_attachments WHERE issue_id IN (SELECT id FROM issues WHERE project_id=?1)) AND ${gate}`).bind(targetId, operationId, now));
   // One event per removed cross-project relation, with no deleted target identifier or content.
@@ -120,6 +128,7 @@ function cleanupStatements(db: D1Database, kind: Kind, targetId: string, operati
   result.push(stmt(`DELETE FROM invitations WHERE last_operation_id=?2
     AND NOT EXISTS (SELECT 1 FROM invitation_project_grants WHERE invitation_id=invitations.id)
     AND NOT EXISTS (SELECT 1 FROM invitation_redemption_items WHERE invitation_id=invitations.id) AND ${gate}`));
+  result.push(stmt(`DELETE FROM scoped_administrator_grants WHERE project_id=?1 AND ${gate}`));
   return result;
 }
 

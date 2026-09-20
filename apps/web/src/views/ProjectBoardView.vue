@@ -18,6 +18,7 @@ import { localizedText, type LocalizedText, useLocalizedError } from "../lib/loc
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { navigate } from "../lib/router";
+import { hasManagementActions, managementPath } from "../lib/scoped-management";
 import { WriteFence } from "../lib/write-fence";
 import type {
   ContainerResource,
@@ -426,6 +427,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
         <h1>{{ project?.display_name ?? "" }}</h1>
       </div>
       <div class="board-toolbar-actions">
+        <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(managementPath(workspaceId, projectId))">{{ locale === 'zh-CN' ? '项目管理' : 'Manage project' }}</button>
         <span v-if="!canWrite" class="read-only-badge">{{ t("board.readOnly") }}</span>
         <button v-if="canWrite" class="primary-button button-with-icon" type="button" @click="showNewIssue = true"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ t("action.newIssue") }}</button>
       </div>

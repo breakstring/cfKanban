@@ -125,6 +125,10 @@ interface FixedTarget {
 }
 
 function fixedTarget(auth: AuthContext): FixedTarget | null {
+  if (auth.kind === "cookie" && auth.targetKind === "workspace") {
+    const workspaceId = typeof auth.target.workspace_id === "string" ? auth.target.workspace_id : null;
+    return { invalid: workspaceId === null, issueNumber: null, projectId: null, workspaceId };
+  }
   if (auth.kind !== "cookie" || (auth.targetKind !== "project" && auth.targetKind !== "issue")) {
     return null;
   }
@@ -210,7 +214,7 @@ async function queryVisibleProjects(
       `SELECT p.id AS project_id, p.display_name AS project_name,
               p.version AS project_version, w.id AS workspace_id,
               w.display_name AS workspace_name, pg.role
-       FROM project_grants AS pg
+       FROM effective_project_grants AS pg
        JOIN projects AS p ON p.id = pg.project_id
        JOIN workspaces AS w ON w.id = p.workspace_id
        WHERE pg.principal_id = ?1 AND pg.revoked_at IS NULL

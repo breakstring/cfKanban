@@ -1,6 +1,6 @@
 import { sha256Hex } from "./crypto.ts";
 import { platformUnavailable, unauthorized } from "./errors.ts";
-import type { AuthContext, BearerAuthContext, CookieAuthContext, JsonValue } from "./types.ts";
+import type { AuthContext, BearerAuthContext, CookieAuthContext, JsonValue, ScopedAdministrator } from "./types.ts";
 
 export const SESSION_COOKIE_NAME = "cfkanban_session";
 
@@ -23,7 +23,7 @@ interface SessionRow {
   source_id: string;
   source_kind: "credential" | "web_authenticator";
   target_json: string;
-  target_kind: "admin" | "issue" | "project" | "project_selection";
+  target_kind: "admin" | "issue" | "project" | "project_selection" | "workspace";
 }
 
 interface ParsedCredential {
@@ -40,6 +40,24 @@ export function parseBearerCredential(header: string | null): ParsedCredential |
 
 function fingerprint(prefix: string): string {
   return `cfk_v1_${prefix}_…`;
+}
+
+export async function readManagementGrants(db: D1Database, principalId: string): Promise<ScopedAdministrator[]> {
+  try {
+    const rows = await db.prepare(
+      `SELECT a.id, a.principal_id, a.workspace_id, a.project_id, a.version,
+              a.generation, a.revoked_at, a.created_at, a.updated_at
+       FROM scoped_administrator_grants a
+       JOIN workspaces w ON w.id = a.workspace_id
+       LEFT JOIN projects p ON p.id = a.project_id AND p.workspace_id = a.workspace_id
+       WHERE a.principal_id = ?1 AND a.revoked_at IS NULL AND w.deleted_at IS NULL
+         AND (a.project_id IS NULL OR (p.id IS NOT NULL AND p.deleted_at IS NULL))
+       ORDER BY a.workspace_id, a.project_id, a.id`,
+    ).bind(principalId).all<ScopedAdministrator>();
+    return rows.results;
+  } catch (error) {
+    throw platformUnavailable("d1", error);
+  }
 }
 
 function singleCookie(header: string | null, name: string): string | null {
@@ -89,6 +107,7 @@ export async function authenticateBearer(db: D1Database, header: string | null):
     kind: "bearer",
     principalId: row.principal_id,
     principalVersion: row.principal_version,
+    managementGrants: row.principal_id === row.owner_principal_id ? [] : await readManagementGrants(db, row.principal_id),
   };
 }
 
@@ -151,6 +170,7 @@ export async function authenticateCookieSession(
     kind: "cookie",
     principalId: row.principal_id,
     principalVersion: row.principal_version,
+    managementGrants: row.principal_id === row.owner_principal_id ? [] : await readManagementGrants(db, row.principal_id),
     sessionExpiresAt: row.session_expires_at,
     sessionId: row.session_id,
     sourceId: row.source_id,

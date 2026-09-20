@@ -113,6 +113,14 @@ function safeBrowserLaunchTarget(target) {
   if (!isPlainObject(target)) {
     throw toolError("INVALID_CAPABILITY_RESPONSE", "The Browser Launch response is missing its target");
   }
+  if (target.kind === "workspace") {
+    const workspaceId = requireUuid(target.workspace_id, "workspace_id");
+    const entryPath = `/app/manage?workspace=${workspaceId}`;
+    if (target.entry_path !== entryPath) {
+      throw toolError("INVALID_CAPABILITY_RESPONSE", "The Browser Launch response contained an inconsistent Workspace entry path");
+    }
+    return { kind: "workspace", workspace_id: workspaceId, entry_path: entryPath };
+  }
   if (target.kind === "project") {
     const workspaceId = requireUuid(target.workspace_id, "workspace_id");
     const projectId = requireUuid(target.project_id, "project_id");
@@ -232,7 +240,9 @@ function assertBrowserLaunchTargetMatchesRequest(target, requestedTarget) {
   if (!isPlainObject(requestedTarget) || target.kind !== requestedTarget.kind) {
     throw toolError("INVALID_CAPABILITY_RESPONSE", "The Browser Launch response did not match the requested target");
   }
-  const matches = target.kind === "project"
+  const matches = target.kind === "workspace"
+    ? target.workspace_id === requestedTarget.workspace_id
+    : target.kind === "project"
     ? target.workspace_id === requestedTarget.workspace_id && target.project_id === requestedTarget.project_id
     : target.kind === "issue"
       ? target.identifier === requestedTarget.identifier

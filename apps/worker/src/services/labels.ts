@@ -217,7 +217,7 @@ function labelEvent(
        project_id, subject_type, subject_id, payload_json, created_at)
      SELECT ?1, 'domain', ?2, ?3, 0, ?4, ?5, ?6,
             CASE WHEN ?7 = 1 THEN NULL ELSE (
-              SELECT grant_row.id FROM project_grants grant_row
+              SELECT grant_row.id FROM effective_project_grants grant_row
               WHERE grant_row.project_id = label.project_id
                 AND grant_row.principal_id = ?4
                 AND grant_row.role = 'writer' AND grant_row.revoked_at IS NULL
@@ -792,7 +792,7 @@ function issueLabelEvent(
        project_id, subject_type, subject_id, payload_json, created_at)
      SELECT ?1, 'domain', ?2, ?3, 0, ?4, ?5, ?6,
             CASE WHEN ?7 = 1 THEN NULL ELSE (
-              SELECT grant_row.id FROM project_grants grant_row
+              SELECT grant_row.id FROM effective_project_grants grant_row
               WHERE grant_row.project_id = issue.project_id
                 AND grant_row.principal_id = ?4
                 AND grant_row.role = 'writer' AND grant_row.revoked_at IS NULL

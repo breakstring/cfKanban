@@ -1,3 +1,4 @@
+import { buildManagementGuard, managementAuthorization, requireManagementAuthorization } from "../kernel/scoped-authorization.ts";
 import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
 import {
   principalDisplayNameKey,
@@ -18,7 +19,6 @@ import {
 import { authenticateBearer, parseBearerCredential } from "../kernel/auth.ts";
 import {
   buildCurrentAuthGuard,
-  reauthenticateOwner,
   requireOwnerControl,
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
@@ -79,6 +79,8 @@ interface InvitationRow {
   expires_at: number;
   id: string;
   kind: InvitationKind;
+  issuer_administrator_id: string | null;
+  issuer_administrator_generation: string | null;
   last_operation_id: string | null;
   recovery_mode: RecoveryMode | null;
   redeemed_at: number | null;
@@ -131,6 +133,8 @@ function invitationSnapshotJsonSql(extraFields = ""): string {
       'expires_at', invitation.expires_at,
       'id', invitation.id,
       'kind', invitation.kind,
+      'issuer_administrator_id', invitation.issuer_administrator_id,
+      'issuer_administrator_generation', invitation.issuer_administrator_generation,
       'last_operation_id', invitation.last_operation_id,
       'recovery_mode', invitation.recovery_mode,
       'redeemed_at', invitation.redeemed_at,
@@ -271,7 +275,7 @@ async function readInvitationById(db: D1Database, invitationId: string): Promise
               bound.display_name AS bound_display_name, i.recovery_mode,
               i.expires_at, i.revoked_at, i.redeemed_at,
               i.redeemed_by_principal_id, i.created_at,
-              i.created_by_owner_principal_id, i.last_operation_id
+              i.created_by_owner_principal_id, i.last_operation_id, i.issuer_administrator_id, i.issuer_administrator_generation
        FROM invitations AS i
        LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
        WHERE i.id = ?1 LIMIT 1`,
@@ -288,7 +292,7 @@ async function readInvitationByDigest(db: D1Database, digest: string): Promise<I
               bound.display_name AS bound_display_name, i.recovery_mode,
               i.expires_at, i.revoked_at, i.redeemed_at,
               i.redeemed_by_principal_id, i.created_at,
-              i.created_by_owner_principal_id, i.last_operation_id
+              i.created_by_owner_principal_id, i.last_operation_id, i.issuer_administrator_id, i.issuer_administrator_generation
        FROM invitations AS i
        LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
        WHERE i.code_digest = ?1 LIMIT 1`,
@@ -452,12 +456,17 @@ export async function listInvitations(
   url: URL,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
+  const projectFilter = url.searchParams.get("project_id");
+  const managedIds = await managedInvitationProjectIds(db, auth, now);
+  if (projectFilter !== null) {
+    requireUuid(projectFilter, "project_id");
+    await requireInvitationProject(db, auth, projectFilter, now);
+  }
   const limit = requireLimit(url);
   const cursorContext = await createCursorContext(
     "invitations",
-    {},
-    [`owner:${auth.principalId}`],
+    { project_id: projectFilter },
+    managedIds === null ? [`owner:${auth.principalId}`] : managedIds,
     auth.principalId,
   );
   const position = parseCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
@@ -468,13 +477,18 @@ export async function listInvitations(
               bound.display_name AS bound_display_name, i.recovery_mode,
               i.expires_at, i.revoked_at, i.redeemed_at,
               i.redeemed_by_principal_id, i.created_at,
-              i.created_by_owner_principal_id, i.last_operation_id
+              i.created_by_owner_principal_id, i.last_operation_id, i.issuer_administrator_id, i.issuer_administrator_generation
        FROM invitations AS i
        LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
        WHERE (?1 IS NULL OR i.created_at < ?1 OR (i.created_at = ?1 AND i.id < ?2))
+         AND (?4 IS NULL OR (i.kind = 'project_grant'
+           AND EXISTS (SELECT 1 FROM invitation_project_grants targets WHERE targets.invitation_id = i.id)
+           AND NOT EXISTS (SELECT 1 FROM invitation_project_grants targets WHERE targets.invitation_id = i.id
+             AND targets.project_id NOT IN (SELECT value FROM json_each(?4)))))
+         AND (?5 IS NULL OR EXISTS (SELECT 1 FROM invitation_project_grants targets WHERE targets.invitation_id = i.id AND targets.project_id = ?5))
        ORDER BY i.created_at DESC, i.id DESC
        LIMIT ?3`,
-    ).bind(position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<InvitationRow>();
+    ).bind(position?.[0] ?? null, position?.[1] ?? null, limit + 1, managedIds === null ? null : JSON.stringify(managedIds), projectFilter).all<InvitationRow>();
     rows = result.results;
   } catch (error) {
     throw platformUnavailable("d1", error);
@@ -482,12 +496,13 @@ export async function listInvitations(
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;
   const tail = page.at(-1);
+  for (const row of page) await requireInvitationManagement(db, auth, row, now);
   const grants = await readInvitationGrantPages(db, page.map((row) => row.id));
   return {
     has_more: hasMore,
     items: await Promise.all(page.map((row) => invitationResource(db, row, now, grants.get(row.id) ?? []))),
     next_cursor: hasMore && tail ? encodeCursor(cursorContext, [tail.created_at, tail.id]) : null,
-    resolved_scope: { owner_principal_id: auth.principalId },
+    resolved_scope: managedIds === null ? { owner_principal_id: auth.principalId } : { principal_id: auth.principalId, project_ids: managedIds, project_id: projectFilter },
   };
 }
 
@@ -497,10 +512,10 @@ export async function getInvitation(
   invitationIdValue: JsonValue,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
   const invitationId = requireUuid(invitationIdValue, "invitation_id");
   const row = await readInvitationById(db, invitationId);
   if (row === null) throw notFound();
+  await requireInvitationManagement(db, auth, row, now);
   return invitationResource(db, row, now);
 }
 
@@ -553,7 +568,9 @@ async function createInvitationBatch(
   expiresAt: number,
   now: number,
 ): Promise<void> {
-  const guard = buildCurrentAuthGuard(auth, now, 11, true);
+  const source = await authorizeInvitationCreation(db, auth, kind, grants, now);
+  const guard = source === null ? buildCurrentAuthGuard(auth, now, 13, true)
+    : buildManagementGuard(auth, now, 13, source.scope, "manage_members");
   const grantsJson = JSON.stringify(grants.map((grant) => ({
     project_id: grant.projectId,
     role: grant.role,
@@ -563,8 +580,8 @@ async function createInvitationBatch(
       `INSERT INTO invitations
         (id, kind, code_prefix, code_digest, bound_principal_id,
          recovery_mode, expires_at, created_at, created_by_owner_principal_id,
-         created_operation_id, last_operation_id)
-       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10
+         created_operation_id, last_operation_id, issuer_administrator_id, issuer_administrator_generation)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12
        WHERE ${guard.sql}
          AND (
            (?2 = 'project_grant' AND ?5 IS NULL AND ?6 IS NULL)
@@ -586,6 +603,8 @@ async function createInvitationBatch(
       now,
       auth.principalId,
       operationId,
+      source?.authorization.administratorGrantId ?? null,
+      source?.authorization.administratorGeneration ?? null,
       ...guard.values,
     ),
     db.prepare(
@@ -607,9 +626,9 @@ async function createInvitationBatch(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
        actor_credential_id, authorized_via, subject_type, subject_id,
-       payload_json, created_at)
+       payload_json, created_at, administrator_grant_id, administrator_grant_version)
      SELECT ?1, 'security', 'invitation.created', ?2, 0, ?3, ?4,
-            'deployment_owner', 'invitation', i.id, ?5, ?6
+            ?9, 'invitation', i.id, ?5, ?6, ?10, ?11
      FROM invitations AS i
      WHERE i.id = ?7 AND i.created_operation_id = ?2
        AND ((i.kind = 'project_grant' AND
@@ -629,6 +648,9 @@ async function createInvitationBatch(
     now,
     invitationId,
     grants.length,
+    source?.authorization.authorizedVia ?? "deployment_owner",
+    source?.authorization.administratorGrantId ?? null,
+    source?.authorization.administratorGrantVersion ?? null,
   ));
   try {
     await executeAtomicBatch(db, {
@@ -661,7 +683,7 @@ async function createInvitationBatch(
           || projectSet.requested_count !== grants.length
           || projectSet.active_count !== grants.length
         ) return true;
-        return ownerGuardRejected(db, auth, now);
+        return invitationCreationRejected(db, auth, kind, grants, now);
       },
       expectedEventCount: 1,
       operationId,
@@ -688,7 +710,6 @@ export async function createInvitation(
   recoveryModeValue: JsonValue | undefined,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
   const kind = requireInvitationKind(kindValue);
   let grants: InvitationGrantInput[] = [];
   let principalId: string | null = null;
@@ -715,10 +736,10 @@ export async function createInvitation(
     routeTemplate: "/api/v1/admin/invitations",
     scopeKey: `principal:${auth.principalId}`,
   };
-  await reauthenticateOwner(db, request, now);
+  await authorizeInvitationCreation(db, auth, kind, grants, now);
   const claim = await claimIdempotency(db, identity, now);
   if (claim.state === "committed") {
-    await reauthenticateOwner(db, request, now);
+    await authorizeInvitationCreation(db, auth, kind, grants, now);
     const stored = readIdempotencyResponse<{ [key: string]: JsonValue }>(claim);
     return {
       ...stored.body,
@@ -763,7 +784,7 @@ export async function createInvitation(
     commit = await probeOperationCommit(db, claim.operationId);
   }
   if (commit === null) throw new AtomicBatchRejectedError();
-  await reauthenticateOwner(db, request, now);
+  await authorizeInvitationCreation(db, auth, kind, grants, now);
   let snapshot: InvitationOperationSnapshot;
   try {
     snapshot = await readOperationSnapshot<InvitationOperationSnapshot>(db, claim.operationId);
@@ -827,16 +848,16 @@ export async function revokeInvitation(
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
   const invitationId = requireUuid(invitationIdValue, "invitation_id");
   const current = await readInvitationById(db, invitationId);
   if (current === null) throw notFound();
+  const management = await requireInvitationManagement(db, auth, current, now);
   if (invitationVersion(current) !== expectedVersion || current.redeemed_at !== null || current.revoked_at !== null) {
     throw versionConflict(invitationVersion(current));
   }
   const grants = await readInvitationGrants(db, invitationId);
   const operationId = crypto.randomUUID();
-  const guard = buildCurrentAuthGuard(auth, now, 6, true);
+  const guard = invitationManagementGuard(auth, management, now, 6);
   let commit: OperationCommit;
   try {
     ({ commit } = await executeAtomicBatch(db, {
@@ -852,17 +873,20 @@ export async function revokeInvitation(
           `INSERT INTO events
             (id, stream, type, operation_id, event_index, actor_principal_id,
              actor_credential_id, authorized_via, subject_type, subject_id,
-             payload_json, created_at)
+             payload_json, created_at, administrator_grant_id, administrator_grant_version)
            SELECT ?1, 'security', 'invitation.revoked', ?2, 0, ?3, ?4,
-                  'deployment_owner', 'invitation', id, '{}', ?5
+                  ?7, 'invitation', id, '{}', ?5, ?8, ?9
            FROM invitations WHERE id = ?6 AND last_operation_id = ?2`,
-        ).bind(crypto.randomUUID(), operationId, auth.principalId, actorCredentialId(auth), now, invitationId),
+        ).bind(crypto.randomUUID(), operationId, auth.principalId, actorCredentialId(auth), now, invitationId,
+          management[0]?.authorization.authorizedVia ?? "deployment_owner",
+          management[0]?.authorization.administratorGrantId ?? null,
+          management[0]?.authorization.administratorGrantVersion ?? null),
       ],
       committedAt: now,
       confirmBusinessRejection: async () => {
         const latest = await readInvitationById(db, invitationId);
         return latest === null || latest.revoked_at !== null || latest.redeemed_at !== null
-          || expectedVersion !== 1 || await ownerGuardRejected(db, auth, now);
+          || expectedVersion !== 1 || await invitationManagementRejected(db, auth, current, now);
       },
       expectedEventCount: 1,
       operationId,
@@ -871,7 +895,7 @@ export async function revokeInvitation(
     }));
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
-      await verifyCurrentAuth(db, auth, now);
+      await requireInvitationManagement(db, auth, current, now);
       const latest = await readInvitationById(db, invitationId);
       if (latest === null) throw notFound();
       throw versionConflict(invitationVersion(latest));
@@ -965,6 +989,7 @@ export async function getInvitationBootstrapHtml(
   const row = await readInvitationByDigest(db, await sha256Hex(codeValue));
   if (row === null) throw notFound();
   assertInvitationUsable(row, now);
+  await requireInvitationIssuerActive(db, row);
   const grants = await readInvitationGrants(db, row.id);
   const locale = preferredInvitationLocale(acceptLanguage);
   const renderDetails = (isChinese: boolean) => {
@@ -1079,14 +1104,14 @@ async function projectQuotaExceeded(
        JOIN workspaces w ON w.id = p.workspace_id
        LEFT JOIN project_usage usage ON usage.project_id = p.id
        JOIN public_join_policies policy ON policy.project_id = p.id
-       LEFT JOIN project_grants existing
+       LEFT JOIN effective_project_grants existing
          ON existing.project_id = p.id AND existing.principal_id = ?2
        WHERE ipg.invitation_id = ?1
          AND p.deleted_at IS NULL AND w.deleted_at IS NULL
          AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
          AND p.principal_limit IS NOT NULL
          AND usage.active_principal_count >= p.principal_limit
-         AND (existing.id IS NULL OR existing.revoked_at IS NOT NULL)
+         AND existing.principal_id IS NULL
        ORDER BY p.id
        LIMIT 1`,
     ).bind(invitationId, principalId).first<{
@@ -1184,13 +1209,13 @@ async function executeProjectInviteRedeem(
      JOIN workspaces w ON w.id = p.workspace_id
      LEFT JOIN project_usage usage ON usage.project_id = p.id
      LEFT JOIN public_join_policies policy ON policy.project_id = p.id
-     LEFT JOIN project_grants existing
+     LEFT JOIN effective_project_grants existing
        ON existing.project_id = p.id AND existing.principal_id = target.id
      JOIN instance_meta im ON im.singleton = 1
      WHERE target.id != im.owner_principal_id
        AND p.deleted_at IS NULL AND w.deleted_at IS NULL
        AND (
-         (existing.id IS NOT NULL AND existing.revoked_at IS NULL)
+         (existing.principal_id IS NOT NULL)
          OR policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL
          OR (p.principal_limit IS NOT NULL
              AND usage.active_principal_count < p.principal_limit)
@@ -1252,7 +1277,7 @@ async function executeProjectInviteRedeem(
 
   statements.push(db.prepare(
     `UPDATE project_usage
-     SET active_principal_count = active_principal_count + 1,
+     SET active_principal_count = (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = project_usage.project_id),
          updated_at = ?1, last_operation_id = ?2
      WHERE project_id IN (
        SELECT iri.project_id
@@ -1260,17 +1285,14 @@ async function executeProjectInviteRedeem(
        WHERE iri.invitation_id = ?3 AND iri.operation_id = ?2
          AND iri.outcome IN ('created', 'regranted')
      )
-       AND EXISTS (
-         SELECT 1 FROM public_join_policies policy
-         WHERE policy.project_id = project_usage.project_id
-           AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
-       )`,
+`,
   ).bind(now, claim.operationId, invitation.id));
   statements.push(db.prepare(
     `UPDATE invitations
      SET redeemed_at = ?1, redeemed_by_principal_id = ?2, last_operation_id = ?3
      WHERE id = ?4 AND code_digest = ?5 AND kind = 'project_grant'
        AND revoked_at IS NULL AND redeemed_at IS NULL AND expires_at > ?1
+       AND ${invitationIssuerActiveSql('invitations')}
        AND (SELECT COUNT(*) FROM invitation_redemption_items iri
             WHERE iri.invitation_id = ?4 AND iri.operation_id = ?3) = ?6
        AND (?7 = 0 OR EXISTS (SELECT 1 FROM credentials c
@@ -1349,6 +1371,7 @@ async function executeProjectInviteRedeem(
       confirmBusinessRejection: async () => {
         const latest = await readInvitationById(db, invitation.id);
         return latest === null || invitationStatus(latest, now) !== "active"
+          || !(await invitationIssuerActive(db, latest))
           || !(await invitationTargetsActive(db, invitation.id))
           || (auth !== null && await currentAuthRejected(db, auth, now))
           || (auth === null && displayName !== null && await principalDisplayNameExists(db, displayName))
@@ -1372,6 +1395,7 @@ async function executeProjectInviteRedeem(
       );
       const latest = await readInvitationById(db, invitation.id);
       if (latest === null) throw notFound();
+      await requireInvitationIssuerActive(db, latest);
       if (invitationStatus(latest, now) !== "active") assertInvitationUsable(latest, now);
       if (auth !== null) await verifyCurrentAuth(db, auth, now);
       if (!(await invitationTargetsActive(db, invitation.id))) throw notFound();
@@ -1580,6 +1604,7 @@ export async function redeemInvitation(
   const preliminaryToken = typeof tokenValue === "string" ? tokenValue : null;
   const invitation = await readInvitationByDigest(db, await sha256Hex(inviteCode));
   if (invitation === null) throw notFound();
+  if (invitation.redeemed_at === null) await requireInvitationIssuerActive(db, invitation);
   let auth = await optionalRedeemAuth(db, request, preliminaryToken);
   const mode = validateRedeemMode(invitation, redeemAs, auth, displayNameValue, tokenValue);
   if (auth === null && invitation.recovery_mode === "rotation" && mode.replacement !== null) {
@@ -1715,4 +1740,87 @@ export async function redeemInvitation(
     ...finalized.body,
     idempotent_replay: !claim.owned || resumed || status === "redeemed",
   };
+}
+
+async function requireInvitationProject(db: D1Database, auth: AuthContext, projectId: string, now: number) {
+  const project = await db.prepare("SELECT workspace_id FROM projects WHERE id = ?1 AND purged_at IS NULL").bind(projectId).first<{workspace_id: string}>();
+  if (project === null) throw notFound();
+  const scope = { workspaceId: project.workspace_id, projectId };
+  const authorization = await requireManagementAuthorization(db, auth, scope, "manage_members", now);
+  return { scope, authorization };
+}
+
+async function authorizeInvitationCreation(db: D1Database, auth: AuthContext, kind: InvitationKind, grants: readonly InvitationGrantInput[], now: number) {
+  if (auth.isOwner && (auth.kind === "bearer" || auth.targetKind === "admin")) { requireOwnerControl(auth); await verifyCurrentAuth(db, auth, now); return null; }
+  if (kind !== "project_grant" || grants.length !== 1) throw forbidden();
+  return requireInvitationProject(db, auth, grants[0]!.projectId, now);
+}
+
+async function invitationCreationRejected(db: D1Database, auth: AuthContext, kind: InvitationKind, grants: readonly InvitationGrantInput[], now: number): Promise<boolean> {
+  try { await authorizeInvitationCreation(db, auth, kind, grants, now); return false; }
+  catch (error) { if (error instanceof ApiError && [401, 403, 404].includes(error.status)) return true; throw error; }
+}
+
+async function requireInvitationManagement(db: D1Database, auth: AuthContext, row: InvitationRow, now: number) {
+  if (auth.isOwner && (auth.kind === "bearer" || auth.targetKind === "admin")) { requireOwnerControl(auth); await verifyCurrentAuth(db, auth, now); return []; }
+  if (row.kind !== "project_grant") throw notFound();
+  const targets = await readInvitationGrants(db, row.id);
+  if (targets.length === 0) throw notFound();
+  return Promise.all(targets.map((target) => requireInvitationProject(db, auth, target.project_id, now)));
+}
+
+function invitationManagementGuard(auth: AuthContext, management: Awaited<ReturnType<typeof requireInvitationManagement>>, now: number, start: number) {
+  if (management.length === 0) return buildCurrentAuthGuard(auth, now, start, true);
+  const values: (string | number | null)[] = [];
+  const sql = management.map(({scope}) => {
+    const guard = buildManagementGuard(auth, now, start + values.length, scope, "manage_members");
+    values.push(...guard.values);
+    return `(${guard.sql})`;
+  }).join(" AND ");
+  return {sql, values};
+}
+
+async function invitationManagementRejected(db: D1Database, auth: AuthContext, row: InvitationRow, now: number): Promise<boolean> {
+  try { await requireInvitationManagement(db, auth, row, now); return false; }
+  catch (error) { if (error instanceof ApiError && [401, 403, 404].includes(error.status)) return true; throw error; }
+}
+
+async function managedInvitationProjectIds(db: D1Database, auth: AuthContext, now: number): Promise<string[] | null> {
+  if (auth.isOwner && (auth.kind === "bearer" || auth.targetKind === "admin")) { requireOwnerControl(auth); await verifyCurrentAuth(db, auth, now); return null; }
+  if (auth.isOwner) {
+    await verifyCurrentAuth(db, auth, now);
+    if (auth.kind !== "cookie" || auth.targetKind !== "workspace") return [];
+    const owned = await db.prepare(`SELECT project.id, project.workspace_id FROM projects project
+      JOIN workspaces workspace ON workspace.id = project.workspace_id
+      WHERE workspace.id = ?1 AND project.deleted_at IS NULL AND workspace.deleted_at IS NULL
+        AND project.purged_at IS NULL AND workspace.purged_at IS NULL`)
+      .bind(auth.target.workspace_id).all<{id: string; workspace_id: string}>();
+    return owned.results.filter(project => managementAuthorization(auth, { workspaceId: project.workspace_id, projectId: project.id }, "manage_members") !== null).map(project => project.id);
+  }
+  const rows = await db.prepare(`SELECT DISTINCT project.id, project.workspace_id FROM projects project
+    JOIN workspaces workspace ON workspace.id = project.workspace_id
+    JOIN scoped_administrator_grants manager ON manager.workspace_id = project.workspace_id
+      AND (manager.project_id IS NULL OR manager.project_id = project.id)
+    WHERE project.deleted_at IS NULL AND workspace.deleted_at IS NULL AND manager.revoked_at IS NULL
+      AND manager.principal_id = ?1 AND manager.id IN (SELECT value FROM json_each(?2))`)
+    .bind(auth.principalId, JSON.stringify((auth.managementGrants ?? []).map(grant => grant.id)))
+    .all<{id: string; workspace_id: string}>();
+  await verifyCurrentAuth(db, auth, now);
+  return rows.results.filter(project => managementAuthorization(auth, {workspaceId: project.workspace_id, projectId: project.id}, "manage_members") !== null).map(project => project.id);
+}
+
+function invitationIssuerActiveSql(alias: string): string {
+  return `(${alias}.issuer_administrator_id IS NULL OR EXISTS (
+    SELECT 1 FROM scoped_administrator_grants issuer
+    WHERE issuer.id = ${alias}.issuer_administrator_id
+      AND issuer.generation = ${alias}.issuer_administrator_generation AND issuer.revoked_at IS NULL
+      AND issuer.principal_id = ${alias}.created_by_owner_principal_id))`;
+}
+
+async function invitationIssuerActive(db: D1Database, row: InvitationRow): Promise<boolean> {
+  return await db.prepare(`SELECT 1 FROM invitations WHERE id = ?1 AND ${invitationIssuerActiveSql("invitations")}`).bind(row.id).first() !== null;
+}
+
+async function requireInvitationIssuerActive(db: D1Database, row: InvitationRow): Promise<void> {
+  if (!(await invitationIssuerActive(db, row))) throw new ApiError({ category: "conflict", code: "INVITATION_REVOKED", recovery: "request_new_invitation", message: "The invitation issuer authorization is no longer valid.", retryable: false, status: 410, details: { reason: "issuer_authorization_revoked" } });
 }

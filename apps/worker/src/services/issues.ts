@@ -183,7 +183,7 @@ const ISSUE_SELECT = `
            WHEN i.assignee_principal_id IS NULL THEN 0
            WHEN i.assignee_principal_id = instance.owner_principal_id THEN 1
            WHEN EXISTS (
-             SELECT 1 FROM project_grants eligible_grant
+             SELECT 1 FROM effective_project_grants eligible_grant
              WHERE eligible_grant.project_id = i.project_id
                AND eligible_grant.principal_id = i.assignee_principal_id
                AND eligible_grant.role = 'writer'
@@ -215,6 +215,7 @@ function cookieTargetAllowsProject(auth: AuthContext, workspaceId: string, proje
   if (auth.kind === "bearer") return true;
   if (auth.targetKind === "admin") return auth.isOwner;
   if (auth.targetKind === "project_selection") return true;
+  if (auth.targetKind === "workspace") return auth.target.workspace_id === workspaceId;
   // An Issue launch fixes the Session to the Issue's owning Project. The
   // project membership is resolved by resolveVisibleProjects; the identifier
   // only selects the initial Web page and is not a single-resource ACL.
@@ -322,6 +323,10 @@ async function resolveIssueRecoveryProjects(
   let targetIssueNumber: number | null = null;
   if (auth.kind === "cookie") {
     if (auth.targetKind === "admin" && !auth.isOwner) return [];
+    if (auth.targetKind === "workspace") {
+      targetWorkspaceId = typeof auth.target.workspace_id === "string" ? auth.target.workspace_id : null;
+      if (targetWorkspaceId === null) return [];
+    }
     if (auth.targetKind === "project") {
       targetProjectId = typeof auth.target.project_id === "string" ? auth.target.project_id : null;
       targetWorkspaceId = typeof auth.target.workspace_id === "string" ? auth.target.workspace_id : null;
@@ -375,7 +380,7 @@ async function resolveIssueRecoveryProjects(
       `${select}
        AND p.deleted_at IS NULL AND w.deleted_at IS NULL
        AND EXISTS (
-         SELECT 1 FROM project_grants recovery_grant
+         SELECT 1 FROM effective_project_grants recovery_grant
          WHERE recovery_grant.project_id = p.id
            AND recovery_grant.principal_id = ?6
            AND recovery_grant.role = 'writer' AND recovery_grant.revoked_at IS NULL
@@ -537,7 +542,7 @@ function issueOperationSnapshotStatement(
              WHEN i.assignee_principal_id IS NULL THEN 0
              WHEN i.assignee_principal_id = instance.owner_principal_id THEN 1
              WHEN EXISTS (
-               SELECT 1 FROM project_grants eligible_grant
+               SELECT 1 FROM effective_project_grants eligible_grant
                WHERE eligible_grant.project_id = i.project_id
                  AND eligible_grant.principal_id = i.assignee_principal_id
                  AND eligible_grant.role = 'writer' AND eligible_grant.revoked_at IS NULL
@@ -988,7 +993,7 @@ async function listIssueRows(
              AND (
                current_instance.owner_principal_id = ?8
                OR EXISTS (
-                 SELECT 1 FROM project_grants current_grant
+                 SELECT 1 FROM effective_project_grants current_grant
                  WHERE current_grant.project_id = current_project.id
                    AND current_grant.principal_id = ?8
                    AND current_grant.revoked_at IS NULL
@@ -1021,7 +1026,7 @@ async function listIssueRows(
                  AND i.assignee_principal_id IS NOT NULL
                  AND i.assignee_principal_id != (SELECT owner_principal_id FROM instance_meta WHERE singleton = 1)
                  AND NOT EXISTS (
-                   SELECT 1 FROM project_grants candidate_grant
+                   SELECT 1 FROM effective_project_grants candidate_grant
                    WHERE candidate_grant.project_id = i.project_id
                      AND candidate_grant.principal_id = i.assignee_principal_id
                      AND candidate_grant.role = 'writer'
@@ -1072,7 +1077,7 @@ async function listIssueRows(
                  current_project.deleted_at IS NULL
                  AND current_workspace.deleted_at IS NULL
                  AND EXISTS (
-                   SELECT 1 FROM project_grants current_grant
+                   SELECT 1 FROM effective_project_grants current_grant
                    WHERE current_grant.project_id = current_project.id
                      AND current_grant.principal_id = ?9
                      AND current_grant.role = 'writer'
@@ -1084,7 +1089,7 @@ async function listIssueRows(
              AND (
                current_instance.owner_principal_id = ?9
                OR EXISTS (
-                 SELECT 1 FROM project_grants current_grant
+                 SELECT 1 FROM effective_project_grants current_grant
                  WHERE current_grant.project_id = current_project.id
                    AND current_grant.principal_id = ?9
                    AND current_grant.revoked_at IS NULL
@@ -1511,7 +1516,7 @@ function buildProjectWriterGuard(
   return {
     sql: `${currentAuth.sql}
       AND (?${ownerIndex} = 1 OR EXISTS (
-        SELECT 1 FROM project_grants final_grant
+        SELECT 1 FROM effective_project_grants final_grant
         WHERE final_grant.project_id = ${projectExpression}
           AND final_grant.principal_id = ?${principalIndex}
           AND final_grant.role = 'writer' AND final_grant.revoked_at IS NULL
@@ -1529,7 +1534,7 @@ async function assigneeEligible(db: D1Database, projectId: string, principalId: 
        JOIN instance_meta instance ON instance.singleton = 1
        WHERE principal.id = ?1 AND (
          principal.id = instance.owner_principal_id OR EXISTS (
-           SELECT 1 FROM project_grants grant_row
+           SELECT 1 FROM effective_project_grants grant_row
            WHERE grant_row.project_id = ?2 AND grant_row.principal_id = principal.id
              AND grant_row.role = 'writer' AND grant_row.revoked_at IS NULL
          )
@@ -1667,7 +1672,7 @@ function issueEvent(
        project_id, subject_type, subject_id, payload_json, created_at)
      SELECT ?1, 'domain', ?2, ?3, 0, ?4, ?5, ?6,
             CASE WHEN ?7 = 1 THEN NULL ELSE (
-              SELECT grant_row.id FROM project_grants grant_row
+              SELECT grant_row.id FROM effective_project_grants grant_row
               WHERE grant_row.project_id = i.project_id
                 AND grant_row.principal_id = ?4
                 AND grant_row.role = 'writer' AND grant_row.revoked_at IS NULL
@@ -1804,7 +1809,7 @@ export async function createIssue(
                   AND label_row.id IN (SELECT value FROM json_each(?13))) = ?14
            AND ?15 = 1 AND ${guard.sql}
            AND (?8 IS NULL OR ?8 = (SELECT owner_principal_id FROM instance_meta WHERE singleton = 1)
-                OR EXISTS (SELECT 1 FROM project_grants eligible_grant
+                OR EXISTS (SELECT 1 FROM effective_project_grants eligible_grant
                            WHERE eligible_grant.project_id = p.id
                              AND eligible_grant.principal_id = ?8
                              AND eligible_grant.role = 'writer'
@@ -2004,7 +2009,7 @@ export async function updateIssue(
              AND ${guard.sql}
              AND (?11 = 0 OR ?12 IS NULL
                   OR ?12 = (SELECT owner_principal_id FROM instance_meta WHERE singleton = 1)
-                  OR EXISTS (SELECT 1 FROM project_grants eligible_grant
+                  OR EXISTS (SELECT 1 FROM effective_project_grants eligible_grant
                              WHERE eligible_grant.project_id = issues.project_id
                                AND eligible_grant.principal_id = ?12
                                AND eligible_grant.role = 'writer'
@@ -2361,7 +2366,7 @@ async function runIssueCommand(
                              WHERE p.id = issues.project_id AND p.deleted_at IS NULL AND w.deleted_at IS NULL)
                  AND ${guard.sql}
                  AND (?1 = 0 OR ?2 = (SELECT owner_principal_id FROM instance_meta WHERE singleton = 1)
-                      OR EXISTS (SELECT 1 FROM project_grants eligible_grant
+                      OR EXISTS (SELECT 1 FROM effective_project_grants eligible_grant
                                  WHERE eligible_grant.project_id = issues.project_id
                                    AND eligible_grant.principal_id = ?2
                                    AND eligible_grant.role = 'writer'

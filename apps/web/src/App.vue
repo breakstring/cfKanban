@@ -20,6 +20,7 @@ import ProfileView from "./views/ProfileView.vue";
 import ProjectBoardView from "./views/ProjectBoardView.vue";
 import ProjectSelectionView from "./views/ProjectSelectionView.vue";
 import PublicHomeView from "./views/PublicHomeView.vue";
+import ScopedManagementView from "./views/ScopedManagementView.vue";
 
 type OwnerSection = "overview" | "workspaces" | "access" | "audit" | "archive";
 type AppRoute =
@@ -29,6 +30,7 @@ type AppRoute =
   | { kind: "owner"; section: OwnerSection }
   | { kind: "profile" }
   | { kind: "project"; projectId: string; workspaceId: string }
+  | { kind: "manage"; workspaceId: string; projectId?: string }
   | { kind: "unknown" };
 
 const session = ref<WebSessionView | null>(null);
@@ -57,6 +59,16 @@ const route = computed<AppRoute>(() => {
   const path = routePath();
   if (path === "/") return { kind: "home" };
   if (path === "/app") return { kind: "selection" };
+  if (path === "/app/manage") {
+    const params = new URLSearchParams(currentPath.value.split("?", 2)[1] ?? "");
+    const workspaceId = params.get("workspace");
+    const projectId = params.get("project");
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (workspaceId && uuid.test(workspaceId) && (!projectId || uuid.test(projectId))) {
+      return { kind: "manage", workspaceId, ...(projectId ? { projectId } : {}) };
+    }
+    return { kind: "unknown" };
+  }
   if (path === "/app/profile") return { kind: "profile" };
   if (path === "/app/admin") {
     const raw = new URLSearchParams(currentPath.value.split("?", 2)[1] ?? "").get("section");
@@ -260,6 +272,14 @@ watch(currentPath, () => {
       <ProfileView
         v-else-if="route.kind === 'profile'"
         :key="`${sessionViewGeneration}:${currentPath}`"
+        :session="session"
+        @context="context = $event"
+      />
+      <ScopedManagementView
+        v-else-if="route.kind === 'manage'"
+        :key="`${sessionViewGeneration}:${currentPath}`"
+        :workspace-id="route.workspaceId"
+        :project-id="route.projectId"
         :session="session"
         @context="context = $event"
       />

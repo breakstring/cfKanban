@@ -34,7 +34,7 @@ const tagDescriptions = {
   invitations: "Short-lived one-time Project and Principal recovery invitations.",
   "public-join": "Owner-controlled single-Project public enrollment and limits.",
   web: "Browser Launch, fixed Web Sessions, and Passkey authentication.",
-  admin: "Deployment Owner application-level maintenance capabilities.",
+  admin: "Scope-authorized application maintenance; identity, security, quotas, and instance settings remain Deployment Owner-only.",
   events: "Authorization-filtered domain events and incremental synchronization.",
 };
 
@@ -66,7 +66,7 @@ const operations = [
   ["post", "/api/v1/workspaces/{workspace_id}/commands/restore", "restoreWorkspace", "workspaces", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
 
   ["get", "/api/v1/workspaces/{workspace_id}/projects", "listProjects", "projects", authenticated, "read", "DeletedCursorQuery"],
-  ["post", "/api/v1/workspaces/{workspace_id}/projects", "createProject", "projects", bearer, "idempotent", "CreateProjectRequest"],
+  ["post", "/api/v1/workspaces/{workspace_id}/projects", "createProject", "projects", authenticated, "idempotent", "CreateProjectRequest"],
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}", "getProject", "projects", authenticated, "read", "DeletedModeQuery"],
   ["patch", "/api/v1/workspaces/{workspace_id}/projects/{project_id}", "updateProject", "projects", authenticated, "cas", "UpdateProjectRequest"],
   ["delete", "/api/v1/workspaces/{workspace_id}/projects/{project_id}", "deleteProject", "projects", authenticated, "cas-delete"],
@@ -76,6 +76,14 @@ const operations = [
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees", "findProjectAssignee", "projects", authenticated, "read", "AssigneeNameQuery"],
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses", "listProjectStatuses", "projects", authenticated, "read"],
   ["patch", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_key}", "updateProjectStatusName", "projects", authenticated, "cas", "UpdateStatusNameRequest"],
+
+  ["get", "/api/v1/workspaces/{workspace_id}/administrators", "listWorkspaceAdministrators", "workspaces", authenticated, "read", "CursorQuery"],
+  ["post", "/api/v1/workspaces/{workspace_id}/administrators", "createWorkspaceAdministrator", "workspaces", authenticated, "idempotent-cas", "CreateAdministratorRequest"],
+  ["delete", "/api/v1/workspaces/{workspace_id}/administrators/{administrator_id}", "revokeWorkspaceAdministrator", "workspaces", authenticated, "idempotent-cas-delete"],
+  ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators", "listProjectAdministrators", "projects", authenticated, "read", "CursorQuery"],
+  ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators", "createProjectAdministrator", "projects", authenticated, "idempotent-cas", "CreateAdministratorRequest"],
+  ["delete", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators/{administrator_id}", "revokeProjectAdministrator", "projects", authenticated, "idempotent-cas-delete"],
+  ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/members", "listProjectMembers", "projects", authenticated, "read", "CursorQuery"],
 
   ["get", "/api/v1/issues", "listIssues", "issues", authenticated, "read", "IssueListQuery"],
   ["get", "/api/v1/issues/candidates", "listIssueCandidates", "issues", authenticated, "read", "CandidateListQuery"],
@@ -121,7 +129,7 @@ const operations = [
   ["post", "/api/v1/relations/{relation_id}/commands/restore", "restoreRelation", "relations", authenticated, "idempotent-cas", "RelationVersionsRequest"],
 
   ["post", "/api/v1/invitations/redeem", "redeemInvitation", "invitations", optionalBearer, "idempotent", "RedeemInvitationRequest"],
-  ["get", "/api/v1/admin/invitations", "listInvitations", "invitations", authenticated, "read", "CursorQuery"],
+  ["get", "/api/v1/admin/invitations", "listInvitations", "invitations", authenticated, "read", "InvitationListQuery"],
   ["post", "/api/v1/admin/invitations", "createInvitation", "invitations", authenticated, "idempotent", "CreateInvitationRequest"],
   ["get", "/api/v1/admin/invitations/{invitation_id}", "getInvitation", "invitations", authenticated, "read"],
   ["delete", "/api/v1/admin/invitations/{invitation_id}", "revokeInvitation", "invitations", authenticated, "cas-delete"],
@@ -302,15 +310,18 @@ const permissionDescriptions = {
   public: "Public, non-secret read.",
   authenticated_principal: "Any authenticated Principal; returned data is filtered to current effective authorization.",
   visible_scope: "Deployment Owner or a Principal with a currently visible Project in this container.",
-  visible_scope_active_owner_tombstone: "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner.",
+  visible_scope_active_owner_tombstone: "Active container reads require Deployment Owner, scoped administration, or a currently visible Project in the container, including empty managed Workspaces. Archived Workspace recovery remains Owner-only; archived Projects may also be read by the active parent Workspace administrator.",
   current_principal: "The currently authenticated Principal acting only on its own identity or Web authentication state.",
-  deployment_owner: "The single Deployment Owner. Project Grants never satisfy this permission.",
-  project_reader: "Deployment Owner or an active reader/writer Grant for the resource Project.",
-  project_reader_active_writer_tombstone: "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner.",
-  project_writer: "Deployment Owner or an active writer Grant for the resource Project.",
-  relation_endpoints_reader: "Deployment Owner or active reader/writer Grants for both Relation endpoint Projects. List operations use the path Issue Project for scope and omit Relations whose other endpoint is not currently readable.",
+  deployment_owner: "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission.",
+  workspace_administrator: "Deployment Owner or a current administrator of this active Workspace, within the current Session scope.",
+  project_administrator: "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights.",
+  scoped_invitation_manager: "Deployment Owner manages all Invitations. Scoped administrators manage only ordinary Project Invitations whose complete targets are within their current scope; non-Owner creation is limited to one Project with explicit reader/writer role. Recovery Invitations remain Owner-only. A scoped Invitation binds the issuing administrator grant ID and generation; revocation permanently invalidates unredeemed Invitations, even after regrant.",
+  project_reader: "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance.",
+  project_reader_active_writer_tombstone: "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner.",
+  project_writer: "Deployment Owner or effective Project writer access, including current scoped administrator inheritance.",
+  relation_endpoints_reader: "Deployment Owner or effective reader/writer access for both Relation endpoint Projects, including scoped administrators. List operations use the path Issue Project for scope and omit Relations whose other endpoint is not currently readable.",
   relation_endpoints_reader_active_writer_tombstone: "Active Relations require current reader/writer access to both Relation endpoint Projects. The explicit deleted=only recovery view requires writer access to both endpoints and remains available under paused parents only to the Deployment Owner.",
-  relation_endpoints_writer: "Deployment Owner or active writer Grants for both Relation endpoint Projects.",
+  relation_endpoints_writer: "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators.",
   credential_principal: "Any Principal authenticated with a current Bearer Credential; Cookie Session is intentionally insufficient.",
   agent_launch_session: "A current Cookie Session whose source is an active Bearer Credential Browser Launch.",
   invitation_capability: "A valid one-time Invitation capability, with conditional current-Credential authentication required by redeem_as.",
@@ -327,15 +338,16 @@ const permissionGroups = {
   current_principal: ["getMe", "updateMe", "getWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey"],
   deployment_owner: [
     "previewWorkspacePurge", "purgeWorkspace", "previewProjectPurge", "purgeProject",
-    "createWorkspace", "updateWorkspace", "deleteWorkspace", "restoreWorkspace",
-    "createProject", "updateProject", "deleteProject", "restoreProject", "updateProjectStatusName",
-    "listInvitations", "createInvitation", "getInvitation", "revokeInvitation",
+    "createWorkspace", "deleteWorkspace", "restoreWorkspace",
+    "createWorkspaceAdministrator", "revokeWorkspaceAdministrator",
     "listPrincipals", "getPrincipal", "listPrincipalCredentials", "revokeCredential", "rotateOwnerCredential",
-    "getInstanceOrigin", "updateInstanceOrigin", "listProjectGrants", "createProjectGrant", "getProjectGrant",
-    "updateProjectGrant", "revokeProjectGrant", "listAuditEvents", "revokePrincipalPasskey",
+    "getInstanceOrigin", "updateInstanceOrigin", "listAuditEvents", "revokePrincipalPasskey",
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
     "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings",
   ],
+  workspace_administrator: ["updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
+  project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
+  scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
   project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
@@ -383,7 +395,7 @@ const resumedPublicProjectsSchema = {
   additionalProperties: false,
 };
 const workspaceProperties = {
-  allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["create_project", "delete", "read", "restore", "update"] }) },
+  allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["create_project", "delete", "read", "restore", "update", "manage_administrators"] }) },
   created_at: ref("Timestamp"),
   display_name: string({ minLength: 1, maxLength: 128 }),
   id: ref("Uuid"),
@@ -403,7 +415,7 @@ const workspaceSchema = ({ deleted, resumed = false }) => ({
   additionalProperties: false,
 });
 const projectProperties = {
-  allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["delete", "manage_status_names", "read", "restore", "update"] }) },
+  allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["delete", "manage_status_names", "read", "restore", "update", "manage_members", "manage_administrators"] }) },
   context: nullableUtf8String(32768, { description: "Untrusted bounded Project context." }),
   created_at: ref("Timestamp"),
   display_name: string({ minLength: 1, maxLength: 128 }),
@@ -500,7 +512,7 @@ const schemas = {
       counts: {
         type: "object",
         required: ["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"],
-        properties: Object.fromEntries(["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"].map((key) => [key, integer({ minimum: 0 })])),
+        properties: { ...Object.fromEntries(["projects", "issues", "comments", "attachments", "attachment_bytes", "labels", "relations", "cross_project_relations", "grants", "invitations", "shared_invitations", "browser_launches", "web_sessions"].map((key) => [key, integer({ minimum: 0 })])), administrators: integer({ minimum: 0, description: "Direct administrator records belonging to the target container; excludes inherited sources and ordinary Project Grants." }) },
         additionalProperties: false,
       },
       can_purge: { type: "boolean" },
@@ -577,9 +589,61 @@ const schemas = {
   },
   RotateOwnerCredentialRequest: { type: "object", required: ["new_credential_token"], properties: { new_credential_token: credentialToken() }, additionalProperties: false },
   UpdateInstanceOriginRequest: { type: "object", required: ["expected_version", "preferred_api_origin"], properties: { expected_version: ref("Version"), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }) }, additionalProperties: false },
+  Administrator: {
+    type: "object",
+    required: ["id", "principal_id", "principal", "workspace_id", "project_id", "role", "version", "generation", "revoked_at", "created_at", "updated_at", "allowed_actions"],
+    properties: {
+      id: ref("Uuid"), principal_id: ref("Uuid"),
+      principal: { type: "object", required: ["id", "display_name"], properties: { id: ref("Uuid"), display_name: string() }, additionalProperties: false },
+      workspace_id: ref("Uuid"), project_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+      role: string({ enum: ["workspace_admin", "project_admin"] }),
+      version: ref("Version"), generation: ref("Uuid"),
+      revoked_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      created_at: ref("Timestamp"), updated_at: ref("Timestamp"),
+      allowed_actions: { type: "array", uniqueItems: true, items: string({ enum: ["read", "revoke", "regrant"] }) },
+    },
+    additionalProperties: false,
+  },
+  AdministratorListResult: {
+    type: "object", required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    properties: {
+      has_more: { type: "boolean" }, items: { type: "array", maxItems: 100, items: ref("Administrator") }, next_cursor: nullableString(),
+      resolved_scope: { type: "object", required: ["workspace_id", "project_id"], properties: { workspace_id: ref("Uuid"), project_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
+    }, additionalProperties: false,
+  },
+  AdministratorWriteResult: { type: "object", required: ["event_cursor", "idempotent_replay", "resource"], properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("Administrator") }, additionalProperties: false },
+  EffectiveMemberSource: {
+    type: "object", required: ["kind", "id", "version"],
+    properties: {
+      kind: string({ enum: ["workspace_admin", "project_admin", "project_grant", "deployment_owner"] }),
+      id: { anyOf: [ref("Uuid"), { type: "null" }] }, version: { anyOf: [ref("Version"), { type: "null" }] }, role: string(),
+    }, additionalProperties: false,
+  },
+  EffectiveMember: {
+    type: "object", required: ["principal_id", "display_name", "effective_role", "sources"],
+    properties: { principal_id: ref("Uuid"), display_name: string(), effective_role: string({ enum: ["owner", "writer", "reader"] }), sources: { type: "array", minItems: 1, items: ref("EffectiveMemberSource") } }, additionalProperties: false,
+  },
+  EffectiveMemberListResult: {
+    type: "object", required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    properties: {
+      has_more: { type: "boolean" }, items: { type: "array", maxItems: 100, items: ref("EffectiveMember") }, next_cursor: nullableString(),
+      resolved_scope: { type: "object", required: ["workspace_id", "project_id"], properties: { workspace_id: ref("Uuid"), project_id: ref("Uuid") }, additionalProperties: false },
+    }, additionalProperties: false,
+  },
+  CurrentPrincipal: {
+    type: "object", required: ["id", "principal_id", "display_name", "is_owner", "version", "management_grants"],
+    properties: {
+      id: ref("Uuid"), principal_id: ref("Uuid"), display_name: string(), is_owner: { type: "boolean" }, version: ref("Version"),
+      management_grants: { type: "array", items: ref("Administrator") },
+      grants: { type: "array", items: ref("WebSessionProjectScopeItem") }, allowed_actions: { type: "array", items: string() },
+      created_at: ref("Timestamp"), updated_at: ref("Timestamp"), deleted_at: { type: "null" },
+      credential: { anyOf: [{ type: "object", required: ["fingerprint", "id"], properties: { fingerprint: string(), id: ref("Uuid") }, additionalProperties: false }, { type: "null" }] },
+    }, additionalProperties: false,
+  },
+  CreateAdministratorRequest: { type: "object", required: ["principal_id", "expected_version"], properties: { principal_id: ref("Uuid"), expected_version: integer({ minimum: 0, description: "0 for first grant; current revoked row version for regrant. Regrant creates a new generation." }) }, additionalProperties: false },
   CreateGrantRequest: { type: "object", required: ["principal_id", "role"], properties: { principal_id: ref("Uuid"), role: ref("ProjectRole") }, additionalProperties: false },
   UpdateGrantRequest: { type: "object", required: ["expected_version", "role"], properties: { expected_version: ref("Version"), role: ref("ProjectRole") }, additionalProperties: false },
-  CreateWebLaunchRequest: { type: "object", required: ["target"], properties: { target: { oneOf: [{ type: "object", required: ["kind", "workspace_id", "project_id"], properties: { kind: { const: "project" }, workspace_id: ref("Uuid"), project_id: ref("Uuid") }, additionalProperties: false }, { type: "object", required: ["kind", "identifier"], properties: { kind: { const: "issue" }, identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }) }, additionalProperties: false }, { type: "object", required: ["kind", "section"], properties: { kind: { const: "admin" }, section: string({ enum: ["overview", "workspaces-projects", "access", "audit"] }) }, additionalProperties: false }] } }, additionalProperties: false },
+  CreateWebLaunchRequest: { type: "object", required: ["target"], properties: { target: { oneOf: [{ type: "object", required: ["kind", "workspace_id"], properties: { kind: { const: "workspace" }, workspace_id: ref("Uuid") }, additionalProperties: false }, { type: "object", required: ["kind", "workspace_id", "project_id"], properties: { kind: { const: "project" }, workspace_id: ref("Uuid"), project_id: ref("Uuid") }, additionalProperties: false }, { type: "object", required: ["kind", "identifier"], properties: { kind: { const: "issue" }, identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }) }, additionalProperties: false }, { type: "object", required: ["kind", "section"], properties: { kind: { const: "admin" }, section: string({ enum: ["overview", "workspaces-projects", "access", "audit"] }) }, additionalProperties: false }] } }, additionalProperties: false },
   RedeemWebLaunchRequest: { type: "object", required: ["launch_code"], properties: { launch_code: string({ minLength: 59, maxLength: 59, pattern: "^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$", writeOnly: true }) }, additionalProperties: false },
   WebAuthnRegistrationCredential: {
     type: "object",
@@ -1361,10 +1425,10 @@ const schemas = {
       items: { type: "array", items: ref("Invitation") },
       next_cursor: nullableString(),
       resolved_scope: {
-        type: "object",
-        required: ["owner_principal_id"],
-        properties: { owner_principal_id: ref("Uuid") },
-        additionalProperties: false,
+        oneOf: [
+          { type: "object", required: ["owner_principal_id"], properties: { owner_principal_id: ref("Uuid") }, additionalProperties: false },
+          { type: "object", required: ["principal_id", "project_ids", "project_id"], properties: { principal_id: ref("Uuid"), project_ids: { type: "array", items: ref("Uuid") }, project_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
+        ],
       },
     },
     additionalProperties: false,
@@ -1460,7 +1524,7 @@ const schemas = {
   },
   Event: {
     type: "object",
-    required: ["actor", "authorized_via", "created_at", "event_index", "grant_id", "id", "operation_id", "payload", "project", "subject", "type", "workspace"],
+    required: ["actor", "administrator_grant_id", "administrator_grant_version", "authorized_via", "created_at", "event_index", "grant_id", "id", "operation_id", "payload", "project", "subject", "type", "workspace"],
     properties: {
       actor: {
         anyOf: [
@@ -1477,9 +1541,17 @@ const schemas = {
           { type: "null" },
         ],
       },
+      administrator_grant_id: {
+        description: "Scoped administrator Grant used to authorize the Event, when applicable.",
+        anyOf: [ref("Uuid"), { type: "null" }],
+      },
+      administrator_grant_version: {
+        description: "Scoped administrator Grant version captured when authorizing the Event, when applicable.",
+        anyOf: [integer({ minimum: 1 }), { type: "null" }],
+      },
       authorized_via: string({
         description: "Historical authorization path used for this Event; it does not identify the mutated resource.",
-        enum: ["deployment_owner", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"],
+        enum: ["deployment_owner", "workspace_admin", "project_admin", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"],
       }),
       created_at: ref("Timestamp"),
       event_index: integer({ minimum: 0 }),
@@ -1575,6 +1647,7 @@ const schemas = {
   },
   BrowserLaunchTarget: {
     oneOf: [
+      { type: "object", required: ["entry_path", "kind", "workspace_id"], properties: { entry_path: string({ pattern: "^/app/manage\\?workspace=" }), kind: { const: "workspace" }, workspace_id: ref("Uuid") }, additionalProperties: false },
       {
         type: "object",
         required: ["entry_path", "kind", "project_id", "workspace_id"],
@@ -1663,6 +1736,7 @@ const schemas = {
   },
   WebSessionAllowedScope: {
     oneOf: [
+      { type: "object", required: ["kind", "workspace_id"], properties: { kind: { const: "workspace" }, workspace_id: ref("Uuid"), projects: { type: "array", items: ref("WebSessionProjectScopeItem") } }, additionalProperties: false },
       {
         type: "object",
         required: ["kind"],
@@ -1744,8 +1818,9 @@ const schemas = {
   },
   WebSessionView: {
     type: "object",
-    required: ["allowed_scope", "expires_at", "principal", "session_id", "source", "target"],
+    required: ["allowed_scope", "expires_at", "principal", "session_id", "source", "target", "management_grants"],
     properties: {
+      management_grants: { type: "array", items: ref("Administrator") },
       allowed_scope: ref("WebSessionAllowedScope"),
       expires_at: ref("Timestamp"),
       principal: ref("WebSessionPrincipal"),
@@ -2027,6 +2102,7 @@ const querySets = {
     { name: "after", in: "query", required: false, schema: string(), description: "Opaque Owner audit cursor." },
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],
+  InvitationListQuery: [{ name: "project_id", in: "query", required: false, schema: ref("Uuid"), description: "Filter to Invitations containing this Project. Every target must still be manageable by the current Principal; partial visibility never reveals an Invitation." }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   CursorQuery: [{ name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   DeletedModeQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],
   DeletedCursorQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
@@ -2038,6 +2114,14 @@ const querySets = {
 };
 
 const operationResponseSchemas = {
+  getMe: ref("CurrentPrincipal"),
+  listWorkspaceAdministrators: ref("AdministratorListResult"),
+  listProjectAdministrators: ref("AdministratorListResult"),
+  createWorkspaceAdministrator: ref("AdministratorWriteResult"),
+  createProjectAdministrator: ref("AdministratorWriteResult"),
+  revokeWorkspaceAdministrator: ref("AdministratorWriteResult"),
+  revokeProjectAdministrator: ref("AdministratorWriteResult"),
+  listProjectMembers: ref("EffectiveMemberListResult"),
   findProjectAssignee: ref("ProjectAssigneeResult"),
   listAttachments: ref("AttachmentListResult"),
   getAttachment: ref("Attachment"),

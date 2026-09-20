@@ -160,11 +160,13 @@ function schemaHasArtifacts(schema, expected = {}) {
   const tables = new Set(schema.tables || []);
   const indexes = new Set(schema.indexes || []);
   const triggers = new Set(schema.triggers || []);
+  const views = new Set(schema.views || []);
   const columns = new Set(schema.columns || []);
   const missing = {
     tables: (expected.tables || []).filter((name) => !tables.has(name)),
     indexes: (expected.indexes || []).filter((name) => !indexes.has(name)),
     ...(expected.triggers ? { triggers: expected.triggers.filter((name) => !triggers.has(name)) } : {}),
+    ...(expected.views ? { views: expected.views.filter((name) => !views.has(name)) } : {}),
     columns: (expected.columns || []).filter((name) => !columns.has(name)),
     ...(expected.absent_columns ? { absent_columns: expected.absent_columns.filter((name) => columns.has(name)) } : {}),
   };

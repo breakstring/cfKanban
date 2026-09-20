@@ -33,4 +33,4 @@
 - 云端确认后，以 pending secret 在冻结的 origin 验证 `/meta`、`/me` 的 instance、origin、Service/schema、Owner flag、Principal ID、Credential ID/fingerprint；匹配后才写本地可信实例记录、提升 current、写脱敏恢复 receipt。最终化中断后复用 pending/current，不签发第二凭据。
 - 同实例本地执行使用互斥锁。正常退出释放；进程被硬杀后，先确认锁中 PID 对应进程已停止，再移除准确的 `owner-recovery.lock`。不得因此删除 pending、journal 或整个私有目录。
 
-当前实现每次最多恢复 256 个旧 active Credential，只支持已知 schema 1–7；越界或不兼容时停止，不截断 inventory、不迁移数据库。本轮不改变 canonical release/install 合同，源码增加命令不代表已发布或用户当前插件已更新。
+当前实现每次最多恢复 256 个旧 active Credential，只支持已知 schema 1–9；越界或不兼容时停止，不截断 inventory、不迁移数据库。本轮不改变 canonical release/install 合同，源码增加命令不代表已发布或用户当前插件已更新。

@@ -249,7 +249,7 @@ function issueActiveScopeBarrierDatabase(database, pauseAtRead = 1) {
       get(target, property) {
         if (property === "prepare") {
           return (sql) => {
-            const matchesScopeRead = sql.includes("FROM project_grants AS pg")
+            const matchesScopeRead = sql.includes("FROM effective_project_grants AS pg")
               && sql.includes("ORDER BY w.id, p.id");
             const matchesFinalQuery = (
               sql.includes("WITH current_result_projects(id) AS MATERIALIZED")

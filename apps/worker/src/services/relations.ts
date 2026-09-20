@@ -187,7 +187,7 @@ function deletedRelationListSql(withCursor: boolean, authGuardSql: string): stri
                  current_project.deleted_at IS NULL
                  AND current_workspace.deleted_at IS NULL
                  AND EXISTS (
-                   SELECT 1 FROM project_grants current_grant
+                   SELECT 1 FROM effective_project_grants current_grant
                    WHERE current_grant.project_id = current_project.id
                      AND current_grant.principal_id = ${principalParameter}
                      AND current_grant.role = 'writer'
@@ -240,7 +240,7 @@ function activeRelationListSql(authGuardSql: string): string {
              AND (
                current_instance.owner_principal_id = ?6
                OR EXISTS (
-                 SELECT 1 FROM project_grants current_grant
+                 SELECT 1 FROM effective_project_grants current_grant
                  WHERE current_grant.project_id = current_project.id
                    AND current_grant.principal_id = ?6
                    AND current_grant.revoked_at IS NULL
@@ -318,7 +318,7 @@ async function readCurrentRelationAccess(
     WHEN relation_row.${endpoint}_project_deleted_at IS NULL
       AND relation_row.workspace_deleted_at IS NULL
       AND EXISTS (
-        SELECT 1 FROM project_grants endpoint_grant
+        SELECT 1 FROM effective_project_grants endpoint_grant
         WHERE endpoint_grant.project_id = relation_row.${endpoint}_project_id
           AND endpoint_grant.principal_id = ?3
           ${write ? "AND endpoint_grant.role = 'writer'" : ""}
@@ -443,7 +443,7 @@ function relationEvent(
        project_id, relation_other_project_id, subject_type, subject_id, payload_json, created_at)
      SELECT ?1, 'domain', ?2, ?3, ?4, ?5, ?6, ?7,
             CASE WHEN ?8 = 1 THEN NULL ELSE (
-              SELECT grant_row.id FROM project_grants grant_row
+              SELECT grant_row.id FROM effective_project_grants grant_row
               WHERE grant_row.project_id = ?9
                 AND grant_row.principal_id = ?5
                 AND grant_row.role = 'writer' AND grant_row.revoked_at IS NULL

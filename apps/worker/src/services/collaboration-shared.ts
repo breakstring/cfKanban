@@ -232,7 +232,7 @@ export function buildProjectRoleGuard(
   return {
     sql: `${currentAuth.sql}
       AND (?${ownerIndex} = 1 OR EXISTS (
-        SELECT 1 FROM project_grants final_grant
+        SELECT 1 FROM effective_project_grants final_grant
         WHERE final_grant.project_id = ${projectExpression}
           AND final_grant.principal_id = ?${principalIndex}
           ${requiredRole === "writer" ? "AND final_grant.role = 'writer'" : ""}
@@ -256,13 +256,13 @@ export function buildTwoProjectWriterGuard(
     sql: `${currentAuth.sql}
       AND (?${ownerIndex} = 1 OR (
         EXISTS (
-          SELECT 1 FROM project_grants source_grant
+          SELECT 1 FROM effective_project_grants source_grant
           WHERE source_grant.project_id = ${sourceProjectExpression}
             AND source_grant.principal_id = ?${principalIndex}
             AND source_grant.role = 'writer' AND source_grant.revoked_at IS NULL
         )
         AND EXISTS (
-          SELECT 1 FROM project_grants target_grant
+          SELECT 1 FROM effective_project_grants target_grant
           WHERE target_grant.project_id = ${targetProjectExpression}
             AND target_grant.principal_id = ?${principalIndex}
             AND target_grant.role = 'writer' AND target_grant.revoked_at IS NULL

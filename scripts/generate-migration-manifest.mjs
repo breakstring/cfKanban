@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 8,
+  schema_version: 9,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -116,6 +116,28 @@ const manifest = {
         triggers: ["principal_name_key_insert", "principal_name_key_update"],
       },
       expected_data: { instance_meta_schema_version_at_least: 8, allow_uninitialized: true },
+    },
+    {
+      sequence: 9,
+      name: "0009_scoped_administrators.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0009_scoped_administrators.sql", import.meta.url), "utf8")),
+      classification: "breaking_non_destructive",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        tables: ["scoped_administrator_grants"],
+        views: ["project_access_sources", "effective_project_grants"],
+        indexes: ["idx_scoped_admin_workspace_principal", "idx_scoped_admin_project_principal", "idx_scoped_admin_principal_active"],
+        columns: [
+          "scoped_administrator_grants.principal_id", "scoped_administrator_grants.workspace_id",
+          "scoped_administrator_grants.project_id", "scoped_administrator_grants.version",
+          "scoped_administrator_grants.generation", "scoped_administrator_grants.revoked_at",
+          "invitations.issuer_administrator_id", "invitations.issuer_administrator_generation",
+          "events.administrator_grant_id", "events.administrator_grant_version",
+        ],
+        triggers: ["scoped_admin_event_source"],
+      },
+      expected_data: { instance_meta_schema_version_at_least: 9, allow_uninitialized: true },
     },
   ],
 };

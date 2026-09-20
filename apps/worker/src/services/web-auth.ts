@@ -37,6 +37,8 @@ import { randomBase64Url } from "../kernel/webauthn.ts";
 import { requireCollaborationIssue } from "./collaboration-shared.ts";
 import { actorCredentialId, authorizedVia, eventCursor, requireIdempotencyKey, writeResult } from "./shared.ts";
 import { browserLaunchCleanupStatement, webSessionCleanupStatement } from "./web-state.ts";
+import { requireManagementAuthorization } from "../kernel/scoped-authorization.ts";
+import { managementGrantsResource } from "./scoped-administrators.ts";
 
 const BROWSER_LAUNCH_LIFETIME_MS = 5 * 60 * 1_000;
 const WEB_SESSION_LIFETIME_MS = 8 * 60 * 60 * 1_000;
@@ -50,6 +52,7 @@ function adminEntryPath(section: string): string {
 }
 
 type LaunchTarget =
+  | { entry_path: string; kind: "workspace"; workspace_id: string }
   | {
     entry_path: string;
     kind: "admin";
@@ -87,7 +90,7 @@ interface BrowserLaunchRow {
   revoked_at: number | null;
   source_credential_id: string;
   target_json: string;
-  target_kind: "admin" | "issue" | "project";
+  target_kind: "admin" | "issue" | "project" | "workspace";
 }
 
 interface LaunchOperationSnapshot {
@@ -158,6 +161,11 @@ function launchTargetFromRow(row: BrowserLaunchRow): LaunchTarget {
   if (row.target_kind === "admin") {
     return resolvedAdminTarget(target.section);
   }
+  if (row.target_kind === "workspace") {
+    if (typeof target.workspace_id !== "string") throw platformUnavailable("d1");
+    return { kind: "workspace", workspace_id: target.workspace_id,
+      entry_path: `/app/manage?workspace=${encodeURIComponent(target.workspace_id)}` };
+  }
   if (
     typeof target.project_id !== "string"
     || typeof target.workspace_id !== "string"
@@ -189,6 +197,12 @@ async function resolveLaunchTarget(
   value: JsonValue,
 ): Promise<LaunchTarget> {
   const target = parseObject(value);
+  if (target.kind === "workspace") {
+    validateJsonObject(target, { allowedKeys: ["kind", "workspace_id"], requiredKeys: ["kind", "workspace_id"] });
+    const workspaceId = requireUuid(target.workspace_id as JsonValue, "workspace_id");
+    await requireManagementAuthorization(db, auth, { workspaceId }, "manage_workspace", Date.now());
+    return { kind: "workspace", workspace_id: workspaceId, entry_path: `/app/manage?workspace=${encodeURIComponent(workspaceId)}` };
+  }
   if (target.kind === "project") {
     validateJsonObject(target, {
       allowedKeys: ["kind", "project_id", "workspace_id"],
@@ -245,6 +259,10 @@ async function verifyResolvedLaunchTarget(
     requireOwnerControl(auth, true);
     return;
   }
+  if (target.kind === "workspace") {
+    await requireManagementAuthorization(db, auth, { workspaceId: target.workspace_id }, "manage_workspace", Date.now());
+    return;
+  }
   if (target.kind === "project") {
     const project = await requireProjectAuthorization(
       db,
@@ -260,6 +278,14 @@ async function verifyResolvedLaunchTarget(
 }
 
 const launchTargetGuardSql = `(
+  (launch.target_kind = 'workspace' AND EXISTS (
+    SELECT 1 FROM workspaces target_workspace JOIN instance_meta target_instance ON target_instance.singleton=1
+    WHERE target_workspace.id=json_extract(launch.target_json, '$.workspace_id') AND target_workspace.deleted_at IS NULL
+      AND (target_instance.owner_principal_id=launch.principal_id OR EXISTS (
+        SELECT 1 FROM scoped_administrator_grants target_admin WHERE target_admin.workspace_id=target_workspace.id
+          AND target_admin.project_id IS NULL AND target_admin.principal_id=launch.principal_id AND target_admin.revoked_at IS NULL
+      ))
+  )) OR
   (launch.target_kind = 'admin' AND EXISTS (
     SELECT 1 FROM instance_meta target_instance
     WHERE target_instance.singleton = 1
@@ -277,7 +303,7 @@ const launchTargetGuardSql = `(
       AND (
         target_instance.owner_principal_id = launch.principal_id
         OR EXISTS (
-          SELECT 1 FROM project_grants target_grant
+          SELECT 1 FROM effective_project_grants target_grant
           WHERE target_grant.project_id = target_project.id
             AND target_grant.principal_id = launch.principal_id
             AND target_grant.revoked_at IS NULL
@@ -341,6 +367,14 @@ async function createLaunchBatch(
            SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10
            WHERE ${guard.sql}
              AND (
+               (?6 = 'workspace' AND EXISTS (
+                 SELECT 1 FROM workspaces target_workspace JOIN instance_meta target_instance ON target_instance.singleton=1
+                 WHERE target_workspace.id=json_extract(?7, '$.workspace_id') AND target_workspace.deleted_at IS NULL
+                   AND (target_instance.owner_principal_id=?4 OR EXISTS (
+                     SELECT 1 FROM scoped_administrator_grants target_admin WHERE target_admin.workspace_id=target_workspace.id
+                       AND target_admin.project_id IS NULL AND target_admin.principal_id=?4 AND target_admin.revoked_at IS NULL
+                   ))
+               )) OR
                (?6 = 'admin' AND EXISTS (
                  SELECT 1 FROM instance_meta target_instance
                  WHERE target_instance.singleton = 1
@@ -358,7 +392,7 @@ async function createLaunchBatch(
                    AND (
                      target_instance.owner_principal_id = ?4
                      OR EXISTS (
-                       SELECT 1 FROM project_grants target_grant
+                       SELECT 1 FROM effective_project_grants target_grant
                        WHERE target_grant.project_id = target_project.id
                          AND target_grant.principal_id = ?4
                          AND target_grant.revoked_at IS NULL
@@ -469,7 +503,7 @@ export async function createWebLaunch(
   const identity = {
     idempotencyKey: requireIdempotencyKey(request),
     method: "POST",
-    normalizedResourceScope: `web-launch:${target.kind}:${target.kind === "admin" ? target.section : target.project_id}`,
+    normalizedResourceScope: `web-launch:${target.kind}:${target.kind === "admin" ? target.section : target.kind === "workspace" ? target.workspace_id : target.project_id}`,
     requestBody: { target },
     routeTemplate: "/api/v1/web-launches",
     scopeKey: `principal:${auth.principalId}`,
@@ -677,6 +711,8 @@ function sessionSnapshotResource(
       ? { kind: "instance" }
       : snapshot.target.kind === "project_selection"
         ? { kind: "project_selection" }
+        : snapshot.target.kind === "workspace"
+          ? { kind: "workspace", workspace_id: snapshot.target.workspace_id }
         : { kind: "project", project_id: snapshot.target.project_id },
     cookie_available: cookieAvailable,
     entry_path: snapshot.entry_path,
@@ -932,7 +968,9 @@ export async function getWebSession(
   // This is the response's authorization point: the same D1 statement that
   // reads Grants and parent-container state also verifies the Session/source.
   const projects = await resolveCurrentVisibleProjects(db, auth, now);
-  if (auth.targetKind !== "project_selection" && auth.targetKind !== "admin" && projects.length === 0) {
+  if (auth.targetKind === "workspace") {
+    await requireManagementAuthorization(db, auth, { workspaceId: String(auth.target.workspace_id) }, "manage_workspace", now);
+  } else if (auth.targetKind !== "project_selection" && auth.targetKind !== "admin" && projects.length === 0) {
     throw notFound();
   }
   if (auth.targetKind === "admin" && !auth.isOwner) throw forbidden();
@@ -942,7 +980,10 @@ export async function getWebSession(
   return {
     allowed_scope: auth.targetKind === "admin"
       ? { kind: "instance", projects: visibleScopeResource(projects) }
+      : auth.targetKind === "workspace"
+        ? { kind: "workspace", workspace_id: auth.target.workspace_id ?? null, projects: visibleScopeResource(projects) }
       : { kind: auth.targetKind === "project_selection" ? "project_selection" : "project", projects: visibleScopeResource(projects) },
+    management_grants: managementGrantsResource(auth),
     expires_at: timestamp(auth.sessionExpiresAt),
     principal: {
       display_name: auth.displayName,

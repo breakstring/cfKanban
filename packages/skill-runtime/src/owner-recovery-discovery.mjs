@@ -77,7 +77,7 @@ export async function discoverOwnerRecoveryCandidates(input) {
       const owner = requireUuid(row.owner_principal_id, "owner_principal_id");
       const displayName = requireObservedPrincipalDisplayName(row.display_name);
       requireString(row.service_version, "service_version", { max: 128 });
-      if (![row.schema_version, row.principal_version, row.origin_version].every(value => Number.isSafeInteger(value) && value > 0) || row.schema_version > 8) invalid();
+      if (![row.schema_version, row.principal_version, row.origin_version].every(value => Number.isSafeInteger(value) && value > 0) || row.schema_version > 9) invalid();
       const apiOrigin = requireHttpsOrigin(row.preferred_api_origin);
       const target = { accountId, workerName: name, d1Name, databaseId, apiOrigin, instanceId };
       const verified = await inspectOwnerRecovery({ ...input, ...target });

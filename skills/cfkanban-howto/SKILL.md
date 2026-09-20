@@ -1,11 +1,11 @@
 ---
 name: cfkanban-howto
-description: Explain how to use cfKanban as a participant, administer it as the Owner, or deploy an instance. Use for onboarding, capability questions, and choosing among the three operational Skills; this guide does not execute operations.
+description: Explain how to use cfKanban as a participant, administer an authorized Workspace/Project or the instance as Owner, or deploy an instance. Use for onboarding, capability questions, and choosing among the three operational Skills; this guide does not execute operations.
 ---
 
 # cfKanban Howto
 
-Explain cfKanban in the user's language, starting with daily use, then Owner administration, then deployment. For a focused question, cover only the relevant part. Give a short capability explanation and a natural-language prompt the user can reuse; avoid API parameters and setup internals unless requested.
+Explain cfKanban in the user's language, starting with daily use, then scoped and Owner administration, then deployment. For a focused question, cover only the relevant part. Give a short capability explanation and a natural-language prompt the user can reuse; avoid API parameters and setup internals unless requested.
 
 This is a read-only teaching and routing Skill, with no command helper. Explaining a workflow does not authorize joining a Project, opening a session, creating an invitation, installing software, or changing cloud resources. If the user requests an action, use the relevant operational Skill and the user's existing authorization. If that Skill is unavailable, explain the missing capability; do not invent a command or silently install it. Do not ask the user to paste a long-lived Credential. Use placeholders for invitation links, never reproduce real secret values in examples.
 
@@ -51,7 +51,7 @@ For execution and precise inputs, read [cfkanban](../cfkanban/SKILL.md).
 
 ## 2. Organize Projects and access — cfkanban-admin
 
-Only the instance's verified Deployment Owner uses this Skill for application administration. A Project writer is not an administrator. These actions use the existing application; they do not deploy cloud resources.
+The verified Owner and scoped Workspace/Project administrators use this Skill within their current scope. A Project writer is not an administrator. Owner appoints Workspace administrators; Owner or a parent Workspace administrator appoints Project administrators. Multiple administrators are supported. These actions use the existing application; they do not deploy cloud resources.
 
 | Goal / 目标 | Example prompt / 自然语言示例 | Expected result / 预期结果 |
 | --- | --- | --- |
@@ -63,6 +63,10 @@ Only the instance's verified Deployment Owner uses this Skill for application ad
 | Archive / 归档 | “Archive the old DemoProject project.” / “归档旧 DemoProject 项目。” | Reversible container archive; permanent removal is a separate explicit request and preview. / 可恢复地归档容器，永久删除需要独立明确请求与预览。 |
 
 Prefix these with `$cfkanban-admin`. It also handles container rename/restore, fixed status display names, participant recovery, Owner Credential rotation, and application settings. Public writer access permits content changes; disabling Public Join does not revoke existing Grants. Restoring a container can resume its enabled Public Join policies and must explain that effect. Cloudflare request-rate configuration and enabling private attachment storage belong to deployment; selecting application attachment capacity belongs here.
+
+Workspace administrators manage their Workspace's current/future Projects, ordinary members, and Project administrators; Project administrators manage their Project's settings and ordinary members. Neither can appoint peers. Owner keeps Public Join, quotas, instance audit, permanent purge, and identity/Credential recovery. Removing one direct or inherited permission source preserves any other effective access. Administrators count once per Principal in public Project membership quotas. Non-Owner Invitations grant one Project's reader/writer access and become permanently invalid if their issuing administrator grant is revoked before redemption.
+
+工作区与项目都支持多名管理员。Owner 任免工作区管理员；Owner 或所属工作区管理员任免项目管理员，同级不能互相任免。工作区管理员管理现有与未来子项目及普通成员；项目管理员管理本项目设置和普通成员，但不能归档项目。Public Join、配额、全局审计、永久删除和身份恢复仍属于 Owner。权限按来源取并集，撤销一条不会删除其他有效来源；管理员计入公开项目人数配额且同一人只计一次。局部管理员邀请只授予一个项目的 reader/writer；签发管理授权在兑换前撤销后，该邀请永久失效。
 
 For execution, read [cfkanban-admin](../cfkanban-admin/SKILL.md).
 

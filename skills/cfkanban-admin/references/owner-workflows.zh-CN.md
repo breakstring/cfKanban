@@ -1,4 +1,4 @@
-# Owner 工作流
+# 管理工作流
 
 语言：[English](owner-workflows.md) | [简体中文](owner-workflows.zh-CN.md)
 
@@ -6,13 +6,13 @@
 
 ## 常见 Owner 请求
 
-先验证 `is_owner=true`。这些是应用操作，不是 Cloudflare 部署；Owner 的日常 Issue 工作仍使用 `cfkanban`。
+先读取 `/api/v1/me` 的 `is_owner`、`management_grants` 与目标 `allowed_actions`；Owner 专属操作仍要求 `is_owner=true`。这些是应用操作，不是 Cloudflare 部署；Owner 的日常 Issue 工作仍使用 `cfkanban`。
 
 | 用户请求 | 预期结果 |
 | --- | --- |
 | “在 Product 工作区创建 DemoProject 项目。” | 解析既有名称或创建请求的容器，读回 UUID 并报告项目，用户请求时再打开看板；不自动创建 Issue、添加成员或开启公开加入。 |
 | “创建 DemoProject 的只读邀请。” | 创建明确 `reader` 权限的 Invite 并安全交付，不自动发送给他人。 |
-| “查看谁可以访问 DemoProject。” | 展示当前 Grants 与 Owner 权限及稳定 Principal 标识，不撤权或改角色。 |
+| “查看谁可以访问 DemoProject。” | 分页展示有效成员、直接/继承权限来源及稳定 Principal 标识，不撤权或改角色。 |
 | “解释开启 DemoProject 公开加入的影响。” | 说明访客可选择 reader 或 writer，开启需要三项明确配额；讲解不隐含修改策略，以后关闭不撤销既有 Grants。 |
 | “查看用量和剩余附件容量。” | 按缓存规则刷新，区分应用预留量/上限与平台指标；未知不是零，不限制不是未配置。 |
 | “归档旧 DemoProject 项目。” | 可恢复地归档准确项目；恢复时提示仍 enabled 的 Public Join 会恢复，永久清理需要独立预览及明确授权。 |
@@ -30,7 +30,31 @@
 }
 ```
 
-将其作为 `node scripts/cfkanban-tool.mjs api request` 的 stdin。命令在内部读取 current Owner Credential。不得把 Credential、pending secret、完整 Invite URL 或 recovery code 放入普通请求输入。
+将其作为 `node scripts/cfkanban-tool.mjs api request` 的 stdin。命令在内部读取 current Principal Credential。不得把 Credential、pending secret、完整 Invite URL 或 recovery code 放入普通请求输入。
+
+## 分级管理员与有效成员（schema 9+）
+
+先读 `/api/v1/me.management_grants` 并解析准确 UUID。Owner 权限为隐式，该数组为空。管理授权包含 `id`、`principal_id`、`principal:{id,display_name}`、`workspace_id`、可空的 `project_id`、`version`、UUID `generation`、`revoked_at`、时间戳和 `allowed_actions`；`project_id=null` 表示工作区管理员。数据面的 `grants.role=writer` 不证明管理权，浏览器 Session 范围也是额外约束。
+
+| 能力 | 工作区管理员 | 项目管理员 |
+| --- | --- | --- |
+| 改本工作区名、创建子项目 | 是 | 否 |
+| 项目名称、context、固定状态显示名 | 全部子项目 | 本项目 |
+| 项目归档/恢复 | 工作区有效时的子项目 | 否 |
+| 普通 reader/writer 成员和单项目邀请 | 全部子项目 | 本项目 |
+| 任免项目管理员 | 全部子项目 | 否 |
+| 任免工作区管理员 | 仅 Owner | 仅 Owner |
+| 创建/归档/恢复工作区，Public Join/配额，全局用量/审计，永久删除，身份恢复和他人 Credential/Passkey | 仅 Owner | 仅 Owner |
+
+工作区管理员端点为 `/api/v1/workspaces/{workspace_id}/administrators`，项目管理员端点为 `/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators`。列表使用 `limit`/`cursor`，保留撤销行供显式重新授予。POST body 为 `{principal_id,expected_version}`：首次 `expected_version=0`，重新授予使用撤销行当前 version。DELETE 追加 `/{administrator_id}?expected_version=<version>`。每次写入独立 Idempotency-Key 并读回；版本冲突先刷新。两级均支持多人，允许零名管理员，上级接管；同级不能任免，不设最后一位局部管理员限制。
+
+使用 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/members?limit=20` 并有界翻页。每项包含 `principal_id`、`display_name`、`effective_role`（`owner|writer|reader`）及 `sources`（`deployment_owner|workspace_admin|project_admin|project_grant`，含来源 ID/version、可选 role）。撤权前说明直接/继承来源及剩余访问。普通 Grant 仍通过 `/api/v1/admin/projects/{project_id}/grants` 和 `/api/v1/admin/grants/{grant_id}` 管理；路径含 `/admin` 不代表可使用实例身份接口。
+
+工作区管理员动态继承当前和未来全部子项目。撤销一个管理来源保留其他管理来源和直接 Grant；assignment/历史保持，指派可用性按有效 writer 计算。公开项目人数是非 Owner 有效成员并集，两级管理员都计入、同人一次。新增工作区管理员会原子检查所有受影响有效公开项目，任一新增人数超额则整个授权失败；不能改为只授予部分项目绕过。既有超额成员不删除，重复来源不加人数。归档项目保留人数，归档工作区暂停管理和数据访问。
+
+邀请只能授予普通 reader/writer，不授予管理身份。非 Owner 的 `invite create` 每次仅一个受管项目；Owner 保留多项目邀请。局部管理员只能查看/撤销全部目标均可管理的普通邀请，不能看到恢复邀请或夹带无权项目的邀请。创建与兑换校验准确签发管理授权 ID/generation；撤权永久使未兑换邀请失效，其他来源或重新授予都不复活。已兑换成员保留。容器归档只暂停兑换，恢复仍受原有效期和签发授权约束。身份恢复、Credential/Passkey 管理仍仅 Owner。
+
+已有项目使用 Project/Issue `web launch`。空工作区或明确工作区管理使用 `{kind:"workspace",workspace_id:"<UUID>"}`，初始路径为 `/app/manage?workspace=<UUID>`，不能得到实例管理范围。新非 Owner Session 使用实时 `project_selection`；固定 Project/Issue Session 不扩大为工作区管理。Owner 仅在未指定更窄目标时默认 admin Overview。核对服务端实际 scope/target，不从本地技能版本推断线上支持。
 
 ## 部署后的第一个可用看板
 
@@ -134,7 +158,7 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 随机路径的 loopback 入口只能使用一次，60 秒失效。它是短暂进入宿主工具上下文的敏感本地 capability，不在回复中复述，也不写文件、日志、receipt 或报告；远端 ticket URL/code 始终只在进程内存，不打印。远端票据仍为 5 分钟，兑换后 Session 仍为 8 小时，本地 60 秒不改变这些时效。若指定浏览器与进程处于不同宿主/网络空间，或缺少可用导航工具，应在创建票据前停止并解释交付限制，不静默换浏览器。relay 成功仅证明交付，还须检查最终页面；无法验证登录时如实说明。默认 `system_browser` 与显式确认的 `stdout_once` 行为保持不变。
 
-Owner Browser Launch 只用 current Owner Credential 创建固定 5 分钟的 opaque code。`web launch` 默认通过纯内存 loopback relay 打开系统浏览器，远端 URL 不进入 stdout 或进程参数；它兑换为实例级 admin Session，默认打开 Overview，不预取全部 Issues。用户随后可显式选择 Workspace/Project。长期 Credential 不进入浏览器。headless 输出沿用 Invite 的显式 `stdout_once` 确认与禁止留存规则。
+Owner Browser Launch 只用 current Principal Credential 创建固定 5 分钟的 opaque code。`web launch` 默认通过纯内存 loopback relay 打开系统浏览器，远端 URL 不进入 stdout 或进程参数；它兑换为实例级 admin Session，默认打开 Overview，不预取全部 Issues。用户随后可显式选择 Workspace/Project。长期 Credential 不进入浏览器。headless 输出沿用 Invite 的显式 `stdout_once` 确认与禁止留存规则。
 
 ## 审计筛选
 

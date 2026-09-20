@@ -20,6 +20,7 @@ import { Router } from "./kernel/router.ts";
 import type { WorkerEnv } from "./kernel/types.ts";
 import { registerAttachmentRoutes } from "./routes/attachments.ts";
 import { registerUsageRoutes } from "./routes/usage.ts";
+import { registerScopedAdministratorRoutes } from "./routes/scoped-administrators.ts";
 import { collectAttachmentGarbage } from "./services/attachments.ts";
 import { registerWp03Routes } from "./routes/wp03.ts";
 import { registerWp04Routes } from "./routes/wp04.ts";
@@ -52,6 +53,8 @@ const router = registerUsageRoutes(registerAttachmentRoutes(registerWp08Routes(r
       "x-request-id": context.requestId,
     },
   }))))))))));
+
+registerScopedAdministratorRoutes(router);
 
 function mayHaveJsonBody(request: Request): boolean {
   return request.method !== "GET" && request.method !== "HEAD" && request.body !== null;

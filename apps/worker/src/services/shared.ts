@@ -39,7 +39,7 @@ async function eventCursorProjectIds(
          AND (
            instance.owner_principal_id = ?1
            OR EXISTS (
-             SELECT 1 FROM project_grants grant_row
+             SELECT 1 FROM effective_project_grants grant_row
              WHERE grant_row.project_id = project.id
                AND grant_row.principal_id = ?1
                AND grant_row.revoked_at IS NULL

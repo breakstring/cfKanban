@@ -1,3 +1,4 @@
+import { buildManagementGuard, managementAuthorization, requireManagementAuthorization } from "../kernel/scoped-authorization.ts";
 import {
   requireCredentialToken,
   requireProjectRole,
@@ -8,7 +9,6 @@ import {
 import { authenticateBearer, parseBearerCredential } from "../kernel/auth.ts";
 import {
   buildCurrentAuthGuard,
-  reauthenticateOwner,
   requireOwnerControl,
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
@@ -787,9 +787,10 @@ export async function listProjectGrants(
   projectIdValue: JsonValue,
   url: URL,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
   const projectId = requireUuid(projectIdValue, "project_id");
-  if (await readProjectControl(db, projectId) === null) throw notFound();
+  const project = await readProjectControl(db, projectId);
+  if (project === null) throw notFound();
+  await requireManagementAuthorization(db, auth, { workspaceId: project.workspace_id, projectId }, "manage_members", Date.now());
   const limit = requireLimit(url);
   const cursorContext = await createCursorContext(
     "project-grants",
@@ -818,6 +819,7 @@ export async function listProjectGrants(
   } catch (error) {
     throw platformUnavailable("d1", error);
   }
+  await requireManagementAuthorization(db, auth, { workspaceId: project.workspace_id, projectId }, "manage_members", Date.now());
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;
   const tail = page.at(-1);
@@ -834,10 +836,10 @@ export async function getProjectGrant(
   auth: AuthContext,
   grantIdValue: JsonValue,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
   const grantId = requireUuid(grantIdValue, "grant_id");
   const row = await readGrant(db, grantId);
   if (row === null) throw notFound();
+  await requireGrantReadOrRevokeAuthorization(db, auth, { workspaceId: row.workspace_id, projectId: row.project_id }, Date.now());
   return grantResource(row);
 }
 
@@ -861,6 +863,7 @@ async function grantCapacity(db: D1Database, projectId: string): Promise<GrantCa
 function grantEvent(
   db: D1Database,
   auth: AuthContext,
+  scope: { workspaceId: string; projectId: string },
   operationId: string,
   grantId: string,
   type: string | null,
@@ -868,24 +871,26 @@ function grantEvent(
   now: number,
   requireUsageCommit = false,
 ): D1PreparedStatement {
+  const authorization = managementAuthorization(auth, scope, "manage_members");
+  if (authorization === null) throw forbidden();
   return db.prepare(
     `INSERT INTO events
       (id, stream, type, operation_id, event_index, actor_principal_id,
        actor_credential_id, authorized_via, grant_id, workspace_id,
-       project_id, subject_type, subject_id, payload_json, created_at)
+       project_id, subject_type, subject_id, payload_json, created_at, administrator_grant_id, administrator_grant_version)
      SELECT ?1, 'domain',
             COALESCE(?2, CASE WHEN g.created_operation_id = ?3
                              THEN 'project-grant.created'
                              ELSE 'project-grant.regranted' END),
-            ?3, 0, ?4, ?5, 'deployment_owner',
+            ?3, 0, ?4, ?5, ?9,
             g.id, p.workspace_id, g.project_id, 'project_grant', g.id,
             json_set(
               json(?6),
               '$.grant_version', g.version,
-              '$.effective_role', CASE WHEN g.revoked_at IS NULL THEN g.role ELSE NULL END,
+              '$.effective_role', effective.role,
               '$.effective_capabilities', json_object(
-                'read', json(CASE WHEN g.revoked_at IS NULL THEN 'true' ELSE 'false' END),
-                'write', json(CASE WHEN g.revoked_at IS NULL AND g.role = 'writer' THEN 'true' ELSE 'false' END)
+                'read', json(CASE WHEN effective.principal_id IS NOT NULL THEN 'true' ELSE 'false' END),
+                'write', json(CASE WHEN effective.role = 'writer' THEN 'true' ELSE 'false' END)
               ),
               '$.lifecycle', CASE
                 WHEN ?2 IS NULL AND g.created_operation_id = ?3 THEN 'created'
@@ -894,9 +899,10 @@ function grantEvent(
                 WHEN ?2 = 'project-grant.revoked' THEN 'revoked'
                 ELSE ?2
               END
-            ), ?7
+            ), ?7, ?10, ?11
      FROM project_grants AS g
      JOIN projects AS p ON p.id = g.project_id
+     LEFT JOIN effective_project_grants effective ON effective.project_id = g.project_id AND effective.principal_id = g.principal_id
      LEFT JOIN project_usage AS usage ON usage.project_id = g.project_id
      LEFT JOIN public_join_policies AS policy ON policy.project_id = g.project_id
      WHERE g.id = ?8 AND g.last_operation_id = ?3
@@ -913,6 +919,9 @@ function grantEvent(
     JSON.stringify(payload),
     now,
     grantId,
+    authorization.authorizedVia,
+    authorization.administratorGrantId,
+    authorization.administratorGrantVersion,
   );
 }
 
@@ -925,16 +934,18 @@ export async function createProjectGrant(
   roleValue: JsonValue,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
   const projectId = requireUuid(projectIdValue, "project_id");
   const principalId = requireUuid(principalIdValue, "principal_id");
   const role = requireProjectRole(roleValue);
+  const target = await readProjectControl(db, projectId);
+  if (target === null) throw notFound();
+  const scope = { workspaceId: target.workspace_id, projectId };
+  await requireManagementAuthorization(db, auth, scope, "manage_members", now);
   const proposedGrantId = crypto.randomUUID();
   const idempotencyKey = requireIdempotencyKey(request);
   const result = await runIdempotentOperation({
     authorize: async () => {
-      const current = await reauthenticateOwner(db, request, now);
-      if (current.principalId !== auth.principalId) throw forbidden();
+      await requireManagementAuthorization(db, auth, scope, "manage_members", now);
     },
     db,
     execute: async (operationId) => {
@@ -946,7 +957,7 @@ export async function createProjectGrant(
       if (principal === null || project === null) throw notFound();
       if (principal.is_owner === 1) throw forbidden();
       const grantId = existing?.id ?? proposedGrantId;
-      const guard = buildCurrentAuthGuard(auth, now, 8, true);
+      const guard = buildManagementGuard(auth, now, 8, scope, "manage_members");
       try {
         await executeAtomicBatch(db, {
           businessStatements: [
@@ -964,6 +975,7 @@ export async function createProjectGrant(
                WHERE target_principal.id = ?2 AND target_principal.id != im.owner_principal_id
                  AND p.deleted_at IS NULL AND w.deleted_at IS NULL
                  AND (policy.enabled_at IS NULL OR policy.disabled_at IS NOT NULL
+                      OR EXISTS (SELECT 1 FROM effective_project_grants effective WHERE effective.project_id = p.id AND effective.principal_id = target_principal.id)
                       OR (p.principal_limit IS NOT NULL
                           AND usage.project_id IS NOT NULL
                           AND usage.active_principal_count < p.principal_limit))
@@ -978,20 +990,16 @@ export async function createProjectGrant(
             ).bind(grantId, principalId, projectId, role, now, auth.principalId, operationId, ...guard.values),
             db.prepare(
               `UPDATE project_usage
-               SET active_principal_count = active_principal_count + 1,
+               SET active_principal_count = (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = project_usage.project_id),
                    updated_at = ?1, last_operation_id = ?2
                WHERE project_id = ?3 AND EXISTS (
                  SELECT 1 FROM project_grants g
                  WHERE g.project_id = ?3 AND g.principal_id = ?4
                    AND g.last_operation_id = ?2 AND g.revoked_at IS NULL
-               ) AND EXISTS (
-                 SELECT 1 FROM public_join_policies policy
-                 WHERE policy.project_id = ?3
-                   AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
                )`,
             ).bind(now, operationId, projectId, principalId),
             grantOperationSnapshotStatement(db, operationId, grantId),
-            grantEvent(db, auth, operationId, grantId, null, { role }, now, true),
+            grantEvent(db, auth, scope, operationId, grantId, null, { role }, now, true),
           ],
           committedAt: now,
           confirmBusinessRejection: async () => {
@@ -1000,7 +1008,7 @@ export async function createProjectGrant(
               || await readProjectControl(db, projectId) === null
               || (await readPrincipal(db, principalId))?.is_owner === 1
               || (await grantCapacity(db, projectId))?.exceeded === true
-              || await ownerGuardRejected(db, auth, now);
+              || await managementGuardRejected(db, auth, scope, now);
           },
           expectedEventCount: 1,
           operationId,
@@ -1010,7 +1018,7 @@ export async function createProjectGrant(
         });
       } catch (error) {
         if (error instanceof AtomicBatchRejectedError) {
-          await reauthenticateOwner(db, request, now);
+          await requireManagementAuthorization(db, auth, scope, "manage_members", now);
           if (await readProjectControl(db, projectId) === null || await readPrincipal(db, principalId) === null) throw notFound();
           if ((await readPrincipal(db, principalId))?.is_owner === 1) throw forbidden();
           const latest = await readGrantForPrincipalProject(db, principalId, projectId);
@@ -1049,11 +1057,12 @@ export async function updateProjectGrant(
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
   const grantId = requireUuid(grantIdValue, "grant_id");
   const role = requireProjectRole(roleValue);
   const current = await readGrant(db, grantId);
   if (current === null || await readProjectControl(db, current.project_id) === null) throw notFound();
+  const scope = { workspaceId: current.workspace_id, projectId: current.project_id };
+  await requireManagementAuthorization(db, auth, scope, "manage_members", now);
   const updated: GrantRow = {
     ...current,
     role,
@@ -1061,7 +1070,7 @@ export async function updateProjectGrant(
     version: current.version + 1,
   };
   const operationId = crypto.randomUUID();
-  const guard = buildCurrentAuthGuard(auth, now, 7, true);
+  const guard = buildManagementGuard(auth, now, 7, scope, "manage_members");
   let commit: OperationCommit;
   try {
     ({ commit } = await executeAtomicBatch(db, {
@@ -1077,14 +1086,14 @@ export async function updateProjectGrant(
                  AND p.deleted_at IS NULL AND w.deleted_at IS NULL
              ) AND ${guard.sql}`,
         ).bind(role, now, operationId, grantId, expectedVersion, auth.principalId, ...guard.values),
-        grantEvent(db, auth, operationId, grantId, "project-grant.role-updated", { role }, now),
+        grantEvent(db, auth, scope, operationId, grantId, "project-grant.role-updated", { role }, now),
       ],
       committedAt: now,
       confirmBusinessRejection: async () => {
         const latest = await readGrant(db, grantId);
         return latest === null || latest.revoked_at !== null || latest.version !== expectedVersion
           || await readProjectControl(db, latest.project_id) === null
-          || await ownerGuardRejected(db, auth, now);
+          || await managementGuardRejected(db, auth, scope, now);
       },
       expectedEventCount: 1,
       operationId,
@@ -1093,7 +1102,7 @@ export async function updateProjectGrant(
     }));
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
-      await verifyCurrentAuth(db, auth, now);
+      await requireManagementAuthorization(db, auth, scope, "manage_members", now);
       const latest = await readGrant(db, grantId);
       if (latest === null || await readProjectControl(db, latest.project_id) === null) throw notFound();
       if (latest.revoked_at !== null) {
@@ -1113,10 +1122,11 @@ export async function revokeProjectGrant(
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  requireOwnerControl(auth);
   const grantId = requireUuid(grantIdValue, "grant_id");
   const current = await readGrant(db, grantId);
   if (current === null) throw notFound();
+  const scope = { workspaceId: current.workspace_id, projectId: current.project_id };
+  await requireGrantReadOrRevokeAuthorization(db, auth, scope, now);
   const updated: GrantRow = {
     ...current,
     revoked_at: now,
@@ -1124,7 +1134,7 @@ export async function revokeProjectGrant(
     version: current.version + 1,
   };
   const operationId = crypto.randomUUID();
-  const guard = buildCurrentAuthGuard(auth, now, 7, true);
+  const guard = buildGrantReadOrRevokeGuard(auth, now, 7, scope);
   let commit: OperationCommit;
   try {
     ({ commit } = await executeAtomicBatch(db, {
@@ -1139,25 +1149,21 @@ export async function revokeProjectGrant(
         ).bind(now, auth.principalId, operationId, grantId, expectedVersion, auth.principalId, ...guard.values),
         db.prepare(
           `UPDATE project_usage
-           SET active_principal_count = active_principal_count - 1,
+           SET active_principal_count = (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = project_usage.project_id),
                updated_at = ?1, last_operation_id = ?2
            WHERE project_id = ?3 AND active_principal_count > 0
              AND EXISTS (SELECT 1 FROM project_grants g
                          WHERE g.id = ?4 AND g.last_operation_id = ?2
                            AND g.revoked_at IS NOT NULL)
-             AND EXISTS (
-               SELECT 1 FROM public_join_policies policy
-               WHERE policy.project_id = ?3
-                 AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
-             )`,
+`,
         ).bind(now, operationId, current.project_id, grantId),
-        grantEvent(db, auth, operationId, grantId, "project-grant.revoked", { role: current.role }, now, true),
+        grantEvent(db, auth, scope, operationId, grantId, "project-grant.revoked", { role: current.role }, now, true),
       ],
       committedAt: now,
       confirmBusinessRejection: async () => {
         const latest = await readGrant(db, grantId);
         return latest === null || latest.revoked_at !== null || latest.version !== expectedVersion
-          || await ownerGuardRejected(db, auth, now);
+          || await grantReadOrRevokeGuardRejected(db, auth, scope, now);
       },
       expectedEventCount: 1,
       operationId,
@@ -1166,7 +1172,7 @@ export async function revokeProjectGrant(
     }));
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
-      await verifyCurrentAuth(db, auth, now);
+      await requireGrantReadOrRevokeAuthorization(db, auth, scope, now);
       const latest = await readGrant(db, grantId);
       if (latest === null) throw notFound();
       if (latest.revoked_at !== null) {
@@ -1177,4 +1183,40 @@ export async function revokeProjectGrant(
     throw error;
   }
   return writeResult(db, auth, grantResource(updated), commit.lastEventSequence, false);
+}
+
+async function managementGuardRejected(db: D1Database, auth: AuthContext, scope: {workspaceId: string; projectId: string}, now: number): Promise<boolean> {
+  const guard = buildManagementGuard(auth, now, 1, scope, "manage_members");
+  return await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null;
+}
+
+function hasFullOwnerControl(auth: AuthContext): boolean {
+  return auth.isOwner && (auth.kind === "bearer" || auth.targetKind === "admin");
+}
+
+async function requireGrantReadOrRevokeAuthorization(db: D1Database, auth: AuthContext, scope: {workspaceId: string; projectId: string}, now: number): Promise<void> {
+  if (hasFullOwnerControl(auth)) {
+    requireOwnerControl(auth);
+    await verifyCurrentAuth(db, auth, now);
+    return;
+  }
+  await requireManagementAuthorization(db, auth, scope, "manage_members", now);
+  if (await readProjectControl(db, scope.projectId) === null) throw notFound();
+}
+
+function buildGrantReadOrRevokeGuard(auth: AuthContext, now: number, startIndex: number, scope: {workspaceId: string; projectId: string}) {
+  if (hasFullOwnerControl(auth)) return buildCurrentAuthGuard(auth, now, startIndex, true);
+  const guard = buildManagementGuard(auth, now, startIndex, scope, "manage_members");
+  const projectParameter = `?${startIndex + guard.values.length}`;
+  return {
+    sql: `(${guard.sql}) AND EXISTS (SELECT 1 FROM projects active_project
+      JOIN workspaces active_workspace ON active_workspace.id = active_project.workspace_id
+      WHERE active_project.id = ${projectParameter} AND active_project.deleted_at IS NULL AND active_workspace.deleted_at IS NULL)`,
+    values: [...guard.values, scope.projectId],
+  };
+}
+
+async function grantReadOrRevokeGuardRejected(db: D1Database, auth: AuthContext, scope: {workspaceId: string; projectId: string}, now: number): Promise<boolean> {
+  const guard = buildGrantReadOrRevokeGuard(auth, now, 1, scope);
+  return await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null;
 }

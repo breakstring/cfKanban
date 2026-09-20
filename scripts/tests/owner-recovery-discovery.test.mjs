@@ -28,7 +28,7 @@ function fixture(kinds) {
       const parsed = new URL(url); calls.push({ url: String(url), method: options.method ?? 'GET', body: options.body });
       if (parsed.origin !== 'https://api.cloudflare.com') {
         const entry = entries.find(entry => entry.origin === parsed.origin); assert.ok(entry);
-        const body = { instance_id: entry.instanceId, observed_origin: entry.origin, preferred_api_origin: entry.origin, origin_version: 1, service_version: '1.0.0', schema_version: 1 };
+        const body = { instance_id: entry.instanceId, observed_origin: entry.origin, preferred_api_origin: entry.origin, origin_version: 1, service_version: '1.0.0', schema_version: entry.schemaVersion ?? 1 };
         if (parsed.pathname.includes('.well-known')) return new Response(JSON.stringify({ ...body, discovery_version: 1 }), { headers: { 'content-type': 'application/json' } });
         assert.equal(parsed.pathname, '/healthz'); return new Response(JSON.stringify({ ...body, d1: 'reachable' }), { headers: { 'content-type': 'application/json' } });
       }
@@ -47,7 +47,7 @@ function fixture(kinds) {
       const sql = batch[0].sql;
       let rows;
       if (sql.includes('sqlite_master')) rows = entry.kind === 'foreign-db' ? [] : (entry.kind === 'partial-schema' ? ['instance_meta'] : ['instance_meta', 'principals', 'instance_origin_settings', 'credentials']).map(name => ({ name }));
-      else rows = [{ instance_id: entry.kind === 'bad-marker' ? 'wrong' : entry.instanceId, owner_principal_id: entry.owner, display_name: 'Original Owner', service_version: '1.0.0', schema_version: 1, principal_version: 1, origin_version: 1, preferred_api_origin: entry.origin, ...(sql.includes('active_count') ? { active_count: 1, active_ids: JSON.stringify(['11111111-1111-4111-8111-111111111111']) } : {}) }];
+      else rows = [{ instance_id: entry.kind === 'bad-marker' ? 'wrong' : entry.instanceId, owner_principal_id: entry.owner, display_name: 'Original Owner', service_version: '1.0.0', schema_version: entry.schemaVersion ?? 1, principal_version: 1, origin_version: 1, preferred_api_origin: entry.origin, ...(sql.includes('active_count') ? { active_count: 1, active_ids: JSON.stringify(['11111111-1111-4111-8111-111111111111']) } : {}) }];
       return json([{ success: true, results: rows }]);
     },
   };
@@ -137,4 +137,22 @@ test('settings 的 D1 id 和 database_id 两种返回格式都能完成核验', 
   const result = await discoverOwnerRecoveryCandidates(fixture(['valid', 'database-id-binding']).input);
   assert.equal(result.status, 'selection_required'); assert.equal(result.candidates.length, 2);
   assert.deepEqual(result.unresolved, []);
+});
+
+
+test('schema 9 能只读发现原 Owner；schema 10 保留为不兼容未确认项', async () => {
+  const f = fixture(['valid', 'valid']);
+  f.entries[0].schemaVersion = 9;
+  f.entries[1].schemaVersion = 10;
+  const result = await discoverOwnerRecoveryCandidates(f.input);
+  assert.equal(result.status, 'incomplete');
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].target.instanceId, f.entries[0].instanceId);
+  assert.equal(result.candidates[0].owner_principal_id, f.entries[0].owner);
+  assert.deepEqual(result.unresolved, [{ worker_name: 'service-1', reason: 'OWNER_RECOVERY_DISCOVERY_READBACK_INVALID' }]);
+  for (const call of f.calls.filter(call => call.body)) {
+    const { batch } = JSON.parse(call.body);
+    assert.equal(batch.length, 1);
+    assert.match(batch[0].sql, /^SELECT /);
+  }
 });

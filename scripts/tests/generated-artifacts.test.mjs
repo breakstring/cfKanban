@@ -236,7 +236,7 @@ test("OpenAPI distinguishes Comment lifecycle shapes and deleted-only permission
     relationRead["x-cfkanban-permission"],
     "relation_endpoints_reader_active_writer_tombstone",
   );
-  assert.match(relationWrite.description, /active writer Grants for both Relation endpoint Projects/);
+  assert.match(relationWrite.description, /effective writer access for both Relation endpoint Projects/);
   const commentRead = document.paths["/api/v1/comments/{comment_id}"].get;
   const labelList = document.paths["/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels"].get;
   for (const operation of [commentRead, labelList]) {
@@ -363,7 +363,7 @@ test("OpenAPI exposes concrete Browser Launch, Session, and WebAuthn contracts",
   assert.equal(authenticationCredential.properties.clientExtensionResults.maxProperties, 0);
   assert.deepEqual(
     document.components.schemas.Event.properties.authorized_via.enum,
-    ["deployment_owner", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"],
+    ["deployment_owner", "workspace_admin", "project_admin", "project_grant", "public_join", "invitation", "browser_launch", "web_session", "webauthn", "deployment_recovery"],
   );
   assert.match(document.components.schemas.Event.properties.authorized_via.description, /does not identify the mutated resource/u);
   assert.match(document.components.schemas.Event.properties.grant_id.description, /authorization context/u);

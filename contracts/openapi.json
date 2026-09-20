@@ -65,7 +65,7 @@
     },
     {
       "name": "admin",
-      "description": "Deployment Owner application-level maintenance capabilities."
+      "description": "Scope-authorized application maintenance; identity, security, quotas, and instance settings remain Deployment Owner-only."
     },
     {
       "name": "events",
@@ -487,8 +487,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/CurrentPrincipal"
                 }
               }
             }
@@ -709,7 +708,7 @@
           "workspaces"
         ],
         "summary": "List Workspaces",
-        "description": "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active container reads require Deployment Owner, scoped administration, or a currently visible Project in the container, including empty managed Workspaces. Archived Workspace recovery remains Owner-only; archived Projects may also be read by the active parent Workspace administrator. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -800,7 +799,7 @@
           "workspaces"
         ],
         "summary": "Create Workspace",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -873,7 +872,7 @@
           "workspaces"
         ],
         "summary": "Get Workspace",
-        "description": "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active container reads require Deployment Owner, scoped administration, or a currently visible Project in the container, including empty managed Workspaces. Archived Workspace recovery remains Owner-only; archived Projects may also be read by the active parent Workspace administrator. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -959,7 +958,7 @@
           "workspaces"
         ],
         "summary": "Update Workspace",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or a current administrator of this active Workspace, within the current Session scope. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1023,7 +1022,7 @@
           }
         },
         "x-cfkanban-write-contract": "cas",
-        "x-cfkanban-permission": "deployment_owner",
+        "x-cfkanban-permission": "workspace_administrator",
         "requestBody": {
           "required": true,
           "content": {
@@ -1041,7 +1040,7 @@
           "workspaces"
         ],
         "summary": "Delete Workspace",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1115,7 +1114,7 @@
           "workspaces"
         ],
         "summary": "Preview Workspace Purge",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1183,7 +1182,7 @@
           "workspaces"
         ],
         "summary": "Purge Workspace",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1270,7 +1269,7 @@
           "workspaces"
         ],
         "summary": "Restore Workspace",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1357,7 +1356,7 @@
           "projects"
         ],
         "summary": "List Projects",
-        "description": "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active container reads require Deployment Owner, scoped administration, or a currently visible Project in the container, including empty managed Workspaces. Archived Workspace recovery remains Owner-only; archived Projects may also be read by the active parent Workspace administrator. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1456,10 +1455,13 @@
           "projects"
         ],
         "summary": "Create Project",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or a current administrator of this active Workspace, within the current Session scope. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
+          },
+          {
+            "WebSession": []
           }
         ],
         "parameters": [
@@ -1473,6 +1475,9 @@
           },
           {
             "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
           }
         ],
         "responses": {
@@ -1517,7 +1522,7 @@
           }
         },
         "x-cfkanban-write-contract": "idempotent",
-        "x-cfkanban-permission": "deployment_owner",
+        "x-cfkanban-permission": "workspace_administrator",
         "requestBody": {
           "required": true,
           "content": {
@@ -1537,7 +1542,7 @@
           "projects"
         ],
         "summary": "Get Project",
-        "description": "Active container reads require Deployment Owner or a currently visible Project in the container. The explicit deleted=only container recovery view is restricted to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active container reads require Deployment Owner, scoped administration, or a currently visible Project in the container, including empty managed Workspaces. Archived Workspace recovery remains Owner-only; archived Projects may also be read by the active parent Workspace administrator. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1631,7 +1636,7 @@
           "projects"
         ],
         "summary": "Update Project",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1703,7 +1708,7 @@
           }
         },
         "x-cfkanban-write-contract": "cas",
-        "x-cfkanban-permission": "deployment_owner",
+        "x-cfkanban-permission": "project_administrator",
         "requestBody": {
           "required": true,
           "content": {
@@ -1721,7 +1726,7 @@
           "projects"
         ],
         "summary": "Delete Project",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or a current administrator of this active Workspace, within the current Session scope. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1793,7 +1798,7 @@
           }
         },
         "x-cfkanban-write-contract": "cas-delete",
-        "x-cfkanban-permission": "deployment_owner"
+        "x-cfkanban-permission": "workspace_administrator"
       }
     },
     "/api/v1/workspaces/{workspace_id}/projects/{project_id}/purge-preview": {
@@ -1803,7 +1808,7 @@
           "projects"
         ],
         "summary": "Preview Project Purge",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1879,7 +1884,7 @@
           "projects"
         ],
         "summary": "Purge Project",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -1974,7 +1979,7 @@
           "projects"
         ],
         "summary": "Restore Project",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or a current administrator of this active Workspace, within the current Session scope. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2049,7 +2054,7 @@
           }
         },
         "x-cfkanban-write-contract": "idempotent-cas",
-        "x-cfkanban-permission": "deployment_owner",
+        "x-cfkanban-permission": "workspace_administrator",
         "requestBody": {
           "required": true,
           "content": {
@@ -2069,7 +2074,7 @@
           "projects"
         ],
         "summary": "Find Project Assignee",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2153,7 +2158,7 @@
           "projects"
         ],
         "summary": "List Project Statuses",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2229,7 +2234,7 @@
           "projects"
         ],
         "summary": "Update Project Status Name",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2310,7 +2315,7 @@
           }
         },
         "x-cfkanban-write-contract": "cas",
-        "x-cfkanban-permission": "deployment_owner",
+        "x-cfkanban-permission": "project_administrator",
         "requestBody": {
           "required": true,
           "content": {
@@ -2323,6 +2328,642 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspace_id}/administrators": {
+      "get": {
+        "operationId": "listWorkspaceAdministrators",
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "List Workspace Administrators",
+        "description": "Deployment Owner or a current administrator of this active Workspace, within the current Session scope. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministratorListResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "workspace_administrator"
+      },
+      "post": {
+        "operationId": "createWorkspaceAdministrator",
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Create Workspace Administrator",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministratorWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAdministratorRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/administrators/{administrator_id}": {
+      "delete": {
+        "operationId": "revokeWorkspaceAdministrator",
+        "tags": [
+          "workspaces"
+        ],
+        "summary": "Revoke Workspace Administrator",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "administrator_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ExpectedVersion"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministratorWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas-delete",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators": {
+      "get": {
+        "operationId": "listProjectAdministrators",
+        "tags": [
+          "projects"
+        ],
+        "summary": "List Project Administrators",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministratorListResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_administrator"
+      },
+      "post": {
+        "operationId": "createProjectAdministrator",
+        "tags": [
+          "projects"
+        ],
+        "summary": "Create Project Administrator",
+        "description": "Deployment Owner or a current administrator of this active Workspace, within the current Session scope. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministratorWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "workspace_administrator",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAdministratorRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators/{administrator_id}": {
+      "delete": {
+        "operationId": "revokeProjectAdministrator",
+        "tags": [
+          "projects"
+        ],
+        "summary": "Revoke Project Administrator",
+        "description": "Deployment Owner or a current administrator of this active Workspace, within the current Session scope. Atomic cfKanban idempotent-cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "administrator_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ExpectedVersion"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdministratorWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas-delete",
+        "x-cfkanban-permission": "workspace_administrator"
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/members": {
+      "get": {
+        "operationId": "listProjectMembers",
+        "tags": [
+          "projects"
+        ],
+        "summary": "List Project Members",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveMemberListResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_administrator"
+      }
+    },
     "/api/v1/issues": {
       "get": {
         "operationId": "listIssues",
@@ -2330,7 +2971,7 @@
           "issues"
         ],
         "summary": "List Issues",
-        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2490,7 +3131,7 @@
           "issues"
         ],
         "summary": "List Issue Candidates",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2635,7 +3276,7 @@
           "issues"
         ],
         "summary": "List Project Issues",
-        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2809,7 +3450,7 @@
           "issues"
         ],
         "summary": "Create Issue",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2904,7 +3545,7 @@
           "issues"
         ],
         "summary": "Get Issue",
-        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -2991,7 +3632,7 @@
           "issues"
         ],
         "summary": "Update Issue",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3074,7 +3715,7 @@
           "issues"
         ],
         "summary": "Delete Issue",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3149,7 +3790,7 @@
           "issues"
         ],
         "summary": "Restore Issue",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3237,7 +3878,7 @@
           "issues"
         ],
         "summary": "Get Issue Context",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3306,7 +3947,7 @@
           "issues"
         ],
         "summary": "Assign Issue To Me",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3394,7 +4035,7 @@
           "issues"
         ],
         "summary": "Report Issue Blocked",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3482,7 +4123,7 @@
           "issues"
         ],
         "summary": "Clear Issue Blocked",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3570,7 +4211,7 @@
           "issues"
         ],
         "summary": "Complete Issue",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3658,7 +4299,7 @@
           "issues"
         ],
         "summary": "Add Issue Label",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3746,7 +4387,7 @@
           "issues"
         ],
         "summary": "Remove Issue Label",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3834,7 +4475,7 @@
           "attachments"
         ],
         "summary": "List Attachments",
-        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -3934,7 +4575,7 @@
           "attachments"
         ],
         "summary": "Reserve Attachment",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4022,7 +4663,7 @@
           "attachments"
         ],
         "summary": "Get Attachment",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4088,7 +4729,7 @@
           "attachments"
         ],
         "summary": "Delete Attachment",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4165,7 +4806,7 @@
           "attachments"
         ],
         "summary": "Upload Attachment",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes. Only the reservation creator or Deployment Owner may upload. The reservation fixes the byte length and SHA-256. R2 and D1 are separate stages; retry with the same attachment and Idempotency-Key.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes. Only the reservation creator or Deployment Owner may upload. The reservation fixes the byte length and SHA-256. R2 and D1 are separate stages; retry with the same attachment and Idempotency-Key.",
         "security": [
           {
             "BearerCredential": []
@@ -4250,7 +4891,7 @@
           "attachments"
         ],
         "summary": "Download Attachment",
-        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4371,7 +5012,7 @@
           "attachments"
         ],
         "summary": "Restore Attachment",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4458,7 +5099,7 @@
           "comments"
         ],
         "summary": "List Comments",
-        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4558,7 +5199,7 @@
           "comments"
         ],
         "summary": "Create Comment",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4646,7 +5287,7 @@
           "comments"
         ],
         "summary": "Get Comment",
-        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4725,7 +5366,7 @@
           "comments"
         ],
         "summary": "Delete Comment",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4799,7 +5440,7 @@
           "comments"
         ],
         "summary": "Restore Comment",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4886,7 +5527,7 @@
           "labels"
         ],
         "summary": "List Labels",
-        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -4993,7 +5634,7 @@
           "labels"
         ],
         "summary": "Create Label",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5088,7 +5729,7 @@
           "labels"
         ],
         "summary": "Get Label",
-        "description": "Active resources require a current reader/writer Grant for the resource Project (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Active resources require a current effective reader/writer access for the resource Project, including scoped administrators (or Deployment Owner). The explicit deleted=only recovery view requires writer and remains available under paused parents only to the Deployment Owner. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5167,7 +5808,7 @@
           "labels"
         ],
         "summary": "Update Label",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5249,7 +5890,7 @@
           "labels"
         ],
         "summary": "Delete Label",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5323,7 +5964,7 @@
           "labels"
         ],
         "summary": "Restore Label",
-        "description": "Deployment Owner or an active writer Grant for the resource Project. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective Project writer access, including current scoped administrator inheritance. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5510,7 +6151,7 @@
           "relations"
         ],
         "summary": "Create Issue Relation",
-        "description": "Deployment Owner or active writer Grants for both Relation endpoint Projects. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5677,7 +6318,7 @@
           "relations"
         ],
         "summary": "Delete Relation",
-        "description": "Deployment Owner or active writer Grants for both Relation endpoint Projects. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5767,7 +6408,7 @@
           "relations"
         ],
         "summary": "Restore Relation",
-        "description": "Deployment Owner or active writer Grants for both Relation endpoint Projects. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5931,7 +6572,7 @@
           "invitations"
         ],
         "summary": "List Invitations",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner manages all Invitations. Scoped administrators manage only ordinary Project Invitations whose complete targets are within their current scope; non-Owner creation is limited to one Project with explicit reader/writer role. Recovery Invitations remain Owner-only. A scoped Invitation binds the issuing administrator grant ID and generation; revocation permanently invalidates unredeemed Invitations, even after regrant. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -5941,6 +6582,15 @@
           }
         ],
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "Filter to Invitations containing this Project. Every target must still be manageable by the current Principal; partial visibility never reveals an Invitation."
+          },
           {
             "name": "cursor",
             "in": "query",
@@ -6001,7 +6651,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "deployment_owner"
+        "x-cfkanban-permission": "scoped_invitation_manager"
       },
       "post": {
         "operationId": "createInvitation",
@@ -6009,7 +6659,7 @@
           "invitations"
         ],
         "summary": "Create Invitation",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner manages all Invitations. Scoped administrators manage only ordinary Project Invitations whose complete targets are within their current scope; non-Owner creation is limited to one Project with explicit reader/writer role. Recovery Invitations remain Owner-only. A scoped Invitation binds the issuing administrator grant ID and generation; revocation permanently invalidates unredeemed Invitations, even after regrant. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6068,7 +6718,7 @@
           }
         },
         "x-cfkanban-write-contract": "idempotent",
-        "x-cfkanban-permission": "deployment_owner",
+        "x-cfkanban-permission": "scoped_invitation_manager",
         "requestBody": {
           "required": true,
           "content": {
@@ -6088,7 +6738,7 @@
           "invitations"
         ],
         "summary": "Get Invitation",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner manages all Invitations. Scoped administrators manage only ordinary Project Invitations whose complete targets are within their current scope; non-Owner creation is limited to one Project with explicit reader/writer role. Recovery Invitations remain Owner-only. A scoped Invitation binds the issuing administrator grant ID and generation; revocation permanently invalidates unredeemed Invitations, even after regrant. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6146,7 +6796,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "deployment_owner"
+        "x-cfkanban-permission": "scoped_invitation_manager"
       },
       "delete": {
         "operationId": "revokeInvitation",
@@ -6154,7 +6804,7 @@
           "invitations"
         ],
         "summary": "Revoke Invitation",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner manages all Invitations. Scoped administrators manage only ordinary Project Invitations whose complete targets are within their current scope; non-Owner creation is limited to one Project with explicit reader/writer role. Recovery Invitations remain Owner-only. A scoped Invitation binds the issuing administrator grant ID and generation; revocation permanently invalidates unredeemed Invitations, even after regrant. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6218,7 +6868,7 @@
           }
         },
         "x-cfkanban-write-contract": "cas-delete",
-        "x-cfkanban-permission": "deployment_owner"
+        "x-cfkanban-permission": "scoped_invitation_manager"
       }
     },
     "/api/v1/admin/principals": {
@@ -6228,7 +6878,7 @@
           "admin"
         ],
         "summary": "List Principals",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6325,7 +6975,7 @@
           "admin"
         ],
         "summary": "Get Principal",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6393,7 +7043,7 @@
           "admin"
         ],
         "summary": "List Principal Credentials",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6481,7 +7131,7 @@
           "admin"
         ],
         "summary": "Revoke Credential",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6555,7 +7205,7 @@
           "admin"
         ],
         "summary": "Rotate Owner Credential",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6628,7 +7278,7 @@
           "admin"
         ],
         "summary": "Get Instance Origin",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6686,7 +7336,7 @@
           "admin"
         ],
         "summary": "Update Instance Origin",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6759,7 +7409,7 @@
           "admin"
         ],
         "summary": "List Project Grants",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6837,7 +7487,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "deployment_owner"
+        "x-cfkanban-permission": "project_administrator"
       },
       "post": {
         "operationId": "createProjectGrant",
@@ -6845,7 +7495,7 @@
           "admin"
         ],
         "summary": "Create Project Grant",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6912,7 +7562,7 @@
           }
         },
         "x-cfkanban-write-contract": "idempotent",
-        "x-cfkanban-permission": "deployment_owner",
+        "x-cfkanban-permission": "project_administrator",
         "requestBody": {
           "required": true,
           "content": {
@@ -6932,7 +7582,7 @@
           "admin"
         ],
         "summary": "Get Project Grant",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -6991,7 +7641,7 @@
           }
         },
         "x-cfkanban-write-contract": "read",
-        "x-cfkanban-permission": "deployment_owner"
+        "x-cfkanban-permission": "project_administrator"
       },
       "patch": {
         "operationId": "updateProjectGrant",
@@ -6999,7 +7649,7 @@
           "admin"
         ],
         "summary": "Update Project Grant",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -7063,7 +7713,7 @@
           }
         },
         "x-cfkanban-write-contract": "cas",
-        "x-cfkanban-permission": "deployment_owner",
+        "x-cfkanban-permission": "project_administrator",
         "requestBody": {
           "required": true,
           "content": {
@@ -7081,7 +7731,7 @@
           "admin"
         ],
         "summary": "Revoke Project Grant",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -7145,7 +7795,7 @@
           }
         },
         "x-cfkanban-write-contract": "cas-delete",
-        "x-cfkanban-permission": "deployment_owner"
+        "x-cfkanban-permission": "project_administrator"
       }
     },
     "/api/v1/admin/audit-events": {
@@ -7155,7 +7805,7 @@
           "admin"
         ],
         "summary": "List Audit Events",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -7868,7 +8518,7 @@
           "admin"
         ],
         "summary": "Revoke Principal Passkey",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban csrf-cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban csrf-cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -8177,7 +8827,7 @@
           "public-join"
         ],
         "summary": "Get Public Join Policy",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -8243,7 +8893,7 @@
           "public-join"
         ],
         "summary": "Enable Public Join",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -8328,7 +8978,7 @@
           "public-join"
         ],
         "summary": "Disable Public Join",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -8402,7 +9052,7 @@
           "public-join"
         ],
         "summary": "Get Project Resource Limits",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -8468,7 +9118,7 @@
           "public-join"
         ],
         "summary": "Update Project Resource Limits",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -8552,7 +9202,7 @@
           "admin"
         ],
         "summary": "Get Attachment Settings",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -8699,7 +9349,7 @@
           "admin"
         ],
         "summary": "Get Usage",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -8848,7 +9498,7 @@
           "admin"
         ],
         "summary": "Get Rate Limit Settings",
-        "description": "The single Deployment Owner. Project Grants never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -9463,6 +10113,12 @@
                 "type": "integer",
                 "format": "int64",
                 "minimum": 0
+              },
+              "administrators": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "description": "Direct administrator records belonging to the target container; excludes inherited sources and ordinary Project Grants."
               }
             },
             "additionalProperties": false
@@ -10462,6 +11118,399 @@
         },
         "additionalProperties": false
       },
+      "Administrator": {
+        "type": "object",
+        "required": [
+          "id",
+          "principal_id",
+          "principal",
+          "workspace_id",
+          "project_id",
+          "role",
+          "version",
+          "generation",
+          "revoked_at",
+          "created_at",
+          "updated_at",
+          "allowed_actions"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "principal": {
+            "type": "object",
+            "required": [
+              "id",
+              "display_name"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "display_name": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "workspace_admin",
+              "project_admin"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "allowed_actions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "read",
+                "revoke",
+                "regrant"
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdministratorListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/Administrator"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "workspace_id",
+              "project_id"
+            ],
+            "properties": {
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "project_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdministratorWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/Administrator"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EffectiveMemberSource": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "version"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "workspace_admin",
+              "project_admin",
+              "project_grant",
+              "deployment_owner"
+            ]
+          },
+          "id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Version"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EffectiveMember": {
+        "type": "object",
+        "required": [
+          "principal_id",
+          "display_name",
+          "effective_role",
+          "sources"
+        ],
+        "properties": {
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "effective_role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "writer",
+              "reader"
+            ]
+          },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/EffectiveMemberSource"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EffectiveMemberListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/EffectiveMember"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "workspace_id",
+              "project_id"
+            ],
+            "properties": {
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "CurrentPrincipal": {
+        "type": "object",
+        "required": [
+          "id",
+          "principal_id",
+          "display_name",
+          "is_owner",
+          "version",
+          "management_grants"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "is_owner": {
+            "type": "boolean"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "management_grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Administrator"
+            }
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebSessionProjectScopeItem"
+            }
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleted_at": {
+            "type": "null"
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "fingerprint",
+                  "id"
+                ],
+                "properties": {
+                  "fingerprint": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateAdministratorRequest": {
+        "type": "object",
+        "required": [
+          "principal_id",
+          "expected_version"
+        ],
+        "properties": {
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "expected_version": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "0 for first grant; current revoked row version for regrant. Regrant creates a new generation."
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateGrantRequest": {
         "type": "object",
         "required": [
@@ -10502,6 +11551,22 @@
         "properties": {
           "target": {
             "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "workspace_id"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "workspace"
+                  },
+                  "workspace_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
               {
                 "type": "object",
                 "required": [
@@ -14814,16 +15879,50 @@
             ]
           },
           "resolved_scope": {
-            "type": "object",
-            "required": [
-              "owner_principal_id"
-            ],
-            "properties": {
-              "owner_principal_id": {
-                "$ref": "#/components/schemas/Uuid"
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "owner_principal_id"
+                ],
+                "properties": {
+                  "owner_principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "principal_id",
+                  "project_ids",
+                  "project_id"
+                ],
+                "properties": {
+                  "principal_id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  "project_ids": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/Uuid"
+                    }
+                  },
+                  "project_id": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/Uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
               }
-            },
-            "additionalProperties": false
+            ]
           }
         },
         "additionalProperties": false
@@ -15444,6 +16543,8 @@
         "type": "object",
         "required": [
           "actor",
+          "administrator_grant_id",
+          "administrator_grant_version",
           "authorized_via",
           "created_at",
           "event_index",
@@ -15491,11 +16592,37 @@
               }
             ]
           },
+          "administrator_grant_id": {
+            "description": "Scoped administrator Grant used to authorize the Event, when applicable.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "administrator_grant_version": {
+            "description": "Scoped administrator Grant version captured when authorizing the Event, when applicable.",
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "authorized_via": {
             "type": "string",
             "description": "Historical authorization path used for this Event; it does not identify the mutated resource.",
             "enum": [
               "deployment_owner",
+              "workspace_admin",
+              "project_admin",
               "project_grant",
               "public_join",
               "invitation",
@@ -15768,6 +16895,27 @@
             "required": [
               "entry_path",
               "kind",
+              "workspace_id"
+            ],
+            "properties": {
+              "entry_path": {
+                "type": "string",
+                "pattern": "^/app/manage\\?workspace="
+              },
+              "kind": {
+                "const": "workspace"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "entry_path",
+              "kind",
               "project_id",
               "workspace_id"
             ],
@@ -15979,6 +17127,28 @@
           {
             "type": "object",
             "required": [
+              "kind",
+              "workspace_id"
+            ],
+            "properties": {
+              "kind": {
+                "const": "workspace"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WebSessionProjectScopeItem"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
               "kind"
             ],
             "properties": {
@@ -16184,9 +17354,16 @@
           "principal",
           "session_id",
           "source",
-          "target"
+          "target",
+          "management_grants"
         ],
         "properties": {
+          "management_grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Administrator"
+            }
+          },
           "allowed_scope": {
             "$ref": "#/components/schemas/WebSessionAllowedScope"
           },
@@ -17082,7 +18259,8 @@
                 "delete",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_administrators"
               ]
             }
           },
@@ -17135,7 +18313,8 @@
                 "delete",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_administrators"
               ]
             }
           },
@@ -17189,7 +18368,8 @@
                 "delete",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_administrators"
               ]
             }
           },
@@ -17263,7 +18443,8 @@
                 "delete",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_administrators"
               ]
             }
           },
@@ -17464,7 +18645,9 @@
                 "manage_status_names",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_members",
+                "manage_administrators"
               ]
             }
           },
@@ -17616,7 +18799,9 @@
                 "manage_status_names",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_members",
+                "manage_administrators"
               ]
             }
           },
@@ -17746,7 +18931,9 @@
                 "manage_status_names",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_members",
+                "manage_administrators"
               ]
             }
           },
@@ -17960,7 +19147,9 @@
                 "manage_status_names",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_members",
+                "manage_administrators"
               ]
             }
           },
@@ -18146,7 +19335,9 @@
                 "manage_status_names",
                 "read",
                 "restore",
-                "update"
+                "update",
+                "manage_members",
+                "manage_administrators"
               ]
             }
           },

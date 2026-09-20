@@ -30,11 +30,24 @@ export interface RequestContext {
   url: URL;
 }
 
+export interface ScopedAdministrator {
+  id: string;
+  principal_id: string;
+  workspace_id: string;
+  project_id: string | null;
+  version: number;
+  generation: string;
+  revoked_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 interface AuthenticatedPrincipal {
   displayName: string;
   isOwner: boolean;
   principalId: string;
   principalVersion: number;
+  managementGrants?: ScopedAdministrator[];
 }
 
 export interface BearerAuthContext extends AuthenticatedPrincipal {
@@ -50,7 +63,7 @@ export interface CookieAuthContext extends AuthenticatedPrincipal {
   sourceId: string;
   sourceKind: "credential" | "web_authenticator";
   target: { [key: string]: JsonValue };
-  targetKind: "admin" | "issue" | "project" | "project_selection";
+  targetKind: "admin" | "issue" | "project" | "project_selection" | "workspace";
 }
 
 export type AuthContext = BearerAuthContext | CookieAuthContext;

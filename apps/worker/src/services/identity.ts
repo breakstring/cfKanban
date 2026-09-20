@@ -1,4 +1,5 @@
 import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
+import { managementGrantsResource } from "./scoped-administrators.ts";
 import { principalDisplayNameKey, requirePrincipalDisplayName, requireHttpsOrigin, timestamp } from "../domain/model.ts";
 import {
   buildCurrentAuthGuard,
@@ -188,6 +189,7 @@ export async function getMe(db: D1Database, auth: AuthContext): Promise<{ [key: 
       workspace_id: project.workspaceId,
     })),
     is_owner: auth.isOwner,
+    management_grants: managementGrantsResource(auth),
     principal_id: principal.id,
   });
 }

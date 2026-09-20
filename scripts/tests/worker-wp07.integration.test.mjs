@@ -455,7 +455,7 @@ async function assertRacedWebSessionScope({
   try {
     assert.match(barrier.guardedSql, /FROM web_sessions AS auth_session/u);
     if (expectGrantGuard) assert.match(barrier.guardedSql, /pg\.revoked_at IS NULL/u);
-    else assert.doesNotMatch(barrier.guardedSql, /FROM project_grants AS pg/u);
+    else assert.doesNotMatch(barrier.guardedSql, /FROM effective_project_grants AS pg/u);
     assert.match(barrier.guardedSql, /p\.deleted_at IS NULL AND w\.deleted_at IS NULL/u);
     assert.match(barrier.guardedSql, /target_issue\.deleted_at IS NULL/u);
     await mutate(now);

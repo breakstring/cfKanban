@@ -201,6 +201,7 @@ function migrationDelta(values, allowBreakingChange) {
         tables: artifactNames(value.expected_artifacts?.tables, "migration.expected_artifacts.tables"),
         indexes: artifactNames(value.expected_artifacts?.indexes, "migration.expected_artifacts.indexes"),
         columns: artifactNames(value.expected_artifacts?.columns, "migration.expected_artifacts.columns"),
+        ...(value.expected_artifacts?.views ? { views: artifactNames(value.expected_artifacts.views, "migration.expected_artifacts.views") } : {}),
         ...(value.expected_artifacts?.triggers ? { triggers: artifactNames(value.expected_artifacts.triggers, "migration.expected_artifacts.triggers") } : {}),
         ...(value.expected_artifacts?.absent_columns ? { absent_columns: artifactNames(value.expected_artifacts.absent_columns, "migration.expected_artifacts.absent_columns") } : {}),
       },

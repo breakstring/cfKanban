@@ -3,9 +3,11 @@
 - 文档状态：Draft
 - 方向真相：本文件
 - 执行真相：[cfKanban Development](cfkanban.md)
-- 最近校准：2026-09-19
+- 最近校准：2026-09-20
 
 ## 当前基线
+
+2026-09-20 增量：用户授权 [工作区与项目多人管理员 Frozen SPEC](../specs/2026-09-20-scoped-administrators-spec.md)。下文涉及仅 Owner 管理、工作区不继承权限的历史阶段描述由该合同覆盖；实现和验证以 [CFK-421](https://cfkanban.dev/app/issues/CFK-421) 为准，不表示已发布或部署。
 
 2026-09-19 增量：用户已授权 Web/Skills 体验优化与可选私有 Issue 附件，范围以 [Issue 附件 Frozen SPEC](../specs/2026-09-19-issue-attachments-spec.md) 为准。下文历史阶段中“暂缓 R2 附件”的表述由该合同覆盖；不改变其他增强能力的暂缓状态，也不替代线上任务的实际验收。
 
@@ -14,26 +16,26 @@
 - 已具备 Frozen 产品/技术合同、Worker/D1/Web、三个 portable Skills 和部署/更新链路，并已进行多次测试发行与真实 dogfood；这不代表所有跨宿主、跨 OS 和真人验收已完成。
 - 2026-09-19 起，执行与完成证据统一在 cfKanban Development 跟踪；Linear 仅保留历史来源。迁移采用已有任务承接，映射见 [协作约定](cfkanban.md)，本文件不保存动态 Issue 计数。
 - 已确认一个部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project。
-- 已确认 Credential 只认证 Principal；v0 业务权限按 Project 显式授予，不从 Workspace 继承。
-- 已确认每个部署实例只有一个 Owner；只有 Owner 能创建 Workspace/Project 和管理 Project Grants，参与者只有 reader/writer。
+- 已确认 Credential 只认证 Principal；普通 reader/writer 按 Project 显式授予，工作区管理员动态继承该工作区全部项目，项目管理员仅管理本项目。
+- 已确认每个部署实例只有一个 Owner；Workspace 由 Owner 创建，Project 可由 Owner 或对应工作区管理员创建；普通成员可由对应范围管理员管理，两级管理员支持多人。
 - 已确认 Owner 无需 Project Grant，隐式拥有全部 Project 数据面读写能力，并单独审计。
-- 已确认不设置第二管理员、不支持 Owner transfer；Credential 轮换或恢复只能继续绑定同一 Owner Principal。
+- 已确认不设置第二个实例管理员、不支持 Owner transfer；局部管理员不获得实例安全或恢复能力，Owner Credential 轮换或恢复只能继续绑定同一 Owner Principal。
 - 已确认首次部署使用一次性 Owner bootstrap Credential；全部丢失时仅允许部署控制者通过部署外受控 Skill 脚本为同一 Principal 重新签发。
-- 已确认 `writer` 可以软删除和恢复 Project 内容，Workspace/Project 容器只能由 Owner 软删除和恢复。
+- 已确认 `writer` 可以软删除和恢复 Project 内容；Workspace 容器由 Owner 归档/恢复，Project 容器由 Owner 或所属工作区管理员归档/恢复。
 - 已确认容器软删除采用暂停语义：保留子资源和 Grants、暂停访问，恢复后仍有效的 Grants 自动恢复。
 - 已确认 Issue assignee 只表示负责人，不形成独占执行权；v0 不采用 lease，普通并发写用 version/CAS 防止静默覆盖。
 - 已确认 blocked 与 status 正交，通过依赖或人工原因形成统一 `is_blocked` 投影，不自动改变工作阶段。
-- 已确认参与者由 Owner 创建的短期一次性 Invite URL bootstrap；Agent 复用本地身份或创建 Principal/Credential 后原子兑换 Project Grants。
-- 已确认普通 Project Invite 固定有效 7 天，Principal Recovery Invite 固定有效 1 小时；v0 不支持自定义或延长，过期后由 Owner 重新创建。
+- 已确认参与者由 Owner 或对应范围管理员创建的短期一次性 Invite URL bootstrap；局部管理员只邀请单项目 reader/writer，邀请绑定签发管理授权代次，撤权后不复活。
+- 已确认普通 Project Invite 固定有效 7 天，Principal Recovery Invite 固定有效 1 小时；v0 不支持自定义或延长，过期后由有权管理该邀请的 Owner 或范围管理员重新创建。
 - 已确认 v0 固定五个 workflow status key/category/order/terminal 语义，Project 只可覆盖显示名称。
 - 已确认 assignee 只能是 Owner 或目标 Project 的有效 writer；资格失效后保留引用并投影为待重新分配。
 - 已确认普通 Project Invite 与 Principal Recovery Invite 严格分离；参与者 Credential 轮换/全失恢复由 Owner 发起，Recovery Invite 创建时按稳定 principal ID 固定不可互换的 `rotation | full_recovery` mode，参与者不能自行签发额外 Credential。
 - 已确认 v0 产品、API 与 Skills 不提供完整 D1 导出、导入、本地恢复演练或整库灾难恢复；Cloudflare 原生控制面运维属于部署者直接管理的外部能力。
-- 已确认首发固定三个工作场景 Skill：无后缀 `cfkanban` 是默认日常入口，`cfkanban-admin` 是 Owner 应用管理入口，`cfkanban-deploy` 是 Cloudflare 控制面入口；它们不是三种 Agent 角色。
+- 已确认首发固定三个工作场景 Skill：无后缀 `cfkanban` 是默认日常入口，`cfkanban-admin` 按 Owner 或局部管理能力工作，`cfkanban-deploy` 是 Cloudflare 控制面入口；它们不是三种 Agent 角色。
 - 已确认 immutable release manifest 是具体版本真相源，分别固定 Skill bundle 与 Service deployment bundle；stable pointer 只用于发现，已安装 Skill/缓存只是验证副本，repo clone 不作为普通 stable 部署来源。
 - 已确认 v0 发行信任采用“官方 canonical HTTPS + 不可覆盖版本清单 + SHA-256 文件指纹 + 来源连续性”；marketplace/plugin 不覆盖官方来源，安装、更新和降级均需明确授权。该方案不防官方发布系统整体失陷，独立签名体系按公共分发或自动更新需求后置。
 - 已确认首次部署默认零参数生成 strict-zero 计划：Agent 自动解析 stable 版本、提议无冲突资源名并生成安全/确定性参数；缺少 Owner display name 时只询问这一项身份信息，只有 account 歧义或 custom domain、付费、数据地域/合规、非 stable/源码试验等结果性偏差才再询问，用户最终一次授权完整 plan。
-- 已确认 status 显示名称仅 Owner 可修改；Owner 或 Project writer 可带 expected version 在固定状态间任意显式转换和 reopen，terminal 不表示不可逆。
+- 已确认 status 显示名称可由对应范围管理员修改；具有有效 writer 能力者可带 expected version 在固定状态间任意显式转换和 reopen，terminal 不表示不可逆。
 - 已确认完成结果使用结构化、不可变且不可删除的 completion comment；complete 原子追加记录并转为 done，reopen 后再次完成会追加新记录。
 - 已确认 Issue Relation 支持 blocks、parent、related、duplicate 四类语义，允许同一 Workspace 内跨 Project、禁止跨 Workspace；跨 Project 写入要求同时拥有两端 writer。
 - 已确认 v0 不首发 assign-next，也不发布独立 cfKanban CLI。v0 必须提供同一 Worker 托管的极简第一方 Web UI，服务 Owner 简单维护和参与者直接 Kanban 查看/轻量参与。
@@ -45,7 +47,7 @@
 - 已确认 Web/Agent 使用统一机器错误分类；Worker 内返回统一 JSON，D1 quota 安全映射，Cloudflare edge 1027/429/HTML 则由客户端显式归一化并保留来源。
 - 已确认实例只发布一个 Owner 推荐的 preferred API origin，并动态提供公开、非秘密、`no-store` 的 well-known discovery。已有 Agent 只在当前 trusted origin 发布更高版本且无 Credential 目标探测一致时自动 rebind；陌生或已失联 origin 仍需用户显式确认。域名绑定继续由 Cloudflare/第三方控制面负责；Web Session 按 origin 隔离，v0 Passkey 按精确 hostname 隔离。
 - 已确认 v0 提供部署级授权过滤的跨 Workspace/Project Issue 聚合读取；Project filter 可省略，但 Skill 在已知上下文时强烈推荐限定一个或多个明确 Project。
-- 已确认 Project Grant 不设置失效日期；每个 Principal/Project 只有一条当前记录，由 Owner 显式变更角色、撤销或重新授予；普通邀请不改写已有有效 Grant。
+- 已确认 Project Grant 不设置失效日期；每个 Principal/Project 只有一条普通 reader/writer 当前记录，由对应范围管理员显式变更角色、撤销或重新授予；普通邀请不改写已有有效 Grant，管理授权独立保留。
 - 已确认 Event 使用部署级单调 sequence，opaque cursor 绑定 Principal、过滤与可读 Project 集合；scope 变化要求重新获取快照。
 - 已确认 priority 固定五档且默认 none，v0 不保存手工 rank；候选按 priority 后 FIFO 稳定排序。
 - 已确认非幂等创建/命令强制 Idempotency-Key 并保留 24 小时；结构化错误提供 retryable 与 recovery hint。

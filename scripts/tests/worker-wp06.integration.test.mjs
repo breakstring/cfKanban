@@ -222,7 +222,7 @@ function eventScopeBarrierDatabase(database) {
           if (sql.includes("candidate_events AS") && sql.includes("current_visible_projects")) {
             rawEventRows = result.results;
           }
-          if (!paused && sql.includes("FROM project_grants AS pg")
+          if (!paused && sql.includes("FROM effective_project_grants AS pg")
               && sql.includes("ORDER BY w.id, p.id")) {
             paused = true;
             signalReached();
@@ -291,7 +291,7 @@ function relationScopeBarrierDatabase(database) {
         if (property === "prepare") {
           return (sql) => wrapStatement(
             target.prepare(sql),
-            sql.includes("FROM project_grants AS pg") && sql.includes("ORDER BY w.id, p.id"),
+            sql.includes("FROM effective_project_grants AS pg") && sql.includes("ORDER BY w.id, p.id"),
           );
         }
         const value = Reflect.get(target, property, target);
@@ -419,7 +419,7 @@ function relationDetailBarrierDatabase(database) {
       if (property === "bind") {
         return (...values) => wrapStatement(target.bind(...values), sql);
       }
-      if (property === "all" && sql.includes("FROM project_grants AS pg")
+      if (property === "all" && sql.includes("FROM effective_project_grants AS pg")
           && sql.includes("ORDER BY w.id, p.id")) {
         return async (...args) => {
           const result = await target.all(...args);
