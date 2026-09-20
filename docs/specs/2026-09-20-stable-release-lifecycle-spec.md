@@ -30,7 +30,11 @@ canonical stable pointer 固定为 `https://github.com/breakstring/cfKanban/rele
 
 普通用户默认 stable；源码调试使用明确 checkout/commit 和 dirty 状态，不能声称 canonical release。功能开发使用下一个预发行版本，已发布 tag、manifest 与工件不可覆盖。日常使用与发行验收使用已发布、可校验工件。
 
-建议本地开发、独立远端测试实例和正式实例分工；测试实例使用独立 Worker/D1/instance ID/凭据，附件存储也隔离。已有开发管理项目仍可保存在正式实例。操作目标通过准确实例和项目解析，Repo scope 只作推荐过滤；切换实例不需要切换 Skills。此次实现不创建新测试实例、不改变宿主安装来源。
+本项目使用本地隔离开发环境和 `https://cfkanban.dev` 持久远端实例。用户于 2026-09-20 确认该实例定位为公开测试、演示和自用服务，可运行 RC，不作为稳定对外托管承诺；当前不另建项目自有的正式服务实例。GitHub stable 仍是用户自行部署的推荐发行，两者版本可以不同。
+
+cfkanban.dev 内的开发管理和体验者数据是真实持久数据；该定位不授权自动清理、破坏性测试、放宽权限或跳过 migration/恢复核验。本地自动化与故障注入保持隔离，测试 Project 不能隔离部署与数据库迁移。操作目标通过准确实例和项目解析，Repo scope 只作推荐过滤；切换实例不需要切换 Skills。首页说明遵循 [首页实例说明设置](2026-09-20-homepage-settings-spec.md)。
+
+仓库维护者使用项目级 [project-release](../../.agents/skills/project-release/SKILL.md) 组织准备、GitHub RC/正式发行和按授权升级默认实例；它位于 `.agents/skills/`，不加入对外 plugin 的 `skills/` 或发行工件白名单。默认实例是选择约定，不是部署授权；本机插件更新仍独立。
 
 ## 发行顺序与验证
 
@@ -39,3 +43,5 @@ canonical stable pointer 固定为 `https://github.com/breakstring/cfKanban/rele
 3. 匿名下载 stable pointer、manifest 和工件，重新校验摘要；验证从固定 stable 入口能够发现该正式版本。
 4. 既有实例只按独立 preflight/plan 升级，保留资源、Owner、数据和兼容性；版本读回同时核对产品发行和 API/schema。
 5. 线上任务只记录实际完成的验证。CFK-149 的真实跨任务宿主加载与回退不由脚本测试冒充。
+
+后续通常先公开准确 RC，再按授权升级 cfkanban.dev 并验收；修复使用新的 RC 版本。从通过验收的候选源码准备正式版时重新构建、验证正式工件，不改名复用 RC 或就地改变已公开 RC 的属性。正式发行推进 stable 后，可在同一明确授权范围内将 cfkanban.dev 同步到正式版本；若实例已测试更高版本，须先核对降级及 schema 影响，不自动回退。源码、GitHub 发行、实例实际版本与本机插件分别读回，不能互相代替完成证据。

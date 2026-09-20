@@ -1,6 +1,6 @@
 ---
 name: cfkanban
-description: Find, create, and update cfKanban Issues, Comments, relations, and completion records; join Projects and open authenticated boards. Use for daily collaboration and your profile, not scoped administration or Cloudflare deployment.
+description: Find, create, and update cfKanban Issues and priorities, Comments, relations, and completion records; join Projects and open authenticated boards. Use for daily collaboration and your profile, not scoped administration or Cloudflare deployment.
 ---
 
 # cfKanban
@@ -19,7 +19,7 @@ For an already joined user, lead with finding, creating, editing, changing statu
 
 - Inspect the local instance identity and show the authenticated Principal without exposing a Credential.
 - Resolve an explicit or Repo-recommended Project scope, then list or search Issues and deterministic work candidates.
-- Create, read, edit, assign, block, unblock, complete, reopen, soft-delete, or restore one Issue at a time.
+- Create, read, edit, prioritize, assign, block, unblock, complete, reopen, soft-delete, or restore one Issue at a time.
 - Add and restore Comments, manage Project Labels, and create or remove Issue relations.
 - Upload one explicitly selected local file to an Issue or download a private attachment to a new local file.
 - Redeem one Project Invite, Principal Recovery Invite, or Public Join safely.
@@ -90,6 +90,10 @@ The complete endpoint and recovery guide is [references/workflows.md](references
 ## Ordinary operations
 
 Verify trusted local identity and resolve the requested Project or stable Issue identifier. Reuse unchanged identity/scope evidence from the current task; refresh the resource version before a CAS write. Use one independent Idempotency Key per atomic operation and read back the result. On response loss, keep the same payload/key until commit state is known. A multi-call goal is not a transaction: report committed, pending, and failed operations separately.
+
+## Issue priority requests
+
+For “Set CFK-123 to high priority” or “清除 CFK-123 的优先级”, use the existing Issue PATCH through `api request`. Keys are `urgent` (紧急), `high` (高), `medium` (中), `low` (低), and `none` (无); clear with `none`, never `null`. GET the Issue's current `version`, returned `priority`, and `allowed_actions`; require effective writer/Owner access and `update`. If already equal, report unchanged without writing. PATCH only `priority_key` and `expected_version` with one Idempotency Key, preserving status, assignee, title and other fields; read back before reporting success. After response loss retain the same payload/key, and on CAS conflict read current state before deciding again. This uses an existing API; a new Web shortcut does not add a CLI command or require an instance upgrade. Read [English](references/workflows.md#issue-priority) or [简体中文](references/workflows.zh-CN.md#issue-优先级) for examples.
 
 ## Contract and stop conditions
 

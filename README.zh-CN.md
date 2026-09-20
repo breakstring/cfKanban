@@ -147,7 +147,7 @@ codex plugin add cfkanban-agent-skills@cfkanban
 
 记录 commit 和未提交状态；源码 checkout、`main` 与本地修改不代表正式发行。测试版或历史版必须明确选择，已发布 tag 和工件不可覆盖。当前 Skill 不提供冻结源码事实的远端部署计划，源码评估应在 Cloudflare 写入前停止。
 
-建议区分本地开发、独立远端测试实例和正式实例。远端测试使用独立 Worker、D1、instance ID、凭据及附件存储；仅创建测试 Project 不能隔离部署和迁移。通过准确实例和 Project 切换操作目标，同一套兼容 Skills 可以操作多套实例，无需跟着环境重装。开发管理项目可以继续放在正式实例。
+本项目采用本地隔离开发环境，并将 `cfkanban.dev` 作为持久的公开测试、演示和自用实例。网站可以运行测试版；GitHub stable 仍是用户自行部署的推荐发行。演示站中的真实数据继续遵循原有迁移、权限与恢复保护，仅创建测试 Project 不能隔离部署或迁移。维护者可以使用仅在本仓库提供的 [project-release 技能](.agents/skills/project-release/SKILL.md)准备发行，并在授权范围内升级网站。同一套兼容 Skills 可以操作多套明确选择的实例。
 
 按准确 lockfile 安装依赖并运行完整仓库验证：
 

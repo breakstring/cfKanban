@@ -9551,6 +9551,153 @@
         }
       }
     },
+    "/api/v1/admin/homepage-settings": {
+      "get": {
+        "operationId": "getHomepageSettings",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Homepage Settings",
+        "description": "Owner instance control only; a project-scoped Owner Session and scoped administrators cannot read these settings.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomepageSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      },
+      "patch": {
+        "operationId": "updateHomepageSettings",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Update Homepage Settings",
+        "description": "Owner instance control only. Update both public homepage translations with expected_version and Idempotency-Key; Cookie requests require CSRF. Trimmed empty strings become null and use locale/hostname fallback. CAS, idempotency snapshot and one security audit event commit atomically.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomepageSettingsWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHomepageSettingsRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/attachment-settings": {
       "get": {
         "operationId": "getAttachmentSettings",
@@ -12931,6 +13078,90 @@
         },
         "additionalProperties": false
       },
+      "HomepageNotice": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "maxLength": 500,
+        "description": "Public plain text, at most 500 Unicode code points after trimming; whitespace-only input is stored as null and uses the homepage fallback."
+      },
+      "HomepageSettings": {
+        "type": "object",
+        "required": [
+          "notice_en",
+          "notice_zh_cn",
+          "version"
+        ],
+        "properties": {
+          "notice_en": {
+            "$ref": "#/components/schemas/HomepageNotice"
+          },
+          "notice_zh_cn": {
+            "$ref": "#/components/schemas/HomepageNotice"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateHomepageSettingsRequest": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "notice_en",
+          "notice_zh_cn"
+        ],
+        "properties": {
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "notice_en": {
+            "$ref": "#/components/schemas/HomepageNotice"
+          },
+          "notice_zh_cn": {
+            "$ref": "#/components/schemas/HomepageNotice"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HomepageSettingsWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/HomepageSettings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublicHomepageNotice": {
+        "type": "object",
+        "required": [
+          "en",
+          "zh-CN"
+        ],
+        "properties": {
+          "en": {
+            "$ref": "#/components/schemas/HomepageNotice"
+          },
+          "zh-CN": {
+            "$ref": "#/components/schemas/HomepageNotice"
+          }
+        },
+        "additionalProperties": false
+      },
       "AttachmentSettings": {
         "type": "object",
         "required": [
@@ -13432,6 +13663,9 @@
           "updated_at"
         ],
         "properties": {
+          "homepage_notice": {
+            "$ref": "#/components/schemas/PublicHomepageNotice"
+          },
           "discovery_version": {
             "type": "integer",
             "format": "int64",

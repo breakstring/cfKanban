@@ -6,6 +6,7 @@ import ContainerIcon from "../components/ContainerIcon.vue";
 import CopyForAgentButton from "../components/CopyForAgentButton.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
+import HomepageSettingsPanel from "../components/HomepageSettingsPanel.vue";
 import InvitationRows from "../components/InvitationRows.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
@@ -1625,6 +1626,7 @@ onUnmounted(() => {
         </nav>
       </section>
       <UsagePanel />
+      <HomepageSettingsPanel />
       <details class="owner-section owner-disclosure">
         <summary>{{ ui("Service information & access limits", "服务信息与访问限制") }}</summary>
         <p class="muted-copy">{{ ui("Version, addresses, and request limits for troubleshooting. These settings are read-only.", "排查问题时可查看版本、访问地址和请求限制；这里的设置均为只读。") }}</p>

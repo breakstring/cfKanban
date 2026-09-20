@@ -1,0 +1,4 @@
+interface:
+  display_name: "项目发版"
+  short_description: "准备和发布 cfKanban RC 与正式版，按授权升级默认测试实例"
+  default_prompt: "使用 $project-release 准备下一次 RC，核对变更和版本建议，展示 GitHub 发行及 cfkanban.dev 升级计划。"

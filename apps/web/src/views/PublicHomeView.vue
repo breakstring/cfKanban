@@ -7,6 +7,7 @@ import PageState from "../components/PageState.vue";
 import ProductIntro from "../components/ProductIntro.vue";
 import { ApiProblem, apiRequest } from "../lib/api";
 import { locale, t } from "../lib/i18n";
+import { homepageNotice } from "../lib/homepage-notice";
 import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart } from "../lib/pagination";
 import { deployAgentInstruction, publicGuideUrl, publicJoinInstruction } from "../lib/public-guide";
@@ -35,6 +36,12 @@ const joinBusy = ref(false);
 const copied = ref("");
 const copyFallback = ref<{ key: string; value: string } | null>(null);
 const canUsePasskeys = typeof window !== "undefined" && "PublicKeyCredential" in window;
+const isPublicDemo = window.location.hostname === "cfkanban.dev";
+const instanceNotice = computed(() => homepageNotice(
+  meta.value?.homepage_notice,
+  locale.value,
+  t(isPublicDemo ? "home.publicDemo" : "home.independent"),
+));
 const writeFence = new WriteFence();
 
 const preferredOrigin = computed(() => {
@@ -175,7 +182,7 @@ onMounted(load);
         <p class="eyebrow">{{ t("home.eyebrow") }}</p>
         <h1><span>{{ t("home.headingFirst") }}</span><span>{{ t("home.headingSecond") }}</span></h1>
         <p class="hero-description">{{ t("home.description") }}</p>
-        <p class="instance-note">{{ t("home.independent") }}</p>
+        <p class="instance-note">{{ instanceNotice }}</p>
         <a v-if="preferredOrigin" class="preferred-origin" :href="preferredOrigin">
           {{ locale === "zh-CN" ? "推荐访问地址" : "Preferred address" }} · {{ preferredOrigin }}
         </a>
@@ -265,3 +272,7 @@ onMounted(load);
     </footer>
   </main>
 </template>
+
+<style scoped>
+.instance-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>

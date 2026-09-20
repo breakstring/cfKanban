@@ -2,6 +2,8 @@
 
 本文对应 CFK-27，是源码工程工具说明，不是用户部署指南、独立 cfKanban CLI 或 Cloudflare 写入通道。安装 Skill 和升级 Instance 仍由各自独立计划执行。脚本不修改 tag、已发布 Release、现有附件或 Cloudflare 资源。
 
+维护者可在本仓库调用项目级 [`$project-release`](../.agents/skills/project-release/SKILL.md)，例如“准备下个 RC，先给范围与验证结果”或“完整发布指定 RC，并升级默认测试实例”。该技能组织下述工程流程，默认远端目标为持久的公开测试/演示实例 `cfkanban.dev`；GitHub stable 是用户自部署的推荐发行。它不属于对外四个 cfKanban Skills，不随其 bundle 分发。只发布 GitHub、同步实例和更新本机插件可分别指定，技能名或默认目标本身不授予写入权限。
+
 ## 发布前准备
 
 1. 对当前源码运行 `npm run validate`，审查 staged set，然后按当前授权提交并推送准确 tag。脚本要求远端 tag 已存在且指向完整的预期 commit；不会隐式创建 tag。
@@ -12,7 +14,9 @@
 
 产品版本以 `release/version.json` 为源码声明。同步 plugin metadata 与当次 `release/config/<version>.json`，重新构建 Worker/Web；打包会拒绝错版本、缺失或变化的构建入口。API 的 `service_version`/OpenAPI `info.version` 与 schema 不随产品版本机械递增。历史 tag、migration SQL、发行配置和已发布工件不原地修改。
 
-普通用户 README 和双语部署/加入/安装指南保持版本无关，不为每次发行替换数字。开发后续功能前将声明切到下一个准确预发行版本，并在独立测试实例验收；仅在正式发行时推进 stable。
+普通用户 README 和双语部署/加入/安装指南保持版本无关，不为每次发行替换数字。开发后续功能前将声明切到下一个准确预发行版本；本地隔离验证后，公开 RC 并按授权在 cfkanban.dev 验收，仅在正式发行时推进 stable。公开测试实例仍保留真实数据和既有迁移、权限、恢复保护。
+
+RC 转正式版时，从已验收候选的准确源码基线收敛版本与说明，重新构建并校验正式工件；不直接改 RC zip 名称或已发布 Release 属性。同步网站须部署正式工件并核对 `release_version`。若网站已运行更新 RC，先核对降级和 schema 影响，不因发布旧系列修复版而自动降级网站。
 
 ## 三个独立动作
 

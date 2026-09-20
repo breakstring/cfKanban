@@ -333,12 +333,14 @@ for (const failure of ['response', 'exception']) test(`Cloudflare ${failure} 回
 });
 
 
-for (const schemaVersion of [9, 10]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
+for (const schemaVersion of [9, 10, 11]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
   const f = await fixture(t);
   for (const name of ['0002_container_purge', '0003_container_uuid', '0004_issue_attachments', '0005_attachment_schema_version', '0006_usage_statistics', '0007_attachment_settings', '0008_principal_names', '0009_scoped_administrators']) {
     f.db.exec(await readFile(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'));
   }
-  if (schemaVersion === 10) f.db.exec(await readFile(new URL('../../migrations/0010_query_indexes.sql', import.meta.url), 'utf8'));
+  if (schemaVersion >= 10) f.db.exec(await readFile(new URL('../../migrations/0010_query_indexes.sql', import.meta.url), 'utf8'));
+  if (schemaVersion >= 11) f.db.exec(await readFile(new URL('../../migrations/0011_homepage_settings.sql', import.meta.url), 'utf8'));
+  const beforeHomepage = schemaVersion >= 11 ? f.db.prepare('SELECT * FROM homepage_settings').all() : null;
   const workspace = f.db.prepare('SELECT id FROM workspaces').get().id;
   const project = randomUUID(), manager = randomUUID();
   f.db.prepare('INSERT INTO principals(id,display_name,display_name_key,created_at,updated_at) VALUES (?, ?, ?, 1, 1)').run(manager, 'Scoped_Manager', 'scoped_manager');
@@ -370,11 +372,12 @@ for (const schemaVersion of [9, 10]) test(`schema ${schemaVersion} 恢复保留�
   assert.equal(f.db.prepare('SELECT schema_version FROM instance_meta').get().schema_version, schemaVersion);
   assert.equal(f.count('workspaces'), 1);
   assert.equal(f.count('projects'), 1);
+  if (beforeHomepage) assert.deepEqual(f.db.prepare('SELECT * FROM homepage_settings').all(), beforeHomepage);
 });
 
-test('schema 11 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
+test('schema 12 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
   const f = await fixture(t);
-  f.db.prepare('UPDATE instance_meta SET schema_version = 11').run();
+  f.db.prepare('UPDATE instance_meta SET schema_version = 12').run();
   await assert.rejects(inspectOwnerRecovery(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   await assert.rejects(createOwnerRecoveryPlan(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   assert.equal(f.writes, 0);

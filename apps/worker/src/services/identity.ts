@@ -1,3 +1,4 @@
+import { readHomepageSettings } from "./homepage-settings.ts";
 import { RELEASE_VERSION } from "../release-version.ts";
 import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
 import { managementGrantsResource } from "./scoped-administrators.ts";
@@ -115,8 +116,9 @@ export async function getInstanceDiscovery(
   db: D1Database,
   observedOrigin: string,
 ): Promise<{ [key: string]: JsonValue }> {
-  const instance = await readInstance(db);
+  const [instance, homepage] = await Promise.all([readInstance(db), readHomepageSettings(db)]);
   return {
+    homepage_notice: { en: homepage.notice_en, "zh-CN": homepage.notice_zh_cn },
     discovery_version: 1,
     instance_id: instance.instance_id,
     observed_origin: observedOrigin,

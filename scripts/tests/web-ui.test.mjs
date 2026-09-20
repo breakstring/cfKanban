@@ -42,6 +42,7 @@ import {
 import { renderMarkdown } from "../../apps/web/src/lib/markdown.ts";
 import { deployAgentInstruction, publicGuideUrl, publicJoinInstruction } from "../../apps/web/src/lib/public-guide.ts";
 import { publicJoinRiskNotice } from "../../apps/web/src/lib/public-join-risk.ts";
+import { homepageNotice, HomepageSettingsDraft, isHomepageSettingsWriteResult, noticeLength } from "../../apps/web/src/lib/homepage-notice.ts";
 import { ProjectionGeneration } from "../../apps/web/src/lib/projection-generation.ts";
 import {
   continuationCursor,
@@ -701,6 +702,143 @@ test("public-home copy keeps the Agent-first promise playful and concrete", asyn
   assert.match(chineseBlock, /给 Agent 一份正经说明书/);
   assert.doesNotMatch(source, /github\.com\/breakstring\/cfKanban#readme/i);
   assert.doesNotMatch(chineseBlock, /canonical/i);
+});
+
+test("homepage notices choose the current locale, English fallback, and old-Service defaults", () => {
+  const configured = { en: "English notice", "zh-CN": "中文说明" };
+  assert.equal(homepageNotice(configured, "en", "default"), "English notice");
+  assert.equal(homepageNotice(configured, "zh-CN", "默认"), "中文说明");
+  assert.equal(homepageNotice({ en: "English notice", "zh-CN": null }, "zh-CN", "默认"), "English notice");
+  assert.equal(homepageNotice({ en: null, "zh-CN": "中文说明" }, "en", "default"), "default");
+  for (const notice of [undefined, { en: null, "zh-CN": null }]) {
+    assert.equal(homepageNotice(notice, "en", "default"), "default");
+    assert.equal(homepageNotice(notice, "zh-CN", "默认"), "默认");
+  }
+});
+
+test("homepage drafts preserve Unicode limits and normalize blank fields without hiding the notice", () => {
+  const draft = new HomepageSettingsDraft();
+  assert.equal(draft.canSave, false);
+  assert.throws(() => draft.payload());
+  draft.receive({ notice_en: "Existing", notice_zh_cn: "现有", version: 1 });
+  draft.english = `  ${"😀".repeat(500)}  `;
+  draft.chinese = " \n ";
+  assert.equal(noticeLength(draft.english), 500);
+  assert.equal(draft.canSave, true);
+  assert.equal(draft.payload().notice_en, "😀".repeat(500));
+  assert.equal(draft.payload().notice_zh_cn, null);
+  draft.english += "x";
+  assert.equal(draft.canSave, false);
+  assert.throws(() => draft.payload());
+  draft.reset();
+  assert.deepEqual(draft.current, { notice_en: "Existing", notice_zh_cn: "现有", version: 1 }, "restoring defaults only changes the draft");
+  assert.deepEqual(draft.payload(), { expected_version: 1, notice_en: null, notice_zh_cn: null });
+});
+
+test("homepage conflict readback retains drafts and blocks writes until a valid latest version arrives", () => {
+  const draft = new HomepageSettingsDraft();
+  assert.throws(() => draft.receive({ notice_en: null, notice_zh_cn: null, version: 0 }));
+  assert.equal(draft.canSave, false);
+  draft.receive({ notice_en: "old", notice_zh_cn: null, version: 1 });
+  draft.english = "my draft";
+  draft.requiresReadback = true;
+  assert.throws(() => draft.payload());
+  assert.throws(() => draft.receive({ notice_en: 4, notice_zh_cn: null, version: 2 }, true));
+  assert.equal(draft.canSave, false, "failed readback cannot unlock saving");
+  assert.equal(draft.english, "my draft");
+  draft.receive({ notice_en: "someone else's change", notice_zh_cn: "新说明", version: 2 }, true);
+  assert.equal(draft.current.notice_en, "someone else's change");
+  assert.equal(draft.english, "my draft");
+  assert.deepEqual(draft.payload(), { expected_version: 2, notice_en: "my draft", notice_zh_cn: null });
+});
+
+test("homepage uncertain writes retain the original body across edits and require advanced-version readback before release", () => {
+  const draft = new HomepageSettingsDraft();
+  draft.receive({ notice_en: "old", notice_zh_cn: null, version: 1 });
+  draft.english = "original save";
+  const original = draft.beginWrite();
+  draft.english = "new draft";
+  assert.equal(draft.canSave, false);
+  assert.throws(() => draft.payload());
+  assert.deepEqual(draft.beginWrite(), original, "retry cannot adopt the edited draft");
+  draft.receive({ notice_en: "old", notice_zh_cn: null, version: 1 }, true);
+  assert.equal(draft.canRetirePending, false);
+  assert.throws(() => draft.retirePending(), /can still commit/);
+  draft.receive({ notice_en: "other save", notice_zh_cn: null, version: 2 }, true);
+  assert.equal(draft.canSave, false, "readback does not silently release the original operation");
+  assert.equal(draft.canRetirePending, true);
+  draft.retirePending();
+  assert.deepEqual(draft.payload(), { expected_version: 2, notice_en: "new draft", notice_zh_cn: null });
+});
+
+test("homepage response validation preserves the original key across transport loss and malformed success", async () => {
+  const { apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const originalFetch = globalThis.fetch;
+  const draft = new HomepageSettingsDraft();
+  draft.receive({ notice_en: "old", notice_zh_cn: null, version: 1 });
+  draft.english = "original save";
+  const seen = [];
+  globalThis.fetch = async (_path, init) => {
+    seen.push({ key: init.headers.get("idempotency-key"), body: JSON.parse(init.body) });
+    if (seen.length === 1) throw new TypeError("response lost");
+    const result = seen.length === 2 ? { resource: { version: 2 } } : {
+      event_cursor: "event-1", idempotent_replay: true,
+      resource: { notice_en: "original save", notice_zh_cn: null, version: 2 },
+    };
+    return new Response(JSON.stringify(result), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const send = () => {
+    const body = draft.beginWrite();
+    return apiRequest("/api/v1/admin/homepage-settings", { method: "PATCH", body,
+      validateResponse: value => isHomepageSettingsWriteResult(value, body),
+    });
+  };
+  try {
+    await assert.rejects(send());
+    draft.english = "next draft";
+    assert.equal(draft.canSave, false);
+    await assert.rejects(send());
+    assert.equal(draft.canSave, false);
+    const result = await send();
+    assert.equal(new Set(seen.map(item => item.key)).size, 1);
+    assert.ok(seen[0].key);
+    assert.ok(seen.every(item => item.body.notice_en === "original save" && item.body.expected_version === 1));
+    assert.equal(draft.finishWrite(result.resource), false, "confirming the original save does not label an edited draft as saved");
+    assert.equal(draft.english, "next draft");
+    assert.equal(draft.payload().expected_version, 2);
+    const valid = { event_cursor: "cursor", idempotent_replay: false, resource: result.resource };
+    assert.equal(isHomepageSettingsWriteResult(valid, seen[0].body), true);
+    for (const invalid of [
+      { ...valid, event_cursor: undefined },
+      { ...valid, idempotent_replay: undefined },
+      { ...valid, resource: { ...result.resource, version: 3 } },
+      { ...valid, resource: { ...result.resource, notice_en: "wrong" } },
+    ]) assert.equal(isHomepageSettingsWriteResult(invalid, seen[0].body), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("homepage notice renders untrusted text literally and only the exact demo hostname changes the fallback", async () => {
+  const source = await readFile(new URL("../../apps/web/src/views/PublicHomeView.vue", import.meta.url), "utf8");
+  const hostnameExpression = source.match(/const isPublicDemo = ([^;]+);/)?.[1];
+  assert.ok(hostnameExpression);
+  const isDemo = new Function("window", `return ${hostnameExpression};`);
+  for (const hostname of ["cfkanban.dev.example.test", "example.cfkanban.dev", "localhost", "example.test"]) {
+    assert.equal(isDemo({ location: { hostname } }), false);
+  }
+  assert.equal(isDemo({ location: { hostname: "cfkanban.dev" } }), true);
+  const noticeTemplate = source.match(/<p class="instance-note"[^>]*>[\s\S]*?<\/p>/)?.[0];
+  assert.ok(noticeTemplate);
+  const { createSSRApp } = await import("vue");
+  const { renderToString } = await import("vue/server-renderer");
+  const html = await renderToString(createSSRApp({
+    template: noticeTemplate,
+    setup: () => ({ instanceNotice: '<script>alert(1)</script> **plain** https://example.test' }),
+  }));
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /\*\*plain\*\* https:\/\/example\.test/);
+  assert.doesNotMatch(html, /<script>|<a\b|<strong>/);
 });
 
 test("the self-hosted brand mark is wired to the favicon and both Web shells", async () => {

@@ -245,6 +245,13 @@ export interface InstanceDiscovery {
   service_version: string;
   release_version?: string;
   updated_at: string;
+  homepage_notice?: { en: string | null; "zh-CN": string | null };
+}
+
+export interface HomepageSettings {
+  notice_en: string | null;
+  notice_zh_cn: string | null;
+  version: number;
 }
 
 export interface RateLimitSettings {

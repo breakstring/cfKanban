@@ -168,6 +168,8 @@ const operations = [
   ["delete", "/api/v1/admin/projects/{project_id}/public-join", "disablePublicJoin", "public-join", authenticated, "cas-delete"],
   ["get", "/api/v1/admin/projects/{project_id}/resource-limits", "getProjectResourceLimits", "public-join", authenticated, "read"],
   ["patch", "/api/v1/admin/projects/{project_id}/resource-limits", "updateProjectResourceLimits", "public-join", authenticated, "cas", "UpdateResourceLimitsRequest"],
+  ["get", "/api/v1/admin/homepage-settings", "getHomepageSettings", "admin", authenticated, "read"],
+  ["patch", "/api/v1/admin/homepage-settings", "updateHomepageSettings", "admin", authenticated, "cas", "UpdateHomepageSettingsRequest"],
   ["get", "/api/v1/admin/attachment-settings", "getAttachmentSettings", "admin", authenticated, "read"],
   ["patch", "/api/v1/admin/attachment-settings", "updateAttachmentSettings", "admin", authenticated, "cas", "UpdateAttachmentSettingsRequest"],
   ["get", "/api/v1/admin/usage", "getUsage", "admin", authenticated, "read"],
@@ -346,7 +348,7 @@ const permissionGroups = {
     "listPrincipals", "getPrincipal", "listPrincipalCredentials", "revokeCredential", "rotateOwnerCredential",
     "getInstanceOrigin", "updateInstanceOrigin", "listAuditEvents", "revokePrincipalPasskey",
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
-    "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings",
+    "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings", "getHomepageSettings", "updateHomepageSettings",
   ],
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
@@ -835,6 +837,20 @@ const schemas = {
     properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("PublicJoinRedemptionResource") },
     additionalProperties: false,
   },
+  HomepageNotice: { type: ["string", "null"], maxLength: 500, description: "Public plain text, at most 500 Unicode code points after trimming; whitespace-only input is stored as null and uses the homepage fallback." },
+  HomepageSettings: {
+    type: "object", required: ["notice_en", "notice_zh_cn", "version"],
+    properties: { notice_en: ref("HomepageNotice"), notice_zh_cn: ref("HomepageNotice"), version: ref("Version") }, additionalProperties: false,
+  },
+  UpdateHomepageSettingsRequest: {
+    type: "object", required: ["expected_version", "notice_en", "notice_zh_cn"],
+    properties: { expected_version: ref("Version"), notice_en: ref("HomepageNotice"), notice_zh_cn: ref("HomepageNotice") }, additionalProperties: false,
+  },
+  HomepageSettingsWriteResult: containerWriteResult("HomepageSettings"),
+  PublicHomepageNotice: {
+    type: "object", required: ["en", "zh-CN"],
+    properties: { en: ref("HomepageNotice"), "zh-CN": ref("HomepageNotice") }, additionalProperties: false,
+  },
   AttachmentSettings: {
     type: "object", required: ["limit_bytes", "configured", "version", "reserved_bytes"],
     properties: { limit_bytes: { type: ["integer", "null"], minimum: 1, maximum: 9007199254740991 }, configured: { type: "boolean" }, version: ref("Version"), reserved_bytes: integer({ minimum: 0 }) }, additionalProperties: false,
@@ -919,7 +935,7 @@ const schemas = {
   },
   Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }) }, additionalProperties: true },
   Health: { type: "object", required: ["service_version", "schema_version", "d1"], properties: { service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), schema_version: integer({ minimum: 1 }), d1: string({ enum: ["reachable", "unavailable"] }) }, additionalProperties: false },
-  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
+  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
   IssueLabelSummary: {
     type: "object",
     required: ["color", "id", "name"],
@@ -2188,6 +2204,8 @@ const operationResponseSchemas = {
   disablePublicJoin: ref("PublicJoinPolicyWriteResult"),
   getProjectResourceLimits: ref("PublicJoinPolicy"),
   updateProjectResourceLimits: ref("PublicJoinPolicyWriteResult"),
+  getHomepageSettings: ref("HomepageSettings"),
+  updateHomepageSettings: ref("HomepageSettingsWriteResult"),
   getAttachmentSettings: ref("AttachmentSettings"),
   updateAttachmentSettings: ref("AttachmentSettingsWriteResult"),
   getUsage: ref("Usage"),
@@ -2333,6 +2351,10 @@ for (const operation of operations) {
 
 const requestIdHeader = { "X-Request-ID": { $ref: "#/components/headers/RequestId" } };
 const noStoreHeader = { ...requestIdHeader, "Cache-Control": { required: true, schema: { type: "string", const: "no-store" } } };
+paths["/api/v1/admin/homepage-settings"].get.responses["200"].headers = noStoreHeader;
+paths["/api/v1/admin/homepage-settings"].patch.responses["200"].headers = noStoreHeader;
+paths["/api/v1/admin/homepage-settings"].get.description = "Owner instance control only; a project-scoped Owner Session and scoped administrators cannot read these settings.";
+paths["/api/v1/admin/homepage-settings"].patch.description = "Owner instance control only. Update both public homepage translations with expected_version and Idempotency-Key; Cookie requests require CSRF. Trimmed empty strings become null and use locale/hostname fallback. CAS, idempotency snapshot and one security audit event commit atomically.";
 paths["/api/v1/admin/attachment-settings"].get.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/attachment-settings"].patch.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/attachment-settings"].patch.description = "Owner-only explicit capacity choice: positive safe integer bytes or null for unlimited. Requires expected_version and Idempotency-Key; Cookie requests require CSRF. Lowering the limit preserves files and existing reservations. New reservations require configured=true and available capacity. An unset limit is not implicit unlimited capacity.";

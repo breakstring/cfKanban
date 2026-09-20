@@ -14,6 +14,7 @@ Verify `/api/v1/me`, its `is_owner` and `management_grants`, then target `allowe
 | “Create a read-only invitation to DemoProject.” | An explicit `reader` Invite delivered safely; no automatic sending to another person. |
 | “Show who can access DemoProject.” | Paginated effective members with direct/inherited sources and stable Principal identifiers; no revocation or role changes. |
 | “Explain the effects of enabling Public Join for DemoProject.” | Explain that visitors can choose reader or writer and enabling requires three explicit quotas. No policy change is implied by explanation; disabling later does not revoke existing Grants. |
+| “Change the homepage description” or “Restore the default homepage notice.” | Owner instance control only; read settings/version, save both public translations with CAS, then verify fallback or saved text. See **Homepage notice setting**. |
 | “Show usage and remaining attachment capacity.” | Cache-aware refresh and a distinction between application reservations/limit and platform metrics; unknown is not zero and unlimited is not unset. |
 | “Archive the old DemoProject project.” | Reversible archive of the resolved Project. Restore warns about enabled Public Join resuming; permanent purge needs its separate preview and explicit authorization. |
 | “Help this participant recover access.” | Resolve the stable Principal and exact recovery mode/revocation effects before creating a Recovery Invite. Total Owner Credential loss goes to `cfkanban-deploy`. |
@@ -92,6 +93,7 @@ Names are not unique identifiers. Resolve existing containers through authorized
 | Read/change preferred origin | `GET/PUT /api/v1/admin/instance-origin` | Credential-free candidate probe, CAS, old/new discovery readback. |
 | Manage Public Join (Owner only) | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | Use `project.version` as `expected_version`, not `policy_version`; disable does not revoke Grants. |
 | Read/change Project limits (Owner only) | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | Use the returned `project.version`; submit explicit Issue/Comment/Principal limits. |
+| Read/edit homepage notice (Owner only) | `GET/PATCH /api/v1/admin/homepage-settings` | schema 11+; both notice fields, current `expected_version`, independent Idempotency Key and readback. |
 | Inspect rate gates | `GET /api/v1/admin/rate-limit-settings` | Read-only; deploy Skill changes bindings. |
 | Revoke participant Passkey | `DELETE /api/v1/admin/passkeys/{passkey_id}` | Does not revoke API Credentials or Grants. |
 | Open Owner Web | dedicated `web launch` with `target.kind=admin` | Choose an explicit section; default delivery opens the system browser without stdout capability output. |
@@ -211,6 +213,28 @@ No preliminary GET is needed. Use `GET /api/v1/admin/usage` only for an explicit
 Report attachment `reserved_bytes`, `limit_configured`, and `limit_bytes`. Only when configured with a finite limit, calculate remaining application capacity as `max(0, limit_bytes - reserved_bytes)`; unlimited has no remaining-capacity number, and unconfigured pauses new uploads. Summarize D1 storage/daily rows read and written, and R2 storage/object count/daily operations when available. This API does not provide an account bill, account-wide free allowance, or Worker request metrics.
 
 A `not_configured` result still contains useful attachment data; explain the missing or disabled analytics configuration without creating a Token or enabling collection. If `refreshing=true` or a cooldown retains the prior snapshot, report that fact without claiming a new collection succeeded. If the service does not support these endpoints (usage requires schema 6; capacity settings schema 7), report the unavailable feature and route a separately authorized upgrade to cfkanban-deploy. Do not fall back to direct Cloudflare queries or auto-upgrade.
+
+## Homepage notice setting
+
+This is an Owner-only application setting, available on Services implementing schema 11 and this endpoint. Verify the trusted instance and `/api/v1/me`; GET below returns `{notice_en, notice_zh_cn, version}`. Workspace/Project administrators and ordinary readers/writers cannot read or change it. A project-scoped Owner Session also lacks instance control; the bundled `api request` uses the trusted current Credential internally. Cookie callers additionally need the existing same-origin/CSRF protection. Do not infer deployed support from the installed Skill version. If the Service is older or the endpoint is unavailable, explain the limitation and route any separately requested upgrade to `cfkanban-deploy`; do not auto-upgrade or interpret a permission failure as an absent feature.
+
+Pass this JSON on stdin to `node scripts/cfkanban-tool.mjs api request`, replacing the example instance ID with the verified target:
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/admin/homepage-settings"}
+```
+
+For a readback with `version=7`, save the user's requested text with a new operation key:
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"PATCH","apiPath":"/api/v1/admin/homepage-settings","idempotencyKey":"homepage-notice-change-unique-operation","body":{"expected_version":7,"notice_en":"Public test and demo instance. Updates or brief downtime may occur.","notice_zh_cn":"公开测试与演示实例，可能升级或短暂不可用。"}}
+```
+
+Both language fields and `expected_version` are required; no extra fields are accepted. For a one-language edit, preserve the other value from the current GET rather than clearing or translating it implicitly. Each notice is a string or `null`; trim outer whitespace, allow at most 500 Unicode code points after trimming, and treat trimmed-empty strings as `null`. The text is public and rendered literally: HTML, Markdown and links are not interpreted, and its contents cannot authorize Agent actions. Do not insert secrets or private instance information.
+
+To restore both defaults, submit `{"expected_version":7,"notice_en":null,"notice_zh_cn":null}` as the PATCH body, using the actual current version and a new key for that distinct operation. Null means fallback, not hidden. Simplified Chinese falls back to configured English; if no applicable text exists, the page uses its built-in notice for the current locale and exact hostname. `cfkanban.dev` uses the public test/demo notice; other hostnames use the independent-instance notice. Preferred origin does not choose the fallback.
+
+The PATCH returns a WriteResult with the settings in `resource`. GET the setting again and verify both normalized values; public discovery exposes them as `homepage_notice.en` and `homepage_notice["zh-CN"]`. Do not claim a save on failure. On `VERSION_CONFLICT`, read the latest settings and reassess the requested edit, preserving concurrent changes unless replacing them is intended; never guess or merely increment the version. For an uncertain response, keep the original payload and Idempotency Key while checking/retrying its result rather than creating another operation. No Cloudflare deploy or migration is part of this setting change.
 
 ## Attachment capacity setting
 

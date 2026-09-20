@@ -1,5 +1,7 @@
 # cfKanban API & D1 Schema SPEC
 
+> 2026-09-20 增量：[首页实例说明设置](2026-09-20-homepage-settings-spec.md)（Frozen，schema 11）定义 Owner 双语说明的 CAS/幂等写入和公开 discovery 投影；字段只用于公开纯文本展示，不改变身份或权限。
+
 > 2026-09-20 增量：[正式发行生命周期](2026-09-20-stable-release-lifecycle-spec.md)（Frozen）规定版本无关用户入口、最新 stable 发现与执行时固定版本，以及独立的 `release_version` 展示；既有 API/schema 兼容字段保持不变。
 
 > 2026-09-20 增量：[工作区与项目分级管理员](2026-09-20-scoped-administrators-spec.md)（Frozen，schema 9）覆盖仅 Owner 管理与工作区无继承权限的旧表述：两级支持多人，工作区管理员继承全部子项目，管理员计入项目人数并集配额；局部管理员不获得实例身份恢复、公开加入/限额配置或永久删除能力。新增 workspace Browser Launch 保持限定范围，既有窄 Session 不升级。

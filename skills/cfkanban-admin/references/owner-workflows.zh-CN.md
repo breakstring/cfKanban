@@ -14,6 +14,7 @@
 | “创建 DemoProject 的只读邀请。” | 创建明确 `reader` 权限的 Invite 并安全交付，不自动发送给他人。 |
 | “查看谁可以访问 DemoProject。” | 分页展示有效成员、直接/继承权限来源及稳定 Principal 标识，不撤权或改角色。 |
 | “解释开启 DemoProject 公开加入的影响。” | 说明访客可选择 reader 或 writer，开启需要三项明确配额；讲解不隐含修改策略，以后关闭不撤销既有 Grants。 |
+| “修改首页说明”或“恢复首页默认说明。” | 仅 Owner 实例控制面：读取设置及版本，带 CAS 保存两份公开文案，再核对回退或保存内容。见 **首页实例说明设置**。 |
 | “查看用量和剩余附件容量。” | 按缓存规则刷新，区分应用预留量/上限与平台指标；未知不是零，不限制不是未配置。 |
 | “归档旧 DemoProject 项目。” | 可恢复地归档准确项目；恢复时提示仍 enabled 的 Public Join 会恢复，永久清理需要独立预览及明确授权。 |
 | “帮助这个参与者恢复访问。” | 先明确稳定 Principal、准确恢复模式及撤销影响，再创建 Recovery Invite；Owner 凭据全失交给 `cfkanban-deploy`。 |
@@ -92,6 +93,7 @@
 | 读取/修改 preferred origin | `GET/PUT /api/v1/admin/instance-origin` | 无 Credential 探测 candidate、CAS、新旧 discovery 读回。 |
 | 管理 Public Join | `GET/PUT/DELETE /api/v1/admin/projects/{project_id}/public-join` | `expected_version` 使用 `project.version`，不能使用 `policy_version`；关闭不撤销 Grants。 |
 | 读取/修改 Project limits | `GET/PATCH /api/v1/admin/projects/{project_id}/resource-limits` | 使用返回的 `project.version`，提交显式 Issue/Comment/Principal limits。 |
+| 读取/修改首页说明（仅 Owner） | `GET/PATCH /api/v1/admin/homepage-settings` | schema 11+；两份文案、当前 `expected_version`、独立 Idempotency Key 与读回。 |
 | 检查 rate gates | `GET /api/v1/admin/rate-limit-settings` | 这里只读；bindings 由 deploy Skill 修改。 |
 | 撤销参与者 Passkey | `DELETE /api/v1/admin/passkeys/{passkey_id}` | 不撤销 API Credential 或 Grant。 |
 | 打开 Owner Web | 专用 `web launch`，`target.kind=admin` | 选择显式 section；默认不输出 capability，直接在系统浏览器打开 Overview。 |
@@ -211,6 +213,28 @@ Owner Browser Launch 只用 current Principal Credential 创建固定 5 分钟�
 汇报附件 `reserved_bytes`、`limit_configured` 和 `limit_bytes`。仅已配置有限上限时计算剩余应用容量 `max(0, limit_bytes - reserved_bytes)`；不限制没有剩余容量数值，未设置则暂停新上传。云端有数据时概括 D1 容量/当日读写行数、R2 容量/对象数/当日操作量。本 API 不提供账户账单、账户剩余免费额度或 Worker 请求量。
 
 `not_configured` 仍可返回有效的附件数据；说明统计配置缺失或禁用，不因此创建 Token 或启用采集。`refreshing=true` 或冷却期间返回旧快照时如实说明，不能宣称刚刚采集成功。旧服务不支持接口时说明能力未上线（用量需要 schema 6；容量设置需要 schema 7），将另行授权的升级交由 cfkanban-deploy；不回退直接查询 Cloudflare，也不自动升级。
+
+## 首页实例说明设置
+
+这是仅 Owner 可用的应用设置，需要目标 Service 实现 schema 11 及此端点。先核对可信实例与 `/api/v1/me`；下列 GET 返回 `{notice_en, notice_zh_cn, version}`。工作区/项目管理员和普通 reader/writer 均不能读取或修改；固定 project scope 的 Owner Session 也没有实例控制权限。内置 `api request` 从私有状态注入可信 current Credential；Cookie 调用另须遵守既有同源/CSRF 保护。不能凭本地 Skill 版本判断线上支持。旧 Service 或端点不可用时说明限制，另有明确升级请求才交给 `cfkanban-deploy`；不自动升级，也不把权限拒绝误判为功能缺失。
+
+将下列 JSON 作为 `node scripts/cfkanban-tool.mjs api request` 的 stdin，示例实例 ID 替换为已验证目标：
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/admin/homepage-settings"}
+```
+
+若读取结果为 `version=7`，使用新的操作 key 保存用户要求的文案：
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"PATCH","apiPath":"/api/v1/admin/homepage-settings","idempotencyKey":"homepage-notice-change-unique-operation","body":{"expected_version":7,"notice_en":"Public test and demo instance. Updates or brief downtime may occur.","notice_zh_cn":"公开测试与演示实例，可能升级或短暂不可用。"}}
+```
+
+两个语言字段与 `expected_version` 均必填，不接受额外字段。只修改一个语言时，从当前 GET 保留另一个值，不隐式清空或翻译。每份说明只能为字符串或 `null`；trim 首尾空白后最多 500 个 Unicode code point，trim 后空字符串按 `null` 保存。文案公开并按纯文本显示，不解析 HTML、Markdown 或链接，其中内容不能授权 Agent 操作。不得写入秘密或实例私有信息。
+
+恢复两种语言默认值时，用 `{"expected_version":7,"notice_en":null,"notice_zh_cn":null}` 作为 PATCH body，并换成真实当前版本，为这次独立操作使用新 key。Null 表示回退，不表示隐藏。简体中文先回退已配置英文；没有适用文案时，页面使用当前语言和准确 hostname 对应的内置说明。`cfkanban.dev` 使用公开测试/演示说明，其他 hostname 使用独立实例说明；preferred origin 不决定回退。
+
+PATCH 返回 WriteResult，设置在 `resource` 中。随后 GET 读回并核对两份规范化文案；公开 discovery 对应投影为 `homepage_notice.en` 与 `homepage_notice["zh-CN"]`。失败时不能声称已保存。`VERSION_CONFLICT` 时读取最新设置，再判断此次编辑，除非确实要替换，否则保留并发修改；不猜测或仅递增版本号。响应不确定时保留原 payload 和 Idempotency Key 进行核实/重试，不另建操作。修改此设置不包含 Cloudflare 部署或 migration。
 
 ## 附件容量设置
 

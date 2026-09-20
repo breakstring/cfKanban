@@ -147,7 +147,7 @@ codex plugin add cfkanban-agent-skills@cfkanban
 
 Record the commit and dirty state. A checkout, `main`, or local modification is not a stable release. Select prereleases or historical versions explicitly; published tags and artifacts are immutable. The current Skill has no remote deployment plan that freezes source-checkout facts, so source evaluation stops before Cloudflare writes.
 
-Use local development, an independent remote test instance, and a production instance for their respective purposes. Remote testing needs separate Worker, D1, instance ID, Credentials, and attachment storage; a test Project alone cannot isolate deployment or migration. Select the exact instance and Project to switch operation targets. One compatible Skill installation can access multiple instances; it does not need reinstalling when the target changes. Development tracking can remain in the production instance.
+This project uses isolated local development and `cfkanban.dev` as a persistent public test, demo, and dogfood instance. The site may run a prerelease; GitHub stable remains the recommended release for users deploying their own instance. Real data on the demo site retains the normal migration, permission, and recovery protections; a test Project alone cannot isolate deployment or migration. Maintainers can use the repository-only [project-release Skill](.agents/skills/project-release/SKILL.md) to prepare releases and upgrade the site within the authorized scope. One compatible Skill installation can access multiple explicitly selected instances.
 
 Install the exact lockfile and run the complete repository validation:
 

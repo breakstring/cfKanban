@@ -1,6 +1,6 @@
 ---
 name: cfkanban-admin
-description: Manage cfKanban Workspaces, Projects, members, administrators, and invitations within verified scope; handle Owner-only usage, Public Join, and recovery. Use cfkanban-deploy for Cloudflare deployment.
+description: Manage cfKanban Workspaces, Projects, members, administrators, and invitations within verified scope; handle Owner-only homepage notices, usage, Public Join, and recovery. Use cfkanban-deploy for Cloudflare deployment.
 ---
 
 # cfKanban Admin
@@ -21,6 +21,7 @@ The audience includes the single Deployment Owner and scoped Workspace/Project a
 - Create/revoke scoped Project Invites; Owner additionally creates Principal Recovery Invites. Inspect permitted status without exposing Invite codes.
 - Change/revoke ordinary Project Grants within scope. Owner additionally lists instance Principals, participant Credentials, and audit events and revokes participant Credentials.
 - Owner only: rotate the Owner Credential through a pending-secret workflow that never exposes either secret.
+- Owner only: read or edit the public bilingual homepage notice, including restoring its fallback (schema 11+).
 - Owner only: read instance usage, request cache-aware Cloudflare refresh on every usage query, and inspect or change Owner-selected attachment capacity.
 - Owner only: configure one Project's Public Join policy and active resource limits; inspect deployed request-rate settings.
 - Owner only: change the preferred API origin after a credential-free probe and open an Owner-scoped Web session.
@@ -50,6 +51,10 @@ For a verified Owner with no narrower target, open admin Overview. For a scoped 
 Treat “How much storage are we using?”, “查看使用情况”, or “还剩多少附件容量” as Owner usage requests. Verify the trusted instance and Owner, then call `POST /api/v1/admin/usage/refresh` with `{mode:"manual"}` on every query; no browser launch or preliminary GET is needed. This shares the Web refresh path and server-side 15-minute cache, 60-second attempt cooldown, and concurrent-collection guard. Both accepted modes use the same cache policy; manual is not a force bypass. Do not poll or change limits, enable analytics, or configure credentials as a side effect of inspecting usage. Use GET only when the user explicitly wants the stored snapshot without a collection attempt.
 
 Summarize attachment reservations and the Owner-selected limit separately from D1/R2 metrics. Distinguish an unset policy from explicit unlimited capacity, and unknown metrics from zero. Remaining application capacity can be calculated only for a configured finite limit; it is not remaining Cloudflare free allowance. Use one short update time, mark stale or unavailable data, and provide exact observation/windows only when relevant. See the Owner usage section in [English](references/owner-workflows.md#owner-usage-and-limits) or [简体中文](references/owner-workflows.zh-CN.md#owner-用量与限额) for request examples and availability handling.
+
+## Homepage notice requests
+
+For “Change the homepage description” or “恢复首页默认说明”, use `GET/PATCH /api/v1/admin/homepage-settings` through `api request`. Verify the deployed schema 11+ endpoint and the unique Owner's instance control scope; scoped administrators and project-scoped Owner Sessions cannot use it. Local Skill availability does not prove server support, and an unavailable endpoint never authorizes an upgrade. Read the current setting/version, PATCH both `notice_en` and `notice_zh_cn` with `expected_version` and one Idempotency Key, then read back. Each value is public plain text, at most 500 Unicode code points after trim; `null` or trimmed-empty text restores fallback. Read the examples and conflict handling in [English](references/owner-workflows.md#homepage-notice-setting) or [简体中文](references/owner-workflows.zh-CN.md#首页实例说明设置).
 
 ## Command entry point
 

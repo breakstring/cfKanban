@@ -132,7 +132,7 @@ try {
   assert.ok(json, `Wrangler did not return JSON: ${output}`);
   const parsed = JSON.parse(json);
   const tableCount = parsed[0]?.results?.[0]?.table_count;
-  assert.equal(tableCount, 31, "Wrangler D1 should contain 30 application tables and the migration ledger");
+  assert.equal(tableCount, 32, "Wrangler D1 should contain 31 application tables and the migration ledger");
   assert.equal(parsed[0]?.results?.[0]?.container_key_count, 0, "final local D1 schema must not contain container keys");
   await validateBatchWorker();
   console.log("Wrangler local D1 applied the ordered migrations and returned the expected schema.");

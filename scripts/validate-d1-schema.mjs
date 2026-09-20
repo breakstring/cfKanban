@@ -42,6 +42,8 @@ for (const qualified of new Set(manifest.migrations.flatMap((entry) => entry.exp
 }
 assert.deepEqual({ ...db.prepare("SELECT reserved_bytes,limit_bytes,limit_configured,version FROM attachment_storage WHERE singleton=1").get() }, { reserved_bytes: 0, limit_bytes: null, limit_configured: 0, version: 1 });
 
+assert.deepEqual({ ...db.prepare("SELECT notice_en,notice_zh_cn,version,last_operation_id FROM homepage_settings WHERE singleton=1").get() }, { notice_en: null, notice_zh_cn: null, version: 1, last_operation_id: null });
+
 const now = 1_787_966_400_000;
 const digest = (character) => character.repeat(64);
 const run = (sql, values = []) => db.prepare(sql).run(...values);
@@ -55,7 +57,7 @@ const expectConstraint = (label, action) => {
 
 assert.equal(get("PRAGMA foreign_keys").foreign_keys, 1, "foreign keys must be enabled");
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
-assert.equal(tables.length, 31, "expected 30 application tables and the deployment migration ledger");
+assert.equal(tables.length, 32, "expected 31 application tables and the deployment migration ledger");
 assert.deepEqual(
   tables.map((row) => row.name).sort(),
   [...new Set(manifest.migrations.flatMap((entry) => entry.expected_artifacts.tables ?? []))].sort(),

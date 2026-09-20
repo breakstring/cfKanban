@@ -40,8 +40,11 @@
 | 工作区 / 项目管理员、权限继承、邀请与人数配额 | [分级管理员](docs/specs/2026-09-20-scoped-administrators-spec.md) |
 | Owner Credential 全失恢复 | [Owner 恢复](docs/specs/2026-09-20-owner-credential-recovery-spec.md) |
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](docs/specs/2026-09-20-stable-release-lifecycle-spec.md) |
+| Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](docs/specs/2026-09-20-homepage-settings-spec.md) |
 
 涉及治理接入或迁移、Roadmap 方向、执行工具同步、合同位置或完成证据方式变化时，使用项目管理治理技能。普通局部修改不因此自动扩展为治理任务。
+
+维护本仓库的 RC/正式发行、stable 推进和测试实例同步时，使用项目级 [project-release](.agents/skills/project-release/SKILL.md)，按当前授权组织准备与执行。它不属于对外分发的 cfKanban Skills；默认环境定位及完整流程以发行生命周期合同和技能为准。
 
 ## 项目协作
 

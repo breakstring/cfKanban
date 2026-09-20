@@ -34,6 +34,8 @@
 
 ## 项目治理
 
+- [项目发版技能](../.agents/skills/project-release/SKILL.md)：维护者 RC/正式发行、stable 推进及默认测试实例升级流程，不对外分发。
+- [首页实例说明设置](specs/2026-09-20-homepage-settings-spec.md)：Owner 双语公开说明与持久测试实例的缺省提示。
 - [Roadmap](project/roadmap.md)：方向真相和推荐顺序。
 - [决策登记表](project/decision-register.md)：确认、建议和延后项。
 - [待讨论问题](project/open-questions.md)：会实质改变合同的选择。
