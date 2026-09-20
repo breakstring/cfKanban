@@ -126,8 +126,9 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 
 ### 2.4 Brand mark
 
-- The cfKanban mark is a warm-ink board with one vivid-orange task card moving out of it: the board identifies the product, while the escaping card gives the Agent-first promise a small, playful motion cue. The mark uses a brighter orange than controls; interactive surfaces use the deeper accessible orange tokens above so white text and focus cues retain sufficient contrast.
+- The cfKanban mark is a warm-paper board with warm-ink task cards and one vivid-orange task card moving out of it: the board identifies the product, while the escaping card gives the Agent-first promise a small, playful motion cue. The rounded board has a transparent exterior. This light board replaces the black tile (CFK-415); a fully transparent board would lose the old white cards on light browser chrome. The mark uses a brighter orange than controls; interactive surfaces use the deeper accessible orange tokens above so white text and focus cues retain sufficient contrast.
 - Use the same self-hosted mark for the favicon, public wordmark, authenticated header, and compact footer lockup. Keep adjacent `cfKanban` text as live text rather than baking a wordmark into the image.
+- The source is `apps/web/src/assets/cfkanban-mark.png`. The plugin's `interface.composerIcon`, `logo`, and `logoDark` reference this same PNG, which is also included in the Skill bundle. Use the same artwork in both host themes; do not maintain a separate plugin copy.
 - The mark must remain legible at 16px and 32px, keep its colored details within one warm-orange family, load no third-party resource, and carry an empty alt value when adjacent text already names the product.
 
 ## 3. Application shell

@@ -32,6 +32,9 @@
       "Use $cfkanban-admin to explain how I can manage projects and invite teammates as Owner.",
       "Use $cfkanban-deploy to check what I need to deploy or upgrade my instance."
     ],
-    "brandColor": "#D86F45"
+    "brandColor": "#D86F45",
+    "composerIcon": "./apps/web/src/assets/cfkanban-mark.png",
+    "logo": "./apps/web/src/assets/cfkanban-mark.png",
+    "logoDark": "./apps/web/src/assets/cfkanban-mark.png"
   }
 }

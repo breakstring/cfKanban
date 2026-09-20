@@ -28,6 +28,7 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
     await copyEntries([
       ".codex-plugin/plugin.json",
       ".agents/plugins/marketplace.json",
+      "apps/web/src/assets/cfkanban-mark.png",
       "skills",
       "packages/skill-runtime",
       "docs/skills/README.md",
