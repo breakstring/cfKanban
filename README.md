@@ -68,6 +68,22 @@ Then start a **new Codex task**. Plugin installation does not modify Cloudflare,
 
 You normally talk to the Skill in natural language. The bundled `.mjs` commands are deterministic tools for the Agent; ordinary users do not need to run them manually.
 
+## After installation: start with Howto
+
+In your new task, start with the read-only usage guide:
+
+> Use `$cfkanban-howto` to explain how to use cfKanban, which Skill fits my needs, and give me a few prompts I can try.
+
+You can make the question specific: “I have joined a Project; how do I find my tasks, create an Issue, change its status, and add a Comment?” Howto explains the available actions and suggests the next Skill; asking for guidance does not perform those actions.
+
+Then choose the path that matches your situation:
+
+- **Invited to an existing Project:** follow [the joining steps](#join-an-existing-cfkanban-project). You do not need your own Cloudflare deployment.
+- **Already have access:** ask `$cfkanban` to show your unfinished Issues in a named Project or open its board.
+- **Want to host an instance:** follow [the deployment steps](#ask-your-agent-to-deploy), then create your first board as Owner.
+
+Howto is a recommended starting point, not a required setup step. If you already know what you want, ask the appropriate operational Skill directly. More examples are in the [Agent Skills guide](docs/skills/README.md).
+
 ## Ask your Agent to deploy
 
 In the new task, this one sentence is enough:
