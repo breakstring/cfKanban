@@ -65,6 +65,7 @@ Public Join 的 `principal_limit` 统计该项目有效直接成员、项目管�
 - 授予 body 为 `{principal_id, expected_version}`；返回沿用 WriteResult、资源 version、allowed_actions 和有效来源。列表使用既有 limit/cursor 合同；撤销记录可用于显式重新授予。
 - 工作区和项目新增 `GET .../administrator-candidates`：任免权限与对应 POST 一致；支持 `q` 姓名子串搜索及 `limit/cursor` 分页，返回 `principal_id/display_name/expected_version`。分页前排除 Owner、有效直接管理员及工作区继承管理员。实例级 Owner 可选择全部既有用户；窄范围会话及局部管理员只看到本范围有效成员及已有管理员记录中的用户，不扩大人员可见范围。首次授予版本为 0，已撤销的直接授权返回当前版本；候选结果不替代 POST 的实时鉴权、CAS 和配额检查。
 - `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/members`：供当前项目管理员读取有界、分页的有效成员和授权来源；不返回跨范围身份细节。
+- `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/member-candidates`：用于普通成员的姓名搜索选择，要求当前 `manage_members` 能力，并复用实时 Session/授权查询保护。支持 NFKC、转小写后的 `q` 姓名子串（最多 100 字符）及 `limit/cursor` 分页，仅返回 `principal_id/display_name`。分页前排除 Owner 和已有有效直接 Project Grant；直接/继承管理员可添加独立普通授权，已撤销授权可重新授予。实例级 Owner 可选择全部既有用户；局部管理员与窄范围会话仅可见当前项目有效成员及本项目既有普通/管理员授权记录中的用户，不列举兄弟项目或其他工作区人员。无可见候选的新成员通过邀请加入；既有 Grant POST 的鉴权与配额合同不变，不增加 schema 迁移。
 - 既有项目 Grant 与普通 Invitation 管理端点按目标扩展局部管理授权；`/admin` 路径不等于全实例授权，实例身份/安全端点继续 Owner-only。
 - 工作区/项目读回使用 allowed_actions 表达改名、建项、状态名、归档/恢复、成员及管理员管理。列表包含当前管理员有权管理的空工作区。
 
@@ -73,6 +74,10 @@ Public Join 的 `principal_limit` 统计该项目有效直接成员、项目管�
 ## Web 与 Skills
 
 第一方 Web 通过姓名搜索和人员下拉框添加管理员，不要求手输 UUID；排除已有有效管理权限的人员，普通 reader/writer 仍可提升，已撤销者可重新添加。提供工作区/项目的管理入口与成员/管理员列表，清楚显示继承来源、直接授权和移除后的剩余访问；支持多人、CAS 冲突、归档恢复提示、中英文。Owner 仍使用实例管理页面；局部管理员只进入自己范围的管理界面，不展示全实例身份、凭据、用量和安全审计。
+
+2026-09-20 用户授权管理页体验修复：普通成员授权同样通过姓名搜索选择，取消手填 UUID；管理员候选与普通成员候选按各自用途过滤，均不扩大人员可见范围。表单操作与对应控件对齐，说明文字独立排列，候选为空时明确引导通过项目邀请添加新成员。
+
+局部管理页在安全恢复存储可用且没有待处理邀请操作时，直接显示角色选择与邀请入口，不要求预先检查历史。仅真实待恢复操作进入原操作重试、撤销或完整复核流程；跨范围待处理操作仍阻止创建，原幂等键、跨标签锁和一次性交付保护不变。邀请历史的刷新与空态独立呈现，普通刷新不隐藏正常邀请入口。
 
 沿用新参与者 project_selection Session 的实时权限；管理请求必须同时满足当前角色和 Session 允许范围。既有固定 Project/Issue Session 不扩大为工作区管理范围，Owner 窄 scope Session 也不提升成实例管理。局部管理员用既有 Project/Issue Launch 进入界面，空工作区管理提供明确受限入口；不得复用 Owner admin scope。
 

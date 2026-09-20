@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { createTestHarness } from "wrangler";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
+import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
+import { listProjectMemberCandidates } from "../../apps/worker/src/services/scoped-administrators.ts";
 
 const server = createTestHarness({ root: fileURLToPath(new URL("../../", import.meta.url)), workers: [{ configPath: "wrangler.wp02-test.jsonc" }] });
 const owner = { id: crypto.randomUUID(), token: `cfk_v1_scopeowner_${"A".repeat(43)}` };
@@ -54,6 +56,100 @@ before(async () => {
     ownerCredentialId: crypto.randomUUID(), ownerCredentialToken: owner.token, ownerDisplayName: "Scoped_Owner", preferredApiOrigin: "https://kanban.example.test" });
 });
 after(async () => server.close());
+
+test("普通成员候选按项目可见范围搜索分页，排除直接成员并保留独立授权和重新授予", async () => {
+  const w = await workspace("MemberCandidateWorkspace");
+  const p = await project(w, "MemberCandidateProject");
+  const sibling = await project(w, "MemberCandidateSibling");
+  const hidden = await project(await workspace("MemberCandidateHidden"), "Hidden");
+  const lead = await person("MemberLead");
+  const admin = await person("MemberAdmin");
+  const reader = await person("MemberReader");
+  const writer = await person("MemberWriter");
+  const former = await person("MemberFormer");
+  const formerAdmin = await person("MemberFormerAdmin");
+  const siblingMember = await person("MemberSibling");
+  const hiddenMember = await person("MemberHidden");
+  const stranger = await person("MemberStranger");
+  const leadGrant = ok(await grant(w, lead));
+  ok(await grant(p, admin));
+  ok(await revoke(p, ok(await grant(p, formerAdmin))));
+  for (const [target, actor, role] of [[p,reader,"reader"],[p,writer,"writer"],[sibling,siblingMember,"reader"],[hidden,hiddenMember,"writer"]]) {
+    ok(await call(owner, `/api/v1/admin/projects/${target.id}/grants`, "POST", { principal_id: actor.id, role }));
+  }
+  const direct = ok(await call(owner, `/api/v1/admin/projects/${p.id}/grants`, "POST", { principal_id: former.id, role: "reader" }));
+  ok(await call(owner, `/api/v1/admin/grants/${direct.id}?expected_version=${direct.version}`, "DELETE"));
+  const path = `${p.path}/member-candidates`;
+  const scoped = ok(await call(admin, `${path}?limit=100`)).items;
+  assert.deepEqual(scoped.map(item => item.principal_id).sort(), [lead.id,admin.id,former.id,formerAdmin.id].sort());
+  for (const item of scoped) assert.deepEqual(Object.keys(item).sort(), ["display_name", "principal_id"]);
+  assert.deepEqual(ok(await call(lead, `${path}?limit=100`)).items, scoped);
+  const all = ok(await call(owner, `${path}?q=Member&limit=100`)).items;
+  for (const excluded of [owner, reader, writer]) assert.ok(!all.some(item => item.principal_id === excluded.id));
+  for (const included of [lead,admin,former,formerAdmin,siblingMember,hiddenMember,stranger]) assert.ok(all.some(item => item.principal_id === included.id));
+  const first = ok(await call(admin, `${path}?limit=1`));
+  assert.equal(first.items.length, 1); assert.equal(first.has_more, true);
+  let cursor = first.next_cursor;
+  const paged = [...first.items];
+  while (cursor) {
+    const page = ok(await call(admin, `${path}?limit=1&cursor=${encodeURIComponent(cursor)}`));
+    paged.push(...page.items); cursor = page.next_cursor;
+  }
+  assert.deepEqual(paged, scoped);
+  assert.equal((await call(admin, `${path}?q=former&cursor=${encodeURIComponent(first.next_cursor)}`)).status, 409);
+  const search = ok(await call(admin, `${path}?q=${encodeURIComponent("  ＦＯＲＭＥＲ  ")}`));
+  assert.deepEqual(search.items.map(item => item.principal_id).sort(), [former.id,formerAdmin.id].sort());
+  assert.equal(ok(await call(admin, `${path}?q=%25`)).items.length, 0);
+  assert.equal((await call(admin, `${path}?q=${"a".repeat(101)}`)).status, 400);
+  assert.equal((await call(writer, path)).status, 403);
+  assert.equal((await call(reader, path)).status, 403);
+  assert.equal((await call(admin, `${sibling.path}/member-candidates`)).status, 403);
+  assert.equal((await call(lead, `${hidden.path}/member-candidates`)).status, 403);
+  const narrowOwner = await session(owner, { kind: "workspace", workspace_id: w.id });
+  assert.deepEqual(ok(await call(narrowOwner, `${path}?limit=100`)).items, scoped);
+  const fixed = await session(lead, { kind: "project", workspace_id: w.id, project_id: p.id });
+  await db.prepare("UPDATE web_sessions SET target_kind='project', target_json=?1 WHERE id=?2")
+    .bind(JSON.stringify({ kind: "project", workspace_id: w.id, project_id: p.id, entry_path: `/app/w/${w.id}/p/${p.id}` }), fixed.resource.session_id).run();
+  assert.deepEqual(ok(await call(fixed, `${path}?limit=100`)).items, scoped);
+  assert.equal((await call(fixed, `${sibling.path}/member-candidates`)).status, 403);
+  ok(await call(admin, `/api/v1/admin/projects/${p.id}/grants`, "POST", { principal_id: former.id, role: "writer" }));
+  ok(await call(admin, `/api/v1/admin/projects/${p.id}/grants`, "POST", { principal_id: lead.id, role: "reader" }));
+  const after = ok(await call(admin, `${path}?limit=100`)).items;
+  assert.deepEqual(after.map(item => item.principal_id).sort(), [admin.id,formerAdmin.id].sort());
+  ok(await revoke(w, leadGrant));
+  assert.equal((await call(lead, path)).status, 403);
+});
+
+test("成员候选查询在初始鉴权后并发撤权也不读取人员数据", async () => {
+  const w = await workspace("MemberCandidateRace");
+  const p = await project(w, "Race");
+  const admin = await person("MemberRaceAdmin");
+  const administrator = ok(await grant(p, admin));
+  const auth = await authenticateBearer(db, `Bearer ${admin.token}`);
+  let rawRows;
+  function wrapStatement(statement) {
+    return new Proxy(statement, { get(target, property) {
+      if (property === "bind") return (...values) => wrapStatement(target.bind(...values));
+      if (property === "all") return async () => {
+        ok(await revoke(p, administrator));
+        const result = await target.all(); rawRows = result.results; return result;
+      };
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+  }
+  const raced = new Proxy(db, { get(target, property) {
+    if (property === "prepare") return sql => {
+      const statement = target.prepare(sql);
+      return sql.includes("SELECT p.id AS principal_id, p.display_name") ? wrapStatement(statement) : statement;
+    };
+    const value = Reflect.get(target, property, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  } });
+  await assert.rejects(listProjectMemberCandidates(raced, auth, { workspaceId: w.id, projectId: p.id },
+    new URL(`https://kanban.example.test${p.path}/member-candidates`), Date.now()), error => [403,404].includes(error.status));
+  assert.deepEqual(rawRows, []);
+});
 
 test("administrator CRUD enforces hierarchy, independent grants, data capabilities, CAS and current replay authorization", async () => {
   const w = await workspace("Hierarchy");

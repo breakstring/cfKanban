@@ -1039,6 +1039,37 @@ test("Invitation recovery claim is atomic across concurrent tabs", async () => {
   assert.deepEqual(firstTab.read(), winners[0].value);
 });
 
+test("跨标签处理完邀请后，新邀请丢弃旧请求键而未处理操作仍阻止创建", async () => {
+  const storage = new MemoryStorage();
+  const locks = new MemoryExclusiveLocks();
+  let now = 100;
+  let sequence = 0;
+  const intents = new PendingIntentKeys(() => `key-${++sequence}`, 100);
+  const firstTab = new InvitationRecoveryCoordinator("member", storage, locks.run.bind(locks), () => "a", () => now);
+  const secondTab = new InvitationRecoveryCoordinator("member", storage, locks.run.bind(locks), () => "b", () => now);
+  const endpoint = "/api/v1/admin/invitations";
+  const body = { kind: "project_grant", grants: [{ project_id: "project-a", role: "writer" }] };
+  let acquired = 0;
+  const freshIntent = () => {
+    acquired += 1;
+    intents.clearRequest("POST", endpoint);
+    return intents.acquire("POST", endpoint, body, now);
+  };
+  await firstTab.runNewOperation(freshIntent, body, async lease => { lease.retainPendingAfterUncertainResult(); });
+  const pending = firstTab.read();
+  await assert.rejects(firstTab.runNewOperation(freshIntent, body, async () => assert.fail("must stay blocked")), InvitationRecoveryBlockedError);
+  assert.equal(acquired, 1, "共享记录未处理时不能清理原请求键");
+  assert.equal(intents.acquire("POST", endpoint, body, now).key, pending.idempotency_key);
+  await secondTab.runExistingOperation(pending, async lease => { lease.markCommittedUnavailable("invitation-a"); });
+  await assert.rejects(firstTab.runNewOperation(freshIntent, body, async () => assert.fail("delivery not acknowledged")), InvitationRecoveryBlockedError);
+  assert.equal(await secondTab.settle(secondTab.read()), true);
+  now = 300;
+  let nextKey;
+  await firstTab.runNewOperation(freshIntent, body, async (lease, intent) => { nextKey = intent.key; lease.settle(); });
+  assert.equal(nextKey, "key-2", "另一标签处理完成后，即使旧键过期也应创建全新操作");
+  assert.notEqual(nextKey, pending.idempotency_key);
+});
+
 test("a committed one-time Invitation remains locked until the visible delivery is acknowledged", async () => {
   const storage = new MemoryStorage();
   const locks = new MemoryExclusiveLocks();

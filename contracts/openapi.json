@@ -3188,6 +3188,112 @@
         "x-cfkanban-permission": "project_administrator"
       }
     },
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/member-candidates": {
+      "get": {
+        "operationId": "listProjectMemberCandidates",
+        "tags": [
+          "projects"
+        ],
+        "summary": "List Project Member Candidates",
+        "description": "Deployment Owner, current parent Workspace administrator, or current Project administrator, within the current Session scope. Ordinary writer Grants do not grant management rights. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "Optional normalized display name substring."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectMemberCandidateListResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_administrator"
+      }
+    },
     "/api/v1/issues": {
       "get": {
         "operationId": "listIssues",
@@ -11597,6 +11703,71 @@
                     "type": "null"
                   }
                 ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectMemberCandidate": {
+        "type": "object",
+        "required": [
+          "principal_id",
+          "display_name"
+        ],
+        "properties": {
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "display_name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectMemberCandidateListResult": {
+        "type": "object",
+        "required": [
+          "has_more",
+          "items",
+          "next_cursor",
+          "resolved_scope"
+        ],
+        "description": "Requires current Project member-management permission. Excludes Owner and active direct Project grants before pagination. Instance-scoped Owner can select existing Principals; narrower callers see only this Project's effective members and existing direct member/administrator records. Inherited or direct administrators may receive an independent ordinary grant; revoked direct grants may be regranted. No other Project or Workspace directory is exposed. Grant writes retain their existing authorization and quota checks.",
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/ProjectMemberCandidate"
+            }
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolved_scope": {
+            "type": "object",
+            "required": [
+              "workspace_id",
+              "project_id"
+            ],
+            "properties": {
+              "workspace_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "project_id": {
+                "$ref": "#/components/schemas/Uuid"
               }
             },
             "additionalProperties": false

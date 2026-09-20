@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import AdministratorSelect from "../components/AdministratorSelect.vue";
+import PersonSelect from "../components/PersonSelect.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
@@ -14,7 +14,7 @@ import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor } from "../lib/pagination";
 import { navigate } from "../lib/router";
 import { hasManagementActions, managementPath, remainingAccessSources, sourceLabel } from "../lib/scoped-management";
-import type { AccessSource, AdministratorCandidate, AdministratorResource, ContainerResource, GrantResource, ListResult, ProjectMember, ProjectStatusResource, WebSessionView } from "../types";
+import type { AccessSource, AdministratorCandidate, AdministratorResource, ContainerResource, GrantResource, ListResult, MemberCandidate, ProjectMember, ProjectStatusResource, WebSessionView } from "../types";
 
 const props = defineProps<{ workspaceId: string; projectId?: string | undefined; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
@@ -35,7 +35,8 @@ const archived = ref(false);
 const draft = ref({ display_name: "", context: "" });
 const projectName = ref("");
 const administratorCandidate = ref<AdministratorCandidate | null>(null);
-const memberForm = ref({ principal_id: "", role: "writer" as "reader" | "writer" });
+const memberCandidate = ref<MemberCandidate | null>(null);
+const memberRole = ref<"reader" | "writer">("writer");
 const conflict = ref<CasConflictState | null>(null);
 const confirmation = ref<{ title: string; message: string; run: () => Promise<void>; restore?: ContainerResource } | null>(null);
 const { error, clearError, setError } = useLocalizedError();
@@ -52,6 +53,7 @@ const endpoints: Record<string, string> = {
 function clearFacts(): void {
   resource.value = null;
   administratorCandidate.value = null;
+  memberCandidate.value = null;
   administrators.value = []; members.value = []; grants.value = []; projects.value = []; statuses.value = [];
   cursors.value = {}; confirmation.value = null;
 }
@@ -162,6 +164,10 @@ function grantAdministrator(item?: AdministratorResource): void {
     run: () => write(`${resourcePath}/administrators`, "POST", { principal_id: id, expected_version: expectedVersion }),
   };
 }
+function grantMember(): void {
+  if (!can("manage_members") || !memberCandidate.value) return;
+  void write(grantsPath, "POST", { principal_id: memberCandidate.value.principal_id, role: memberRole.value });
+}
 function sourcesText(sources: AccessSource[]): string {
   return sources.map(source => `${sourceLabel(source.kind, locale.value === "zh-CN")}${source.role ? ` · ${source.role}` : ""}`).join(" / ");
 }
@@ -259,9 +265,13 @@ onUnmounted(() => { mounted = false; generation += 1; clearFacts(); });
       <section v-if="active" class="management-section">
         <h2>{{ ui('Administrators', '管理员') }}</h2>
         <p>{{ projectId ? ui('Workspace administrators also inherit management access. Project administrators cannot appoint or remove peers.', '工作区管理员也继承本项目管理权；项目管理员不能任免同级管理员。') : ui('Only the Owner can appoint or remove workspace administrators. All current and future projects inherit this access.', '只有实例所有者可以任免工作区管理员；授权覆盖现在和未来的全部子项目。') }}</p>
-        <form v-if="can('manage_administrators')" class="management-row" @submit.prevent="grantAdministrator()">
-          <AdministratorSelect :resource-path="resourcePath" :disabled="busy" @select="administratorCandidate = $event" />
-          <button class="secondary-button" type="submit" :disabled="busy || !administratorCandidate">{{ ui('Grant administrator access', '授予管理员权限') }}</button>
+        <form v-if="can('manage_administrators')" class="management-person-form" @submit.prevent="grantAdministrator()">
+          <PersonSelect v-model="administratorCandidate" :endpoint="`${resourcePath}/administrator-candidates`" :disabled="busy"
+            :placeholder="ui('Choose an administrator', '请选择要添加的管理员')"
+            :empty-text="ui('No people available to add as administrators.', '当前没有可添加的管理员。')"
+            :hint="ui('Search within your visible scope. The Owner and people with administrator access are excluded.', '仅搜索当前可见范围内的人员，已排除实例所有者和已有管理权限的人员。')" v-slot="{ ready }">
+            <button class="secondary-button" type="submit" :disabled="busy || !ready">{{ ui('Grant administrator access', '授予管理员权限') }}</button>
+          </PersonSelect>
         </form>
         <div v-for="administrator in administrators" :key="administrator.id" class="management-row">
           <div><strong>{{ administrator.principal.display_name }}</strong><p><code>{{ administrator.principal_id }}</code> · {{ administrator.revoked_at ? ui('Revoked', '已撤销') : ui('Active', '有效') }}</p></div>
@@ -278,10 +288,14 @@ onUnmounted(() => { mounted = false; generation += 1; clearFacts(); });
         </div>
         <button v-if="cursors.members" class="secondary-button" type="button" :disabled="busy" @click="more('members')">{{ ui('Load more members', '加载更多成员') }}</button>
         <h3>{{ ui('Direct memberships', '直接成员授权') }}</h3>
-        <form class="management-row" @submit.prevent="write(grantsPath, 'POST', { principal_id: memberForm.principal_id.trim(), role: memberForm.role })">
-          <label>{{ ui('Principal UUID', '用户 UUID') }}<input v-model="memberForm.principal_id" required pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" /></label>
-          <label>{{ ui('Role', '角色') }}<select v-model="memberForm.role"><option value="reader">reader</option><option value="writer">writer</option></select></label>
-          <button class="secondary-button" type="submit" :disabled="busy">{{ ui('Grant access', '授予访问') }}</button>
+        <form class="management-person-form" @submit.prevent="grantMember">
+          <PersonSelect v-model="memberCandidate" :endpoint="`${resourcePath}/member-candidates`" :disabled="busy"
+            :placeholder="ui('Choose a member', '请选择要添加的成员')"
+            :empty-text="ui('No people available for direct access. Use an invitation below to add new members.', '当前没有可直接授权的人员。添加新成员，请使用下方的项目邀请。')"
+            :hint="ui('Search within your visible scope. Existing direct members can be managed below; new people can join by invitation.', '仅搜索当前可见范围内的人员。已有直接成员在下方管理，新成员通过邀请加入。')" v-slot="{ ready }">
+            <label>{{ ui('Role', '角色') }}<select v-model="memberRole" :aria-label="ui('Role', '角色')" :disabled="busy"><option value="reader">{{ ui('Reader', '只读者') }}</option><option value="writer">{{ ui('Writer', '协作者') }}</option></select></label>
+            <button class="secondary-button" type="submit" :disabled="busy || !ready">{{ ui('Grant access', '授予访问') }}</button>
+          </PersonSelect>
         </form>
         <div v-for="grant in grants" :key="grant.id" class="management-row">
           <div><strong>{{ grant.principal.display_name }}</strong><p>{{ grant.role }} · {{ grant.revoked_at ? ui('Revoked', '已撤销') : ui('Active', '有效') }}</p></div>
@@ -310,10 +324,13 @@ onUnmounted(() => { mounted = false; generation += 1; clearFacts(); });
 .scoped-management { max-width: 1040px; }
 .management-section { padding-block: var(--space-6, 24px); border-bottom: 1px solid var(--color-border); }
 .management-section > h2 { margin-top: 0; }
+.management-section > h3 { margin-block: 24px 16px; }
+.management-person-form { padding-block: 16px; }
 .management-row { display: flex; align-items: end; gap: 16px; flex-wrap: wrap; padding-block: 12px; border-bottom: 1px solid var(--color-border); }
 .management-row > div, .management-row > label:first-child { flex: 1; min-width: 220px; }
 .management-row label { display: grid; gap: 8px; }
 .management-row p { margin-block: 6px; overflow-wrap: anywhere; }
 .management-row code { font-size: 12px; }
+.management-row input, .management-row select, .management-row > button { min-height: 44px; }
 @media (max-width: 600px) { .management-row button { min-height: 44px; } }
 </style>

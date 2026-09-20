@@ -351,9 +351,12 @@ export interface ManagementGrant {
   version: number;
 }
 
-export interface AdministratorCandidate {
+export interface MemberCandidate {
   principal_id: string;
   display_name: string;
+}
+
+export interface AdministratorCandidate extends MemberCandidate {
   expected_version: number;
 }
 

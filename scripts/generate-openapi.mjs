@@ -86,6 +86,7 @@ const operations = [
   ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators", "createProjectAdministrator", "projects", authenticated, "idempotent-cas", "CreateAdministratorRequest"],
   ["delete", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators/{administrator_id}", "revokeProjectAdministrator", "projects", authenticated, "idempotent-cas-delete"],
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/members", "listProjectMembers", "projects", authenticated, "read", "CursorQuery"],
+  ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/member-candidates", "listProjectMemberCandidates", "projects", authenticated, "read", "AdministratorCandidateQuery"],
 
   ["get", "/api/v1/issues", "listIssues", "issues", authenticated, "read", "IssueListQuery"],
   ["get", "/api/v1/issues/candidates", "listIssueCandidates", "issues", authenticated, "read", "CandidateListQuery"],
@@ -348,7 +349,7 @@ const permissionGroups = {
     "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings",
   ],
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
-  project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
+  project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
   scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
   project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext"],
   project_reader_active_writer_tombstone: [
@@ -623,6 +624,18 @@ const schemas = {
     properties: {
       has_more: { type: "boolean" }, items: { type: "array", maxItems: 100, items: ref("AdministratorCandidate") }, next_cursor: nullableString(),
       resolved_scope: { type: "object", required: ["workspace_id", "project_id"], properties: { workspace_id: ref("Uuid"), project_id: { anyOf: [ref("Uuid"), { type: "null" }] } }, additionalProperties: false },
+    }, additionalProperties: false,
+  },
+  ProjectMemberCandidate: {
+    type: "object", required: ["principal_id", "display_name"],
+    properties: { principal_id: ref("Uuid"), display_name: string() }, additionalProperties: false,
+  },
+  ProjectMemberCandidateListResult: {
+    type: "object", required: ["has_more", "items", "next_cursor", "resolved_scope"],
+    description: "Requires current Project member-management permission. Excludes Owner and active direct Project grants before pagination. Instance-scoped Owner can select existing Principals; narrower callers see only this Project's effective members and existing direct member/administrator records. Inherited or direct administrators may receive an independent ordinary grant; revoked direct grants may be regranted. No other Project or Workspace directory is exposed. Grant writes retain their existing authorization and quota checks.",
+    properties: {
+      has_more: { type: "boolean" }, items: { type: "array", maxItems: 100, items: ref("ProjectMemberCandidate") }, next_cursor: nullableString(),
+      resolved_scope: { type: "object", required: ["workspace_id", "project_id"], properties: { workspace_id: ref("Uuid"), project_id: ref("Uuid") }, additionalProperties: false },
     }, additionalProperties: false,
   },
   AdministratorWriteResult: { type: "object", required: ["event_cursor", "idempotent_replay", "resource"], properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("Administrator") }, additionalProperties: false },
@@ -2145,6 +2158,7 @@ const operationResponseSchemas = {
   revokeWorkspaceAdministrator: ref("AdministratorWriteResult"),
   revokeProjectAdministrator: ref("AdministratorWriteResult"),
   listProjectMembers: ref("EffectiveMemberListResult"),
+  listProjectMemberCandidates: ref("ProjectMemberCandidateListResult"),
   findProjectAssignee: ref("ProjectAssigneeResult"),
   listAttachments: ref("AttachmentListResult"),
   getAttachment: ref("Attachment"),
