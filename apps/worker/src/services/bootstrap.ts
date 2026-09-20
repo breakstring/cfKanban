@@ -1,6 +1,7 @@
+import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
 import migrationManifest from "../../../../migrations/manifest.json" with { type: "json" };
 
-import { requireCredentialToken, requireDisplayName, requireHttpsOrigin, requireUuid, timestamp } from "../domain/model.ts";
+import { requireCredentialToken, principalDisplayNameKey, requirePrincipalDisplayName, requireHttpsOrigin, requireUuid, timestamp } from "../domain/model.ts";
 import { sha256Hex } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, probeOperationCommit } from "../kernel/d1.ts";
 import { conflict, platformUnavailable, validationError } from "../kernel/errors.ts";
@@ -104,7 +105,7 @@ export async function bootstrapInstance(
   const operationId = requireUuid(input.operationId, "operation_id");
   const ownerPrincipalId = requireUuid(input.ownerPrincipalId, "owner_principal_id");
   const ownerCredentialId = requireUuid(input.ownerCredentialId, "owner_credential_id");
-  const ownerDisplayName = requireDisplayName(input.ownerDisplayName, "owner_display_name");
+  const ownerDisplayName = requirePrincipalDisplayName(input.ownerDisplayName, "owner_display_name");
   const preferredApiOrigin = requireHttpsOrigin(input.preferredApiOrigin);
   const credential = requireCredentialToken(input.ownerCredentialToken, "owner_credential_token");
   const serviceVersion = input.serviceVersion ?? "0.1.0";
@@ -138,10 +139,10 @@ export async function bootstrapInstance(
   const statements = [
     db.prepare(
       `INSERT INTO principals
-        (id, display_name, version, created_at, updated_at, last_operation_id)
-       SELECT ?1, ?2, 1, ?3, ?3, ?4
+        (id, display_name, version, created_at, updated_at, last_operation_id, display_name_key)
+       SELECT ?1, ?2, 1, ?3, ?3, ?4, ?5
        WHERE NOT EXISTS (SELECT 1 FROM instance_meta WHERE singleton = 1)`,
-    ).bind(ownerPrincipalId, ownerDisplayName, now, operationId),
+    ).bind(ownerPrincipalId, ownerDisplayName, now, operationId, principalDisplayNameKey(ownerDisplayName)),
     db.prepare(
       `INSERT INTO instance_meta
         (singleton, instance_id, owner_principal_id, service_version, schema_version, created_at)
@@ -194,7 +195,7 @@ export async function bootstrapInstance(
     await executeAtomicBatch(db, {
       businessStatements: statements,
       committedAt: now,
-      confirmBusinessRejection: async () => instanceAlreadyInitialized(db),
+      confirmBusinessRejection: async () => await instanceAlreadyInitialized(db) || await principalDisplayNameExists(db, ownerDisplayName),
       expectedEventCount: 1,
       operationId,
       primarySubjectId: instanceId,
@@ -202,6 +203,9 @@ export async function bootstrapInstance(
     });
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
+      if (!(await instanceAlreadyInitialized(db)) && await principalDisplayNameExists(db, ownerDisplayName)) {
+        throw principalDisplayNameConflict();
+      }
       throw conflict("INSTANCE_ALREADY_INITIALIZED", "request_owner");
     }
     throw error;

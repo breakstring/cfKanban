@@ -267,7 +267,7 @@ before(async () => {
     operationId: ids.bootstrapOperation,
     ownerCredentialId: ids.ownerCredential,
     ownerCredentialToken: initialOwnerToken,
-    ownerDisplayName: "Deployment Owner",
+    ownerDisplayName: "Deployment_Owner",
     ownerPrincipalId: ids.ownerPrincipal,
     preferredApiOrigin: "https://kanban.example.test",
   });
@@ -575,7 +575,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const bulkNewCode = invitationCode(bulkNewInvite.body);
   const bulkNewRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
-      display_name: "Bulk New Principal",
+      display_name: "Bulk_New_Principal",
       invite_code: bulkNewCode,
       new_credential_token: bulkNewToken,
       redeem_as: "new_principal",
@@ -690,7 +690,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
     }),
     racedInviteCode,
     "new_principal",
-    "Terminal Race Loser",
+    "Terminal_Race_Loser",
     racedLoserToken,
     Date.now(),
   );
@@ -699,7 +699,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   try {
     racedWinner = await jsonRequest("/api/v1/invitations/redeem", {
       body: {
-        display_name: "Terminal Race Winner",
+        display_name: "Terminal_Race_Winner",
         invite_code: racedInviteCode,
         new_credential_token: racedWinnerToken,
         redeem_as: "new_principal",
@@ -721,7 +721,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   ).bind(racedLoserKeyDigest).first();
   assert.equal(racedLoserPending.count, 0);
   const racedLoserPrincipal = await db.prepare(
-    "SELECT COUNT(*) AS count FROM principals WHERE display_name = 'Terminal Race Loser'",
+    "SELECT COUNT(*) AS count FROM principals WHERE display_name = 'Terminal_Race_Loser'",
   ).first();
   assert.equal(racedLoserPrincipal.count, 0);
   const consumedInvitePage = await jsonRequest(`/invite?code=${encodeURIComponent(racedInviteCode)}`);
@@ -747,7 +747,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   ).bind(unsafeSnapshotKeyDigest).first();
   const unsafeSnapshotRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
-      display_name: "Snapshot Safety Probe",
+      display_name: "Snapshot_Safety_Probe",
       invite_code: unsafeSnapshotCode,
       new_credential_token: unsafeSnapshotToken,
       redeem_as: "new_principal",
@@ -798,7 +798,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
         }),
         code,
         "new_principal",
-        "Workspace Snapshot Safety Probe",
+        "Workspace_Snapshot_Safety_Probe",
         newToken,
         Date.now(),
       ).then(() => null, (error) => error);
@@ -1025,7 +1025,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const principalCount = await db.prepare("SELECT COUNT(*) AS count FROM principals").first();
   const conflictRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
-      display_name: "Must Roll Back",
+      display_name: "Must_Roll_Back",
       invite_code: conflictInviteCode,
       new_credential_token: conflictToken,
       redeem_as: "new_principal",
@@ -1237,7 +1237,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const beforeQuotaPrincipals = await db.prepare("SELECT COUNT(*) AS count FROM principals").first();
   const quotaRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
-      display_name: "Quota Rollback",
+      display_name: "Quota_Rollback",
       invite_code: quotaCode,
       new_credential_token: quotaToken,
       redeem_as: "new_principal",
@@ -1270,7 +1270,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   ).first();
   const revokedRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
-      display_name: "Terminal Invite Probe",
+      display_name: "Terminal_Invite_Probe",
       invite_code: revocableCode,
       new_credential_token: token("terminal", "T"),
       redeem_as: "new_principal",
@@ -1301,7 +1301,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   ).first();
   const expiredRedeem = await jsonRequest("/api/v1/invitations/redeem", {
     body: {
-      display_name: "Expired Invite Probe",
+      display_name: "Expired_Invite_Probe",
       invite_code: expiringCode,
       new_credential_token: token("terminal", "T"),
       redeem_as: "new_principal",
@@ -1346,7 +1346,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   assert.deepEqual(await ownerRotationSideEffects(), exposedRotationBefore);
   const restoredOwnerName = await jsonRequest("/api/v1/me", {
     body: {
-      display_name: "Deployment Owner",
+      display_name: "Deployment_Owner",
       expected_version: exposedOwnerName.body.resource.version,
     },
     headers: ownerHeaders(),
@@ -1393,7 +1393,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   );
   const restoredOwnerNameAfterRace = await jsonRequest("/api/v1/me", {
     body: {
-      display_name: "Deployment Owner",
+      display_name: "Deployment_Owner",
       expected_version: racedOwnerName.body.resource.version,
     },
     headers: ownerHeaders(),

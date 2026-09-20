@@ -1,3 +1,4 @@
+import { normalizePrincipalDisplayName, requireObservedPrincipalDisplayName } from "../../packages/skill-runtime/src/principal-name.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { request as httpRequest } from "node:http";
 import assert from "node:assert/strict";
@@ -152,7 +153,7 @@ const OTHER_PRINCIPAL_ID = "33333333-3333-4333-8333-333333333333";
 const CREDENTIAL_ID = "44444444-4444-4444-8444-444444444444";
 const OPERATION_ID = "55555555-5555-4555-8555-555555555555";
 const SERVER_CREDENTIAL_ID = "77777777-7777-4777-8777-777777777777";
-const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/1.0.0-rc.2.json", import.meta.url), "utf8"));
+const TESTING_RELEASE_CONFIG = JSON.parse(await readFile(new URL("../../release/config/1.0.0-rc.3.json", import.meta.url), "utf8"));
 
 function upgradeBindingReadback(databaseId = "88888888-8888-4888-8888-888888888888") {
   return [
@@ -261,7 +262,7 @@ function upgradePlanInput(overrides = {}) {
       },
     },
     owner: {
-      display_name: "Example Owner",
+      display_name: "Example_Owner",
       principal_id: PRINCIPAL_ID,
       credential_id: CREDENTIAL_ID,
       credential_fingerprint: "cfk_v1_example_…",
@@ -1316,7 +1317,7 @@ test("Invite redemption injects and verifies a pending Credential without exposi
     instanceId: INSTANCE_ID,
     inviteCode: "private-invite-code",
     redeemAs: "new_principal",
-    displayName: "Example Participant",
+    displayName: "Example_Participant",
     fetchImpl,
   });
   assert.equal(calls.length, 2);
@@ -1481,7 +1482,7 @@ test("Public Join promotes the Credential ID assigned by the Service", async (t)
     publicId,
     role: "writer",
     redeemAs: "new_principal",
-    displayName: "Public Join Participant",
+    displayName: "Public_Join_Participant",
     fetchImpl,
   });
   assert.equal(result.credential.credential_id, SERVER_CREDENTIAL_ID);
@@ -1795,7 +1796,7 @@ test("state initialization rejects a symlink root", async (t) => {
   );
 });
 
-test("Owner bootstrap and finalization stay plan-bound, verify exact identity, and write only a redacted receipt", async (t) => {
+for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization stay plan-bound for schema ${bootstrapSchema}, verify exact identity, and write only a redacted receipt`, async (t) => {
   const { home, stateRoot } = await fixtureState();
   t.after(() => rm(home, { recursive: true, force: true }));
   const serviceRoot = path.join(home, "service-bundle");
@@ -1818,7 +1819,7 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
     expected_artifacts: { tables: [], indexes: [] },
   };
   await writeFile(path.join(serviceRoot, "migrations", migration.name), migrationText, "utf8");
-  await writeFile(path.join(serviceRoot, "migrations", "manifest.json"), `${JSON.stringify({ manifest_version: 1, schema_version: 1, migrations: [migration] }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(serviceRoot, "migrations", "manifest.json"), `${JSON.stringify({ manifest_version: 1, schema_version: bootstrapSchema, migrations: [migration] }, null, 2)}\n`, "utf8");
   await writeFile(path.join(serviceRoot, "release", "deployment", "migration-readback.sql"), "SELECT 1;\n", "utf8");
   await writeFile(path.join(serviceRoot, "wrangler-config-schema.json"), "{}\n", "utf8");
   await writeFile(path.join(serviceRoot, "wrangler.template.json"), JSON.stringify({
@@ -1846,7 +1847,7 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
     nodeRange: ">=22.12.0 <27",
     wranglerRange: ">=4.127.1 <5",
     serviceApiRange: ">=0.1.0 <0.2.0",
-    schemaVersion: 1,
+    schemaVersion: bootstrapSchema,
   });
   const serviceArtifact = generated.manifest.artifacts.find((artifact) => artifact.kind === "service_deployment_bundle");
   const skillArtifact = generated.manifest.artifacts.find((artifact) => artifact.kind === "skill_bundle");
@@ -1874,7 +1875,7 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
     taskId: "wp10-owner-finalize",
     accountId: "account-one",
     cloudflareProfile: "production",
-    ownerDisplayName: "Example Owner",
+    ownerDisplayName: "Example_Owner",
     release: {
       manifest_version: generated.manifest.release.version,
       manifest_sha256: generated.pointer.manifest_sha256,
@@ -1948,6 +1949,8 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
     preferredApiOrigin: "https://example.workers.dev",
   });
   const sql = await readFile(result.bootstrap_sql_path, "utf8");
+  assert.equal(sql.includes("display_name_key"), bootstrapSchema >= 8);
+  if (bootstrapSchema >= 8) assert.ok(sql.includes("'example_owner'"));
   assert.equal(sql.includes(secret.token), false);
   assert.equal(sql.includes(pending.token_digest), true);
   assert.doesNotMatch(sql, /\b(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b/iu);
@@ -2048,13 +2051,13 @@ test("Owner bootstrap and finalization stay plan-bound, verify exact identity, a
     fetchCalls.push({ path: url.pathname, authorization: headers.has("authorization") });
     let body;
     if (url.pathname === "/healthz") {
-      body = { d1: "reachable", service_version: "0.1.0", schema_version: 1 };
+      body = { d1: "reachable", service_version: "0.1.0", schema_version: bootstrapSchema };
     } else if (url.pathname === "/.well-known/cfkanban-instance.json") {
       body = { discovery_version: 1, instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0" };
     } else if (url.pathname === "/api/v1/meta") {
-      body = { instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0", schema_version: 1, principal: { id: PRINCIPAL_ID, is_owner: true } };
+      body = { instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0", schema_version: bootstrapSchema, principal: { id: PRINCIPAL_ID, is_owner: true } };
     } else {
-      body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example Owner", is_owner: true, credential: { id: wrongCredential ? "88888888-8888-4888-8888-888888888888" : CREDENTIAL_ID, fingerprint: pending.fingerprint } };
+      body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example_Owner", is_owner: true, credential: { id: wrongCredential ? "88888888-8888-4888-8888-888888888888" : CREDENTIAL_ID, fingerprint: pending.fingerprint } };
     }
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   };
@@ -2234,7 +2237,7 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
       reason: "pre_migration_time_travel_bookmark",
     },
     owner: {
-      display_name: "Example Owner",
+      display_name: "Example_Owner",
       principal_id: PRINCIPAL_ID,
       credential_id: CREDENTIAL_ID,
       credential_fingerprint: credential.fingerprint,
@@ -2254,7 +2257,7 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
       d1: { name: "cfkanban-d1", database_id: base.resources.d1.database_id },
     },
     owner: {
-      display_name: "Example Owner",
+      display_name: "Example_Owner",
       principal_id: PRINCIPAL_ID,
       credential_id: CREDENTIAL_ID,
       credential_fingerprint: credential.fingerprint,
@@ -2458,7 +2461,7 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
     } else if (url.pathname === "/api/v1/meta") {
       body = { instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0", schema_version: 2, principal: { id: PRINCIPAL_ID, is_owner: true } };
     } else {
-      body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example Owner", is_owner: true, credential: { id: CREDENTIAL_ID, fingerprint: credential.fingerprint } };
+      body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example_Owner", is_owner: true, credential: { id: CREDENTIAL_ID, fingerprint: credential.fingerprint } };
     }
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   };
@@ -2877,7 +2880,7 @@ test("strict-zero plan freezes defaults; any delta requires new authorization", 
     taskId: "task-wp10",
     accountId: "account-one",
     cloudflareProfile: "production",
-    ownerDisplayName: "Example Owner",
+    ownerDisplayName: "Example_Owner",
     release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
     instanceId: INSTANCE_ID,
     ownerPrincipalId: PRINCIPAL_ID,
@@ -3057,7 +3060,7 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
     taskId: "wp10-portable",
     accountId: "account-one",
     cloudflareProfile: "production",
-    ownerDisplayName: "Example Owner",
+    ownerDisplayName: "Example_Owner",
     release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
     instanceId: INSTANCE_ID,
     ownerPrincipalId: PRINCIPAL_ID,
@@ -3235,7 +3238,7 @@ test("missing migration ledger recovery requires the same authorized journal, su
   const plan = createStrictZeroPlan({
     taskId: "wp10-ledger-recovery",
     accountId: "account-one",
-    ownerDisplayName: "Example Owner",
+    ownerDisplayName: "Example_Owner",
     release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
     instanceId: INSTANCE_ID,
     ownerPrincipalId: PRINCIPAL_ID,
@@ -3405,7 +3408,7 @@ test("Owner bootstrap never retries after any present or partial recovery readba
   const plan = createStrictZeroPlan({
     taskId: "wp10-owner-partial",
     accountId: "account-one",
-    ownerDisplayName: "Example Owner",
+    ownerDisplayName: "Example_Owner",
     release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
     instanceId: INSTANCE_ID,
     ownerPrincipalId: PRINCIPAL_ID,
@@ -3486,7 +3489,7 @@ test("migration checksum SQL is fixed, same-journal authorized, and never overwr
   const plan = createStrictZeroPlan({
     taskId: "wp10-ledger",
     accountId: "account-one",
-    ownerDisplayName: "Example Owner",
+    ownerDisplayName: "Example_Owner",
     release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
     instanceId: INSTANCE_ID,
     ownerPrincipalId: PRINCIPAL_ID,
@@ -3945,6 +3948,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/notes/0.1.0-alpha.60.md",
     "../../release/notes/1.0.0-rc.1.md",
     "../../release/notes/1.0.0-rc.2.md",
+    "../../release/notes/1.0.0-rc.3.md",
     "../../release/config/0.1.0-alpha.2.json",
     "../../release/config/0.1.0-alpha.3.json",
     "../../release/config/0.1.0-alpha.4.json",
@@ -3994,6 +3998,7 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
     "../../release/config/0.1.0-alpha.60.json",
     "../../release/config/1.0.0-rc.1.json",
     "../../release/config/1.0.0-rc.2.json",
+    "../../release/config/1.0.0-rc.3.json",
     "../../.codex-plugin/plugin.json",
     "../../.agents/plugins/marketplace.json",
     "../../skills/cfkanban/SKILL.md",
@@ -4020,11 +4025,14 @@ test("public Agent-facing documents avoid the internal stage label", async () =>
 test("breaking migration plans require explicit opt-in and forbid old Worker rollback", async () => {
   const base = upgradePlanInput();
   const input = { ...base, target: { ...base.target, schema_version: 3, compatibility: { ...base.target.compatibility, schema_version: 3 } },
-    migrations: [{ sequence: 3, name: "0003_uuid.sql", sha256: "f".repeat(64), classification: "breaking_non_destructive", destructive: false, reentry: "wrangler_migration_ledger_only", expected_artifacts: { tables: ["workspaces"], absent_columns: ["workspaces.key"] } }],
+    migrations: [{ sequence: 3, name: "0003_container_uuid.sql", sha256: "f".repeat(64), classification: "breaking_non_destructive", destructive: false, reentry: "wrangler_migration_ledger_only", expected_artifacts: { tables: ["workspaces"], absent_columns: ["workspaces.key"] } }],
     restorePoint: { required: true, verified: true, bookmark: "bookmark", observed_at: "2026-09-08T01:00:00.000Z", retention_boundary: "verified_plan_retention", reason: "pre_migration" } };
   assert.throws(() => createInstanceUpgradePlan(input), { code: "BREAKING_MIGRATION_REQUIRES_EXPLICIT_PLAN" });
   const plan = createInstanceUpgradePlan({ ...input, allow_breaking_change: true });
   assert.equal(plan.migrations.allow_breaking_change, true);
+  assert.equal(plan.breaking_change.old_api_urls_and_scope_unsupported, true);
+  assert.equal(plan.breaking_change.old_operation_snapshots_removed, true);
+  assert.equal(plan.breaking_change.legacy_worker_principal_writes_unsupported, undefined);
   assert.deepEqual(plan.migrations.execution, { mode: "single_query", max_sql_bytes: 24576 });
   assert.equal(plan.rollback_boundary.previous_worker_rollback_prohibited_after_migration, true);
   assert.equal(plan.expected_interruption, "service_unavailable_between_migration_and_compatible_worker_deploy");
@@ -4150,7 +4158,7 @@ test("data-only migration ledger recovery requires successful same-journal apply
   await writeFile(path.join(migrationRoot, migration.name), migrationText);
   await writeFile(manifestPath, JSON.stringify({ manifest_version: 1, schema_version: 5, migrations: [migration] }));
   const plan = createStrictZeroPlan({
-    taskId: "data-migration-recovery", accountId: "account-one", ownerDisplayName: "Example Owner",
+    taskId: "data-migration-recovery", accountId: "account-one", ownerDisplayName: "Example_Owner",
     release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64) },
     instanceId: INSTANCE_ID, ownerPrincipalId: PRINCIPAL_ID, ownerCredentialId: CREDENTIAL_ID, operationId: OPERATION_ID,
   }).plan;
@@ -4194,4 +4202,61 @@ test("upgrade migration query binds execution mode and rejects oversized or inva
     assert.throws(() => buildWranglerInvocation({ ...input, plan: { ...plan, migrations: { execution } } }), { code: "MIGRATION_EXECUTION_PLAN_REQUIRED" });
   }
   assert.throws(() => buildWranglerInvocation({ ...input, migrationSql: null, migrationSqlPath: "/tmp/migration.sql" }), { code: "MIGRATION_INPUT_REQUIRED" });
+});
+
+
+test("Principal names normalize Unicode and reject reserved or ambiguous input", () => {
+  assert.equal(normalizePrincipalDisplayName("  Ｋｅｎｎ  "), "Kenn");
+  assert.equal(normalizePrincipalDisplayName("张三-研发_01·甲"), "张三-研发_01·甲");
+  assert.equal(normalizePrincipalDisplayName("𠮷".repeat(128)).length, 256);
+  for (const value of ["", " ", "a".repeat(129), "İ".repeat(65)]) {
+    assert.throws(() => normalizePrincipalDisplayName(value), error => error.details.name_reason === "length");
+  }
+  for (const value of ["a b", "a\tb", "a\nb", "a\u200bb", "a\u202eb", "a\ufe0fb", "@name", "name#", "name!", "😀"]) {
+    assert.throws(() => normalizePrincipalDisplayName(value), error => error.details.name_reason === "invalid_characters");
+  }
+  for (const value of ["ADMIN", "ｏｗｎｅｒ", "administrator", "system", "管理员", "所有者", "系统"]) {
+    assert.throws(() => normalizePrincipalDisplayName(value), error => error.code === "VALIDATION_ERROR" && error.details.name_reason === "reserved");
+  }
+  assert.equal(normalizePrincipalDisplayName("admin_team"), "admin_team");
+  assert.equal(requireObservedPrincipalDisplayName("Original Owner"), "Original Owner");
+  assert.equal(requireObservedPrincipalDisplayName("𠮷".repeat(128)), "𠮷".repeat(128));
+});
+
+
+test("migration trigger readback is required for name enforcement", () => {
+  const migration = { sequence: 8, name: "0008.sql", sha256: "a".repeat(64), destructive: false, expected_artifacts: { triggers: ["principal_name_required"] } };
+  const manifest = { manifest_version: 1, migrations: [migration] };
+  const ledger = [{ sequence: 8, name: migration.name, sha256: migration.sha256, applied_at: 1, classification: "backward_compatible", reentry: "wrangler_migration_ledger_only", operation_id: OPERATION_ID }];
+  assert.equal(reconcileMigrationState({ manifest, ledger, schema: { tables: [], indexes: [] } }).safe_to_continue, false);
+  const raw = JSON.stringify([{ success: true, results: ledger }, { success: true, results: [{ type: "trigger", name: "principal_name_required" }] }]);
+  const base = upgradePlanInput();
+  const plan = createInstanceUpgradePlan({ ...base, target: { ...base.target, schema_version: 8, compatibility: { ...base.target.compatibility, schema_version: 8 } }, migrations: [{ ...migration, classification: "backward_compatible", reentry: "wrangler_migration_ledger_only" }], restorePoint: { required: true, verified: true, bookmark: "bookmark", observed_at: "2026-09-20T01:00:00.000Z", retention_boundary: "verified_plan_retention", reason: "pre_migration" } });
+  assert.deepEqual(plan.migrations.ordered[0].expected_artifacts.triggers, ["principal_name_required"]);
+  const result = parseMigrationReadbackOutput(raw);
+  assert.deepEqual(result.schema.triggers, ["principal_name_required"]);
+  assert.equal(reconcileMigrationState({ manifest, ledger, schema: result.schema }).safe_to_continue, true);
+});
+
+
+test("Principal-name upgrade states its exact breaking boundary without claiming URL or snapshot removal", () => {
+  const base = upgradePlanInput();
+  const input = {
+    ...base,
+    target: { ...base.target, schema_version: 8, compatibility: { ...base.target.compatibility, schema_version: 8 } },
+    migrations: [{ sequence: 8, name: "0008_principal_names.sql", sha256: "f".repeat(64), classification: "breaking_non_destructive", destructive: false, reentry: "wrangler_migration_ledger_only", expected_artifacts: { columns: ["principals.display_name_key"] } }],
+    restorePoint: { required: true, verified: true, bookmark: "bookmark", observed_at: "2026-09-20T01:00:00.000Z", retention_boundary: "verified_plan_retention", reason: "pre_migration" },
+  };
+  assert.throws(() => createInstanceUpgradePlan(input), { code: "BREAKING_MIGRATION_REQUIRES_EXPLICIT_PLAN" });
+  const plan = createInstanceUpgradePlan({ ...input, allow_breaking_change: true });
+  assert.deepEqual(plan.breaking_change, {
+    old_api_urls_and_scope_unsupported: false,
+    old_operation_snapshots_removed: false,
+    principal_display_names_unique: true,
+    legacy_worker_principal_writes_unsupported: true,
+    preserve_business_data_and_identity: true,
+    recovery: "deploy_a_worker_compatible_with_the_migrated_schema",
+  });
+  assert.equal(plan.rollback_boundary.previous_worker_rollback_prohibited_after_migration, true);
+  assert.equal(plan.expected_interruption, "service_unavailable_between_migration_and_compatible_worker_deploy");
 });

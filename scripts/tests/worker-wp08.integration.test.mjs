@@ -144,7 +144,7 @@ before(async () => {
     operationId: ids.bootstrapOperation,
     ownerCredentialId: ids.ownerCredential,
     ownerCredentialToken: ownerToken,
-    ownerDisplayName: "Deployment Owner",
+    ownerDisplayName: "Deployment_Owner",
     ownerPrincipalId: ids.ownerPrincipal,
     preferredApiOrigin: origin,
   });
@@ -321,7 +321,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   assert.deepEqual(pausedPublicList.body.items.map((item) => item.public_id), [publicId]);
   const pausedRedeem = await request(`/api/v1/public-joins/${secondPublicId}/redeem`, {
     body: {
-      display_name: "Paused Target Member",
+      display_name: "Paused_Target_Member",
       new_credential_token: joinTokenC,
       redeem_as: "new_principal",
       role: "reader",
@@ -363,7 +363,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
 
   const concurrentJoinRequest = {
     body: {
-      display_name: "Concurrent Public Member",
+      display_name: "Concurrent_Public_Member",
       new_credential_token: joinTokenD,
       redeem_as: "new_principal",
       role: "reader",
@@ -390,7 +390,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
 
   const responseLossKey = "wp08-response-loss-join";
   const responseLossBody = {
-    display_name: "Response Loss Public Member",
+    display_name: "Response_Loss_Public_Member",
     new_credential_token: joinTokenE,
     redeem_as: "new_principal",
     role: "reader",
@@ -467,7 +467,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
     `${origin}/api/v1/public-joins/${secondPublicId}/redeem`,
     {
       body: JSON.stringify({
-        display_name: "Policy Race Public Member",
+        display_name: "Policy_Race_Public_Member",
         new_credential_token: joinTokenF,
         redeem_as: "new_principal",
         role: "reader",
@@ -494,7 +494,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
       secondPublicId,
       "new_principal",
       "reader",
-      "Policy Race Public Member",
+      "Policy_Race_Public_Member",
       joinTokenF,
       Date.now(),
     ),
@@ -532,7 +532,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
       parentRaceDb,
       new Request(`${origin}/api/v1/public-joins/${secondPublicId}/redeem`, {
         body: JSON.stringify({
-          display_name: "Parent Race Public Member",
+          display_name: "Parent_Race_Public_Member",
           new_credential_token: joinTokenG,
           redeem_as: "new_principal",
           role: "reader",
@@ -547,7 +547,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
       secondPublicId,
       "new_principal",
       "reader",
-      "Parent Race Public Member",
+      "Parent_Race_Public_Member",
       joinTokenG,
       Date.now(),
     ),
@@ -615,8 +615,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   const cookieNow = Date.now();
   await db.batch([
     db.prepare(
-      `INSERT INTO principals (id, display_name, created_at, updated_at)
-       VALUES (?1, 'Passkey Public Member', ?2, ?2)`,
+      `INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, 'Passkey_Public_Member', lower('Passkey_Public_Member'), ?2, ?2)`,
     ).bind(cookiePrincipalId, cookieNow),
     db.prepare(
       `INSERT INTO web_authenticators
@@ -716,7 +715,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
 
   const firstJoinRequest = {
     body: {
-      display_name: "Public Member A",
+      display_name: "Public_Member_A",
       new_credential_token: joinTokenA,
       redeem_as: "new_principal",
       role: "reader",
@@ -785,7 +784,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
 
   const secondJoin = await request(`/api/v1/public-joins/${publicId}/redeem`, {
     body: {
-      display_name: "Public Member B",
+      display_name: "Public_Member_B",
       new_credential_token: joinTokenB,
       redeem_as: "new_principal",
       role: "reader",
@@ -900,7 +899,7 @@ test("WP-08 enforces Public Join policy, usage lifecycle, redemption, and owner-
   const beforeRejectedPrincipals = await tableCount("principals");
   const quotaRejected = await request(`/api/v1/public-joins/${publicId}/redeem`, {
     body: {
-      display_name: "Public Member C",
+      display_name: "Public_Member_C",
       new_credential_token: joinTokenC,
       redeem_as: "new_principal",
       role: "reader",

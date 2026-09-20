@@ -586,7 +586,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateDisplayNameRequest"
+                "$ref": "#/components/schemas/UpdatePrincipalDisplayNameRequest"
               }
             }
           }
@@ -2060,6 +2060,90 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees": {
+      "get": {
+        "operationId": "findProjectAssignee",
+        "tags": [
+          "projects"
+        ],
+        "summary": "Find Project Assignee",
+        "description": "Deployment Owner or an active reader/writer Grant for the resource Project. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "display_name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PrincipalDisplayNameInput"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAssigneeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_reader"
       }
     },
     "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses": {
@@ -9721,6 +9805,63 @@
         },
         "additionalProperties": false
       },
+      "PrincipalDisplayNameInput": {
+        "type": "string",
+        "description": "Trim and NFKC normalize before validation; 1–128 Unicode code points in both display and locale-independent lowercase key. Letters, marks, numbers, underscore, hyphen and middle dot only; reject Default_Ignorable_Code_Point. Exact reserved keys: admin, administrator, owner, system, 管理员, 所有者, 系统. Instance-wide unique key; conflict returns PRINCIPAL_DISPLAY_NAME_CONFLICT without owner identity."
+      },
+      "UpdatePrincipalDisplayNameRequest": {
+        "type": "object",
+        "required": [
+          "expected_version",
+          "display_name"
+        ],
+        "properties": {
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "display_name": {
+            "$ref": "#/components/schemas/PrincipalDisplayNameInput"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProjectAssigneeResult": {
+        "type": "object",
+        "required": [
+          "items",
+          "has_more",
+          "next_cursor"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "has_more": {
+            "const": false
+          },
+          "next_cursor": {
+            "type": "null"
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "principal_id",
+                "display_name"
+              ],
+              "properties": {
+                "principal_id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "display_name": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
       "UpdateDisplayNameRequest": {
         "type": "object",
         "required": [
@@ -10162,9 +10303,7 @@
                 "const": "new_principal"
               },
               "display_name": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
+                "$ref": "#/components/schemas/PrincipalDisplayNameInput"
               },
               "new_credential_token": {
                 "type": "string",
@@ -10722,9 +10861,7 @@
             ],
             "properties": {
               "display_name": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
+                "$ref": "#/components/schemas/PrincipalDisplayNameInput"
               },
               "new_credential_token": {
                 "type": "string",

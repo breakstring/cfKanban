@@ -65,11 +65,11 @@ before(async () => {
   ({ DB: db } = await worker.getEnv());
   await bootstrapInstance(db, {
     instanceId: randomUUID(), operationId: randomUUID(), ownerCredentialId: credentialId,
-    ownerCredentialToken: ownerToken, ownerDisplayName: "Purge test Owner", ownerPrincipalId: ownerId,
+    ownerCredentialToken: ownerToken, ownerDisplayName: "Purge_test_Owner", ownerPrincipalId: ownerId,
     preferredApiOrigin: "https://purge.example.test",
   });
   const now = Date.now();
-  await db.prepare("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?1, 'Member', ?2, ?2)")
+  await db.prepare("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, 'Member', lower('Member'), ?2, ?2)")
     .bind(memberId, now).run();
   await db.prepare(`INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id)
     VALUES (?1, ?2, 'member', ?3, ?4, ?5)`).bind(randomUUID(), memberId, await sha256Hex(memberToken), now, randomUUID()).run();

@@ -1,3 +1,15 @@
+export function principalDisplayNameProblemText(reason: unknown, locale: "en" | "zh-CN"): string {
+  if (reason === "length") return locale === "zh-CN"
+    ? "显示名称须为 1–128 个字符，首尾空白会自动去除。"
+    : "Use 1–128 characters for your display name. Leading and trailing whitespace is trimmed.";
+  if (reason === "reserved") return locale === "zh-CN"
+    ? "此名称为系统保留名称，请选择其他名称。"
+    : "This name is reserved. Choose another name.";
+  return locale === "zh-CN"
+    ? "名称只能包含文字、数字、组合标记及 _ - ·，不能包含空格、不可见字符、Emoji 或其他符号。"
+    : "Use letters, numbers, combining marks, and _ - · only. Spaces, invisible characters, emoji, and other symbols are not allowed.";
+}
+
 export type ErrorTranslationKey =
   | "error.authorization"
   | "error.businessQuota"
@@ -48,6 +60,7 @@ function categoryLabel(category: string, selectedLocale: SupportedLocale): strin
 function recoveryAction(error: PresentableApiProblem, selectedLocale: SupportedLocale): string {
   const { body, retryAfter } = error;
   const chinese = selectedLocale === "zh-CN";
+  if (body.recovery === "choose_another_display_name") return chinese ? "更换显示名称后重新保存" : "Choose another display name and save again";
   if (body.recovery === "reauthenticate") return chinese ? "重新登录" : "Sign in again";
   if (body.recovery === "refresh_resource") {
     return chinese ? "刷新远端事实后重新决定" : "Refresh the remote facts before deciding again";
@@ -145,7 +158,13 @@ export function presentApiProblem(
 ): string {
   const { body } = error;
   let message: string | undefined;
-  if (body.code === "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED") message = translate("error.idempotencyExpired");
+  if (body.code === "PRINCIPAL_DISPLAY_NAME_CONFLICT") message = locale === "zh-CN"
+    ? "该显示名称已被使用，请选择其他名称。大小写及全角等兼容形式不能用于区分同名。"
+    : "This display name is already in use. Choose another name; case and equivalent forms such as full-width letters do not distinguish names.";
+  else if (body.code === "VALIDATION_ERROR" && body.details?.reason === "principal_display_name_invalid") {
+    message = principalDisplayNameProblemText(body.details.name_reason, locale);
+  }
+  else if (body.code === "IDEMPOTENCY_RECOVERY_WINDOW_EXPIRED") message = translate("error.idempotencyExpired");
   else if (body.code === "VERSION_CONFLICT") message = translate("error.conflict");
   else if (body.code === "ISSUE_ATTACHMENT_LIMIT_REACHED") message = locale === "zh-CN"
     ? "此事项的附件数量已达上限。请删除不需要的附件或取消未完成的上传后重试。"

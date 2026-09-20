@@ -11,8 +11,10 @@ import {
   markCasReadbackComplete,
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
+import { principalDisplayNameProblemText } from "../lib/error-presentation";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
+import { normalizePrincipalDisplayName, principalDisplayNameProblem } from "../lib/principal-display-name";
 import { canRegisterPasskeyFromSession } from "../lib/session-capabilities";
 import { registrationCredential, registrationOptions } from "../lib/webauthn";
 import { WriteFence } from "../lib/write-fence";
@@ -34,6 +36,7 @@ interface CeremonyEnvelope {
 const me = ref<PrincipalResource | null>(null);
 const passkeys = ref<Passkey[]>([]);
 const displayName = ref("");
+const nameProblem = computed(() => principalDisplayNameProblem(displayName.value));
 const loading = ref(true);
 const busy = ref(false);
 const { clearError, error, setError, setErrorKey } = useLocalizedError();
@@ -108,13 +111,14 @@ async function refreshCasFacts(): Promise<void> {
 }
 
 async function saveProfile(): Promise<void> {
-  if (me.value === null || !displayName.value.trim()) return;
+  if (me.value === null || nameProblem.value !== null) return;
   const fenceKey = "profile-update";
   if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
+  clearError();
   try {
     const result = await apiRequest<WriteResult<PrincipalResource>>("/api/v1/me", {
-      body: { display_name: displayName.value.trim(), expected_version: me.value.version },
+      body: { display_name: normalizePrincipalDisplayName(displayName.value), expected_version: me.value.version },
       method: "PATCH",
     });
     me.value = result.resource;
@@ -193,11 +197,13 @@ onMounted(load);
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <template v-if="me">
       <section class="profile-section">
-        <div class="section-heading-row"><div><h2>{{ locale === "zh-CN" ? "身份资料" : "Identity profile" }}</h2><p>{{ locale === "zh-CN" ? "显示名称不用于认证或去重。" : "Your display name is not used for authentication or deduplication." }}</p></div></div>
+        <div class="section-heading-row"><div><h2>{{ locale === "zh-CN" ? "身份资料" : "Identity profile" }}</h2><p>{{ locale === "zh-CN" ? "显示名称在此实例内唯一，英文大小写及全角等兼容形式视为相同名称。身份和权限仍绑定固定 ID。" : "Display names are unique within this instance, ignoring case and equivalent forms such as full-width letters. Identity and permissions remain linked to your fixed ID." }}</p></div></div>
         <form class="profile-form" @submit.prevent="saveProfile">
-          <label>{{ locale === "zh-CN" ? "显示名称" : "Display name" }}<input v-model="displayName" maxlength="128" required /></label>
-          <button class="primary-button" type="submit" :disabled="busy || displayName.trim() === me.display_name">{{ t("action.save") }}</button>
+          <label>{{ locale === "zh-CN" ? "显示名称" : "Display name" }}<input v-model="displayName" required aria-describedby="profile-name-rules profile-name-error" :aria-invalid="nameProblem !== null" /></label>
+          <button class="primary-button" type="submit" :disabled="busy || nameProblem !== null || normalizePrincipalDisplayName(displayName) === me.display_name">{{ t("action.save") }}</button>
         </form>
+        <p id="profile-name-rules" class="muted-copy">{{ locale === "zh-CN" ? "1–128 个字符；允许文字、数字、组合标记及 _ - ·；禁止空格、不可见字符、Emoji 和其他符号。首尾空白自动去除，兼容字符统一规范化。admin、administrator、owner、system、管理员、所有者、系统为保留名称。" : "1–128 characters: letters, numbers, combining marks, and _ - ·. No spaces, invisible characters, emoji, or other symbols. Surrounding whitespace is trimmed and compatible characters are normalized. Reserved names: admin, administrator, owner, system, 管理员, 所有者, 系统." }}</p>
+        <p id="profile-name-error" role="status" class="muted-copy">{{ nameProblem === null ? "" : principalDisplayNameProblemText(nameProblem, locale) }}</p>
         <dl class="profile-facts"><div><dt>{{ t("profile.id") }}</dt><dd><code>{{ me.id }}</code></dd></div><div><dt>{{ locale === "zh-CN" ? "角色" : "Role" }}</dt><dd>{{ me.is_owner ? (locale === "zh-CN" ? "部署所有者" : "Deployment Owner") : (locale === "zh-CN" ? "项目参与者" : "Project participant") }}</dd></div><div><dt>{{ locale === "zh-CN" ? "版本" : "Version" }}</dt><dd>{{ me.version }}</dd></div></dl>
       </section>
 

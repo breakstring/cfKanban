@@ -327,8 +327,8 @@ async function seedParticipant({ credentialId, grantId, principalId, role, token
   const now = Date.now();
   await db.batch([
     db.prepare(
-      "INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-    ).bind(principalId, role === "writer" ? "Writer" : "Reader", now),
+      "INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, ?2, lower(?2), ?3, ?3)",
+    ).bind(principalId, `Member_${principalId}`, now),
     db.prepare(
       `INSERT INTO credentials
         (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id)
@@ -359,7 +359,7 @@ before(async () => {
     operationId: ids.bootstrapOperation,
     ownerCredentialId: ids.ownerCredential,
     ownerCredentialToken: ownerToken,
-    ownerDisplayName: "Deployment Owner",
+    ownerDisplayName: "Deployment_Owner",
     ownerPrincipalId: ids.ownerPrincipal,
     preferredApiOrigin: "https://kanban.example.test",
   });

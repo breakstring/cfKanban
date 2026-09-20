@@ -661,13 +661,13 @@ before(async () => {
     operationId: ids.bootstrapOperation,
     ownerCredentialId: ids.ownerCredential,
     ownerCredentialToken: ownerToken,
-    ownerDisplayName: "Deployment Owner",
+    ownerDisplayName: "Deployment_Owner",
     ownerPrincipalId: ids.ownerPrincipal,
     preferredApiOrigin: origin,
   });
   await db.batch([
     db.prepare(
-      "INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?1, 'Participant', ?2, ?2)",
+      "INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, 'Participant', lower('Participant'), ?2, ?2)",
     ).bind(ids.participantPrincipal, now),
     db.prepare(
       `INSERT INTO credentials

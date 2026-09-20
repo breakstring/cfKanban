@@ -212,6 +212,8 @@
 
 | D-273 | Owner 全失恢复撤销全部旧 API Credential，保留独立 Passkey | Confirmed | 用户于 2026-09-20 明确确认。通过独立 Cloudflare 控制面恢复计划为原 Owner 签发替代凭据；不改变 Owner、业务数据或 Passkey，旧凭据来源 Session/Launch 随之失效。同账户多 Worker 先按绑定与实例标记排除明确无关项，多实例让用户选择，无法确认项不当作无关。参数化 D1 batch 原子写入 Credential、撤销与安全审计，响应丢失先读回同 operation，完成前核对 `/meta` 与 `/me`。详见 [Frozen 增量合同](../specs/2026-09-20-owner-credential-recovery-spec.md)；实现授权不包含线上恢复或发布。 |
 
+| D-274 | 用户名称全实例唯一并支持 Agent 精确解析 | Confirmed | 用户于 2026-09-20 确认并授权实现。trim/NFKC 与 Unicode 小写 key 判重，限制字符与固定保留词，数据库唯一约束覆盖创建和改名；项目权限过滤的准确名称查询返回可分配 Principal ID。schema 8 将旧测试名称空格替换下划线，冲突停止，不改变身份引用。详见 [Frozen 增量合同](../specs/2026-09-20-principal-names-spec.md)；线上发布另行授权。 |
+
 ## 需要显式修订的决策
 
 Foundation、Agent Skills & Bootstrap、API/Schema、Web UI 和视觉设计合同均已完成 v0 实现前冻结。Foundation 当前为合同修订 19，Agent Skills & Bootstrap 为合同修订 31；D-251/D-252 固定 D1 原子提交证明与 Passkey 非零签名计数策略，D-253/D-254 固定统一 `.cfkanban/` 维护根、宿主投影边界和任务/命令导向的双语 Skill 表面，D-255 固定 Cloudflare 官方 Skills 的可选参考边界与 portable Wrangler config/dry-run，D-256/D-257 将 auth 进一步收敛为不自动枚举 profiles、由 Wrangler 上下文选择身份并由私有 config 固定 account，D-258 固定远端 file ingestion 事务与同 journal 缺 ledger 行恢复，D-259 固定首次 Owner bootstrap 的同 plan 最终化证据链，D-260 补充仅在同 journal 六表零状态证明后的同 SQL 重试，D-261 防止 Agent 用单次命令话术意外收窄完整计划授权，D-262 统一 Owner Audit 的 Project/stream 筛选、响应回显与 cursor scope，D-263 固定一次性 Invite/Browser Launch 的专用安全交付，D-264～D-269 补齐公开指南/页脚、opaque cursor、Public Join CAS 指引、HTML 边缘防改写、品牌标志与橙色交互主色。D-270 固定自动实例解析与 IAB/指定浏览器 loopback 交付。实施范围与依赖顺序进入 `docs/plans/2026-08-29-v0-implementation-plan.md` 和 Linear；冻结本身仍不代表任何实现 Issue 已完成，也不授权部署、迁移、提交或推送。

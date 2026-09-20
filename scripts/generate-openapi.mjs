@@ -53,7 +53,7 @@ const operations = [
   ["get", "/app/launch", "getWebLaunchPage", "web", publicAccess, "read", "LaunchCodeQuery"],
   ["get", "/api/v1/meta", "getMeta", "meta", authenticated, "read"],
   ["get", "/api/v1/me", "getMe", "identity", authenticated, "read"],
-  ["patch", "/api/v1/me", "updateMe", "identity", authenticated, "cas", "UpdateDisplayNameRequest"],
+  ["patch", "/api/v1/me", "updateMe", "identity", authenticated, "cas", "UpdatePrincipalDisplayNameRequest"],
   ["get", "/api/v1/events", "listEvents", "events", authenticated, "read", "EventQuery"],
 
   ["get", "/api/v1/workspaces", "listWorkspaces", "workspaces", authenticated, "read", "DeletedCursorQuery"],
@@ -73,6 +73,7 @@ const operations = [
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/purge-preview", "previewProjectPurge", "projects", authenticated, "read"],
   ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/purge", "purgeProject", "projects", authenticated, "idempotent-cas", "ContainerPurgeRequest"],
   ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/restore", "restoreProject", "projects", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
+  ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees", "findProjectAssignee", "projects", authenticated, "read", "AssigneeNameQuery"],
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses", "listProjectStatuses", "projects", authenticated, "read"],
   ["patch", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_key}", "updateProjectStatusName", "projects", authenticated, "cas", "UpdateStatusNameRequest"],
 
@@ -335,7 +336,7 @@ const permissionGroups = {
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
     "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings",
   ],
-  project_reader: ["downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext"],
+  project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
     "listAttachments", "listComments", "getComment", "listLabels", "getLabel",
@@ -537,6 +538,15 @@ const schemas = {
   },
   AttachmentWriteResult: containerWriteResult("Attachment"),
   ExpectedVersionRequest: { type: "object", required: ["expected_version"], properties: { expected_version: ref("Version") }, additionalProperties: false },
+  PrincipalDisplayNameInput: string({ description: "Trim and NFKC normalize before validation; 1–128 Unicode code points in both display and locale-independent lowercase key. Letters, marks, numbers, underscore, hyphen and middle dot only; reject Default_Ignorable_Code_Point. Exact reserved keys: admin, administrator, owner, system, 管理员, 所有者, 系统. Instance-wide unique key; conflict returns PRINCIPAL_DISPLAY_NAME_CONFLICT without owner identity." }),
+  UpdatePrincipalDisplayNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: ref("PrincipalDisplayNameInput") }, additionalProperties: false },
+  ProjectAssigneeResult: {
+    type: "object", required: ["items", "has_more", "next_cursor"], additionalProperties: false,
+    properties: {
+      has_more: { const: false }, next_cursor: { type: "null" },
+      items: { type: "array", maxItems: 1, items: { type: "object", required: ["principal_id", "display_name"], properties: { principal_id: ref("Uuid"), display_name: string() }, additionalProperties: false } },
+    },
+  },
   UpdateDisplayNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
   CreateWorkspaceRequest: { type: "object", required: ["display_name"], properties: { display_name: string({ minLength: 1, maxLength: 128 }) }, additionalProperties: false },
   CreateProjectRequest: { type: "object", required: ["display_name"], properties: { display_name: string({ minLength: 1, maxLength: 128 }), context: nullableUtf8String(32768, { description: "Untrusted bounded Project context." }) }, additionalProperties: false },
@@ -554,7 +564,7 @@ const schemas = {
   RelationVersionsRequest: { type: "object", required: ["expected_version", "source_expected_version", "target_expected_version"], properties: { expected_version: ref("Version"), source_expected_version: ref("Version"), target_expected_version: ref("Version") }, additionalProperties: false },
   RedeemInvitationRequest: {
     oneOf: [
-      { type: "object", required: ["invite_code", "redeem_as", "display_name", "new_credential_token"], properties: { invite_code: string({ minLength: 1, maxLength: 1024, writeOnly: true }), redeem_as: { const: "new_principal" }, display_name: string({ minLength: 1, maxLength: 128 }), new_credential_token: credentialToken() }, additionalProperties: false },
+      { type: "object", required: ["invite_code", "redeem_as", "display_name", "new_credential_token"], properties: { invite_code: string({ minLength: 1, maxLength: 1024, writeOnly: true }), redeem_as: { const: "new_principal" }, display_name: ref("PrincipalDisplayNameInput"), new_credential_token: credentialToken() }, additionalProperties: false },
       { type: "object", required: ["invite_code", "redeem_as"], properties: { invite_code: string({ minLength: 1, maxLength: 1024, writeOnly: true }), redeem_as: { const: "current_principal" } }, additionalProperties: false },
       { type: "object", required: ["invite_code", "redeem_as", "new_credential_token"], properties: { invite_code: string({ minLength: 1, maxLength: 1024, writeOnly: true }), redeem_as: { const: "recovery" }, new_credential_token: credentialToken() }, additionalProperties: false },
     ],
@@ -625,7 +635,7 @@ const schemas = {
   UpdateResourceLimitsRequest: { type: "object", required: ["expected_version", "issue_limit", "comment_limit", "principal_limit"], properties: { expected_version: { ...ref("Version"), description: "Current Project version from the resource-limits response's project.version; the Public Join policy_version is not this CAS value." }, issue_limit: integer({ minimum: 1 }), comment_limit: integer({ minimum: 1 }), principal_limit: integer({ minimum: 1 }) }, additionalProperties: false },
   RedeemPublicJoinRequest: {
     oneOf: [
-      { type: "object", required: ["display_name", "new_credential_token", "redeem_as", "role"], properties: { display_name: string({ minLength: 1, maxLength: 128 }), new_credential_token: credentialToken(), redeem_as: { const: "new_principal" }, role: ref("ProjectRole") }, additionalProperties: false },
+      { type: "object", required: ["display_name", "new_credential_token", "redeem_as", "role"], properties: { display_name: ref("PrincipalDisplayNameInput"), new_credential_token: credentialToken(), redeem_as: { const: "new_principal" }, role: ref("ProjectRole") }, additionalProperties: false },
       { type: "object", required: ["redeem_as", "role"], properties: { redeem_as: { const: "current_principal" }, role: ref("ProjectRole") }, additionalProperties: false },
     ],
   },
@@ -2002,6 +2012,7 @@ const schemas = {
 };
 
 const querySets = {
+  AssigneeNameQuery: [{ name: "display_name", in: "query", required: true, schema: ref("PrincipalDisplayNameInput") }],
   InviteCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 1 }), description: "一次性 Invite code。" }],
   LaunchCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 59, maxLength: 59, pattern: "^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$" }), description: "一次性 Browser Launch code；GET 不消费该 code。" }],
   EventQuery: [
@@ -2027,6 +2038,7 @@ const querySets = {
 };
 
 const operationResponseSchemas = {
+  findProjectAssignee: ref("ProjectAssigneeResult"),
   listAttachments: ref("AttachmentListResult"),
   getAttachment: ref("Attachment"),
   reserveAttachment: ref("AttachmentWriteResult"),

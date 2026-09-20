@@ -1,3 +1,4 @@
+import { findProjectAssignee } from "../services/principal-names.ts";
 import { requireVersion } from "../domain/model.ts";
 import { authenticateRequest } from "../kernel/auth.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
@@ -59,6 +60,13 @@ export function registerWp05Routes(router: Router): Router {
         auth,
         context.url,
         context.startedAt,
+      ), context.requestId);
+    })
+    .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      return jsonResponse(await findProjectAssignee(
+        env.DB, auth, path(context, "workspace_id"), path(context, "project_id"),
+        context.url, context.startedAt,
       ), context.requestId);
     })
     .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", async (request, env, context) => {

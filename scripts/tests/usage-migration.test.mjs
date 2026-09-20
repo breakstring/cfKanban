@@ -27,8 +27,8 @@ test("published migration readback observes every expected schema artifact", asy
   const db = new DatabaseSync(":memory:");
   try {
     for (const entry of manifest.migrations) db.exec(await migration(entry.name));
-    db.prepare("INSERT INTO principals(id,display_name,created_at,updated_at) VALUES (?,?,?,?)").run("owner", "Owner", 1, 1);
-    db.prepare("INSERT INTO instance_meta VALUES (1,?,?,?,?,?)").run("instance", "owner", "0.1.0", 7, 1);
+    db.prepare("INSERT INTO principals(id,display_name,display_name_key,created_at,updated_at) VALUES (?,?,?,?,?)").run("owner", "Test_Owner", "test_owner", 1, 1);
+    db.prepare("INSERT INTO instance_meta VALUES (1,?,?,?,?,?)").run("instance", "owner", "0.1.0", manifest.schema_version, 1);
     for (const entry of manifest.migrations) db.prepare("INSERT INTO cfkanban_migration_ledger VALUES (?,?,?,?,?,?,?)").run(entry.sequence, entry.name, entry.sha256, entry.classification, entry.reentry, "12345678-1234-4123-8123-123456789012", 1);
     const sql = await readFile(new URL("../../release/deployment/migration-readback.sql", import.meta.url), "utf8");
     const results = sql.split(";").map((part) => part.trim()).filter(Boolean).map((statement) => ({ success: true, results: db.prepare(statement).all() }));

@@ -1,3 +1,4 @@
+import { requireObservedPrincipalDisplayName } from "./principal-name.mjs";
 import { existingUsageConfig, normalizeUsageConfig, usageBindings, USAGE_SECRET, USAGE_VARS } from "./usage-config.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -200,6 +201,7 @@ function migrationDelta(values, allowBreakingChange) {
         tables: artifactNames(value.expected_artifacts?.tables, "migration.expected_artifacts.tables"),
         indexes: artifactNames(value.expected_artifacts?.indexes, "migration.expected_artifacts.indexes"),
         columns: artifactNames(value.expected_artifacts?.columns, "migration.expected_artifacts.columns"),
+        ...(value.expected_artifacts?.triggers ? { triggers: artifactNames(value.expected_artifacts.triggers, "migration.expected_artifacts.triggers") } : {}),
         ...(value.expected_artifacts?.absent_columns ? { absent_columns: artifactNames(value.expected_artifacts.absent_columns, "migration.expected_artifacts.absent_columns") } : {}),
       },
       ...(value.expected_data === undefined ? {} : { expected_data: normalizeExpectedMigrationData(value.expected_data) }),
@@ -343,6 +345,8 @@ export function createInstanceUpgradePlan({
   if (typeof allow_breaking_change !== "boolean") throw toolError("INVALID_UPGRADE_PLAN", "allow_breaking_change must be boolean");
   const orderedMigrations = migrationDelta(migrations, allow_breaking_change);
   const breakingChange = orderedMigrations.some((migration) => migration.classification === "breaking_non_destructive");
+  const containerUuidChange = orderedMigrations.some((migration) => migration.name === "0003_container_uuid.sql");
+  const principalNamesChange = orderedMigrations.some((migration) => migration.name === "0008_principal_names.sql");
   if (normalizedTarget.schema_version < normalizedCurrent.schema_version
     || (orderedMigrations.length === 0 && normalizedTarget.schema_version !== normalizedCurrent.schema_version)
     || (orderedMigrations.length > 0 && normalizedTarget.schema_version <= normalizedCurrent.schema_version)) {
@@ -354,7 +358,7 @@ export function createInstanceUpgradePlan({
     throw toolError("INVALID_UPGRADE_OWNER", "owner must identify the existing Deployment Owner");
   }
   const normalizedOwner = {
-    display_name: requireString(owner.display_name, "owner.display_name", { max: 128 }).trim(),
+    display_name: requireObservedPrincipalDisplayName(owner.display_name),
     principal_id: requireUuid(owner.principal_id, "owner.principal_id"),
     credential_id: requireUuid(owner.credential_id, "owner.credential_id"),
     credential_fingerprint: requireString(owner.credential_fingerprint, "owner.credential_fingerprint", { max: 128 }),
@@ -464,8 +468,12 @@ export function createInstanceUpgradePlan({
     domain_delta: false,
     expected_interruption: breakingChange ? "service_unavailable_between_migration_and_compatible_worker_deploy" : "single_worker_deploy",
     ...(breakingChange ? { breaking_change: {
-      old_api_urls_and_scope_unsupported: true,
-      old_operation_snapshots_removed: true,
+      old_api_urls_and_scope_unsupported: containerUuidChange,
+      old_operation_snapshots_removed: containerUuidChange,
+      ...(principalNamesChange ? {
+        principal_display_names_unique: true,
+        legacy_worker_principal_writes_unsupported: true,
+      } : {}),
       preserve_business_data_and_identity: true,
       recovery: "deploy_a_worker_compatible_with_the_migrated_schema",
     } } : {}),

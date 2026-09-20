@@ -3,7 +3,7 @@ const digest = (character) => character.repeat(64);
 
 async function seed(db) {
   await db.batch([
-    db.prepare("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES ('owner', 'Lin', ?, ?)").bind(now, now),
+    db.prepare("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES ('owner', 'Lin', 'lin', ?, ?)").bind(now, now),
     db.prepare("INSERT INTO instance_meta VALUES (1, 'instance-batch', 'owner', '0.1.0', 1, ?)").bind(now),
     db.prepare("INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id) VALUES ('cred-owner', 'owner', 'owner', ?, ?, 'seed-cred')").bind(digest("a"), now),
     db.prepare("INSERT INTO workspaces (id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('workspace', 'Validation', ?, ?, 'owner', 'owner', 'seed-workspace')").bind(now, now),

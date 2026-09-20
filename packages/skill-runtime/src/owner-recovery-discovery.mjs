@@ -1,3 +1,4 @@
+import { requireObservedPrincipalDisplayName } from "./principal-name.mjs";
 import { validatePrivatePath } from "./state.mjs";
 import path from "node:path";
 import { createCloudflareControlClient } from "./cloudflare-control.mjs";
@@ -74,9 +75,9 @@ export async function discoverOwnerRecoveryCandidates(input) {
       const row = rows[0];
       const instanceId = requireUuid(row.instance_id, "instance_id");
       const owner = requireUuid(row.owner_principal_id, "owner_principal_id");
-      const displayName = requireString(row.display_name, "display_name", { max: 128 });
+      const displayName = requireObservedPrincipalDisplayName(row.display_name);
       requireString(row.service_version, "service_version", { max: 128 });
-      if (![row.schema_version, row.principal_version, row.origin_version].every(value => Number.isSafeInteger(value) && value > 0) || row.schema_version > 7) invalid();
+      if (![row.schema_version, row.principal_version, row.origin_version].every(value => Number.isSafeInteger(value) && value > 0) || row.schema_version > 8) invalid();
       const apiOrigin = requireHttpsOrigin(row.preferred_api_origin);
       const target = { accountId, workerName: name, d1Name, databaseId, apiOrigin, instanceId };
       const verified = await inspectOwnerRecovery({ ...input, ...target });

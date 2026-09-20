@@ -1,6 +1,8 @@
+import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
 import {
+  principalDisplayNameKey,
   requireCredentialToken,
-  requireDisplayName,
+  requirePrincipalDisplayName,
   requireProjectRole,
   requireUuid,
   timestamp,
@@ -1421,7 +1423,7 @@ export async function redeemPublicJoin(
   let replacement: { digest: string; id: string; prefix: string; token: string } | null = null;
   if (redeemAs === "new_principal") {
     if (auth !== null) throw validationError("public_join_mode_fields_mixed");
-    displayName = requireDisplayName(displayNameValue as JsonValue);
+    displayName = requirePrincipalDisplayName(displayNameValue as JsonValue);
     const token = requireCredentialToken(credentialTokenValue as JsonValue, "new_credential_token");
     assertSecretNotInText(displayName, "display_name", token.token);
     replacement = {
@@ -1494,8 +1496,8 @@ export async function redeemPublicJoin(
       if (replacement !== null && displayName !== null) {
         statements.push(db.prepare(
           `INSERT INTO principals
-            (id, display_name, version, created_at, updated_at, last_operation_id)
-           SELECT ?1, ?2, 1, ?3, ?3, ?4
+            (id, display_name, version, created_at, updated_at, last_operation_id, display_name_key)
+           SELECT ?1, ?2, 1, ?3, ?3, ?4, ?7
            FROM public_join_policies policy
            JOIN projects project ON project.id = policy.project_id
            JOIN workspaces workspace ON workspace.id = project.workspace_id
@@ -1511,7 +1513,7 @@ export async function redeemPublicJoin(
              AND instr(workspace.display_name, ?6) = 0
              AND instr(workspace.id, ?6) = 0
              AND instr(policy.public_summary, ?6) = 0`,
-        ).bind(principalId, displayName, now, operationId, publicId, replacement.token));
+        ).bind(principalId, displayName, now, operationId, publicId, replacement.token, principalDisplayNameKey(displayName)));
         statements.push(db.prepare(
           `INSERT INTO credentials
             (id, principal_id, token_prefix, token_digest, issued_at,
@@ -1680,6 +1682,7 @@ export async function redeemPublicJoin(
                 throw error;
               }
             }
+            if (displayName !== null && await principalDisplayNameExists(db, displayName)) return true;
             if (replacement !== null && await credentialDigestExists(db, replacement.digest)) return true;
             if (replacement !== null) {
               const targetTexts = [
@@ -1708,6 +1711,7 @@ export async function redeemPublicJoin(
           const latestTarget = await readPublicJoinTarget(db, publicId);
           if (!publicJoinTargetEnabled(latestTarget)) throw notFound();
           if (auth !== null) await assertCurrentPublicJoinAuth(db, auth, target.project_id, now);
+          if (displayName !== null && await principalDisplayNameExists(db, displayName)) throw principalDisplayNameConflict();
           if (replacement !== null && await credentialDigestExists(db, replacement.digest)) {
             throw conflict("CREDENTIAL_TOKEN_CONFLICT", "generate_new_credential");
           }

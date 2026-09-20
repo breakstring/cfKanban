@@ -1,4 +1,5 @@
-import { requireDisplayName, requireHttpsOrigin, timestamp } from "../domain/model.ts";
+import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
+import { principalDisplayNameKey, requirePrincipalDisplayName, requireHttpsOrigin, timestamp } from "../domain/model.ts";
 import {
   buildCurrentAuthGuard,
   reauthenticateOwner,
@@ -198,7 +199,7 @@ export async function updateMe(
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const normalizedName = requireDisplayName(displayName);
+  const normalizedName = requirePrincipalDisplayName(displayName);
   const current = await readPrincipal(db, auth.principalId);
   if (current === null) throw notFound();
   const updated: PrincipalRow = {
@@ -209,13 +210,13 @@ export async function updateMe(
   };
   const operationId = crypto.randomUUID();
   const eventId = crypto.randomUUID();
-  const guard = buildCurrentAuthGuard(auth, now, 6);
+  const guard = buildCurrentAuthGuard(auth, now, 7);
   const statements = [
     db.prepare(
       `UPDATE principals
-       SET display_name = ?1, version = version + 1, updated_at = ?2, last_operation_id = ?3
+       SET display_name = ?1, display_name_key = ?6, version = version + 1, updated_at = ?2, last_operation_id = ?3
        WHERE id = ?4 AND version = ?5 AND ${guard.sql}`,
-    ).bind(normalizedName, now, operationId, auth.principalId, expectedVersion, ...guard.values),
+    ).bind(normalizedName, now, operationId, auth.principalId, expectedVersion, principalDisplayNameKey(normalizedName), ...guard.values),
     db.prepare(
       `INSERT INTO events
         (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -243,6 +244,7 @@ export async function updateMe(
       confirmBusinessRejection: async () => {
         const current = await readPrincipal(db, auth.principalId);
         return current === null || current.version !== expectedVersion
+          || await principalDisplayNameExists(db, normalizedName, auth.principalId)
           || await authGuardRejected(db, auth, now);
       },
       expectedEventCount: 1,
@@ -255,6 +257,8 @@ export async function updateMe(
       await verifyCurrentAuth(db, auth, now);
       const current = await readPrincipal(db, auth.principalId);
       if (current === null) throw notFound();
+      if (current.version !== expectedVersion) throw versionConflict(current.version);
+      if (await principalDisplayNameExists(db, normalizedName, auth.principalId)) throw principalDisplayNameConflict();
       throw versionConflict(current.version);
     }
     throw error;

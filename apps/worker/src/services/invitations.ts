@@ -1,7 +1,9 @@
+import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
 import {
+  principalDisplayNameKey,
   generateInvitationCode,
   requireCredentialToken,
-  requireDisplayName,
+  requirePrincipalDisplayName,
   requireInvitationKind,
   requireInvitationRedeemAs,
   requireProjectRole,
@@ -1024,7 +1026,7 @@ function validateRedeemMode(
   if (invitation.kind === "project_grant" && redeemAs === "new_principal") {
     if (auth !== null) throw validationError("new_principal_must_be_unauthenticated");
     return {
-      displayName: requireDisplayName(displayNameValue as JsonValue),
+      displayName: requirePrincipalDisplayName(displayNameValue as JsonValue),
       replacement: requireCredentialToken(tokenValue as JsonValue, "new_credential_token"),
     };
   }
@@ -1151,11 +1153,11 @@ async function executeProjectInviteRedeem(
   const statements: D1PreparedStatement[] = [];
   if (auth === null) {
     statements.push(db.prepare(
-      `INSERT INTO principals (id, display_name, version, created_at, updated_at, last_operation_id)
-       SELECT ?1, ?2, 1, ?3, ?3, ?4 FROM invitations
+      `INSERT INTO principals (id, display_name, version, created_at, updated_at, last_operation_id, display_name_key)
+       SELECT ?1, ?2, 1, ?3, ?3, ?4, ?7 FROM invitations
        WHERE id = ?5 AND code_digest = ?6 AND kind = 'project_grant'
          AND revoked_at IS NULL AND redeemed_at IS NULL AND expires_at > ?3`,
-    ).bind(principalId, displayName, now, claim.operationId, invitation.id, invitation.code_digest));
+    ).bind(principalId, displayName, now, claim.operationId, invitation.id, invitation.code_digest, principalDisplayNameKey(displayName!)));
     statements.push(db.prepare(
       `INSERT INTO credentials
         (id, principal_id, token_prefix, token_digest, issued_at,
@@ -1349,6 +1351,7 @@ async function executeProjectInviteRedeem(
         return latest === null || invitationStatus(latest, now) !== "active"
           || !(await invitationTargetsActive(db, invitation.id))
           || (auth !== null && await currentAuthRejected(db, auth, now))
+          || (auth === null && displayName !== null && await principalDisplayNameExists(db, displayName))
           || (replacement !== null && await credentialDigestExists(db, replacement.digest))
           || await projectQuotaExceeded(db, invitation.id, principalId) !== null
           || await redemptionSnapshotInputsRejected(db, latest, displayName ?? auth?.displayName ?? null, forbiddenValues);
@@ -1372,6 +1375,7 @@ async function executeProjectInviteRedeem(
       if (invitationStatus(latest, now) !== "active") assertInvitationUsable(latest, now);
       if (auth !== null) await verifyCurrentAuth(db, auth, now);
       if (!(await invitationTargetsActive(db, invitation.id))) throw notFound();
+      if (auth === null && displayName !== null && await principalDisplayNameExists(db, displayName)) throw principalDisplayNameConflict();
       if (replacement !== null && await credentialDigestExists(db, replacement.digest)) {
         throw conflict("CREDENTIAL_TOKEN_CONFLICT", "generate_new_credential");
       }

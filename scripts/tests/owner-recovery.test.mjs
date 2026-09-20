@@ -293,6 +293,24 @@ test('全部 migration 至 schema 7 后恢复兼容且保留业务数据', async
   assert.equal(f.count('workspaces'), 1); assert.equal(f.count('web_authenticators'), 1);
 });
 
+test('全部 migration 至 schema 8 后恢复兼容且保留业务数据', async t => {
+  const f = await fixture(t);
+  for (const name of ['0002_container_purge', '0003_container_uuid', '0004_issue_attachments', '0005_attachment_schema_version', '0006_usage_statistics', '0007_attachment_settings', '0008_principal_names']) {
+    f.db.exec(await readFile(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'));
+  }
+  const fetch = f.input.fetchImpl;
+  f.input.fetchImpl = async (url, options) => {
+    const response = await fetch(url, options);
+    if (new URL(url).origin !== f.input.apiOrigin) return response;
+    const body = await response.json();
+    if ('schema_version' in body) body.schema_version = 8;
+    return json(body, response.status);
+  };
+  await f.prepare(); await f.execute();
+  assert.equal(f.plan.observed.schema_version, 8);
+  assert.equal(f.count('workspaces'), 1); assert.equal(f.count('web_authenticators'), 1);
+});
+
 for (const failure of ['response', 'exception']) test(`Cloudflare ${failure} 回显秘密时序列化错误不泄露凭据或 SQL 参数`, async t => {
   const f = await fixture(t); await f.prepare();
   const fetch = f.execution.fetchImpl;

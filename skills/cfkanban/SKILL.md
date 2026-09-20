@@ -7,6 +7,8 @@ description: Find, create, and update cfKanban Issues, Comments, relations, and 
 
 Use this Skill for ordinary work in a cfKanban instance. Read the relevant section of [English](references/workflows.md) or [简体中文](references/workflows.zh-CN.md) for detailed inputs or recovery. Choose one language; ordinary operations do not require loading the whole guide.
 
+Principal names (schema 8 and later) are unique across the Instance. Creation and rename trim outer whitespace and store NFKC-normalized text; uniqueness uses non-locale `toLowerCase()`. Both display text and comparison key must contain 1–128 Unicode code points. Allow Unicode letters, marks, numbers and `_`, `-`, `·`; reject internal whitespace, default-ignorable characters, other symbols and exact reserved keys `admin`, `administrator`, `owner`, `system`, `管理员`, `所有者`, `系统`. `PRINCIPAL_DISPLAY_NAME_CONFLICT` requires another user-chosen name; do not silently append a suffix. A display name never grants access, and all writes still use stable Principal IDs.
+
 ## Start with the user's daily goal
 
 For an already joined user, lead with finding, creating, editing, changing status, completing/reopening, and commenting; do not restart onboarding. Examples: “Show my unfinished Issues in this Project”, “Create an Issue with this description”, “Move CFK-123 to in progress”, or “Add this progress Comment to CFK-123”. The expected result is the requested scoped read or verified change, not a mandatory workflow through all capabilities.
@@ -98,3 +100,5 @@ Verify trusted local identity and resolve the requested Project or stable Issue 
 - **DECIDES:** The user, host, and Repo rules decide when to call operations, their order, and whether to continue after partial success.
 
 Stop rather than guess when the instance maps to another Principal, the origin cannot be cross-verified, storage permissions drift, the target Project is ambiguous, CAS state is stale, or a pending Credential may already have been committed. `credential clear` is allowed only after remote non-commit is proven.
+
+To assign an Issue by name, call `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees?display_name=<URL-encoded-exact-name>` (schema 8+). The required name is normalized by the server; the Project-authorized result contains zero or one eligible Owner/writer in `items`, with `principal_id` and `display_name`. Use that ID for the assignment write with the current Issue version. One exact match requires no extra identity-disambiguation confirmation. No match means ask for a valid eligible name; never fuzzy-match, enumerate unrelated Projects, or infer identity from historical Issue text. If an older Service lacks this endpoint, use an explicitly supplied verified ID or ask for clarification rather than claiming name uniqueness.

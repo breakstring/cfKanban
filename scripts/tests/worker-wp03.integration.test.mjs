@@ -140,7 +140,7 @@ test("WP-03 bootstraps one Owner without exposing its secret", async () => {
     operationId: ids.bootstrapOperation,
     ownerCredentialId: ids.ownerCredential,
     ownerCredentialToken: ownerToken,
-    ownerDisplayName: "Deployment Owner",
+    ownerDisplayName: "Deployment_Owner",
     ownerPrincipalId: ids.ownerPrincipal,
     preferredApiOrigin: "https://kanban.example.test",
   };
@@ -152,7 +152,7 @@ test("WP-03 bootstraps one Owner without exposing its secret", async () => {
   const recovered = await bootstrapInstance(db, input);
   assert.equal(recovered.recovered, true);
   await assert.rejects(
-    bootstrapInstance(db, { ...input, ownerDisplayName: "Drifted Owner" }),
+    bootstrapInstance(db, { ...input, ownerDisplayName: "Drifted_Owner" }),
     (error) => error.code === "INSTANCE_ALREADY_INITIALIZED",
   );
   await assert.rejects(
@@ -184,15 +184,15 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(meta.body.visible_scope.project_count, 0);
 
   const me = await jsonRequest("/api/v1/me", { headers: ownerHeaders() });
-  assert.equal(me.body.display_name, "Deployment Owner");
+  assert.equal(me.body.display_name, "Deployment_Owner");
   const renamedMe = await jsonRequest("/api/v1/me", {
-    body: { display_name: "Owner Renamed", expected_version: me.body.version },
+    body: { display_name: "Owner_Renamed", expected_version: me.body.version },
     headers: ownerHeaders(),
     method: "PATCH",
   });
   assert.equal(renamedMe.response.status, 200);
   assertWriteResult(renamedMe.body);
-  assert.equal(renamedMe.body.resource.display_name, "Owner Renamed");
+  assert.equal(renamedMe.body.resource.display_name, "Owner_Renamed");
 
   const createWorkspaceRequest = {
     body: { display_name: "Engineering" },
@@ -304,8 +304,7 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   const issueSessionDigest = await sha256Hex(issueSessionToken);
   await db.batch([
     db.prepare(
-      `INSERT INTO principals (id, display_name, created_at, updated_at)
-       VALUES (?1, 'Participant', ?2, ?2)`,
+      `INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, 'Participant', lower('Participant'), ?2, ?2)`,
     ).bind(ids.participantPrincipal, Date.now()),
     db.prepare(
       `INSERT INTO credentials
@@ -670,12 +669,12 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     operationId: ids.bootstrapOperation,
     ownerCredentialId: ids.ownerCredential,
     ownerCredentialToken: ownerToken,
-    ownerDisplayName: "Deployment Owner",
+    ownerDisplayName: "Deployment_Owner",
     ownerPrincipalId: ids.ownerPrincipal,
     preferredApiOrigin: "https://kanban.example.test",
   });
   assert.equal(bootstrapAfterLaterMutations.recovered, true);
-  assert.equal(bootstrapAfterLaterMutations.ownerDisplayName, "Deployment Owner");
+  assert.equal(bootstrapAfterLaterMutations.ownerDisplayName, "Deployment_Owner");
   assert.equal(bootstrapAfterLaterMutations.preferredApiOrigin, "https://kanban.example.test");
   assert.equal(bootstrapAfterLaterMutations.credentialId, ids.ownerCredential);
 

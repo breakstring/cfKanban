@@ -50,6 +50,8 @@
 
 ## 安全下限与合同约束
 
+- 2026-09-20 已授权 Principal 名称规则以 `docs/specs/2026-09-20-principal-names-spec.md` 为 Frozen 增量合同：用户显示名全实例规范化唯一，收紧字符和保留词，schema 8 迁移空格为下划线；覆盖下文非唯一旧表述，容器名称不变。
+
 - 2026-09-19 已授权技能与 UI 优化、Issue 附件增强；附件以 `docs/specs/2026-09-19-issue-attachments-spec.md` 为增量 Frozen 合同。默认 strict-zero 仍只有 Worker/D1；附件 profile 显式启用私有 R2、Owner 明确选择的应用容量上限（或不限制）和有界定时清理，R2 订阅/费用及新的 Cloudflare 权限须单独确认。该增量优先于下文旧有的附件后置范围。
 
 - 2026-09-08 已授权 UUID 重构以 `docs/specs/2026-09-08-container-uuid-spec.md` 为 Frozen 合同；容器 key 已取消，不兼容旧 API/URL/scope。UI 只要求和展示名称；API、URL 和 Agent 使用服务端 UUID，同名不代表同一对象。

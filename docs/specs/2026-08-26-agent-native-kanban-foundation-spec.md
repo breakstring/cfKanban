@@ -1,5 +1,8 @@
 # Agent-native Kanban Foundation SPEC
 
+> 2026-09-20 增量：[Principal 唯一显示名称](2026-09-20-principal-names-spec.md)（Frozen）覆盖用户显示名非唯一旧合同，定义字符、规范化判重、精确指派候选与 schema 8 迁移；容器名称不受影响。
+
+
 > 2026-09-19 增量：参与者 Agent Launch 会话的项目切换以 [D-272 Frozen 合同](2026-09-19-participant-project-switching-spec.md) 为准；旧固定 scope 会话和 Owner 明确 Project/Issue 会话不扩大。
 
 > 2026-09-19 增量修订：[Issue 私有附件](2026-09-19-issue-attachments-spec.md) 将 R2 附件纳入可选增强；下文附件后置说明由该合同替代，默认 strict-zero 与核心 D1 真相源不变。

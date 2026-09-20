@@ -58,7 +58,7 @@
 | 读取/修改 status 显示名 | `GET .../statuses`、`PATCH .../statuses/{status_key}` | 固定五个 key 和语义不能改变。 |
 | 列出/创建 Invite | `GET /api/v1/admin/invitations`；专用 `invite create` | 显式 kind、准确 target(s)、每个 Project 显式 `reader | writer`。 |
 | 读取/撤销 Invite | `GET/DELETE /api/v1/admin/invitations/{invitation_id}` | 使用稳定 ID；不保存完整 Bearer URL。 |
-| 列出/读取 Principal | `GET /api/v1/admin/principals`、`GET .../{principal_id}` | display name 不唯一，不能选择目标。 |
+| 列出/读取 Principal | `GET /api/v1/admin/principals`、`GET .../{principal_id}` | schema 8 起 Principal 名称实例内唯一；按规范化名称精确匹配后取得稳定 ID，操作仍使用 ID。 |
 | 列出参与者 Credential | `GET /api/v1/admin/principals/{principal_id}/credentials` | 只展示 fingerprint/status，不展示 secret。 |
 | 撤销参与者 Credential | `DELETE /api/v1/admin/credentials/{credential_id}` | 读回准确 Credential 与 audit；不适用于 Owner Credential。 |
 | 轮换 Owner Credential | 专用 `credential prepare` + `owner rotate-credential` | 见下方轮换流程。 |

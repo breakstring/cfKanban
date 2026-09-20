@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 7,
+  schema_version: 8,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -102,6 +102,20 @@ const manifest = {
       reentry: "wrangler_migration_ledger_only",
       expected_artifacts: { columns: ["attachment_storage.limit_bytes", "attachment_storage.limit_configured", "attachment_storage.version", "attachment_storage.last_operation_id"] },
       expected_data: { instance_meta_schema_version_at_least: 7, allow_uninitialized: true },
+    },
+    {
+      sequence: 8,
+      name: "0008_principal_names.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0008_principal_names.sql", import.meta.url), "utf8")),
+      classification: "breaking_non_destructive",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        columns: ["principals.display_name_key"],
+        indexes: ["idx_principals_display_name_key"],
+        triggers: ["principal_name_key_insert", "principal_name_key_update"],
+      },
+      expected_data: { instance_meta_schema_version_at_least: 8, allow_uninitialized: true },
     },
   ],
 };

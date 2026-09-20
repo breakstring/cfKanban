@@ -21,13 +21,13 @@ const reserve = (bytes, extra={}) => request(`/api/v1/issues/${issue.identifier}
 const freshIssue = async () => (await request(`/api/v1/workspaces/${workspace.id}/projects/${project.id}/issues`, {method:"POST",body:{title:"Settings test"}})).data.resource;
 before(async () => {
   await server.listen(); await worker.applyD1Migrations("DB"); env=await worker.getEnv(); db=env.DB;
-  await bootstrapInstance(db,{instanceId:randomUUID(),operationId:randomUUID(),ownerCredentialId:credentialId,ownerCredentialToken:token,ownerDisplayName:"Settings Owner",ownerPrincipalId:ownerId,preferredApiOrigin:"https://settings.example.test"});
+  await bootstrapInstance(db,{instanceId:randomUUID(),operationId:randomUUID(),ownerCredentialId:credentialId,ownerCredentialToken:token,ownerDisplayName:"Settings_Owner",ownerPrincipalId:ownerId,preferredApiOrigin:"https://settings.example.test"});
   workspace=(await request("/api/v1/workspaces",{method:"POST",body:{display_name:"Settings"}})).data.resource;
   project=(await request(`/api/v1/workspaces/${workspace.id}/projects`,{method:"POST",body:{display_name:"Settings"}})).data.resource;
   issue=await freshIssue();
   const principalId=randomUUID(),now=Date.now();
   await db.batch([
-    db.prepare("INSERT INTO principals(id,display_name,created_at,updated_at) VALUES (?1,'Writer',?2,?2)").bind(principalId,now),
+    db.prepare("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, 'Writer', lower('Writer'), ?2, ?2)").bind(principalId,now),
     db.prepare("INSERT INTO credentials(id,principal_id,token_prefix,token_digest,issued_at,created_operation_id) VALUES (?1,?2,'writer',?3,?4,?5)").bind(randomUUID(),principalId,hash(writerToken),now,randomUUID()),
     db.prepare("INSERT INTO project_grants(id,principal_id,project_id,role,created_at,updated_at,created_operation_id) VALUES (?1,?2,?3,'writer',?4,?4,?5)").bind(randomUUID(),principalId,project.id,now,randomUUID()),
   ]);

@@ -81,10 +81,10 @@ async function seedDatabase() {
   });
   await db.batch([
     db.prepare(
-      "INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?1, 'Owner', ?2, ?2)",
+      "INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, 'TestOwner', 'testowner', ?2, ?2)",
     ).bind(ids.owner, now),
     db.prepare(
-      "INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?1, 'Participant', ?2, ?2)",
+      "INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, 'Participant', 'participant', ?2, ?2)",
     ).bind(ids.participant, now),
     db.prepare(
       "INSERT INTO instance_meta VALUES (1, 'instance-wp02-test', ?1, '0.1.0', 1, ?2)",

@@ -24,7 +24,7 @@ before(async () => {
     operationId: "88000000-0000-4000-8000-000000000004",
     ownerCredentialId: "88000000-0000-4000-8000-000000000002",
     ownerCredentialToken: ownerToken,
-    ownerDisplayName: "Rate Policy Owner",
+    ownerDisplayName: "Rate_Policy_Owner",
     ownerPrincipalId: "88000000-0000-4000-8000-000000000003",
     preferredApiOrigin: origin,
   });

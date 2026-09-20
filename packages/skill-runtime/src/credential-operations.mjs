@@ -1,3 +1,4 @@
+import { normalizePrincipalDisplayName } from "./principal-name.mjs";
 import { toolError } from "./errors.mjs";
 import { resolveStateRoot } from "./paths.mjs";
 import {
@@ -144,7 +145,7 @@ export async function redeemInvitation({
   }
 
   const pending = await loadPendingCredentialSecret({ stateRoot, instanceId });
-  if (mode === "new_principal") body.display_name = requireString(displayName, "display_name", { max: 128 });
+  if (mode === "new_principal") body.display_name = normalizePrincipalDisplayName(displayName);
   body.new_credential_token = pending.token;
   // A rotation recovery must prove possession of the current Principal's
   // Credential; full recovery may intentionally proceed without one. When a
@@ -204,7 +205,7 @@ export async function redeemPublicJoin({
   }
 
   const pending = await loadPendingCredentialSecret({ stateRoot, instanceId });
-  body.display_name = requireString(displayName, "display_name", { max: 128 });
+  body.display_name = normalizePrincipalDisplayName(displayName);
   body.new_credential_token = pending.token;
   const operation = await trustedApiRequest({
     stateRoot,

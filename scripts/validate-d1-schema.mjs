@@ -87,8 +87,8 @@ assert.deepEqual(
   "recovery preview index must bound one Workspace page in UUID order",
 );
 
-run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["owner", "Lin", now, now]);
-run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)", ["writer", "Chen", now, now]);
+run("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, ?2, lower(?2), ?3, ?4)", ["owner", "Lin", now, now]);
+run("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, ?2, lower(?2), ?3, ?4)", ["writer", "Chen", now, now]);
 run("INSERT INTO instance_meta VALUES (1, ?, ?, ?, ?, ?)", ["instance-1", "owner", "0.1.0", 1, now]);
 run("INSERT INTO instance_origin_settings VALUES (1, ?, 1, ?, ?, ?)", ["https://example.workers.dev", now, "owner", "op-origin"]);
 run("INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id) VALUES (?, ?, ?, ?, ?, ?)", ["cred-owner", "owner", "owner", digest("a"), now, "op-cred-owner"]);

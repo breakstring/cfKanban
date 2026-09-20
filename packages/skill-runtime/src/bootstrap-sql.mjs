@@ -1,3 +1,4 @@
+import { normalizePrincipalDisplayName } from "./principal-name.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveStateRoot } from "./paths.mjs";
@@ -45,7 +46,7 @@ export function ownerDeploymentFacts(plan, instanceId, operationId) {
     operation,
     principalId: requireUuid(plan.owner_bootstrap?.owner_principal_id, "owner_principal_id"),
     credentialId: requireUuid(plan.owner_bootstrap?.owner_credential_id, "owner_credential_id"),
-    displayName: requireString(plan.owner_bootstrap?.owner_display_name, "owner_display_name", { max: 128 }).trim(),
+    displayName: normalizePrincipalDisplayName(plan.owner_bootstrap?.owner_display_name),
   };
 }
 
@@ -256,7 +257,7 @@ export async function writeOwnerBootstrapSql({
   });
   const statements = [
     "PRAGMA foreign_keys = ON;",
-    `INSERT INTO principals (id, display_name, version, created_at, updated_at, last_operation_id) VALUES (${sql(facts.principalId)}, ${sql(facts.displayName)}, 1, ${now}, ${now}, ${sql(facts.operation)});`,
+    `INSERT INTO principals (id, display_name, ${contract.schemaVersion >= 8 ? "display_name_key, " : ""}version, created_at, updated_at, last_operation_id) VALUES (${sql(facts.principalId)}, ${sql(facts.displayName)}, ${contract.schemaVersion >= 8 ? `${sql(facts.displayName.toLowerCase())}, ` : ""}1, ${now}, ${now}, ${sql(facts.operation)});`,
     `INSERT INTO instance_meta (singleton, instance_id, owner_principal_id, service_version, schema_version, created_at) VALUES (1, ${sql(facts.instance)}, ${sql(facts.principalId)}, ${sql(contract.serviceVersion)}, ${contract.schemaVersion}, ${now});`,
     `INSERT INTO instance_origin_settings (singleton, preferred_api_origin, version, updated_at, updated_by_principal_id, last_operation_id) VALUES (1, ${sql(origin)}, 1, ${now}, ${sql(facts.principalId)}, ${sql(facts.operation)});`,
     `INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id, last_operation_id) VALUES (${sql(facts.credentialId)}, ${sql(facts.principalId)}, ${sql(metadata.token_prefix)}, ${sql(metadata.token_digest)}, ${now}, ${sql(facts.operation)}, ${sql(facts.operation)});`,

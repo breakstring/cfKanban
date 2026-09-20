@@ -7,6 +7,8 @@ description: Install or update cfKanban Skills, deploy or upgrade Cloudflare ins
 
 Use this Skill for the Cloudflare control plane and local Skill lifecycle. Read only the relevant workflow in [English](references/deployment-workflows.md) or [简体中文](references/deployment-workflows.zh-CN.md); choose one language. A local Skill update does not need the Cloudflare login or first-deployment workflow.
 
+Principal names (schema 8 and later) are unique across the Instance. Creation and rename trim outer whitespace and store NFKC-normalized text; uniqueness uses non-locale `toLowerCase()`. Both display text and comparison key must contain 1–128 Unicode code points. Allow Unicode letters, marks, numbers and `_`, `-`, `·`; reject internal whitespace, default-ignorable characters, other symbols and exact reserved keys `admin`, `administrator`, `owner`, `system`, `管理员`, `所有者`, `系统`. `PRINCIPAL_DISPLAY_NAME_CONFLICT` requires another user-chosen name; do not silently append a suffix. A display name never grants access, and all writes still use stable Principal IDs.
+
 ## Start with the maintenance goal
 
 Examples: “Check what is needed to deploy”, “Update only my local Skills”, “Plan an instance upgrade”, or “Resume the interrupted deployment”. These mean a readiness report, a local-only update, a reviewable upgrade plan, or readback of an existing journal before authorized continuation. Read **Common maintenance requests** in the workflow reference for examples and outcomes; do not restart first deployment for a local update or an existing-instance upgrade.
@@ -35,7 +37,7 @@ Treat a plain request such as “Deploy cfKanban for me” as sufficient to begi
 
 If only a prerelease is available, say that stable deployment is unavailable and offer the prerelease as an explicit testing choice. Never opt the user into a prerelease or source checkout silently.
 
-The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.2/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
+The current public testing pointer is `https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.3/prerelease.json`. Treat it as unavailable until that exact HTTPS resource and its declared immutable manifest/artifacts can be fetched and verified. Do not substitute the repository tag, plugin cache, or source checkout for a missing release asset.
 
 ## Choose the deployment source first
 

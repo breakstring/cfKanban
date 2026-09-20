@@ -2,7 +2,7 @@
 
 Language: [English](README.md) | [简体中文](README.zh-CN.md)
 
-`1.0.0-rc.2` contains four Skills: one usage guide and three operational Skills:
+`1.0.0-rc.3` contains four Skills: one usage guide and three operational Skills:
 
 - `cfkanban-howto`: explain user goals with reusable prompts and expected results; start with daily work for already joined users. Teaching only, without executing operations.
 - `cfkanban`: find, create, edit, assign, change status, complete/reopen, and comment on Issues; manage Labels, relations, private attachments and soft-delete/restore; open boards, manage your profile, or join when needed.
@@ -45,7 +45,7 @@ Joining an existing Project does not require your own deployment. The user does 
 The first stable release has not been published. Today, Codex users can load the immutable testing tag:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.2
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref 1.0.0-rc.3
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
@@ -53,7 +53,7 @@ The testing tag is immutable; use mutable `main` only for deliberate development
 
 Alpha.57 adds Owner usage reads and on-demand refresh with a shared 15-minute cache, plus explicit Owner attachment capacity settings. The schema 7 upgrade pauses new upload reservations until the Owner chooses a limit or unlimited capacity; existing files remain available. Analytics Token setup is separate from Skill installation and instance upgrade.
 
-The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.2/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
+The current testing release pointer is <https://github.com/breakstring/cfKanban/releases/download/1.0.0-rc.3/prerelease.json>. `cfkanban-deploy` may use it only after the user explicitly chooses the testing prerelease.
 
 Install the complete plugin/bundle rather than copying one `SKILL.md` or one `skills/<name>/` directory. The three operational entrypoints deliberately share the bundled JavaScript source modules under `packages/skill-runtime`; despite the internal directory name, this is not an embedded Node.js executable or runtime distribution. A host projection must preserve that verified bundle layout. The current testing preview is supported through the Codex plugin path. Other-host projection is part of the stable release installation flow and must not be approximated with an incomplete folder copy.
 

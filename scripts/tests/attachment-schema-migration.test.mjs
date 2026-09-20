@@ -16,7 +16,7 @@ const identities = (db) => Object.fromEntries(
     .map((table) => [table, db.prepare(`SELECT * FROM ${table}`).all()]),
 );
 
-// 运行真实 bootstrap SQL 和原子 batch；不启动 Worker 或访问任何远端服务。
+// 当前 schema 使用真实 bootstrap；历史 schema 使用下方冻结的历史数据夹具。
 function sqliteD1(db) {
   return {
     prepare(sql) {
@@ -59,6 +59,30 @@ function bootstrapInput(schemaVersion) {
   };
 }
 
+// 旧发行实例的固定数据形状，避免当前 Worker 的新列要求污染历史迁移测试。
+function seedHistoricalInstance(db, input, now) {
+  const { instanceId, operationId, ownerPrincipalId, ownerCredentialId, ownerDisplayName, preferredApiOrigin, serviceVersion, schemaVersion } = input;
+  db.exec("BEGIN");
+  try {
+    db.prepare("INSERT INTO principals(id,display_name,version,created_at,updated_at,last_operation_id) VALUES(?,?,1,?,?,?)")
+      .run(ownerPrincipalId, ownerDisplayName, now, now, operationId);
+    db.prepare("INSERT INTO instance_meta(singleton,instance_id,owner_principal_id,service_version,schema_version,created_at) VALUES(1,?,?,?,?,?)")
+      .run(instanceId, ownerPrincipalId, serviceVersion, schemaVersion, now);
+    db.prepare("INSERT INTO instance_origin_settings(singleton,preferred_api_origin,version,updated_at,updated_by_principal_id,last_operation_id) VALUES(1,?,1,?,?,?)")
+      .run(preferredApiOrigin, now, ownerPrincipalId, operationId);
+    db.prepare("INSERT INTO credentials(id,principal_id,token_prefix,token_digest,issued_at,created_operation_id,last_operation_id) VALUES(?,?,?,?,?,?,?)")
+      .run(ownerCredentialId, ownerPrincipalId, "owner", "a".repeat(64), now, operationId, operationId);
+    db.prepare("INSERT INTO events(id,stream,type,operation_id,event_index,actor_principal_id,actor_credential_id,authorized_via,subject_type,subject_id,payload_json,created_at) VALUES(?,'security','instance.bootstrapped',?,0,?,?,'deployment_recovery','instance',?,?,?)")
+      .run(randomUUID(), operationId, ownerPrincipalId, ownerCredentialId, instanceId, JSON.stringify({ owner_display_name: ownerDisplayName, origin_version: 1, preferred_api_origin: preferredApiOrigin, schema_version: schemaVersion, service_version: serviceVersion }), now);
+    db.prepare("INSERT INTO operation_commits(operation_id,primary_subject_type,primary_subject_id,last_event_sequence,committed_at) SELECT ?,'instance',?,sequence,? FROM events WHERE operation_id=?")
+      .run(operationId, instanceId, now, operationId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 async function historicalDatabase() {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
@@ -90,7 +114,7 @@ for (const version of [3, 4]) {
   test(`attachment schema migration upgrades initialized schema ${version} without changing identity`, async () => {
     const db = await historicalDatabase();
     try {
-      await bootstrapInstance(sqliteD1(db), bootstrapInput(version), 1234);
+      seedHistoricalInstance(db, bootstrapInput(version), 1234);
       const before = instance(db);
       const beforeIdentities = identities(db);
       await apply(db, "0004_issue_attachments.sql");
@@ -114,7 +138,7 @@ test("empty database applies all migrations before the real bootstrap initialize
     await apply(db, "0005_attachment_schema_version.sql");
     for (const entry of manifest.migrations.filter((entry) => entry.sequence > 5)) await apply(db, entry.name);
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM instance_meta").get().count, 0);
-    const input = bootstrapInput();
+    const input = { ...bootstrapInput(), ownerDisplayName: "Migration_test_owner" };
     const result = await bootstrapInstance(sqliteD1(db), input, 5678);
     assert.equal(result.schemaVersion, manifest.schema_version);
     assert.equal(result.instanceId, input.instanceId);
@@ -129,7 +153,7 @@ test("attachment schema repair never downgrades a future instance version", asyn
   const db = await historicalDatabase();
   try {
     await apply(db, "0004_issue_attachments.sql");
-    await bootstrapInstance(sqliteD1(db), bootstrapInput(6), 9012);
+    seedHistoricalInstance(db, bootstrapInput(6), 9012);
     const before = instance(db);
     await apply(db, "0005_attachment_schema_version.sql");
     assert.deepEqual(instance(db), before);
@@ -140,7 +164,7 @@ test("owner capacity migration preserves old reservations without inventing a ch
   const db = await historicalDatabase();
   try {
     for (const entry of manifest.migrations.filter((entry) => entry.sequence >= 4 && entry.sequence <= 6)) await apply(db, entry.name);
-    await bootstrapInstance(sqliteD1(db), bootstrapInput(6), 1234);
+    seedHistoricalInstance(db, bootstrapInput(6), 1234);
     db.prepare("UPDATE attachment_storage SET reserved_bytes=123").run();
     db.prepare("INSERT INTO attachment_objects(id,object_key,size_bytes,sha256,state,expires_at,created_at,created_operation_id) VALUES ('object','attachments/object',123,?,'pending',9999,1234,'operation')").run("a".repeat(64));
     const before=db.prepare("SELECT * FROM attachment_objects").all();

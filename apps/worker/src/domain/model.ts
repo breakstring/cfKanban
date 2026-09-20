@@ -108,6 +108,30 @@ export function requireDisplayName(value: JsonValue, field = "display_name"): st
   return normalized;
 }
 
+const reservedPrincipalNames = new Set(["admin", "administrator", "owner", "system", "管理员", "所有者", "系统"]);
+
+export function principalDisplayNameKey(displayName: string): string {
+  return displayName.trim().normalize("NFKC").toLowerCase();
+}
+
+export function requirePrincipalDisplayName(value: JsonValue, field = "display_name"): string {
+  if (typeof value !== "string") {
+    throw validationError("principal_display_name_invalid", { field, name_reason: "invalid_characters" });
+  }
+  const normalized = value.trim().normalize("NFKC");
+  const key = principalDisplayNameKey(normalized);
+  if (normalized.length === 0 || codePointLength(normalized) > 128 || codePointLength(key) > 128) {
+    throw validationError("principal_display_name_invalid", { field, name_reason: "length" });
+  }
+  if (!/^[\p{L}\p{M}\p{N}_·-]+$/u.test(normalized) || /\p{Default_Ignorable_Code_Point}/u.test(normalized)) {
+    throw validationError("principal_display_name_invalid", { field, name_reason: "invalid_characters" });
+  }
+  if (reservedPrincipalNames.has(key)) {
+    throw validationError("principal_display_name_invalid", { field, name_reason: "reserved" });
+  }
+  return normalized;
+}
+
 export function requireContext(value: JsonValue | undefined, field = "context"): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;

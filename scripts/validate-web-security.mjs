@@ -16,7 +16,7 @@ const digest = (value) => createHash("sha256").update(value).digest("hex");
 const run = (sql, values = []) => db.prepare(sql).run(...values);
 const get = (sql, values = []) => db.prepare(sql).get(...values);
 
-run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES ('owner', 'Lin', ?, ?)", [now, now]);
+run("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES ('owner', 'Lin', 'lin', ?, ?)", [now, now]);
 run("INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id) VALUES ('credential', 'owner', 'owner', ?, ?, 'op-credential')", [digest("credential-secret"), now]);
 const adminLaunchTarget = JSON.stringify({ entry_path: "/app/admin", kind: "admin", section: "overview" });
 assert.throws(

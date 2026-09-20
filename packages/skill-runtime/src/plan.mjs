@@ -1,3 +1,4 @@
+import { normalizePrincipalDisplayName } from "./principal-name.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
@@ -54,7 +55,7 @@ export function createStrictZeroPlan({
   operationId = randomUUID(),
   preferredApiOrigin = null,
 }) {
-  const owner = requireString(ownerDisplayName, "owner_display_name", { max: 128 }).trim();
+  const owner = normalizePrincipalDisplayName(ownerDisplayName);
   const frozenWorkerName = exactResourceName(workerName || resourceName(resourcePrefix, "worker"), "worker_name");
   const frozenD1Name = exactResourceName(d1Name || resourceName(resourcePrefix, "d1"), "d1_name");
   if (cloudflareProfile !== null && cloudflareAuthContextDirectory !== null) {

@@ -97,7 +97,7 @@ test("Web and Skill refresh modes share fresh cache and concurrent cooldown", as
 test("HTTP owner bearer/admin cookie access, no-store, CSRF and validation", async () => {
   const ownerId=randomUUID(), credentialId=randomUUID(), token=`cfk_v1_owner_${"A".repeat(43)}`;
   const hash = value => createHash("sha256").update(value).digest("hex");
-  await bootstrapInstance(env.DB, { instanceId: randomUUID(), operationId: randomUUID(), ownerCredentialId: credentialId, ownerCredentialToken: token, ownerDisplayName: "Usage Owner", ownerPrincipalId: ownerId, preferredApiOrigin: "https://usage.example.test" });
+  await bootstrapInstance(env.DB, { instanceId: randomUUID(), operationId: randomUUID(), ownerCredentialId: credentialId, ownerCredentialToken: token, ownerDisplayName: "Usage_Owner", ownerPrincipalId: ownerId, preferredApiOrigin: "https://usage.example.test" });
   const now=Date.now(), csrf="C".repeat(32);
   await env.DB.prepare(`INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,expires_at,created_at) VALUES (?1,?2,?3,'credential',?4,'admin',?5,?6,?7)`).bind(randomUUID(),hash("U".repeat(43)),ownerId,credentialId,JSON.stringify({kind:"admin",entry_path:"/app/admin",section:"overview"}),now+3600000,now).run();
   const local = { ...env, USAGE_ANALYTICS_ENABLED:"false" };
@@ -117,7 +117,7 @@ test("HTTP owner bearer/admin cookie access, no-store, CSRF and validation", asy
   assert.equal((await call("POST",{...cookie,origin:"https://usage.example.test","x-csrf-token":csrf},{mode:"manual"})).status,403);
   const participant=randomUUID(), participantToken=`cfk_v1_writer_${"B".repeat(43)}`;
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO principals(id,display_name,created_at,updated_at) VALUES (?1,'Participant',?2,?2)").bind(participant,now),
+    env.DB.prepare("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, 'Participant', lower('Participant'), ?2, ?2)").bind(participant,now),
     env.DB.prepare("INSERT INTO credentials(id,principal_id,token_prefix,token_digest,issued_at,created_operation_id) VALUES (?1,?2,'writer',?3,?4,?5)").bind(randomUUID(),participant,hash(participantToken),now,randomUUID()),
   ]);
   assert.equal((await call("GET",{authorization:`Bearer ${participantToken}`})).status,403);

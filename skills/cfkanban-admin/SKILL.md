@@ -7,6 +7,8 @@ description: Inspect cfKanban usage and capacity; manage Workspaces, Projects, a
 
 Use this Skill only with a verified Deployment Owner Credential. Read the relevant section of [English](references/owner-workflows.md) or [简体中文](references/owner-workflows.zh-CN.md) when a task needs detailed inputs or recovery. Choose one language; ordinary operations do not require loading the whole guide.
 
+Principal names (schema 8 and later) are unique across the Instance. Creation and rename trim outer whitespace and store NFKC-normalized text; uniqueness uses non-locale `toLowerCase()`. Both display text and comparison key must contain 1–128 Unicode code points. Allow Unicode letters, marks, numbers and `_`, `-`, `·`; reject internal whitespace, default-ignorable characters, other symbols and exact reserved keys `admin`, `administrator`, `owner`, `system`, `管理员`, `所有者`, `系统`. `PRINCIPAL_DISPLAY_NAME_CONFLICT` requires another user-chosen name; do not silently append a suffix. A display name never grants access, and all writes still use stable Principal IDs.
+
 ## Start with the Owner's management goal
 
 Examples: “Create a DemoProject Project in Product”, “Invite someone to DemoProject as a reader”, “Show who can access DemoProject”, or “Show usage and attachment capacity”. Expect a verified container, safely delivered invitation, access listing, or usage report respectively; one request does not authorize the other actions. Read **Common Owner requests** in the workflow reference for examples and outcomes.

@@ -47,7 +47,7 @@ async function uploaded(bytes, options) {
 async function seed(token, role) {
   const principal = randomUUID(), credential = randomUUID(), now = Date.now();
   await db.batch([
-    db.prepare("INSERT INTO principals(id,display_name,created_at,updated_at) VALUES (?1,?2,?3,?3)").bind(principal, role, now),
+    db.prepare("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES (?1, ?2, lower(?2), ?3, ?3)").bind(principal, `${role}_${principal}`, now),
     db.prepare("INSERT INTO credentials(id,principal_id,token_prefix,token_digest,issued_at,created_operation_id) VALUES (?1,?2,?3,?4,?5,?6)").bind(credential, principal, token.split("_")[2], hash(token), now, randomUUID()),
     db.prepare("INSERT INTO project_grants(id,principal_id,project_id,role,created_at,updated_at,created_operation_id) VALUES (?1,?2,?3,?4,?5,?5,?6)").bind(randomUUID(), principal, project.id, role, now, randomUUID()),
   ]);
@@ -57,7 +57,7 @@ before(async () => {
   await server.listen();
   await worker.applyD1Migrations("DB");
   env = await worker.getEnv(); db = env.DB;
-  await bootstrapInstance(db, { instanceId: randomUUID(), operationId: randomUUID(), ownerCredentialId: credentialId, ownerCredentialToken: ownerToken, ownerDisplayName: "Attachment Owner", ownerPrincipalId: ownerId, preferredApiOrigin: "https://attachments.example.test" });
+  await bootstrapInstance(db, { instanceId: randomUUID(), operationId: randomUUID(), ownerCredentialId: credentialId, ownerCredentialToken: ownerToken, ownerDisplayName: "Attachment_Owner", ownerPrincipalId: ownerId, preferredApiOrigin: "https://attachments.example.test" });
   auth = await authenticateBearer(db, `Bearer ${ownerToken}`);
   await success("/api/v1/admin/attachment-settings", { method: "PATCH", body: { expected_version: 1, limit_bytes: 1073741824 } });
   workspace = (await success("/api/v1/workspaces", { method: "POST", body: { display_name: "Attachments" } })).resource;

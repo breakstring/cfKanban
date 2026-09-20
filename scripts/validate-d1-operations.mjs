@@ -77,8 +77,8 @@ function insertDomainEvent({ operationId, eventIndex, type, workspaceId, project
   );
 }
 
-run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES ('owner', 'Lin', ?, ?)", [now, now]);
-run("INSERT INTO principals (id, display_name, created_at, updated_at) VALUES ('writer', 'Chen', ?, ?)", [now, now]);
+run("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES ('owner', 'Lin', 'lin', ?, ?)", [now, now]);
+run("INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at) VALUES ('writer', 'Chen', 'chen', ?, ?)", [now, now]);
 run("INSERT INTO instance_meta VALUES (1, 'instance-1', 'owner', '0.1.0', 1, ?)", [now]);
 run("INSERT INTO credentials (id, principal_id, token_prefix, token_digest, issued_at, created_operation_id) VALUES ('cred-owner', 'owner', 'owner', ?, ?, 'seed-cred-owner')", [digest("a"), now]);
 run("INSERT INTO workspaces (id, display_name, created_at, updated_at, created_by_principal_id, updated_by_principal_id, created_operation_id) VALUES ('workspace', 'Agent Tools', ?, ?, 'owner', 'owner', 'seed-workspace')", [now, now]);
@@ -367,8 +367,8 @@ run("INSERT INTO invitation_project_grants VALUES ('invite-valid', 'project-a', 
 atomic(() => {
   const operationId = "op-invite-redeem";
   run(
-    `INSERT INTO principals (id, display_name, created_at, updated_at, last_operation_id)
-     SELECT 'invitee', 'Alex', ?, ?, ? FROM invitations
+    `INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at, last_operation_id)
+     SELECT 'invitee', 'Alex', 'alex', ?, ?, ? FROM invitations
      WHERE id = 'invite-valid' AND expires_at > ? AND revoked_at IS NULL AND redeemed_at IS NULL`,
     [now, now, operationId, now],
   );
@@ -430,8 +430,8 @@ run("INSERT INTO invitation_project_grants VALUES ('invite-expired', 'project-a'
 expectAtomicRollback("expired invitation leaves no identity", () => {
   const operationId = "op-invite-expired";
   run(
-    `INSERT INTO principals (id, display_name, created_at, updated_at, last_operation_id)
-     SELECT 'orphan', 'Orphan', ?, ?, ? FROM invitations
+    `INSERT INTO principals (id, display_name, display_name_key, created_at, updated_at, last_operation_id)
+     SELECT 'orphan', 'Orphan', 'orphan', ?, ?, ? FROM invitations
      WHERE id = 'invite-expired' AND expires_at > ? AND revoked_at IS NULL AND redeemed_at IS NULL`,
     [now, now, operationId, now],
   );

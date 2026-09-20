@@ -1,5 +1,8 @@
 # cfKanban API & D1 Schema SPEC
 
+> 2026-09-20 增量：[Principal 唯一显示名称](2026-09-20-principal-names-spec.md)（Frozen）覆盖用户显示名非唯一旧合同，定义字符、规范化判重、精确指派候选与 schema 8 迁移；容器名称不受影响。
+
+
 > 2026-09-19 增量：参与者 Agent Launch 会话的项目切换以 [D-272 Frozen 合同](2026-09-19-participant-project-switching-spec.md) 为准；旧固定 scope 会话和 Owner 明确 Project/Issue 会话不扩大。
 
 > 2026-09-19 增量修订：[管理员用量与限额](2026-09-19-usage-statistics-spec.md) 定义 Owner 只读统计、schema 6 快照与可选云端采集；默认部署不增加统计凭据。

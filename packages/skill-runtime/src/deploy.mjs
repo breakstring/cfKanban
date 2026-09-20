@@ -270,17 +270,18 @@ export function parseMigrationReadbackOutput(value) {
   const ledger = ledgerRows.map(normalizeMigrationLedgerRow);
   const tables = [];
   const indexes = [];
+  const triggers = [];
   const columns = [];
   const seen = new Set();
   for (const row of schemaRows) {
-    if (row?.type !== "table" && row?.type !== "index" && row?.type !== "column") {
+    if (row?.type !== "table" && row?.type !== "index" && row?.type !== "column" && row?.type !== "trigger") {
       throw migrationReadbackInvalid("Wrangler migration readback returned an unexpected schema artifact type");
     }
     const name = readbackString(row?.name, "schema artifact name", { max: 128, pattern: row.type === "column" ? /^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$/u : /^[A-Za-z0-9_]+$/u });
     const key = `${row.type}:${name}`;
     if (seen.has(key)) throw migrationReadbackInvalid("Wrangler migration readback returned duplicate schema artifacts");
     seen.add(key);
-    (row.type === "table" ? tables : row.type === "index" ? indexes : columns).push(name);
+    (row.type === "table" ? tables : row.type === "index" ? indexes : row.type === "trigger" ? triggers : columns).push(name);
   }
   tables.sort();
   indexes.sort();
@@ -297,7 +298,7 @@ export function parseMigrationReadbackOutput(value) {
   }
   return {
     ledger,
-    schema: { tables, indexes, ...(columns.length > 0 ? { columns: columns.sort() } : {}), ...(data === undefined ? {} : { data }) },
+    schema: { tables, indexes, ...(triggers.length > 0 ? { triggers: triggers.sort() } : {}), ...(columns.length > 0 ? { columns: columns.sort() } : {}), ...(data === undefined ? {} : { data }) },
     result_set_count: parsed.length,
   };
 }
