@@ -477,6 +477,21 @@ test("Cloudflare OAuth planning freezes named-profile syntax, least scopes, and 
     (error) => error.code === "WRANGLER_AUTH_ACTION_OUT_OF_ORDER",
   );
 
+  for (const code of ["EACCES", "EPERM", "ENOENT", "PRIVATE_AUTH_VALUE"]) {
+    await assert.rejects(executeCloudflareAuthAction({
+      plan: frozen.plan, actionId: "oauth_login", completedActionIds: ["enable_keyring"],
+      authorizedTaskId: "task-auth", authorizedPlanDigest: frozen.plan_digest,
+      runner: async () => { throw Object.assign(new Error("private OAuth URL and token"), { code }); },
+    }), (error) => {
+      const safe = serializeError(error);
+      assert.equal(safe.error.code, "WRANGLER_AUTH_ACTION_FAILED");
+      assert.equal(safe.error.details.cause_code, code === "PRIVATE_AUTH_VALUE" ? "AUTH_EXECUTION_FAILED" : code);
+      assert.equal(safe.error.details.readback_required, true);
+      assert.doesNotMatch(JSON.stringify(safe), /private OAuth|PRIVATE_AUTH_VALUE/);
+      return true;
+    });
+  }
+
   const executed = [];
   const completedActionIds = [];
   for (const action of frozen.plan.actions) {
@@ -755,6 +770,7 @@ test("each Skill exposes a self-describing command catalog with a bounded surfac
   const deploy = getCommandCatalog({ surface: "deploy" });
   const names = (catalog) => catalog.commands.map((entry) => entry.name);
 
+  for (const catalog of [daily, admin, deploy]) assert.equal(names(catalog).includes("web preflight"), true);
   assert.equal(daily.surface, "daily");
   assert.equal(names(daily).includes("scope resolve"), true);
   assert.equal(names(daily).includes("web launch"), true);
@@ -1219,7 +1235,7 @@ test("post-commit Browser and Invite delivery failures expose only safe recovery
             },
           },
         }), { status: 200, headers: { "content-type": "application/json" } }),
-      browserOpener: { open: async () => { throw new Error(`never serialize ${launchUrl}`); } },
+      browserOpener: { open: async () => { throw Object.assign(new Error(`never serialize ${launchUrl}`), { code: "DELIVERY_HELPER_FAILED" }); } },
     });
   } catch (error) {
     browserError = error;
@@ -1227,6 +1243,8 @@ test("post-commit Browser and Invite delivery failures expose only safe recovery
   const safeBrowserError = serializeError(browserError);
   assert.equal(safeBrowserError.error.code, "BROWSER_DELIVERY_FAILED_AFTER_COMMIT");
   assert.equal(safeBrowserError.error.details.committed, true);
+  assert.equal(safeBrowserError.error.details.channel, "system_browser");
+  assert.equal(safeBrowserError.error.details.cause_code, "DELIVERY_HELPER_FAILED");
   assert.equal(JSON.stringify(safeBrowserError).includes(launchCode), false);
 
   const inviteCode = `cfi_v1_abcdefgh_${"G".repeat(43)}`;

@@ -31,3 +31,9 @@ export function serializeError(error) {
     },
   };
 }
+
+// Only known local failure codes may cross the capability-delivery boundary.
+export function safeBrowserFailureCode(error) {
+  return ["DELIVERY_HELPER_UNAVAILABLE", "DELIVERY_HELPER_FAILED", "BROWSER_RELAY_FAILED", "BROWSER_OPEN_TIMEOUT", "BROWSER_DELIVERY_UNAVAILABLE"].includes(error?.code)
+    ? error.code : "BROWSER_DELIVERY_UNKNOWN";
+}

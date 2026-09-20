@@ -123,6 +123,10 @@ Wrangler's keyring preference is global to every Wrangler profile for the curren
 
 Login authorizes Wrangler and writes Wrangler/OS-owned authentication state only. It does not create a Worker, D1, deployment, directory binding, or `.cfkanban/` Credential. After every login action, rerun `runtime inspect-cloudflare-auth`, rerun `runtime resolve-cloudflare-auth` in the same private deployment context, and use `runtime wrangler-account-readback` with the exact selected account/profile. Only a successful readback can proceed to deployment planning. With optional attachments, also run `runtime r2-storage-readback` for the exact account/bucket; OAuth success alone does not prove R2 access or subscription. A 403/code 10000 does not distinguish missing permission from missing subscription.
 
+### Browser delivery failures
+
+Cloudflare OAuth uses Wrangler's browser opener and callback, not cfKanban Browser Launch. For an unverified local browser environment, `web preflight` can diagnose general system-browser delivery without authentication or remote writes; it does not prove Wrangler's `localhost:8976` callback or OAuth consent works. Reuse valid auth first. On browser, sandbox, or process failure, inspect auth state before retrying; follow the reference's **Browser delivery and OAuth recovery** section. Never change profile, login mode, scopes, browser security, or permissions to bypass a failed attempt. Opening the application after deployment/recovery goes through `cfkanban-admin` or `cfkanban`, including their delivery preflight and final authenticated-page verification.
+
 ## Local storage and host projections
 
 cfKanban-managed persistent data uses one maintenance root in the current execution environment user's home:

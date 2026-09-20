@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { toolError } from "./errors.mjs";
+import { safeBrowserFailureCode, toolError } from "./errors.mjs";
 import { classifyExecutionEnvironment, resolveStateRoot } from "./paths.mjs";
 import { checkTrustedOriginRebind } from "./rebind.mjs";
 import { getInstancePaths } from "./state.mjs";
@@ -590,6 +590,8 @@ export async function createBrowserLaunchAndDeliver({
       launch_id: resource.id,
       expires_at: resource.expires_at,
       recovery: "create_new_launch_after_fixing_browser_delivery",
+      channel: delivery,
+      cause_code: safeBrowserFailureCode(error),
     }, error);
   }
   return {
