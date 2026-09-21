@@ -234,7 +234,7 @@ watch(currentPath, () => {
 <template>
   <PublicHomeView v-if="route.kind === 'home'" />
 
-  <div v-else class="application-shell">
+  <div v-else class="application-shell" :class="{ 'application-shell--board': route.kind === 'project' && session }">
     <AppHeader
       v-if="session"
       :context="context?.label"

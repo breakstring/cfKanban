@@ -118,6 +118,17 @@ h3 {
   min-height: 100vh;
 }
 
+.application-shell--board {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+}
+
+.application-shell--board > :not(.board-page) {
+  flex-shrink: 0;
+}
+
 .page-shell {
   width: min(1200px, calc(100% - 48px));
   margin: 0 auto;
@@ -808,8 +819,17 @@ h3 {
 }
 
 .board-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
   width: 100%;
-  padding: 32px 24px 64px;
+  padding: 32px 24px 16px;
+  overflow-y: auto;
+}
+
+.board-page > :not(.kanban-scroll) {
+  flex-shrink: 0;
 }
 
 .board-toolbar {
@@ -880,8 +900,12 @@ h3 {
 }
 
 .kanban-scroll {
+  /* 极矮窗口仍保留可操作的列区域，由看板容器滚动展示工具栏。 */
+  flex: 1 0 180px;
+  min-height: 180px;
   max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   overscroll-behavior-inline: contain;
   scrollbar-gutter: stable;
 }
@@ -893,6 +917,7 @@ h3 {
 
 .kanban-board {
   display: grid;
+  height: 100%;
   grid-template-columns: repeat(5, minmax(248px, 1fr));
   gap: 16px;
   min-width: 1304px;
@@ -901,8 +926,9 @@ h3 {
 }
 
 .kanban-column {
-  min-height: 610px;
-  padding: 0 0 24px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .column-header h2::before,
@@ -930,6 +956,7 @@ h3 {
 
 .column-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   min-height: 58px;
@@ -952,7 +979,14 @@ h3 {
 
 .column-content {
   display: grid;
+  flex: 1;
+  min-height: 0;
+  align-content: start;
   gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  padding-bottom: 12px;
 }
 
 .issue-card {
@@ -2056,7 +2090,7 @@ textarea:disabled {
   }
 
   .board-page {
-    padding: 24px 14px 48px;
+    padding: 24px 14px 16px;
   }
 
   .board-toolbar {
@@ -2442,7 +2476,6 @@ textarea:disabled {
 .management-tabs { display: flex; flex-wrap: wrap; gap: 12px; border-bottom: 1px solid var(--color-border); }
 .management-tabs [aria-current] { color: var(--color-primary); border-bottom: 2px solid currentColor; }
 
-.kanban-column .column-content { max-height: max(320px, calc(100dvh - 340px)); overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; padding-bottom: 12px; }
 .column-page-error { padding: 12px; overflow-wrap: anywhere; font-size: 13px; }
 .column-header > span { white-space: nowrap; }
 
