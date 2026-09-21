@@ -3,18 +3,18 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import PageState from "../components/PageState.vue";
 import { apiRequest } from "../lib/api";
-import { hasManagementActions, managedWorkspaceIds, managementPath } from "../lib/scoped-management";
+import { hasManagementActions, managedWorkspaceIds, managementPath, projectDisplayRole, projectRoleLabel } from "../lib/scoped-management";
 import { containerChoiceLabels } from "../lib/container-choice";
 import { locale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
-import type { ContainerResource, WebSessionView } from "../types";
+import type { ContainerResource, ProjectScopeItem, WebSessionView } from "../types";
 
 const props = defineProps<{ session: WebSessionView }>();
 
 interface Choice {
   displayName: string;
   projectId: string;
-  role: string;
+  scope: ProjectScopeItem;
   workspaceId: string;
   workspaceName: string;
 }
@@ -34,20 +34,13 @@ const choiceLabels = computed(() => containerChoiceLabels(choices.value.map((cho
 const loading = ref(true);
 const error = ref("");
 
-function roleLabel(value: string): string {
-  if (locale.value !== "zh-CN") return value;
-  if (value === "writer") return "协作者";
-  if (value === "reader") return "只读者";
-  return value === "owner" ? "所有者" : value;
-}
-
 function load(): void {
   loading.value = true;
   error.value = "";
   choices.value = (props.session.allowed_scope.projects ?? []).map((scope) => ({
     displayName: scope.project_display_name,
     projectId: scope.project_id,
-    role: scope.role,
+    scope,
     workspaceId: scope.workspace_id,
     workspaceName: scope.workspace_display_name,
   }));
@@ -85,7 +78,7 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
           <small>{{ choice.workspaceName }}</small>
           <strong>{{ choiceLabels.get(choice.projectId)?.label }}</strong>
         </span>
-        <span class="selection-row-end"><span class="role-badge">{{ roleLabel(choice.role) }}</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></span>
+        <span class="selection-row-end"><span class="role-badge">{{ projectRoleLabel(projectDisplayRole(session, choice.scope), locale) }}</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></span>
       </button>
       <p v-if="choices.length === 0" class="empty-copy">
         {{ locale === "zh-CN" ? "当前没有可访问的项目，请联系所有者获取项目权限。" : "No projects are currently available. Contact the Owner for project access." }}

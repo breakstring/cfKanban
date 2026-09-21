@@ -26,9 +26,16 @@ function resource(row: AdministratorRow, auth: AuthContext): { [key: string]: Js
 }
 
 export function managementGrantsResource(auth: AuthContext): JsonValue[] {
-  return (auth.managementGrants ?? []).filter((grant) => sessionAllowsManagement(auth, {
-    workspaceId: grant.workspace_id, ...(grant.project_id === null ? {} : { projectId: grant.project_id }),
-  })).map((grant) => resource({ ...grant, display_name: auth.displayName }, auth));
+  return (auth.managementGrants ?? []).filter((grant) => {
+    if (sessionAllowsManagement(auth, {
+      workspaceId: grant.workspace_id, ...(grant.project_id === null ? {} : { projectId: grant.project_id }),
+    })) return true;
+    // 固定项目会话保留继承来源用于身份展示，不授予工作区级管理能力。
+    return grant.project_id === null && auth.kind === "cookie"
+      && (auth.targetKind === "project" || auth.targetKind === "issue")
+      && typeof auth.target.project_id === "string"
+      && sessionAllowsManagement(auth, { workspaceId: grant.workspace_id, projectId: auth.target.project_id });
+  }).map((grant) => resource({ ...grant, display_name: auth.displayName }, auth));
 }
 
 function cursorPosition(value: JsonValue[] | null): string | null {

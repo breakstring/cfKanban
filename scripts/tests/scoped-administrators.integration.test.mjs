@@ -6,6 +6,7 @@ import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { sha256Hex } from "../../apps/worker/src/kernel/crypto.ts";
 import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { listProjectMemberCandidates } from "../../apps/worker/src/services/scoped-administrators.ts";
+import { managedWorkspaceIds, projectDisplayRole } from "../../apps/web/src/lib/scoped-management.ts";
 
 const server = createTestHarness({ root: fileURLToPath(new URL("../../", import.meta.url)), workers: [{ configPath: "wrangler.wp02-test.jsonc" }] });
 const owner = { id: crypto.randomUUID(), token: `cfk_v1_scopeowner_${"A".repeat(43)}` };
@@ -56,6 +57,60 @@ before(async () => {
     ownerCredentialId: crypto.randomUUID(), ownerCredentialToken: owner.token, ownerDisplayName: "Scoped_Owner", preferredApiOrigin: "https://kanban.example.test" });
 });
 after(async () => server.close());
+
+test("固定 Project 和 Issue 会话展示继承管理员身份但不扩大管理范围", async () => {
+  const w = await workspace("FixedRoleWorkspace");
+  const p = await project(w, "FixedRoleProject");
+  const sibling = await project(w, "FixedRoleSibling");
+  const hidden = await workspace("FixedRoleHidden");
+  const lead = await person("FixedRoleLead");
+  const inherited = ok(await grant(w, lead));
+  const direct = ok(await grant(p, lead));
+  ok(await grant(sibling, lead));
+  ok(await grant(hidden, lead));
+  ok(await call(owner, `/api/v1/admin/projects/${p.id}/grants`, "POST", { principal_id: lead.id, role: "writer" }));
+  const issue = ok(await call(owner, `${p.path}/issues`, "POST", { title: "Fixed role issue" }));
+  const fixedSessions = [];
+  for (const kind of ["project", "issue"]) {
+    const target = { kind, workspace_id: w.id, project_id: p.id,
+      ...(kind === "issue" ? { identifier: issue.identifier, issue_id: issue.id } : {}),
+      entry_path: kind === "issue" ? `/app/issues/${issue.identifier}` : `/app/w/${w.id}/p/${p.id}` };
+    const fixed = await session(lead, kind === "issue" ? { kind, identifier: issue.identifier } : { kind, workspace_id: w.id, project_id: p.id });
+    // 新 Launch 默认使用 project_selection；在隔离数据库中还原仍受支持的旧固定会话。
+    await db.prepare("UPDATE web_sessions SET target_kind=?1, target_json=?2 WHERE id=?3")
+      .bind(kind, JSON.stringify(target), fixed.resource.session_id).run();
+    fixedSessions.push(fixed);
+    const view = ok(await call(fixed, "/api/v1/web-session"));
+    assert.equal(view.allowed_scope.kind, "project");
+    assert.deepEqual(view.allowed_scope.projects.map(item => item.project_id), [p.id]);
+    assert.deepEqual(view.management_grants.map(item => item.id).sort(), [inherited.id, direct.id].sort());
+    const source = view.management_grants.find(item => item.id === inherited.id);
+    assert.equal(source.project_id, null);
+    assert.equal(source.role, "workspace_admin");
+    assert.deepEqual(source.allowed_actions, ["read"]);
+    assert.equal(projectDisplayRole(view, view.allowed_scope.projects[0]), "workspace_admin");
+    assert.deepEqual(managedWorkspaceIds(view), []);
+    assert.ok(ok(await call(fixed, p.path)).allowed_actions.includes("manage_members"));
+    assert.equal((await call(fixed, `${w.path}/administrators`)).status, 403);
+    assert.equal((await call(fixed, `${w.path}/projects`, "POST", { display_name: "Denied" })).status, 403);
+    assert.equal((await call(fixed, sibling.path)).status, 404);
+    assert.equal((await call(fixed, `${sibling.path}/administrators`)).status, 403);
+    assert.equal((await call(fixed, hidden.path)).status, 404);
+  }
+  ok(await revoke(w, inherited));
+  for (const fixed of fixedSessions) {
+    const view = ok(await call(fixed, "/api/v1/web-session"));
+    assert.deepEqual(view.management_grants.map(item => item.id), [direct.id]);
+    assert.equal(projectDisplayRole(view, view.allowed_scope.projects[0]), "project_admin");
+  }
+  ok(await revoke(p, direct));
+  for (const fixed of fixedSessions) {
+    const view = ok(await call(fixed, "/api/v1/web-session"));
+    assert.deepEqual(view.management_grants, []);
+    assert.equal(projectDisplayRole(view, view.allowed_scope.projects[0]), "writer");
+    assert.equal((await call(fixed, `${p.path}/administrators`)).status, 403);
+  }
+});
 
 test("普通成员候选按项目可见范围搜索分页，排除直接成员并保留独立授权和重新授予", async () => {
   const w = await workspace("MemberCandidateWorkspace");

@@ -6,6 +6,7 @@ import ProjectSwitcher from "./ProjectSwitcher.vue";
 import { apiRequest } from "../lib/api";
 import { locale, setLocale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
+import { projectDisplayRole, projectRoleLabel } from "../lib/scoped-management";
 import { canAccessOwnerControlPlane } from "../lib/session-capabilities";
 import type { InstanceDiscovery, WebSessionView } from "../types";
 
@@ -38,6 +39,14 @@ function roleLabel(value: string): string {
   return value;
 }
 
+const displayedRole = computed(() => {
+  const project = props.session.allowed_scope.projects?.find(item =>
+    item.workspace_id === props.workspaceId && item.project_id === props.projectId);
+  return project
+    ? projectRoleLabel(projectDisplayRole(props.session, project), locale.value)
+    : props.role ? roleLabel(props.role) : null;
+});
+
 async function loadDiscovery(): Promise<void> {
   try {
     discovery.value = await apiRequest<InstanceDiscovery>("/.well-known/cfkanban-instance.json");
@@ -57,7 +66,7 @@ onMounted(loadDiscovery);
     </button>
     <div class="header-context">
       <ProjectSwitcher :session="session" :context="context" :project-id="projectId" :workspace-id="workspaceId" @verified="emit('verified', $event)" />
-      <span v-if="role" class="role-badge">{{ roleLabel(role) }}</span>
+      <span v-if="displayedRole" class="role-badge">{{ displayedRole }}</span>
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
       <button v-if="canAccessOwnerControlPlane(session)" class="text-button" type="button" @click="navigate('/app/admin')">

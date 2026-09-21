@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { managedWorkspaceIds, managementPath, hasManagementActions, remainingAccessSources, sourceLabel } from "../../apps/web/src/lib/scoped-management.ts";
+import { managedWorkspaceIds, managementPath, hasManagementActions, remainingAccessSources, sourceLabel, projectDisplayRole, projectRoleLabel } from "../../apps/web/src/lib/scoped-management.ts";
 import { sameSessionBoundary } from "../../apps/web/src/lib/session-boundary.ts";
 import { canAccessOwnerControlPlane } from "../../apps/web/src/lib/session-capabilities.ts";
 
@@ -16,6 +16,42 @@ function session(overrides = {}) {
     ...overrides,
   };
 }
+
+test("project identity display follows management precedence without leaking across scopes", () => {
+  const project = { workspace_id: "workspace-1", project_id: "project-1", role: "writer" };
+  const direct = { ...workspaceGrant, id: "direct", project_id: "project-1" };
+  assert.equal(projectDisplayRole(session(), project), "workspace_admin");
+  assert.equal(projectDisplayRole(session(), { ...project, project_id: "future-project" }), "workspace_admin");
+  assert.equal(projectDisplayRole(session({ management_grants: [direct] }), project), "project_admin");
+  assert.equal(projectDisplayRole(session({ management_grants: [direct, workspaceGrant] }), project), "workspace_admin");
+  assert.equal(projectDisplayRole(session({ management_grants: [direct, workspaceGrant] }), { ...project, role: "owner" }), "owner");
+  assert.equal(projectDisplayRole(session(), { ...project, workspace_id: "other-workspace" }), "writer");
+  assert.equal(projectDisplayRole(session({ management_grants: [direct] }), { ...project, project_id: "other-project", role: "reader" }), "reader");
+  assert.equal(projectDisplayRole(session({ management_grants: [{ ...workspaceGrant, principal_id: "other-user" }] }), project), "writer");
+});
+
+test("revoked or unavailable management grants fall back to the remaining current project role", () => {
+  const project = { workspace_id: "workspace-1", project_id: "project-1", role: "writer" };
+  const direct = { ...workspaceGrant, id: "direct", project_id: "project-1" };
+  const revoked = { ...workspaceGrant, revoked_at: "2026-09-21T00:00:00Z" };
+  assert.equal(projectDisplayRole(session({ management_grants: [revoked, direct] }), project), "project_admin");
+  assert.equal(projectDisplayRole(session({ management_grants: [revoked, { ...direct, revoked_at: revoked.revoked_at }] }), project), "writer");
+  assert.equal(projectDisplayRole(session({ management_grants: [] }), { ...project, role: "reader" }), "reader");
+  assert.equal(projectDisplayRole(session({ management_grants: undefined, allowed_scope: { kind: "project", projects: [project] } }), project), "writer");
+});
+
+test("every project identity has an English and Chinese label", () => {
+  for (const [role, english, chinese] of [
+    ["owner", "Owner", "所有者"],
+    ["workspace_admin", "Workspace administrator", "工作区管理员"],
+    ["project_admin", "Project administrator", "项目管理员"],
+    ["writer", "Writer", "协作者"],
+    ["reader", "Reader", "只读者"],
+  ]) {
+    assert.equal(projectRoleLabel(role, "en"), english);
+    assert.equal(projectRoleLabel(role, "zh-CN"), chinese);
+  }
+});
 
 test("empty workspaces remain discoverable without broadening a fixed session", () => {
   assert.deepEqual(managedWorkspaceIds(session()), ["workspace-1"]);

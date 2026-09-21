@@ -7,7 +7,7 @@ import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor } from "../lib/pagination";
 import { groupProjects } from "../lib/project-navigation";
 import { navigate } from "../lib/router";
-import { managedWorkspaceIds, managementPath } from "../lib/scoped-management";
+import { managedWorkspaceIds, managementPath, projectDisplayRole, projectRoleLabel } from "../lib/scoped-management";
 import { canAccessOwnerControlPlane } from "../lib/session-capabilities";
 import type { ContainerResource, ListResult, WebSessionView } from "../types";
 
@@ -101,7 +101,7 @@ onUnmounted(() => { generation += 1; document.removeEventListener("pointerdown",
       <div v-if="error" role="alert"><p>{{ error }}</p><button class="text-button" type="button" :disabled="busy" @click="refresh">{{ ui("Retry", "重试") }}</button></div>
       <div v-for="group in groups" :key="group.id" class="project-switch-group">
         <div class="project-switch-group-title"><h2 :title="workspaceLabels.get(group.id)?.title">{{ workspaceLabels.get(group.id)?.label ?? group.name }}</h2><button v-if="group.canManage" class="text-button" type="button" @click.stop="manage(group.id)">{{ ui("Manage workspace", "管理工作区") }} →</button></div>
-        <button v-for="project in group.projects" :key="project.project_id" class="project-switch-row" type="button" :title="projectLabels.get(project.project_id)?.title" :aria-current="project.project_id === projectId && project.workspace_id === workspaceId ? 'page' : undefined" @click="selectProject(project.workspace_id, project.project_id)"><span aria-hidden="true">{{ project.project_id === projectId && project.workspace_id === workspaceId ? '✓' : '' }}</span><strong>{{ projectLabels.get(project.project_id)?.label ?? project.project_display_name }}</strong><small>{{ project.role === 'reader' ? ui('Reader', '只读者') : project.role === 'owner' ? ui('Owner', '所有者') : ui('Writer', '协作者') }}</small></button>
+        <button v-for="project in group.projects" :key="project.project_id" class="project-switch-row" type="button" :title="projectLabels.get(project.project_id)?.title" :aria-current="project.project_id === projectId && project.workspace_id === workspaceId ? 'page' : undefined" @click="selectProject(project.workspace_id, project.project_id)"><span aria-hidden="true">{{ project.project_id === projectId && project.workspace_id === workspaceId ? '✓' : '' }}</span><strong>{{ projectLabels.get(project.project_id)?.label ?? project.project_display_name }}</strong><small>{{ projectRoleLabel(projectDisplayRole(verified ?? session, project), locale) }}</small></button>
         <p v-if="!group.projects.length" class="muted-copy">{{ ui("No projects", "暂无项目") }}</p>
       </div>
       <p v-if="!busy && !groups.length">{{ ui("No available projects", "暂无可访问项目") }}</p>

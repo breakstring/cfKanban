@@ -1,4 +1,28 @@
-import type { AccessSource, ContainerResource, WebSessionView } from "../types";
+import type { AccessSource, ContainerResource, Locale, ProjectRole, ProjectScopeItem, WebSessionView } from "../types";
+
+export type ProjectDisplayRole = ProjectRole | "workspace_admin" | "project_admin";
+
+export function projectDisplayRole(session: WebSessionView, project: ProjectScopeItem): ProjectDisplayRole {
+  if (project.role === "owner") return "owner";
+  const grants = (session.management_grants ?? []).filter(grant =>
+    grant.principal_id === session.principal.id
+    && grant.workspace_id === project.workspace_id
+    && grant.revoked_at === null);
+  if (grants.some(grant => grant.project_id === null)) return "workspace_admin";
+  if (grants.some(grant => grant.project_id === project.project_id)) return "project_admin";
+  return project.role;
+}
+
+export function projectRoleLabel(role: ProjectDisplayRole, locale: Locale): string {
+  const labels = {
+    owner: ["Owner", "所有者"],
+    workspace_admin: ["Workspace administrator", "工作区管理员"],
+    project_admin: ["Project administrator", "项目管理员"],
+    writer: ["Writer", "协作者"],
+    reader: ["Reader", "只读者"],
+  } as const;
+  return labels[role][locale === "zh-CN" ? 1 : 0];
+}
 
 export function managementPath(workspaceId: string, projectId?: string): string {
   const params = new URLSearchParams({ workspace: workspaceId });
