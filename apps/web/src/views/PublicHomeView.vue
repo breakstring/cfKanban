@@ -4,6 +4,7 @@ import { computed, onMounted, ref } from "vue";
 import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
 import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";
+import ProductHighlights from "../components/ProductHighlights.vue";
 import ProductIntro from "../components/ProductIntro.vue";
 import { ApiProblem, apiRequest } from "../lib/api";
 import { locale, t } from "../lib/i18n";
@@ -177,102 +178,165 @@ onMounted(load);
       <LocaleSwitch />
     </header>
 
-    <section class="hero-section">
-      <div class="hero-copy">
-        <p class="eyebrow">{{ t("home.eyebrow") }}</p>
-        <h1><span>{{ t("home.headingFirst") }}</span><span>{{ t("home.headingSecond") }}</span></h1>
-        <p class="hero-description">{{ t("home.description") }}</p>
-        <p class="instance-note">{{ instanceNotice }}</p>
-        <a v-if="preferredOrigin" class="preferred-origin" :href="preferredOrigin">
-          {{ locale === "zh-CN" ? "推荐访问地址" : "Preferred address" }} · {{ preferredOrigin }}
-        </a>
-      </div>
-      <aside class="agent-note">
-        <p class="note-kicker">{{ t("home.agentGuideTitle") }}</p>
-        <p class="agent-guide-description">{{ t("home.agentGuideDescription") }}</p>
-        <p class="agent-prompt">{{ deployInstruction }}</p>
-        <div class="agent-actions">
-          <button class="primary-button" type="button" @click="copyText(deployInstruction, 'deploy')">
-            {{ copied === "deploy" ? (locale === "zh-CN" ? "已复制" : "Copied") : t("home.copyDeploy") }}
-          </button>
-          <a class="guide-link" :href="deployGuideUrl">{{ t("home.deployGuide") }} ↗</a>
+    <div class="home-stage home-stage--intro">
+
+      <section class="hero-section">
+        <div class="hero-copy">
+          <p class="eyebrow">{{ t("home.eyebrow") }}</p>
+          <h1><span>{{ t("home.headingFirst") }}</span><span>{{ t("home.headingSecond") }}</span></h1>
+          <p class="hero-description">{{ t("home.description") }}</p>
+          <p class="instance-note">{{ instanceNotice }}</p>
+          <a v-if="preferredOrigin" class="preferred-origin" :href="preferredOrigin">
+            {{ locale === "zh-CN" ? "推荐访问地址" : "Preferred address" }} · {{ preferredOrigin }}
+          </a>
         </div>
-      </aside>
-    </section>
+        <aside class="agent-note">
+          <p class="note-kicker">{{ t("home.agentGuideTitle") }}</p>
+          <p class="agent-guide-description">{{ t("home.agentGuideDescription") }}</p>
+          <p class="agent-prompt">{{ deployInstruction }}</p>
+          <div class="agent-actions">
+            <button class="primary-button" type="button" @click="copyText(deployInstruction, 'deploy')">
+              {{ copied === "deploy" ? (locale === "zh-CN" ? "已复制" : "Copied") : t("home.copyDeploy") }}
+            </button>
+            <a class="guide-link" :href="deployGuideUrl">{{ t("home.deployGuide") }} ↗</a>
+          </div>
+          <div v-if="copyFallback?.key === 'deploy'" class="copy-fallback" role="status">
+            <label>
+              {{ t("copy.manual") }}
+              <textarea :value="copyFallback.value" readonly rows="5" @focus="($event.target as HTMLTextAreaElement).select()" />
+            </label>
+          </div>
+        </aside>
+      </section>
+    </div>
 
-    <ProductIntro />
+    <div class="home-stage home-stage--highlights">
+      <ProductHighlights />
+    </div>
+    <div class="home-stage home-stage--video">
+      <ProductIntro />
+    </div>
 
-    <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load(true)" />
+    <div class="home-stage home-stage--community">
+      <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load(true)" />
 
-    <section v-if="copyFallback" class="copy-fallback" role="status">
-      <label>
-        {{ t("copy.manual") }}
-        <textarea :value="copyFallback.value" readonly rows="5" @focus="($event.target as HTMLTextAreaElement).select()" />
-      </label>
-    </section>
+      <section v-if="copyFallback && copyFallback.key !== 'deploy'" class="copy-fallback" role="status">
+        <label>
+          {{ t("copy.manual") }}
+          <textarea :value="copyFallback.value" readonly rows="5" @focus="($event.target as HTMLTextAreaElement).select()" />
+        </label>
+      </section>
 
-    <section v-if="!loading && !error" class="public-projects-section">
-      <header class="section-heading-row">
-        <div>
-          <p class="eyebrow">{{ locale === "zh-CN" ? "公开加入" : "Public Join" }}</p>
-          <h2>{{ t("home.projects") }}</h2>
-          <p>{{ t("home.projectsDescription") }}</p>
-        </div>
-        <button
-          v-if="canUsePasskeys"
-          class="secondary-button"
-          type="button"
-          :disabled="passkeyBusy"
-          @click="signInWithPasskey"
-        >
-          {{ passkeyBusy ? "…" : t("action.usePasskey") }}
-        </button>
-      </header>
-
-      <div v-if="projects.length" class="public-project-list">
-        <article v-for="project in projects" :key="project.public_id" class="public-project-row">
+      <section v-if="!loading && !error" class="public-projects-section">
+        <header class="section-heading-row">
           <div>
-            <h3>{{ project.display_name }}</h3>
-            <p>{{ project.public_summary }}</p>
+            <p class="eyebrow">{{ locale === "zh-CN" ? "公开加入" : "Public Join" }}</p>
+            <h2>{{ t("home.projects") }}</h2>
+            <p>{{ t("home.projectsDescription") }}</p>
           </div>
-          <div class="role-actions">
-            <button class="secondary-button" type="button" :disabled="joinBusy" @click="chooseRole(project, 'reader')">
-              {{ copied === `${project.public_id}:reader` ? (locale === "zh-CN" ? "话术已复制" : "Instruction copied") : t("home.reader") }}
-            </button>
-            <button class="primary-button" type="button" :disabled="joinBusy" @click="chooseRole(project, 'writer')">
-              {{ copied === `${project.public_id}:writer` ? (locale === "zh-CN" ? "话术已复制" : "Instruction copied") : t("home.writer") }}
-            </button>
-          </div>
-        </article>
-      </div>
-      <p v-else class="empty-copy">
-        {{ locale === "zh-CN" ? "当前没有公开项目。" : "No projects are public right now." }}
-      </p>
-      <button v-if="projectsNextCursor" class="load-more" type="button" :disabled="projectsLoadingMore" @click="load(false)">{{ projectsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多公开项目" : "Load more public projects") }}</button>
-    </section>
+          <button
+            v-if="canUsePasskeys"
+            class="secondary-button"
+            type="button"
+            :disabled="passkeyBusy"
+            @click="signInWithPasskey"
+          >
+            {{ passkeyBusy ? "…" : t("action.usePasskey") }}
+          </button>
+        </header>
 
-    <footer class="public-footer">
-      <div class="footer-brand">
-        <img class="footer-logo" :src="cfKanbanMarkUrl" alt="" aria-hidden="true" />
-        <div class="footer-brand-copy">
-          <strong>cfKanban</strong>
-          <span>{{ t("home.footerTagline") }}</span>
+        <div v-if="projects.length" class="public-project-list">
+          <article v-for="project in projects" :key="project.public_id" class="public-project-row">
+            <div>
+              <h3>{{ project.display_name }}</h3>
+              <p>{{ project.public_summary }}</p>
+            </div>
+            <div class="role-actions">
+              <button class="secondary-button" type="button" :disabled="joinBusy" @click="chooseRole(project, 'reader')">
+                {{ copied === `${project.public_id}:reader` ? (locale === "zh-CN" ? "话术已复制" : "Instruction copied") : t("home.reader") }}
+              </button>
+              <button class="primary-button" type="button" :disabled="joinBusy" @click="chooseRole(project, 'writer')">
+                {{ copied === `${project.public_id}:writer` ? (locale === "zh-CN" ? "话术已复制" : "Instruction copied") : t("home.writer") }}
+              </button>
+            </div>
+          </article>
         </div>
-      </div>
-      <nav class="footer-links" :aria-label="locale === 'zh-CN' ? '页脚导航' : 'Footer navigation'">
-        <a :href="deployGuideUrl">{{ t("home.deployGuide") }}</a>
-        <a :href="joinGuideUrl">{{ t("home.joinGuide") }}</a>
-        <a :href="`${guideOrigin}/openapi.json`">{{ t("home.openapi") }}</a>
-        <a href="https://github.com/breakstring/cfKanban" rel="noreferrer noopener">{{ t("home.github") }}</a>
-      </nav>
-      <div class="footer-meta">
-        <span>cfKanban {{ meta?.release_version ?? "—" }}</span>
-        <span>{{ meta?.instance_id ? `${locale === "zh-CN" ? "实例" : "instance"} ${meta.instance_id.slice(0, 8)}` : "" }}</span>
-      </div>
-    </footer>
+        <p v-else class="empty-copy">
+          {{ locale === "zh-CN" ? "当前没有公开项目。" : "No projects are public right now." }}
+        </p>
+        <button v-if="projectsNextCursor" class="load-more" type="button" :disabled="projectsLoadingMore" @click="load(false)">{{ projectsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多公开项目" : "Load more public projects") }}</button>
+      </section>
+
+      <footer class="public-footer">
+        <div class="footer-brand">
+          <img class="footer-logo" :src="cfKanbanMarkUrl" alt="" aria-hidden="true" />
+          <div class="footer-brand-copy">
+            <strong>cfKanban</strong>
+            <span>{{ t("home.footerTagline") }}</span>
+          </div>
+        </div>
+        <nav class="footer-links" :aria-label="locale === 'zh-CN' ? '页脚导航' : 'Footer navigation'">
+          <a :href="deployGuideUrl">{{ t("home.deployGuide") }}</a>
+          <a :href="joinGuideUrl">{{ t("home.joinGuide") }}</a>
+          <a :href="`${guideOrigin}/openapi.json`">{{ t("home.openapi") }}</a>
+          <a href="https://github.com/breakstring/cfKanban" rel="noreferrer noopener">{{ t("home.github") }}</a>
+        </nav>
+        <div class="footer-meta">
+          <span>cfKanban {{ meta?.release_version ?? "—" }}</span>
+          <span>{{ meta?.instance_id ? `${locale === "zh-CN" ? "实例" : "instance"} ${meta.instance_id.slice(0, 8)}` : "" }}</span>
+        </div>
+      </footer>
+    </div>
   </main>
 </template>
 
 <style scoped>
 .instance-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.home-stage {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+.home-stage + .home-stage {
+  border-top: 1px solid var(--color-border);
+}
+
+.home-stage--intro {
+  min-height: min(600px, calc(78svh - 68px));
+  justify-content: flex-start;
+}
+
+.hero-section {
+  flex: 1;
+  padding: clamp(32px, 5svh, 64px) 0;
+}
+
+.home-stage--highlights {
+  min-height: min(440px, 50svh);
+}
+
+.agent-note .copy-fallback {
+  margin: 16px 0 0;
+}
+
+.home-stage--community {
+  min-height: 65svh;
+  justify-content: flex-start;
+  scroll-snap-align: end;
+}
+
+.public-footer {
+  margin-top: auto;
+}
+
+@media (min-width: 941px) and (max-width: 1100px) {
+  .hero-section {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 32px;
+  }
+}
 </style>

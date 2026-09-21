@@ -28,6 +28,7 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
     await mkdir(skillRoot, { recursive: true });
     await mkdir(serviceRoot, { recursive: true });
     await copyEntries([
+      "LICENSE",
       ".codex-plugin/plugin.json",
       ".agents/plugins/marketplace.json",
       "apps/web/src/assets/cfkanban-mark.png",
@@ -37,6 +38,7 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
       "docs/skills/README.zh-CN.md",
     ], skillRoot);
     await copyEntries([
+      "LICENSE",
       "apps/web/dist",
       "contracts/openapi.json",
       "migrations",

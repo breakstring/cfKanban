@@ -41,7 +41,6 @@ const intro = computed(() => locale.value === "zh-CN" ? {
   grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   padding: 32px 0 40px;
-  border-top: 1px solid var(--color-border);
 }
 
 .product-intro h2 {

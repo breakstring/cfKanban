@@ -40,6 +40,11 @@ html {
   background: var(--color-canvas);
 }
 
+html:has(.public-home) {
+  scroll-padding-top: 68px;
+  scroll-snap-type: y proximity;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -502,11 +507,15 @@ h3 {
 }
 
 .public-nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-height: 68px;
   border-bottom: 1px solid var(--color-border);
+  background: var(--color-canvas);
 }
 
 .wordmark {
@@ -637,7 +646,6 @@ h3 {
 
 .public-projects-section {
   padding: 44px 0 68px;
-  border-top: 1px solid var(--color-border);
 }
 
 .section-heading-row,
@@ -2177,6 +2185,10 @@ textarea:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html:has(.public-home) {
+    scroll-snap-type: none;
+  }
+
   *,
   *::before,
   *::after {
