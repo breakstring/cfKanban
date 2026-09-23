@@ -161,3 +161,9 @@ npm run validate
 Source maintainers can use the [release publication and interruption-recovery workflow](docs/release-publication.md) to verify a draft before publishing its assets. This is separate from user deployment and Skill updates.
 
 Start with the [documentation index](docs/README.md), [product brief](docs/product/product-brief.md), [user storyboard](docs/product/user-storyboard.md), [Agent Skills guide](docs/skills/README.md), and [implementation plan](docs/plans/2026-08-29-v0-implementation-plan.md). Frozen technical contracts live under [`docs/specs/`](docs/specs/).
+
+## Friendly links
+
+<p align="center">
+  <a href="https://linux.do" alt="LINUX DO"><img src="https://shorturl.at/ggSqS" alt="LINUX DO" /></a>
+</p>
