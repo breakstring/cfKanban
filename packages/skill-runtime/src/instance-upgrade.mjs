@@ -15,6 +15,7 @@ import { resolveStateRoot } from "./paths.mjs";
 import { fetchDiscovery, validateDiscovery } from "./rebind.mjs";
 import { loadAndVerifyRelease } from "./release.mjs";
 import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
+import { deploymentCompletion, findDeploymentAttempt } from "./worker-deployment-recovery.mjs";
 import { ATTACHMENT_CLEANUP_CRON, assertAttachmentStoragePlan } from "./r2-storage.mjs";
 import {
   getInstancePaths,
@@ -45,9 +46,19 @@ function receiptRelease(receipt) {
   return receipt?.service_release?.after || receipt?.service_release || null;
 }
 
-function assertPriorReceipt(receipt, plan) {
+export function assertPriorReceipt(receipt, plan) {
+  const attachment = receipt?.kind === "cfkanban_deployment_attachment_receipt";
+  if (attachment && (plan.current?.provenance !== "remote_observed" || plan.allow_unverified_current_source !== true
+    || receipt.provenance?.deployed_artifact_verified !== false || receipt.provenance?.historical_artifact_source !== "unknown"
+    || receipt.cloudflare?.worker?.version_id !== plan.resources.worker.current_version_id
+    || receipt.cloudflare?.worker?.deployment_id !== plan.resources.worker.current_deployment_id
+    || receipt.service_release?.provenance !== "remote_observed"
+    || receipt.instance?.schema_version !== plan.current.schema_version || receipt.instance?.service_version !== plan.current.service_api_version)) {
+    throw toolError("UPGRADE_PRIOR_RECEIPT_DRIFT", "Attached deployment provenance or observed Worker state differs from the frozen upgrade plan");
+  }
+  if (!attachment && plan.current?.provenance === "remote_observed") throw toolError("UPGRADE_PRIOR_RECEIPT_DRIFT", "Unknown current provenance requires an attachment receipt");
   const before = receiptRelease(receipt);
-  if ((receipt?.kind !== "cfkanban_deployment_receipt" && receipt?.kind !== "cfkanban_instance_upgrade_receipt")
+  if ((receipt?.kind !== "cfkanban_deployment_receipt" && receipt?.kind !== "cfkanban_instance_upgrade_receipt" && !attachment)
     || receipt.instance?.id !== plan.instance_id
     || receipt.cloudflare?.account_id !== plan.target.cloudflare_account_id
     || receipt.cloudflare?.profile !== plan.target.cloudflare_profile
@@ -159,15 +170,23 @@ export async function finalizeInstanceUpgrade({
     throw toolError("UPGRADE_MIGRATION_MANIFEST_DRIFT", "Target migration schema version differs from the upgrade plan");
   }
   const migrationReadback = assertMigrationReadback(journal, migrationManifest);
-  const deploy = latestFinished(journal.events, "deploy_worker_and_static_assets");
+  const deploy = deploymentCompletion(journal, plan, configEvent.config_digest);
   const workerReadback = latestFinished(journal.events, "worker_deployment_readback");
-  if (deploy?.event?.exit_code !== 0
+  if (deploy === null
     || workerReadback?.event?.exit_code !== 0
     || workerReadback.index <= deploy.index
     || workerReadback.event.worker_deployment_readback === undefined) {
     throw toolError("WORKER_DEPLOYMENT_READBACK_REQUIRED", "Upgrade finalization requires a successful post-deploy Worker readback");
   }
   const afterWorker = workerReadback.event.worker_deployment_readback;
+  if (plan.current?.provenance === "remote_observed") {
+    const attempt = findDeploymentAttempt(journal, plan, configEvent.config_digest);
+    if (!attempt || !afterWorker.deployment_proof
+      || canonicalDigest(afterWorker.deployment_proof) !== canonicalDigest(attempt.proof)
+      || (deploy.recovered && (deploy.event.deployment_id !== afterWorker.deployment_id || deploy.event.version_id !== afterWorker.version_id))) {
+      throw toolError("WORKER_DEPLOYMENT_READBACK_REQUIRED", "Upgrade finalization requires readback bound to the exact journaled deployment attempt");
+    }
+  }
   if (plan.usage_analytics && JSON.stringify(afterWorker.usage_configuration) !== JSON.stringify({ binding_verified: true })) throw toolError("USAGE_READBACK_REQUIRED", "Upgrade finalization requires usage binding readback");
   if (plan.resources.r2 && JSON.stringify(afterWorker.attachment_configuration) !== JSON.stringify({ bucket_name: plan.resources.r2.bucket_name, crons: [ATTACHMENT_CLEANUP_CRON], binding_verified: true })) throw toolError("R2_READBACK_REQUIRED", "Upgrade finalization requires post-deploy attachment binding and Cron readback");
   if (afterWorker.deployment_id === plan.resources.worker.current_deployment_id
@@ -296,6 +315,7 @@ export async function finalizeInstanceUpgrade({
     verification: {
       canonical_release: true,
       worker_deployment_readback: true,
+      ...(deploy.recovered ? { worker_deployment_recovered: true } : {}),
       health: true,
       d1_reachable: true,
       discovery: true,

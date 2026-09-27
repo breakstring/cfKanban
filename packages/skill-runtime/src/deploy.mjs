@@ -8,6 +8,8 @@ import { toolError } from "./errors.mjs";
 import { assessMigrationLedgerRecovery, normalizeExpectedMigrationData, reconcileMigrationState } from "./migrations.mjs";
 import { loadPendingCredentialSecret } from "./state.mjs";
 import { UPGRADE_MIGRATION_EXECUTION } from "./upgrade-plan.mjs";
+import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
+import { deploymentCompletion, findDeploymentAttempt, isDeploymentMarker, prepareDeploymentProof } from "./worker-deployment-recovery.mjs";
 import { canonicalDigest, normalizeLf, readJson, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
 
 const MAX_MIGRATION_READBACK_SQL_BYTES = 4 * 1024;
@@ -122,6 +124,7 @@ export function buildWranglerInvocation({
   migrationSql = null,
   migrationRecordSqlPath = null,
   ownerBootstrapReadbackSql = null,
+  deploymentMarker = null,
 }) {
   const d1Name = plan.resources?.d1?.name;
   const normalizedConfig = configPath === null ? null : safeAbsolute(configPath, "config_path");
@@ -132,7 +135,8 @@ export function buildWranglerInvocation({
       return withProfile(["deploy", "--dry-run", "--config", normalizedConfig], plan, environment);
     case "deploy_worker_and_static_assets":
       if (normalizedConfig === null) throw toolError("CONFIG_REQUIRED", "Worker deployment requires a frozen generated Wrangler config");
-      return withProfile(["deploy", "--config", normalizedConfig], plan, environment);
+      if (plan.current?.provenance === "remote_observed" && !isDeploymentMarker(deploymentMarker)) throw toolError("WORKER_DEPLOYMENT_PROOF_REQUIRED", "Attached deployment upgrades require a journal-bound deployment marker");
+      return withProfile(["deploy", "--config", normalizedConfig, ...(deploymentMarker === null ? [] : ["--message", deploymentMarker])], plan, environment);
     case "apply_non_destructive_migrations":
       if (normalizedConfig === null) throw toolError("CONFIG_REQUIRED", "Migration apply requires a frozen generated Wrangler config");
       return withProfile(["d1", "migrations", "apply", requireString(d1Name, "d1_name", { max: 64 }), "--remote", "--config", normalizedConfig], plan, environment);
@@ -539,7 +543,8 @@ function parseWorkerVersion(value, expectedVersionId) {
     }
     return { type, name, value_redacted: true };
   }).sort((left, right) => (left.type + ":" + left.name).localeCompare(right.type + ":" + right.name));
-  return { version_id: versionId, bindings };
+  const marker = version.annotations?.["workers/message"];
+  return { version_id: versionId, bindings, ...(isDeploymentMarker(marker) ? { deployment_marker: marker } : {}) };
 }
 
 export async function readD1RestorePoint({
@@ -820,15 +825,16 @@ async function validateUpgradeAction({
     if (dryRun?.event?.exit_code !== 0) {
       throw toolError("WORKER_DRY_RUN_REQUIRED", "Instance upgrade requires a successful Worker dry run before deployment");
     }
-    const priorDeploy = latestFinished(journal.events, "deploy_worker_and_static_assets");
-    if (priorDeploy?.event?.exit_code === 0) {
+    const priorDeploy = deploymentCompletion(journal, plan, frozenConfigEvent.config_digest);
+    if (priorDeploy !== null) {
       throw toolError("WORKER_ALREADY_DEPLOYED", "Worker deployment already succeeded; use readback and finalization");
     }
   }
   if (action === "worker_deployment_readback") {
     const deploy = latestFinished(journal.events, "deploy_worker_and_static_assets");
-    if (deploy?.event?.exit_code !== 0) {
-      throw toolError("WORKER_DEPLOYMENT_REQUIRED", "Worker deployment readback requires a successful deployment");
+    const attempt = plan.current?.provenance === "remote_observed" ? findDeploymentAttempt(journal, plan, frozenConfigEvent.config_digest) : null;
+    if (deploy?.event?.exit_code !== 0 && attempt === null) {
+      throw toolError("WORKER_DEPLOYMENT_REQUIRED", "Worker deployment readback requires a successful deployment or a journaled recoverable attempt");
     }
   }
   return { migration: null };
@@ -856,7 +862,7 @@ export async function executeWranglerAction({
 }) {
   const journal = await assertJournalAuthorization({ stateRoot, instanceId, operationId, taskId, plan });
   const executable = safeAbsolute(wranglerExecutable, "wrangler_executable");
-  if ((plan.resources?.r2 || plan.usage_analytics) && action === "deploy_worker_and_static_assets") {
+  if ((plan.current?.provenance === "remote_observed" || plan.resources?.r2 || plan.usage_analytics) && action === "deploy_worker_and_static_assets") {
     if (plan.resources?.r2 && !journal.events.some((event) => event.type === "r2_storage_verified" && event.bucket_name === plan.resources.r2.bucket_name && event.instance_id === instanceId)) throw toolError("R2_READBACK_REQUIRED", "Verify authorized attachment storage before deploying the binding");
     const current = await readWorkerResourceByName({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, runner, environment: controlEnvironment });
     if (current.version_id !== plan.resources.worker.current_version_id || current.deployment_id !== plan.resources.worker.current_deployment_id) throw toolError("UPGRADE_WORKER_DRIFT", "Current Worker deployment changed after the deployment plan was frozen");
@@ -891,6 +897,21 @@ export async function executeWranglerAction({
         taskId,
       })
     : { migration: null };
+  let deploymentProof = null;
+  if (plan.current?.provenance === "remote_observed"
+    && ["deploy_worker_and_static_assets", "worker_deployment_readback"].includes(action)) {
+    await verifyInstalledServiceBundle({
+      bundleRoot: frozenConfigEvent.service_bundle_root,
+      expectedVersion: plan.release.service_bundle_version,
+      expectedSha256: plan.release.service_bundle_sha256,
+      expectedPublisher: plan.target.publisher,
+      expectedSource: plan.target.service_bundle_source,
+    });
+    deploymentProof = action === "deploy_worker_and_static_assets"
+      ? prepareDeploymentProof(journal, plan, frozenConfigEvent.config_digest)
+      : findDeploymentAttempt(journal, plan, frozenConfigEvent.config_digest)?.proof;
+    if (!deploymentProof) throw toolError("WORKER_DEPLOYMENT_PROOF_REQUIRED", "Observed-source upgrades require a deployment attempt bound to the frozen plan and configuration");
+  }
   let actionMigration = upgradeAction.migration;
   if (action === "record_migration_checksum") {
     const recordPath = safeAbsolute(migrationRecordSqlPath, "migration_record_sql_path");
@@ -987,6 +1008,7 @@ export async function executeWranglerAction({
     migrationSql: upgradeAction.migrationSql ?? null,
     migrationRecordSqlPath,
     ownerBootstrapReadbackSql,
+    deploymentMarker: deploymentProof?.marker ?? null,
   });
   await appendJournalEvent({
     stateRoot,
@@ -995,6 +1017,7 @@ export async function executeWranglerAction({
     event: {
       type: "command_started",
       action,
+      ...(action === "deploy_worker_and_static_assets" && deploymentProof ? { deployment_proof: deploymentProof } : {}),
       ...(migrationReadbackSource === null ? {} : { migration_readback_source: migrationReadbackSource }),
       executable,
       args: action === "apply_migration" ? args.map((arg) => arg.startsWith("--command=") ? "--command=[VERIFIED_PUBLIC_MIGRATION_SQL]" : arg) : args,
@@ -1047,13 +1070,36 @@ export async function executeWranglerAction({
   if (result.code === 0 && action === "worker_deployment_readback") {
     try {
       workerDeploymentReadback = parseWorkerDeployment(result.stdout);
-      if (plan.resources?.r2 || plan.usage_analytics) {
+      if (deploymentProof || plan.resources?.r2 || plan.usage_analytics) {
         const version = await readWorkerVersionById({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, versionId: workerDeploymentReadback.version_id, runner, environment: controlEnvironment });
+        if (deploymentProof) {
+          if (workerDeploymentReadback.deployment_id === plan.resources.worker.current_deployment_id
+            || workerDeploymentReadback.version_id === plan.resources.worker.current_version_id) {
+            throw toolError("WORKER_DEPLOYMENT_NOT_UPDATED", "Worker readback still identifies the deployment or version from before this attempt");
+          }
+          if (version.deployment_marker !== deploymentProof.marker) throw toolError("UPGRADE_WORKER_DRIFT", "Remote Worker version does not carry this journaled deployment attempt's marker");
+        }
         const expectedBindings = targetWorkerBindings(plan);
         if (canonicalDigest(version.bindings) !== canonicalDigest(expectedBindings)) throw toolError("UPGRADE_BINDING_DRIFT", "Deployed Worker bindings differ from the planned binding delta");
         await verifyPlannedR2Storage({ plan, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
         if (plan.usage_analytics) workerDeploymentReadback.usage_configuration = { binding_verified: true };
         if (plan.resources?.r2) workerDeploymentReadback.attachment_configuration = await verifyPlannedAttachmentWorker({ plan, phase: "after", version, wranglerExecutable: executable, fetchImpl, environment: controlEnvironment, tokenRunner });
+      }
+      if (deploymentProof) {
+        const current = await readWorkerResourceByName({ wranglerExecutable: executable, accountId: plan.target.cloudflare_account_id, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.cloudflare_auth_context_directory, workerName: plan.resources.worker.name, runner, environment: controlEnvironment });
+        if (current.deployment_id !== workerDeploymentReadback.deployment_id || current.version_id !== workerDeploymentReadback.version_id) throw toolError("UPGRADE_WORKER_DRIFT", "Worker deployment changed during recovery readback");
+        workerDeploymentReadback.deployment_proof = deploymentProof;
+        const completion = deploymentCompletion(journal, plan, frozenConfigEvent.config_digest);
+        if (completion?.recovered && (completion.event.deployment_id !== current.deployment_id || completion.event.version_id !== current.version_id)) throw toolError("UPGRADE_WORKER_DRIFT", "Worker deployment differs from the previously recovered result");
+        if (completion === null) {
+          await appendJournalEvent({ stateRoot, instanceId, operationId, event: {
+            type: "worker_deployment_recovered",
+            source: "verified_cloudflare_readback",
+            deployment_proof: deploymentProof,
+            deployment_id: current.deployment_id,
+            version_id: current.version_id,
+          } });
+        }
       }
       stdoutSummary = JSON.stringify(workerDeploymentReadback);
     } catch (error) {

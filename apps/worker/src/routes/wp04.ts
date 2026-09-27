@@ -32,6 +32,7 @@ import {
   redeemInvitation,
   revokeInvitation,
 } from "../services/invitations.ts";
+import { addOwnerDevice, revokeOwnerDevice } from "../services/owner-devices.ts";
 
 async function body(request: Request, allowedKeys: readonly string[], requiredKeys: readonly string[]) {
   return validateJsonObject(await readJsonBody(request), { allowedKeys, requiredKeys });
@@ -172,6 +173,17 @@ export function registerWp04Routes(router: Router): Router {
         expectedVersionFromQuery(context.url),
         context.startedAt,
       ), context.requestId);
+    })
+    .post("/api/v1/admin/owner-credentials/add-device", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      const keys = ["instance_id", "principal_id", "credential_id", "token_prefix", "token_digest", "device_name", "issued_at", "expires_at", "expected_version"];
+      const value = await body(request, keys, keys);
+      return jsonResponse(await addOwnerDevice(env.DB, request, auth, value, context.startedAt), context.requestId);
+    })
+    .post("/api/v1/admin/owner-credentials/{credential_id}/revoke", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      const value = await body(request, ["expected_version"], ["expected_version"]);
+      return jsonResponse(await revokeOwnerDevice(env.DB, request, auth, path(context, "credential_id"), requireVersion(value.expected_version ?? null), context.startedAt), context.requestId);
     })
     .post("/api/v1/admin/owner-credentials/rotate", async (request, env, context) => {
       const preauthenticated = await preauthenticateOwnerRotationRequest(env.DB, request);

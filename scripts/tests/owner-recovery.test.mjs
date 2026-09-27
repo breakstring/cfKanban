@@ -333,13 +333,20 @@ for (const failure of ['response', 'exception']) test(`Cloudflare ${failure} 回
 });
 
 
-for (const schemaVersion of [9, 10, 11]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
+for (const schemaVersion of [9, 10, 11, 12]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
   const f = await fixture(t);
   for (const name of ['0002_container_purge', '0003_container_uuid', '0004_issue_attachments', '0005_attachment_schema_version', '0006_usage_statistics', '0007_attachment_settings', '0008_principal_names', '0009_scoped_administrators']) {
     f.db.exec(await readFile(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'));
   }
   if (schemaVersion >= 10) f.db.exec(await readFile(new URL('../../migrations/0010_query_indexes.sql', import.meta.url), 'utf8'));
   if (schemaVersion >= 11) f.db.exec(await readFile(new URL('../../migrations/0011_homepage_settings.sql', import.meta.url), 'utf8'));
+  if (schemaVersion >= 12) {
+    f.db.exec(await readFile(new URL('../../migrations/0012_owner_devices.sql', import.meta.url), 'utf8'));
+    for (const [index, id] of f.old.entries()) {
+      f.db.prepare('UPDATE credentials SET device_name = ? WHERE id = ?').run(['办公电脑', 'Home laptop'][index], id);
+    }
+  }
+  const beforeDeviceNames = schemaVersion >= 12 ? f.db.prepare('SELECT id,device_name FROM credentials ORDER BY id').all() : null;
   const beforeHomepage = schemaVersion >= 11 ? f.db.prepare('SELECT * FROM homepage_settings').all() : null;
   const workspace = f.db.prepare('SELECT id FROM workspaces').get().id;
   const project = randomUUID(), manager = randomUUID();
@@ -373,11 +380,17 @@ for (const schemaVersion of [9, 10, 11]) test(`schema ${schemaVersion} 恢复保
   assert.equal(f.count('workspaces'), 1);
   assert.equal(f.count('projects'), 1);
   if (beforeHomepage) assert.deepEqual(f.db.prepare('SELECT * FROM homepage_settings').all(), beforeHomepage);
+  if (beforeDeviceNames) {
+    assert.deepEqual(f.db.prepare("SELECT id,device_name FROM credentials WHERE revoked_at IS NOT NULL AND revoke_reason = 'owner_full_recovery' ORDER BY id").all(), beforeDeviceNames);
+    const replacement = f.db.prepare('SELECT id,device_name FROM credentials WHERE principal_id = ? AND revoked_at IS NULL').get(f.owner);
+    assert.equal(replacement.id, f.plan.credential_id);
+    assert.equal(replacement.device_name, null);
+  }
 });
 
-test('schema 12 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
+test('schema 13 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
   const f = await fixture(t);
-  f.db.prepare('UPDATE instance_meta SET schema_version = 12').run();
+  f.db.prepare('UPDATE instance_meta SET schema_version = 13').run();
   await assert.rejects(inspectOwnerRecovery(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   await assert.rejects(createOwnerRecoveryPlan(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   assert.equal(f.writes, 0);

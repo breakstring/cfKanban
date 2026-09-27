@@ -6,6 +6,7 @@ import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { executeWranglerAction, parseMigrationReadbackOutput } from "../../packages/skill-runtime/src/deploy.mjs";
 import { createJournal, authorizeJournal, appendJournalEvent, assertJournalAuthorization } from "../../packages/skill-runtime/src/journal.mjs";
+import { reconcileMigrationState } from "../../packages/skill-runtime/src/migrations.mjs";
 import { canonicalDigest, sha256Bytes } from "../../packages/skill-runtime/src/utils.mjs";
 const oldSql = "SELECT\n  sequence,\n  name,\n  sha256,\n  classification,\n  reentry,\n  operation_id,\n  applied_at\nFROM cfkanban_migration_ledger\nORDER BY sequence;\n\nSELECT\n  type,\n  name\nFROM sqlite_master\nWHERE type IN ('table', 'index')\n  AND name NOT LIKE 'sqlite_%'\nUNION ALL\nSELECT 'column' AS type, 'workspaces.' || name AS name FROM pragma_table_info('workspaces')\nUNION ALL\nSELECT 'column' AS type, 'projects.' || name AS name FROM pragma_table_info('projects')\nUNION ALL\nSELECT 'column' AS type, 'public_join_policies.' || name AS name FROM pragma_table_info('public_join_policies')\nORDER BY type, name;\n\nSELECT COUNT(*) AS row_count, MAX(schema_version) AS schema_version\nFROM instance_meta;\n";
 async function fixture(t, sql = oldSql, version = "0.1.0-alpha.57", artifactSha = "20b5002cde2b8e8df6986d05f72600b5657f2965c406aa126f851b3d9d985d9e") {
@@ -91,5 +92,34 @@ test("current readback stays within D1 compound SELECT limits and includes all m
     assert.ok(after.schema.indexes.includes("idx_principals_display_name_key"));
     assert.ok(after.schema.triggers.includes("principal_name_key_insert"));
     assert.equal(after.schema.data.instance_meta.schema_version, 8);
+  } finally { database.close(); }
+});
+
+
+test("schema 12 real release readback proves device_name and the complete migration baseline", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8"));
+  const sql = await readFile(new URL("../../release/deployment/migration-readback.sql", import.meta.url), "utf8");
+  const database = new DatabaseSync(":memory:");
+  try {
+    database.exec(await readFile(new URL("../../release/deployment/migration-ledger.sql", import.meta.url), "utf8"));
+    for (const migration of manifest.migrations) {
+      database.exec(`BEGIN;${await readFile(new URL(`../../migrations/${migration.name}`, import.meta.url), "utf8")}COMMIT;`);
+      database.prepare("INSERT INTO cfkanban_migration_ledger VALUES(?,?,?,?,?,?,?)").run(
+        migration.sequence, migration.name, migration.sha256, migration.classification, migration.reentry,
+        "00000000-0000-4000-8000-000000000001", 1,
+      );
+    }
+    database.exec("INSERT INTO principals(id,display_name,display_name_key,created_at,updated_at) VALUES('owner','owner','owner',1,1)");
+    database.prepare("INSERT INTO instance_meta VALUES(1,'instance','owner','0.1.0',?,1)").run(manifest.schema_version);
+    const readback = source => parseMigrationReadbackOutput(JSON.stringify(source.split(";").map(part => part.trim()).filter(Boolean)
+      .map(statement => ({ success: true, results: database.prepare(statement).all() }))));
+    const current = readback(sql);
+    assert.ok(current.schema.columns.includes("credentials.device_name"));
+    const state = reconcileMigrationState({ manifest, ...current });
+    assert.equal(state.safe_to_continue, true);
+    assert.ok(state.migrations.every(entry => entry.state === "applied"));
+    const omitted = reconcileMigrationState({ manifest, ...readback(sql.replace(", 'credentials'", "")) });
+    assert.equal(omitted.safe_to_continue, false);
+    assert.equal(omitted.migrations.find(entry => entry.sequence === 12).reason, "ledger_present_schema_incomplete");
   } finally { database.close(); }
 });

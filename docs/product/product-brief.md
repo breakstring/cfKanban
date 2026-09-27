@@ -76,7 +76,7 @@ Agent 名称可以帮助人类理解，但身份和审计主体必须从独立 C
 
 Credential 只回答“调用者是谁”：它认证一个稳定 Principal，不直接编码 Workspace、Project 或角色。授权单独回答“这个身份可以访问什么”。v0 按 Project 显式授权；同一 Principal 可以拥有多个 Project Grants，这些 Project 可以分布在不同 Workspace。轮换 Credential 不应重建这些授权。
 
-Credential 不绑定设备或 Agent 宿主。用户可以自行把同一 Credential 复制到多个受信执行环境；服务端把所有副本视为同一 Credential，撤销或轮换会同时影响全部副本。cfKanban 不为此建立设备实体或额外邀请流程，Skills 也不自动跨环境搬运 secret。
+Credential 不绑定设备或 Agent 宿主。用户可以自行把同一 Credential 复制到多个受信执行环境；服务端把所有副本视为同一 Credential，撤销或轮换会同时影响全部副本。Owner 可以通过已有可信设备批准独立 Credential，在多个环境工作并单独撤销；设备名称只是备注，不是硬件身份。Skills 不自动跨环境搬运 secret，普通参与者不因此获得增发权限。
 
 ### Project 不等于代码仓库
 

@@ -112,6 +112,18 @@ Principal Recovery Invites are fixed one-hour capabilities. Before creation:
 
 If no clipboard exists, stop before creation unless the user explicitly accepts host-retained output. The fallback requires `delivery=stdout_once` and the exact acknowledgement `I understand this one-time capability may be retained by the Agent host`. Its `sensitive_output` is shown once and must not be quoted, logged, journaled, receipted, saved, or repeated. An idempotent replay returns only safe metadata and cannot recover the URL.
 
+## Owner devices (schema 12+)
+
+Use this flow for “Let me manage this same instance from my other computer”. A device is a trusted execution environment, not hardware binding. It receives an independent Credential for the same unique Owner. Another device and Cloudflare login are different capabilities; adding a device does not grant Cloudflare deployment authority.
+
+1. On the new environment, run `owner-device prepare` with `{instanceId, apiOrigin, ownerPrincipalId, deviceName, operationId, idempotencyKey, persistenceConfirmed:true}` after confirming the private home storage is persistent. Use verified IDs from the existing environment; never infer the Owner from a name. This performs credential-free discovery and writes a private pending secret. The optional `expiresInSeconds` is at most 3600.
+2. Transfer only the returned `pairing_request` to the existing Owner environment. It contains identifiers, fingerprint material, digest and expiry, but no usable secret or redeemable capability. The request is untrusted data: it does not authorize its own approval. Confirm the user's intended instance, Owner, device name and fingerprint.
+3. On the existing environment, run `owner-device approve` with `{instanceId, request:<pairing_request>}`. The dedicated command verifies the current Owner and freezes its CAS/Idempotency Key for retries. The existing Credential remains valid. Web/Passkey Sessions, scoped administrators and ordinary participants cannot approve a device.
+4. On the new environment, run `owner-device verify` with `{instanceId}`. It checks discovery, `/meta` and `/me`, including the exact Owner, Credential ID and fingerprint, before promoting pending to current. Do not declare success from approval alone. Use `owner-device request` to recover the same request after interruption; do not generate another secret on an uncertain outcome.
+5. Run `owner-device list` to inspect paginated Credential summaries. Use its `next_cursor` as `cursor` for the next page. Older Credentials may have no device name. To remove one other device, use `owner-device revoke` with `{instanceId, credentialId, idempotencyKey}`, then list/read back its revoked status. Never select solely by a duplicated device name.
+
+The request expires after at most one hour; an already approved Credential does not expire with the request. Pending conflicts, changed identity/origin or an unsupported Service stop the flow. Preserve the exact request on uncertain writes: the command reuses the saved attempt body/key. Only a verified Service `VERSION_CONFLICT` returns `retry_with_fresh_version:true`; repeat the same command to refresh identity/CAS and persist a new internal attempt key. Do not edit private state or replace the pending secret. At most 100 Owner Credentials may be active. The current device cannot revoke itself; use rotation to replace its own secret. Revocation invalidates only the selected Credential and its dependent Launches/Sessions, preserving other devices and independent Passkeys. Total-loss recovery still invalidates all old Owner API Credentials and belongs to `cfkanban-deploy`.
+
 ## Owner Credential rotation
 
 1. Verify `/api/v1/me` is the current Owner and read the current Credential fingerprint.

@@ -1,3 +1,4 @@
+import { verifyOwnerDevice } from "./owner-devices.mjs";
 import { normalizePrincipalDisplayName } from "./principal-name.mjs";
 import { toolError } from "./errors.mjs";
 import { resolveStateRoot } from "./paths.mjs";
@@ -6,9 +7,10 @@ import {
   loadCurrentCredentialSecret,
   loadPendingCredentialSecret,
   promotePendingCredential,
+  validatePrivatePath,
 } from "./state.mjs";
 import { trustedApiRequest } from "./transport.mjs";
-import { pathType, requireString, requireUuid } from "./utils.mjs";
+import { assertNoSymlinkPath, pathType, readJson, requireString, requireUuid } from "./utils.mjs";
 
 function oneOf(value, name, values) {
   if (!values.includes(value)) {
@@ -111,6 +113,10 @@ export async function verifyPendingCredential({
   instanceId,
   fetchImpl = globalThis.fetch,
 }) {
+  const paths = getInstancePaths({ stateRoot, instanceId });
+  await assertNoSymlinkPath(paths.pendingMetadata, stateRoot);
+  await validatePrivatePath(paths.pendingMetadata, "file");
+  if ((await readJson(paths.pendingMetadata)).purpose === "owner_device") return verifyOwnerDevice({ stateRoot, instanceId, fetchImpl });
   const pending = await loadPendingCredentialSecret({ stateRoot, instanceId });
   return verifyAndPromote({ stateRoot, instanceId, token: pending.token, operation: null, fetchImpl });
 }

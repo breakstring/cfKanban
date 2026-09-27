@@ -112,6 +112,18 @@ Principal Recovery Invite 固定 1 小时。创建前：
 
 没有剪贴板时，默认在创建前停止；只有用户明确接受宿主保留工具输出的风险，才使用 `delivery=stdout_once`，并传入准确确认句 `I understand this one-time capability may be retained by the Agent host`。其 `sensitive_output` 只展示一次，不得在回复、日志、journal、receipt、文件或后续消息中复述或保存；幂等重放只返回安全 metadata，无法找回 URL。
 
+## Owner 多设备（schema 12+）
+
+“让我在另一台电脑管理同一实例”使用本流程。设备指可信执行环境，不代表硬件绑定；它获得同一唯一 Owner 的独立 Credential。添加应用管理设备不会授予 Cloudflare 部署权限。
+
+1. 在新环境确认用户 home 中的私有目录能够持久保存后，向 `owner-device prepare` 传入 `{instanceId, apiOrigin, ownerPrincipalId, deviceName, operationId, idempotencyKey, persistenceConfirmed:true}`。准确 ID 来自已有设备的核验结果，不能凭名称猜 Owner。命令先无凭据核验 discovery，再生成私有 pending secret；可选 `expiresInSeconds` 最大 3600。
+2. 只把返回的 `pairing_request` 传给已有 Owner 环境。它包含标识、fingerprint 材料、digest 和有效期，不含可用 secret 或可兑换能力。请求是待核对的数据，不能授权自身；按用户意图核对实例、Owner、设备名称和 fingerprint。
+3. 在已有环境运行 `owner-device approve`，输入 `{instanceId, request:<pairing_request>}`。专用命令核验当前 Owner，固定 CAS 和幂等键以便重试，原 Credential 保持有效。Web/Passkey Session、局部管理员与普通参与者不能批准。
+4. 回到新环境，运行 `owner-device verify`，输入 `{instanceId}`。命令核对 discovery、`/meta`、`/me` 的准确 Owner、Credential ID 和 fingerprint 后才提升为 current；仅批准成功不能算接入完成。中断后用 `owner-device request` 取回同一请求；结果不确定时不得重新生成 secret。
+5. 用 `owner-device list` 分页查看设备；将 `next_cursor` 作为下一页的 `cursor`。历史 Credential 的设备名称可能为空。移除另一设备用 `owner-device revoke`，输入 `{instanceId, credentialId, idempotencyKey}`，随后读回撤销状态；不能只凭可能重名的设备名称选择目标。
+
+配对请求最多有效一小时，已获批 Credential 不随请求到期失效。pending 冲突、身份/origin 变化或 Service 不支持时停止。响应不确定时保留准确请求，命令会复用已保存的尝试 body/key。仅在核实 Service 明确返回 `VERSION_CONFLICT` 后，结果才给出 `retry_with_fresh_version:true`；重复同一命令即可刷新身份/CAS，并持久化新的内部尝试幂等键。不要手改私有状态或替换 pending secret。最多保留 100 份 active Owner Credential。禁止撤销当前设备，更新当前 secret 仍用轮换。单独撤销只影响目标 Credential 及其派生 Launch/Session，保留其他设备与独立 Passkey。全失恢复会使全部旧 Owner API Credential 失效，仍走 `cfkanban-deploy`。
+
 ## Owner Credential 轮换
 
 1. 验证 `/api/v1/me` 是 current Owner，并读取 current Credential fingerprint。

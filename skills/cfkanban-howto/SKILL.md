@@ -93,6 +93,14 @@ Users do not need to supply version numbers. First installation and new deployme
 
 For execution, read [cfkanban-deploy](../cfkanban-deploy/SKILL.md).
 
+### Work on another computer / 换电脑或多台电脑工作
+
+“Use $cfkanban-admin to connect my other computer as the same Owner.” / “请用 $cfkanban-admin 让我在另一台电脑管理同一实例。” On a schema 12+ Service, the new environment generates a private Credential, the existing Owner device approves its non-secret request, and the new device verifies access. Each device can be revoked independently; no long-lived secret needs to be copied. Devices represent execution environments, not hardware binding. A surviving API Credential is required for approval; a browser Passkey cannot approve a new API device.
+
+新设备在本地生成并保存独立凭据，旧设备只批准不含 secret 的请求，新设备验证后完成接入。每台设备可以单独撤销；不必用全失恢复让其他电脑退出。此功能需要线上 Service 支持，更新本地技能不会自动更新服务器。
+
+“Use $cfkanban-deploy to reconnect this existing deployment for maintenance on this computer.” / “请用 $cfkanban-deploy 在这台电脑接入已有部署，方便后续维护。” This separately verifies Cloudflare control, the exact Worker/D1 and the current Owner, then saves a local maintenance record without changing remote resources. It requires a verified bundle for the running release and cannot reconstruct proof of an unknown historical artifact. Upgrading remains a separate authorized operation.
+
 ### Lost access / 凭据丢失时如何恢复
 
 Choose the recovery route by identity and remaining access:

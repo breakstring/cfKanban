@@ -7627,6 +7627,160 @@
         }
       }
     },
+    "/api/v1/admin/owner-credentials/add-device": {
+      "post": {
+        "operationId": "addOwnerDeviceCredential",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Add Owner Device Credential",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerDeviceWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddOwnerDeviceCredentialRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/owner-credentials/{credential_id}/revoke": {
+      "post": {
+        "operationId": "revokeOwnerDeviceCredential",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Revoke Owner Device Credential",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerDeviceWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpectedVersionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/instance-origin": {
       "get": {
         "operationId": "getInstanceOrigin",
@@ -11593,6 +11747,152 @@
             "additionalProperties": false
           }
         ]
+      },
+      "OwnerDeviceResource": {
+        "type": "object",
+        "required": [
+          "id",
+          "principal_id",
+          "device_name",
+          "fingerprint",
+          "issued_at",
+          "last_used_at",
+          "revoked_at",
+          "revoke_reason",
+          "principal_version"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "device_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "issued_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revoke_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "principal_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "OwnerDeviceWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/OwnerDeviceResource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AddOwnerDeviceCredentialRequest": {
+        "type": "object",
+        "required": [
+          "instance_id",
+          "principal_id",
+          "credential_id",
+          "token_prefix",
+          "token_digest",
+          "device_name",
+          "issued_at",
+          "expires_at",
+          "expected_version"
+        ],
+        "properties": {
+          "instance_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "principal_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "credential_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "token_prefix": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{16}$"
+          },
+          "token_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "writeOnly": true,
+            "description": "SHA-256 of a high-entropy Credential generated and privately stored on the new device; never accepts the secret itself."
+          },
+          "device_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "User-provided environment label, not a hardware identity. Trimmed; control characters are rejected."
+          },
+          "issued_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "Pairing approval expiry, at most one hour after issued_at; does not expire an approved Credential."
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Current Owner Principal version from /me.version."
+          }
+        },
+        "additionalProperties": false
       },
       "RotateOwnerCredentialRequest": {
         "type": "object",
@@ -18376,6 +18676,7 @@
           "allowed_actions",
           "created_at",
           "deleted_at",
+          "device_name",
           "fingerprint",
           "id",
           "issued_at",
@@ -18404,6 +18705,17 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
               },
               {
                 "type": "null"

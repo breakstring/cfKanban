@@ -54,7 +54,7 @@
 - 已确认普通 Comment 不可原地编辑，可软删除/恢复；纠错追加引用旧 Comment 的新记录，completion comment 不可删除。
 - 已确认保留显式 assign-to-me 命令，由服务端推导当前 Principal，且不产生 lease。
 - 已确认 Credential 不自动过期，只通过显式撤销、轮换或 full recovery 中的撤销失效；last_used_at 仅作低频运维提示。v0 不提供 Principal disable/enable/delete。
-- 已确认 Credential 不做设备绑定；用户可以手工把同一 Credential 复制到多个受信执行环境，所有副本共享身份、审计、撤销和轮换后果；Skill 不自动搬运，v0 不增加设备 Invite/API。
+- 已确认 Credential 不做硬件绑定；Owner 多环境使用独立凭据，由已有 Owner Bearer 批准，可单独撤销；复制同一 secret 的副本仍共享撤销后果。新电脑通过只读远端核验及明确本地接入重建维护登记，不依赖全失恢复承担日常换机。合同见[多设备与已有部署接入](../specs/2026-09-27-owner-devices-deployment-attachment-spec.md)。
 - 已确认小而明确的应用级资源上限：请求 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB、列表默认 20/最大 100、context 64 KiB。
 - 已确认源码/发行工程采用锁文件约束的根级验证/构建入口，以及包含顺序、checksum、分类、重入边界和预期 schema artifacts 的 D1 migration manifest；deploy Skill 以 ledger + 实际 schema 双重 readback，不把文件名或退出码当成应用完成。
 - 已确认 v0 不提供持有 Cloudflare Token 的 GitHub Actions 部署路径，继续由用户的 Agent 通过 `cfkanban-deploy` 完成唯一主部署流程。无 Cloudflare 凭据的 CI 验证 workflow 可以作为正常工程设施；远端部署 workflow 后置到下一阶段重新冻结授权与恢复体验。
@@ -141,6 +141,10 @@ R1/R2 是否拆成两个交付阶段，要在 Foundation SPEC 冻结后根据最
 - 在 Agent-first 部署路径经过真实使用验证后，评估可选的 GitHub Actions 远端部署 profile；另行设计最小权限 Token/GitHub Secrets、人工审批、串行 concurrency、migration 中断和恢复，且必须复用同一 deployment bundle、plan、journal、marker 与 readback。
 
 安全和恢复合同必须在 R1/R2 设计中提前考虑；R4 表示产品化收口，不表示此前可以忽略。
+
+### 开发与自部署流程演进
+
+先建立 Owner 多设备和已有部署接入能力；隔离分支 Previews 可独立试点，使用独立数据、实例身份和受控资源生命周期。随后评估 Deploy to Cloudflare 模板与 Workers Builds，复用固定发行、Owner 认领、部署登记与升级恢复规则。执行范围和验收保存在 [CFK-443](https://cfkanban.dev/app/issues/CFK-443)、[CFK-444](https://cfkanban.dev/app/issues/CFK-444)、[CFK-445](https://cfkanban.dev/app/issues/CFK-445)，不以此授权云端部署或扩大当前阶段。
 
 ### R5 可选 Cloudflare 增强
 

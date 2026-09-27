@@ -58,7 +58,7 @@ export async function provisionR2Storage(input) {
     if (!path.isAbsolute(receiptPath)) throw toolError("ABSOLUTE_PATH_REQUIRED", "The prior receipt must be an absolute private path");
     await assertNoSymlinkPath(receiptPath, stateRoot);
     const receipt = await readJson(receiptPath);
-    if (!["cfkanban_deployment_receipt", "cfkanban_instance_upgrade_receipt"].includes(receipt.kind) || receipt.instance?.id !== instance || receipt.cloudflare?.account_id !== plan.target.cloudflare_account_id || receipt.cloudflare?.r2?.bucket_name !== name || receipt.cloudflare?.r2?.instance_id !== instance) throw toolError("R2_RECEIPT_REQUIRED", "Existing attachment storage needs the matching prior deployment receipt");
+    if (!["cfkanban_deployment_receipt", "cfkanban_instance_upgrade_receipt", "cfkanban_deployment_attachment_receipt"].includes(receipt.kind) || receipt.instance?.id !== instance || receipt.cloudflare?.account_id !== plan.target.cloudflare_account_id || receipt.cloudflare?.r2?.bucket_name !== name || receipt.cloudflare?.r2?.instance_id !== instance) throw toolError("R2_RECEIPT_REQUIRED", "Existing attachment storage needs the matching prior deployment receipt");
   }
   let observed = await inspect(client, name, null, plan.target.cloudflare_account_id);
   if (observed.status === "absent") {

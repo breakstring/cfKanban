@@ -91,7 +91,7 @@
 
 Owner bootstrap、轮换和恢复不创建新身份：明文 Credential 只在签发时展示一次，D1 只保存安全散列；正常轮换先签发替代 Credential 再撤销旧凭据。部署外恢复不复活旧 Credential，也不改变 `owner_principal_id`。
 
-Owner Credential 生命周期不能通过第一方 Web Session 管理。Web 只读展示 Owner Credential 非秘密摘要，且通用 Credential revoke 必须拒绝 Owner Principal 的 Credential。正常轮换由 `cfkanban-admin` 在替代 secret 已安全写入本地受限文件后，以当前 Owner Bearer Credential 调用原子 rotation；服务端在同一业务单元中建立替代 Credential 并撤销当前旧凭据，不产生“最后一个 Owner Credential 被先撤销”的窗口。全部 Owner Credential 丢失仍只允许部署外恢复。
+Owner Credential 生命周期不能通过第一方 Web Session 管理。Web 只读展示 Owner Credential 非秘密摘要，且通用 Credential revoke 必须拒绝 Owner Principal 的 Credential。正常轮换由 `cfkanban-admin` 在替代 secret 已安全写入本地受限文件后，以当前 Owner Bearer Credential 调用原子 rotation；服务端在同一业务单元中建立替代 Credential 并撤销当前旧凭据，不产生“最后一个 Owner Credential 被先撤销”的窗口。全部 Owner Credential 丢失仍只允许部署外恢复。 同一 Owner 的独立设备批准与单独撤销由[多设备增量合同](2026-09-27-owner-devices-deployment-attachment-spec.md)定义，仍只接受 Owner Bearer，不开放 Web Credential 管理。
 
 服务端 Principal 同时保存不可变 `principal_id` 与可变、非唯一的 `display_name`。前者是授权、assignee、Grant、Event/Audit 和跨用户引用的唯一稳定身份；后者只用于展示，允许重名且不能参与认证、授权、去重、恢复或本地 Credential 选择。任何跨用户的 Principal/assignee 摘要都必须同时返回 `principal_id` 与当前 `display_name`，不能只返回名称。v0 不保存 `human | agent` Principal kind；Codex、Claude Code 等 Agent 宿主不是 Principal 类型。
 

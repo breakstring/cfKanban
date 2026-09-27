@@ -2160,7 +2160,9 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
   assert.equal(journal.events.filter((event) => event.type === "deployment_finalized").length, 1);
 });
 
-test("existing Instance upgrade consumes a verified Service cache, preserves the Owner Credential, and writes a redacted before/after receipt", async (t) => {
+for (const deploymentOutcome of ["success", "observed_success", "response_lost", "error_after_deploy"]) test(`existing Instance upgrade consumes a verified Service cache and preserves the Owner Credential (${deploymentOutcome})`, async (t) => {
+  const observedCurrent = deploymentOutcome !== "success";
+  const recoverDeployment = ["response_lost", "error_after_deploy"].includes(deploymentOutcome);
   const { home, stateRoot } = await fixtureState();
   t.after(() => rm(home, { recursive: true, force: true }));
   const serviceRoot = path.join(home, "upgrade-service");
@@ -2274,6 +2276,10 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
     ...base.current,
     publisher: generated.manifest.publisher.canonical_origin,
     service_bundle_source: "https://releases.example.test/cfkanban/0.1.0-alpha.8/service.zip",
+    ...(observedCurrent ? {
+      provenance: "remote_observed", manifest_version: null, manifest_sha256: null,
+      service_bundle_sha256: null, service_bundle_source: null,
+    } : {}),
   };
   const target = {
     publisher: generated.manifest.publisher.canonical_origin,
@@ -2291,6 +2297,7 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
     ...base,
     current,
     target,
+    ...(observedCurrent ? { allow_unverified_current_source: true } : {}),
     migrations: [upgradeMigration],
     restorePoint: {
       required: true,
@@ -2312,12 +2319,15 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
   const currentReceiptPath = path.join(paths.receiptsRoot, "99999999-9999-4999-8999-999999999999.deployment.json");
   await writeFile(currentReceiptPath, JSON.stringify({
     schema_version: 1,
-    kind: "cfkanban_deployment_receipt",
+    kind: observedCurrent ? "cfkanban_deployment_attachment_receipt" : "cfkanban_deployment_receipt",
+    ...(observedCurrent ? { provenance: { deployed_artifact_verified: false, historical_artifact_source: "unknown" } } : {}),
     instance: { id: INSTANCE_ID, api_origin: "https://example.workers.dev", origin_version: 1, service_version: "0.1.0", schema_version: 1 },
     cloudflare: {
       account_id: "account-one",
       profile: "production",
-      worker: { name: "cfkanban-worker" },
+      worker: { name: "cfkanban-worker", ...(observedCurrent ? {
+        version_id: base.resources.worker.version_id, deployment_id: base.resources.worker.deployment_id,
+      } : {}) },
       d1: { name: "cfkanban-d1", database_id: base.resources.d1.database_id },
     },
     owner: {
@@ -2483,39 +2493,113 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
     configPath: config.wrangler_config_path,
     runner: async () => ({ code: 0, signal: null, stdout: "dry run", stderr: "" }),
   });
-  await executeWranglerAction({
-    stateRoot,
-    instanceId: INSTANCE_ID,
-    operationId: OPERATION_ID,
-    taskId: plan.task_id,
-    plan,
-    wranglerExecutable: "/opt/cfkanban/wrangler",
-    action: "deploy_worker_and_static_assets",
-    configPath: config.wrangler_config_path,
-    runner: async () => ({ code: 0, signal: null, stdout: "deployed", stderr: "" }),
-  });
   const afterDeploymentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const afterVersionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-  await executeWranglerAction({
-    stateRoot,
-    instanceId: INSTANCE_ID,
-    operationId: OPERATION_ID,
-    taskId: plan.task_id,
-    plan,
-    wranglerExecutable: "/opt/cfkanban/wrangler",
-    action: "worker_deployment_readback",
-    configPath: config.wrangler_config_path,
-    runner: async () => ({
-      code: 0,
-      signal: null,
-      stdout: JSON.stringify({
-        id: afterDeploymentId,
+  const journalPath = path.join(paths.journalsRoot, `${OPERATION_ID}.json`);
+  let deployed = false;
+  let deployCalls = 0;
+  let marker = null;
+  let readbackMode = "valid";
+  let statusReads = 0;
+  const runner = async (_executable, args) => {
+    if (args[0] === "deploy") {
+      assert.equal(args.includes("--dry-run"), false);
+      deployCalls += 1;
+      if (observedCurrent) {
+        assert.ok(args.includes("--message"));
+        marker = args[args.indexOf("--message") + 1];
+        assert.equal(typeof marker, "string");
+      }
+      deployed = true;
+      if (deploymentOutcome === "response_lost") throw new Error("Fixture response lost after remote deployment");
+      return { code: deploymentOutcome === "error_after_deploy" ? 1 : 0, signal: null, stdout: "deployed", stderr: "" };
+    }
+    const current = deployed && readbackMode !== "baseline";
+    if (args[0] === "deployments") {
+      statusReads += 1;
+      return { code: 0, signal: null, stdout: JSON.stringify({
+        id: current ? afterDeploymentId : base.resources.worker.deployment_id,
         created_on: "2026-09-04T02:03:04.000Z",
-        versions: [{ version_id: afterVersionId, percentage: 100 }],
-      }),
-      stderr: "",
-    }),
-  });
+        versions: [{ version_id: readbackMode === "status_drift" && statusReads > 1
+          ? "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+          : current ? afterVersionId : base.resources.worker.version_id, percentage: 100 }],
+      }), stderr: "" };
+    }
+    assert.equal(args[0], "versions");
+    assert.equal(args[1], "view");
+    assert.equal(args[2], current ? afterVersionId : base.resources.worker.version_id);
+    const bindings = upgradeBindingReadback(readbackMode === "bindings" ? "dddddddd-dddd-4ddd-8ddd-dddddddddddd" : undefined);
+    return { code: 0, signal: null, stdout: JSON.stringify({
+      id: args[2], resources: { bindings },
+      annotations: { "workers/message": readbackMode === "marker" ? "another-operation" : marker },
+    }), stderr: "" };
+  };
+  const actionInput = {
+    stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: plan.task_id, plan,
+    wranglerExecutable: "/opt/cfkanban/wrangler", configPath: config.wrangler_config_path,
+    environment: {}, runner,
+  };
+  const readback = () => executeWranglerAction({ ...actionInput, action: "worker_deployment_readback" });
+  if (recoverDeployment) {
+    await assert.rejects(readback(), { code: "WORKER_DEPLOYMENT_REQUIRED" });
+    assert.equal(statusReads, 0);
+  }
+  const deploy = () => executeWranglerAction({ ...actionInput, action: "deploy_worker_and_static_assets" });
+  if (deploymentOutcome === "response_lost") {
+    const entryPath = path.join(installedService.path, "dist", "index.js");
+    const entryBytes = await readFile(entryPath);
+    await writeFile(entryPath, "export default { changed: true };\n");
+    await assert.rejects(deploy(), { code: "LOCAL_SERVICE_BUNDLE_MODIFIED" });
+    assert.equal(deployCalls, 0);
+    await writeFile(entryPath, entryBytes);
+    await assert.rejects(deploy(), /Fixture response lost after remote deployment/);
+  } else if (deploymentOutcome === "error_after_deploy") {
+    await assert.rejects(deploy(), { code: "WRANGLER_ACTION_FAILED" });
+  } else {
+    await deploy();
+  }
+  if (observedCurrent) {
+    const started = (await readJson(journalPath)).events.findLast(event => event.type === "command_started" && event.action === "deploy_worker_and_static_assets");
+    assert.equal(started.deployment_proof.marker, marker);
+    assert.equal(started.deployment_proof.operation_id, OPERATION_ID);
+    assert.equal(started.deployment_proof.plan_digest, canonicalDigest(plan));
+    assert.equal(started.deployment_proof.config_digest, config.config_digest);
+    assert.equal(started.deployment_proof.service_bundle_sha256, serviceArtifact.sha256);
+  }
+  if (recoverDeployment) {
+    const failedJournal = await readJson(journalPath);
+    assert.equal(failedJournal.events.some(event => event.type === "command_finished" && event.action === "deploy_worker_and_static_assets" && event.exit_code === 0), false);
+    if (deploymentOutcome === "response_lost") {
+      assert.equal(failedJournal.events.some(event => event.type === "command_finished" && event.action === "deploy_worker_and_static_assets"), false);
+      const entryPath = path.join(installedService.path, "dist", "index.js");
+      const entryBytes = await readFile(entryPath);
+      await writeFile(entryPath, "export default { changed: true };\n");
+      await assert.rejects(readback(), { code: "LOCAL_SERVICE_BUNDLE_MODIFIED" });
+      assert.equal((await readJson(journalPath)).events.some(event => event.type === "worker_deployment_recovered"), false);
+      await writeFile(entryPath, entryBytes);
+      for (const [mode, code] of [["baseline", "WORKER_DEPLOYMENT_NOT_UPDATED"], ["marker", "UPGRADE_WORKER_DRIFT"], ["bindings", "UPGRADE_BINDING_DRIFT"], ["status_drift", "UPGRADE_WORKER_DRIFT"]]) {
+        readbackMode = mode;
+        statusReads = 0;
+        await assert.rejects(readback(), { code }, mode);
+        const rejected = await readJson(journalPath);
+        assert.equal(rejected.events.some(event => event.type === "worker_deployment_recovered"), false, mode);
+      }
+      readbackMode = "valid";
+      await assert.rejects(deploy(), { code: "UPGRADE_WORKER_DRIFT" });
+      assert.equal(deployCalls, 1);
+    }
+  }
+  statusReads = 0;
+  await readback();
+  assert.equal(deployCalls, 1);
+  if (recoverDeployment) {
+    const recovered = (await readJson(journalPath)).events.filter(event => event.type === "worker_deployment_recovered");
+    assert.equal(recovered.length, 1);
+    // Repeating readback must reuse the recovery evidence without another deploy.
+    statusReads = 0;
+    await readback();
+    assert.equal((await readJson(journalPath)).events.filter(event => event.type === "worker_deployment_recovered").length, 1);
+  }
   const fetchImpl = async (url) => {
     let body;
     if (url.pathname === "/healthz") {
@@ -2555,6 +2639,7 @@ test("existing Instance upgrade consumes a verified Service cache, preserves the
   assert.equal(receipt.service_release.after.service_bundle_version, "0.1.0-alpha.19");
   assert.equal(receipt.cloudflare.worker.after_version_id, afterVersionId);
   assert.equal(receipt.owner.credential_id, CREDENTIAL_ID);
+  if (recoverDeployment) assert.equal(receipt.verification.worker_deployment_recovered, true);
   assert.equal(JSON.stringify(receipt).includes(secret.token), false);
   assert.equal((await readJson(paths.currentMetadata)).credential_id, CREDENTIAL_ID);
   const resumed = await finalizeInstanceUpgrade(finalizeInput);

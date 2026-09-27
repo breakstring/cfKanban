@@ -178,6 +178,20 @@ Issue、Project、Owner 管理页及加入/部署/恢复后的应用访问统一
 
 首次部署只创建基础设施和 Deployment Owner，按设计不会创建 Workspace、Project、Label、Grant 或 Issue。最终报告必须提供一条简单的下一步提示词：“请使用 `$cfkanban-admin` 创建我的第一个 cfKanban 看板。”Owner 验证、缺失名称询问、两个独立创建与读回以及 Browser Launch 流程都由 Admin Skill 负责；不能要求用户把这些步骤写进提示词，也不能把这些应用写入隐藏在 Cloudflare deployment authorization 里面。
 
+## 接入已有部署
+
+新电脑已有同一实例的 Owner 权限、但缺少旧部署 receipt 时使用本流程。另一台电脑仍有 Owner API Credential 时，先用 `cfkanban-admin` 添加设备；只有全部 Owner API Credential 丢失才使用全失恢复。Passkey 本身不授予 API 或 Cloudflare 权限。
+
+1. 定位准确获准的 Cloudflare account、Worker、D1、实例和可信 origin。缺少本地记录时可复用 `owner-recovery discover` 做有界只读发现，不执行恢复。准确选择已验证候选；未解决候选阻止自动选择。使用已选定 Wrangler auth context，不枚举 profile。
+2. 按 canonical 发现、验证和缓存流程取得**当前正在运行的发行版本**的不可变 Service bundle。`baselineBundle` 为已安装 bundle 的 `{bundleRoot, version, sha256, publisher, source}`，不是计划升级的目标版本。它证明用于比较的 migration 合同，不证明线上代码的历史工件摘要。
+3. 运行 `deployment inspect-existing`，输入 `{instanceId, accountId, workerName, d1Name, databaseId, apiOrigin, wranglerExecutable, baselineBundle}`，并在 `cloudflareProfile` 与 `contextDirectory` 中准确选择一个。已有可信 publisher 或已验证 canonical Skills 时可省略 `publisher`，否则显式选择。无 current Credential 时返回 `credential_required`，不会签发凭据。检查涵盖资源 binding、当前 deployment/version、marker、schema/ledger、路由、可选 R2/usage 以及已有 Owner 的认证证据。
+4. 有已验证 current Owner 后，以同一输入加 `taskId` 运行 `plan deployment-attachment`。核对准确资源、本地 receipt 路径、历史来源限制和 `remote_writes:false`。在用户授权本地接入范围内，先用 `{instanceId, operationId:plan.operation_id, plan}` 执行 `journal create`，再用 `{instanceId, operationId, taskId, planDigest}` 执行 `journal authorize`。
+5. 用 `{instanceId, operationId, taskId, plan}` 执行 `deployment attach`。它重新检查完整证据，仅保存私有本地实例 metadata、journal 和 `cfkanban_deployment_attachment_receipt`；不部署、不迁移、不修改 Cloudflare 登录、不恢复 Owner。证据变化则重新计划；本地中断可重试同一计划。
+
+可验证的 production 自定义域名、R2 和 usage 配置会保留；非空路径路由、未知 binding/schema、checksum 漂移或不完整迁移历史会阻止接入。接入不能修复远端状态。历史工件字段保留 null，来源为 `provenance=remote_observed`，不能把比较 bundle 的摘要伪装成线上历史来源。
+
+使用此 receipt 升级是独立操作。`plan instance-upgrade` 必须显式选择 `allow_unverified_current_source:true`，并说明无法证明原工件来源；目标准确发行、schema、migration、restore point 和授权要求不放宽。轮换、恢复或换用另一设备 Credential 后，应重新接入核验身份，不能手工修改旧 receipt。
+
 ## Owner 凭据全失恢复
 
 本流程恢复原 Owner API 访问，保留原 Owner Principal、名称、业务数据、历史与 Passkey；撤销全部旧 Owner API Credential，关联 Launch/Session 访问随之失效。Passkey Session 仍按独立认证源校验。本地 current secret 仍存在时应转 `cfkanban-admin` 正常轮换；metadata 尚在但 secret 丢失可以恢复。目标未知时先在已确认的 Cloudflare 账户中发现候选，再让用户选择准确实例；不猜账户、资源或信任 origin。
@@ -235,6 +249,8 @@ Instance upgrade 是独立 Cloudflare plan：
 4. 使用准确 resources、当前 binding 读回、不变的 Owner Principal/Credential fingerprint、目标 compatibility、ordered migration delta、restore evidence，以及公开升级 migration 的执行约束 `mode: single_query` 与 `max_sql_bytes: 24576` 创建 `plan instance-upgrade`。执行约束纳入 plan digest；旧计划不能隐式切换执行入口。授权 task/operation/digest，并从已安装 Service cache 生成 frozen config。
 5. 先运行固定 migration 读回。每条 planned migration 只执行下一条 pending 的 verified canonical bundle migration：将完整、未改动的公开 SQL 通过单次 `wrangler d1 execute --remote --command=<SQL>` 提交到 `/query`。每条 SQL 最多 24 KiB UTF-8（24,576 字节），这是兼顾 Windows argv 的保守限额，不是 D1 平台最大值。超限必须在写入前停止，不逐语句执行、不分块，失败也不回退 `--file`。checksum 与 Owner-bootstrap 的文件执行方式不变。随后再次读回；必须让 `migrations assess-ledger-recovery` 证明准确的 post-apply checksum 缺行；再写入绑定计划的固定路径 SQL、记录 checksum，最后重新读回并 reconcile。不能跳过 apply 后证明。
 6. 执行 Worker dry run，只部署一次，再用 `worker_deployment_readback` 证明新的单版本 deployment。最后运行 `deployment finalize-upgrade`，验证 canonical release、最终 migration/schema、公开 health/discovery、认证 `/meta` 与 `/me`、未变化的 Owner Credential，并写入幂等脱敏 receipt。
+
+对接入的 `remote_observed` 基线，安全脚本先将绑定冻结计划、配置和目标 bundle 的非秘密发布标识记入 journal，再通过 Wrangler 写入版本注解。发布响应丢失或失败时，保留同一计划和 journal，先运行 `worker_deployment_readback` 再决定是否重试部署。只有新的 deployment/version、精确发布标识、目标 bindings、适用的存储/Cron 校验和第二次稳定 deployment 读回全部通过，才能恢复。恢复证据与本地命令成功分别记录，最终回执保留此区别；标识缺失/不符或远端漂移时停止。
 
 Skill update 始终是独立的本地计划。较新的 active Skill 可以是 compatibility 前置条件，但绝不会静默升级 Instance。
 

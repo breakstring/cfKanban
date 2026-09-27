@@ -1,6 +1,6 @@
 ---
 name: cfkanban-deploy
-description: Install or update cfKanban Skills, deploy or upgrade Cloudflare instances, resume interrupted deployments, and recover lost Owner access. Use for release and infrastructure lifecycle, not daily Issue work or Owner application settings.
+description: Install or update cfKanban Skills, deploy or upgrade Cloudflare instances, reconnect an existing deployment on another computer, resume interrupted deployments, and recover lost Owner access. Use for release and infrastructure lifecycle, not daily Issue work or Owner application settings.
 ---
 
 # cfKanban Deploy
@@ -26,6 +26,7 @@ The audience is the person maintaining local Skills or hosting the Service. Clou
 - Reconcile migration manifest checksums, the remote ledger, and actual D1 schema artifacts.
 - Update local Skills and upgrade a deployed Instance as two independent operations.
 - Perform controlled out-of-band recovery for the same Owner Principal after total Owner Credential loss.
+- Reconnect an existing deployment on another computer by verifying its resources, schema and current Owner, then saving a private local maintenance receipt without remote writes. Read the existing deployment attachment workflow first.
 
 Loading this Skill is not authorization to install software, change local state, create cloud resources, migrate data, change DNS, recover an Owner, publish, or upgrade.
 

@@ -44,6 +44,16 @@ function serviceRelease(value, name, { isTarget = false } = {}) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw toolError("INVALID_UPGRADE_RELEASE", name + " must be an object", { field: name });
   }
+  if (!isTarget && value.provenance === "remote_observed") {
+    if (["manifest_version", "manifest_sha256", "service_bundle_sha256", "service_bundle_source"].some((key) => value[key] !== null)) {
+      throw toolError("INVALID_UPGRADE_RELEASE", "Remote-observed current releases must not claim historical artifact provenance");
+    }
+    if (!Number.isSafeInteger(value.schema_version) || value.schema_version < 1) throw toolError("INVALID_UPGRADE_RELEASE", "Invalid observed schema version");
+    return { provenance: "remote_observed", publisher: requireHttpsOrigin(value.publisher, name + ".publisher"),
+      manifest_version: null, manifest_sha256: null, service_bundle_sha256: null, service_bundle_source: null,
+      service_bundle_version: requireString(value.service_bundle_version, name + ".service_bundle_version", { max: 128 }),
+      service_api_version: requireString(value.service_api_version, name + ".service_api_version", { max: 128 }), schema_version: value.schema_version };
+  }
   let source;
   try {
     source = new URL(requireString(value.service_bundle_source, name + ".service_bundle_source", { max: 4096 }));
@@ -125,7 +135,7 @@ function expectedBindings({ d1DatabaseId, rateLimits: limits, attachments = null
   ]);
 }
 
-function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits, attachments = null, usageSecret = false }) {
+export function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits, attachments = null, usageSecret = false }) {
   if (!Array.isArray(value)) {
     throw toolError("UPGRADE_BINDING_READBACK_REQUIRED", "Instance upgrade requires the redacted binding inventory from the current Worker version");
   }
@@ -272,6 +282,7 @@ export function createInstanceUpgradePlan({
   attachments = undefined,
   usageAnalytics = undefined,
   allow_breaking_change = false,
+  allow_unverified_current_source = false,
   restorePoint: restorePointInput,
 }) {
   const instance = requireUuid(instanceId, "instance_id");
@@ -332,8 +343,11 @@ export function createInstanceUpgradePlan({
   const normalizedTarget = serviceRelease(target, "target", { isTarget: true });
   if (usage && normalizedTarget.schema_version < 6) throw toolError("USAGE_RELEASE_UNSUPPORTED", "Usage analytics requires schema version 6 or later");
   if (storage && normalizedTarget.schema_version < 4) throw toolError("R2_RELEASE_UNSUPPORTED", "Attachment storage requires a Service release with schema version 4 or later");
+  const observedCurrent = normalizedCurrent.provenance === "remote_observed";
+  if (observedCurrent && allow_unverified_current_source !== true) throw toolError("UNVERIFIED_CURRENT_SOURCE_CONFIRMATION_REQUIRED", "Explicitly confirm that the existing deployed artifact source is unknown before planning its replacement");
+  if (typeof allow_unverified_current_source !== "boolean") throw toolError("INVALID_UPGRADE_PLAN", "allow_unverified_current_source must be boolean");
   if (normalizedCurrent.publisher !== normalizedTarget.publisher
-    || new URL(normalizedCurrent.service_bundle_source).origin !== new URL(normalizedTarget.service_bundle_source).origin) {
+    || (!observedCurrent && new URL(normalizedCurrent.service_bundle_source).origin !== new URL(normalizedTarget.service_bundle_source).origin)) {
     throw toolError("PUBLISHER_DISCONTINUITY", "Instance upgrade target changes the canonical publisher or artifact origin");
   }
   if (normalizedCurrent.service_bundle_sha256 === normalizedTarget.service_bundle_sha256 && !storage?.create && JSON.stringify(usage) === JSON.stringify(previousUsage)) {
@@ -391,6 +405,7 @@ export function createInstanceUpgradePlan({
     operation_id: operation,
     instance_id: instance,
     current: normalizedCurrent,
+    ...(observedCurrent ? { allow_unverified_current_source: true } : {}),
     target: frozenTarget,
     release: {
       manifest_version: normalizedTarget.manifest_version,

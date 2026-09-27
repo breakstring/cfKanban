@@ -408,7 +408,7 @@ Cloudflare auth 与 cfKanban Credential 分别存储；前者仍由 Wrangler 及
 - 每次使用前重新检查 ownership/ACL。权限漂移时停止，不自动修复或继续读取；修复计划需要用户授权；
 - 容器或临时文件系统只有在用户明确提供持久、私有且权限可验证的 home/挂载时才能创建新 Credential。仅在进程内暂存不满足 bootstrap 的完成条件；
 - 产品不自动备份或同步 `.cfkanban/`。用户手工复制该目录等同于复制其中 Principal 的全部有效权限，必须按 secret 迁移处理。
-- 手工复制后不产生新 Credential 或设备身份；所有副本共享同一 fingerprint、服务端生命周期和撤销范围。不为此增加“添加设备”Invite 或 API。
+- 手工复制后不产生新 Credential 或设备身份；所有副本共享同一 fingerprint、服务端生命周期和撤销范围。Owner 可按[多设备增量合同](2026-09-27-owner-devices-deployment-attachment-spec.md)由已有 Bearer 设备批准一份独立 Credential；普通参与者仍不提供自行增发入口。
 
 Owner Credential 的本地文件风险提示必须额外说明它拥有整个部署实例的控制能力；参与者 Credential 则说明其当前全部 Project Grants 的暴露范围。文件存储方式不改变 Credential 的服务端权限、有效期、轮换或恢复语义。
 
@@ -544,7 +544,7 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 18. 已确认：D-229/D-230 要求公开 Project 显式设置 Issue/Comment/Principal 三项 active quota，soft delete/revoke 释放，restore/regrant 重新占用；D-231 要求 Owner 可见实例级请求门控。当时尚未确定的配置载体已由 D-232 解决。
 19. 已确认：D-232 选择原生 Workers Rate Limiting 部署配置，不引入 Durable Object；首次部署自动带 120/300/30 每 60 秒档位，后续由 `cfkanban-deploy` 显式发布配置，Project 三项 quota 仍在 D1 中即时修改。
 20. 已确认：D-233 固定统一错误分类和分层归一化；服务端 JSON、D1 平台映射、Cloudflare edge 非 JSON 与网络失败都向 Web/Agent 暴露一致的机器字段，同时保留真实来源。
-21. 已修订：D-234 明确 Credential 不做设备绑定，用户可以在多个受信执行环境手工复用同一 Credential。Skill 不自动跨环境搬运，也不为此新增设备 Invite/API；所有副本共享 revoke/rotation 后果。
+21. 已修订：D-234 明确 Credential 不做设备绑定，用户可以在多个受信执行环境手工复用同一 Credential。Skill 不自动跨环境搬运；复制的所有副本共享 revoke/rotation 后果。Owner 独立设备接入由[多设备增量合同](2026-09-27-owner-devices-deployment-attachment-spec.md)覆盖。
 22. 已确认：D-236 将 Owner display name 固定为首次部署缺失时唯一询问的身份输入；strict-zero 的“零参数”只指无需填写 Cloudflare 资源配置，不允许猜测身份名称。
 23. 已确认：D-237 要求首次加入使用一份合并计划和一次应用层确认，计划内连续完成 Skill 写入、身份创建和 Project Grants 兑换；计划变化或宿主/OS 权限提示不被合并确认覆盖。
 24. 已确认：D-239 固定新 Credential 的 pending → 服务端提交/readback → current 生命周期；明确失败清理，提交状态不确定时保留同一 secret 与幂等键恢复。

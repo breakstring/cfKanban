@@ -7,7 +7,8 @@ import { reconcileMigrationState } from "../../packages/skill-runtime/src/migrat
 import { sha256NormalizedText } from "../lib/generated-artifacts.mjs";
 import { normalizeHomepageNotice } from "../../apps/worker/src/services/homepage-settings.ts";
 
-const manifest = JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8"));
+const currentManifest = JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8"));
+const manifest = { ...currentManifest, schema_version: 11, migrations: currentManifest.migrations.filter(entry => entry.sequence <= 11) };
 const migration = manifest.migrations.find(entry => entry.sequence === 11);
 const previous = await Promise.all(manifest.migrations.filter(entry => entry.sequence <= 10).map(async entry => ({ entry, sql: await readFile(new URL(`../../migrations/${entry.name}`, import.meta.url), "utf8") })));
 const sql = await readFile(new URL(`../../migrations/${migration.name}`, import.meta.url), "utf8");

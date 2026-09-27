@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 11,
+  schema_version: 12,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -163,6 +163,16 @@ const manifest = {
         columns: ["homepage_settings.singleton", "homepage_settings.notice_en", "homepage_settings.notice_zh_cn", "homepage_settings.version", "homepage_settings.last_operation_id"],
       },
       expected_data: { instance_meta_schema_version_at_least: 11, allow_uninitialized: true },
+    },
+    {
+      sequence: 12,
+      name: "0012_owner_devices.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0012_owner_devices.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { columns: ["credentials.device_name"] },
+      expected_data: { instance_meta_schema_version_at_least: 12, allow_uninitialized: true },
     },
   ],
 };

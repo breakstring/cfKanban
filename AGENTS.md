@@ -39,6 +39,7 @@
 | Principal 名称唯一性、规范化与人员解析 | [Principal 名称](docs/specs/2026-09-20-principal-names-spec.md) |
 | 工作区 / 项目管理员、权限继承、邀请与人数配额 | [分级管理员](docs/specs/2026-09-20-scoped-administrators-spec.md) |
 | Owner Credential 全失恢复 | [Owner 恢复](docs/specs/2026-09-20-owner-credential-recovery-spec.md) |
+| Owner 多设备、独立凭据与新电脑接入已有部署 | [多设备与部署接入](docs/specs/2026-09-27-owner-devices-deployment-attachment-spec.md) |
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](docs/specs/2026-09-20-stable-release-lifecycle-spec.md) |
 | Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](docs/specs/2026-09-20-homepage-settings-spec.md) |
 

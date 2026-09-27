@@ -40,6 +40,7 @@ import {
 } from "./shared.ts";
 
 interface CredentialRow {
+  device_name: string | null;
   id: string;
   issued_at: number;
   last_used_at: number | null;
@@ -109,6 +110,7 @@ function credentialResource(row: CredentialRow, canRevoke: boolean): { [key: str
     allowed_actions: row.revoked_at === null && canRevoke ? ["revoke"] : [],
     created_at: timestamp(row.issued_at),
     deleted_at: timestamp(row.revoked_at),
+    device_name: row.device_name,
     fingerprint: `cfk_v1_${row.token_prefix}_…`,
     id: row.id,
     issued_at: timestamp(row.issued_at),
@@ -234,7 +236,7 @@ async function readGrantOperationSnapshot(
 async function readCredential(db: D1Database, credentialId: string): Promise<CredentialRow | null> {
   try {
     return await db.prepare(
-      `SELECT c.id, c.principal_id, c.token_prefix, c.issued_at, c.last_used_at,
+      `SELECT c.id, c.principal_id, c.token_prefix, c.device_name, c.issued_at, c.last_used_at,
               c.revoked_at, c.revoke_reason, p.display_name AS principal_display_name
        FROM credentials AS c
        JOIN principals AS p ON p.id = c.principal_id
@@ -439,7 +441,7 @@ export async function getPrincipal(
          WHERE g.principal_id = ?1 ORDER BY g.created_at, g.id LIMIT 101`,
       ).bind(principalId).all<GrantRow>(),
       db.prepare(
-        `SELECT c.id, c.principal_id, c.token_prefix, c.issued_at, c.last_used_at,
+        `SELECT c.id, c.principal_id, c.token_prefix, c.device_name, c.issued_at, c.last_used_at,
                 c.revoked_at, c.revoke_reason, p.display_name AS principal_display_name
          FROM credentials AS c JOIN principals AS p ON p.id = c.principal_id
          WHERE c.principal_id = ?1 ORDER BY c.issued_at DESC, c.id DESC LIMIT 101`,
@@ -492,7 +494,7 @@ export async function listPrincipalCredentials(
   let rows: CredentialRow[];
   try {
     const result = await db.prepare(
-      `SELECT c.id, c.principal_id, c.token_prefix, c.issued_at, c.last_used_at,
+      `SELECT c.id, c.principal_id, c.token_prefix, c.device_name, c.issued_at, c.last_used_at,
               c.revoked_at, c.revoke_reason, p.display_name AS principal_display_name
        FROM credentials AS c JOIN principals AS p ON p.id = c.principal_id
        WHERE c.principal_id = ?1
@@ -645,6 +647,7 @@ export async function rotateOwnerCredential(
   const replacementDigest = await sha256Hex(replacement.token);
   const replacementCredentialId = crypto.randomUUID();
   const replacementRow: CredentialRow = {
+    device_name: (await readCredential(db, initialAuth.credentialId))?.device_name ?? null,
     id: replacementCredentialId,
     issued_at: now,
     last_used_at: null,
@@ -672,8 +675,9 @@ export async function rotateOwnerCredential(
             db.prepare(
               `INSERT INTO credentials
                 (id, principal_id, token_prefix, token_digest, issued_at,
-                 created_operation_id, last_operation_id)
-               SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?6
+                 created_operation_id, last_operation_id, device_name)
+               SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?6,
+                      (SELECT device_name FROM credentials WHERE id = ?9)
                FROM principals current_owner
                WHERE current_owner.id = ?2
                  AND current_owner.version = ?7
@@ -698,6 +702,11 @@ export async function rotateOwnerCredential(
                  AND EXISTS (SELECT 1 FROM credentials replacement
                              WHERE replacement.created_operation_id = ?3)`,
             ).bind(now, initialAuth.principalId, operationId, initialAuth.credentialId),
+            db.prepare(
+              `UPDATE principals SET version = version + 1, updated_at = ?1, last_operation_id = ?2
+               WHERE id = ?3 AND version = ?4
+                 AND EXISTS (SELECT 1 FROM credentials replacement WHERE replacement.created_operation_id = ?2)`,
+            ).bind(now, operationId, initialAuth.principalId, initialAuth.principalVersion),
             operationSnapshotStatement(db, operationId, rotationResource),
             db.prepare(
               `INSERT INTO events
