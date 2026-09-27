@@ -16,7 +16,7 @@ import { sha256Bytes, canonicalDigest } from '../../packages/skill-runtime/src/u
 
 // Cloudflare 与应用请求全部由内存 SQLite 和严格端点 fixture 接管。
 const json = value => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
-async function fixture(t, { credential = true, r2 = false, customDomain = false } = {}) {
+async function fixture(t, { credential = true, r2 = false, customDomain = false, expectedColumns = [] } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'cfkanban-attach-'));
   const db = new DatabaseSync(':memory:');
   db.exec(await readFile(new URL('../../migrations/0001_initial.sql', import.meta.url), 'utf8'));
@@ -25,7 +25,7 @@ async function fixture(t, { credential = true, r2 = false, customDomain = false 
   const instanceId = randomUUID(), owner = randomUUID(), databaseId = randomUUID(), versionId = randomUUID(), deploymentId = randomUUID();
   const schemaVersion = r2 ? 6 : 1;
   const origin = customDomain ? 'https://board.invalid' : 'https://isolated-worker.isolated.workers.dev', publisher = 'https://publisher.invalid';
-  const manifest = { manifest_version: 1, schema_version: schemaVersion, migrations: [{ sequence: 1, name: '0001_initial.sql', sha256: 'a'.repeat(64), classification: 'bootstrap', reentry: 'ledger_only', expected_artifacts: { tables: ['principals', 'credentials', 'instance_meta', 'instance_origin_settings'], indexes: [], columns: [] } }] };
+  const manifest = { manifest_version: 1, schema_version: schemaVersion, migrations: [{ sequence: 1, name: '0001_initial.sql', sha256: 'a'.repeat(64), classification: 'bootstrap', reentry: 'ledger_only', expected_artifacts: { tables: ['principals', 'credentials', 'instance_meta', 'instance_origin_settings'], indexes: [], columns: expectedColumns } }] };
   db.prepare('INSERT INTO principals(id,display_name,created_at,updated_at) VALUES (?, ?, 1, 1)').run(owner, 'Test Owner');
   db.prepare('INSERT INTO instance_meta VALUES (1, ?, ?, ?, ?, 1)').run(instanceId, owner, '0.1.0', schemaVersion);
   db.prepare('INSERT INTO instance_origin_settings(singleton,preferred_api_origin,updated_at,updated_by_principal_id) VALUES (1, ?, 1, ?)').run(origin, owner);
@@ -42,7 +42,7 @@ async function fixture(t, { credential = true, r2 = false, customDomain = false 
     ...[['INSTANCE_LIMIT', '300'], ['INSTANCE_PERIOD_SECONDS', '60'], ['PRINCIPAL_LIMIT', '120'], ['PRINCIPAL_PERIOD_SECONDS', '60'], ['UNAUTHENTICATED_SENSITIVE_LIMIT', '30'], ['UNAUTHENTICATED_SENSITIVE_PERIOD_SECONDS', '60']].map(([name, text]) => ({ type: 'plain_text', name: `RATE_LIMIT_${name}`, text })),
     ...(r2 ? [{ type: 'r2_bucket', name: 'ATTACHMENTS', bucket_name: 'test-attachments' }, { type: 'secret_text', name: 'USAGE_ANALYTICS_TOKEN', text: 'never-export-this' }, { type: 'plain_text', name: 'USAGE_ACCOUNT_ID', text: 'isolated-account' }] : []),
   ];
-  const f = { db, bindings, owner, versionId, deploymentId, network: [], runnerCalls: [], routes: [], domains: customDomain ? [{ service: 'isolated-worker', environment: 'production', hostname: 'board.invalid' }] : [], domainInfo: null, release: version, ownerValid: true, r2MarkerInstance: instanceId };
+  const f = { db, bindings, owner, versionId, deploymentId, network: [], queryResults: [], runnerCalls: [], routes: [], domains: customDomain ? [{ service: 'isolated-worker', environment: 'production', hostname: 'board.invalid' }] : [], domainInfo: null, release: version, ownerValid: true, r2MarkerInstance: instanceId };
   const input = { home, stateRoot: path.join(home, '.cfkanban'), persistenceConfirmed: true, instanceId, accountId: 'isolated-account', workerName: 'isolated-worker', d1Name: 'isolated-db', databaseId, apiOrigin: origin, cloudflareProfile: 'isolated', wranglerExecutable: '/mock/wrangler', environment: {}, taskId: 'attach-test', publisher,
     baselineBundle: { bundleRoot, version, sha256: 'b'.repeat(64), publisher, source },
     runner: async (executable, args) => {
@@ -60,10 +60,12 @@ async function fixture(t, { credential = true, r2 = false, customDomain = false 
         if (suffix === `/d1/database/${databaseId}/query`) {
           assert.equal(options.method, 'POST');
           const { batch } = JSON.parse(options.body);
-          return json({ success: true, result: batch.map(statement => {
+          const result = batch.map(statement => {
             assert.match(statement.sql.trim(), /^SELECT /u); assert.deepEqual(statement.params, []);
             return { success: true, results: db.prepare(statement.sql).all() };
-          }) });
+          });
+          f.queryResults.push(result);
+          return json({ success: true, result });
         }
         assert.equal(options.method, 'GET');
         const values = {
@@ -115,6 +117,27 @@ test('已有Owner安全接入仅写本地登记，历史工件来源始终unknow
   assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM events').get().n, 0);
   const surfaces = JSON.stringify([result, f.plan, f.runnerCalls, f.network]);
   for (const secret of [f.token, sha256Bytes(f.token), 'control-only-secret']) assert.ok(!surfaces.includes(secret));
+});
+
+test('schema读取跳过D1内部表的列并继续核对业务列', async t => {
+  const f = await fixture(t, { expectedColumns: ['credentials.device_name'] });
+  f.db.exec(`ALTER TABLE credentials ADD COLUMN device_name TEXT;
+    CREATE TABLE _cf_KV (key TEXT PRIMARY KEY, value BLOB);
+    CREATE TABLE _cf_METADATA (key INTEGER PRIMARY KEY, value BLOB);
+    CREATE TABLE acfx_business (id INTEGER PRIMARY KEY AUTOINCREMENT, value TEXT);
+    CREATE TABLE sqliteX_business (value TEXT)`);
+  assert.equal((await inspectDeploymentAttachment(f.input)).status, 'ready');
+  const rows = f.queryResults.at(-1)[1].results;
+  const columns = rows.filter(row => row.type === 'column').map(row => row.name);
+  assert.ok(rows.some(row => row.type === 'table' && row.name === '_cf_KV'));
+  assert.ok(columns.includes('credentials.device_name'));
+  assert.ok(columns.includes('acfx_business.value'));
+  assert.ok(columns.includes('sqliteX_business.value'));
+  for (const name of ['_cf_KV', '_cf_METADATA', 'sqlite_sequence']) {
+    assert.ok(!columns.some(column => column.startsWith(`${name}.`)));
+  }
+  f.db.exec('ALTER TABLE credentials DROP COLUMN device_name');
+  await assert.rejects(inspectDeploymentAttachment(f.input), { code: 'DEPLOYMENT_ATTACH_MIGRATIONS_UNSAFE' });
 });
 
 test('无本地凭据只能inspect且不初始化任何本地身份', async t => {
