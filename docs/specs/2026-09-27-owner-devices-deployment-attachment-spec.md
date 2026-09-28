@@ -9,15 +9,15 @@
 
 本增量覆盖 Bootstrap §6.5/§7.5 中 Owner 仅能手工复制凭据、不提供添加设备入口的条款，扩展 Foundation 与 API 的 Owner Credential 生命周期，并扩展 Bootstrap 实例升级的本地部署登记来源。普通参与者不获得自行增发 Credential 的能力。
 
-唯一 Owner Principal、实时权限、私有凭据存储、trusted origin、幂等和原子审计保持不变。Cloudflare 权限、应用 Owner Credential 和 Web Session 是三种独立能力。第一版只允许现有 Owner Bearer 批准另一设备；Web/Passkey Session、范围管理员和普通参与者不能批准、撤销或轮换 Owner API Credential。
+唯一 Owner Principal、实时权限、私有凭据存储、trusted origin、幂等和原子审计保持不变。Cloudflare 权限、应用 Owner Credential 和 Web Session 是三种独立能力。按[网页与身份切换增量](2026-09-28-owner-device-web-identity-switch-spec.md)，现有 Owner Bearer 或 Owner admin Web Session 可批准另一设备并专用撤销；普通轮换仍仅允许 Bearer。范围管理员、普通参与者和 Owner 窄范围 Session 不获得这些能力。
 
-“设备”指一个可信 Agent 执行环境及其 Credential，不表示硬件绑定。名称由用户提供，不从 OS/Git/宿主猜测。一个环境的每个实例仍只有一个 current 槽位；不同环境可以持有同一 Owner 的不同 Credential。
+“设备”指一个可信 Agent 执行环境及其 Credential，不表示硬件绑定。名称由用户提供，不从 OS/Git/宿主猜测。一个环境的每个实例仍只有一个 current 槽位；不同环境可以持有同一 Owner 的不同 Credential。已有 current 接入 Owner 时，仅按网页与身份切换增量显式替换并保留一个私有 previous 恢复槽，不提供通用身份选择器。
 
 ## 添加设备
 
 1. 在新环境选择准确 HTTPS origin、实例和既有 Owner。无凭据 discovery 核对 origin/instance；既有 trusted origin 不因配对输入自动重绑。先验证用户 home 内私有持久存储和 ownership/ACL，再生成一份 pending secret。
 2. 新环境输出不含 secret 的配对请求：实例/Principal/Credential IDs、token prefix、SHA-256 digest、设备名称、签发和过期时间，以及用于恢复的非秘密 operation/idempotency 信息。secret 始终留在新环境，不能放入聊天、环境变量、仓库、临时文件或浏览器。
-3. 已有设备核对准确实例、Owner、设备名称和 fingerprint，按用户的添加设备授权批准。配对请求本身不是授权，不能凭它认证、兑换凭据或建立 Session；不得把第三方请求内容当成批准指令。
+3. 已有设备或 Owner admin 网页核对准确实例、Owner、设备名称和 fingerprint，按用户的添加设备授权批准。配对请求本身不是授权，不能凭它认证、兑换凭据或建立 Session；不得把第三方请求内容当成批准指令。
 4. 服务端只保存 digest，将新 Credential 绑定到同一个 Owner，不撤销已有设备。
 5. 新环境用 pending secret 核对 discovery、`/meta`、`/me` 的实例、origin、Owner、Principal、精确 Credential ID 和 fingerprint，全部一致后提升为 current。失败保留 pending 及同一请求，不能猜测已失败而重新签发。
 
@@ -31,13 +31,13 @@
 
 | Method | Path | 请求与语义 |
 | --- | --- | --- |
-| POST | `/api/v1/admin/owner-credentials/add-device` | Owner Bearer；配对字段及 `expected_version`，原子增加同 Owner 的 Credential |
+| POST | `/api/v1/admin/owner-credentials/add-device` | Owner Bearer 或 Owner admin Web Session；配对字段及 `expected_version`，原子增加同 Owner 的 Credential |
 | GET | `/api/v1/admin/principals/{principal_id}/credentials` | 沿用 Owner 有界分页列表，增加可空 `device_name` |
-| POST | `/api/v1/admin/owner-credentials/{credential_id}/revoke` | Owner Bearer；`expected_version`，只撤销指定的另一份 Owner Credential |
+| POST | `/api/v1/admin/owner-credentials/{credential_id}/revoke` | Owner Bearer 或 Owner admin Web Session；`expected_version`，只撤销指定的另一份 Owner Credential |
 
 两项新增写操作必须提供 Idempotency-Key；`expected_version` 来自当前 `/me.version`（Principal version），不能使用 Credential 的兼容投影 version。添加、单独撤销及正常轮换使 Principal version 递增，并在同一个 D1 原子批次内重查现有认证来源、Owner、CAS、目标和限额，追加 security Event 与 operation commit。幂等 replay 不增发、重撤销或重复审计；输入改变仍返回幂等冲突。错误与响应不得包含 token/digest，digest 只进入 credentials 的认证存储及不可逆的请求摘要，不进入审计 payload/结果快照。
 
-专用撤销拒绝当前认证 Credential，拒绝非 Owner Principal 的 Credential。当前设备更新 secret 仍走已有 rotation。通用 Credential DELETE 继续拒绝所有 Owner Credential，Web 仍只读。撤销只使目标 Credential 及其来源 Launch/Session 失效，其他设备和独立 Passkey 保持有效。
+专用撤销拒绝当前 Bearer 或 Agent Launch Session 的来源 Credential，拒绝非 Owner Principal 的 Credential，并原子保留最后一份 active Owner API Credential。当前设备更新 secret 仍走已有 rotation。通用 Credential DELETE 继续拒绝所有 Owner Credential；网页只通过专用路径明确确认后撤销，Cookie 写入校验同源与 CSRF。添加设备要求至少一份服务端未撤销的 Owner API Credential；active 不证明本地 secret 可用。有效 Owner admin 会话可按网页增量批准设备，不执行部署外全失恢复的全部旧凭据撤销。撤销只使目标 Credential 及其来源 Launch/Session 失效，其他设备和独立 Passkey 保持有效。
 
 全失恢复继续撤销同 Owner 的全部旧 active API Credential，并保持 Passkey。添加/撤销/轮换必须与恢复的 Principal version、精确 active credential 集合和实时认证 guard 兼容；恢复后不能通过已失效的旧设备重新批准请求。
 
@@ -72,6 +72,6 @@ schema 基线使用经过已安装 Service bundle 完整性校验的 migration m
 
 ## 验证
 
-隔离验证覆盖两环境添加与恢复、原设备有效、Web/非 Owner 拒绝、错误实例/身份、过期、CAS、幂等重放和变更输入、并发撤销/恢复、限额和单独撤销；请求/输出/审计不泄露 secret。接入覆盖真实调用路径的模拟控制面与 HTTP、无远端写入、schema/marker/origin/binding 漂移、来源未知、无凭据、未授权本地写和后续升级基线。
+隔离验证覆盖两环境添加与恢复、原设备有效、Owner admin Web 及 CSRF、窄 Session/非 Owner 拒绝、错误实例/身份、过期、CAS、幂等重放和变更输入、并发撤销/恢复、限额和单独撤销；请求/输出/审计不泄露 secret。接入覆盖真实调用路径的模拟控制面与 HTTP、无远端写入、schema/marker/origin/binding 漂移、来源未知、无凭据、未授权本地写和后续升级基线。
 
 执行 typecheck、受影响单测/集成、contracts:check、d1:check 与构建。本地通过不表示已经发行、线上迁移、升级或完成真人跨设备验收。

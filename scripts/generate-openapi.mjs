@@ -142,8 +142,8 @@ const operations = [
   ["get", "/api/v1/admin/principals/{principal_id}/credentials", "listPrincipalCredentials", "admin", authenticated, "read", "CursorQuery"],
   ["delete", "/api/v1/admin/credentials/{credential_id}", "revokeCredential", "admin", authenticated, "cas-delete"],
   ["post", "/api/v1/admin/owner-credentials/rotate", "rotateOwnerCredential", "admin", bearer, "idempotent", "RotateOwnerCredentialRequest"],
-  ["post", "/api/v1/admin/owner-credentials/add-device", "addOwnerDeviceCredential", "admin", bearer, "idempotent-cas", "AddOwnerDeviceCredentialRequest"],
-  ["post", "/api/v1/admin/owner-credentials/{credential_id}/revoke", "revokeOwnerDeviceCredential", "admin", bearer, "idempotent-cas", "ExpectedVersionRequest"],
+  ["post", "/api/v1/admin/owner-credentials/add-device", "addOwnerDeviceCredential", "admin", authenticated, "idempotent-cas", "AddOwnerDeviceCredentialRequest"],
+  ["post", "/api/v1/admin/owner-credentials/{credential_id}/revoke", "revokeOwnerDeviceCredential", "admin", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
   ["get", "/api/v1/admin/instance-origin", "getInstanceOrigin", "admin", authenticated, "read"],
   ["put", "/api/v1/admin/instance-origin", "updateInstanceOrigin", "admin", bearer, "idempotent-cas", "UpdateInstanceOriginRequest"],
   ["get", "/api/v1/admin/projects/{project_id}/grants", "listProjectGrants", "admin", authenticated, "read", "CursorQuery"],
@@ -1959,7 +1959,7 @@ const schemas = {
     type: "object",
     required: ["allowed_actions", "created_at", "deleted_at", "device_name", "fingerprint", "id", "issued_at", "last_used_at", "principal", "principal_id", "revoke_reason", "revoked_at", "updated_at", "version"],
     properties: {
-      allowed_actions: { type: "array", items: string({ enum: ["revoke"] }) },
+      allowed_actions: { type: "array", items: string({ enum: ["revoke", "revoke_owner_device"] }), description: "Owner devices only expose revoke_owner_device when active, not the caller's Bearer or Agent Session source Credential, and another active Owner API Credential remains. Generic revoke never applies to Owner Credentials." },
       created_at: ref("Timestamp"),
       deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
       device_name: { anyOf: [string({ maxLength: 80 }), { type: "null" }] },
@@ -2384,6 +2384,8 @@ for (const operation of operations) {
 
 const requestIdHeader = { "X-Request-ID": { $ref: "#/components/headers/RequestId" } };
 const noStoreHeader = { ...requestIdHeader, "Cache-Control": { required: true, schema: { type: "string", const: "no-store" } } };
+paths["/api/v1/admin/owner-credentials/add-device"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Explicitly approve an Agent-generated non-secret pairing request for the same instance and Owner. Requires at least one active Owner API Credential and enforces the 100 active Credential limit atomically. Principal CAS, idempotency and security audit commit together. The new Agent must still verify its pending Credential locally; this is not an all-credentials-lost recovery endpoint.";
+paths["/api/v1/admin/owner-credentials/{credential_id}/revoke"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Atomically revoke another Owner device and its derived Session/Launch capabilities with Principal CAS, idempotency and security audit. Reject the caller's Bearer Credential, an Agent Session's source Credential and the last active Owner API Credential. Passkey Sessions remain independent. Generic Credential DELETE and Owner rotation retain their separate restrictions.";
 paths["/api/v1/admin/homepage-settings"].get.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/homepage-settings"].patch.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/homepage-settings"].get.description = "Owner instance control only; a project-scoped Owner Session and scoped administrators cannot read these settings.";

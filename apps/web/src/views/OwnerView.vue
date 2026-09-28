@@ -9,6 +9,7 @@ import ErrorNotice from "../components/ErrorNotice.vue";
 import HomepageSettingsPanel from "../components/HomepageSettingsPanel.vue";
 import InvitationRows from "../components/InvitationRows.vue";
 import ModalDialog from "../components/ModalDialog.vue";
+import OwnerDevices from "../components/OwnerDevices.vue";
 import PageState from "../components/PageState.vue";
 import UsagePanel from "../components/UsagePanel.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
@@ -1683,6 +1684,7 @@ onUnmounted(() => {
     </template>
 
     <template v-if="!loading && section === 'access'">
+      <OwnerDevices :session="session" />
       <div class="section-action-bar"><p>{{ locale === "zh-CN" ? "邀请成员加入项目，或查看和调整现有成员的权限。" : "Invite members to a project or review and change their access." }}</p><div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="navigate(sectionPath('invitations'))">{{ ui("Invitation history", "邀请历史") }}</button><button class="primary-button" type="button" :disabled="busy" @click="openInviteDialog">+ {{ ui("Invite", "邀请") }}</button></div></div>
       <div v-if="showInvitationReview && inviteNeedsReview" class="warning-panel">
         <p><strong>{{ ui("Check existing invitations before creating another", "创建新邀请前，请先检查已有邀请") }}</strong></p>

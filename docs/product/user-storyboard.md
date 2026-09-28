@@ -353,7 +353,7 @@
 - **失败恢复**：Owner Session、源 Credential 失效或远端状态冲突时停止写入并提供结构化恢复提示；不能降级成在页面粘贴长期 Credential。Web 不持有 Cloudflare API 凭据，因此只显示应用可观察的健康与计数；Cloudflare account 的权威用量/配额检查仍由 `cfkanban-deploy` 执行。
 - **已确认方向**：Owner 管理是 Web 必需表面，但保持应用层维护，不包装 Cloudflare 数据控制面。
 - **已确认**：v0 移除 Principal disable/enable/delete。Owner 使用 Credential revoke、Project Grant revoke 与 Principal Recovery Invite 分别处理认证停止、Project 撤权和同一身份恢复；Principal、assignment 与历史稳定保留。
-- **已确认（Owner Credential 防锁死）**：Web 可以撤销参与者 Credential，但只读显示 Owner Credential 摘要，不提供任何 Owner Credential revoke/rotation。Owner 正常轮换由 `cfkanban-admin` 引导：本地先安全保存替代 secret，再用 Bearer-only 原子 rotation 建立新凭据并撤销当前旧凭据，验证后切换本地槽位；全失恢复仍只走 `cfkanban-deploy`。因此当前 Session 来源和最后一个 Owner Credential 都不能从 Web 被撤销。
+- **已确认（Owner 设备与防锁死）**：Owner 在「成员与权限 → Owner 设备」检查新电脑生成的非秘密配对请求，明确确认后批准；新电脑上的 Agent 验证才算完成接入。网页可专用撤销另一设备，不要求 Passkey 二次确认，服务端保护当前 Session 来源和最后一份有效 API Credential。已有同实例身份的电脑可明确切换为 Owner，保留旧身份安全恢复入口，不合并身份或删除原授权。普通轮换仍由 Agent 先安全保存替代 secret 再执行 Bearer-only 原子 rotation；全失恢复仍走 `cfkanban-deploy`。见[网页与身份切换增量](../specs/2026-09-28-owner-device-web-identity-switch-spec.md)。
 
 ### SB-28：浏览器 Session 过期、撤销与攻击面收口
 

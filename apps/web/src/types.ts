@@ -310,6 +310,7 @@ export interface PrincipalResource {
 
 export interface CredentialResource {
   allowed_actions: string[];
+  device_name?: string | null;
   fingerprint: string;
   id: string;
   issued_at: string;

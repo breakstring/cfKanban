@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { lstat, rm } from "node:fs/promises";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { lstat, open, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -8,6 +9,7 @@ import { resolveStateRoot } from "./paths.mjs";
 import {
   assertNoSymlinkPath,
   atomicWriteJson,
+  canonicalDigest,
   ensurePrivateDirectory,
   pathType,
   readJson,
@@ -29,9 +31,39 @@ function instancePaths(stateRoot, instanceId) {
     currentSecret: path.join(credentialsRoot, "current.secret.json"),
     pendingMetadata: path.join(credentialsRoot, "pending.json"),
     pendingSecret: path.join(credentialsRoot, "pending.secret.json"),
+    previousMetadata: path.join(credentialsRoot, "previous.json"),
+    previousSecret: path.join(credentialsRoot, "previous.secret.json"),
+    identitySwitch: path.join(credentialsRoot, "identity-switch.json"),
     receiptsRoot: path.join(instanceRoot, "receipts"),
     journalsRoot: path.join(instanceRoot, "journals"),
   };
+}
+
+const credentialLocks = new AsyncLocalStorage();
+
+export async function withCredentialStateLock(input, callback) {
+  const paths = instancePaths(input.stateRoot ?? resolveStateRoot(), input.instanceId);
+  if (credentialLocks.getStore() === paths.credentialsRoot) return callback(paths);
+  await validatePrivatePath(paths.stateRoot, "directory");
+  await assertNoSymlinkPath(paths.credentialsRoot, paths.stateRoot);
+  await validatePrivatePath(paths.credentialsRoot, "directory");
+  const lockPath = path.join(paths.credentialsRoot, "owner-devices.lock");
+  let lock;
+  try { lock = await open(lockPath, "wx", 0o600); }
+  catch { throw toolError("OWNER_DEVICE_LOCKED", "Another Credential operation may be running; verify that it stopped before removing its private lock"); }
+  try { return await credentialLocks.run(paths.credentialsRoot, () => callback(paths)); }
+  finally { await lock.close(); await rm(lockPath); }
+}
+
+export async function assertCredentialStateAvailable(paths) {
+  if (credentialLocks.getStore() !== paths.credentialsRoot && await pathType(path.join(paths.credentialsRoot, "owner-devices.lock")) !== "missing") {
+    throw toolError("OWNER_DEVICE_LOCKED", "Another Credential operation is using this instance's private state");
+  }
+  await assertNoSymlinkPath(paths.identitySwitch, paths.stateRoot);
+  if (await pathType(paths.identitySwitch) === "missing") return;
+  await validatePrivatePath(paths.identitySwitch, "file");
+  const transaction = await readJson(paths.identitySwitch);
+  if (transaction?.phase !== "complete") throw toolError("IDENTITY_SWITCH_INCOMPLETE", "Resume the exact Owner device verification or previous-identity restoration before using or changing this Credential state");
 }
 
 function windowsAclProbe(targetPath) {
@@ -184,7 +216,7 @@ export function credentialMetadataView(metadata) {
   };
 }
 
-export async function createPendingCredential({
+async function createPendingCredentialRecord({
   stateRoot = resolveStateRoot(),
   home = os.homedir(),
   persistenceConfirmed = false,
@@ -194,13 +226,22 @@ export async function createPendingCredential({
   idempotencyKey = randomUUID(),
   operationId = randomUUID(),
   purpose = "principal_bootstrap",
-}) {
+}, ownerDeviceReplacement = null) {
   await initializeStateRoot({ stateRoot, home, persistenceConfirmed });
   const paths = instancePaths(stateRoot, instanceId);
+  await assertCredentialStateAvailable(paths);
   await ensurePrivateDirectory(paths.credentialsRoot);
   await assertNoSymlinkPath(paths.credentialsRoot, stateRoot);
   const existingCurrent = await readJson(paths.currentMetadata, { allowMissing: true });
-  if (existingCurrent !== null && principalId !== null && existingCurrent.principal_id !== principalId) {
+  if (ownerDeviceReplacement !== null) {
+    const current = await loadCurrentCredentialSecret({ stateRoot, instanceId });
+    if (purpose !== "owner_device" || ownerDeviceReplacement.metadata_digest !== canonicalDigest(current.metadata)
+      || ownerDeviceReplacement.principal_id !== current.metadata.principal_id || ownerDeviceReplacement.credential_id !== current.metadata.credential_id
+      || ownerDeviceReplacement.token_digest !== current.metadata.token_digest || ownerDeviceReplacement.fingerprint !== current.metadata.fingerprint) {
+      throw toolError("STATE_CURRENT_CONFLICT", "The explicitly selected current Credential changed before preparing the Owner device");
+    }
+  }
+  if (ownerDeviceReplacement === null && existingCurrent !== null && principalId !== null && existingCurrent.principal_id !== principalId) {
     throw toolError("STATE_IDENTITY_CONFLICT", "This instance already has a different current local Principal", {
       instanceId,
       currentPrincipalId: existingCurrent.principal_id,
@@ -231,6 +272,7 @@ export async function createPendingCredential({
     purpose: requireString(purpose, "purpose", { max: 64 }),
     state: "pending",
     created_at: new Date().toISOString(),
+    ...(ownerDeviceReplacement === null ? {} : { owner_device_replacement: ownerDeviceReplacement }),
   };
   await atomicWriteJson(paths.pendingSecret, { schema_version: 1, token: credential.token });
   try {
@@ -242,12 +284,23 @@ export async function createPendingCredential({
   return metadata;
 }
 
+export async function createPendingCredential(input) {
+  await initializeStateRoot(input);
+  await ensurePrivateDirectory(instancePaths(input.stateRoot ?? resolveStateRoot(), input.instanceId).credentialsRoot);
+  return withCredentialStateLock(input, () => createPendingCredentialRecord(input));
+}
+
+export async function createOwnerDevicePendingCredential(input, replacement) {
+  return withCredentialStateLock(input, () => createPendingCredentialRecord({ ...input, purpose: "owner_device" }, replacement));
+}
+
 export async function preparePendingCredential(input) {
   return credentialMetadataView(await createPendingCredential(input));
 }
 
 export async function loadPendingCredentialSecret({ stateRoot = resolveStateRoot(), instanceId }) {
   const paths = instancePaths(stateRoot, instanceId);
+  await assertCredentialStateAvailable(paths);
   await validatePrivatePath(paths.pendingMetadata, "file");
   await validatePrivatePath(paths.pendingSecret, "file");
   const metadata = await readJson(paths.pendingMetadata);
@@ -258,9 +311,12 @@ export async function loadPendingCredentialSecret({ stateRoot = resolveStateRoot
   return { metadata, token: secret.token };
 }
 
-export async function promotePendingCredential({ stateRoot = resolveStateRoot(), instanceId, principalId, credentialId, fingerprint }) {
+async function promotePendingCredentialRecord({ stateRoot = resolveStateRoot(), instanceId, principalId, credentialId, fingerprint }) {
   const paths = instancePaths(stateRoot, instanceId);
   const { metadata } = await loadPendingCredentialSecret({ stateRoot, instanceId });
+  if (metadata.owner_device_replacement !== undefined) {
+    throw toolError("OWNER_DEVICE_REPLACEMENT_REQUIRED", "Verify this Owner device through its dedicated identity-switch workflow so the previous Credential is preserved");
+  }
   const verifiedPrincipalId = requireUuid(principalId, "principal_id");
   const verifiedCredentialId = requireUuid(credentialId, "credential_id");
   if (metadata.principal_id !== null && metadata.principal_id !== verifiedPrincipalId) {
@@ -300,18 +356,28 @@ export async function promotePendingCredential({ stateRoot = resolveStateRoot(),
   return promoted;
 }
 
-export async function clearPendingCredential({ stateRoot = resolveStateRoot(), instanceId, committedStateKnownFalse = false }) {
+export async function promotePendingCredential(input) {
+  return withCredentialStateLock(input, () => promotePendingCredentialRecord(input));
+}
+
+async function clearPendingCredentialRecord({ stateRoot = resolveStateRoot(), instanceId, committedStateKnownFalse = false }) {
   if (!committedStateKnownFalse) {
     throw toolError("PENDING_STATE_UNCERTAIN", "Pending Credential may only be cleared after proving the remote operation was not committed", { instanceId });
   }
   const paths = instancePaths(stateRoot, instanceId);
+  await assertCredentialStateAvailable(paths);
   await rm(paths.pendingSecret, { force: true });
   await rm(paths.pendingMetadata, { force: true });
   return { cleared: true, instance_id: instanceId };
 }
 
+export async function clearPendingCredential(input) {
+  return withCredentialStateLock(input, () => clearPendingCredentialRecord(input));
+}
+
 export async function loadCurrentCredentialSecret({ stateRoot = resolveStateRoot(), instanceId }) {
   const paths = instancePaths(stateRoot, instanceId);
+  await assertCredentialStateAvailable(paths);
   await validatePrivatePath(stateRoot, "directory");
   await assertNoSymlinkPath(paths.credentialsRoot, stateRoot);
   await validatePrivatePath(paths.currentMetadata, "file");
@@ -330,14 +396,22 @@ export async function inspectInstanceState({ stateRoot = resolveStateRoot(), hom
   const instance = await readJson(paths.instanceMetadata, { allowMissing: true });
   const current = await readJson(paths.currentMetadata, { allowMissing: true });
   const pending = await readJson(paths.pendingMetadata, { allowMissing: true });
+  for (const file of [paths.previousMetadata, paths.identitySwitch]) {
+    await assertNoSymlinkPath(file, stateRoot);
+    if (await pathType(file) !== "missing") await validatePrivatePath(file, "file");
+  }
+  const previous = await readJson(paths.previousMetadata, { allowMissing: true });
+  const transition = await readJson(paths.identitySwitch, { allowMissing: true });
   return {
     schema_version: 1,
     instance,
     credential: {
       current: credentialMetadataView(current),
       pending: credentialMetadataView(pending),
+      previous: credentialMetadataView(previous),
       secret_values_exposed: false,
     },
+    ...(transition ? { identity_switch: { kind: transition.kind, operation_id: transition.operation_id, phase: transition.phase } } : {}),
   };
 }
 

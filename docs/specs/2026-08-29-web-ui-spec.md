@@ -111,7 +111,7 @@ Owner 管理面只承载已有管理能力：
 
 v0 已按 D-219 移除 Principal disable/enable/delete。Owner 通过 Credential revoke 停止认证、通过 Project Grant revoke 停止具体 Project 权限、通过 Principal Recovery Invite 恢复同一身份；Web 不显示全局停用身份按钮。
 
-Web 只允许撤销参与者 Credential。Owner Credential 在 Web 中只显示 ID、fingerprint、issued/last-used/revoked 等非秘密摘要，不显示 revoke/rotate 操作。Owner 正常轮换由 `cfkanban-admin` 使用本地受限文件与 Bearer-only 原子 rotation 完成；全部丢失时才由 `cfkanban-deploy` 做部署外恢复。Cookie Session 不能调用 Owner Credential lifecycle API，因此当前 Session 来源和最后一个有效 Owner Credential 都不存在 Web 自锁路径。
+按[Owner 设备网页与身份切换增量](2026-09-28-owner-device-web-identity-switch-spec.md)，Owner admin Web 在 Access 提供设备列表、非秘密配对预览、明确批准和专用撤销；不要求 Passkey 二次确认。Cookie 写入校验同源与 CSRF，服务端原子保护当前 Session 来源及最后一份有效 Owner API Credential。网页不接触长期 secret，批准后仍需新设备验证并本地提升。普通轮换由 `cfkanban-admin` 使用本地受限文件与 Bearer-only 原子 rotation 完成；全失恢复仍由 `cfkanban-deploy` 执行。
 
 Owner 管理面按四个简单分区组织：Overview、Workspaces/Projects、Access、Audit。它不做可配置 Dashboard；Overview 只展示实例自身能够读取的健康、版本、资源计数、preferred/current observed origin 与近期错误摘要。preferred origin 在 Web 中只读，页面提供一段让 Owner 交给 `cfkanban-admin` 的简短话术；修改只能使用 Owner Bearer Credential，避免一个被劫持的 Cookie Session 把后续 Agent Credential 导向攻击者地址。Web 不保存 Cloudflare API token，也不声称提供权威 account quota/usage 或域名清单；Cloudflare-native domain reconcile 属于 `cfkanban-deploy`，第三方 alias 由 Owner 明确提供。
 

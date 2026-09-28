@@ -268,8 +268,8 @@ Relation 的方向固定：`blocks` 表示 source blocks target；`parent` 表�
 | GET | `/api/v1/admin/principals/{principal_id}/credentials` | Owner | 只返回 ID、fingerprint、issued/last-used/revoked |
 | DELETE | `/api/v1/admin/credentials/{credential_id}` | Owner Bearer 或 Owner Web Session | 撤销一个参与者 Credential；目标属于 Owner Principal 时拒绝 |
 | POST | `/api/v1/admin/owner-credentials/rotate` | Owner Bearer only | 原子建立本地已安全保存的替代 Credential 并撤销当前认证 Credential；拒绝 Cookie Session |
-| POST | `/api/v1/admin/owner-credentials/add-device` | Owner Bearer only | 按[多设备增量合同](2026-09-27-owner-devices-deployment-attachment-spec.md)批准同 Owner 的独立凭据，CAS 取 Principal version |
-| POST | `/api/v1/admin/owner-credentials/{credential_id}/revoke` | Owner Bearer only | 单独撤销另一份 Owner 凭据；拒绝当前调用凭据 |
+| POST | `/api/v1/admin/owner-credentials/add-device` | Owner Bearer 或 Owner admin Web Session | 按[网页与身份切换增量](2026-09-28-owner-device-web-identity-switch-spec.md)批准同 Owner 的独立凭据，CAS 取 Principal version；保留至少一份 active API Credential，Cookie 要求同源与 CSRF |
+| POST | `/api/v1/admin/owner-credentials/{credential_id}/revoke` | Owner Bearer 或 Owner admin Web Session | 专用撤销另一份 Owner 凭据；原子保护当前 Bearer/Session 来源及最后一份 active API Credential，Cookie 要求同源与 CSRF |
 | GET | `/api/v1/admin/instance-origin` | Owner Bearer 或 Owner Web Session | 读取 preferred/observed origin、origin version 与更新时间；Web 只读展示 |
 | PUT | `/api/v1/admin/instance-origin` | Owner Bearer only | 带 expected version 原子发布一个规范化 HTTPS preferred origin；拒绝 Cookie Session |
 | GET/POST | `/api/v1/admin/projects/{project_id}/grants` | Owner | 列表；创建或重新授予一条明确 Grant |

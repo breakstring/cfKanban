@@ -12,7 +12,7 @@
 2026-09-19 增量：用户已授权 Web/Skills 体验优化与可选私有 Issue 附件，范围以 [Issue 附件 Frozen SPEC](../specs/2026-09-19-issue-attachments-spec.md) 为准。下文历史阶段中“暂缓 R2 附件”的表述由该合同覆盖；不改变其他增强能力的暂缓状态，也不替代线上任务的实际验收。
 
 - 产品定位为面向 Coding Agents 的轻量工作协调账本。
-- 已明确用户的 Agent 是主要调用载体，但不是唯一界面；人类也可以在极简第一方 Web 中直接查看、轻量参与和维护。部署、Owner 管理、协调和 Coding 只是 Agent 的任务模式，不是不同 Agent 类型。
+- 已明确 Agent-first，同时尽可能使 Web 与 Skill 具备一致的业务能力；差异应来自运行环境或凭据存储的实际约束。人类可以在第一方 Web 中直接查看、参与和维护。部署、Owner 管理、协调和 Coding 只是 Agent 的任务模式，不是不同 Agent 类型。
 - 已具备 Frozen 产品/技术合同、Worker/D1/Web、三个 portable Skills 和部署/更新链路，并已进行多次测试发行与真实 dogfood；这不代表所有跨宿主、跨 OS 和真人验收已完成。
 - 2026-09-19 起，执行与完成证据统一在 cfKanban Development 跟踪；Linear 仅保留历史来源。迁移采用已有任务承接，映射见 [协作约定](cfkanban.md)，本文件不保存动态 Issue 计数。
 - 已确认一个部署实例可以包含多个 Workspace，一个 Workspace 可以包含多个 Project。
@@ -54,7 +54,7 @@
 - 已确认普通 Comment 不可原地编辑，可软删除/恢复；纠错追加引用旧 Comment 的新记录，completion comment 不可删除。
 - 已确认保留显式 assign-to-me 命令，由服务端推导当前 Principal，且不产生 lease。
 - 已确认 Credential 不自动过期，只通过显式撤销、轮换或 full recovery 中的撤销失效；last_used_at 仅作低频运维提示。v0 不提供 Principal disable/enable/delete。
-- 已确认 Credential 不做硬件绑定；Owner 多环境使用独立凭据，由已有 Owner Bearer 批准，可单独撤销；复制同一 secret 的副本仍共享撤销后果。新电脑通过只读远端核验及明确本地接入重建维护登记，不依赖全失恢复承担日常换机。合同见[多设备与已有部署接入](../specs/2026-09-27-owner-devices-deployment-attachment-spec.md)。
+- 已确认 Credential 不做硬件绑定；Owner 多环境使用独立凭据，由已有 Owner Bearer 或 Owner admin 网页明确批准，可单独撤销；当前来源和最后一份 active API Credential 受保护，网页无需 Passkey 二次确认。已有本地身份接入时显式切换为 Owner，并保留安全恢复入口，见[网页与身份切换](../specs/2026-09-28-owner-device-web-identity-switch-spec.md)；复制同一 secret 的副本仍共享撤销后果。新电脑通过只读远端核验及明确本地接入重建维护登记，不依赖全失恢复承担日常换机。合同见[多设备与已有部署接入](../specs/2026-09-27-owner-devices-deployment-attachment-spec.md)。
 - 已确认小而明确的应用级资源上限：请求 128 KiB、Issue body 64 KiB、Comment/completion 32 KiB、列表默认 20/最大 100、context 64 KiB。
 - 已确认源码/发行工程采用锁文件约束的根级验证/构建入口，以及包含顺序、checksum、分类、重入边界和预期 schema artifacts 的 D1 migration manifest；deploy Skill 以 ledger + 实际 schema 双重 readback，不把文件名或退出码当成应用完成。
 - 已确认 v0 不提供持有 Cloudflare Token 的 GitHub Actions 部署路径，继续由用户的 Agent 通过 `cfkanban-deploy` 完成唯一主部署流程。无 Cloudflare 凭据的 CI 验证 workflow 可以作为正常工程设施；远端部署 workflow 后置到下一阶段重新冻结授权与恢复体验。

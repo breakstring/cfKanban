@@ -91,7 +91,7 @@
 
 Owner bootstrap、轮换和恢复不创建新身份：明文 Credential 只在签发时展示一次，D1 只保存安全散列；正常轮换先签发替代 Credential 再撤销旧凭据。部署外恢复不复活旧 Credential，也不改变 `owner_principal_id`。
 
-Owner Credential 生命周期不能通过第一方 Web Session 管理。Web 只读展示 Owner Credential 非秘密摘要，且通用 Credential revoke 必须拒绝 Owner Principal 的 Credential。正常轮换由 `cfkanban-admin` 在替代 secret 已安全写入本地受限文件后，以当前 Owner Bearer Credential 调用原子 rotation；服务端在同一业务单元中建立替代 Credential 并撤销当前旧凭据，不产生“最后一个 Owner Credential 被先撤销”的窗口。全部 Owner Credential 丢失仍只允许部署外恢复。 同一 Owner 的独立设备批准与单独撤销由[多设备增量合同](2026-09-27-owner-devices-deployment-attachment-spec.md)定义，仍只接受 Owner Bearer，不开放 Web Credential 管理。
+通用 Credential revoke 必须拒绝 Owner Principal 的 Credential。专用设备批准/撤销按[网页与身份切换增量](2026-09-28-owner-device-web-identity-switch-spec.md)允许 Owner Bearer 或 Owner admin Web Session；网页明确确认并校验同源与 CSRF，服务端原子保护当前来源和最后一份 active API Credential。正常轮换由 `cfkanban-admin` 在替代 secret 已安全写入本地受限文件后，以当前 Owner Bearer Credential 调用原子 rotation；服务端在同一业务单元中建立替代 Credential 并撤销当前旧凭据。专用全失恢复仍由部署外流程撤销全部旧 API Credential；持有有效 Owner admin Session 且仍有未撤销凭据记录时，可按网页增量批准新设备。同一 Owner 的配对格式、服务端存储与部署接入见[多设备增量合同](2026-09-27-owner-devices-deployment-attachment-spec.md)；已有本地身份的显式替换和私有恢复槽遵循网页与身份切换增量。
 
 服务端 Principal 同时保存不可变 `principal_id` 与可变、非唯一的 `display_name`。前者是授权、assignee、Grant、Event/Audit 和跨用户引用的唯一稳定身份；后者只用于展示，允许重名且不能参与认证、授权、去重、恢复或本地 Credential 选择。任何跨用户的 Principal/assignee 摘要都必须同时返回 `principal_id` 与当前 `display_name`，不能只返回名称。v0 不保存 `human | agent` Principal kind；Codex、Claude Code 等 Agent 宿主不是 Principal 类型。
 
@@ -684,7 +684,7 @@ Invite bootstrap 页面是公开说明与 Invitation 兑换入口，不是日常
 6. Free tier 超限返回明确错误并禁止无限快速重试；Vectorize、Workers AI、Queues、R2 与 Durable Objects 关闭时，核心 Kanban 仍完整工作。
 7. D-215/D-216 已通过合同修订 3 固定极简第一方 Web UI 与 Browser Launch/HttpOnly Session 的方向；D-217 通过修订 4 固定 5 分钟 launch、8 小时固定 Session、源 Credential 失效联动与 target scope。具体 CSRF/schema 已由 2026-08-29 Frozen Web UI 与 API/Schema SPEC 固定，不能在实现中默补。
 8. D-219 通过合同修订 5 移除 v0 Principal disable/enable/delete；Credential revoke、Grant revoke 与 Recovery Invite 分别承担认证停止、Project 撤权和身份连续性恢复。
-9. D-221 通过合同修订 6 固定 Owner Credential 的防锁死边界：Web 不撤销或轮换 Owner Credential，正常轮换由 `cfkanban-admin` 先安全落盘替代 secret 后执行 Bearer-only 原子 rotation，全部丢失才走 `cfkanban-deploy` 部署外恢复。
+9. D-279 修订 D-221 的网页设备边界：Owner admin Web 明确确认后可批准/专用撤销另一设备，保护当前来源和最后一份有效 API Credential；普通轮换仍由 `cfkanban-admin` 先安全落盘后执行 Bearer-only 原子 rotation，专用全失恢复仍走 `cfkanban-deploy` 并撤销全部旧 API Credential。
 10. D-222 通过合同修订 7 固定 Owner admin Session 的范围：默认不加载全部数据，但可在显式选择后进入实例内任意 Project；Owner Project/Issue 和既有固定 scope Session 仍限制单 Project；非 Owner 新兑换 Session 后由 D-272 增量修订。
 11. D-224/D-226 通过合同修订 8 固定 Passkey 为唯一免 Agent Web 直登方式，并固定单 Project Public Join：Owner 可同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer`；Team Join 与多 Project 公开授权不进入 v0。当时留出的 Q-230 重入问题已由合同修订 9 解决。
 12. D-227/D-228 通过合同修订 9 取消逐 Principal 重入阻止，并首次要求 Owner 开启 Public Join 前显式设置 Project Issue/Comment limits；其中“tombstone 永久占用、删除不释放”的旧语义已由合同修订 10 替代。

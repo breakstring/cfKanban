@@ -28,10 +28,10 @@ async function device(name="工作电脑") {
 const add = (body, extra={}) => request(endpoint,{method:"POST",body,...extra});
 const revoke = (id,version,extra={}) => request(`/api/v1/admin/owner-credentials/${id}/revoke`,{method:"POST",body:{expected_version:version},...extra});
 const auditCount = async () => (await db.prepare("SELECT COUNT(*) AS n FROM events WHERE type IN ('owner.device-added','owner.device-revoked')").first()).n;
-async function session(sourceKind,sourceId,targetKind="admin",target={kind:"admin",entry_path:"/app/admin",section:"overview"}) {
+async function session(sourceKind,sourceId,targetKind="admin",target={kind:"admin",entry_path:"/app/admin",section:"overview"},principalId=ownerId) {
   const token=randomBytes(32).toString("base64url"),id=randomUUID(),now=Date.now();
   await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,expires_at,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)")
-    .bind(id,hash(token),ownerId,sourceKind,sourceId,targetKind,JSON.stringify(target),now+3600000,now).run();
+    .bind(id,hash(token),principalId,sourceKind,sourceId,targetKind,JSON.stringify(target),now+3600000,now).run();
   return {id,token,headers:{cookie:`cfkanban_session=${token}; cfkanban_csrf=${"C".repeat(32)}`,origin,"x-csrf-token":"C".repeat(32)}};
 }
 before(async()=>{
@@ -52,7 +52,7 @@ before(async()=>{
 });
 after(()=>server.close());
 
-test("历史凭据名称为空；未认证、参与者、局部管理员及全部 Owner Web Session 均不能添加/撤销",async()=>{
+test("历史凭据名称为空；未认证、参与者、局部管理员和 Owner 窄 Session 均不能添加/撤销",async()=>{
   const body=(await device()).body;
   const list=(await request(`/api/v1/admin/principals/${ownerId}/credentials`)).data;
   assert.equal(list.items[0].device_name,null);
@@ -61,15 +61,18 @@ test("历史凭据名称为空；未认证、参与者、局部管理员及全�
     const headers={authorization:`Bearer ${actor.token}`};
     assert.equal((await add(body,{headers})).status,403,actor.role);
     assert.equal((await revoke(originalCredentialId,1,{headers})).status,403,actor.role);
+    const cookie=await session("credential",actor.credentialId,"admin",{kind:"admin",entry_path:"/app/admin",section:"overview"},actor.id);
+    assert.equal((await add(body,{headers:cookie.headers})).status,403,`${actor.role} cookie`);
+    assert.equal((await revoke(originalCredentialId,1,{headers:cookie.headers})).status,403,`${actor.role} cookie`);
   }
   const cookie=await session("credential",originalCredentialId);
   assert.equal((await request("/api/v1/me",{headers:cookie.headers})).status,200);
-  assert.equal((await add(body,{headers:cookie.headers})).status,403);
   assert.equal((await revoke(originalCredentialId,1,{headers:cookie.headers})).status,403);
   const project=await db.prepare("SELECT id,workspace_id FROM projects LIMIT 1").first();
   const scoped=await session("credential",originalCredentialId,"project",{kind:"project",workspace_id:project.workspace_id,project_id:project.id,entry_path:`/app/w/${project.workspace_id}/p/${project.id}`});
   assert.equal((await request("/api/v1/me",{headers:scoped.headers})).status,200);
   assert.equal((await add(body,{headers:scoped.headers})).status,403);
+  assert.equal((await revoke(originalCredentialId,1,{headers:scoped.headers})).status,403);
   assert.equal((await owner()).version,1);assert.equal(await auditCount(),0);
 });
 test("拒绝不匹配实例/Owner、错误字段、过期和超过一小时请求，服务端不接收secret",async()=>{
@@ -124,8 +127,6 @@ test("单独撤销只影响目标Credential及派生Session/Launch，保留其�
   for(const [index,id] of launchIds.entries())await db.prepare("INSERT INTO browser_launches(id,code_prefix,code_digest,principal_id,source_credential_id,target_kind,target_json,expires_at,redeemed_at,created_at,created_operation_id) VALUES(?1,'fixture',?2,?3,?4,'admin',?5,?6,?7,?8,?9)")
     .bind(id,hash(id),ownerId,added.body.credential_id,JSON.stringify({kind:"admin",entry_path:"/app/admin",section:"overview"}),now+300000,index===1?now:null,now,randomUUID()).run();
   const version=(await owner()).version,key=randomUUID();
-  assert.equal((await add((await device()).body,{headers:passkeySession.headers})).status,403);
-  assert.equal((await revoke(added.body.credential_id,version,{headers:passkeySession.headers})).status,403);
   const result=await revoke(added.body.credential_id,version,{key});assert.equal(result.status,200,JSON.stringify(result.data));
   assert.equal(result.data.resource.principal_version,version+1);
   const replay=await revoke(added.body.credential_id,version,{key});assert.equal(replay.data.idempotent_replay,true);assert.deepEqual(replay.data.resource,result.data.resource);
@@ -224,4 +225,175 @@ test("全失恢复发生在添加的认证和原子写之间，旧设备不能�
   assert.equal((await add(added.body,{key:added.key})).status,401);
   assert.equal((await db.prepare("SELECT COUNT(*) n FROM credentials WHERE principal_id=?1 AND revoked_at IS NULL").bind(ownerId).first()).n,1);
   ownerToken=replacement;assert.equal((await request("/api/v1/me")).status,200);
+});
+
+const currentCredential = async () => (await request("/api/v1/me")).data.credential.id;
+const activeCredentials = async () => (await db.prepare("SELECT id FROM credentials WHERE principal_id=?1 AND revoked_at IS NULL ORDER BY id").bind(ownerId).all()).results.map(row=>row.id);
+async function passkeySession() {
+  const passkey=await db.prepare("SELECT id FROM web_authenticators WHERE principal_id=?1 AND revoked_at IS NULL LIMIT 1").bind(ownerId).first();
+  return {...await session("web_authenticator",passkey.id),sourceId:passkey.id};
+}
+
+test("Owner admin Cookie 批准与 Passkey Cookie 撤销支持幂等并记录非秘密审计来源",async()=>{
+  const currentId=await currentCredential(),agentSession=await session("credential",currentId),passkey=await passkeySession();
+  const candidate=await device("网页批准电脑"),key=randomUUID();
+  const result=await add(candidate.body,{headers:agentSession.headers,key});
+  assert.equal(result.status,200,JSON.stringify(result.data));
+  const replay=await add(candidate.body,{headers:agentSession.headers,key});
+  assert.equal(replay.data.idempotent_replay,true);assert.deepEqual(replay.data.resource,result.data.resource);
+  const event=await db.prepare("SELECT actor_principal_id,actor_credential_id,payload_json FROM events WHERE type='owner.device-added' AND subject_id=?1").bind(candidate.body.credential_id).first();
+  assert.equal(event.actor_principal_id,ownerId);assert.equal(event.actor_credential_id,currentId);
+  const payload=JSON.parse(event.payload_json);
+  assert.equal(payload.actor_session_id,agentSession.id);assert.deepEqual(payload.authentication_source,{kind:"credential",id:currentId});
+  const surfaces=JSON.stringify([result.data,event,replay.data]);
+  for(const secret of [candidate.token,candidate.body.token_digest,agentSession.token])assert.ok(!surfaces.includes(secret));
+  assert.equal((await request("/api/v1/me",{headers:{authorization:`Bearer ${candidate.token}`}})).status,200);
+
+  const list=(await request(`/api/v1/admin/principals/${ownerId}/credentials`,{headers:agentSession.headers})).data.items;
+  assert.deepEqual(list.find(row=>row.id===currentId).allowed_actions,[]);
+  assert.deepEqual(list.find(row=>row.id===candidate.body.credential_id).allowed_actions,["revoke_owner_device"]);
+  const detail=(await request(`/api/v1/admin/principals/${ownerId}`,{headers:agentSession.headers})).data;
+  assert.deepEqual(detail.credentials.find(row=>row.id===candidate.body.credential_id).allowed_actions,["revoke_owner_device"]);
+  const passkeyList=(await request(`/api/v1/admin/principals/${ownerId}/credentials`,{headers:passkey.headers})).data.items;
+  assert.deepEqual(passkeyList.find(row=>row.id===currentId).allowed_actions,["revoke_owner_device"]);
+  assert.equal((await revoke(currentId,(await owner()).version,{headers:agentSession.headers})).status,403);
+  assert.equal((await request(`/api/v1/admin/credentials/${candidate.body.credential_id}?expected_version=1`,{method:"DELETE",headers:passkey.headers})).status,403);
+  assert.equal((await request("/api/v1/admin/owner-credentials/rotate",{method:"POST",headers:passkey.headers,body:{new_credential_token:makeToken()}})).status,401);
+
+  const revokeKey=randomUUID(),version=(await owner()).version;
+  const revoked=await revoke(candidate.body.credential_id,version,{headers:passkey.headers,key:revokeKey});
+  assert.equal(revoked.status,200,JSON.stringify(revoked.data));
+  const revokeReplay=await revoke(candidate.body.credential_id,version,{headers:passkey.headers,key:revokeKey});
+  assert.equal(revokeReplay.data.idempotent_replay,true);assert.deepEqual(revokeReplay.data.resource,revoked.data.resource);
+  const revokeEvent=await db.prepare("SELECT actor_credential_id,payload_json FROM events WHERE type='owner.device-revoked' AND subject_id=?1").bind(candidate.body.credential_id).first();
+  assert.equal(revokeEvent.actor_credential_id,null);
+  assert.equal(JSON.parse(revokeEvent.payload_json).actor_session_id,passkey.id);
+  assert.deepEqual(JSON.parse(revokeEvent.payload_json).authentication_source,{kind:"web_authenticator",id:passkey.sourceId});
+  assert.equal((await request("/api/v1/me",{headers:agentSession.headers})).status,200);
+  assert.equal((await request("/api/v1/me",{headers:passkey.headers})).status,200);
+  const finalList=(await request(`/api/v1/admin/principals/${ownerId}/credentials`,{headers:passkey.headers})).data.items;
+  assert.ok(finalList.every(row=>row.allowed_actions.length===0));
+});
+
+test("Cookie 新增和撤销均强制同源 CSRF，Bearer 维持现有无需 CSRF 语义",async()=>{
+  const cookie=await passkeySession(),candidate=await device("CSRF target");
+  assert.equal((await add(candidate.body)).status,200);
+  const next=await device(),version=(await owner()).version,before=await auditCount();
+  const missingHeader={...cookie.headers},missingOrigin={...cookie.headers};
+  delete missingHeader["x-csrf-token"];delete missingOrigin.origin;
+  const invalidHeaders=[missingHeader,missingOrigin,{...cookie.headers,origin:"https://other.example.test"},{...cookie.headers,"x-csrf-token":"D".repeat(32)},{...cookie.headers,cookie:`cfkanban_session=${cookie.token}`}];
+  for(const headers of invalidHeaders){
+    assert.equal((await add(next.body,{headers})).status,403);
+    assert.equal((await revoke(candidate.body.credential_id,version,{headers})).status,403);
+  }
+  assert.equal(await auditCount(),before);assert.equal((await owner()).version,version);
+  assert.equal((await revoke(candidate.body.credential_id,version)).status,200);
+});
+
+test("两个 Passkey Session 并发撤销仅余的两份 API Credential 后必须保留一份",async()=>{
+  const originalId=await currentCredential(),candidate=await device("并发剩余设备");
+  assert.equal((await add(candidate.body)).status,200);
+  const [first,second]=await Promise.all([passkeySession(),passkeySession()]),version=(await owner()).version;
+  const results=await Promise.all([
+    revoke(originalId,version,{headers:first.headers}),
+    revoke(candidate.body.credential_id,version,{headers:second.headers}),
+  ]);
+  assert.equal(results.filter(result=>result.status===200).length,1,JSON.stringify(results));
+  assert.equal(results.filter(result=>result.status===409).length,1,JSON.stringify(results));
+  const active=await activeCredentials();assert.equal(active.length,1);
+  if(active[0]===candidate.body.credential_id)ownerToken=candidate.token;
+  assert.equal((await revoke(active[0],(await owner()).version,{headers:first.headers})).status,403);
+  assert.equal((await activeCredentials()).length,1);
+});
+
+test("独立 Passkey 不能在零 API Credential 状态添加设备，也不能在提交竞态中绕过限制",async()=>{
+  const cookie=await passkeySession(),candidate=await device(),active=await activeCredentials(),before=(await owner()).version,count=await auditCount();
+  const revokeAll=()=>db.prepare("UPDATE credentials SET revoked_at=?1 WHERE principal_id=?2 AND revoked_at IS NULL").bind(Date.now(),ownerId).run();
+  const restore=async()=>{for(const id of active)await db.prepare("UPDATE credentials SET revoked_at=NULL WHERE id=?1").bind(id).run();};
+  try{
+    await revokeAll();
+    assert.equal((await request("/api/v1/me",{headers:cookie.headers})).status,200);
+    assert.equal((await add(candidate.body,{headers:cookie.headers})).status,403);
+  }finally{await restore();}
+  let batches=0;
+  const racedDb=new Proxy(db,{get(target,property){if(property==="batch")return async statements=>{
+    if(++batches===2)await revokeAll();
+    return db.batch(statements);
+  };const value=Reflect.get(target,property,target);return typeof value==="function"?value.bind(target):value;}});
+  try{
+    const result=await add(candidate.body,{headers:cookie.headers,overrideEnv:{...env,DB:racedDb}});
+    assert.equal(result.status,403,JSON.stringify(result.data));
+    assert.equal((await owner()).version,before);assert.equal(await auditCount(),count);
+    assert.equal(await db.prepare("SELECT id FROM credentials WHERE id=?1").bind(candidate.body.credential_id).first(),null);
+  }finally{await restore();}
+});
+
+test("撤销提交前另一份凭据失效时，原子 guard 保护最后一份目标",async()=>{
+  const cookie=await passkeySession(),currentId=await currentCredential(),candidate=await device();
+  assert.equal((await add(candidate.body)).status,200);
+  const version=(await owner()).version,count=await auditCount();let batches=0;
+  const racedDb=new Proxy(db,{get(target,property){if(property==="batch")return async statements=>{
+    if(++batches===2)await db.prepare("UPDATE credentials SET revoked_at=?1 WHERE id=?2").bind(Date.now(),currentId).run();
+    return db.batch(statements);
+  };const value=Reflect.get(target,property,target);return typeof value==="function"?value.bind(target):value;}});
+  try{
+    const result=await revoke(candidate.body.credential_id,version,{headers:cookie.headers,overrideEnv:{...env,DB:racedDb}});
+    assert.equal(result.status,403,JSON.stringify(result.data));
+    assert.equal((await owner()).version,version);assert.equal(await auditCount(),count);
+    assert.deepEqual(await activeCredentials(),[candidate.body.credential_id]);
+  }finally{await db.prepare("UPDATE credentials SET revoked_at=NULL WHERE id=?1").bind(currentId).run();}
+  assert.equal((await revoke(candidate.body.credential_id,version)).status,200);
+});
+
+test("Cookie 来源、Session 过期和管理范围在原子提交前漂移时不留下新增权限",async()=>{
+  const candidate=await device(),count=await auditCount(),before=(await owner()).version,currentId=await currentCredential();
+  const cases=[
+    {name:"session revoke",status:401,change:cookie=>db.prepare("UPDATE web_sessions SET revoked_at=?1 WHERE id=?2").bind(Date.now(),cookie.id).run()},
+    {name:"session expire",status:401,change:cookie=>db.prepare("UPDATE web_sessions SET created_at=0,expires_at=1 WHERE id=?1").bind(cookie.id).run()},
+    {name:"session scope",status:403,change:cookie=>db.prepare("UPDATE web_sessions SET target_kind='project_selection',target_json=?1 WHERE id=?2").bind(JSON.stringify({kind:"project_selection",entry_path:"/app"}),cookie.id).run()},
+    {name:"passkey revoke",status:401,change:cookie=>db.prepare("UPDATE web_authenticators SET revoked_at=?1,revoked_by_principal_id=?2 WHERE id=?3").bind(Date.now(),ownerId,cookie.sourceId).run(),restore:cookie=>db.prepare("UPDATE web_authenticators SET revoked_at=NULL,revoked_by_principal_id=NULL WHERE id=?1").bind(cookie.sourceId).run()},
+    {name:"credential source revoke",status:401,create:()=>session("credential",currentId),change:()=>db.prepare("UPDATE credentials SET revoked_at=?1 WHERE id=?2").bind(Date.now(),currentId).run(),restore:()=>db.prepare("UPDATE credentials SET revoked_at=NULL WHERE id=?1").bind(currentId).run()},
+  ];
+  for(const item of cases){
+    const cookie=await (item.create??passkeySession)();let batches=0;
+    const racedDb=new Proxy(db,{get(target,property){if(property==="batch")return async statements=>{
+      if(++batches===2)await item.change(cookie);
+      return db.batch(statements);
+    };const value=Reflect.get(target,property,target);return typeof value==="function"?value.bind(target):value;}});
+    try{
+      const result=await add(candidate.body,{headers:cookie.headers,overrideEnv:{...env,DB:racedDb}});
+      assert.equal(result.status,item.status,`${item.name}: ${JSON.stringify(result.data)}`);
+      assert.equal((await owner()).version,before,item.name);assert.equal(await auditCount(),count,item.name);
+      assert.equal(await db.prepare("SELECT id FROM credentials WHERE id=?1").bind(candidate.body.credential_id).first(),null);
+    }finally{await item.restore?.(cookie);}
+  }
+});
+
+test("Cookie 已成功批准在认证来源撤销后不能幂等重放，审计失败保持原子回滚",async()=>{
+  const cookie=await passkeySession(),candidate=await device(),key=randomUUID();
+  assert.equal((await add(candidate.body,{headers:cookie.headers,key})).status,200);
+  await db.prepare("UPDATE web_sessions SET revoked_at=?1 WHERE id=?2").bind(Date.now(),cookie.id).run();
+  assert.equal((await add(candidate.body,{headers:cookie.headers,key})).status,401);
+  assert.equal((await revoke(candidate.body.credential_id,(await owner()).version)).status,200);
+  const freshCookie=await passkeySession(),next=await device(),before=(await owner()).version,count=await auditCount();
+  await db.prepare("CREATE TRIGGER owner_web_device_test_reject BEFORE INSERT ON events WHEN NEW.type='owner.device-added' BEGIN SELECT RAISE(ABORT,'test audit failure'); END").run();
+  try{
+    assert.equal((await add(next.body,{headers:freshCookie.headers})).status,503);
+    assert.equal((await owner()).version,before);assert.equal(await auditCount(),count);
+    assert.equal(await db.prepare("SELECT id FROM credentials WHERE id=?1").bind(next.body.credential_id).first(),null);
+  }finally{await db.prepare("DROP TRIGGER owner_web_device_test_reject").run();}
+});
+
+test("Cookie 撤销审计失败回滚目标及其派生 Session 与 Principal 版本",async()=>{
+  const cookie=await passkeySession(),candidate=await device();
+  assert.equal((await add(candidate.body)).status,200);
+  const targetSession=await session("credential",candidate.body.credential_id),version=(await owner()).version,count=await auditCount();
+  await db.prepare("CREATE TRIGGER owner_web_revoke_test_reject BEFORE INSERT ON events WHEN NEW.type='owner.device-revoked' BEGIN SELECT RAISE(ABORT,'test audit failure'); END").run();
+  try{
+    assert.equal((await revoke(candidate.body.credential_id,version,{headers:cookie.headers})).status,503);
+    assert.equal((await owner()).version,version);assert.equal(await auditCount(),count);
+    assert.equal((await request("/api/v1/me",{headers:{authorization:`Bearer ${candidate.token}`}})).status,200);
+    assert.equal((await request("/api/v1/me",{headers:targetSession.headers})).status,200);
+  }finally{await db.prepare("DROP TRIGGER owner_web_revoke_test_reject").run();}
+  assert.equal((await revoke(candidate.body.credential_id,version,{headers:cookie.headers})).status,200);
 });

@@ -380,7 +380,7 @@ Service deployment bundle 必须携带已构建 Worker、预构建 Static Assets
 - Owner bootstrap 的远端 SQL 先进行一次初始尝试。失败、中断或响应状态不确定后，不得盲目重跑；同一已授权 task/operation/plan 必须先执行固定的只读 D1 probe，通过 `d1 execute --command --json` 对 `principals`、`instance_meta`、`instance_origin_settings`、`credentials`、`events` 与 `operation_commits` 六张 bootstrap 所触及的表只返回有界行数，并关闭 Wrangler 磁盘日志。只有该次尝试之后的最新有效 probe 证明六张表全部为空、且前次动作未记录成功时，才允许对准确的同一 hash-only SQL 重试一次；每次新的失败或不确定结果都需要更新 probe。这个受保护的重试已经包含在未变化的完整 plan 授权中，不需要逐次重新索要应用层确认。任何完整或部分记录、probe 失败/畸形、成功的既有尝试、plan/config/SQL/pending Credential 漂移都禁止重试，只能进入准确最终化读回或停止。
 - 云端只保存 hash/prefix；本地保存失败时不把 bootstrap 标记为完成。
 - Cloudflare auth 与 cfKanban Owner Credential 是两套不同凭据，不能互相复制或代用。
-- Owner 正常轮换由 `cfkanban-admin` 执行：脚本先生成替代 token 并写入同一实例的受限 pending 文件，再以当前 Owner Bearer Credential 调用幂等原子 rotation，验证新 Credential 后才原子切换本地 current slot。Web Session 不能发起该操作，管理页也不提供 Owner Credential revoke/rotate。全部 Owner Credential 丢失时才使用 `cfkanban-deploy` 的部署外恢复。
+- Owner 正常轮换由 `cfkanban-admin` 执行：脚本先生成替代 token 并写入同一实例的受限 pending 文件，再以当前 Owner Bearer Credential 调用幂等原子 rotation，验证新 Credential 后才原子切换本地 current slot。Web Session 不能发起普通轮换；管理页只按[网页增量](2026-09-28-owner-device-web-identity-switch-spec.md)提供批准新设备和专用撤销另一设备。全部 Owner Credential 丢失时才使用 `cfkanban-deploy` 的部署外恢复。
 - 部署最终化必须同时验证 health、公开 `/.well-known/cfkanban-instance.json`、认证后的 `/api/v1/meta` 与 `/api/v1/me`：准确匹配 instance ID、observed/preferred origin、origin version、Service/schema versions、Owner flag、Principal ID、Credential ID 与 fingerprint。`/me` 单独不包含 instance ID，不能单独作为部署完成证据。全部匹配后才写 trusted instance metadata、把 pending 原子提升为 current，并创建脱敏 receipt；若本地写入在提升后中断，续做必须复用同一 current Credential，不得生成第二个 secret。
 - `cfkanban-deploy` 的实例检查/升级 preflight 还要只读核对 Cloudflare 当前 Workers Domains/Routes 与本地 receipt，报告 Dashboard 手工添加的域名和配置所有权。deployment bundle 默认不得因路由未出现在 release 文件中就静默删除域名；任何创建、删除或接管 domain 都是明确 plan delta。
 - Owner 设置 preferred API origin 由 `cfkanban-admin` 使用 Owner Bearer Credential 调用应用层原子能力，不要求重新部署 Worker；Owner Web 只读显示而不修改。Cloudflare-native candidate 可由 `cfkanban-deploy` 显式只读 reconcile 提供，第三方 candidate 必须由 Owner 明确给出。设置前先完成无 Credential 探测和影响预览，设置后从旧/new origin 读回 discovery 一致性。
@@ -395,7 +395,7 @@ Cloudflare auth 与 cfKanban Credential 分别存储；前者仍由 Wrangler 及
 
 - `.cfkanban/` 是 cfKanban 自己的用户级持久根，不位于代码 Repo、云同步目录或临时目录；Agent 宿主目录与 Cloudflare auth 不是其子目录。Skill release 与 Tool Runtime 属于该根内独立的非 Credential 子目录，不得因此放宽 `instances/` 及 secret 文件的 ownership/ACL 检查；
 - 目录以服务端生成的 immutable `instance_id` 作为实例记录的稳定主键，secret 与非秘密 metadata/fingerprint 分离；同一环境可以保存多个上游实例，但每个实例正常只维护一个当前 Principal/Credential 槽位，一个 Credential 不能跨实例复用；
-- 同一 `instance_id` 发现多个不同 Principal 时属于本地状态冲突，必须停止并引导整理，不提供常规身份选择器，也不能按 display name、Repo、最近使用或 Agent 宿主猜测；同一 Principal 轮换时短暂存在的新旧 Credential 只作为脚本内部可恢复过渡状态；
+- 同一 `instance_id` 发现多个不同 Principal 时默认属于本地状态冲突，必须停止，不提供常规身份选择器，也不能按 display name、Repo、最近使用或 Agent 宿主猜测。仅[Owner 设备身份切换增量](2026-09-28-owner-device-web-identity-switch-spec.md)允许显式替换 current、保留一个私有 previous 并验证后恢复；pending、previous 和切换事务不得参与自动选取。普通同 Principal 轮换的新旧 Credential 只作为脚本内部可恢复过渡状态；
 - API origin 是实例记录下可变但受信任的安全 metadata，不参与本地记录主键。普通请求只向当前 trusted origin 发送 Credential；本地记录保存最近确认的 `origin_version` 与低频 discovery 检查时间。已信任 origin 返回不同 `instance_id` 时停止；陌生 origin 声称已有 ID 时必须先由旧 trusted origin 交叉确认，无法确认则在发送 Credential 前走显式 rebind；
 - Skill 在本地检查间隔到期、当前 trusted origin 失败、处理新 Invite/origin 或创建 Browser Launch 前，可以不带 Credential、且不跟随跨 origin redirect 地读取当前 trusted origin 的 `/.well-known/cfkanban-instance.json`。只有该 trusted origin 发布更高 `origin_version`，并且对目标 preferred origin 的第二次无 Credential 探测返回相同 `instance_id`、准确 `observed_origin` 与一致 preferred origin/version 时，内置脚本才无提示地原子更新 trusted origin、origin version 与 receipt。任一步失败或版本回退都保留旧配置；
 - 自动 rebind 的授权来源是旧 trusted origin，而不是新地址自报的 `instance_id`。Invite、用户直接提供或第三方代理暴露的新 origin 若无法从旧 trusted origin 取得一致指示，仍必须展示旧/新地址和影响并取得明确授权。认证请求不靠 HTTP redirect 搬迁，也不把 Credential 用于发现探测；
@@ -408,7 +408,7 @@ Cloudflare auth 与 cfKanban Credential 分别存储；前者仍由 Wrangler 及
 - 每次使用前重新检查 ownership/ACL。权限漂移时停止，不自动修复或继续读取；修复计划需要用户授权；
 - 容器或临时文件系统只有在用户明确提供持久、私有且权限可验证的 home/挂载时才能创建新 Credential。仅在进程内暂存不满足 bootstrap 的完成条件；
 - 产品不自动备份或同步 `.cfkanban/`。用户手工复制该目录等同于复制其中 Principal 的全部有效权限，必须按 secret 迁移处理。
-- 手工复制后不产生新 Credential 或设备身份；所有副本共享同一 fingerprint、服务端生命周期和撤销范围。Owner 可按[多设备增量合同](2026-09-27-owner-devices-deployment-attachment-spec.md)由已有 Bearer 设备批准一份独立 Credential；普通参与者仍不提供自行增发入口。
+- 手工复制后不产生新 Credential 或设备身份；所有副本共享同一 fingerprint、服务端生命周期和撤销范围。Owner 可按[多设备增量合同](2026-09-27-owner-devices-deployment-attachment-spec.md)由已有 Bearer 设备或按[网页增量](2026-09-28-owner-device-web-identity-switch-spec.md)使用 Owner admin 网页批准一份独立 Credential；普通参与者仍不提供自行增发入口。
 
 Owner Credential 的本地文件风险提示必须额外说明它拥有整个部署实例的控制能力；参与者 Credential 则说明其当前全部 Project Grants 的暴露范围。文件存储方式不改变 Credential 的服务端权限、有效期、轮换或恢复语义。
 
@@ -536,7 +536,7 @@ Eval 必须检查可观察行为，而不只匹配 Skill 文案。Guidance 测�
 10. 已修订：D-215/D-216 要求 `cfkanban`/`cfkanban-admin` 为明确 target 创建短期一次性 Browser Launch；浏览器只兑换 HttpOnly Session，流程不把长期 Credential 传入浏览器。具体从 Agent 到浏览器的 capability 交付边界由 D-263 收紧。
 11. 已确认：D-217 固定 launch 为 5 分钟一次性，Session 为 8 小时固定且无 refresh；Session 绑定源 Credential 和服务端 scope，参与者新兑换 scope 由 D-272 修订。过期或源 Credential revoke 后只引导用户让 Agent 重新打开，不回退到网页粘贴 Credential。
 12. 已确认：D-219 移除 v0 Principal disable/enable/delete。Owner 按目标使用 Credential revoke、Project Grant revoke 或 Principal Recovery Invite；Skill 不再暴露不可逆身份停用动作。
-13. 已确认：D-221 禁止 Web 管理 Owner Credential 生命周期。`cfkanban-admin` 负责先本地落盘替代 secret、再执行 Bearer-only 原子轮换；`cfkanban-deploy` 只负责全部 Owner Credential 丢失后的部署外恢复。Web 只能撤销参与者 Credential。
+13. 已确认：D-279 允许 Owner admin Web 经明确确认批准/专用撤销另一设备，保留当前来源和最后一份有效 API Credential；不要求 Passkey 再验证。`cfkanban-admin` 仍负责先本地落盘替代 secret、再执行 Bearer-only 原子轮换；`cfkanban-deploy` 负责全部 Owner Credential 丢失后的部署外恢复。
 14. 已确认：D-222 允许 Owner `admin` Session 在显式选择后进入实例内任意 Project 数据面；默认 Overview 不自动加载全部 Issue，Owner Project/Issue Session 仍限制单 Project；非 Owner 新兑换规则由 [D-272 增量合同](2026-09-19-participant-project-switching-spec.md) 修订，既有固定 scope Session 不扩大。
 15. 已确认：D-224 固定 Passkey 为 v0 唯一免 Agent 的 Web 直登方法；首次/补充登记都从 Agent-launch Session 开始，失败或 hostname 变化仍由 Browser Launch 恢复，不允许网页 Credential 输入。精确可检测性与 hostname 边界随后由 D-244 补充。
 16. 已确认：D-225 否决 Team Join；D-226 只保留单 Project Public Join。Owner 可以同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer`；Skill 每次只执行一条 Grant 的原子 self-join。

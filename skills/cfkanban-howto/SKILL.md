@@ -95,9 +95,13 @@ For execution, read [cfkanban-deploy](../cfkanban-deploy/SKILL.md).
 
 ### Work on another computer / 换电脑或多台电脑工作
 
-“Use $cfkanban-admin to connect my other computer as the same Owner.” / “请用 $cfkanban-admin 让我在另一台电脑管理同一实例。” On a schema 12+ Service, the new environment generates a private Credential, the existing Owner device approves its non-secret request, and the new device verifies access. Each device can be revoked independently; no long-lived secret needs to be copied. Devices represent execution environments, not hardware binding. A surviving API Credential is required for approval; a browser Passkey cannot approve a new API device.
+“Use $cfkanban-admin to connect my other computer as the same Owner.” / “请用 $cfkanban-admin 让我在另一台电脑管理同一实例。” On a schema 12+ Service, the new environment generates a private Credential, the existing Owner device approves its non-secret request, and the new device verifies access. Each device can be revoked independently; no long-lived secret needs to be copied. Devices represent execution environments, not hardware binding. At least one API Credential must remain active. On a Service supporting Web device management, an Owner admin browser session can also preview and explicitly approve the public pairing request or revoke another device, without extra Passkey confirmation. The current source and last active API Credential are protected.
 
-新设备在本地生成并保存独立凭据，旧设备只批准不含 secret 的请求，新设备验证后完成接入。每台设备可以单独撤销；不必用全失恢复让其他电脑退出。此功能需要线上 Service 支持，更新本地技能不会自动更新服务器。
+新设备在本地生成并保存独立凭据，已有 Owner 设备或支持此能力的 Owner 网页批准非秘密请求，再回新设备验证。网页入口在「成员与权限 → Owner 设备」，正常登录后明确确认即可，无需 Passkey 二次确认。可以单独撤销另一台设备，当前来源和最后一份有效 API 凭据受保护。此功能需要线上 Service 支持，更新本地技能不会自动更新服务器。
+
+If this computer already has another identity for the same instance, explicitly choose to switch to Owner and preserve that identity in the private restoration slot. The old identity and grants remain intact; restoration verifies its saved Credential first. This needs newer Skills implementing identity switching; 1.1.1 and 1.2.0-rc.2 cannot perform it.
+
+如果这台电脑已有同实例管理员身份，可明确选择切换到 Owner，并保留旧身份安全恢复入口；原身份和授权不会被合并或删除，恢复前会验证旧凭据。这需要支持新切换能力的技能，1.1.1 和 1.2.0-rc.2 尚不支持。可说：“用 $cfkanban-admin 把这台电脑接入为 Owner，保留当前身份以便恢复。”／“用 $cfkanban-admin 恢复这台电脑之前的身份。”
 
 “Use $cfkanban-deploy to reconnect this existing deployment for maintenance on this computer.” / “请用 $cfkanban-deploy 在这台电脑接入已有部署，方便后续维护。” This separately verifies Cloudflare control, the exact Worker/D1 and the current Owner, then saves a local maintenance record without changing remote resources. It requires a verified bundle for the running release and cannot reconstruct proof of an unknown historical artifact. Upgrading remains a separate authorized operation.
 
@@ -106,7 +110,9 @@ For execution, read [cfkanban-deploy](../cfkanban-deploy/SKILL.md).
 Choose the recovery route by identity and remaining access:
 
 - An Owner with a usable API Credential uses [cfkanban-admin](../cfkanban-admin/SKILL.md) for normal Credential rotation. A participant asks the Owner for a Principal Recovery Invite; ordinary Project invitations do not recover an existing identity.
-- When every Owner API Credential is lost, use [cfkanban-deploy](../cfkanban-deploy/SKILL.md) with verified Cloudflare control of the existing Worker/D1. Recover the same Owner; do not create a new Owner or redeploy an empty instance. A surviving Passkey still permits its supported Web access, but does not replace Cloudflare authority for this recovery.
+- If local Owner secret files are lost but a valid Owner admin Web session remains and the Service still has an unrevoked Owner API Credential record, the supported Web device flow above can approve a new device without revoking all old credentials. Otherwise use [cfkanban-deploy](../cfkanban-deploy/SKILL.md) with verified Cloudflare control for dedicated total-loss recovery, which revokes all old API Credentials. Recover the same Owner; do not create a new Owner or redeploy an empty instance. A Passkey does not replace Cloudflare authority for that dedicated recovery.
+
+本地凭据文件丢失但仍能使用有效 Owner 管理会话、且服务端尚有未撤销的 Owner API 凭据记录时，可以用新版网页批准新设备，旧凭据不会自动全部撤销；不具备这一条件或需要统一撤销全部旧凭据时，使用部署外全失恢复。
 
 Example: “Use $cfkanban-deploy to check recovery options for my lost Owner credentials, including when local state is gone. Show the target and effects before making changes.” / “我的 Owner 凭据全部丢失了，本地记录也可能没有了。请用 $cfkanban-deploy 先检查恢复条件，展示目标和影响，暂不执行恢复。”
 

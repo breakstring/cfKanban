@@ -3,7 +3,7 @@ import { buildCurrentAuthGuard, requireOwnerControl, verifyCurrentAuth } from ".
 import { AtomicBatchRejectedError, executeAtomicBatch } from "../kernel/d1.ts";
 import { ApiError, conflict, forbidden, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
 import { readOperationSnapshot, runIdempotentOperation } from "../kernel/idempotency.ts";
-import type { AuthContext, BearerAuthContext, JsonValue } from "../kernel/types.ts";
+import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import { requireIdempotencyKey, writeResult } from "./shared.ts";
 
 type Resource = { [key: string]: JsonValue };
@@ -76,8 +76,19 @@ async function readOwner(db: D1Database): Promise<OwnerState> {
   }
 }
 
-function requireBearerOwner(auth: AuthContext): asserts auth is BearerAuthContext {
-  requireOwnerControl(auth, true);
+async function authorizeOwner(db: D1Database, auth: AuthContext): Promise<void> {
+  requireOwnerControl(auth);
+  await verifyCurrentAuth(db, auth, Date.now());
+  const guard = buildCurrentAuthGuard(auth, Date.now(), 1, true);
+  try {
+    if (await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}`).bind(...guard.values).first() === null) throw forbidden();
+  } catch (error) {
+    throw platformUnavailable("d1", error);
+  }
+}
+
+function sourceCredentialId(auth: AuthContext): string | null {
+  return auth.kind === "bearer" ? auth.credentialId : auth.sourceKind === "credential" ? auth.sourceId : null;
 }
 
 async function guardRejected(db: D1Database, auth: AuthContext, check: () => Promise<void>): Promise<boolean> {
@@ -112,15 +123,19 @@ async function readResource(db: D1Database, operationId: string): Promise<Resour
   };
 }
 
-function auditStatement(db: D1Database, auth: BearerAuthContext, operationId: string, credentialId: string, type: string, now: number): D1PreparedStatement {
+function auditStatement(db: D1Database, auth: AuthContext, operationId: string, credentialId: string, type: string, now: number): D1PreparedStatement {
   return db.prepare(`INSERT INTO events (id,stream,type,operation_id,event_index,actor_principal_id,
     actor_credential_id,authorized_via,subject_type,subject_id,payload_json,created_at)
     SELECT ?1,'security',?2,?3,0,?4,?5,'deployment_owner','credential',c.id,
       json_object('credential_id',c.id,'principal_id',c.principal_id,'device_name',c.device_name,
-        'fingerprint','cfk_v1_' || c.token_prefix || '_…','principal_version',p.version),?6
+        'fingerprint','cfk_v1_' || c.token_prefix || '_…','principal_version',p.version,
+        'actor_session_id',?8,'authentication_source',json_object('kind',?9,'id',?10)),?6
     FROM credentials c JOIN principals p ON p.id=c.principal_id
     WHERE c.id=?7 AND c.last_operation_id=?3 AND p.last_operation_id=?3`)
-    .bind(crypto.randomUUID(), type, operationId, auth.principalId, auth.credentialId, now, credentialId);
+    .bind(crypto.randomUUID(), type, operationId, auth.principalId, sourceCredentialId(auth), now, credentialId,
+      auth.kind === "cookie" ? auth.sessionId : null,
+      auth.kind === "cookie" ? auth.sourceKind : "credential",
+      auth.kind === "cookie" ? auth.sourceId : auth.credentialId);
 }
 
 export async function addOwnerDevice(
@@ -130,14 +145,15 @@ export async function addOwnerDevice(
   body: Resource,
   now: number,
 ): Promise<Resource> {
-  requireBearerOwner(auth);
+  requireOwnerControl(auth);
   const input = parseDeviceRequest(body);
-  const authorize = async () => { await verifyCurrentAuth(db, auth, Date.now()); requireOwnerControl(auth, true); };
+  const authorize = () => authorizeOwner(db, auth);
   const check = async () => {
     await authorize();
     const owner = await readOwner(db);
     if (input.instance_id !== owner.instance_id || input.principal_id !== owner.principal_id || auth.principalId !== owner.principal_id) throw forbidden();
     if (owner.version !== input.expected_version) throw versionConflict(owner.version);
+    if (owner.active_count === 0) throw forbidden();
     const currentTime = Date.now();
     if (Date.parse(input.issued_at) > currentTime || Date.parse(input.expires_at) <= currentTime) throw validationError("owner_device_request_expired");
     const existing = await db.prepare("SELECT id FROM credentials WHERE id=?1 OR token_digest=?2 LIMIT 1").bind(input.credential_id, input.token_digest).first();
@@ -163,7 +179,7 @@ export async function addOwnerDevice(
             db.prepare(`INSERT INTO credentials(id,principal_id,token_prefix,token_digest,device_name,issued_at,created_operation_id,last_operation_id)
               SELECT ?1,p.id,?2,?3,?4,?5,?6,?6 FROM principals p JOIN instance_meta im ON im.owner_principal_id=p.id
               WHERE im.singleton=1 AND im.instance_id=?7 AND p.id=?8 AND p.version=?9
-                AND ?10>?11 AND (SELECT COUNT(*) FROM credentials c WHERE c.principal_id=p.id AND c.revoked_at IS NULL)<100
+                AND ?10>?11 AND (SELECT COUNT(*) FROM credentials c WHERE c.principal_id=p.id AND c.revoked_at IS NULL) BETWEEN 1 AND 99
                 AND NOT EXISTS(SELECT 1 FROM credentials c WHERE c.id=?1 OR c.token_digest=?3) AND ${guard.sql}`)
               .bind(input.credential_id,input.token_prefix,input.token_digest,input.device_name,now,operationId,input.instance_id,input.principal_id,input.expected_version,Date.parse(input.expires_at),Date.now(),...guard.values),
             db.prepare(`UPDATE principals SET version=version+1,updated_at=?1,last_operation_id=?2 WHERE id=?3 AND version=?4
@@ -195,13 +211,10 @@ export async function revokeOwnerDevice(
   expectedVersion: number,
   now: number,
 ): Promise<Resource> {
-  requireBearerOwner(auth);
+  requireOwnerControl(auth);
   const credentialId = requireUuid(credentialIdValue, "credential_id");
-  if (credentialId === auth.credentialId) throw forbidden();
-  const authorize = async () => {
-    await verifyCurrentAuth(db, auth, Date.now());
-    requireOwnerControl(auth, true);
-  };
+  if (credentialId === sourceCredentialId(auth)) throw forbidden();
+  const authorize = () => authorizeOwner(db, auth);
   const check = async () => {
     await authorize();
     const owner = await readOwner(db);
@@ -210,6 +223,7 @@ export async function revokeOwnerDevice(
     if (target === null) throw notFound();
     if (target.principal_id !== owner.principal_id) throw forbidden();
     if (target.revoked_at !== null) throw conflict("CREDENTIAL_ALREADY_REVOKED");
+    if (owner.active_count <= 1) throw forbidden();
   };
   const result = await runIdempotentOperation({
     db,
@@ -236,6 +250,7 @@ export async function revokeOwnerDevice(
             db.prepare(`UPDATE credentials SET revoked_at=?1,revoked_by_principal_id=?2,revoke_reason='owner_device_revoke',last_operation_id=?3
               WHERE id=?4 AND principal_id=?2 AND revoked_at IS NULL
                 AND EXISTS(SELECT 1 FROM principals p JOIN instance_meta im ON im.owner_principal_id=p.id WHERE p.id=?2 AND p.version=?5)
+                AND (SELECT COUNT(*) FROM credentials c WHERE c.principal_id=?2 AND c.revoked_at IS NULL)>1
                 AND ${guard.sql}`).bind(now, auth.principalId, operationId, credentialId, expectedVersion, ...guard.values),
             db.prepare(`UPDATE principals SET version=version+1,updated_at=?1,last_operation_id=?2 WHERE id=?3 AND version=?4
               AND EXISTS(SELECT 1 FROM credentials WHERE id=?5 AND last_operation_id=?2)`)

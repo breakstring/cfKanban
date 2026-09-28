@@ -7634,15 +7634,21 @@
           "admin"
         ],
         "summary": "Add Owner Device Credential",
-        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Explicitly approve an Agent-generated non-secret pairing request for the same instance and Owner. Requires at least one active Owner API Credential and enforces the 100 active Credential limit atomically. Principal CAS, idempotency and security audit commit together. The new Agent must still verify its pending Credential locally; this is not an all-credentials-lost recovery endpoint.",
         "security": [
           {
             "BearerCredential": []
+          },
+          {
+            "WebSession": []
           }
         ],
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
           }
         ],
         "responses": {
@@ -7707,10 +7713,13 @@
           "admin"
         ],
         "summary": "Revoke Owner Device Credential",
-        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Atomically revoke another Owner device and its derived Session/Launch capabilities with Principal CAS, idempotency and security audit. Reject the caller's Bearer Credential, an Agent Session's source Credential and the last active Owner API Credential. Passkey Sessions remain independent. Generic Credential DELETE and Owner rotation retain their separate restrictions.",
         "security": [
           {
             "BearerCredential": []
+          },
+          {
+            "WebSession": []
           }
         ],
         "parameters": [
@@ -7724,6 +7733,9 @@
           },
           {
             "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
           }
         ],
         "responses": {
@@ -18694,9 +18706,11 @@
             "items": {
               "type": "string",
               "enum": [
-                "revoke"
+                "revoke",
+                "revoke_owner_device"
               ]
-            }
+            },
+            "description": "Owner devices only expose revoke_owner_device when active, not the caller's Bearer or Agent Session source Credential, and another active Owner API Credential remains. Generic revoke never applies to Owner Credentials."
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"

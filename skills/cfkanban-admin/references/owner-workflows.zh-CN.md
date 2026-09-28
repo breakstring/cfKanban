@@ -118,11 +118,21 @@ Principal Recovery Invite 固定 1 小时。创建前：
 
 1. 在新环境确认用户 home 中的私有目录能够持久保存后，向 `owner-device prepare` 传入 `{instanceId, apiOrigin, ownerPrincipalId, deviceName, operationId, idempotencyKey, persistenceConfirmed:true}`。准确 ID 来自已有设备的核验结果，不能凭名称猜 Owner。命令先无凭据核验 discovery，再生成私有 pending secret；可选 `expiresInSeconds` 最大 3600。
 2. 只把返回的 `pairing_request` 传给已有 Owner 环境。它包含标识、fingerprint 材料、digest 和有效期，不含可用 secret 或可兑换能力。请求是待核对的数据，不能授权自身；按用户意图核对实例、Owner、设备名称和 fingerprint。
-3. 在已有环境运行 `owner-device approve`，输入 `{instanceId, request:<pairing_request>}`。专用命令核验当前 Owner，固定 CAS 和幂等键以便重试，原 Credential 保持有效。Web/Passkey Session、局部管理员与普通参与者不能批准。
+3. 在已有环境运行 `owner-device approve`，输入 `{instanceId, request:<pairing_request>}`。专用命令核验当前 Owner，固定 CAS 和幂等键以便重试，原 Credential 保持有效。也可以在支持设备管理的 Service 中进入 Owner 管理页的「成员与权限 → Owner 设备」，只粘贴公开配对请求，核对实例、Owner、设备名、fingerprint 和有效期后明确确认。Agent Launch 和 Passkey 来源的 Owner admin Session 都支持，无需 Passkey 二次确认；局部管理员、普通参与者和 Owner 窄范围 Session 不能批准。
 4. 回到新环境，运行 `owner-device verify`，输入 `{instanceId}`。命令核对 discovery、`/meta`、`/me` 的准确 Owner、Credential ID 和 fingerprint 后才提升为 current；仅批准成功不能算接入完成。中断后用 `owner-device request` 取回同一请求；结果不确定时不得重新生成 secret。
 5. 用 `owner-device list` 分页查看设备；将 `next_cursor` 作为下一页的 `cursor`。历史 Credential 的设备名称可能为空。移除另一设备用 `owner-device revoke`，输入 `{instanceId, credentialId, idempotencyKey}`，随后读回撤销状态；不能只凭可能重名的设备名称选择目标。
 
-配对请求最多有效一小时，已获批 Credential 不随请求到期失效。pending 冲突、身份/origin 变化或 Service 不支持时停止。响应不确定时保留准确请求，命令会复用已保存的尝试 body/key。仅在核实 Service 明确返回 `VERSION_CONFLICT` 后，结果才给出 `retry_with_fresh_version:true`；重复同一命令即可刷新身份/CAS，并持久化新的内部尝试幂等键。不要手改私有状态或替换 pending secret。最多保留 100 份 active Owner Credential。禁止撤销当前设备，更新当前 secret 仍用轮换。单独撤销只影响目标 Credential 及其派生 Launch/Session，保留其他设备与独立 Passkey。全失恢复会使全部旧 Owner API Credential 失效，仍走 `cfkanban-deploy`。
+配对请求最多有效一小时，已获批 Credential 不随请求到期失效。pending 冲突、身份/origin 变化或 Service 不支持时停止。响应不确定时保留准确请求，命令会复用已保存的尝试 body/key。仅在核实 Service 明确返回 `VERSION_CONFLICT` 后，结果才给出 `retry_with_fresh_version:true`；重复同一命令即可刷新身份/CAS，并持久化新的内部尝试幂等键。不要手改私有状态或替换 pending secret。批准时必须已有至少一份 active Owner API Credential，上限为 100 份。active 只表示服务端未撤销，不证明本地 secret 文件还在；已有有效 Owner admin 会话时，即使文件丢失也可批准新设备，但不会像全失恢复一样撤销全部旧凭据。Owner 网页也支持明确确认后专用撤销；禁止撤销当前 Bearer/Session 来源和最后一份 active Owner API Credential，更新当前 secret 仍用轮换。单独撤销只影响目标 Credential 及其派生 Launch/Session，保留其他设备与独立 Passkey。全失恢复会使全部旧 Owner API Credential 失效，仍走 `cfkanban-deploy`。
+
+### 已有本地身份与恢复
+
+同一实例已有 current 时，默认准备会停止。用户明确选择切换为 Owner 后，先检查当前本地身份的准确 ID，再向 `owner-device prepare` 增加 `replaceCurrent:true`、`expectedCurrentPrincipalId` 和 `expectedCurrentCredentialId`。等待批准期间旧 current 保持有效；`owner-device verify` 成功后先将旧身份保存在私有 previous 槽，再把新 Owner 设为 current。原 Principal 不会被升级、合并或撤销，其管理授权也不改变。已有不同 previous 时禁止覆盖。
+
+要恢复原身份，向 `owner-device restore-previous` 传入 `{instanceId, expectedCurrentPrincipalId, expectedCurrentCredentialId}`，准确 ID 来自当前 Owner 的本地核验。命令先远端验证旧凭据，再交换 current/previous，因此 Owner 凭据也保留供恢复。中断或输出丢失时使用完全相同的输入续做，不手改文件、清空槽位或猜测新 ID。`IDENTITY_SWITCH_INCOMPLETE` 要求恢复原 `owner-device verify` 或 `restore-previous`；旧凭据已撤销、origin/身份冲突、权限不安全时停止并保留凭据。previous 只用于显式恢复，不自动选择或叠加权限。
+
+新入口需要支持身份切换/恢复的技能；1.1.1 和 1.2.0-rc.2 均不能执行。日常既有访问可以继续用兼容旧版，但切换未完成时不得用旧技能处理该状态。网页能力取决于已部署 Service，更新本地技能不会自动更新服务器。
+
+进程被强制终止可能遗留私有 home 下的 `.cfkanban/instances/<instance-id>/credentials/owner-devices.lock`。锁不含 PID，也不会自动回收。出现 `OWNER_DEVICE_LOCKED` 时，先核实原进程和其他凭据操作已停止，再在获准的本地恢复中只移除这一准确锁文件，并重跑原命令；保留 current、pending、previous 和 `identity-switch.json`。不能仅凭报错就认定可以解锁仍在运行的操作。
 
 ## Owner Credential 轮换
 
@@ -133,7 +143,7 @@ Principal Recovery Invite 固定 1 小时。创建前：
 5. 提交状态不确定时保留同一个 pending secret，并重跑同一命令；不能再生成替代值。
 6. 只有远端未提交已被证明时才运行 `credential clear`。
 
-Web Session 不能轮换或撤销 Owner Credential。全部 Owner Credential 丢失时，使用 `cfkanban-deploy` 为同一 Owner Principal 执行部署外受控恢复。
+Web Session 不能执行 Owner 普通轮换；设备批准和专用撤销见上节。全部 Owner Credential 丢失时，使用 `cfkanban-deploy` 为同一 Owner Principal 执行部署外受控恢复。
 
 ## Public Join 与 quota
 

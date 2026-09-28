@@ -40,6 +40,7 @@
 | 工作区 / 项目管理员、权限继承、邀请与人数配额 | [分级管理员](docs/specs/2026-09-20-scoped-administrators-spec.md) |
 | Owner Credential 全失恢复 | [Owner 恢复](docs/specs/2026-09-20-owner-credential-recovery-spec.md) |
 | Owner 多设备、独立凭据与新电脑接入已有部署 | [多设备与部署接入](docs/specs/2026-09-27-owner-devices-deployment-attachment-spec.md) |
+| Owner 设备网页批准/撤销、已有本地身份切换与恢复 | [网页与身份切换](docs/specs/2026-09-28-owner-device-web-identity-switch-spec.md) |
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](docs/specs/2026-09-20-stable-release-lifecycle-spec.md) |
 | Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](docs/specs/2026-09-20-homepage-settings-spec.md) |
 
@@ -58,6 +59,7 @@
 ## 实现约束
 
 - 核心架构为同一 Worker 托管 REST API 与 Web assets，D1 是业务事实源。Web 与 Skills 复用服务端权限、并发、幂等和审计合同；核心 Kanban 不依赖可选 R2、AI、Vectorize、Queues 或 Durable Objects。
+- 新增或扩展面向用户的能力时，默认在 Web 与 Agent（Skills/API）两端提供等价的业务能力，并在设计与验收中同时核对；Agent first 不意味着默认只实现 Agent 端。交互形式可以不同，但业务语义与权限规则应一致。受交互方式、安全边界或平台能力等具体限制而无法对齐时，在相关 SPEC 中说明差异、原因及可行的替代路径；不得为两端一致而放宽安全约束。
 - Service / 安全脚本强制 MUST，Skills 提供可覆盖 SHOULD，上层用户或 Agent 决定操作组合与时机。Skills 不成为领域角色或工作流执行器，不提供独立 cfKanban CLI。
 - 身份与寻址使用稳定 ID：Workspace / Project 使用服务端 UUID，Issue 使用实例内单调且不复用的 `CFK-<正整数>`。Principal 名称虽规范化唯一，仍不能代替 ID 进行授权、历史引用或恢复；不从 OS、Git 或宿主信息猜测用户身份。
 - 唯一 Deployment Owner 与分级管理员并存。管理权、普通 Project Grant 与 Session scope 分别核验；按有效授权来源并集判断能力，不把局部管理员伪装成 Owner，也不因其具有 writer 能力就允许普通 writer 管理。具体能力、继承、撤权及配额以分级管理员矩阵为准。

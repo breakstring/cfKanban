@@ -19,6 +19,12 @@ function oneOf(value, name, values) {
   return value;
 }
 
+function rejectOwnerDeviceReplacement(pending) {
+  if (pending.metadata.owner_device_replacement !== undefined) {
+    throw toolError("OWNER_DEVICE_REPLACEMENT_REQUIRED", "Preserve this pending Credential for its dedicated Owner-device identity-switch verification");
+  }
+}
+
 function redactSecretValues(value, secrets) {
   if (typeof value === "string") {
     return secrets.reduce((redacted, secret) => redacted.replaceAll(secret, "[REDACTED]"), value);
@@ -152,6 +158,7 @@ export async function redeemInvitation({
 
   const pending = await loadPendingCredentialSecret({ stateRoot, instanceId });
   if (mode === "new_principal") body.display_name = normalizePrincipalDisplayName(displayName);
+  rejectOwnerDeviceReplacement(pending);
   body.new_credential_token = pending.token;
   // A rotation recovery must prove possession of the current Principal's
   // Credential; full recovery may intentionally proceed without one. When a
@@ -212,6 +219,7 @@ export async function redeemPublicJoin({
 
   const pending = await loadPendingCredentialSecret({ stateRoot, instanceId });
   body.display_name = normalizePrincipalDisplayName(displayName);
+  rejectOwnerDeviceReplacement(pending);
   body.new_credential_token = pending.token;
   const operation = await trustedApiRequest({
     stateRoot,
@@ -237,6 +245,9 @@ export async function rotateOwnerCredential({
     loadCurrentCredentialSecret({ stateRoot, instanceId }),
     loadPendingCredentialSecret({ stateRoot, instanceId }),
   ]);
+  if (pending.metadata.owner_device_replacement !== undefined || pending.metadata.purpose !== "owner_rotation") {
+    throw toolError("STATE_PENDING_CONFLICT", "Owner rotation requires its own pending Credential; preserve an Owner-device replacement for the dedicated verification workflow");
+  }
   const operation = await trustedApiRequest({
     stateRoot,
     instanceId,

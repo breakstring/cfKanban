@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { open, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
 import { resolveStateRoot } from "./paths.mjs";
 import { fetchDiscovery, validateDiscovery } from "./rebind.mjs";
 import {
-  createPendingCredential, credentialMetadataView, getInstancePaths, initializeStateRoot,
+  createPendingCredential, createOwnerDevicePendingCredential, credentialMetadataView, getInstancePaths, initializeStateRoot,
   loadCurrentCredentialSecret, loadPendingCredentialSecret, promotePendingCredential,
-  putInstanceMetadata, validatePrivatePath,
+  putInstanceMetadata, validatePrivatePath, withCredentialStateLock,
 } from "./state.mjs";
+import {
+  prepareIdentityReplacement, readIdentitySwitch, restorePreviousIdentity,
+  resumeOwnerIdentitySwitch, switchPendingOwnerIdentity,
+} from "./identity-switch.mjs";
 import { trustedApiRequest } from "./transport.mjs";
 import {
   assertNoSymlinkPath, atomicWriteJson, canonicalDigest, ensurePrivateDirectory,
@@ -66,7 +70,7 @@ async function privatePaths(input, initialize = false) {
   await assertNoSymlinkPath(paths.credentialsRoot, input.stateRoot);
   if (initialize) await ensurePrivateDirectory(paths.credentialsRoot);
   for (const directory of [path.join(input.stateRoot, "instances"), paths.instanceRoot, paths.credentialsRoot]) await validatePrivatePath(directory, "directory");
-  for (const file of [paths.instanceMetadata, paths.currentMetadata, paths.currentSecret, paths.pendingMetadata, paths.pendingSecret]) {
+  for (const file of [paths.instanceMetadata, paths.currentMetadata, paths.currentSecret, paths.pendingMetadata, paths.pendingSecret, paths.previousMetadata, paths.previousSecret, paths.identitySwitch]) {
     await assertNoSymlinkPath(file, input.stateRoot);
     if (await pathType(file) !== "missing") await validatePrivatePath(file, "file");
   }
@@ -75,12 +79,7 @@ async function privatePaths(input, initialize = false) {
 
 async function withLock(input, callback, initialize = false) {
   const paths = await privatePaths(input, initialize);
-  const lockPath = path.join(paths.credentialsRoot, "owner-devices.lock");
-  let lock;
-  try { lock = await open(lockPath, "wx", 0o600); }
-  catch { fail("OWNER_DEVICE_LOCKED", "Another device operation may be running; verify that it stopped before removing its private lock"); }
-  try { return await callback(paths); }
-  finally { await lock.close(); await rm(lockPath); }
+  return withCredentialStateLock(input, () => callback(paths));
 }
 
 async function instanceMetadata(input, paths) {
@@ -113,10 +112,6 @@ async function verifyPublicDeviceSupport(input, origin) {
   requireDeviceSchema(health?.schema_version, "healthz");
 }
 
-async function assertNoCurrent(paths) {
-  if (await pathType(paths.currentMetadata) !== "missing" || await pathType(paths.currentSecret) !== "missing") fail("STATE_CURRENT_CONFLICT", "This environment already has a current Credential for the instance");
-}
-
 function pairingFrom(metadata) {
   if (metadata.purpose !== PURPOSE || metadata.credential_id_binding !== "exact") fail("STATE_PENDING_CONFLICT", "Pending Credential belongs to another operation");
   const request = validateRequest(metadata.owner_device_request);
@@ -132,7 +127,7 @@ export async function prepareOwnerDevice(options) {
   const lifetime = input.expiresInSeconds ?? 3600;
   if (!Number.isSafeInteger(lifetime) || lifetime < 1 || lifetime > 3600) fail("INVALID_OWNER_DEVICE_REQUEST", "Pairing request lifetime must be 1–3600 seconds");
   return withLock(input, async (paths) => {
-    await assertNoCurrent(paths);
+    const replacement = await prepareIdentityReplacement(input, paths);
     const stored = await readJson(paths.instanceMetadata, { allowMissing: true });
     if (stored && (stored.instance_id !== input.instanceId || stored.trusted_api_origin !== origin)) fail("STATE_INSTANCE_CONFLICT", "Explicit origin conflicts with existing trusted instance metadata");
     const discovery = await discoveryAt(input, origin, stored);
@@ -144,8 +139,10 @@ export async function prepareOwnerDevice(options) {
     if (pendingType !== "missing") {
       metadata = (await loadPendingCredentialSecret(input)).metadata;
       if (metadata.purpose !== PURPOSE || metadata.principal_id !== owner || metadata.operation_id !== operationId || metadata.idempotency_key !== key) fail("STATE_PENDING_CONFLICT", "An unresolved pending Credential belongs to a different pairing operation");
+      if (canonicalDigest(metadata.owner_device_replacement ?? null) !== canonicalDigest(replacement)) fail("STATE_CURRENT_CONFLICT", "The saved Owner-device request has a different explicit current identity replacement");
     } else {
-      metadata = await createPendingCredential({ ...input, principalId: owner, credentialId: randomUUID(), operationId, idempotencyKey: key, purpose: PURPOSE });
+      const pendingInput = { ...input, principalId: owner, credentialId: randomUUID(), operationId, idempotencyKey: key, purpose: PURPOSE };
+      metadata = replacement === null ? await createPendingCredential(pendingInput) : await createOwnerDevicePendingCredential(pendingInput, replacement);
     }
     // If interrupted before this write, no public pairing request was returned.
     if (!metadata.owner_device_request) {
@@ -158,7 +155,7 @@ export async function prepareOwnerDevice(options) {
     }
     const request = pairingFrom(metadata);
     if (request.api_origin !== origin || request.device_name !== name || Date.parse(request.expires_at) - Date.parse(request.issued_at) !== lifetime * 1000) fail("STATE_PENDING_CONFLICT", "The existing pairing request must be reused without changing its target, name or expiry");
-    return requestView(request, "pending", currentTime(input));
+    return { ...requestView(request, "pending", currentTime(input)), ...(replacement ? { replaces_current: { principal_id: replacement.principal_id, credential_id: replacement.credential_id, fingerprint: replacement.fingerprint } } : {}) };
   }, true);
 }
 
@@ -171,18 +168,18 @@ export async function inspectOwnerDeviceRequest(options) {
   return requestView(request, credential.metadata.state, currentTime(input));
 }
 
-async function authenticatedOwner(input, paths, credential, request = null) {
+async function authenticatedOwner(input, paths, credential, request = null, requireOwner = true) {
   const instance = await instanceMetadata(input, paths), origin = instance.trusted_api_origin;
   if (request && (request.instance_id !== input.instanceId || request.api_origin !== origin || request.principal_id !== credential.metadata.principal_id)) fail("OWNER_DEVICE_TARGET_MISMATCH", "Pairing request does not match the trusted instance and current Owner");
   await discoveryAt(input, origin, instance);
   const send = (apiPath) => trustedApiRequest({ ...input, apiPath, authorizationToken: credential.token, fetchImpl: boundedFetch(input) });
   const meta = await send("/api/v1/meta");
   if (!meta.ok) return { failure: redact(meta, credential.token) };
-  if (meta.data?.instance_id !== input.instanceId || meta.data?.observed_origin !== origin || meta.data?.preferred_api_origin !== origin || meta.data?.origin_version !== instance.origin_version || meta.data?.principal?.id !== credential.metadata.principal_id || meta.data?.principal?.is_owner !== true) fail("CREDENTIAL_VERIFICATION_MISMATCH", "Authenticated instance readback did not verify the expected Owner and trusted origin");
+  if (meta.data?.instance_id !== input.instanceId || meta.data?.observed_origin !== origin || meta.data?.preferred_api_origin !== origin || meta.data?.origin_version !== instance.origin_version || meta.data?.principal?.id !== credential.metadata.principal_id || typeof meta.data?.principal?.is_owner !== "boolean" || (requireOwner && meta.data.principal.is_owner !== true)) fail("CREDENTIAL_VERIFICATION_MISMATCH", "Authenticated instance readback did not verify the expected identity and trusted origin");
   requireDeviceSchema(meta.data?.schema_version, "meta");
   const me = await send("/api/v1/me");
   if (!me.ok) return { failure: redact(me, credential.token) };
-  if (me.data?.id !== credential.metadata.principal_id || me.data?.principal_id !== credential.metadata.principal_id || me.data?.is_owner !== true || me.data?.credential?.id !== credential.metadata.credential_id || me.data?.credential?.fingerprint !== credential.metadata.fingerprint || !Number.isSafeInteger(me.data?.version) || me.data.version < 1) fail("CREDENTIAL_VERIFICATION_MISMATCH", "/me did not verify the exact Owner Credential and Principal version");
+  if (me.data?.id !== credential.metadata.principal_id || me.data?.principal_id !== credential.metadata.principal_id || me.data?.is_owner !== meta.data.principal.is_owner || (requireOwner && me.data.is_owner !== true) || me.data?.credential?.id !== credential.metadata.credential_id || me.data?.credential?.fingerprint !== credential.metadata.fingerprint || !Number.isSafeInteger(me.data?.version) || me.data.version < 1) fail("CREDENTIAL_VERIFICATION_MISMATCH", "/me did not verify the exact Credential and Principal version");
   return { me: me.data };
 }
 
@@ -291,7 +288,11 @@ async function loadDeviceCredential(input, paths) {
 export async function verifyOwnerDevice(options) {
   const input = inputOptions(options);
   return withLock(input, async (paths) => {
+    const transaction = await readIdentitySwitch(input, paths);
+    const verifyTarget = (credential) => authenticatedOwner(input, paths, credential, pairingFrom(credential.metadata));
+    if (transaction?.phase === "prepared") return resumeOwnerIdentitySwitch(input, paths, transaction, verifyTarget);
     const { credential, pending, leftoverDigest } = await loadDeviceCredential(input, paths);
+    if (pending && credential.metadata.owner_device_replacement) return switchPendingOwnerIdentity(input, paths, credential, verifyTarget);
     if (pending) await assertPromotionCompatible(paths, credential);
     const request = pairingFrom(credential.metadata);
     const identity = await authenticatedOwner(input, paths, credential, request);
@@ -305,6 +306,11 @@ export async function verifyOwnerDevice(options) {
     }
     return { verification: { ok: true, is_owner: true, principal_id: metadata.principal_id, credential_id: metadata.credential_id }, credential: credentialMetadataView(metadata), secret_values_exposed: false };
   });
+}
+
+export async function restorePreviousOwnerDeviceIdentity(options) {
+  const input = inputOptions(options);
+  return withLock(input, (paths) => restorePreviousIdentity(input, paths, (credential) => authenticatedOwner(input, paths, credential, null, false)));
 }
 
 export async function listOwnerDevices(options) {
