@@ -899,7 +899,7 @@ test("the Web interaction palette uses accessible orange without legacy blue the
   });
   assert.deepEqual(blueDominant, [], `stylesheet retains blue-dominant literals: ${blueDominant.join(", ")}`);
   assert.doesNotMatch(issueDetail, /#2563EB/iu);
-  assert.match(design, /revision:\s*7/u);
+  assert.match(design, /revision:\s*8/u);
   assert.match(design, /One filled deep-orange primary button per visible task region\./u);
   assert.match(webSpec, /以单一深橙色主操作色组织的工作台/u);
 });
