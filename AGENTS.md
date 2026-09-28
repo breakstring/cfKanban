@@ -41,6 +41,7 @@
 | Owner Credential 全失恢复 | [Owner 恢复](docs/specs/2026-09-20-owner-credential-recovery-spec.md) |
 | Owner 多设备、独立凭据与新电脑接入已有部署 | [多设备与部署接入](docs/specs/2026-09-27-owner-devices-deployment-attachment-spec.md) |
 | Owner 设备网页批准/撤销、已有本地身份切换与恢复 | [网页与身份切换](docs/specs/2026-09-28-owner-device-web-identity-switch-spec.md) |
+| 已登录参与者网页接受普通邀请、Bearer 本人 Passkey 管理 | [参与者邀请与 Passkey](docs/specs/2026-09-28-participant-invitation-passkey-parity-spec.md) |
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](docs/specs/2026-09-20-stable-release-lifecycle-spec.md) |
 | Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](docs/specs/2026-09-20-homepage-settings-spec.md) |
 

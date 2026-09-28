@@ -140,7 +140,7 @@ const RECOVERY_INVITATION_BODY = {
 };
 
 function invitationWriteResult(secretAvailable = true, body = PROJECT_INVITATION_BODY) {
-  const projectGrant = body.kind === "project_grant" ? body.grants[0] : null;
+  const projectGrants = body.kind === "project_grant" ? body.grants : [];
   return {
     event_cursor: "event-cursor",
     idempotent_replay: !secretAvailable,
@@ -154,12 +154,12 @@ function invitationWriteResult(secretAvailable = true, body = PROJECT_INVITATION
       created_at: "2026-08-30T00:00:00.000Z",
       deleted_at: null,
       expires_at: "2026-09-06T00:00:00.000Z",
-      grants: projectGrant === null ? [] : [{
+      grants: projectGrants.map(projectGrant => ({
         display_name: "Project",
         project_id: projectGrant.project_id,
         role: projectGrant.role,
         workspace_id: "22222222-2222-4222-8222-222222222222", workspace_display_name: "workspace",
-      }],
+      })),
       id: "11111111-1111-4111-8111-111111111111",
       kind: body.kind,
       recovery_mode: body.kind === "principal_recovery" ? body.recovery_mode : null,
@@ -2323,4 +2323,24 @@ test("binary attachment uploads preserve bytes, CSRF and the explicit retry key"
     if (originalDocument === undefined) delete globalThis.document;
     else globalThis.document = originalDocument;
   }
+});
+
+test("多项目邀请严格验证全部目标与角色，安全恢复保留整份请求", async () => {
+  const body = { kind: "project_grant", grants: [{ project_id: PROJECT_A_ID, role: "writer" }, { project_id: PROJECT_B_ID, role: "reader" }] };
+  const result = invitationWriteResult(true, body);
+  result.resource.grants.reverse();
+  assert.equal(isInvitationCreateWriteResult(result, body), true);
+  const wrong = structuredClone(result);
+  wrong.resource.grants[0].role = "writer";
+  assert.equal(isInvitationCreateWriteResult(wrong, body), false);
+  const repeated = structuredClone(result);
+  repeated.resource.grants[0] = repeated.resource.grants[1];
+  assert.equal(isInvitationCreateWriteResult(repeated, body), false);
+  assert.equal(isInvitationCreateWriteResult(invitationWriteResult(), body), false);
+  const storage = new MemoryStorage(), locks = new MemoryExclusiveLocks();
+  const coordinator = new InvitationRecoveryCoordinator("owner", storage, locks.run.bind(locks), () => "multi");
+  const record = await coordinator.begin({ acquiredAt: Date.now(), key: "multi-key", signature: "multi" }, body);
+  assert.deepEqual(coordinator.read().body, body);
+  assert.deepEqual(record.body.grants, body.grants);
+  await assert.rejects(coordinator.begin({ acquiredAt: Date.now(), key: "another", signature: "different" }, PROJECT_INVITATION_BODY), InvitationRecoveryBlockedError);
 });

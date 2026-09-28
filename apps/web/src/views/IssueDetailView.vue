@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import AssigneeSelect from "../components/AssigneeSelect.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
+import IssueContext from "../components/IssueContext.vue";
 import CompletionRecord from "../components/CompletionRecord.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import IssueAttachments from "../components/IssueAttachments.vue";
@@ -42,6 +43,7 @@ import type {
   WriteResult,
 } from "../types";
 
+const showContext = ref(false);
 const props = defineProps<{ identifier: string; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string; workspaceId?: string; projectId?: string }] }>();
 
@@ -939,14 +941,19 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             <label>{{ t("issue.priority") }}<select v-model="edit.priority_key" :aria-label="t('issue.priority')"><option v-for="key in priorityOrder" :key="key" :value="key">{{ priorityLabel(key) }}</option></select></label>
             <div class="form-actions"><button class="secondary-button" type="button" @click="editMode = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="writeBusy">{{ t("action.save") }}</button></div>
           </form>
-          <section v-else class="content-section">
+          <section v-else id="issue-description" class="content-section">
             <h2>{{ t("issue.body") }}</h2>
             <MarkdownContent :source="issue.body || ''" />
           </section>
 
+          <details v-if="!issue.deleted_at" class="content-section" @toggle="($event.target as HTMLDetailsElement).open && (showContext = true)">
+            <summary>{{ ui('Handoff summary', '交接摘要') }}</summary>
+            <IssueContext v-if="showContext" :key="`${issue.identifier}:${issue.version}`" :identifier="issue.identifier" :scope-boundary="projectInventoryBoundary(session.allowed_scope.projects)" />
+          </details>
+
           <IssueAttachments :key="`${session.session_id}:${issue.identifier}`" :identifier="issue.identifier" :can-upload="canUpdate" :session-id="session.session_id" :principal-id="session.principal.id" />
 
-          <section class="content-section">
+          <section id="issue-activity" class="content-section">
             <div class="section-heading-row compact">
               <h2>{{ t("issue.activity") }}</h2>
               <span>{{ comments.length }}</span>

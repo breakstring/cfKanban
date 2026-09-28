@@ -163,7 +163,7 @@ export function registerWp07Routes(router: Router): Router {
       ), context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .get("/api/v1/me/passkeys", async (request, env, context) => {
-      const auth = await cookieAuth(request, env, context);
+      const auth = await authenticated(request, env, context);
       return jsonResponse(await listMyPasskeys(env.DB, auth, context.startedAt), context.requestId, {
         headers: { "cache-control": "no-store" },
       });
@@ -182,7 +182,7 @@ export function registerWp07Routes(router: Router): Router {
       ), context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .delete("/api/v1/me/passkeys/{passkey_id}", async (request, env, context) => {
-      const auth = await cookieAuth(request, env, context);
+      const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
       const result = await revokeMyPasskey(
         env.DB,
@@ -190,8 +190,9 @@ export function registerWp07Routes(router: Router): Router {
         path(context, "passkey_id"),
         expectedVersionFromQuery(context.url),
         context.startedAt,
+        request,
       );
-      const clearsCurrentSource = auth.sourceKind === "web_authenticator"
+      const clearsCurrentSource = auth.kind === "cookie" && auth.sourceKind === "web_authenticator"
         && auth.sourceId === context.params.passkey_id;
       return jsonResponse(
         result,

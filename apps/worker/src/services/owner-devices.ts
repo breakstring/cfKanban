@@ -27,6 +27,14 @@ interface DeviceRequest {
 const REQUEST_TTL_MS = 60 * 60 * 1_000;
 const ACTIVE_CREDENTIAL_LIMIT = 100;
 
+function requireDeviceName(value: JsonValue | undefined, digest?: string): string {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name || [...name].length > 80 || /[\p{Cc}\p{Cf}]/u.test(name) || /cf[kil]_v1_/i.test(name) || (digest !== undefined && name.includes(digest))) {
+    throw validationError("invalid_device_name", { field: "device_name" });
+  }
+  return name;
+}
+
 function requireTimestamp(value: JsonValue, field: string): string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
     throw validationError("schema_validation_failed", { field });
@@ -47,10 +55,7 @@ function parseDeviceRequest(body: Resource): DeviceRequest {
   const digest = body.token_digest;
   if (typeof prefix !== "string" || !/^[a-f0-9]{16}$/.test(prefix)) throw validationError("schema_validation_failed", { field: "token_prefix" });
   if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) throw validationError("schema_validation_failed", { field: "token_digest" });
-  const name = typeof body.device_name === "string" ? body.device_name.trim() : "";
-  if (!name || [...name].length > 80 || /[\p{Cc}\p{Cf}]/u.test(name) || /cf[kil]_v1_/i.test(name) || name.includes(digest)) {
-    throw validationError("invalid_device_name", { field: "device_name" });
-  }
+  const name = requireDeviceName(body.device_name, digest);
   return {
     instance_id: requireUuid(body.instance_id ?? null, "instance_id"),
     principal_id: requireUuid(body.principal_id ?? null, "principal_id"),
@@ -272,6 +277,68 @@ export async function revokeOwnerDevice(
     readback: async (operationId, commit) => ({
       body: await writeResult(db, auth, await readResource(db, operationId), commit.lastEventSequence, false),
       status: 200,
+    }),
+  });
+  return { ...result.body, idempotent_replay: result.idempotentReplay };
+}
+
+export async function renameOwnerDevice(
+  db: D1Database,
+  request: Request,
+  auth: AuthContext,
+  credentialIdValue: JsonValue,
+  body: Resource,
+  now: number,
+): Promise<Resource> {
+  requireOwnerControl(auth);
+  const credentialId = requireUuid(credentialIdValue, "credential_id");
+  const deviceName = requireDeviceName(body.device_name);
+  const expectedVersion = requireVersion(body.expected_version ?? null);
+  const authorize = () => authorizeOwner(db, auth);
+  const check = async () => {
+    await authorize();
+    const owner = await readOwner(db);
+    if (owner.version !== expectedVersion) throw versionConflict(owner.version);
+    const target = await db.prepare("SELECT principal_id,revoked_at,token_digest FROM credentials WHERE id=?1")
+      .bind(credentialId).first<{ principal_id: string; revoked_at: number | null; token_digest: string }>();
+    if (target === null) throw notFound();
+    if (target.principal_id !== owner.principal_id) throw forbidden();
+    if (target.revoked_at !== null) throw conflict("CREDENTIAL_ALREADY_REVOKED");
+    requireDeviceName(deviceName, target.token_digest);
+  };
+  const result = await runIdempotentOperation({
+    db, now, method: "POST", scopeKey: `principal:${auth.principalId}`,
+    routeTemplate: "/api/v1/admin/owner-credentials/{credential_id}/rename",
+    normalizedResourceScope: `credential:${credentialId}`,
+    requestBody: { device_name: deviceName, expected_version: expectedVersion },
+    idempotencyKey: requireIdempotencyKey(request), authorize,
+    execute: async (operationId) => {
+      await check();
+      const guard = buildCurrentAuthGuard(auth, Date.now(), 6, true);
+      try {
+        await executeAtomicBatch(db, {
+          operationId, primarySubjectId: credentialId, primarySubjectType: "credential", committedAt: now,
+          expectedEventCount: 1, requireIdempotencySnapshot: true,
+          businessStatements: [
+            db.prepare(`UPDATE credentials SET device_name=?1,last_operation_id=?2
+              WHERE id=?3 AND principal_id=?4 AND revoked_at IS NULL
+                AND EXISTS(SELECT 1 FROM principals p JOIN instance_meta im ON im.owner_principal_id=p.id WHERE p.id=?4 AND p.version=?5)
+                AND ${guard.sql}`).bind(deviceName, operationId, credentialId, auth.principalId, expectedVersion, ...guard.values),
+            db.prepare(`UPDATE principals SET version=version+1,updated_at=?1,last_operation_id=?2 WHERE id=?3 AND version=?4
+              AND EXISTS(SELECT 1 FROM credentials WHERE id=?5 AND last_operation_id=?2)`)
+              .bind(now, operationId, auth.principalId, expectedVersion, credentialId),
+            snapshotStatement(db, operationId, credentialId),
+            auditStatement(db, auth, operationId, credentialId, "owner.device-renamed", now),
+          ],
+          confirmBusinessRejection: () => guardRejected(db, auth, check),
+        });
+      } catch (error) {
+        if (error instanceof AtomicBatchRejectedError) await check();
+        throw error;
+      }
+    },
+    readback: async (operationId, commit) => ({
+      body: await writeResult(db, auth, await readResource(db, operationId), commit.lastEventSequence, false), status: 200,
     }),
   });
   return { ...result.body, idempotent_replay: result.idempotentReplay };

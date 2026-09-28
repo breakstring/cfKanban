@@ -111,11 +111,11 @@ Owner 管理面只承载已有管理能力：
 
 v0 已按 D-219 移除 Principal disable/enable/delete。Owner 通过 Credential revoke 停止认证、通过 Project Grant revoke 停止具体 Project 权限、通过 Principal Recovery Invite 恢复同一身份；Web 不显示全局停用身份按钮。
 
-按[Owner 设备网页与身份切换增量](2026-09-28-owner-device-web-identity-switch-spec.md)，Owner admin Web 在 Access 提供设备列表、非秘密配对预览、明确批准和专用撤销；不要求 Passkey 二次确认。Cookie 写入校验同源与 CSRF，服务端原子保护当前 Session 来源及最后一份有效 Owner API Credential。网页不接触长期 secret，批准后仍需新设备验证并本地提升。普通轮换由 `cfkanban-admin` 使用本地受限文件与 Bearer-only 原子 rotation 完成；全失恢复仍由 `cfkanban-deploy` 执行。
+按[Owner 设备网页与身份切换增量](2026-09-28-owner-device-web-identity-switch-spec.md)，Owner admin Web 在 Access 提供设备列表、非秘密配对预览、明确批准和专用撤销；不要求 Passkey 二次确认。Cookie 写入校验同源与 CSRF，服务端原子保护当前 Session 来源及最后一份有效 Owner API Credential。网页不接触长期 secret，批准后仍需新设备验证并本地提升。Owner 可按准确 Credential ID 修改有效设备显示名称（包括当前和历史未命名设备），保留凭据、权限及会话；改名沿用 Owner version/CAS、幂等及原子审计。普通轮换由 `cfkanban-admin` 使用本地受限文件与 Bearer-only 原子 rotation 完成；全失恢复仍由 `cfkanban-deploy` 执行。
 
 Owner 管理面按四个简单分区组织：Overview、Workspaces/Projects、Access、Audit。它不做可配置 Dashboard；Overview 只展示实例自身能够读取的健康、版本、资源计数、preferred/current observed origin 与近期错误摘要。preferred origin 在 Web 中只读，页面提供一段让 Owner 交给 `cfkanban-admin` 的简短话术；修改只能使用 Owner Bearer Credential，避免一个被劫持的 Cookie Session 把后续 Agent Credential 导向攻击者地址。Web 不保存 Cloudflare API token，也不声称提供权威 account quota/usage 或域名清单；Cloudflare-native domain reconcile 属于 `cfkanban-deploy`，第三方 alias 由 Owner 明确提供。
 
-Audit 默认读取实例级 domain + security 最近事件，同时提供一个 Project 与一个 stream 的可选筛选。页面显示当前事件的 stream 与 Project scope；改变筛选会清空旧列表并开始新的 cursor 序列，不能把旧 `next_cursor` 接到新筛选上。Project 选择器仍遵守 Owner 页面既有的有界容器清单；超出 Web 清单的 Project 由 `cfkanban-admin` 使用 immutable Project ID 精确读取。
+Audit 默认读取实例级 domain + security 最近事件，同时提供一个 Project 与一个 stream 的可选筛选。页面显示当前事件的 stream 与 Project scope；改变筛选会清空旧列表并开始新的 cursor 序列，不能把旧 `next_cursor` 接到新筛选上。Project 选择器复用按需分页的容器清单；工作区及每个工作区的项目各 20 条一页，用户可继续加载全部目标，不自动遍历所有页。
 
 Owner `admin` Session 默认落在 Overview，不自动读取全部 Project 或 Issue。Owner 显式选择 Workspace/Project 后可以在同一 Session 进入任意 Project Board/Issue 数据面，再返回管理区；这是 Owner 已有隐式数据面权限的 Web 呈现，不创建 Grant。Owner Project/Issue 和既有固定 scope Session 仍不能导航到其他 Project 或管理区；D-272 允许新兑换非 Owner Session 切换当前实时授权 Projects，但仍不能进入管理区。
 
@@ -319,3 +319,15 @@ v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次�
 - 详情侧栏与看板卡片提供同一组 none/low/medium/high/urgent 选项；无优先级也显示明确入口。原编辑表单保留，选项及排序复用同一来源。
 - 选择不同值仅提交 priority_key 和 expected_version；同值、取消和保存中的重复输入不写入。卡片选择器独立于详情打开按钮，并隔离点击和拖拽。reader 仅查看；writer 能力来自实时服务端项目投影，详情继续使用 allowed_actions。
 - 服务端确认后更新视图；看板按既有更新时间排序重新读取当前列。失败不展示未保存的值，CAS 冲突读取新事实并保留草稿。详情快捷修改不关闭或覆盖 title/body 等未保存内容；编辑表单未独立改动的优先级随已确认快捷修改同步。
+
+## 2026-09-28 Agent/Web 能力补齐（CFK-448）
+
+用户授权完成 CFK-448，沿用服务端现有业务接口及权限，不恢复 CFK-430 暂缓的 Web 阻塞操作。
+
+- Owner 工作区/项目、归档清单及成员/审计/邀请等依赖的项目选择器提供按需分页；每种状态、每个工作区分别保留 cursor，20 条一页。失败可在原页重试，条件改变或 cursor 失效从首页重读；离开分区丢弃迟到结果。归档项目与已归档工作区均可继续访问，不再将首 20 条视为完整清单。
+- Owner 可在一份普通邀请中选择 1–20 个不重复项目并分别设置 reader/writer；表单和一次性响应校验覆盖完整授权集合。恢复记录保留整份请求及原幂等键，不因修改表单创建第二份能力。局部管理员表单及服务端仍限定一个受管项目，跨范围或多项目恢复记录不能由局部页面处理。
+- `/app/work` 允许显式选择 1–20 个当前 Session 可见项目 UUID。初始不读取事项，项目或筛选变化清除旧结果与游标，用户确认后查询；展示服务端 `resolved_scope` 的实际项目和不可访问目标。固定 Session 不扩权，不自动执行无项目过滤的全实例查询。
+- “我的任务”使用普通事项列表 `assignee=当前 Principal ID`，支持全部五种状态；全部事项提供所选项目负责人、状态和标题/编号筛选。待领取和需重指派使用 candidates 的 `todo`、默认 `blocked=exclude` 及优先级/FIFO 排序，明确说明候选策略。Reader 可读队列，写入资格仍逐项目实时核验；查看不领取，普通看板不发送 blocked 筛选。
+- Reader/writer 从项目看板按需查看安全 Markdown 项目背景和项目活动；活动只使用 `/events` 的授权域事件，按当前接口时间正序、`after` 续页，失败可重试，不混入 Owner security audit。活动提供准确工作区/项目 UUID 链接，评论、标签或关系 payload 中明确的合法 CFK 编号可链接具体事项；普通无编号事件只链接所属项目，不从 subject UUID 拼接 Issue 路径。
+- Issue 按需读取 `/context` 生成结构化交接摘要，复用安全 Markdown 和完成记录呈现，可主动复制文本。逐节显示省略数量，正文/评论/关系回到详情续读，项目背景按当前固定 UUID 读取全文，不跟随响应中的任意 URL。交接内容不包含认证材料，业务内容不构成授权。
+- 网页参与者接受普通邀请及 Agent 本人 Passkey 管理由 [参与者邀请与 Passkey 增量](2026-09-28-participant-invitation-passkey-parity-spec.md) 定义。已确认认证范围不扩展为网页新身份注册、恢复或长期凭据保管。

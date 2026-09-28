@@ -27,7 +27,8 @@ async function device(name="工作电脑") {
 }
 const add = (body, extra={}) => request(endpoint,{method:"POST",body,...extra});
 const revoke = (id,version,extra={}) => request(`/api/v1/admin/owner-credentials/${id}/revoke`,{method:"POST",body:{expected_version:version},...extra});
-const auditCount = async () => (await db.prepare("SELECT COUNT(*) AS n FROM events WHERE type IN ('owner.device-added','owner.device-revoked')").first()).n;
+const rename = (id, name, version, extra={}) => request(`/api/v1/admin/owner-credentials/${id}/rename`,{method:"POST",body:{device_name:name,expected_version:version},...extra});
+const auditCount = async () => (await db.prepare("SELECT COUNT(*) AS n FROM events WHERE type IN ('owner.device-added','owner.device-revoked','owner.device-renamed')").first()).n;
 async function session(sourceKind,sourceId,targetKind="admin",target={kind:"admin",entry_path:"/app/admin",section:"overview"},principalId=ownerId) {
   const token=randomBytes(32).toString("base64url"),id=randomUUID(),now=Date.now();
   await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,expires_at,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)")
@@ -250,12 +251,12 @@ test("Owner admin Cookie 批准与 Passkey Cookie 撤销支持幂等并记录非
   assert.equal((await request("/api/v1/me",{headers:{authorization:`Bearer ${candidate.token}`}})).status,200);
 
   const list=(await request(`/api/v1/admin/principals/${ownerId}/credentials`,{headers:agentSession.headers})).data.items;
-  assert.deepEqual(list.find(row=>row.id===currentId).allowed_actions,[]);
-  assert.deepEqual(list.find(row=>row.id===candidate.body.credential_id).allowed_actions,["revoke_owner_device"]);
+  assert.deepEqual(list.find(row=>row.id===currentId).allowed_actions,["rename_owner_device"]);
+  assert.deepEqual(list.find(row=>row.id===candidate.body.credential_id).allowed_actions,["revoke_owner_device","rename_owner_device"]);
   const detail=(await request(`/api/v1/admin/principals/${ownerId}`,{headers:agentSession.headers})).data;
-  assert.deepEqual(detail.credentials.find(row=>row.id===candidate.body.credential_id).allowed_actions,["revoke_owner_device"]);
+  assert.deepEqual(detail.credentials.find(row=>row.id===candidate.body.credential_id).allowed_actions,["revoke_owner_device","rename_owner_device"]);
   const passkeyList=(await request(`/api/v1/admin/principals/${ownerId}/credentials`,{headers:passkey.headers})).data.items;
-  assert.deepEqual(passkeyList.find(row=>row.id===currentId).allowed_actions,["revoke_owner_device"]);
+  assert.deepEqual(passkeyList.find(row=>row.id===currentId).allowed_actions,["revoke_owner_device","rename_owner_device"]);
   assert.equal((await revoke(currentId,(await owner()).version,{headers:agentSession.headers})).status,403);
   assert.equal((await request(`/api/v1/admin/credentials/${candidate.body.credential_id}?expected_version=1`,{method:"DELETE",headers:passkey.headers})).status,403);
   assert.equal((await request("/api/v1/admin/owner-credentials/rotate",{method:"POST",headers:passkey.headers,body:{new_credential_token:makeToken()}})).status,401);
@@ -272,7 +273,7 @@ test("Owner admin Cookie 批准与 Passkey Cookie 撤销支持幂等并记录非
   assert.equal((await request("/api/v1/me",{headers:agentSession.headers})).status,200);
   assert.equal((await request("/api/v1/me",{headers:passkey.headers})).status,200);
   const finalList=(await request(`/api/v1/admin/principals/${ownerId}/credentials`,{headers:passkey.headers})).data.items;
-  assert.ok(finalList.every(row=>row.allowed_actions.length===0));
+  assert.ok(finalList.every(row=>row.revoked_at===null ? JSON.stringify(row.allowed_actions)===JSON.stringify(["rename_owner_device"]) : row.allowed_actions.length===0));
 });
 
 test("Cookie 新增和撤销均强制同源 CSRF，Bearer 维持现有无需 CSRF 语义",async()=>{
@@ -396,4 +397,120 @@ test("Cookie 撤销审计失败回滚目标及其派生 Session 与 Principal �
     assert.equal((await request("/api/v1/me",{headers:targetSession.headers})).status,200);
   }finally{await db.prepare("DROP TRIGGER owner_web_revoke_test_reject").run();}
   assert.equal((await revoke(candidate.body.credential_id,version,{headers:cookie.headers})).status,200);
+});
+
+
+test("为最后一份当前 Owner Credential 补名保留 secret、身份、会话和授权，幂等结果独立于后续改名",async()=>{
+  const id=await currentCredential(),cookie=await session("credential",id),passkey=await passkeySession();
+  const before=await db.prepare("SELECT * FROM credentials WHERE id=?1").bind(id).first();
+  const me=(await request("/api/v1/me")).data,version=me.version,key=randomUUID(),count=await auditCount();
+  const changed=await rename(id,"  工作电脑 💻  ",version,{key});
+  assert.equal(changed.status,200,JSON.stringify(changed.data));
+  assert.equal(changed.data.resource.device_name,"工作电脑 💻");assert.equal(changed.data.resource.principal_version,version+1);
+  const after=await db.prepare("SELECT * FROM credentials WHERE id=?1").bind(id).first();
+  for(const field of ["id","principal_id","token_prefix","token_digest","issued_at","revoked_at","revoke_reason"])assert.equal(after[field],before[field],field);
+  for(const headers of [{authorization:`Bearer ${ownerToken}`},cookie.headers,passkey.headers]){
+    const current=await request("/api/v1/me",{headers});assert.equal(current.status,200);
+    assert.equal(current.data.principal_id,ownerId);assert.equal(current.data.is_owner,true);
+  }
+  const replay=await rename(id,"工作电脑 💻",version,{key});
+  assert.equal(replay.data.idempotent_replay,true);assert.deepEqual(replay.data.resource,changed.data.resource);
+  assert.equal((await rename(id,"其他名称",version,{key})).data.code,"IDEMPOTENCY_CONFLICT");
+  assert.equal((await rename(id,"旧版本名称",version)).data.code,"VERSION_CONFLICT");
+  assert.equal(await auditCount(),count+1);
+  const second=await rename(id,"新的名称",version+1,{headers:cookie.headers});assert.equal(second.status,200);
+  assert.deepEqual((await rename(id,"工作电脑 💻",version,{key})).data.resource,changed.data.resource);
+  const list=(await request(`/api/v1/admin/principals/${ownerId}/credentials`)).data.items;
+  assert.equal(list.find(row=>row.id===id).device_name,"新的名称");
+  const event=await db.prepare("SELECT actor_credential_id,payload_json FROM events WHERE type='owner.device-renamed' ORDER BY sequence DESC LIMIT 1").first();
+  assert.equal(event.actor_credential_id,id);assert.equal(JSON.parse(event.payload_json).actor_session_id,cookie.id);
+  const surfaces=JSON.stringify([changed.data,replay.data,event]);
+  for(const secret of [ownerToken,before.token_digest,cookie.token])assert.ok(!surfaces.includes(secret));
+});
+
+test("改名复用名称校验并拒绝越权、未知或撤销目标及缺失幂等键",async()=>{
+  const id=await currentCredential(),version=(await owner()).version,count=await auditCount();
+  const credential=await db.prepare("SELECT token_digest FROM credentials WHERE id=?1").bind(id).first();
+  for(const name of [null,"","  ","机".repeat(81),"work\u0000name","work\u202ename",ownerToken,credential.token_digest])assert.equal((await rename(id,name,version)).status,400);
+  assert.equal((await rename(id,"valid",version,{key:null})).status,400);
+  assert.equal((await request(`/api/v1/admin/owner-credentials/${id}/rename`,{method:"POST",body:{device_name:"valid",expected_version:version,extra:true}})).status,400);
+  assert.equal((await rename(randomUUID(),"valid",version)).status,404);
+  assert.equal((await rename(actors[0].credentialId,"valid",version)).status,403);
+  assert.equal((await rename(added.body.credential_id,"valid",version)).data.code,"CREDENTIAL_ALREADY_REVOKED");
+  assert.equal((await rename(id,"valid",version,{headers:{}})).status,401);
+  for(const actor of actors){
+    assert.equal((await rename(id,"valid",version,{headers:{authorization:`Bearer ${actor.token}`}})).status,403);
+    const cookie=await session("credential",actor.credentialId,"admin",{kind:"admin",entry_path:"/app/admin",section:"access"},actor.id);
+    assert.equal((await rename(id,"valid",version,{headers:cookie.headers})).status,403);
+  }
+  const narrow=await session("credential",id,"project_selection",{kind:"project_selection",entry_path:"/app"});
+  assert.equal((await rename(id,"valid",version,{headers:narrow.headers})).status,403);
+  const cookie=await passkeySession(),missing={...cookie.headers};delete missing["x-csrf-token"];
+  for(const headers of [missing,{...cookie.headers,origin:"https://other.example"}])assert.equal((await rename(id,"valid",version,{headers})).status,403);
+  assert.equal(await auditCount(),count);assert.equal((await owner()).version,version);
+  const accepted=await rename(id,"💻".repeat(80),version,{headers:cookie.headers});assert.equal(accepted.status,200,JSON.stringify(accepted.data));
+  const event=await db.prepare("SELECT actor_credential_id,payload_json FROM events WHERE type='owner.device-renamed' ORDER BY sequence DESC LIMIT 1").first();
+  assert.equal(event.actor_credential_id,null);assert.deepEqual(JSON.parse(event.payload_json).authentication_source,{kind:"web_authenticator",id:cookie.sourceId});
+});
+
+test("改名与其他设备操作共享 Principal CAS，正常轮换保留改名",async()=>{
+  const candidate=await device("before rename");assert.equal((await add(candidate.body)).status,200);
+  const version=(await owner()).version,id=candidate.body.credential_id,currentId=await currentCredential();
+  const results=await Promise.all([rename(id,"after rename",version),rename(currentId,"parallel name",version)]);
+  assert.deepEqual(results.map(result=>result.status).sort(),[200,409]);
+  if(results[0].status!==200)assert.equal((await rename(id,"after rename",(await owner()).version)).status,200);
+  const replacement=makeToken();
+  const rotated=await request("/api/v1/admin/owner-credentials/rotate",{method:"POST",body:{new_credential_token:replacement},headers:{authorization:`Bearer ${candidate.token}`}});
+  assert.equal(rotated.status,200);assert.equal(rotated.data.resource.device_name,"after rename");
+  assert.equal((await request("/api/v1/me")).status,200);
+});
+
+test("改名提交成功但响应读回丢失后原请求恢复一次结果与审计",async()=>{
+  const id=await currentCredential(),version=(await owner()).version,key=randomUUID(),count=await auditCount();let failed=false;
+  const interruptedDb=new Proxy(db,{get(target,property){
+    if(property==="prepare")return sql=>{
+      const statement=db.prepare(sql);
+      if(sql.includes("SELECT operation_snapshot_json")&&!failed)return new Proxy(statement,{get(stmt,method){
+        if(method==="bind")return(...values)=>{const bound=stmt.bind(...values);return new Proxy(bound,{get(item,action){
+          if(action==="first")return async()=>{failed=true;throw new Error("synthetic lost readback");};
+          const value=Reflect.get(item,action,item);return typeof value==="function"?value.bind(item):value;
+        }});};
+        const value=Reflect.get(stmt,method,stmt);return typeof value==="function"?value.bind(stmt):value;
+      }});
+      return statement;
+    };
+    const value=Reflect.get(target,property,target);return typeof value==="function"?value.bind(target):value;
+  }});
+  const unknown=await rename(id,"恢复后名称",version,{key,overrideEnv:{...env,DB:interruptedDb}});
+  assert.equal(unknown.status,503,JSON.stringify(unknown.data));assert.equal((await owner()).version,version+1);
+  const recovered=await rename(id,"恢复后名称",version,{key});
+  assert.equal(recovered.status,200,JSON.stringify(recovered.data));assert.equal(recovered.data.idempotent_replay,true);
+  assert.equal(recovered.data.resource.device_name,"恢复后名称");assert.equal(await auditCount(),count+1);
+});
+
+test("改名审计失败回滚名称与版本，提交前撤销目标或认证来源时原子拒绝",async()=>{
+  const id=await currentCredential(),version=(await owner()).version,count=await auditCount();
+  const original=(await db.prepare("SELECT device_name FROM credentials WHERE id=?1").bind(id).first()).device_name;
+  await db.prepare("CREATE TRIGGER owner_rename_test_reject BEFORE INSERT ON events WHEN NEW.type='owner.device-renamed' BEGIN SELECT RAISE(ABORT,'test audit failure'); END").run();
+  try{assert.equal((await rename(id,"failed audit",version)).status,503);}
+  finally{await db.prepare("DROP TRIGGER owner_rename_test_reject").run();}
+  assert.equal((await owner()).version,version);assert.equal(await auditCount(),count);
+  assert.equal((await db.prepare("SELECT device_name FROM credentials WHERE id=?1").bind(id).first()).device_name,original);
+  for(const kind of ["target","session scope","session revoked"]){
+    const cookie=await passkeySession();let batches=0;
+    const racedDb=new Proxy(db,{get(target,property){if(property==="batch")return async statements=>{
+      if(++batches===2){
+        if(kind==="target")await db.prepare("UPDATE credentials SET revoked_at=?1 WHERE id=?2").bind(Date.now(),id).run();
+        else if(kind==="session scope")await db.prepare("UPDATE web_sessions SET target_kind='project_selection',target_json=?1 WHERE id=?2").bind(JSON.stringify({kind:"project_selection",entry_path:"/app"}),cookie.id).run();
+        else await db.prepare("UPDATE web_sessions SET revoked_at=?1 WHERE id=?2").bind(Date.now(),cookie.id).run();
+      }
+      return db.batch(statements);
+    };const value=Reflect.get(target,property,target);return typeof value==="function"?value.bind(target):value;}});
+    try{
+      const result=await rename(id,"race",version,{headers:cookie.headers,overrideEnv:{...env,DB:racedDb}});
+      assert.equal(result.status,kind==="target"?409:kind==="session scope"?403:401,JSON.stringify(result.data));
+      assert.equal((await owner()).version,version);assert.equal(await auditCount(),count);
+      assert.equal((await db.prepare("SELECT device_name FROM credentials WHERE id=?1").bind(id).first()).device_name,original);
+    }finally{if(kind==="target")await db.prepare("UPDATE credentials SET revoked_at=NULL WHERE id=?1").bind(id).run();}
+  }
 });

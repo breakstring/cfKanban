@@ -5,7 +5,7 @@ export const INVITATION_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
 
 export type InvitationRequestBody =
   | {
-    grants: [{ project_id: string; role: "reader" | "writer" }];
+    grants: { project_id: string; role: "reader" | "writer" }[];
     kind: "project_grant";
   }
   | {
@@ -122,15 +122,20 @@ function isHttpsUrl(value: unknown): value is string {
 function isInvitationRequestBody(value: unknown): value is InvitationRequestBody {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
   if (value.kind === "project_grant") {
-    if (!hasOnlyKeys(value, ["grants", "kind"]) || !Array.isArray(value.grants) || value.grants.length !== 1) {
+    if (!hasOnlyKeys(value, ["grants", "kind"]) || !Array.isArray(value.grants) || value.grants.length < 1 || value.grants.length > 20) {
       return false;
     }
-    const grant = value.grants[0];
-    return isRecord(grant)
+    const projects = new Set<string>();
+    return value.grants.every(grant => {
+      if (!(isRecord(grant)
       && hasOnlyKeys(grant, ["project_id", "role"])
       && typeof grant.project_id === "string"
       && grant.project_id.length > 0
-      && (grant.role === "reader" || grant.role === "writer");
+      && (grant.role === "reader" || grant.role === "writer"))) return false;
+      if (projects.has(grant.project_id)) return false;
+      projects.add(grant.project_id);
+      return true;
+    });
   }
   return value.kind === "principal_recovery"
     && hasOnlyKeys(value, ["kind", "principal_id", "recovery_mode"])
@@ -201,15 +206,14 @@ function isInvitationCreateResource(
     || allowedActions[1] !== "revoke") return false;
   const grantCount = grants.length;
   if (expectedBody.kind === "project_grant") {
-    const expectedGrant = expectedBody.grants[0];
-    const actualGrant = grants[0];
     if (value.kind !== "project_grant"
       || value.bound_principal !== null
       || value.recovery_mode !== null
-      || grantCount !== 1
-      || !isRecord(actualGrant)
-      || actualGrant.project_id !== expectedGrant.project_id
-      || actualGrant.role !== expectedGrant.role) return false;
+      || !isInvitationRequestBody(expectedBody)
+      || grantCount !== expectedBody.grants.length
+      || new Set(grants.map(grant => isRecord(grant) ? grant.project_id : null)).size !== grantCount
+      || !expectedBody.grants.every(expected => grants.some(actual => isRecord(actual)
+        && actual.project_id === expected.project_id && actual.role === expected.role))) return false;
   } else {
     if (value.kind !== "principal_recovery"
       || !isRecord(value.bound_principal)

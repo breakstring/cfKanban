@@ -21,7 +21,7 @@ The audience includes the single Deployment Owner and scoped Workspace/Project a
 - Create/revoke scoped Project Invites; Owner additionally creates Principal Recovery Invites. Inspect permitted status without exposing Invite codes.
 - Change/revoke ordinary Project Grants within scope. Owner additionally lists instance Principals, participant Credentials, and audit events and revokes participant Credentials.
 - Owner only: rotate the Owner Credential through a pending-secret workflow that never exposes either secret.
-- Owner only: add another device with an independent Credential, list devices, and revoke one other device (schema 12+). An existing Owner device or a supported Owner admin Web session approves the new environment’s non-secret request. Explicit replacement of an existing local identity preserves a private restoration slot; no long-lived secret is copied between environments.
+- Owner only: add another device with an independent Credential, list devices, name or rename active devices, and revoke one other device (schema 12+). An existing Owner device or a supported Owner admin Web session approves the new environment’s non-secret request. Explicit replacement of an existing local identity preserves a private restoration slot; no long-lived secret is copied between environments.
 - Owner only: read or edit the public bilingual homepage notice, including restoring its fallback (schema 11+).
 - Owner only: read instance usage, request cache-aware Cloudflare refresh on every usage query, and inspect or change Owner-selected attachment capacity.
 - Owner only: configure one Project's Public Join policy and active resource limits; inspect deployed request-rate settings.

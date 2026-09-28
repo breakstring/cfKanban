@@ -91,6 +91,7 @@ interface CommentRow {
   author_display_name: string;
   author_principal_id: string;
   body: string;
+  completion_json: string | null;
   created_at: number;
   id: string;
   kind: "completion" | "standard";
@@ -1349,7 +1350,7 @@ async function visibleRelations(
 async function recentComments(db: D1Database, issueId: string): Promise<BoundedSection<CommentRow>> {
   try {
     const result = await db.prepare(
-      `SELECT c.id, c.kind, c.body, c.author_principal_id,
+      `SELECT c.id, c.kind, c.body, c.completion_json, c.author_principal_id,
               author.display_name AS author_display_name, c.version, c.created_at,
               COUNT(*) OVER () AS total_count
        FROM comments c JOIN principals author ON author.id = c.author_principal_id
@@ -1366,9 +1367,20 @@ async function recentComments(db: D1Database, issueId: string): Promise<BoundedS
 }
 
 function commentResource(row: CommentRow): { [key: string]: JsonValue } {
+  let completion: JsonValue = null;
+  try {
+    if (row.kind === "completion" && row.completion_json !== null) {
+      completion = JSON.parse(row.completion_json) as JsonValue;
+    }
+  } catch (error) {
+    throw platformUnavailable("d1", error);
+  }
+  const completionSummary = completion !== null && typeof completion === "object" && !Array.isArray(completion)
+    ? completion.summary : undefined;
   return {
     author: { display_name: row.author_display_name, principal_id: row.author_principal_id },
-    body: row.body,
+    body: row.kind === "completion" && typeof completionSummary === "string" ? completionSummary : row.body,
+    completion,
     created_at: timestamp(row.created_at),
     id: row.id,
     kind: row.kind,

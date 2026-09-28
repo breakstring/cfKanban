@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
 import ContainerIdentityDetails from "../components/ContainerIdentityDetails.vue";
 import ContainerIcon from "../components/ContainerIcon.vue";
+import ContainerTreePagination from "../components/ContainerTreePagination.vue";
 import CopyForAgentButton from "../components/CopyForAgentButton.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
@@ -20,6 +21,7 @@ import {
   markCasReadbackComplete,
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
+import { ContainerTree, type ContainerState } from "../lib/container-tree";
 import { containerChoiceLabels } from "../lib/container-choice";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
@@ -102,15 +104,20 @@ const {
   setLocalizedError,
 } = useLocalizedError();
 const casConflict = ref<CasConflictState | null>(null);
-const treeTruncated = ref(false);
+const containerTree = reactive(new ContainerTree()) as ContainerTree;
 const meta = ref<MetaResource | null>(null);
 const rateSettings = ref<RateLimitSettings | null>(null);
-const workspaces = ref<ContainerResource[]>([]);
-const projects = ref<ProjectEntry[]>([]);
+const workspaces = computed({ get: () => containerTree.workspaces.active.items, set: value => { containerTree.workspaces.active.items = value; } });
+const projects = computed({ get: () => containerTree.entries("active"), set: value => setProjectEntries("active", value) });
 const projectChoiceLabels = computed(() => containerChoiceLabels(projects.value.map((item) => ({ id: item.id, name: item.display_name, workspaceName: item.workspaceName }))));
 const workspaceChoiceLabels = computed(() => containerChoiceLabels(workspaces.value.map((item) => ({ id: item.id, name: item.display_name }))));
-const deletedWorkspaces = ref<ContainerResource[]>([]);
-const deletedProjects = ref<ProjectEntry[]>([]);
+const deletedWorkspaces = computed({ get: () => containerTree.workspaces.archived.items, set: value => { containerTree.workspaces.archived.items = value; } });
+const deletedProjects = computed({ get: () => containerTree.entries("archived"), set: value => setProjectEntries("archived", value) });
+function setProjectEntries(state: ContainerState, value: ProjectEntry[]): void {
+  for (const workspace of [...workspaces.value, ...deletedWorkspaces.value]) {
+    containerTree.projectPage(workspace.id, state).items = value.filter(item => item.workspaceId === workspace.id);
+  }
+}
 const initialWorkspace = new URLSearchParams(window.location.search).get("workspace");
 const expandedWorkspaces = ref<string[]>(initialWorkspace ? [initialWorkspace] : []);
 const archivedWorkspaceLabels = computed(() => containerChoiceLabels([...workspaces.value, ...deletedWorkspaces.value].map(item => ({ id: item.id, name: item.display_name }))));
@@ -183,7 +190,10 @@ const selectedWorkspace = ref("");
 const selectedProject = ref<ProjectEntry | null>(null);
 const workspaceForm = ref({ display_name: "" });
 const projectForm = ref({ context: "", display_name: "" });
-const inviteForm = ref({ project_id: "", role: "writer" as "reader" | "writer" });
+const inviteGrants = ref([{ project_id: "", role: "writer" as "reader" | "writer" }]);
+const validInviteGrants = computed(() => inviteGrants.value.length >= 1 && inviteGrants.value.length <= 20
+  && inviteGrants.value.every(grant => projects.value.some(project => project.id === grant.project_id))
+  && new Set(inviteGrants.value.map(grant => grant.project_id)).size === inviteGrants.value.length);
 const policy = ref<PolicyResource | null>(null);
 const policyForm = ref({ comments: 500, issues: 50, principals: 50, public_summary: "" });
 const containerEdit = ref<{ display_name: string; kind: "workspace" | "project"; item: ContainerResource; workspace_id?: string } | null>(null);
@@ -379,38 +389,19 @@ function sectionPath(section: OwnerSection): string {
   return section === "overview" ? "/app/admin" : `/app/admin?section=${section}`;
 }
 
+const fetchContainers = (path: string) => apiRequest<ListResult<ContainerResource>>(path);
 async function loadWorkspaceTree(includeDeleted = props.section === "archive"): Promise<void> {
-  treeTruncated.value = false;
-  const [result, deletedResult] = await Promise.all([
-    apiRequest<ListResult<ContainerResource>>("/api/v1/workspaces?limit=20"),
-    includeDeleted
-      ? apiRequest<ListResult<ContainerResource>>("/api/v1/workspaces?deleted=only&limit=20")
-      : Promise.resolve<ListResult<ContainerResource>>({ has_more: false, items: [], next_cursor: null }),
+  containerTree.reset();
+  await Promise.all([
+    containerTree.loadWorkspaces(fetchContainers, "active", includeDeleted),
+    ...(includeDeleted ? [containerTree.loadWorkspaces(fetchContainers, "archived", true)] : []),
   ]);
-  workspaces.value = result.items;
-  deletedWorkspaces.value = deletedResult.items;
-  const groups = await Promise.all([...result.items, ...deletedResult.items].map(async (workspace) => {
-    const [projectResult, deletedProjectResult] = await Promise.all([
-      workspace.deleted_at
-        ? Promise.resolve<ListResult<ContainerResource>>({ has_more: false, items: [], next_cursor: null })
-        : apiRequest<ListResult<ContainerResource>>(
-          `/api/v1/workspaces/${encodeURIComponent(workspace.id)}/projects?limit=20`,
-        ),
-      includeDeleted
-        ? apiRequest<ListResult<ContainerResource>>(
-          `/api/v1/workspaces/${encodeURIComponent(workspace.id)}/projects?deleted=only&limit=20`,
-        )
-        : Promise.resolve<ListResult<ContainerResource>>({ has_more: false, items: [], next_cursor: null }),
-    ]);
-    return {
-      active: projectResult.items.map((item) => ({ ...item, workspaceId: workspace.id, workspaceName: workspace.display_name })),
-      deleted: deletedProjectResult.items.map((item) => ({ ...item, workspaceId: workspace.id, workspaceName: workspace.display_name })),
-      truncated: projectResult.has_more || deletedProjectResult.has_more,
-    };
-  }));
-  projects.value = groups.flatMap((group) => group.active);
-  deletedProjects.value = groups.flatMap((group) => group.deleted);
-  treeTruncated.value = result.has_more || deletedResult.has_more || groups.some((group) => group.truncated);
+}
+async function moreWorkspaces(state: ContainerState): Promise<void> {
+  await containerTree.loadWorkspaces(fetchContainers, state, props.section === "archive");
+}
+async function moreProjects(workspaceId: string, state: ContainerState): Promise<void> {
+  await containerTree.loadProjects(fetchContainers, workspaceId, state);
 }
 
 async function loadInvitationHistory(page = 0, propagateError = false): Promise<void> {
@@ -1016,12 +1007,19 @@ function openContainerEdit(kind: "workspace" | "project", item: ContainerResourc
 async function refreshContainerEditFacts(
   target: { display_name: string; kind: "workspace" | "project"; item: ContainerResource; workspace_id?: string },
 ): Promise<void> {
-  await loadWorkspaceTree(true);
-  const current = target.kind === "workspace"
-    ? workspaces.value.find((entry) => entry.id === target.item.id)
-    : projects.value.find((entry) => entry.id === target.item.id);
-  if (current !== undefined && containerEdit.value?.item.id === target.item.id) {
-    containerEdit.value = { ...target, item: current };
+  const path = target.kind === "workspace"
+    ? `/api/v1/workspaces/${encodeURIComponent(target.item.id)}`
+    : `/api/v1/workspaces/${encodeURIComponent(target.workspace_id ?? "")}/projects/${encodeURIComponent(target.item.id)}`;
+  const current = await apiRequest<ContainerResource>(path);
+  if (target.kind === "workspace") {
+    workspaces.value = workspaces.value.map(entry => entry.id === current.id ? current : entry);
+  } else {
+    projects.value = projects.value.map(entry => entry.id === current.id
+      ? { ...entry, ...current, workspaceName: current.workspace_display_name ?? entry.workspaceName }
+      : entry);
+  }
+  if (containerEdit.value?.item.id === target.item.id) {
+    containerEdit.value = { ...containerEdit.value, item: current };
   }
 }
 
@@ -1425,11 +1423,11 @@ async function revokeGrant(grant: GrantResource): Promise<void> {
 }
 
 async function createInvite(): Promise<void> {
-  if (!inviteForm.value.project_id || inviteNeedsReview.value || !invitationCoordinationReady.value || busy.value) return;
+  if (!validInviteGrants.value || inviteNeedsReview.value || !invitationCoordinationReady.value || busy.value) return;
   busy.value = true;
   oneTimeInvite.value = "";
   const body: InvitationRequestBody = {
-    grants: [{ project_id: inviteForm.value.project_id, role: inviteForm.value.role }],
+    grants: inviteGrants.value.map(grant => ({ ...grant })),
     kind: "project_grant",
   };
   let operationRecord: InvitationRecoveryRecord | null = null;
@@ -1579,6 +1577,7 @@ function formatTime(value: string): string {
 watch(sectionTitle, (label) => emit("context", { label, role: "owner" }));
 watch(() => props.section, () => {
   expandedWorkspaces.value = [];
+  containerTree.reset();
   void load();
 });
 onMounted(() => {
@@ -1588,6 +1587,7 @@ onMounted(() => {
 });
 onUnmounted(() => {
   ownerViewMounted = false;
+  containerTree.reset();
   invitationHistoryRequestId += 1;
   window.removeEventListener("storage", onInvitationRecoveryStorage);
 });
@@ -1602,6 +1602,7 @@ onUnmounted(() => {
     <ErrorNotice v-if="error" :error="error" />
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
+    <ContainerTreePagination v-if="!loading && ['workspaces', 'archive', 'access', 'audit'].includes(section)" :tree="containerTree" :archived="section === 'archive'" @workspaces="moreWorkspaces" @projects="moreProjects" />
 
     <template v-if="!loading && section === 'overview'">
       <p class="overview-intro">{{ ui("Open a board, organize your projects, or manage who can join.", "打开看板、整理项目，或管理谁可以参与协作。") }}</p>
@@ -1650,7 +1651,6 @@ onUnmounted(() => {
 
     <template v-if="!loading && section === 'workspaces'">
       <div class="section-action-bar workspace-actions"><button class="secondary-button" type="button" @click="showWorkspace = true">{{ ui("New workspace", "新建工作区") }}</button></div>
-      <p v-if="treeTruncated" class="warning-panel">{{ ui("This list may be incomplete: it shows up to 20 workspaces and 20 projects per workspace. Ask your Agent to find a missing project.", "列表可能未显示全部内容：最多展示 20 个工作区及各自的 20 个项目。找不到项目时，可以让智能体帮助查找。") }}</p>
       <p v-if="workspaces.length === 0" class="empty-copy">{{ ui("Create a workspace first, then add your first project.", "先创建一个工作区，再添加你的第一个项目。") }}</p>
       <section v-for="workspace in workspaces" :key="workspace.id" class="workspace-block">
         <header><h2><button class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(workspace.id)" :aria-controls="`workspace-projects-${workspace.id}`" @click="toggleWorkspace(workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(workspace.id) ? '▾' : '▸' }}</span><ContainerIcon kind="workspace" /><span>{{ workspace.display_name }}</span><span class="workspace-count">{{ projects.filter(project => project.workspaceId === workspace.id).length }} {{ ui('projects', '个项目') }}</span></button></h2><div><button v-if="workspace.allowed_actions?.includes('manage_administrators')" class="text-button" type="button" @click="navigate(managementPath(workspace.id))">{{ ui("Administrators and settings", "管理员与设置") }}</button><button class="secondary-button" type="button" @click="openCreateProject(workspace.id)">{{ ui("New project", "新建项目") }}</button><button class="text-button" type="button" @click="openContainerEdit('workspace', workspace)">{{ ui("Rename", "改名") }}</button><button class="danger-text-button" type="button" @click="deleteContainer('workspace', workspace)">{{ ui("Archive", "归档") }}</button></div></header>
@@ -1660,7 +1660,6 @@ onUnmounted(() => {
     </template>
 
     <template v-if="!loading && section === 'archive'">
-      <p v-if="treeTruncated" class="warning-panel">{{ ui('This list may be incomplete: it shows up to 20 workspaces per state and 20 archived projects per workspace.', '列表可能未显示全部内容：使用中、已归档工作区各最多展示 20 个，每个工作区最多展示 20 个已归档项目。') }}</p>
       <p v-if="archivedGroups.length === 0" class="empty-copy">{{ ui('No archived content', '暂无已归档内容') }}</p>
       <section v-for="archiveSection in archiveSections" :key="archiveSection.kind" class="archive-category">
         <h2>{{ archiveSection.kind === 'projects' ? ui('Archived projects', '已归档项目') : ui('Archived workspaces', '已归档工作区') }}</h2>
@@ -1704,7 +1703,6 @@ onUnmounted(() => {
         </div>
         <InvitationRows v-if="inviteReviewReady || invitations.length" :items="invitations" :busy="busy" @revoke="revokeInvite" />
       </div>
-      <p v-if="treeTruncated" class="warning-panel">{{ ui("Project access controls are limited to the first 20 Workspaces and first 20 Projects in each. Use cfkanban-admin with an explicit cursor for omitted Projects.", "项目访问管理只显示前 20 个工作区，以及每个工作区的前 20 个项目；未显示的项目请让 cfkanban-admin 使用明确的分页位置。") }}</p>
       <section class="owner-section"><div class="section-heading-row"><div><h2>{{ ui("Members", "成员") }}</h2><p>{{ ui("Search by exact stable ID or name text, optionally restricted to one visible Project.", "按名称查找成员，或选择项目查看其成员。重名时可使用成员 ID 区分。") }}</p></div></div><form class="principal-search" role="search" @submit.prevent="loadPrincipals(true)"><input v-model="principalQuery" type="search" :aria-label="ui('Find a member', '查找成员')" :placeholder="ui('Member name or ID', '成员名称或 ID')" /><select v-model="principalProjectId" :aria-label="ui('Filter members by project', '按项目筛选成员')"><option value="">{{ ui("Every visible Project", "全部可见项目") }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select><button class="secondary-button" type="submit" :disabled="principalsLoadingMore">{{ ui("Search", "查找") }}</button></form><div class="data-list"><button v-for="principal in principals" :key="principal.id" class="data-row data-row-button" type="button" @click="openPrincipal(principal)"><span><strong>{{ principal.display_name }}</strong><code>{{ principal.id }}</code></span><span>{{ principal.is_owner ? ui('Owner', '所有者') : ui('Participant', '参与者') }}</span><span v-if="principal.is_owner">{{ ui("Access to all projects", "可管理全部项目") }}</span><span v-else>{{ principal.active_grant_count ?? 0 }} {{ ui("project permissions", "项项目权限") }}</span></button><p v-if="principals.length === 0" class="empty-copy">{{ ui("No matching Principals", "没有匹配的身份") }}</p></div><p v-if="principalsHasMore" class="warning-panel">{{ ui("More Principals match this exact query scope. Continue with the bound cursor; changing the query or Project starts a fresh search.", "此准确查询范围还有更多身份。请使用绑定的分页位置继续；修改查询或项目会开始一次新查找。") }}</p><button v-if="principalsNextCursor" class="load-more" type="button" :disabled="principalsLoadingMore" @click="loadPrincipals(false)">{{ principalsLoadingMore ? "…" : ui("Load more Principals", "加载更多身份") }}</button></section>
       <section class="owner-section"><h2>{{ ui("Project access", "项目成员权限") }}</h2><div class="data-list"><button v-for="item in projects" :key="item.id" class="data-row data-row-button" type="button" :title="projectChoiceLabels.get(item.id)?.title" @click="openProjectGrants(item)"><span><strong>{{ projectChoiceLabels.get(item.id)?.label }}</strong></span><span>{{ ui("Manage members", "管理成员") }}</span></button></div></section>
 
@@ -1736,7 +1734,6 @@ onUnmounted(() => {
         <button class="secondary-button" type="submit" :disabled="auditLoadingMore">{{ auditLoadingMore ? "…" : ui("Apply filters", "应用筛选") }}</button>
       </form>
       <p class="muted-copy">{{ ui("Filter by project or activity type to find the changes you need.", "按项目或操作类型筛选，查找你关心的变更。") }}</p>
-      <p v-if="treeTruncated" class="warning-panel">{{ ui("The Project picker shows the first 20 Workspaces and first 20 Projects in each. Use cfkanban-admin with an explicit Project ID for omitted Projects.", "项目选择器只显示前 20 个工作区及每个工作区的前 20 个项目；未显示的项目请让 cfkanban-admin 使用明确的项目 ID。") }}</p>
       <p v-if="auditNextCursor" class="warning-panel">{{ ui("More records are available. Use “Load more” below to continue.", "还有更多记录，可在列表底部继续加载。") }}</p>
       <section class="audit-list">
         <article v-for="event in audit" :key="event.id" class="audit-event">
@@ -1823,7 +1820,23 @@ onUnmounted(() => {
       <p v-if="!(restoreTarget.item.resumed_public_projects?.projects.length)" class="empty-copy">{{ ui("No enabled Public Join policy will resume.", "没有已开启的公开加入策略会重新公开。") }}</p>
       <div class="form-actions"><button class="secondary-button" type="button" @click="showRestore = false">{{ t("action.cancel") }}</button><button class="primary-button" type="button" :disabled="busy" @click="restoreContainer">{{ t("action.restore") }}</button></div>
     </ModalDialog>
-    <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建项目邀请')" @close="closeInviteDialog"><form class="form-stack" @submit.prevent="createInvite"><label>{{ ui("Project", "项目") }}<select v-model="inviteForm.project_id" required><option value="" disabled>{{ ui("Choose…", "请选择…") }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select></label><label>{{ ui("Role", "角色") }}<select v-model="inviteForm.role"><option value="reader">{{ roleLabel('reader') }}</option><option value="writer">{{ roleLabel('writer') }}</option></select></label><p class="muted-copy">{{ locale === "zh-CN" ? "完整网址只在创建响应中出现一次；页面不会保存它。" : "The full URL appears only in the create response; this page does not store it." }}</p><p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p><textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" /><div class="form-actions"><CopyForAgentButton v-if="oneTimeInvite" :text="oneTimeInvite" /><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui("I saved it · Done", "我已保存，完成") }}</button><button class="primary-button" type="submit" :disabled="busy || inviteNeedsReview">{{ oneTimeInvite ? (locale === 'zh-CN' ? '再创建一个' : 'Create another') : t('action.save') }}</button></div></form></ModalDialog>
+    <ModalDialog v-if="showInvite" :busy="busy" :title="ui('Create Project Invite', '创建项目邀请')" @close="closeInviteDialog">
+      <form class="form-stack" @submit.prevent="createInvite">
+        <p>{{ ui('Choose up to 20 projects and a role for each. The recipient accepts all of them together.', '最多选择 20 个项目，并分别设置角色。接收者会一次性加入全部项目。') }}</p>
+        <fieldset v-for="(grant, index) in inviteGrants" :key="index" :disabled="busy || !!oneTimeInvite" class="invite-grant-row">
+          <legend>{{ ui('Project', '项目') }} {{ index + 1 }}</legend>
+          <label>{{ ui('Project', '项目') }}<select v-model="grant.project_id" required><option value="" disabled>{{ ui('Choose…', '请选择…') }}</option><option v-for="item in projects" :key="item.id" :value="item.id" :disabled="inviteGrants.some((other, otherIndex) => otherIndex !== index && other.project_id === item.id)" :title="projectChoiceLabels.get(item.id)?.title">{{ projectChoiceLabels.get(item.id)?.label }}</option></select></label>
+          <label>{{ ui('Role', '角色') }}<select v-model="grant.role"><option value="reader">{{ roleLabel('reader') }}</option><option value="writer">{{ roleLabel('writer') }}</option></select></label>
+          <button v-if="inviteGrants.length > 1" class="text-button" type="button" @click="inviteGrants.splice(index, 1)">{{ ui('Remove project', '移除项目') }}</button>
+        </fieldset>
+        <button v-if="inviteGrants.length < 20" class="secondary-button" type="button" :disabled="busy || !!oneTimeInvite" @click="inviteGrants.push({ project_id: '', role: 'writer' })">{{ ui('Add project', '添加项目') }}</button>
+        <ContainerTreePagination :tree="containerTree" @workspaces="moreWorkspaces" @projects="moreProjects" />
+        <p class="muted-copy">{{ ui('The full URL appears only in the create response; this page does not store it.', '完整网址只在创建响应中出现一次；页面不会保存它。') }}</p>
+        <p v-if="inviteRecoveryNotice" class="inline-alert" role="alert">{{ inviteRecoveryNotice }}</p>
+        <textarea v-if="oneTimeInvite" :value="oneTimeInvite" readonly rows="5" />
+        <div class="form-actions"><CopyForAgentButton v-if="oneTimeInvite" :text="oneTimeInvite" /><button v-if="oneTimeInvite && presentedInvitationRecord" class="primary-button" type="button" :disabled="busy" @click="acknowledgePresentedInvitation">{{ ui('I saved it · Done', '我已保存，完成') }}</button><button v-if="!oneTimeInvite" class="primary-button" type="submit" :disabled="busy || inviteNeedsReview || !validInviteGrants">{{ t('action.save') }}</button></div>
+      </form>
+    </ModalDialog>
     <ModalDialog v-if="showPrincipal && selectedPrincipal" :busy="busy" :title="ui('Principal access', '身份访问')" @close="closePrincipal">
       <header class="modal-summary">
         <strong>{{ selectedPrincipal.display_name }}</strong>

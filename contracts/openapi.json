@@ -6851,16 +6851,22 @@
           "invitations"
         ],
         "summary": "Redeem Invitation",
-        "description": "A valid one-time Invitation capability, with conditional current-Credential authentication required by redeem_as. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Redeem one Invitation with Idempotency-Key. A non-Owner Cookie Session can redeem only project_grant invitations as current_principal, with same-origin CSRF and every target inside its unchanged Session scope. A multi-Project invitation with any target outside a fixed Session scope is rejected atomically. Cookie cannot create an identity, recover a Principal or mint a Credential. Anonymous and Bearer modes retain their existing constraints.",
         "security": [
           {},
           {
             "BearerCredential": []
+          },
+          {
+            "WebSession": []
           }
         ],
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
           }
         ],
         "responses": {
@@ -6869,6 +6875,13 @@
             "headers": {
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             },
             "content": {
@@ -7787,6 +7800,93 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/ExpectedVersionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/owner-credentials/{credential_id}/rename": {
+      "post": {
+        "operationId": "renameOwnerDeviceCredential",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Rename Owner Device Credential",
+        "description": "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Set or change the display name of an exact active Owner Credential, including the caller's and last active device. Principal CAS, idempotency, the immutable result snapshot and security audit commit atomically. Does not rotate/revoke credentials or change secrets, fingerprints, Principal identity, sessions or permissions. Revoked and non-Owner targets are rejected.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "credential_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerDeviceWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameOwnerDeviceCredentialRequest"
               }
             }
           }
@@ -8811,8 +8911,11 @@
           "web"
         ],
         "summary": "List My Passkeys",
-        "description": "The currently authenticated Principal acting only on its own identity or Web authentication state. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Bearer Credential or Cookie Session for the current Principal only. Lists only that Principal's Passkeys; browser registration remains a separate Cookie-only WebAuthn ceremony.",
         "security": [
+          {
+            "BearerCredential": []
+          },
           {
             "WebSession": []
           }
@@ -8955,8 +9058,11 @@
           "web"
         ],
         "summary": "Revoke My Passkey",
-        "description": "The currently authenticated Principal acting only on its own identity or Web authentication state. Atomic cfKanban csrf-cas-delete operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Bearer Credential or Cookie Session for the current Principal only; Cookie requests require same-origin CSRF. Require expected_version in the query. Bearer requires Idempotency-Key; Cookie may omit it for compatibility. When supplied, retry with the same key and expected_version to replay the immutable result. Revoking a Passkey invalidates only its derived Sessions, preserving API Credentials and grants.",
         "security": [
+          {
+            "BearerCredential": []
+          },
           {
             "WebSession": []
           }
@@ -8974,7 +9080,19 @@
             "$ref": "#/components/parameters/ExpectedVersion"
           },
           {
-            "$ref": "#/components/parameters/CsrfToken"
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[\\x20-\\x7E]+$"
+            },
+            "description": "Required for Bearer authentication; optional for existing Cookie clients. Supplied keys enforce strict idempotency with unchanged expected_version."
           }
         ],
         "responses": {
@@ -11906,6 +12024,26 @@
         },
         "additionalProperties": false
       },
+      "RenameOwnerDeviceCredentialRequest": {
+        "type": "object",
+        "required": [
+          "device_name",
+          "expected_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "device_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Trimmed user-provided display label containing 1–80 Unicode code points. Control/format characters and secret credential material are rejected; never an identity or authorization key."
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version",
+            "description": "Current Owner Principal version from /me.version; not the Credential summary version."
+          }
+        }
+      },
       "RotateOwnerCredentialRequest": {
         "type": "object",
         "required": [
@@ -14424,6 +14562,7 @@
         "required": [
           "author",
           "body",
+          "completion",
           "created_at",
           "id",
           "kind",
@@ -14447,7 +14586,19 @@
             "additionalProperties": false
           },
           "body": {
-            "type": "string"
+            "type": "string",
+            "description": "Comment text, or the completion summary (including an empty summary)."
+          },
+          "completion": {
+            "description": "Null for standard comments; the complete structured payload for completion comments. Context size limits omit whole comments instead of truncating this payload.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompletionPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -18707,10 +18858,11 @@
               "type": "string",
               "enum": [
                 "revoke",
-                "revoke_owner_device"
+                "revoke_owner_device",
+                "rename_owner_device"
               ]
             },
-            "description": "Owner devices only expose revoke_owner_device when active, not the caller's Bearer or Agent Session source Credential, and another active Owner API Credential remains. Generic revoke never applies to Owner Credentials."
+            "description": "Owner devices only expose revoke_owner_device when active, not the caller's Bearer or Agent Session source Credential, and another active Owner API Credential remains. Every active Owner device exposes rename_owner_device, including the caller and last active device. Generic revoke never applies to Owner Credentials."
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"

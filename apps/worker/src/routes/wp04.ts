@@ -32,7 +32,7 @@ import {
   redeemInvitation,
   revokeInvitation,
 } from "../services/invitations.ts";
-import { addOwnerDevice, revokeOwnerDevice } from "../services/owner-devices.ts";
+import { addOwnerDevice, renameOwnerDevice, revokeOwnerDevice } from "../services/owner-devices.ts";
 
 async function body(request: Request, allowedKeys: readonly string[], requiredKeys: readonly string[]) {
   return validateJsonObject(await readJsonBody(request), { allowedKeys, requiredKeys });
@@ -99,7 +99,7 @@ export function registerWp04Routes(router: Router): Router {
         value.new_credential_token as JsonValue | undefined,
         context.startedAt,
         (auth) => enforcePrincipalRateLimit(env, auth),
-      ), context.requestId);
+      ), context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .get("/api/v1/admin/invitations", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
@@ -184,6 +184,11 @@ export function registerWp04Routes(router: Router): Router {
       const auth = await ownerWriteAuth(request, env, context);
       const value = await body(request, ["expected_version"], ["expected_version"]);
       return jsonResponse(await revokeOwnerDevice(env.DB, request, auth, path(context, "credential_id"), requireVersion(value.expected_version ?? null), context.startedAt), context.requestId);
+    })
+    .post("/api/v1/admin/owner-credentials/{credential_id}/rename", async (request, env, context) => {
+      const auth = await ownerWriteAuth(request, env, context);
+      const value = await body(request, ["device_name", "expected_version"], ["device_name", "expected_version"]);
+      return jsonResponse(await renameOwnerDevice(env.DB, request, auth, path(context, "credential_id"), value, context.startedAt), context.requestId);
     })
     .post("/api/v1/admin/owner-credentials/rotate", async (request, env, context) => {
       const preauthenticated = await preauthenticateOwnerRotationRequest(env.DB, request);

@@ -59,6 +59,7 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
       <p class="eyebrow">{{ locale === "zh-CN" ? "项目范围" : "Project scope" }}</p>
       <h1>{{ t("project.choose") }}</h1>
       <p>{{ t("project.chooseHelp") }}</p>
+      <button class="text-button" type="button" @click="navigate('/app/work')">{{ locale === "zh-CN" ? "跨项目工作清单" : "Work across selected projects" }} →</button>
     </header>
     <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load" />
     <section v-if="managedWorkspaces.length" class="selection-list">

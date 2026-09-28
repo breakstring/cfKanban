@@ -42,7 +42,6 @@ const bearer = [{ BearerCredential: [] }];
 const cookie = [{ WebSession: [] }];
 const authenticated = [...bearer, ...cookie];
 const publicAccess = [];
-const optionalBearer = [{}, ...bearer];
 const optionalAuthenticated = [{}, ...authenticated];
 
 const operations = [
@@ -131,7 +130,7 @@ const operations = [
   ["delete", "/api/v1/relations/{relation_id}", "deleteRelation", "relations", authenticated, "cas-delete", "RelationDeleteQuery"],
   ["post", "/api/v1/relations/{relation_id}/commands/restore", "restoreRelation", "relations", authenticated, "idempotent-cas", "RelationVersionsRequest"],
 
-  ["post", "/api/v1/invitations/redeem", "redeemInvitation", "invitations", optionalBearer, "idempotent", "RedeemInvitationRequest"],
+  ["post", "/api/v1/invitations/redeem", "redeemInvitation", "invitations", optionalAuthenticated, "idempotent", "RedeemInvitationRequest"],
   ["get", "/api/v1/admin/invitations", "listInvitations", "invitations", authenticated, "read", "InvitationListQuery"],
   ["post", "/api/v1/admin/invitations", "createInvitation", "invitations", authenticated, "idempotent", "CreateInvitationRequest"],
   ["get", "/api/v1/admin/invitations/{invitation_id}", "getInvitation", "invitations", authenticated, "read"],
@@ -144,6 +143,7 @@ const operations = [
   ["post", "/api/v1/admin/owner-credentials/rotate", "rotateOwnerCredential", "admin", bearer, "idempotent", "RotateOwnerCredentialRequest"],
   ["post", "/api/v1/admin/owner-credentials/add-device", "addOwnerDeviceCredential", "admin", authenticated, "idempotent-cas", "AddOwnerDeviceCredentialRequest"],
   ["post", "/api/v1/admin/owner-credentials/{credential_id}/revoke", "revokeOwnerDeviceCredential", "admin", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
+  ["post", "/api/v1/admin/owner-credentials/{credential_id}/rename", "renameOwnerDeviceCredential", "admin", authenticated, "idempotent-cas", "RenameOwnerDeviceCredentialRequest"],
   ["get", "/api/v1/admin/instance-origin", "getInstanceOrigin", "admin", authenticated, "read"],
   ["put", "/api/v1/admin/instance-origin", "updateInstanceOrigin", "admin", bearer, "idempotent-cas", "UpdateInstanceOriginRequest"],
   ["get", "/api/v1/admin/projects/{project_id}/grants", "listProjectGrants", "admin", authenticated, "read", "CursorQuery"],
@@ -158,9 +158,9 @@ const operations = [
   ["get", "/api/v1/web-session", "getWebSession", "web", cookie, "read"],
   ["delete", "/api/v1/web-session", "revokeWebSession", "web", cookie, "csrf"],
   ["post", "/api/v1/me/passkeys/registration-options", "createPasskeyRegistrationOptions", "web", cookie, "csrf", "EmptyRequest"],
-  ["get", "/api/v1/me/passkeys", "listMyPasskeys", "web", cookie, "read"],
+  ["get", "/api/v1/me/passkeys", "listMyPasskeys", "web", authenticated, "read"],
   ["post", "/api/v1/me/passkeys", "registerPasskey", "web", cookie, "csrf-idempotent", "RegisterPasskeyRequest"],
-  ["delete", "/api/v1/me/passkeys/{passkey_id}", "revokeMyPasskey", "web", cookie, "csrf-cas-delete"],
+  ["delete", "/api/v1/me/passkeys/{passkey_id}", "revokeMyPasskey", "web", authenticated, "csrf-cas-delete"],
   ["delete", "/api/v1/admin/passkeys/{passkey_id}", "revokePrincipalPasskey", "admin", authenticated, "csrf-cas-delete"],
   ["post", "/api/v1/web-authentication/options", "createWebAuthenticationOptions", "web", publicAccess, "write", "EmptyRequest"],
   ["post", "/api/v1/web-authentication/verify", "verifyWebAuthentication", "web", publicAccess, "idempotent", "VerifyWebAuthenticationRequest"],
@@ -331,7 +331,7 @@ const permissionDescriptions = {
   relation_endpoints_writer: "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators.",
   credential_principal: "Any Principal authenticated with a current Bearer Credential; Cookie Session is intentionally insufficient.",
   agent_launch_session: "A current Cookie Session whose source is an active Bearer Credential Browser Launch.",
-  invitation_capability: "A valid one-time Invitation capability, with conditional current-Credential authentication required by redeem_as.",
+  invitation_capability: "A valid one-time Invitation capability, with conditional current-Principal authentication required by redeem_as. Cookie sessions may redeem only ordinary Project Invitations as their current non-Owner Principal within their unchanged Session scope.",
   browser_launch_capability: "A valid one-time Browser Launch capability.",
   webauthn_options: "Public creation of a short-lived, single-use discoverable WebAuthn authentication challenge.",
   webauthn_capability: "A valid single-use WebAuthn challenge and assertion ceremony.",
@@ -347,7 +347,7 @@ const permissionGroups = {
     "previewWorkspacePurge", "purgeWorkspace", "previewProjectPurge", "purgeProject",
     "createWorkspace", "deleteWorkspace", "restoreWorkspace",
     "createWorkspaceAdministrator", "revokeWorkspaceAdministrator", "listWorkspaceAdministratorCandidates",
-    "listPrincipals", "getPrincipal", "listPrincipalCredentials", "revokeCredential", "rotateOwnerCredential", "addOwnerDeviceCredential", "revokeOwnerDeviceCredential",
+    "listPrincipals", "getPrincipal", "listPrincipalCredentials", "revokeCredential", "rotateOwnerCredential", "addOwnerDeviceCredential", "revokeOwnerDeviceCredential", "renameOwnerDeviceCredential",
     "getInstanceOrigin", "updateInstanceOrigin", "listAuditEvents", "revokePrincipalPasskey",
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
     "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings", "getHomepageSettings", "updateHomepageSettings",
@@ -621,6 +621,13 @@ const schemas = {
       expected_version: { ...ref("Version"), description: "Current Owner Principal version from /me.version." },
     },
     additionalProperties: false,
+  },
+  RenameOwnerDeviceCredentialRequest: {
+    type: "object", required: ["device_name", "expected_version"], additionalProperties: false,
+    properties: {
+      device_name: string({ minLength: 1, maxLength: 80, description: "Trimmed user-provided display label containing 1–80 Unicode code points. Control/format characters and secret credential material are rejected; never an identity or authorization key." }),
+      expected_version: { ...ref("Version"), description: "Current Owner Principal version from /me.version; not the Credential summary version." },
+    },
   },
   RotateOwnerCredentialRequest: { type: "object", required: ["new_credential_token"], properties: { new_credential_token: credentialToken() }, additionalProperties: false },
   UpdateInstanceOriginRequest: { type: "object", required: ["expected_version", "preferred_api_origin"], properties: { expected_version: ref("Version"), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }) }, additionalProperties: false },
@@ -998,7 +1005,7 @@ const schemas = {
   },
   IssueCommentSummary: {
     type: "object",
-    required: ["author", "body", "created_at", "id", "kind", "version"],
+    required: ["author", "body", "completion", "created_at", "id", "kind", "version"],
     properties: {
       author: {
         type: "object",
@@ -1006,7 +1013,11 @@ const schemas = {
         properties: { display_name: string(), principal_id: ref("Uuid") },
         additionalProperties: false,
       },
-      body: string(),
+      body: string({ description: "Comment text, or the completion summary (including an empty summary)." }),
+      completion: {
+        description: "Null for standard comments; the complete structured payload for completion comments. Context size limits omit whole comments instead of truncating this payload.",
+        oneOf: [ref("CompletionPayload"), { type: "null" }],
+      },
       created_at: ref("Timestamp"),
       id: ref("Uuid"),
       kind: string({ enum: ["standard", "completion"] }),
@@ -1959,7 +1970,7 @@ const schemas = {
     type: "object",
     required: ["allowed_actions", "created_at", "deleted_at", "device_name", "fingerprint", "id", "issued_at", "last_used_at", "principal", "principal_id", "revoke_reason", "revoked_at", "updated_at", "version"],
     properties: {
-      allowed_actions: { type: "array", items: string({ enum: ["revoke", "revoke_owner_device"] }), description: "Owner devices only expose revoke_owner_device when active, not the caller's Bearer or Agent Session source Credential, and another active Owner API Credential remains. Generic revoke never applies to Owner Credentials." },
+      allowed_actions: { type: "array", items: string({ enum: ["revoke", "revoke_owner_device", "rename_owner_device"] }), description: "Owner devices only expose revoke_owner_device when active, not the caller's Bearer or Agent Session source Credential, and another active Owner API Credential remains. Every active Owner device exposes rename_owner_device, including the caller and last active device. Generic revoke never applies to Owner Credentials." },
       created_at: ref("Timestamp"),
       deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
       device_name: { anyOf: [string({ maxLength: 80 }), { type: "null" }] },
@@ -2202,6 +2213,7 @@ const operationResponseSchemas = {
   listProjectAdministrators: ref("AdministratorListResult"),
   addOwnerDeviceCredential: ref("OwnerDeviceWriteResult"),
   revokeOwnerDeviceCredential: ref("OwnerDeviceWriteResult"),
+  renameOwnerDeviceCredential: ref("OwnerDeviceWriteResult"),
   createWorkspaceAdministrator: ref("AdministratorWriteResult"),
   createProjectAdministrator: ref("AdministratorWriteResult"),
   revokeWorkspaceAdministrator: ref("AdministratorWriteResult"),
@@ -2386,6 +2398,12 @@ const requestIdHeader = { "X-Request-ID": { $ref: "#/components/headers/RequestI
 const noStoreHeader = { ...requestIdHeader, "Cache-Control": { required: true, schema: { type: "string", const: "no-store" } } };
 paths["/api/v1/admin/owner-credentials/add-device"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Explicitly approve an Agent-generated non-secret pairing request for the same instance and Owner. Requires at least one active Owner API Credential and enforces the 100 active Credential limit atomically. Principal CAS, idempotency and security audit commit together. The new Agent must still verify its pending Credential locally; this is not an all-credentials-lost recovery endpoint.";
 paths["/api/v1/admin/owner-credentials/{credential_id}/revoke"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Atomically revoke another Owner device and its derived Session/Launch capabilities with Principal CAS, idempotency and security audit. Reject the caller's Bearer Credential, an Agent Session's source Credential and the last active Owner API Credential. Passkey Sessions remain independent. Generic Credential DELETE and Owner rotation retain their separate restrictions.";
+paths["/api/v1/admin/owner-credentials/{credential_id}/rename"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Set or change the display name of an exact active Owner Credential, including the caller's and last active device. Principal CAS, idempotency, the immutable result snapshot and security audit commit atomically. Does not rotate/revoke credentials or change secrets, fingerprints, Principal identity, sessions or permissions. Revoked and non-Owner targets are rejected.";
+paths["/api/v1/me/passkeys"].get.description = "Bearer Credential or Cookie Session for the current Principal only. Lists only that Principal's Passkeys; browser registration remains a separate Cookie-only WebAuthn ceremony.";
+paths["/api/v1/me/passkeys/{passkey_id}"].delete.description = "Bearer Credential or Cookie Session for the current Principal only; Cookie requests require same-origin CSRF. Require expected_version in the query. Bearer requires Idempotency-Key; Cookie may omit it for compatibility. When supplied, retry with the same key and expected_version to replay the immutable result. Revoking a Passkey invalidates only its derived Sessions, preserving API Credentials and grants.";
+paths["/api/v1/me/passkeys/{passkey_id}"].delete.parameters.push({ name: "Idempotency-Key", in: "header", required: false, schema: string({ minLength: 1, maxLength: 128, pattern: "^[\\x20-\\x7E]+$" }), description: "Required for Bearer authentication; optional for existing Cookie clients. Supplied keys enforce strict idempotency with unchanged expected_version." });
+paths["/api/v1/invitations/redeem"].post.description = "Redeem one Invitation with Idempotency-Key. A non-Owner Cookie Session can redeem only project_grant invitations as current_principal, with same-origin CSRF and every target inside its unchanged Session scope. A multi-Project invitation with any target outside a fixed Session scope is rejected atomically. Cookie cannot create an identity, recover a Principal or mint a Credential. Anonymous and Bearer modes retain their existing constraints.";
+paths["/api/v1/invitations/redeem"].post.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/homepage-settings"].get.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/homepage-settings"].patch.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/homepage-settings"].get.description = "Owner instance control only; a project-scoped Owner Session and scoped administrators cannot read these settings.";

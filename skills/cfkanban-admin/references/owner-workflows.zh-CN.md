@@ -124,6 +124,12 @@ Principal Recovery Invite 固定 1 小时。创建前：
 
 配对请求最多有效一小时，已获批 Credential 不随请求到期失效。pending 冲突、身份/origin 变化或 Service 不支持时停止。响应不确定时保留准确请求，命令会复用已保存的尝试 body/key。仅在核实 Service 明确返回 `VERSION_CONFLICT` 后，结果才给出 `retry_with_fresh_version:true`；重复同一命令即可刷新身份/CAS，并持久化新的内部尝试幂等键。不要手改私有状态或替换 pending secret。批准时必须已有至少一份 active Owner API Credential，上限为 100 份。active 只表示服务端未撤销，不证明本地 secret 文件还在；已有有效 Owner admin 会话时，即使文件丢失也可批准新设备，但不会像全失恢复一样撤销全部旧凭据。Owner 网页也支持明确确认后专用撤销；禁止撤销当前 Bearer/Session 来源和最后一份 active Owner API Credential，更新当前 secret 仍用轮换。单独撤销只影响目标 Credential 及其派生 Launch/Session，保留其他设备与独立 Passkey。全失恢复会使全部旧 Owner API Credential 失效，仍走 `cfkanban-deploy`。
 
+### 为有效 Owner 设备补名或改名
+
+“给未命名设备补名”或“把工作电脑改名”时，先核对已部署的改名接口、当前 Owner，并用 `owner-device list` 确定准确 Credential ID；名称可能重复，不能仅凭名称选择。使用 `api request`，传入 `method:"POST"`、`apiPath:"/api/v1/admin/owner-credentials/<credential-id>/rename"`、`body:{device_name:"工作电脑",expected_version:<最新 /me.version>}` 和新的 `idempotencyKey`。核对 `rename_owner_device`，不要使用 Credential 摘要的兼容投影 version。名称 trim 后为 1–80 Unicode code points，拒绝空白、控制/格式字符和秘密凭据材料，不能清空为 null；允许改名当前设备和最后一份有效设备，拒绝已撤销或非 Owner Credential。
+
+保存后通过有界分页读回同一 ID。操作只改变展示名称和 Principal CAS 元数据，secret/fingerprint、Principal 身份、会话和权限保持有效，后续轮换保留名称。Owner Web 成员与权限页提供同等的英文/简中保存入口，无需撤销式确认框。响应不确定时保留完全相同的 body/key 重试；仅核实 `VERSION_CONFLICT` 后才能刷新版本并发起新尝试。安装了新 Skill 不证明线上支持该接口，也不授权升级。
+
 ### 已有本地身份与恢复
 
 同一实例已有 current 时，默认准备会停止。用户明确选择切换为 Owner 后，先检查当前本地身份的准确 ID，再向 `owner-device prepare` 增加 `replaceCurrent:true`、`expectedCurrentPrincipalId` 和 `expectedCurrentCredentialId`。等待批准期间旧 current 保持有效；`owner-device verify` 成功后先将旧身份保存在私有 previous 槽，再把新 Owner 设为 current。原 Principal 不会被升级、合并或撤销，其管理授权也不改变。已有不同 previous 时禁止覆盖。

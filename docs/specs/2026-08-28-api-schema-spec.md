@@ -299,11 +299,13 @@ preferred origin 是实例级应用设置，不负责在 Cloudflare 或第三方
 
 ### 5.6 Passkey 与 Public Join
 
+普通邀请的有限 Cookie 兑换、本人 Passkey 的 Bearer 管理及幂等兼容，以 [参与者邀请与 Passkey 增量](2026-09-28-participant-invitation-passkey-parity-spec.md) 为准。
+
 | Method | Path | 权限 | 语义 |
 | --- | --- | --- | --- |
 | POST | `/api/v1/me/passkeys/registration-options` | Agent-launch Cookie Session + CSRF | 创建短期单次登记 challenge；Passkey 来源 Session 拒绝 |
-| GET/POST | `/api/v1/me/passkeys` | Cookie Session / Agent-launch Cookie Session + CSRF | 列举自己的非秘密服务端登记摘要；验证登记结果并绑定当前 Principal，不声称枚举当前设备 |
-| DELETE | `/api/v1/me/passkeys/{passkey_id}` | Cookie Session + CSRF | 撤销自己的一个 Passkey，并撤销其来源 Sessions |
+| GET/POST | `/api/v1/me/passkeys` | GET: Bearer 或 Cookie；POST: Agent-launch Cookie + CSRF | 列举自己的非秘密服务端登记摘要；验证登记结果并绑定当前 Principal，不声称枚举当前设备 |
+| DELETE | `/api/v1/me/passkeys/{passkey_id}` | Bearer 或 Cookie + CSRF | 撤销自己的一个 Passkey，并撤销其来源 Sessions；Bearer 要求 Idempotency-Key，Cookie 保持无键兼容，有键时可重放 |
 | DELETE | `/api/v1/admin/passkeys/{passkey_id}` | Owner Bearer 或 Owner Cookie Session + CSRF | 撤销参与者 Passkey；目标属于 Owner 时拒绝并要求本人操作 |
 | POST | `/api/v1/web-authentication/options` | Public | 创建短期单次 discoverable-credential assertion challenge |
 | POST | `/api/v1/web-authentication/verify` | WebAuthn assertion capability | 验证 assertion、消费 challenge并建立固定 8 小时 Session |
@@ -417,6 +419,8 @@ complete：
 2026-09-20 用户授权修订：请求只要求 `expected_version`；`summary` 选填，省略、空字符串或纯空白统一保存为 `""`，拒绝 `null` 和非字符串。输入最多 8192 个 Unicode code points，非空内容保留原文。响应的 completion 仍始终包含字符串 `summary`。completion Comment 的公开 `body` 从结构化 `summary` 投影，空说明时同样返回 `""`。为兼容既有 `comments.body` 非空 CHECK，空说明记录在内部 body 保存同一规范 completion JSON，不能保存虚构用户说明；普通 Comment 仍要求非空。已有带摘要调用保持有效，无需数据迁移；新 Web 必须与支持选填的 Service 一起发布。空说明仍创建不可变 completion Comment，继续占用原有 Comment quota，保留 CAS、幂等、审计与 reopen 历史；不允许普通 PATCH 绕过 complete。
 
 整个 completion payload 最大 32 KiB。服务端校验结构但不读取 artifact，也不把内容当指令。
+
+Issue 详情的 `comments` 与 `/context` 的 `sections.comments.items` 使用同一 `IssueCommentSummary` 投影：普通 Comment 的 `completion` 为 `null`；completion Comment 返回完整既有 payload，`body` 同样从 `completion.summary` 投影，包含空字符串，不能返回内部兼容存储的 JSON 正文。`/context` 的 64 KiB 总预算包含结构化完成记录；超限时按既有顺序整条省略较旧评论，以 `omitted_count` 和 `continuation` 标明续读，不裁剪完成记录字段。详情和摘要复用原有有界评论查询，不新增查询或改变读取权限。
 
 Invitation redeem 使用由本地可信脚本预先生成并安全落盘的 Credential token。首次创建 Principal 的 Project Invite 示例：
 

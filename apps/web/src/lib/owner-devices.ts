@@ -28,9 +28,9 @@ export interface OwnerDevicePairing {
 
 type DeviceBody = Pick<OwnerDevicePairing, "instance_id" | "principal_id" | "credential_id" | "token_prefix" | "token_digest" | "device_name" | "issued_at" | "expires_at"> & { expected_version: number };
 export interface OwnerDeviceAttempt {
-  readonly kind: "approve" | "revoke";
+  readonly kind: "approve" | "revoke" | "rename";
   readonly path: string;
-  readonly body: Readonly<DeviceBody | { expected_version: number }>;
+  readonly body: Readonly<DeviceBody | { expected_version: number } | { device_name: string; expected_version: number }>;
   readonly key: string;
   readonly startedAt: number;
   readonly credentialId: string;
@@ -40,7 +40,7 @@ export interface OwnerDeviceAttempt {
 }
 
 export class OwnerDeviceInputError extends Error {
-  readonly code: "invalid" | "target" | "expired" | "identity";
+  readonly code: "invalid" | "name" | "target" | "expired" | "identity";
   constructor(code: OwnerDeviceInputError["code"]) {
     super(code);
     this.code = code;
@@ -117,6 +117,15 @@ export function revokeOwnerDeviceAttempt(device: CredentialResource, identity: O
     body: Object.freeze({ expected_version: identity.version }) });
 }
 
+export function renameOwnerDeviceAttempt(device: CredentialResource, name: string, identity: OwnerDeviceIdentity, key: string, now = Date.now()): OwnerDeviceAttempt {
+  if (!uuid(device.id) || device.principal_id !== identity.principalId || device.revoked_at !== null || !device.allowed_actions.includes("rename_owner_device")) throw new OwnerDeviceInputError("target");
+  const deviceName = name.trim();
+  if (!deviceName || [...deviceName].length > 80 || /[\p{Cc}\p{Cf}]/u.test(deviceName) || /cf[kil]_v1_/i.test(deviceName)) throw new OwnerDeviceInputError("name");
+  return Object.freeze({ kind: "rename", path: `/api/v1/admin/owner-credentials/${device.id}/rename`, key, startedAt: now,
+    credentialId: device.id, principalId: identity.principalId, fingerprint: device.fingerprint, deviceName,
+    body: Object.freeze({ device_name: deviceName, expected_version: identity.version }) });
+}
+
 export function ownerDeviceRetryAllowed(attempt: OwnerDeviceAttempt, now = Date.now()): boolean {
   return now < attempt.startedAt + RETRY_WINDOW_MS;
 }
@@ -127,11 +136,18 @@ export function isOwnerDeviceWriteResult(value: unknown, attempt: OwnerDeviceAtt
   return device.id === attempt.credentialId && device.principal_id === attempt.principalId
     && device.fingerprint === attempt.fingerprint && device.device_name === attempt.deviceName
     && device.principal_version === attempt.body.expected_version + 1
-    && (attempt.kind === "approve" ? device.revoked_at === null : utc(device.revoked_at) && device.revoke_reason === "owner_device_revoke");
+    && (attempt.kind === "revoke" ? utc(device.revoked_at) && device.revoke_reason === "owner_device_revoke" : device.revoked_at === null);
 }
 
 export function ownerDeviceVersionConflict(error: unknown): boolean {
   return record(error) && error.status === 409 && record(error.body) && error.body.source === "service"
     && error.body.code === "VERSION_CONFLICT" && error.body.retryable === false
     && record(error.body.details) && error.body.details.normalized_by !== "client";
+}
+
+export function ownerDeviceNameRejected(error: unknown): boolean {
+  return record(error) && error.status === 400 && record(error.body) && error.body.source === "service"
+    && error.body.code === "VALIDATION_ERROR" && error.body.retryable === false
+    && record(error.body.details) && error.body.details.normalized_by !== "client"
+    && error.body.details.reason === "invalid_device_name";
 }

@@ -2058,10 +2058,15 @@ test("optional completion summaries preserve atomic completion, replay, and reop
   const issuePath = `/api/v1/issues/${issue.body.resource.identifier}`;
   const expectedSummaries = ["", "", "", "  Meaningful note\n"];
   const summaries = [undefined, "", " \t\n", expectedSummaries[3]];
+  const completionFields = {
+    artifacts: [{ kind: "url", value: "https://example.test/verification" }],
+    follow_ups: ["Check the next handoff"],
+    verification: ["Confirmed in the local integration test"],
+  };
   let version = issue.body.resource.version;
   const commentIds = [];
   for (const [index, summary] of summaries.entries()) {
-    const body = { expected_version: version, ...(summary === undefined ? {} : { summary }) };
+    const body = { expected_version: version, ...completionFields, ...(summary === undefined ? {} : { summary }) };
     const headers = ownerHeaders({ "idempotency-key": `optional-completion-${index}` });
     const result = await jsonRequest(`${issuePath}/commands/complete`, { body, headers, method: "POST" });
     assert.equal(result.response.status, 200, JSON.stringify(result.body));
@@ -2077,8 +2082,20 @@ test("optional completion summaries preserve atomic completion, replay, and reop
     assert.equal(comment.response.status, 200, JSON.stringify(comment.body));
     assert.equal(comment.body.body, expectedSummaries[index]);
     assert.deepEqual(comment.body.completion, {
-      artifacts: [], follow_ups: [], summary: expectedSummaries[index], verification: [],
+      ...completionFields, summary: expectedSummaries[index],
     });
+    const [detail, context] = await Promise.all([
+      jsonRequest(issuePath, { headers: ownerHeaders() }),
+      jsonRequest(`${issuePath}/context`, { headers: ownerHeaders() }),
+    ]);
+    assert.equal(detail.response.status, 200, JSON.stringify(detail.body));
+    assert.equal(context.response.status, 200, JSON.stringify(context.body));
+    assert.deepEqual(context.body.sections.comments.items, detail.body.comments);
+    const summaryComment = context.body.sections.comments.items.find((entry) => entry.id === commentIds[index]);
+    assert.equal(summaryComment.body, expectedSummaries[index]);
+    assert.deepEqual(summaryComment.completion, comment.body.completion);
+    assert.equal(context.body.sections.comments.omitted_count, 0);
+    assert.equal(context.body.sections.comments.continuation, null);
     const deletion = await jsonRequest(`/api/v1/comments/${commentIds[index]}?expected_version=1`, {
       headers: ownerHeaders(), method: "DELETE",
     });
@@ -2102,4 +2119,83 @@ test("optional completion summaries preserve atomic completion, replay, and reop
     }
   }
   assert.equal(new Set(commentIds).size, summaries.length);
+  const standard = await jsonRequest(`${issuePath}/comments`, {
+    body: { body: "Ordinary handoff note" },
+    headers: ownerHeaders({ "idempotency-key": "optional-completion-standard" }),
+    method: "POST",
+  });
+  assert.equal(standard.response.status, 200, JSON.stringify(standard.body));
+  for (const suffix of ["", "/context"]) {
+    const response = await jsonRequest(`${issuePath}${suffix}`, { headers: ownerHeaders() });
+    assert.equal(response.response.status, 200, JSON.stringify(response.body));
+    const items = suffix ? response.body.sections.comments.items : response.body.comments;
+    const standardSummary = items.find((entry) => entry.id === standard.body.resource.id);
+    assert.equal(standardSummary.body, "Ordinary handoff note");
+    assert.equal(standardSummary.completion, null);
+  }
+});
+
+test("context budget omits whole structured completion records and preserves their continuation", async () => {
+  const workspace = await jsonRequest("/api/v1/workspaces", {
+    body: { display_name: "Bounded completion" },
+    headers: ownerHeaders({ "idempotency-key": "bounded-completion-workspace" }),
+    method: "POST",
+  });
+  assert.equal(workspace.response.status, 200, JSON.stringify(workspace.body));
+  const project = await jsonRequest(`/api/v1/workspaces/${workspace.body.resource.id}/projects`, {
+    body: { display_name: "Bounded completion history" },
+    headers: ownerHeaders({ "idempotency-key": "bounded-completion-project" }),
+    method: "POST",
+  });
+  assert.equal(project.response.status, 200, JSON.stringify(project.body));
+  const issue = await createIssue(workspace.body.resource.id, project.body.resource.id,
+    "Keep complete handoff records", "bounded-completion-issue");
+  const issuePath = `/api/v1/issues/${issue.body.resource.identifier}`;
+  const records = new Map();
+  let version = issue.body.resource.version;
+  for (let index = 0; index < 3; index++) {
+    const payload = {
+      artifacts: [{ kind: "other", value: `artifact-${index}: ${"a".repeat(1_000)}` }],
+      follow_ups: [`follow-up-${index}: ${"f".repeat(1_000)}`],
+      summary: index === 2 ? "" : `Completion ${index}`,
+      verification: Array.from({ length: 24 }, (_, entry) => `check-${index}-${entry}: ${"v".repeat(1_000)}`),
+    };
+    const completed = await jsonRequest(`${issuePath}/commands/complete`, {
+      body: { expected_version: version, ...payload },
+      headers: ownerHeaders({ "idempotency-key": `bounded-completion-${index}` }),
+      method: "POST",
+    });
+    assert.equal(completed.response.status, 200, JSON.stringify(completed.body));
+    records.set(completed.body.resource.completion_comment_id, payload);
+    version = completed.body.resource.version;
+    if (index < 2) {
+      const reopened = await jsonRequest(issuePath, {
+        body: { expected_version: version, status_key: "todo" },
+        headers: ownerHeaders(), method: "PATCH",
+      });
+      assert.equal(reopened.response.status, 200, JSON.stringify(reopened.body));
+      version = reopened.body.resource.version;
+    }
+  }
+  const [detail, context, history] = await Promise.all([
+    jsonRequest(issuePath, { headers: ownerHeaders() }),
+    jsonRequest(`${issuePath}/context`, { headers: ownerHeaders() }),
+    jsonRequest(`${issuePath}/comments?limit=100`, { headers: ownerHeaders() }),
+  ]);
+  for (const response of [detail, context, history]) {
+    assert.equal(response.response.status, 200, JSON.stringify(response.body));
+  }
+  assert.equal(detail.body.comments.length, 3);
+  assert.equal(context.body.truncated, true);
+  assert.ok(Buffer.byteLength(JSON.stringify(context.body), "utf8") <= 64 * 1_024);
+  assert.equal(context.body.sections.comments.omitted_count, 1);
+  assert.equal(context.body.sections.comments.continuation, `${issuePath}/comments`);
+  assert.deepEqual(context.body.sections.comments.items, detail.body.comments.slice(1));
+  for (const entry of [...detail.body.comments, ...context.body.sections.comments.items, ...history.body.items]) {
+    const expected = records.get(entry.id);
+    assert.ok(expected);
+    assert.equal(entry.body, expected.summary);
+    assert.deepEqual(entry.completion, expected);
+  }
+  assert.equal(context.body.sections.comments.items.at(-1).body, "");
 });

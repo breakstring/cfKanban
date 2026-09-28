@@ -264,3 +264,11 @@ Principal 名称从 schema 8 起在整个实例内唯一。首尾去空白并 NF
 当前工作区或项目管理员在日常 Issue、评论、附件、指派与关系操作中具有有效 writer 权限。工作区管理动态继承到当前和未来全部子项目。`/api/v1/me.management_grants` 与资源 `allowed_actions` 单独表达管理能力，数据面 reader/writer 投影不授予管理权。直接 Grant 与管理来源独立取并集；失去一条来源不删除其他授权，失去全部 writer 权限只让现有 assignment 标记不可用，保留历史。关系仍要求同工作区且两端有效授权。
 
 管理员任免、有效成员列表、范围内设置和空工作区管理交给 `cfkanban-admin`，后者可用 `{kind:"workspace",workspace_id:"<UUID>"}` 打开准确管理页。普通加入与 Invite 仍只授予明确 reader/writer。局部管理员签发的邀请如果准确签发管理授权在兑换前撤销，会永久失效；请获取新的获授权邀请，不原样重试或更换原邀请的签发来源。Owner 专属身份恢复边界不变。
+
+## 本人已登记的 Passkey
+
+服务支持 Bearer 本人管理时，使用 `api request` 读取 `GET /api/v1/me/passkeys`。结果是当前 Principal 的服务端登记记录，不是硬件清单，不返回私钥或 WebAuthn 认证材料。旧服务若拒绝 Bearer，使用 Browser Launch 打开个人资料页，不改用 Owner 管理入口替代本人操作。
+
+用户明确选择一项后，说明撤销会立即终止由该 Passkey 建立的全部浏览器会话。使用返回的准确 ID/version，发送 `DELETE /api/v1/me/passkeys/{id}?expected_version={version}`，提供一个明确且稳定的 `idempotencyKey`。API Credential、Grant 和其他 Passkey 保持不变。读回本人列表后才报告成功。响应不确定时保留同一路径、版本和键；版本冲突时刷新并重新核对目标，提交状态未知时不换键重试。登记与认证仍由用户在浏览器/系统中完成 WebAuthn 交互。
+
+服务支持时，已登录的非 Owner 网页参与者也可在普通项目邀请落地页明确接受邀请，复用当前身份并校验同源与 CSRF，不扩大 Session 范围；固定范围会话不能接受越界目标。新身份、Principal Recovery 与 Owner 设备接入继续使用各自的 Agent 安全流程。

@@ -105,9 +105,9 @@ function credentialVersion(row: CredentialRow): number {
   return row.revoked_at === null ? 1 : 2;
 }
 
-function credentialResource(row: CredentialRow, canRevoke: boolean, canRevokeOwnerDevice = false): { [key: string]: JsonValue } {
+function credentialResource(row: CredentialRow, canRevoke: boolean, canRevokeOwnerDevice = false, canRenameOwnerDevice = false): { [key: string]: JsonValue } {
   return {
-    allowed_actions: row.revoked_at === null ? [...(canRevoke ? ["revoke"] : []), ...(canRevokeOwnerDevice ? ["revoke_owner_device"] : [])] : [],
+    allowed_actions: row.revoked_at === null ? [...(canRevoke ? ["revoke"] : []), ...(canRevokeOwnerDevice ? ["revoke_owner_device"] : []), ...(canRenameOwnerDevice ? ["rename_owner_device"] : [])] : [],
     created_at: timestamp(row.issued_at),
     deleted_at: timestamp(row.revoked_at),
     device_name: row.device_name,
@@ -469,7 +469,7 @@ export async function getPrincipal(
   await verifyCurrentAuth(db, auth, now);
   return {
     ...principalResource(principal),
-    credentials: credentials.slice(0, 100).map((row) => credentialResource(row, principal.is_owner !== 1, canRevokeOwnerDevice(row, principal, auth))),
+    credentials: credentials.slice(0, 100).map((row) => credentialResource(row, principal.is_owner !== 1, canRevokeOwnerDevice(row, principal, auth), principal.is_owner === 1)),
     credentials_has_more: credentials.length > 100,
     grants: grants.slice(0, 100).map(grantResource),
     grants_has_more: grants.length > 100,
@@ -516,7 +516,7 @@ export async function listPrincipalCredentials(
   const tail = page.at(-1);
   return {
     has_more: hasMore,
-    items: page.map((row) => credentialResource(row, principal.is_owner !== 1, canRevokeOwnerDevice(row, principal, auth))),
+    items: page.map((row) => credentialResource(row, principal.is_owner !== 1, canRevokeOwnerDevice(row, principal, auth), principal.is_owner === 1)),
     next_cursor: hasMore && tail ? encodeCursor(cursorContext, [tail.issued_at, tail.id]) : null,
     resolved_scope: { principal_id: principalId },
   };

@@ -16,7 +16,8 @@ import {
   type ProjectRole,
   type RecoveryMode,
 } from "../domain/model.ts";
-import { authenticateBearer, parseBearerCredential } from "../kernel/auth.ts";
+import { authenticateBearer, authenticateCookieSession, parseBearerCredential, SESSION_COOKIE_NAME } from "../kernel/auth.ts";
+import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
 import {
   buildCurrentAuthGuard,
   requireOwnerControl,
@@ -951,7 +952,118 @@ function preferredInvitationLocale(acceptLanguage: string | null): "en" | "zh-CN
   return "en";
 }
 
-export const INVITATION_PAGE_SCRIPT = `(()=>{const apply=(locale)=>{const selected=locale==="zh-CN"?"zh-CN":"en";document.documentElement.lang=selected;document.querySelectorAll("[data-invitation-locale]").forEach((section)=>{section.hidden=section.dataset.invitationLocale!==selected});try{localStorage.setItem("cfkanban_locale",selected)}catch{}};document.querySelectorAll("[data-select-locale]").forEach((button)=>button.addEventListener("click",()=>apply(button.dataset.selectLocale)));try{const saved=localStorage.getItem("cfkanban_locale");if(saved)apply(saved)}catch{}history.replaceState({},document.title,"/invite")})()`;
+export const INVITATION_PAGE_SCRIPT = String.raw`(() => {
+  const inviteCode = new URL(location.href).searchParams.get("code");
+  history.replaceState({}, document.title, "/invite");
+  const metadata = JSON.parse(document.getElementById("cfkanban-invitation-metadata").textContent);
+  const status = document.getElementById("invitation-status");
+  const button = document.getElementById("invitation-accept");
+  const next = document.getElementById("invitation-next");
+  let principal = null;
+  let sessionId = null;
+  let state = "loading";
+  let submitting = false;
+  let attempt = null;
+  const messages = {
+    loading: ["Checking your signed-in identity…", "正在核对当前登录身份…"],
+    agent: ["Use your trusted cfKanban Agent to join or recover an identity. No invitation has been accepted here.", "请使用可信 cfKanban Agent 加入或恢复身份。此页面尚未接受邀请。"],
+    ready: ["Accept the projects and roles above as ", "将以上项目与角色授予当前身份："],
+    sending: ["Accepting invitation…", "正在接受邀请…"],
+    uncertain: ["The result is not confirmed. Keep this page open and retry the same request.", "结果尚未确认。请保留此页面并重试原请求。"],
+    unavailable: ["This invitation cannot be accepted. Ask the sender to check its current status.", "此邀请无法接受，请联系发送者核对当前状态。"],
+    forbidden: ["This session cannot accept these projects. Reopen cfKanban through your Agent and use the original invitation link.", "当前会话无法接受这些项目。请通过 Agent 重新打开 cfKanban，再使用原邀请链接。"],
+    expired: ["Your session is no longer valid. Reopen cfKanban through your Agent and use the original invitation link.", "当前登录已失效。请通过 Agent 重新打开 cfKanban，再使用原邀请链接。"],
+    identity_changed: ["Your signed-in identity changed. Reload the original invitation link and review it before accepting.", "当前登录身份已变化。请重新打开原邀请链接，核对身份后再接受。"],
+    done: ["Invitation accepted. Your existing session scope and expiry are unchanged.", "已接受邀请。当前会话的范围与到期时间保持不变。"]
+  };
+  const render = () => {
+    const zh = document.documentElement.lang === "zh-CN";
+    const index = zh ? 1 : 0;
+    status.textContent = messages[state][index] + (state === "ready" && principal ? principal.display_name + " (" + principal.id + ")" : "");
+    button.hidden = !principal || !["ready", "sending", "uncertain"].includes(state);
+    button.disabled = submitting;
+    button.textContent = state === "uncertain" ? (zh ? "核实并重试" : "Retry the same request") : (zh ? "以当前身份接受邀请" : "Accept as this identity");
+    next.hidden = state !== "done";
+    next.textContent = zh ? "打开项目" : "Open projects";
+  };
+  const apply = (locale) => {
+    const selected = locale === "zh-CN" ? "zh-CN" : "en";
+    document.documentElement.lang = selected;
+    document.querySelectorAll("[data-invitation-locale]").forEach((section) => { section.hidden = section.dataset.invitationLocale !== selected; });
+    try { localStorage.setItem("cfkanban_locale", selected); } catch {}
+    render();
+  };
+  document.querySelectorAll("[data-select-locale]").forEach((control) => control.addEventListener("click", () => apply(control.dataset.selectLocale)));
+  try { const saved = localStorage.getItem("cfkanban_locale"); if (saved) apply(saved); } catch {}
+  const confirmed = (result) => {
+    const resource = result?.resource;
+    if (!resource || resource.id !== metadata.invitation_id || resource.kind !== "project_grant"
+      || resource.status !== "redeemed" || typeof resource.redeemed_at !== "string"
+      || resource.revoked_at !== null || resource.credential !== null
+      || resource.redeemed_by_principal_id !== principal.id || resource.principal?.principal_id !== principal.id
+      || !Array.isArray(resource.results) || !Array.isArray(resource.grants)
+      || resource.results.length !== metadata.grants.length || resource.grants.length !== metadata.grants.length
+      || new Set(resource.results.map((item) => item.project_id)).size !== metadata.grants.length) return false;
+    return metadata.grants.every((expected) => {
+      const grant = resource.grants.find((item) => item.project_id === expected.project_id);
+      const outcome = resource.results.find((item) => item.project_id === expected.project_id);
+      return grant && grant.workspace_id === expected.workspace_id && grant.role === expected.role
+        && outcome && ["created", "regranted", "already_has_access"].includes(outcome.outcome)
+        && ["reader", "writer"].includes(outcome.effective_role)
+        && (outcome.outcome === "already_has_access" || outcome.effective_role === expected.role);
+    });
+  };
+  const sessionUuid = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  const validSession = (value) => value && sessionUuid(value.session_id)
+    && value.principal && sessionUuid(value.principal.id)
+    && typeof value.principal.display_name === "string" && value.principal.display_name.length > 0
+    && typeof value.principal.is_owner === "boolean";
+  const csrf = () => document.cookie.split(";").map((item) => item.trim()).find((item) => item.startsWith("cfkanban_csrf="))?.slice("cfkanban_csrf=".length);
+  button.addEventListener("click", async () => {
+    if (submitting || !principal || !inviteCode || !["ready", "uncertain"].includes(state)) return;
+    attempt ??= { key: crypto.randomUUID(), body: JSON.stringify({ invite_code: inviteCode, redeem_as: "current_principal" }) };
+    submitting = true;
+    state = "sending";
+    render();
+    try {
+      const currentResponse = await fetch("/api/v1/web-session", { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(15000) });
+      const current = currentResponse.ok ? await currentResponse.json() : null;
+      const sessionFailure = currentResponse.status === 401 ? "expired"
+        : !currentResponse.ok || !validSession(current) ? "uncertain"
+        : current.principal.id !== principal.id || current.session_id !== sessionId || current.principal.is_owner ? "identity_changed" : null;
+      if (sessionFailure !== null) {
+        state = sessionFailure;
+        submitting = false;
+        render();
+        return;
+      }
+      const response = await fetch("/api/v1/invitations/redeem", {
+        method: "POST", credentials: "same-origin", cache: "no-store",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf() ?? "", "idempotency-key": attempt.key },
+        body: attempt.body, signal: AbortSignal.timeout(15000)
+      });
+      const result = await response.json();
+      state = response.ok && confirmed(result) ? "done"
+        : response.status === 401 ? "expired"
+        : response.status === 403 ? "forbidden"
+        : response.status === 404 || response.status === 410 ? "unavailable" : "uncertain";
+    } catch { state = "uncertain"; }
+    submitting = false;
+    render();
+  });
+  render();
+  if (metadata.kind !== "project_grant" || !inviteCode) { state = "agent"; render(); return; }
+  fetch("/api/v1/web-session", { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(15000) })
+    .then(async (response) => {
+      const session = response.ok ? await response.json() : null;
+      if (validSession(session) && !session.principal.is_owner) {
+        principal = session.principal;
+        sessionId = session.session_id;
+        state = "ready";
+      } else { state = "agent"; }
+      render();
+    }).catch(() => { state = "agent"; render(); });
+})()`;
 
 let invitationPageScriptHash: Promise<string> | null = null;
 
@@ -972,7 +1084,7 @@ export async function invitationPageContentSecurityPolicy(): Promise<string> {
     "default-src 'none'",
     `script-src '${await invitationPageScriptSource()}'`,
     "base-uri 'none'",
-    "connect-src 'none'",
+    "connect-src 'self'",
     "font-src 'none'",
     "form-action 'none'",
     "frame-ancestors 'none'",
@@ -1007,6 +1119,7 @@ export async function getInvitationBootstrapHtml(
         : `This Invitation is bound to Principal ${escapeHtml(row.bound_principal_id ?? "")} (${escapeHtml(row.bound_display_name ?? "")}). The redeemer inherits all existing Grants, assignments, and history. ${row.recovery_mode === "rotation" ? "A successful rotation revokes only the old Credential used to authenticate this redemption; other active Credentials remain valid." : "A successful full recovery revokes every previously active Credential for this Principal."}`}</p>`;
   };
   const metadata = JSON.stringify({
+    invitation_id: row.id,
     bound_principal_id: row.bound_principal_id,
     expires_at: timestamp(row.expires_at),
     grants: grants.map((grant) => ({
@@ -1022,20 +1135,27 @@ export async function getInvitationBootstrapHtml(
   const section = (sectionLocale: "en" | "zh-CN") => {
     const isChinese = sectionLocale === "zh-CN";
     const intro = isChinese
-      ? "此页面只读，尚未消费邀请。请让 Agent 使用已从项目声明的 canonical publisher 验证过的 cfKanban Skill，核对发行来源、版本、完整性与下列目标后再执行兑换；不要运行页面中的远程脚本。"
-      : "This page is read-only and has not consumed the Invitation. Ask your Agent to use a cfKanban Skill already verified against the project-declared canonical publisher, then check its source, version, integrity, and the targets below before redeeming. Do not run remote scripts from this page.";
+      ? "打开页面不会消费邀请。已登录参与者可核对下方项目后，以当前身份接受普通项目邀请；其他加入或恢复请让 Agent 使用已从项目声明的 canonical publisher 验证过的 cfKanban Skill，核对发行来源、版本、完整性与下列目标后再执行兑换；不要运行页面中的远程脚本。"
+      : "Opening this page does not consume the Invitation. Signed-in participants can review and accept ordinary project invitations as their current identity. For other joining or recovery, ask your Agent to use a cfKanban Skill already verified against the project-declared canonical publisher, then check its source, version, integrity, and the targets below before redeeming. Do not run remote scripts from this page.";
     return `<section data-invitation-locale="${sectionLocale}"${locale === sectionLocale ? "" : " hidden"}><p>${intro}</p>${renderDetails(isChinese)}<p>${isChinese ? "有效期至" : "Expires at"} ${escapeHtml(timestamp(row.expires_at) ?? "")}.</p></section>`;
   };
-  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><nav aria-label="Language"><button type="button" data-select-locale="en">English</button> <button type="button" data-select-locale="zh-CN">简体中文</button></nav><h1>cfKanban Invitation</h1>${section("en")}${section("zh-CN")}<script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>${INVITATION_PAGE_SCRIPT}</script></body></html>`;
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><nav aria-label="Language"><button type="button" data-select-locale="en">English</button> <button type="button" data-select-locale="zh-CN">简体中文</button></nav><h1>cfKanban Invitation</h1>${section("en")}${section("zh-CN")}<p id="invitation-status" role="status" aria-live="polite"></p><button id="invitation-accept" type="button" hidden></button><p><a id="invitation-next" href="/app" hidden></a></p><script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>${INVITATION_PAGE_SCRIPT}</script></body></html>`;
 }
 
 async function optionalRedeemAuth(
   db: D1Database,
   request: Request,
   replacementToken: string | null,
-): Promise<(AuthContext & { kind: "bearer" }) | null> {
+  now: number,
+): Promise<AuthContext | null> {
   const header = request.headers.get("authorization");
-  if (header === null) return null;
+  if (header === null) {
+    const hasSessionCookie = request.headers.get("cookie")?.split(";").some((entry) => entry.trim().startsWith(`${SESSION_COOKIE_NAME}=`)) ?? false;
+    if (!hasSessionCookie) return null;
+    const auth = await authenticateCookieSession(db, request, now);
+    enforceCookieWriteProtection(request, auth);
+    return auth;
+  }
   if (parseBearerCredential(header) === null) throw unauthorized();
   try {
     return await authenticateBearer(db, header);
@@ -1048,10 +1168,11 @@ async function optionalRedeemAuth(
 function validateRedeemMode(
   invitation: InvitationRow,
   redeemAs: InvitationRedeemAs,
-  auth: (AuthContext & { kind: "bearer" }) | null,
+  auth: AuthContext | null,
   displayNameValue: JsonValue | undefined,
   tokenValue: JsonValue | undefined,
 ): { displayName: string | null; replacement: { prefix: string; token: string } | null } {
+  if (auth?.kind === "cookie" && (auth.isOwner || invitation.kind !== "project_grant" || redeemAs !== "current_principal")) throw forbidden();
   if (invitation.kind === "project_grant" && redeemAs === "new_principal") {
     if (auth !== null) throw validationError("new_principal_must_be_unauthenticated");
     return {
@@ -1158,11 +1279,56 @@ async function currentAuthRejected(db: D1Database, auth: AuthContext, now: numbe
   }
 }
 
+function invitationCookieScopeGuard(auth: AuthContext | null, invitationIdSql: string, startIndex: number) {
+  if (auth?.kind !== "cookie") {
+    return { sql: "1 = 1", values: [] as string[] };
+  }
+  // 多项目邀请中的任何目标越过固定会话范围时，必须整单拒绝。
+  return {
+    sql: `EXISTS (SELECT 1 FROM web_sessions fixed_session
+      WHERE fixed_session.id = ?${startIndex}
+        AND (fixed_session.target_kind = 'project_selection' OR NOT EXISTS (
+          SELECT 1 FROM invitation_project_grants target
+          JOIN projects scoped_project ON scoped_project.id = target.project_id
+          WHERE target.invitation_id = ${invitationIdSql}
+            AND NOT COALESCE((
+              EXISTS (SELECT 1 FROM effective_project_grants current_access
+                WHERE current_access.project_id = scoped_project.id
+                  AND current_access.principal_id = fixed_session.principal_id)
+              AND (
+                (fixed_session.target_kind = 'workspace' AND scoped_project.workspace_id = json_extract(fixed_session.target_json, '$.workspace_id'))
+                OR (fixed_session.target_kind = 'project' AND scoped_project.id = json_extract(fixed_session.target_json, '$.project_id')
+                  AND scoped_project.workspace_id = json_extract(fixed_session.target_json, '$.workspace_id'))
+                OR (fixed_session.target_kind = 'issue' AND EXISTS (SELECT 1 FROM issues fixed_issue
+                  WHERE fixed_issue.id = json_extract(fixed_session.target_json, '$.issue_id')
+                    AND fixed_issue.project_id = scoped_project.id AND fixed_issue.deleted_at IS NULL))
+              )
+            ), 0)
+        )))`,
+    values: [auth.sessionId],
+  };
+}
+
+async function invitationCookieScopeAllowed(db: D1Database, auth: AuthContext, invitationId: string): Promise<boolean> {
+  const guard = invitationCookieScopeGuard(auth, "?1", 2);
+  if (guard.values.length === 0) return true;
+  try {
+    return await db.prepare(`SELECT 1 WHERE ${guard.sql}`).bind(invitationId, ...guard.values).first() !== null;
+  } catch (error) {
+    throw platformUnavailable("d1", error);
+  }
+}
+
+async function assertInvitationCookieScope(db: D1Database, auth: AuthContext, invitationId: string, now: number): Promise<void> {
+  await verifyCurrentAuth(db, auth, now);
+  if (!(await invitationCookieScopeAllowed(db, auth, invitationId))) throw forbidden();
+}
+
 async function executeProjectInviteRedeem(
   db: D1Database,
   invitation: InvitationRow,
   claim: IdempotencyClaim,
-  auth: (AuthContext & { kind: "bearer" }) | null,
+  auth: AuthContext | null,
   displayName: string | null,
   replacement: { digest: string; id: string; prefix: string } | null,
   forbiddenValues: readonly string[],
@@ -1196,6 +1362,7 @@ async function executeProjectInviteRedeem(
     ).bind(replacement?.id, replacement?.prefix, replacement?.digest, now, claim.operationId, principalId));
   }
   const upsertAuthGuard = auth === null ? null : buildCurrentAuthGuard(auth, now, 6);
+  const upsertScopeGuard = invitationCookieScopeGuard(auth, "?5", 6 + (upsertAuthGuard?.values.length ?? 0));
   statements.push(db.prepare(
     `INSERT INTO project_grants
       (id, principal_id, project_id, role, version, created_at,
@@ -1227,6 +1394,7 @@ async function executeProjectInviteRedeem(
        ${upsertAuthGuard === null
          ? "AND EXISTS (SELECT 1 FROM principals created WHERE created.id = target.id AND created.last_operation_id = ?4)"
          : `AND ${upsertAuthGuard.sql}`}
+       AND ${upsertScopeGuard.sql}
      ON CONFLICT(principal_id, project_id) DO UPDATE SET
        role = excluded.role,
        revoked_at = NULL,
@@ -1242,9 +1410,11 @@ async function executeProjectInviteRedeem(
     claim.operationId,
     invitation.id,
     ...(upsertAuthGuard?.values ?? []),
+    ...upsertScopeGuard.values,
   ));
 
   const outcomeAuthGuard = auth === null ? null : buildCurrentAuthGuard(auth, now, 5);
+  const outcomeScopeGuard = invitationCookieScopeGuard(auth, "?1", 5 + (outcomeAuthGuard?.values.length ?? 0));
   statements.push(db.prepare(
     `INSERT INTO invitation_redemption_items
       (invitation_id, project_id, operation_id, outcome, effective_role)
@@ -1270,13 +1440,15 @@ async function executeProjectInviteRedeem(
               WHERE created.id = ?3 AND created.last_operation_id = ?2
                 AND created_credential.created_operation_id = ?2
             )`
-         : `AND ${outcomeAuthGuard.sql}`}`,
+         : `AND ${outcomeAuthGuard.sql}`}
+       AND ${outcomeScopeGuard.sql}`,
   ).bind(
     invitation.id,
     claim.operationId,
     principalId,
     planJson,
     ...(outcomeAuthGuard?.values ?? []),
+    ...outcomeScopeGuard.values,
   ));
 
   statements.push(db.prepare(
@@ -1291,6 +1463,8 @@ async function executeProjectInviteRedeem(
      )
 `,
   ).bind(now, claim.operationId, invitation.id));
+  const consumeScopeGuard = invitationCookieScopeGuard(auth, "?4", 8);
+  const consumeAuthGuard = auth === null ? null : buildCurrentAuthGuard(auth, now, 8 + consumeScopeGuard.values.length);
   statements.push(db.prepare(
     `UPDATE invitations
      SET redeemed_at = ?1, redeemed_by_principal_id = ?2, last_operation_id = ?3
@@ -1300,8 +1474,11 @@ async function executeProjectInviteRedeem(
        AND (SELECT COUNT(*) FROM invitation_redemption_items iri
             WHERE iri.invitation_id = ?4 AND iri.operation_id = ?3) = ?6
        AND (?7 = 0 OR EXISTS (SELECT 1 FROM credentials c
-                             WHERE c.principal_id = ?2 AND c.created_operation_id = ?3))`,
-  ).bind(now, principalId, claim.operationId, invitation.id, invitation.code_digest, grants.length, auth === null ? 1 : 0));
+                             WHERE c.principal_id = ?2 AND c.created_operation_id = ?3))
+       AND ${consumeScopeGuard.sql}
+       AND ${consumeAuthGuard?.sql ?? "1 = 1"}`,
+  ).bind(now, principalId, claim.operationId, invitation.id, invitation.code_digest, grants.length, auth === null ? 1 : 0,
+    ...consumeScopeGuard.values, ...(consumeAuthGuard?.values ?? [])));
   statements.push(redemptionOperationSnapshotStatement(
     db,
     claim.operationId,
@@ -1346,7 +1523,7 @@ async function executeProjectInviteRedeem(
     planJson,
     claim.operationId,
     principalId,
-    auth?.credentialId ?? null,
+    auth === null ? null : actorCredentialId(auth),
     now,
     invitation.id,
   ));
@@ -1364,7 +1541,7 @@ async function executeProjectInviteRedeem(
     claim.operationId,
     grants.length,
     principalId,
-    auth?.credentialId ?? null,
+    auth === null ? null : actorCredentialId(auth),
     now,
     invitation.id,
   ));
@@ -1377,7 +1554,7 @@ async function executeProjectInviteRedeem(
         return latest === null || invitationStatus(latest, now) !== "active"
           || !(await invitationIssuerActive(db, latest))
           || !(await invitationTargetsActive(db, invitation.id))
-          || (auth !== null && await currentAuthRejected(db, auth, now))
+          || (auth !== null && (await currentAuthRejected(db, auth, now) || !(await invitationCookieScopeAllowed(db, auth, invitation.id))))
           || (auth === null && displayName !== null && await principalDisplayNameExists(db, displayName))
           || (replacement !== null && await credentialDigestExists(db, replacement.digest))
           || await projectQuotaExceeded(db, invitation.id, principalId) !== null
@@ -1401,7 +1578,7 @@ async function executeProjectInviteRedeem(
       if (latest === null) throw notFound();
       await requireInvitationIssuerActive(db, latest);
       if (invitationStatus(latest, now) !== "active") assertInvitationUsable(latest, now);
-      if (auth !== null) await verifyCurrentAuth(db, auth, now);
+      if (auth !== null) await assertInvitationCookieScope(db, auth, invitation.id, now);
       if (!(await invitationTargetsActive(db, invitation.id))) throw notFound();
       if (auth === null && displayName !== null && await principalDisplayNameExists(db, displayName)) throw principalDisplayNameConflict();
       if (replacement !== null && await credentialDigestExists(db, replacement.digest)) {
@@ -1609,12 +1786,15 @@ export async function redeemInvitation(
   const invitation = await readInvitationByDigest(db, await sha256Hex(inviteCode));
   if (invitation === null) throw notFound();
   if (invitation.redeemed_at === null) await requireInvitationIssuerActive(db, invitation);
-  let auth = await optionalRedeemAuth(db, request, preliminaryToken);
+  let auth = await optionalRedeemAuth(db, request, preliminaryToken, now);
   const mode = validateRedeemMode(invitation, redeemAs, auth, displayNameValue, tokenValue);
   if (auth === null && invitation.recovery_mode === "rotation" && mode.replacement !== null) {
-    auth = await optionalRedeemAuth(db, request, mode.replacement.token);
+    auth = await optionalRedeemAuth(db, request, mode.replacement.token, now);
   }
-  if (auth !== null) await onAuthenticated?.(auth);
+  if (auth !== null) {
+    await onAuthenticated?.(auth);
+    await assertInvitationCookieScope(db, auth, invitation.id, now);
+  }
   const replacement = mode.replacement === null ? null : {
     digest: await sha256Hex(mode.replacement.token),
     id: crypto.randomUUID(),
@@ -1670,6 +1850,7 @@ export async function redeemInvitation(
     throw gone("INVITATION_ALREADY_REDEEMED");
   }
   if (claim.state === "committed") {
+    if (auth !== null) await assertInvitationCookieScope(db, auth, invitation.id, now);
     const stored = readIdempotencyResponse<{ [key: string]: JsonValue }>(claim);
     return { ...stored.body, idempotent_replay: true };
   }
@@ -1696,6 +1877,7 @@ export async function redeemInvitation(
         );
       } else {
         if (replacement === null) throw validationError("new_credential_token_required");
+        if (auth?.kind === "cookie") throw forbidden();
         await executeRecoveryRedeem(
           db,
           invitation,
@@ -1728,6 +1910,7 @@ export async function redeemInvitation(
         claim.operationId,
       );
       if (finalizedByPeer !== null) {
+        if (auth?.kind === "cookie") await assertInvitationCookieScope(db, auth, invitation.id, now);
         return { ...finalizedByPeer.body, idempotent_replay: true };
       }
     }
@@ -1740,6 +1923,7 @@ export async function redeemInvitation(
     persistenceForbiddenValues,
     now,
   );
+  if (auth?.kind === "cookie") await assertInvitationCookieScope(db, auth, invitation.id, now);
   return {
     ...finalized.body,
     idempotent_replay: !claim.owned || resumed || status === "redeemed",

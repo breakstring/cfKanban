@@ -69,6 +69,7 @@ onMounted(loadDiscovery);
       <span v-if="displayedRole" class="role-badge">{{ displayedRole }}</span>
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
+      <button class="text-button" type="button" @click="navigate('/app/work')">{{ locale === "zh-CN" ? "工作清单" : "Work list" }}</button>
       <button v-if="canAccessOwnerControlPlane(session)" class="text-button" type="button" @click="navigate('/app/admin')">
         {{ t("admin.overview") }}
       </button>

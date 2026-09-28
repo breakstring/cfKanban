@@ -651,7 +651,7 @@ export async function registerPasskey(
 
 export async function listMyPasskeys(
   db: D1Database,
-  auth: CookieAuthContext,
+  auth: AuthContext,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
   try {
@@ -712,6 +712,7 @@ async function revokePasskey(
   expectedVersion: number,
   self: boolean,
   now: number,
+  idempotentOperationId?: string,
 ): Promise<{ [key: string]: JsonValue }> {
   const passkeyId = requireUuid(passkeyIdValue, "passkey_id");
   if (!self) requireOwnerControl(auth);
@@ -733,7 +734,7 @@ async function revokePasskey(
   }
   if (current.version !== expectedVersion) throw versionConflict(current.version);
 
-  const operationId = crypto.randomUUID();
+  const operationId = idempotentOperationId ?? crypto.randomUUID();
   const guard = buildCurrentAuthGuard(auth, now, 8, !self);
   let commit: OperationCommit;
   try {
@@ -772,6 +773,11 @@ async function revokePasskey(
                  AND revoked_authenticator.last_operation_id = ?2
              )`,
         ).bind(now, operationId, passkeyId),
+        ...(idempotentOperationId === undefined ? [] : [operationSnapshotStatement(db, operationId, {
+          ...authenticatorResource(current),
+          revoked_at: timestamp(now),
+          version: expectedVersion + 1,
+        })]),
         db.prepare(
           `INSERT INTO events
             (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -807,6 +813,7 @@ async function revokePasskey(
       operationId,
       primarySubjectId: passkeyId,
       primarySubjectType: "web_authenticator",
+      requireIdempotencySnapshot: idempotentOperationId !== undefined,
     }));
   } catch (error) {
     if (error instanceof AtomicBatchRejectedError) {
@@ -822,19 +829,70 @@ async function revokePasskey(
 
 export async function revokeMyPasskey(
   db: D1Database,
-  auth: CookieAuthContext,
+  auth: AuthContext,
   passkeyId: JsonValue,
   expectedVersionValue: JsonValue,
   now: number,
+  request?: Request,
 ): Promise<{ [key: string]: JsonValue }> {
-  return revokePasskey(
-    db,
-    auth,
-    passkeyId,
-    requireVersion(expectedVersionValue),
-    true,
-    now,
-  );
+  const expectedVersion = requireVersion(expectedVersionValue);
+  if (auth.kind === "cookie" && !request?.headers.has("idempotency-key")) {
+    return revokePasskey(db, auth, passkeyId, expectedVersion, true, now);
+  }
+  const id = requireUuid(passkeyId, "passkey_id");
+  await verifyCurrentAuth(db, auth, now);
+  const claim = await claimIdempotency(db, {
+    idempotencyKey: request === undefined ? "" : requireIdempotencyKey(request),
+    method: "DELETE",
+    normalizedResourceScope: `principal:${auth.principalId}:passkey:${id}`,
+    requestBody: { expected_version: expectedVersion },
+    routeTemplate: "/api/v1/me/passkeys/{passkey_id}",
+    scopeKey: `principal:${auth.principalId}`,
+  }, now);
+  if (claim.state === "committed") {
+    await verifyCurrentAuth(db, auth, now);
+    const stored = readIdempotencyResponse<{ [key: string]: JsonValue }>(claim);
+    return { ...stored.body, idempotent_replay: true };
+  }
+  let commit = await probeOperationCommit(db, claim.operationId);
+  const resumed = commit !== null;
+  if (commit === null) {
+    try {
+      await revokePasskey(db, auth, id, expectedVersion, true, now, claim.operationId);
+    } catch (error) {
+      commit = await probeOperationCommit(db, claim.operationId);
+      if (commit === null) {
+        if (error instanceof ApiError && !error.retryable) await abandonOwnedPendingClaim(db, claim);
+        throw error;
+      }
+    }
+    commit ??= await probeOperationCommit(db, claim.operationId);
+  }
+  if (commit === null) throw new AtomicBatchRejectedError();
+  // 本次撤销会有意使其来源 Session 失效；其他调用者在读回前仍须认证有效。
+  const verifyReadbackAuth = async () => {
+    if (!(auth.kind === "cookie" && auth.sourceKind === "web_authenticator" && auth.sourceId === id)) {
+      await verifyCurrentAuth(db, auth, now);
+    }
+  };
+  await verifyReadbackAuth();
+  try {
+    const body = await writeResult(db, auth,
+      await readOperationSnapshot<{ [key: string]: JsonValue }>(db, claim.operationId),
+      commit.lastEventSequence, !claim.owned || resumed);
+    const finalized = await finalizeIdempotency(db, claim.operationId, { body, status: 200 }, [], now);
+    await verifyReadbackAuth();
+    return finalized.body;
+  } catch (error) {
+    if (error instanceof AtomicBatchRejectedError) {
+      const finalized = await readFinalizedIdempotencyResponse<{ [key: string]: JsonValue }>(db, claim.operationId);
+      if (finalized !== null) {
+        await verifyReadbackAuth();
+        return { ...finalized.body, idempotent_replay: true };
+      }
+    }
+    throw error;
+  }
 }
 
 export async function revokePrincipalPasskey(

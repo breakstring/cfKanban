@@ -31,7 +31,7 @@ const { error, clearError, setError } = useLocalizedError();
 let coordinator: InvitationRecoveryCoordinator | null = null;
 let mounted = true;
 let reviewGeneration = 0;
-const belongsHere = computed(() => record.value === null || (record.value.body.kind === "project_grant" && record.value.body.grants[0].project_id === props.projectId));
+const belongsHere = computed(() => record.value === null || (record.value.body.kind === "project_grant" && record.value.body.grants.length === 1 && record.value.body.grants[0]?.project_id === props.projectId));
 const canCreate = computed(() => available.value && record.value === null);
 const canConfirm = computed(() => record.value !== null && belongsHere.value && canConfirmInvitationReview(reviewReady.value, cursor.value !== null, reviewRecord.value, reviewStarted.value, Date.now(), reviewRecord.value?.state === "committed_unavailable" && items.value.some(item => item.id === (reviewRecord.value as { invitation_id?: string })?.invitation_id && item.status !== "active")));
 

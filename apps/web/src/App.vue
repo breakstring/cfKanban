@@ -19,6 +19,7 @@ import OwnerView from "./views/OwnerView.vue";
 import ProfileView from "./views/ProfileView.vue";
 import ProjectLabelsView from "./views/ProjectLabelsView.vue";
 import ProjectBoardView from "./views/ProjectBoardView.vue";
+import WorkListView from "./views/WorkListView.vue";
 import ProjectSelectionView from "./views/ProjectSelectionView.vue";
 import PublicHomeView from "./views/PublicHomeView.vue";
 import ScopedManagementView from "./views/ScopedManagementView.vue";
@@ -26,7 +27,7 @@ import ScopedManagementView from "./views/ScopedManagementView.vue";
 type OwnerSection = "overview" | "workspaces" | "access" | "invitations" | "audit" | "archive";
 type AppRoute =
   | { kind: "home" }
-  | { kind: "selection" }
+  | { kind: "selection" | "work" }
   | { identifier: string; kind: "issue" }
   | { kind: "owner"; section: OwnerSection }
   | { kind: "profile" }
@@ -60,6 +61,7 @@ const route = computed<AppRoute>(() => {
   const path = routePath();
   if (path === "/") return { kind: "home" };
   if (path === "/app") return { kind: "selection" };
+  if (path === "/app/work") return { kind: "work" };
   if (path === "/app/manage") {
     const params = new URLSearchParams(currentPath.value.split("?", 2)[1] ?? "");
     const workspaceId = params.get("workspace");
@@ -267,6 +269,7 @@ watch(currentPath, () => {
     <template v-else>
       <ErrorNotice v-if="sessionError" :error="sessionError" />
       <ProjectSelectionView v-if="route.kind === 'selection'" :key="`${sessionViewGeneration}:${currentPath}`" :session="session" />
+      <WorkListView v-else-if="route.kind === 'work'" :key="`${sessionViewGeneration}:${currentPath}`" :session="session" />
       <ProjectBoardView
         v-else-if="route.kind === 'project'"
         :key="`${sessionViewGeneration}:${currentPath}`"

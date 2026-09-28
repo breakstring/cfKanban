@@ -2,12 +2,12 @@
 
 - 状态：Frozen
 - 日期：2026-09-28
-- 执行任务：[CFK-447](https://cfkanban.dev/app/issues/CFK-447)
-- 授权：用户要求 Owner 设备能力尽可能在 Web 与 Skill 对齐，并明确选择“切换为 Owner，保留旧身份的安全恢复入口”和“Owner 登录后明确确认即可”。本轮实现和隔离验证，不隐含新发行、线上凭据操作或部署。
+- 执行任务：[CFK-447](https://cfkanban.dev/app/issues/CFK-447)、[CFK-451](https://cfkanban.dev/app/issues/CFK-451)
+- 授权：用户要求 Owner 设备能力尽可能在 Web 与 Skill 对齐，并明确选择“切换为 Owner，保留旧身份的安全恢复入口”和“Owner 登录后明确确认即可”。后续用户要求完成 CFK-451，增加有效 Owner 设备补名/改名。本轮实现和隔离验证，不隐含新发行、线上凭据操作或部署。
 
 ## 覆盖范围
 
-本增量在以下范围替代 2026-09-27 多设备合同及 Foundation、Bootstrap、Web、API 中的旧限制：Owner `admin` Web Session 可以批准新设备及撤销指定另一设备；明确授权的 Owner 设备接入可以替换同一实例的另一 current Principal，并保留一个私有恢复槽。Owner 普通轮换、preferred origin 修改、全失恢复、唯一 Owner、普通成员邀请和分级管理员权限保持原合同。
+本增量在以下范围替代 2026-09-27 多设备合同及 Foundation、Bootstrap、Web、API 中的旧限制：Owner `admin` Web Session 可以批准新设备及撤销指定另一设备；Owner Bearer 和 Owner `admin` Web Session 可以为自身有效设备补名或改名；明确授权的 Owner 设备接入可以替换同一实例的另一 current Principal，并保留一个私有恢复槽。Owner 普通轮换、preferred origin 修改、全失恢复、唯一 Owner、普通成员邀请和分级管理员权限保持原合同。
 
 Agent-first 表示优先服务 Agent，同时尽可能使 Web 与 Skill 提供一致的业务能力。界面差异应来自实际运行环境或凭据存储约束，不能仅因入口不同而永久排除一侧。浏览器不能读取或保存 Agent 的长期 secret；网页批准与 Agent 本地落盘是同一接入流程的不同步骤。
 
@@ -25,6 +25,15 @@ Agent-first 表示优先服务 Agent，同时尽可能使 Web 与 Skill 提供�
 10. 写响应不确定时页面保留冻结 body 与幂等键，锁定目标并允许原请求重试；不能重建 key 或误报成功。明确 CAS 拒绝后重读并重新确认才发起新尝试。离开未确认操作页面须提示，禁止把旧确认用于已变化请求。
 
 schema 保持 12、API 保持 0.1.0，无新增数据库 migration；OpenAPI 与错误/权限描述同步实现。
+
+## 有效设备补名与改名
+
+- `POST /api/v1/admin/owner-credentials/{credential_id}/rename` 只接受 `{device_name, expected_version}`，必须提供 Idempotency-Key。按准确 Credential ID 操作当前唯一 Owner 的未撤销 Credential；允许当前设备和最后一份有效设备。目标不存在返回 `NOT_FOUND`，非 Owner 目标返回 `FORBIDDEN`，已撤销目标返回 `CREDENTIAL_ALREADY_REVOKED`。
+- 沿用添加设备的名称校验：trim 后为 1–80 Unicode code points，拒绝控制/格式字符和长期凭据材料；不能清空为 null 或空白，名称只作展示，不要求唯一。历史 `device_name=null` 可补名，不重签发凭据。
+- 权限沿用网页批准/撤销：有效 Owner Bearer 或完整 Owner admin Cookie；Cookie 使用同源/CSRF 校验，局部管理员、参与者及窄范围 Owner Session 均拒绝。`rename_owner_device` 仅在 Owner Credential 的未撤销摘要上提供。
+- `expected_version` 使用 `/me.version` 的 Principal CAS。原子提交重查认证来源、Owner、目标有效性和版本，只修改设备名称及操作元数据、递增 Principal version，并追加 `owner.device-renamed` security Event、不可变结果快照与 operation commit。secret、fingerprint、Principal 身份、Session、Launch、授权和其他设备保持不变；后续普通 rotation 保留改后的名称。
+- 幂等重放返回原结果，无重复写入或审计；改 body 复用 key 返回幂等冲突。未知响应保留准确目标、body 和 key，只重试原请求；已核实的 CAS 冲突允许读回后重新提交。所有响应/审计/快照均不含 secret 或 digest。
+- Web 在设备列表按目标提供补名/改名，显示名称与 fingerprint，填写后保存；不要求撤销式二次确认。未知响应锁定输入并保留原请求重试，CAS 冲突刷新状态后由用户再次保存。英文和简体中文均提供可访问的标签、错误和成功反馈。Skill 通过 `api request` 提供同等能力，先核对 Owner、准确目标、`rename_owner_device` 与最新 Principal version，保存后分页读回同一 ID。
 
 ## 已有本地身份接入 Owner
 
@@ -45,6 +54,7 @@ schema 保持 12、API 保持 0.1.0，无新增数据库 migration；OpenAPI 与
 ## 验证
 
 - Web/API：Owner admin 的两种 Session 来源、CSRF、非 Owner/局部管理员/窄 Session 拒绝、来源撤销与过期、请求校验、CAS/幂等、并发撤销最后一份、零 active 时拒绝新增、审计与事务回滚。
+- 设备改名：历史空名称、当前/其他/最后有效设备、名称边界、非 Owner/窄范围/撤销目标、CSRF、CAS 并发、幂等重放/冲突、未知响应恢复、认证来源漂移、审计故障回滚及原 Credential/Session/权限不变。
 - Web 交互：非秘密配对预览、确认绑定准确输入、成功后的新设备验证提示、未知响应同请求重试、分页、撤销保护、英文/简中与无障碍。
 - 本地：管理员转 Owner、缺少明确替换的拒绝、旧凭据保留及恢复、远端验证失败、previous/pending 冲突、ACL/symlink、防泄露、写入中断及幂等恢复、并发常规凭据命令阻止。
 - 运行 typecheck、相关单测/集成、contracts:check、d1:check 和构建；线上真实身份与凭据不用于自动化写入测试。代码验证不等于发行或真实跨设备验收。

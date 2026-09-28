@@ -4,8 +4,8 @@ import test from "node:test";
 
 import {
   approveOwnerDeviceAttempt, isOwnerDeviceList, isOwnerDeviceWriteResult, OwnerDeviceInputError,
-  ownerDeviceIdentity, ownerDeviceRetryAllowed, ownerDeviceVersionConflict, parseOwnerDevicePairing,
-  revokeOwnerDeviceAttempt,
+  ownerDeviceIdentity, ownerDeviceNameRejected, ownerDeviceRetryAllowed, ownerDeviceVersionConflict, parseOwnerDevicePairing,
+  renameOwnerDeviceAttempt, revokeOwnerDeviceAttempt,
 } from "../../apps/web/src/lib/owner-devices.ts";
 
 const now = Date.parse("2026-09-28T00:00:00.000Z");
@@ -125,4 +125,34 @@ test("Owner device UI uses shared CSRF transport, guards uncertain navigation an
   assert.match(source, /Return to the Agent on the new computer/);
   assert.match(source, /返回|回到新电脑上的 Agent/);
   assert.doesNotMatch(source, /localStorage|sessionStorage|indexedDB|method: "DELETE"/);
+});
+
+
+test("rename freezes the exact active device and trimmed label without requiring revocation permission", () => {
+  const unnamed = { ...device, device_name: null, allowed_actions: ["rename_owner_device"] };
+  const attempt = renameOwnerDeviceAttempt(unnamed, " 工作电脑 💻 ", identity, "rename-1", now);
+  assert.equal(attempt.kind, "rename");
+  assert.equal(attempt.path, `/api/v1/admin/owner-credentials/${credentialId}/rename`);
+  assert.equal(attempt.fingerprint, fingerprint);
+  assert.deepEqual(attempt.body, { device_name: "工作电脑 💻", expected_version: 4 });
+  assert.equal(Object.isFrozen(attempt), true);assert.equal(Object.isFrozen(attempt.body), true);
+  assert.equal(ownerDeviceRetryAllowed(attempt, now + 60000), true);
+  const renamed = result(attempt, { device_name: "工作电脑 💻" });
+  assert.equal(isOwnerDeviceWriteResult(renamed, attempt), true);
+  for (const change of [{ id: ownerId }, { device_name: "another" }, { fingerprint: "other" }, { revoked_at: request.issued_at }, { principal_version: 6 }]) {
+    assert.equal(isOwnerDeviceWriteResult(result(attempt, { device_name: "工作电脑 💻", ...change }), attempt), false);
+  }
+  for (const name of ["", "   ", "机".repeat(81), "work\u0000name", "work\u202ename", "cfk_v1_secret"]) {
+    assert.throws(() => renameOwnerDeviceAttempt(unnamed, name, identity, "rename", now), error => error instanceof OwnerDeviceInputError && error.code === "name");
+  }
+  assert.equal([...renameOwnerDeviceAttempt(unnamed, "💻".repeat(80), identity, "rename", now).deviceName].length, 80);
+  for (const change of [{ id: "invalid" }, { allowed_actions: ["revoke_owner_device"] }, { revoked_at: request.issued_at }, { principal_id: credentialId }]) {
+    assert.throws(() => renameOwnerDeviceAttempt({ ...unnamed, ...change }, "valid", identity, "rename", now), OwnerDeviceInputError);
+  }
+});
+
+test("only a verified device-name validation rejection releases the name draft for correction", () => {
+  const rejection = { status: 400, body: { source: "service", code: "VALIDATION_ERROR", retryable: false, details: { reason: "invalid_device_name" } } };
+  assert.equal(ownerDeviceNameRejected(rejection), true);
+  for (const changed of [{ ...rejection, status: 503 }, { ...rejection, body: { ...rejection.body, source: "client_transport" } }, { ...rejection, body: { ...rejection.body, details: { reason: "other" } } }]) assert.equal(ownerDeviceNameRejected(changed), false);
 });

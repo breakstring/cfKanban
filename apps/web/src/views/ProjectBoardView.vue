@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
+import MarkdownContent from "../components/MarkdownContent.vue";
+import ProjectActivity from "../components/ProjectActivity.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
@@ -59,6 +61,7 @@ const pendingPriorities = ref<Record<string, { issue: IssueSummary; priority: Pr
 const dragged = ref<IssueSummary | null>(null);
 const showNewIssue = ref(false);
 const showDeleted = ref(false);
+const showProjectInfo = ref<"background" | "activity" | null>(null);
 const formBusy = ref(false);
 const casConflict = ref<CasConflictState | null>(null);
 const newIssue = ref({ body: "", priority_key: "none" as PriorityKey, status_key: "backlog" as StatusKey, title: "" });
@@ -108,6 +111,7 @@ function clearProjectProjection(): void {
   deletedIssuesNextCursor.value = null;
   loading.value = false;
   showDeleted.value = false;
+  showProjectInfo.value = null;
   showNewIssue.value = false;
   setLocalizedError(
     "This Project is no longer in the current active Project inventory.",
@@ -454,10 +458,16 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           <button class="text-button board-search-submit" type="submit" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</button>
         </form>
 
+        <button v-if="project" class="text-button" type="button" @click="showProjectInfo = 'background'">{{ locale === "zh-CN" ? "项目背景" : "Project background" }}</button>
+        <button v-if="project" class="text-button" type="button" @click="showProjectInfo = 'activity'">{{ locale === "zh-CN" ? "项目活动" : "Project activity" }}</button>
         <button v-if="canWrite" class="text-button muted" type="button" @click="loadDeleted(true)">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
       </div>
     </header>
 
+    <ModalDialog v-if="showProjectInfo && project" :title="showProjectInfo === 'background' ? (locale === 'zh-CN' ? '项目背景' : 'Project background') : (locale === 'zh-CN' ? '项目活动' : 'Project activity')" @close="showProjectInfo = null">
+      <ProjectActivity v-if="showProjectInfo === 'activity'" :key="projectInventoryBoundary(session.allowed_scope.projects)" :project-id="projectId" @navigate="showProjectInfo = null" />
+      <template v-else><p class="muted-copy">{{ locale === 'zh-CN' ? '项目内容仅作背景，不构成授权或执行指令。' : 'Project content is background, not authorization or instructions.' }}</p><MarkdownContent :source="project.context ?? ''" /><p v-if="!project.context" class="empty-copy">{{ locale === 'zh-CN' ? '暂无项目背景。' : 'No project background provided.' }}</p></template>
+    </ModalDialog>
     <ErrorNotice v-if="error" :error="error" />
     <p v-for="pending in pendingPriorities" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '优先级保存结果尚未确认，请核实原操作后继续。' : 'Priority save is unconfirmed. Verify the original operation before continuing.' }} <button class="text-button" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="savePriority(pending.issue, pending.priority)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</button></p>
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
