@@ -509,35 +509,41 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
               :aria-busy="saving.has(issue.id)"
               @dragstart="onDragStart(issue, $event)"
             >
-                <div class="card-meta">
-                  <code>{{ issue.identifier }}</code>
-                  <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
-                  <span v-else class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
-                </div>
               <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
-                <strong>{{ issue.title }}</strong>
-                <span v-if="issue.labels.length" class="label-line">
-                  <span v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip" :title="label.name">{{ label.name }}</span>
+                <span class="card-heading">
+                  <code>{{ issue.identifier }}</code>
+                  <strong :title="issue.title">{{ issue.title }}</strong>
                 </span>
-                <span v-if="issue.needs_reassignment" class="card-exceptions">
+                <span v-if="issue.labels.length || issue.needs_reassignment" class="card-summary">
+                  <span v-if="issue.labels.length" class="label-line" :title="issue.labels.map(label => label.name).join(' · ')">
+                    <span v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip" :title="label.name">{{ label.name }}</span>
+                    <span v-if="issue.labels.length > 3" class="card-label-count" :aria-label="`${locale === 'zh-CN' ? '更多标签' : 'More labels'}: ${issue.labels.slice(3).map(label => label.name).join(' · ')}`">+{{ issue.labels.length - 3 }}</span>
+                  </span>
                   <span v-if="issue.needs_reassignment" class="warning-chip">{{ locale === "zh-CN" ? "需重新指派" : "reassign" }}</span>
                 </span>
               </button>
-              <div class="card-footer">
-                <span class="card-assignee" :title="issue.assignee?.display_name ?? t('issue.unassigned')">{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
+              <div class="card-meta">
+                <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
+                <span v-else class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
               <select
                 v-if="canWrite"
                 class="card-status-select"
                 :value="issue.status.key"
                 :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]"
                 :aria-label="`${issue.identifier} · ${locale === 'zh-CN' ? '变更状态' : 'Change status'}`"
+                :draggable="false"
+                @pointerdown.stop
+                @mousedown.stop
                 @click.stop
+                @keydown.stop
+                @dragstart.stop.prevent
                 @change.stop="onStatusSelection(issue, $event)"
               >
                 <option v-for="option in statusOrder" :key="option" :value="option">
                   {{ statusMap.get(option)?.display_name ?? option }}
                 </option>
               </select>
+                <span class="card-assignee" :title="issue.assignee?.display_name ?? t('issue.unassigned')">{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
               </div>
             </article>
             <p v-if="columns[statusKey].loading" role="status" class="column-empty">{{ locale === "zh-CN" ? "加载中…" : "Loading…" }}</p>

@@ -274,7 +274,7 @@ async function returnToProject(): Promise<void> {
           <button class="secondary-button" type="submit" :disabled="busy">{{ ui('Create project', '创建项目') }}</button>
         </form>
         <button class="text-button" :disabled="busy" type="button" @click="toggleArchive">{{ archived ? ui('Show active projects', '显示有效项目') : ui('Show archived projects', '显示归档项目') }}</button>
-        <div v-for="project in projects" :key="project.id" class="management-row">
+        <div v-for="project in projects" :key="project.id" class="management-row management-project-row">
           <strong>{{ project.display_name }}</strong>
           <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, project.id)}${project.deleted_at ? '&archived=1' : ''}${returnProject && returnPath ? `&from=${encodeURIComponent(returnPath)}` : ''}`)">{{ ui('Manage', '管理') }}</button>
           <button v-if="project.allowed_actions?.includes('delete')" class="text-button" type="button" :disabled="busy" @click="confirmArchive(project, false)">{{ ui('Archive', '归档') }}</button>
@@ -352,5 +352,8 @@ async function returnToProject(): Promise<void> {
 .management-row p { margin-block: 6px; overflow-wrap: anywhere; }
 .management-row code { font-size: 12px; }
 .management-row input, .management-row select, .management-row > button { min-height: 44px; }
+.management-project-row { align-items: center; }
+.management-project-row > strong { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.management-project-row > button { flex-shrink: 0; }
 @media (max-width: 600px) { .management-row button { min-height: 44px; } }
 </style>

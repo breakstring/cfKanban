@@ -1000,9 +1000,9 @@ h3 {
 .issue-card {
   position: relative;
   display: grid;
-  gap: 10px;
+  gap: 4px;
   width: 100%;
-  padding: 16px;
+  padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
   text-align: left;
@@ -1040,8 +1040,10 @@ h3 {
 
 .issue-card-open {
   display: grid;
-  gap: 12px;
+  gap: 4px;
   width: 100%;
+  min-width: 0;
+  min-height: 32px;
   padding: 0;
   border: 0;
   color: inherit;
@@ -1054,48 +1056,59 @@ h3 {
   outline-offset: 4px;
 }
 
-.issue-card-open > strong {
+.card-heading {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.card-heading > code {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.card-heading > strong {
   display: -webkit-box;
+  min-width: 0;
   overflow: hidden;
   font-size: 0.9rem;
   font-weight: 600;
   line-height: 1.55;
+  overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 
 .card-meta,
-.card-footer,
 .label-line {
   display: flex;
   gap: 7px;
   align-items: center;
 }
 
-.card-meta,
-.card-footer {
-  justify-content: space-between;
+.card-meta {
+  flex-wrap: wrap;
+  gap: 0 4px;
+  min-width: 0;
   color: var(--color-text-muted);
-  font-size: 0.72rem;
-}
-
-.card-footer {
-  gap: 8px;
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-surface-muted);
+  font-size: 0.75rem;
 }
 
 .card-assignee {
+  flex: 1 1 44px;
   min-width: 0;
   overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .card-status-select {
+  flex: 0 1 104px;
   width: auto;
-  max-width: 65%;
+  max-width: calc(50% - 2px);
   min-height: 32px;
   padding: 4px 2px 4px 5px;
   border-color: transparent;
@@ -1109,11 +1122,36 @@ h3 {
   background-color: var(--color-surface-muted);
 }
 
-.label-line,
-.card-exceptions {
+.label-line {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.card-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.card-summary .label-line {
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.card-summary .label-line .label-chip {
+  min-width: 0;
+  max-width: 45%;
+}
+
+.card-label-count {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
 }
 
 .label-line .label-chip {
@@ -2491,7 +2529,6 @@ textarea:disabled {
 .column-page-error { padding: 12px; overflow-wrap: anywhere; font-size: 13px; }
 .column-header > span { white-space: nowrap; }
 
-.issue-card > .card-meta { padding: 12px 12px 0; min-width: 0; }
-.card-priority-select { width: auto; max-width: 110px; min-height: 32px; padding-block: 4px; border-color: transparent; background-color: transparent; font-size: 12px; }
+.card-priority-select { flex: 0 1 72px; width: auto; max-width: calc(50% - 2px); min-height: 32px; padding: 4px 2px 4px 4px; border-color: transparent; background-color: transparent; font-size: 12px; }
 .card-priority-select:focus-visible, .card-priority-select:hover { border-color: var(--color-border-strong); }
-@media (max-width: 940px) { .card-priority-select { min-height: 44px; } }
+@media (max-width: 940px) { .card-priority-select, .card-status-select, .issue-card-open { min-height: 44px; } }

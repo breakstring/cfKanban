@@ -1,9 +1,9 @@
 ---
 name: cfKanban
 status: frozen
-revision: 7
+revision: 8
 frozen_on: 2026-08-29
-revised_on: 2026-09-19
+revised_on: 2026-09-28
 selected_direction: warm-editorial-workbench
 applies_to:
   - first-party-web-ui
@@ -140,7 +140,7 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 - Do not add a persistent left sidebar to the default Board. Workspace/Project scope, search, locale, session/role summary, profile, and the single primary `New issue` action fit in the top region.
 - At a 1440px desktop viewport, all five fixed columns should be visible without reducing card text below the typography rules.
 - Each column has a practical minimum width of 248px. Narrow viewports use horizontal board scrolling rather than compressing five columns into unreadable slivers.
-- When the five columns need to scroll, keep that overflow inside a named, keyboard-focusable Board region and show a concise localized cue that all five columns continue sideways. The status selector in each writable card's footer is the non-drag alternative and therefore uses a touch target of at least 44px on narrow viewports.
+- When the five columns need to scroll, keep that overflow inside a named, keyboard-focusable Board region and show a concise localized cue that all five columns continue sideways. The status selector in each writable card's metadata row is the non-drag alternative and therefore uses a touch target of at least 44px on narrow viewports.
 - Column separation uses spacing and a subtle vertical divider or surface step. Columns are not five large elevated cards.
 - Issue cards do not repeat a completion-note action; optional completion notes belong in Issue detail.
 - The column footer does not repeat `Add issue` when the top-level `New issue` action is already visible.
@@ -149,14 +149,15 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 
 The visual order is:
 
-1. `CFK-<number>` and priority metadata;
-2. issue title;
-3. labels or exceptional markers when present;
-4. assignee or `Unassigned`.
+1. `CFK-<number>` and issue title sharing the detail entry;
+2. a compact summary of labels or exceptional markers, only when present;
+3. priority, the writable status selector, and assignee or `Unassigned` sharing one metadata row.
 
-- Cards use `surface`, a 1px border, 8px radius, and 16px padding. Labels wrap between chips, never between ordinary characters within a chip; exceptionally long labels truncate with their full text available as the title.
-- Put assignee and the always-visible status selector in one footer row separated from content by a quiet rule. The selector uses a transparent resting surface and a compact 32px desktop height; it does not compete with the card title as a second large form field. It remains disabled while that card is saving.
-- A card title normally occupies no more than three lines on the board. Full content belongs in Issue detail.
+- Cards use `surface`, a 1px border, 8px radius, 8px padding, and 4px vertical gaps. Common desktop cards target roughly half the previous height through layout and spacing, without smaller title text or a fixed card height. Long titles, labels, and exceptional markers may increase height.
+- Show at most three label chips and a `+N` count for additional labels. The summary stays on one line when possible; long chips truncate without splitting ordinary characters, with full names in accessible text and titles. Issue detail retains all labels. Do not reserve a summary row when labels and exceptional markers are absent.
+- Priority, status, and assignee share a compact metadata row without a divider or separate footer. Preserve explicit `Unassigned` text; long assignee names may truncate with the full name in the title. Allow the metadata to wrap when necessary.
+- Priority and status retain transparent resting surfaces and a 32px minimum desktop height. The detail entry and both selectors use at least 44px below or at 940px viewport width. Keep selectors outside the detail button and isolate their pointer, keyboard, and drag events; saving disables both selectors and dragging.
+- A card title normally occupies no more than two lines on the board, with its complete text retained in the accessible detail entry and title. Full content belongs in Issue detail.
 - Empty columns remain visually quiet. Do not fill them with a permanent dashed drop box; show a drop target only during an active drag.
 - `saving` disables repeated movement of the same card and shows a compact progress cue.
 - Conflict or failure returns the card to the server-confirmed column and presents a nearby, readable explanation.
@@ -178,6 +179,7 @@ The visual order is:
 
 - Owner pages use the same shell and tokens. They are not a separate admin theme.
 - Use simple lists, tables, forms, and compact summaries for Overview, Workspaces/Projects, Access, and Audit.
+- Workspace project rows vertically center the name and its management actions. Long names wrap completely, including unbroken names; actions retain their click targets and may wrap without overlapping the name. Form rows keep their own input alignment.
 - Avoid metric tiles unless a value is both actionable and required by the product contract. Health and quota summaries should read as operational facts, not an analytics dashboard.
 - Invitation history is reached from Access through a dedicated link and shows a bounded page with previous/next controls. Daily browsing stays separate from the full safety review needed for uncertain Invitation operations.
 - Destructive or security-sensitive actions use explicit labels and confirmation copy; red is not used as general decoration.
