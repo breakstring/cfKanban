@@ -2034,6 +2034,7 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
     ownerSource,
     profileSource,
     projectBoardSource,
+    projectDeletedSource,
     publicHomeSource,
     issueDetailSource,
   ] = await Promise.all([
@@ -2045,6 +2046,7 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
     readFile(new URL("../../apps/web/src/views/OwnerView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/ProfileView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/ProjectBoardView.vue", import.meta.url), "utf8"),
+    readFile(new URL("../../apps/web/src/views/ProjectDeletedIssuesView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/PublicHomeView.vue", import.meta.url), "utf8"),
     readFile(new URL("../../apps/web/src/views/IssueDetailView.vue", import.meta.url), "utf8"),
   ]);
@@ -2098,10 +2100,13 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(ownerSource, /cursorRequiresRestart/);
   assert.match(projectBoardSource, /projectionGeneration\.isCurrent\(generation\)/);
   assert.match(projectBoardSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
-  assert.match(projectBoardSource, /deletedIssues\.value = \[\]/);
-  assert.match(projectBoardSource, /issue\.restorable && issue\.allowed_actions\.includes\('restore'\)/);
-  assert.match(projectBoardSource, /issue\.parent_status\.workspace === "deleted"/);
-  assert.match(projectBoardSource, /deletedIssuesNextCursor/);
+  assert.match(projectDeletedSource, /issues\.value = \[\]/);
+  assert.match(projectDeletedSource, /issue\.restorable && issue\.allowed_actions\.includes\('restore'\)/);
+  assert.match(projectDeletedSource, /issue\.parent_status\.workspace === "deleted"/);
+  assert.match(projectDeletedSource, /continuationCursor\(result\)/);
+  assert.match(projectDeletedSource, /captureCasConflict/);
+  assert.match(projectDeletedSource, /writeFence\.enter/);
+  assert.match(projectDeletedSource, /onUnmounted\(clearProjection\)/);
   assert.match(projectBoardSource, /recoverCasConflict/);
   assert.match(projectBoardSource, /writeFence\.enter/);
   assert.match(projectBoardSource, /void load\(\)/);

@@ -136,7 +136,7 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 ### 3.1 Project Board
 
 - Use a full-width application surface with a compact top bar and a quiet project header.
-- Group the Project title and the primary `New issue` action on the first row; search and secondary recovery controls share a quieter utility row below. Search has an explicit submit control in addition to Enter.
+- Group the Project title and the primary `New issue` action on the first row, with the project description directly under its title. Search and compact priority/label menus share a quieter utility row; activity and deleted issues link to separate project pages. Filter selections apply immediately after a short debounce; search retains an explicit submit control in addition to Enter. This hierarchy follows the user's 2026-09-29 review of the expanded toolbar and filter rows.
 - Do not add a persistent left sidebar to the default Board. Workspace/Project scope, search, locale, session/role summary, profile, and the single primary `New issue` action fit in the top region.
 - At a 1440px desktop viewport, all five fixed columns should be visible without reducing card text below the typography rules.
 - Each column has a practical minimum width of 248px. Narrow viewports use horizontal board scrolling rather than compressing five columns into unreadable slivers.

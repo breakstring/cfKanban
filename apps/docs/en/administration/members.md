@@ -28,7 +28,7 @@ Use $cfkanban-admin to change <member name>'s ordinary Project access in DemoPro
 If this person also has administrator access, explain the access that would remain first.
 ```
 
-The required scope is the same as for invitations. Expect a scoped member list, or a verified change to the selected ordinary grant. Names help find people; operations use stable identities. Resolve ambiguity before selecting a person.
+You need the same management access as for invitations. Verify the intended person when names are ambiguous.
 
 **In the Web UI:** The Owner can select a Project under **Members & access → Project access**, or use **Workspaces & Projects → Administrators and members**. On Project management pages, **Effective members and permission sources** shows access sources. **Direct memberships** offers name search, role changes, removal, and regranting. Invite new members who do not appear among visible candidates.
 
@@ -57,6 +57,6 @@ Public Project membership quotas include non-Owner administrators, counting each
 Use $cfkanban-admin to revoke DemoProject's unredeemed invitation <invitation record ID>, then verify its status.
 ```
 
-Revoking the exact administrative grant used to issue a scoped invitation permanently invalidates that invitation if unredeemed. Regranting administration or retaining another source does not revive it. Previously redeemed memberships remain. Archiving a container pauses redemption; restoration still requires an unexpired invitation and valid issuing authority.
+Unused invitations can become permanently invalid when their issuer loses the management access used to create them; create a new invitation if needed. Members who already joined are not automatically removed.
 
 To recover the same person's identity, use [Devices and identity recovery](./devices.md). An ordinary Project invitation cannot replace a recovery invitation.

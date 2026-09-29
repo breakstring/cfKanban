@@ -1,40 +1,31 @@
 # Connect an existing deployment on a new computer
 
-Moving computers has two goals: obtain application Owner access, then establish a local deployment maintenance record. Neither requires redeployment or copying a long-lived Credential.
+On a new computer, connect your existing Owner identity first, then set up deployment maintenance if needed. You do not need to redeploy the site.
 
-## Connect the Owner identity first
+## Connect the Owner identity
 
 ```text
 Use $cfkanban-admin to connect this computer to <instance address> as the same Owner, with device name “<name>”.
 ```
 
-An existing Owner device or supported administration page approves the pairing request, and the new computer verifies it. See [Owner devices](../administration/devices.md). If another identity is current locally, explicitly choose to retain it for restoration before switching. If all access is lost, inspect [recovery options](./recovery.md) first.
+Approve the request from an existing Owner device or administration page, then finish verification on the new computer. See [Owner devices](../administration/devices.md). If all access is lost, check [recovery options](./recovery.md) first.
 
-Adding an application device grants application management only. It does not sign in to Cloudflare or create a deployment maintenance record.
+This gives you application management access. Continue below if you also want to upgrade the site or maintain cloud resources from this computer.
 
-## Establish the local maintenance record
+## Set up deployment maintenance
 
 ```text
 Use $cfkanban-deploy to connect this computer to the existing deployment at <instance address> for future maintenance.
-Verify the current Owner, exact Cloudflare resources, and running release. Save only the local maintenance record, without upgrading or changing remote resources.
+Verify my Owner identity and Cloudflare account. Save local maintenance records without upgrading or changing remote resources.
 ```
 
-You need a current Owner API identity, control of the exact Cloudflare account, and verified artifacts for the release already running. If old local records are missing, the Agent can discover candidates read-only within the confirmed account. Multiple candidates or unresolved checks require selecting the correct instance first.
+You need current Owner access and authority over the corresponding Cloudflare account. The Agent checks the site, cloud resources, and existing settings, then saves private maintenance records on this computer. Existing data and access stay unchanged.
 
-The Agent checks the Worker, D1 binding, instance identity, schema and migration ledger, current Owner, trusted origin, and existing domain, R2, and analytics settings. After plan approval it saves only private local maintenance records. Remote resources, the database, and authentication configuration remain unchanged.
+Use an Agent for this step; there is no Web button. After connecting, make a separate [upgrade request](./updates.md) when needed.
 
-## What the record proves
+## If something goes wrong
 
-The new record proves the instance state observed and verified now. Without historical artifact evidence, matching a release number does not prove which exact digest was originally deployed. That provenance is recorded as a remotely observed baseline.
-
-A later upgrade must disclose the historical-source limitation and still verify the target release and database baseline. Connecting cannot repair unknown bindings, migration drift, or partial deployment and does not silently insert database records.
-
-**In the Web UI:** Owner device approval is available in application administration. Deployment attachment has no Web button; it requires an Agent with local environment and Cloudflare control-plane access. A Passkey alone provides neither a local API Credential nor Cloudflare authority.
-
-## Common questions
-
-**Can I just copy the old computer's directory?** Use independent device Credentials and verified deployment attachment instead of moving long-lived secrets into chat, a repository, temporary directories, or a browser. This workflow does not ask you to export a secret.
-
-**Can I upgrade immediately after connecting?** Connection and upgrade are separate operations. Prepare the exact [instance upgrade](./updates.md) plan before execution.
-
-**What if I later rotate or recover the Owner?** Repeat attachment verification for the current identity and resources. Do not manually rewrite Credential identifiers in an old receipt.
+- **This computer already has another identity:** Explicitly keep it for restoration before switching; see [Devices and identity recovery](../administration/devices.md).
+- **Several instances are found:** Verify the target address and account before choosing.
+- **Checks find a mismatch:** Ask the Agent to investigate. Do not edit maintenance records or reinitialize the site.
+- **You want to copy the old computer's data directory:** Use the connection workflow instead of putting long-lived credentials in chat, a repository, or a shared folder.

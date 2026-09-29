@@ -19,7 +19,7 @@ If you already have project access, you can start immediately. The Agent reads t
 | Deploy a site, maintain cloud resources, or update Skills and instances | The `cfkanban-deploy` Skill |
 | Understand capabilities and choose the next step | This documentation or the teaching Skill `cfkanban-howto` |
 
-Agent and Web operations follow the same access rules. A button does not grant access, and a Skill does not acquire extra permissions by acting for you. Your access can differ between projects.
+Agents and the Web UI use the same project permissions.
 
 ## Where to go next
 
@@ -40,7 +40,7 @@ high-priority issues tagged bug in DemoProject. Include the permissions,
 Web entry, and source links. Explain only; do not run the query.
 ```
 
-Howto reads the public documentation index and only the pages needed for your question, without a Credential or project membership. It checks the documentation's release against the running instance when possible. If a page or version cannot be verified, it explains the limit and can use its local guidance; updating the Skill does not update the site.
+Howto reads relevant documentation and cites its sources, explaining any limits. It requires no sign-in and does not execute the examples it explains.
 
 Each feature starts with a prompt you can copy, followed by permissions, expected results, and Web instructions. Replace `DemoProject`, `CFK-123`, and angle-bracket placeholders with your own targets. Example requests can make real changes; send only the actions you want performed.
 

@@ -23,7 +23,7 @@ Restore permissions match archive permissions. If the parent Workspace is archiv
 
 **In the Web UI:** The Owner opens **Administration → Archived**, expands the relevant Workspace, and chooses **Restore** for the Project or Workspace. Workspace administrators use **Projects → Show archived projects** in Workspace management, then open the archived Project's management page to restore it.
 
-Expect the same stable IDs, content, and access grants. Archive and restore have no automatic expiry window. For soft-deleted Issues and Comments, see [Usage](../usage/index.md).
+Restoration preserves the original content and access. See [Usage](../usage/index.md) to restore individual issues or comments.
 
 ## Preview permanent deletion
 
@@ -47,8 +47,8 @@ Authorization to archive is not authorization to purge. Changes to the target or
 
 **In the Web UI:** Open **Administration → Archived → Delete permanently**. Review the exact name, parent Workspace, expandable full ID, and impact counts. Enter the complete display name and confirm. The target then leaves the archive list and cannot be restored.
 
-The system retains only a minimal irreversible identity record and compact audit evidence. UUIDs and Issue numbers are not reused. This does not erase Cloudflare backups or copies already saved by clients, and does not guarantee immediate reduction in reported storage.
+Permanent deletion does not erase Cloudflare backups or copies others have already saved, and may not free all storage immediately.
 
 ## Failure or uncertain results
 
-If a response is lost, keep the original request and choose **Retry same request** to recover its result. Do not start another deletion. Refresh a changed preview; resolve permission or state failures first. Permanent deletion has no application recovery action, and D1 platform restoration is not an automatic undo.
+If the result is uncertain, use **Retry same request** to check it. Permanent deletion cannot be undone in the application; do not start another deletion to guess the outcome.

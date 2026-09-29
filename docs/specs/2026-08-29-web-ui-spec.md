@@ -330,6 +330,6 @@ v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次�
 - Owner 可在一份普通邀请中选择 1–20 个不重复项目并分别设置 reader/writer；表单和一次性响应校验覆盖完整授权集合。恢复记录保留整份请求及原幂等键，不因修改表单创建第二份能力。局部管理员表单及服务端仍限定一个受管项目，跨范围或多项目恢复记录不能由局部页面处理。
 - `/app/work` 允许显式选择 1–20 个当前 Session 可见项目 UUID。初始不读取事项，项目或筛选变化清除旧结果与游标，用户确认后查询；展示服务端 `resolved_scope` 的实际项目和不可访问目标。固定 Session 不扩权，不自动执行无项目过滤的全实例查询。
 - “我的任务”使用普通事项列表 `assignee=当前 Principal ID`，支持全部五种状态；全部事项提供所选项目负责人、状态和标题/编号筛选。待领取和需重指派使用 candidates 的 `todo`、默认 `blocked=exclude` 及优先级/FIFO 排序，明确说明候选策略。Reader 可读队列，写入资格仍逐项目实时核验；查看不领取，普通看板不发送 blocked 筛选。
-- Reader/writer 从项目看板按需查看安全 Markdown 项目背景和项目活动；活动只使用 `/events` 的授权域事件，按当前接口时间正序、`after` 续页，失败可重试，不混入 Owner security audit。活动提供准确工作区/项目 UUID 链接，评论、标签或关系 payload 中明确的合法 CFK 编号可链接具体事项；普通无编号事件只链接所属项目，不从 subject UUID 拼接 Issue 路径。
+- 项目描述使用安全 Markdown 直接展示在看板标题下方，无内容时不占位；长描述使用有界、键盘可滚动的阅读区，保留五列可用空间。2026-09-29 用户要求项目活动和已删除事项使用独立 `/app/w/{workspace_id}/p/{project_id}/activity`、`/deleted` 页面，并提供返回当前看板及筛选条件的入口，不再使用看板弹窗。活动沿用 reader/writer 可读权限；已删除列表及单条恢复仅对当前 writer/Owner 提供，继续使用实时服务端权限、CAS、幂等和父级状态校验。活动只使用 `/events` 的授权域事件，按当前接口时间正序、`after` 续页，失败可重试，不混入 Owner security audit。活动提供准确工作区/项目 UUID 链接，评论、标签或关系 payload 中明确的合法 CFK 编号可链接具体事项；普通无编号事件只链接所属项目，不从 subject UUID 拼接 Issue 路径。
 - Issue 按需读取 `/context` 生成结构化交接摘要，复用安全 Markdown 和完成记录呈现，可主动复制文本。逐节显示省略数量，正文/评论/关系回到详情续读，项目背景按当前固定 UUID 读取全文，不跟随响应中的任意 URL。交接内容不包含认证材料，业务内容不构成授权。
 - 网页参与者接受普通邀请及 Agent 本人 Passkey 管理由 [参与者邀请与 Passkey 增量](2026-09-28-participant-invitation-passkey-parity-spec.md) 定义。已确认认证范围不扩展为网页新身份注册、恢复或长期凭据保管。

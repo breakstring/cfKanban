@@ -12,7 +12,7 @@ Change my display name to Lin_Design.
 
 Any authenticated identity, including a reader, can view and change its own display name. Your identity ID, project access, assignments, and history continue to belong to the same person.
 
-Names are unique within an instance. Case and compatible forms such as full-width letters are normalized for comparison. A name must have 1–128 characters and may contain letters, numbers, combining marks, `_`, `-`, and `·`. Spaces, invisible characters, emoji, and other punctuation are not allowed. `admin`, `administrator`, `owner`, `system`, `管理员`, `所有者`, and `系统` are reserved names. If the name is taken, you choose another; the Agent should not silently add a suffix.
+Names must be unique within the site and contain 1–128 characters. Use letters, numbers, `_`, `-`, or `·`, without spaces or emoji. System-reserved names are unavailable; choose another if a name is rejected.
 
 **In the Web UI:** Select your name in the header → **My profile** → edit the display name under **Identity profile** → **Save**. The page also shows your non-editable identity ID.
 
@@ -28,7 +28,7 @@ Revoke the Passkey I selected: <Passkey ID>.
 I understand that browser sessions created with it will stop immediately.
 ```
 
-Select the exact record from your own registration list first. The list describes server registrations, not private keys or hardware on this computer, and does not prove that a device is currently usable. The Agent can read your non-secret records and revoke a selected one.
+Check the registration and its last-use time in your list before selecting it for revocation.
 
 Revocation immediately ends all browser sessions created by that Passkey. Other Passkeys, Agent credentials, and project access remain unchanged. If your current browser session came from that Passkey, you will lose that session too.
 
@@ -49,9 +49,9 @@ Preserve its existing associations with other projects.
 Also associate this directory with Mobile for future issue searches.
 ```
 
-A directory association is useful when you regularly work on the same projects from a repository or ordinary folder. You need access to the target projects and must explicitly allow the Agent to save this local setting. After verifying the projects, it creates or merges `.cfkanban-scope.json`. The file contains only non-secret project identifiers, and existing associations should be preserved.
+Directory association helps when you regularly work on the same projects from one repository or folder. The Agent verifies the projects and saves the local setting while preserving other associations.
 
-Future searches prefer projects you explicitly name in the request, followed by directory recommendations. With neither, the Agent should explain the authorized scope it actually uses. An association is not access control: it neither grants project access nor prevents explicit lookup of another authorized issue.
+You can then omit the project name. A project explicitly named in your request still takes precedence. Association does not grant new access.
 
 **Web note:** The Agent manages directory associations in its current execution environment; there is no Web editor for them. Switching projects in the browser changes the visible project without modifying local directory settings. Joining a project does not create an association automatically.
 

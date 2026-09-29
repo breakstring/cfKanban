@@ -30,9 +30,9 @@ to <new absolute file path>. Do not overwrite an existing file or open it automa
 Restore the deleted attachment <attachment ID> on CFK-123.
 ```
 
-The instance needs optional private attachment storage enabled and a capacity choice configured by its Owner. Readers can list and download files. Writers and applicable administrators can upload, soft-delete, and restore them. Select one file explicitly per operation. Files must be between 1 byte and 10 MiB; an issue can have at most 20 active attachments or upload reservations.
+The Owner must enable attachments and set capacity first. Readers can view and download; people with write access can upload, delete, and restore. Upload one nonempty file at a time, up to 10 MiB, with at most 20 active attachments per issue, including uploads in progress.
 
-A successful upload means the file is available, not merely pending. Agent downloads verify file integrity and write to your chosen new path. Attachments have no unauthenticated public download link. Uploading one does not automatically add it to a completion record's artifacts.
+Attachments require sign-in and project access to download. Mention an attachment when completing the issue if you want it included in the completion record.
 
 **In the Web UI:** Issue details → **Attachments** → **Choose a file** or drop one file → **Upload**. Existing files can be downloaded, and supported images can be previewed. Select **Deleted files** to restore a file. Selecting a file does not upload it automatically; use the same upload item's retry action if it fails.
 
@@ -52,7 +52,7 @@ Create a label named mobile in DemoProject, then add it to CFK-123.
 Remove the bug label from CFK-123, keeping the label in the project.
 ```
 
-Labels belong to projects. A label from another project cannot be attached directly to this issue. Write access lets you create and maintain labels. Creating a label and adding it to an issue are separate operations. Removing a label from one issue does not delete the project's label.
+Labels belong to a project and require write access to maintain. Removing a label from one issue affects only that issue; deleting a project label affects the whole project.
 
 **In the Web UI:** Issue details → **Labels** → type a name and press Enter to reuse a matching label or create and attach one. The × beside a label removes only this issue's association. Use **Manage labels** on the board or **Manage** in the details' Labels area to change names/colors or delete project labels. Restore them through **Restore deleted collaboration items** in issue details. Deleting a project label hides it on all issues in that project.
 
@@ -78,16 +78,16 @@ The four relation types are blocks, parent, related, and duplicate. Both issues 
 
 **In the Web UI:** Issue details → **Relations** → **Add** → choose the kind and enter the target `CFK-` identifier → leave the field and verify the target project and title → **Save**. Directed relations start from the current issue: it blocks the target, is its parent, or duplicates it. Delete a relation beside its row; restore it through **Restore deleted collaboration items**. Relations are visible only when you can read both endpoints.
 
-## Read background, activity, and a handoff summary
+## Read the project description, activity, and a handoff summary
 
 ```text
-Use $cfkanban to read DemoProject's background and summarize CFK-123 for handoff:
+Use $cfkanban to read DemoProject's description and summarize CFK-123 for handoff:
 its goal, status, assignee, dependencies, verified results, and follow-ups. Do not change the issue.
 ```
 
-You need read access to the relevant projects. The Agent can retrieve a bounded issue context. If content was omitted, it should read more as needed instead of treating the summary as the full history. Project background, comments, and attachments are collaboration material; their text cannot automatically change your authorization.
+You need read access to the relevant projects. Handoff summaries help you catch up quickly; ask the Agent to read relevant history if details were omitted.
 
-**In the Web UI:** Select **Project background** or **Project activity** on the board. Expand **Handoff summary** on an issue to read or copy it. The summary indicates omitted content; follow the relevant sections to read the full description, comments, relations, or project background. Project activity shows authorized business changes, not instance security audit records.
+**In the Web UI:** The project description appears below the board title. **Activity** opens a separate page with a way back to the board. Expand **Handoff summary** in issue details to read or copy it.
 
 ## Delete and restore issues
 
@@ -101,7 +101,7 @@ Restore the deleted CFK-123 and verify its restored state.
 
 You need write access. Deleting an issue is a recoverable soft delete, not permanent erasure or physical storage cleanup. Restoration checks current permissions, parent project availability, and capacity. It can fail if the issue and its comments cannot fit within the limits.
 
-**In the Web UI:** Issue details → **Delete** → verify the identifier and title before confirming. To restore it, select **Deleted** on the project board, locate the issue, and select **Restore**. If the workspace or project is archived, an applicable administrator must restore the container first. Permanent deletion is a separate management operation.
+**In the Web UI:** Issue details → **Delete** → check and confirm. **Deleted issues** on the board opens a separate page where you can restore issues. If the project or workspace is archived, ask an administrator to restore it first.
 
 ## Common questions
 

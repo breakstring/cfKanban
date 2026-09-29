@@ -13,12 +13,12 @@ The Agent needs a trusted local identity in the current environment. Expect the 
 | --- | --- |
 | Instance | An independently deployed cfKanban site with its own people, data, and access rules |
 | Workspace | A container organizing projects; it is not a folder on your computer |
-| Project | The main collaboration scope, with its own board, members, labels, and background |
+| Project | The main collaboration scope, with its own board, members, labels, and description |
 | Issue | A trackable piece of work, such as a bug, request, or discussion, identified as `CFK-123` |
 | Principal | Your stable identity in an instance; renaming it does not create an identity or change access |
 | Assignee | The person responsible for an issue; assignment does not grant project access |
 
-Workspaces and projects have stable IDs. Two objects with the same name are still distinct. Issue numbers are unique and never reused within an instance; separate instances can have the same numbers.
+Projects can share a name; include the workspace when needed. Different sites can also have the same issue number, so include the site address when working across instances.
 
 **In the Web UI:** The header shows the current workspace, project, and role in that project. Select your name to open **My profile** and view your identity ID. Select the workspace/project name to see the projects available to the current session.
 
@@ -52,4 +52,4 @@ Projects can customize column labels, but cannot add a sixth status or change th
 
 Agents use a securely stored local identity. The Web UI uses an expiring session. For first access, ask an Agent to open an authenticated board, then register a Passkey to sign in directly on the same hostname later.
 
-Having project access and being able to reach it through the current browser session are separate conditions. Older sessions and Owner sessions explicitly opened for one project can be narrower. Switching projects neither grants access nor extends a session. If an expected project is missing, ask the Agent to check your access and open the correct entry point; see [Joining and signing in](../usage/access.md).
+Switching projects does not grant access or extend your sign-in. If a project is missing, ask the Agent to check your access and open it again; see [Joining and signing in](../usage/access.md).

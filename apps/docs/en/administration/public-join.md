@@ -11,7 +11,7 @@ Explain the access and effects of enabling it without changing anything.
 
 This requires Owner instance administration. The result includes public status, an explicitly public summary, and usage and quotas for Issues, Comments, and non-Owner members. It does not automatically publish internal Project notes.
 
-Visitors can choose `reader` or `writer`. Public writers can edit and soft-delete content and generate database writes. Public Join is not an application queue requiring individual administrator approval.
+Visitors may choose reader or writer access. Writers can edit and delete project content. Public Join needs no individual approval, so enable it only when the project welcomes unknown participants.
 
 ## Enable or adjust Public Join
 

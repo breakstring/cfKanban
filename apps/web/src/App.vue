@@ -8,6 +8,7 @@ import LocaleSwitch from "./components/LocaleSwitch.vue";
 import PageState from "./components/PageState.vue";
 import { ApiProblem, apiRequest } from "./lib/api";
 import { clearAttachmentUploadDrafts } from "./lib/attachment-upload-drafts";
+import { boardReturnPath } from "./lib/board-navigation";
 import { locale, t } from "./lib/i18n";
 import { useLocalizedError } from "./lib/localized-error";
 import { currentPath, navigate, routePath } from "./lib/router";
@@ -18,6 +19,8 @@ import type { WebSessionView } from "./types";
 import IssueDetailView from "./views/IssueDetailView.vue";
 import OwnerView from "./views/OwnerView.vue";
 import ProfileView from "./views/ProfileView.vue";
+import ProjectActivityView from "./views/ProjectActivityView.vue";
+import ProjectDeletedIssuesView from "./views/ProjectDeletedIssuesView.vue";
 import ProjectLabelsView from "./views/ProjectLabelsView.vue";
 import ProjectBoardView from "./views/ProjectBoardView.vue";
 import WorkListView from "./views/WorkListView.vue";
@@ -32,7 +35,7 @@ type AppRoute =
   | { identifier: string; kind: "issue" }
   | { kind: "owner"; section: OwnerSection }
   | { kind: "profile" }
-  | { kind: "project" | "labels"; projectId: string; workspaceId: string }
+  | { kind: "project" | "labels" | "activity" | "deleted"; projectId: string; workspaceId: string }
   | { kind: "manage"; workspaceId: string; projectId?: string }
   | { kind: "unknown" };
 
@@ -81,11 +84,11 @@ const route = computed<AppRoute>(() => {
       : "overview";
     return { kind: "owner", section };
   }
-  const project = /^\/app\/w\/([^/]+)\/p\/([^/]+)(\/labels)?$/.exec(path);
+  const project = /^\/app\/w\/([^/]+)\/p\/([^/]+)(?:\/(labels|activity|deleted))?$/.exec(path);
   if (project !== null) {
     const workspaceId = decoded(project[1] ?? "");
     const projectId = decoded(project[2] ?? "");
-    if (workspaceId !== null && projectId !== null) return { kind: project[3] ? "labels" : "project", projectId, workspaceId };
+    if (workspaceId !== null && projectId !== null) return { kind: project[3] === "labels" || project[3] === "activity" || project[3] === "deleted" ? project[3] : "project", projectId, workspaceId };
   }
   const issue = /^\/app\/issues\/(CFK-[1-9][0-9]*)$/.exec(path);
   if (issue !== null) return { identifier: issue[1] ?? "", kind: "issue" };
@@ -243,8 +246,8 @@ watch(currentPath, () => {
       :context="context?.label"
       :role="context?.role"
       :session="session"
-      :project-id="route.kind === 'project' || route.kind === 'labels' ? route.projectId : context?.projectId"
-      :workspace-id="route.kind === 'project' || route.kind === 'labels' ? route.workspaceId : context?.workspaceId"
+      :project-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' ? route.projectId : context?.projectId"
+      :workspace-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' ? route.workspaceId : context?.workspaceId"
       @verified="acceptVerifiedSession"
       @logout="logout"
     />
@@ -280,6 +283,8 @@ watch(currentPath, () => {
         @context="context = $event"
       />
       <ProjectLabelsView v-else-if="route.kind === 'labels'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" @context="context = $event" />
+      <ProjectActivityView v-else-if="route.kind === 'activity'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" :return-to="boardReturnPath(route.workspaceId, route.projectId, currentPath.split('?').slice(1).join('?'))" @navigate="navigate" @context="context = $event" />
+      <ProjectDeletedIssuesView v-else-if="route.kind === 'deleted'" :key="`${sessionViewGeneration}:${currentPath}`" :workspace-id="route.workspaceId" :project-id="route.projectId" :session="session" :return-to="boardReturnPath(route.workspaceId, route.projectId, currentPath.split('?').slice(1).join('?'))" @navigate="navigate" @context="context = $event" />
       <IssueDetailView
         v-else-if="route.kind === 'issue'"
         :key="`${sessionViewGeneration}:${currentPath}`"

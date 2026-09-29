@@ -15,7 +15,7 @@ Set CFK-123 to Canceled because this request is no longer needed.
 Also add a comment recording that reason.
 ```
 
-You need write access to the project. The five statuses are Backlog, Todo, In Progress, Done, and Canceled; projects may customize their display names. Status changes do not automatically change assignee, priority, or manual blockers. Updating status records progress; it does not mean the Agent performed the work described in the issue. A status change and a comment are separate operations, and the Agent should verify each result.
+You need write access. Changing status records progress; it does not change the assignee or perform the work described in the issue.
 
 **In the Web UI:** Drag a card to the target column, or use the status selector on the card or issue details. Wait for the saved result. All status changes are possible without dragging. Done follows the completion process below.
 
@@ -33,7 +33,7 @@ Assign CFK-123 to Lin_Design.
 Unassign CFK-123 without changing anything else.
 ```
 
-You need write access. The new assignee must also currently have writer access, applicable administration, or Owner access to that project. The Agent checks the exact name within the project. It does not guess from similar names or historical comments when no eligible person matches.
+You need write access, and the assignee must also be able to write to the project. If someone is missing, ask an administrator to check their access.
 
 Assignment changes only the responsible person. It does not start the issue or lock it. If an assignee later loses write eligibility, the historical assignment remains and may show **Needs reassignment**; another person is not silently substituted.
 
@@ -50,7 +50,7 @@ in the service's candidate order. Do not claim any automatically.
 Show Todo issues that need reassignment in DemoProject.
 ```
 
-Read access is enough to view candidates; claiming still requires write access. These queues contain only Todo issues, exclude blocked work by default, and sort by priority then oldest first. “My unfinished issues” should use an ordinary list instead, because a candidate-only query can omit Backlog and In Progress work.
+Read access lets you view these queues; claiming requires write access. They contain only Todo issues, exclude blocked issues by default, and sort by priority then oldest first. Include Backlog and In Progress when you want all unfinished work.
 
 **In the Web UI:** **Work list** in the header → choose projects → set **View** to **Ready to claim** or **Needs reassignment** → **Show work**. Viewing a queue does not claim work. Open an issue and set its assignee separately.
 
@@ -65,7 +65,7 @@ Follow-ups: <remaining work; write none if there is none>
 Do not invent verification results I have not provided.
 ```
 
-You need write access, and the issue must not already be Done. Completion changes its status to Done and appends a record that cannot be edited or deleted. A note is optional. When results are available, recording the summary, verification, artifacts, and follow-ups helps the next collaborator understand them. Do not use a status change as a substitute for unfinished work.
+You need write access. Completion saves a record that cannot be edited or deleted. Notes are optional; use them for actual results, checks, artifacts, and follow-ups.
 
 **In the Web UI:** Issue details → **Complete issue** → enter an optional note → confirm. Selecting Done from the details' status selector opens the same dialog. The current Web form provides a text note; write the result and checks there, or use the Agent for separate structured verification, artifact, and follow-up lists.
 

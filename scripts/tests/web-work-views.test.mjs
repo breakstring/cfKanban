@@ -19,7 +19,7 @@ import { createRenderer, h, nextTick, ref } from 'vue';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
-  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { default as Footer } from './apps/web/src/components/AppFooter.vue'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
+  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as ActivityPage } from './apps/web/src/views/ProjectActivityView.vue'; export { default as DeletedPage } from './apps/web/src/views/ProjectDeletedIssuesView.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { default as Footer } from './apps/web/src/components/AppFooter.vue'; export { navigate, registerNavigationGuard, currentPath } from './apps/web/src/lib/router.ts'; export { boardFilters, boardPath, boardReturnPath } from './apps/web/src/lib/board-navigation.ts'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent', loader: { '.png': 'dataurl' },
   plugins: [{ name: 'vue-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
@@ -30,7 +30,7 @@ const output = await build({
     builder.onResolve({ filter: /^vue$/ }, () => ({ path: new URL('../../node_modules/vue/index.mjs', import.meta.url).href, external: true }));
   } }],
 });
-const { WorkList, Board, Activity, Context, Footer, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
+const { WorkList, Board, Activity, ActivityPage, DeletedPage, Context, Footer, navigate, registerNavigationGuard, currentPath, boardFilters, boardPath, boardReturnPath, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
 
 
 
@@ -211,6 +211,27 @@ test('late label pages are discarded on scope change and label cursor invalidati
   } finally { app.unmount(); }
 });
 
+test('board disables query choices until the first project load finishes', async () => {
+  let resolveProject;
+  globalThis.fetch = async path => {
+    const url = new URL(path, 'https://local.test');
+    if (url.pathname.endsWith('/statuses')) return Response.json(page(['backlog', 'todo', 'in_progress', 'done', 'canceled'].map(key => ({ key, display_name: key }))));
+    if (url.pathname.endsWith('/issues')) return Response.json(page(url.searchParams.get('status') === 'todo' ? [{ ...issue('initial'), labels: [] }] : []));
+    return new Promise(resolve => { resolveProject = resolve; });
+  };
+  const { app, host } = mount(Board, { session, projectId: p1, workspaceId: workspace });
+  try {
+    await nextTick();
+    const fieldsets = () => all(host).filter(item => item.tag === 'fieldset');
+    assert.equal(fieldsets().length, 2);
+    assert.ok(fieldsets().every(item => item.props.disabled), 'native fieldsets prevent a premature filter event from retiring the initial project request');
+    resolveProject(Response.json({ display_name: 'Loaded project', workspace_display_name: 'Team' }));
+    await until(() => text(host).includes('Loaded project'));
+    assert.match(text(host), /Issue initial/);
+    assert.ok(fieldsets().every(item => !item.props.disabled));
+  } finally { app.unmount(); }
+});
+
 test('board filters reset every column, discard old continuation and request new pages with repeated parameters', async () => {
   const calls = []; let resolveOld;
   const labelId = '00000000-0000-4000-8000-000000000080';
@@ -232,11 +253,11 @@ test('board filters reset every column, discard old continuation and request new
     const pending = button(host, 'Load more').props.onClick(); await nextTick();
     await button(host, 'Choose labels').props.onClick(); await nextTick();
     check(labelId).props.onChange(); await nextTick(); check('high').props.onChange(); await nextTick(); check('urgent').props.onChange(); await nextTick();
-    assert.doesNotMatch(text(host), /Issue initial/); assert.match(text(host), /Filters changed/);
+    assert.doesNotMatch(text(host), /Issue initial/); assert.match(text(host), /Updating filtered results/);
     resolveOld(Response.json(page([{ ...issue('obsolete'), labels: [] }]))); await pending; await nextTick();
     assert.doesNotMatch(text(host), /Issue obsolete/);
     const before = calls.length;
-    await all(host).find(item => item.tag === 'form' && item.props.class === 'board-query-filters').props.onSubmit({ preventDefault() {}, stopPropagation() {} }); await nextTick();
+    await until(() => text(host).includes('Issue current'));
     const queries = calls.slice(before).filter(path => new URL(path, 'https://local.test').pathname.endsWith('/issues'));
     assert.equal(queries.length, 5);
     for (const path of queries) {
@@ -244,8 +265,62 @@ test('board filters reset every column, discard old continuation and request new
       assert.deepEqual(params.getAll('priority'), ['high', 'urgent']); assert.deepEqual(params.getAll('label'), [labelId]);
       assert.equal(params.has('cursor'), false); assert.equal(params.has('blocked'), false);
     }
-    assert.match(text(host), /Issue current/); assert.doesNotMatch(text(host), /Filters changed/);
+    assert.match(text(host), /Issue current/); assert.doesNotMatch(text(host), /Updating filtered results/);
   } finally { app.unmount(); }
+});
+
+test('board filter changes keep unsubmitted search out of requests and reuse project metadata', async () => {
+  const calls = [];
+  globalThis.fetch = async path => {
+    calls.push(path); const url = new URL(path, 'https://local.test');
+    if (url.pathname.endsWith('/statuses')) return Response.json(page([]));
+    if (url.pathname.endsWith('/issues')) return Response.json(page([]));
+    return Response.json({ display_name: 'Board ready', context: 'Visible description' });
+  };
+  const { app, host } = mount(Board, { session, projectId: p1, workspaceId: workspace });
+  try {
+    await until(() => text(host).includes('Board ready'));
+    const before = calls.length;
+    all(host).find(item => item.tag === 'input' && item.props.type === 'search').props['onUpdate:modelValue']('unsubmitted text');
+    all(host).find(item => item.tag === 'input' && item.props.value === 'high').props.onChange();
+    await until(() => calls.length >= before + 5);
+    assert.equal(calls.length, before + 5);
+    for (const path of calls.slice(before)) {
+      const url = new URL(path, 'https://local.test');
+      assert.ok(url.pathname.endsWith('/issues')); assert.equal(url.searchParams.has('q'), false);
+      assert.deepEqual(url.searchParams.getAll('priority'), ['high']);
+    }
+    await submit(host); await nextTick();
+    assert.ok(calls.filter(path => path.includes('/issues?')).slice(-5).every(path => new URL(path, 'https://local.test').searchParams.get('q') === 'unsubmitted text'));
+  } finally { app.unmount(); }
+});
+
+test('returning to the board preserves verified query values and rejects foreign return paths', () => {
+  const label = '00000000-0000-4000-8000-000000000080';
+  const filter = boardFilters(`priority=high&priority=urgent&priority=invalid&label=${label}&label=bad&q=hello`);
+  assert.deepEqual(filter, { search: 'hello', priorities: ['high', 'urgent'], labels: [label] });
+  const path = boardPath(workspace, p1, filter);
+  assert.equal(boardReturnPath(workspace, p1, new URLSearchParams({from:path}).toString()), path);
+  for (const from of ['https://evil.invalid/', '//evil.invalid', boardPath(workspace, p2), `${boardPath(workspace,p1)}/deleted`]) {
+    assert.equal(boardReturnPath(workspace,p1,new URLSearchParams({from}).toString()), boardPath(workspace,p1));
+  }
+});
+
+test('board URL label selections survive initial project loading and pending filters stop on unmount', async () => {
+  const label = '00000000-0000-4000-8000-000000000080';
+  const calls = [];
+  globalThis.fetch = async path => { calls.push(path); return Response.json(path.includes('/issues?') || path.endsWith('/statuses') ? page([]) : {display_name:'Restored board'}); };
+  const old = window.location.search;
+  window.location.search = `?priority=high&label=${label}`;
+  const {app,host} = mount(Board,{session,projectId:p1,workspaceId:workspace});
+  window.location.search = old;
+  await until(() => text(host).includes('Restored board'));
+  assert.ok(all(host).some(item => item.tag === 'summary' && text(item) === 'Labels · 1'));
+  assert.ok(calls.filter(path=>path.includes('/issues?')).every(path=>new URL(path,'https://local.test').searchParams.get('label')===label));
+  const before=calls.length;
+  all(host).find(item=>item.tag==='input'&&item.props.value==='urgent').props.onChange();
+  app.unmount(); await new Promise(resolve=>setTimeout(resolve,220));
+  assert.equal(calls.length,before);
 });
 
 for (const status of [403, 404]) {
@@ -266,14 +341,14 @@ for (const status of [403, 404]) {
       return Response.json({ display_name: 'Project 0', workspace_display_name: 'Team' });
     };
     const { app, host } = mount(Board, { session, projectId: p1, workspaceId: workspace });
-    const applyFilters = () => all(host).find(item => item.tag === 'form' && item.props.class === 'board-query-filters').props.onSubmit({ preventDefault() {}, stopPropagation() {} });
+    const applyFilters = () => submit(host);
     try {
       await until(() => text(host).includes('Issue before-access-failure'));
       await button(host, 'Choose labels').props.onClick(); await nextTick();
       all(host).find(item => item.tag === 'input' && item.props.value === labelId).props.onChange(); await nextTick();
       await applyFilters(); await nextTick();
       assert.match(text(host), /Issue before-access-failure/);
-      assert.match(text(host), /Labels · 1\/20/);
+      assert.ok(all(host).some(item => item.tag === 'summary' && text(item) === 'Labels · 1'));
 
       phase = 'denied'; await applyFilters(); await nextTick();
       assert.ok(session.allowed_scope.projects.some(project => project.project_id === p1));
@@ -538,3 +613,206 @@ test('activity renders target links and keeps a readable fallback plus technical
     locale.value = 'zh-CN'; await nextTick(); assert.match(text(rows[0]), /项目活动.*事件详情/);
   } finally { app.unmount(); }
 });
+
+test('project page navigation preserves filtered browser history only after the draft guard allows leaving', () => {
+  const previous = { location: window.location, history: window.history, scrollTo: window.scrollTo, path: currentPath.value };
+  const calls = [];
+  const base = boardPath(workspace, p1);
+  const filtered = boardPath(workspace, p1, { search: 'current search', priorities: ['high'], labels: [] });
+  const target = `${base}/activity?${new URLSearchParams({ from: filtered })}`;
+  const setLocation = path => { const url = new URL(path, 'https://local.test'); window.location = { pathname: url.pathname, search: url.search }; };
+  window.history = {
+    replaceState(_state, _title, path) { calls.push(['replace', path]); setLocation(path); },
+    pushState(_state, _title, path) { calls.push(['push', path]); setLocation(path); },
+  };
+  window.scrollTo = () => {};
+  setLocation(base); currentPath.value = base;
+  let allow = false;
+  const unregister = registerNavigationGuard(() => allow);
+  try {
+    assert.equal(navigate(target, false, filtered), false);
+    assert.deepEqual(calls, []);
+    assert.equal(currentPath.value, base);
+    allow = true;
+    assert.equal(navigate(target, false, filtered), true);
+    assert.deepEqual(calls, [['replace', filtered], ['push', target]]);
+    assert.equal(currentPath.value, target);
+    assert.deepEqual(boardFilters(new URL(calls[0][1], 'https://local.test').search), { search: 'current search', priorities: ['high'], labels: [] });
+  } finally {
+    unregister(); window.location = previous.location; window.history = previous.history; window.scrollTo = previous.scrollTo; currentPath.value = previous.path;
+  }
+});
+
+test('project record pages reject mismatched scope and readers cannot read deleted issues', async () => {
+  const calls = [];
+  globalThis.fetch = async path => { calls.push(path); throw Error('out-of-scope pages must not fetch'); };
+  for (const [component, props, message] of [
+    [ActivityPage, { projectId: p1, workspaceId: principal }, /no longer available/],
+    [DeletedPage, { projectId: p1, workspaceId: principal }, /need project write access/],
+    [DeletedPage, { projectId: p2, workspaceId: workspace }, /need project write access/],
+  ]) {
+    const { app, host } = mount(component, { session, ...props });
+    try { await nextTick(); assert.match(text(host), message); }
+    finally { app.unmount(); }
+  }
+  assert.deepEqual(calls, []);
+});
+
+test('activity page verifies the project before a bounded reader activity request', async () => {
+  const calls = []; let resolveProject;
+  globalThis.fetch = async path => {
+    calls.push(path);
+    if (path.startsWith('/api/v1/events?')) return Response.json(page([]));
+    return new Promise(resolve => { resolveProject = resolve; });
+  };
+  const returnTo = boardPath(workspace, p2, { search: '', priorities: ['high'], labels: [] });
+  const navigations = [];
+  const { app, host } = mount(ActivityPage, { session, projectId: p2, workspaceId: workspace, returnTo, onNavigate: path => navigations.push(path) });
+  try {
+    await nextTick();
+    assert.deepEqual(calls, [`/api/v1/workspaces/${workspace}/projects/${p2}`]);
+    resolveProject(Response.json({ display_name: 'Reader project', deleted_at: null }));
+    await until(() => text(host).includes('No visible project activity.'));
+    assert.equal(calls.length, 2);
+    const params = new URL(calls[1], 'https://local.test').searchParams;
+    assert.deepEqual(params.getAll('project'), [p2]); assert.equal(params.get('limit'), '20');
+    button(host, '← Back to board').props.onClick();
+    assert.deepEqual(navigations, [returnTo]);
+  } finally { app.unmount(); }
+});
+
+test('unmounted project record pages discard the late project read without fetching child data', async () => {
+  for (const component of [ActivityPage, DeletedPage]) {
+    const calls = []; const contexts = []; let resolveProject;
+    globalThis.fetch = async path => { calls.push(path); return new Promise(resolve => { resolveProject = resolve; }); };
+    const { app, host } = mount(component, { session, projectId: p1, workspaceId: workspace, onContext: value => contexts.push(value) });
+    await nextTick(); app.unmount();
+    resolveProject(Response.json({ display_name: 'Obsolete project', deleted_at: null }));
+    await new Promise(resolve => setTimeout(resolve, 0)); await nextTick();
+    assert.equal(calls.length, 1); assert.deepEqual(contexts, []); assert.doesNotMatch(text(host), /Obsolete project/);
+  }
+});
+
+test('deleted page rejects a late tombstone response after writer access becomes reader access', async () => {
+  const currentSession = ref(session); const calls = []; let resolveDeleted;
+  globalThis.fetch = async path => {
+    calls.push(path);
+    if (new URL(path, 'https://local.test').pathname.endsWith('/issues')) return new Promise(resolve => { resolveDeleted = resolve; });
+    return Response.json({ display_name: 'Project', deleted_at: null });
+  };
+  const Wrapper = { setup: () => () => h(DeletedPage, { session: currentSession.value, projectId: p1, workspaceId: workspace }) };
+  const { app, host } = mount(Wrapper);
+  try {
+    await until(() => !!resolveDeleted);
+    currentSession.value = { ...session, allowed_scope: { ...session.allowed_scope, projects: projects.map(project => ({ ...project, role: 'reader' })) } };
+    await nextTick();
+    resolveDeleted(Response.json(page([{ ...issue('obsolete'), deleted_at: '2026-09-29T00:00:00Z', restorable: true, allowed_actions: ['restore'] }])));
+    await new Promise(resolve => setTimeout(resolve, 0)); await nextTick();
+    assert.match(text(host), /need project write access/);
+    assert.doesNotMatch(text(host), /Issue obsolete/);
+    assert.equal(button(host, 'Restore'), undefined); assert.equal(calls.length, 2);
+  } finally { app.unmount(); }
+});
+
+test('deleted issue pagination deduplicates and recovery reads CAS facts without automatically replaying', async () => {
+  const projectPath = `/api/v1/workspaces/${workspace}/projects/${p1}`;
+  const tombstone = version => ({ ...issue('deleted'), version, labels: [], deleted_at: '2026-09-29T00:00:00Z', restorable: true, allowed_actions: ['restore'], parent_status: { workspace: 'active', project: 'active' }, unavailability_reason: null });
+  const unavailable = { ...tombstone(2), id: 'blocked', identifier: 'CFK-2', title: 'Parent archived', restorable: false, allowed_actions: [], parent_status: { workspace: 'deleted', project: 'active' } };
+  const queries = []; const writes = []; let conflicted = false; let restored = false;
+  globalThis.fetch = async (path, init) => {
+    if (init?.method === 'POST') {
+      writes.push({ path, body: JSON.parse(init.body) });
+      if (!conflicted) {
+        conflicted = true;
+        const requestId = '00000000-0000-4000-8000-000000000098';
+        return Response.json({ category: 'conflict', code: 'VERSION_CONFLICT', details: { current_version: 3 }, message: 'Version changed.', recovery: 'refresh_resource', request_id: requestId, retryable: false, source: 'service' }, { status: 409, headers: { 'x-request-id': requestId } });
+      }
+      restored = true;
+      return Response.json({ resource: { ...issue('restored'), version: 4 } });
+    }
+    if (path === projectPath) return Response.json({ display_name: 'Project', deleted_at: null });
+    const params = new URL(path, 'https://local.test').searchParams;
+    queries.push(params);
+    if (restored) return Response.json(page([]));
+    if (params.has('cursor')) return Response.json(page([tombstone(2), unavailable]));
+    return Response.json(page([tombstone(conflicted ? 3 : 2)], conflicted ? null : 'deleted-next'));
+  };
+  const { app, host } = mount(DeletedPage, { session, projectId: p1, workspaceId: workspace });
+  try {
+    await until(() => !!button(host, 'Load more deleted issues'));
+    await button(host, 'Load more deleted issues').props.onClick(); await nextTick();
+    assert.equal(queries[1].get('cursor'), 'deleted-next');
+    assert.ok(queries.every(query => query.get('deleted') === 'only' && query.get('limit') === '100'));
+    assert.equal(all(host).filter(item => item.props.class === 'tombstone-row').length, 2);
+    assert.match(text(host), /Restore the parent workspace first/);
+    await button(host, 'Restore').props.onClick(); await nextTick();
+    assert.deepEqual(writes, [{ path: '/api/v1/issues/CFK-1/commands/restore', body: { expected_version: 2 } }]);
+    assert.match(text(host), /remote version is v3.*latest fact was read back/);
+    assert.equal(queries.at(-1).has('cursor'), false);
+    assert.equal(button(host, 'Restore').props.disabled, true);
+    button(host, 'Dismiss').props.onClick(); await nextTick();
+    await button(host, 'Restore').props.onClick(); await nextTick();
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1].body, { expected_version: 3 });
+    assert.match(text(host), /No deleted issues\./); assert.doesNotMatch(text(host), /Issue deleted/);
+  } finally { app.unmount(); }
+});
+
+for (const trigger of ['automatic', 'manual']) {
+  for (const outcome of ['success', 'failure']) {
+    test(`deleted issue CAS dismissal survives ${trigger} readback ${outcome}`, async () => {
+      const tombstone = version => ({ ...issue(`version ${version}`), version, labels: [], deleted_at: '2026-09-29T00:00:00Z', restorable: true, allowed_actions: ['restore'], parent_status: { workspace: 'active', project: 'active' }, unavailability_reason: null });
+      const writes = []; let reads = 0; let settleReadback;
+      globalThis.fetch = async (path, init) => {
+        if (init?.method === 'POST') {
+          writes.push({ path, body: JSON.parse(init.body) });
+          const requestId = '00000000-0000-4000-8000-000000000098';
+          return Response.json({ category: 'conflict', code: 'VERSION_CONFLICT', details: { current_version: 3 }, message: 'Version changed.', recovery: 'refresh_resource', request_id: requestId, retryable: false, source: 'service' }, { status: 409, headers: { 'x-request-id': requestId } });
+        }
+        if (!new URL(path, 'https://local.test').pathname.endsWith('/issues')) return Response.json({ display_name: 'Project', deleted_at: null });
+        reads += 1;
+        if (reads === 1) return Response.json(page([tombstone(2)]));
+        if (trigger === 'manual' && reads === 2) return Response.json(page([tombstone(3)]));
+        return new Promise((resolve, reject) => {
+          settleReadback = () => outcome === 'success'
+            ? resolve(Response.json(page([tombstone(4)], 'readback-next')))
+            : reject(new Error('Readback connection failed'));
+        });
+      };
+      const { app, host } = mount(DeletedPage, { session, projectId: p1, workspaceId: workspace });
+      try {
+        await until(() => !!button(host, 'Restore'));
+        const restoration = button(host, 'Restore').props.onClick();
+        if (trigger === 'manual') {
+          await restoration; await nextTick();
+          assert.match(text(host), /latest fact was read back/);
+          button(host, 'Refresh facts again').props.onClick();
+        }
+        await until(() => !!settleReadback);
+        assert.match(text(host), /Reading the latest fact/);
+        button(host, 'Dismiss').props.onClick(); await nextTick();
+        assert.equal(!!button(host, 'Dismiss'), false);
+        assert.equal(button(host, 'Restore').props.disabled, true, 'the active readback still fences writes');
+        settleReadback();
+        await restoration;
+        await until(() => !all(host).some(item => item.props.role === 'status'));
+        assert.equal(!!button(host, 'Dismiss'), false, 'late readback must not recreate a dismissed conflict');
+        assert.doesNotMatch(text(host), /changed remotely/);
+        assert.equal(button(host, 'Restore').props.disabled, false);
+        assert.equal(button(host, 'Refresh').props.disabled, false);
+        assert.deepEqual(writes, [{ path: '/api/v1/issues/CFK-1/commands/restore', body: { expected_version: 2 } }]);
+        assert.equal(reads, trigger === 'automatic' ? 2 : 3);
+        if (outcome === 'success') {
+          assert.match(text(host), /Issue version 4/);
+          assert.doesNotMatch(text(host), /Issue version [23]/);
+          assert.equal(button(host, 'Load more deleted issues').props.disabled, false);
+          assert.equal(all(host).some(item => item.props.class === 'inline-alert error-notice'), false);
+        } else {
+          assert.match(text(host), new RegExp(`Issue version ${trigger === 'automatic' ? 2 : 3}`));
+          assert.match(text(host), /PLATFORM_UNAVAILABLE/);
+          assert.equal(all(host).some(item => item.props.class === 'inline-alert error-notice'), true);
+          assert.equal(button(host, 'Retry').props.disabled, false);
+        }
+      } finally { app.unmount(); }
+    });
+  }
+}

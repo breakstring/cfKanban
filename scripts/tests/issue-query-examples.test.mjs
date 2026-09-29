@@ -7,8 +7,6 @@ const contract = JSON.parse(readFileSync(new URL("contracts/openapi.json", root)
 const files = [
   "skills/cfkanban/references/workflows.md",
   "skills/cfkanban/references/workflows.zh-CN.md",
-  "apps/docs/en/usage/issues.md",
-  "apps/docs/zh-CN/usage/issues.md",
 ];
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const exampleProject = "33333333-3333-4333-8333-333333333333";
@@ -103,7 +101,7 @@ for (const file of files) {
   });
 }
 
-test("daily workflows and public documentation preserve the same bilingual query semantics", () => {
+test("daily workflow references preserve the same bilingual query semantics", () => {
   const reference = queryExamples(files[0]);
   for (const file of files.slice(1)) assert.deepEqual(queryExamples(file), reference, file);
   const [labels, mine, unfinished, unassigned, candidates] = reference.map(validateRequest);

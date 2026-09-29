@@ -1,53 +1,46 @@
 # Interruption and recovery
 
-Distinguish interrupted deployment, device-connection failure, and identity loss first. Recovery checks the original operation and actual state rather than initializing an existing instance again.
+If deployment stops or identity access is lost, check the existing state first. Do not reinitialize an existing site.
 
 ## Resume deployment or upgrade
 
 ```text
 Use $cfkanban-deploy to inspect my interrupted operation for <instance address or deployment target>.
-Read its original plan and maintenance records, verify actual remote state, and continue where the original authorization remains valid and the plan has not drifted.
+Keep the original plan and maintenance records, verify completed steps, then continue the remaining work. Explain any changes first.
 ```
 
-You need the original local plan, operation records, and relevant Cloudflare authority. The Agent checks resource ownership, current Worker deployment, migration ledger, and actual schema. If Owner initialization returned an uncertain result, it checks committed facts before deciding what remains.
+You need the relevant Cloudflare authority and original maintenance records. A timeout does not mean nothing happened in the cloud. Keep the records and let the Agent check before resuming. Do not rename resources, delete local records, or create a new identity just to retry.
 
-The result may finish pending steps, verify steps already committed, or report the exact difference preventing safe continuation. A timeout does not prove nothing happened remotely. Do not change resource names or generate a fresh Credential just to try again.
+**In the Web UI:** There is no deployment-resume button. An accessible homepage alone does not prove every deployment step completed.
 
-An unchanged, fully approved plan can continue in the same authorized task. Plan changes, a different authorization context, or a narrower user limit require reviewing the exact current effects again. Do not delete pending state, maintenance records, or unknown lock files to bypass a stop.
+## Choose an identity recovery route
 
-**In the Web UI:** There is no deployment-resume button. The website can help show reachability, but cannot replace resource, migration, and Owner identity verification.
-
-## Choose the right identity recovery
-
-| Current situation | Route |
+| Situation | Next step |
 | --- | --- |
-| The Owner API Credential still works and needs replacement | [Administration: ordinary rotation](../administration/devices.md) |
-| Another device still works and a new computer needs access | [Administration: add an Owner device](../administration/devices.md) |
-| Local secrets are lost, but a valid Owner admin browser Session remains and an API Credential is still unrevoked on the server | Approve a new device in Web, then verify it on that device |
-| A participant loses identity access | Ask the Owner for a recovery invitation bound to that participant |
-| No usable Owner connection path remains, or all old Owner API Credentials must be revoked | Out-of-band Owner recovery below |
+| The Owner still works on another computer | [Add an Owner device](../administration/devices.md) |
+| An Owner administration page is still usable | Ask the Agent to check whether Web approval can connect a new device |
+| A participant cannot use their original identity | Ask the Owner for an identity recovery invitation |
+| No Owner connection route remains, or all old device credentials must be revoked | Use total Owner recovery below |
 
-## Total Owner Credential recovery
-
-```text
-All my Owner Credentials are lost and local records may also be missing.
-Use $cfkanban-deploy to inspect recovery options and identify the exact instance in my confirmed Cloudflare account.
-Show a recovery plan for the same Owner and the effects of revoking every old Owner API Credential. Do not execute it yet.
-```
-
-You need control of the Worker/D1 in the exact Cloudflare account; an old application Credential is not required. The Agent verifies cfKanban instance markers and public discovery in that account. A naming prefix is not identity evidence. Multiple candidates or incomplete checks require choosing the target instead of assuming it is unique.
-
-The plan should explain that the same Owner Principal, name, business content, member access, assignments, and history remain. All previous Owner API Credentials and their derived browser access are revoked. Independent Passkeys and their independently authenticated Sessions remain. The replacement Credential is saved privately in the current local environment.
+## Total Owner recovery
 
 ```text
-I approve the Owner recovery plan for the exact instance just verified, including revoking all old Owner API Credentials while retaining independent Passkeys.
-Use $cfkanban-deploy to execute it and verify the replacement for the same Owner.
+All my Owner credentials are lost.
+Use $cfkanban-deploy to verify <instance address> in my Cloudflare account.
+Explain recovery of the original Owner and revocation of all old credentials without executing it yet.
 ```
 
-Completion requires reading back the recovery operation and authenticating the replacement as the original Owner. Recovery does not create a new Owner, deploy a Worker, migrate the schema, or rebuild an empty database. Resume interruption with the same plan and replacement instead of issuing another Credential.
+You need control of the site's Cloudflare account; a Passkey alone is insufficient. Recovery preserves the original Owner, issues, member access, and history. It revokes all old Owner Agent credentials and browser sign-ins created through them. Independent Passkeys and their sessions remain.
 
-**In the Web UI:** Dedicated total-loss recovery has no anonymous or application recovery button. Even if Passkey sign-in works, this dedicated flow still needs Cloudflare authority. The Web device-approval alternative above is different from recovery that revokes every old API Credential.
+After checking the target and effects, confirm:
 
-## What recovery does not include
+```text
+I approve the Owner recovery plan just verified, including revoking all old Owner credentials while retaining independent Passkeys.
+Complete recovery and verify that I am still the original Owner.
+```
 
-The Skill does not provide complete database export/import, one-click backup restoration, or automatic D1 Time Travel. Worker rollback does not roll back the database. Restoring a database with possible data loss is a separate operation requiring an exact target and reviewed impact.
+The Agent stores the replacement privately on your computer. Recovery does not create a new Owner or erase data. Resume the same operation if it is interrupted.
+
+## Data recovery boundaries
+
+Identity recovery is not database recovery. The Skill does not provide one-click backup restoration, and rolling back the application does not roll back its database. Overwriting a database can lose newer data and requires a separate review of the target and effects.

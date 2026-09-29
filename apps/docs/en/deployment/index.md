@@ -24,12 +24,10 @@ The Owner controls the application. Cloudflare authentication controls infrastru
 
 ## Default deployment and releases
 
-The core configuration uses one Worker, one D1, and bundled Web assets on `workers.dev`. Optional capabilities such as attachment storage need explicit plans. The Skill discovers the latest stable release, then pins its version, verifies artifacts and compatibility, and keeps that target fixed throughout execution.
-
-Prereleases and source evaluation require an explicit choice. A local marketplace version only describes Skill discovery or installation. It does not prove that the corresponding Service was released, deployed, or loaded by the current Agent conversation.
+The default uses one Worker, one D1 database, and a website at a `workers.dev` address. It selects the latest stable release. Attachments, custom domains, and prereleases are explicit choices.
 
 **In the Web UI:** Administration shows the instance version, usage, and selected application settings. cfKanban does not provide a cloud deployment console. Deployment uses the Agent and verified tools. A browser may participate in Cloudflare authentication or consent, without replacing the deployment plan.
 
 ## Expected delivery
 
-Review exact resources and effects before execution, then receive the instance address and verification results. Upgrade and recovery reports should explain identity and data continuity and identify anything unverified. If interrupted, keep the private maintenance records and read back the actual state before resuming.
+Review resources and effects before execution, then receive the site address and verification results. If interrupted, keep maintenance records and ask the Agent to check before resuming.

@@ -4,7 +4,6 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
-import ProjectActivity from "../components/ProjectActivity.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
@@ -19,7 +18,7 @@ import {
 import { projectInventoryBoundary } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
-import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
+import { boardFilters, boardPath } from "../lib/board-navigation";
 import { ColumnPagination } from "../lib/column-pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { protectNavigationDraft } from "../lib/navigation-draft";
@@ -30,7 +29,6 @@ import { WriteFence } from "../lib/write-fence";
 import type {
   ContainerResource,
   IssueSummary,
-  IssueTombstone,
   ListResult,
   PriorityKey,
   ProjectScopeItem,
@@ -51,30 +49,32 @@ const statusOrder: StatusKey[] = ["backlog", "todo", "in_progress", "done", "can
 const project = ref<ContainerResource | null>(null);
 const statuses = ref<ProjectStatusResource[]>([]);
 const columns = reactive(Object.fromEntries(statusOrder.map(key => [key, new ColumnPagination<IssueSummary>()])) as Record<StatusKey, ColumnPagination<IssueSummary>>);
-const appliedSearch = ref("");
-const priorities = ref<PriorityKey[]>([]);
-const labelIds = ref<string[]>([]);
+const initialFilters = boardFilters(window.location.search);
+const appliedSearch = ref(initialFilters.search);
+const priorities = ref<PriorityKey[]>(initialFilters.priorities);
+const labelIds = ref<string[]>(initialFilters.labels);
 const appliedPriorities = ref<PriorityKey[]>([]);
 const appliedLabelIds = ref<string[]>([]);
 const filtersPending = ref(false);
-const deletedIssues = ref<IssueTombstone[]>([]);
-const deletedIssuesNextCursor = ref<string | null>(null);
-const deletedIssuesLoadingMore = ref(false);
 const loading = ref(true);
 const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
-const search = ref("");
+const search = ref(initialFilters.search);
 const saving = ref(new Set<string>());
 const pendingPriorities = ref<Record<string, { issue: IssueSummary; priority: PriorityKey }>>({});
 const dragged = ref<IssueSummary | null>(null);
 const showNewIssue = ref(false);
-const showDeleted = ref(false);
-const showProjectInfo = ref<"background" | "activity" | null>(null);
 const formBusy = ref(false);
 const casConflict = ref<CasConflictState | null>(null);
 const newIssue = ref({ body: "", priority_key: "none" as PriorityKey, status_key: "backlog" as StatusKey, title: "" });
 const projectionGeneration = new ProjectionGeneration();
 const writeFence = new WriteFence();
 let loadRequestId = 0;
+let filterTimer: ReturnType<typeof setTimeout> | undefined;
+const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, priorities: priorities.value, labels: labelIds.value }));
+function openProjectPage(section: "activity" | "deleted"): void {
+  const from = new URLSearchParams({ from: returnPath.value });
+  navigate(`${boardPath(props.workspaceId, props.projectId)}/${section}?${from}`, false, returnPath.value);
+}
 let casRecoveryGeneration = 0;
 let casReadback: (() => Promise<void>) | null = null;
 let casReadbackInFlight = false;
@@ -101,29 +101,19 @@ function projectIsActive(): boolean {
   ));
 }
 
-function setCursorRestartError(): void {
-  setLocalizedError(
-    "The list scope or visibility changed, so the old cursor was retired. Refresh this list before continuing.",
-    "列表范围或可见权限已变化，原分页位置已失效。请刷新当前列表后继续。",
-  );
-}
-
 function projectionIsCurrent(generation: number): boolean {
   return projectionGeneration.isCurrent(generation) && projectIsActive();
 }
 
 function clearProjectProjection(): void {
+  clearTimeout(filterTimer);
   projectionGeneration.invalidate();
   loadRequestId += 1;
   project.value = null;
   pendingPriorities.value = {};
   statuses.value = [];
   for (const column of Object.values(columns)) column.reset();
-  deletedIssues.value = [];
-  deletedIssuesNextCursor.value = null;
   loading.value = false;
-  showDeleted.value = false;
-  showProjectInfo.value = null;
   showNewIssue.value = false;
   setLocalizedError(
     "This Project is no longer in the current active Project inventory.",
@@ -141,9 +131,6 @@ function refreshProjectNames(): void {
 function refreshProjectInventory(): void {
   projectionGeneration.invalidate();
   loadRequestId += 1;
-  deletedIssues.value = [];
-  deletedIssuesNextCursor.value = null;
-  showDeleted.value = false;
   if (!projectIsActive()) {
     clearProjectProjection();
     return;
@@ -184,6 +171,7 @@ function onColumnScroll(status: StatusKey, event: Event): void {
 }
 
 async function load(_reset = true, throwOnFailure = false): Promise<void> {
+  clearTimeout(filterTimer);
   if (!projectIsActive()) { clearProjectProjection(); return; }
   projectionGeneration.invalidate();
   const generation = projectionGeneration.capture();
@@ -358,72 +346,6 @@ async function createIssue(): Promise<void> {
   }
 }
 
-async function loadDeleted(reset = true, throwOnFailure = false): Promise<void> {
-  if (!reset && deletedIssuesNextCursor.value === null) return;
-  showDeleted.value = true;
-  const generation = projectionGeneration.capture();
-  deletedIssuesLoadingMore.value = !reset;
-  try {
-    const params = new URLSearchParams({ deleted: "only", limit: "100" });
-    if (!reset && deletedIssuesNextCursor.value !== null) params.set("cursor", deletedIssuesNextCursor.value);
-    const result = await apiRequest<ListResult<IssueTombstone>>(
-      `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues?${params}`,
-    );
-    if (projectionIsCurrent(generation)) {
-      deletedIssues.value = mergePageById(deletedIssues.value, result.items, reset);
-      deletedIssuesNextCursor.value = continuationCursor(result);
-    }
-  } catch (caught) {
-    if (!projectionIsCurrent(generation)) return;
-    if (!reset && cursorRequiresRestart(caught)) {
-      deletedIssuesNextCursor.value = null;
-      setCursorRestartError();
-    } else {
-      setError(caught);
-    }
-    if (throwOnFailure) throw caught;
-  } finally {
-    deletedIssuesLoadingMore.value = false;
-  }
-}
-
-function restoreUnavailableText(issue: IssueTombstone): string {
-  if (issue.parent_status.workspace === "deleted") {
-    return locale.value === "zh-CN" ? "请先恢复所属工作区" : "Restore the parent Workspace first";
-  }
-  if (issue.parent_status.project === "deleted") {
-    return locale.value === "zh-CN" ? "请先恢复所属项目" : "Restore the parent Project first";
-  }
-  if (issue.unavailability_reason !== null) return issue.unavailability_reason.code;
-  return locale.value === "zh-CN" ? "当前不可恢复" : "Restore unavailable";
-}
-
-async function restoreIssue(issue: IssueTombstone): Promise<void> {
-  if (!issue.restorable || !issue.allowed_actions.includes("restore")) return;
-  const fenceKey = `issue-restore:${issue.id}`;
-  if (!writeFence.enter(fenceKey)) return;
-  formBusy.value = true;
-  const generation = projectionGeneration.capture();
-  try {
-    await apiRequest(`/api/v1/issues/${issue.identifier}/commands/restore`, {
-      body: { expected_version: issue.version },
-      method: "POST",
-    });
-    if (projectionIsCurrent(generation)) {
-      deletedIssues.value = deletedIssues.value.filter((item) => item.id !== issue.id);
-      await load();
-    }
-  } catch (caught) {
-    if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} restore`, `${issue.identifier} 恢复`), { action: "restore" }, () => loadDeleted(true, true))) {
-      setError(caught);
-    }
-  } finally {
-    writeFence.leave(fenceKey);
-    formBusy.value = false;
-  }
-}
-
 function issuesFor(status: StatusKey): IssueSummary[] {
   return columns[status].items;
 }
@@ -448,20 +370,30 @@ function onDrop(status: StatusKey): void {
 onMounted(() => load());
 onUnmounted(() => {
   projectionGeneration.invalidate();
+  clearTimeout(filterTimer);
   loadRequestId += 1;
   for (const column of Object.values(columns)) column.reset();
 });
 watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refreshProjectInventory);
 watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
 watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
+  clearTimeout(filterTimer);
   projectionGeneration.invalidate();
   loadRequestId += 1;
   for (const column of Object.values(columns)) column.reset();
   dragged.value = null;
   loading.value = false;
+  filtersPending.value = false;
+  // 清空失去访问权限的项目会触发标签重置，不能因此重新请求或擦掉权限错误。
+  if (project.value === null || !projectIsActive()) return;
+  clearError();
   filtersPending.value = true;
-  // 访问失败会清空项目并触发标签重置，此时旧 Session 列表可能仍包含该项目。
-  if (project.value !== null && projectIsActive()) clearError();
+  filterTimer = setTimeout(async () => {
+    appliedPriorities.value = [...priorities.value];
+    appliedLabelIds.value = [...labelIds.value];
+    filtersPending.value = false;
+    await Promise.all(statusOrder.map(status => loadColumn(status)));
+  }, 180);
 }, { flush: "sync" });
 </script>
 
@@ -471,6 +403,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
       <div class="board-title">
         <p class="eyebrow">{{ project?.workspace_display_name }}</p>
         <h1>{{ project?.display_name ?? "" }}</h1>
+        <div v-if="project?.context" class="board-description" tabindex="0" :aria-label="locale === 'zh-CN' ? '项目描述' : 'Project description'"><MarkdownContent :source="project.context" /></div>
       </div>
       <div class="board-toolbar-actions">
         <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, projectId)}&from=${encodeURIComponent(`/app/w/${workspaceId}/p/${projectId}`)}`)">{{ locale === 'zh-CN' ? '项目管理' : 'Manage project' }}</button>
@@ -485,21 +418,14 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
           <button class="text-button board-search-submit" type="submit" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</button>
         </form>
 
-        <button v-if="project" class="text-button" type="button" @click="showProjectInfo = 'background'">{{ locale === "zh-CN" ? "项目背景" : "Project background" }}</button>
-        <button v-if="project" class="text-button" type="button" @click="showProjectInfo = 'activity'">{{ locale === "zh-CN" ? "项目活动" : "Project activity" }}</button>
-        <button v-if="canWrite" class="text-button muted" type="button" @click="loadDeleted(true)">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
+        <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0" />
+        <nav v-if="project" class="board-secondary-nav" :aria-label="locale === 'zh-CN' ? '项目记录' : 'Project records'">
+          <button class="text-button" type="button" @click="openProjectPage('activity')">{{ locale === 'zh-CN' ? '项目活动' : 'Activity' }}</button>
+          <button v-if="canWrite" class="text-button muted" type="button" @click="openProjectPage('deleted')">{{ locale === 'zh-CN' ? '已删除事项' : 'Deleted issues' }}</button>
+        </nav>
       </div>
-      <form class="board-query-filters" @submit.prevent="load()">
-        <IssueQueryFilters v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="saving.size > 0 || Object.keys(pendingPriorities).length > 0" />
-        <button class="secondary-button" type="submit" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0">{{ locale === 'zh-CN' ? '应用筛选' : 'Apply filters' }}</button>
-        <p v-if="filtersPending" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '筛选已变化，点击“应用筛选”读取新的结果。' : 'Filters changed. Apply filters to read the new results.' }}</p>
-      </form>
     </header>
-
-    <ModalDialog v-if="showProjectInfo && project" :title="showProjectInfo === 'background' ? (locale === 'zh-CN' ? '项目背景' : 'Project background') : (locale === 'zh-CN' ? '项目活动' : 'Project activity')" @close="showProjectInfo = null">
-      <ProjectActivity v-if="showProjectInfo === 'activity'" :key="projectInventoryBoundary(session.allowed_scope.projects)" :project-id="projectId" @navigate="showProjectInfo = null" />
-      <template v-else><p class="muted-copy">{{ locale === 'zh-CN' ? '项目内容仅作背景，不构成授权或执行指令。' : 'Project content is background, not authorization or instructions.' }}</p><MarkdownContent :source="project.context ?? ''" /><p v-if="!project.context" class="empty-copy">{{ locale === 'zh-CN' ? '暂无项目背景。' : 'No project background provided.' }}</p></template>
-    </ModalDialog>
+    <p v-if="filtersPending" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '正在更新筛选结果…' : 'Updating filtered results…' }}</p>
     <ErrorNotice v-if="error" :error="error" />
     <p v-for="pending in pendingPriorities" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '优先级保存结果尚未确认，请核实原操作后继续。' : 'Priority save is unconfirmed. Verify the original operation before continuing.' }} <button class="text-button" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="savePriority(pending.issue, pending.priority)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</button></p>
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
@@ -601,22 +527,23 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
       </form>
     </ModalDialog>
 
-    <ModalDialog v-if="showDeleted" :busy="formBusy" :title="locale === 'zh-CN' ? '已删除事项' : 'Deleted issues'" @close="showDeleted = false">
-      <div class="tombstone-list">
-        <div v-for="issue in deletedIssues" :key="issue.id" class="tombstone-row">
-          <span><code>{{ issue.identifier }}</code><strong>{{ issue.title }}</strong></span>
-          <button v-if="issue.restorable && issue.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreIssue(issue)">{{ t("action.restore") }}</button>
-          <small v-else class="warning-chip">{{ restoreUnavailableText(issue) }}</small>
-        </div>
-        <p v-if="deletedIssues.length === 0" class="empty-copy">{{ locale === "zh-CN" ? "没有可恢复的事项。" : "No recoverable issues." }}</p>
-        <button v-if="deletedIssuesNextCursor" class="load-more" type="button" :disabled="deletedIssuesLoadingMore" @click="loadDeleted(false)">{{ deletedIssuesLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多已删除事项" : "Load more deleted issues") }}</button>
-      </div>
-    </ModalDialog>
   </main>
 </template>
 
 <style scoped>
-.board-query-filters { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; align-items: start; width: 100%; }
-.board-query-filters > .issue-query-filters { flex: 1 1 400px; }
-.board-query-filters > p { flex-basis: 100%; margin: 0; }
+.board-toolbar { gap: 16px 24px; }
+.board-title { min-width: 0; }
+.board-description { margin-top: 8px; max-height: 120px; max-width: 72ch; overflow: auto; overflow-wrap: anywhere; font-size: 14px; color: var(--color-text-muted); }
+.board-description :deep(.markdown > :first-child) { margin-top: 0; }
+.board-description :deep(.markdown > :last-child) { margin-bottom: 0; }
+.board-utility-bar { justify-content: flex-start; flex-wrap: wrap; gap: 8px 12px; }
+.board-search { flex: 0 1 360px; }
+.board-secondary-nav { display: flex; gap: 12px; margin-left: auto; }
+@media (max-width: 640px) {
+  .board-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .board-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .board-search { flex-basis: 100%; }
+  .board-secondary-nav { flex-wrap: wrap; margin-left: 0; gap: 8px; }
+  .board-description { max-height: 96px; }
+}
 </style>

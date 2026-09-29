@@ -1,6 +1,6 @@
 # Workspaces and Projects
 
-A Workspace organizes Projects. A Project contains a board, Issues, Labels, and Project notes. A Workspace is not a local folder: names help identify it, while stable IDs determine the actual target.
+A workspace organizes projects. Each project has its own board, issues, labels, and description.
 
 ## Create a Workspace and Project
 
@@ -13,8 +13,6 @@ Creating a Workspace requires the Owner. The Owner or a Workspace administrator 
 
 **In the Web UI:** The Owner opens **Administration → Workspaces & Projects**, creates a Workspace, then creates a Project inside it with a name and optional notes. Workspace administrators open their Workspace management **Projects** section, enter **New project name**, and create it.
 
-Workspace and Project creation are separate operations. If the Workspace was created but Project creation fails, the report should explain that state. The Workspace is not automatically deleted.
-
 ## Change names and Project notes
 
 ```text
@@ -22,7 +20,7 @@ Use $cfkanban-admin to rename DemoProject to Mobile and update its Project notes
 <goals, scope, delivery conventions, and relevant non-secret links>
 ```
 
-The Owner and Workspace administrators can rename their Workspace. The Owner, parent Workspace administrator, or Project administrator can edit the Project name and notes. Renaming preserves stable IDs, Issues, and access; existing URLs use IDs.
+The Owner and workspace administrators can rename their workspace. Project administrators can also edit their project’s name and description. Renaming preserves issues and access.
 
 **In the Web UI:** The Owner changes the Workspace name under **Workspaces & Projects**, or opens a Project's **Settings** to edit its name and notes. Scoped administrators use **Workspace settings** or the Project management **Settings** area. Project notes inform collaboration; they do not replace permissions or authorize additional Agent actions.
 
@@ -34,7 +32,7 @@ Internal Project notes are separate from the [Public Join summary](./public-join
 Use $cfkanban-admin to change the display label of DemoProject's todo column to “Ready”, leaving the other columns unchanged.
 ```
 
-You need permission to manage Project settings. This changes only the Project's display label. The five fixed status keys remain `backlog`, `todo`, `in_progress`, `done`, and `canceled`, with the same count, order, and completion semantics. Renaming cannot add custom statuses or bypass completion records.
+You need project management access. This changes the displayed column name while preserving the five statuses—Backlog, Todo, In Progress, Done, and Canceled—and their order.
 
 **In the Web UI:** The Owner uses Project **Settings → Board column names**. Scoped administrators edit **Status names** on the Project management page and save each label.
 

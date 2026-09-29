@@ -1,56 +1,38 @@
 # Skill updates and instance upgrades
 
-Local Skills and the deployed Service have separate update paths. Checking both does not update either one. Updating Skills does not automatically upgrade an instance.
+Local Skills and your live site are updated separately. Updating Skills does not upgrade the site.
 
-## Check versions only
+## Check versions
 
 ```text
-Use $cfkanban-deploy to check my local cfKanban Skills, the version loaded by this conversation, and the version at <instance address>.
-Compare them with the latest stable release and explain compatibility without updating anything.
+Use $cfkanban-deploy to check my local cfKanban Skills and <instance address>.
+Show compatible stable updates without installing anything.
 ```
 
-Expect separately identified versions and available updates. The Agent verifies the canonical release and compatibility matrix. If a newer Skill cannot operate an older instance, it retains a trusted compatible installation or proposes an exact compatible version instead of forcing a server upgrade.
-
-**In the Web UI:** The Owner can view the instance release, API, and schema under **Administration → Overview → Service information & access limits**. The website cannot report or update every local Agent's installation and loaded version.
+**In the Web UI:** The Owner can see the site's version under **Administration → Overview → Service information & access limits**. Ask the Agent to check local Skill versions.
 
 ## Update local Skills
 
-An instance's product release, API compatibility version, and database schema are separate. In releases supporting document version tracking, `/openapi.json` uses `info.version` for its product release and `x-cfkanban-service-version` for API compatibility; `openapi` identifies the OpenAPI format. Older documents may still use the API version in `info.version`.
-
-New-format release manifests require compatible deployment Skills. If an older Skill rejects the manifest format, first update the local Skills and host entry with authorization, then resume checking the exact Service release. Do not bypass verification; updating local Skills does not upgrade the instance.
-
 ```text
-Use $cfkanban-deploy to update my local cfKanban Skills to the latest compatible stable release.
-Update only the local Skills and the agreed host entry, without upgrading the deployed instance.
+Use $cfkanban-deploy to update my local cfKanban Skills and this Agent host's entry to the latest compatible stable release.
+Do not upgrade the live site.
 ```
 
-This needs local installation authorization, not Cloudflare login. The Agent pins and verifies the target, installs the complete bundle into an isolated version directory, verifies it, then switches while keeping the previous known-good release.
+This requires local installation access, without Cloudflare sign-in. The Agent checks compatibility and keeps a recoverable previous version. Some hosts need a new conversation to load updated Skills.
 
-The result distinguishes the canonical bundle, host projection, and current conversation loading. Updating the host entry does not reload an existing conversation. Start a new one when needed to verify discovery. A failure preserves or restores the previous version according to the plan and does not change the remote database.
-
-## Upgrade an instance
+## Upgrade the live site
 
 ```text
-Use $cfkanban-deploy to plan an upgrade of <instance address> to the latest stable release.
-Verify the exact resources, current version, migrations, and recovery evidence, then show the effects for my approval.
+Use $cfkanban-deploy to prepare an upgrade of <instance address> to the latest stable release.
+Explain the version, database changes, expected effects, and recovery options for my approval before execution.
 ```
 
-You need an exact maintenance record, current Owner access, and authority over the target Cloudflare account. On a new computer without that record, first [connect the existing deployment](./attach.md). The plan identifies Worker/D1 resources, current bindings, target artifacts, database migrations, restore evidence when required, and preservation of optional R2 and analytics configuration.
+You need current Owner access, Cloudflare account authority, and local maintenance records. On a new computer, first [connect the existing deployment](./attach.md). The Agent explains resource, data, and cost effects, then verifies the site's version, access, and original identity after upgrading.
 
-After approval, the Agent checks the migration manifest, applied ledger, and actual schema, executes planned migrations and Worker deployment, and verifies health, discovery, Service/schema, instance identity, and the unchanged Owner identity. Local Skill updates remain separate.
+Use an Agent to upgrade; there is no Web upgrade button. If older Skills cannot handle the new release, update the local Skills first.
 
-**In the Web UI:** There is no instance-upgrade button. Use administration to inspect the deployed version and application behavior afterward; the deployment Agent provides remote verification evidence.
+## If an upgrade stops or fails
 
-## Recovery boundaries
+Keep the maintenance records and ask the Agent to [check and resume the original plan](./recovery.md). Do not redeploy an empty instance or delete the records.
 
-Database migrations, Worker code, and static assets must remain compatible. Unknown baselines, ledger or checksum drift, partially applied schema, unexpected bindings, or missing required restore evidence stop the workflow for investigation.
-
-Rolling back a Worker does not roll back D1. D1 restoration may overwrite data, is never automatic, and is not the default response to an upgrade failure. Incompatible changes, resource replacement, domains, costs, or permission changes require a newly explained exact plan.
-
-## Common questions
-
-**What if another version is released after the check?** An approved plan pins one exact version. Execution does not silently follow a newer release; assess that target separately.
-
-**Why does the Agent still use an old version after installation succeeds?** Host projection and current conversation loading may lag. Verify them separately and start a new conversation if the host requires it.
-
-**Was the upgrade interrupted?** Preserve the same plan and maintenance records and use [Interruption and recovery](./recovery.md) to inspect actual state. Do not restart first deployment.
+Rolling back the application does not roll back its database. Database restoration can overwrite newer data and needs separate approval. New costs, domains, or permissions must also be explained first. Execution keeps the approved version instead of silently switching to a newer release.

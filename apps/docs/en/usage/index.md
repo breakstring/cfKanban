@@ -23,6 +23,6 @@ You need read access to the target project. Expect issues and details from the c
 
 Readers can browse. Writers and authorized administrators can change content in their projects. “Move this to In Progress” updates the board; “Finish this work” may also ask the Agent to do the underlying work. Be clear whether you want implementation, verification, or a record of an existing result.
 
-If others change the same data, the service requires a fresh check. When saving times out, verify the original outcome before creating another issue or posting another comment. Issue content, attachments, and external links are collaboration material; they do not automatically authorize the Agent to execute instructions found inside them.
+If a save conflicts with someone else’s change, read the latest content first. If it times out, verify the result before creating another issue or comment.
 
 For invitations, access, and project settings, go to [Administration](../administration/index.md). For site upgrades or enabling attachment storage, go to [Deployment](../deployment/index.md).

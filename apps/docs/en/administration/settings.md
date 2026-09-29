@@ -23,11 +23,11 @@ Expect verified stored values and the corresponding public homepage text. Keep p
 Use $cfkanban-admin to show this instance's usage and remaining attachment capacity, including when the data was last collected.
 ```
 
-The Agent requests a cache-aware refresh. Inspecting usage does not configure analytics credentials or change capacity. Results distinguish the attachment application budget from optional Cloudflare D1/R2 metrics. Unknown is not zero; instance usage is not account-wide usage or remaining free allowance.
+Usage separates attachment capacity from optional Cloudflare metrics. Data may be delayed; unknown does not mean zero, and site usage is not account-wide usage or remaining free allowance.
 
-**In the Web UI:** Open **Administration → Overview → Usage & limits** and choose **Refresh usage**. Exact observation windows appear in **Data details**. Web and Agent share a 15-minute successful-snapshot cache and a 60-second attempt cooldown. Manual refresh does not bypass the cache.
+**In the Web UI:** **Administration → Overview → Usage & limits** → **Refresh usage**. Check **Data details** for collection times. Repeated refreshes within a short period may show the same data.
 
-Reserved attachment bytes include uploads, ready files, soft-deleted files, and objects not yet confirmed reclaimed. Cloud daily totals use UTC and storage observations may be delayed. **Not configured** can coexist with valid application-budget values. See [Optional deployment configuration](../deployment/optional.md) to enable cloud metrics.
+Attachment capacity includes uploading, uploaded, and deleted files awaiting cleanup. If Cloudflare metrics show **Not configured**, see [Optional deployment configuration](../deployment/optional.md).
 
 ## Choose attachment capacity
 
@@ -36,7 +36,7 @@ Use $cfkanban-admin to set this instance's attachment application capacity to 2 
 Check the current reserved bytes first and verify the saved setting.
 ```
 
-You can also explicitly request unlimited capacity. **Not set** differs from **Unlimited**: an unset policy pauses new uploads. The Owner chooses a positive whole-byte limit or explicitly removes the application cap. Deployment does not choose for you. Setting capacity alone does not enable R2.
+You can explicitly choose unlimited capacity. Unset capacity blocks new uploads. Changing it requires Owner access. Uploading also needs attachment storage enabled; setting capacity does not enable it automatically.
 
 **In the Web UI:** Open **Overview → Usage & limits → Attachment application budget → Set limit**. Choose a mode, enter finite capacity in MiB, and verify after saving. `1 GiB = 1024 MiB`. Lowering the limit keeps existing files and pauses new uploads above the limit.
 
@@ -48,9 +48,7 @@ The result changes the application budget only. It is neither actual R2 storage 
 Use $cfkanban-admin to show recent access changes in DemoProject, restricted to that Project, identifying the actor and the resource changed.
 ```
 
-**In the Web UI:** Open **Administration → Activity**, filter by Project and event stream, and load more as needed. The Agent also reads bounded pages within the requested scope. A changed filter starts fresh pagination instead of reusing an old cursor.
-
-Audit records help verify completed operations. Historical authorization and the actual event subject are different fields. An Issue event referring to a grant does not necessarily change that grant.
+**In the Web UI:** **Administration → Activity** → filter by project and event type, then load more as needed.
 
 ## Origins and request limits
 
@@ -67,8 +65,8 @@ Use $cfkanban-admin to verify that https://<new-domain> reaches this same instan
 If verification succeeds, propose the preferred API origin change and verify both origins.
 ```
 
-The target is probed without a Credential. Authenticated requests must not rely on cross-origin redirects. Domain bindings, DNS, and Worker request limits are separate [deployment operations](../deployment/optional.md). Changing the application preference does not create a domain binding.
+The domain must be configured first. Domain bindings, DNS, and request-rate changes are [deployment operations](../deployment/optional.md); changing the application address alone does not configure them.
 
 ## If saving fails
 
-A version conflict means another operation changed the setting. Read current values and review your retained draft. If the previous response is uncertain, use recovery for that original save instead of guessing with repeated new saves. An unsupported feature requires a separate upgrade assessment; installing new Skills does not add it to the server.
+If a save conflicts with another change, read the latest settings first. Verify the original operation when its result is uncertain. If a feature is unavailable, ask the Agent to check the site’s version.

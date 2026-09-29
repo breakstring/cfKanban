@@ -9,7 +9,7 @@ Use $cfkanban to join this project: <invitation link>.
 Check the site, projects, roles, and my existing local identity, then explain what needs confirmation before continuing.
 ```
 
-You need a valid invitation. The Agent first checks its exact scope, roles, expiry, and identity requirements, then presents one combined join plan. It reuses an existing identity when permitted; first use may require you to choose a display name. After confirmation, expect verified access to the invited projects.
+You need a valid invitation. First-time use may require a display name; if you already have an identity, the Agent checks whether it can be reused.
 
 An ordinary invitation grants reader or writer access to specific projects, not administrator access. Invitations can be redeemed once. Accepting an ordinary invitation does not overwrite an existing active role. Contact a project administrator to change an existing role.
 
@@ -42,7 +42,7 @@ Open CFK-123 in IAB using my current cfKanban identity.
 
 You need a usable local identity, access to the target, and browser delivery supported by your host. The Agent verifies the site and identity, then opens an authenticated page through the dedicated entry point. If the requested browser is unavailable, it should explain the problem instead of silently choosing another.
 
-The sign-in handoff is one-time and valid for five minutes. Browser sessions have a fixed eight-hour lifetime. The header shows the expiry, and switching projects does not extend it. You do not need to copy a long-lived credential into a page, prompt, or clipboard.
+Web sign-in lasts eight hours, with the expiry shown in the header. Sign in again when it expires; do not copy long-lived credentials into a page or chat.
 
 **In the Web UI:** Use your current session while it remains valid. After expiry, ask the Agent to open a fresh one or sign in with a registered Passkey. If browser delivery fails, ask the Agent to check the delivery path; do not create a second identity solely because of that failure.
 
@@ -66,7 +66,7 @@ Use $cfkanban to show the projects I can access, then open DemoProject in the Pr
 
 **In the Web UI:** Select the workspace/project name in the header. Search the panel, which groups projects by workspace, and choose a project. New participant Agent sessions and participant Passkey sessions support switching among currently authorized projects. Each project displays your current role and access.
 
-Older fixed-scope sessions and Owner sessions explicitly opened for a project/issue keep their original scope. If a project is missing, ask the Agent to verify access and open the target; the switcher does not grant new access. Archived projects and revoked access are no longer available as before.
+If an expected project is missing, ask the Agent to check access and open it again. Archived projects and revoked access are no longer available.
 
 ## Common questions
 

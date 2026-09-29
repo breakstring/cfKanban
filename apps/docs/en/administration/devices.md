@@ -11,7 +11,7 @@ Use $cfkanban-admin to connect this computer to <instance address> as the same O
 Name it “<device name>” and prepare a pairing request for an existing Owner device or administration page to approve.
 ```
 
-The deployed Service must support Owner devices, and the new environment must provide private persistent storage. The new device generates a private local Credential and returns only a non-secret pairing request. An existing Owner device or full Owner admin Session verifies the instance, Owner, name, fingerprint, and expiry before approving. Requests last at most one hour.
+After the new computer prepares a pairing request, check the site, Owner identity, device name, and expiry on an existing Owner device or administration page. Confirm that the fingerprint matches the request on the new computer before approving. Requests last at most one hour. Do not transfer long-lived credentials.
 
 **In the Web UI:** As Owner, open **Administration → Members & access → Owner devices**, paste the non-secret request, inspect the preview, and explicitly approve it. The browser does not receive or store the new device's long-lived Credential. Return to the new device:
 
@@ -19,7 +19,7 @@ The deployed Service must support Owner devices, and the new environment must pr
 Use $cfkanban-admin to finish verifying the Owner device connection I just prepared, and check my current identity.
 ```
 
-Connection is complete only after the new device verifies the instance and exact Credential identity. Web approval alone does not switch local identity. Resume the same request after interruption instead of generating another Credential.
+After Web approval, finish verification on the new computer before using it. Resume the same request if interrupted.
 
 ## List, rename, or revoke devices
 
@@ -31,9 +31,9 @@ Use $cfkanban-admin to list my Owner devices and rename <exact device> to “Wor
 Use $cfkanban-admin to revoke Owner access for <exact device>, after verifying its identifier and the effects.
 ```
 
-Device names can be duplicated or empty. The Agent resolves the exact Credential ID and fingerprint before acting. Renaming only changes the label, preserving the secret, identity, and permissions. Trimmed names contain 1–80 Unicode characters.
+Devices can share a name; check the exact record before revocation. Renaming changes only the label, preserving access.
 
-**In the Web UI:** The same **Owner devices** list supports pagination, naming or renaming, and confirmed revocation of another device. You cannot revoke the current authentication source or the last active Owner API Credential. At most 100 Owner API Credentials may be active. Active means not revoked on the server; it does not prove a local secret file still exists.
+**In the Web UI:** The **Owner devices** list lets you rename or revoke other devices. You cannot revoke the device credential used for your current sign-in or the last active Owner credential.
 
 Revocation invalidates the selected Credential and its derived browser access. Other devices and independent Passkeys remain. A device represents an execution environment, not hardware binding.
 
@@ -49,7 +49,7 @@ You must explicitly choose to replace the local current identity and use Skills 
 Use $cfkanban-admin to restore this computer's previously saved identity for <instance address>.
 ```
 
-The Agent verifies the saved Credential before switching back and preserves the Owner Credential in turn. Conflicting restoration slots, identity mismatches, or interrupted switches require recovery of the original operation. Do not clear private files to bypass them. **There is no Web editor for local identity slots**; this happens in the environment holding the Agent Credential.
+The Agent verifies and restores the saved identity while keeping the Owner identity available to switch back. **There is no Web action for local identity switching.** Ask the Agent to investigate conflicts instead of deleting private files.
 
 ## Rotate the current Owner Credential
 
@@ -57,16 +57,16 @@ The Agent verifies the saved Credential before switching back and preserves the 
 Use $cfkanban-admin to safely rotate my current Owner Credential and verify that the replacement works locally.
 ```
 
-You need a working Owner API Credential. The Agent privately prepares a replacement, atomically revokes the old Credential used for this rotation, and verifies the new one. Other devices remain. Ordinary rotation has no Web action; do not simulate it by revoking the current device.
+You need a working Owner credential. The Agent safely replaces this device’s credential while preserving other devices. Use the Agent; there is no Web action for this operation.
 
 ## Recover a participant identity
 
 ```text
 Use $cfkanban-admin to inspect recovery options for <participant name or stable ID>.
-Explain the revocation scope of rotation and full_recovery, then verify the exact identity before creating a recovery invitation.
+Explain which access ordinary rotation and full recovery would revoke, then verify the exact identity before creating a recovery invitation.
 ```
 
-Only the Owner can issue recovery invitations for existing participants. They expire after one hour. `rotation` requires a working old Credential and revokes only the one used to redeem it. `full_recovery` needs no old Credential and revokes all of that identity's previous API Credentials. Both preserve the stable identity, access, assignments, history, and Passkeys. The mode cannot change at redemption.
+Only the Owner can issue recovery invitations, which last one hour. Ordinary rotation requires working access and replaces only the credential used. Full recovery needs no old credential and revokes all previous Agent credentials for that identity. Browser sign-ins created through revoked credentials also end. Both options preserve issues, access, history, and independent Passkeys.
 
 **In the Web UI:** The Owner finds the participant under **Members & access**, opens their details, verifies the stable identity and recovery mode, and confirms inherited access and revocation effects before creating the invitation. Deliver it safely to the intended person, who completes recovery with an Agent. The browser does not save the replacement long-lived Credential. The Owner can also inspect and revoke a participant's specific Credential or Passkey from their details, after checking which sign-ins will be invalidated.
 

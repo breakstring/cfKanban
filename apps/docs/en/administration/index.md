@@ -8,7 +8,7 @@ Use `cfkanban-admin` to organize Workspaces and Projects, manage members and inv
 Use $cfkanban-admin to check my identity and management scope at <instance address>, and list the Workspaces and Projects I can manage.
 ```
 
-This request is read-only. The Agent verifies the exact instance, current identity, and resource permissions before reporting your scope. Names, Issue assignments, and ordinary writer access do not grant administration. Select the intended instance if you use several.
+The Agent returns the workspaces and projects you can manage. Reader or writer access does not automatically grant administration. Include the site address if you use several.
 
 | Capability | Owner | Workspace administrator | Project administrator |
 | --- | --- | --- | --- |
@@ -43,4 +43,4 @@ Browser Session scope also limits access. An Owner Session opened for a single P
 - [Devices and identity recovery](./devices.md): Owner devices, rotation, and participant recovery.
 - [Archive and permanent cleanup](./cleanup.md): pause access, restore, or preview irreversible deletion.
 
-The Agent verifies changes by reading the result. A version conflict requires fresh state. An uncertain response requires checking the original operation instead of repeatedly creating new invitations, deletions, or permission changes.
+If saving fails or its result is uncertain, ask the Agent to verify the original operation before repeating an invitation, deletion, or permission change.

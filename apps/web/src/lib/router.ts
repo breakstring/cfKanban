@@ -18,8 +18,9 @@ window.addEventListener("popstate", () => {
   currentPath.value = `${window.location.pathname}${window.location.search}`;
 });
 
-export function navigate(path: string, replace = false): boolean {
+export function navigate(path: string, replace = false, previousPath?: string): boolean {
   if (path !== currentPath.value && !canLeave()) return false;
+  if (!replace && previousPath) window.history.replaceState({}, "", previousPath);
   if (replace) window.history.replaceState({}, "", path);
   else window.history.pushState({}, "", path);
   currentPath.value = `${window.location.pathname}${window.location.search}`;
