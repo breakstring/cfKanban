@@ -63,7 +63,7 @@ Read `help` once for the installed release, and again after an update or when a 
 | Inspect environment and local identity | `capabilities`, `state inspect`, then `api request` → `GET /api/v1/me` | Stop on permission drift, symlinks, identity conflict, or untrusted origin. |
 | Read or change my display name | `GET /api/v1/me`; `PATCH /api/v1/me` | Read the current `version`; send `expected_version`; read back `/me`. |
 | Resolve Project scope | `scope read`, `scope resolve`; use `scope merge` only on explicit request | Prefer explicit targets, then `.cfkanban-scope.json`, then warned authorized aggregate. |
-| List/search work | `GET /api/v1/issues`, `GET /api/v1/issues/candidates`, or `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues` | Include explicit Project filters when context is known. Candidate queries require an explicit assignment policy. |
+| List/search work | `GET /api/v1/issues`, `GET /api/v1/issues/candidates`, or `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues` | Include explicit Project filters when context is known. Filter on the server before pagination; priority/Label and ordinary unassigned filters require deployed support (schema 13). Candidate queries require an explicit assignment policy. |
 | Create an Issue | `POST /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues` | One Project, one Idempotency Key, then read back the returned Issue. |
 | Edit, move, reopen, delete, or restore an Issue | `GET/PATCH/DELETE /api/v1/issues/{identifier}` or `POST .../commands/restore` | Read current state/version first; use CAS; read back after the mutation. |
 | Assign, block, unblock, or complete | `POST /api/v1/issues/{identifier}/commands/{assign-to-me|report-blocked|clear-blocked|complete}` | Completion creates an immutable completion comment; summary is optional on Services supporting optional completion notes. Recommend meaningful evidence when available, never invent it. |
@@ -77,6 +77,8 @@ Read `help` once for the installed release, and again after an update or when a 
 | Open the Web UI | `web resolve`, `/me`, then `web launch` | Resolve the instance and explicit Project/Issue; route Owner Overview to admin. Preflight the chosen delivery path; use `system_browser` for a verified matching default, otherwise `host_browser`. |
 
 Candidate queries are intentionally explicit. Use `/api/v1/issues/candidates?assignment=mine&blocked=exclude&project={project_id}` as the scoped template, choosing exactly one required `assignment`: `mine`, `unassigned`, or `needs_reassignment`. Keep `blocked=exclude` for the normal work queue and use `blocked=include` only when blocked candidates are wanted. Repeat the UUID `project` parameter for multiple Projects, and report the response's `resolved_scope.candidate_policy` and resolved Projects instead of inferring what the server selected.
+
+For queries by priority, Label, status, or assignee, read **Efficient Issue queries** in [English](references/workflows.md#efficient-issue-queries) or [简体中文](references/workflows.zh-CN.md#高效查询-issue). Resolve Label names inside each explicit Project and use returned Label UUIDs. Repeated values mean OR within one parameter, AND between parameters; preserve all filters when following a cursor and restart after changing conditions. Prefer server-side filtering over fetching pages to discard Issues locally. A query limit does not guarantee the same number of database rows read.
 
 The complete endpoint and recovery guide is [references/workflows.md](references/workflows.md).
 

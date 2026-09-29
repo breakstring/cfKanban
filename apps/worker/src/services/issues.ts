@@ -161,6 +161,8 @@ interface IssueListFilter {
   assignees: string[];
   blocked: "only" | "exclude" | null;
   statuses: StatusKey[];
+  priorities: PriorityKey[];
+  labels: string[];
 }
 
 const ISSUE_SELECT = `
@@ -876,23 +878,29 @@ function requireCandidateFilter(url: URL): CandidateFilter {
   return { assignment, blocked };
 }
 
-function requireIssueListFilter(url: URL): IssueListFilter {
-  const rawStatuses = url.searchParams.getAll("status");
-  const rawAssignees = url.searchParams.getAll("assignee");
+function requireIssueListFilter(url: URL, candidates = false): IssueListFilter {
+  const rawStatuses = candidates ? [] : url.searchParams.getAll("status");
+  const rawAssignees = candidates ? [] : url.searchParams.getAll("assignee");
+  const rawPriorities = url.searchParams.getAll("priority");
+  const rawLabels = url.searchParams.getAll("label");
   if (rawStatuses.length > 5) throw validationError("too_many_issue_filters", { field: "status" });
   if (rawAssignees.length > 20) throw validationError("too_many_issue_filters", { field: "assignee" });
+  if (rawPriorities.length > 5) throw validationError("too_many_issue_filters", { field: "priority" });
+  if (rawLabels.length > 20) throw validationError("too_many_issue_filters", { field: "label" });
   const statuses = [...new Set(rawStatuses)].map((status) => {
     if (!WORKFLOW_STATUSES.some((definition) => definition.key === status)) {
       throw validationError("schema_validation_failed", { field: "status" });
     }
     return status as StatusKey;
   }).sort();
-  const assignees = [...new Set(rawAssignees.map((assignee) => requireUuid(assignee, "assignee")))].sort();
-  const blocked = url.searchParams.get("blocked");
-  if (url.searchParams.getAll("blocked").length > 1 || (blocked !== null && blocked !== "only" && blocked !== "exclude")) {
+  const assignees = [...new Set(rawAssignees.map((assignee) => assignee === "unassigned" ? assignee : requireUuid(assignee, "assignee")))].sort();
+  const priorities = [...new Set(rawPriorities.map((priority) => requirePriorityKey(priority, "priority")))].sort();
+  const labels = [...new Set(rawLabels.map((label) => requireUuid(label, "label")))].sort();
+  const blocked = candidates ? null : url.searchParams.get("blocked");
+  if ((!candidates && url.searchParams.getAll("blocked").length > 1) || (blocked !== null && blocked !== "only" && blocked !== "exclude")) {
     throw validationError("schema_validation_failed", { field: "blocked" });
   }
-  return { assignees, statuses, blocked };
+  return { assignees, statuses, blocked, priorities, labels };
 }
 
 function resolvedScope(
@@ -918,12 +926,69 @@ function resolvedScope(
       assignees: issueFilter.assignees,
       ...(issueFilter.blocked === null ? {} : { blocked: issueFilter.blocked }),
       statuses: issueFilter.statuses,
+      ...(issueFilter.priorities.length === 0 ? {} : { priorities: issueFilter.priorities }),
+      ...(issueFilter.labels.length === 0 ? {} : { labels: issueFilter.labels }),
     },
     target_identifier: scope.targetIdentifier,
     unresolved_project_targets: scope.unresolvedProjectTargets,
     unresolved_workspace_targets: scope.unresolvedWorkspaceTargets,
     workspace_targets: scope.workspaceTargets,
   };
+}
+
+function issuePageSql(
+  filter: IssueListFilter,
+  predicates: string,
+  candidate: CandidateFilter | null,
+  deletionView: "exclude" | "only",
+): string {
+  const order = candidate === null
+    ? `i.${deletionView === "only" ? "deleted_at" : "updated_at"} DESC, i.number DESC`
+    : "i.priority_rank ASC, i.created_at ASC, i.number ASC";
+  const limit = candidate === null ? "?8" : "?9";
+  if (filter.labels.length > 0) {
+    // 从反向关联索引收敛到标签匹配集合，避免逐个 Issue 探测稀疏标签。
+    return `matched_label_issues(id) AS MATERIALIZED (
+      SELECT DISTINCT association.issue_id
+      FROM json_each(?12) requested_label
+      CROSS JOIN labels selected_label ON selected_label.id = requested_label.value
+        AND selected_label.deleted_at IS NULL
+        AND selected_label.project_id IN (SELECT id FROM current_result_projects)
+      CROSS JOIN issue_labels association ON association.label_id = selected_label.id
+    ), issue_page(number) AS MATERIALIZED (
+      SELECT i.number FROM matched_label_issues matching
+      CROSS JOIN issues i ON i.id = matching.id
+      WHERE i.project_id IN (SELECT id FROM current_result_projects) AND ${predicates}
+      ORDER BY ${order} LIMIT ${limit}
+    )`;
+  }
+  let driver: { values: string; condition: string; index: string } | null = null;
+  let index = "idx_issues_project_list";
+  if (candidate !== null) {
+    index = candidate.assignment === "needs_reassignment" ? "idx_issues_candidates" : "idx_issues_todo_assignee_order";
+    if (filter.priorities.length > 0) driver = { values: "?11", condition: "i.priority_rank = selected_filter.value", index };
+  } else if (deletionView === "exclude") {
+    const assigneeDriver = { values: "?7", condition: "i.assignee_principal_id IS NULLIF(selected_filter.value, 'unassigned')", index: "idx_issues_active_assignee_order" };
+    // 未分配可能覆盖大部分任务；联用状态/优先级时优先从这些有序集合读取。
+    if (filter.assignees.length > 0 && !filter.assignees.includes("unassigned")) driver = assigneeDriver;
+    else if (filter.priorities.length > 0) driver = { values: "?11", condition: "i.priority_key = selected_filter.value", index: "idx_issues_active_priority_order" };
+    else if (filter.statuses.length > 0) driver = { values: "?6", condition: "i.status_key = selected_filter.value", index: "idx_issues_active_status_order" };
+    else if (filter.assignees.length > 0) driver = assigneeDriver;
+  }
+  if (driver !== null) index = driver.index;
+  // 每个项目/驱动值先取一页，再归并；多项目、多值不先物化所有匹配 Issue。
+  return `issue_page(number) AS MATERIALIZED (
+    SELECT i.number FROM current_result_projects selected_project
+    ${driver === null ? "" : `CROSS JOIN json_each(${driver.values}) selected_filter`}
+    CROSS JOIN issues i ON i.number IN (
+      SELECT i.number FROM issues i ${deletionView === "only" ? "" : `INDEXED BY ${index}`}
+      WHERE i.project_id = selected_project.id
+        ${driver === null ? "" : `AND ${driver.condition}`}
+        AND ${predicates}
+      ORDER BY ${order} LIMIT ${limit}
+    )
+    ORDER BY ${order} LIMIT ${limit}
+  )`;
 }
 
 async function listIssueRows(
@@ -949,6 +1014,8 @@ async function listIssueRows(
     project_targets: [...scope.projectTargets].sort(),
     q: search.normalized,
     statuses: issueFilter.statuses,
+    ...(issueFilter.priorities.length === 0 ? {} : { priorities: issueFilter.priorities }),
+    ...(issueFilter.labels.length === 0 ? {} : { labels: issueFilter.labels }),
     workspace_targets: [...scope.workspaceTargets].sort(),
   };
   const cursorContext = await createCursorContext(
@@ -984,33 +1051,8 @@ async function listIssueRows(
   try {
     if (candidates) {
       const cursor = parsedCursor as [number, number, number] | null;
-      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 11);
-      const candidateStatement = db.prepare(
-        `WITH current_visible_projects(id) AS MATERIALIZED (
-           SELECT current_project.id
-           FROM projects current_project
-           JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
-           JOIN instance_meta current_instance ON current_instance.singleton = 1
-           WHERE current_project.id IN (SELECT value FROM json_each(?10))
-             AND current_project.deleted_at IS NULL
-             AND current_workspace.deleted_at IS NULL
-             AND ${currentAuthGuard.sql}
-             AND (
-               current_instance.owner_principal_id = ?8
-               OR EXISTS (
-                 SELECT 1 FROM effective_project_grants current_grant
-                 WHERE current_grant.project_id = current_project.id
-                   AND current_grant.principal_id = ?8
-                   AND current_grant.revoked_at IS NULL
-               )
-             )
-         ), current_result_projects(id) AS MATERIALIZED (
-           SELECT id FROM current_visible_projects
-           WHERE id IN (SELECT value FROM json_each(?1))
-         )
-         ${ISSUE_SELECT}
-         WHERE i.project_id IN (SELECT id FROM current_result_projects)
-           AND i.deleted_at IS NULL AND p.deleted_at IS NULL AND w.deleted_at IS NULL
+      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 13);
+      const candidatePredicates = `i.deleted_at IS NULL
            AND i.status_key = 'todo'
            ${candidate.blocked === "exclude" ? `AND i.blocked_reason IS NULL
            AND NOT EXISTS (
@@ -1037,8 +1079,35 @@ async function listIssueRows(
                  ))`}
            ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
            ${cursor === null ? "" : "AND (i.priority_rank, i.created_at, i.number) > (?4, ?5, ?6)"}
-         ORDER BY i.priority_rank ASC, i.created_at ASC, i.number ASC
-         LIMIT ?9`,
+           ${issueFilter.priorities.length === 0 ? "" : "AND i.priority_rank IN (SELECT value FROM json_each(?11))"}
+`;
+      const candidateStatement = db.prepare(
+        `WITH current_visible_projects(id) AS MATERIALIZED (
+           SELECT current_project.id
+           FROM projects current_project
+           JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+           JOIN instance_meta current_instance ON current_instance.singleton = 1
+           WHERE current_project.id IN (SELECT value FROM json_each(?10))
+             AND current_project.deleted_at IS NULL
+             AND current_workspace.deleted_at IS NULL
+             AND ${currentAuthGuard.sql}
+             AND (
+               current_instance.owner_principal_id = ?8
+               OR EXISTS (
+                 SELECT 1 FROM effective_project_grants current_grant
+                 WHERE current_grant.project_id = current_project.id
+                   AND current_grant.principal_id = ?8
+                   AND current_grant.revoked_at IS NULL
+               )
+             )
+         ), current_result_projects(id) AS MATERIALIZED (
+           SELECT id FROM current_visible_projects
+           WHERE id IN (SELECT value FROM json_each(?1))
+         ),
+         ${issuePageSql(issueFilter, candidatePredicates, candidate, deletionView)}
+         ${ISSUE_SELECT}
+         JOIN issue_page ON issue_page.number = i.number
+         ORDER BY i.priority_rank ASC, i.created_at ASC, i.number ASC`,
       );
       const candidateBindings = [
         JSON.stringify(projectIds), search.number, search.normalized,
@@ -1050,6 +1119,8 @@ async function listIssueRows(
       const boundCandidateStatement = candidateStatement.bind(
         ...candidateBindings,
         JSON.stringify(scope.relationProjects.map((project) => project.projectId)),
+        JSON.stringify(issueFilter.priorities.map(priorityRank)),
+        JSON.stringify(issueFilter.labels),
         ...currentAuthGuard.values,
       );
       const result = await boundCandidateStatement.all<IssueRow>();
@@ -1062,7 +1133,32 @@ async function listIssueRows(
       }
     } else {
       const cursor = parsedCursor as [number, number] | null;
-      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 11);
+      const currentAuthGuard = buildCurrentAuthGuard(auth, now, 13);
+      const ordinaryPredicates = `1 = 1
+           ${issueFilter.blocked === null ? "" : `AND ${issueFilter.blocked === "exclude" ? "NOT" : ""} (
+             i.blocked_reason IS NOT NULL OR (i.deleted_at IS NULL
+               AND i.project_id IN (SELECT id FROM current_relation_projects)
+               AND EXISTS (
+                 SELECT 1 FROM issue_relations blocked_relation
+                 JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
+                 WHERE blocked_relation.target_issue_id = i.id
+                   AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
+                   AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
+                   AND blocker.project_id IN (SELECT id FROM current_relation_projects)
+               ))
+           )`}
+           AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
+           ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
+           ${issueFilter.statuses.length === 0 ? "" : issueFilter.statuses.length === 1
+             ? "AND i.status_key = json_extract(?6, '$[0]')"
+             : "AND i.status_key IN (SELECT value FROM json_each(?6))"}
+           ${issueFilter.assignees.length === 0 ? "" : `AND (
+             i.assignee_principal_id IN (SELECT value FROM json_each(?7))
+             ${issueFilter.assignees.includes("unassigned") ? "OR i.assignee_principal_id IS NULL" : ""}
+           )`}
+           ${issueFilter.priorities.length === 0 ? "" : "AND i.priority_key IN (SELECT value FROM json_each(?11))"}
+           ${cursor === null ? "" : `AND (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"}, i.number) < (?4, ?5)`}
+`;
       const statement = db.prepare(
         `WITH current_result_projects(id) AS MATERIALIZED (
            SELECT current_project.id
@@ -1108,35 +1204,7 @@ async function listIssueRows(
                WHERE relation_grant.project_id = relation_project.id
                  AND relation_grant.principal_id = ?9 AND relation_grant.revoked_at IS NULL
              ))
-         ), issue_page(number) AS MATERIALIZED (
-         SELECT i.number FROM issues i
-         WHERE ${projectIds.length === 1
-           ? "i.project_id = (SELECT id FROM current_result_projects)"
-           : "i.project_id IN (SELECT id FROM current_result_projects)"}
-           ${issueFilter.blocked === null ? "" : `AND ${issueFilter.blocked === "exclude" ? "NOT" : ""} (
-             i.blocked_reason IS NOT NULL OR (i.deleted_at IS NULL
-               AND i.project_id IN (SELECT id FROM current_relation_projects)
-               AND EXISTS (
-                 SELECT 1 FROM issue_relations blocked_relation
-                 JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
-                 WHERE blocked_relation.target_issue_id = i.id
-                   AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
-                   AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
-                   AND blocker.project_id IN (SELECT id FROM current_relation_projects)
-               ))
-           )`}
-           AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
-           ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
-           ${issueFilter.statuses.length === 0 ? "" : issueFilter.statuses.length === 1
-             ? "AND i.status_key = json_extract(?6, '$[0]')"
-             : "AND i.status_key IN (SELECT value FROM json_each(?6))"}
-           ${issueFilter.assignees.length === 0 ? "" : issueFilter.assignees.length === 1
-             ? "AND i.assignee_principal_id = json_extract(?7, '$[0]')"
-             : "AND i.assignee_principal_id IN (SELECT value FROM json_each(?7))"}
-           ${cursor === null ? "" : `AND (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"}, i.number) < (?4, ?5)`}
-         ORDER BY ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} DESC, i.number DESC
-         LIMIT ?8
-         )
+         ), ${issuePageSql(issueFilter, ordinaryPredicates, null, deletionView)}
          ${ISSUE_SELECT}
          JOIN issue_page ON issue_page.number = i.number
          ORDER BY ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} DESC, i.number DESC`,
@@ -1152,6 +1220,8 @@ async function listIssueRows(
         ...bindings,
         auth.principalId,
         JSON.stringify(scope.relationProjects.map((project) => project.projectId)),
+        JSON.stringify(issueFilter.priorities),
+        JSON.stringify(issueFilter.labels),
         ...currentAuthGuard.values,
       ).all<IssueRow>();
       rows = result.results;
@@ -1188,7 +1258,7 @@ async function listIssuesInternal(
   }
   const search = searchFilter(url);
   const candidate = candidates ? requireCandidateFilter(url) : null;
-  const issueFilter = candidates ? { assignees: [], statuses: [], blocked: null } : requireIssueListFilter(url);
+  const issueFilter = requireIssueListFilter(url, candidates);
   let page = await listIssueRows(
     db,
     scope,

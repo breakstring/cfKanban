@@ -2,6 +2,7 @@
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import PageState from "../components/PageState.vue";
 import WorkAssigneeFilter from "../components/WorkAssigneeFilter.vue";
+import IssueQueryFilters from "../components/IssueQueryFilters.vue";
 import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import { ColumnPagination } from "../lib/column-pagination";
 import { containerChoiceLabels } from "../lib/container-choice";
@@ -15,7 +16,7 @@ import { resolvedWorkScope, workListPath, workProjects, type ResolvedWorkScope, 
 import type { IssueSummary, ListResult, StatusKey, WebSessionView } from "../types";
 const props = defineProps<{ session: WebSessionView }>();
 const ui = (en: string, zh: string) => locale.value === "zh-CN" ? zh : en;
-const filter = reactive<WorkListFilter>({ projects: [], queue: "all", assignee: "", status: "", search: "" });
+const filter = reactive<WorkListFilter>({ projects: [], queue: "all", assignee: "", status: "", search: "", priorities: [], labels: [] });
 const page = reactive(new ColumnPagination<IssueSummary>());
 const applied = ref(false);
 const resolved = ref<ResolvedWorkScope | null>(null);
@@ -53,7 +54,7 @@ watch(() => JSON.stringify(filter), clear, { flush: "sync" });
 watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), () => {
   clear(); filter.projects = filter.projects.filter(id => projects.value.some(project => project.project_id === id)); filter.assignee = "";
 });
-watch(() => filter.projects.join(","), () => { filter.assignee = ""; });
+watch(() => filter.projects.join(","), () => { filter.assignee = ""; filter.labels = []; }, { flush: "sync" });
 onUnmounted(clear);
 </script>
 <template>
@@ -70,6 +71,7 @@ onUnmounted(clear);
         <WorkAssigneeFilter v-if="filter.queue === 'all'" v-model="filter.assignee" :projects="selectedProjects" :principal-id="session.principal.id" />
         <label>{{ ui('Search', '搜索') }}<input v-model="filter.search" type="search" :placeholder="ui('Title or CFK number', '标题或 CFK 编号')" /></label>
       </div>
+      <IssueQueryFilters v-model:priorities="filter.priorities" v-model:labels="filter.labels" :projects="selectedProjects" />
       <p v-if="selectedProjects.some(project => project.role === 'reader')" class="muted-copy">{{ ui('Reader access allows viewing work; assignment and changes require writer access in that project.', '只读项目可以查看事项；领取、指派和修改需要该项目的协作者权限。') }}</p>
       <p v-if="candidates" class="muted-copy">{{ ui('Candidate queues contain only startable Todo issues, ordered by priority then oldest first. Viewing a queue does not assign work.', '候选队列只包含可开始的待办事项，按优先级与创建先后排序。查看队列不会领取或指派任务。') }}</p>
       <div class="form-actions"><button class="primary-button" type="submit" :disabled="!canLoad || page.loading">{{ ui('Show work', '查看工作') }}</button><button v-if="filter.projects.length" class="text-button" type="button" @click="filter.projects = []">{{ ui('Clear selection', '清空选择') }}</button></div>

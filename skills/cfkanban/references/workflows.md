@@ -111,6 +111,72 @@ For every non-idempotent operation, provide an independent `idempotencyKey`. For
 
 Candidate selection has no silent assignment default. Start from `/api/v1/issues/candidates?assignment=mine&blocked=exclude&project={project_id}` and choose the required `assignment` from the user's intent: `mine` for work assigned to the current Principal, `unassigned` for work available to pick up, or `needs_reassignment` for work whose assignee is no longer eligible. The endpoint returns only unstarted work in server-defined order. `blocked=exclude` is the normal default; set `blocked=include` when blocked candidates should remain visible. Repeat `project={project_id}` for multiple Projects. Echo `resolved_scope.candidate_policy` and the resolved Projects so the user can see the exact policy and scope that were applied.
 
+## Efficient Issue queries
+
+Priority/Label filtering and ordinary-list `assignee=unassigned` require a deployed Service that implements these filters and schema 13. Updating the local Skill alone does not upgrade the instance. On an older Service, explain the missing capability; do not silently download all Issues and filter them locally or claim a filter took effect without server support.
+
+Prefer a known Project scope and server-side filters before pagination. Apply OR within a repeated parameter and AND between dimensions:
+
+| Parameter | Ordinary list and Project list | Candidates |
+| --- | --- | --- |
+| `project` | Repeat Project UUIDs, at most 20; a Project URL already fixes its scope | Repeat Project UUIDs, at most 20 |
+| `status` | Repeat up to 5 fixed keys: `backlog`, `todo`, `in_progress`, `done`, `canceled` | Fixed `todo`; do not supply `status` |
+| `assignee` | Repeat up to 20 Principal UUIDs or `unassigned`; UUIDs and `unassigned` can be combined with OR | Use required `assignment` policy instead |
+| `priority` | Repeat up to 5 keys: `urgent`, `high`, `medium`, `low`, `none` | Same |
+| `label` | Repeat up to 20 active Label UUIDs; any matching Label | Same |
+| `q` | Title/identifier substring only | Same |
+| `limit`, `cursor` | 1–100 per page (default 20), followed by the returned cursor | Same |
+
+A lower `limit` bounds returned results; it does not guarantee that the database reads only that many rows. Index benefit depends on selectivity, combinations, and ordering; indexes also add storage/write cost. `q` substring search and blocking checks can still require extra reads. Never promise that every filter combination is covered by one index.
+
+The JSON blocks below are inputs to `node scripts/cfkanban-tool.mjs api request` through stdin. UUIDs are examples, not real targets: replace `111…` with the trusted instance, `222…` with its Workspace, `333…` with the selected Project, `444…` with the current Principal, and `555…` / `666…` with the resolved bug / performance Labels. No Credential belongs in this input.
+
+### Resolve Label names in the selected Project
+
+For “Find unfinished Issues tagged bug or performance in DemoProject”, first read that exact Project's active Labels. Follow `has_more` / `next_cursor` if needed, match the returned name exactly (ASCII case-insensitive, consistent with SQLite `NOCASE`), and use its stable Label ID. Do not guess a UUID or search unrelated Projects. Resolve the same name separately in each selected Project; a Label ID belongs to one Project. Unknown, inaccessible, or deleted Label IDs contribute no matches and do not reveal why.
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/workspaces/22222222-2222-4222-8222-222222222222/projects/33333333-3333-4333-8333-333333333333/labels?limit=100"}
+```
+
+### My high-priority todo Issues
+
+“Show my high-priority todo Issues in DemoProject.” Resolve “me” through `/api/v1/me`; ordinary lists require the Principal UUID, not `assignee=mine`.
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=todo&assignee=44444444-4444-4444-8444-444444444444&priority=high&limit=20"}
+```
+
+### Unfinished Issues with either Label
+
+“Show unfinished Issues tagged bug or performance in DemoProject.” This includes `backlog`, `todo`, and `in_progress`, matching either Label. Repeated Labels mean **any**, not “must have every Label”.
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=backlog&status=todo&status=in_progress&label=55555555-5555-4555-8555-555555555555&label=66666666-6666-4666-8666-666666666666&limit=20"}
+```
+
+### Unassigned Issues and work candidates
+
+“Show all unassigned Issues in DemoProject, regardless of status.” The ordinary Project list uses `assignee=unassigned`; it can include started and terminal work. Add repeated `status` parameters when only unfinished work is wanted.
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/workspaces/22222222-2222-4222-8222-222222222222/projects/33333333-3333-4333-8333-333333333333/issues?assignee=unassigned&limit=20"}
+```
+
+“Find unassigned, unblocked todo candidates tagged bug with high or urgent priority in DemoProject.” Candidates always select `todo` work in the server-defined candidate order and require exactly one `assignment=mine|unassigned|needs_reassignment`. Do not substitute ordinary `status` or `assignee` parameters. `needs_reassignment` finds assignments whose Principal has lost eligibility; it is different from unassigned.
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues/candidates?project=33333333-3333-4333-8333-333333333333&assignment=unassigned&blocked=exclude&priority=high&priority=urgent&label=55555555-5555-4555-8555-555555555555&limit=20"}
+```
+
+### Continue the same search
+
+“Show the next page of that unfinished bug-or-performance search.” Use the previous response's `next_cursor` only when `has_more=true`. The example below uses `CURSOR_FROM_PREVIOUS_RESPONSE` as a placeholder: replace it with the actual cursor, URL-encoded once. Keep the original scope and filters; start without a cursor after changing any condition. Check `resolved_scope` and, for candidates, `resolved_scope.candidate_policy` rather than inferring the effective scope.
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=backlog&status=todo&status=in_progress&label=55555555-5555-4555-8555-555555555555&label=66666666-6666-4666-8666-666666666666&limit=20&cursor=CURSOR_FROM_PREVIOUS_RESPONSE"}
+```
+
 ## Issue priority
 
 Use this workflow for a priority change from an Agent, including the same operation exposed by the Web card/detail shortcut. It uses the existing Issue PATCH API, not a new command or a schema-11-only feature. Resolve the trusted instance and Issue identifier, then GET `/api/v1/issues/{identifier}`. Read its current `version`, `priority`, and `allowed_actions`; require effective Project writer/Owner access (including authorized scoped administrators) and `update`. Readers cannot change priority. If the current priority already matches the request, report it as unchanged and send no PATCH.

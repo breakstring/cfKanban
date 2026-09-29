@@ -1,4 +1,5 @@
-import type { ProjectScopeItem, StatusKey, WebSessionView } from "../types";
+import type { PriorityKey, ProjectScopeItem, StatusKey, WebSessionView } from "../types";
+import { priorityOrder } from "./priority";
 
 export type WorkQueue = "all" | "mine" | "unassigned" | "needs_reassignment";
 export interface WorkListFilter {
@@ -7,6 +8,8 @@ export interface WorkListFilter {
   assignee: string;
   status: StatusKey | "";
   search: string;
+  priorities: PriorityKey[];
+  labels: string[];
 }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -27,11 +30,16 @@ export function workListPath(filter: WorkListFilter, session: WebSessionView, cu
   else {
     const assignee = filter.queue === "mine" ? session.principal.id : filter.assignee;
     if (assignee) {
-      if (!uuid.test(assignee)) return null;
+      if (assignee !== "unassigned" && !uuid.test(assignee)) return null;
       params.set("assignee", assignee);
     }
     if (filter.status) params.set("status", filter.status);
   }
+  const priorities = [...new Set(filter.priorities)].sort();
+  const labels = [...new Set(filter.labels)].sort();
+  if (priorities.length > 5 || priorities.some(priority => !priorityOrder.includes(priority)) || labels.length > 20 || labels.some(label => !uuid.test(label))) return null;
+  for (const priority of priorities) params.append("priority", priority);
+  for (const label of labels) params.append("label", label);
   if (filter.search.trim()) params.set("q", filter.search.trim());
   if (cursor) params.set("cursor", cursor);
   return `/api/v1/issues${candidates ? "/candidates" : ""}?${params}`;

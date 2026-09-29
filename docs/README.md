@@ -14,6 +14,7 @@
 
 ## 产品与合同
 
+- [Issue 结构化筛选与有界查询](specs/2026-09-29-issue-query-filters-spec.md)：优先级、标签、未分配筛选及 schema 13 查询索引。
 - [产品简报](product/product-brief.md)：产品为何存在、为谁服务、MVP 与非目标。
 - [用户使用 Storyboard](product/user-storyboard.md)：从首次部署到日常协作与恢复的逐卡产品验收故事。
 - [Agent-native Kanban Foundation SPEC](specs/2026-08-26-agent-native-kanban-foundation-spec.md)：已冻结的领域、身份、assignment、基础 API 语义和可靠性合同。

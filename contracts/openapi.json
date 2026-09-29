@@ -3312,6 +3312,36 @@
         ],
         "parameters": [
           {
+            "name": "priority",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 5,
+              "items": {
+                "$ref": "#/components/schemas/PriorityKey"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Match any selected priority; combined with other dimensions using AND."
+          },
+          {
+            "name": "label",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Match any selected active Project Label ID before pagination; unknown, deleted or inaccessible Labels do not match."
+          },
+          {
             "name": "blocked",
             "in": "query",
             "required": false,
@@ -3383,11 +3413,19 @@
             "name": "assignee",
             "in": "query",
             "required": false,
+            "description": "Match any selected Principal UUID or the unassigned sentinel, independently of status.",
             "schema": {
               "type": "array",
               "maxItems": 20,
               "items": {
-                "$ref": "#/components/schemas/Uuid"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "const": "unassigned"
+                  }
+                ]
               }
             },
             "style": "form",
@@ -3484,6 +3522,36 @@
           }
         ],
         "parameters": [
+          {
+            "name": "priority",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 5,
+              "items": {
+                "$ref": "#/components/schemas/PriorityKey"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Match any selected priority; combined with other dimensions using AND."
+          },
+          {
+            "name": "label",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Match any selected active Project Label ID before pagination; unknown, deleted or inaccessible Labels do not match."
+          },
           {
             "name": "assignment",
             "in": "query",
@@ -3646,6 +3714,36 @@
             }
           },
           {
+            "name": "priority",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 5,
+              "items": {
+                "$ref": "#/components/schemas/PriorityKey"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Match any selected priority; combined with other dimensions using AND."
+          },
+          {
+            "name": "label",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Match any selected active Project Label ID before pagination; unknown, deleted or inaccessible Labels do not match."
+          },
+          {
             "name": "blocked",
             "in": "query",
             "required": false,
@@ -3717,11 +3815,19 @@
             "name": "assignee",
             "in": "query",
             "required": false,
+            "description": "Match any selected Principal UUID or the unassigned sentinel, independently of status.",
             "schema": {
               "type": "array",
               "maxItems": 20,
               "items": {
-                "$ref": "#/components/schemas/Uuid"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "const": "unassigned"
+                  }
+                ]
               }
             },
             "style": "form",
@@ -15155,7 +15261,14 @@
                 "type": "array",
                 "maxItems": 20,
                 "items": {
-                  "$ref": "#/components/schemas/Uuid"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Uuid"
+                    },
+                    {
+                      "const": "unassigned"
+                    }
+                  ]
                 }
               },
               "blocked": {
@@ -15170,6 +15283,20 @@
                 "maxItems": 5,
                 "items": {
                   "$ref": "#/components/schemas/StatusKey"
+                }
+              },
+              "priorities": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                  "$ref": "#/components/schemas/PriorityKey"
+                }
+              },
+              "labels": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                  "$ref": "#/components/schemas/Uuid"
                 }
               }
             },

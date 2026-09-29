@@ -14,9 +14,77 @@
 
 需要目标项目的读取权限。Agent 应说明实际查询的项目范围，并返回匹配任务；搜索覆盖标题与编号，不承诺搜索评论或附件全文。多个项目同名时，需要先核对所属工作区。
 
-**在网页中操作：** 打开项目看板，在搜索框输入标题或编号并点击「搜索」。各状态列独立加载，列头数量是已加载数量；滚动列或点击「加载更多」继续查看。
+**在网页中操作：** 打开项目看板，在搜索框输入标题或编号，按需选择优先级或标签筛选，再点击「搜索」。各状态列独立加载，列头数量是已加载数量；滚动列或点击「加载更多」继续查看。
 
-跨项目查找时，点击顶部「工作清单」，明确选择 1–20 个项目，选「全部事项」或「我的任务」，设置状态、负责人或标题/编号筛选，再点击「查看工作」。修改筛选后需要再次查询；初次打开不会自动读取全部项目。
+跨项目查找时，点击顶部「工作清单」，明确选择 1–20 个项目，选「全部事项」或「我的任务」，设置状态、负责人（包括未分配）、优先级、标签或标题/编号筛选，再点击「查看工作」。修改筛选后需要再次查询；初次打开不会自动读取全部项目。
+
+## 按优先级、负责人、状态与标签组合筛选
+
+```text
+请用 $cfkanban 查看 DemoProject 中分配给我、优先级为高的待办任务。
+```
+
+```text
+查看 DemoProject 中带 bug 或 performance 标签的未完成任务；先给我一页，并说明项目范围及使用的筛选条件。
+```
+
+这些筛选需要实例部署支持 Issue 查询筛选的 Service，并应用 schema 13；只更新本地 Skills 不会升级实例。先明确项目，再解析其标签名。跨项目工作清单中的同名标签属于不同项目，须分别选择目标项目的标签。
+
+同一筛选维度多个值取**任一**（OR），不同维度须**同时满足**（AND）。例如“高或紧急”加“待办”，表示两种优先级之一且处于待办；“bug 或 performance”命中任一标签即可，不要求同时具备两个标签。“未完成”包含 Backlog、待办和进行中；候选只包含待办，不能代替全部未完成任务。
+
+先限定项目和筛选，再按需要继续翻页，服务端在分页前执行过滤。索引有助于避免无关读取，但收益取决于条件组合和排序，也有额外存储及写入成本。返回少量结果不保证数据库只读相同行数；标题/编号子串搜索仍可能读取更多行。
+
+### 给 Agent 作者的 API 示例
+
+在已安装的日常 Skill 目录，将下列每个 JSON 对象通过 stdin 传给 `node scripts/cfkanban-tool.mjs api request`，输入中不包含 Credential。所有 UUID 都是示例：将 `111…` 替换为可信实例、`222…` 为工作区、`333…` 为项目、`444…` 为本人 Principal、`555…` / `666…` 为该项目实际返回的 bug / performance 标签 ID。
+
+普通列表支持重复 `status` key（最多 5 个）、`assignee` Principal UUID 或 `unassigned`（最多 20 个，混用取 OR）、`priority` key（最多 5 个：`urgent`、`high`、`medium`、`low`、`none`）及 `label` UUID（最多 20 个）。候选支持相同的优先级/标签条件。使用重复 URL 参数，不使用逗号拼接值。`limit` 为 1–100，默认 20。
+
+### 在明确项目内解析标签名称
+
+用户要求“查找 DemoProject 中带 bug 或 performance 标签的未完成任务”时，先读取这个准确项目的有效标签。按 `has_more` / `next_cursor` 继续分页，从返回名称精确匹配（ASCII 大小写不敏感，与 SQLite `NOCASE` 一致），再使用稳定 Label ID。不猜 UUID，不遍历无关项目。跨项目同名标签须分别解析，一个 Label ID 只属于一个项目。未知、无权访问或已删除的标签 ID 均不产生匹配，不据此推断具体原因。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/workspaces/22222222-2222-4222-8222-222222222222/projects/33333333-3333-4333-8333-333333333333/labels?limit=100"}
+```
+
+### 我的高优先级待办任务
+
+“查看 DemoProject 中分配给我、优先级为高的待办任务。”先通过 `/api/v1/me` 解析“我”；普通列表使用 Principal UUID，不能写 `assignee=mine`。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=todo&assignee=44444444-4444-4444-8444-444444444444&priority=high&limit=20"}
+```
+
+### 带任一标签的未完成任务
+
+“查看 DemoProject 中带 bug 或 performance 标签的未完成任务。”包含 `backlog`、`todo`、`in_progress`，命中任一标签即可。重复标签参数表达**任一匹配**，不表示“同时具备全部标签”。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=backlog&status=todo&status=in_progress&label=55555555-5555-4555-8555-555555555555&label=66666666-6666-4666-8666-666666666666&limit=20"}
+```
+
+### 未分配任务与待领取候选
+
+“查看 DemoProject 所有未分配任务，不限状态。”普通项目列表用 `assignee=unassigned`，因此可以包括已开始或终态任务；只要未完成任务时，再附加重复的 `status` 参数。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/workspaces/22222222-2222-4222-8222-222222222222/projects/33333333-3333-4333-8333-333333333333/issues?assignee=unassigned&limit=20"}
+```
+
+“在 DemoProject 找带 bug 标签、优先级为高或紧急、未分配且未阻塞的待办候选。”候选固定为 `todo`，按服务端候选顺序返回，且必须明确传入一个 `assignment=mine|unassigned|needs_reassignment`；不能用普通列表的 `status` 或 `assignee` 替代。`needs_reassignment` 指原负责人已失去资格，与未分配不同。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues/candidates?project=33333333-3333-4333-8333-333333333333&assignment=unassigned&blocked=exclude&priority=high&priority=urgent&label=55555555-5555-4555-8555-555555555555&limit=20"}
+```
+
+### 继续同一次查询
+
+“继续查看刚才带 bug 或 performance 标签的未完成任务的下一页。”只在上次响应 `has_more=true` 时使用返回的 `next_cursor`。下例 `CURSOR_FROM_PREVIOUS_RESPONSE` 是占位符，须替换为实际 cursor 并做一次 URL 编码。保留原项目范围及筛选；任一条件变化后移除 cursor，从首页重新查询。核对 `resolved_scope`；候选还须核对 `resolved_scope.candidate_policy`，不自行推断实际范围。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=backlog&status=todo&status=in_progress&label=55555555-5555-4555-8555-555555555555&label=66666666-6666-4666-8666-666666666666&limit=20&cursor=CURSOR_FROM_PREVIOUS_RESPONSE"}
+```
 
 ## 创建一个任务
 

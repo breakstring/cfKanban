@@ -333,7 +333,7 @@ for (const failure of ['response', 'exception']) test(`Cloudflare ${failure} 回
 });
 
 
-for (const schemaVersion of [9, 10, 11, 12]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
+for (const schemaVersion of [9, 10, 11, 12, 13]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
   const f = await fixture(t);
   for (const name of ['0002_container_purge', '0003_container_uuid', '0004_issue_attachments', '0005_attachment_schema_version', '0006_usage_statistics', '0007_attachment_settings', '0008_principal_names', '0009_scoped_administrators']) {
     f.db.exec(await readFile(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'));
@@ -346,6 +346,7 @@ for (const schemaVersion of [9, 10, 11, 12]) test(`schema ${schemaVersion} 恢�
       f.db.prepare('UPDATE credentials SET device_name = ? WHERE id = ?').run(['办公电脑', 'Home laptop'][index], id);
     }
   }
+  if (schemaVersion >= 13) f.db.exec(await readFile(new URL('../../migrations/0013_issue_query_indexes.sql', import.meta.url), 'utf8'));
   const beforeDeviceNames = schemaVersion >= 12 ? f.db.prepare('SELECT id,device_name FROM credentials ORDER BY id').all() : null;
   const beforeHomepage = schemaVersion >= 11 ? f.db.prepare('SELECT * FROM homepage_settings').all() : null;
   const workspace = f.db.prepare('SELECT id FROM workspaces').get().id;
@@ -388,9 +389,9 @@ for (const schemaVersion of [9, 10, 11, 12]) test(`schema ${schemaVersion} 恢�
   }
 });
 
-test('schema 13 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
+test('schema 14 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
   const f = await fixture(t);
-  f.db.prepare('UPDATE instance_meta SET schema_version = 13').run();
+  f.db.prepare('UPDATE instance_meta SET schema_version = 14').run();
   await assert.rejects(inspectOwnerRecovery(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   await assert.rejects(createOwnerRecoveryPlan(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   assert.equal(f.writes, 0);

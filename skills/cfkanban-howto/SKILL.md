@@ -37,6 +37,24 @@ Joining is for people who do not yet have access: “Use $cfkanban to join this 
 
 When explaining browser access, distinguish API identity from browser-session delivery. Opening a board, Issue, or administration page routes to the operational Skill's browser preflight and authenticated-target verification. A failed browser handoff alone does not mean the user needs a new Credential or identity. Honor the requested browser; explain a concrete supported recovery path without promising that every host can automate it. Cloudflare OAuth belongs to `cfkanban-deploy` and is a separate login, not a cfKanban Browser Launch.
 
+### Find work efficiently / 高效查找任务
+
+Use scoped filters so growing Issue history does not need to be downloaded and discarded by the Agent. Priority/Label filtering and ordinary-list unassigned filtering require deployed Service support and schema 13; a local Skill update alone is insufficient. Explain the deployed capability before promising results.
+
+| Example prompt / 自然语言示例 | Meaning / 含义 |
+| --- | --- |
+| “Show my high-priority todo Issues in DemoProject.” / “查看 DemoProject 中分配给我、优先级为高的待办任务。” | Ordinary list: Project AND current assignee AND high priority AND todo. / 普通列表：项目、当前负责人、高优先级和待办状态同时满足。 |
+| “Show unfinished Issues tagged bug or performance in DemoProject.” / “查看 DemoProject 中带 bug 或 performance 标签的未完成任务。” | Resolve Labels in that Project; match either Label and backlog/todo/in_progress. / 在该项目解析标签，任一标签匹配，状态包含未开始、待办和进行中。 |
+| “Show all unassigned Issues in DemoProject, regardless of status.” / “查看 DemoProject 中所有未分配任务，不限状态。” | Ordinary list; can include started and terminal work. / 普通列表，可包含已开始与终态任务。 |
+| “Find unassigned, unblocked todo candidates tagged bug with high or urgent priority in DemoProject.” / “查找 DemoProject 中带 bug 标签、优先级为高或紧急、未分配且未阻塞的待办候选。” | Candidate queue is fixed to todo and has an explicit assignment policy. / 候选固定为待办，必须明确负责人选择策略。 |
+| “Show the next page with the same filters.” / “保留刚才的筛选，查看下一页。” | Continue using the returned cursor; changing filters starts a new search. / 使用返回的游标继续；修改条件后从首页查询。 |
+
+Repeated values within one dimension mean **any**, while different dimensions must all match. Labels with the same name in different Projects have separate IDs; resolve them per selected Project. Status, priority, assignee, and Label filtering happens before pagination. Indexes can reduce unnecessary reads, but combinations, sorting, substring search, and blocking checks have different costs; never promise that returned row count equals database row reads.
+
+同一维度多个值取“任一”，不同维度需同时满足。跨项目同名标签分别解析稳定 ID；筛选在分页前执行。限定项目、使用明确条件并按需翻页，有助于减少无关读取；索引也增加存储及写入成本，不保证所有组合只读取最终返回的行。
+
+On a Service with these filters, the Web board and **Work list** also expose priority and Label choices. Technical users can find parameter limits, Label lookup, exact `api request` JSON, and pagination examples in [English](../cfkanban/references/workflows.md#efficient-issue-queries) or [简体中文](../cfkanban/references/workflows.zh-CN.md#高效查询-issue). Route execution to `cfkanban`; this howto does not run queries.
+
 ### Work regularly from one folder / 在固定目录里长期协作
 
 Recommend an optional directory association when the user regularly handles one or more Projects from the same repository or ordinary folder. It helps future Issue lists/searches use the intended Projects without repeatedly naming them. It is unnecessary for a one-off Issue lookup and is not a prerequisite for joining or daily work.

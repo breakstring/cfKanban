@@ -1,5 +1,7 @@
 # cfKanban API & D1 Schema SPEC
 
+> 2026-09-29 增量：[Issue 结构化筛选与有界查询](2026-09-29-issue-query-filters-spec.md)（Frozen）定义优先级、标签、未分配筛选和 schema 13 查询索引，以及 Web / Agent 等价入口。
+
 > 2026-09-20 增量：[首页实例说明设置](2026-09-20-homepage-settings-spec.md)（Frozen，schema 11）定义 Owner 双语说明的 CAS/幂等写入和公开 discovery 投影；字段只用于公开纯文本展示，不改变身份或权限。
 
 > 2026-09-20 增量：[正式发行生命周期](2026-09-20-stable-release-lifecycle-spec.md)（Frozen）规定版本无关用户入口、最新 stable 发现与执行时固定版本，以及独立的 `release_version` 展示；既有 API/schema 兼容字段保持不变。

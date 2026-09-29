@@ -19,7 +19,7 @@ import { createRenderer, h, nextTick, ref } from 'vue';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
-  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
+  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
   plugins: [{ name: 'vue-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
@@ -30,7 +30,7 @@ const output = await build({
     builder.onResolve({ filter: /^vue$/ }, () => ({ path: new URL('../../node_modules/vue/index.mjs', import.meta.url).href, external: true }));
   } }],
 });
-const { WorkList, Activity, Context, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
+const { WorkList, Board, Activity, Context, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
 
 
 
@@ -63,7 +63,7 @@ const p2 = '00000000-0000-4000-8000-000000000003';
 const principal = '00000000-0000-4000-8000-000000000004';
 const projects = [p1, p2].map((id, index) => ({ workspace_id: workspace, workspace_display_name: 'Team', project_id: id, project_display_name: `Project ${index}`, role: index ? 'reader' : 'writer' }));
 const session = { allowed_scope: { kind: 'project_selection', projects }, principal: { id: principal, display_name: 'Pat', is_owner: false } };
-const filter = { projects: [p1], queue: 'all', status: '', assignee: '', search: '' };
+const filter = { projects: [p1], queue: 'all', status: '', assignee: '', search: '', priorities: [], labels: [] };
 const page = (items, cursor = null) => ({ items, has_more: !!cursor, next_cursor: cursor });
 const issue = (id = 'one') => ({ id, identifier: 'CFK-1', title: `Issue ${id}`, status: { key: 'todo', display_name: 'Todo' }, priority: 'none', workspace: { id: workspace, display_name: 'Team' }, project: { id: p1, display_name: 'Project 0' }, assignee: null, version: 2 });
 const button = (host, label) => all(host).find(item => item.tag === 'button' && text(item) === label);
@@ -92,6 +92,178 @@ test('work queries require explicit current scope, preserve fixed scope, and sep
     assert.equal(candidate.searchParams.has('blocked'), false);
   }
 });
+
+test('priority and label filters use repeated stable parameters in ordinary and candidate queries', () => {
+  const labelIds = ['00000000-0000-4000-8000-000000000080', '00000000-0000-4000-8000-000000000081'];
+  for (const queue of ['all', 'mine', 'unassigned', 'needs_reassignment']) {
+    const url = new URL(workListPath({ ...filter, queue, priorities: ['urgent', 'high', 'urgent'], labels: [...labelIds].reverse(), assignee: 'unassigned', status: 'done' }, session), 'https://local.test');
+    assert.deepEqual(url.searchParams.getAll('priority'), ['high', 'urgent']);
+    assert.deepEqual(url.searchParams.getAll('label'), labelIds);
+    assert.equal(url.searchParams.has('blocked'), false);
+    if (queue === 'all') { assert.equal(url.searchParams.get('assignee'), 'unassigned'); assert.equal(url.searchParams.get('status'), 'done'); }
+    if (queue === 'unassigned' || queue === 'needs_reassignment') { assert.equal(url.searchParams.has('assignee'), false); assert.equal(url.searchParams.has('status'), false); }
+  }
+  assert.equal(workListPath({ ...filter, priorities: ['invalid'] }, session), null);
+  assert.equal(workListPath({ ...filter, labels: ['label name'] }, session), null);
+  assert.equal(workListPath({ ...filter, labels: Array.from({ length: 21 }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`) }, session), null);
+});
+
+test('work list loads labels only on request with project distinction, pagination and reset-safe selection', async () => {
+  const calls = [];
+  const firstLabel = '00000000-0000-4000-8000-000000000080';
+  const nextLabel = '00000000-0000-4000-8000-000000000081';
+  const otherLabel = '00000000-0000-4000-8000-000000000082';
+  globalThis.fetch = async path => {
+    calls.push(path);
+    if (path.includes('/labels')) {
+      if (path.includes(p2)) return Response.json(page([{ id: otherLabel, name: 'Shared label name' }]));
+      return Response.json(path.includes('cursor=') ? page([{ id: nextLabel, name: 'Later label' }]) : page([{ id: firstLabel, name: 'Shared label name' }], 'labels-next'));
+    }
+    return Response.json(page([issue('filtered')], 'issues-next'));
+  };
+  const { app, host } = mount(WorkList, { session });
+  const check = value => all(host).find(item => item.tag === 'input' && item.props.type === 'checkbox' && item.props.value === value);
+  try {
+    chooseProjects(host, [p1, p2]); await nextTick();
+    assert.equal(calls.length, 0);
+    const projectSection = name => all(host).find(item => item.tag === 'section' && item.props['aria-label'] === name);
+    await button(projectSection('Team / Project 0'), 'Choose labels').props.onClick(); await nextTick();
+    assert.equal(calls.length, 1); assert.ok(calls[0].includes(`${p1}/labels?limit=20`));
+    await button(projectSection('Team / Project 1'), 'Choose labels').props.onClick(); await nextTick();
+    assert.equal(calls.length, 2); assert.ok(calls[1].includes(p2));
+    assert.ok(check(firstLabel)); assert.ok(check(otherLabel));
+    check(firstLabel).props.onChange(); await nextTick();
+    await button(host, 'More labels').props.onClick(); await nextTick();
+    assert.equal(new URL(calls[2], 'https://local.test').searchParams.get('cursor'), 'labels-next');
+    assert.ok(check(firstLabel).props.checked); check(nextLabel).props.onChange(); await nextTick();
+    check('high').props.onChange(); await nextTick(); check('urgent').props.onChange(); await nextTick();
+    select(host, 'Assignee').props.onChange({ target: { value: 'unassigned' } }); await nextTick();
+    select(host, 'Status').props['onUpdate:modelValue']('done'); await nextTick();
+    await submit(host); await nextTick();
+    const query = new URL(calls.at(-1), 'https://local.test');
+    assert.equal(query.pathname, '/api/v1/issues'); assert.equal(query.searchParams.get('assignee'), 'unassigned'); assert.equal(query.searchParams.get('status'), 'done');
+    assert.deepEqual(query.searchParams.getAll('priority'), ['high', 'urgent']); assert.deepEqual(query.searchParams.getAll('label'), [firstLabel, nextLabel]);
+    assert.match(text(host), /Issue filtered/);
+    check('high').props.onChange(); await nextTick(); assert.doesNotMatch(text(host), /Issue filtered/);
+    await submit(host); await nextTick(); assert.equal(new URL(calls.at(-1), 'https://local.test').searchParams.has('cursor'), false);
+    chooseProjects(host, [p2]); await nextTick(); assert.equal(check(firstLabel), undefined);
+    await submit(host); await nextTick(); assert.equal(new URL(calls.at(-1), 'https://local.test').searchParams.has('label'), false);
+    assert.equal(new URL(calls.at(-1), 'https://local.test').searchParams.get('project'), p2);
+  } finally { app.unmount(); }
+});
+
+test('late label pages are discarded on scope change and label cursor invalidation retires selection', async () => {
+  const calls = []; let resolveOld; let phase = 'old';
+  const labelId = '00000000-0000-4000-8000-000000000080';
+  globalThis.fetch = async path => {
+    calls.push(path);
+    if (phase === 'old') return new Promise(resolve => { resolveOld = resolve; });
+    if (phase === 'expired' || phase === 'forbidden') {
+      const requestId = '00000000-0000-4000-8000-000000000098';
+      if (phase === 'forbidden') return Response.json({ category: 'authorization', code: 'FORBIDDEN', details: {}, message: 'Access changed', recovery: 'request_access', request_id: requestId, retryable: false, source: 'service' }, { status: 403, headers: { 'x-request-id': requestId } });
+      return Response.json({ category: 'validation', code: 'CURSOR_SCOPE_MISMATCH', details: {}, message: 'Scope changed', recovery: 'restart_list', request_id: requestId, retryable: false, source: 'service' }, { status: 400, headers: { 'x-request-id': requestId } });
+    }
+    return Response.json(page([{ id: labelId, name: 'Current label' }], 'labels-next'));
+  };
+  const { app, host } = mount(WorkList, { session });
+  try {
+    chooseProjects(host, [p1]); await nextTick(); const old = button(host, 'Choose labels').props.onClick(); await nextTick();
+    chooseProjects(host, [p2]); await nextTick();
+    phase = 'fresh'; await button(host, 'Choose labels').props.onClick(); await nextTick();
+    resolveOld(Response.json(page([{ id: principal, name: 'Obsolete label' }]))); await old; await nextTick();
+    assert.doesNotMatch(text(host), /Obsolete label/);
+    all(host).find(item => item.tag === 'input' && item.props.value === labelId).props.onChange(); await nextTick();
+    assert.match(text(host), /Labels · 1\/20/);
+    phase = 'expired'; await button(host, 'More labels').props.onClick(); await nextTick();
+    assert.doesNotMatch(text(host), /Current label/); assert.match(text(host), /Labels · Any/);
+    phase = 'fresh'; await button(host, 'Retry labels').props.onClick(); await nextTick();
+    assert.equal(new URL(calls.at(-1), 'https://local.test').searchParams.has('cursor'), false);
+    all(host).find(item => item.tag === 'input' && item.props.value === labelId).props.onChange(); await nextTick();
+    phase = 'forbidden'; await button(host, 'More labels').props.onClick(); await nextTick();
+    assert.doesNotMatch(text(host), /Current label/); assert.match(text(host), /Labels · Any/);
+  } finally { app.unmount(); }
+});
+
+test('board filters reset every column, discard old continuation and request new pages with repeated parameters', async () => {
+  const calls = []; let resolveOld;
+  const labelId = '00000000-0000-4000-8000-000000000080';
+  globalThis.fetch = async path => {
+    calls.push(path);
+    const url = new URL(path, 'https://local.test');
+    if (url.pathname.endsWith('/labels')) return Response.json(page([{ id: labelId, name: 'Board label' }]));
+    if (url.pathname.endsWith('/statuses')) return Response.json(page(['backlog', 'todo', 'in_progress', 'done', 'canceled'].map(key => ({ key, display_name: key }))));
+    if (!url.pathname.endsWith('/issues')) return Response.json({ display_name: 'Project 0', workspace_display_name: 'Team' });
+    if (url.searchParams.has('cursor')) return new Promise(resolve => { resolveOld = resolve; });
+    const priority = url.searchParams.get('priority');
+    return Response.json(url.searchParams.get('status') === 'todo' ? page([{ ...issue(priority ? 'current' : 'initial'), labels: [] }], priority ? null : 'old-next') : page([]));
+  };
+  const { app, host } = mount(Board, { session, projectId: p1, workspaceId: workspace });
+  const check = value => all(host).find(item => item.tag === 'input' && item.props.type === 'checkbox' && item.props.value === value);
+  try {
+    await until(() => text(host).includes('Issue initial'));
+    assert.equal(calls.filter(path => path.includes('/labels')).length, 0);
+    const pending = button(host, 'Load more').props.onClick(); await nextTick();
+    await button(host, 'Choose labels').props.onClick(); await nextTick();
+    check(labelId).props.onChange(); await nextTick(); check('high').props.onChange(); await nextTick(); check('urgent').props.onChange(); await nextTick();
+    assert.doesNotMatch(text(host), /Issue initial/); assert.match(text(host), /Filters changed/);
+    resolveOld(Response.json(page([{ ...issue('obsolete'), labels: [] }]))); await pending; await nextTick();
+    assert.doesNotMatch(text(host), /Issue obsolete/);
+    const before = calls.length;
+    await all(host).find(item => item.tag === 'form' && item.props.class === 'board-query-filters').props.onSubmit({ preventDefault() {}, stopPropagation() {} }); await nextTick();
+    const queries = calls.slice(before).filter(path => new URL(path, 'https://local.test').pathname.endsWith('/issues'));
+    assert.equal(queries.length, 5);
+    for (const path of queries) {
+      const params = new URL(path, 'https://local.test').searchParams;
+      assert.deepEqual(params.getAll('priority'), ['high', 'urgent']); assert.deepEqual(params.getAll('label'), [labelId]);
+      assert.equal(params.has('cursor'), false); assert.equal(params.has('blocked'), false);
+    }
+    assert.match(text(host), /Issue current/); assert.doesNotMatch(text(host), /Filters changed/);
+  } finally { app.unmount(); }
+});
+
+for (const status of [403, 404]) {
+  test(`board retains access failure after selected labels are cleared on project ${status}, then recovers on retry`, async () => {
+    const calls = []; let phase = 'initial';
+    const labelId = '00000000-0000-4000-8000-000000000080';
+    const projectPath = `/api/v1/workspaces/${workspace}/projects/${p1}`;
+    globalThis.fetch = async path => {
+      calls.push(path);
+      const url = new URL(path, 'https://local.test');
+      if (phase === 'denied' && url.pathname === projectPath) {
+        const requestId = '00000000-0000-4000-8000-000000000098';
+        return Response.json({ category: status === 403 ? 'authorization' : 'not_found', code: status === 403 ? 'FORBIDDEN' : 'NOT_FOUND', details: {}, message: 'Project unavailable', recovery: 'request_access', request_id: requestId, retryable: false, source: 'service' }, { status, headers: { 'x-request-id': requestId } });
+      }
+      if (url.pathname.endsWith('/labels')) return Response.json(page([{ id: labelId, name: 'Selected board label' }]));
+      if (url.pathname.endsWith('/statuses')) return Response.json(page(['backlog', 'todo', 'in_progress', 'done', 'canceled'].map(key => ({ key, display_name: key }))));
+      if (url.pathname.endsWith('/issues')) return Response.json(page(url.searchParams.get('status') === 'todo' ? [{ ...issue(phase === 'recovered' ? 'recovered' : 'before-access-failure'), labels: [] }] : []));
+      return Response.json({ display_name: 'Project 0', workspace_display_name: 'Team' });
+    };
+    const { app, host } = mount(Board, { session, projectId: p1, workspaceId: workspace });
+    const applyFilters = () => all(host).find(item => item.tag === 'form' && item.props.class === 'board-query-filters').props.onSubmit({ preventDefault() {}, stopPropagation() {} });
+    try {
+      await until(() => text(host).includes('Issue before-access-failure'));
+      await button(host, 'Choose labels').props.onClick(); await nextTick();
+      all(host).find(item => item.tag === 'input' && item.props.value === labelId).props.onChange(); await nextTick();
+      await applyFilters(); await nextTick();
+      assert.match(text(host), /Issue before-access-failure/);
+      assert.match(text(host), /Labels · 1\/20/);
+
+      phase = 'denied'; await applyFilters(); await nextTick();
+      assert.ok(session.allowed_scope.projects.some(project => project.project_id === p1));
+      assert.doesNotMatch(text(host), /Issue before-access-failure|Selected board label/);
+      assert.match(text(host), /Labels · Any/);
+      assert.match(text(host), /This Project is no longer in the current active Project inventory\./);
+
+      phase = 'recovered'; const beforeRetry = calls.length;
+      await applyFilters(); await nextTick();
+      assert.match(text(host), /Issue recovered/);
+      assert.doesNotMatch(text(host), /This Project is no longer in the current active Project inventory\.|Filters changed/);
+      const issueQueries = calls.slice(beforeRetry).map(path => new URL(path, 'https://local.test')).filter(url => url.pathname.endsWith('/issues'));
+      assert.equal(issueQueries.length, 5);
+      assert.ok(issueQueries.every(url => !url.searchParams.has('label') && !url.searchParams.has('cursor')));
+    } finally { app.unmount(); }
+  });
+}
 
 test('work view reads only after explicit selection and submit; filter change resets rows and cursor, failed page retries', async () => {
   const calls = []; let fail = false;

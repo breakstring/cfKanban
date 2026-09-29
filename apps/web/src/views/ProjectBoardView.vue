@@ -8,6 +8,7 @@ import ProjectActivity from "../components/ProjectActivity.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
+import IssueQueryFilters from "../components/IssueQueryFilters.vue";
 import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import {
   type CasConflictState,
@@ -32,6 +33,7 @@ import type {
   IssueTombstone,
   ListResult,
   PriorityKey,
+  ProjectScopeItem,
   ProjectStatusResource,
   StatusKey,
   WebSessionView,
@@ -50,6 +52,11 @@ const project = ref<ContainerResource | null>(null);
 const statuses = ref<ProjectStatusResource[]>([]);
 const columns = reactive(Object.fromEntries(statusOrder.map(key => [key, new ColumnPagination<IssueSummary>()])) as Record<StatusKey, ColumnPagination<IssueSummary>>);
 const appliedSearch = ref("");
+const priorities = ref<PriorityKey[]>([]);
+const labelIds = ref<string[]>([]);
+const appliedPriorities = ref<PriorityKey[]>([]);
+const appliedLabelIds = ref<string[]>([]);
+const filtersPending = ref(false);
 const deletedIssues = ref<IssueTombstone[]>([]);
 const deletedIssuesNextCursor = ref<string | null>(null);
 const deletedIssuesLoadingMore = ref(false);
@@ -79,6 +86,11 @@ const role = computed(() => {
   ))?.role ?? "reader";
 });
 const canWrite = computed(() => projectIsActive() && (role.value === "writer" || role.value === "owner"));
+const filterProjects = computed<ProjectScopeItem[]>(() => project.value && projectIsActive() ? [{
+  project_id: props.projectId, workspace_id: props.workspaceId, role: role.value,
+  project_display_name: project.value.display_name,
+  workspace_display_name: project.value.workspace_display_name ?? "",
+}] : []);
 protectNavigationDraft(() => formBusy.value || saving.value.size > 0 || Object.keys(pendingPriorities.value).length > 0 || (showNewIssue.value && (!!newIssue.value.title.trim() || !!newIssue.value.body.trim() || newIssue.value.priority_key !== "none" || newIssue.value.status_key !== "backlog")));
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 
@@ -142,6 +154,8 @@ function refreshProjectInventory(): void {
 function query(status: StatusKey, cursor?: string): string {
   const params = new URLSearchParams({ limit: "20", status });
   if (appliedSearch.value) params.set("q", appliedSearch.value);
+  for (const priority of appliedPriorities.value) params.append("priority", priority);
+  for (const label of appliedLabelIds.value) params.append("label", label);
   if (cursor) params.set("cursor", cursor);
   return `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues?${params}`;
 }
@@ -175,6 +189,9 @@ async function load(_reset = true, throwOnFailure = false): Promise<void> {
   const generation = projectionGeneration.capture();
   const requestId = ++loadRequestId;
   appliedSearch.value = search.value.trim();
+  appliedPriorities.value = [...priorities.value];
+  appliedLabelIds.value = [...labelIds.value];
+  filtersPending.value = false;
   for (const column of Object.values(columns)) column.reset();
   loading.value = true;
   clearError();
@@ -436,6 +453,16 @@ onUnmounted(() => {
 });
 watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refreshProjectInventory);
 watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
+watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
+  projectionGeneration.invalidate();
+  loadRequestId += 1;
+  for (const column of Object.values(columns)) column.reset();
+  dragged.value = null;
+  loading.value = false;
+  filtersPending.value = true;
+  // 访问失败会清空项目并触发标签重置，此时旧 Session 列表可能仍包含该项目。
+  if (project.value !== null && projectIsActive()) clearError();
+}, { flush: "sync" });
 </script>
 
 <template>
@@ -462,6 +489,11 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
         <button v-if="project" class="text-button" type="button" @click="showProjectInfo = 'activity'">{{ locale === "zh-CN" ? "项目活动" : "Project activity" }}</button>
         <button v-if="canWrite" class="text-button muted" type="button" @click="loadDeleted(true)">{{ locale === "zh-CN" ? "已删除" : "Deleted" }}</button>
       </div>
+      <form class="board-query-filters" @submit.prevent="load()">
+        <IssueQueryFilters v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="saving.size > 0 || Object.keys(pendingPriorities).length > 0" />
+        <button class="secondary-button" type="submit" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0">{{ locale === 'zh-CN' ? '应用筛选' : 'Apply filters' }}</button>
+        <p v-if="filtersPending" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '筛选已变化，点击“应用筛选”读取新的结果。' : 'Filters changed. Apply filters to read the new results.' }}</p>
+      </form>
     </header>
 
     <ModalDialog v-if="showProjectInfo && project" :title="showProjectInfo === 'background' ? (locale === 'zh-CN' ? '项目背景' : 'Project background') : (locale === 'zh-CN' ? '项目活动' : 'Project activity')" @close="showProjectInfo = null">
@@ -582,3 +614,9 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
     </ModalDialog>
   </main>
 </template>
+
+<style scoped>
+.board-query-filters { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; align-items: start; width: 100%; }
+.board-query-filters > .issue-query-filters { flex: 1 1 400px; }
+.board-query-filters > p { flex-basis: 100%; margin: 0; }
+</style>

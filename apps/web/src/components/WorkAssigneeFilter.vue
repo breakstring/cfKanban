@@ -44,7 +44,7 @@ onUnmounted(reset);
 </script>
 <template>
   <div class="work-assignee">
-    <label>{{ ui('Assignee', '负责人') }}<select :value="modelValue" @change="emit('update:modelValue', ($event.target as HTMLSelectElement).value)"><option value="">{{ ui('Anyone', '任何人') }}</option><option :value="principalId">{{ ui('Me', '我') }}</option><option v-for="person in people.filter(person => person.principal_id !== principalId)" :key="person.principal_id" :value="person.principal_id">{{ person.display_name }}</option></select></label>
+    <label>{{ ui('Assignee', '负责人') }}<select :value="modelValue" @change="emit('update:modelValue', ($event.target as HTMLSelectElement).value)"><option value="">{{ ui('Anyone', '任何人') }}</option><option value="unassigned">{{ ui('Unassigned', '未分配') }}</option><option :value="principalId">{{ ui('Me', '我') }}</option><option v-for="person in people.filter(person => person.principal_id !== principalId)" :key="person.principal_id" :value="person.principal_id">{{ person.display_name }}</option></select></label>
     <button v-if="!loaded || Object.values(cursors).some(Boolean)" class="text-button" type="button" :disabled="loading || !projects.length" @click="load">{{ loading ? ui('Loading…', '加载中…') : error ? ui('Retry people', '重试加载人员') : loaded ? ui('More people', '更多人员') : ui('Choose other people', '选择其他人员') }}</button>
     <small v-if="error" role="alert">{{ error }}</small>
   </div>

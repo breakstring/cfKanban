@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 12,
+  schema_version: 13,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -173,6 +173,18 @@ const manifest = {
       reentry: "wrangler_migration_ledger_only",
       expected_artifacts: { columns: ["credentials.device_name"] },
       expected_data: { instance_meta_schema_version_at_least: 12, allow_uninitialized: true },
+    },
+    {
+      sequence: 13,
+      name: "0013_issue_query_indexes.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0013_issue_query_indexes.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        indexes: ["idx_issues_active_status_order", "idx_issues_active_assignee_order", "idx_issues_active_priority_order", "idx_issues_todo_assignee_order"],
+      },
+      expected_data: { instance_meta_schema_version_at_least: 13, allow_uninitialized: true },
     },
   ],
 };

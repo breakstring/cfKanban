@@ -91,7 +91,7 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 | 查看个人资料 | `GET /api/v1/me` | 确认 immutable Principal ID 与 Credential fingerprint。 |
 | 修改自己的名称 | `PATCH /api/v1/me` | `display_name`、`expected_version`；随后读回 `/me`。 |
 | 列出全部已授权 Issues | `GET /api/v1/issues` | 优先携带重复的显式 Workspace/Project filters；扩大范围时告警。 |
-| 列出确定性候选 | `GET /api/v1/issues/candidates` | `assignment` 必填；使用 Workspace-qualified `project` 过滤，并读回服务端解析后的候选策略。 |
+| 列出确定性候选 | `GET /api/v1/issues/candidates` | `assignment` 必填；使用 UUID `project` 过滤，并读回服务端解析后的候选策略。 |
 | 在一个 Project 列出/创建 | `GET/POST /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues` | 创建使用一个 Idempotency Key。 |
 | 读取/编辑/删除 Issue | `GET/PATCH/DELETE /api/v1/issues/{identifier}` | 先读 `version`，使用 CAS，再读回。 |
 | 修改/清除优先级 | `PATCH /api/v1/issues/{identifier}` | 仅提交 `priority_key` 与当前 `expected_version`；读回 `priority`，保留状态和负责人。 |
@@ -110,6 +110,72 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 每个非幂等操作都要提供独立 `idempotencyKey`。CAS 操作按 OpenAPI operation 的准确合同，把 current `expected_version` 放进 JSON body；DELETE 则放进 query string。
 
 候选查询没有静默的 assignment 默认值。从 `/api/v1/issues/candidates?assignment=mine&blocked=exclude&project={project_id}` 这个模板开始，并根据用户意图显式选择必填的 `assignment`：`mine` 表示分配给当前 Principal 的工作，`unassigned` 表示可以领取的未分配工作，`needs_reassignment` 表示原负责人已不再具备资格的工作。该端点只返回未开始的工作，并按服务端固定顺序排列。普通工作队列使用 `blocked=exclude`；确实要看阻塞候选时改用 `blocked=include`。多个 Project 就重复 `project={project_id}`。向用户回显响应中的 `resolved_scope.candidate_policy` 与实际解析到的 Projects，不能靠调用方猜测服务端采用了什么策略和范围。
+
+## 高效查询 Issue
+
+优先级、标签筛选与普通列表的 `assignee=unassigned` 需要实例部署支持这些条件的 Service，并应用 schema 13。仅更新本地 Skill 不会升级实例。旧 Service 缺少能力时应说明，不静默拉取全部 Issue 在本地筛选，也不在缺少服务端支持时声称筛选已生效。
+
+优先限定已知项目，并在服务端分页前筛选。同一参数重复值之间取 OR，不同维度之间取 AND：
+
+| 参数 | 普通列表与项目列表 | 候选列表 |
+| --- | --- | --- |
+| `project` | 重复项目 UUID，最多 20 个；项目 URL 已固定范围 | 重复项目 UUID，最多 20 个 |
+| `status` | 最多 5 个固定 key：`backlog`、`todo`、`in_progress`、`done`、`canceled` | 固定为 `todo`，不传 `status` |
+| `assignee` | 最多 20 个 Principal UUID 或 `unassigned`；UUID 与 `unassigned` 可以混用，取 OR | 使用必填的 `assignment` 策略 |
+| `priority` | 最多 5 个 key：`urgent`、`high`、`medium`、`low`、`none` | 相同 |
+| `label` | 最多 20 个有效 Label UUID，匹配任一标签 | 相同 |
+| `q` | 仅搜索标题/编号子串 | 相同 |
+| `limit`、`cursor` | 每页 1–100 条，默认 20，后续用返回的 cursor | 相同 |
+
+较小的 `limit` 限制返回条数，不保证数据库只读相同数量的行。索引收益取决于筛选命中比例、条件组合和排序，也会增加存储与写入成本。`q` 子串搜索及阻塞检查仍可能增加读取；不能承诺所有组合都由一个索引覆盖。
+
+下列 JSON 通过 stdin 传给 `node scripts/cfkanban-tool.mjs api request`。UUID 都是示例，不能作为真实目标：将 `111…` 替换为可信实例、`222…` 为所属工作区、`333…` 为明确项目、`444…` 为当前 Principal、`555…` / `666…` 为已解析的 bug / performance 标签 ID。输入中不包含 Credential。
+
+### 在明确项目内解析标签名称
+
+用户要求“查找 DemoProject 中带 bug 或 performance 标签的未完成任务”时，先读取这个准确项目的有效标签。按 `has_more` / `next_cursor` 继续分页，从返回名称精确匹配（ASCII 大小写不敏感，与 SQLite `NOCASE` 一致），再使用稳定 Label ID。不猜 UUID，不遍历无关项目。跨项目同名标签须分别解析，一个 Label ID 只属于一个项目。未知、无权访问或已删除的标签 ID 均不产生匹配，不据此推断具体原因。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/workspaces/22222222-2222-4222-8222-222222222222/projects/33333333-3333-4333-8333-333333333333/labels?limit=100"}
+```
+
+### 我的高优先级待办任务
+
+“查看 DemoProject 中分配给我、优先级为高的待办任务。”先通过 `/api/v1/me` 解析“我”；普通列表使用 Principal UUID，不能写 `assignee=mine`。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=todo&assignee=44444444-4444-4444-8444-444444444444&priority=high&limit=20"}
+```
+
+### 带任一标签的未完成任务
+
+“查看 DemoProject 中带 bug 或 performance 标签的未完成任务。”包含 `backlog`、`todo`、`in_progress`，命中任一标签即可。重复标签参数表达**任一匹配**，不表示“同时具备全部标签”。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=backlog&status=todo&status=in_progress&label=55555555-5555-4555-8555-555555555555&label=66666666-6666-4666-8666-666666666666&limit=20"}
+```
+
+### 未分配任务与待领取候选
+
+“查看 DemoProject 所有未分配任务，不限状态。”普通项目列表用 `assignee=unassigned`，因此可以包括已开始或终态任务；只要未完成任务时，再附加重复的 `status` 参数。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/workspaces/22222222-2222-4222-8222-222222222222/projects/33333333-3333-4333-8333-333333333333/issues?assignee=unassigned&limit=20"}
+```
+
+“在 DemoProject 找带 bug 标签、优先级为高或紧急、未分配且未阻塞的待办候选。”候选固定为 `todo`，按服务端候选顺序返回，且必须明确传入一个 `assignment=mine|unassigned|needs_reassignment`；不能用普通列表的 `status` 或 `assignee` 替代。`needs_reassignment` 指原负责人已失去资格，与未分配不同。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues/candidates?project=33333333-3333-4333-8333-333333333333&assignment=unassigned&blocked=exclude&priority=high&priority=urgent&label=55555555-5555-4555-8555-555555555555&limit=20"}
+```
+
+### 继续同一次查询
+
+“继续查看刚才带 bug 或 performance 标签的未完成任务的下一页。”只在上次响应 `has_more=true` 时使用返回的 `next_cursor`。下例 `CURSOR_FROM_PREVIOUS_RESPONSE` 是占位符，须替换为实际 cursor 并做一次 URL 编码。保留原项目范围及筛选；任一条件变化后移除 cursor，从首页重新查询。核对 `resolved_scope`；候选还须核对 `resolved_scope.candidate_policy`，不自行推断实际范围。
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"GET","apiPath":"/api/v1/issues?project=33333333-3333-4333-8333-333333333333&status=backlog&status=todo&status=in_progress&label=55555555-5555-4555-8555-555555555555&label=66666666-6666-4666-8666-666666666666&limit=20&cursor=CURSOR_FROM_PREVIOUS_RESPONSE"}
+```
 
 ## Issue 优先级
 
