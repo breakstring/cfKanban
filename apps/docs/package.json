@@ -1,0 +1,16 @@
+{
+  "name": "@cfkanban/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vitepress build",
+    "dev": "vitepress dev --host 127.0.0.1",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4",
+    "vue": "3.5.42",
+    "vue-tsc": "3.3.11"
+  }
+}

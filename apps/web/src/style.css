@@ -529,6 +529,20 @@ h3 {
   text-decoration: none;
 }
 
+.public-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.public-nav-links a {
+  padding: 12px 0;
+  color: var(--color-text);
+  text-underline-offset: 4px;
+}
+
 .brand-logo {
   display: block;
   width: 30px;

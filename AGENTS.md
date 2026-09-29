@@ -44,6 +44,7 @@
 | 已登录参与者网页接受普通邀请、Bearer 本人 Passkey 管理 | [参与者邀请与 Passkey](docs/specs/2026-09-28-participant-invitation-passkey-parity-spec.md) |
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](docs/specs/2026-09-20-stable-release-lifecycle-spec.md) |
 | Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](docs/specs/2026-09-20-homepage-settings-spec.md) |
+| 公开文档、双语手册、Agent 示例与静态打包 | [站内双语文档中心](docs/specs/2026-09-29-documentation-center-spec.md) |
 
 涉及治理接入或迁移、Roadmap 方向、执行工具同步、合同位置或完成证据方式变化时，使用项目管理治理技能。普通局部修改不因此自动扩展为治理任务。
 
@@ -68,6 +69,7 @@
 - Workflow 固定为 `backlog / todo / in_progress / done / canceled`；转入 `done` 必须走原子 `complete` 并创建不可变完成记录，reopen 保留历史。权限变化不清空 assignment 或历史；归档、恢复、永久删除各遵循对应合同。
 - Public Join 的业务配额与边缘限流分别处理；错误按机器字段分类，不依赖供应商自然语言文案。客户端归一化的边缘错误必须标明来源，不冒充 Worker 响应。
 - Web 公共文案支持 English / 简体中文，缺失翻译回退 English；业务内容和稳定 key 不自动翻译。Markdown 安全渲染；UI 权限显示不能代替服务端授权。
+- 新增或调整面向用户的能力时，检查是否影响公开文档；涉及使用方式、权限、管理或部署流程变化的，同步更新 `apps/docs/` 中英文对应页面，核对 Agent 示例提示词与 Web 操作说明。无需更新时，不为流程添加无关文档。
 
 ## 凭据与外部操作
 

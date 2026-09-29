@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { readReleaseVersion, verifyReleaseBuild, writeBuildVersion } from "../lib/release-version.mjs";
+import { writeDocsBuild } from "../lib/docs-build.mjs";
 
 async function fixture(t) {
   const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), "cfkanban-release-version-"));
@@ -18,6 +19,11 @@ async function fixture(t) {
   const webOutput = path.join(repositoryRoot, "apps/web/dist");
   await writeFile(path.join(webOutput, "index.html"), "<html>Built web app</html>");
   await writeBuildVersion({ repositoryRoot, outputDirectory: webOutput, entry: "index.html", version });
+  const docsOutput = path.join(webOutput, "docs");
+  await mkdir(docsOutput);
+  await writeFile(path.join(docsOutput, "index.html"), "<html>Documentation</html>");
+  await writeFile(path.join(docsOutput, "guide.md"), "# A user guide");
+  await writeDocsBuild({ outputDirectory: docsOutput, version });
   return { repositoryRoot, outputDirectory, version };
 }
 
@@ -67,4 +73,16 @@ test("packaging refuses stale or changed Web build output", async (t) => {
   await writeFile(metadataPath, JSON.stringify(metadata));
   await writeFile(path.join(directory, "index.html"), "stale web app");
   await assert.rejects(verifyReleaseBuild(input), /digest changed/);
+});
+
+test("packaging refuses missing, mismatched or changed documentation", async (t) => {
+  const input = await fixture(t);
+  const outputDirectory = path.join(input.repositoryRoot, "apps/web/dist/docs");
+  await writeDocsBuild({ outputDirectory, version: "1.0.1" });
+  await assert.rejects(verifyReleaseBuild(input), /Documentation build version/);
+  await writeDocsBuild({ outputDirectory, version: input.version });
+  await writeFile(path.join(outputDirectory, "guide.md"), "# Changed after build");
+  await assert.rejects(verifyReleaseBuild(input), /Documentation artifact digest/);
+  await rm(path.join(outputDirectory, "build-manifest.json"));
+  await assert.rejects(verifyReleaseBuild(input), { code: "ENOENT" });
 });

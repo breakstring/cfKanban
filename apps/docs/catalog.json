@@ -1,0 +1,45 @@
+[
+  {
+    "slug": "overview", "en": "Overview", "zh-CN": "概述",
+    "pages": [
+      { "slug": "index", "en": "Meet cfKanban", "zh-CN": "认识 cfKanban" },
+      { "slug": "concepts", "en": "Concepts & roles", "zh-CN": "概念与角色" },
+      { "slug": "quick-start", "en": "Quick start", "zh-CN": "快速开始" }
+    ]
+  },
+  {
+    "slug": "usage", "en": "Usage", "zh-CN": "使用",
+    "pages": [
+      { "slug": "index", "en": "Everyday work", "zh-CN": "日常协作" },
+      { "slug": "access", "en": "Join & sign in", "zh-CN": "加入与登录" },
+      { "slug": "issues", "en": "Find & create issues", "zh-CN": "查找与创建任务" },
+      { "slug": "workflow", "en": "Move work forward", "zh-CN": "推进与完成任务" },
+      { "slug": "collaboration", "en": "Comments & organization", "zh-CN": "评论、附件与整理" },
+      { "slug": "profile", "en": "Your profile & workspace", "zh-CN": "个人设置与目录关联" }
+    ]
+  },
+  {
+    "slug": "administration", "en": "Administration", "zh-CN": "管理",
+    "pages": [
+      { "slug": "index", "en": "Administration overview", "zh-CN": "管理能力概览" },
+      { "slug": "projects", "en": "Workspaces & projects", "zh-CN": "工作区与项目" },
+      { "slug": "members", "en": "Members & invitations", "zh-CN": "成员、邀请与管理员" },
+      { "slug": "public-join", "en": "Public Join & quotas", "zh-CN": "公开加入与配额" },
+      { "slug": "settings", "en": "Settings & usage", "zh-CN": "实例设置与用量" },
+      { "slug": "devices", "en": "Devices & identities", "zh-CN": "设备与身份恢复" },
+      { "slug": "cleanup", "en": "Archive & clean up", "zh-CN": "归档、恢复与清理" }
+    ]
+  },
+  {
+    "slug": "deployment", "en": "Deployment", "zh-CN": "部署",
+    "pages": [
+      { "slug": "index", "en": "Deployment overview", "zh-CN": "部署维护概览" },
+      { "slug": "setup", "en": "Prepare & install Skills", "zh-CN": "准备与安装技能" },
+      { "slug": "first-deployment", "en": "Your first deployment", "zh-CN": "首次部署" },
+      { "slug": "updates", "en": "Versions & updates", "zh-CN": "版本与更新" },
+      { "slug": "attach", "en": "Use another computer", "zh-CN": "新电脑接入" },
+      { "slug": "recovery", "en": "Resume & recover", "zh-CN": "中断与身份恢复" },
+      { "slug": "optional", "en": "Optional capabilities", "zh-CN": "域名与可选能力" }
+    ]
+  }
+]

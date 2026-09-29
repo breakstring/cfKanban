@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { verifyDocsBuild } from "./docs-build.mjs";
 
 const versionPattern = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/;
 const json = async (file) => JSON.parse(await readFile(file, "utf8"));
@@ -31,4 +32,5 @@ export async function verifyReleaseBuild({ repositoryRoot, version }) {
   if (version !== declared) throw new Error("Requested bundle version does not match release/version.json");
   await verifyBuildVersion({ outputDirectory: path.join(repositoryRoot, "apps/worker/dist"), entry: "index.js", version });
   await verifyBuildVersion({ outputDirectory: path.join(repositoryRoot, "apps/web/dist"), entry: "index.html", version });
+  await verifyDocsBuild({ outputDirectory: path.join(repositoryRoot, "apps/web/dist/docs"), version });
 }

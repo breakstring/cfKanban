@@ -11,7 +11,7 @@ import { locale, t } from "../lib/i18n";
 import { homepageNotice } from "../lib/homepage-notice";
 import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart } from "../lib/pagination";
-import { deployAgentInstruction, publicGuideUrl, publicJoinInstruction } from "../lib/public-guide";
+import { deployAgentInstruction, publicJoinInstruction } from "../lib/public-guide";
 import { navigate } from "../lib/router";
 import { safeWebEntryPath } from "../lib/session-capabilities";
 import { WriteFence } from "../lib/write-fence";
@@ -50,8 +50,8 @@ const preferredOrigin = computed(() => {
   return meta.value.preferred_api_origin;
 });
 const guideOrigin = computed(() => meta.value?.preferred_api_origin ?? window.location.origin);
-const deployGuideUrl = computed(() => publicGuideUrl(guideOrigin.value, "deploy-guide", locale.value));
-const joinGuideUrl = computed(() => publicGuideUrl(guideOrigin.value, "join", locale.value));
+const docsUrl = computed(() => `/docs/${locale.value}/overview/`);
+const deployGuideUrl = computed(() => `/docs/${locale.value}/deployment/first-deployment`);
 const deployInstruction = computed(() => deployAgentInstruction(guideOrigin.value, locale.value));
 
 async function load(reset = true): Promise<void> {
@@ -175,7 +175,10 @@ onMounted(load);
         <img class="brand-logo" :src="cfKanbanMarkUrl" alt="" aria-hidden="true" />
         <span>cfKanban</span>
       </a>
-      <LocaleSwitch />
+      <nav class="public-nav-links" :aria-label="locale === 'zh-CN' ? '站点导航' : 'Site navigation'">
+        <a :href="docsUrl">{{ t("home.docsShort") }}</a>
+        <LocaleSwitch />
+      </nav>
     </header>
 
     <div class="home-stage home-stage--intro">
@@ -276,8 +279,7 @@ onMounted(load);
           </div>
         </div>
         <nav class="footer-links" :aria-label="locale === 'zh-CN' ? '页脚导航' : 'Footer navigation'">
-          <a :href="deployGuideUrl">{{ t("home.deployGuide") }}</a>
-          <a :href="joinGuideUrl">{{ t("home.joinGuide") }}</a>
+          <a :href="docsUrl">{{ t("home.documentation") }}</a>
           <a :href="`${guideOrigin}/openapi.json`">{{ t("home.openapi") }}</a>
           <a href="https://github.com/breakstring/cfKanban" rel="noreferrer noopener">{{ t("home.github") }}</a>
         </nav>

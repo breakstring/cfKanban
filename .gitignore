@@ -22,6 +22,7 @@ dist/
 /build/
 coverage/
 *.tsbuildinfo
+apps/docs/.vitepress/cache/
 
 # Logs and local OS/editor files
 *.log

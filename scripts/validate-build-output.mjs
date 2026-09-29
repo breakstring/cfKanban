@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, readdir, stat } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { verifyDocsBuild } from "./lib/docs-build.mjs";
 
 async function filesUnder(root) {
   const entries = await readdir(root, { withFileTypes: true, recursive: true });
@@ -8,6 +10,29 @@ async function filesUnder(root) {
 
 const webRoot = new URL("../apps/web/dist/", import.meta.url);
 const workerRoot = new URL("../apps/worker/dist/", import.meta.url);
+const release = JSON.parse(await readFile(new URL("../release/version.json", import.meta.url), "utf8"));
+const docsRoot = new URL("docs/", webRoot);
+await verifyDocsBuild({ outputDirectory: fileURLToPath(docsRoot), version: release.version });
+const catalog = JSON.parse(await readFile(new URL("../apps/docs/catalog.json", import.meta.url), "utf8"));
+for (const locale of ["en", "zh-CN"]) {
+  for (const group of catalog) {
+    for (const page of group.pages) {
+      const prefix = `${locale}/${group.slug}/${page.slug}`;
+      const html = await readFile(new URL(`${prefix}.html`, docsRoot), "utf8");
+      assert.match(html, /<meta name="cfkanban-docs"/u, `${prefix} must identify itself as documentation`);
+      assert.match(html, /<link rel="icon" href="\/docs\/assets\/cfkanban-mark\.[^"/]+\.png">/u, `${prefix} must load the local brand mark`);
+      assert.ok(html.includes(`content="${release.version}"`), `${prefix} must match the release version`);
+      assert.equal(await readFile(new URL(`${prefix}.md`, docsRoot), "utf8"), await readFile(new URL(`../apps/docs/${prefix}.md`, import.meta.url), "utf8"));
+      assert.ok(!/<link[^>]+href="https?:/u.test(html), `${prefix} must not load external fonts/styles`);
+    }
+  }
+}
+assert.match(await readFile(new URL("404.html", docsRoot), "utf8"), /name="cfkanban-docs"/u);
+assert.ok((await stat(new URL("llms.txt", docsRoot))).isFile());
+assert.ok((await stat(new URL("vp-icons.css", docsRoot))).isFile(), "Documentation icon stylesheet must be included");
+const docsFiles = await filesUnder(docsRoot);
+assert.ok(docsFiles.some(name => name.startsWith("@localSearchIndexen.") && name.endsWith(".js")), "English local search index must be bundled");
+assert.ok(docsFiles.some(name => name.startsWith("@localSearchIndexzh-CN.") && name.endsWith(".js")), "Chinese local search index must be bundled");
 
 assert.ok((await stat(new URL("index.html", webRoot))).isFile(), "Web build must emit index.html");
 assert.ok((await stat(new URL("_headers", webRoot))).isFile(), "Web build must emit Cloudflare Static Assets headers");

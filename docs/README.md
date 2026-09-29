@@ -1,5 +1,9 @@
 # cfKanban 文档导航
 
+本目录保存工程合同与维护资料。面向使用者的双语文档源位于 [`apps/docs/`](../apps/docs/)，构建后通过站点 `/docs/` 阅读。
+
+公开文档以 `apps/docs/catalog.json` 维护两级目录；新增或修改功能说明时同步 `en` / `zh-CN` 同名页面，并核对 Agent 提示词、权限和实际 Web 入口。`npm run docs:check` 检查目录、双语页面与链接，`npm run dev --workspace @cfkanban/docs` 预览文档，`npm run build` 将文档纳入同 Worker 工件。旧公开操作指南仍位于 `apps/web/public/`，其机器流程不在文档正文重复维护。
+
 ## 状态语义
 
 - `Draft`：讨论基线，允许重写，不代表实现授权。
@@ -16,6 +20,7 @@
 - [Agent Skills & Bootstrap SPEC](specs/2026-08-28-agent-skills-bootstrap-spec.md)：已冻结的 Skill 能力暴露、可覆盖 Agent Guidance、宿主兼容、跨平台 Node scripts、部署与凭据安全体验合同；不替上层 Agent 作最终工作决策。
 - [API & D1 Schema SPEC](specs/2026-08-28-api-schema-spec.md)：已冻结的 v0 HTTP/OpenAPI、D1 schema、索引和原子写入合同。
 - [Web UI SPEC](specs/2026-08-29-web-ui-spec.md)：已冻结的极简第一方 Web、Browser Launch/Session、参与者轻量操作和 Owner 维护合同。
+- [站内双语文档中心](specs/2026-09-29-documentation-center-spec.md)：公开文档的栏目、提示词、双语维护、旧指南兼容与同版本静态打包。
 - [Web 视觉设计合同](../DESIGN.md)：已冻结的 warm editorial workbench 颜色、排版、布局、组件状态与无障碍约束。
 - [v0 Implementation Plan](plans/2026-08-29-v0-implementation-plan.md)：WP-01～WP-11 的范围、依赖、验收和停止条件；执行状态以 Linear 为准。
 

@@ -4,6 +4,7 @@ import migrationManifest from "../../../migrations/manifest.json" with { type: "
 import { RELEASE_VERSION } from "./release-version.ts";
 
 import { clearCsrfCookie, clearSessionCookie } from "./kernel/csrf.ts";
+import { documentationResponse, isDocumentationPath } from "./kernel/docs.ts";
 import { ApiError, errorResponse, notFound, platformUnavailable } from "./kernel/errors.ts";
 import {
   createRequestContext,
@@ -80,6 +81,9 @@ function withSpaDocumentHeaders(response: Response, requestId: string): Response
 export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Response> {
   const context = createRequestContext(request);
   try {
+    if (isDocumentationPath(context.url.pathname)) {
+      return withRequestId(await documentationResponse(request, env), context.requestId);
+    }
     if (isRateLimitedDynamicPath(context.url.pathname)) {
       await enforceInstanceRateLimit(env);
       if (isUnauthenticatedSensitivePath(context.method, context.url.pathname)) {
