@@ -5,6 +5,7 @@ import { getInstancePaths } from "./state.mjs";
 import { toolError } from "./errors.mjs";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
 import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
+import { readServiceApiVersion } from "./service-api-version.mjs";
 import { assertAttachmentStoragePlan } from "./r2-storage.mjs";
 import {
   assertNoSymlinkPath,
@@ -105,6 +106,11 @@ export async function writeFrozenWranglerConfig({
         expectedSource: plan.target?.service_bundle_source,
       })
     : null;
+  await readServiceApiVersion(bundleRoot, {
+    expectedReleaseVersion: plan.release?.service_bundle_version,
+    expectedApiVersion: plan.kind === "deployed_instance_upgrade" ? plan.target.service_api_version : undefined,
+    serviceApiRange: plan.kind === "deployed_instance_upgrade" ? plan.target.compatibility.service_api : undefined,
+  });
   const templatePath = await requireBundleEntry(bundleRoot, "wrangler.template.json", "file");
   const schemaPath = await requireBundleEntry(bundleRoot, "wrangler-config-schema.json", "file");
   const mainPath = await requireBundleEntry(bundleRoot, path.join("dist", "index.js"), "file");

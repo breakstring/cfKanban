@@ -2,12 +2,13 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "0.1.0",
-    "description": "Frozen v0.1 Agent-first atomic Kanban contract. Generated from the repository contract source; implementation completion is tracked separately.",
+    "version": "1.4.0-rc.2",
+    "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
     }
   },
+  "x-cfkanban-service-version": "0.1.0",
   "servers": [
     {
       "url": "/",

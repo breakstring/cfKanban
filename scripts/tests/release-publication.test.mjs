@@ -16,8 +16,8 @@ async function fixture(t, version = "0.1.0-alpha.99") {
   const documents = { en: `${base}install.md`, "zh-CN": `${base}install.zh-CN.md` };
   const publisher = { id: "cfkanban", canonical_origin: "https://github.com" };
   const manifest = {
-    schema_version: 1, product: "cfkanban", publisher, release: { version, immutable: true }, documents,
-    compatibility: { node: ">=22.12.0 <27", wrangler: ">=4.127.1 <5", service_api: ">=0.1.0 <0.2.0", schema_version: 10 },
+    schema_version: 2, product: "cfkanban", publisher, release: { version, immutable: true }, documents,
+    compatibility: { bootstrap_schema: 2, node: ">=22.12.0 <27", wrangler: ">=4.127.1 <5", service_api: ">=0.1.0 <0.2.0", schema_version: 10 },
     artifacts: names.map((name, index) => ({ kind: index ? "service_deployment_bundle" : "skill_bundle", version, url: `${base}${name}`, allowed_origins: ["https://github.com"], sha256: digest(name) })),
   };
   const manifestBytes = JSON.stringify(manifest);

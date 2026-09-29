@@ -4,14 +4,14 @@ import { discoverRelease, STABLE_RELEASE_POINTER } from "../../packages/skill-ru
 import { sha256Bytes } from "../../packages/skill-runtime/src/utils.mjs";
 import { getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
 
-function release(version = "1.0.0") {
+function release(version = "1.0.0", schemaVersion = 1) {
   const base = `https://github.com/breakstring/cfKanban/releases/download/${version}/`;
   const publisher = { id: "cfkanban", canonical_origin: "https://github.com" };
   const documents = { en: `${base}install.md`, "zh-CN": `${base}install.zh-CN.md` };
   const manifest = {
-    schema_version: 1, product: "cfkanban", publisher, documents,
+    schema_version: schemaVersion, product: "cfkanban", publisher, documents,
     release: { version, immutable: true },
-    compatibility: { node: ">=22.12.0 <27", wrangler: ">=4.127.1 <5", service_api: ">=0.1.0 <0.2.0", schema_version: 10 },
+    compatibility: { bootstrap_schema: schemaVersion, node: ">=22.12.0 <27", wrangler: ">=4.127.1 <5", service_api: ">=0.1.0 <0.2.0", schema_version: 10 },
     artifacts: ["skills", "service"].map((name) => ({
       kind: name === "skills" ? "skill_bundle" : "service_deployment_bundle",
       version, url: `${base}cfkanban-${name}-${version}.zip`, allowed_origins: ["https://github.com"], sha256: "a".repeat(64),
@@ -44,6 +44,26 @@ test("default discovery pins a stable snapshot without downloading bundles or mu
   assert.equal(result.manifest_sha256, remote.pointer.manifest_sha256);
   remote.pointer.release_version = "1.0.1";
   assert.equal(result.pointer.release_version, "1.0.0", "Planning keeps the originally resolved snapshot");
+});
+
+test("discovery accepts legacy and independent API manifests, but rejects unsupported formats before artifact use", async () => {
+  for (const schemaVersion of [1, 2]) {
+    const remote = release("1.4.0-rc.2", schemaVersion);
+    const discovered = await discoverRelease({ version: "1.4.0-rc.2" }, remote);
+    assert.equal(discovered.manifest.schema_version, schemaVersion);
+    assert.equal(discovered.pointer.schema_version, 1);
+    assert.equal(discovered.manifest.compatibility.service_api, ">=0.1.0 <0.2.0");
+    assert.equal(remote.calls.length, 2);
+  }
+  for (const schemaVersion of [0, 3]) {
+    const remote = release("1.4.0-rc.2", schemaVersion);
+    await assert.rejects(discoverRelease({ version: "1.4.0-rc.2" }, remote), { code: "INVALID_RELEASE_MANIFEST" });
+    assert.equal(remote.calls.length, 2);
+  }
+  const mismatch = release("1.4.0-rc.2", 2);
+  mismatch.manifest.compatibility.bootstrap_schema = 1;
+  mismatch.pointer.manifest_sha256 = sha256Bytes(Buffer.from(JSON.stringify(mismatch.manifest)));
+  await assert.rejects(discoverRelease({ version: "1.4.0-rc.2" }, mismatch), { code: "INVALID_RELEASE_MANIFEST" });
 });
 
 test("explicit historical stable and prerelease selections use only that immutable target", async () => {

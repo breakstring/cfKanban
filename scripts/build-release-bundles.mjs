@@ -41,6 +41,7 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
       "LICENSE",
       "apps/web/dist",
       "contracts/openapi.json",
+      "contracts/service-api.json",
       "migrations",
       "release/deployment",
       "release/version.json",

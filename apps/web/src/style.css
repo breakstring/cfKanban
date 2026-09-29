@@ -120,18 +120,70 @@ h3 {
 }
 
 .application-shell {
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .application-shell--board {
-  display: flex;
-  flex-direction: column;
   height: 100dvh;
   min-height: 0;
 }
 
 .application-shell--board > :not(.board-page) {
   flex-shrink: 0;
+}
+
+.app-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding: 8px 24px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.app-footer-brand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.app-footer-brand img {
+  width: 20px;
+  height: 20px;
+}
+
+.app-footer-version {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.app-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.app-footer-links a {
+  display: inline-flex;
+  min-height: 36px;
+  gap: 4px;
+  align-items: center;
+  text-decoration: none;
+}
+
+.app-footer-links a:hover {
+  text-decoration: underline;
 }
 
 .page-shell {
@@ -1990,6 +2042,8 @@ textarea:disabled {
 }
 
 @media (max-width: 940px) {
+  .app-footer-links a { min-height: 44px; }
+
   .app-header {
     grid-template-columns: auto 1fr;
   }
@@ -2062,6 +2116,8 @@ textarea:disabled {
 }
 
 @media (max-width: 640px) {
+  .app-footer { padding: 6px 14px; }
+
   .page-shell,
   .narrow-page,
   .profile-page,

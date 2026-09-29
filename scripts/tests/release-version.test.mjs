@@ -9,10 +9,12 @@ import { writeDocsBuild } from "../lib/docs-build.mjs";
 async function fixture(t) {
   const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), "cfkanban-release-version-"));
   t.after(() => rm(repositoryRoot, { recursive: true, force: true }));
-  for (const directory of ["release", ".codex-plugin", "apps/worker/dist", "apps/web/dist"]) await mkdir(path.join(repositoryRoot, directory), { recursive: true });
+  for (const directory of ["release", "contracts", ".codex-plugin", "apps/worker/dist", "apps/web/dist"]) await mkdir(path.join(repositoryRoot, directory), { recursive: true });
   const version = "1.0.0";
   await writeFile(path.join(repositoryRoot, "release/version.json"), JSON.stringify({ version }));
   await writeFile(path.join(repositoryRoot, ".codex-plugin/plugin.json"), JSON.stringify({ version }));
+  await writeFile(path.join(repositoryRoot, "contracts/service-api.json"), JSON.stringify({ service_version: "0.1.0" }));
+  await writeFile(path.join(repositoryRoot, "contracts/openapi.json"), JSON.stringify({ info: { version }, "x-cfkanban-service-version": "0.1.0" }));
   const outputDirectory = path.join(repositoryRoot, "apps/worker/dist");
   await writeFile(path.join(outputDirectory, "index.js"), 'export const release_version = "1.0.0";');
   await writeBuildVersion({ repositoryRoot, outputDirectory, entry: "index.js", version });
@@ -54,13 +56,26 @@ test("packaging refuses mismatched plugin, changed Worker bytes, and missing bui
 
 test("product release remains separate from existing API and schema contracts", async () => {
   const document = JSON.parse(await readFile(new URL("../../contracts/openapi.json", import.meta.url), "utf8"));
-  assert.equal(document.info.version, "0.1.0");
+  const release = JSON.parse(await readFile(new URL("../../release/version.json", import.meta.url), "utf8"));
+  const serviceApi = JSON.parse(await readFile(new URL("../../contracts/service-api.json", import.meta.url), "utf8"));
+  assert.equal(document.info.version, release.version);
+  assert.equal(document["x-cfkanban-service-version"], serviceApi.service_version);
+  assert.notEqual(document.info.version, serviceApi.service_version);
   for (const name of ["Health", "InstanceDiscovery", "Meta"]) {
     const schema = document.components.schemas[name];
     assert.equal(schema.properties.release_version.type, "string");
     assert.equal(schema.required.includes("release_version"), false, "older compatible instances omit this additive field");
     assert.equal(schema.required.includes("service_version"), true);
   }
+});
+
+test("packaging rejects stale document versions and conflicting API declarations", async (t) => {
+  const input = await fixture(t);
+  const file = path.join(input.repositoryRoot, "contracts/openapi.json");
+  await writeFile(file, JSON.stringify({ info: { version: "0.1.0" }, "x-cfkanban-service-version": "0.1.0" }));
+  await assert.rejects(verifyReleaseBuild(input), /OpenAPI version/);
+  await writeFile(file, JSON.stringify({ info: { version: input.version }, "x-cfkanban-service-version": "0.2.0" }));
+  await assert.rejects(verifyReleaseBuild(input), /API compatibility version/);
 });
 
 test("packaging refuses stale or changed Web build output", async (t) => {

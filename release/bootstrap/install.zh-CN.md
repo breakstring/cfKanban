@@ -17,6 +17,8 @@ marketplace/plugin 只是便捷入口。宿主 marketplace metadata 与 plugin c
 
 ## 版本发现、宿主安装与更新
 
+`schema_version: 2` 的发行清单将产品/OpenAPI 文档版本与 API 兼容版本分开，要求部署技能支持该格式；新技能仍可读取历史格式 1。旧技能拒绝清单时，先核对 canonical 安装文档，在获准后更新本地技能及宿主投影，再部署 Service bundle。不能绕过清单校验，也不能把文档版本当成 API 版本。发行 pointer 仍使用 schema 1。
+
 首次安装默认发现最新正式发行；已有可信且兼容的安装应优先复用。读取 canonical stable pointer：
 
 <https://github.com/breakstring/cfKanban/releases/latest/download/stable.json>

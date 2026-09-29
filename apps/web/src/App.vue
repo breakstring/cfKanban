@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
+import AppFooter from "./components/AppFooter.vue";
 import AppHeader from "./components/AppHeader.vue";
 import ErrorNotice from "./components/ErrorNotice.vue";
 import LocaleSwitch from "./components/LocaleSwitch.vue";
@@ -315,6 +316,7 @@ watch(currentPath, () => {
           <button class="primary-button" type="button" @click="navigate('/app')">{{ t("project.choose") }}</button>
         </div>
       </main>
+      <AppFooter />
     </template>
   </div>
 </template>

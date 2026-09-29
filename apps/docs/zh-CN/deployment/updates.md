@@ -15,6 +15,10 @@
 
 ## 更新本地技能
 
+实例的产品发行、API 兼容版本和数据库 schema 各有含义。支持文档版本跟踪的发行中，`/openapi.json` 的 `info.version` 对应产品发行，`x-cfkanban-service-version` 表示 API 兼容版本，`openapi` 表示 OpenAPI 格式；旧文档的 `info.version` 可能仍是 API 版本。
+
+新格式发行清单要求兼容的部署技能。旧技能拒绝清单格式时，先在获准后更新本地技能和宿主入口，再继续核对准确的 Service 发行；不能绕过验证。更新本地技能不会自动升级实例。
+
 ```text
 请用 $cfkanban-deploy 将本地 cfKanban 技能更新到最新兼容正式版。
 只更新本地技能与已确认的宿主入口，不升级线上实例。

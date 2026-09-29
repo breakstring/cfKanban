@@ -1,4 +1,5 @@
 import { readServiceReleaseVersion } from "./service-release-version.mjs";
+import { readServiceApiVersion } from "./service-api-version.mjs";
 import { normalizePrincipalDisplayName } from "./principal-name.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -161,12 +162,12 @@ export async function loadAuthorizedDeploymentContract({ stateRoot, facts, taskI
     throw toolError("WRANGLER_CONFIG_DRIFT", "Owner bootstrap config does not match the frozen Cloudflare resources");
   }
   const bundleRoot = absolutePath(configEvent.service_bundle_root, "service_bundle_root");
-  const openapiPath = path.join(bundleRoot, "contracts", "openapi.json");
   const migrationManifestPath = path.join(bundleRoot, "migrations", "manifest.json");
-  await assertNoSymlinkPath(openapiPath, bundleRoot);
   await assertNoSymlinkPath(migrationManifestPath, bundleRoot);
-  const [openapi, migrationManifest] = await Promise.all([readJson(openapiPath), readJson(migrationManifestPath)]);
-  const serviceVersion = requireString(openapi?.info?.version, "service_version", { max: 128 });
+  const [serviceVersion, migrationManifest] = await Promise.all([
+    readServiceApiVersion(bundleRoot, { expectedReleaseVersion: plan.release?.service_bundle_version }),
+    readJson(migrationManifestPath),
+  ]);
   const releaseVersion = await readServiceReleaseVersion(bundleRoot, plan.release?.service_bundle_version);
   const schemaVersion = migrationManifest?.schema_version;
   if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 1) {

@@ -1,4 +1,5 @@
 import { readServiceReleaseVersion } from "./service-release-version.mjs";
+import { readServiceApiVersion } from "./service-api-version.mjs";
 import { deploymentCrons, usageVars } from "./usage-config.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -159,6 +160,11 @@ export async function finalizeInstanceUpgrade({
   });
 
   const releaseVersion = await readServiceReleaseVersion(configEvent.service_bundle_root, plan.release.service_bundle_version);
+  await readServiceApiVersion(configEvent.service_bundle_root, {
+    expectedReleaseVersion: plan.release.service_bundle_version,
+    expectedApiVersion: plan.target.service_api_version,
+    serviceApiRange: plan.target.compatibility.service_api,
+  });
 
   const targetManifestPath = path.join(configEvent.service_bundle_root, "migrations", "manifest.json");
   const manifestBytes = await readFile(targetManifestPath);
@@ -203,6 +209,7 @@ export async function finalizeInstanceUpgrade({
   const artifacts = assertReleaseMatchesPlan(verifiedRelease, plan);
   if (verifiedRelease.manifest.publisher?.canonical_origin !== plan.target.publisher
     || artifacts.service.source !== plan.target.service_bundle_source
+    || verifiedRelease.manifest.compatibility?.service_api !== plan.target.compatibility.service_api
     || verifiedRelease.manifest.compatibility?.schema_version !== plan.target.schema_version) {
     throw toolError("DEPLOYMENT_RELEASE_DRIFT", "Verified target release differs from the authorized Instance upgrade");
   }

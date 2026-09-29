@@ -12,7 +12,9 @@
 4. 使用已安装并完成 GitHub 登录的 `gh`。脚本复用 gh 身份，不读取或输出 Token，不执行 OAuth 登录，不把 Cloudflare Credential 传给 gh。网络失败、权限失败和读取超时都不是“Release 不存在”的证据。
 5. 创建非秘密 config JSON，字段为 `repository`（固定 `breakstring/cfKanban`）、准确 `version`、40 位 `commit`、上传 `directory` 的绝对路径、完整 `notes` 字符串。配置不放进上传目录，不提交本机绝对路径。
 
-产品版本以 `release/version.json` 为源码声明。同步 plugin metadata 与当次 `release/config/<version>.json`，重新构建 Worker/Web；打包会拒绝错版本、缺失或变化的构建入口。API 的 `service_version`/OpenAPI `info.version` 与 schema 不随产品版本机械递增。历史 tag、migration SQL、发行配置和已发布工件不原地修改。
+产品版本以 `release/version.json` 为源码声明。同步 plugin metadata 与当次 `release/config/<version>.json`，重新生成 OpenAPI 并构建 Worker/Web；打包会拒绝文档错版本、缺失或变化的构建入口。OpenAPI `info.version` 对应产品发行，API 的 `service_version` 则独立来自 `contracts/service-api.json`，schema 由 migration manifest 决定。历史 tag、migration SQL、发行配置和已发布工件不原地修改。
+
+新发行清单使用 manifest schema 2（pointer 仍为 1），要求支持独立 API 声明的部署技能；旧技能应在正常发现/校验入口拒绝。先完成获准的本地技能/宿主更新，再执行新 Service 工件部署，不能绕过未知 manifest 格式检查。
 
 普通用户 README 和双语部署/加入/安装指南保持版本无关，不为每次发行替换数字。开发后续功能前将声明切到下一个准确预发行版本；本地隔离验证后，公开 RC 并按授权在 cfkanban.dev 验收，仅在正式发行时推进 stable。公开测试实例仍保留真实数据和既有迁移、权限、恢复保护。
 

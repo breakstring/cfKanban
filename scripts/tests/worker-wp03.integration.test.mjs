@@ -188,6 +188,11 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
     assert.equal(body.release_version, release.version);
     assert.equal(body.service_version, "0.1.0");
   }
+  const apiDocument = await jsonRequest("/openapi.json");
+  assert.equal(apiDocument.response.status, 200);
+  assert.equal(apiDocument.body.info.version, health.body.release_version);
+  assert.equal(apiDocument.body["x-cfkanban-service-version"], health.body.service_version);
+  assert.deepEqual(apiDocument.body, openApi);
 
   const me = await jsonRequest("/api/v1/me", { headers: ownerHeaders() });
   assert.equal(me.body.display_name, "Deployment_Owner");

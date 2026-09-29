@@ -1,3 +1,6 @@
+import { fileURLToPath } from "node:url";
+import serviceApi from "../contracts/service-api.json" with { type: "json" };
+import { readReleaseVersion } from "./lib/release-version.mjs";
 import {
   parseGeneratedMode,
   renderGeneratedJson,
@@ -2468,10 +2471,11 @@ const document = {
   openapi: "3.1.0",
   info: {
     title: "cfKanban API",
-    version: "0.1.0",
-    description: "Frozen v0.1 Agent-first atomic Kanban contract. Generated from the repository contract source; implementation completion is tracked separately.",
+    version: await readReleaseVersion(fileURLToPath(new URL("..", import.meta.url))),
+    description: "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     license: { name: "UNLICENSED" },
   },
+  "x-cfkanban-service-version": serviceApi.service_version,
   servers: [{ url: "/", description: "Current cfKanban instance origin" }],
   tags: tags.map((name) => ({ name, description: tagDescriptions[name] })),
   paths,

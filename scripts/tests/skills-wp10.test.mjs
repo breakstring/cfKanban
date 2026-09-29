@@ -1860,9 +1860,10 @@ test("state initialization rejects a symlink root", async (t) => {
   );
 });
 
-for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization stay plan-bound for schema ${bootstrapSchema}, verify exact identity, and write only a redacted receipt`, async (t) => {
+for (const [bootstrapSchema, productVersion] of [[1, null], [8, null], [8, "1.4.0-rc.2"]]) test(`Owner bootstrap and finalization stay plan-bound for schema ${bootstrapSchema} (${productVersion ?? "legacy"}), verify exact identity, and write only a redacted receipt`, async (t) => {
   const { home, stateRoot } = await fixtureState();
   t.after(() => rm(home, { recursive: true, force: true }));
+  const releaseVersion = productVersion ?? "0.1.0";
   const serviceRoot = path.join(home, "service-bundle");
   await mkdir(path.join(serviceRoot, "dist"), { recursive: true });
   await mkdir(path.join(serviceRoot, "apps", "web", "dist"), { recursive: true });
@@ -1871,7 +1872,11 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
   await mkdir(path.join(serviceRoot, "release", "deployment"), { recursive: true });
   await writeFile(path.join(serviceRoot, "dist", "index.js"), "export default {};\n", "utf8");
   await writeFile(path.join(serviceRoot, "apps", "web", "dist", "index.html"), "<!doctype html>\n", "utf8");
-  await writeFile(path.join(serviceRoot, "contracts", "openapi.json"), `${JSON.stringify({ info: { version: "0.1.0" } })}\n`, "utf8");
+  await writeFile(path.join(serviceRoot, "contracts", "openapi.json"), `${JSON.stringify({ info: { version: productVersion ?? "0.1.0" }, ...(productVersion ? { "x-cfkanban-service-version": "0.1.0" } : {}) })}\n`, "utf8");
+  if (productVersion) {
+    await writeFile(path.join(serviceRoot, "contracts/service-api.json"), JSON.stringify({ service_version: "0.1.0" }));
+    await writeFile(path.join(serviceRoot, "release/version.json"), JSON.stringify({ version: productVersion }));
+  }
   const migrationText = "SELECT 1;\n";
   const migration = {
     sequence: 1,
@@ -1904,8 +1909,9 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
   await mkdir(releaseOutput);
   const generated = await generateReleaseMetadata({
     outputDirectory: releaseOutput,
-    canonicalBaseUrl: "https://releases.example.test/cfkanban/0.1.0/",
-    version: "0.1.0",
+    canonicalBaseUrl: `https://releases.example.test/cfkanban/${releaseVersion}/`,
+    version: releaseVersion,
+    channel: productVersion ? "prerelease" : "stable",
     skillBundlePath: skillBundle,
     serviceBundlePath: serviceBundle,
     nodeRange: ">=22.12.0 <27",
@@ -1925,7 +1931,7 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
   });
   assert.equal(installedService.installed, true);
   assert.equal(installedService.verified, true);
-  assert.equal(installedService.path.endsWith(path.join("versions", "0.1.0", "service")), true);
+  assert.equal(installedService.path.endsWith(path.join("versions", releaseVersion, "service")), true);
   const reusedService = await installVerifiedServiceBundle({
     bundlePath: serviceBundle,
     version: serviceArtifact.version,
@@ -1985,7 +1991,7 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
   });
   await installVerifiedSkillBundle({
     bundlePath: skillBundle,
-    version: "0.1.0",
+    version: releaseVersion,
     expectedSha256: skillArtifact.sha256,
     publisher: generated.manifest.publisher.canonical_origin,
     source: skillArtifact.url,
@@ -2013,6 +2019,8 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
     preferredApiOrigin: "https://example.workers.dev",
   });
   const sql = await readFile(result.bootstrap_sql_path, "utf8");
+  assert.match(sql, /INSERT INTO instance_meta .*'0\.1\.0'/u);
+  if (productVersion) assert.equal(sql.includes(productVersion), false);
   assert.equal(sql.includes("display_name_key"), bootstrapSchema >= 8);
   if (bootstrapSchema >= 8) assert.ok(sql.includes("'example_owner'"));
   assert.equal(sql.includes(secret.token), false);
@@ -2123,6 +2131,7 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
     } else {
       body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example_Owner", is_owner: true, credential: { id: wrongCredential ? "88888888-8888-4888-8888-888888888888" : CREDENTIAL_ID, fingerprint: pending.fingerprint } };
     }
+    if (productVersion && url.pathname !== "/api/v1/me") body.release_version = productVersion;
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   };
   const finalizeInput = {
@@ -2150,7 +2159,8 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
   const receipt = await readJson(finalized.receipt_path);
   assert.equal(receipt.owner.credential_id, CREDENTIAL_ID);
   assert.equal(receipt.operation.plan_digest, canonicalDigest(plan));
-  assert.equal(receipt.active_skill_runtime.version, "0.1.0");
+  assert.equal(receipt.active_skill_runtime.version, releaseVersion);
+  assert.equal(receipt.instance.service_version, "0.1.0");
   assert.equal(JSON.stringify(receipt).includes(secret.token), false);
   assert.equal(JSON.stringify(finalized).includes(secret.token), false);
   assert.equal(fetchCalls.filter((call) => call.authorization).every((call) => call.path === "/api/v1/meta" || call.path === "/api/v1/me"), true);
@@ -2161,6 +2171,7 @@ for (const bootstrapSchema of [1, 8]) test(`Owner bootstrap and finalization sta
 });
 
 for (const deploymentOutcome of ["success", "observed_success", "response_lost", "error_after_deploy"]) test(`existing Instance upgrade consumes a verified Service cache and preserves the Owner Credential (${deploymentOutcome})`, async (t) => {
+  const productVersion = deploymentOutcome === "success" ? "1.4.0-rc.2" : null;
   const observedCurrent = deploymentOutcome !== "success";
   const recoverDeployment = ["response_lost", "error_after_deploy"].includes(deploymentOutcome);
   const { home, stateRoot } = await fixtureState();
@@ -2177,7 +2188,11 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
   }
   await writeFile(path.join(serviceRoot, "dist", "index.js"), "export default {};\n", "utf8");
   await writeFile(path.join(serviceRoot, "apps", "web", "dist", "index.html"), "<!doctype html>\n", "utf8");
-  await writeFile(path.join(serviceRoot, "contracts", "openapi.json"), JSON.stringify({ info: { version: "0.1.0" } }) + "\n", "utf8");
+  await writeFile(path.join(serviceRoot, "contracts", "openapi.json"), JSON.stringify({ info: { version: productVersion ?? "0.1.0" }, ...(productVersion ? { "x-cfkanban-service-version": "0.1.0" } : {}) }) + "\n", "utf8");
+  if (productVersion) {
+    await writeFile(path.join(serviceRoot, "contracts/service-api.json"), JSON.stringify({ service_version: "0.1.0" }));
+    await writeFile(path.join(serviceRoot, "release/version.json"), JSON.stringify({ version: productVersion }));
+  }
   const initialSql = "SELECT 1;\n";
   const initialMigration = {
     sequence: 1,
@@ -2223,9 +2238,9 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
   await mkdir(releaseOutput);
   const generated = await generateReleaseMetadata({
     outputDirectory: releaseOutput,
-    canonicalBaseUrl: "https://releases.example.test/cfkanban/0.1.0-alpha.19/",
+    canonicalBaseUrl: `https://releases.example.test/cfkanban/${productVersion ?? "0.1.0-alpha.19"}/`,
     channel: "prerelease",
-    version: "0.1.0-alpha.19",
+    version: productVersion ?? "0.1.0-alpha.19",
     skillBundlePath: skillBundle,
     serviceBundlePath: serviceBundle,
     nodeRange: ">=22.12.0 <27",
@@ -2342,6 +2357,15 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
 
   await createJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, plan });
   await authorizeJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: plan.task_id, planDigest: canonicalDigest(plan) });
+  const driftedPlan = { ...plan, operation_id: "abababab-abab-4bab-8bab-abababababab", target: { ...plan.target, service_api_version: "0.1.1" } };
+  await createJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: driftedPlan.operation_id, plan: driftedPlan });
+  await authorizeJournal({ stateRoot, instanceId: INSTANCE_ID, operationId: driftedPlan.operation_id, taskId: driftedPlan.task_id, planDigest: canonicalDigest(driftedPlan) });
+  await assert.rejects(writeFrozenWranglerConfig({
+    stateRoot, instanceId: INSTANCE_ID, operationId: driftedPlan.operation_id, taskId: driftedPlan.task_id,
+    plan: driftedPlan, serviceBundleRoot: installedService.path, d1DatabaseId: base.resources.d1.database_id,
+  }), { code: "DEPLOYMENT_SERVICE_VERSION_DRIFT" });
+  const rejectedJournal = await readJson(path.join(paths.journalsRoot, `${driftedPlan.operation_id}.json`));
+  assert.equal(rejectedJournal.events.some(event => event.type === "wrangler_config_written"), false);
   const config = await writeFrozenWranglerConfig({
     stateRoot,
     instanceId: INSTANCE_ID,
@@ -2611,6 +2635,7 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
     } else {
       body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example_Owner", is_owner: true, credential: { id: CREDENTIAL_ID, fingerprint: credential.fingerprint } };
     }
+    if (productVersion && url.pathname !== "/api/v1/me") body.release_version = productVersion;
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   };
   const finalizeInput = {
@@ -2636,7 +2661,7 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
   const receipt = await readJson(finalized.receipt_path);
   assert.equal(receipt.kind, "cfkanban_instance_upgrade_receipt");
   assert.equal(receipt.service_release.before.service_bundle_version, "0.1.0-alpha.8");
-  assert.equal(receipt.service_release.after.service_bundle_version, "0.1.0-alpha.19");
+  assert.equal(receipt.service_release.after.service_bundle_version, productVersion ?? "0.1.0-alpha.19");
   assert.equal(receipt.cloudflare.worker.after_version_id, afterVersionId);
   assert.equal(receipt.owner.credential_id, CREDENTIAL_ID);
   if (recoverDeployment) assert.equal(receipt.verification.worker_deployment_recovered, true);
@@ -3205,6 +3230,8 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
       run_worker_first: ["/api/*", "/healthz"],
     },
   }), "utf8");
+  await mkdir(path.join(serviceRoot, "contracts"));
+  await writeFile(path.join(serviceRoot, "contracts/openapi.json"), JSON.stringify({ info: { version: "0.1.0" } }));
   const plan = createStrictZeroPlan({
     taskId: "wp10-portable",
     accountId: "account-one",

@@ -18,6 +18,8 @@ You need read access to the target project. The Agent should state the projects 
 
 For multiple projects, select **Work list** in the header. Choose 1–20 projects, select **All issues** or **My tasks**, set the status, assignee (including unassigned), priority, Label, or title/identifier filters, and select **Show work**. Apply the filters again after changing them. Opening this page does not automatically load every project's issues.
 
+The Work list's status control selects **one status or all statuses**. To browse unfinished work in the Web UI, inspect Backlog, Todo, and In progress on the board, or query each status separately in the Work list. To combine those three statuses into one filtered result, use an Agent/API query; repeated status parameters below do not imply a Web status multiselect.
+
 ## Filter by priority, assignee, status, and Label
 
 ```text

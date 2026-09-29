@@ -31,6 +31,7 @@ For help, joining, Owner management, or hosting:
 
 ```text
 Use $cfkanban-howto to explain what I can do with Issues, with examples.
+Use $cfkanban-howto and the docs at <instance URL> to explain priority and Label filters, with Web steps and source links. Do not run a query.
 Use $cfkanban to join this Project: <Invite URL>.
 Use $cfkanban-admin to create my first cfKanban board.
 Use $cfkanban-admin to show who can access DemoProject.
@@ -39,6 +40,8 @@ Use $cfkanban-deploy to deploy cfKanban for me.
 ```
 
 Joining an existing Project does not require your own deployment. The user does not need to request release verification, preflight, readback, or recovery handling. Each Skill performs the checks relevant to that intent, asks only for missing choices, and presents effects at the applicable authorization boundary. Local Skill updates and cloud Instance upgrades are separate actions; installation alone grants neither application nor Cloudflare permissions.
+
+Howto discovers public pages from the known instance's `/docs/llms.txt` and reads only the relevant Markdown in your language. It cites the source and checks the document release against the Service release, without credentials or membership. Missing pages, translations, network access, or version evidence lead to an explained fallback to local guidance, never an automatic instance switch or upgrade.
 
 ## Installation and updates
 

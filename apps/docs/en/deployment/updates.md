@@ -15,6 +15,10 @@ Expect separately identified versions and available updates. The Agent verifies 
 
 ## Update local Skills
 
+An instance's product release, API compatibility version, and database schema are separate. In releases supporting document version tracking, `/openapi.json` uses `info.version` for its product release and `x-cfkanban-service-version` for API compatibility; `openapi` identifies the OpenAPI format. Older documents may still use the API version in `info.version`.
+
+New-format release manifests require compatible deployment Skills. If an older Skill rejects the manifest format, first update the local Skills and host entry with authorization, then resume checking the exact Service release. Do not bypass verification; updating local Skills does not upgrade the instance.
+
 ```text
 Use $cfkanban-deploy to update my local cfKanban Skills to the latest compatible stable release.
 Update only the local Skills and the agreed host entry, without upgrading the deployed instance.

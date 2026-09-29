@@ -30,6 +30,18 @@ Agent and Web operations follow the same access rules. A button does not grant a
 
 ## How to use these pages
 
+Open **Documentation** from the public home header or footer. After signing in, the application footer also links to these pages in your current language, alongside GitHub. Documentation opens in a new tab so you can keep your board or management page open; you do not need to sign out, and your session access stays the same.
+
+You can also ask Howto to read the relevant pages and cite them:
+
+```text
+Use $cfkanban-howto and the docs at <instance URL> to explain how to find
+high-priority issues tagged bug in DemoProject. Include the permissions,
+Web entry, and source links. Explain only; do not run the query.
+```
+
+Howto reads the public documentation index and only the pages needed for your question, without a Credential or project membership. It checks the documentation's release against the running instance when possible. If a page or version cannot be verified, it explains the limit and can use its local guidance; updating the Skill does not update the site.
+
 Each feature starts with a prompt you can copy, followed by permissions, expected results, and Web instructions. Replace `DemoProject`, `CFK-123`, and angle-bracket placeholders with your own targets. Example requests can make real changes; send only the actions you want performed.
 
 An Issue is a task. The interface supports English and Simplified Chinese; project names, issue descriptions, comments, and other collaboration content are not translated automatically. Project administrators can customize status display names, so your column labels may differ from the defaults used here.

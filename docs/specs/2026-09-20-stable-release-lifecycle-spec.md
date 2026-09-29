@@ -24,7 +24,11 @@ canonical stable pointer 固定为 `https://github.com/breakstring/cfKanban/rele
 
 新增 `release/version.json` 作为源码当前产品发行版本的单一声明；正式构建、plugin metadata 和对应 release config 必须一致。打包拒绝声明版本与构建版本不一致，避免只更换 zip 文件名得到新版本。
 
-`/healthz`、`/.well-known/cfkanban-instance.json`、`/api/v1/meta` 增量返回 `release_version`，来自正在执行的 Worker 构建；第一方 Web 使用该值展示实际发行版本。旧实例无字段时不把旧 `service_version` 冒充产品发行版本。保留 `service_version` 的既有兼容语义、OpenAPI `info.version` 和 API 路径；schema 仍由 migration manifest 决定。不为了产品发行编号更新 D1 或重写历史 migration。
+`/healthz`、`/.well-known/cfkanban-instance.json`、`/api/v1/meta` 增量返回 `release_version`，来自正在执行的 Worker 构建；第一方 Web 使用该值展示实际发行版本。旧实例无字段时不把旧 `service_version` 冒充产品发行版本。保留 `service_version` 的既有兼容语义和 API 路径；schema 仍由 migration manifest 决定。不为了产品发行编号更新 D1 或重写历史 migration。
+
+2026-09-29 用户授权 [CFK-504](https://cfkanban.dev/app/issues/CFK-504)：OpenAPI `info.version` 改为从 `release/version.json` 自动生成，表示该文档对应的产品发行；`openapi` 仍只表示 OAS 格式版本。`contracts/service-api.json` 独立声明 API 的 `service_version`，供 Worker、初始化和生成器复用，OpenAPI 根扩展 `x-cfkanban-service-version` 回显该值。打包核对文档、产品与 API 声明一致；不能把产品版本写入 D1 的 API 兼容字段。
+
+新的 immutable release manifest 使用顶层 `schema_version: 2` 与 `compatibility.bootstrap_schema: 2`；发行 pointer 保持 schema 1。支持此格式的部署技能同时读取历史 manifest 1。旧技能只支持 manifest 1，正常发现/校验入口必须提前拒绝新清单；单独提高旧实现未检查的 `bootstrap_schema` 无法形成兼容性门槛。用户先独立更新技能/宿主，再操作新 Service 工件；不能跳过校验或直接用旧低层命令部署。新 Service bundle 携带独立 API 声明，配置/初始化前校验声明、文档扩展与产品版本，升级时还校验计划中的 API 版本；只有历史格式可回退读取 `info.version`，不能将缺失声明的新产品文档当成旧 API 版本。
 
 ## 源码开发与环境
 

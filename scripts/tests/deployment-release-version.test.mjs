@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { assertReadback } from "../../packages/skill-runtime/src/deployment-finalize.mjs";
 import { readServiceReleaseVersion } from "../../packages/skill-runtime/src/service-release-version.mjs";
+import { readServiceApiVersion } from "../../packages/skill-runtime/src/service-api-version.mjs";
 
 async function bundle(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "cfkanban-product-version-"));
@@ -69,3 +70,60 @@ for (const [endpoint, code] of [["health", "DEPLOYMENT_HEALTH_MISMATCH"], ["disc
     }
   });
 }
+
+async function apiBundle(t, { legacy = false } = {}) {
+  const fixture = await bundle(t);
+  await mkdir(path.join(fixture.root, "contracts"));
+  await mkdir(path.join(fixture.root, "migrations"));
+  const declaration = path.join(fixture.root, "contracts/service-api.json");
+  const openapi = path.join(fixture.root, "contracts/openapi.json");
+  const migrations = path.join(fixture.root, "migrations/manifest.json");
+  await writeFile(fixture.file, JSON.stringify({ version: "1.4.0-rc.2" }));
+  if (!legacy) await writeFile(declaration, JSON.stringify({ service_version: "0.1.0" }));
+  await writeFile(openapi, JSON.stringify({ info: { version: legacy ? "0.1.0" : "1.4.0-rc.2" }, ...(!legacy ? { "x-cfkanban-service-version": "0.1.0" } : {}) }));
+  await writeFile(migrations, JSON.stringify({ service_compatibility: { minimum: "0.1.0", maximum_exclusive: "0.2.0" } }));
+  return { ...fixture, declaration, openapi, migrations, read: (options = {}) => readServiceApiVersion(fixture.root, { expectedReleaseVersion: "1.4.0-rc.2", ...options }) };
+}
+
+test("Service API version supports legacy and independent declarations without treating a product version as an API", async (t) => {
+  for (const legacy of [true, false]) {
+    const fixture = await apiBundle(t, { legacy });
+    assert.equal(await fixture.read({ serviceApiRange: ">=0.1.0 <0.2.0", expectedApiVersion: "0.1.0" }), "0.1.0");
+    await assert.rejects(fixture.read({ expectedApiVersion: "0.1.1" }), { code: "DEPLOYMENT_SERVICE_VERSION_DRIFT" });
+    await assert.rejects(fixture.read({ serviceApiRange: ">=1.0.0 <2.0.0" }), { code: "DEPLOYMENT_SERVICE_VERSION_DRIFT" });
+    await writeFile(fixture.migrations, JSON.stringify({ service_compatibility: { minimum: "0.2.0", maximum_exclusive: "0.3.0" } }));
+    await assert.rejects(fixture.read(), { code: "DEPLOYMENT_SERVICE_VERSION_DRIFT" });
+  }
+  const legacy = await apiBundle(t, { legacy: true });
+  for (const version of ["1.4.0-rc.2", "1.4.0", "0.1.0-rc.2"]) {
+    await writeFile(legacy.openapi, JSON.stringify({ info: { version } }));
+    await assert.rejects(legacy.read(), { code: "SERVICE_API_DECLARATION_REQUIRED" });
+  }
+});
+
+test("new Service version contracts fail closed on missing, conflicting or malformed declarations", async (t) => {
+  const fixture = await apiBundle(t);
+  for (const declaration of [null, {}, { service_version: "0.2.0" }, { service_version: "1.4.0-rc.2" }]) {
+    await writeFile(fixture.declaration, JSON.stringify(declaration));
+    await assert.rejects(fixture.read(), { code: "SERVICE_API_DECLARATION_MISMATCH" });
+  }
+  await writeFile(fixture.declaration, "invalid-json");
+  await assert.rejects(fixture.read(), { code: "SERVICE_BUNDLE_INCOMPLETE" });
+  await rm(fixture.declaration);
+  await assert.rejects(fixture.read(), { code: "SERVICE_API_DECLARATION_MISMATCH" });
+  await writeFile(fixture.declaration, JSON.stringify({ service_version: "0.1.0" }));
+  await writeFile(fixture.openapi, JSON.stringify({ info: { version: "1.4.0-rc.2" } }));
+  await assert.rejects(fixture.read(), { code: "SERVICE_API_DECLARATION_MISMATCH" });
+  await writeFile(fixture.openapi, JSON.stringify({ info: { version: "0.1.0" }, "x-cfkanban-service-version": "0.1.0" }));
+  await assert.rejects(fixture.read(), { code: "DEPLOYMENT_RELEASE_DRIFT" });
+  await writeFile(fixture.openapi, JSON.stringify({ info: { version: "1.4.0-rc.2" }, "x-cfkanban-service-version": "0.1.0" }));
+  await rm(fixture.file);
+  await assert.rejects(fixture.read(), { code: "DEPLOYMENT_RELEASE_DRIFT" });
+});
+
+test("independent API declaration cannot escape the immutable Service bundle through a symlink", async (t) => {
+  const fixture = await apiBundle(t);
+  await rm(fixture.declaration);
+  await symlink(fixture.file, fixture.declaration);
+  await assert.rejects(fixture.read());
+});

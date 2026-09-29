@@ -1,5 +1,6 @@
 import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
 import migrationManifest from "../../../../migrations/manifest.json" with { type: "json" };
+import serviceApi from "../../../../contracts/service-api.json" with { type: "json" };
 
 import { requireCredentialToken, principalDisplayNameKey, requirePrincipalDisplayName, requireHttpsOrigin, requireUuid, timestamp } from "../domain/model.ts";
 import { sha256Hex } from "../kernel/crypto.ts";
@@ -108,7 +109,7 @@ export async function bootstrapInstance(
   const ownerDisplayName = requirePrincipalDisplayName(input.ownerDisplayName, "owner_display_name");
   const preferredApiOrigin = requireHttpsOrigin(input.preferredApiOrigin);
   const credential = requireCredentialToken(input.ownerCredentialToken, "owner_credential_token");
-  const serviceVersion = input.serviceVersion ?? "0.1.0";
+  const serviceVersion = input.serviceVersion ?? serviceApi.service_version;
   const schemaVersion = input.schemaVersion ?? migrationManifest.schema_version;
   if (serviceVersion.trim().length === 0 || !Number.isSafeInteger(schemaVersion) || schemaVersion < 1) {
     throw validationError("invalid_bootstrap_version");

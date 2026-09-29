@@ -15,6 +15,7 @@ import {
 import { fetchDiscovery, validateDiscovery } from "./rebind.mjs";
 import { loadAndVerifyRelease } from "./release.mjs";
 import { treeDigest } from "./skill-update.mjs";
+import { readServiceApiVersion } from "./service-api-version.mjs";
 import { toolError } from "./errors.mjs";
 import {
   assertNoSymlinkPath,
@@ -175,6 +176,11 @@ export async function finalizeOwnerDeployment({
 
   const verifiedRelease = await loadAndVerifyRelease({ releasePointerPath, manifestPath, artifactFiles });
   const artifacts = assertReleaseMatchesPlan(verifiedRelease, plan);
+  await readServiceApiVersion(contract.bundleRoot, {
+    expectedReleaseVersion: plan.release.service_bundle_version,
+    expectedApiVersion: contract.serviceVersion,
+    serviceApiRange: verifiedRelease.manifest.compatibility?.service_api,
+  });
   if (verifiedRelease.manifest.compatibility?.schema_version !== contract.schemaVersion) {
     throw toolError("DEPLOYMENT_RELEASE_DRIFT", "Release manifest schema compatibility differs from the deployed Service bundle");
   }

@@ -1,4 +1,5 @@
 import openApiDocument from "../../../contracts/openapi.json" with { type: "json" };
+import serviceApi from "../../../contracts/service-api.json" with { type: "json" };
 import migrationManifest from "../../../migrations/manifest.json" with { type: "json" };
 
 import { RELEASE_VERSION } from "./release-version.ts";
@@ -33,7 +34,7 @@ import { registerWp06Routes } from "./routes/wp06.ts";
 import { registerWp07Routes } from "./routes/wp07.ts";
 import { registerWp08Routes } from "./routes/wp08.ts";
 
-const SERVICE_VERSION = "0.1.0";
+const SERVICE_VERSION = serviceApi.service_version;
 const SCHEMA_VERSION = migrationManifest.schema_version;
 const openApiBody = JSON.stringify(openApiDocument);
 

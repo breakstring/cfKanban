@@ -19,8 +19,8 @@ import { createRenderer, h, nextTick, ref } from 'vue';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
-  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
-  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
+  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { default as Footer } from './apps/web/src/components/AppFooter.vue'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
+  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent', loader: { '.png': 'dataurl' },
   plugins: [{ name: 'vue-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
       const { descriptor } = parse(await readFile(path, 'utf8'), { filename: path });
@@ -30,7 +30,7 @@ const output = await build({
     builder.onResolve({ filter: /^vue$/ }, () => ({ path: new URL('../../node_modules/vue/index.mjs', import.meta.url).href, external: true }));
   } }],
 });
-const { WorkList, Board, Activity, Context, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
+const { WorkList, Board, Activity, Context, Footer, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
 
 
 
@@ -71,6 +71,33 @@ const select = (host, label) => all(host).find(item => item.tag === 'label' && t
 const submit = host => all(host).find(item => item.tag === 'form').props.onSubmit({ preventDefault() {}, stopPropagation() {} });
 const chooseProjects = (host, ids) => all(host).find(item => item.tag === 'input' && item.props.type === 'checkbox').props['onUpdate:modelValue'](ids);
 const mount = (component, props) => { const app = renderer.createApp(component, props); const host = node('root'); app.mount(host); return { app, host }; };
+
+test('authenticated footer follows locale and opens public help separately without fetching session or business data', async () => {
+  const calls = [];
+  globalThis.fetch = async (...args) => { calls.push(args); throw new Error('footer must not fetch data'); };
+  const release = JSON.parse(await readFile(new URL('../../release/version.json', import.meta.url), 'utf8'));
+  const { app, host } = mount(Footer);
+  try {
+    for (const [language, docsLabel, newTabLabel] of [['en', 'Documentation', 'opens in a new tab'], ['zh-CN', '文档', '在新标签页打开']]) {
+      locale.value = language;
+      await nextTick();
+      const links = all(host).filter(item => item.tag === 'a');
+      assert.equal(links.length, 2);
+      assert.equal(links[0].props.href, `/docs/${language}/overview/`);
+      assert.equal(links[0].props['aria-label'], `${docsLabel} (${newTabLabel})`);
+      assert.equal(links[1].props.href, 'https://github.com/breakstring/cfKanban');
+      for (const link of links) {
+        assert.equal(link.props.target, '_blank');
+        assert.deepEqual(link.props.rel.split(' ').sort(), ['noopener', 'noreferrer']);
+        assert.equal(link.props.onClick, undefined, 'ordinary links must not trigger SPA navigation or logout');
+        assert.ok(link.props['aria-label'].includes(newTabLabel));
+      }
+      assert.match(text(host), /cfKanban/);
+      assert.ok(text(host).includes(release.version));
+    }
+    assert.deepEqual(calls, []);
+  } finally { app.unmount(); }
+});
 
 test('work queries require explicit current scope, preserve fixed scope, and separate candidate policies', () => {
   assert.equal(workListPath({ ...filter, projects: [] }, session), null);

@@ -41,12 +41,12 @@ export async function generateReleaseMetadata({
   const artifactOrigin = base.origin;
   const releaseUrl = (name, directory) => new URL(urlLayout === "flat" || directory === "" ? name : `${directory}/${name}`, base).href;
   const manifest = validateReleaseManifest({
-    schema_version: 1,
+    schema_version: 2,
     product: "cfkanban",
     publisher: { id: "cfkanban", canonical_origin: base.origin },
     release: { version, immutable: true },
     compatibility: {
-      bootstrap_schema: 1,
+      bootstrap_schema: 2,
       node: nodeRange,
       wrangler: wranglerRange,
       service_api: serviceApiRange,

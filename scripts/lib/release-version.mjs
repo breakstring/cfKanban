@@ -33,4 +33,11 @@ export async function verifyReleaseBuild({ repositoryRoot, version }) {
   await verifyBuildVersion({ outputDirectory: path.join(repositoryRoot, "apps/worker/dist"), entry: "index.js", version });
   await verifyBuildVersion({ outputDirectory: path.join(repositoryRoot, "apps/web/dist"), entry: "index.html", version });
   await verifyDocsBuild({ outputDirectory: path.join(repositoryRoot, "apps/web/dist/docs"), version });
+  const document = await json(path.join(repositoryRoot, "contracts/openapi.json"));
+  const serviceApi = await json(path.join(repositoryRoot, "contracts/service-api.json"));
+  if (document.info?.version !== version) throw new Error("OpenAPI version does not match release/version.json; regenerate the contract");
+  if (typeof serviceApi.service_version !== "string" || !versionPattern.test(serviceApi.service_version)
+    || document["x-cfkanban-service-version"] !== serviceApi.service_version) {
+    throw new Error("OpenAPI API compatibility version does not match contracts/service-api.json");
+  }
 }

@@ -17,6 +17,8 @@ Marketplace/plugin installation is a convenience. Host marketplace metadata and 
 
 ## Release discovery, host installation, and updates
 
+Release manifests with `schema_version: 2` separate the product/OpenAPI document version from the API compatibility version. They require a deployment Skill that supports this format; historical format 1 remains readable by the newer Skill. If an older Skill rejects the manifest, verify the canonical installation documents and update the local Skills and host projection with authorization before deploying the Service bundle. Do not bypass the manifest check or reinterpret the document version as the API version. Release pointers still use schema 1.
+
 First installation discovers the latest stable release by default; reuse an existing trusted, compatible installation. Read the canonical stable pointer:
 
 <https://github.com/breakstring/cfKanban/releases/latest/download/stable.json>

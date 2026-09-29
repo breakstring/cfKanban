@@ -3,8 +3,11 @@ import { toolError } from "./errors.mjs";
 import { canonicalDigest, readJson, requireHttpsOrigin, requireString, sha256Bytes } from "./utils.mjs";
 
 export function validateReleaseManifest(manifest) {
-  if (manifest?.schema_version !== 1 || !Array.isArray(manifest.artifacts) || manifest.artifacts.length !== 2) {
+  if (![1, 2].includes(manifest?.schema_version) || !Array.isArray(manifest.artifacts) || manifest.artifacts.length !== 2) {
     throw toolError("INVALID_RELEASE_MANIFEST", "Release manifest must contain exactly the Skill and Service deployment artifacts");
+  }
+  if (manifest.schema_version === 2 && manifest.compatibility?.bootstrap_schema !== 2) {
+    throw toolError("INVALID_RELEASE_MANIFEST", "Release manifest v2 requires bootstrap schema 2 for independent API versions");
   }
   const kinds = new Set();
   const artifacts = manifest.artifacts.map((artifact) => {
