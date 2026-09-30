@@ -20,11 +20,13 @@ Release archives do not contain a Node.js executable. The Skill bundle includes 
 
 ## What you need
 
-For Codex:
+For any supported Agent host:
 
-- Codex desktop or Codex CLI with plugin support;
-- Git access to this repository;
-- a new Codex task after plugin installation, so the new Skills are loaded.
+- support for loading Skills, reading HTTPS documents, and running local Node.js scripts;
+- a compatible Node.js environment and persistent private storage for your identity;
+- access to the official release downloads, plus Git access if using a Git-based installation.
+
+The Agent uses the host’s supported Skill directories or plugin mechanism. Some hosts need a new conversation after installation to load the Skills.
 
 For your own Cloudflare deployment you will also need:
 
@@ -38,7 +40,9 @@ Give your Agent this request:
 
 > Read https://github.com/breakstring/cfKanban/releases/latest/download/install.md and install the latest stable cfKanban Skills for me.
 
-The Agent checks existing installations, explains the required local changes, and handles host installation. In Codex, it resolves the exact tag from the verified release and internally installs with `--ref <resolved-version>`; you do not need to maintain that parameter. If the host needs a new task to load the Skills, the Agent will say so. Installation does not deploy or upgrade a Cloudflare instance or grant application permissions.
+The Agent identifies your host, checks existing installations, and explains the required local changes. Hosts with a compatible Git plugin or marketplace source can follow the repository’s default `main` branch, which contains only published stable releases; Codex is one example and does not need `--ref` for ordinary installation. Hosts that load local Skill directories use the complete verified bundle, including its shared runtime. The Agent checks the selected release and actual installed files for either method. Installation does not deploy or upgrade a Cloudflare instance or grant application permissions.
+
+If your Git-based installation is pinned to an old tag, ask the Agent to switch its registered source to the default branch and update the host installation. Editing a copied command alone does not change the saved setting. Local-directory installations continue using the bundle update path. Keep your private `.cfkanban/` identity and deployment records. Neither installation method updates automatically just because a new release appears; ask for an update, then reload the host or start a new conversation when required.
 
 cfKanban contains four Skills: an onboarding guide and three operational Skills:
 
@@ -53,7 +57,7 @@ You normally talk to the Skill in natural language. The bundled `.mjs` commands 
 
 ## After installation: start with Howto
 
-In your new task, start with the read-only usage guide:
+Once the host has loaded the Skills, start with the read-only usage guide:
 
 > Use `$cfkanban-howto` to explain how to use cfKanban, which Skill fits my needs, and give me a few prompts I can try.
 
@@ -69,7 +73,7 @@ Howto is a recommended starting point, not a required setup step. If you already
 
 ## Ask your Agent to deploy
 
-In the new task, this one sentence is enough:
+With the Skills loaded, this one sentence is enough:
 
 > Use `$cfkanban-deploy` to deploy cfKanban for me.
 
@@ -111,7 +115,7 @@ The Skill verifies the Owner, asks for the Workspace and Project display names i
 
 ## Join an existing cfKanban Project
 
-Install the plugin, start a new task, and give the one-time Invite URL to your Agent:
+Install or reuse the Skills, let the host load them, and give the one-time Invite URL to your Agent:
 
 The [joining guide](apps/web/public/join.md) also covers a recipient who has not installed the Skill yet, and explains both Project Invite and Public Join paths.
 
@@ -131,13 +135,17 @@ cfKanban-owned persistent local data uses the current execution environment user
   tool-runtime/    # isolated pinned Wrangler package; never a bundled Node.js runtime
 ```
 
-Codex marketplace configuration and plugin caches remain in Codex-owned directories because Codex must discover them there. They are disposable host projections, not cfKanban state and not canonical release truth. Windows native and WSL2 use separate user homes and are never mixed automatically.
+Host discovery entries, marketplace configuration, and plugin caches remain in the directories managed by the corresponding Agent host. They are disposable host projections, not cfKanban state or canonical release truth. Windows native and WSL2 use separate user homes and are never mixed automatically.
 
 ## For contributors
 
 ### Source development and test environments
 
-For deliberate development, register the exact checkout:
+Keep `main` on the commit of a published stable release. Develop on `feat/*` or `fix/*` branches; switching branches in the normal project directory is sufficient, and an additional Git worktree is optional. Publish an exact RC from the development branch and validate it on the test instance. Then build and publish the stable artifacts, verify them, and advance `main` to that same stable commit.
+
+For routine Skill development, have the Agent read the current branch’s `SKILL.md` and execute its scripts from that checkout. Read changed instructions again; edits do not automatically refresh an installed Skill or an existing task. To test host discovery and loading, use the host’s supported local-directory layout or temporarily switch its existing plugin source to the exact checkout. Preserve the shared runtime and relative paths in either case.
+
+For Codex with plugin support, a local installation example is:
 
 ```sh
 cd /absolute/path/to/cfKanban
@@ -145,7 +153,9 @@ codex plugin marketplace add .
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-Record the commit and dirty state. A checkout, `main`, or local modification is not a stable release. Select prereleases or historical versions explicitly; published tags and artifacts are immutable. The current Skill has no remote deployment plan that freezes source-checkout facts, so source evaluation stops before Cloudflare writes.
+In Codex, if `cfkanban` is already registered, inspect its source and use the supported source-switch procedure before these commands; do not silently overwrite it. After host-loading tests, restore the previous normal installation or its verified stable update. Hosts without plugins use their own Skill discovery method; no separate development plugin is needed.
+
+Record the branch, commit, and dirty state for source tests. A development checkout or local modification is not a verified release; `main` is a distribution source whose installed content must still match the selected published release. Select prereleases or historical versions explicitly; published tags and artifacts are immutable. The current Skill has no remote deployment plan that freezes source-checkout facts, so source evaluation stops before Cloudflare writes.
 
 This project uses isolated local development and `cfkanban.dev` as a persistent public test, demo, and dogfood instance. The site may run a prerelease; GitHub stable remains the recommended release for users deploying their own instance. Real data on the demo site retains the normal migration, permission, and recovery protections; a test Project alone cannot isolate deployment or migration. Maintainers can use the repository-only [project-release Skill](.agents/skills/project-release/SKILL.md) to prepare releases and upgrade the site within the authorized scope. One compatible Skill installation can access multiple explicitly selected instances.
 

@@ -23,14 +23,21 @@ Only for a required first installation or an explicitly requested update check/u
 
 Resolve and pin the immutable manifest URL, SHA-256, and exact version; verify the publisher, allowed artifact origins, and required bundle digests. The pointer is discovery only: keep this snapshot for the operation. For this release-discovery path, stop on missing or failed verification instead of falling back to a prerelease, cache, or development source; this does not block joining with an already verified compatible installation. Prereleases and historical versions require an explicit choice. If a trusted installed deployment Skill supports `release discover`, use stdin `{}` for read-only stable discovery, then `release verify` to check downloaded artifacts; otherwise inspect the HTTPS documents as above rather than installing an update merely to check.
 
-When installation is needed, include the source, exact version, user scope, local paths, and rollback in the plan. For a fresh Codex installation, the Agent replaces `<resolved-version>` below with the verified release tag and executes after the applicable authorization. Do not ask the user to fill the placeholder, execute it literally, or omit `--ref`:
+When installation is needed, first identify the actual Agent host and its supported Skill installation and discovery methods. Include the source, exact version, user scope, local paths, and rollback in the plan; record the source commit when using Git. Every host must preserve the complete verified Skill bundle: all four Skills, shared `packages/skill-runtime`, and relative layout. Copying a single Skill directory is insufficient.
+
+- A host with a compatible Git marketplace or plugin source can follow the repository's default `main` branch, which contains only published stable releases. Before installation, verify that its commit matches the published tag for the pinned stable target and that the installed files match the verified Skill bundle.
+- A host that loads local Skill directories uses the complete verified bundle and its supported discovery layout. Preserve the shared runtime and relative paths when creating the host entry. If the host cannot support that layout, report the specific limitation.
+
+For **Codex with plugin support only**, a fresh default-branch installation uses this example after the applicable authorization; other hosts use their own supported installation method:
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref <resolved-version>
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-If the `cfkanban` marketplace already exists, inspect its old source/ref and present the exact switch and rollback. Refreshing an old tag does not move it to a newer tag; never silently delete or overwrite it. Install the complete Skill bundle, preserving all four Skills, shared `packages/skill-runtime`, and relative layout. Other hosts must preserve this verified layout too; copying a single Skill directory is insufficient. Report a host limitation if it cannot support that projection.
+After installation or update on any host, verify its actual copy against the same pinned target; a matching version string alone is insufficient. For the Git path, if `main` still trails Latest or the source changes during the operation, stop and report it; also stop if any host copy differs from the verified bundle. Recheck and prepare a new plan when appropriate; do not silently substitute a tag, prerelease, or development checkout. Historical releases and RCs require an explicit choice and exact target verification; in Codex, use `--ref <resolved-version>` with the verified tag filled in by the Agent.
+
+Only an existing Git-based installation pinned to an old tag needs a source switch to follow the default branch. Inspect the saved source/ref first (the `cfkanban` marketplace in Codex); removing `--ref` from a copied command does not change the saved setting. Present the source change and rollback, then use the host's supported procedure within the user's authorization; never silently delete or overwrite it. Keep private `.cfkanban/` identity and deployment records. Local-directory installations continue through their verified bundle update path. Following `main` lets later host updates discover new stable releases; it does not automatically refresh installed Skills or the current task.
 
 Check the canonical active receipt, host plugin/Skill projection, and current task loaded version separately. Updating the canonical bundle does not update the host; an installed host projection does not prove this task loaded it. Explain the specific handoff and remaining step if a new task is required, and mark unverifiable loading as unverified.
 

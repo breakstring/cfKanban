@@ -18,9 +18,11 @@ Install the official stable cfKanban Skills for this Agent host.
 Explain the local changes and verify that the Skills can be loaded afterward.
 ```
 
-If your Agent cannot find cfKanban yet, add the official bundle through your host's supported plugin or Skill installation entry. The full bundle includes daily use, administration, deployment, and Howto guidance.
+The Agent first identifies your host and its supported installation method, then discovers and verifies the official stable release. The full bundle includes daily use, administration, deployment, Howto guidance, and a shared runtime that must stay with the Skills.
 
-You may need a new conversation after installation. An existing compatible version can be reused without reinstalling each time.
+A compatible Git plugin or marketplace source can follow the repository’s default `main` branch, which contains published stable releases. Codex with plugin support is one example: ordinary installation omits `--ref`. A host that loads local Skill directories installs the complete verified bundle using its own supported directory layout. Both paths verify the selected release and actual installed content.
+
+You may need a new conversation after installation. An existing compatible version can be reused without reinstalling each time. Only a Git-based installation pinned to an old tag needs the one-time source change described in [Skill updates](./updates.md).
 
 ## Sign in to Cloudflare
 

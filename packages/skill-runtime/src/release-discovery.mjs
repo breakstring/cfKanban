@@ -96,6 +96,6 @@ export async function discoverRelease({ version = null } = {}, { fetchImpl = fet
     pointer,
     manifest,
     artifacts_verified: false,
-    marketplace: { source: "https://github.com/breakstring/cfKanban.git", ref: resolvedVersion },
+    marketplace: { source: "https://github.com/breakstring/cfKanban.git", ref: version === null ? null : resolvedVersion },
   };
 }

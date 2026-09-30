@@ -2,8 +2,9 @@
 
 - 状态：Frozen
 - 日期：2026-09-20
-- 执行任务：[CFK-425](https://cfkanban.dev/app/issues/CFK-425)
-- 授权依据：用户确认普通用户入口应版本无关、默认最新正式发行，并要求基于该方案优化及发布。
+- 最近修订：2026-09-30
+- 执行任务：[CFK-425](https://cfkanban.dev/app/issues/CFK-425)；默认分支与开发规则修订：[CFK-526](https://cfkanban.dev/app/issues/CFK-526)
+- 授权依据：用户确认普通用户入口应版本无关、默认最新正式发行；2026-09-30 进一步确认 main 仅承载正式内容、开发使用专门分支、普通安装不固定 tag，并授权规则和本地实现。不要求额外 worktree，不新增独立开发插件入口。
 - 本增量覆盖 Bootstrap/Web 合同中的固定测试发行入口；其余信任、权限、凭据与部署恢复边界保持不变。
 
 ## 用户入口与发现
@@ -12,13 +13,19 @@ README、同实例双语 deploy-guide/join、bootstrap install 和 Skill 使用�
 
 canonical stable pointer 固定为 `https://github.com/breakstring/cfKanban/releases/latest/download/stable.json`。GitHub Latest 仅由正式发布推进，RC 不推进。该可变入口只用于只读发现；Agent 在准备计划时解析并固定准确版本、不可变 manifest URL/SHA-256、两个工件及兼容矩阵。后续安装和部署沿用同一快照，不在执行途中重新解析 Latest。不存在 stable 或校验失败时明确停止，不回退 main、RC 或本地 cache。
 
-当前实现保持 GitHub tag 等于发行版本（如 `1.0.0`），不额外添加 `v`。用户无需编写版本参数；Codex 安装计划由 Agent 从已验证发行解析准确 tag，再使用 `--ref <resolved-version>`。不通过删掉 `--ref` 获得普通用户更新，也不新增可变 stable Git 分支。检查更新与执行更新分离；已固定旧 tag 的 marketplace 需要明确切换来源，刷新旧 tag 不等于发现下一 tag。
+GitHub tag 等于发行版本（如 `1.0.0`），不额外添加 `v`。仓库默认分支 `main` 只承载已公开并校验的正式发行源码，兼作普通用户的 Skill 更新渠道，不另设 stable Git 分支。先识别 Agent 宿主的发现/安装能力，不默认使用 Codex：支持 Git marketplace/plugin 来源的宿主可跟随默认分支；使用个人或项目 Skill 目录的宿主从已验证完整 bundle 创建符合宿主布局的投影，保留共享 runtime。Codex 的具体示例是 `codex plugin marketplace add https://github.com/breakstring/cfKanban.git`，省略 `--ref`，再安装同一个 `cfkanban-agent-skills@cfkanban`，其他宿主无需执行这些命令。显式选择历史正式版或 RC 时，仍使用该已验证发行的准确 tag/bundle；不能让默认 main 代替显式目标。
+
+`release discover` 省略 `version` 时固定最新正式 manifest/版本/摘要，并返回 `marketplace.ref: null`，供 Git 来源宿主注册默认分支；显式 `version` 始终返回该准确 tag。这个可选宿主提示不改变顶层 `release_version` 或 immutable 工件目标，目录型宿主使用已验证 bundle 即可。Git 来源安装前后须核对宿主 checkout 的 commit 与该准确发行 tag 的 commit；所有宿主均须核对实际安装的 Skills/共享 runtime 内容与已验证 bundle 的一致性，仅版本字符串相同不足以通过。默认分支暂落后 Latest、安装过程中漂移或宿主内容不符时，停止依赖该安装的操作并重新只读核对，不静默切换 tag、RC 或开发源码。
+
+检查更新与执行更新分离；默认分支刷新仍需宿主实际安装/加载，不保证当前聊天自动热更新。已固定旧 tag 的用户可手动将已注册 marketplace 来源切换到默认分支，再刷新安装并读回；仅从新命令删去 `--ref` 不代表旧配置已清除。切换应检查旧来源/ref、安装范围及恢复方式，保留私有身份与部署记录；不新增自动迁移或并行开发插件。
 
 ## 安装、兼容与宿主
 
 安装完整 Skill bundle，保留共享 `packages/skill-runtime` 和相对目录；不能仅复制一个 Skill 目录。宿主投影只是已验证 bundle 的副本。更新报告分别说明 canonical active receipt、宿主安装投影、当前任务加载状态；无法验证新任务加载时保留未验证说明。
 
 首次安装、已安装兼容技能、固定旧 RC 检查更新、显式升级、历史版回退、旧实例兼容和源码开发均有明确路径。Skill update 与 Instance upgrade 独立；同一套兼容 Skill 可访问多个实例。来源连续性、秘密保存、digest 校验与所有已有授权边界不变。
+
+正式渠道不要求 Skill 与 Service 的产品版本相等。兼容性须分别核对旧 Skill 访问新 Service、新 Skill 访问旧 Service，以及部署 Skill 读取发行清单/工件的能力；新功能只能用于服务端已支持的范围。未知发行格式仍须拒绝；本修订不声明已完成所有历史版本组合的测试，也不因渠道变化强制升级实例。
 
 ## 发行版本与运行时版本
 
@@ -32,7 +39,9 @@ canonical stable pointer 固定为 `https://github.com/breakstring/cfKanban/rele
 
 ## 源码开发与环境
 
-普通用户默认 stable；源码调试使用明确 checkout/commit 和 dirty 状态，不能声称 canonical release。功能开发使用下一个预发行版本，已发布 tag、manifest 与工件不可覆盖。日常使用与发行验收使用已发布、可校验工件。
+普通用户默认 stable。所有开发及规则/文档修改在 `feat/*`、`fix/*` 等专门分支进行；多个任务需要合并验收时可使用候选分支，但不要求长期 develop 分支。项目主目录 checkout 到开发分支即可，额外 worktree 只用于并行或隔离。开发周期使用下一个预发行版本；已发布 tag、manifest 与工件不可覆盖。
+
+源码调试使用明确 checkout/commit 和 dirty 状态，不能声称 canonical release。日常调试直接读取该目录的 `SKILL.md` 并执行同目录脚本，保留共享 runtime 的相对布局；指引修改后重新读取，脚本修改后重新启动命令，无需为每次本地修改发 RC。自动触发、菜单与宿主加载验证则按该宿主支持的方式，临时将现有入口/投影切换到明确本地目录或准确 RC，记录原来源及恢复方式，刷新安装副本并在新聊天核对加载；完成后恢复原来源。Codex 沿用同一个 `cfkanban` marketplace，目录型宿主无需引入 marketplace。不新增独立开发插件或专用切换脚本，不能把 checkout 直接调用当作真实宿主加载证据。线上 RC 验收仍使用已发布、可校验工件，不从浮动工作树隐式部署。
 
 本项目使用本地隔离开发环境和 `https://cfkanban.dev` 持久远端实例。用户于 2026-09-20 确认该实例定位为公开测试、演示和自用服务，可运行 RC，不作为稳定对外托管承诺；当前不另建项目自有的正式服务实例。GitHub stable 仍是用户自行部署的推荐发行，两者版本可以不同。
 
@@ -42,10 +51,12 @@ cfkanban.dev 内的开发管理和体验者数据是真实持久数据；该定�
 
 ## 发行顺序与验证
 
-1. 修订合同、指南、版本声明和实现，完成根 validate 与发行定向测试。
-2. 在准确 commit 构建确定性工件，发布不可变 tag 和六份 release 资产；正式发布维护并核对 Latest。
-3. 匿名下载 stable pointer、manifest 和工件，重新校验摘要；验证从固定 stable 入口能够发现该正式版本。
-4. 既有实例只按独立 preflight/plan 升级，保留资源、Owner、数据和兼容性；版本读回同时核对产品发行和 API/schema。
-5. 线上任务只记录实际完成的验证。CFK-149 的真实跨任务宿主加载与回退不由脚本测试冒充。
+1. 从当前正式 main 建立开发分支，修订合同、指南、预发行版本声明和实现，完成根 validate 与发行定向测试。
+2. 从开发分支的准确干净 commit 构建确定性 RC 工件，发布不可变 tag 和六份资产；RC 不推进 main 或 GitHub Latest。
+3. 按独立授权的 preflight/plan 将 RC 部署到 cfkanban.dev 并验收，保留资源、Owner、数据与兼容性。修复使用新的 RC；未验收的新业务改动不能混入正式候选。
+4. 从通过验收的候选源码准备正式版本及说明，重新构建并校验正式工件，不重命名 RC zip 或改写已公开 RC。最终候选先包含目标 main；冲突解决或合并结果带来的改动须重新验证，再固定正式 commit/tag。
+5. 发布正式 Release，匿名下载 pointer、manifest 与工件重新校验摘要，并验证 Latest 指向本次正式目标；成功后才按授权将 main 快进到该同一正式 commit。不能先合 main 再准备工件，也不 force push。main 或 Latest 被其他发行推进时先重新核对，不自动回退。
+6. main 与 GitHub Latest 无法原子更新，短暂 main 落后只代表发行接续未完成。只有远端默认分支、正式 tag、manifest 和插件版本/内容一致后才报告渠道更新完成；中断时保留已发布工件并读回续做，不覆盖已公开内容。
+7. 按独立授权同步实例或本机插件，并分别读回；线上任务只记录实际完成的验证。CFK-149 的真实跨任务宿主加载与回退不由脚本测试冒充。
 
 后续通常先公开准确 RC，再按授权升级 cfkanban.dev 并验收；修复使用新的 RC 版本。从通过验收的候选源码准备正式版时重新构建、验证正式工件，不改名复用 RC 或就地改变已公开 RC 的属性。正式发行推进 stable 后，可在同一明确授权范围内将 cfkanban.dev 同步到正式版本；若实例已测试更高版本，须先核对降级及 schema 影响，不自动回退。源码、GitHub 发行、实例实际版本与本机插件分别读回，不能互相代替完成证据。

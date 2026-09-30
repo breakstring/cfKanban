@@ -10,6 +10,7 @@
 - 实现前阅读直接相关的 SPEC 及适用增量；只将 `Frozen` 作为稳定合同。`Draft` 是讨论基线；用户明确授权试验时，交付须说明未冻结项和偏差。
 - 增量 SPEC 只在其明确覆盖的范围内替代旧条款，其余约束继续有效。发现未声明覆盖的冲突或代码与合同不一致时，先核实，不自行改写公共合同或将现有实现视为授权。
 - 保留工作区既有改动，只修改任务范围内文件；不顺带提交、推送、部署或整理其他任务。
+- `main` 是面向用户的正式分发分支，只推进到已公开并校验的正式发行提交。开发和规则/文档修改在 `feat/*`、`fix/*` 等专门分支进行；可在项目主目录切换分支，额外 worktree 仅在并行或隔离需要时使用。RC 从开发分支发布并验收，正式发布与 main 推进按[发行生命周期](docs/specs/2026-09-20-stable-release-lifecycle-spec.md)执行，不把 RC 或未发布改动直接合入 main。
 
 ## 真相源与文档路由
 
@@ -78,6 +79,7 @@
 - 每实例只维护一个当前本地 Principal / Credential 槽位；新凭据先 pending，经 `/me` 验证后提升为 current。身份冲突、权限漂移或提交状态不明时停止猜测；Credential 只发往当前可信 origin，迁移必须按合同交叉验证。
 - Browser Launch 使用专用 `web launch`，Invite 使用专用 `invite create`；普通 API 请求不得绕过一次性能力交付保护。敏感链接按专用交付合同处理，不复述、记录或提前消费；不要求用户粘贴长期 Credential，指定浏览器不可达时不静默替换。
 - 普通安装 / 部署默认发现 stable，执行前固定 immutable manifest、版本、digest 与兼容矩阵；来源变化重新授权。源码、测试版须显式选择；不从当前工作树隐式部署，不执行远程 pipe-to-shell。
+- 安装与更新先识别 Agent 宿主能力，不默认使用 Codex。支持 Git 来源的宿主可跟随正式 `main`（Codex 示例省略 `--ref`）；目录型宿主安装完整已验证 Skill bundle 并保留共享 runtime，显式历史版或 RC 固定准确发行。渠道不能替代本次工件校验。开发技能可直接读取当前开发 checkout 的指引并执行同目录脚本；宿主加载测试临时切换该宿主的现有入口/投影并恢复原来源，不新增开发插件入口。
 - Skill update 与 Instance upgrade 独立。部署先核对准确 account、资源、instance marker、plan digest 和 journal；同一已授权计划内可连续执行，无漂移恢复不逐命令重复确认。付费、域名、删除覆盖、破坏性 migration、未知资源接管或账户权限变化须重新授权。
 - strict-zero 默认一个 Worker + 一个 D1；附件 R2、付费和新增权限须明确列入获批计划。部署通过 `cfkanban-deploy`，不引入持有 Cloudflare Token 的部署型 GitHub Actions。
 - 优先复用兼容 Node / Wrangler，缺失时按 Bootstrap 合同处理；不静默修改全局工具、PATH、shell profile 或 Node 默认版本，不通过枚举 auth profiles 选择身份。Windows 原生与 WSL2 的工具、凭据和状态不自动混用。

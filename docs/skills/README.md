@@ -49,9 +49,11 @@ Users do not need to enter a version. Ask your Agent to read the [installation g
 
 Reuse existing trusted, compatible installations. Joining a Project implies neither a Skill update nor a server upgrade. Checking updates only reports availability and compatibility. For an explicit update, the Agent verifies the target and publisher continuity, then presents a local installation plan and rollback. If the latest Skills are incompatible with an older instance, reuse a compatible installation or propose an explicit compatible historical stable release; do not force a server upgrade.
 
-For Codex, the Agent resolves the exact tag from the verified release and installs with `--ref <resolved-version>`; never omit ref to follow the default development branch. A marketplace pinned to an old tag needs an explicit switch to the exact new ref. Refreshing the old tag does not discover the latest stable release.
+Identify the actual Agent host and its supported Skill installation and discovery methods first. Install the complete plugin/bundle, preserving all four Skills, shared `packages/skill-runtime`, and relative layout. Copying one `SKILL.md` or Skill directory is insufficient. The shared modules are JavaScript source, not an embedded Node.js executable. A host that loads local Skill directories installs the verified bundle with its supported discovery layout; explain any unsupported layout rather than installing an incomplete copy.
 
-Install the complete plugin/bundle, preserving all four Skills, shared `packages/skill-runtime`, and relative layout. Copying one `SKILL.md` or Skill directory is insufficient. The shared modules are JavaScript source, not an embedded Node.js executable. Other hosts must support discovery projections of the complete bundle; an incomplete directory copy is not a substitute.
+Hosts with a compatible Git marketplace or plugin source can follow the repository’s default `main` branch, which contains only published stable releases. Verify its commit against the published tag for the pinned release, then verify the installed files against the selected Skill bundle; a version string alone is insufficient. If `main` trails Latest or changes during installation, report the mismatch and recheck instead of silently substituting a tag or development source. Codex with plugin support is one example: ordinary installation omits `--ref`; an explicitly selected historical release or RC uses the exact verified tag.
+
+Only a Git installation pinned to an old tag needs a one-time switch of its saved source to follow the default branch. Inspect the current source, show the change and rollback, and use the host’s supported procedure within the user’s authorization; removing `--ref` from a copied Codex command does not change its saved registration. Local-directory installations use the verified bundle update path. Neither path implicitly updates the host or its current task, and both preserve private `.cfkanban/` identity and deployment records.
 
 Verify and report the canonical active receipt, host plugin/Skill projection, and current task's loaded version separately. Updating one does not synchronize all three. Explain the handoff when the host requires a new task, and retain an unverified status when loading cannot be checked. Installation itself grants no Cloudflare or application permissions.
 
@@ -69,18 +71,22 @@ Before proposing Cloudflare login, `cfkanban-deploy` first reuses an exact profi
 
 The `.mjs` extension means plain JavaScript in Node's explicit ES module format. These files run directly with `node`, need no compile step, and remain unambiguous when a portable Skill is installed outside a `package.json` tree.
 
-## Development: marketplace and source plugin installation
+## Development: use the current branch’s Skills
 
-The repository root is a Codex plugin, and `.agents/plugins/marketplace.json` provides a named local marketplace entry. An already downloaded checkout can be registered and installed for development or validation with:
+Develop on a `feat/*` or `fix/*` branch. Switching branches in the normal project directory is sufficient; an additional worktree is optional. Have the Agent read the current checkout’s `SKILL.md` and execute scripts from that same checkout. Read changed instructions again. Source edits do not refresh an installed Skill or the current task automatically.
+
+To test host discovery and loading, use the host’s supported local-directory layout, preserving the shared runtime and relative paths. If the host supports plugins, temporarily switch its existing source to the exact checkout; there is no separate development plugin. Record the branch, commit, and dirty state.
+
+For **Codex with plugin support only**, the repository root is a plugin, and `.agents/plugins/marketplace.json` provides the local marketplace entry. An installation example is:
 
 ```text
 codex plugin marketplace add .
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-Start a new Codex task after installing or reinstalling so the host loads the snapshot's Skills.
+If `cfkanban` is already registered in Codex, inspect its source and follow the supported source-switch procedure before the example; do not silently overwrite it. Start a new Codex task after installing or reinstalling to verify loading. Other hosts use their own discovery and reload mechanisms. After testing, restore the previous normal installation or its verified stable update.
 
-Codex and other Agent hosts place discoverable Skills/plugins in host-owned locations. Those files are verified projections used for host discovery; they are not cfKanban's persistent state or canonical release truth. Removing one projection affects only that host's discovery.
+Agent hosts place discoverable Skills/plugins in host-owned locations. Those files are verified projections used for host discovery; they are not cfKanban's persistent state or canonical release truth. Removing one projection affects only that host's discovery.
 
 Marketplace/plugin is a convenience entry and never overrides the canonical HTTPS publisher, immutable release manifest, artifact-origin allowlist, SHA-256 digests, or installed receipt. A local source checkout is not a canonical stable release. Install, update, downgrade, deployment, and Instance upgrade remain separate planned actions and never run automatically because a marketplace entry exists.
 

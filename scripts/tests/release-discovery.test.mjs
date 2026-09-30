@@ -39,7 +39,7 @@ test("default discovery pins a stable snapshot without downloading bundles or mu
   assert.deepEqual(remote.calls, [STABLE_RELEASE_POINTER, remote.pointer.manifest_url]);
   assert.equal(result.release_version, "1.0.0");
   assert.equal(result.release_pointer_url, "https://github.com/breakstring/cfKanban/releases/download/1.0.0/stable.json");
-  assert.equal(result.marketplace.ref, "1.0.0");
+  assert.deepEqual(result.marketplace, { source: "https://github.com/breakstring/cfKanban.git", ref: null });
   assert.equal(result.artifacts_verified, false);
   assert.equal(result.manifest_sha256, remote.pointer.manifest_sha256);
   remote.pointer.release_version = "1.0.1";
@@ -69,12 +69,27 @@ test("discovery accepts legacy and independent API manifests, but rejects unsupp
 test("explicit historical stable and prerelease selections use only that immutable target", async () => {
   for (const version of ["1.0.0", "1.1.0-rc.1"]) {
     const remote = release(version);
-    assert.equal((await discoverRelease({ version }, remote)).release_version, version);
+    const result = await discoverRelease({ version }, remote);
+    assert.equal(result.release_version, version);
+    assert.equal(result.marketplace.ref, version);
     assert.equal(remote.calls[0], `https://github.com/breakstring/cfKanban/releases/download/${version}/${version.includes("-") ? "prerelease" : "stable"}.json`);
   }
   for (const version of ["main", "latest", "../1.0.0", "1.0.0+build", 1]) {
     await assert.rejects(discoverRelease({ version }, { fetchImpl: () => assert.fail("Invalid selection must not fetch") }), { code: "INVALID_INPUT" });
   }
+});
+
+test("explicitly selecting the latest stable version still pins the marketplace ref", async () => {
+  const remote = release();
+  const latest = await discoverRelease({}, remote);
+  const selected = await discoverRelease({ version: latest.release_version }, remote);
+  assert.equal(latest.marketplace.ref, null);
+  assert.equal(selected.marketplace.ref, latest.release_version);
+  assert.equal(selected.manifest_sha256, latest.manifest_sha256);
+  assert.deepEqual(remote.calls, [
+    STABLE_RELEASE_POINTER, remote.pointer.manifest_url,
+    latest.release_pointer_url, remote.pointer.manifest_url,
+  ]);
 });
 
 test("missing stable and network failure never fall back or expose remote error details", async () => {

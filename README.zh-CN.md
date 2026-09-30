@@ -20,11 +20,13 @@ https://github.com/user-attachments/assets/94b3d30b-a1a7-4ad2-9924-838a8317d3bb
 
 ## 你需要准备什么
 
-在 Codex 中使用需要：
+在支持的 Agent 宿主中使用需要：
 
-- 支持 plugin 的 Codex 桌面应用或 Codex CLI；
-- 能够访问本仓库的 Git 环境；
-- 安装 plugin 后新建一个 Codex 任务，让新 Skills 被加载。
+- 能够加载 Skills、读取 HTTPS 文档并运行本地 Node.js 脚本；
+- 兼容的 Node.js 环境，以及可持久保存身份的私有存储；
+- 能够访问官方发行下载；使用 Git 来源安装时还需要 Git 访问能力。
+
+Agent 按当前宿主支持的 Skill 目录或插件机制安装。部分宿主需要安装后新开会话才能加载技能。
 
 自行部署到 Cloudflare 时还需要：
 
@@ -38,7 +40,9 @@ https://github.com/user-attachments/assets/94b3d30b-a1a7-4ad2-9924-838a8317d3bb
 
 > 请阅读 https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md，为我安装 cfKanban 最新正式发行的 Skills。
 
-Agent 会检查已有安装、解释所需本地变更，并处理宿主安装。如果使用 Codex，Agent 会从已验证发行解析准确 tag，再内部使用 `--ref <resolved-version>` 安装；你不需要维护这个参数。若宿主需要新任务才能加载，Agent 会明确告知。安装本身不会部署或升级 Cloudflare 实例，也不授予应用权限。
+Agent 会识别当前宿主、检查已有安装，并解释所需本地变更。支持兼容 Git plugin 或 marketplace 来源的宿主，可以跟随只承载已公开正式发行的默认 `main` 分支；Codex 是其中一个例子，普通安装不传 `--ref`。通过本地 Skill 目录加载的宿主，安装包含共享 runtime 的完整已验证 bundle。两种方式都须核对所选发行和实际安装文件。安装本身不会部署或升级 Cloudflare 实例，也不授予应用权限。
+
+如果 Git 来源安装固定在旧 tag，让 Agent 将已注册来源切换到默认分支，再更新宿主安装。只修改复制的命令不会改变已保存设置；本地目录安装继续使用 bundle 更新流程。保留私有 `.cfkanban/` 身份和部署记录。两种安装都不会因发布了新版而自动更新，提出更新请求后，再按宿主要求刷新或新开会话。
 
 cfKanban 包含四个 Skills：一个入门指南和三个操作技能：
 
@@ -53,7 +57,7 @@ cfKanban 包含四个 Skills：一个入门指南和三个操作技能：
 
 ## 安装后：先用 Howto 了解怎么使用
 
-在新任务里，建议先让只读使用指南带你入门：
+宿主加载技能后，建议先让只读使用指南带你入门：
 
 > 请使用 `$cfkanban-howto` 介绍 cfKanban 怎么用、我的需求应该交给哪个技能，并给我几个可以直接使用的例子。
 
@@ -69,7 +73,7 @@ Howto 是推荐的入门入口，不是必经的初始化步骤；如果已经�
 
 ## 让 Agent 帮你部署
 
-新建任务后，只说这一句话就够了：
+技能加载后，只说这一句话就够了：
 
 > 请使用 `$cfkanban-deploy` 为我部署一套 cfKanban。
 
@@ -111,7 +115,7 @@ Skill 会验证 Owner，询问还缺少的 Workspace 与 Project 显示名称，
 
 ## 加入别人已有的 cfKanban Project
 
-安装 plugin、新建任务，然后把一次性 Invite URL 交给你的 Agent：
+安装或复用 Skills，让宿主完成加载，然后把一次性 Invite URL 交给你的 Agent：
 
 [加入指南](apps/web/public/join.zh-CN.md)同时覆盖尚未安装 Skill 的接收方，并分别说明 Project Invite 与 Public Join 路径。
 
@@ -131,13 +135,17 @@ cfKanban 自己拥有的持久本地数据统一使用当前执行环境用户�
   tool-runtime/    # 隔离的固定版本 Wrangler package；不包含 Node.js runtime
 ```
 
-Codex marketplace 配置和 plugin cache 仍放在 Codex 自己管理的目录，因为 Codex 只能在那里发现它们。这些内容是可丢弃的宿主投影，不是 cfKanban 状态，也不是 canonical release 真相源。Windows 原生和 WSL2 使用各自独立的用户目录，绝不自动混用。
+宿主发现入口、marketplace 配置和 plugin cache 仍放在对应 Agent 宿主管理的目录；它们是可丢弃的宿主投影，不是 cfKanban 状态，也不是 canonical release 真相源。Windows 原生和 WSL2 使用各自独立的用户目录，绝不自动混用。
 
 ## 参与开发
 
 ### 源码开发与测试环境
 
-开发时可显式注册准确 checkout：
+`main` 保持在已公开正式发行的 commit。开发使用 `feat/*` 或 `fix/*` 分支，直接在项目主目录切换分支即可，额外 Git worktree 是可选项。从开发分支发布准确 RC，在测试实例验收；之后构建并发布正式工件，校验通过后再将 `main` 推进到同一正式 commit。
+
+日常开发技能时，让 Agent 读取当前分支的 `SKILL.md`，并从该 checkout 执行脚本。指引修改后重新读取；源码编辑不会自动刷新已安装技能或当前任务。需要验证宿主发现与加载时，按该宿主支持的本地目录布局加载，或临时把现有插件来源切到准确 checkout；两种方式都保留共享 runtime 和相对路径。
+
+对于支持 plugin 的 Codex，本地安装示例如下：
 
 ```sh
 cd /absolute/path/to/cfKanban
@@ -145,7 +153,9 @@ codex plugin marketplace add .
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-记录 commit 和未提交状态；源码 checkout、`main` 与本地修改不代表正式发行。测试版或历史版必须明确选择，已发布 tag 和工件不可覆盖。当前 Skill 不提供冻结源码事实的远端部署计划，源码评估应在 Cloudflare 写入前停止。
+在 Codex 中，若已注册 `cfkanban`，先核对来源，按支持的来源切换流程处理，再执行上述命令，不得静默覆盖。宿主加载测试结束后，恢复原来的正常安装或其已验证正式更新；没有插件机制的宿主使用自己的 Skill 发现方式，不需要单独的开发插件。
+
+源码测试记录分支、commit 和未提交状态。开发 checkout 或本地修改不代表已验证发行；`main` 作为分发来源，其实际安装内容仍须与所选已公开发行匹配。测试版或历史版必须明确选择，已发布 tag 和工件不可覆盖。当前 Skill 不提供冻结源码事实的远端部署计划，源码评估应在 Cloudflare 写入前停止。
 
 本项目采用本地隔离开发环境，并将 `cfkanban.dev` 作为持久的公开测试、演示和自用实例。网站可以运行测试版；GitHub stable 仍是用户自行部署的推荐发行。演示站中的真实数据继续遵循原有迁移、权限与恢复保护，仅创建测试 Project 不能隔离部署或迁移。维护者可以使用仅在本仓库提供的 [project-release 技能](.agents/skills/project-release/SKILL.md)准备发行，并在授权范围内升级网站。同一套兼容 Skills 可以操作多套明确选择的实例。
 

@@ -49,9 +49,11 @@ Howto 从明确实例的 `/docs/llms.txt` 发现公开页面，只读取当前�
 
 已有可信且兼容的安装可以复用；加入项目不隐含技能更新或实例升级。检查更新只报告可用版本与兼容性。明确更新时，Agent 校验目标及来源连续性，展示本地安装计划和回退边界。若最新 Skills 不兼容旧实例，复用兼容版本，或提出明确的兼容历史正式版方案，不强制升级服务器。
 
-Codex 安装由 Agent 从已验证发行解析准确 tag，再使用 `--ref <resolved-version>`；不要省略 ref 来跟随默认开发分支。已固定旧 tag 的 marketplace 要明确切换到准确新 ref；刷新旧 tag 不等于更新到最新正式版。
+先识别当前 Agent 宿主及其支持的 Skill 安装和发现方式。安装完整 plugin/bundle，保留四个 Skills、共享 `packages/skill-runtime` 和相对目录，不能只复制某个 `SKILL.md` 或单个 Skill 目录。共享模块是 JavaScript 源码，不是内嵌 Node.js 可执行程序。通过本地 Skill 目录加载的宿主，按自身支持的发现布局安装已验证 bundle；不支持时说明限制，不能以不完整复制代替。
 
-安装完整 plugin/bundle，保留四个 Skills、共享 `packages/skill-runtime` 和相对目录，不能只复制某个 `SKILL.md` 或单个 Skill 目录。共享模块是 JavaScript 源码，不是内嵌 Node.js 可执行程序。其他宿主必须支持完整 bundle 的发现投影，不能以不完整复制代替。
+支持兼容 Git marketplace 或 plugin 来源的宿主，可跟随只承载已公开正式发行的默认 `main` 分支。核对其 commit 与本次固定发行的已发布 tag 一致，再核对实际安装文件与所选 Skill bundle 匹配；仅版本字符串相同不足以证明已验证。若 `main` 落后 Latest 或安装期间变化，说明不一致并重新检查，不静默改用 tag 或开发源码。支持 plugin 的 Codex 是其中一个例子：普通安装省略 `--ref`，只有明确选择历史发行或 RC 时才使用准确已验证 tag。
+
+只有固定旧 tag 的 Git 安装，才需要一次性切换已保存的来源以跟随默认分支。先检查当前来源，展示变更和回退，在用户授权内按宿主支持的方式操作；只从复制的 Codex 命令中删掉 `--ref` 不会修改已保存注册。本地目录安装继续使用已验证 bundle 更新流程。两种方式都不会隐含刷新宿主或当前任务，并保留私有 `.cfkanban/` 身份和部署记录。
 
 分别验证并报告 canonical active receipt、宿主 plugin/Skill 投影和当前任务实际加载的版本。更新一个不代表其他两个已同步；宿主要求新任务加载时给出接续说明，无法验证的加载状态保留为未验证。安装本身不授权 Cloudflare 或应用操作。
 
@@ -69,18 +71,22 @@ node scripts/cfkanban-tool.mjs help
 
 `.mjs` 表示使用 Node 显式 ES module 格式的普通 JavaScript。这些文件可直接由 `node` 运行、无需编译，并且 portable Skill 安装到没有 `package.json` 的目录时仍不会产生模块语义歧义。
 
-## 开发：Marketplace 与 plugin 源码安装
+## 开发：使用当前分支中的 Skills
 
-仓库根目录是一个 Codex plugin，`.agents/plugins/marketplace.json` 提供具名的本地 marketplace entry。已经下载源码 checkout 时，可以注册并用于开发或验证：
+开发在 `feat/*` 或 `fix/*` 分支进行，直接在项目主目录切换分支即可，额外 worktree 是可选项。让 Agent 读取当前 checkout 的 `SKILL.md`，并从同一 checkout 执行脚本；修改指引后重新读取。源码编辑不会自动刷新已安装技能或当前任务。
+
+需要验证宿主发现与加载时，按其支持的本地目录布局加载，保留共享 runtime 和相对路径；支持插件的宿主可以临时把现有来源切到准确 checkout，不另建开发插件。记录分支、commit 和未提交状态。
+
+**仅对于支持 plugin 的 Codex**，仓库根目录是一个 plugin，`.agents/plugins/marketplace.json` 提供本地 marketplace entry，安装示例如下：
 
 ```text
 codex plugin marketplace add .
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-安装或重装后请新建一个 Codex 任务，让宿主加载该 snapshot 中的 Skills。
+若 Codex 已注册 `cfkanban`，先检查来源，按支持的切换流程处理后再执行示例，不得静默覆盖。安装或重装后新建 Codex 任务验证加载；其他宿主使用各自的发现和刷新机制。测试后恢复原来的正常安装或其已验证正式更新。
 
-Codex 和其他 Agent 宿主会把可发现 Skills/plugins 放在宿主自己管理的位置。这些文件是用于宿主发现的已验证投影，不是 cfKanban 的持久状态或 canonical release 真相源；删除一个投影只会影响该宿主的能力发现。
+Agent 宿主会把可发现 Skills/plugins 放在宿主自己管理的位置。这些文件是用于宿主发现的已验证投影，不是 cfKanban 的持久状态或 canonical release 真相源；删除一个投影只会影响该宿主的能力发现。
 
 marketplace/plugin 只是便利入口，不能覆盖 canonical HTTPS publisher、immutable release manifest、artifact-origin allowlist、SHA-256 digests 或 installed receipt。本地源码 checkout 不是 canonical stable release。安装、更新、降级、部署和 Instance upgrade 始终是彼此独立的计划动作，不会因为 marketplace entry 存在而自动执行。
 

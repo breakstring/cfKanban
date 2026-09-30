@@ -22,14 +22,21 @@
 
 解析并固定不可变 manifest URL、SHA-256 和准确版本，验证 publisher、工件允许来源及所需 bundle 摘要。指针仅用于发现，后续操作沿用同一快照；缺失或校验失败时停止，不回退测试版、本地 cache 或开发源码。测试版和历史版只有在用户明确选择时才可使用。若已有可信 deploy Skill 支持 `release discover`，以 stdin `{}` 只读发现正式目标，再用 `release verify` 校验下载工件；没有该命令时按上述 HTTPS 文档流程检查，不为了检查而先更新技能。
 
-需要安装时，把来源、准确版本、用户级 scope、本地路径和回退写入计划。Codex 全新安装由 Agent 把下方 `<resolved-version>` 替换为已验证版本对应的准确 tag，获得相应授权后执行；不要把占位符交给用户填写或原样执行，也不要省略 `--ref`：
+需要安装时，先识别当前 Agent 宿主及其支持的 Skill 安装和发现方式。把来源、准确版本、用户级 scope、本地路径和回退写入计划；使用 Git 时同时记录来源 commit。所有宿主都须保留完整已验证 Skill bundle：四个 Skills、共享 `packages/skill-runtime` 和相对目录，不能只复制某个 Skill 目录。
+
+- 支持兼容 Git marketplace 或 plugin 来源的宿主，可以跟随仓库默认 `main` 分支；该分支只承载已公开正式发行。安装前核对 commit 与本次固定正式目标的已发布 tag 一致，且安装文件与已验证 Skill bundle 匹配。
+- 通过本地 Skill 目录加载的宿主，使用完整已验证 bundle，按该宿主支持的目录布局建立发现入口，保留共享 runtime 和相对路径。宿主无法支持该布局时，说明具体限制。
+
+**仅对于支持 plugin 的 Codex**，全新安装跟随默认分支的命令示例如下，获得相应授权后执行；其他宿主使用各自支持的安装方式：
 
 ```text
-codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref <resolved-version>
+codex plugin marketplace add https://github.com/breakstring/cfKanban.git
 codex plugin add cfkanban-agent-skills@cfkanban
 ```
 
-已存在 `cfkanban` marketplace 时，先检查旧来源/ref，展示准确切换和回退；刷新旧 tag 不会自动切换到新 tag，不得静默删除或覆盖。安装完整 Skill bundle，保留四个 Skills、共享 `packages/skill-runtime` 和相对目录；其他宿主也须保留完整已验证 layout，不能只复制某个 Skill 目录。宿主不支持所需投影时说明限制。
+所有宿主在安装或更新后，都须用同一固定目标核对实际副本，仅版本字符串相同不足以证明已验证。Git 路径中，若 `main` 暂时落后 Latest 或操作期间来源变化，停止并说明；任何宿主副本与已验证 bundle 不一致时也须停止。需要时重新检查并准备计划，不静默改用 tag、RC 或开发 checkout。历史发行和 RC 必须由用户明确选择并校验准确目标；在 Codex 中使用 `--ref <resolved-version>`，由 Agent 填入已验证 tag。
+
+只有固定旧 tag 的 Git 来源安装，才需要切换来源以跟随默认分支。先检查已保存的来源/ref（Codex 中是 `cfkanban` marketplace）；只从复制的命令中删除 `--ref` 不会修改旧设置。展示来源切换和回退，在用户授权内按宿主支持的方式操作，不得静默删除或覆盖；保留私有 `.cfkanban/` 身份和部署记录。本地目录安装继续使用已验证 bundle 更新流程。跟随 `main` 后，后续宿主更新能够取得新正式版，但不会自动刷新已安装技能或当前任务。
 
 分别核对 canonical active receipt、宿主 plugin/Skill 投影和当前任务实际加载状态。更新 canonical bundle 不等于更新宿主，宿主已安装也不等于当前任务已加载。需要新任务时说明具体接续操作和剩余步骤；无法验证时明确标为未验证。
 

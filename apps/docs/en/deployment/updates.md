@@ -18,7 +18,18 @@ Use $cfkanban-deploy to update my local cfKanban Skills and this Agent host's en
 Do not upgrade the live site.
 ```
 
-This requires local installation access, without Cloudflare sign-in. The Agent checks compatibility and keeps a recoverable previous version. Some hosts need a new conversation to load updated Skills.
+This requires local installation access, without Cloudflare sign-in. The Agent identifies your host’s update method, verifies the release and compatibility, and keeps a recoverable previous version. A compatible Git plugin or marketplace source can follow the default `main` branch without choosing a new tag for each release. Local Skill directory installations receive the complete verified bundle, preserving its shared runtime and relative paths. Both paths require an actual host update and verification; some hosts need a new conversation to load updated Skills.
+
+### Switch a Git installation pinned to an old tag
+
+Use this only if your host has a Git-based installation pinned to a tag, such as a Codex marketplace registration. Local-directory installations do not need this migration.
+
+```text
+Switch my existing cfKanban Git installation source from its fixed version tag to the repository default branch, and update the host installation.
+Show the saved source and proposed change first. Keep my cfKanban identity and deployment records, and do not upgrade the live site.
+```
+
+This is a one-time change to the registered Git source; in Codex, removing `--ref` from a command you copied earlier does not update its saved setting. The Agent verifies that the default branch and installed files match the selected stable release. If the branch still trails the latest release or changes during installation, it reports the mismatch for a fresh check rather than choosing another source silently. Historical versions and RCs remain explicit choices with an exact tag.
 
 ## Upgrade the live site
 

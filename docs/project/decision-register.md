@@ -3,7 +3,7 @@
 > 2026-09-08 当前合同补充：[工作区与项目 UUID 寻址重构](../specs/2026-09-08-container-uuid-spec.md) 已获用户明确授权并 Frozen。它覆盖下表早期关于容器 key、旧 project key-pair 过滤和 schema 1 scope 的决定；这些历史行保留作为决策过程，不应继续用于创建、路由或 UI 实现。当前创建只收名称、寻址使用服务端 UUID、本地 scope 为 schema 2；其他决定不变。
 
 - 文档状态：Draft
-- 最近更新：2026-08-29
+- 最近更新：2026-09-30
 
 ## 状态定义
 
@@ -216,11 +216,13 @@
 
 | D-275 | 工作区与项目支持多位范围管理员 | Confirmed | 用户于 2026-09-20 同意分级管理员方案并授权文档、任务及实现。Owner 唯一；Owner 任免工作区管理员，Owner/工作区管理员任免项目管理员；各范围允许 0..N 人，同级不可任免。工作区管理员动态继承全部现有及未来子项目，独立 reader/writer 与管理授权并存；实例身份恢复、Public Join/限额设置、永久删除和部署不下放。管理员计入项目非 Owner 有效成员并集人数，工作区授权任一有效公开项目满额则整个操作失败。邀请绑定具体授权代次，撤销后重新授权不复活旧邀请。见 [Frozen SPEC](../specs/2026-09-20-scoped-administrators-spec.md) 和 [PLAN](../plans/2026-09-20-scoped-administrators-plan.md)；源码实现不等于发布/部署。 |
 
-| D-276 | 普通用户入口版本无关，默认最新正式发行 | Confirmed | 用户于 2026-09-20 确认并授权优化及发行。README、部署/加入/安装指南使用固定 stable 发现入口；Agent 解析后固定准确 tag、manifest 和工件摘要，不删除 ref 跟随 main，不因加入项目强制升级兼容技能或实例。产品 release_version 独立展示，既有 API/schema 保持兼容；源码开发与正式实例分离。见 [Frozen 增量合同](../specs/2026-09-20-stable-release-lifecycle-spec.md)，执行证据保存在 CFK-425。 |
+| D-276 | 普通用户入口版本无关，默认最新正式发行 | Confirmed | 用户于 2026-09-20 确认并授权优化及发行。README、部署/加入/安装指南使用固定 stable 发现入口；Agent 解析后固定准确版本、manifest 和工件摘要，不因加入项目强制升级兼容技能或实例。宿主长期来源按 D-280 跟随仅承载正式内容的 main，显式历史/RC 才固定 tag。产品 release_version 独立展示，既有 API/schema 保持兼容。见 [Frozen 增量合同](../specs/2026-09-20-stable-release-lifecycle-spec.md)，初次执行证据保存在 CFK-425。 |
 
 | D-277 | 以 cfkanban.dev 作为持久公开测试实例，并提供维护者发版技能与首页说明设置 | Confirmed | 用户于 2026-09-20 确认。项目以本地隔离验证和 cfkanban.dev RC 体验收敛发行，GitHub stable 继续服务用户自部署，不另要求自有稳定托管实例；真实数据的权限、迁移与恢复保护不变。项目级 `.agents/skills/project-release` 组织 RC、正式版、stable 校验及按授权升级，独立于对外技能。Owner 可配置双语公开首页说明，未配置时 cfkanban.dev 使用测试演示提示，其他域名保持独立实例说明。见 [发行生命周期](../specs/2026-09-20-stable-release-lifecycle-spec.md)与[首页说明设置](../specs/2026-09-20-homepage-settings-spec.md)；本轮实现和 Git 提交/推送授权不包含发行或线上 migration。 |
 
 | D-278 | Owner 多设备使用独立 Credential，已有部署通过实证接入 | Confirmed | 用户于 2026-09-27 确认三阶段优化并授权第一阶段。新设备本地生成 secret，已有 Owner 批准非秘密请求，保留原设备并支持单独撤销；批准/撤销的 Web 入口和本地身份切换以 D-279 为准。已有部署只读核验资源、实例、身份和 migration 后建立明确来源状态的本地登记，未知历史工件不能伪造，后续升级另行固定目标及授权。见[增量合同](../specs/2026-09-27-owner-devices-deployment-attachment-spec.md)。Preview 与模板阶段仅记录方向，不隐含实施/部署授权。 |
+
+| D-280 | main 承载正式渠道，开发分支独立验收且只维护一个插件入口 | Confirmed | 用户于 2026-09-30 确认并授权规则与实现。普通 Codex 安装省略固定版本 ref，main 仅在正式工件公开并校验后推进到对应提交；开发使用 feat/fix 等分支，RC 从分支发布并在线验收。每次操作仍固定已验证 manifest/版本/摘要并核对宿主来源与内容。项目主目录切换分支即可，worktree 可选；本地直接调试源码，宿主验证临时切换同一个 cfkanban 来源并恢复，不新增开发插件或切换脚本。已固定 tag 的用户可手动迁移既有 marketplace；技能与实例更新独立。见[发行生命周期](../specs/2026-09-20-stable-release-lifecycle-spec.md)，任务 [CFK-526](https://cfkanban.dev/app/issues/CFK-526)；本轮不授权提交、推送、合并、安装或发布。 |
 
 ## 需要显式修订的决策
 

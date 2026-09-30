@@ -3967,6 +3967,16 @@ test("user-facing entrypoints use short intent-first prompts while Skills retain
   assert.match(deployYaml, /Use \$cfkanban-deploy to deploy cfKanban for me\./u);
 });
 
+test("ordinary installation commands follow the default branch in bootstrap, deployment, and join guides", async () => {
+  for (const guide of ["release/bootstrap/install", "apps/web/public/deploy-guide", "apps/web/public/join"]) {
+    for (const locale of ["", ".zh-CN"]) {
+      const source = await readFile(new URL(`../../${guide}${locale}.md`, import.meta.url), "utf8");
+      const firstInstall = source.match(/^codex plugin marketplace add https:\/\/github\.com\/breakstring\/cfKanban\.git[^\r\n]*/mu)?.[0];
+      assert.equal(firstInstall, "codex plugin marketplace add https://github.com/breakstring/cfKanban.git", `${guide}${locale} must default to the release channel without a pinned ref`);
+    }
+  }
+});
+
 test("daily Skill documents an executable deterministic candidate query contract", async () => {
   const sources = await Promise.all([
     readFile(new URL("../../skills/cfkanban/SKILL.md", import.meta.url), "utf8"),

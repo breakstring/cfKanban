@@ -60,7 +60,13 @@ marketplace/plugin 是受支持的便利安装入口，但不能覆盖 canonical
 
 只读检查时，应明确报告缺少 canonical bootstrap/manifest 并停止。不得编造 release URL、向 `release verify` 提供伪造的 HTTPS manifest、把 plugin cache 当作 Service bundle，也不能静默退回当前 working tree。
 
-明确的源码评估属于另一种工程模式。明确获准的宿主本地开发投影可以注册准确 checkout 用于 Skill 调试；记录来源、commit、dirty/untracked 状态、本地目标和回退，保留共享 bundle layout，并标明非 canonical。该本地投影不要求源码专用云端部署计划，也不生成 Credential 或云资源。生成源码部署计划前，还须记录 lockfile 状态、验证命令/结果，以及不具备 publisher continuity 和 canonical release 保证这一事实；branch/tag 仅作人类辅助说明，只有可变 branch name 不构成可复现来源。如果当前 Skill release 没有能够冻结这些事实的源码专用部署计划，必须在 Credential 生成或 Cloudflare 写入前停止。不得把开发投影称为 canonical release，也不得把源码试验作为无标记的既有 Instance upgrade。
+### 本地开发验证
+
+明确的源码评估属于另一种工程模式。开发在 feat/fix 等专门分支进行，可在项目主目录 checkout，额外 worktree 仅在并行或隔离需要时使用。日常调试直接读取该目录的 `SKILL.md` 并运行同目录脚本；指引修改后重新读取，脚本修改后重新启动命令，无需为每次修改发布 RC。记录来源、commit、dirty/untracked 状态，保留共享 bundle layout，并标明非 canonical。
+
+验证宿主菜单、触发和加载时，在明确本地安装授权内，按该宿主支持的方式临时把现有入口/投影切换到准确本地 checkout 或准确 RC。先记录旧来源/ref 与恢复方式，刷新安装副本并在新聊天读回实际加载来源，结束后恢复原来源。Codex 沿用同一个 `cfkanban` marketplace，目录型宿主不要求 marketplace；不另建开发插件或切换脚本。直接从源码运行 `help` 不等于宿主加载成功。本地调试不要求源码专用云端部署计划，也不生成 Credential 或云资源。
+
+生成源码部署计划前，还须记录 lockfile 状态、验证命令/结果，以及不具备 publisher continuity 和 canonical release 保证这一事实；branch/tag 仅作人类辅助说明，只有可变 branch name 不构成可复现来源。如果当前 Skill release 没有能够冻结这些事实的源码专用部署计划，必须在 Credential 生成或 Cloudflare 写入前停止。不得把开发投影称为 canonical release，也不得把源码试验作为无标记的既有 Instance upgrade；正常线上验收使用分支发布的已验证 RC 工件。
 
 ## 与 Cloudflare 上游对齐
 
@@ -232,8 +238,10 @@ Wrangler 原始输出必须先脱敏，不能直接记日志。前一次 create 
 3. 安装完整 bundle 到 `.cfkanban/skill-releases` 的新 immutable 目录，保留共享 `packages/skill-runtime` 和相对路径。
 4. 运行无副作用 discovery/help smoke。
 5. 原子切换 active pointer，保留上一已知良好版本。
-6. 仅在明确安装范围内更新宿主投影。Codex 全新安装从已验证发行取准确 tag，并以 `codex plugin marketplace add https://github.com/breakstring/cfKanban.git --ref <resolved-version>` 和 `codex plugin add cfkanban-agent-skills@cfkanban` 安装。占位符由 Agent 替换，不原样执行。已有 marketplace 先检查旧来源/ref 与宿主支持的切换方式，计划固定新 ref 和旧 ref 回退，不能静默删除或覆盖，也不能以刷新旧 tag 冒充升级。历史版回退同样验证来源连续性、准确版本和摘要。
+6. 先识别 Agent 宿主，不默认使用 Codex；仅在明确安装范围内更新宿主投影。Git 来源宿主可跟随正式 main，目录型宿主从步骤 3 的完整已验证 bundle 创建其支持的 Skill 布局，保留共享 runtime。所有宿主均核对安装内容，Git 来源另核对 checkout commit 与本次已验证发行 tag；不一致时停止并重新只读核对，不静默改用 tag/RC/源码。显式历史版或 RC 保持准确 tag/bundle。
 7. 分别读回 canonical active receipt、宿主投影与当前任务加载状态。当前任务可能仍使用旧 Skill；需要新任务时说明接续，只有新任务确认来源/版本才报告已加载。不能用 `help` smoke 代替宿主跨任务加载验证。
+
+Codex 示例：普通安装使用 `codex plugin marketplace add https://github.com/breakstring/cfKanban.git`，不传 `--ref`，再运行 `codex plugin add cfkanban-agent-skills@cfkanban`；显式历史版或 RC 才加准确 `--ref`。已有 marketplace 先检查实际旧来源/ref，按宿主支持方式切换并记录恢复方式；仅删除新命令的参数不代表旧 pin 已清除。用户可手动完成一次迁移，不清理私有身份或部署状态，不新增开发入口或自动迁移脚本。已跟随默认分支时可用 `codex plugin marketplace upgrade cfkanban` 刷新来源，再核对/更新插件安装副本；刷新旧 tag 不等于升级。其他宿主使用自身支持的操作，历史版回退同样验证来源连续性、准确版本和摘要。
 
 切换 pointer 前失败时 active 版本保持不变。本地回退不回退云端实例；已安装 bundle 或宿主投影成功也不代表第三层加载成功。
 
