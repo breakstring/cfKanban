@@ -160,7 +160,8 @@ test("排序/过滤/Principal/授权范围绑定 cursor，跨项目关系仅在�
   finally { await db.prepare("UPDATE project_grants SET revoked_at=NULL,revoked_by_principal_id=NULL WHERE id=?1").bind(grant).run(); }
 
   const sessionId = randomUUID(), target = { kind: "project", entry_path: `/app/w/${workspace}/p/${projects[0]}`, workspace_id: workspace, project_id: projects[0] };
-  await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at) VALUES(?1,?2,?3,'credential',?4,'project',?5,1,9999999999999)").bind(sessionId, "c".repeat(64), owner, credential, JSON.stringify(target)).run();
+  const sessionCreatedAt = Date.now();
+  await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at) VALUES(?1,?2,?3,'credential',?4,'project',?5,?6,?7)").bind(sessionId, "c".repeat(64), owner, credential, JSON.stringify(target), sessionCreatedAt, sessionCreatedAt + 28_800_000).run();
   const fixed = { ...auth, kind: "cookie", sessionId, targetKind: "project", target };
   assert.deepEqual(await walk({}, false, fixed), newest(all.filter(row => row.stream === "domain" && row.project_id === projects[0] && row.relation_other_project_id === null)));
 });

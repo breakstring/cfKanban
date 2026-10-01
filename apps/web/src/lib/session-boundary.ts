@@ -1,5 +1,19 @@
 import type { ApiErrorBody, ProjectScopeItem, WebSessionView } from "../types";
 
+export function isWebSessionView(value: unknown): value is WebSessionView {
+  if (typeof value !== "object" || value === null) return false;
+  const session = value as WebSessionView;
+  return typeof session.session_id === "string" && typeof session.principal?.id === "string"
+    && typeof session.source?.id === "string" && typeof session.source?.kind === "string"
+    && typeof session.target?.kind === "string" && typeof session.allowed_scope?.kind === "string"
+    && typeof session.expires_at === "string" && Number.isFinite(Date.parse(session.expires_at));
+}
+
+export function sessionCanWriteProject(session: WebSessionView, workspaceId: string, projectId: string): boolean {
+  return (session.principal.is_owner && session.allowed_scope.kind === "instance")
+    || (session.allowed_scope.projects?.some(project => project.workspace_id === workspaceId && project.project_id === projectId && (project.role === "writer" || project.role === "owner")) ?? false);
+}
+
 function orderedProjects(projects: ProjectScopeItem[] | undefined): ProjectScopeItem[] {
   return [...(projects ?? [])].sort((left, right) => (
     left.project_id.localeCompare(right.project_id)
@@ -39,8 +53,10 @@ function boundaryValue(session: WebSessionView): Record<string, unknown> {
   };
 }
 
+export function sessionBoundaryKey(session: WebSessionView): string { return JSON.stringify(boundaryValue(session)); }
+
 export function sameSessionBoundary(left: WebSessionView, right: WebSessionView): boolean {
-  return JSON.stringify(boundaryValue(left)) === JSON.stringify(boundaryValue(right));
+  return sessionBoundaryKey(left) === sessionBoundaryKey(right);
 }
 
 export function isVerifiedServiceAccessFailure(status: number, body: ApiErrorBody): boolean {

@@ -15,6 +15,7 @@ import { notifyBusinessSuccess } from "./notification-events";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const CSRF_COOKIE = "cfkanban_csrf";
 const pendingIntents = new PendingIntentKeys(() => crypto.randomUUID());
+const uncertainWrites = new Map<string, string>();
 const ERROR_CATEGORIES = new Set([
   "authentication", "authorization", "business_quota", "conflict", "not_found",
   "platform_failure", "platform_quota", "rate_limit", "validation",
@@ -128,16 +129,26 @@ export interface ApiRequestOptions<T = unknown> {
     execute: (intent: AcquiredPendingIntent) => Promise<T>,
   ) => Promise<T>;
   idempotencyKey?: string;
+  idempotencyScope?: string;
   method?: string;
   signal?: AbortSignal;
   validateResponse?: (value: unknown) => boolean;
+  authorizationCurrent?: () => boolean;
 }
 
 export function clearPendingRequestIntents(method: string, path: string): void {
   pendingIntents.clearRequest(method.toUpperCase(), path);
+  for (const [signature, entryPath] of uncertainWrites) {
+    if (entryPath === path && signature.startsWith(`${method.toUpperCase()}\n`)) uncertainWrites.delete(signature);
+  }
 }
 
+export function hasUncertainWrite(path: string): boolean { return [...uncertainWrites.values()].some(value => value === path); }
+
 export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> = {}): Promise<T> {
+  const notifyFailure = (problem: ApiProblem): void => {
+    if (options.authorizationCurrent?.() !== false) notifyAuthorizationFailure(problem);
+  };
   const method = (options.method ?? "GET").toUpperCase();
   if (options.rawBody !== undefined && (options.body !== undefined || options.idempotencyKey === undefined || method !== "PUT")) {
     throw new Error("Binary uploads require PUT, an explicit Idempotency-Key, and no JSON body.");
@@ -148,7 +159,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
   let requestIntent: AcquiredPendingIntent | null = null;
   const acquirePendingIntent = (): AcquiredPendingIntent => {
     try {
-      return pendingIntents.acquire(method, path, options.body);
+      return pendingIntents.acquire(method, path, options.body, Date.now(), options.idempotencyScope);
     } catch (error) {
       if (!(error instanceof PendingIntentExpiredError)) throw error;
       throw new ApiProblem(409, {
@@ -173,6 +184,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
   }
 
   const executeRequest = async (intent: AcquiredPendingIntent | null = requestIntent): Promise<T> => {
+    const uncertaintyKey = intent?.signature ?? (!SAFE_METHODS.has(method) ? `${method}\n${path}\n${options.idempotencyKey}` : null);
+    if (uncertaintyKey !== null) uncertainWrites.set(uncertaintyKey, path);
     if (intent !== null) headers.set("idempotency-key", intent.key);
     let response: Response;
     try {
@@ -201,12 +214,12 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
         payload = await response.json();
       } catch {
         const problem = normalizedHttpFailure(response, "", localRequestId);
-        notifyAuthorizationFailure(problem);
+        notifyFailure(problem);
         throw problem;
       }
     } else if (response.status !== 204) {
       const problem = normalizedHttpFailure(response, (await response.text()).slice(0, 16_384), localRequestId);
-      notifyAuthorizationFailure(problem);
+      notifyFailure(problem);
       throw problem;
     }
 
@@ -217,7 +230,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
           (JSON.stringify(payload) ?? "").slice(0, 16_384),
           localRequestId,
         );
-        notifyAuthorizationFailure(problem);
+        notifyFailure(problem);
         throw problem;
       }
       const headerRetryAfter = retryAfterSeconds(response.headers.get("retry-after"));
@@ -228,7 +241,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
         : null;
       const retryAfter = headerRetryAfter ?? bodyRetryAfter;
       const problem = new ApiProblem(response.status, payload, retryAfter);
-      notifyAuthorizationFailure(problem);
+      if (uncertaintyKey !== null && response.status >= 400 && response.status < 500) uncertainWrites.delete(uncertaintyKey);
+      notifyFailure(problem);
       throw problem;
     }
     if (options.validateResponse !== undefined && !options.validateResponse(payload)) {
@@ -242,6 +256,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
       }));
     }
     if (intent !== null) pendingIntents.complete(intent.signature);
+    if (uncertaintyKey !== null) uncertainWrites.delete(uncertaintyKey);
     notifyBusinessSuccess(path);
     return payload as T;
   };

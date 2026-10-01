@@ -201,9 +201,23 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 使用 IAB 或宿主导航（而非经过核验的同名系统默认浏览器）时，先确认浏览器工具能够访问当前进程的 loopback，再使用 `delivery=host_browser`。以短 shell yield 启动 CLI，保留运行进程；CLI 先流式输出包含 `local_url` 的 `browser_relay_ready` event，等待浏览器 GET 后再输出最终结果。立即用指定浏览器的导航工具打开准确的本地 URL。不要先用 fetch、curl、预览或其他浏览器探测：GET 会消费本地交付能力。导航后收取仍在运行的 CLI 最终结果。
 
-随机路径的 loopback 入口只能使用一次，60 秒失效。它是短暂进入宿主工具上下文的敏感本地 capability，不在回复中复述，也不写文件、日志、receipt 或报告；远端 ticket URL/code 始终只在进程内存，不打印。远端票据仍为 5 分钟，兑换后 Session 仍为 8 小时，本地 60 秒不改变这些时效。若指定浏览器与进程处于不同宿主/网络空间，或缺少可用导航工具，应在创建票据前停止并解释交付限制，不静默换浏览器。relay 成功仅证明交付，还须检查最终页面；无法验证登录时如实说明。默认 `system_browser` 与显式确认的 `stdout_once` 行为保持不变。
+随机路径的 loopback 入口只能使用一次，60 秒失效。它是短暂进入宿主工具上下文的敏感本地 capability，不在回复中复述，也不写文件、日志、receipt 或报告；远端 ticket URL/code 始终只在进程内存，不打印。远端票据仍为 5 分钟且只能兑换一次，Session 初始有效 8 小时，本地 60 秒不改变票据时效或下述活动续期规则。若指定浏览器与进程处于不同宿主/网络空间，或缺少可用导航工具，应在创建票据前停止并解释交付限制，不静默换浏览器。relay 成功仅证明交付，还须检查最终页面；无法验证登录时如实说明。默认 `system_browser` 与显式确认的 `stdout_once` 行为保持不变。
 
 Owner Browser Launch 只用 current Principal Credential 创建固定 5 分钟的 opaque code。`web launch` 默认通过纯内存 loopback relay 打开系统浏览器，远端 URL 不进入 stdout 或进程参数；它兑换为实例级 admin Session，默认打开 Overview，不预取全部 Issues。用户随后可显式选择 Workspace/Project。长期 Credential 不进入浏览器。headless 输出沿用 Invite 的显式 `stdout_once` 确认与禁止留存规则。
+
+### Web Session 活动续期与草稿恢复
+
+支持活动续期的 Service 对 Agent Launch 与 Passkey Session 使用相同政策。在可见网页中发生真实鼠标、键盘或触屏操作，包括编辑，可延长仍有效的 Session。实际续期后的截止为「服务端续期时间加 8 小时」与「原 Session 创建时间加 7 天」中较早者。每个 Session 最多每 30 分钟实际延长一次。续期保持原 Principal、来源和 target scope，包括窄 Owner 与工作区 Session，不增加授权。后台轮询、隐藏页签、刷新和焦点/可见性校验不续期。页脚显示当前截止与绝对到期时间。
+
+Web 根据自身 `GET /api/v1/web-session` 响应中的 `version` 与 `renewal: {renew_after, absolute_expires_at}` 判断线上支持，该读取不延长 Session。缺少 metadata 时，Service 仍按旧的固定 8 小时到期；不得从安装的 Skill 版本推断支持，也不得认为升级已批量延长现有 Session。`POST /api/v1/web-session/renew` 只接受浏览器当前 Cookie Session，并要求同源与 CSRF 保护。Skill Bearer 请求不能代为续期；普通 API 操作与通知 attention 检查都不延长会话。让 Web 完成活动续期，不编写后台续期调用，也不把 Cookie/CSRF 秘密复制到 Agent 上下文。
+
+已到期、退出或来源撤销的 Session 不能复活。按原入口使用 Passkey 登录，或以当前已验证的本地身份与原目标重新执行专用 `web launch`，并再次核验已认证页面。Browser Launch 保留 5 分钟、单次兑换的交付合同。重新登录不重试、也不核实提交结果不明的业务写入；先用原请求与幂等键核实该操作，再决定下一步。
+
+如果原页面在到期或撤销后提供未提交业务文本草稿，请保持它打开。草稿只保留在当前页面内存，不写浏览器存储或 Skill 私有状态；刷新或关闭会丢失，主动退出会清除。同一 Principal 重新登录后，由用户明确恢复或复制文本、检查当前事实并决定是否提交。另一 Principal 不会自动恢复草稿。不得自动重放写入，也不恢复任意表单内容、凭据、CSRF、Launch/Invite capability 或附件 bytes。
+
+```text
+以我当前的身份在 IAB 重新打开管理页。保留原页面，让我恢复其中的文本草稿；不要重新提交上一次写入。
+```
 
 ## 审计筛选
 

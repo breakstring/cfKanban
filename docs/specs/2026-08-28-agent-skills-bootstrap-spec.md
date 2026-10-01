@@ -1,5 +1,7 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
+> 2026-10-01 增量：[Web 会话活动续期](2026-10-01-web-session-renewal-spec.md)（Frozen）覆盖固定八小时到期的旧表述；有效 Cookie Session 按前台活动续期，最多七天，不改变五分钟一次性 Browser Launch、来源撤销、凭据隔离或 Session scope。Bearer Credential 不获得浏览器会话续期能力。
+
 > 2026-10-01 增量：[Owner 实例通知](2026-10-01-instance-notifications-spec.md)（Frozen）仅覆盖 Owner 单向实例公告，定义本人接收偏好、逐条确认、Web/Agent 提醒与历史；其他通知、mention、外部投递及实时唤醒仍在范围外。
 
 > 2026-09-20 增量：[首页实例说明设置](2026-09-20-homepage-settings-spec.md)（Frozen，schema 11）的读写通过 `cfkanban-admin` 暴露；项目维护者发版由仓库内的 `project-release` 组织，不加入对外 Skill bundle。Issue 单字段优先级修改仍复用既有日常 Skill 与 PATCH 合同。

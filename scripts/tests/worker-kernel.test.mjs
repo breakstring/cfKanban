@@ -7,6 +7,7 @@ import {
   enforceCookieWriteProtection,
   serializeCsrfCookie,
   serializeSessionCookie,
+  sessionCookieMaxAge,
 } from "../../apps/worker/src/kernel/csrf.ts";
 import { sha256Hex, timingSafeEqual } from "../../apps/worker/src/kernel/crypto.ts";
 import { lookupOpaqueResourceId, requireDiscoverable, resolveSqlFragment } from "../../apps/worker/src/kernel/d1.ts";
@@ -333,9 +334,19 @@ test("cookie write protection enforces same-origin and double-submit while Beare
     method: "POST",
   });
   assert.doesNotThrow(() => enforceCookieWriteProtection(bearerWithCookie, bearerAuth));
-  assert.match(serializeSessionCookie("value"), /HttpOnly; Secure; SameSite=Strict; Path=\/; Max-Age=28800$/);
-  assert.match(serializeCsrfCookie("value"), /Secure; SameSite=Strict; Path=\/; Max-Age=28800$/);
+  assert.match(serializeSessionCookie("value"), /HttpOnly; Secure; SameSite=Strict; Path=\/; Max-Age=604800$/);
+  assert.match(serializeCsrfCookie("value"), /Secure; SameSite=Strict; Path=\/; Max-Age=604800$/);
   assert.doesNotMatch(serializeCsrfCookie("value"), /HttpOnly/);
+});
+
+test("Session Cookie 根据固定持有截止计算 Max-Age，截止后归零", () => {
+  const now = 1_000_000;
+  assert.equal(sessionCookieMaxAge(now + 30_000, now), 30);
+  assert.equal(sessionCookieMaxAge(now + 1, now), 1);
+  assert.equal(sessionCookieMaxAge(now, now), 0);
+  assert.equal(sessionCookieMaxAge(now - 1, now), 0);
+  assert.match(serializeSessionCookie("value", 30), /Max-Age=30$/);
+  assert.match(serializeCsrfCookie("value", 30), /Max-Age=30$/);
 });
 
 test("constant-time comparison and hidden-resource errors are stable", () => {

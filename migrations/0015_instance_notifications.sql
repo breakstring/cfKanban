@@ -1,5 +1,6 @@
 CREATE TABLE instance_notifications (
-  id TEXT PRIMARY KEY,
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE,
   title TEXT NOT NULL CHECK (typeof(title) = 'text' AND length(title) BETWEEN 1 AND 200 AND instr(title, char(0)) = 0),
   body TEXT NOT NULL CHECK (typeof(body) = 'text' AND length(body) BETWEEN 1 AND 4000 AND instr(body, char(0)) = 0),
   created_at INTEGER NOT NULL,
@@ -30,8 +31,17 @@ CREATE TABLE notification_acknowledgements (
 );
 CREATE INDEX idx_notification_acknowledgements_principal ON notification_acknowledgements(principal_id, notification_id);
 
+CREATE TABLE notification_pending_cache (
+  principal_id TEXT PRIMARY KEY REFERENCES principals(id),
+  preference_version INTEGER NOT NULL CHECK (preference_version >= 1),
+  receive_after INTEGER NOT NULL,
+  through_sequence INTEGER NOT NULL CHECK (through_sequence >= 0),
+  pending_ids_json TEXT NOT NULL CHECK (json_valid(pending_ids_json) AND json_type(pending_ids_json) = 'array' AND json_array_length(pending_ids_json) <= 50),
+  version INTEGER NOT NULL CHECK (version >= 1)
+);
+
 CREATE TRIGGER notification_content_immutable BEFORE UPDATE ON instance_notifications
-WHEN NEW.id IS NOT OLD.id OR NEW.title IS NOT OLD.title OR NEW.body IS NOT OLD.body
+WHEN NEW.sequence IS NOT OLD.sequence OR NEW.id IS NOT OLD.id OR NEW.title IS NOT OLD.title OR NEW.body IS NOT OLD.body
   OR NEW.created_at IS NOT OLD.created_at OR NEW.created_by_principal_id IS NOT OLD.created_by_principal_id
   OR NEW.expires_at IS NOT OLD.expires_at OR NEW.created_operation_id IS NOT OLD.created_operation_id
   OR (OLD.withdrawn_at IS NOT NULL AND NEW.withdrawn_at IS NOT OLD.withdrawn_at)

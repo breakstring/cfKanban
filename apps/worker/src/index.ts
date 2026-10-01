@@ -108,7 +108,8 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
     return withRequestId(assetResponse, context.requestId);
   } catch (error) {
     const response = errorResponse(error, context.requestId);
-    if (!(error instanceof ApiError) || !error.clearSessionCookies) return response;
+    // 迟到的续期响应不能清除另一页签已经建立的新身份；登录与显式退出保留既有处理。
+    if (!(error instanceof ApiError) || !error.clearSessionCookies || context.url.pathname === "/api/v1/web-session/renew") return response;
     const headers = new Headers(response.headers);
     headers.append("set-cookie", clearSessionCookie());
     headers.append("set-cookie", clearCsrfCookie());

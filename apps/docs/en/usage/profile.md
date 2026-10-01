@@ -51,6 +51,12 @@ Revocation immediately ends all browser sessions created by that Passkey. Other 
 
 **In the Web UI:** Open the account menu → **Personal settings** → **Passkeys**, check the record, and select **Revoke** for the correct entry. Registering another Passkey still requires an Agent-opened session and your browser/system interaction; see [Joining and signing in](./access.md).
 
+## Session expiry and unsaved text
+
+Both Agent and Passkey sign-in can use foreground activity renewal where the instance supports it: eight hours after renewal, at most one actual extension every 30 minutes, with a seven-day limit from the session's original creation. Renewal preserves its identity, source, and scope; background polling, refresh, and focus checks do not extend it. A revoked sign-in source or an expired session requires a fresh sign-in.
+
+Keep the original page open if it offers a business text draft for recovery. The draft stays only in that page's memory, is lost on refresh or close, and is cleared by explicit sign-out. After signing in as the same identity, choose to restore or copy it and review before submitting; no write is replayed automatically. Credentials, sign-in or invitation links, and attachment files are excluded. See [Joining and signing in](./access.md) for renewal support and recovery steps.
+
 ## Associate a working directory with projects
 
 ```text

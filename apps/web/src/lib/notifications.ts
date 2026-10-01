@@ -2,6 +2,7 @@ import { reactive } from "vue";
 
 import type { WebSessionView } from "../types";
 import { apiRequest } from "./api";
+import { sessionBoundaryKey } from "./session-boundary";
 
 export interface NotificationResource {
   id: string;
@@ -54,7 +55,7 @@ export function hasNotificationPreferences(value: unknown): value is { resource:
 
 export function notificationSessionKey(session: WebSessionView | null): string | null {
   if (session === null) return null;
-  return JSON.stringify([session.principal.id, session.session_id, session.source, session.allowed_scope]);
+  return sessionBoundaryKey(session);
 }
 
 export const notificationAttention = reactive({ hasPending: false, unavailable: false, checking: false });

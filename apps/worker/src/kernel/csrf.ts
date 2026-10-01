@@ -1,18 +1,23 @@
 import { readCookie, SESSION_COOKIE_NAME } from "./auth.ts";
+import { WEB_SESSION_ABSOLUTE_LIFETIME_MS } from "../domain/web-session-policy.ts";
 import { timingSafeEqual } from "./crypto.ts";
 import { forbidden } from "./errors.ts";
 import type { AuthContext } from "./types.ts";
 
 export const CSRF_COOKIE_NAME = "cfkanban_csrf";
 export const CSRF_HEADER_NAME = "x-csrf-token";
-const WEB_SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+const WEB_SESSION_MAX_AGE_SECONDS = WEB_SESSION_ABSOLUTE_LIFETIME_MS / 1_000;
 
-export function serializeSessionCookie(token: string): string {
-  return `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${WEB_SESSION_MAX_AGE_SECONDS}`;
+export function sessionCookieMaxAge(expiresAt: number, now = Date.now()): number {
+  return Math.max(0, Math.ceil((expiresAt - now) / 1_000));
 }
 
-export function serializeCsrfCookie(token: string): string {
-  return `${CSRF_COOKIE_NAME}=${token}; Secure; SameSite=Strict; Path=/; Max-Age=${WEB_SESSION_MAX_AGE_SECONDS}`;
+export function serializeSessionCookie(token: string, maxAgeSeconds = WEB_SESSION_MAX_AGE_SECONDS): string {
+  return `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAgeSeconds}`;
+}
+
+export function serializeCsrfCookie(token: string, maxAgeSeconds = WEB_SESSION_MAX_AGE_SECONDS): string {
+  return `${CSRF_COOKIE_NAME}=${token}; Secure; SameSite=Strict; Path=/; Max-Age=${maxAgeSeconds}`;
 }
 
 export function clearSessionCookie(): string {

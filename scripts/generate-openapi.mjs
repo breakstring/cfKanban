@@ -167,6 +167,7 @@ const operations = [
   ["post", "/api/v1/web-launches", "createWebLaunch", "web", bearer, "idempotent", "CreateWebLaunchRequest"],
   ["post", "/api/v1/web-sessions/redeem", "redeemWebLaunch", "web", publicAccess, "idempotent", "RedeemWebLaunchRequest"],
   ["get", "/api/v1/web-session", "getWebSession", "web", cookie, "read"],
+  ["post", "/api/v1/web-session/renew", "renewWebSession", "web", cookie, "csrf-idempotent", "ExpectedVersionRequest"],
   ["delete", "/api/v1/web-session", "revokeWebSession", "web", cookie, "csrf"],
   ["post", "/api/v1/me/passkeys/registration-options", "createPasskeyRegistrationOptions", "web", cookie, "csrf", "EmptyRequest"],
   ["get", "/api/v1/me/passkeys", "listMyPasskeys", "web", authenticated, "read"],
@@ -353,7 +354,7 @@ const permissionGroups = {
   public: ["getHealth", "getOpenApi", "discoverInstance", "getInvitationBootstrap", "getWebLaunchPage", "listPublicProjects"],
   authenticated_principal: ["getMeta", "listEvents"],
   visible_scope_active_owner_tombstone: ["listWorkspaces", "getWorkspace", "listProjects", "getProject"],
-  current_principal: ["getMe", "updateMe", "getWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey", "getNotificationPreferences", "updateNotificationPreferences", "listMyNotifications", "acknowledgeNotification"],
+  current_principal: ["getMe", "updateMe", "getWebSession", "renewWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey", "getNotificationPreferences", "updateNotificationPreferences", "listMyNotifications", "acknowledgeNotification"],
   deployment_owner: [
     "previewWorkspacePurge", "purgeWorkspace", "previewProjectPurge", "purgeProject",
     "createWorkspace", "deleteWorkspace", "restoreWorkspace",
@@ -1965,7 +1966,7 @@ const schemas = {
   },
   WebSessionView: {
     type: "object",
-    required: ["allowed_scope", "expires_at", "principal", "session_id", "source", "target", "management_grants"],
+    required: ["allowed_scope", "expires_at", "principal", "session_id", "source", "target", "management_grants", "version", "renewal"],
     properties: {
       management_grants: { type: "array", items: ref("Administrator") },
       allowed_scope: ref("WebSessionAllowedScope"),
@@ -1979,7 +1980,30 @@ const schemas = {
       session_id: ref("Uuid"),
       source: ref("WebSessionSource"),
       target: ref("WebSessionTarget"),
+      version: ref("Version"),
+      renewal: ref("WebSessionRenewalMetadata"),
     },
+    additionalProperties: false,
+  },
+  WebSessionRenewalMetadata: {
+    type: "object",
+    required: ["renew_after", "absolute_expires_at"],
+    properties: { renew_after: ref("Timestamp"), absolute_expires_at: ref("Timestamp") },
+    additionalProperties: false,
+  },
+  WebSessionRenewalResource: {
+    type: "object",
+    required: ["session_id", "version", "expires_at", "renew_after", "absolute_expires_at", "renewed"],
+    properties: {
+      session_id: ref("Uuid"), version: ref("Version"), expires_at: ref("Timestamp"),
+      renew_after: ref("Timestamp"), absolute_expires_at: ref("Timestamp"), renewed: { type: "boolean" },
+    },
+    additionalProperties: false,
+  },
+  WebSessionRenewalWriteResult: {
+    type: "object",
+    required: ["event_cursor", "idempotent_replay", "resource"],
+    properties: { event_cursor: string(), idempotent_replay: { type: "boolean" }, resource: ref("WebSessionRenewalResource") },
     additionalProperties: false,
   },
   WebSessionRevocationWriteResult: {
@@ -2345,6 +2369,7 @@ const operationResponseSchemas = {
   createWebLaunch: ref("BrowserLaunchWriteResult"),
   redeemWebLaunch: ref("WebSessionExchangeWriteResult"),
   getWebSession: ref("WebSessionView"),
+  renewWebSession: ref("WebSessionRenewalWriteResult"),
   revokeWebSession: ref("WebSessionRevocationWriteResult"),
   createPasskeyRegistrationOptions: ref("PasskeyRegistrationOptions"),
   listMyPasskeys: ref("PasskeyListResult"),
@@ -2514,6 +2539,8 @@ paths["/api/v1/me/notifications/{notification_id}/commands/acknowledge"].post.de
 paths["/api/v1/admin/notifications"].get.description = "Deployment Owner Bearer or Owner admin Web Session only. Bounded history includes the publisher's own notifications and retained expired/withdrawn plain text.";
 paths["/api/v1/admin/notifications"].post.description = "Deployment Owner Bearer or Owner admin Web Session only. Publish one immutable instance notification; title <=200 and body <=4000 Unicode code points, with optional future expiry. Cookie requires CSRF. Idempotency-Key, current Owner authorization, snapshot and security audit commit atomically; never fan out inbox rows.";
 paths["/api/v1/admin/notifications/{notification_id}/commands/withdraw"].post.description = "Deployment Owner Bearer or Owner admin Web Session only. Withdraw one notification with expected_version and Idempotency-Key; Cookie requires CSRF. Current Owner authorization, CAS, withdrawal, immutable snapshot and security audit commit together. Retain title/body and personal acknowledgements permanently; published text cannot be edited.";
+paths["/api/v1/web-session/renew"].post.description = "Current Cookie Session only; Bearer authentication is rejected. Require same-origin CSRF, expected_version and Idempotency-Key. Foreground activity may extend a still-valid Session at most once per thirty minutes, to eight hours from renewal and no later than seven days from creation. CAS, unchanged live source/scope, idempotency snapshot and security audit commit atomically. Success, replay and error responses never set or clear cookies; new sign-ins issue cookies until the absolute deadline, with current expiry enforced independently by the server. Pre-upgrade cookies retain their original expiry and require a new sign-in to use the full renewal period.";
+paths["/api/v1/web-session/renew"].post.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/attachment-settings"].get.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/attachment-settings"].patch.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/attachment-settings"].patch.description = "Owner-only explicit capacity choice: positive safe integer bytes or null for unlimited. Requires expected_version and Idempotency-Key; Cookie requests require CSRF. Lowering the limit preserves files and existing reservations. New reservations require configured=true and available capacity. An unset limit is not implicit unlimited capacity.";
@@ -2534,7 +2561,7 @@ for (const [path, method] of [
   ["/api/v1/web-authentication/verify", "post"],
 ]) {
   paths[path][method].responses["200"].headers = {
-    "Set-Cookie": { required: false, schema: string(), description: "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body." },
+    "Set-Cookie": { required: false, schema: string(), description: "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie until the original seven-day absolute deadline. The server independently enforces the current eight-hour expiry and revocation. Secrets never appear in the response body." },
     ...noStoreHeader,
   };
 }
@@ -2583,7 +2610,7 @@ const document = {
   components: {
     securitySchemes: {
       BearerCredential: { type: "http", scheme: "bearer", bearerFormat: "cfk_v1 opaque credential", description: "Long-lived Principal credential used by Agents. Never place it in a URL." },
-      WebSession: { type: "apiKey", in: "cookie", name: "cfkanban_session", description: "Fixed eight-hour HttpOnly same-origin Web Session." },
+      WebSession: { type: "apiKey", in: "cookie", name: "cfkanban_session", description: "HttpOnly same-origin Web Session: eight-hour activity renewal, at most once per thirty minutes, with a seven-day absolute lifetime." },
     },
     parameters: {
       IdempotencyKey: { name: "Idempotency-Key", in: "header", required: true, schema: string({ minLength: 1, maxLength: 128, pattern: "^[\\x20-\\x7E]+$" }) },

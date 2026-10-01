@@ -161,7 +161,8 @@ test("Reader and fixed Session counts respect Project and visible-blocker scope"
   await assert.rejects(count({}, reader, projects[2]), error => error.code === "NOT_FOUND");
   const sessionId = randomUUID();
   const target = { kind: "project", entry_path: `/app/w/${workspace}/p/${projects[0]}`, workspace_id: workspace, project_id: projects[0] };
-  await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at) VALUES(?1,?2,?3,'credential',?4,'project',?5,1,9999999999999)").bind(sessionId, "c".repeat(64), owner, credential, JSON.stringify(target)).run();
+  const sessionCreatedAt = Date.now();
+  await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at) VALUES(?1,?2,?3,'credential',?4,'project',?5,?6,?7)").bind(sessionId, "c".repeat(64), owner, credential, JSON.stringify(target), sessionCreatedAt, sessionCreatedAt + 28_800_000).run();
   const fixed = { ...auth, kind: "cookie", sessionId, targetKind: "project", target };
   assert.equal((await count({}, fixed)).total_count, 649);
   await assert.rejects(count({}, fixed, projects[2]), error => error.code === "NOT_FOUND");

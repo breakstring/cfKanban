@@ -229,6 +229,48 @@ test("uncertain publication retries the identical body and key, preserving and f
   } finally { app.unmount(); }
 });
 
+for (const uncertain of [false, true]) test(`Owner project presentation updates preserve announcement text and ${uncertain ? "uncertain submission" : "editing state"}`, async () => {
+  const writes = []; let reads = 0;
+  globalThis.fetch = async (path, init) => {
+    if (init.method === "POST") {
+      writes.push({ body: init.body, key: init.headers.get("idempotency-key") });
+      if (uncertain && writes.length === 1) throw new Error("response lost");
+      return Response.json({ resource: announcement("presentation-update") });
+    }
+    reads++;
+    return path.includes("notification-preferences") ? Response.json(preference()) : page();
+  };
+  const originalSession = { ...session(true, "instance"), allowed_scope: { kind: "instance", projects: [{ workspace_id: "workspace", project_id: "project", role: "owner", workspace_display_name: "Before", project_display_name: "Original" }] } };
+  const { app, host, change } = await mount(originalSession);
+  try {
+    const title = uncertain ? "Uncertain presentation draft" : "Presentation draft", body = "Keep title, body, and expiry";
+    const expiry = new Date(Date.now() + 86400000).toISOString().slice(0, 16);
+    await update(inputs(host).find(item => item.tag === "input" && !item.props.type), title);
+    await update(inputs(host).find(item => item.tag === "textarea"), body);
+    await update(inputs(host).find(item => item.props.type === "datetime-local"), expiry);
+    if (uncertain) { await submit(host, "notification-compose"); await until(() => !!button(host, "Retry same publication")); }
+    const initialReads = reads;
+    await change({ ...originalSession, version: 2, expires_at: "2027-01-01T23:59:59Z", allowed_scope: { kind: "instance", projects: [
+      { ...originalSession.allowed_scope.projects[0], workspace_display_name: "Renamed workspace", project_display_name: "Renamed project" },
+      { workspace_id: "workspace", project_id: "new-project", role: "owner", workspace_display_name: "Renamed workspace", project_display_name: "New project" },
+    ] } });
+    const compose = form(host, "notification-compose");
+    assert.equal(inputs(compose).find(item => item.tag === "input" && !item.props.type).props.value, title);
+    assert.equal(inputs(compose).find(item => item.tag === "textarea").props.value, body);
+    assert.equal(inputs(compose).find(item => item.props.type === "datetime-local").props.value, expiry);
+    assert.equal(reads, initialReads, "presentation updates do not reset notification projections");
+    assert.equal(writes.length, uncertain ? 1 : 0, "fact readback never replays publication");
+    if (uncertain) {
+      assert.ok(button(host, "Retry same publication")); assert.equal(inputs(compose).find(item => item.tag === "textarea").props.disabled, true);
+      await submit(host, "notification-compose"); await until(() => text(host).includes("Announcement published"));
+      assert.deepEqual(writes[0], writes[1], "same uncertain publication retains its original body and key");
+    } else {
+      await change({ ...originalSession, allowed_scope: { kind: "project_selection", projects: originalSession.allowed_scope.projects } });
+      assert.equal(form(host, "notification-compose"), undefined, "a real authorization boundary removes Owner publication controls");
+    }
+  } finally { app.unmount(); }
+});
+
 test("an expired Owner announcement can still be withdrawn; an already withdrawn announcement cannot", async () => {
   const writes = []; const item = announcement("expired-owner", { status: "expired", expires_at: "2026-10-01T00:01:00Z" });
   globalThis.fetch = async (path, init) => {

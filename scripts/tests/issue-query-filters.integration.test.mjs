@@ -96,8 +96,9 @@ test("unknown, deleted and out-of-scope labels give no matches and cannot widen 
   for (const label of [unknown, labels[1], labels[2]]) assert.deepEqual(await numbers({ label }), []);
   assert.deepEqual(await numbers({ label: [unknown, labels[0]] }), expected({ label: [labels[0]] }));
   // 即使 Principal 为 Owner，项目范围 Session 也不能借标签查询读取其他项目。
-  await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at) VALUES(?1,?5,?2,'credential',?3,'project',?4,1,9999999999999)")
-    .bind("filter-session", owner, credential, JSON.stringify({ kind: "project", entry_path: `/app/w/${workspace}/p/${projects[0]}`, workspace_id: workspace, project_id: projects[0] }), "b".repeat(64)).run();
+  const sessionCreatedAt = Date.now();
+  await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,created_at,expires_at) VALUES(?1,?5,?2,'credential',?3,'project',?4,?6,?7)")
+    .bind("filter-session", owner, credential, JSON.stringify({ kind: "project", entry_path: `/app/w/${workspace}/p/${projects[0]}`, workspace_id: workspace, project_id: projects[0] }), "b".repeat(64), sessionCreatedAt, sessionCreatedAt + 28_800_000).run();
   const session = { ...auth, kind: "cookie", sessionId: "filter-session", targetKind: "project", target: { workspace_id: workspace, project_id: projects[0] } };
   assert.deepEqual(await numbers({ project: [projects[0], projects[1]], label: labels[2] }, session), []);
   assert.deepEqual(await numbers({ deleted: "only", priority: examples[29].priority }), [examples[29].number]);

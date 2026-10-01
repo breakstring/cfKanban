@@ -14,14 +14,14 @@ import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
 import IssueQueryFilters from "../components/IssueQueryFilters.vue";
-import { ApiProblem, apiRequest, errorText } from "../lib/api";
+import { ApiProblem, apiRequest, errorText, hasUncertainWrite } from "../lib/api";
 import {
   type CasConflictState,
   captureCasConflict,
   markCasReadbackComplete,
   markCasReadbackFailed,
 } from "../lib/cas-recovery";
-import { projectInventoryBoundary } from "../lib/session-boundary";
+import { projectInventoryBoundary, sessionCanWriteProject } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { boardFilters, boardPath } from "../lib/board-navigation";
@@ -29,6 +29,7 @@ import { matchesBoardFilters, sortBoardIssues } from "../lib/board-projection";
 import { ColumnPagination } from "../lib/column-pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { protectNavigationDraft } from "../lib/navigation-draft";
+import { changedTextFields, useSessionTextDraft, verifySessionTextDraftIdentity } from "../lib/session-drafts";
 import { priorityOrder, prioritySaveIsUncertain, priorityText } from "../lib/priority";
 import { navigate } from "../lib/router";
 import { hasManagementActions } from "../lib/scoped-management";
@@ -108,6 +109,20 @@ const filterProjects = computed<ProjectScopeItem[]>(() => project.value && proje
 }] : []);
 const hasPendingWrites = computed(() => Object.keys(pendingPriorities.value).length > 0 || Object.keys(pendingStatuses.value).length > 0);
 protectNavigationDraft(() => formBusy.value || saving.value.size > 0 || hasPendingWrites.value || casConflict.value !== null || (showNewIssue.value && (!!newIssue.value.title.trim() || !!newIssue.value.body.trim() || newIssue.value.priority_key !== "none" || newIssue.value.status_key !== "backlog")));
+useSessionTextDraft({
+  key: `new-issue:${props.workspaceId}:${props.projectId}`, path: `/app/w/${props.workspaceId}/p/${props.projectId}`,
+  label: { en: "New Issue", zh: "新事项" }, target: () => ({ workspaceId: props.workspaceId, projectId: props.projectId }),
+  capture: () => showNewIssue.value ? changedTextFields({ title: [newIssue.value.title, ""], body: [newIssue.value.body, ""] }) : null,
+  canRestore: () => project.value !== null && !loading.value && canWrite.value && !formBusy.value,
+  restore: async (fields, _target, isCurrent) => {
+    const latest = await apiRequest<ContainerResource>(`/api/v1/workspaces/${props.workspaceId}/projects/${props.projectId}`, { authorizationCurrent: isCurrent });
+    if (!isCurrent() || latest.id !== props.projectId || latest.deleted_at !== null) return false;
+    const verified = await verifySessionTextDraftIdentity(isCurrent);
+    if (!isCurrent() || !verified || !sessionCanWriteProject(verified, props.workspaceId, props.projectId) || formBusy.value) return false;
+    project.value = latest; newIssue.value = { ...newIssue.value, ...fields }; showNewIssue.value = true;
+  },
+  uncertain: () => formBusy.value || hasUncertainWrite(`/api/v1/workspaces/${props.workspaceId}/projects/${props.projectId}/issues`),
+});
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 
 function projectIsActive(): boolean {

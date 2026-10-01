@@ -65,6 +65,16 @@ Joining is for people who do not yet have access: “Use $cfkanban to join this 
 
 When explaining browser access, distinguish API identity from browser-session delivery. Opening a board, Issue, or administration page routes to the operational Skill's browser preflight and authenticated-target verification. A failed browser handoff alone does not mean the user needs a new Credential or identity. Honor the requested browser; explain a concrete supported recovery path without promising that every host can automate it. Cloudflare OAuth belongs to `cfkanban-deploy` and is a separate login, not a cfKanban Browser Launch.
 
+### Browser Session activity and unsaved text / 网页会话活动与未提交文本
+
+On supporting instances, both Agent-opened and Passkey browser Sessions start with eight hours. Real foreground mouse, keyboard, or touch activity, including editing, can renew them for eight hours, at most one actual extension every 30 minutes and never past seven days from the original Session creation. Background polling, hidden tabs, refresh, and focus checks do not renew. The Web uses a Cookie-only, same-origin/CSRF renewal endpoint; Skill Bearer requests cannot extend it. Identity, sign-in source, and scope stay unchanged. If Session renewal metadata is missing, explain the old fixed eight-hour expiry; an installed Skill version does not prove deployed support. Browser Launch remains a five-minute, single-use capability.
+
+支持续期的实例对 Agent 打开与 Passkey 登录的网页会话都采用初始 8 小时期限。真实前台鼠标、键盘或触屏操作，包括编辑，可续期 8 小时，每 30 分钟最多实际延长一次，且不得超过原会话创建起 7 天。后台轮询、隐藏页签、刷新和焦点校验不续期。Web 使用 Cookie-only、同源与 CSRF 保护的续期入口，Skill Bearer 请求不能代为延长。身份、登录来源与范围保持不变。缺少会话续期 metadata 时，说明旧的固定 8 小时到期规则；安装的 Skill 版本不能证明线上支持。Browser Launch 仍为 5 分钟且只能兑换一次。
+
+Expiry or source revocation requires a fresh Passkey sign-in or a new authenticated Agent launch. Keep the original page open if it offers an unsubmitted business text draft: the draft stays only in page memory, is lost on refresh/close, and is cleared by explicit sign-out. The same identity must explicitly restore or copy and review the text before deciding to submit; another identity does not automatically restore it. Credentials, sign-in/invitation capabilities, and attachment bytes are excluded. Never replay a write automatically. Example: “Reopen this Project with my current identity; keep the original page open so I can recover my text draft, and do not resubmit the previous write.”
+
+到期或登录来源撤销后，需要重新使用 Passkey 登录，或让 Agent 打开新的已认证页面。原页面如提供未提交业务文本草稿，请保持它打开：草稿只在页面内存中保留，刷新或关闭会丢失，主动退出会清除。以同一身份登录后，须明确恢复或复制、检查文本，再决定是否提交；另一身份不会自动恢复。凭据、登录/邀请 capability 与附件 bytes 不在恢复范围内。不得自动重放写入。示例：「以我当前的身份重新打开这个项目，保留原页面让我恢复文本草稿，不要重新提交上一次写入。」
+
 ### Find work efficiently / 高效查找任务
 
 Use scoped filters so growing Issue history does not need to be downloaded and discarded by the Agent. Priority/Label filtering and ordinary-list unassigned filtering require deployed Service support and schema 13; a local Skill update alone is insufficient. Explain the deployed capability before promising results.

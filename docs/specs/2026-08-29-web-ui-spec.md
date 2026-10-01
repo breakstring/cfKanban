@@ -1,5 +1,7 @@
 # cfKanban 极简 Web UI SPEC
 
+> 2026-10-01 增量：[Web 会话活动续期](2026-10-01-web-session-renewal-spec.md)（Frozen）覆盖固定八小时到期的旧表述；仅真实前台输入触发续期，后台读取不续期，草稿留在当前页面内存并由本人重新登录后显式恢复，不自动重放写入。
+
 > 2026-10-01 增量：[活动历史倒序](2026-10-01-event-history-order-spec.md)（Frozen）增加显式历史浏览和 schema 16 时间索引，Web 最新在前；既有正序增量 feed 与 write cursor 保持兼容。
 
 > 2026-10-01 增量：[Owner 实例通知](2026-10-01-instance-notifications-spec.md)（Frozen）仅覆盖 Owner 单向实例公告，定义本人接收偏好、逐条确认、Web/Agent 提醒与历史；其他通知、mention、外部投递及实时唤醒仍在范围外。
@@ -302,7 +304,7 @@ v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次�
 
 新兑换的非 Owner Agent Project/Issue Launch Session 使用已有 `project_selection` scope，初始仍进入指定目标，可在当前实时授权项目之间切换；逐项目校验 reader/writer。既有固定 scope Session 和 Owner 明确 Project/Issue target Session 不扩大，Owner admin 与 Passkey 规则保持不变。 详见 [Frozen 增量合同](2026-09-19-participant-project-switching-spec.md)。所有入口都不自动执行无 Project filter 的 Issue 聚合读取。
 
-五分钟给普通浏览器复制/切换留出余量，一次性与实时授权范围限制了暴露；八小时覆盖一个工作日而不形成长期网页登录。到期时已打开页面清除已渲染的远端业务数据；刷新或下一次 API 请求返回稳定的 Session 过期错误并清除 cookie。已登录页脚显示“登录有效至 [日期时间]”，并说明“到期后请用通行密钥重新登录，或让 Agent 重新打开。”；英文提供等价文案。到期后可回到同站点首页用已登记 Passkey 重新登录，或让 Agent 重新打开当前 target，建立新的 Session；不显示密码框或 Credential 粘贴入口。写入到期失败时不自动重放；尚未提交的本地表单文本可以暂存在当前页面内存中，待新 Session 建立后由用户重新判断并提交，但不能写入 Web Storage。
+五分钟给普通浏览器复制/切换留出余量，一次性与实时授权范围限制了暴露；八小时覆盖一个工作日而不形成长期网页登录。到期时已打开页面清除已渲染的远端业务数据；刷新或下一次 API 请求返回稳定的 Session 过期错误并清除 cookie。会话期限及过期提示遵循 [Web Session 活动续期增量](2026-10-01-web-session-renewal-spec.md)，页脚不持续显示到期时间。到期后可回到同站点首页用已登记 Passkey 重新登录，或让 Agent 重新打开当前 target，建立新的 Session；不显示密码框或 Credential 粘贴入口。写入到期失败时不自动重放；尚未提交的本地表单文本可以暂存在当前页面内存中，待新 Session 建立后由用户重新判断并提交，但不能写入 Web Storage。
 
 ### Q-WEB-02：后置增强
 

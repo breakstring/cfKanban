@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 16,
+  "schema_version": 17,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -363,7 +363,7 @@
     {
       "sequence": 15,
       "name": "0015_instance_notifications.sql",
-      "sha256": "048c20849298d1a89868dec0bd02d037c81b7371dbdec9f75362ae9381ceb719",
+      "sha256": "86b2d0773814c9f9e7160d336a7d48ba4425f878b2b2aca9fbabf46d83c17377",
       "classification": "backward_compatible",
       "destructive": false,
       "reentry": "wrangler_migration_ledger_only",
@@ -371,12 +371,21 @@
         "tables": [
           "instance_notifications",
           "notification_preferences",
-          "notification_acknowledgements"
+          "notification_acknowledgements",
+          "notification_pending_cache"
         ],
         "indexes": [
           "idx_notifications_created",
           "idx_notifications_pending",
           "idx_notification_acknowledgements_principal"
+        ],
+        "columns": [
+          "instance_notifications.sequence",
+          "notification_pending_cache.preference_version",
+          "notification_pending_cache.receive_after",
+          "notification_pending_cache.through_sequence",
+          "notification_pending_cache.pending_ids_json",
+          "notification_pending_cache.version"
         ],
         "triggers": [
           "notification_content_immutable",
@@ -406,6 +415,26 @@
       },
       "expected_data": {
         "instance_meta_schema_version_at_least": 16,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 17,
+      "name": "0017_web_session_renewal.sql",
+      "sha256": "f7146810acd393d51d140f9f65fb97ef5a0f32c4fefd045173ebfc2628ad8456",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "columns": [
+          "web_sessions.version"
+        ],
+        "indexes": [
+          "idx_web_sessions_expiry_cleanup"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 17,
         "allow_uninitialized": true
       }
     }

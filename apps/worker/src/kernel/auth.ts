@@ -1,4 +1,5 @@
 import { sha256Hex } from "./crypto.ts";
+import { WEB_SESSION_ABSOLUTE_LIFETIME_MS } from "../domain/web-session-policy.ts";
 import { platformUnavailable, unauthorized } from "./errors.ts";
 import type { AuthContext, BearerAuthContext, CookieAuthContext, JsonValue, ScopedAdministrator } from "./types.ts";
 
@@ -20,6 +21,9 @@ interface SessionRow {
   principal_id: string;
   principal_version: number;
   session_expires_at: number;
+  session_created_at: number;
+  session_last_renewed_at: number | null;
+  session_version: number;
   session_id: string;
   source_id: string;
   source_kind: "credential" | "web_authenticator";
@@ -126,6 +130,8 @@ export async function authenticateCookieSession(
     row = await db.prepare(
       `SELECT ws.id AS session_id, ws.principal_id, ws.source_kind, ws.source_id,
               ws.target_kind, ws.target_json, ws.expires_at AS session_expires_at,
+              ws.created_at AS session_created_at, ws.last_seen_at AS session_last_renewed_at,
+              ws.version AS session_version,
               p.display_name, p.theme,
               p.version AS principal_version, im.owner_principal_id
        FROM web_sessions AS ws
@@ -134,6 +140,7 @@ export async function authenticateCookieSession(
        WHERE ws.token_digest = ?1
          AND ws.revoked_at IS NULL
          AND ws.expires_at > ?2
+         AND ws.created_at + ?3 > ?2
          AND (
            (ws.source_kind = 'credential' AND EXISTS (
              SELECT 1 FROM credentials AS c
@@ -150,7 +157,7 @@ export async function authenticateCookieSession(
            ))
          )
        LIMIT 1`,
-    ).bind(digest, now).first<SessionRow>();
+    ).bind(digest, now, WEB_SESSION_ABSOLUTE_LIFETIME_MS).first<SessionRow>();
   } catch (error) {
     throw platformUnavailable("d1", error);
   }
@@ -174,6 +181,9 @@ export async function authenticateCookieSession(
     principalVersion: row.principal_version,
     managementGrants: row.principal_id === row.owner_principal_id ? [] : await readManagementGrants(db, row.principal_id),
     sessionExpiresAt: row.session_expires_at,
+    sessionCreatedAt: row.session_created_at,
+    sessionLastRenewedAt: row.session_last_renewed_at,
+    sessionVersion: row.session_version,
     sessionId: row.session_id,
     sourceId: row.source_id,
     sourceKind: row.source_kind,

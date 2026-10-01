@@ -38,6 +38,7 @@ import { requireCollaborationIssue } from "./collaboration-shared.ts";
 import { actorCredentialId, authorizedVia, eventCursor, requireIdempotencyKey, writeResult } from "./shared.ts";
 import { browserLaunchCleanupStatement, webSessionCleanupStatement } from "./web-state.ts";
 import { requireManagementAuthorization } from "../kernel/scoped-authorization.ts";
+import { readCurrentWebSession, sessionRenewalResource } from "./web-session-state.ts";
 import { managementGrantsResource } from "./scoped-administrators.ts";
 
 const BROWSER_LAUNCH_LIFETIME_MS = 5 * 60 * 1_000;
@@ -974,6 +975,7 @@ export async function getWebSession(
     throw notFound();
   }
   if (auth.targetKind === "admin" && !auth.isOwner) throw forbidden();
+  const session = await readCurrentWebSession(db, auth, Date.now());
   const target = auth.targetKind === "admin"
     ? resolvedAdminTarget(auth.target.section)
     : { kind: auth.targetKind, ...auth.target };
@@ -984,7 +986,9 @@ export async function getWebSession(
         ? { kind: "workspace", workspace_id: auth.target.workspace_id ?? null, projects: visibleScopeResource(projects) }
       : { kind: auth.targetKind === "project_selection" ? "project_selection" : "project", projects: visibleScopeResource(projects) },
     management_grants: managementGrantsResource(auth),
-    expires_at: timestamp(auth.sessionExpiresAt),
+    expires_at: timestamp(session.expires_at),
+    version: session.version,
+    renewal: sessionRenewalResource(session),
     principal: {
       display_name: auth.displayName,
       id: auth.principalId,

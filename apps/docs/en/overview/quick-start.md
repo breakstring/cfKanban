@@ -29,6 +29,8 @@ You need project access, a usable local identity in the current environment, and
 
 On your first visit, open the account menu at the top right → **Personal settings** → **Register Passkey**, then complete the browser or system prompt. You can subsequently sign in with that Passkey from the same site's homepage.
 
+On supported instances, real foreground activity can renew either sign-in method for eight hours, up to seven days from the session's creation. After expiry, sign in again; keep the original page open to recover any offered text draft. See [Joining and signing in](../usage/access.md) for the timing and recovery rules.
+
 ### 3. Start working
 
 ```text

@@ -7,12 +7,13 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import PageState from "../components/PageState.vue";
-import { ApiProblem, apiRequest } from "../lib/api";
+import { ApiProblem, apiRequest, hasUncertainWrite } from "../lib/api";
 import { captureCasConflict, markCasReadbackComplete, markCasReadbackFailed, type CasConflictState } from "../lib/cas-recovery";
 import { locale } from "../lib/i18n";
 import { localizedText, useLocalizedError } from "../lib/localized-error";
 import { checkNotificationAttention, clearNotificationAttention, hasNotificationPreferences, hasNotificationResource, isNotificationPage, isNotificationPreferences, notificationSessionKey, type NotificationPage, type NotificationPreferences, type NotificationResource } from "../lib/notifications";
 import { canAccessOwnerControlPlane } from "../lib/session-capabilities";
+import { changedTextFields, useSessionTextDraft, verifySessionTextDraftIdentity } from "../lib/session-drafts";
 import type { WebSessionView, WriteResult } from "../types";
 
 const props = defineProps<{ session: WebSessionView }>();
@@ -49,6 +50,17 @@ const titleLength = computed(() => Array.from(title.value).length);
 const bodyLength = computed(() => Array.from(body.value).length);
 const publicationInvalid = computed(() => titleLength.value < 1 || titleLength.value > 200 || bodyLength.value < 1 || bodyLength.value > 4000
   || (expires.value !== "" && (!Number.isFinite(Date.parse(expires.value)) || Date.parse(expires.value) <= Date.now())));
+useSessionTextDraft({
+  key: "announcement-text", path: "/app/notifications", label: { en: "Announcement draft", zh: "公告草稿" },
+  capture: () => canPublish.value ? changedTextFields({ title: [title.value, ""], body: [body.value, ""], expires: [expires.value, ""] }) : null,
+  canRestore: () => canPublish.value && preferences.value !== null && !preferencesLoading.value && !busy.value,
+  restore: async (fields, _target, isCurrent) => {
+    const verified = await verifySessionTextDraftIdentity(isCurrent);
+    if (!isCurrent() || !verified || !canAccessOwnerControlPlane(verified) || busy.value) return false;
+    title.value = fields.title ?? ""; body.value = fields.body ?? ""; expires.value = fields.expires ?? "";
+  },
+  uncertain: () => busy.value || publishUncertain.value || hasUncertainWrite("/api/v1/admin/notifications"),
+});
 
 function listPath(): string {
   const params = new URLSearchParams({ limit: "20" });

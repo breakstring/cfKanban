@@ -45,6 +45,8 @@ export interface WebSessionView {
   };
   management_grants?: ManagementGrant[];
   expires_at: string;
+  version?: number;
+  renewal?: { renew_after: string; absolute_expires_at: string };
   principal: {
     display_name: string;
     theme?: "orange" | "blue";

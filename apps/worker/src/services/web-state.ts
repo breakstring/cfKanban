@@ -11,9 +11,9 @@ export const BROWSER_LAUNCH_CLEANUP_SQL = `DELETE FROM browser_launches
 
 export const WEB_SESSION_CLEANUP_SQL = `DELETE FROM web_sessions
  WHERE id IN (
-   SELECT id FROM web_sessions INDEXED BY idx_web_sessions_cleanup
-   WHERE created_at <= ?1
-   ORDER BY created_at, id LIMIT ?2
+   SELECT id FROM web_sessions INDEXED BY idx_web_sessions_expiry_cleanup
+   WHERE expires_at <= ?1
+   ORDER BY expires_at, id LIMIT ?2
  )`;
 
 export const EXPIRED_WEB_AUTHN_CHALLENGE_CLEANUP_SQL = `DELETE FROM webauthn_challenges

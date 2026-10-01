@@ -42,7 +42,7 @@ Open CFK-123 in IAB using my current cfKanban identity.
 
 You need a usable local identity, access to the target, and browser delivery supported by your host. The Agent verifies the site and identity, then opens an authenticated page through the dedicated entry point. If the requested browser is unavailable, it should explain the problem instead of silently choosing another.
 
-Web sign-in lasts a fixed eight hours from when the session is created. The footer shows **Signed in until** with the date and time. Refreshing the page, switching projects, or continuing to work does not extend that time. After expiry, sign in with a registered Passkey or ask your Agent to reopen the page. Do not copy long-lived credentials into a page or chat.
+The Agent's Browser Launch link can be exchanged once within five minutes. The resulting browser session starts with eight hours and, on an instance that supports activity renewal, follows the rules below. Do not copy long-lived credentials into a page or chat.
 
 When the current address differs from the site’s recommended address, the footer also shows a link to that address. It does not redirect you automatically; changing the address does not transfer your current sign-in.
 
@@ -59,6 +59,20 @@ Both first registration and additional registrations require an Agent-opened ses
 **In the Web UI:** Account menu at the top right → **Personal settings** → **Register Passkey**. For later visits, open the same site's homepage, select Passkey sign-in, and follow the system prompt. Participants then choose an authorized project; the Owner enters the management overview.
 
 A Passkey authenticates you to the Web UI. It grants no project access and does not replace the Agent's local credential. It is associated with the hostname where you registered it. If the site moves to another hostname, ask the Agent to open the new address and register there. See [Profile](./profile.md) for revocation.
+
+## Stay signed in and recover text drafts
+
+Sessions opened by an Agent and sessions created with a Passkey follow the same rules. Real mouse, keyboard, or touch activity in the visible page, including editing, can automatically renew a valid session. Each renewal sets the expiry to eight hours from that renewal, up to an absolute limit of seven days from the session's original creation. Each session can actually extend at most once every 30 minutes. Renewal keeps the same identity, sign-in source, and access scope.
+
+Background polling, hidden tabs, refreshing the page, and merely focusing or showing it do not renew the session. When the session expires, the page asks you to sign in again. Older instances without renewal information keep the fixed eight-hour expiry; the Agent's installed Skill version does not establish whether an instance supports renewal.
+
+On a renewal-capable instance, a new sign-in keeps its Session and CSRF cookies for up to seven days, while the server still enforces the current eight-hour expiry and revocation. Renewal does not rewrite cookies, so a delayed renewal response cannot replace a newer sign-in. Cookies issued before the instance upgrade retain their original eight-hour deadline; sign in again after that deadline to use the full renewal period.
+
+After expiry, sign-out, or revocation of the sign-in source, sign in again with a registered Passkey or ask the Agent to reopen the page. Keep the original page open if it offers an unsubmitted text draft for recovery. These business text drafts remain only in that page's memory: refreshing or closing it loses them, and explicit sign-out clears them. After signing in as the same identity, explicitly restore or copy the text, review the current state, and decide whether to submit. Signing in as another identity does not automatically restore it, and signing in never automatically replays a write. Draft recovery excludes credentials, sign-in or invitation links, and attachment files.
+
+```text
+Use $cfkanban to reopen this project with my current identity. Keep my original page open so I can recover its text draft; do not resubmit the previous write.
+```
 
 ## Switch projects
 

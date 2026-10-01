@@ -60,6 +60,9 @@ export interface CookieAuthContext extends AuthenticatedPrincipal {
   kind: "cookie";
   theme: "orange" | "blue";
   sessionExpiresAt: number;
+  sessionCreatedAt: number;
+  sessionLastRenewedAt: number | null;
+  sessionVersion: number;
   sessionId: string;
   sourceId: string;
   sourceKind: "credential" | "web_authenticator";

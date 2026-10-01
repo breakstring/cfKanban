@@ -9583,7 +9583,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body."
+                "description": "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie until the original seven-day absolute deadline. The server independently enforces the current eight-hour expiry and revocation. Secrets never appear in the response body."
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
@@ -9779,6 +9779,89 @@
         },
         "x-cfkanban-write-contract": "csrf",
         "x-cfkanban-permission": "current_principal"
+      }
+    },
+    "/api/v1/web-session/renew": {
+      "post": {
+        "operationId": "renewWebSession",
+        "tags": [
+          "web"
+        ],
+        "summary": "Renew Web Session",
+        "description": "Current Cookie Session only; Bearer authentication is rejected. Require same-origin CSRF, expected_version and Idempotency-Key. Foreground activity may extend a still-valid Session at most once per thirty minutes, to eight hours from renewal and no later than seven days from creation. CAS, unchanged live source/scope, idempotency snapshot and security audit commit atomically. Success, replay and error responses never set or clear cookies; new sign-ins issue cookies until the absolute deadline, with current expiry enforced independently by the server. Pre-upgrade cookies retain their original expiry and require a new sign-in to use the full renewal period.",
+        "security": [
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebSessionRenewalWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "csrf-idempotent",
+        "x-cfkanban-permission": "current_principal",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpectedVersionRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/me/passkeys/registration-options": {
@@ -10284,7 +10367,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie. Secrets never appear in the response body."
+                "description": "Present only on the secret-bearing first response; sets the HttpOnly Web Session cookie and a separate readable CSRF cookie until the original seven-day absolute deadline. The server independently enforces the current eight-hour expiry and revocation. Secrets never appear in the response body."
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/RequestId"
@@ -11395,7 +11478,7 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "cfkanban_session",
-        "description": "Fixed eight-hour HttpOnly same-origin Web Session."
+        "description": "HttpOnly same-origin Web Session: eight-hour activity renewal, at most once per thirty minutes, with a seven-day absolute lifetime."
       }
     },
     "parameters": {
@@ -19858,7 +19941,9 @@
           "session_id",
           "source",
           "target",
-          "management_grants"
+          "management_grants",
+          "version",
+          "renewal"
         ],
         "properties": {
           "management_grants": {
@@ -19903,6 +19988,80 @@
           },
           "target": {
             "$ref": "#/components/schemas/WebSessionTarget"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "renewal": {
+            "$ref": "#/components/schemas/WebSessionRenewalMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionRenewalMetadata": {
+        "type": "object",
+        "required": [
+          "renew_after",
+          "absolute_expires_at"
+        ],
+        "properties": {
+          "renew_after": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "absolute_expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionRenewalResource": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "version",
+          "expires_at",
+          "renew_after",
+          "absolute_expires_at",
+          "renewed"
+        ],
+        "properties": {
+          "session_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "renew_after": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "absolute_expires_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "renewed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "WebSessionRenewalWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/WebSessionRenewalResource"
           }
         },
         "additionalProperties": false

@@ -49,6 +49,7 @@
 | 公开文档、双语手册、Agent 示例与静态打包 | [站内双语文档中心](docs/specs/2026-09-29-documentation-center-spec.md) |
 | Owner 实例公告、个人接收偏好、逐条确认与 Web/Agent 提醒 | [Owner 实例通知](docs/specs/2026-10-01-instance-notifications-spec.md) |
 | 活动与审计倒序历史、正序增量兼容与时间索引 | [活动历史倒序](docs/specs/2026-10-01-event-history-order-spec.md) |
+| Web 活动续期、绝对到期、多标签页和文字草稿恢复 | [Web Session 续期](docs/specs/2026-10-01-web-session-renewal-spec.md) |
 
 涉及治理接入或迁移、Roadmap 方向、执行工具同步、合同位置或完成证据方式变化时，使用项目管理治理技能。普通局部修改不因此自动扩展为治理任务。
 
@@ -70,6 +71,7 @@
 - 身份与寻址使用稳定 ID：Workspace / Project 使用服务端 UUID，Issue 使用实例内单调且不复用的 `CFK-<正整数>`。Principal 名称虽规范化唯一，仍不能代替 ID 进行授权、历史引用或恢复；不从 OS、Git 或宿主信息猜测用户身份。
 - 唯一 Deployment Owner 与分级管理员并存。管理权、普通 Project Grant 与 Session scope 分别核验；按有效授权来源并集判断能力，不把局部管理员伪装成 Owner，也不因其具有 writer 能力就允许普通 writer 管理。具体能力、继承、撤权及配额以分级管理员矩阵为准。
 - 所有状态写入考虑实时权限、CAS、幂等、原子审计和结构化错误；响应不确定时保留原请求与幂等键核实。公开 API 每次只表达一个原子操作，不提供 batch/bulk 写入。
+- 新增或调整 D1 查询时，把读取行数和索引写放大作为成本约束。高频查询须核对筛选、连接、排序与游标是否得到索引支持，并用有代表性的规模数据验证；尤其覆盖空结果、深分页、稀疏匹配及大量历史记录。`LIMIT` 或命中索引不等于读取量有界，不能用全历史扫描支撑后台轮询。优先记录 D1 的 `meta.rows_read` / `meta.rows_written`；只能验证本地查询计划时，明确其不能证明线上计费读量，不为减少读取量放宽权限、并发或历史保留语义。
 - Workflow 固定为 `backlog / todo / in_progress / done / canceled`；转入 `done` 必须走原子 `complete` 并创建不可变完成记录，reopen 保留历史。权限变化不清空 assignment 或历史；归档、恢复、永久删除各遵循对应合同。
 - Public Join 的业务配额与边缘限流分别处理；错误按机器字段分类，不依赖供应商自然语言文案。客户端归一化的边缘错误必须标明来源，不冒充 Worker 响应。
 - Web 公共文案支持 English / 简体中文，缺失翻译回退 English；业务内容和稳定 key 不自动翻译。Markdown 安全渲染；UI 权限显示不能代替服务端授权。

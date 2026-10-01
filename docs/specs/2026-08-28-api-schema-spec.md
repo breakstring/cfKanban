@@ -1,5 +1,7 @@
 # cfKanban API & D1 Schema SPEC
 
+> 2026-10-01 增量：[Web 会话活动续期](2026-10-01-web-session-renewal-spec.md)（Frozen）覆盖固定八小时到期的旧表述，定义 Cookie-only 续期、CAS/幂等、三十分钟节流、七天上限、schema 17 及草稿恢复；不改变 Browser Launch、来源撤销或 Session scope。
+
 > 2026-10-01 增量：[活动历史倒序](2026-10-01-event-history-order-spec.md)（Frozen）增加显式历史浏览和 schema 16 时间索引，Web 最新在前；既有正序增量 feed 与 write cursor 保持兼容。
 
 > 2026-10-01 增量：[Owner 实例通知](2026-10-01-instance-notifications-spec.md)（Frozen）仅覆盖 Owner 单向实例公告，定义本人接收偏好、逐条确认、Web/Agent 提醒与历史；其他通知、mention、外部投递及实时唤醒仍在范围外。

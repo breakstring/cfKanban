@@ -1,4 +1,5 @@
 import { authenticateRequest } from "./auth.ts";
+import { WEB_SESSION_ABSOLUTE_LIFETIME_MS } from "../domain/web-session-policy.ts";
 import { ApiError, forbidden, notFound, platformUnavailable, unauthorized } from "./errors.ts";
 import type { AuthContext } from "./types.ts";
 
@@ -68,6 +69,7 @@ export function buildCurrentAuthGuard(
         AND auth_session.principal_id = ${principal}
         AND auth_session.revoked_at IS NULL
         AND auth_session.expires_at > ${currentTime}
+        AND auth_session.created_at + ${WEB_SESSION_ABSOLUTE_LIFETIME_MS} > ${currentTime}
         AND (
           (auth_session.source_kind = 'credential' AND EXISTS (
             SELECT 1 FROM credentials AS auth_source_credential

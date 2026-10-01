@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from "vue";
 import { en, zh_cn } from "@nuxt/ui/locale";
 
 import AppFooter from "./components/AppFooter.vue";
@@ -16,12 +16,15 @@ import { useLocalizedError } from "./lib/localized-error";
 import { currentPath, navigate, routePath } from "./lib/router";
 import { scheduleSessionExpiry } from "./lib/session-expiry";
 import { canAccessOwnerControlPlane } from "./lib/session-capabilities";
-import { sameSessionBoundary, shouldClearAfterSessionRevalidation } from "./lib/session-boundary";
+import { isWebSessionView, sameSessionBoundary, shouldClearAfterSessionRevalidation } from "./lib/session-boundary";
+import { isSessionRenewalResult, mergeSessionFacts, SESSION_ACTIVITY_EVENTS, SessionRenewalController } from "./lib/session-renewal";
+import { captureSessionTextDrafts, clearRetainedSessionTextDrafts, retainedSessionTextDrafts, setSessionDraftPrincipal } from "./lib/session-drafts";
 import { applyTheme, latestPrincipalTheme } from "./lib/theme";
 import type { InstanceDiscovery, PrincipalResource } from "./types";
 import type { WebSessionView } from "./types";
 
 const UApp = lazyPage(() => import("@nuxt/ui/components/App.vue"));
+const SessionDraftsPanel = defineAsyncComponent(() => import("./components/SessionDraftsPanel.vue"));
 const AppHeader = lazyPage(() => import("./components/AppHeader.vue"));
 const IssueDetailView = lazyPage(() => import("./views/IssueDetailView.vue"));
 const OwnerView = lazyPage(() => import("./views/OwnerView.vue"));
@@ -65,6 +68,21 @@ const sessionViewGeneration = ref(0);
 let cancelSessionExpiry: (() => void) | null = null;
 let sessionLoadGeneration = 0;
 let sessionReloadPending = false;
+let loggingOut = false;
+let sessionChannel: BroadcastChannel | null = null;
+const sessionRenewal = new SessionRenewalController({
+  read: signal => apiRequest<WebSessionView>("/api/v1/web-session", { signal, validateResponse: isWebSessionView, authorizationCurrent: () => !signal.aborted }),
+  renew: async (version, sessionId, signal) => {
+    await apiRequest("/api/v1/web-session/renew", { method: "POST", body: { expected_version: version }, idempotencyScope: sessionId, signal,
+      validateResponse: value => isSessionRenewalResult(value, sessionId), authorizationCurrent: () => !signal.aborted });
+  },
+  accept: result => acceptVerifiedSession(result),
+  expire: () => clearSession(true),
+  accessFailure: caught => caught instanceof ApiProblem && shouldClearAfterSessionRevalidation(caught),
+  versionConflict: caught => caught instanceof ApiProblem && caught.body.source === "service" && caught.body.code === "VERSION_CONFLICT",
+  visible: () => document.visibilityState === "visible",
+  notify: () => sessionChannel?.postMessage({ type: "session-facts-changed" }),
+});
 
 function decoded(value: string): string | null {
   try {
@@ -110,7 +128,11 @@ const route = computed<AppRoute>(() => {
 });
 
 const authenticatedRoute = computed(() => route.value.kind !== "home");
-watch(session, value => setNotificationSession(value), { flush: "sync" });
+watch(session, value => {
+  setNotificationSession(value);
+  setSessionDraftPrincipal(value?.principal.id ?? null);
+  sessionRenewal.setSession(value);
+}, { flush: "sync" });
 
 watch([route, session], ([currentRoute, verifiedSession]) => {
   if (verifiedSession === null || currentRoute.kind === "home") return;
@@ -156,7 +178,8 @@ function updateProfile(principal: PrincipalResource): void {
   };
 }
 
-function clearSession(ended = true): void {
+function clearSession(ended = true, retainDrafts = ended): void {
+  if (retainDrafts && !loggingOut && session.value) captureSessionTextDrafts(session.value.principal.id);
   clearAttachmentUploadDrafts();
   cancelSessionExpiry?.();
   cancelSessionExpiry = null;
@@ -173,7 +196,7 @@ function clearSession(ended = true): void {
 function armSessionExpiry(expiresAt: string): boolean {
   cancelSessionExpiry?.();
   cancelSessionExpiry = null;
-  const schedule = scheduleSessionExpiry(expiresAt, () => clearSession(true));
+  const schedule = scheduleSessionExpiry(expiresAt, () => { void sessionRenewal.deadline(); });
   if (!schedule.scheduled) {
     clearSession(true);
     return false;
@@ -183,12 +206,14 @@ function armSessionExpiry(expiresAt: string): boolean {
 }
 
 function acceptVerifiedSession(result: WebSessionView): void {
+  result = mergeSessionFacts(session.value, result);
   // 新验证的 Session 使此前发出的读回失效，包括身份和 scope 切换。
   sessionLoadGeneration += 1;
   loadingSession.value = false;
   clearSessionError();
   sessionEnded.value = false;
   if (session.value && !sameSessionBoundary(session.value, result)) {
+    if (!loggingOut) captureSessionTextDrafts(session.value.principal.id);
     clearAttachmentUploadDrafts();
     sessionViewGeneration.value += 1;
     context.value = null;
@@ -212,9 +237,11 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
   clearSessionError();
   sessionEnded.value = false;
   try {
-    const result = await apiRequest<WebSessionView>("/api/v1/web-session");
+    let result = await apiRequest<WebSessionView>("/api/v1/web-session", { authorizationCurrent: () => generation === sessionLoadGeneration && authenticatedRoute.value });
     if (generation !== sessionLoadGeneration || !authenticatedRoute.value) return;
+    result = mergeSessionFacts(session.value, result);
     if (previous !== null && !sameSessionBoundary(previous, result)) {
+      if (!loggingOut) captureSessionTextDrafts(previous.principal.id);
       clearAttachmentUploadDrafts();
       sessionViewGeneration.value += 1;
       context.value = null;
@@ -227,7 +254,7 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
       if (caught instanceof ApiProblem && caught.status === 401) sessionEnded.value = true;
       else setSessionError(caught);
     } else if (caught instanceof ApiProblem && shouldClearAfterSessionRevalidation(caught)) {
-      clearSession(false);
+      clearSession(false, true);
       setSessionError(caught);
     } else if (!(caught instanceof ApiProblem && caught.status === 401)) {
       setSessionError(caught);
@@ -244,18 +271,27 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
 }
 
 async function logout(): Promise<void> {
+  loggingOut = true;
   try {
     await apiRequest("/api/v1/web-session", { method: "DELETE" });
   } catch (caught) {
     if (!(caught instanceof ApiProblem && caught.status === 401)) {
       setSessionError(caught);
+      loggingOut = false;
       return;
     }
   }
+  clearRetainedSessionTextDrafts();
   clearSession(false);
+  loggingOut = false;
+  sessionChannel?.postMessage({ type: "session-facts-changed" });
   navigate("/");
 }
 
+function sessionActivity(event: Event): void { sessionRenewal.activity(event); }
+function tabSessionHint(event: MessageEvent): void {
+  if (event.data?.type === "session-facts-changed") sessionRenewal.hint();
+}
 function eventProblem(event: Event): ApiProblem | null {
   return event instanceof CustomEvent && event.detail instanceof ApiProblem ? event.detail : null;
 }
@@ -281,6 +317,11 @@ function revalidateVisibleSession(): void {
 }
 
 onMounted(() => {
+  for (const name of SESSION_ACTIVITY_EVENTS) document.addEventListener(name, sessionActivity, { passive: true });
+  if (typeof window.BroadcastChannel === "function") {
+    sessionChannel = new window.BroadcastChannel("cfkanban:session-facts");
+    sessionChannel.addEventListener("message", tabSessionHint);
+  }
   window.addEventListener("cfkanban:session-invalid", sessionInvalid);
   window.addEventListener("cfkanban:authorization-stale", authorizationStale);
   window.addEventListener("cfkanban:session-exchanged", authorizationStale);
@@ -290,6 +331,9 @@ onMounted(() => {
   void loadSession();
 });
 onUnmounted(() => {
+  for (const name of SESSION_ACTIVITY_EVENTS) document.removeEventListener(name, sessionActivity);
+  sessionChannel?.close(); sessionChannel = null;
+  clearRetainedSessionTextDrafts();
   clearSession(false);
   window.removeEventListener("cfkanban:session-invalid", sessionInvalid);
   window.removeEventListener("cfkanban:authorization-stale", authorizationStale);
@@ -308,6 +352,7 @@ watch(currentPath, () => {
 </script>
 
 <template>
+  <SessionDraftsPanel v-if="retainedSessionTextDrafts.length" :session="session" />
   <PublicHomeView v-if="route.kind === 'home'" />
 
   <UApp v-else :locale="locale === 'zh-CN' ? zh_cn : en" :toaster="null">
@@ -399,7 +444,7 @@ watch(currentPath, () => {
           <button class="primary-button" type="button" @click="navigate('/app')">{{ t("project.choose") }}</button>
         </div>
       </main>
-      <AppFooter :expires-at="session.expires_at" :preferred-origin="preferredOrigin" />
+      <AppFooter :preferred-origin="preferredOrigin" />
     </template>
   </div>
   </UApp>

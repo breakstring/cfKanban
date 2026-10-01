@@ -1,4 +1,5 @@
 import { requireVersion } from "../domain/model.ts";
+import { WEB_SESSION_ABSOLUTE_LIFETIME_MS, WEB_SESSION_LIFETIME_MS } from "../domain/web-session-policy.ts";
 import { authenticateBearer, authenticateCookieSession, authenticateRequest } from "../kernel/auth.ts";
 import {
   clearCsrfCookie,
@@ -6,8 +7,10 @@ import {
   enforceCookieWriteProtection,
   serializeCsrfCookie,
   serializeSessionCookie,
+  sessionCookieMaxAge,
 } from "../kernel/csrf.ts";
-import { ApiError } from "../kernel/errors.ts";
+import { ApiError, forbidden } from "../kernel/errors.ts";
+import { renewWebSession } from "../services/web-session-renewal.ts";
 import {
   HTML_DOCUMENT_CACHE_CONTROL,
   jsonResponse,
@@ -56,8 +59,14 @@ function exchangeResponse(exchange: SessionExchangeResult, requestId: string): R
   const headers = new Headers();
   headers.set("cache-control", "no-store");
   if (exchange.sessionToken !== null && exchange.csrfToken !== null) {
-    headers.append("set-cookie", serializeSessionCookie(exchange.sessionToken));
-    headers.append("set-cookie", serializeCsrfCookie(exchange.csrfToken));
+    const resource = exchange.body.resource;
+    const expiresAt = resource !== null && typeof resource === "object" && !Array.isArray(resource) ? resource.expires_at : null;
+    if (typeof expiresAt !== "string" || !Number.isFinite(Date.parse(expiresAt))) throw new Error("Invalid Session expiry.");
+    // 兑换快照的初始截止为 created_at + 8h；Cookie 固定持有到原创建的绝对上限。
+    const createdAt = Date.parse(expiresAt) - WEB_SESSION_LIFETIME_MS;
+    const maxAge = sessionCookieMaxAge(createdAt + WEB_SESSION_ABSOLUTE_LIFETIME_MS);
+    headers.append("set-cookie", serializeSessionCookie(exchange.sessionToken, maxAge));
+    headers.append("set-cookie", serializeCsrfCookie(exchange.csrfToken, maxAge));
   }
   return jsonResponse(exchange.body, requestId, { headers });
 }
@@ -150,6 +159,14 @@ export function registerWp07Routes(router: Router): Router {
         context.requestId,
         { headers: clearedCookieHeaders() },
       );
+    })
+    .post("/api/v1/web-session/renew", async (request, env, context) => {
+      if (request.headers.has("authorization")) throw forbidden();
+      const auth = await cookieAuth(request, env, context);
+      enforceCookieWriteProtection(request, auth);
+      const value = await body(request, ["expected_version"], ["expected_version"]);
+      const result = await renewWebSession(env.DB, request, auth, requireVersion(value.expected_version ?? null), context.startedAt);
+      return jsonResponse(result, context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .post("/api/v1/me/passkeys/registration-options", async (request, env, context) => {
       const auth = await cookieAuth(request, env, context);

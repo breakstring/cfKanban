@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 16,
+  schema_version: 17,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -204,8 +204,9 @@ const manifest = {
       destructive: false,
       reentry: "wrangler_migration_ledger_only",
       expected_artifacts: {
-        tables: ["instance_notifications", "notification_preferences", "notification_acknowledgements"],
+        tables: ["instance_notifications", "notification_preferences", "notification_acknowledgements", "notification_pending_cache"],
         indexes: ["idx_notifications_created", "idx_notifications_pending", "idx_notification_acknowledgements_principal"],
+        columns: ["instance_notifications.sequence", "notification_pending_cache.preference_version", "notification_pending_cache.receive_after", "notification_pending_cache.through_sequence", "notification_pending_cache.pending_ids_json", "notification_pending_cache.version"],
         triggers: ["notification_content_immutable", "notification_history_retained", "notification_acknowledgement_immutable", "notification_acknowledgement_retained"],
       },
       expected_data: { instance_meta_schema_version_at_least: 15, allow_uninitialized: true },
@@ -219,6 +220,16 @@ const manifest = {
       reentry: "wrangler_migration_ledger_only",
       expected_artifacts: { indexes: ["idx_events_history", "idx_events_stream_history", "idx_events_project_stream_history"] },
       expected_data: { instance_meta_schema_version_at_least: 16, allow_uninitialized: true },
+    },
+    {
+      sequence: 17,
+      name: "0017_web_session_renewal.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0017_web_session_renewal.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { columns: ["web_sessions.version"], indexes: ["idx_web_sessions_expiry_cleanup"] },
+      expected_data: { instance_meta_schema_version_at_least: 17, allow_uninitialized: true },
     },
   ],
 };

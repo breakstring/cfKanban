@@ -6,6 +6,7 @@ import { ApiError, forbidden, notFound, platformUnavailable, validationError, ve
 import { readOperationSnapshot, runIdempotentOperation } from "../kernel/idempotency.ts";
 import type { AuthContext, JsonValue } from "../kernel/types.ts";
 import { actorCredentialId, authorizedVia, requireIdempotencyKey, writeResult } from "./shared.ts";
+import { readPendingNotifications } from "./notification-pending-cache.ts";
 
 type Resource = { [key: string]: JsonValue };
 interface NotificationRow {
@@ -103,13 +104,38 @@ export async function listNotifications(db: D1Database, auth: AuthContext, url: 
   const last = decodeCursor(url.searchParams.get("cursor"), context);
   if (last !== null && (last.length !== 2 || typeof last[0] !== "number" || !Number.isSafeInteger(last[0])
     || typeof last[1] !== "string" || !/^[0-9a-f-]{36}$/i.test(last[1]))) throw invalidCursor();
+  const readAt = Date.now();
+  const checkCurrent = async () => {
+    const finalPreferences = pending ? await readPreferences(db, auth.principalId) : null;
+    await verifyCurrentAuth(db, auth, Date.now());
+    if (admin && await guardRejected(db, auth, true)) throw forbidden();
+    if (finalPreferences !== null) {
+      if (finalPreferences.enabled === 0) return false;
+      if (finalPreferences.version !== preferences.version || finalPreferences.receive_after !== preferences.receive_after) throw cursorScopeMismatch();
+    }
+    return true;
+  };
+  const pageResult = async (rows: NotificationRow[]): Promise<Resource> => {
+    const page = rows.slice(0, limit), tail = page.at(-1);
+    return { items: page.map(row => notificationResource(row, readAt)),
+      next_cursor: rows.length > limit && tail ? encodeCursor(context, [tail.created_at, tail.id]) : null };
+  };
+  if (pending) {
+    try {
+      if (preferences.enabled === 0) {
+        if (!await checkCurrent()) return { items: [], next_cursor: null };
+      }
+      const read = await readPendingNotifications<NotificationRow>(db, auth, preferences, last as (string | number)[] | null, limit, readAt);
+      if (!await checkCurrent()) return { items: [], next_cursor: null };
+      if (read.save !== null && !await read.save()) {
+        read.rows = await read.cold();
+        if (!await checkCurrent()) return { items: [], next_cursor: null };
+      }
+      return pageResult(read.rows);
+    } catch (error) { if (error instanceof ApiError) throw error; throw platformUnavailable("d1", error); }
+  }
   const values: (string | number | null)[] = [auth.principalId];
   const conditions: string[] = admin ? [] : ["n.created_by_principal_id<>?1"];
-  const readAt = Date.now();
-  if (pending) {
-    conditions.push("COALESCE(np.enabled,1)=1", "n.withdrawn_at IS NULL", "(n.expires_at IS NULL OR n.expires_at>?2)", "a.notification_id IS NULL", "n.created_at>=MAX(p.created_at,COALESCE(np.receive_after,p.created_at))");
-    values.push(readAt);
-  }
   if (last !== null) {
     const start = values.length + 1;
     conditions.push(`(n.created_at<?${start} OR (n.created_at=?${start} AND n.id<?${start + 1}))`);
@@ -124,18 +150,8 @@ export async function listNotifications(db: D1Database, auth: AuthContext, url: 
       LEFT JOIN notification_acknowledgements a ON a.notification_id=n.id AND a.principal_id=?1
       WHERE ${conditions.join(" AND ")} ORDER BY n.created_at DESC,n.id DESC LIMIT ?${values.length}`)
       .bind(...values).all<NotificationRow>();
-    const finalPreferences = pending ? await readPreferences(db, auth.principalId) : null;
-    await verifyCurrentAuth(db, auth, Date.now());
-    if (admin && await guardRejected(db, auth, true)) throw forbidden();
-    if (finalPreferences !== null) {
-      if (finalPreferences.enabled === 0) return { items: [], next_cursor: null };
-      if (finalPreferences.version !== preferences.version || finalPreferences.receive_after !== preferences.receive_after) {
-        throw cursorScopeMismatch();
-      }
-    }
-    const page = rows.results.slice(0, limit), tail = page.at(-1);
-    return { items: page.map(row => notificationResource(row, readAt)),
-      next_cursor: rows.results.length > limit && tail ? encodeCursor(context, [tail.created_at, tail.id]) : null };
+    await checkCurrent();
+    return pageResult(rows.results);
   } catch (error) { if (error instanceof ApiError) throw error; throw platformUnavailable("d1", error); }
 }
 

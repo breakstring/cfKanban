@@ -57,7 +57,7 @@ const expectConstraint = (label, action) => {
 
 assert.equal(get("PRAGMA foreign_keys").foreign_keys, 1, "foreign keys must be enabled");
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
-assert.equal(tables.length, 35, "expected 34 application tables and the deployment migration ledger");
+assert.equal(tables.length, 36, "expected 35 application tables and the deployment migration ledger");
 assert.deepEqual(
   tables.map((row) => row.name).sort(),
   [...new Set(manifest.migrations.flatMap((entry) => entry.expected_artifacts.tables ?? []))].sort(),
@@ -87,6 +87,7 @@ assert.deepEqual(
 );
 assert.deepEqual(indexColumns("idx_browser_launches_cleanup"), ["created_at", "id"]);
 assert.deepEqual(indexColumns("idx_web_sessions_cleanup"), ["created_at", "id"]);
+assert.deepEqual(indexColumns("idx_web_sessions_expiry_cleanup"), ["expires_at", "id"]);
 assert.deepEqual(indexColumns("idx_webauthn_challenges_expiry"), ["expires_at", "id"]);
 assert.deepEqual(indexColumns("idx_webauthn_challenges_consumed"), ["consumed_at", "id"]);
 assert.deepEqual(
@@ -145,6 +146,9 @@ expectConstraint("passkey algorithm allowlist", () => run("INSERT INTO web_authe
 expectConstraint("passkey backup flags", () => run("INSERT INTO web_authenticators (id, principal_id, credential_id, public_key_cose, algorithm, user_handle, backup_eligible, backup_state, rp_id, created_at, created_operation_id) VALUES ('bad-backup', 'owner', 'credential-2', 'cose', -7, 'owner', 0, 2, 'example.workers.dev', ?, 'op-bad-backup')", [now]));
 
 const planChecks = [
+  ["notification sequence delta", "SELECT id FROM instance_notifications WHERE sequence > ? AND sequence <= ?", [0, 100], /INTEGER PRIMARY KEY \(rowid>\? AND rowid<\?\)/],
+  ["notification identity lookup", "SELECT id FROM instance_notifications WHERE id = ?", ["notice"], /sqlite_autoindex_instance_notifications/],
+  ["notification pending cache lookup", "SELECT principal_id FROM notification_pending_cache WHERE principal_id = ?", ["owner"], /sqlite_autoindex_notification_pending_cache/],
   ["credential authentication", "SELECT p.id FROM credentials c JOIN principals p ON p.id = c.principal_id WHERE c.token_digest = ? AND c.revoked_at IS NULL", [digest("a")], /idx_credentials_token_digest|sqlite_autoindex_credentials/],
   ["project issue list", "SELECT number FROM issues WHERE project_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC, number DESC LIMIT 21", ["project"], /idx_issues_project_list/],
   ["issue candidates", "SELECT number FROM issues WHERE project_id = ? AND status_key = ? AND deleted_at IS NULL ORDER BY priority_rank, created_at, number LIMIT 21", ["project", "todo"], /idx_issues_candidates/],
@@ -168,7 +172,7 @@ const planChecks = [
   ["workspace public resume invariant", workspacePublicResumeInvariantSql("1 = 1"), ["workspace"], /idx_public_join_resume_enabled_workspace_project/],
   ["workspace public resume page", workspacePublicResumePageSql("1 = 1"), ["workspace"], /idx_public_join_resume_enabled_workspace_project/],
   ["browser launch cleanup", BROWSER_LAUNCH_CLEANUP_SQL, [now, 100], /idx_browser_launches_cleanup/],
-  ["web session cleanup", WEB_SESSION_CLEANUP_SQL, [now, 100], /idx_web_sessions_cleanup/],
+  ["web session cleanup", WEB_SESSION_CLEANUP_SQL, [now, 100], /idx_web_sessions_expiry_cleanup/],
   ["expired WebAuthn challenge cleanup", EXPIRED_WEB_AUTHN_CHALLENGE_CLEANUP_SQL, [now, 100], /idx_webauthn_challenges_expiry/],
   ["consumed WebAuthn challenge cleanup", CONSUMED_WEB_AUTHN_CHALLENGE_CLEANUP_SQL, [100], /idx_webauthn_challenges_consumed/],
   ["attachment garbage cleanup", "SELECT id,object_key FROM attachment_objects WHERE state='garbage' ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1", [64], /idx_attachment_objects_cleanup/],

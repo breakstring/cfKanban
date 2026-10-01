@@ -17,7 +17,7 @@ import OwnerDevices from "../components/OwnerDevices.vue";
 import PageState from "../components/PageState.vue";
 import UsagePanel from "../components/UsagePanel.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
-import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText } from "../lib/api";
+import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText, hasUncertainWrite } from "../lib/api";
 import {
   type CasConflictState,
   captureCasConflict,
@@ -45,6 +45,7 @@ import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib
 import { publicJoinRiskNotice } from "../lib/public-join-risk";
 import { navigate } from "../lib/router";
 import { managementPath } from "../lib/scoped-management";
+import { changedTextFields, useSessionTextDraft } from "../lib/session-drafts";
 import { WriteFence } from "../lib/write-fence";
 import type {
   ContainerResource,
@@ -226,6 +227,197 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 let casRecoveryGeneration = 0;
 let casReadback: (() => Promise<void>) | null = null;
 let casReadbackInFlight = false;
+
+const ownerTextDraftReady = () => ownerViewMounted && !loading.value && !busy.value && !writeFence.active
+  && casConflict.value === null && !casReadbackInFlight && props.session.principal.is_owner
+  && props.session.allowed_scope.kind === "instance" && !showInvite.value && !showPurge.value
+  && !showRestore.value && !showPrincipal.value && !showGrant.value;
+const ownerTextWriteUncertain = (path: string) => busy.value || writeFence.active || casConflict.value !== null
+  || casReadbackInFlight || hasUncertainWrite(path);
+function ownerTextFormReady(form: "workspace" | "project" | "rename" | "settings" | "policy"): boolean {
+  return ownerTextDraftReady() && (form === "workspace" || !showWorkspace.value)
+    && (form === "project" || !showProject.value) && (form === "rename" || !showContainerEdit.value)
+    && (form === "settings" || !showProjectSettings.value) && (form === "policy" || !showPolicy.value);
+}
+function ownerProjectDraftTarget(): Record<string, string> {
+  return selectedProject.value ? { project_id: selectedProject.value.id, workspace_id: selectedProject.value.workspaceId } : {};
+}
+function ownerProjectDraftMatches(target: Readonly<Record<string, string>>): boolean {
+  return UUID_PATTERN.test(target.project_id ?? "") && UUID_PATTERN.test(target.workspace_id ?? "")
+    && ((!showProjectSettings.value && !showPolicy.value)
+      || (selectedProject.value?.id === target.project_id && selectedProject.value?.workspaceId === target.workspace_id));
+}
+function ownerContainerDraftTarget(): Record<string, string> {
+  const edit = containerEdit.value;
+  return edit ? { kind: edit.kind, id: edit.item.id, workspace_id: edit.workspace_id ?? "" } : {};
+}
+function ownerContainerDraftPath(target: Readonly<Record<string, string>>): string | null {
+  if (!UUID_PATTERN.test(target.id ?? "")) return null;
+  if (target.kind === "workspace") return `/api/v1/workspaces/${encodeURIComponent(target.id!)}`;
+  return target.kind === "project" && UUID_PATTERN.test(target.workspace_id ?? "")
+    ? `/api/v1/workspaces/${encodeURIComponent(target.workspace_id!)}/projects/${encodeURIComponent(target.id!)}` : null;
+}
+async function verifyOwnerDraftSession(isCurrent: () => boolean): Promise<boolean> {
+  const current = await apiRequest<WebSessionView>("/api/v1/web-session", { authorizationCurrent: isCurrent });
+  if (!isCurrent() || !ownerTextDraftReady()) return false;
+  return current.principal.id === props.session.principal.id && current.principal.is_owner && current.allowed_scope.kind === "instance";
+}
+async function readOwnerDraftProject(target: Readonly<Record<string, string>>, action: string, isCurrent: () => boolean): Promise<ProjectEntry | null> {
+  if (!ownerProjectDraftMatches(target)) return null;
+  const current = await apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(target.workspace_id!)}/projects/${encodeURIComponent(target.project_id!)}`, { authorizationCurrent: isCurrent });
+  if (!isCurrent() || !ownerTextDraftReady() || current.id !== target.project_id || current.workspace_id !== target.workspace_id
+    || current.deleted_at !== null || !current.allowed_actions?.includes(action)) return null;
+  return { ...current, workspaceId: target.workspace_id!, workspaceName: current.workspace_display_name ?? "" };
+}
+function receiveOwnerDraftProject(item: ProjectEntry, statuses: ProjectStatusResource[]): void {
+  const sameForm = showProjectSettings.value && selectedProject.value?.id === item.id && selectedProject.value.workspaceId === item.workspaceId;
+  const localFields = sameForm && selectedProject.value ? changedTextFields({
+    display_name: [projectSettingsForm.value.display_name, selectedProject.value.display_name],
+    context: [projectSettingsForm.value.context, selectedProject.value.context ?? ""],
+  }) : null;
+  const localStatuses = sameForm ? changedTextFields(Object.fromEntries(projectStatuses.value.map(status => [
+    status.key, [statusDrafts.value[status.key] ?? status.display_name, status.display_name] as const,
+  ]))) : null;
+  projectSettingsRequestId += 1;
+  selectedProject.value = item;
+  projectSettingsForm.value = { display_name: localFields?.display_name ?? item.display_name, context: localFields?.context ?? item.context ?? "" };
+  projectStatuses.value = statuses;
+  statusDrafts.value = Object.fromEntries(statuses.map(status => [status.key, localStatuses?.[status.key] ?? status.display_name]));
+  showProjectSettings.value = true;
+}
+
+useSessionTextDraft({
+  key: "owner-workspace-create", path: "/app/admin?section=workspaces",
+  label: { en: "New workspace name", zh: "新工作区名称" },
+  capture: () => showWorkspace.value ? changedTextFields({ display_name: [workspaceForm.value.display_name, ""] }) : null,
+  canRestore: () => ownerTextFormReady("workspace") && !hasUncertainWrite("/api/v1/workspaces"),
+  uncertain: () => ownerTextWriteUncertain("/api/v1/workspaces"),
+  restore: async (fields, _target, isCurrent) => {
+    const verified = await verifyOwnerDraftSession(isCurrent);
+    if (!isCurrent() || !verified || !ownerTextFormReady("workspace") || hasUncertainWrite("/api/v1/workspaces")) return false;
+    if (fields.display_name !== undefined) workspaceForm.value.display_name = fields.display_name;
+    showWorkspace.value = true;
+    return true;
+  },
+});
+
+useSessionTextDraft({
+  key: "owner-project-create", path: "/app/admin?section=workspaces",
+  label: { en: "New project", zh: "新项目" }, target: () => ({ workspace_id: selectedWorkspace.value }),
+  capture: () => showProject.value ? changedTextFields({ display_name: [projectForm.value.display_name, ""], context: [projectForm.value.context, ""] }) : null,
+  canRestore: target => ownerTextFormReady("project") && (target.workspace_id === "" || UUID_PATTERN.test(target.workspace_id ?? ""))
+    && !hasUncertainWrite(`/api/v1/workspaces/${encodeURIComponent(target.workspace_id ?? "")}/projects`),
+  uncertain: () => ownerTextWriteUncertain(`/api/v1/workspaces/${encodeURIComponent(selectedWorkspace.value)}/projects`),
+  restore: async (fields, target, isCurrent) => {
+    if (target.workspace_id) {
+      const workspace = await apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(target.workspace_id)}`, { authorizationCurrent: isCurrent });
+      if (!isCurrent() || workspace.id !== target.workspace_id || workspace.deleted_at !== null || !workspace.allowed_actions?.includes("create_project")) return false;
+    }
+    const verified = await verifyOwnerDraftSession(isCurrent);
+    if (!isCurrent() || !verified || !ownerTextFormReady("project")
+      || hasUncertainWrite(`/api/v1/workspaces/${encodeURIComponent(target.workspace_id ?? "")}/projects`)) return false;
+    selectedWorkspace.value = target.workspace_id ?? "";
+    if (fields.display_name !== undefined) projectForm.value.display_name = fields.display_name;
+    if (fields.context !== undefined) projectForm.value.context = fields.context;
+    showProject.value = true;
+    return true;
+  },
+});
+
+useSessionTextDraft({
+  key: "owner-container-rename", path: "/app/admin?section=workspaces",
+  label: { en: "Container name", zh: "容器名称" }, target: ownerContainerDraftTarget,
+  capture: () => showContainerEdit.value && containerEdit.value ? changedTextFields({ display_name: [containerEdit.value.display_name, containerEdit.value.item.display_name] }) : null,
+  canRestore: target => ownerTextFormReady("rename") && ownerContainerDraftPath(target) !== null
+    && (!showContainerEdit.value || (containerEdit.value?.item.id === target.id && containerEdit.value?.kind === target.kind))
+    && !hasUncertainWrite(ownerContainerDraftPath(target)!),
+  uncertain: () => ownerTextWriteUncertain(ownerContainerDraftPath(ownerContainerDraftTarget()) ?? ""),
+  restore: async (fields, target, isCurrent) => {
+    const path = ownerContainerDraftPath(target);
+    if (path === null) return false;
+    const current = await apiRequest<ContainerResource>(path, { authorizationCurrent: isCurrent });
+    if (!isCurrent() || current.id !== target.id || current.deleted_at !== null || !current.allowed_actions?.includes("update")) return false;
+    const verified = await verifyOwnerDraftSession(isCurrent);
+    if (!isCurrent() || !verified || !ownerTextFormReady("rename") || hasUncertainWrite(path)) return false;
+    containerEdit.value = { kind: target.kind as "workspace" | "project", item: current, display_name: fields.display_name ?? current.display_name,
+      ...(target.kind === "project" ? { workspace_id: target.workspace_id! } : {}) };
+    showContainerEdit.value = true;
+    return true;
+  },
+});
+
+useSessionTextDraft({
+  key: "owner-project-settings", path: "/app/admin?section=workspaces",
+  label: { en: "Project settings", zh: "项目设置" }, target: ownerProjectDraftTarget,
+  capture: () => showProjectSettings.value && selectedProject.value ? changedTextFields({
+    display_name: [projectSettingsForm.value.display_name, selectedProject.value.display_name],
+    context: [projectSettingsForm.value.context, selectedProject.value.context ?? ""],
+  }) : null,
+  canRestore: target => ownerTextFormReady("settings") && ownerProjectDraftMatches(target)
+    && !hasUncertainWrite(`/api/v1/workspaces/${encodeURIComponent(target.workspace_id!)}/projects/${encodeURIComponent(target.project_id!)}`),
+  uncertain: () => ownerTextWriteUncertain(`/api/v1/workspaces/${encodeURIComponent(selectedProject.value?.workspaceId ?? "")}/projects/${encodeURIComponent(selectedProject.value?.id ?? "")}`),
+  restore: async (fields, target, isCurrent) => {
+    const item = await readOwnerDraftProject(target, "update", isCurrent);
+    if (!isCurrent() || item === null) return false;
+    const latest = await apiRequest<ListResult<ProjectStatusResource>>(`/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}/statuses`, { authorizationCurrent: isCurrent });
+    if (!isCurrent() || latest.items.some(status => status.version !== item.version)) return false;
+    const verified = await verifyOwnerDraftSession(isCurrent);
+    if (!isCurrent() || !verified || !ownerTextFormReady("settings") || !ownerProjectDraftMatches(target)
+      || hasUncertainWrite(`/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}`)) return false;
+    receiveOwnerDraftProject(item, latest.items);
+    if (fields.display_name !== undefined) projectSettingsForm.value.display_name = fields.display_name;
+    if (fields.context !== undefined) projectSettingsForm.value.context = fields.context;
+    return true;
+  },
+});
+
+useSessionTextDraft({
+  key: "owner-status-names", path: "/app/admin?section=workspaces",
+  label: { en: "Board column names", zh: "看板列名称" }, target: ownerProjectDraftTarget,
+  capture: () => showProjectSettings.value ? changedTextFields(Object.fromEntries(projectStatuses.value.map(status => [status.key, [statusDrafts.value[status.key] ?? status.display_name, status.display_name] as const]))) : null,
+  canRestore: target => ownerTextFormReady("settings") && ownerProjectDraftMatches(target)
+    && !["backlog", "todo", "in_progress", "done", "canceled"].some(key => hasUncertainWrite(`/api/v1/workspaces/${encodeURIComponent(target.workspace_id!)}/projects/${encodeURIComponent(target.project_id!)}/statuses/${key}`)),
+  uncertain: () => busy.value || writeFence.active || casConflict.value !== null || projectStatuses.value.some(status => hasUncertainWrite(`/api/v1/workspaces/${encodeURIComponent(selectedProject.value?.workspaceId ?? "")}/projects/${encodeURIComponent(selectedProject.value?.id ?? "")}/statuses/${status.key}`)),
+  restore: async (fields, target, isCurrent) => {
+    const item = await readOwnerDraftProject(target, "manage_status_names", isCurrent);
+    if (!isCurrent() || item === null) return false;
+    const latest = await apiRequest<ListResult<ProjectStatusResource>>(`/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}/statuses`, { authorizationCurrent: isCurrent });
+    if (!isCurrent() || latest.items.some(status => status.version !== item.version || hasUncertainWrite(`/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}/statuses/${status.key}`))) return false;
+    const verified = await verifyOwnerDraftSession(isCurrent);
+    if (!isCurrent() || !verified || !ownerTextFormReady("settings") || !ownerProjectDraftMatches(target)
+      || latest.items.some(status => hasUncertainWrite(`/api/v1/workspaces/${encodeURIComponent(item.workspaceId)}/projects/${encodeURIComponent(item.id)}/statuses/${status.key}`))) return false;
+    receiveOwnerDraftProject(item, latest.items);
+    for (const status of latest.items) if (fields[status.key] !== undefined) statusDrafts.value[status.key] = fields[status.key]!;
+    return true;
+  },
+});
+
+useSessionTextDraft({
+  key: "owner-public-summary", path: "/app/admin?section=workspaces",
+  label: { en: "Public Join summary", zh: "公开加入摘要" }, target: ownerProjectDraftTarget,
+  capture: () => showPolicy.value && policy.value ? changedTextFields({ public_summary: [policyForm.value.public_summary, policy.value.public_summary ?? ""] }) : null,
+  canRestore: target => ownerTextFormReady("policy") && ownerProjectDraftMatches(target)
+    && !hasUncertainWrite(`/api/v1/admin/projects/${encodeURIComponent(target.project_id!)}/public-join`),
+  uncertain: () => ownerTextWriteUncertain(`/api/v1/admin/projects/${encodeURIComponent(selectedProject.value?.id ?? "")}/public-join`),
+  restore: async (fields, target, isCurrent) => {
+    const item = await readOwnerDraftProject(target, "update", isCurrent);
+    if (!isCurrent() || item === null) return false;
+    const path = `/api/v1/admin/projects/${encodeURIComponent(item.id)}/public-join`;
+    const current = await apiRequest<PolicyResource>(path, { authorizationCurrent: isCurrent });
+    if (!isCurrent() || current.project.id !== item.id || current.project.workspace_id !== item.workspaceId
+      || !current.allowed_actions.some(action => action === "enable" || action === "update")) return false;
+    const verified = await verifyOwnerDraftSession(isCurrent);
+    if (!isCurrent() || !verified || !ownerTextFormReady("policy") || !ownerProjectDraftMatches(target) || hasUncertainWrite(path)) return false;
+    policyRequestId += 1;
+    selectedProject.value = item;
+    policy.value = current;
+    policyForm.value = { comments: current.resource_limits.comments ?? 500, issues: current.resource_limits.issues ?? 50,
+      principals: current.resource_limits.principals ?? 50, public_summary: fields.public_summary ?? current.public_summary ?? "" };
+    policyRiskConfirmed.value = false;
+    showPolicy.value = true;
+    return true;
+  },
+});
 
 function ui(english: string, chinese: string): string {
   return locale.value === "zh-CN" ? chinese : english;

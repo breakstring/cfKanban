@@ -6,14 +6,15 @@ import ErrorNotice from "../components/ErrorNotice.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import ProjectSettingsHeader from "../components/ProjectSettingsHeader.vue";
-import { apiRequest } from "../lib/api";
+import { apiRequest, hasUncertainWrite } from "../lib/api";
 import { captureCasConflict, markCasReadbackComplete, markCasReadbackFailed, type CasConflictState } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, mergePageById } from "../lib/pagination";
 import { protectNavigationDraft } from "../lib/navigation-draft";
+import { changedTextFields, useSessionTextDraft, verifySessionTextDraftIdentity } from "../lib/session-drafts";
 import { navigate } from "../lib/router";
-import { projectInventoryBoundary } from "../lib/session-boundary";
+import { projectInventoryBoundary, sessionCanWriteProject } from "../lib/session-boundary";
 import type { ContainerResource, LabelResource, ListResult, WebSessionView, WriteResult } from "../types";
 
 const props = defineProps<{ workspaceId: string; projectId: string; session: WebSessionView }>();
@@ -36,6 +37,27 @@ const canWrite = computed(() => scope.value?.role === "writer" || scope.value?.r
   || (props.session.principal.is_owner && props.session.allowed_scope.projects === undefined));
 protectNavigationDraft(() => busy.value || draft.value.name !== (editing.value?.name ?? "") || draft.value.color !== (editing.value?.color ?? ""));
 const path = `/api/v1/workspaces/${props.workspaceId}/projects/${props.projectId}/labels`;
+useSessionTextDraft({
+  key: `label-text:${props.workspaceId}:${props.projectId}`, path: `/app/w/${props.workspaceId}/p/${props.projectId}/labels`,
+  label: { en: "Label text", zh: "标签文字" }, target: () => ({ labelId: editing.value?.id ?? "" }),
+  capture: () => changedTextFields({ name: [draft.value.name, editing.value?.name ?? ""], color: [draft.value.color, editing.value?.color ?? ""] }),
+  canRestore: () => project.value?.deleted_at === null && !loading.value && canWrite.value && !busy.value,
+  restore: async (fields, target, isCurrent) => {
+    const verified = await verifySessionTextDraftIdentity(isCurrent);
+    if (!isCurrent() || !verified || !sessionCanWriteProject(verified, props.workspaceId, props.projectId)) return false;
+    if (target.labelId) {
+      const latest = await apiRequest<LabelResource>(`/api/v1/labels/${encodeURIComponent(target.labelId)}`, { authorizationCurrent: isCurrent });
+      if (!isCurrent() || latest.project.id !== props.projectId || latest.project.workspace_id !== props.workspaceId || latest.deleted_at !== null || !latest.allowed_actions.includes("update")) return false;
+      editLabel(latest);
+    } else {
+      const latest = await apiRequest<ContainerResource>(`/api/v1/workspaces/${props.workspaceId}/projects/${props.projectId}`, { authorizationCurrent: isCurrent });
+      if (!isCurrent() || latest.id !== props.projectId || latest.deleted_at !== null) return false;
+      project.value = latest; editing.value = null; draft.value = { name: "", color: "" };
+    }
+    draft.value = { ...draft.value, ...fields };
+  },
+  uncertain: () => busy.value || hasUncertainWrite(editing.value ? `/api/v1/labels/${editing.value.id}` : path),
+});
 const ui = (en: string, zh: string): string => locale.value === "zh-CN" ? zh : en;
 
 async function load(reset = true): Promise<void> {

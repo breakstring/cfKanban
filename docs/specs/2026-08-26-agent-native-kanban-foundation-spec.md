@@ -1,5 +1,7 @@
 # Agent-native Kanban Foundation SPEC
 
+> 2026-10-01 增量：[Web Session 活动续期](2026-10-01-web-session-renewal-spec.md)（Frozen）覆盖 §5.6 固定不可续期的 Session 期限；两种登录来源遵循活动续期、30 分钟节流和 7 天绝对截止，来源撤销、scope 与其余安全边界不变。
+
 > 2026-10-01 增量：[活动历史倒序](2026-10-01-event-history-order-spec.md)（Frozen）增加显式历史浏览和 schema 16 时间索引，Web 最新在前；既有正序增量 feed 与 write cursor 保持兼容。
 
 > 2026-10-01 增量：[Owner 实例通知](2026-10-01-instance-notifications-spec.md)（Frozen）仅覆盖 Owner 单向实例公告，定义本人接收偏好、逐条确认、Web/Agent 提醒与历史；其他通知、mention、外部投递及实时唤醒仍在范围外。

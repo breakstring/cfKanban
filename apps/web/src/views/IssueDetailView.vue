@@ -16,7 +16,7 @@ import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
-import { ApiProblem, apiRequest } from "../lib/api";
+import { ApiProblem, apiRequest, hasUncertainWrite } from "../lib/api";
 import { forgetIssueAttachmentUploadDraft } from "../lib/attachment-upload-drafts";
 import {
   type CasConflictState,
@@ -31,6 +31,7 @@ import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { labelNameKey, resolveInputLabel } from "../lib/label-input";
 import { protectNavigationDraft } from "../lib/navigation-draft";
+import { changedTextFields, useSessionTextDraft, verifySessionTextDraftIdentity } from "../lib/session-drafts";
 import { priorityOrder, prioritySaveIsUncertain, priorityText } from "../lib/priority";
 import { navigate } from "../lib/router";
 import { canCreateIssueRelation } from "../lib/session-capabilities";
@@ -104,6 +105,46 @@ const canDelete = computed(() => issue.value?.allowed_actions.includes("delete")
 const canRestore = computed(() => issue.value?.allowed_actions.includes("restore") ?? false);
 const relationTargetCanWrite = computed(() => canCreateIssueRelation(issue.value, relationTarget.value));
 protectNavigationDraft(() => !leavingAfterDeletion && (writeBusy.value || (editMode.value && (edit.value.title !== issue.value?.title || edit.value.body !== (issue.value?.body ?? "") || edit.value.priority_key !== issue.value?.priority)) || !!comment.value.trim() || !!completionSummary.value.trim() || !!labelInput.value.trim() || !!relation.value.target_identifier.trim()));
+const draftPath = `/app/issues/${props.identifier}`;
+const draftCanRestore = () => issue.value?.identifier === props.identifier && issue.value.deleted_at === null && canUpdate.value && !loading.value && !writeBusy.value;
+async function readTextDraftIssue(isCurrent: () => boolean): Promise<IssueDetail | null> {
+  const latest = await apiRequest<IssueDetail>(`/api/v1/issues/${props.identifier}`, { authorizationCurrent: isCurrent });
+  if (!isCurrent() || latest.identifier !== props.identifier || latest.deleted_at !== null || !latest.allowed_actions.includes("update")) return null;
+  const verified = await verifySessionTextDraftIdentity(isCurrent);
+  return isCurrent() && verified && draftCanRestore() ? latest : null;
+}
+useSessionTextDraft({
+  key: `issue-edit:${props.identifier}`, path: draftPath, label: { en: `${props.identifier} edit`, zh: `${props.identifier} 编辑` },
+  capture: () => editMode.value && issue.value ? changedTextFields({ title: [edit.value.title, issue.value.title], body: [edit.value.body, issue.value.body ?? ""] }) : null,
+  canRestore: draftCanRestore,
+  restore: async (fields, _target, isCurrent) => {
+    const latest = await readTextDraftIssue(isCurrent);
+    if (!latest || !isCurrent()) return false;
+    const local = editMode.value && issue.value ? changedTextFields({ title: [edit.value.title, issue.value.title], body: [edit.value.body, issue.value.body ?? ""] }) : null;
+    issue.value = latest; editMode.value = true;
+    edit.value = { body: latest.body ?? "", title: latest.title, priority_key: latest.priority, ...local, ...fields };
+  },
+  uncertain: () => writeFence.active || hasUncertainWrite(`/api/v1/issues/${props.identifier}`),
+});
+useSessionTextDraft({
+  key: `issue-comment:${props.identifier}`, path: draftPath, label: { en: `${props.identifier} comment`, zh: `${props.identifier} 评论` },
+  capture: () => comment.value !== "" ? { comment: comment.value } : null,
+  canRestore: draftCanRestore, restore: async (fields, _target, isCurrent) => {
+    const latest = await readTextDraftIssue(isCurrent); if (!latest || !isCurrent()) return false;
+    issue.value = latest; comment.value = fields.comment ?? "";
+  },
+  uncertain: () => writeFence.active || hasUncertainWrite(`/api/v1/issues/${props.identifier}/comments`),
+});
+useSessionTextDraft({
+  key: `issue-completion:${props.identifier}`, path: draftPath, label: { en: `${props.identifier} completion summary`, zh: `${props.identifier} 完成摘要` },
+  capture: () => completionSummary.value !== "" ? { summary: completionSummary.value } : null,
+  canRestore: () => draftCanRestore() && issue.value?.status.key !== "done",
+  restore: async (fields, _target, isCurrent) => {
+    const latest = await readTextDraftIssue(isCurrent); if (!latest || !isCurrent() || latest.status.key === "done") return false;
+    issue.value = latest; completionSummary.value = fields.summary ?? ""; showComplete.value = true;
+  },
+  uncertain: () => writeFence.active || hasUncertainWrite(`/api/v1/issues/${props.identifier}/commands/complete`),
+});
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 
 function statusDisplayName(key: StatusKey): string {

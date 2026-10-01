@@ -41,8 +41,8 @@ export class PendingIntentKeys {
     this.#ttlMs = ttlMs;
   }
 
-  acquire(method: string, path: string, body: unknown, now = Date.now()): AcquiredPendingIntent {
-    const signature = `${method}\n${path}\n${canonicalJson(body)}`;
+  acquire(method: string, path: string, body: unknown, now = Date.now(), scope?: string): AcquiredPendingIntent {
+    const signature = `${method}\n${path}\n${scope === undefined ? "" : `${JSON.stringify(scope)}\n`}${canonicalJson(body)}`;
     const existing = this.#entries.get(signature);
     if (existing !== undefined) {
       if (existing.acquiredAt + this.#ttlMs <= now) throw new PendingIntentExpiredError();

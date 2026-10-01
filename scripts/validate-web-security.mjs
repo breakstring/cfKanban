@@ -69,7 +69,7 @@ function redeemLaunch(secret, operationId, at) {
 }
 
 const sessionId = redeemLaunch(launchSecret, "op-redeem", now + 1);
-assert.equal(get("SELECT expires_at - created_at AS ttl FROM web_sessions WHERE id = ?", [sessionId]).ttl, 28_800_000, "Web Session must be fixed at eight hours");
+assert.equal(get("SELECT expires_at - created_at AS ttl FROM web_sessions WHERE id = ?", [sessionId]).ttl, 28_800_000, "Web Session initially lasts eight hours");
 assert.throws(() => redeemLaunch(launchSecret, "op-replay", now + 2), /single-use/);
 assert.equal(get("SELECT COUNT(*) AS count FROM web_sessions").count, 1, "replay must not create another Session");
 

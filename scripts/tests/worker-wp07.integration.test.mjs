@@ -366,7 +366,8 @@ async function redeemLaunch(code, idempotencyKey) {
   assert.match(cookies.header, /HttpOnly/u);
   assert.match(cookies.header, /Secure/u);
   assert.match(cookies.header, /SameSite=Strict/u);
-  assert.match(cookies.header, /Max-Age=28800/u);
+  const cookieMaxAge = Number(/Max-Age=(\d+)/u.exec(cookies.header)?.[1]);
+  assert.ok(cookieMaxAge > 604790 && cookieMaxAge <= 604800);
   assert.equal(redeemed.body.resource.cookie_available, true);
   return { ...redeemed, cookies };
 }

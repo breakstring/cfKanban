@@ -60,7 +60,7 @@ test("schema 15 强制 Unicode 限长与公告/确认不可变历史，撤回保
   const db = fixture();
   try {
     apply(db); seed(db, "😀".repeat(200), "😀".repeat(4000));
-    for (const field of ["title", "body", "expires_at", "created_at", "created_by_principal_id"]) {
+    for (const field of ["sequence", "title", "body", "expires_at", "created_at", "created_by_principal_id"]) {
       assert.throws(() => db.prepare(`UPDATE instance_notifications SET ${field}=? WHERE id='notice'`).run(field.endsWith("_at") ? 10 : "changed"));
     }
     assert.throws(() => db.exec("DELETE FROM instance_notifications"), /retained/);
@@ -74,6 +74,23 @@ test("schema 15 强制 Unicode 限长与公告/确认不可变历史，撤回保
     for (const [title, body] of [["😀".repeat(201), "x"], ["x", "😀".repeat(4001)], ["x\0", "x"], ["x", "x\0"], ["", "x"]]) {
       assert.throws(() => db.prepare("INSERT INTO instance_notifications(id,title,body,created_at,created_by_principal_id,created_operation_id,last_operation_id) VALUES('bad',?,?,3,'owner','op','op')").run(title, body), /constraint/i);
     }
+  } finally { db.close(); }
+});
+
+test("提交序列不可修改或复用；未读投影仅按 Principal 存至多 50 个 ID", () => {
+  const db = fixture();
+  try {
+    apply(db); seed(db);
+    const sequence = db.prepare("SELECT sequence FROM instance_notifications WHERE id='notice'").get().sequence;
+    db.exec("BEGIN; INSERT INTO instance_notifications(id,title,body,created_at,created_by_principal_id,created_operation_id,last_operation_id) VALUES('rolled-back','x','x',3,'owner','op','op'); ROLLBACK;");
+    db.exec("INSERT INTO instance_notifications(id,title,body,created_at,created_by_principal_id,created_operation_id,last_operation_id) VALUES('later','x','x',2,'owner','op2','op2');");
+    assert.ok(db.prepare("SELECT sequence FROM instance_notifications WHERE id='later'").get().sequence > sequence);
+    assert.throws(() => db.exec("UPDATE instance_notifications SET sequence=100 WHERE id='notice'"), /immutable/);
+    db.exec(`INSERT INTO notification_pending_cache VALUES('member',1,2,${sequence},'["notice"]',1)`);
+    assert.throws(() => db.prepare("UPDATE notification_pending_cache SET pending_ids_json=?").run(JSON.stringify(Array.from({ length: 51 }, (_, index) => `${index}`))), /constraint/i);
+    assert.throws(() => db.exec("UPDATE notification_pending_cache SET pending_ids_json='broken'"));
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM notification_preferences").get().count, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM notification_acknowledgements").get().count, 0);
   } finally { db.close(); }
 });
 

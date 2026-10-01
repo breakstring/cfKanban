@@ -140,10 +140,10 @@ test('settings 的 D1 id 和 database_id 两种返回格式都能完成核验', 
 });
 
 
-for (const schemaVersion of [9, 10, 11, 12, 13, 14, 15, 16]) test(`schema ${schemaVersion} 能只读发现原 Owner；schema 17 保留为不兼容未确认项`, async () => {
+for (const schemaVersion of [9, 10, 11, 12, 13, 14, 15, 16, 17]) test(`schema ${schemaVersion} 能只读发现原 Owner；schema 18 保留为不兼容未确认项`, async () => {
   const f = fixture(['valid', 'valid']);
   f.entries[0].schemaVersion = schemaVersion;
-  f.entries[1].schemaVersion = 17;
+  f.entries[1].schemaVersion = 18;
   const result = await discoverOwnerRecoveryCandidates(f.input);
   assert.equal(result.status, 'incomplete');
   assert.equal(result.candidates.length, 1);

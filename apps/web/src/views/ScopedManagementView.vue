@@ -11,7 +11,7 @@ import PageState from "../components/PageState.vue";
 import ProjectSettingsHeader from "../components/ProjectSettingsHeader.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
 import ScopedInvitations from "../components/ScopedInvitations.vue";
-import { ApiProblem, apiRequest } from "../lib/api";
+import { ApiProblem, apiRequest, hasUncertainWrite } from "../lib/api";
 import { captureCasConflict, markCasReadbackComplete, markCasReadbackFailed, type CasConflictState } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
@@ -20,6 +20,7 @@ import { navigate } from "../lib/router";
 import { protectNavigationDraft } from "../lib/navigation-draft";
 import { projectReturnTarget } from "../lib/project-navigation";
 import { hasManagementActions, managementPath, remainingAccessSources, sourceLabel } from "../lib/scoped-management";
+import { changedTextFields, useSessionTextDraft } from "../lib/session-drafts";
 import type { AccessSource, AdministratorCandidate, AdministratorResource, ContainerResource, GrantResource, ListResult, MemberCandidate, ProjectMember, ProjectStatusResource, WebSessionView } from "../types";
 
 const props = defineProps<{ workspaceId: string; projectId?: string | undefined; session: WebSessionView }>();
@@ -40,6 +41,7 @@ const busy = ref(false);
 const archived = ref(false);
 const draft = ref({ display_name: "", context: "" });
 const projectName = ref("");
+let projectNameBaseline = "";
 const section = ref<"projects" | "members" | "settings">("projects");
 const returnPath = new URLSearchParams(window.location.search).get("from");
 const returnProject = computed(() => projectReturnTarget(returnPath, props.session.allowed_scope.projects ?? []));
@@ -59,6 +61,100 @@ const endpoints: Record<string, string> = {
   administrators: `${resourcePath}/administrators`, members: `${resourcePath}/members`, grants: grantsPath,
   projects: `${workspacePath}/projects`,
 };
+const projectCreatePath = `${workspacePath}/projects`;
+
+const textDraftTarget = () => ({ workspace_id: props.workspaceId, project_id: props.projectId ?? "" });
+const textDraftReady = (target: Readonly<Record<string, string>>, action: string) => mounted && !loading.value
+  && !busy.value && conflict.value === null && confirmation.value === null && active.value && can(action)
+  && target.workspace_id === props.workspaceId && target.project_id === (props.projectId ?? "")
+  && resource.value?.id === (props.projectId ?? props.workspaceId);
+const textWriteUncertain = (path: string) => busy.value || conflict.value !== null || hasUncertainWrite(path);
+
+async function readDraftResource(target: Readonly<Record<string, string>>, action: string, isCurrent: () => boolean): Promise<ContainerResource | null> {
+  const readGeneration = generation;
+  const current = await apiRequest<ContainerResource>(resourcePath, { authorizationCurrent: isCurrent });
+  if (!isCurrent() || readGeneration !== generation || !textDraftReady(target, action)
+    || current.id !== (props.projectId ?? props.workspaceId) || current.deleted_at !== null
+    || !current.allowed_actions?.includes(action)) return null;
+  return current;
+}
+async function verifyDraftPrincipal(target: Readonly<Record<string, string>>, action: string, readGeneration: number, isCurrent: () => boolean): Promise<boolean> {
+  const current = await apiRequest<WebSessionView>("/api/v1/web-session", { authorizationCurrent: isCurrent });
+  if (!isCurrent() || readGeneration !== generation || !textDraftReady(target, action)) return false;
+  return current.principal.id === props.session.principal.id;
+}
+
+useSessionTextDraft({
+  key: "scoped-container-settings", path: managementPath(props.workspaceId, props.projectId),
+  label: { en: "Container settings", zh: "容器设置" }, target: textDraftTarget,
+  capture: () => resource.value === null ? null : changedTextFields({
+    display_name: [draft.value.display_name, resource.value.display_name],
+    ...(props.projectId ? { context: [draft.value.context, resource.value.context ?? ""] as const } : {}),
+  }),
+  canRestore: target => textDraftReady(target, "update") && !hasUncertainWrite(resourcePath),
+  uncertain: () => textWriteUncertain(resourcePath),
+  restore: async (fields, target, isCurrent) => {
+    const readGeneration = generation;
+    const current = await readDraftResource(target, "update", isCurrent);
+    if (!isCurrent() || current === null || hasUncertainWrite(resourcePath)) return false;
+    const verified = await verifyDraftPrincipal(target, "update", readGeneration, isCurrent);
+    if (!isCurrent() || !verified || hasUncertainWrite(resourcePath)) return false;
+    const localFields = resource.value ? changedTextFields({ display_name: [draft.value.display_name, resource.value.display_name], context: [draft.value.context, resource.value.context ?? ""] }) : null;
+    resource.value = current;
+    draft.value = { display_name: fields.display_name ?? localFields?.display_name ?? current.display_name,
+      context: props.projectId ? fields.context ?? localFields?.context ?? current.context ?? "" : "" };
+    section.value = "settings";
+    return true;
+  },
+});
+
+useSessionTextDraft({
+  key: "scoped-project-create", path: managementPath(props.workspaceId),
+  label: { en: "New project name", zh: "新项目名称" }, target: textDraftTarget,
+  capture: () => props.projectId ? null : changedTextFields({ display_name: [projectName.value, projectNameBaseline] }),
+  canRestore: target => !props.projectId && textDraftReady(target, "create_project") && !hasUncertainWrite(projectCreatePath),
+  uncertain: () => textWriteUncertain(projectCreatePath),
+  restore: async (fields, target, isCurrent) => {
+    const readGeneration = generation;
+    const current = await readDraftResource(target, "create_project", isCurrent);
+    if (!isCurrent() || current === null || props.projectId || hasUncertainWrite(projectCreatePath)) return false;
+    const verified = await verifyDraftPrincipal(target, "create_project", readGeneration, isCurrent);
+    if (!isCurrent() || !verified || hasUncertainWrite(projectCreatePath)) return false;
+    resource.value = current;
+    if (fields.display_name !== undefined) projectName.value = fields.display_name;
+    section.value = "projects";
+    return true;
+  },
+});
+
+useSessionTextDraft({
+  key: "scoped-status-names", path: managementPath(props.workspaceId, props.projectId),
+  label: { en: "Board column names", zh: "看板列名称" }, target: textDraftTarget,
+  capture: () => props.projectId ? changedTextFields(Object.fromEntries(statuses.value.map(status => [
+    status.key, [statusDrafts.value[status.key] ?? status.display_name, status.display_name] as const,
+  ]))) : null,
+  canRestore: target => !!props.projectId && textDraftReady(target, "manage_status_names")
+    && !statuses.value.some(status => hasUncertainWrite(`${resourcePath}/statuses/${status.key}`)),
+  uncertain: () => busy.value || conflict.value !== null
+    || statuses.value.some(status => hasUncertainWrite(`${resourcePath}/statuses/${status.key}`)),
+  restore: async (fields, target, isCurrent) => {
+    const readGeneration = generation;
+    const current = await readDraftResource(target, "manage_status_names", isCurrent);
+    if (!isCurrent() || current === null || !props.projectId) return false;
+    const latest = await apiRequest<ListResult<ProjectStatusResource>>(`${resourcePath}/statuses`, { authorizationCurrent: isCurrent });
+    if (!isCurrent() || readGeneration !== generation || !textDraftReady(target, "manage_status_names")
+      || latest.items.some(status => status.version !== current.version || hasUncertainWrite(`${resourcePath}/statuses/${status.key}`))) return false;
+    const verified = await verifyDraftPrincipal(target, "manage_status_names", readGeneration, isCurrent);
+    if (!isCurrent() || !verified || latest.items.some(status => hasUncertainWrite(`${resourcePath}/statuses/${status.key}`))) return false;
+    const localStatuses = changedTextFields(Object.fromEntries(statuses.value.map(status => [
+      status.key, [statusDrafts.value[status.key] ?? status.display_name, status.display_name] as const,
+    ])));
+    resource.value = current;
+    statuses.value = latest.items;
+    statusDrafts.value = Object.fromEntries(latest.items.map(status => [status.key, fields[status.key] ?? localStatuses?.[status.key] ?? status.display_name]));
+    return true;
+  },
+});
 
 function clearFacts(): void {
   resource.value = null;
@@ -134,10 +230,12 @@ async function more(kind: string): Promise<void> {
 
 async function write(path: string, method: string, body?: unknown, nextArchived?: boolean): Promise<void> {
   if (busy.value || loading.value) return;
+  const submittedProjectName = path === endpoints.projects && method === "POST" ? projectName.value : null;
   busy.value = true; clearError();
   try {
     await apiRequest(path, { method, ...(body === undefined ? {} : { body }) });
     if (!mounted) return;
+    if (submittedProjectName !== null) projectNameBaseline = submittedProjectName;
     confirmation.value = null;
     conflict.value = null;
     if (nextArchived !== undefined && props.projectId) {

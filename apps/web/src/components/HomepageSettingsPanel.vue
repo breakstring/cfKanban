@@ -3,10 +3,11 @@ import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 
 import ErrorNotice from "./ErrorNotice.vue";
-import { ApiProblem, apiRequest, clearPendingRequestIntents } from "../lib/api";
+import { ApiProblem, apiRequest, clearPendingRequestIntents, hasUncertainWrite } from "../lib/api";
 import { HomepageSettingsDraft, isHomepageSettings, isHomepageSettingsWriteResult, noticeLength } from "../lib/homepage-notice";
 import { locale } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
+import { changedTextFields, useSessionTextDraft, verifySessionTextDraftIdentity } from "../lib/session-drafts";
 import type { HomepageSettings, WriteResult } from "../types";
 
 const draft = reactive(new HomepageSettingsDraft());
@@ -20,6 +21,37 @@ const { error, clearError, setError } = useLocalizedError();
 const controller = new AbortController();
 let disposed = false;
 function ui(en: string, zh: string): string { return locale.value === "zh-CN" ? zh : en; }
+
+const settingsPath = "/api/v1/admin/homepage-settings";
+const draftRestoreReady = () => !disposed && !busy.value && draft.current !== null
+  && draft.pending === null && !draft.requiresReadback && !hasUncertainWrite(settingsPath);
+useSessionTextDraft({
+  key: "homepage-notice", path: "/app/admin",
+  label: { en: "Homepage notice", zh: "首页实例说明" },
+  capture: () => draft.current === null ? null : changedTextFields({
+    english: [draft.english, draft.current.notice_en ?? ""],
+    chinese: [draft.chinese, draft.current.notice_zh_cn ?? ""],
+  }),
+  canRestore: draftRestoreReady,
+  uncertain: () => busy.value || draft.pending !== null || draft.requiresReadback || hasUncertainWrite(settingsPath),
+  restore: async (fields, _target, isCurrent) => {
+    const current = await apiRequest<HomepageSettings>(settingsPath, {
+      signal: controller.signal, validateResponse: isHomepageSettings, authorizationCurrent: isCurrent,
+    });
+    if (!isCurrent() || !draftRestoreReady()) return false;
+    const verified = await verifySessionTextDraftIdentity(isCurrent);
+    if (!isCurrent() || !verified?.principal.is_owner || verified.allowed_scope.kind !== "instance" || !draftRestoreReady()) return false;
+    const localFields = draft.current ? changedTextFields({ english: [draft.english, draft.current.notice_en ?? ""], chinese: [draft.chinese, draft.current.notice_zh_cn ?? ""] }) : null;
+    draft.receive(current, false);
+    if (localFields?.english !== undefined) draft.english = localFields.english;
+    if (localFields?.chinese !== undefined) draft.chinese = localFields.chinese;
+    if (fields.english !== undefined) draft.english = fields.english;
+    if (fields.chinese !== undefined) draft.chinese = fields.chinese;
+    saved.value = false;
+    reviewing.value = true;
+    return true;
+  },
+});
 
 async function load(): Promise<void> {
   if (busy.value) return;
