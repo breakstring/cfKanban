@@ -15,9 +15,13 @@ You need read access to the target project. Expect issues and details from the c
 | Find, create, edit titles/descriptions, or set priority | [Find, create, and edit issues](./issues.md) |
 | Claim and assign work, change status, complete, reopen, or report blockers | [Workflow and assignees](./workflow.md) |
 | Comments, attachments, labels, relations, handoffs, and restoration | [Collaboration and attachments](./collaboration.md) |
-| Change your name, manage Passkeys, or associate a working directory | [Profile and directory association](./profile.md) |
+| Change your name or theme, manage Passkeys, or associate a working directory | [Profile and directory association](./profile.md) |
 
-**In the Web UI:** Use a project board to browse one project's work. **Work list** in the header reads multiple projects you explicitly select. Open an issue card for editing, comments, and other actions. Select the workspace/project name to switch projects, or your own name to open your profile.
+**In the Web UI:** Use a project board to browse one project's work. Open the account menu at the top right → **Work list** to read multiple projects you explicitly select. Open an issue card for editing, comments, and other actions. Select the workspace/project name to switch projects.
+
+The account menu contains your name, role, **Work list**, **Management center** when available, **Personal settings**, and **Sign out**. The language switch stays outside the menu. The footer shows your sign-in expiry and, when you are using another address, the site’s recommended address.
+
+Use the board’s **Project settings** button for the project’s management, labels, activity, and deleted issues; available tabs follow your current access.
 
 ## Daily work boundaries
 

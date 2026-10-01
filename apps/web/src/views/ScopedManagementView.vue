@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import UTextarea from "@nuxt/ui/components/Textarea.vue";
+import UInput from "@nuxt/ui/components/Input.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import PersonSelect from "../components/PersonSelect.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
+import ProjectSettingsHeader from "../components/ProjectSettingsHeader.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
 import ScopedInvitations from "../components/ScopedInvitations.vue";
 import { ApiProblem, apiRequest } from "../lib/api";
@@ -236,14 +240,16 @@ async function returnToProject(): Promise<void> {
 
 <template>
   <main class="page-shell scoped-management">
-    <header class="page-title-block">
-      <button v-if="returnProject" class="text-button" type="button" @click="returnToProject">← {{ ui('Back to', '返回') }} {{ returnProject.workspace_display_name }} / {{ returnProject.project_display_name }}</button>
-      <p class="eyebrow">{{ props.projectId ? ui('Project management', '项目管理') : ui('Workspace management', '工作区管理') }}</p>
+    <ProjectSettingsHeader v-if="projectId" :workspace-id="workspaceId" :project-id="projectId" section="management" :project="resource" :session="session" @navigate="navigate">
+      <template #actions><UButton color="neutral" variant="ghost" type="button" :disabled="busy || loading" @click="refresh">{{ t('action.refresh') }}</UButton></template>
+    </ProjectSettingsHeader>
+    <header v-else class="page-title-block">
+      <UButton color="neutral" variant="ghost" v-if="returnProject" class="text-button" type="button" @click="returnToProject">← {{ ui('Back to', '返回') }} {{ returnProject.workspace_display_name }} / {{ returnProject.project_display_name }}</UButton>
+      <p class="eyebrow">{{ ui('Workspace management', '工作区管理') }}</p>
       <h1>{{ resource?.display_name ?? ui('Management', '管理') }}</h1>
       <div class="form-actions">
-        <button class="text-button" type="button" @click="navigate('/app')">{{ t('project.choose') }}</button>
-        <button v-if="props.projectId && active" class="text-button" type="button" @click="navigate(`/app/w/${encodeURIComponent(workspaceId)}/p/${encodeURIComponent(projectId!)}`)">{{ ui('Open board', '打开看板') }}</button>
-        <button class="text-button" type="button" :disabled="busy || loading" @click="refresh">{{ t('action.refresh') }}</button>
+        <UButton color="neutral" variant="ghost" class="text-button" type="button" @click="navigate('/app')">{{ t('project.choose') }}</UButton>
+        <UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="busy || loading" @click="refresh">{{ t('action.refresh') }}</UButton>
       </div>
     </header>
     <ErrorNotice v-if="error" :error="error" />
@@ -252,35 +258,35 @@ async function returnToProject(): Promise<void> {
     <p v-if="!loading && resource && !hasManagementActions(resource)">{{ ui('Management is unavailable in this session.', '当前会话没有此范围的管理权限。') }}</p>
     <template v-if="!loading && resource && hasManagementActions(resource)">
       <nav v-if="!projectId" class="management-tabs" :aria-label="ui('Workspace management sections', '工作区管理分区')">
-        <button v-for="key in (['projects', 'members', 'settings'] as const)" :key="key" type="button" class="text-button" :aria-current="section === key ? 'page' : undefined" @click="section = key">{{ key === 'projects' ? ui('Projects', '项目') : key === 'members' ? ui('Members and permissions', '成员与权限') : ui('Workspace settings', '工作区设置') }}</button>
+        <UButton color="neutral" variant="ghost" v-for="key in (['projects', 'members', 'settings'] as const)" :key="key" type="button" class="text-button" :aria-current="section === key ? 'page' : undefined" @click="section = key">{{ key === 'projects' ? ui('Projects', '项目') : key === 'members' ? ui('Members and permissions', '成员与权限') : ui('Workspace settings', '工作区设置') }}</UButton>
       </nav>
       <form v-if="active && can('update')" v-show="projectId || section === 'settings'" class="form-stack management-section" @submit.prevent="saveSettings">
         <h2>{{ ui('Settings', '设置') }}</h2>
-        <label>{{ ui('Name', '名称') }}<input v-model="draft.display_name" required maxlength="128" /></label>
-        <label v-if="projectId">{{ ui('Project context', '项目说明') }}<textarea v-model="draft.context" rows="4" /></label>
-        <div class="form-actions"><button class="primary-button" :disabled="busy" type="submit">{{ t('action.save') }}</button></div>
+        <label>{{ ui('Name', '名称') }}<UInput class="w-full" v-model="draft.display_name" required maxlength="128" /></label>
+        <label v-if="projectId">{{ ui('Project context', '项目说明') }}<UTextarea class="w-full" v-model="draft.context" :rows="4" /></label>
+        <div class="form-actions"><UButton color="primary" variant="solid" class="primary-button" :disabled="busy" type="submit">{{ t('action.save') }}</UButton></div>
       </form>
       <section v-if="statuses.length && can('manage_status_names')" class="management-section">
         <h2>{{ ui('Status names', '状态显示名') }}</h2>
         <form v-for="status in statuses" :key="status.key" class="management-row" @submit.prevent="write(`${resourcePath}/statuses/${status.key}`, 'PATCH', { display_name: statusDrafts[status.key], expected_version: status.version })">
-          <label>{{ status.key }}<input v-model="statusDrafts[status.key]" required maxlength="128" /></label>
-          <button class="secondary-button" type="submit" :disabled="busy">{{ t('action.save') }}</button>
+          <label>{{ status.key }}<UInput class="w-full" :model-value="statusDrafts[status.key] ?? ''" @update:model-value="statusDrafts[status.key] = String($event)" required maxlength="128" /></label>
+          <UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="busy">{{ t('action.save') }}</UButton>
         </form>
       </section>
       <section v-if="!projectId && can('create_project')" v-show="section === 'projects'" class="management-section">
         <h2>{{ ui('Projects', '项目') }}</h2>
         <form class="management-row" @submit.prevent="write(`${workspacePath}/projects`, 'POST', { display_name: projectName.trim() })">
-          <label>{{ ui('New project name', '新项目名称') }}<input v-model="projectName" required maxlength="128" /></label>
-          <button class="secondary-button" type="submit" :disabled="busy">{{ ui('Create project', '创建项目') }}</button>
+          <label>{{ ui('New project name', '新项目名称') }}<UInput class="w-full" v-model="projectName" required maxlength="128" /></label>
+          <UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="busy">{{ ui('Create project', '创建项目') }}</UButton>
         </form>
-        <button class="text-button" :disabled="busy" type="button" @click="toggleArchive">{{ archived ? ui('Show active projects', '显示有效项目') : ui('Show archived projects', '显示归档项目') }}</button>
+        <UButton color="neutral" variant="ghost" class="text-button" :disabled="busy" type="button" @click="toggleArchive">{{ archived ? ui('Show active projects', '显示有效项目') : ui('Show archived projects', '显示归档项目') }}</UButton>
         <div v-for="project in projects" :key="project.id" class="management-row management-project-row">
           <strong>{{ project.display_name }}</strong>
-          <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, project.id)}${project.deleted_at ? '&archived=1' : ''}${returnProject && returnPath ? `&from=${encodeURIComponent(returnPath)}` : ''}`)">{{ ui('Manage', '管理') }}</button>
-          <button v-if="project.allowed_actions?.includes('delete')" class="text-button" type="button" :disabled="busy" @click="confirmArchive(project, false)">{{ ui('Archive', '归档') }}</button>
-          <button v-if="project.allowed_actions?.includes('restore')" class="secondary-button" type="button" :disabled="busy" @click="confirmArchive(project, true)">{{ t('action.restore') }}</button>
+          <UButton color="neutral" variant="ghost" v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, project.id)}${project.deleted_at ? '&archived=1' : ''}${returnProject && returnPath ? `&from=${encodeURIComponent(returnPath)}` : ''}`)">{{ ui('Manage', '管理') }}</UButton>
+          <UButton color="neutral" variant="ghost" v-if="project.allowed_actions?.includes('delete')" class="text-button" type="button" :disabled="busy" @click="confirmArchive(project, false)">{{ ui('Archive', '归档') }}</UButton>
+          <UButton color="neutral" variant="outline" v-if="project.allowed_actions?.includes('restore')" class="secondary-button" type="button" :disabled="busy" @click="confirmArchive(project, true)">{{ t('action.restore') }}</UButton>
         </div>
-        <button v-if="cursors.projects" class="secondary-button" type="button" :disabled="busy" @click="more('projects')">{{ ui('Load more', '加载更多') }}</button>
+        <UButton color="neutral" variant="outline" v-if="cursors.projects" class="secondary-button" type="button" :disabled="busy" @click="more('projects')">{{ ui('Load more', '加载更多') }}</UButton>
       </section>
       <section v-if="active" v-show="projectId || section === 'members'" class="management-section">
         <h2>{{ ui('Administrators', '管理员') }}</h2>
@@ -290,15 +296,15 @@ async function returnToProject(): Promise<void> {
             :placeholder="ui('Choose an administrator', '请选择要添加的管理员')"
             :empty-text="ui('No people available to add as administrators.', '当前没有可添加的管理员。')"
             :hint="ui('Search within your visible scope. The Owner and people with administrator access are excluded.', '仅搜索当前可见范围内的人员，已排除实例所有者和已有管理权限的人员。')" v-slot="{ ready }">
-            <button class="secondary-button" type="submit" :disabled="busy || !ready">{{ ui('Grant administrator access', '授予管理员权限') }}</button>
+            <UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="busy || !ready">{{ ui('Grant administrator access', '授予管理员权限') }}</UButton>
           </PersonSelect>
         </form>
         <div v-for="administrator in administrators" :key="administrator.id" class="management-row">
           <div><strong>{{ administrator.principal.display_name }}</strong><p><code>{{ administrator.principal_id }}</code> · {{ administrator.revoked_at ? ui('Revoked', '已撤销') : ui('Active', '有效') }}</p></div>
-          <button v-if="can('manage_administrators') && administrator.allowed_actions.includes('revoke') && !administrator.revoked_at" class="text-button" type="button" :disabled="busy" @click="revokeAdministrator(administrator)">{{ ui('Revoke', '撤销') }}</button>
-          <button v-if="can('manage_administrators') && administrator.allowed_actions.includes('regrant') && administrator.revoked_at" class="text-button" type="button" :disabled="busy" @click="grantAdministrator(administrator)">{{ ui('Grant again', '重新授予') }}</button>
+          <UButton color="neutral" variant="ghost" v-if="can('manage_administrators') && administrator.allowed_actions.includes('revoke') && !administrator.revoked_at" class="text-button" type="button" :disabled="busy" @click="revokeAdministrator(administrator)">{{ ui('Revoke', '撤销') }}</UButton>
+          <UButton color="neutral" variant="ghost" v-if="can('manage_administrators') && administrator.allowed_actions.includes('regrant') && administrator.revoked_at" class="text-button" type="button" :disabled="busy" @click="grantAdministrator(administrator)">{{ ui('Grant again', '重新授予') }}</UButton>
         </div>
-        <button v-if="cursors.administrators" class="secondary-button" type="button" :disabled="busy" @click="more('administrators')">{{ ui('Load more', '加载更多') }}</button>
+        <UButton color="neutral" variant="outline" v-if="cursors.administrators" class="secondary-button" type="button" :disabled="busy" @click="more('administrators')">{{ ui('Load more', '加载更多') }}</UButton>
       </section>
       <section v-if="projectId && active && can('manage_members')" class="management-section">
         <h2>{{ ui('Effective members and permission sources', '有效成员与权限来源') }}</h2>
@@ -306,7 +312,7 @@ async function returnToProject(): Promise<void> {
         <div v-for="member in members" :key="member.principal_id" class="management-row">
           <div><strong>{{ member.display_name }} · {{ member.effective_role }}</strong><p><code>{{ member.principal_id }}</code></p><p>{{ sourcesText(member.sources) }}</p></div>
         </div>
-        <button v-if="cursors.members" class="secondary-button" type="button" :disabled="busy" @click="more('members')">{{ ui('Load more members', '加载更多成员') }}</button>
+        <UButton color="neutral" variant="outline" v-if="cursors.members" class="secondary-button" type="button" :disabled="busy" @click="more('members')">{{ ui('Load more members', '加载更多成员') }}</UButton>
         <h3>{{ ui('Direct memberships', '直接成员授权') }}</h3>
         <form class="management-person-form" @submit.prevent="grantMember">
           <PersonSelect v-model="memberCandidate" :endpoint="`${resourcePath}/member-candidates`" :disabled="busy"
@@ -314,28 +320,28 @@ async function returnToProject(): Promise<void> {
             :empty-text="ui('No people available for direct access. Use an invitation below to add new members.', '当前没有可直接授权的人员。添加新成员，请使用下方的项目邀请。')"
             :hint="ui('Search within your visible scope. Existing direct members can be managed below; new people can join by invitation.', '仅搜索当前可见范围内的人员。已有直接成员在下方管理，新成员通过邀请加入。')" v-slot="{ ready }">
             <label>{{ ui('Role', '角色') }}<select v-model="memberRole" :aria-label="ui('Role', '角色')" :disabled="busy"><option value="reader">{{ ui('Reader', '只读者') }}</option><option value="writer">{{ ui('Writer', '协作者') }}</option></select></label>
-            <button class="secondary-button" type="submit" :disabled="busy || !ready">{{ ui('Grant access', '授予访问') }}</button>
+            <UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="busy || !ready">{{ ui('Grant access', '授予访问') }}</UButton>
           </PersonSelect>
         </form>
         <div v-for="grant in grants" :key="grant.id" class="management-row">
           <div><strong>{{ grant.principal.display_name }}</strong><p>{{ grant.role }} · {{ grant.revoked_at ? ui('Revoked', '已撤销') : ui('Active', '有效') }}</p></div>
-          <button v-if="grant.allowed_actions.includes('update')" class="text-button" type="button" :disabled="busy" @click="editGrant(grant, grant.role === 'reader' ? 'writer' : 'reader')">{{ grant.role === 'reader' ? ui('Change to writer', '改为协作者') : ui('Change to reader', '改为只读者') }}</button>
-          <button v-if="grant.allowed_actions.includes('revoke')" class="text-button" type="button" :disabled="busy" @click="revokeGrant(grant)">{{ ui('Remove direct membership', '移除直接授权') }}</button>
-          <button v-if="grant.revoked_at && grant.allowed_actions.includes('regrant')" class="text-button" type="button" :disabled="busy" @click="editGrant(grant, grant.role)">{{ ui('Grant again', '重新授予') }}</button>
+          <UButton color="neutral" variant="ghost" v-if="grant.allowed_actions.includes('update')" class="text-button" type="button" :disabled="busy" @click="editGrant(grant, grant.role === 'reader' ? 'writer' : 'reader')">{{ grant.role === 'reader' ? ui('Change to writer', '改为协作者') : ui('Change to reader', '改为只读者') }}</UButton>
+          <UButton color="neutral" variant="ghost" v-if="grant.allowed_actions.includes('revoke')" class="text-button" type="button" :disabled="busy" @click="revokeGrant(grant)">{{ ui('Remove direct membership', '移除直接授权') }}</UButton>
+          <UButton color="neutral" variant="ghost" v-if="grant.revoked_at && grant.allowed_actions.includes('regrant')" class="text-button" type="button" :disabled="busy" @click="editGrant(grant, grant.role)">{{ ui('Grant again', '重新授予') }}</UButton>
         </div>
-        <button v-if="cursors.grants" class="secondary-button" type="button" :disabled="busy" @click="more('grants')">{{ ui('Load more grants', '加载更多授权') }}</button>
+        <UButton color="neutral" variant="outline" v-if="cursors.grants" class="secondary-button" type="button" :disabled="busy" @click="more('grants')">{{ ui('Load more grants', '加载更多授权') }}</UButton>
         <ScopedInvitations :project-id="projectId" :session="session" />
       </section>
       <section v-if="projectId && (can('delete') || can('restore'))" class="management-section">
         <h2>{{ ui('Project availability', '项目可用性') }}</h2>
-        <button v-if="can('delete')" class="text-button" type="button" :disabled="busy" @click="confirmArchive(resource, false)">{{ ui('Archive project', '归档项目') }}</button>
-        <button v-if="can('restore')" class="secondary-button" type="button" :disabled="busy" @click="confirmArchive(resource, true)">{{ ui('Restore project', '恢复项目') }}</button>
+        <UButton color="neutral" variant="ghost" v-if="can('delete')" class="text-button" type="button" :disabled="busy" @click="confirmArchive(resource, false)">{{ ui('Archive project', '归档项目') }}</UButton>
+        <UButton color="neutral" variant="outline" v-if="can('restore')" class="secondary-button" type="button" :disabled="busy" @click="confirmArchive(resource, true)">{{ ui('Restore project', '恢复项目') }}</UButton>
       </section>
     </template>
     <ModalDialog v-if="confirmation" :busy="busy" :title="confirmation.title" @close="confirmation = null">
       <p>{{ confirmation.message }}</p>
       <PublicJoinRestorePreview v-if="confirmation.restore?.resumed_public_projects" :projects="confirmation.restore.resumed_public_projects.projects" :language="locale" />
-      <div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="confirmation = null">{{ t('action.cancel') }}</button><button class="primary-button" type="button" :disabled="busy" @click="confirmation.run()">{{ ui('Confirm', '确认') }}</button></div>
+      <div class="form-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="confirmation = null">{{ t('action.cancel') }}</UButton><UButton color="primary" variant="solid" class="primary-button" type="button" :disabled="busy" @click="confirmation.run()">{{ ui('Confirm', '确认') }}</UButton></div>
     </ModalDialog>
   </main>
 </template>

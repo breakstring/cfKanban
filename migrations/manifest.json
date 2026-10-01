@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 13,
+  "schema_version": 14,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -340,6 +340,23 @@
       },
       "expected_data": {
         "instance_meta_schema_version_at_least": 13,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 14,
+      "name": "0014_principal_theme.sql",
+      "sha256": "c073d25127e20e244c9fa51fec1a8e417a468d11e45276756a504e60ae8fd8b2",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "columns": [
+          "principals.theme"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 14,
         "allow_uninitialized": true
       }
     }

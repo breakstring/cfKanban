@@ -1,3 +1,4 @@
+import { nuxtUiTestPlugin } from "./nuxt-ui-test-plugin.mjs";
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -16,7 +17,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
   stdin: { contents: `export { default as Component } from './apps/web/src/components/UsagePanel.vue'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
-  plugins: [{ name: 'vue-test', setup(builder) {
+  plugins: [nuxtUiTestPlugin(), { name: 'vue-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
       const { descriptor } = parse(await readFile(path, 'utf8'), { filename: path });
       const compiled = compileScript(descriptor, { id: 'attachment-test', inlineTemplate: true });

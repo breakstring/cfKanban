@@ -865,43 +865,27 @@ test("the self-hosted brand mark is wired to the favicon and both Web shells", a
   assert.doesNotMatch(indexHtml, /cloudflareinsights|https?:\/\/[^\s"']+\.(?:png|svg)/iu);
 });
 
-test("the Web interaction palette uses accessible orange without legacy blue theme literals", async () => {
-  const [stylesheet, issueDetail, design, webSpec] = await Promise.all([
-    readFile(new URL("../../apps/web/src/style.css", import.meta.url), "utf8"),
-    readFile(new URL("../../apps/web/src/views/IssueDetailView.vue", import.meta.url), "utf8"),
-    readFile(new URL("../../DESIGN.md", import.meta.url), "utf8"),
-    readFile(new URL("../../docs/specs/2026-08-29-web-ui-spec.md", import.meta.url), "utf8"),
-  ]);
-  assert.match(stylesheet, /--color-primary:\s*#b84708;/iu);
-  assert.match(stylesheet, /--color-primary-hover:\s*#9d3905;/iu);
-  assert.match(stylesheet, /--color-primary-pressed:\s*#7d2c02;/iu);
-  assert.match(stylesheet, /--color-focus:\s*#b84708;/iu);
-  const labelManagement = await readFile(new URL("../../apps/web/src/views/ProjectLabelsView.vue", import.meta.url), "utf8");
-  assert.match(labelManagement, /placeholder="#B84708"/u);
-
-  const relativeLuminance = (hex) => {
-    const channels = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
-      .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
-    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+test("authenticated themes retain accessible contrast and differ only through color tokens", async () => {
+  const css = await readFile(new URL("../../apps/web/src/ui.css", import.meta.url), "utf8");
+  const luminance = hex => {
+    const channels = [0, 2, 4].map(offset => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
+      .map(channel => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
+    return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
   };
-  const orangeLuminance = relativeLuminance("b84708");
-  const whiteLuminance = relativeLuminance("ffffff");
-  const whiteOnOrangeContrast = (whiteLuminance + 0.05) / (orangeLuminance + 0.05);
-  assert.equal(whiteOnOrangeContrast >= 4.5, true, `white on primary orange has only ${whiteOnOrangeContrast.toFixed(2)}:1 contrast`);
-
-  const sixDigitColors = [...stylesheet.matchAll(/#([0-9a-f]{6})(?![0-9a-f])/giu)]
-    .map((match) => match[1]);
-  const blueDominant = sixDigitColors.filter((hex) => {
-    const red = Number.parseInt(hex.slice(0, 2), 16);
-    const green = Number.parseInt(hex.slice(2, 4), 16);
-    const blue = Number.parseInt(hex.slice(4, 6), 16);
-    return blue > 80 && blue > red * 1.08 && blue > green * 1.02;
-  });
-  assert.deepEqual(blueDominant, [], `stylesheet retains blue-dominant literals: ${blueDominant.join(", ")}`);
-  assert.doesNotMatch(issueDetail, /#2563EB/iu);
-  assert.match(design, /revision:\s*8/u);
-  assert.match(design, /One filled deep-orange primary button per visible task region\./u);
-  assert.match(webSpec, /以单一深橙色主操作色组织的工作台/u);
+  const defaults = css.match(/html\[data-app-ui\]\s*\{([^}]+)\}/)[1];
+  const blue = css.match(/html\[data-app-ui\]\[data-theme="blue"\]\s*\{([^}]+)\}/)[1];
+  for (const block of [defaults, blue]) {
+    for (const token of ["primary", "primary-hover", "primary-pressed"]) {
+      const hex = block.match(new RegExp(`--color-${token}:\\s*#([a-f0-9]{6});`, "i"))[1];
+      assert.ok(1.05 / (luminance(hex) + .05) >= 4.5, `${token} must support white text`);
+    }
+  }
+  const text = defaults.match(/--color-text-muted:\s*#([a-f0-9]{6});/i)[1];
+  assert.ok(1.05 / (luminance(text) + .05) >= 4.5, "supporting copy remains readable");
+  for (const declaration of blue.split(";").filter(line => line.trim())) {
+    assert.match(declaration.trim(), /^--(?:color-|ui-color-)/, "a theme must not change geometry or interaction");
+  }
+  assert.doesNotMatch(css, /@import\s+["']tailwindcss["']/u, "keep the global preflight out of the public homepage");
 });
 
 test("deployed deployment and joining guides are complete, paired, and non-executable", async () => {
@@ -2054,10 +2038,10 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(appSource, /sessionReloadPending = true/);
   assert.match(appSource, /armSessionExpiry\(result\.expires_at\)/);
   assert.match(appSource, /route\.kind === 'owner' && canAccessOwnerControlPlane\(session\)/);
-  assert.match(appHeaderSource, /canAccessOwnerControlPlane\(session\)/);
-  assert.match(appHeaderSource, /session\.expires_at/);
-  assert.match(appHeaderSource, /preferred_api_origin/);
-  assert.match(appHeaderSource, /target="_blank" rel="noreferrer noopener"/);
+  assert.match(appHeaderSource, /canAccessOwnerControlPlane\(props\.session\)/);
+  assert.match(appSource, /:expires-at="session\.expires_at"/);
+  assert.match(appSource, /preferred_api_origin/);
+  assert.doesNotMatch(appHeaderSource, /expires_at|preferred_api_origin/);
   assert.match(ownerSource, /initializeInvitationRecovery\(\)/);
   assert.match(ownerSource, /navigator\.locks\.request\(name, \{ mode: "exclusive" \}, callback\)/);
   assert.match(ownerSource, /coordinateIdempotencyIntent: async \(acquireIntent, execute\)/);

@@ -22,7 +22,7 @@ Use $cfkanban-admin to rename DemoProject to Mobile and update its Project notes
 
 The Owner and workspace administrators can rename their workspace. Project administrators can also edit their project’s name and description. Renaming preserves issues and access.
 
-**In the Web UI:** The Owner changes the Workspace name under **Workspaces & Projects**, or opens a Project's **Settings** to edit its name and notes. Scoped administrators use **Workspace settings** or the Project management **Settings** area. Project notes inform collaboration; they do not replace permissions or authorize additional Agent actions.
+**In the Web UI:** The Owner changes the Workspace name under **Workspaces & Projects**, or opens a Project's **Settings** to edit its name and notes. Scoped administrators use **Workspace settings**, or the board’s **Project settings → Management → Settings** area. Project notes inform collaboration; they do not replace permissions or authorize additional Agent actions.
 
 Internal Project notes are separate from the [Public Join summary](./public-join.md). Only publish information intended for all visitors; do not copy private context into a public introduction.
 
@@ -34,7 +34,7 @@ Use $cfkanban-admin to change the display label of DemoProject's todo column to 
 
 You need project management access. This changes the displayed column name while preserving the five statuses—Backlog, Todo, In Progress, Done, and Canceled—and their order.
 
-**In the Web UI:** The Owner uses Project **Settings → Board column names**. Scoped administrators edit **Status names** on the Project management page and save each label.
+**In the Web UI:** The Owner uses Project **Settings → Board column names**. Scoped administrators open the board’s **Project settings → Management**, edit **Status names**, and save each label.
 
 ## Common questions
 

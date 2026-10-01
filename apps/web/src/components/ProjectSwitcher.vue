@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { apiRequest } from "../lib/api";
 import { containerChoiceLabels } from "../lib/container-choice";
@@ -19,7 +20,6 @@ const search = ref("");
 const workspaces = ref<ContainerResource[]>([]);
 const verified = ref<WebSessionView | null>(null);
 const root = ref<HTMLElement | null>(null);
-const trigger = ref<HTMLButtonElement | null>(null);
 const searchInput = ref<HTMLInputElement | null>(null);
 const { error, clearError, setError } = useLocalizedError();
 let generation = 0;
@@ -68,7 +68,7 @@ async function refresh(): Promise<void> {
   } catch (caught) { if (current === generation) setError(caught); }
   finally { if (current === generation) busy.value = false; }
 }
-function close(): void { opened.value = false; generation += 1; trigger.value?.focus(); }
+function close(): void { opened.value = false; generation += 1; root.value?.querySelector<HTMLButtonElement>(".project-switch-trigger")?.focus(); }
 function selectProject(workspace: string, project: string): void {
   if (navigate(`/app/w/${workspace}/p/${project}`)) close();
 }
@@ -94,14 +94,14 @@ onUnmounted(() => { generation += 1; document.removeEventListener("pointerdown",
 
 <template>
   <div ref="root" class="project-switcher" @keydown="keyboard">
-    <button ref="trigger" class="project-switch-trigger" type="button" :aria-expanded="opened" aria-controls="project-switch-panel" @click="open"><strong>{{ title }}</strong><span aria-hidden="true">▾</span></button>
+    <UButton color="neutral" variant="ghost" class="project-switch-trigger" type="button" :aria-expanded="opened" aria-controls="project-switch-panel" @click="open"><strong>{{ title }}</strong><span aria-hidden="true">▾</span></UButton>
     <section v-if="opened" id="project-switch-panel" class="project-switch-panel" :aria-label="ui('Switch project', '切换项目')">
       <label class="project-switch-search">{{ ui("Workspace or project", "工作区或项目") }}<input ref="searchInput" v-model="search" type="search" :placeholder="ui('Search workspaces or projects…', '搜索工作区或项目…')" /></label>
       <p v-if="busy" role="status">{{ ui("Loading…", "加载中…") }}</p>
-      <div v-if="error" role="alert"><p>{{ error }}</p><button class="text-button" type="button" :disabled="busy" @click="refresh">{{ ui("Retry", "重试") }}</button></div>
+      <div v-if="error" role="alert"><p>{{ error }}</p><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="busy" @click="refresh">{{ ui("Retry", "重试") }}</UButton></div>
       <div v-for="group in groups" :key="group.id" class="project-switch-group">
-        <div class="project-switch-group-title"><h2 :title="workspaceLabels.get(group.id)?.title">{{ workspaceLabels.get(group.id)?.label ?? group.name }}</h2><button v-if="group.canManage" class="text-button" type="button" @click.stop="manage(group.id)">{{ ui("Manage workspace", "管理工作区") }} →</button></div>
-        <button v-for="project in group.projects" :key="project.project_id" class="project-switch-row" type="button" :title="projectLabels.get(project.project_id)?.title" :aria-current="project.project_id === projectId && project.workspace_id === workspaceId ? 'page' : undefined" @click="selectProject(project.workspace_id, project.project_id)"><span aria-hidden="true">{{ project.project_id === projectId && project.workspace_id === workspaceId ? '✓' : '' }}</span><strong>{{ projectLabels.get(project.project_id)?.label ?? project.project_display_name }}</strong><small>{{ projectRoleLabel(projectDisplayRole(verified ?? session, project), locale) }}</small></button>
+        <div class="project-switch-group-title"><h2 :title="workspaceLabels.get(group.id)?.title">{{ workspaceLabels.get(group.id)?.label ?? group.name }}</h2><UButton color="neutral" variant="ghost" v-if="group.canManage" class="text-button" type="button" @click.stop="manage(group.id)">{{ ui("Manage workspace", "管理工作区") }} →</UButton></div>
+        <UButton color="neutral" variant="ghost" v-for="project in group.projects" :key="project.project_id" class="project-switch-row" type="button" :title="projectLabels.get(project.project_id)?.title" :aria-current="project.project_id === projectId && project.workspace_id === workspaceId ? 'page' : undefined" @click="selectProject(project.workspace_id, project.project_id)"><span aria-hidden="true">{{ project.project_id === projectId && project.workspace_id === workspaceId ? '✓' : '' }}</span><strong>{{ projectLabels.get(project.project_id)?.label ?? project.project_display_name }}</strong><small>{{ projectRoleLabel(projectDisplayRole(verified ?? session, project), locale) }}</small></UButton>
         <p v-if="!group.projects.length" class="muted-copy">{{ ui("No projects", "暂无项目") }}</p>
       </div>
       <p v-if="!busy && !groups.length">{{ ui("No available projects", "暂无可访问项目") }}</p>

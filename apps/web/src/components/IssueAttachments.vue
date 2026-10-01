@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 
 import ErrorNotice from "./ErrorNotice.vue";
@@ -247,7 +248,7 @@ onUnmounted(() => { generation.invalidate(); controller.abort(); });
   <section class="content-section attachment-section" :aria-label="ui('Attachments', '附件')">
     <div class="section-heading-row compact">
       <h2>{{ ui("Attachments", "附件") }}</h2>
-      <button v-if="enabled && canUpload" class="text-button muted" type="button" :disabled="busy" @click="toggleDeleted">{{ deletedOnly ? ui("Active files", "使用中的附件") : ui("Deleted files", "已删除附件") }}</button>
+      <UButton color="neutral" variant="ghost" v-if="enabled && canUpload" class="text-button muted" type="button" :disabled="busy" @click="toggleDeleted">{{ deletedOnly ? ui("Active files", "使用中的附件") : ui("Deleted files", "已删除附件") }}</UButton>
     </div>
     <ErrorNotice v-if="error" :error="error" />
     <p v-if="enabled === false" class="attachment-note">{{ ui("Attachment storage is not enabled. Ask the Owner to enable it.", "附件存储尚未启用，请联系所有者开启。") }}</p>
@@ -255,15 +256,15 @@ onUnmounted(() => { generation.invalidate(); controller.abort(); });
       <p v-if="!storageLimitConfigured" class="attachment-note">{{ ui("New uploads require the Owner to set a storage limit or explicitly choose unlimited. Existing files remain accessible.", "所有者需先设置存储上限或明确选择不限制，才能上传新文件。已有文件仍可访问。") }}</p>
       <div v-if="canUpload && !deletedOnly" class="attachment-dropzone" :class="{ 'is-dragging': dropping, 'is-disabled': !canChoose }" @dragover.prevent="dropping = canChoose" @dragleave.prevent="dropping = false" @drop.prevent="onDrop">
         <input ref="fileInput" type="file" class="attachment-file-input" tabindex="-1" :disabled="!canChoose" @change="onSelect" />
-        <button class="secondary-button button-with-icon" type="button" :disabled="!canChoose" @click="fileInput?.click()"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 10 5-5a3 3 0 0 1 4 4l-7 7a4.5 4.5 0 0 1-6-6l7-7" /></svg>{{ ui("Choose a file", "选择文件") }}</button>
+        <UButton color="neutral" variant="outline" class="secondary-button button-with-icon" type="button" :disabled="!canChoose" @click="fileInput?.click()"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 10 5-5a3 3 0 0 1 4 4l-7 7a4.5 4.5 0 0 1-6-6l7-7" /></svg>{{ ui("Choose a file", "选择文件") }}</UButton>
         <p>{{ ui("or drop one here", "或拖入一个文件") }}<small>{{ sizeLabel(maxFileBytes) }} {{ ui("per file", "以内") }} · {{ ui(`Up to ${maxFiles} files per issue`, `每个事项最多 ${maxFiles} 个附件`) }}</small></p>
       </div>
       <div v-if="canUpload && draft" class="attachment-upload" role="status" :aria-busy="busy">
         <div><strong>{{ draft.file.name }}</strong><small>{{ sizeLabel(draft.file.size) }} · {{ progressText }}</small></div>
         <div class="attachment-row-actions">
-          <button v-if="!busy" class="primary-button" type="button" :disabled="!storageLimitConfigured && !draft.reserveStarted" @click="upload">{{ uploadPhase === 'failed' ? ui('Retry upload', '重试上传') : ui('Upload', '上传') }}</button>
-          <button v-if="!busy && !draft.reserveStarted" class="text-button" type="button" @click="draft = null">{{ t("action.cancel") }}</button>
-          <button v-if="!busy && draft.attachment?.allowed_actions.includes('delete')" class="text-button muted" type="button" @click="deleteTarget = draft.attachment">{{ ui("Cancel upload", "取消上传") }}</button>
+          <UButton color="primary" variant="solid" v-if="!busy" class="primary-button" type="button" :disabled="!storageLimitConfigured && !draft.reserveStarted" @click="upload">{{ uploadPhase === 'failed' ? ui('Retry upload', '重试上传') : ui('Upload', '上传') }}</UButton>
+          <UButton color="neutral" variant="ghost" v-if="!busy && !draft.reserveStarted" class="text-button" type="button" @click="draft = null">{{ t("action.cancel") }}</UButton>
+          <UButton color="neutral" variant="ghost" v-if="!busy && draft.attachment?.allowed_actions.includes('delete')" class="text-button muted" type="button" @click="deleteTarget = draft.attachment">{{ ui("Cancel upload", "取消上传") }}</UButton>
         </div>
       </div>
       <div v-if="attachments.length" class="attachment-list">
@@ -271,18 +272,18 @@ onUnmounted(() => { generation.invalidate(); controller.abort(); });
           <a v-if="item.preview_content_type && item.allowed_actions.includes('download')" class="attachment-thumbnail" :href="`${contentUrl(item)}?preview=1`" target="_blank" rel="noopener noreferrer" :aria-label="`${ui('Preview', '预览')} ${item.filename}`"><img :src="`${contentUrl(item)}?preview=1`" alt="" loading="lazy" /></a>
           <div v-else class="attachment-file-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H5V3h2Zm7 0v6h5M8 13h8M8 17h5" /></svg></div>
           <div class="attachment-file-info"><a v-if="item.allowed_actions.includes('download')" :href="contentUrl(item)" download>{{ item.filename }}</a><strong v-else>{{ item.filename }}</strong><small>{{ sizeLabel(item.size_bytes) }} · {{ item.uploaded_by.display_name }}<template v-if="item.state !== 'ready'"> · {{ item.state === 'pending' ? ui('Upload pending', '上传未完成') : ui('Expired', '已过期') }}</template></small></div>
-          <div class="attachment-row-actions"><a v-if="item.allowed_actions.includes('download')" class="text-button attachment-download" :href="contentUrl(item)" download>{{ ui("Download", "下载") }}</a><button v-if="item.allowed_actions.includes('delete')" class="text-button muted" type="button" :disabled="busy" @click="deleteTarget = item">{{ t("action.delete") }}</button><button v-if="item.allowed_actions.includes('restore')" class="secondary-button" type="button" :disabled="busy" @click="changeAttachment(item, true)">{{ t("action.restore") }}</button></div>
+          <div class="attachment-row-actions"><a v-if="item.allowed_actions.includes('download')" class="text-button attachment-download" :href="contentUrl(item)" download>{{ ui("Download", "下载") }}</a><UButton color="neutral" variant="ghost" v-if="item.allowed_actions.includes('delete')" class="text-button muted" type="button" :disabled="busy" @click="deleteTarget = item">{{ t("action.delete") }}</UButton><UButton color="neutral" variant="outline" v-if="item.allowed_actions.includes('restore')" class="secondary-button" type="button" :disabled="busy" @click="changeAttachment(item, true)">{{ t("action.restore") }}</UButton></div>
         </article>
       </div>
       <p v-else-if="!loading && !draft" class="attachment-note">{{ deletedOnly ? ui('No deleted attachments.', '没有已删除的附件。') : ui('No attachments yet.', '还没有附件。') }}</p>
-      <button v-if="nextCursor" class="load-more" type="button" :disabled="loading" @click="load(false)">{{ ui("Load more files", "加载更多附件") }}</button>
+      <UButton color="neutral" variant="outline" v-if="nextCursor" class="load-more" type="button" :disabled="loading" @click="load(false)">{{ ui("Load more files", "加载更多附件") }}</UButton>
     </template>
     <p v-if="loading" class="attachment-note" role="status">{{ ui("Loading attachments…", "正在加载附件…") }}</p>
-    <button v-else-if="error" class="text-button" type="button" :disabled="busy" @click="load()">{{ t("action.refresh") }}</button>
+    <UButton color="neutral" variant="ghost" v-else-if="error" class="text-button" type="button" :disabled="busy" @click="load()">{{ t("action.refresh") }}</UButton>
     <ModalDialog v-if="deleteTarget" :busy="busy" :title="deleteTarget.state === 'ready' ? ui('Delete attachment?', '删除附件？') : ui('Cancel this upload?', '取消上传？')" @close="deleteTarget = null">
       <p class="attachment-confirm-name">{{ deleteTarget.filename }}</p><p class="muted-copy">{{ deleteTarget.state === 'ready' ? ui('The file can be restored. Deleting it does not release its storage budget.', '文件可恢复；软删除不会释放存储预算。') : ui('This upload reservation will be canceled and cannot be restored.', '将取消这次上传预留，取消后不能恢复。') }}</p>
       <ErrorNotice v-if="error" :error="error" />
-      <div class="form-actions"><button class="secondary-button" type="button" :disabled="busy" @click="deleteTarget = null">{{ t("action.cancel") }}</button><button class="danger-button" type="button" :disabled="busy || !deleteTarget.allowed_actions.includes('delete')" @click="changeAttachment(deleteTarget, false)">{{ t("action.delete") }}</button></div>
+      <div class="form-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="deleteTarget = null">{{ t("action.cancel") }}</UButton><UButton color="error" variant="solid" class="danger-button" type="button" :disabled="busy || !deleteTarget.allowed_actions.includes('delete')" @click="changeAttachment(deleteTarget, false)">{{ t("action.delete") }}</UButton></div>
     </ModalDialog>
   </section>
 </template>

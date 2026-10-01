@@ -20,7 +20,7 @@ The Agent needs a trusted local identity in the current environment. Expect the 
 
 Projects can share a name; include the workspace when needed. Different sites can also have the same issue number, so include the site address when working across instances.
 
-**In the Web UI:** The header shows the current workspace, project, and role in that project. Select your name to open **My profile** and view your identity ID. Select the workspace/project name to see the projects available to the current session.
+**In the Web UI:** The header shows the current workspace and project. Open the account menu at the top right to see your name and current role; choose **Personal settings** to view your identity ID. Select the workspace/project name to see the projects available to the current session. The footer shows when your sign-in expires.
 
 ## Who can do what
 

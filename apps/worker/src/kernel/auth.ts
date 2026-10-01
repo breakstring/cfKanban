@@ -15,6 +15,7 @@ interface BearerRow {
 
 interface SessionRow {
   display_name: string;
+  theme: "orange" | "blue";
   owner_principal_id: string;
   principal_id: string;
   principal_version: number;
@@ -125,7 +126,7 @@ export async function authenticateCookieSession(
     row = await db.prepare(
       `SELECT ws.id AS session_id, ws.principal_id, ws.source_kind, ws.source_id,
               ws.target_kind, ws.target_json, ws.expires_at AS session_expires_at,
-              p.display_name,
+              p.display_name, p.theme,
               p.version AS principal_version, im.owner_principal_id
        FROM web_sessions AS ws
        JOIN principals AS p ON p.id = ws.principal_id
@@ -168,6 +169,7 @@ export async function authenticateCookieSession(
     displayName: row.display_name,
     isOwner: row.principal_id === row.owner_principal_id,
     kind: "cookie",
+    theme: row.theme,
     principalId: row.principal_id,
     principalVersion: row.principal_version,
     managementGrants: row.principal_id === row.owner_principal_id ? [] : await readManagementGrants(db, row.principal_id),

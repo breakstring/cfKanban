@@ -1,5 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import UAvatar from "@nuxt/ui/components/Avatar.vue";
+import UBadge from "@nuxt/ui/components/Badge.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
+import UInput from "@nuxt/ui/components/Input.vue";
+import USelect from "@nuxt/ui/components/Select.vue";
+import UTextarea from "@nuxt/ui/components/Textarea.vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
@@ -24,7 +30,8 @@ import { ProjectionGeneration } from "../lib/projection-generation";
 import { protectNavigationDraft } from "../lib/navigation-draft";
 import { priorityOrder, prioritySaveIsUncertain, priorityText } from "../lib/priority";
 import { navigate } from "../lib/router";
-import { hasManagementActions, managementPath } from "../lib/scoped-management";
+import { hasManagementActions } from "../lib/scoped-management";
+import { projectSettingsPath } from "../lib/project-settings";
 import { WriteFence } from "../lib/write-fence";
 import type {
   ContainerResource,
@@ -65,15 +72,15 @@ const dragged = ref<IssueSummary | null>(null);
 const showNewIssue = ref(false);
 const formBusy = ref(false);
 const casConflict = ref<CasConflictState | null>(null);
-const newIssue = ref({ body: "", priority_key: "none" as PriorityKey, status_key: "backlog" as StatusKey, title: "" });
+const newIssue = ref({ body: "", priority_key: "none" as PriorityKey, status_key: "backlog" as Exclude<StatusKey, "done">, title: "" });
 const projectionGeneration = new ProjectionGeneration();
 const writeFence = new WriteFence();
 let loadRequestId = 0;
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
 const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, priorities: priorities.value, labels: labelIds.value }));
-function openProjectPage(section: "activity" | "deleted"): void {
-  const from = new URLSearchParams({ from: returnPath.value });
-  navigate(`${boardPath(props.workspaceId, props.projectId)}/${section}?${from}`, false, returnPath.value);
+function openProjectSettings(): void {
+  const section = hasManagementActions(project.value) ? "management" : "activity";
+  navigate(projectSettingsPath(props.workspaceId, props.projectId, section, returnPath.value), false, returnPath.value);
 }
 let casRecoveryGeneration = 0;
 let casReadback: (() => Promise<void>) | null = null;
@@ -398,7 +405,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
 </script>
 
 <template>
-  <main class="board-page">
+  <main class="board-page board-page--nuxt">
     <header class="board-toolbar">
       <div class="board-title">
         <p class="eyebrow">{{ project?.workspace_display_name }}</p>
@@ -406,28 +413,27 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
         <div v-if="project?.context" class="board-description" tabindex="0" :aria-label="locale === 'zh-CN' ? '项目描述' : 'Project description'"><MarkdownContent :source="project.context" /></div>
       </div>
       <div class="board-toolbar-actions">
-        <button v-if="hasManagementActions(project)" class="text-button" type="button" @click="navigate(`${managementPath(workspaceId, projectId)}&from=${encodeURIComponent(`/app/w/${workspaceId}/p/${projectId}`)}`)">{{ locale === 'zh-CN' ? '项目管理' : 'Manage project' }}</button>
-        <button v-if="canWrite" class="text-button" type="button" @click="navigate(`/app/w/${workspaceId}/p/${projectId}/labels`)">{{ locale === "zh-CN" ? "标签管理" : "Manage labels" }}</button>
-        <span v-if="!canWrite" class="read-only-badge">{{ t("board.readOnly") }}</span>
-        <button v-if="canWrite" class="primary-button button-with-icon" type="button" @click="showNewIssue = true"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ t("action.newIssue") }}</button>
+        <UButton v-if="project" color="neutral" variant="outline" type="button" @click="openProjectSettings">{{ locale === 'zh-CN' ? '项目设置' : 'Project settings' }}</UButton>
+        <UBadge v-if="!canWrite" color="neutral" variant="soft">{{ t("board.readOnly") }}</UBadge>
+        <UButton v-if="canWrite" color="primary" type="button" @click="showNewIssue = true"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ t("action.newIssue") }}</UButton>
+      </div>
+      <div class="board-view-bar">
+        <span class="board-view-label"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ locale === 'zh-CN' ? '看板' : 'Board' }}</span>
+
       </div>
       <div class="board-utility-bar">
         <form class="board-search" role="search" @submit.prevent="load()">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
-          <input v-model="search" type="search" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'" />
-          <button class="text-button board-search-submit" type="submit" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</button>
+          <UInput v-model="search" class="board-search-field" type="search" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'">
+            <template #leading><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg></template>
+          </UInput>
+          <UButton color="neutral" variant="outline" type="submit" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</UButton>
         </form>
-
         <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0" />
-        <nav v-if="project" class="board-secondary-nav" :aria-label="locale === 'zh-CN' ? '项目记录' : 'Project records'">
-          <button class="text-button" type="button" @click="openProjectPage('activity')">{{ locale === 'zh-CN' ? '项目活动' : 'Activity' }}</button>
-          <button v-if="canWrite" class="text-button muted" type="button" @click="openProjectPage('deleted')">{{ locale === 'zh-CN' ? '已删除事项' : 'Deleted issues' }}</button>
-        </nav>
       </div>
     </header>
     <p v-if="filtersPending" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '正在更新筛选结果…' : 'Updating filtered results…' }}</p>
     <ErrorNotice v-if="error" :error="error" />
-    <p v-for="pending in pendingPriorities" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '优先级保存结果尚未确认，请核实原操作后继续。' : 'Priority save is unconfirmed. Verify the original operation before continuing.' }} <button class="text-button" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="savePriority(pending.issue, pending.priority)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</button></p>
+    <p v-for="pending in pendingPriorities" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '优先级保存结果尚未确认，请核实原操作后继续。' : 'Priority save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="savePriority(pending.issue, pending.priority)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
@@ -455,7 +461,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
         >
           <header class="column-header">
             <h2>{{ statusMap.get(statusKey)?.display_name ?? statusKey }}</h2>
-            <span :title="locale === 'zh-CN' ? '已加载事项数量，非项目总数' : 'Loaded issues, not the project total'">{{ locale === "zh-CN" ? "已加载" : "Loaded" }} {{ issuesFor(statusKey).length }}{{ columns[statusKey].cursor ? "+" : "" }}</span>
+            <UBadge color="neutral" variant="soft" size="md" :title="locale === 'zh-CN' ? '已加载事项数量，非项目总数' : 'Loaded issues, not the project total'" :aria-label="`${locale === 'zh-CN' ? '已加载' : 'Loaded'} ${issuesFor(statusKey).length}${columns[statusKey].cursor ? '+' : ''}`">{{ locale === 'zh-CN' ? '已加载' : 'Loaded' }} {{ issuesFor(statusKey).length }}{{ columns[statusKey].cursor ? "+" : "" }}</UBadge>
           </header>
           <div :id="`board-column-${statusKey}`" class="column-content" tabindex="0" :aria-label="`${statusMap.get(statusKey)?.display_name ?? statusKey} · ${locale === 'zh-CN' ? '事项列表' : 'Issues'}`" @scroll="onColumnScroll(statusKey, $event)">
             <article
@@ -467,22 +473,25 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
               :aria-busy="saving.has(issue.id)"
               @dragstart="onDragStart(issue, $event)"
             >
+              <div class="card-topline">
+                <code>{{ issue.identifier }}</code>
+                <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
+                <span v-else class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
+              </div>
               <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
                 <span class="card-heading">
-                  <code>{{ issue.identifier }}</code>
                   <strong :title="issue.title">{{ issue.title }}</strong>
                 </span>
                 <span v-if="issue.labels.length || issue.needs_reassignment" class="card-summary">
                   <span v-if="issue.labels.length" class="label-line" :title="issue.labels.map(label => label.name).join(' · ')">
-                    <span v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip" :title="label.name">{{ label.name }}</span>
+                    <UBadge v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip" color="neutral" variant="soft" size="md" :title="label.name">{{ label.name }}</UBadge>
                     <span v-if="issue.labels.length > 3" class="card-label-count" :aria-label="`${locale === 'zh-CN' ? '更多标签' : 'More labels'}: ${issue.labels.slice(3).map(label => label.name).join(' · ')}`">+{{ issue.labels.length - 3 }}</span>
                   </span>
                   <span v-if="issue.needs_reassignment" class="warning-chip">{{ locale === "zh-CN" ? "需重新指派" : "reassign" }}</span>
                 </span>
               </button>
               <div class="card-meta">
-                <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
-                <span v-else class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
+                <span class="card-assignee" :title="issue.assignee?.display_name ?? t('issue.unassigned')"><UAvatar :alt="issue.assignee?.display_name ?? '—'" size="2xs" /><span>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span></span>
               <select
                 v-if="canWrite"
                 class="card-status-select"
@@ -501,7 +510,6 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
                   {{ statusMap.get(option)?.display_name ?? option }}
                 </option>
               </select>
-                <span class="card-assignee" :title="issue.assignee?.display_name ?? t('issue.unassigned')">{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
               </div>
             </article>
             <p v-if="columns[statusKey].loading" role="status" class="column-empty">{{ locale === "zh-CN" ? "加载中…" : "Loading…" }}</p>
@@ -517,13 +525,13 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
 
     <ModalDialog v-if="showNewIssue" :busy="formBusy" :title="t('action.newIssue')" @close="showNewIssue = false">
       <form class="form-stack" @submit.prevent="createIssue">
-        <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<input v-model="newIssue.title" required maxlength="256" /></label>
-        <label>{{ t("issue.body") }}<textarea v-model="newIssue.body" rows="7" :placeholder="t('comment.placeholder')" /></label>
+        <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="newIssue.title" required maxlength="256" autofocus /></label>
+        <label>{{ t("issue.body") }}<UTextarea v-model="newIssue.body" :rows="7" :placeholder="t('comment.placeholder')" /></label>
         <div class="form-grid">
-          <label>{{ t("issue.status") }}<select v-model="newIssue.status_key"><option v-for="key in statusOrder.filter((item) => item !== 'done')" :key="key" :value="key">{{ statusMap.get(key)?.display_name ?? key }}</option></select></label>
-          <label>{{ t("issue.priority") }}<select v-model="newIssue.priority_key" :aria-label="t('issue.priority')"><option v-for="key in priorityOrder" :key="key" :value="key">{{ priorityLabel(key) }}</option></select></label>
+          <label>{{ t("issue.status") }}<USelect v-model="newIssue.status_key" :items="statusOrder.filter(key => key !== 'done').map(key => ({ value: key, label: statusMap.get(key)?.display_name ?? key }))" /></label>
+          <label>{{ t("issue.priority") }}<USelect v-model="newIssue.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" /></label>
         </div>
-        <div class="form-actions"><button class="secondary-button" type="button" @click="showNewIssue = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="formBusy">{{ t("action.save") }}</button></div>
+        <div class="form-actions"><UButton color="neutral" variant="outline" type="button" :disabled="formBusy" @click="showNewIssue = false">{{ t("action.cancel") }}</UButton><UButton color="primary" type="submit" :loading="formBusy">{{ t("action.save") }}</UButton></div>
       </form>
     </ModalDialog>
 
@@ -531,19 +539,56 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
 </template>
 
 <style scoped>
-.board-toolbar { gap: 16px 24px; }
+.board-page--nuxt { padding: 28px 28px 18px; }
+.board-toolbar { gap: 20px 24px; margin-bottom: 20px; }
 .board-title { min-width: 0; }
-.board-description { margin-top: 8px; max-height: 120px; max-width: 72ch; overflow: auto; overflow-wrap: anywhere; font-size: 14px; color: var(--color-text-muted); }
+.board-title h1 { font-family: var(--font-ui); font-size: 24px; font-weight: 650; line-height: 1.35; letter-spacing: -.02em; }
+.board-title .eyebrow { margin-bottom: 6px; font-size: 12px; color: var(--color-text-muted); }
+.board-description { margin-top: 8px; max-height: 100px; max-width: 72ch; overflow: auto; overflow-wrap: anywhere; font-size: 14px; color: var(--color-text-muted); }
 .board-description :deep(.markdown > :first-child) { margin-top: 0; }
 .board-description :deep(.markdown > :last-child) { margin-bottom: 0; }
-.board-utility-bar { justify-content: flex-start; flex-wrap: wrap; gap: 8px 12px; }
-.board-search { flex: 0 1 360px; }
-.board-secondary-nav { display: flex; gap: 12px; margin-left: auto; }
+.ui-action-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.board-view-bar { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid var(--color-border); padding-top: 6px; }
+.board-view-label { display: inline-flex; align-items: center; gap: 8px; align-self: stretch; padding: 10px 0; border-bottom: 2px solid var(--color-primary); color: var(--color-primary); font-size: 14px; font-weight: 600; }
+.board-utility-bar { justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.board-search { flex: 0 1 380px; gap: 8px; }
+.board-search-field { flex: 1; min-width: 0; }
+.board-search :deep(input) { min-height: 36px; padding-right: 12px; padding-left: 36px; font-size: 14px; }
+.kanban-board { grid-template-columns: repeat(5, minmax(248px, 1fr)); min-width: 1304px; border-top: 0; gap: 16px; }
+.kanban-column { border-radius: 12px; padding: 8px; background: var(--color-surface-muted); }
+.column-header { min-height: 44px; justify-content: flex-start; gap: 8px; padding: 0 8px 6px; }
+.column-header h2 { font-size: 13px; font-weight: 600; }
+.column-header > :last-child { background: transparent; padding-inline: 2px; }
+.column-content { gap: 8px; scrollbar-gutter: auto; padding: 2px 0 0; }
+.issue-card { gap: 10px; border-color: transparent; padding: 12px 14px; border-radius: var(--radius-card); box-shadow: 0 1px 2px color-mix(in srgb, var(--color-text) 4%, transparent); }
+.issue-card:hover { border-color: var(--color-border); box-shadow: 0 2px 6px color-mix(in srgb, var(--color-text) 7%, transparent); }
+.card-topline { display: flex; min-width: 0; justify-content: space-between; align-items: center; gap: 8px; }
+.card-topline > code { color: var(--color-text-muted); font-size: 12px; letter-spacing: .025em; }
+.card-topline :deep(.card-priority-select) { max-width: 106px; flex-basis: auto; text-align: right; }
+.card-topline .priority-mark { min-height: 24px; padding: 0; background: transparent; font-size: 12px; }
+.issue-card-open { gap: 10px; min-height: 0; }
+.card-heading { display: block; }
+.card-heading > strong { font-size: 14px; line-height: 1.6; font-weight: 550; }
+.card-summary { min-height: 20px; }
+.card-summary .label-line .label-chip { max-width: 45%; min-height: 20px; padding: 1px 5px; color: var(--color-text-muted); background: var(--color-surface-muted); border-radius: 4px; font-size: 12px; font-weight: 400; }
+.card-meta { flex-wrap: nowrap; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--color-border); }
+.card-assignee { display: flex; align-items: center; gap: 6px; flex: 1 1 0; text-align: left; }
+.card-assignee > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-status-select { flex: 0 1 auto; max-width: 54%; padding: 4px 2px; min-height: 32px; font-size: 12px; text-align: right; }
+.column-empty { padding: 16px 8px; border-top: 0; color: var(--color-text-muted); font-size: 12px; }
+.form-stack :deep(.relative), .form-grid :deep(.relative) { width: 100%; }
+@media (max-width: 940px) {
+  .board-page--nuxt { padding: 20px 16px 12px; }
+  .board-toolbar-actions :deep(button), .board-search :deep(input), .board-search :deep(button), .card-status-select, .issue-card-open { min-height: 44px; }
+}
 @media (max-width: 640px) {
-  .board-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .board-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .board-title h1 { font-size: 22px; }
+  .board-view-bar { padding-top: 0; }
   .board-search { flex-basis: 100%; }
-  .board-secondary-nav { flex-wrap: wrap; margin-left: 0; gap: 8px; }
   .board-description { max-height: 96px; }
+  .kanban-board { grid-template-columns: repeat(5, minmax(260px, 1fr)); min-width: 1364px; }
+  .card-status-select { min-height: 44px; }
 }
 </style>

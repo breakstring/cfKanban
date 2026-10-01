@@ -82,6 +82,12 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 
 保存需要用户明确提出目录关联要求；要求已清晰且获授权时，不额外设置确认步骤。只读查询配置或加入项目本身不授权写文件。该文件只保存非秘密推荐过滤，与 `~/.cfkanban/` 私有身份状态分开；Git 跟踪遵循 Repo 规则，不静默修改 ignore 设置。本次明确目标优先于目录推荐，按明确编号访问有权限的 Issue 不受该文件限制。
 
+## 个人主题配色
+
+支持 Principal 主题的服务（schema 14+）通过 `GET /api/v1/me` 返回 `theme`。默认为 `orange`（暖橙），另一选项为 `blue`（静蓝）。用户要求“将主题保存为静蓝”时，通过 `PATCH /api/v1/me` 只提交 `theme: "blue"` 和当前 Principal `expected_version`，并提供一个明确的 `idempotencyKey`。不重复提交未编辑的名称，也不把主题请求变成改名。读回 `/me` 核对保存值后再报告成功。包括只读者在内的所有已认证身份都可修改本人的主题，权限不变。
+
+两种主题保留相同布局和交互。偏好属于当前实例中的这个 Principal，与网页个人资料页共用。版本冲突时刷新个人资料并重新判断，不静默覆盖并发修改。已部署服务尚不支持主题时说明限制，不保存仅本地生效的替代值，也不从已安装 Skill 的版本推断线上支持。
+
 ## 身份与 Issue 操作
 
 除明确列出专用命令外，下表操作都使用 `api request`。
@@ -90,6 +96,7 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 | --- | --- | --- |
 | 查看个人资料 | `GET /api/v1/me` | 确认 immutable Principal ID 与 Credential fingerprint。 |
 | 修改自己的名称 | `PATCH /api/v1/me` | `display_name`、`expected_version`；随后读回 `/me`。 |
+| 保存自己的主题 | `PATCH /api/v1/me` | `theme: "orange"`（暖橙）或 `"blue"`（静蓝）、当前 Principal `expected_version`；随后读回 `/me` 并核对 `theme`。 |
 | 列出全部已授权 Issues | `GET /api/v1/issues` | 优先携带重复的显式 Workspace/Project filters；扩大范围时告警。 |
 | 列出确定性候选 | `GET /api/v1/issues/candidates` | `assignment` 必填；使用 UUID `project` 过滤，并读回服务端解析后的候选策略。 |
 | 在一个 Project 列出/创建 | `GET/POST /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues` | 创建使用一个 Idempotency Key。 |

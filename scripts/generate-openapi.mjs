@@ -561,7 +561,8 @@ const schemas = {
   AttachmentWriteResult: containerWriteResult("Attachment"),
   ExpectedVersionRequest: { type: "object", required: ["expected_version"], properties: { expected_version: ref("Version") }, additionalProperties: false },
   PrincipalDisplayNameInput: string({ description: "Trim and NFKC normalize before validation; 1–128 Unicode code points in both display and locale-independent lowercase key. Letters, marks, numbers, underscore, hyphen and middle dot only; reject Default_Ignorable_Code_Point. Exact reserved keys: admin, administrator, owner, system, 管理员, 所有者, 系统. Instance-wide unique key; conflict returns PRINCIPAL_DISPLAY_NAME_CONFLICT without owner identity." }),
-  UpdatePrincipalDisplayNameRequest: { type: "object", required: ["expected_version", "display_name"], properties: { expected_version: ref("Version"), display_name: ref("PrincipalDisplayNameInput") }, additionalProperties: false },
+  PrincipalTheme: string({ enum: ["orange", "blue"], default: "orange", description: "Personal color palette; layout and interactions remain the same." }),
+  UpdatePrincipalDisplayNameRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), display_name: ref("PrincipalDisplayNameInput"), theme: ref("PrincipalTheme") }, additionalProperties: false },
   ProjectAssigneeResult: {
     type: "object", required: ["items", "has_more", "next_cursor"], additionalProperties: false,
     properties: {
@@ -700,9 +701,9 @@ const schemas = {
     }, additionalProperties: false,
   },
   CurrentPrincipal: {
-    type: "object", required: ["id", "principal_id", "display_name", "is_owner", "version", "management_grants"],
+    type: "object", required: ["id", "principal_id", "display_name", "theme", "is_owner", "version", "management_grants"],
     properties: {
-      id: ref("Uuid"), principal_id: ref("Uuid"), display_name: string(), is_owner: { type: "boolean" }, version: ref("Version"),
+      id: ref("Uuid"), principal_id: ref("Uuid"), display_name: string(), theme: ref("PrincipalTheme"), is_owner: { type: "boolean" }, version: ref("Version"),
       management_grants: { type: "array", items: ref("Administrator") },
       grants: { type: "array", items: ref("WebSessionProjectScopeItem") }, allowed_actions: { type: "array", items: string() },
       created_at: ref("Timestamp"), updated_at: ref("Timestamp"), deleted_at: { type: "null" },
@@ -1862,6 +1863,7 @@ const schemas = {
       id: ref("Uuid"),
       is_owner: { type: "boolean" },
       version: ref("Version"),
+      theme: ref("PrincipalTheme"),
     },
     additionalProperties: false,
   },
@@ -1914,7 +1916,12 @@ const schemas = {
       management_grants: { type: "array", items: ref("Administrator") },
       allowed_scope: ref("WebSessionAllowedScope"),
       expires_at: ref("Timestamp"),
-      principal: ref("WebSessionPrincipal"),
+      principal: {
+        allOf: [
+          ref("WebSessionPrincipal"),
+          { type: "object", required: ["theme", "version"], properties: { theme: ref("PrincipalTheme"), version: ref("Version") } },
+        ],
+      },
       session_id: ref("Uuid"),
       source: ref("WebSessionSource"),
       target: ref("WebSessionTarget"),
@@ -2331,6 +2338,11 @@ function buildOperation([method, path, operationId, tag, security, mode, request
   const parameters = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => pathParameter(match[1]));
   if (method === "get" && requestOrQuery && querySets[requestOrQuery]) parameters.push(...querySets[requestOrQuery]);
   if (mode.includes("idempotent")) parameters.push({ $ref: "#/components/parameters/IdempotencyKey" });
+  if (operationId === "updateMe") parameters.push({
+    name: "Idempotency-Key", in: "header", required: false,
+    description: "Optional safe retry key. Reuse the original key and request within 24 hours to recover a committed profile update; the current Principal must remain authenticated.",
+    schema: string({ minLength: 1, maxLength: 128, pattern: "^[\\x20-\\x7E]+$" }),
+  });
   if (mode.includes("cas-delete")) parameters.push({ $ref: "#/components/parameters/ExpectedVersion" });
   const allowsCookie = security.some((requirement) => Object.hasOwn(requirement, "WebSession"));
   const allowsBearer = security.some((requirement) => Object.hasOwn(requirement, "BearerCredential"));

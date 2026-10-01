@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import UTextarea from "@nuxt/ui/components/Textarea.vue";
+import UInput from "@nuxt/ui/components/Input.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import ErrorNotice from "./ErrorNotice.vue";
@@ -282,24 +285,24 @@ onUnmounted(() => { disposed = true; controller.abort(); removeGuard(); window.r
   <section class="owner-section owner-devices" aria-labelledby="owner-devices-heading" :aria-busy="busy">
     <div class="section-heading-row">
       <div><h2 id="owner-devices-heading">{{ ui('Owner devices', 'Owner 设备') }}</h2><p>{{ ui('Your computers share one Owner identity, each with an independent credential.', '你的电脑共用同一个 Owner 身份，各自使用独立凭据。') }}</p></div>
-      <div class="form-actions"><button class="text-button" type="button" :disabled="busy" @click="refresh">{{ ui('Refresh devices', '刷新设备') }}</button><button class="secondary-button" type="button" :disabled="locked || !identity" @click="openApprove">{{ ui('Add my computer', '添加我的电脑') }}</button></div>
+      <div class="form-actions"><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="busy" @click="refresh">{{ ui('Refresh devices', '刷新设备') }}</UButton><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="locked || !identity" @click="openApprove">{{ ui('Add my computer', '添加我的电脑') }}</UButton></div>
     </div>
     <ErrorNotice v-if="error && !dialog" :error="error" />
     <p v-if="notice === 'approved'" role="status">{{ ui('Device approved. Return to the Agent on the new computer to verify and finish local access.', '设备已批准。请回到新电脑上的 Agent，验证并完成本地接入。') }}</p>
     <p v-if="notice === 'revoked'" role="status">{{ ui('Device credential revoked. Other devices remain available.', '该设备凭据已撤销，其他设备可继续使用。') }}</p>
     <p v-if="notice === 'renamed'" role="status">{{ ui('Device name saved.', '设备名称已保存。') }}</p>
-    <div v-if="pending && !dialog" class="warning-panel" role="alert"><p>{{ ui('The last device operation has no confirmed result. New device operations are paused; retry the original request.', '上次设备操作的结果尚未确认，已暂停新的设备操作，请重试原请求。') }}</p><p><strong>{{ pending.deviceName ?? ui('Unnamed device', '未命名设备') }}</strong> · <code>{{ pending.fingerprint }}</code></p><p v-if="retryExpired">{{ ui('The safe retry window ended. Ask your Agent to inspect this device before continuing.', '安全重试期限已过，请让 Agent 核对该设备状态后再继续。') }}</p><button class="secondary-button" type="button" :disabled="busy || retryExpired" @click="retry">{{ ui('Retry original operation', '重试原操作') }}</button></div>
+    <div v-if="pending && !dialog" class="warning-panel" role="alert"><p>{{ ui('The last device operation has no confirmed result. New device operations are paused; retry the original request.', '上次设备操作的结果尚未确认，已暂停新的设备操作，请重试原请求。') }}</p><p><strong>{{ pending.deviceName ?? ui('Unnamed device', '未命名设备') }}</strong> · <code>{{ pending.fingerprint }}</code></p><p v-if="retryExpired">{{ ui('The safe retry window ended. Ask your Agent to inspect this device before continuing.', '安全重试期限已过，请让 Agent 核对该设备状态后再继续。') }}</p><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy || retryExpired" @click="retry">{{ ui('Retry original operation', '重试原操作') }}</UButton></div>
     <ul class="device-list">
       <li v-for="device in devices" :key="device.id" class="device-row">
         <div class="device-details"><strong>{{ device.device_name ?? ui('Unnamed device', '未命名设备') }}</strong><span v-if="session.source.kind === 'credential' && session.source.id === device.id" class="role-badge">{{ ui('Current session source', '当前会话来源') }}</span><code>{{ device.fingerprint }}</code><small>{{ ui('Added', '添加于') }} {{ date(device.issued_at) }} · {{ ui('Last used', '最近使用') }} {{ date(device.last_used_at) }}</small><small v-if="device.revoked_at">{{ ui('Revoked', '已撤销') }} {{ date(device.revoked_at) }}</small></div>
         <div class="form-actions device-actions">
-          <button v-if="device.allowed_actions.includes('rename_owner_device')" class="text-button" type="button" :disabled="locked" :aria-label="`${ui('Rename device', '修改设备名称')} ${device.device_name ?? device.fingerprint}`" @click="openDevice(device, 'rename')">{{ device.device_name ? ui('Rename', '改名') : ui('Name device', '补充名称') }}</button>
-          <button v-if="device.allowed_actions.includes('revoke_owner_device')" class="danger-text-button" type="button" :disabled="locked" :aria-label="`${ui('Revoke device', '撤销设备')} ${device.device_name ?? device.fingerprint}`" @click="openDevice(device, 'revoke')">{{ ui('Revoke', '撤销') }}</button>
+          <UButton color="neutral" variant="ghost" v-if="device.allowed_actions.includes('rename_owner_device')" class="text-button" type="button" :disabled="locked" :aria-label="`${ui('Rename device', '修改设备名称')} ${device.device_name ?? device.fingerprint}`" @click="openDevice(device, 'rename')">{{ device.device_name ? ui('Rename', '改名') : ui('Name device', '补充名称') }}</UButton>
+          <UButton color="error" variant="ghost" v-if="device.allowed_actions.includes('revoke_owner_device')" class="danger-text-button" type="button" :disabled="locked" :aria-label="`${ui('Revoke device', '撤销设备')} ${device.device_name ?? device.fingerprint}`" @click="openDevice(device, 'revoke')">{{ ui('Revoke', '撤销') }}</UButton>
         </div>
       </li>
     </ul>
     <p v-if="!busy && !devices.length" class="muted-copy">{{ ui('No device credentials loaded. Refresh to check the current state.', '尚未读取到设备凭据，请刷新核对当前状态。') }}</p>
-    <button v-if="nextCursor" class="text-button" type="button" :disabled="busy" @click="loadMore">{{ ui('Load more devices', '加载更多设备') }}</button>
+    <UButton color="neutral" variant="ghost" v-if="nextCursor" class="text-button" type="button" :disabled="busy" @click="loadMore">{{ ui('Load more devices', '加载更多设备') }}</UButton>
     <p class="muted-copy">{{ ui('The current session’s source credential and the last active Owner credential cannot be revoked here.', '不能在这里撤销当前会话的来源凭据或最后一份有效 Owner 凭据。') }}</p>
   </section>
 
@@ -309,8 +312,8 @@ onUnmounted(() => { disposed = true; controller.abort(); removeGuard(); window.r
     <form v-if="dialog === 'approve' && !pairing" class="device-form" @submit.prevent="inspect">
       <p id="owner-pairing-help">{{ ui('On your new computer, ask cfkanban-admin to prepare Owner device access. Paste its public pairing_request object below; never paste a secret credential.', '先让新电脑上的 cfkanban-admin 准备 Owner 设备接入，再将生成的非秘密 pairing_request 对象粘贴到下方。不要粘贴秘密凭据。') }}</p>
       <label for="owner-pairing-request">{{ ui('Public pairing request', '非秘密配对请求') }}</label>
-      <textarea id="owner-pairing-request" v-model="input" rows="7" maxlength="8192" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="owner-pairing-help" :disabled="locked" />
-      <button class="primary-button" type="submit" :disabled="locked || !input.trim()">{{ busy ? ui('Checking…', '正在检查…') : ui('Check request', '检查请求') }}</button>
+      <UTextarea class="w-full" id="owner-pairing-request" v-model="input" :rows="7" maxlength="8192" spellcheck="false" autocomplete="off" autocapitalize="off" aria-describedby="owner-pairing-help" :disabled="locked" />
+      <UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="locked || !input.trim()">{{ busy ? ui('Checking…', '正在检查…') : ui('Check request', '检查请求') }}</UButton>
     </form>
     <form v-else class="device-form" @submit.prevent="submit">
       <p>{{ dialog === 'approve' ? ui('This computer will have full Owner access to this instance. Confirm it is your device.', '这台电脑将拥有本实例的完整 Owner 权限，请确认它是你的设备。') : dialog === 'rename' ? ui('Choose a name to help you recognize this device.', '为这台设备填写一个便于识别的名称。') : ui('This stops the selected credential and its browser sessions. Other devices and independent passkeys remain available.', '这将停用所选凭据及其派生浏览器会话，其他设备和独立通行密钥不受影响。') }}</p>
@@ -323,13 +326,13 @@ onUnmounted(() => { disposed = true; controller.abort(); removeGuard(); window.r
       </dl>
       <template v-if="dialog === 'rename'">
         <label for="owner-device-name">{{ ui('Device name', '设备名称') }}</label>
-        <input id="owner-device-name" v-model="deviceName" type="text" autocomplete="off" :disabled="locked" aria-describedby="owner-device-name-help" />
+        <UInput class="w-full" id="owner-device-name" v-model="deviceName" type="text" autocomplete="off" :disabled="locked" aria-describedby="owner-device-name-help" />
         <small id="owner-device-name-help" class="muted-copy">{{ ui('1–80 characters after trimming spaces.', '去除首尾空格后为 1–80 个字符。') }}</small>
       </template>
-      <div v-if="pending" class="warning-panel" role="alert"><p>{{ ui('The result is not confirmed. Keep this page open and retry the original request; its target and request are preserved.', '操作结果尚未确认。请保持此页打开并重试原请求，目标与请求已保留。') }}</p><p v-if="retryExpired">{{ ui('The safe retry window ended. Ask your Agent to inspect this device before continuing.', '安全重试期限已过，请让 Agent 核对该设备状态后再继续。') }}</p><button class="secondary-button" type="button" :disabled="busy || retryExpired" @click="retry">{{ ui('Retry original operation', '重试原操作') }}</button></div>
+      <div v-if="pending" class="warning-panel" role="alert"><p>{{ ui('The result is not confirmed. Keep this page open and retry the original request; its target and request are preserved.', '操作结果尚未确认。请保持此页打开并重试原请求，目标与请求已保留。') }}</p><p v-if="retryExpired">{{ ui('The safe retry window ended. Ask your Agent to inspect this device before continuing.', '安全重试期限已过，请让 Agent 核对该设备状态后再继续。') }}</p><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy || retryExpired" @click="retry">{{ ui('Retry original operation', '重试原操作') }}</UButton></div>
       <template v-else>
         <label v-if="dialog !== 'rename'" class="device-confirm"><input v-model="confirmed" type="checkbox" :disabled="busy || reviewVersion === null" />{{ dialog === 'approve' ? ui('I checked this request and approve this computer as my Owner device.', '我已核对该请求，批准这台电脑作为我的 Owner 设备。') : ui('I confirm revoking this device credential.', '我确认撤销该设备凭据。') }}</label>
-        <div class="form-actions"><button :class="dialog === 'revoke' ? 'danger-button' : 'primary-button'" type="submit" :disabled="busy || (dialog === 'rename' ? !deviceName.trim() : !confirmed) || reviewVersion === null || !reviewing">{{ busy ? ui('Saving…', '正在提交…') : dialog === 'approve' ? ui('Approve device', '批准设备') : dialog === 'rename' ? ui('Save name', '保存名称') : ui('Revoke device', '撤销设备') }}</button><button class="secondary-button" type="button" :disabled="busy" @click="closeDialog">{{ ui('Cancel', '取消') }}</button></div>
+        <div class="form-actions"><UButton color="neutral" variant="ghost" :class="dialog === 'revoke' ? 'danger-button' : 'primary-button'" type="submit" :disabled="busy || (dialog === 'rename' ? !deviceName.trim() : !confirmed) || reviewVersion === null || !reviewing">{{ busy ? ui('Saving…', '正在提交…') : dialog === 'approve' ? ui('Approve device', '批准设备') : dialog === 'rename' ? ui('Save name', '保存名称') : ui('Revoke device', '撤销设备') }}</UButton><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="closeDialog">{{ ui('Cancel', '取消') }}</UButton></div>
       </template>
     </form>
   </ModalDialog>

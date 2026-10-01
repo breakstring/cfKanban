@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import ProjectActivity from "../components/ProjectActivity.vue";
+import ProjectSettingsHeader from "../components/ProjectSettingsHeader.vue";
 import { apiRequest } from "../lib/api";
 import { locale } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
@@ -52,11 +54,10 @@ onUnmounted(() => { generation += 1; });
 
 <template>
   <main class="page-shell">
-    <button class="text-button" type="button" @click="emit('navigate', backPath)">← {{ ui('Back to board', '返回看板') }}</button>
-    <h1>{{ project?.display_name ?? ui('Project activity', '项目活动') }}</h1>
+    <ProjectSettingsHeader :workspace-id="workspaceId" :project-id="projectId" section="activity" :project="project" :session="session" :return-to="backPath" @navigate="emit('navigate', $event)" />
     <ErrorNotice v-if="error" :error="error" />
     <p v-if="loading" role="status">{{ ui('Loading…', '加载中…') }}</p>
-    <button v-if="error && accessible" class="secondary-button" type="button" :disabled="loading" @click="load">{{ ui('Retry', '重试') }}</button>
+    <UButton color="neutral" variant="outline" v-if="error && accessible" class="secondary-button" type="button" :disabled="loading" @click="load">{{ ui('Retry', '重试') }}</UButton>
     <ProjectActivity v-if="project && accessible" :key="projectInventoryBoundary(session.allowed_scope.projects)" :project-id="projectId" />
   </main>
 </template>

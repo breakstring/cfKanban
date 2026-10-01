@@ -27,7 +27,7 @@
 - 关联 Agent Skills：[Agent Skills & Bootstrap SPEC](2026-08-28-agent-skills-bootstrap-spec.md)
 - 关联 API/Schema：[API & D1 Schema SPEC](2026-08-28-api-schema-spec.md)
 - 事实快照：[Web 认证与公开加入能力快照](../research/web-auth-public-enrollment-snapshot-2026-08-29.md)
-- 最近更新：2026-09-05（D-269）
+- 最近更新：2026-10-01（CFK-528，Nuxt UI 与个人主题）
 
 ## 1. 目的与边界
 
@@ -49,7 +49,8 @@
 - v0 不提供公开 batch/bulk 写入；Web 的拖拽一次只移动一张卡，不能通过多选、拖拽多卡或隐藏循环制造批量写接口。
 - 公开首页与认证后 Web UI 公共文案至少支持 English 与简体中文，并允许用户随时切换；这不引入业务内容自动翻译或 Skill/API locale。
 - 同一 Worker 可以通过多个有效域名访问，但实例只发布一个 preferred API/Web origin。页面不替 Cloudflare 管理域名，也不把跨域 Session/Passkey 迁移伪装成普通导航。
-- Web 客户端技术栈固定为 Vue 3 + TypeScript + Vite；视觉实现遵循仓库根目录 `DESIGN.md` 的 warm editorial workbench 基线。该选择不改变同 Worker Static Assets 的部署拓扑，也不授权开始实现。
+- Web 客户端技术栈保持 Vue 3 + TypeScript + Vite，已登录页面统一采用 Nuxt UI 组件，不引入 Nuxt SSR。2026-10-01 用户授权 CFK-528 实施：视觉遵循仓库根目录 `DESIGN.md` 的 Nuxt UI Kanban workbench 基线；旧视觉规则与组件框架冲突时，以简洁、高效的业务操作及框架约定为主，安全、权限、并发和无障碍合同继续有效。保留同 Worker Static Assets 的部署拓扑，使用系统字体与本地打包图标，不增加运行时第三方字体或图标请求。
+- 本轮 UI 改造覆盖全部已登录页面：看板、事项详情/新建、个人资料、项目选择、工作列表、活动、标签、已删除事项、局部管理与全部 Owner 管理页面。公开首页和文档站不改视觉布局。各页面保留已有业务能力与权限入口。
 
 ## 3. 产品表面
 
@@ -89,13 +90,13 @@ UI 只呈现服务端返回的 allowed actions，不靠缓存角色猜测权限�
 
 SB-26 的 v0 交互进一步固定为：
 
-- Project header 始终展示 Workspace/Project、当前 Principal display name、`reader | writer | owner` 摘要和 Session 到期时间；reader 页面醒目标记“只读”，不渲染无效写按钮。
-- 当前 Principal display name 提供轻量“我的资料”入口。所有已认证 Principal，不论 Owner、reader 或 writer，都可以查看只读 principal ID、当前 display name 与身份摘要，并通过同一 `PATCH /api/v1/me` + `expected_version` 合同修改自己的非空 display name；v0 不增加头像、邮箱、简介或他人资料编辑。Passkey 列举/撤销属于认证设置，不与资料修改合并成隐藏复合写入。
+- Project header 展示 Workspace/Project；已登录页面右上角只保留独立的语言切换与账户菜单触发器。当前名称、角色摘要收进账户菜单，并与「工作清单」「管理中心」（当前权限与 Session scope 允许时）、「个人设置」「退出登录」统一组织。桌面与小屏使用同一菜单，Session 到期说明与推荐访问地址统一置于应用页脚，不另设头部 Session 信息行或独立退出按钮；菜单具备键盘、触屏和可见焦点，关闭后焦点返回触发器。reader 页面仍醒目标记“只读”，不渲染无效写按钮。
+- 账户菜单中的“个人设置”打开当前 Principal 的资料页。所有已认证 Principal，不论 Owner、reader 或 writer，都可以查看只读 principal ID、当前 display name、主题偏好与身份摘要，并通过同一 `PATCH /api/v1/me` + `expected_version` 合同修改自己的 display name 或主题；不增加头像、邮箱、简介或他人资料编辑。名称继续满足唯一名称增量合同。Passkey 列举/撤销属于认证设置，不与资料修改合并成隐藏复合写入。
 - Board 卡片点击进入同页 Issue 详情；writer 可以从 Board 创建单个 Issue，卡片 priority 支持独立快捷修改（CFK-434）；assignee、labels、relations 等编辑集中在详情。
 - 拖拽落列采用状态自动保存；Issue title/body 等文本编辑仍使用普通文本框/textarea 和显式 Save，不做后台 autosave，避免输入过程持续写 D1。正文与 Comment 以 Markdown 源码编辑，并在详情、评论流和可选预览中安全渲染；不引入 WYSIWYG 富文本编辑器。
 - 每次保存只提交一个资源的显式改动，并等待服务端成功后更新页面。`VERSION_CONFLICT` 保留尚未提交的当前页草稿，展示远端新 version 与刷新/复制草稿选项，不做自动 merge 或自动重放。
 - 普通 Comment 只有追加、软删除和恢复，没有编辑；completion Comment 只读。评论输入使用普通 Markdown textarea，不做 WYSIWYG。
-- Issue soft delete 只需一次带 identifier/title 的明确确认，因为它可恢复；Project 内提供显式 `deleted=only` 入口定位单个 tombstone 并逐项恢复，不提供多选或批量恢复。
+- Issue soft delete 只需一次带 identifier/title 的明确确认，因为它可恢复；「项目设置 → 已删除事项」使用显式 `deleted=only` 查询定位单个 tombstone 并逐项恢复，不提供多选或批量恢复。
 - Project/Workspace 恢复确认必须列出会随容器恢复而重新公开的 Public Join Projects，并显示其公开 role 选择与三项 quota 摘要。确认恢复后这些仍 enabled 的 Policy 自动恢复；已单独关闭的 Policy 保持关闭，UI 不增加“恢复但保持暂时隐藏”的第二套状态。
 - Label 与 Relation 都是单项操作。跨 Project Relation 的目标选择必须同时显示 `workspace/project + CFK identifier + title`，并继续受同 Workspace/两端权限合同约束。
 - report/clear blocked、assign/unassign、complete/reopen 都是各自独立的显式动作。UI 可以相邻展示，但不能把它们捆绑成隐藏复合写入或失败后自动补偿。
@@ -139,7 +140,24 @@ Web 不提供 Owner transfer、第二管理员、直接 D1 浏览、完整导出
 - `/.well-known/cfkanban-instance.json` 是公开、动态、`no-store` 的机器发现入口，Web 只把其中的 preferred origin 当作展示和生成未来链接的提示，不把任意新 origin 的自报当作信任迁移证据。
 - Agent 新建 Browser Launch、Invite 话术与后续可复制链接时优先使用已经安全绑定的 preferred origin。已经生成的旧 URL 不在后台改写；只要旧 alias 仍绑定同一 Worker，就按原 origin 完成其一次性交换。
 - Web Session cookie 是 origin-specific；换域名后用户需要在新 origin 重新建立 Session。cfKanban v0 主动把 Passkey RP ID 固定为当前 hostname，不启用跨 hostname 共享；换 hostname 后 Agent Browser Launch 是重新进入和登记的恢复路径。
-- 已认证页面只显示非干扰性的推荐地址提示，不自动重定向。这样可以避免正在编辑的内容丢失，也不会把旧 origin 的 Session 或 capability 错误地当作能跨域继承。
+- 已认证页面仅在当前 origin 与 `preferred_api_origin` 不同时，在应用页脚显示非干扰性的推荐地址链接；不放入账户菜单，也不自动重定向。这样可以避免正在编辑的内容丢失，也不会把旧 origin 的 Session 或 capability 错误地当作能跨域继承。
+
+### 3.6 个人主题偏好
+
+- 最少提供「暖橙 / Warm orange」（`orange`）与「静蓝 / Calm blue」（`blue`）两种主题，默认 `orange`。主题只改变强调色、配套浅色及色彩状态，不改变布局、字号、间距、控件位置、导航或交互。
+- 所有已认证身份均可从账户菜单进入「个人设置」，选择主题并显式保存；未保存的选择不形成服务端偏好。保存成功后，当前页面及其他已登录页面使用服务端确认的主题。主题切换不触发导航或业务写入。
+- 偏好属于当前实例中的 Principal，由 D1 保存；登录读取 `WebSession.principal.theme`，个人页通过 `GET /api/v1/me` 读取当前值和 version。换浏览器或重新登录后读取同一已保存值，不将其仅保存在浏览器本地。未认证时和新建 Principal 均使用 `orange`。
+- Web 和 Agent 均通过 `PATCH /api/v1/me` 保存 `theme`，携带当前 Principal `expected_version`；仅修改主题时不提交未编辑的名称。Cookie 写入继续校验同源和 CSRF。权限不因主题改变，任何 Session scope 的已认证身份都只可修改本人。
+- 保存期间防止重复提交；失败保留尚未保存的选择并显示恢复入口，不把选择值当作已保存值。版本冲突按既有 CAS 合同刷新服务端事实并让用户重新判断，不自动覆盖并发的名称或主题更新。
+- 主题不作为新的工作流、角色、项目设置或系统深浅模式。错误、优先级、只读和状态在两种配色下均保留文字或图标提示，颜色不是唯一信号。
+
+### 3.7 项目设置入口与标签页
+
+- 看板的项目级操作收敛为一个「项目设置 / Project settings」按钮。进入后使用同一项目页头和标签导航，承载「项目管理 / Management」「标签 / Labels」「项目活动 / Activity」「已删除事项 / Deleted issues」，不在看板上并列重复这些入口。
+- 「项目管理」只按当前 Project 服务端 `allowed_actions` 的实际管理能力显示；不将普通 writer 或 Principal 名称当作管理授权。「标签」与「项目活动」对可读者提供，标签修改仍要求有效 writer；「已删除事项」及逐条恢复仅对有效 writer/Owner 提供。隐藏标签不预加载其数据，每次访问和写入仍经实时服务端权限与 Session scope 核验。
+- 看板入口对有实际项目管理能力者默认选择「项目管理」，其余可读者默认选择「项目活动」。所有标签切换和返回看板均保留同一项目及已提交筛选条件，`from` 只接收准确同项目看板路径，不接受任意外部跳转。
+- 保留已有地址：项目管理为 `/app/manage?workspace={workspace_id}&project={project_id}`；其余分别为 `/app/w/{workspace_id}/p/{project_id}/labels`、`/activity`、`/deleted`。这些地址直接进入对应标签，不新增替代业务 API 或破坏旧链接。仅工作区的管理地址保留原页面，不引入项目标签。
+- 各标签复用原有业务能力、错误恢复和分页；聚合导航不扩大权限、不合并原子写入、不把项目活动变为 Owner 安全审计。 已归档项目只显示仍有权访问的「项目管理」标签，页头出口改为「选择项目 / Choose project」并进入 `/app`，不导航至不可读的归档看板。
 
 ## 4. Browser Launch 与 Web Session
 
@@ -235,11 +253,11 @@ v0 不包含：自定义列/工作流、手工 rank、批量选择/编辑、复�
 
 ### 5.3 视觉克制
 
-仓库根目录 [`DESIGN.md`](../../DESIGN.md) 是第一方 Web 的视觉与交互设计真相源；本文继续负责产品、安全和行为合同。已确认方向是温暖浅色、纸张般安静、以单一深橙色主操作色组织的工作台；标志可以使用更明快的橙色，控件与链接使用满足对比度要求的深橙色，不再保留蓝色品牌交互层。
+仓库根目录 [`DESIGN.md`](../../DESIGN.md) 是第一方 Web 的视觉与交互设计真相源；本文继续负责产品、安全和行为合同。已确认方向是简洁、高效的 Nuxt UI Kanban 工作台，使用白色与 slate 中性色组织内容，并提供暖橙、静蓝两种个人配色。主题仅改变色彩，布局与交互保持一致；标志沿用既有品牌图形。
 
-- 默认 Board 不设置持久重型侧栏；Workspace/Project、搜索、语言、身份/Session 与一个主要创建动作收敛在紧凑顶部区域。
-- 五列依靠排版、间距、细分隔线和轻微表面差异组织；普通卡片无阴影，不使用玻璃、渐变、霓虹、装饰插画或 cards-inside-cards。
-- 拉丁 Project 页面标题可以使用克制的系统 serif 建立编辑感；高频控件、中文界面、卡片和正文保持系统 sans，Issue identifier 使用系统 monospace。v0 不加载第三方字体。
+- 默认 Board 不设置持久重型侧栏；Workspace/Project、搜索与一个主要创建动作收敛在紧凑顶部区域。右上角仅语言切换与账户菜单触发器，名称、角色与账户操作统一在菜单中呈现；Session 到期说明和有条件出现的推荐地址放在应用页脚。
+- 五列依靠排版、间距与轻微表面差异组织；卡片使用轻边界，必要时可有一层克制阴影，不使用玻璃、渐变、霓虹、装饰插画或 cards-inside-cards。
+- 已登录页面标题、控件、卡片和正文统一使用系统 sans，Issue identifier 可使用系统 monospace。保留公开首页现有排版，不加载第三方字体；图标随应用本地打包。
 - 选定视觉稿只固定气质、信息层级与可见密度。图中的任意日期、重复 Add issue、装饰头像或其他未进入产品合同的生成式偶然细节不得被实现；D-264 明确要求的有界产品页脚不属于该类偶然元素。
 - 精确颜色、间距、圆角、组件状态、无障碍和响应式规则由 `DESIGN.md` 明确；任何有意偏离必须同时更新设计合同与视觉证据，不能在代码中静默漂移。
 
@@ -271,11 +289,11 @@ v0 不包含：自定义列/工作流、手工 rank、批量选择/编辑、复�
 
 ### Q-WEB-01：Launch 与 Session 生命周期（已确认）
 
-v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次；Web Session 固定有效 8 小时，不滑动续期、不提供 refresh token。Session 绑定 `principal_id + source_kind + source_id`：Agent Launch Session 的 source 是发起 launch 的 Credential，Passkey Session 的 source 是完成认证的 Web Authenticator；对应 source revoke 或 Session 显式 revoke 都立即使其失效，Project Grant 始终按请求实时校验。
+v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次；Web Session 自建立起固定有效 8 小时，不滑动续期、不提供 refresh token。刷新页面、切换项目或继续操作都不延长当前 `expires_at`。Session 绑定 `principal_id + source_kind + source_id`：Agent Launch Session 的 source 是发起 launch 的 Credential，Passkey Session 的 source 是完成认证的 Web Authenticator；对应 source revoke 或 Session 显式 revoke 都立即使其失效，Project Grant 始终按请求实时校验。
 
 新兑换的非 Owner Agent Project/Issue Launch Session 使用已有 `project_selection` scope，初始仍进入指定目标，可在当前实时授权项目之间切换；逐项目校验 reader/writer。既有固定 scope Session 和 Owner 明确 Project/Issue target Session 不扩大，Owner admin 与 Passkey 规则保持不变。 详见 [Frozen 增量合同](2026-09-19-participant-project-switching-spec.md)。所有入口都不自动执行无 Project filter 的 Issue 聚合读取。
 
-五分钟给普通浏览器复制/切换留出余量，一次性与实时授权范围限制了暴露；八小时覆盖一个工作日而不形成长期网页登录。到期时已打开页面清除已渲染的远端业务数据；刷新或下一次 API 请求返回稳定的 Session 过期错误并清除 cookie。页面只引导用户让 Agent 重新打开当前 target，不显示密码框或 Credential 粘贴入口。写入到期失败时不自动重放；尚未提交的本地表单文本可以暂存在当前页面内存中，待新 Session 建立后由用户重新判断并提交，但不能写入 Web Storage。
+五分钟给普通浏览器复制/切换留出余量，一次性与实时授权范围限制了暴露；八小时覆盖一个工作日而不形成长期网页登录。到期时已打开页面清除已渲染的远端业务数据；刷新或下一次 API 请求返回稳定的 Session 过期错误并清除 cookie。已登录页脚显示“登录有效至 [日期时间]”，并说明“到期后请用通行密钥重新登录，或让 Agent 重新打开。”；英文提供等价文案。到期后可回到同站点首页用已登记 Passkey 重新登录，或让 Agent 重新打开当前 target，建立新的 Session；不显示密码框或 Credential 粘贴入口。写入到期失败时不自动重放；尚未提交的本地表单文本可以暂存在当前页面内存中，待新 Session 建立后由用户重新判断并提交，但不能写入 Web Storage。
 
 ### Q-WEB-02：后置增强
 
@@ -306,7 +324,7 @@ v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次�
 
 - 详情仅显示当前 Issue 的标签；writer 输入名称后按 Enter 复用或创建一个标签，再以独立原子操作关联。空白不写入，组合输入确认不提交，重复不重复写入；匹配建议仅在输入后出现。名称长度与 ASCII NOCASE 沿用 API 合同。
 - 查找覆盖服务端分页；同名创建冲突重新读取并复用获胜标签。创建成功而关联失败时保留输入和已创建标签，重试复用既有资源；不自动恢复软删除标签或扩大权限。移除仅删除 Issue association。
-- 独立 `/app/w/{workspace_id}/p/{project_id}/labels` 标签管理页由看板主操作区和详情标签区进入，沿用 reader/writer 能力，维护名称和颜色。CAS 冲突保留草稿并要求重新核对；中英文及键盘操作可用。
+- 「项目设置 → 标签」沿用 `/app/w/{workspace_id}/p/{project_id}/labels` 地址，也可从详情标签区进入对应标签。reader 可读，writer 可维护名称和颜色；权限不因进入项目设置而改变。CAS 冲突保留草稿并要求重新核对；中英文及键盘操作可用。
 
 ## 2026-09-20 看板渐进加载（CFK-433）
 
@@ -330,6 +348,6 @@ v0 固定：Browser Launch 生成后 5 分钟内可兑换且只能成功一次�
 - Owner 可在一份普通邀请中选择 1–20 个不重复项目并分别设置 reader/writer；表单和一次性响应校验覆盖完整授权集合。恢复记录保留整份请求及原幂等键，不因修改表单创建第二份能力。局部管理员表单及服务端仍限定一个受管项目，跨范围或多项目恢复记录不能由局部页面处理。
 - `/app/work` 允许显式选择 1–20 个当前 Session 可见项目 UUID。初始不读取事项，项目或筛选变化清除旧结果与游标，用户确认后查询；展示服务端 `resolved_scope` 的实际项目和不可访问目标。固定 Session 不扩权，不自动执行无项目过滤的全实例查询。
 - “我的任务”使用普通事项列表 `assignee=当前 Principal ID`，支持全部五种状态；全部事项提供所选项目负责人、状态和标题/编号筛选。待领取和需重指派使用 candidates 的 `todo`、默认 `blocked=exclude` 及优先级/FIFO 排序，明确说明候选策略。Reader 可读队列，写入资格仍逐项目实时核验；查看不领取，普通看板不发送 blocked 筛选。
-- 项目描述使用安全 Markdown 直接展示在看板标题下方，无内容时不占位；长描述使用有界、键盘可滚动的阅读区，保留五列可用空间。2026-09-29 用户要求项目活动和已删除事项使用独立 `/app/w/{workspace_id}/p/{project_id}/activity`、`/deleted` 页面，并提供返回当前看板及筛选条件的入口，不再使用看板弹窗。活动沿用 reader/writer 可读权限；已删除列表及单条恢复仅对当前 writer/Owner 提供，继续使用实时服务端权限、CAS、幂等和父级状态校验。活动只使用 `/events` 的授权域事件，按当前接口时间正序、`after` 续页，失败可重试，不混入 Owner security audit。活动提供准确工作区/项目 UUID 链接，评论、标签或关系 payload 中明确的合法 CFK 编号可链接具体事项；普通无编号事件只链接所属项目，不从 subject UUID 拼接 Issue 路径。
+- 项目描述使用安全 Markdown 直接展示在看板标题下方，无内容时不占位；长描述使用有界、键盘可滚动的阅读区，保留五列可用空间。项目活动和已删除事项在统一「项目设置」页面中使用各自标签，保留 `/app/w/{workspace_id}/p/{project_id}/activity`、`/deleted` 地址，并提供返回当前看板及筛选条件的入口，不使用看板弹窗。活动沿用 reader/writer 可读权限；已删除列表及单条恢复仅对当前 writer/Owner 提供，继续使用实时服务端权限、CAS、幂等和父级状态校验。活动只使用 `/events` 的授权域事件，按当前接口时间正序、`after` 续页，失败可重试，不混入 Owner security audit。活动提供准确工作区/项目 UUID 链接，评论、标签或关系 payload 中明确的合法 CFK 编号可链接具体事项；普通无编号事件只链接所属项目，不从 subject UUID 拼接 Issue 路径。
 - Issue 按需读取 `/context` 生成结构化交接摘要，复用安全 Markdown 和完成记录呈现，可主动复制文本。逐节显示省略数量，正文/评论/关系回到详情续读，项目背景按当前固定 UUID 读取全文，不跟随响应中的任意 URL。交接内容不包含认证材料，业务内容不构成授权。
 - 网页参与者接受普通邀请及 Agent 本人 Passkey 管理由 [参与者邀请与 Passkey 增量](2026-09-28-participant-invitation-passkey-parity-spec.md) 定义。已确认认证范围不扩展为网页新身份注册、恢复或长期凭据保管。

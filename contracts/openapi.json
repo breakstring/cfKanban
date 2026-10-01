@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.4.1-rc.1",
+    "version": "1.5.0-rc.1",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -533,6 +533,18 @@
           }
         ],
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Optional safe retry key. Reuse the original key and request within 24 hours to recover a committed profile update; the current Principal must remain authenticated.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[\\x20-\\x7E]+$"
+            }
+          },
           {
             "$ref": "#/components/parameters/ConditionalCsrfToken"
           }
@@ -11359,18 +11371,30 @@
         "type": "string",
         "description": "Trim and NFKC normalize before validation; 1–128 Unicode code points in both display and locale-independent lowercase key. Letters, marks, numbers, underscore, hyphen and middle dot only; reject Default_Ignorable_Code_Point. Exact reserved keys: admin, administrator, owner, system, 管理员, 所有者, 系统. Instance-wide unique key; conflict returns PRINCIPAL_DISPLAY_NAME_CONFLICT without owner identity."
       },
+      "PrincipalTheme": {
+        "type": "string",
+        "enum": [
+          "orange",
+          "blue"
+        ],
+        "default": "orange",
+        "description": "Personal color palette; layout and interactions remain the same."
+      },
       "UpdatePrincipalDisplayNameRequest": {
         "type": "object",
         "required": [
-          "expected_version",
-          "display_name"
+          "expected_version"
         ],
+        "minProperties": 2,
         "properties": {
           "expected_version": {
             "$ref": "#/components/schemas/Version"
           },
           "display_name": {
             "$ref": "#/components/schemas/PrincipalDisplayNameInput"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/PrincipalTheme"
           }
         },
         "additionalProperties": false
@@ -12629,6 +12653,7 @@
           "id",
           "principal_id",
           "display_name",
+          "theme",
           "is_owner",
           "version",
           "management_grants"
@@ -12642,6 +12667,9 @@
           },
           "display_name": {
             "type": "string"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/PrincipalTheme"
           },
           "is_owner": {
             "type": "boolean"
@@ -18605,6 +18633,9 @@
           },
           "version": {
             "$ref": "#/components/schemas/Version"
+          },
+          "theme": {
+            "$ref": "#/components/schemas/PrincipalTheme"
           }
         },
         "additionalProperties": false
@@ -18738,7 +18769,26 @@
             "$ref": "#/components/schemas/Timestamp"
           },
           "principal": {
-            "$ref": "#/components/schemas/WebSessionPrincipal"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WebSessionPrincipal"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "theme",
+                  "version"
+                ],
+                "properties": {
+                  "theme": {
+                    "$ref": "#/components/schemas/PrincipalTheme"
+                  },
+                  "version": {
+                    "$ref": "#/components/schemas/Version"
+                  }
+                }
+              }
+            ]
           },
           "session_id": {
             "$ref": "#/components/schemas/Uuid"

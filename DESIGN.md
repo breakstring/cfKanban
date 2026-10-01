@@ -1,10 +1,10 @@
 ---
 name: cfKanban
 status: frozen
-revision: 8
+revision: 9
 frozen_on: 2026-08-29
-revised_on: 2026-09-28
-selected_direction: warm-editorial-workbench
+revised_on: 2026-10-01
+selected_direction: nuxt-ui-kanban-workbench
 applies_to:
   - first-party-web-ui
   - public-instance-home
@@ -13,17 +13,17 @@ applies_to:
   - owner-maintenance
 tokens:
   color:
-    canvas: "#FAF8F4"
-    surface: "#FFFDF9"
-    surface-muted: "#F3F0EA"
-    text: "#20201F"
-    text-muted: "#6C6861"
-    border: "#DDD8CF"
-    border-strong: "#BDB7AD"
-    primary: "#B84708"
-    primary-hover: "#9D3905"
-    primary-pressed: "#7D2C02"
-    focus: "#B84708"
+    canvas: "#FFFFFF"
+    surface: "#FFFFFF"
+    surface-muted: "#F5F7F9"
+    text: "#243247"
+    text-muted: "#596B83"
+    border: "#DCE3EC"
+    border-strong: "#A5B3C5"
+    primary: "#C2410C"
+    primary-hover: "#9A3412"
+    primary-pressed: "#7C2D12"
+    focus: "#C2410C"
     danger: "#B42318"
     danger-soft: "#FCE8E6"
     warning: "#A15C00"
@@ -39,10 +39,28 @@ tokens:
     8: "32px"
     12: "48px"
   radius:
-    control: "6px"
-    card: "8px"
-    overlay: "10px"
+    control: "8px"
+    card: "9px"
+    column: "12px"
+    overlay: "12px"
     pill: "999px"
+  themes:
+    orange:
+      primary: "#C2410C"
+      primary-hover: "#9A3412"
+      primary-pressed: "#7C2D12"
+      focus: "#C2410C"
+      primary-soft: "#FFF3E9"
+      surface-muted: "#F5F7F9"
+      border: "#DCE3EC"
+    blue:
+      primary: "#1D4ED8"
+      primary-hover: "#1E40AF"
+      primary-pressed: "#1E3A8A"
+      focus: "#1D4ED8"
+      primary-soft: "#EFF6FF"
+      surface-muted: "#F3F6FB"
+      border: "#D9E2F0"
 ---
 
 # cfKanban Design Contract
@@ -55,10 +73,11 @@ This document is the visual and interaction design source of truth for the first
 
 ## 1. Design intent
 
-cfKanban should feel like a calm working ledger rather than a configurable enterprise dashboard. It is warm, direct, and readable enough for occasional human use while remaining compact enough for a five-column Kanban board.
+cfKanban is a simple, efficient Kanban workbench. Clear Issue hierarchy, predictable controls, and quick scanning take priority over decoration. All authenticated pages use Nuxt UI components within the existing Vue 3 + TypeScript + Vite application; this does not introduce Nuxt SSR or change the Worker deployment topology. The 2026-10-01 user authorization permits the framework's component conventions to replace conflicting earlier visual rules while preserving product semantics, security, and accessibility.
 
-The selected direction is represented by a four-screen reference set. Each image
-tests the same visual language against a different product surface:
+This revision applies to the Board, Issue detail and creation, profile, project selection, work lists, activity, labels, deleted items, scoped management, and all Owner pages. The public homepage and documentation site keep their existing visual layouts. The two authenticated themes share exactly the same layout and interactions.
+
+The following four-screen set records the earlier warm editorial direction. It remains useful for the unchanged public homepage and historical comparison; it is not the current authenticated layout or Nuxt UI implementation evidence:
 
 | Surface | Reference |
 | --- | --- |
@@ -75,8 +94,8 @@ must not become features.
 ### Principles
 
 1. **Quiet chrome, clear work.** Issue content and current scope dominate; navigation and account controls recede.
-2. **Warm, not decorative.** Warm neutrals replace clinical gray, but the UI does not use illustration, texture, gradients, or ornamental effects.
-3. **One primary action.** A screen has one deep-orange primary action. Supporting actions use text, outline, or menus.
+2. **Neutral foundations.** White surfaces and quiet slate neutrals support either theme without illustration, texture, gradients, or ornamental effects.
+3. **One primary action.** A task region has one clear primary action in the selected theme accent. Supporting actions use text, outline, or menus.
 4. **Structure before containers.** Use spacing, alignment, typography, and dividers before adding backgrounds, borders, or elevation.
 5. **Dense enough, never cramped.** Metadata is compact, while titles and action targets remain easy to scan and operate.
 6. **Behavior is visible.** Saving, read-only state, conflicts, quota failures, and session expiry are explicit and never communicated by color alone.
@@ -85,7 +104,7 @@ must not become features.
 
 ### 2.1 Color
 
-The YAML tokens above are normative. Implement them as CSS custom properties with the same semantic names, for example `--color-canvas` and `--color-primary`.
+The YAML tokens above define the authenticated application palette. Implement semantic CSS custom properties, for example `--color-canvas` and `--color-primary`, and map Nuxt UI semantic colors to the same theme. The unchanged public homepage keeps its warm canvas and original palette in its own scope.
 
 - `canvas` is the default full-page background.
 - `surface` is used for issue records, inputs, menus, dialogs, and other true foreground objects.
@@ -94,11 +113,13 @@ The YAML tokens above are normative. Implement them as CSS custom properties wit
 - Semantic colors must always include text, an icon, or another non-color signal.
 - Status columns do not receive five competing brand colors. Fixed status names and position carry the main status meaning.
 
-Do not introduce a second brand accent without revising this file. Labels may use a small set of accessible muted tints, but they must not turn a card into a rainbow.
+Offer `orange` (Warm orange / 暖橙) as the default and `blue` (Calm blue / 静蓝) as the second theme. Only accent colors, related muted tints, and color states vary; spacing, typography, geometry, navigation, control placement, and interaction remain identical. Semantic danger, warning, and success retain their meaning in both themes. Labels may use accessible muted tints without turning a card into a rainbow.
+
+The profile page presents the two named choices and an explicit Save action. The Principal preference is persisted by the server through the same self-profile API available to Agents. Apply the saved value throughout authenticated pages, including management; a new or unauthenticated Principal uses `orange`. Do not use browser-local identity or credentials to persist the theme, and do not silently change a saved theme to match the operating system.
 
 ### 2.2 Typography
 
-Use system fonts only in v0 so the Worker serves no third-party font dependency.
+Use system fonts only so the Worker serves no third-party font dependency. Icons are bundled locally; do not call a remote icon or font service at runtime.
 
 ```css
 --font-ui: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
@@ -108,7 +129,7 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 ```
 
 - UI text, forms, menus, board columns, card titles, and Markdown body use `--font-ui`.
-- The Latin product/project page title may use `--font-display` at a restrained weight. Under `:lang(zh-CN)`, use `--font-ui` for headings to avoid unpredictable CJK serif fallback.
+- Authenticated page titles use `--font-ui` in both locales. The public homepage may retain its existing restrained display face; under `:lang(zh-CN)`, use `--font-ui` to avoid unpredictable CJK serif fallback.
 - `CFK-<number>`, versions, request IDs, and short machine metadata may use `--font-mono`.
 - Body text: 14–16px; compact metadata: 12–13px; control labels: at least 14px.
 - Project page title: 28–32px desktop, 24–28px narrow viewport.
@@ -119,8 +140,8 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 
 - Use the 4px spacing scale from the YAML tokens. Prefer `8 / 12 / 16 / 24 / 32px` for most layout decisions.
 - Controls are normally 36–40px high on desktop and at least 44px where touch is the primary input.
-- Use `6px` control radius and `8px` card radius. Pills are limited to compact tags, counts, status summaries, and avatars.
-- Default surfaces are flat. Cards use a 1px `border` and no shadow.
+- Use `8px` control radius, `9px` card radius, and `12px` column/overlay radius. Pills are limited to compact tags, counts, status summaries, and avatars.
+- Cards use a light boundary; one subtle shadow is allowed when needed to separate white cards from quiet column backgrounds. Do not add multiple elevation tiers.
 - Menus and dialogs may use one restrained shadow plus a border. There are no multiple elevation tiers for ordinary content.
 - Avoid large rounded shells around the whole application, cards inside cards, and floating dashboard tiles.
 
@@ -133,29 +154,43 @@ Use system fonts only in v0 so the Worker serves no third-party font dependency.
 
 ## 3. Application shell
 
+### 3.0 Authenticated account navigation
+
+- The right side of the authenticated header contains only the independent language switch and one account-menu trigger. Keep workspace/project navigation in its existing scope area.
+- The account menu groups the current name and role with Work list, Management center when permitted by the current Session, Personal settings, and Sign out. These items use the existing destinations and permissions; opening the menu does not expand access. Session expiry and the recommended address belong in the application footer.
+- Use the same account menu on desktop and narrow screens. Keep sign-out explicit inside the menu; do not duplicate it in a separate session row. Long identity names wrap or truncate with their full accessible name retained.
+- The trigger and menu support keyboard operation, visible focus, and touch. Escape closes the menu and returns focus to the trigger. The current name and role remain readable without competing with the current work surface.
+
 ### 3.1 Project Board
 
 - Use a full-width application surface with a compact top bar and a quiet project header.
-- Group the Project title and the primary `New issue` action on the first row, with the project description directly under its title. Search and compact priority/label menus share a quieter utility row; activity and deleted issues link to separate project pages. Filter selections apply immediately after a short debounce; search retains an explicit submit control in addition to Enter. This hierarchy follows the user's 2026-09-29 review of the expanded toolbar and filter rows.
-- Do not add a persistent left sidebar to the default Board. Workspace/Project scope, search, locale, session/role summary, profile, and the single primary `New issue` action fit in the top region.
+- Group the Project title and the primary `New issue` action on the first row, with the project description directly under its title. Search and compact priority/label menus share a quieter utility row. One secondary `Project settings` button opens the project-level page; do not repeat separate management, labels, activity, or deleted-Issue buttons on the Board. Filter selections apply immediately after a short debounce; search retains an explicit submit control in addition to Enter. This hierarchy follows the user's 2026-09-29 review of the expanded toolbar and filter rows.
+- Do not add a persistent left sidebar to the default Board. Workspace/Project scope, search, and the single primary `New issue` action fit in the top region; identity details and account actions stay in the account menu, alongside an independent language switch.
 - At a 1440px desktop viewport, all five fixed columns should be visible without reducing card text below the typography rules.
-- Each column has a practical minimum width of 248px. Narrow viewports use horizontal board scrolling rather than compressing five columns into unreadable slivers.
+- Columns retain enough width for readable titles and metadata. At narrow viewports use horizontal board scrolling rather than compressing five columns into unreadable slivers; the five-column desktop fit and touch targets take priority over an arbitrary fixed minimum.
 - When the five columns need to scroll, keep that overflow inside a named, keyboard-focusable Board region and show a concise localized cue that all five columns continue sideways. The status selector in each writable card's metadata row is the non-drag alternative and therefore uses a touch target of at least 44px on narrow viewports.
-- Column separation uses spacing and a subtle vertical divider or surface step. Columns are not five large elevated cards.
+- Column separation uses spacing and a quiet slate-tinted background with 12px corners. Columns are not elevated panels.
 - Issue cards do not repeat a completion-note action; optional completion notes belong in Issue detail.
 - The column footer does not repeat `Add issue` when the top-level `New issue` action is already visible.
+
+#### Project settings
+
+- Use one shared `Project settings` page heading and tab navigation across Management, Labels, Activity, and Deleted issues. Management appears only for current server-confirmed Project management actions; Labels and Activity retain read access, label edits require effective writer access, and Deleted issues requires effective writer access.
+- The Board entry selects Management for users who can manage this Project and Activity otherwise. Switching tabs preserves the current Project and the submitted Board filters used by Return to board. Do not fetch hidden tabs or enlarge Session scope.
+- Retain existing management, labels, activity, and deleted-Issue URLs as direct tab entries. Workspace-level management remains a separate page, without Project tabs. Permissions, pagination, CAS, restoration, and event visibility remain unchanged. For an archived Project, show only an authorized Management tab and replace Return to board with Choose project (`/app`); do not send the user to an unavailable archived Board.
 
 ### 3.2 Issue cards
 
 The visual order is:
 
-1. `CFK-<number>` and issue title sharing the detail entry;
-2. a compact summary of labels or exceptional markers, only when present;
-3. priority, the writable status selector, and assignee or `Unassigned` sharing one metadata row.
+1. `CFK-<number>` and priority on a compact top row;
+2. the issue title as the main detail entry;
+3. a compact summary of labels or exceptional markers, only when present;
+4. assignee or `Unassigned` and the writable quick status control in a quiet footer.
 
-- Cards use `surface`, a 1px border, 8px radius, 8px padding, and 4px vertical gaps. Common desktop cards target roughly half the previous height through layout and spacing, without smaller title text or a fixed card height. Long titles, labels, and exceptional markers may increase height.
+- Cards use `surface`, a light boundary, 9px radius, and compact spacing on the 4px scale. Keep title, labels, and assignee readable without a fixed card height. Long titles, labels, and exceptional markers may increase height.
 - Show at most three label chips and a `+N` count for additional labels. The summary stays on one line when possible; long chips truncate without splitting ordinary characters, with full names in accessible text and titles. Issue detail retains all labels. Do not reserve a summary row when labels and exceptional markers are absent.
-- Priority, status, and assignee share a compact metadata row without a divider or separate footer. Preserve explicit `Unassigned` text; long assignee names may truncate with the full name in the title. Allow the metadata to wrap when necessary.
+- A subtle divider may separate the assignee/status footer. Preserve explicit `Unassigned` text; long assignee names may truncate with the full name in the title. Allow metadata to wrap when necessary.
 - Priority and status retain transparent resting surfaces and a 32px minimum desktop height. The detail entry and both selectors use at least 44px below or at 940px viewport width. Keep selectors outside the detail button and isolate their pointer, keyboard, and drag events; saving disables both selectors and dragging.
 - A card title normally occupies no more than two lines on the board, with its complete text retained in the accessible detail entry and title. Full content belongs in Issue detail.
 - Empty columns remain visually quiet. Do not fill them with a permanent dashed drop box; show a drop target only during an active drag.
@@ -167,7 +202,7 @@ The visual order is:
 
 - Keep editing and rendered reading modes visually distinct without introducing a WYSIWYG toolbar.
 - Text fields use explicit `Save`; status changes and the dedicated priority selectors save their single explicit choice immediately as defined by the Web UI SPEC.
-- Markdown rendering uses the same typography and warm surfaces. Code blocks use `--font-mono`, a muted surface, and horizontal scrolling rather than page overflow.
+- Markdown rendering uses the same typography and theme surfaces. Code blocks use `--font-mono`, a muted surface, and horizontal scrolling rather than page overflow.
 - Comments are a single chronological stream with light row separation. Do not wrap every comment in an elevated card.
 - Completion comments are visually recognizable as immutable records but remain part of the same comment stream.
 - The title region includes a compact status, priority, and assignee summary. At tablet widths the property rail remains beside the description; below 780px it follows the reading column, with an explicit `View properties` anchor in the summary.
@@ -177,7 +212,7 @@ The visual order is:
 
 ### 3.4 Owner maintenance
 
-- Owner pages use the same shell and tokens. They are not a separate admin theme.
+- Owner and scoped-management pages use the same Nuxt UI components, shell, and selected Principal theme as participant pages. Project selection, work lists, activity, labels, deleted items, and profile follow this same system.
 - Use simple lists, tables, forms, and compact summaries for Overview, Workspaces/Projects, Access, and Audit.
 - Workspace project rows vertically center the name and its management actions. Long names wrap completely, including unbroken names; actions retain their click targets and may wrap without overlapping the name. Form rows keep their own input alignment.
 - Avoid metric tiles unless a value is both actionable and required by the product contract. Health and quota summaries should read as operational facts, not an analytics dashboard.
@@ -196,14 +231,15 @@ The visual order is:
 - The public home has four compact scroll stages: hero/deployment guide below the header, highlights, video, then Public Join and footer. Keep the header sticky and account for its height at snap targets; the footer stays in normal flow. Use bounded whitespace so the next stage can appear in the viewport, with native proximity snapping and normal document scrolling. Content may grow, including project lists and copy recovery; keep recovery near its action and do not intercept wheel, touch, or keyboard events. Disable snapping for reduced-motion preferences, and scope it to the public home so authenticated pages retain their normal scrolling.
 - Public Join Project choices are a simple list or grid of records with a clear `reader | writer` choice. Do not market them as pricing tiers.
 - The public home ends with an understated product footer separated by one rule. It contains the wordmark/tagline, deployment and joining guides, API contract, source link, Service version, and a shortened Instance ID; it does not grow into a sitemap, marketing panel, decorative date, or second navigation shell.
-- Authenticated pages share a compact footer with the product mark/version, localized same-instance documentation, and GitHub. Keep it in normal flow, include its height in the board's flex layout, and let links wrap on narrow screens. New-tab links announce that behavior and keep visible keyboard focus; opening documentation preserves the working page and Session scope.
+- Authenticated pages share a compact footer with the product mark/version, localized same-instance documentation, GitHub, and Session expiry. Show `Signed in until [localized date and time]` / `登录有效至 [本地化日期时间]`, followed by `After expiry, sign in with a Passkey or ask your Agent to reopen.` / `到期后请用通行密钥重新登录，或让 Agent 重新打开。` These lines describe the existing fixed eight-hour Session; refresh and continued activity do not extend it.
+- Show the recommended address in this footer only when the current origin differs from the published preferred origin. Use an explicit link, without automatic redirection or transferring authentication. Keep the footer in normal flow, include its height in the board's flex layout, and let text and links wrap on narrow screens. New-tab links announce that behavior and keep visible keyboard focus; opening documentation preserves the working page and Session scope.
 - Browser Launch, Passkey, expiry, and failure pages use one clear next action and avoid exposing protocol noise unless it helps recovery.
 
 ## 4. Components and states
 
 ### Buttons
 
-- One filled deep-orange primary button per visible task region.
+- One filled primary button in the selected theme accent per visible task region.
 - Secondary actions are neutral outline buttons; tertiary actions are text buttons or menu items.
 - Destructive actions are not filled red by default. Use a red treatment only at the final, explicit destructive step.
 - Every button has default, hover, focus-visible, active, disabled, and loading states.
@@ -229,7 +265,7 @@ The visual order is:
 ### Motion
 
 - Interaction transitions are 120–180ms and explain state change rather than decorate the page.
-- Drag lift may use a subtle scale or shadow, but the resting card remains flat.
+- Drag lift may use a subtle scale or shadow distinct from the resting card's light boundary.
 - Honor `prefers-reduced-motion` and remove nonessential transforms.
 
 ## 5. Accessibility and localization
@@ -237,7 +273,7 @@ The visual order is:
 - Target WCAG 2.2 AA contrast for text, controls, focus, and semantic states.
 - Keyboard focus is always visible. Board drag operations have a status selector/menu equivalent.
 - Icon-only controls require accessible names and tooltips where meaning is not obvious.
-- Small screens retain an explicit sign-out action in the session information row; moving account controls must not remove access to them.
+- On small screens the same account menu retains explicit Sign out, identity, and role. Its trigger and every menu action remain reachable by keyboard and touch; footer Session information and links wrap without horizontal overflow.
 - Error, priority, role, saving, and read-only states use text or icons in addition to color.
 - English and Simplified Chinese layouts must tolerate ordinary text expansion without truncating primary actions.
 - Stable workflow keys and default column labels remain English as required by the product contract; surrounding UI copy follows the selected locale.
@@ -250,8 +286,8 @@ The visual order is:
 - Let typography, whitespace, and alignment create hierarchy.
 - Keep the Board immediately understandable at a glance.
 - Preserve one obvious primary action and expose recovery near failures.
-- Reuse the same tokens and components across public, participant, and Owner surfaces.
-- Prefer CSS, standard controls, and a small icon set over bespoke visual assets.
+- Reuse the same Nuxt UI components and theme tokens across all authenticated participant, profile, and management surfaces.
+- Prefer Nuxt UI controls, semantic HTML, and a small bundled icon set over bespoke visual assets. Keep existing accessible behavior when replacing controls.
 
 ### Do not
 
@@ -264,13 +300,17 @@ The visual order is:
 
 ## 7. Reference policy
 
-- The selected reference set is stored in-repository so future Agents can inspect the same visual system across public, participant, Board, Issue, and Owner contexts.
+- The stored warm-editorial references are historical material and a guide for the unchanged public homepage. They do not prescribe the authenticated Nuxt UI layouts in this revision.
 - A reference screen only governs the hierarchy and styling of the product capabilities already defined by the SPEC. It cannot introduce a new field, action, permission, navigation destination, or service behavior.
 - [getdesign.md's Notion analysis](https://getdesign.md/notion/design-md) informed the warm, paper-calm mood; it is inspiration only and is not a runtime dependency or a license to clone Notion branding.
 - [TypeUI](https://github.com/bergside/typeui) informed the idea of testable, Agent-readable design rules. cfKanban does not depend on TypeUI's hosted MCP, CLI, registry, or paid assets.
 - When implementation begins, screenshots of the real application override generated-image accidents but do not silently override this contract. Any intentional change to the visual system must update this file and its evidence together.
 
-## 8. Revision 7 evidence
+## 8. Historical validation evidence
+
+The following records describe earlier revisions only. They are not evidence that the current Nuxt UI implementation or either theme has passed visual or behavioral validation.
+
+### Revision 7 evidence
 
 The 2026-09-19 review compared the stored warm-editorial reference set with the real Owner, Board, and Issue screens. The initial browser capture showed fragmented Overview actions, label chips compressed into vertical text, prominent native status fields on every card, and a filled-red Issue delete button. This revision changes hierarchy and control placement while retaining the frozen palette, system typography, five-column workflow, and permissions.
 
@@ -289,7 +329,7 @@ The revised UI was rendered in the Codex in-app browser against an isolated loca
 Generated reference artwork remains a mood and hierarchy guide. No avatars, fake counters, decorative dates, extra columns, or unsupported controls were introduced from it.
 
 
-## 2026-09-20 Issue 操作与邀请历史验证
+### 2026-09-20 Issue 操作与邀请历史验证
 
 本次延续现有 tokens，用名称选择器替换详情页的重复指派按钮和 UUID 输入；完成操作合并为一个选填说明弹窗，卡片不再重复显示说明入口。阻塞原因与前置关系说明独立呈现，看板提供服务端阻塞筛选。邀请历史按需进入独立页面，普通分页与完整安全复核使用独立状态。
 

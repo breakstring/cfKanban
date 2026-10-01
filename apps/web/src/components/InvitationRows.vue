@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { locale } from "../lib/i18n";
 import type { InvitationResource } from "../types";
 
@@ -46,7 +47,7 @@ function formatTime(value: string): string {
         <template v-else>{{ invitation.bound_principal?.display_name ?? invitation.bound_principal?.principal_id }} · {{ invitation.recovery_mode }}</template>
         <small>{{ statusLabel(invitation.status) }} · {{ ui("Expires", "到期") }} {{ formatTime(invitation.expires_at) }}</small>
       </span>
-      <button v-if="invitation.allowed_actions.includes('revoke')" class="danger-text-button" type="button" :disabled="busy" @click="emit('revoke', invitation)">{{ ui("Revoke", "撤销") }}</button>
+      <UButton color="error" variant="ghost" v-if="invitation.allowed_actions.includes('revoke')" class="danger-text-button" type="button" :disabled="busy" @click="emit('revoke', invitation)">{{ ui("Revoke", "撤销") }}</UButton>
     </div>
     <p v-if="items.length === 0" class="empty-copy">{{ ui("No invitations", "暂无邀请记录") }}</p>
   </div>

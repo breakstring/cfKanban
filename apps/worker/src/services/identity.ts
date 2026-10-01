@@ -11,7 +11,7 @@ import {
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
-import { ApiError, notFound, platformUnavailable, versionConflict } from "../kernel/errors.ts";
+import { ApiError, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
 import {
   operationSnapshotStatement,
   readOperationSnapshot,
@@ -37,6 +37,7 @@ interface PrincipalRow {
   created_at: number;
   display_name: string;
   id: string;
+  theme: "orange" | "blue";
   updated_at: number;
   version: number;
 }
@@ -65,7 +66,7 @@ async function readInstance(db: D1Database): Promise<InstanceRow> {
 async function readPrincipal(db: D1Database, principalId: string): Promise<PrincipalRow | null> {
   try {
     return await db.prepare(
-      `SELECT id, display_name, version, created_at, updated_at
+      `SELECT id, display_name, theme, version, created_at, updated_at
        FROM principals WHERE id = ?1 LIMIT 1`,
     ).bind(principalId).first<PrincipalRow>();
   } catch (error) {
@@ -93,6 +94,7 @@ function principalResource(row: PrincipalRow, extras: Record<string, JsonValue> 
     deleted_at: null,
     display_name: row.display_name,
     id: row.id,
+    theme: row.theme,
     updated_at: timestamp(row.updated_at),
     version: row.version,
     ...extras,
@@ -201,82 +203,99 @@ export async function getMe(db: D1Database, auth: AuthContext): Promise<{ [key: 
 
 export async function updateMe(
   db: D1Database,
+  request: Request,
   auth: AuthContext,
-  displayName: JsonValue,
+  input: { [key: string]: JsonValue },
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  const normalizedName = requirePrincipalDisplayName(displayName);
-  const current = await readPrincipal(db, auth.principalId);
-  if (current === null) throw notFound();
-  const updated: PrincipalRow = {
-    ...current,
-    display_name: normalizedName,
-    updated_at: now,
-    version: current.version + 1,
-  };
-  const operationId = crypto.randomUUID();
-  const eventId = crypto.randomUUID();
-  const guard = buildCurrentAuthGuard(auth, now, 7);
-  const statements = [
-    db.prepare(
-      `UPDATE principals
-       SET display_name = ?1, display_name_key = ?6, version = version + 1, updated_at = ?2, last_operation_id = ?3
-       WHERE id = ?4 AND version = ?5 AND ${guard.sql}`,
-    ).bind(normalizedName, now, operationId, auth.principalId, expectedVersion, principalDisplayNameKey(normalizedName), ...guard.values),
-    db.prepare(
-      `INSERT INTO events
-        (id, stream, type, operation_id, event_index, actor_principal_id,
-         actor_credential_id, authorized_via, subject_type, subject_id,
-         payload_json, created_at)
-       SELECT ?1, 'security', 'principal.display-name-updated', ?2, 0, ?3, ?4,
-              ?5, 'principal', id, ?6, ?7
-       FROM principals WHERE id = ?3 AND last_operation_id = ?2`,
-    ).bind(
-      eventId,
-      operationId,
-      auth.principalId,
-      actorCredentialId(auth),
-      authorizedVia(auth),
-      JSON.stringify({ display_name: normalizedName }),
-      now,
-    ),
-  ];
-
-  let commit: OperationCommit;
-  try {
-    ({ commit } = await executeAtomicBatch(db, {
-      businessStatements: statements,
-      committedAt: now,
-      confirmBusinessRejection: async () => {
-        const current = await readPrincipal(db, auth.principalId);
-        return current === null || current.version !== expectedVersion
-          || await principalDisplayNameExists(db, normalizedName, auth.principalId)
-          || await authGuardRejected(db, auth, now);
-      },
-      expectedEventCount: 1,
-      operationId,
-      primarySubjectId: auth.principalId,
-      primarySubjectType: "principal",
-    }));
-  } catch (error) {
-    if (error instanceof AtomicBatchRejectedError) {
-      await verifyCurrentAuth(db, auth, now);
-      const current = await readPrincipal(db, auth.principalId);
-      if (current === null) throw notFound();
-      if (current.version !== expectedVersion) throw versionConflict(current.version);
-      if (await principalDisplayNameExists(db, normalizedName, auth.principalId)) throw principalDisplayNameConflict();
-      throw versionConflict(current.version);
-    }
-    throw error;
+  if (!("display_name" in input) && !("theme" in input)) throw validationError("profile_change_required");
+  const changes: { display_name?: string; theme?: "orange" | "blue" } = {};
+  if ("display_name" in input) changes.display_name = requirePrincipalDisplayName(input.display_name as JsonValue);
+  if ("theme" in input) {
+    if (input.theme !== "orange" && input.theme !== "blue") throw validationError("invalid_theme", { field: "theme" });
+    changes.theme = input.theme;
   }
-  return writeResult(
+  const idempotencyKey = request.headers.get("idempotency-key");
+  const execute = async (operationId: string) => {
+    const current = await readPrincipal(db, auth.principalId);
+    if (current === null) throw notFound();
+    const updated: PrincipalRow = { ...current, ...changes, updated_at: now, version: current.version + 1 };
+    const resource = principalResource(updated, { principal_id: updated.id });
+    const guard = buildCurrentAuthGuard(auth, now, 8);
+    const statements = [
+      db.prepare(
+        `UPDATE principals
+         SET display_name = ?1, display_name_key = ?6, theme = ?7,
+             version = version + 1, updated_at = ?2, last_operation_id = ?3
+         WHERE id = ?4 AND version = ?5 AND ${guard.sql}`,
+      ).bind(updated.display_name, now, operationId, auth.principalId, expectedVersion,
+        principalDisplayNameKey(updated.display_name), updated.theme, ...guard.values),
+      db.prepare(
+        `INSERT INTO events
+          (id, stream, type, operation_id, event_index, actor_principal_id,
+           actor_credential_id, authorized_via, subject_type, subject_id,
+           payload_json, created_at)
+         SELECT ?1, 'security', ?8, ?2, 0, ?3, ?4,
+                ?5, 'principal', id, ?6, ?7
+         FROM principals WHERE id = ?3 AND last_operation_id = ?2`,
+      ).bind(crypto.randomUUID(), operationId, auth.principalId, actorCredentialId(auth),
+        authorizedVia(auth), JSON.stringify(changes), now,
+        changes.theme === undefined ? "principal.display-name-updated" : "principal.profile-updated"),
+    ];
+    if (idempotencyKey !== null) statements.push(operationSnapshotStatement(db, operationId, resource));
+
+    let commit: OperationCommit;
+    try {
+      ({ commit } = await executeAtomicBatch(db, {
+        businessStatements: statements,
+        committedAt: now,
+        confirmBusinessRejection: async () => {
+          const current = await readPrincipal(db, auth.principalId);
+          return current === null || current.version !== expectedVersion
+            || await principalDisplayNameExists(db, updated.display_name, auth.principalId)
+            || await authGuardRejected(db, auth, now);
+        },
+        expectedEventCount: 1,
+        operationId,
+        primarySubjectId: auth.principalId,
+        primarySubjectType: "principal",
+        requireIdempotencySnapshot: idempotencyKey !== null,
+      }));
+    } catch (error) {
+      if (error instanceof AtomicBatchRejectedError) {
+        await verifyCurrentAuth(db, auth, now);
+        const current = await readPrincipal(db, auth.principalId);
+        if (current === null) throw notFound();
+        if (current.version !== expectedVersion) throw versionConflict(current.version);
+        if (await principalDisplayNameExists(db, updated.display_name, auth.principalId)) throw principalDisplayNameConflict();
+        throw versionConflict(current.version);
+      }
+      throw error;
+    }
+    return { commit, resource };
+  };
+  if (idempotencyKey === null) {
+    const { commit, resource } = await execute(crypto.randomUUID());
+    return writeResult(db, auth, resource, commit.lastEventSequence, false);
+  }
+  const result = await runIdempotentOperation({
+    authorize: () => verifyCurrentAuth(db, auth, now),
     db,
-    auth,
-    principalResource(updated, { principal_id: updated.id }),
-    commit.lastEventSequence,
-    false,
-  );
+    execute: async (operationId) => { await execute(operationId); },
+    idempotencyKey,
+    method: "PATCH",
+    normalizedResourceScope: `principal:${auth.principalId}`,
+    now,
+    readback: async (operationId, commit) => ({
+      body: await writeResult(db, auth, await readOperationSnapshot<{ [key: string]: JsonValue }>(db, operationId), commit.lastEventSequence, false),
+      status: 200,
+    }),
+    requestBody: { ...changes, expected_version: expectedVersion },
+    routeTemplate: "/api/v1/me",
+    scopeKey: `principal:${auth.principalId}`,
+  });
+  return { ...result.body, idempotent_replay: result.idempotentReplay };
 }
 
 export async function getInstanceOrigin(

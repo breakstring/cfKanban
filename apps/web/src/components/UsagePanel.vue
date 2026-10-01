@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ApiProblem, apiRequest } from "../lib/api";
 import { locale } from "../lib/i18n";
@@ -162,11 +163,11 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
   <section class="owner-section usage-panel" aria-labelledby="usage-heading" :aria-busy="loading">
     <div class="section-heading-row">
       <div><h2 id="usage-heading">{{ ui('Usage & limits', '用量与限额') }}</h2><p>{{ ui('Application budget and Cloudflare statistics for this instance.', '本实例的应用预算与 Cloudflare 统计。') }}</p></div>
-      <button class="secondary-button" type="button" :disabled="loading || saving" @click="refresh()">{{ loading ? ui('Loading…', '正在读取…') : ui('Refresh usage', '刷新用量') }}</button>
+      <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="loading || saving" @click="refresh()">{{ loading ? ui('Loading…', '正在读取…') : ui('Refresh usage', '刷新用量') }}</UButton>
     </div>
     <p v-if="failed" class="warning-panel" role="alert">{{ usage ? ui('Refresh failed. Displayed values are from the previous snapshot and may be out of date.', '刷新失败。下方保留上次快照，数据可能已过期。') : ui('Usage is unavailable. Try refreshing usage.', '暂时无法读取用量，请刷新用量重试。') }}</p>
     <template v-if="usage">
-      <div class="usage-cloud-heading"><h3>{{ ui('Attachment application budget', '附件应用预算') }}</h3><button v-if="!editing" class="text-button" type="button" :disabled="loading" @click="editSettings">{{ ui('Set limit', '设置上限') }}</button></div>
+      <div class="usage-cloud-heading"><h3>{{ ui('Attachment application budget', '附件应用预算') }}</h3><UButton color="neutral" variant="ghost" v-if="!editing" class="text-button" type="button" :disabled="loading" @click="editSettings">{{ ui('Set limit', '设置上限') }}</UButton></div>
       <p>{{ bytes(usage.attachments.reserved_bytes) }} / {{ !usage.attachments.limit_configured ? ui('Not set', '未设置') : usage.attachments.limit_bytes === null ? ui('Unlimited', '不限制') : bytes(usage.attachments.limit_bytes) }}<template v-if="usage.attachments.limit_configured && usage.attachments.limit_bytes !== null"> · {{ number(percent) }}%</template> · {{ usage.attachments.enabled ? ui('Attachments enabled', '附件已启用') : ui('Attachments disabled', '附件未启用') }}</p>
       <meter v-if="usage.attachments.limit_configured && usage.attachments.limit_bytes !== null && usage.attachments.limit_bytes > 0" :class="{ 'capacity-reached': capacityReached }" min="0" :high="usage.attachments.limit_bytes * 0.9" :optimum="0" :max="usage.attachments.limit_bytes" :value="usage.attachments.reserved_bytes" :aria-label="ui('Reserved attachment budget', '附件预留预算')" />
       <p v-if="capacityReached" class="warning-panel" role="status">{{ ui('Storage limit reached. New uploads are paused; existing attachments remain accessible. Raise the limit or wait for reclamation to free space.', '已达到容量上限，新增上传已暂停；已有附件仍可访问。可提高上限或等待回收释放容量。') }}</p>
@@ -176,7 +177,7 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
         <label v-if="settingsMode === 'limited'">{{ ui('Capacity (MiB)', '容量（MiB）') }}<input v-model="limitMiB" type="number" min="0.00000095367431640625" step="any" :disabled="saving" required /></label>
         <p class="muted-copy">{{ ui('1 GiB = 1024 MiB. Lowering the limit keeps existing files and blocks new uploads above the limit. Unlimited has no application budget cap and may incur R2 charges.', '1 GiB = 1024 MiB。调低上限不删除已有文件，超出时仅阻止新上传。不限制表示没有应用容量上限，仍可能产生 R2 费用。') }}</p>
         <p v-if="settingsError" role="alert" class="warning-panel">{{ settingsError === 'invalid' ? ui('Choose a mode and enter a positive capacity precise to whole bytes.', '请选择模式，并输入可精确换算为整数字节的正容量。') : settingsError === 'conflict' ? ui('Settings changed elsewhere. Refresh settings, review the current budget, then save your retained draft.', '设置已被其他操作修改。请刷新设置并核对当前预算，再保存保留的草稿。') : ui('Could not save or read settings. Your draft is retained; try again.', '保存或读取设置失败，草稿已保留，请重试。') }}</p>
-        <div class="usage-setting-actions"><button v-if="settingsError === 'conflict'" class="secondary-button" type="button" :disabled="saving" @click="reloadSettings">{{ ui('Refresh settings', '刷新设置') }}</button><button class="secondary-button" type="submit" :disabled="saving || settingsError === 'conflict'">{{ saving ? ui('Saving…', '正在保存…') : ui('Save', '保存') }}</button><button class="text-button" type="button" :disabled="saving" @click="editing = false">{{ ui('Cancel', '取消') }}</button></div>
+        <div class="usage-setting-actions"><UButton color="neutral" variant="outline" v-if="settingsError === 'conflict'" class="secondary-button" type="button" :disabled="saving" @click="reloadSettings">{{ ui('Refresh settings', '刷新设置') }}</UButton><UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="saving || settingsError === 'conflict'">{{ saving ? ui('Saving…', '正在保存…') : ui('Save', '保存') }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="saving" @click="editing = false">{{ ui('Cancel', '取消') }}</UButton></div>
       </form>
       <p class="muted-copy">{{ ui('Reserved until files are reclaimed, including uploads and deleted files. Not actual R2 storage or a billing cap.', '含上传中和已删除文件，回收后释放；不等于 R2 实际容量或账单上限。') }}</p>
       <div class="usage-cloud-heading"><h3>{{ ui('Cloudflare instance statistics', 'Cloudflare 实例统计') }}</h3><span role="status">{{ statusText }}</span><span v-if="usage.cloudflare.collected_at && usage.cloudflare.status !== 'not_configured'">{{ ui('Updated', '更新于') }} {{ shortTime(usage.cloudflare.collected_at) }}</span></div>

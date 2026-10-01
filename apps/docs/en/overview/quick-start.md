@@ -27,7 +27,7 @@ Use $cfkanban to open the DemoProject board in my browser.
 
 You need project access, a usable local identity in the current environment, and an Agent host that supports browser delivery. Expect an authenticated board for the requested project. Name a particular browser if you have a preference.
 
-On your first visit, select your name in the header → **My profile** → **Register Passkey**, then complete the browser or system prompt. You can subsequently sign in with that Passkey from the same site's homepage.
+On your first visit, open the account menu at the top right → **Personal settings** → **Register Passkey**, then complete the browser or system prompt. You can subsequently sign in with that Passkey from the same site's homepage.
 
 ### 3. Start working
 

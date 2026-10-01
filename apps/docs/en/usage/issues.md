@@ -16,7 +16,7 @@ You need read access to the project. Search covers titles and issue numbers. Inc
 
 **In the Web UI:** On the board, enter a title or issue number and press Enter or select **Search**. Priority and label selections apply immediately; any unsubmitted text in the search box remains unapplied. Each column can load more issues; its count shows how many are currently loaded.
 
-For several projects, open **Work list** in the header, choose projects, a view, and filters, then select **Show work** again after each change. Its status selector offers one status or all statuses. Ask your Agent to combine several specific statuses into one result.
+For several projects, open the account menu at the top right → **Work list**, choose projects, a view, and filters, then select **Show work** again after each change. Its status selector offers one status or all statuses. Ask your Agent to combine several specific statuses into one result.
 
 ## Filter by priority, assignee, and labels
 
@@ -74,7 +74,7 @@ You need write access. Priorities are None, Low, Medium, High, and Urgent. Choos
 
 ## If something goes wrong
 
-- **An issue is missing:** Check the project and filters. Members with write access can also look under **Deleted issues**.
+- **An issue is missing:** Check the project and filters. Members with write access can also look under **Project settings → Deleted issues**.
 - **No edit button:** Check your project access and whether your sign-in has expired.
 - **Someone else changed the issue:** Read the latest content before saving again.
 - **Saving timed out:** Ask the Agent to verify the original result or use the page's retry action to avoid duplicates.

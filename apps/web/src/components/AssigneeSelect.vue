@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { onUnmounted, ref, watch } from "vue";
 import { apiRequest } from "../lib/api";
 import { locale, t } from "../lib/i18n";
@@ -68,7 +69,7 @@ onUnmounted(() => { generation += 1; });
     </select>
     <small v-if="assignee && !assignee.available" class="inline-alert">{{ locale === 'zh-CN' ? '原负责人已无指派资格，请重新选择。' : 'The current assignee is no longer eligible. Choose another person.' }}</small>
     <small v-if="loading" role="status">{{ locale === 'zh-CN' ? '正在加载可指派人员…' : 'Loading eligible people…' }}</small>
-    <template v-if="error"><small class="inline-alert" role="alert">{{ error }}</small><button class="text-button" type="button" :disabled="loading || disabled" @click="load()">{{ t('action.refresh') }}</button></template>
-    <button v-else-if="nextCursor" class="text-button" type="button" :disabled="loading || disabled" @click="load(false)">{{ locale === 'zh-CN' ? '加载更多人员' : 'Load more people' }}</button>
+    <template v-if="error"><small class="inline-alert" role="alert">{{ error }}</small><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="loading || disabled" @click="load()">{{ t('action.refresh') }}</UButton></template>
+    <UButton color="neutral" variant="ghost" v-else-if="nextCursor" class="text-button" type="button" :disabled="loading || disabled" @click="load(false)">{{ locale === 'zh-CN' ? '加载更多人员' : 'Load more people' }}</UButton>
   </div>
 </template>

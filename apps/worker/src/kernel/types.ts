@@ -58,6 +58,7 @@ export interface BearerAuthContext extends AuthenticatedPrincipal {
 
 export interface CookieAuthContext extends AuthenticatedPrincipal {
   kind: "cookie";
+  theme: "orange" | "blue";
   sessionExpiresAt: number;
   sessionId: string;
   sourceId: string;

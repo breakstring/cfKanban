@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "paths": { "#build/ui": ["./node_modules/.nuxt-ui/ui"] },
     "lib": [
       "ES2023"
     ],

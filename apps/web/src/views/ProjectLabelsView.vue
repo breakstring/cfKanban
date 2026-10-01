@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import UInput from "@nuxt/ui/components/Input.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ModalDialog from "../components/ModalDialog.vue";
+import ProjectSettingsHeader from "../components/ProjectSettingsHeader.vue";
 import { apiRequest } from "../lib/api";
 import { captureCasConflict, markCasReadbackComplete, markCasReadbackFailed, type CasConflictState } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
@@ -11,11 +14,12 @@ import { continuationCursor, mergePageById } from "../lib/pagination";
 import { protectNavigationDraft } from "../lib/navigation-draft";
 import { navigate } from "../lib/router";
 import { projectInventoryBoundary } from "../lib/session-boundary";
-import type { LabelResource, ListResult, WebSessionView, WriteResult } from "../types";
+import type { ContainerResource, LabelResource, ListResult, WebSessionView, WriteResult } from "../types";
 
 const props = defineProps<{ workspaceId: string; projectId: string; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
 const labels = ref<LabelResource[]>([]);
+const project = ref<ContainerResource | null>(null);
 const cursor = ref<string | null>(null);
 const loading = ref(false);
 const busy = ref(false);
@@ -39,16 +43,21 @@ async function load(reset = true): Promise<void> {
   const current = generation;
   const request = ++loadGeneration;
   const isCurrent = () => current === generation && request === loadGeneration;
-  if (reset) cursor.value = null;
+  if (reset) { cursor.value = null; project.value = null; }
   loading.value = true;
   clearError();
   try {
-    const result = await apiRequest<ListResult<LabelResource>>(`${path}?limit=50${!reset && cursor.value ? `&cursor=${encodeURIComponent(cursor.value)}` : ""}`);
+    const [result, currentProject] = await Promise.all([
+      apiRequest<ListResult<LabelResource>>(`${path}?limit=50${!reset && cursor.value ? `&cursor=${encodeURIComponent(cursor.value)}` : ""}`),
+      reset || project.value === null
+        ? apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}`)
+        : Promise.resolve(project.value),
+    ]);
     if (!isCurrent()) return;
     labels.value = mergePageById(labels.value, result.items, reset);
     cursor.value = continuationCursor(result);
-    const project = result.items[0]?.project;
-    emit("context", { label: `${scope.value?.workspace_display_name ?? project?.workspace_display_name ?? ""} / ${scope.value?.project_display_name ?? project?.display_name ?? ""}`, role: scope.value?.role ?? "owner" });
+    project.value = currentProject;
+    emit("context", { label: `${currentProject.workspace_display_name ?? scope.value?.workspace_display_name ?? ""} / ${currentProject.display_name}`, role: scope.value?.role ?? "owner" });
     if (conflict.value && conflictLabelId.value) {
       const latest = await apiRequest<LabelResource>(`/api/v1/labels/${conflictLabelId.value}`);
       if (!isCurrent()) return;
@@ -121,7 +130,7 @@ function acceptLatest(): void {
 
 watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), () => {
   generation += 1;
-  labels.value = []; cursor.value = null; loading.value = false; busy.value = false;
+  project.value = null; labels.value = []; cursor.value = null; loading.value = false; busy.value = false;
   if (scope.value || props.session.allowed_scope.projects === undefined) void load();
 });
 onMounted(() => load());
@@ -130,25 +139,25 @@ onUnmounted(() => { generation += 1; });
 
 <template>
   <main class="page-shell labels-page">
-    <button class="text-button" type="button" @click="navigate(`/app/w/${workspaceId}/p/${projectId}`)">← {{ ui("Back to board", "返回看板") }}</button>
-    <h1>{{ ui("Project labels", "项目标签管理") }}</h1>
+    <ProjectSettingsHeader :workspace-id="workspaceId" :project-id="projectId" section="labels" :project="project" :session="session" @navigate="navigate" />
+    <h2>{{ ui("Project labels", "项目标签") }}</h2>
     <ErrorNotice v-if="error" :error="error" />
     <CasConflictNotice v-if="conflict" :conflict="conflict" :busy="loading || busy" @refresh="load()" @dismiss="acceptLatest" />
     <form v-if="canWrite" class="form-stack" @submit.prevent="save">
       <h2>{{ editing ? ui("Edit label", "编辑标签") : ui("Create label", "创建标签") }}</h2>
-      <label>{{ ui("Name", "名称") }}<input v-model="draft.name" required :disabled="busy" /></label>
-      <label>{{ ui("Color (optional)", "颜色（可选）") }}<input v-model="draft.color" pattern="#[0-9A-Fa-f]{6}" placeholder="#B84708" :disabled="busy" /></label>
-      <div class="form-actions"><button v-if="editing" class="text-button" type="button" :disabled="busy" @click="editing = null; draft = { name: '', color: '' }; conflict = null">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="busy || !!conflict">{{ t("action.save") }}</button></div>
+      <label>{{ ui("Name", "名称") }}<UInput class="w-full" v-model="draft.name" required :disabled="busy" /></label>
+      <label>{{ ui("Color (optional)", "颜色（可选）") }}<UInput class="w-full" v-model="draft.color" pattern="#[0-9A-Fa-f]{6}" placeholder="#B84708" :disabled="busy" /></label>
+      <div class="form-actions"><UButton color="neutral" variant="ghost" v-if="editing" class="text-button" type="button" :disabled="busy" @click="editing = null; draft = { name: '', color: '' }; conflict = null">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy || !!conflict">{{ t("action.save") }}</UButton></div>
     </form>
     <div class="data-list">
-      <div v-for="label in labels" :key="label.id" class="data-row"><span><strong>{{ label.name }}</strong><code>{{ label.color ?? '—' }}</code></span><div class="form-actions"><button v-if="canWrite && label.allowed_actions.includes('update')" class="text-button" type="button" :disabled="busy" @click="editLabel(label)">{{ ui("Edit", "编辑") }}</button><button v-if="canWrite && label.allowed_actions.includes('delete')" class="danger-text-button" type="button" :disabled="busy" @click="deleting = label">{{ t("action.delete") }}</button></div></div>
+      <div v-for="label in labels" :key="label.id" class="data-row"><span><strong>{{ label.name }}</strong><code>{{ label.color ?? '—' }}</code></span><div class="form-actions"><UButton color="neutral" variant="ghost" v-if="canWrite && label.allowed_actions.includes('update')" class="text-button" type="button" :disabled="busy" @click="editLabel(label)">{{ ui("Edit", "编辑") }}</UButton><UButton color="error" variant="ghost" v-if="canWrite && label.allowed_actions.includes('delete')" class="danger-text-button" type="button" :disabled="busy" @click="deleting = label">{{ t("action.delete") }}</UButton></div></div>
       <p v-if="!labels.length && !loading">{{ ui("No labels", "暂无标签") }}</p>
     </div>
-    <button v-if="cursor || error" class="load-more" type="button" :disabled="loading" @click="load(!cursor)">{{ ui("Load more / retry", "加载更多 / 重试") }}</button>
+    <UButton color="neutral" variant="outline" v-if="cursor || error" class="load-more" type="button" :disabled="loading" @click="load(!cursor)">{{ ui("Load more / retry", "加载更多 / 重试") }}</UButton>
     <p v-if="loading" role="status">{{ ui("Loading…", "加载中…") }}</p>
     <ModalDialog v-if="deleting" :title="ui('Delete project label', '删除项目标签')" :busy="busy" @close="deleting = null">
       <p>{{ deleting.name }} — {{ ui("This hides the shared label on all project issues. It can be restored from an issue's collaboration recovery.", "这会隐藏项目所有事项中的共享标签，可从事项的协作项恢复入口恢复。") }}</p>
-      <button class="danger-text-button" type="button" :disabled="busy" @click="deleteLabel">{{ t("action.delete") }}</button>
+      <UButton color="error" variant="ghost" class="danger-text-button" type="button" :disabled="busy" @click="deleteLabel">{{ t("action.delete") }}</UButton>
     </ModalDialog>
   </main>
 </template>

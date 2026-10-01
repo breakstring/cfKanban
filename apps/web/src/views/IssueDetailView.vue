@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import UBadge from "@nuxt/ui/components/Badge.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
+import UInput from "@nuxt/ui/components/Input.vue";
+import USelect from "@nuxt/ui/components/Select.vue";
+import UTextarea from "@nuxt/ui/components/Textarea.vue";
 
 import AssigneeSelect from "../components/AssigneeSelect.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
@@ -905,12 +910,12 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
 </script>
 
 <template>
-  <main class="issue-page page-shell">
-    <p v-if="priorityReadbackFailed" class="warning-panel" role="status">{{ ui("Priority was saved, but the latest Issue could not be read. Retry reading the current state.", "优先级已保存，但最新事项读取失败，请重试读取当前状态。") }} <button class="text-button" type="button" :disabled="busy" @click="refreshPriorityFacts">{{ ui("Retry reading", "重试读取") }}</button></p>
-    <p v-if="pendingPriority" class="warning-panel" role="status">{{ ui("Priority save is unconfirmed. Verify the original operation before continuing.", "优先级保存结果尚未确认，请核实原操作后继续。") }} <button class="text-button" type="button" :disabled="busy || !canUpdate" @click="updateIssue(pendingPriority)">{{ ui("Verify save", "核实保存") }}</button></p>
+  <main class="issue-page page-shell issue-page--nuxt">
+    <p v-if="priorityReadbackFailed" class="warning-panel" role="status">{{ ui("Priority was saved, but the latest Issue could not be read. Retry reading the current state.", "优先级已保存，但最新事项读取失败，请重试读取当前状态。") }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy" @click="refreshPriorityFacts">{{ ui("Retry reading", "重试读取") }}</UButton></p>
+    <p v-if="pendingPriority" class="warning-panel" role="status">{{ ui("Priority save is unconfirmed. Verify the original operation before continuing.", "优先级保存结果尚未确认，请核实原操作后继续。") }} <UButton color="neutral" variant="ghost" type="button" :disabled="busy || !canUpdate" @click="updateIssue(pendingPriority)">{{ ui("Verify save", "核实保存") }}</UButton></p>
     <PageState :loading="loading" :error="error && !issue ? error : ''" :action-label="t('action.refresh')" @retry="load" />
     <template v-if="issue">
-      <button class="back-link button-with-icon" type="button" @click="backToBoard"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4-6 6 6 6M2 10h15" /></svg>{{ t("action.back") }}</button>
+      <UButton color="neutral" variant="ghost" type="button" @click="backToBoard"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4-6 6 6 6M2 10h15" /></svg>{{ t("action.back") }}</UButton>
       <ErrorNotice v-if="error" :error="error" />
       <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
 
@@ -927,19 +932,19 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           </div>
         </div>
         <div class="issue-actions">
-          <button v-if="canUpdate" class="secondary-button" type="button" @click="editMode = !editMode">{{ t("action.edit") }}</button>
-          <button v-if="canRestore" class="primary-button" type="button" @click="deleteOrRestore">{{ t("action.restore") }}</button>
-          <button v-else-if="canDelete" class="text-button muted" type="button" @click="showDelete = true">{{ t("action.delete") }}</button>
+          <UButton color="neutral" variant="outline" v-if="canUpdate" type="button" @click="editMode = !editMode">{{ t("action.edit") }}</UButton>
+          <UButton color="primary" variant="solid" v-if="canRestore" type="button" @click="deleteOrRestore">{{ t("action.restore") }}</UButton>
+          <UButton color="neutral" variant="ghost" v-else-if="canDelete" type="button" @click="showDelete = true">{{ t("action.delete") }}</UButton>
         </div>
       </header>
 
       <section class="issue-layout">
         <div class="issue-main">
           <form v-if="editMode" class="editor-panel form-stack" @submit.prevent="saveEdit">
-            <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<input v-model="edit.title" maxlength="256" required /></label>
-            <label>{{ t("issue.body") }}<textarea v-model="edit.body" rows="12" /></label>
-            <label>{{ t("issue.priority") }}<select v-model="edit.priority_key" :aria-label="t('issue.priority')"><option v-for="key in priorityOrder" :key="key" :value="key">{{ priorityLabel(key) }}</option></select></label>
-            <div class="form-actions"><button class="secondary-button" type="button" @click="editMode = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="writeBusy">{{ t("action.save") }}</button></div>
+            <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="edit.title" maxlength="256" required /></label>
+            <label>{{ t("issue.body") }}<UTextarea v-model="edit.body" :rows="12" /></label>
+            <label>{{ t("issue.priority") }}<USelect v-model="edit.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" /></label>
+            <div class="form-actions"><UButton color="neutral" variant="outline" type="button" @click="editMode = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="writeBusy">{{ t("action.save") }}</UButton></div>
           </form>
           <section v-else id="issue-description" class="content-section">
             <h2>{{ t("issue.body") }}</h2>
@@ -960,16 +965,16 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             </div>
             <div class="comment-stream">
               <article v-for="entry in comments" :key="entry.id" class="comment-entry" :class="{ completion: entry.kind === 'completion' }">
-                <header><strong>{{ entry.author.display_name }}</strong><span>{{ formatTime(entry.created_at) }}</span><span v-if="entry.kind === 'completion'" class="success-chip">{{ locale === "zh-CN" ? "完成记录" : "completion" }}</span><button v-if="entry.allowed_actions.includes('delete')" class="danger-text-button" type="button" :disabled="writeBusy" @click="deleteComment(entry)">{{ t("action.delete") }}</button></header>
+                <header><strong>{{ entry.author.display_name }}</strong><span>{{ formatTime(entry.created_at) }}</span><UBadge v-if="entry.kind === 'completion'" color="success" variant="soft" size="md">{{ locale === "zh-CN" ? "完成记录" : "completion" }}</UBadge><UButton color="error" variant="ghost" v-if="entry.allowed_actions.includes('delete')" type="button" :disabled="writeBusy" @click="deleteComment(entry)">{{ t("action.delete") }}</UButton></header>
                 <CompletionRecord v-if="entry.kind === 'completion'" :value="entry.completion"><MarkdownContent :source="entry.body || ''" /></CompletionRecord>
                 <MarkdownContent v-else :source="entry.body || ''" />
               </article>
               <p v-if="!comments.length" class="empty-copy">{{ locale === "zh-CN" ? "还没有评论。" : "No comments yet." }}</p>
             </div>
-            <button v-if="commentNextCursor" class="load-more" type="button" :disabled="commentLoadingMore" @click="loadMoreComments">{{ commentLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多活动" : "Load more activity") }}</button>
+            <UButton color="neutral" variant="ghost" v-if="commentNextCursor" class="load-more" type="button" :disabled="commentLoadingMore" @click="loadMoreComments">{{ commentLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多活动" : "Load more activity") }}</UButton>
             <form v-if="canUpdate" class="comment-form" @submit.prevent="addComment">
-              <label>{{ t("comment.add") }}<textarea v-model="comment" rows="5" :placeholder="t('comment.placeholder')" /></label>
-              <button class="primary-button" type="submit" :disabled="writeBusy || !comment.trim()">{{ t("action.comment") }}</button>
+              <label>{{ t("comment.add") }}<UTextarea v-model="comment" :rows="5" :placeholder="t('comment.placeholder')" /></label>
+              <UButton color="primary" variant="solid" type="submit" :disabled="writeBusy || !comment.trim()">{{ t("action.comment") }}</UButton>
             </form>
           </section>
         </div>
@@ -986,53 +991,96 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           </dl>
 
           <div v-if="canUpdate" class="sidebar-actions">
-            <button v-if="issue.status.key === 'done'" class="secondary-button" type="button" :disabled="writeBusy" @click="updateIssue({ status_key: 'todo' })">{{ ui(`Reopen to ${statusDisplayName("todo")}`, `重新打开到${statusDisplayName("todo")}`) }}</button>
-            <button v-else class="primary-button" type="button" :disabled="writeBusy" @click="showComplete = true">{{ t("complete.title") }}</button>
+            <UButton color="neutral" variant="outline" v-if="issue.status.key === 'done'" type="button" :disabled="writeBusy" @click="updateIssue({ status_key: 'todo' })">{{ ui(`Reopen to ${statusDisplayName("todo")}`, `重新打开到${statusDisplayName("todo")}`) }}</UButton>
+            <UButton color="primary" variant="solid" v-else type="button" :disabled="writeBusy" @click="showComplete = true">{{ t("complete.title") }}</UButton>
           </div>
 
 
 
           <section class="sidebar-section">
-            <div class="section-heading-row compact"><h2>{{ t("issue.labels") }}</h2><button v-if="canUpdate" class="text-button" type="button" @click="navigate(`/app/w/${issue.workspace.id}/p/${issue.project.id}/labels`)">{{ ui("Manage", "管理") }}</button></div>
+            <div class="section-heading-row compact"><h2>{{ t("issue.labels") }}</h2><UButton color="neutral" variant="ghost" v-if="canUpdate" type="button" @click="navigate(`/app/w/${issue.workspace.id}/p/${issue.project.id}/labels`)">{{ ui("Manage", "管理") }}</UButton></div>
             <label v-if="canUpdate" class="label-input">{{ ui("Add label", "添加标签") }}
-              <input v-model="labelInput" :disabled="writeBusy" :placeholder="ui('Type a name and press Enter', '输入名称后按 Enter 添加')" @compositionstart="labelComposing = true" @compositionend="labelComposing = false" @keydown.enter="onLabelEnter" />
+              <UInput v-model="labelInput" :disabled="writeBusy" :placeholder="ui('Type a name and press Enter', '输入名称后按 Enter 添加')" @compositionstart="labelComposing = true" @compositionend="labelComposing = false" @keydown.enter="onLabelEnter" />
             </label>
             <div v-if="canUpdate && labelInput.trim()" class="label-suggestions">
-              <button v-for="label in labels.filter(item => labelNameKey(item.name).includes(labelNameKey(labelInput)) && !issue?.labels.some(added => added.id === item.id)).slice(0, 6)" :key="label.id" class="text-button" type="button" :disabled="writeBusy" @click="labelInput = label.name; addInputLabel()">{{ label.name }}</button>
+              <UButton color="neutral" variant="ghost" v-for="label in labels.filter(item => labelNameKey(item.name).includes(labelNameKey(labelInput)) && !issue?.labels.some(added => added.id === item.id)).slice(0, 6)" :key="label.id" type="button" :disabled="writeBusy" @click="labelInput = label.name; addInputLabel()">{{ label.name }}</UButton>
             </div>
             <div class="label-picker">
-              <span v-for="label in issue.labels" :key="label.id" class="label-chip" :title="label.name">{{ label.name }}<button v-if="canUpdate" type="button" class="text-button" :disabled="writeBusy" :aria-label="`${ui('Remove label', '移除标签')} ${label.name}`" @click="toggleLabel(label.id, false)">×</button></span>
+              <span v-for="label in issue.labels" :key="label.id" class="label-chip" :title="label.name">{{ label.name }}<UButton color="neutral" variant="ghost" v-if="canUpdate" type="button" :disabled="writeBusy" :aria-label="`${ui('Remove label', '移除标签')} ${label.name}`" @click="toggleLabel(label.id, false)">×</UButton></span>
               <span v-if="!issue.labels.length" class="muted-copy">—</span>
             </div>
           </section>
 
           <section id="issue-relations" class="sidebar-section">
-            <div class="section-heading-row compact"><h2>{{ locale === "zh-CN" ? "关系" : "Relations" }}</h2><button v-if="canUpdate" class="text-button" type="button" @click="showRelation = true">+ {{ locale === "zh-CN" ? "添加" : "Add" }}</button></div>
-            <div v-for="item in relations" :key="item.id" class="relation-row-wrap"><button class="relation-row" type="button" @click="navigate(`/app/issues/${item.source.identifier === issue.identifier ? item.target.identifier : item.source.identifier}`)"><span>{{ item.kind === "blocks" ? (item.target.identifier === issue.identifier ? ui("Blocked by", "前置依赖") : ui("Blocks", "阻塞下游")) : relationKindLabel(item.kind) }}</span><code>{{ item.source.identifier === issue.identifier ? item.target.identifier : item.source.identifier }}</code></button><button v-if="item.allowed_actions.includes('delete')" class="danger-text-button" type="button" :disabled="writeBusy" @click="deleteRelation(item)">{{ t("action.delete") }}</button></div>
+            <div class="section-heading-row compact"><h2>{{ locale === "zh-CN" ? "关系" : "Relations" }}</h2><UButton color="neutral" variant="ghost" v-if="canUpdate" type="button" @click="showRelation = true">+ {{ locale === "zh-CN" ? "添加" : "Add" }}</UButton></div>
+            <div v-for="item in relations" :key="item.id" class="relation-row-wrap"><UButton color="neutral" variant="ghost" class="relation-row" type="button" @click="navigate(`/app/issues/${item.source.identifier === issue.identifier ? item.target.identifier : item.source.identifier}`)"><span>{{ item.kind === "blocks" ? (item.target.identifier === issue.identifier ? ui("Blocked by", "前置依赖") : ui("Blocks", "阻塞下游")) : relationKindLabel(item.kind) }}</span><code>{{ item.source.identifier === issue.identifier ? item.target.identifier : item.source.identifier }}</code></UButton><UButton color="error" variant="ghost" v-if="item.allowed_actions.includes('delete')" type="button" :disabled="writeBusy" @click="deleteRelation(item)">{{ t("action.delete") }}</UButton></div>
             <p v-if="!relations.length" class="muted-copy">—</p>
-            <button v-if="relationsNextCursor" class="text-button" type="button" :disabled="relationsLoadingMore" @click="loadMoreRelations">{{ relationsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多关系" : "Load more relations") }}</button>
-            <button v-if="canUpdate" class="text-button" type="button" @click="loadCollaborationRecovery()">{{ locale === "zh-CN" ? "恢复已删除的协作项" : "Restore deleted collaboration items" }}</button>
+            <UButton color="neutral" variant="ghost" v-if="relationsNextCursor" type="button" :disabled="relationsLoadingMore" @click="loadMoreRelations">{{ relationsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多关系" : "Load more relations") }}</UButton>
+            <UButton color="neutral" variant="ghost" v-if="canUpdate" type="button" @click="loadCollaborationRecovery()">{{ locale === "zh-CN" ? "恢复已删除的协作项" : "Restore deleted collaboration items" }}</UButton>
           </section>
         </aside>
       </section>
 
       <ModalDialog v-if="showComplete" :busy="busy" :title="t('complete.title')" @close="showComplete = false">
         <p class="muted-copy">{{ ui("Confirm to mark this Issue as done. You can add a completion note, or leave it empty.", "确认后将事项设为已完成。可以补充完成说明，也可以留空直接完成。") }}</p>
-        <form class="form-stack" @submit.prevent="runCommand('complete', { summary: completionSummary.trim() })"><label>{{ t("complete.summary") }}<textarea v-model="completionSummary" rows="6" maxlength="8192" /></label><div class="form-actions"><button class="secondary-button" type="button" @click="showComplete = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="writeBusy">{{ t("complete.title") }}</button></div></form>
+        <form class="form-stack" @submit.prevent="runCommand('complete', { summary: completionSummary.trim() })"><label>{{ t("complete.summary") }}<UTextarea v-model="completionSummary" :rows="6" maxlength="8192" /></label><div class="form-actions"><UButton color="neutral" variant="outline" type="button" @click="showComplete = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="writeBusy">{{ t("complete.title") }}</UButton></div></form>
       </ModalDialog>
 
       <ModalDialog v-if="showDelete" :busy="busy" :title="locale === 'zh-CN' ? '删除事项？' : 'Delete issue?'" @close="showDelete = false">
-        <p>{{ issue.identifier }} · {{ issue.title }}</p><p class="muted-copy">{{ locale === "zh-CN" ? "这是可恢复的软删除。" : "This is a recoverable soft delete." }}</p><div class="form-actions"><button class="secondary-button" type="button" @click="showDelete = false">{{ t("action.cancel") }}</button><button class="danger-button" type="button" :disabled="writeBusy" @click="deleteOrRestore">{{ t("action.delete") }}</button></div>
+        <p>{{ issue.identifier }} · {{ issue.title }}</p><p class="muted-copy">{{ locale === "zh-CN" ? "这是可恢复的软删除。" : "This is a recoverable soft delete." }}</p><div class="form-actions"><UButton color="neutral" variant="outline" type="button" @click="showDelete = false">{{ t("action.cancel") }}</UButton><UButton color="error" variant="solid" type="button" :disabled="writeBusy" @click="deleteOrRestore">{{ t("action.delete") }}</UButton></div>
       </ModalDialog>
       <ModalDialog v-if="showRelation" :busy="busy" :title="locale === 'zh-CN' ? '添加关系' : 'Add relation'" @close="showRelation = false">
-        <form class="form-stack" @submit.prevent="createRelation"><label>{{ locale === "zh-CN" ? "类型" : "Kind" }}<select v-model="relation.kind"><option v-for="key in ['blocks','parent','related','duplicate']" :key="key" :value="key">{{ relationKindLabel(key) }}</option></select></label><label>{{ locale === "zh-CN" ? "目标事项" : "Target Issue" }}<input v-model="relation.target_identifier" required pattern="CFK-[1-9][0-9]*" placeholder="CFK-42" @input="relationTarget = null" @blur="previewRelationTarget" /></label><article v-if="relationTarget" class="target-preview"><small>{{ relationTarget.workspace.display_name }} / {{ relationTarget.project.display_name }}</small><strong>{{ relationTarget.identifier }} · {{ relationTarget.title }}</strong></article><p v-else class="muted-copy">{{ locale === "zh-CN" ? "离开输入框后会先核对目标项目与标题。" : "Leave the field to verify the target Project and title before creating the relation." }}</p><p v-if="relationTarget && !relationTargetCanWrite" class="warning-panel">{{ locale === "zh-CN" ? "关系两端必须位于同一工作区，且当前会话必须能写入两端项目。" : "Both Relation endpoints must be in one Workspace and writable in the current Session." }}</p><div class="form-actions"><button class="secondary-button" type="button" @click="showRelation = false">{{ t("action.cancel") }}</button><button class="primary-button" type="submit" :disabled="writeBusy || !relationTargetCanWrite">{{ t("action.save") }}</button></div></form>
+        <form class="form-stack" @submit.prevent="createRelation"><label>{{ locale === "zh-CN" ? "类型" : "Kind" }}<USelect v-model="relation.kind" :items="['blocks','parent','related','duplicate'].map(key => ({ value: key, label: relationKindLabel(key) }))" /></label><label>{{ locale === "zh-CN" ? "目标事项" : "Target Issue" }}<UInput v-model="relation.target_identifier" required pattern="CFK-[1-9][0-9]*" placeholder="CFK-42" @input="relationTarget = null" @blur="previewRelationTarget" /></label><article v-if="relationTarget" class="target-preview"><small>{{ relationTarget.workspace.display_name }} / {{ relationTarget.project.display_name }}</small><strong>{{ relationTarget.identifier }} · {{ relationTarget.title }}</strong></article><p v-else class="muted-copy">{{ locale === "zh-CN" ? "离开输入框后会先核对目标项目与标题。" : "Leave the field to verify the target Project and title before creating the relation." }}</p><p v-if="relationTarget && !relationTargetCanWrite" class="warning-panel">{{ locale === "zh-CN" ? "关系两端必须位于同一工作区，且当前会话必须能写入两端项目。" : "Both Relation endpoints must be in one Workspace and writable in the current Session." }}</p><div class="form-actions"><UButton color="neutral" variant="outline" type="button" @click="showRelation = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="writeBusy || !relationTargetCanWrite">{{ t("action.save") }}</UButton></div></form>
       </ModalDialog>
 
       <ModalDialog v-if="showCollaborationRecovery" :busy="busy" :title="locale === 'zh-CN' ? '恢复协作项' : 'Restore collaboration items'" @close="showCollaborationRecovery = false">
-        <section class="recovery-section"><h3>{{ locale === "zh-CN" ? "评论" : "Comments" }}</h3><div class="data-list"><div v-for="entry in deletedComments" :key="entry.id" class="data-row"><span><code>{{ entry.id }}</code><small>{{ formatTime(entry.deleted_at ?? entry.created_at) }}</small></span><button v-if="entry.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreComment(entry)">{{ t("action.restore") }}</button></div><p v-if="!deletedComments.length" class="empty-copy">—</p><button v-if="deletedCommentsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedComments">{{ deletedCollectionLoading === "comments" ? "…" : (locale === "zh-CN" ? "加载更多已删除评论" : "Load more deleted comments") }}</button></div></section>
-        <section class="recovery-section"><h3>{{ locale === "zh-CN" ? "标签" : "Labels" }}</h3><div class="data-list"><div v-for="label in deletedLabels" :key="label.id" class="data-row"><span><strong>{{ label.name }}</strong><code>{{ label.id }}</code></span><button v-if="label.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreLabel(label)">{{ t("action.restore") }}</button></div><p v-if="!deletedLabels.length" class="empty-copy">—</p><button v-if="deletedLabelsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedLabels">{{ deletedCollectionLoading === "labels" ? "…" : (locale === "zh-CN" ? "加载更多已删除标签" : "Load more deleted labels") }}</button></div></section>
-        <section class="recovery-section"><h3>{{ locale === "zh-CN" ? "关系" : "Relations" }}</h3><div class="data-list"><div v-for="item in deletedRelations" :key="item.id" class="data-row"><span><strong>{{ relationKindLabel(item.kind) }}</strong><code>{{ item.source.identifier }} → {{ item.target.identifier }}</code></span><button v-if="item.allowed_actions.includes('restore')" class="secondary-button" type="button" @click="restoreRelation(item)">{{ t("action.restore") }}</button></div><p v-if="!deletedRelations.length" class="empty-copy">—</p><button v-if="deletedRelationsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedRelations">{{ deletedCollectionLoading === "relations" ? "…" : (locale === "zh-CN" ? "加载更多已删除关系" : "Load more deleted relations") }}</button></div></section>
+        <section class="recovery-section"><h3>{{ locale === "zh-CN" ? "评论" : "Comments" }}</h3><div class="data-list"><div v-for="entry in deletedComments" :key="entry.id" class="data-row"><span><code>{{ entry.id }}</code><small>{{ formatTime(entry.deleted_at ?? entry.created_at) }}</small></span><UButton color="neutral" variant="outline" v-if="entry.allowed_actions.includes('restore')" type="button" @click="restoreComment(entry)">{{ t("action.restore") }}</UButton></div><p v-if="!deletedComments.length" class="empty-copy">—</p><UButton color="neutral" variant="ghost" v-if="deletedCommentsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedComments">{{ deletedCollectionLoading === "comments" ? "…" : (locale === "zh-CN" ? "加载更多已删除评论" : "Load more deleted comments") }}</UButton></div></section>
+        <section class="recovery-section"><h3>{{ locale === "zh-CN" ? "标签" : "Labels" }}</h3><div class="data-list"><div v-for="label in deletedLabels" :key="label.id" class="data-row"><span><strong>{{ label.name }}</strong><code>{{ label.id }}</code></span><UButton color="neutral" variant="outline" v-if="label.allowed_actions.includes('restore')" type="button" @click="restoreLabel(label)">{{ t("action.restore") }}</UButton></div><p v-if="!deletedLabels.length" class="empty-copy">—</p><UButton color="neutral" variant="ghost" v-if="deletedLabelsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedLabels">{{ deletedCollectionLoading === "labels" ? "…" : (locale === "zh-CN" ? "加载更多已删除标签" : "Load more deleted labels") }}</UButton></div></section>
+        <section class="recovery-section"><h3>{{ locale === "zh-CN" ? "关系" : "Relations" }}</h3><div class="data-list"><div v-for="item in deletedRelations" :key="item.id" class="data-row"><span><strong>{{ relationKindLabel(item.kind) }}</strong><code>{{ item.source.identifier }} → {{ item.target.identifier }}</code></span><UButton color="neutral" variant="outline" v-if="item.allowed_actions.includes('restore')" type="button" @click="restoreRelation(item)">{{ t("action.restore") }}</UButton></div><p v-if="!deletedRelations.length" class="empty-copy">—</p><UButton color="neutral" variant="ghost" v-if="deletedRelationsNextCursor" class="load-more" type="button" :disabled="deletedCollectionLoading !== null" @click="loadMoreDeletedRelations">{{ deletedCollectionLoading === "relations" ? "…" : (locale === "zh-CN" ? "加载更多已删除关系" : "Load more deleted relations") }}</UButton></div></section>
       </ModalDialog>
     </template>
   </main>
 </template>
+
+<style scoped>
+.issue-page--nuxt { max-width: 1360px; padding-top: 24px; }
+.ui-action-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.issue-title-row { padding-top: 24px; padding-bottom: 24px; margin-bottom: 0; border-bottom: 1px solid var(--color-border); gap: 24px; }
+.issue-title-row h1 { font-family: var(--font-ui); font-size: clamp(24px, 2.5vw, 32px); line-height: 1.4; font-weight: 650; }
+.issue-identifier { margin-bottom: 8px; color: var(--color-text-muted); font-size: 13px; }
+.issue-subtitle { margin-top: 10px; font-size: 13px; }
+.issue-summary { margin-top: 14px; font-size: 13px; }
+.issue-actions { gap: 8px; }
+.issue-layout { gap: 32px; margin-top: 28px; }
+.issue-main { min-width: 0; }
+.issue-sidebar { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
+.content-section { margin-bottom: 24px; }
+.content-section h2, .sidebar-section h2 { font-size: 14px; font-weight: 650; }
+.metadata-list { gap: 16px; }
+.metadata-list dt { margin-bottom: 6px; font-size: 12px; }
+.metadata-list dd { font-size: 13px; }
+.metadata-list select { min-height: 36px; font-size: 13px; }
+.sidebar-section { margin-top: 20px; padding-top: 20px; }
+.sidebar-actions :deep(button) { width: 100%; justify-content: center; }
+.comment-entry { border: 1px solid var(--color-border); border-radius: 10px; padding: 16px; background: var(--color-surface); }
+.comment-entry header { gap: 8px 12px; font-size: 12px; }
+.comment-entry header > :last-child:is(button) { margin-left: auto; }
+.comment-entry.completion { border-color: color-mix(in srgb, var(--color-success) 25%, var(--color-border)); background: var(--color-surface); }
+.comment-form { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
+.comment-form > label, .editor-panel > label, .label-input { display: grid; gap: 8px; }
+.comment-form > :last-child { justify-self: start; }
+.comment-form :deep(.relative), .editor-panel :deep(.relative), .label-input :deep(.relative) { width: 100%; }
+.editor-panel { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; }
+.label-picker .label-chip { color: var(--color-text-muted); background: var(--color-surface-muted); border-radius: 5px; }
+.label-picker .label-chip :deep(button) { min-height: 24px; padding: 0 4px; }
+.relation-row { min-width: 0; justify-content: flex-start; }
+@media (max-width: 940px) {
+  .issue-page--nuxt :deep(button), .issue-page--nuxt :deep(input), .issue-page--nuxt :deep(select) { min-height: 44px; }
+  .issue-layout { gap: 20px; }
+}
+@media (max-width: 640px) {
+  .issue-page--nuxt { padding-top: 16px; }
+  .issue-title-row { padding-top: 20px; }
+  .issue-sidebar, .comment-form, .editor-panel { padding: 16px; }
+}
+</style>

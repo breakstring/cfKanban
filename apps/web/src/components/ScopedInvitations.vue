@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UTextarea from "@nuxt/ui/components/Textarea.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import CopyForAgentButton from "./CopyForAgentButton.vue";
 import ErrorNotice from "./ErrorNotice.vue";
@@ -162,25 +164,25 @@ onUnmounted(() => { mounted = false; reviewGeneration += 1; oneTimeText.value = 
     <div v-if="record && belongsHere && !oneTimeText" class="invitation-recovery">
       <p class="warning-panel">{{ ui('An invitation operation still needs recovery. Retry that exact operation within its recovery window. If its URL is unavailable, revoke the committed invitation and review every page before confirming.', '有邀请操作尚待恢复。恢复窗口内请重试原操作；若一次性网址已不可用，请撤销已提交邀请，并读完全部邀请记录后确认。') }}</p>
       <div class="invitation-actions">
-        <button v-if="invitationRecoveryCanRetry(record)" class="secondary-button" type="button" :disabled="busy || !available" @click="run(recover)">{{ ui('Recover exact operation', '恢复原操作') }}</button>
-        <button v-else-if="available" class="secondary-button" type="button" :disabled="busy || !canConfirm" @click="run(confirmReview)">{{ ui('I reviewed all invitations', '我已检查全部邀请') }}</button>
+        <UButton color="neutral" variant="outline" v-if="invitationRecoveryCanRetry(record)" class="secondary-button" type="button" :disabled="busy || !available" @click="run(recover)">{{ ui('Recover exact operation', '恢复原操作') }}</UButton>
+        <UButton color="neutral" variant="outline" v-else-if="available" class="secondary-button" type="button" :disabled="busy || !canConfirm" @click="run(confirmReview)">{{ ui('I reviewed all invitations', '我已检查全部邀请') }}</UButton>
       </div>
     </div>
     <div v-if="oneTimeText" class="invitation-delivery">
-      <label>{{ ui('One-time invitation instructions', '一次性邀请话术') }}<textarea :value="oneTimeText" readonly rows="5" /></label>
+      <label>{{ ui('One-time invitation instructions', '一次性邀请话术') }}<UTextarea class="w-full" :model-value="oneTimeText" readonly :rows="5" /></label>
       <p class="muted">{{ ui('Copy these instructions and send them to the person you want to invite. They are only shown this once.', '复制话术并发送给要邀请的人。此内容仅展示一次，请先保存。') }}</p>
       <div class="invitation-actions">
         <CopyForAgentButton :text="oneTimeText" />
-        <button class="secondary-button" type="button" :disabled="busy" @click="run(acknowledge)">{{ ui('I saved the invitation', '我已保存邀请') }}</button>
+        <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="run(acknowledge)">{{ ui('I saved the invitation', '我已保存邀请') }}</UButton>
       </div>
     </div>
     <form v-if="canCreate" class="invitation-create" @submit.prevent="run(create)">
       <label>{{ ui('Access level', '成员权限') }}<select v-model="role" :disabled="busy"><option value="writer">{{ ui('Can edit', '可编辑') }}</option><option value="reader">{{ ui('Read only', '只读') }}</option></select></label>
-      <button class="primary-button" type="submit" :disabled="busy">{{ ui('Invite member', '邀请成员') }}</button>
+      <UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy">{{ ui('Invite member', '邀请成员') }}</UButton>
     </form>
     <div class="invitation-history-heading">
       <h4>{{ ui('Invitation history', '邀请记录') }}</h4>
-      <button class="text-button" type="button" :disabled="busy" @click="run(() => list())">{{ ui('Refresh invitations', '刷新邀请') }}</button>
+      <UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="busy" @click="run(() => list())">{{ ui('Refresh invitations', '刷新邀请') }}</UButton>
     </div>
     <p v-if="!items.length && reviewReady" class="muted">{{ ui('No invitations yet.', '暂无邀请记录。') }}</p>
     <p v-else-if="!items.length && busy" class="muted" role="status">{{ ui('Loading invitations…', '正在加载邀请记录…') }}</p>
@@ -190,9 +192,9 @@ onUnmounted(() => { mounted = false; reviewGeneration += 1; oneTimeText.value = 
         <small class="muted">{{ ui('Created', '创建于') }} {{ new Date(item.created_at).toLocaleString(locale) }} · <code>{{ item.code_fingerprint }}</code></small>
         <p v-if="!oneTimeText && record?.state === 'committed_unavailable' && record.invitation_id === item.id" class="muted">{{ ui('This invitation needs review because its one-time instructions are no longer available.', '这条邀请的一次性话术已无法读取，需要检查处理。') }}</p>
       </div>
-      <button v-if="item.allowed_actions.includes('revoke')" class="text-button" type="button" :disabled="busy" @click="run(() => revoke(item))">{{ ui('Revoke invitation', '撤销邀请') }}</button>
+      <UButton color="neutral" variant="ghost" v-if="item.allowed_actions.includes('revoke')" class="text-button" type="button" :disabled="busy" @click="run(() => revoke(item))">{{ ui('Revoke invitation', '撤销邀请') }}</UButton>
     </div>
-    <button v-if="cursor" class="secondary-button" type="button" :disabled="busy" @click="run(() => list(false))">{{ ui('Load more invitations', '加载更多邀请') }}</button>
+    <UButton color="neutral" variant="outline" v-if="cursor" class="secondary-button" type="button" :disabled="busy" @click="run(() => list(false))">{{ ui('Load more invitations', '加载更多邀请') }}</UButton>
   </section>
 </template>
 

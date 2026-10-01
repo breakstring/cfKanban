@@ -18,3 +18,12 @@ function change(event: Event): void {
     <option v-for="priority in priorityOrder" :key="priority" :value="priority">{{ priorityText(priority, locale === 'zh-CN') }}</option>
   </select>
 </template>
+
+<style scoped>
+.priority-control { border-radius: 6px; font-size: 13px; }
+.card-priority-select { min-height: 32px; padding: 3px 2px; font-size: 12px; }
+.priority-control[data-priority="urgent"] { color: var(--color-danger); }
+.priority-control[data-priority="high"] { color: var(--color-warning); }
+.priority-control[data-priority="none"], .priority-control[data-priority="low"], .priority-control[data-priority="medium"] { color: var(--color-text-muted); }
+@media (max-width: 940px) { .card-priority-select { min-height: 44px; } }
+</style>

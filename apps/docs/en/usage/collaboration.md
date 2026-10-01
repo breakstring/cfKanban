@@ -54,7 +54,7 @@ Remove the bug label from CFK-123, keeping the label in the project.
 
 Labels belong to a project and require write access to maintain. Removing a label from one issue affects only that issue; deleting a project label affects the whole project.
 
-**In the Web UI:** Issue details → **Labels** → type a name and press Enter to reuse a matching label or create and attach one. The × beside a label removes only this issue's association. Use **Manage labels** on the board or **Manage** in the details' Labels area to change names/colors or delete project labels. Restore them through **Restore deleted collaboration items** in issue details. Deleting a project label hides it on all issues in that project.
+**In the Web UI:** Issue details → **Labels** → type a name and press Enter to reuse a matching label or create and attach one. The × beside a label removes only this issue's association. Use **Project settings → Labels** on the board or **Manage** in the details' Labels area to change names/colors or delete project labels. Restore them through **Restore deleted collaboration items** in issue details. Deleting a project label hides it on all issues in that project.
 
 ## Connect related work
 
@@ -87,7 +87,7 @@ its goal, status, assignee, dependencies, verified results, and follow-ups. Do n
 
 You need read access to the relevant projects. Handoff summaries help you catch up quickly; ask the Agent to read relevant history if details were omitted.
 
-**In the Web UI:** The project description appears below the board title. **Activity** opens a separate page with a way back to the board. Expand **Handoff summary** in issue details to read or copy it.
+**In the Web UI:** The project description appears below the board title. Open **Project settings → Activity** to read project events; returning to the board preserves your submitted filters. Expand **Handoff summary** in issue details to read or copy it.
 
 ## Delete and restore issues
 
@@ -101,7 +101,7 @@ Restore the deleted CFK-123 and verify its restored state.
 
 You need write access. Deleting an issue is a recoverable soft delete, not permanent erasure or physical storage cleanup. Restoration checks current permissions, parent project availability, and capacity. It can fail if the issue and its comments cannot fit within the limits.
 
-**In the Web UI:** Issue details → **Delete** → check and confirm. **Deleted issues** on the board opens a separate page where you can restore issues. If the project or workspace is archived, ask an administrator to restore it first.
+**In the Web UI:** Issue details → **Delete** → check and confirm. Open **Project settings → Deleted issues** from the board to find and restore an issue. This tab is available to members with write access. If the project or workspace is archived, ask an administrator to restore it first.
 
 ## Common questions
 

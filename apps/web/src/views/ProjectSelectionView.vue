@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import PageState from "../components/PageState.vue";
@@ -59,15 +60,15 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
       <p class="eyebrow">{{ locale === "zh-CN" ? "项目范围" : "Project scope" }}</p>
       <h1>{{ t("project.choose") }}</h1>
       <p>{{ t("project.chooseHelp") }}</p>
-      <button class="text-button" type="button" @click="navigate('/app/work')">{{ locale === "zh-CN" ? "跨项目工作清单" : "Work across selected projects" }} →</button>
+      <UButton color="neutral" variant="ghost" class="text-button" type="button" @click="navigate('/app/work')">{{ locale === "zh-CN" ? "跨项目工作清单" : "Work across selected projects" }} →</UButton>
     </header>
     <PageState :loading="loading" :error="error" :action-label="t('action.refresh')" @retry="load" />
     <section v-if="managedWorkspaces.length" class="selection-list">
       <h2>{{ locale === 'zh-CN' ? '工作区管理' : 'Workspace management' }}</h2>
-      <button v-for="workspace in managedWorkspaces" :key="workspace.id" class="selection-row" type="button" @click="navigate(managementPath(workspace.id))"><strong>{{ workspace.display_name }}</strong><span>{{ locale === 'zh-CN' ? '管理工作区和项目' : 'Manage workspace and projects' }}</span></button>
+      <UButton color="neutral" variant="ghost" v-for="workspace in managedWorkspaces" :key="workspace.id" class="selection-row" type="button" @click="navigate(managementPath(workspace.id))"><strong>{{ workspace.display_name }}</strong><span>{{ locale === 'zh-CN' ? '管理工作区和项目' : 'Manage workspace and projects' }}</span></UButton>
     </section>
     <div v-if="!loading && !error" class="selection-list">
-      <button
+      <UButton color="neutral" variant="ghost"
         v-for="choice in choices"
         :key="`${choice.workspaceId}/${choice.projectId}`"
         class="selection-row"
@@ -80,7 +81,7 @@ watch(() => props.session.allowed_scope.projects, load, { deep: true });
           <strong>{{ choiceLabels.get(choice.projectId)?.label }}</strong>
         </span>
         <span class="selection-row-end"><span class="role-badge">{{ projectRoleLabel(projectDisplayRole(session, choice.scope), locale) }}</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></span>
-      </button>
+      </UButton>
       <p v-if="choices.length === 0" class="empty-copy">
         {{ locale === "zh-CN" ? "当前没有可访问的项目，请联系所有者获取项目权限。" : "No projects are currently available. Contact the Owner for project access." }}
       </p>

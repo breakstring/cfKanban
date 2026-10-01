@@ -18,6 +18,7 @@ For an already joined user, lead with finding, creating, editing, changing statu
 ## What this Skill can do
 
 - Inspect the local instance identity and show the authenticated Principal without exposing a Credential.
+- Read or update your own display name and saved color theme through the profile API.
 - Resolve an explicit or Repo-recommended Project scope, then list or search Issues and deterministic work candidates.
 - Create, read, edit, prioritize, assign, block, unblock, complete, reopen, soft-delete, or restore one Issue at a time.
 - Add and restore Comments, manage Project Labels, and create or remove Issue relations.

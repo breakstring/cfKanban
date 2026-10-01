@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
+import ProjectSettingsHeader from "../components/ProjectSettingsHeader.vue";
 import { ApiProblem, apiRequest } from "../lib/api";
 import { captureCasConflict, markCasReadbackComplete, markCasReadbackFailed, type CasConflictState } from "../lib/cas-recovery";
 import { locale, t } from "../lib/i18n";
@@ -170,21 +172,20 @@ onUnmounted(clearProjection);
 
 <template>
   <main class="page-shell">
-    <button class="text-button" type="button" @click="emit('navigate', backPath)">← {{ ui('Back to board', '返回看板') }}</button>
-    <p v-if="project" class="eyebrow">{{ project.display_name }}</p>
-    <div class="section-heading-row"><h1>{{ ui('Deleted issues', '已删除事项') }}</h1><button v-if="project && canWrite" class="text-button" type="button" :disabled="loading || busy || !!conflict" @click="loadDeleted(true)">{{ ui('Refresh', '刷新') }}</button></div>
+    <ProjectSettingsHeader :workspace-id="workspaceId" :project-id="projectId" section="deleted" :project="project" :session="session" :return-to="backPath" @navigate="emit('navigate', $event)" />
+    <div class="section-heading-row"><h2>{{ ui('Deleted issues', '已删除事项') }}</h2><UButton color="neutral" variant="ghost" v-if="project && canWrite" class="text-button" type="button" :disabled="loading || busy || !!conflict" @click="loadDeleted(true)">{{ ui('Refresh', '刷新') }}</UButton></div>
     <ErrorNotice v-if="error" :error="error" />
     <CasConflictNotice v-if="conflict" :conflict="conflict" :busy="loading || busy" @refresh="refreshConflict" @dismiss="dismissConflict" />
     <div v-if="project && canWrite" class="tombstone-list">
       <div v-for="issue in issues" :key="issue.id" class="tombstone-row">
         <span><code>{{ issue.identifier }}</code><strong>{{ issue.title }}</strong></span>
-        <button v-if="issue.restorable && issue.allowed_actions.includes('restore')" class="secondary-button" type="button" :disabled="busy || loading || !!conflict" @click="restoreIssue(issue)">{{ t('action.restore') }}</button>
+        <UButton color="neutral" variant="outline" v-if="issue.restorable && issue.allowed_actions.includes('restore')" class="secondary-button" type="button" :disabled="busy || loading || !!conflict" @click="restoreIssue(issue)">{{ t('action.restore') }}</UButton>
         <small v-else class="warning-chip">{{ restoreUnavailableText(issue) }}</small>
       </div>
       <p v-if="loaded && !issues.length && !loading && !error" class="empty-copy">{{ ui('No deleted issues.', '没有已删除的事项。') }}</p>
-      <button v-if="cursor && !error" class="load-more" type="button" :disabled="loading || busy || !!conflict" @click="loadDeleted(false)">{{ ui('Load more deleted issues', '加载更多已删除事项') }}</button>
+      <UButton color="neutral" variant="outline" v-if="cursor && !error" class="load-more" type="button" :disabled="loading || busy || !!conflict" @click="loadDeleted(false)">{{ ui('Load more deleted issues', '加载更多已删除事项') }}</UButton>
     </div>
-    <button v-if="error && canWrite && !conflict" class="secondary-button" type="button" :disabled="loading || busy" @click="project ? loadDeleted(!cursor) : load()">{{ ui('Retry', '重试') }}</button>
+    <UButton color="neutral" variant="outline" v-if="error && canWrite && !conflict" class="secondary-button" type="button" :disabled="loading || busy" @click="project ? loadDeleted(!cursor) : load()">{{ ui('Retry', '重试') }}</UButton>
     <p v-if="loading" role="status">{{ ui('Loading…', '加载中…') }}</p>
   </main>
 </template>

@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 13,
+  schema_version: 14,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -185,6 +185,16 @@ const manifest = {
         indexes: ["idx_issues_active_status_order", "idx_issues_active_assignee_order", "idx_issues_active_priority_order", "idx_issues_todo_assignee_order"],
       },
       expected_data: { instance_meta_schema_version_at_least: 13, allow_uninitialized: true },
+    },
+    {
+      sequence: 14,
+      name: "0014_principal_theme.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0014_principal_theme.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { columns: ["principals.theme"] },
+      expected_data: { instance_meta_schema_version_at_least: 14, allow_uninitialized: true },
     },
   ],
 };

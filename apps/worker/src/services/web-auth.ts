@@ -990,6 +990,7 @@ export async function getWebSession(
       id: auth.principalId,
       is_owner: auth.isOwner,
       version: auth.principalVersion,
+      theme: auth.theme,
     },
     session_id: auth.sessionId,
     source: { id: auth.sourceId, kind: auth.sourceKind },

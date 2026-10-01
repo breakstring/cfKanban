@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 
 import ErrorNotice from "./ErrorNotice.vue";
@@ -92,15 +93,15 @@ onUnmounted(() => { disposed = true; controller.abort(); });
         <h2 id="homepage-settings-heading">{{ ui('Homepage instance notice', '首页实例说明') }}</h2>
         <p id="homepage-settings-help">{{ ui('Publicly visible plain text, up to 500 Unicode characters per language. Leave Chinese blank to use English; otherwise blank fields use the built-in notice.', '对所有访客公开，仅显示纯文本，每种语言最多 500 个 Unicode 字符。中文留空时先使用英文；仍无内容时使用内置说明。') }}</p>
       </div>
-      <button class="secondary-button" type="button" :disabled="busy" @click="load">{{ loading ? ui('Loading…', '正在读取…') : ui('Read latest settings', '读取最新设置') }}</button>
+      <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="load">{{ loading ? ui('Loading…', '正在读取…') : ui('Read latest settings', '读取最新设置') }}</UButton>
     </div>
     <ErrorNotice v-if="error" :error="error" />
     <div v-if="draft.pending" class="warning-panel" role="alert">
       <p>{{ ui('The last save has no confirmed result. New saves are paused. Retry the original request, or read the latest settings to resolve it. Your draft is retained.', '上次保存结果尚未确认，已暂停新的保存。请重试原请求，或读取最新设置进行核对，草稿会保留。') }}</p>
       <p v-if="retryExpired">{{ ui('The safe retry window has expired. Read the latest settings; a new save stays blocked while the original version could still commit.', '安全重试期限已过，请读取最新设置。原请求仍可能提交时，不能发起新的保存。') }}</p>
       <div class="homepage-settings-actions">
-        <button class="secondary-button" type="button" :disabled="busy || retryExpired" @click="save(true)">{{ ui('Retry original save', '重试原保存') }}</button>
-        <button v-if="draft.canRetirePending" class="secondary-button" type="button" :disabled="busy" @click="resolvePending">{{ ui('Reviewed latest values; enable new save', '已核对最新内容，允许新的保存') }}</button>
+        <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy || retryExpired" @click="save(true)">{{ ui('Retry original save', '重试原保存') }}</UButton>
+        <UButton color="neutral" variant="outline" v-if="draft.canRetirePending" class="secondary-button" type="button" :disabled="busy" @click="resolvePending">{{ ui('Reviewed latest values; enable new save', '已核对最新内容，允许新的保存') }}</UButton>
       </div>
     </div>
     <p v-if="!draft.current && !loading" class="warning-panel">{{ ui('Read settings successfully before editing or saving.', '成功读取设置后才能编辑或保存，请重试读取。') }}</p>
@@ -122,8 +123,8 @@ onUnmounted(() => { disposed = true; controller.abort(); });
         <p id="homepage-notice-zh-count" class="muted-copy">{{ noticeLength(draft.chinese) }} / 500</p>
         <p v-if="!draft.valid" class="warning-panel" role="alert">{{ ui('Each language must contain at most 500 Unicode characters after trimming whitespace.', '去除首尾空白后，每种语言最多 500 个 Unicode 字符。') }}</p>
         <div class="homepage-settings-actions">
-          <button class="secondary-button" type="submit" :disabled="!draft.canSave">{{ saving ? ui('Saving…', '正在保存…') : ui('Save', '保存') }}</button>
-          <button class="text-button" type="button" @click="restoreDefaults">{{ ui('Restore defaults', '恢复默认') }}</button>
+          <UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="!draft.canSave">{{ saving ? ui('Saving…', '正在保存…') : ui('Save', '保存') }}</UButton>
+          <UButton color="neutral" variant="ghost" class="text-button" type="button" @click="restoreDefaults">{{ ui('Restore defaults', '恢复默认') }}</UButton>
         </div>
         <p class="muted-copy">{{ ui('Restore defaults clears both fields. Save to apply the change.', '恢复默认只清空两个输入框，保存后生效。') }}</p>
       </fieldset>

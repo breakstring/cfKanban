@@ -14,14 +14,15 @@ globalThis.Document = class {};
 globalThis.ShadowRoot = class {};
 after(() => { globalThis.Document = originalDocumentClass; globalThis.ShadowRoot = originalShadowRoot; });
 import { build } from 'esbuild';
+import { nuxtUiTestPlugin } from './nuxt-ui-test-plugin.mjs';
 import { compileScript, parse } from '@vue/compiler-sfc';
 import { createRenderer, h, nextTick, ref } from 'vue';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
-  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as ActivityPage } from './apps/web/src/views/ProjectActivityView.vue'; export { default as DeletedPage } from './apps/web/src/views/ProjectDeletedIssuesView.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { default as Footer } from './apps/web/src/components/AppFooter.vue'; export { navigate, registerNavigationGuard, currentPath } from './apps/web/src/lib/router.ts'; export { boardFilters, boardPath, boardReturnPath } from './apps/web/src/lib/board-navigation.ts'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
+  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as LabelsPage } from './apps/web/src/views/ProjectLabelsView.vue'; export { default as ManagementPage } from './apps/web/src/views/ScopedManagementView.vue'; export { default as SettingsHeader } from './apps/web/src/components/ProjectSettingsHeader.vue'; export { projectSettingsPath, projectSettingsSections } from './apps/web/src/lib/project-settings.ts'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as ActivityPage } from './apps/web/src/views/ProjectActivityView.vue'; export { default as DeletedPage } from './apps/web/src/views/ProjectDeletedIssuesView.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { default as Footer } from './apps/web/src/components/AppFooter.vue'; export { navigate, registerNavigationGuard, currentPath } from './apps/web/src/lib/router.ts'; export { boardFilters, boardPath, boardReturnPath } from './apps/web/src/lib/board-navigation.ts'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent', loader: { '.png': 'dataurl' },
-  plugins: [{ name: 'vue-test', setup(builder) {
+  plugins: [nuxtUiTestPlugin(), { name: 'vue-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
       const { descriptor } = parse(await readFile(path, 'utf8'), { filename: path });
       const compiled = compileScript(descriptor, { id: 'attachment-test', inlineTemplate: true });
@@ -30,7 +31,7 @@ const output = await build({
     builder.onResolve({ filter: /^vue$/ }, () => ({ path: new URL('../../node_modules/vue/index.mjs', import.meta.url).href, external: true }));
   } }],
 });
-const { WorkList, Board, Activity, ActivityPage, DeletedPage, Context, Footer, navigate, registerNavigationGuard, currentPath, boardFilters, boardPath, boardReturnPath, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
+const { WorkList, Board, LabelsPage, ManagementPage, SettingsHeader, projectSettingsPath, projectSettingsSections, Activity, ActivityPage, DeletedPage, Context, Footer, navigate, registerNavigationGuard, currentPath, boardFilters, boardPath, boardReturnPath, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
 
 
 
@@ -816,3 +817,176 @@ for (const trigger of ['automatic', 'manual']) {
     });
   }
 }
+
+function installProjectHistory(start) {
+  const previous = { location: window.location, history: window.history, scrollTo: window.scrollTo, confirm: window.confirm, path: currentPath.value };
+  const navigations = [];
+  const setLocation = path => { const url = new URL(path, 'https://local.test'); window.location = { pathname: url.pathname, search: url.search }; };
+  window.history = {
+    replaceState(_state, _title, path) { navigations.push(['replace', path]); setLocation(path); },
+    pushState(_state, _title, path) { navigations.push(['push', path]); setLocation(path); },
+  };
+  window.scrollTo = () => {};
+  setLocation(start); currentPath.value = start;
+  return {
+    navigations,
+    restore() { window.location = previous.location; window.history = previous.history; window.scrollTo = previous.scrollTo; window.confirm = previous.confirm; currentPath.value = previous.path; },
+  };
+}
+const projectResource = (overrides = {}) => ({ id: p1, workspace_id: workspace, workspace_display_name: 'Team', display_name: 'Project 0', deleted_at: null, version: 2, allowed_actions: ['read'], ...overrides });
+
+test('project settings tabs keep management capabilities distinct from writer access and stay in the current scope', () => {
+  const resource = projectResource();
+  assert.deepEqual(projectSettingsSections(session, workspace, p1, resource), ['labels', 'activity', 'deleted']);
+  assert.deepEqual(projectSettingsSections(session, workspace, p2, projectResource({ id: p2 })), ['labels', 'activity']);
+  const managed = projectResource({ allowed_actions: ['read', 'manage_members'] });
+  assert.deepEqual(projectSettingsSections(session, workspace, p1, managed), ['management', 'labels', 'activity', 'deleted']);
+  assert.deepEqual(projectSettingsSections(session, principal, p1, managed), []);
+  const owner = { ...session, principal: { ...session.principal, is_owner: true }, allowed_scope: { kind: 'instance' } };
+  assert.deepEqual(projectSettingsSections(owner, workspace, p1, managed), ['management', 'labels', 'activity', 'deleted']);
+  assert.deepEqual(projectSettingsSections({ ...owner, allowed_scope: { kind: 'project', workspace_id: workspace, project_id: p2 } }, workspace, p1, managed), []);
+  assert.deepEqual(projectSettingsSections(session, workspace, p1, null), []);
+  const archived = projectResource({ deleted_at: '2026-10-01T00:00:00Z', allowed_actions: ['read', 'restore'] });
+  const grant = { id: 'administrator', principal_id: principal, workspace_id: workspace, project_id: null, revoked_at: null };
+  const archivedManager = { ...session, allowed_scope: { kind: 'project_selection', projects: [] }, management_grants: [grant] };
+  assert.deepEqual(projectSettingsSections(archivedManager, workspace, p1, archived), ['management']);
+  assert.deepEqual(projectSettingsSections({ ...archivedManager, management_grants: [{ ...grant, revoked_at: '2026-10-01T00:01:00Z' }] }, workspace, p1, archived), []);
+});
+
+test('project settings preserve legacy routes and only carry verified same-project board filters', () => {
+  const filtered = boardPath(workspace, p1, { search: 'design', priorities: ['high'], labels: [] });
+  for (const section of ['management', 'labels', 'activity', 'deleted']) {
+    const path = projectSettingsPath(workspace, p1, section, filtered);
+    const url = new URL(path, 'https://local.test');
+    assert.equal(url.pathname, section === 'management' ? '/app/manage' : `${boardPath(workspace, p1)}/${section}`);
+    if (section === 'management') { assert.equal(url.searchParams.get('workspace'), workspace); assert.equal(url.searchParams.get('project'), p1); }
+    assert.equal(url.searchParams.get('from'), filtered);
+    for (const invalid of ['https://other.invalid/', boardPath(workspace, p2), `${boardPath(workspace, p1)}/activity`]) {
+      assert.equal(new URL(projectSettingsPath(workspace, p1, section, invalid), 'https://local.test').searchParams.get('from'), boardPath(workspace, p1));
+    }
+  }
+  assert.equal(new URL(projectSettingsPath(workspace, p1, 'management', filtered, true), 'https://local.test').searchParams.get('archived'), '1');
+});
+
+for (const [actions, destination] of [[['read'], 'activity'], [['read', 'update', 'manage_members'], 'management']]) {
+  test(`board has one project settings entry and defaults to ${destination} with its current filter`, async () => {
+    const filtered = boardPath(workspace, p1, { search: 'saved search', priorities: ['high'], labels: [] });
+    const history = installProjectHistory(filtered);
+    globalThis.fetch = async path => Response.json(path.includes('/issues?') || path.endsWith('/statuses') ? page([]) : projectResource({ allowed_actions: actions }));
+    const { app, host } = mount(Board, { session, workspaceId: workspace, projectId: p1 });
+    try {
+      await until(() => !!button(host, 'Project settings'));
+      for (const label of ['Manage project', 'Manage labels', 'Activity', 'Deleted issues']) assert.equal(button(host, label), undefined);
+      all(host).find(item => item.tag === 'input' && item.props.type === 'search').props['onUpdate:modelValue']('not submitted');
+      button(host, 'Project settings').props.onClick();
+      assert.deepEqual(history.navigations, [
+        ['replace', filtered],
+        ['push', projectSettingsPath(workspace, p1, destination, filtered)],
+      ]);
+    } finally { app.unmount(); history.restore(); }
+  });
+}
+
+test('shared project settings navigation follows permission changes, preserves board filters, and avoids unnecessary reads', async () => {
+  const filtered = boardPath(workspace, p1, { search: 'current', priorities: ['urgent'], labels: [] });
+  const changes = [];
+  const currentSession = ref(session);
+  const resource = ref(projectResource({ allowed_actions: ['read', 'manage_members'] }));
+  globalThis.fetch = async () => { throw new Error('settings navigation must reuse verified project facts'); };
+  const Wrapper = { setup: () => () => h(SettingsHeader, { session: currentSession.value, workspaceId: workspace, projectId: p1, project: resource.value, section: 'labels', returnTo: filtered, onNavigate: path => changes.push(path) }) };
+  const { app, host } = mount(Wrapper);
+  try {
+    assert.equal(button(host, 'Labels').props['aria-current'], 'page');
+    button(host, 'Labels').props.onClick(); assert.deepEqual(changes, []);
+    button(host, 'Activity').props.onClick();
+    button(host, '← Back to board').props.onClick();
+    assert.deepEqual(changes, [projectSettingsPath(workspace, p1, 'activity', filtered), filtered]);
+    currentSession.value = { ...session, allowed_scope: { ...session.allowed_scope, projects: projects.map(project => ({ ...project, role: 'reader' })) } };
+    resource.value = projectResource(); await nextTick();
+    assert.equal(button(host, 'Management'), undefined);
+    assert.equal(button(host, 'Deleted issues'), undefined);
+    assert.ok(button(host, 'Labels')); assert.ok(button(host, 'Activity'));
+    locale.value = 'zh-CN'; await nextTick();
+    assert.ok(button(host, '标签')); assert.ok(button(host, '项目活动'));
+  } finally { app.unmount(); }
+});
+
+test('archived project management keeps only the management tab and exits to project selection', () => {
+  const navigations = [];
+  const owner = { ...session, principal: { ...session.principal, is_owner: true }, allowed_scope: { kind: 'instance' } };
+  const { app, host } = mount(SettingsHeader, { session: owner, workspaceId: workspace, projectId: p1, project: projectResource({ deleted_at: '2026-10-01T00:00:00Z', allowed_actions: ['restore'] }), section: 'management', onNavigate: path => navigations.push(path) });
+  try {
+    assert.ok(button(host, 'Management'));
+    for (const label of ['Labels', 'Activity', 'Deleted issues', '← Back to board']) assert.equal(button(host, label), undefined);
+    button(host, '← Choose project').props.onClick();
+    assert.deepEqual(navigations, ['/app']);
+  } finally { app.unmount(); }
+});
+
+test('the legacy labels page renders project settings for readers without exposing writer actions', async () => {
+  const calls = [];
+  globalThis.fetch = async path => {
+    calls.push(path);
+    return Response.json(path.includes('/labels?') ? page([{ id: 'label', name: 'Review', color: null, allowed_actions: ['read'] }]) : projectResource({ id: p2, display_name: 'Reader project' }));
+  };
+  const { app, host } = mount(LabelsPage, { session, workspaceId: workspace, projectId: p2 });
+  try {
+    await until(() => text(host).includes('Review'));
+    assert.match(text(host), /Project settings/);
+    assert.equal(button(host, 'Labels').props['aria-current'], 'page');
+    assert.equal(button(host, 'Management'), undefined);
+    assert.equal(button(host, 'Deleted issues'), undefined);
+    assert.equal(button(host, 'Save'), undefined);
+    assert.equal(button(host, 'Edit'), undefined);
+    assert.equal(button(host, 'Delete'), undefined);
+    assert.equal(all(host).some(item => item.tag === 'form'), false);
+    assert.deepEqual(calls.sort(), [`/api/v1/workspaces/${workspace}/projects/${p2}`, `/api/v1/workspaces/${workspace}/projects/${p2}/labels?limit=50`].sort());
+  } finally { app.unmount(); }
+});
+
+test('leaving a labels draft through project settings tabs still uses the navigation guard', async () => {
+  const filtered = boardPath(workspace, p1, { search: 'retain', priorities: ['high'], labels: [] });
+  const history = installProjectHistory(projectSettingsPath(workspace, p1, 'labels', filtered));
+  globalThis.fetch = async path => Response.json(path.includes('/labels?') ? page([]) : projectResource());
+  let allow = false; let confirmations = 0;
+  window.confirm = () => { confirmations++; return allow; };
+  const { app, host } = mount(LabelsPage, { session, workspaceId: workspace, projectId: p1 });
+  try {
+    await until(() => !!button(host, 'Activity'));
+    all(host).find(item => item.tag === 'input').props['onUpdate:modelValue']('Unsaved label'); await nextTick();
+    button(host, 'Activity').props.onClick();
+    assert.equal(confirmations, 1); assert.deepEqual(history.navigations, []);
+    allow = true; button(host, 'Activity').props.onClick();
+    assert.equal(confirmations, 2);
+    assert.deepEqual(history.navigations, [['push', projectSettingsPath(workspace, p1, 'activity', filtered)]]);
+  } finally { app.unmount(); history.restore(); }
+});
+
+test('project management keeps its shared tabs without granting management controls to ordinary writers', async () => {
+  const calls = [];
+  globalThis.fetch = async path => { calls.push(path); return Response.json(projectResource()); };
+  const { app, host } = mount(ManagementPage, { session, workspaceId: workspace, projectId: p1 });
+  try {
+    await until(() => text(host).includes('Management is unavailable in this session.'));
+    assert.match(text(host), /Project settings/);
+    assert.ok(button(host, 'Labels')); assert.ok(button(host, 'Activity')); assert.ok(button(host, 'Deleted issues'));
+    assert.equal(button(host, 'Management'), undefined);
+    assert.equal(all(host).some(item => item.tag === 'form'), false);
+    assert.deepEqual(calls, [`/api/v1/workspaces/${workspace}/projects/${p1}`]);
+  } finally { app.unmount(); }
+});
+
+test('workspace management remains separate from project settings tabs', async () => {
+  const calls = [];
+  globalThis.fetch = async path => { calls.push(path); return Response.json({ id: workspace, display_name: 'Team', deleted_at: null, allowed_actions: ['read'] }); };
+  const { app, host } = mount(ManagementPage, { session, workspaceId: workspace });
+  try {
+    await until(() => text(host).includes('Management is unavailable in this session.'));
+    assert.match(text(host), /Workspace management/);
+    assert.doesNotMatch(text(host), /Project settings/);
+    assert.equal(button(host, 'Labels'), undefined);
+    assert.equal(button(host, 'Activity'), undefined);
+    assert.equal(button(host, 'Deleted issues'), undefined);
+    assert.deepEqual(calls, [`/api/v1/workspaces/${workspace}`]);
+  } finally { app.unmount(); }
+});

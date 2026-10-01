@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import UApp from "@nuxt/ui/components/App.vue";
+import { en, zh_cn } from "@nuxt/ui/locale";
 
 import AppFooter from "./components/AppFooter.vue";
 import AppHeader from "./components/AppHeader.vue";
@@ -15,6 +17,8 @@ import { currentPath, navigate, routePath } from "./lib/router";
 import { scheduleSessionExpiry } from "./lib/session-expiry";
 import { canAccessOwnerControlPlane } from "./lib/session-capabilities";
 import { sameSessionBoundary, shouldClearAfterSessionRevalidation } from "./lib/session-boundary";
+import { applyTheme, latestPrincipalTheme } from "./lib/theme";
+import type { InstanceDiscovery, PrincipalResource } from "./types";
 import type { WebSessionView } from "./types";
 import IssueDetailView from "./views/IssueDetailView.vue";
 import OwnerView from "./views/OwnerView.vue";
@@ -40,6 +44,11 @@ type AppRoute =
   | { kind: "unknown" };
 
 const session = ref<WebSessionView | null>(null);
+const discovery = ref<InstanceDiscovery | null>(null);
+const preferredOrigin = computed(() => {
+  const value = discovery.value?.preferred_api_origin;
+  return value && value !== window.location.origin ? value : null;
+});
 const loadingSession = ref(false);
 const {
   clearError: clearSessionError,
@@ -97,6 +106,32 @@ const route = computed<AppRoute>(() => {
 
 const authenticatedRoute = computed(() => route.value.kind !== "home");
 
+watch(() => session.value !== null, async authenticated => {
+  discovery.value = null;
+  if (!authenticated) return;
+  try {
+    const result = await apiRequest<InstanceDiscovery>("/.well-known/cfkanban-instance.json");
+    if (session.value) discovery.value = result;
+  } catch {
+    // 推荐地址暂不可用时，已登录页面仍可正常使用。
+  }
+});
+
+watch([authenticatedRoute, () => session.value?.principal.theme], ([authenticated, theme]) => {
+  applyTheme(theme, authenticated);
+}, { immediate: true });
+
+function updateProfile(principal: PrincipalResource): void {
+  if (session.value?.principal.id !== principal.id) return;
+  if (principal.version < session.value.principal.version) return;
+  session.value.principal = {
+    ...session.value.principal,
+    display_name: principal.display_name,
+    theme: principal.theme ?? "orange",
+    version: principal.version,
+  };
+}
+
 function clearSession(ended = true): void {
   clearAttachmentUploadDrafts();
   cancelSessionExpiry?.();
@@ -124,12 +159,23 @@ function armSessionExpiry(expiresAt: string): boolean {
 }
 
 function acceptVerifiedSession(result: WebSessionView): void {
+  // 新验证的 Session 使此前发出的读回失效，包括身份和 scope 切换。
+  sessionLoadGeneration += 1;
+  loadingSession.value = false;
+  clearSessionError();
+  sessionEnded.value = false;
   if (session.value && !sameSessionBoundary(session.value, result)) {
     clearAttachmentUploadDrafts();
     sessionViewGeneration.value += 1;
     context.value = null;
   }
-  if (armSessionExpiry(result.expires_at)) session.value = result;
+  if (armSessionExpiry(result.expires_at)) {
+    session.value = { ...result, principal: latestPrincipalTheme(session.value?.principal, result.principal) };
+    if (sessionReloadPending && authenticatedRoute.value) {
+      sessionReloadPending = false;
+      void loadSession(false);
+    }
+  }
 }
 
 async function loadSession(resetBeforeRequest = session.value === null): Promise<void> {
@@ -149,7 +195,7 @@ async function loadSession(resetBeforeRequest = session.value === null): Promise
       sessionViewGeneration.value += 1;
       context.value = null;
     }
-    if (armSessionExpiry(result.expires_at)) session.value = result;
+    if (armSessionExpiry(result.expires_at)) session.value = { ...result, principal: latestPrincipalTheme(session.value?.principal, result.principal) };
   } catch (caught) {
     if (generation !== sessionLoadGeneration) return;
     if (previous === null) {
@@ -240,7 +286,8 @@ watch(currentPath, () => {
 <template>
   <PublicHomeView v-if="route.kind === 'home'" />
 
-  <div v-else class="application-shell" :class="{ 'application-shell--board': route.kind === 'project' && session }">
+  <UApp v-else :locale="locale === 'zh-CN' ? zh_cn : en" :toaster="null">
+  <div class="application-shell" :class="{ 'application-shell--board': route.kind === 'project' && session }">
     <AppHeader
       v-if="session"
       :context="context?.label"
@@ -297,6 +344,7 @@ watch(currentPath, () => {
         :key="`${sessionViewGeneration}:${currentPath}`"
         :session="session"
         @context="context = $event"
+        @updated="updateProfile"
       />
       <ScopedManagementView
         v-else-if="route.kind === 'manage'"
@@ -321,7 +369,8 @@ watch(currentPath, () => {
           <button class="primary-button" type="button" @click="navigate('/app')">{{ t("project.choose") }}</button>
         </div>
       </main>
-      <AppFooter />
+      <AppFooter :expires-at="session.expires_at" :preferred-origin="preferredOrigin" />
     </template>
   </div>
+  </UApp>
 </template>

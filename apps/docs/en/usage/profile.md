@@ -14,7 +14,20 @@ Any authenticated identity, including a reader, can view and change its own disp
 
 Names must be unique within the site and contain 1–128 characters. Use letters, numbers, `_`, `-`, or `·`, without spaces or emoji. System-reserved names are unavailable; choose another if a name is rejected.
 
-**In the Web UI:** Select your name in the header → **My profile** → edit the display name under **Identity profile** → **Save**. The page also shows your non-editable identity ID.
+**In the Web UI:** Open the account menu at the top right → **Personal settings** → edit the display name under **Identity profile** → **Save**. The page also shows your non-editable identity ID.
+
+## Save your color theme
+
+```text
+Use $cfkanban to show my saved theme, then change it to Calm blue.
+Keep my display name unchanged and verify that the preference was saved.
+```
+
+Choose **Warm orange** (the default) or **Calm blue**. Both themes use the same layout, controls, and interactions; only their colors change.
+
+**In the Web UI:** Open the account menu → **Personal settings** → choose a theme → **Save theme**. The saved theme applies across signed-in pages, including management pages. It belongs to your identity in this site, so it is available when you sign in again or use another browser. Other people's themes are unchanged.
+
+Any signed-in identity can save its own theme, including readers. If another profile change causes a version conflict, refresh the profile and review your selection before saving again. The Agent uses the same profile API to read and save this preference.
 
 ## View and revoke your Passkeys
 
@@ -32,7 +45,7 @@ Check the registration and its last-use time in your list before selecting it fo
 
 Revocation immediately ends all browser sessions created by that Passkey. Other Passkeys, Agent credentials, and project access remain unchanged. If your current browser session came from that Passkey, you will lose that session too.
 
-**In the Web UI:** Go to **My profile** → **Passkeys**, check the record, and select **Revoke** for the correct entry. Registering another Passkey still requires an Agent-opened session and your browser/system interaction; see [Joining and signing in](./access.md).
+**In the Web UI:** Open the account menu → **Personal settings** → **Passkeys**, check the record, and select **Revoke** for the correct entry. Registering another Passkey still requires an Agent-opened session and your browser/system interaction; see [Joining and signing in](./access.md).
 
 ## Associate a working directory with projects
 

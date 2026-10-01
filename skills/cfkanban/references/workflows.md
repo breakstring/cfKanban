@@ -82,6 +82,12 @@ For “associate this folder with DemoProject”, verify the trusted instance an
 
 Saving scope requires the user's explicit association request; no extra confirmation is imposed for an already clear, authorized request. Reading scope or joining a Project alone does not authorize writing it. The file is non-secret recommended filtering, separate from private `~/.cfkanban/` identity state. Follow Repo rules for Git tracking; do not silently edit ignore settings. Explicit targets override recommendations, and explicit authorized Issue access is not restricted by this file.
 
+## Personal color theme
+
+On Services implementing Principal themes (schema 14+), `GET /api/v1/me` returns `theme`. The default is `orange`; the alternative is `blue`. For “Save Calm blue as my theme”, PATCH `/api/v1/me` with only `theme: "blue"` and the current Principal `expected_version`, plus one explicit `idempotencyKey`. Do not resend an unchanged display name or turn a theme request into a rename. Read `/me` to verify the saved value before reporting success. Theme-only updates are available to every authenticated Principal, including readers, and change no permissions.
+
+Both themes preserve layout and interactions. The saved choice belongs to this Principal in this Instance and is shared with the Web profile page. A version conflict requires fresh profile facts and reconsideration; do not silently overwrite concurrent changes. If the deployed Service lacks theme support, report that limitation rather than saving a local-only substitute or inferring support from installed Skill metadata.
+
 ## Identity and Issue operations
 
 All entries below use `api request` unless a dedicated command is named.
@@ -90,6 +96,7 @@ All entries below use `api request` unless a dedicated command is named.
 | --- | --- | --- |
 | View my profile | `GET /api/v1/me` | Confirm immutable Principal ID and Credential fingerprint. |
 | Rename myself | `PATCH /api/v1/me` | `display_name`, `expected_version`; then read `/me`. |
+| Save my theme | `PATCH /api/v1/me` | `theme: "orange"` (Warm orange) or `"blue"` (Calm blue), current Principal `expected_version`; then read `/me` and verify `theme`. |
 | List all authorized Issues | `GET /api/v1/issues` | Prefer repeated explicit Workspace/Project filters; warn when scope expands. |
 | List deterministic candidates | `GET /api/v1/issues/candidates` | `assignment` is required; use UUID `project` filters and read back the resolved candidate policy. |
 | List/create in one Project | `GET/POST /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues` | Create uses one Idempotency Key. |

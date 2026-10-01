@@ -42,7 +42,9 @@ Open CFK-123 in IAB using my current cfKanban identity.
 
 You need a usable local identity, access to the target, and browser delivery supported by your host. The Agent verifies the site and identity, then opens an authenticated page through the dedicated entry point. If the requested browser is unavailable, it should explain the problem instead of silently choosing another.
 
-Web sign-in lasts eight hours, with the expiry shown in the header. Sign in again when it expires; do not copy long-lived credentials into a page or chat.
+Web sign-in lasts a fixed eight hours from when the session is created. The footer shows **Signed in until** with the date and time. Refreshing the page, switching projects, or continuing to work does not extend that time. After expiry, sign in with a registered Passkey or ask your Agent to reopen the page. Do not copy long-lived credentials into a page or chat.
+
+When the current address differs from the site’s recommended address, the footer also shows a link to that address. It does not redirect you automatically; changing the address does not transfer your current sign-in.
 
 **In the Web UI:** Use your current session while it remains valid. After expiry, ask the Agent to open a fresh one or sign in with a registered Passkey. If browser delivery fails, ask the Agent to check the delivery path; do not create a second identity solely because of that failure.
 
@@ -54,7 +56,7 @@ Use $cfkanban to open an authenticated DemoProject page so I can register a Pass
 
 Both first registration and additional registrations require an Agent-opened session. You complete registration through the browser or operating system. The Agent cannot replace your biometric check, security key interaction, or system confirmation.
 
-**In the Web UI:** Your name in the header → **My profile** → **Register Passkey**. For later visits, open the same site's homepage, select Passkey sign-in, and follow the system prompt. Participants then choose an authorized project; the Owner enters the management overview.
+**In the Web UI:** Account menu at the top right → **Personal settings** → **Register Passkey**. For later visits, open the same site's homepage, select Passkey sign-in, and follow the system prompt. Participants then choose an authorized project; the Owner enters the management overview.
 
 A Passkey authenticates you to the Web UI. It grants no project access and does not replace the Agent's local credential. It is associated with the hostname where you registered it. If the site moves to another hostname, ask the Agent to open the new address and register there. See [Profile](./profile.md) for revocation.
 

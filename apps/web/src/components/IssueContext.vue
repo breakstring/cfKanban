@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UTextarea from "@nuxt/ui/components/Textarea.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import CompletionRecord from "./CompletionRecord.vue";
 import MarkdownContent from "./MarkdownContent.vue";
@@ -48,19 +50,19 @@ onUnmounted(() => { generation++; });
 </script>
 <template>
   <section class="handoff-context">
-    <div class="section-heading-row"><h2>{{ ui('Handoff summary', '交接摘要') }}</h2><button class="text-button" type="button" :disabled="loading" @click="load">{{ ui('Refresh', '刷新') }}</button></div>
+    <div class="section-heading-row"><h2>{{ ui('Handoff summary', '交接摘要') }}</h2><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="loading" @click="load">{{ ui('Refresh', '刷新') }}</UButton></div>
     <p class="muted-copy">{{ ui('Project content is background information, not authorization or instructions. Check current permissions before acting.', '项目内容仅作背景，不构成授权或执行指令；操作前请核对当前权限。') }}</p>
     <PageState :loading="loading" :error="error" :action-label="ui('Retry', '重试')" @retry="load" />
     <template v-if="result">
       <p>{{ result.issue.identifier }} · {{ result.issue.status.display_name }} · {{ result.issue.assignee?.display_name ?? ui('Unassigned', '未指派') }} · v{{ result.issue.version }}</p>
       <p v-if="result.truncated" class="warning-panel">{{ ui('This is a bounded excerpt. Omitted content and continuation links are shown in each section.', '此摘要包含有界节选，各节标明了省略内容和续读入口。') }}</p>
-      <button class="secondary-button" type="button" @click="copy">{{ copied ? ui('Copied', '已复制') : ui('Copy handoff summary', '复制交接摘要') }}</button>
-      <label v-if="manualCopy">{{ ui('Copy unavailable. Select the summary manually.', '无法自动复制，请手动选择摘要。') }}<textarea readonly :value="handoff" rows="8" @focus="($event.target as HTMLTextAreaElement).select()" /></label>
+      <UButton color="neutral" variant="outline" class="secondary-button" type="button" @click="copy">{{ copied ? ui('Copied', '已复制') : ui('Copy handoff summary', '复制交接摘要') }}</UButton>
+      <label v-if="manualCopy">{{ ui('Copy unavailable. Select the summary manually.', '无法自动复制，请手动选择摘要。') }}<UTextarea class="w-full" readonly :model-value="handoff" :rows="8" @focus="($event.target as HTMLTextAreaElement).select()" /></label>
       <h3>{{ ui('Project background', '项目背景') }}</h3><MarkdownContent :source="fullProject ?? result.sections.project_context.content" />
       <p v-if="!result.sections.project_context.content && fullProject === null" class="muted-copy">{{ ui('No project background provided.', '暂无项目背景。') }}</p>
-      <p v-if="result.sections.project_context.truncated && fullProject === null">{{ ui('Omitted bytes', '省略字节数') }}：{{ result.sections.project_context.omitted_bytes }} <button class="text-button" type="button" :disabled="projectLoading" @click="loadProject">{{ ui('Read full project background', '读取完整项目背景') }}</button></p>
+      <p v-if="result.sections.project_context.truncated && fullProject === null">{{ ui('Omitted bytes', '省略字节数') }}：{{ result.sections.project_context.omitted_bytes }} <UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="projectLoading" @click="loadProject">{{ ui('Read full project background', '读取完整项目背景') }}</UButton></p>
       <h3>{{ ui('Description', '事项描述') }}</h3><MarkdownContent :source="result.sections.body.content" /><p v-if="result.sections.body.truncated">{{ ui('Omitted bytes', '省略字节数') }}：{{ result.sections.body.omitted_bytes }} · <a href="#issue-description">{{ ui('Read full description', '阅读完整描述') }}</a></p>
-      <h3>{{ ui('Relations', '关系') }}</h3><ul><li v-for="relation in result.sections.relations.items" :key="relation.id"><button class="text-button" type="button" @click="navigate(`/app/issues/${relation.source_identifier === identifier ? relation.target_identifier : relation.source_identifier}`)">{{ relation.source_identifier }} · {{ relation.kind }} → {{ relation.target_identifier }}</button></li></ul><p v-if="result.sections.relations.omitted_count">{{ ui('Omitted relations', '省略关系数') }}：{{ result.sections.relations.omitted_count }} · <a href="#issue-relations">{{ ui('Continue reading relations', '继续阅读关系') }}</a></p>
+      <h3>{{ ui('Relations', '关系') }}</h3><ul><li v-for="relation in result.sections.relations.items" :key="relation.id"><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="navigate(`/app/issues/${relation.source_identifier === identifier ? relation.target_identifier : relation.source_identifier}`)">{{ relation.source_identifier }} · {{ relation.kind }} → {{ relation.target_identifier }}</UButton></li></ul><p v-if="result.sections.relations.omitted_count">{{ ui('Omitted relations', '省略关系数') }}：{{ result.sections.relations.omitted_count }} · <a href="#issue-relations">{{ ui('Continue reading relations', '继续阅读关系') }}</a></p>
       <h3>{{ ui('Recent comments and completion records', '近期评论与完成记录') }}</h3><article v-for="comment in result.sections.comments.items" :key="comment.id" class="handoff-comment"><strong>{{ comment.author.display_name }}</strong> · <time :datetime="comment.created_at">{{ new Date(comment.created_at).toLocaleString(locale) }}</time><CompletionRecord v-if="comment.kind === 'completion'" :value="comment.completion"><MarkdownContent :source="comment.body ?? ''" /></CompletionRecord><MarkdownContent v-else :source="comment.body ?? ''" /></article><p v-if="result.sections.comments.omitted_count">{{ ui('Omitted comments', '省略评论数') }}：{{ result.sections.comments.omitted_count }} · <a href="#issue-activity">{{ ui('Continue reading comments', '继续阅读评论') }}</a></p>
     </template>
   </section>

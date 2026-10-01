@@ -1,4 +1,5 @@
 <script setup lang="ts" generic="Candidate extends { principal_id: string; display_name: string }">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { onUnmounted, ref, shallowRef, watch } from "vue";
 import { apiRequest } from "../lib/api";
 import { locale } from "../lib/i18n";
@@ -68,9 +69,9 @@ onUnmounted(() => { generation += 1; clearTimeout(timer); });
       </template>
     </div>
     <small v-if="loading" role="status">{{ ui('Loading people…', '正在加载人员…') }}</small>
-    <template v-else-if="error"><small class="inline-alert" role="alert">{{ error }}</small><button class="text-button" type="button" :disabled="disabled" @click="load()">{{ ui('Retry', '重试') }}</button></template>
+    <template v-else-if="error"><small class="inline-alert" role="alert">{{ error }}</small><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="disabled" @click="load()">{{ ui('Retry', '重试') }}</UButton></template>
     <p v-else-if="!candidates.length" class="person-empty" role="status">{{ query.trim() ? ui('No matching people available. Try another name.', '没有匹配的可选人员，请换个姓名搜索。') : emptyText }}</p>
-    <button v-if="nextCursor" class="text-button" type="button" :disabled="disabled || loading" @click="load(true)">{{ ui('Load more people', '加载更多人员') }}</button>
+    <UButton color="neutral" variant="ghost" v-if="nextCursor" class="text-button" type="button" :disabled="disabled || loading" @click="load(true)">{{ ui('Load more people', '加载更多人员') }}</UButton>
     <small class="person-hint">{{ hint }}</small>
   </div>
 </template>

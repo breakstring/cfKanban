@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed } from "vue";
 import type { ContainerState, ContainerTree } from "../lib/container-tree";
 import { containerChoiceLabels } from "../lib/container-choice";
@@ -25,12 +26,12 @@ const projectPages = computed(() => groups.value.flatMap(workspace => states.val
     <template v-for="state in states" :key="state">
       <div v-if="tree.workspaces[state].cursor || tree.workspaces[state].error || tree.workspaces[state].loading">
         <p v-if="tree.workspaces[state].error" class="inline-alert" role="alert">{{ errorText(tree.workspaces[state].error) }}</p>
-        <button class="secondary-button" type="button" :disabled="tree.workspaces[state].loading" @click="emit('workspaces', state)">{{ tree.workspaces[state].loading ? ui('Loading…', '正在加载…') : tree.workspaces[state].error ? ui('Retry workspace page', '重试工作区分页') : state === 'archived' ? ui('Load more archived workspaces', '加载更多已归档工作区') : ui('Load more workspaces', '加载更多工作区') }}</button>
+        <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="tree.workspaces[state].loading" @click="emit('workspaces', state)">{{ tree.workspaces[state].loading ? ui('Loading…', '正在加载…') : tree.workspaces[state].error ? ui('Retry workspace page', '重试工作区分页') : state === 'archived' ? ui('Load more archived workspaces', '加载更多已归档工作区') : ui('Load more workspaces', '加载更多工作区') }}</UButton>
       </div>
     </template>
     <div v-for="{ workspace, state, page } in projectPages" :key="`${state}:${workspace.id}`">
       <p v-if="page.error" class="inline-alert" role="alert">{{ errorText(page.error) }}</p>
-      <button class="text-button" type="button" :disabled="page.loading" @click="emit('projects', workspace.id, state)">{{ page.loading ? ui('Loading…', '正在加载…') : page.error ? ui('Retry projects', '重试项目分页') : state === 'archived' ? ui('More archived projects', '更多已归档项目') : ui('More projects', '更多项目') }} · {{ labels.get(workspace.id)?.label }}</button>
+      <UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="page.loading" @click="emit('projects', workspace.id, state)">{{ page.loading ? ui('Loading…', '正在加载…') : page.error ? ui('Retry projects', '重试项目分页') : state === 'archived' ? ui('More archived projects', '更多已归档项目') : ui('More projects', '更多项目') }} · {{ labels.get(workspace.id)?.label }}</UButton>
     </div>
   </div>
 </template>

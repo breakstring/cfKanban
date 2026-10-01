@@ -41,6 +41,7 @@ export interface WebSessionView {
   expires_at: string;
   principal: {
     display_name: string;
+    theme?: "orange" | "blue";
     id: string;
     is_owner: boolean;
     version: number;
@@ -297,6 +298,7 @@ export interface ContainerResource {
 }
 
 export interface PrincipalResource {
+  theme?: "orange" | "blue";
   active_credential_count?: number;
   active_grant_count?: number;
   assignee_count?: number;

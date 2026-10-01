@@ -1,3 +1,5 @@
+@layer theme, base, legacy, components, utilities;
+@layer legacy {
 :root {
   --color-canvas: #faf8f4;
   --color-surface: #fffdf9;
@@ -2602,3 +2604,5 @@ textarea:disabled {
 .card-priority-select { flex: 0 1 72px; width: auto; max-width: calc(50% - 2px); min-height: 32px; padding: 4px 2px 4px 4px; border-color: transparent; background-color: transparent; font-size: 12px; }
 .card-priority-select:focus-visible, .card-priority-select:hover { border-color: var(--color-border-strong); }
 @media (max-width: 940px) { .card-priority-select, .card-status-select, .issue-card-open { min-height: 44px; } }
+
+}

@@ -52,7 +52,7 @@ Show Todo issues that need reassignment in DemoProject.
 
 Read access lets you view these queues; claiming requires write access. They contain only Todo issues, exclude blocked issues by default, and sort by priority then oldest first. Include Backlog and In Progress when you want all unfinished work.
 
-**In the Web UI:** **Work list** in the header → choose projects → set **View** to **Ready to claim** or **Needs reassignment** → **Show work**. Viewing a queue does not claim work. Open an issue and set its assignee separately.
+**In the Web UI:** Account menu at the top right → **Work list** → choose projects → set **View** to **Ready to claim** or **Needs reassignment** → **Show work**. Viewing a queue does not claim work. Open an issue and set its assignee separately.
 
 ## Complete work and record the result
 

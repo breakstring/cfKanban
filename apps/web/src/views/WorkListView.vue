@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import UInput from "@nuxt/ui/components/Input.vue";
+import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import PageState from "../components/PageState.vue";
 import WorkAssigneeFilter from "../components/WorkAssigneeFilter.vue";
@@ -69,12 +71,12 @@ onUnmounted(clear);
         <label>{{ ui('View', '视图') }}<select v-model="filter.queue"><option value="all">{{ ui('All issues', '全部事项') }}</option><option value="mine">{{ ui('My tasks', '我的任务') }}</option><option value="unassigned">{{ ui('Ready to claim', '待领取') }}</option><option value="needs_reassignment">{{ ui('Needs reassignment', '需重指派') }}</option></select></label>
         <label v-if="!candidates">{{ ui('Status', '状态') }}<select v-model="filter.status"><option value="">{{ ui('All statuses', '全部状态') }}</option><option v-for="status in statuses" :key="status" :value="status">{{ statusLabel(status) }}</option></select></label>
         <WorkAssigneeFilter v-if="filter.queue === 'all'" v-model="filter.assignee" :projects="selectedProjects" :principal-id="session.principal.id" />
-        <label>{{ ui('Search', '搜索') }}<input v-model="filter.search" type="search" :placeholder="ui('Title or CFK number', '标题或 CFK 编号')" /></label>
+        <label>{{ ui('Search', '搜索') }}<UInput class="w-full" v-model="filter.search" type="search" :placeholder="ui('Title or CFK number', '标题或 CFK 编号')" /></label>
       </div>
       <IssueQueryFilters v-model:priorities="filter.priorities" v-model:labels="filter.labels" :projects="selectedProjects" />
       <p v-if="selectedProjects.some(project => project.role === 'reader')" class="muted-copy">{{ ui('Reader access allows viewing work; assignment and changes require writer access in that project.', '只读项目可以查看事项；领取、指派和修改需要该项目的协作者权限。') }}</p>
       <p v-if="candidates" class="muted-copy">{{ ui('Candidate queues contain only startable Todo issues, ordered by priority then oldest first. Viewing a queue does not assign work.', '候选队列只包含可开始的待办事项，按优先级与创建先后排序。查看队列不会领取或指派任务。') }}</p>
-      <div class="form-actions"><button class="primary-button" type="submit" :disabled="!canLoad || page.loading">{{ ui('Show work', '查看工作') }}</button><button v-if="filter.projects.length" class="text-button" type="button" @click="filter.projects = []">{{ ui('Clear selection', '清空选择') }}</button></div>
+      <div class="form-actions"><UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="!canLoad || page.loading">{{ ui('Show work', '查看工作') }}</UButton><UButton color="neutral" variant="ghost" v-if="filter.projects.length" class="text-button" type="button" @click="filter.projects = []">{{ ui('Clear selection', '清空选择') }}</UButton></div>
     </form>
     <p v-if="!applied" class="empty-copy">{{ filter.projects.length ? ui('Apply the selection and filters to load work.', '点击“查看工作”应用项目范围和筛选。') : ui('Select at least one project to begin.', '请先选择至少一个项目。') }}</p>
     <PageState :loading="page.loading && !page.items.length" :error="page.error ? errorText(page.error) : ''" :action-label="ui('Retry', '重试')" @retry="load()" />
@@ -85,10 +87,10 @@ onUnmounted(clear);
     <section v-if="applied" :aria-label="ui('Selected project work', '所选项目的工作')" class="work-results">
       <p v-if="!page.loading && !page.error && !page.items.length" class="empty-copy">{{ ui('No issues match these filters.', '没有符合筛选条件的事项。') }}</p>
       <article v-for="issue in page.items" :key="issue.id" class="work-row">
-        <div><p class="muted-copy">{{ issue.workspace.display_name }} / {{ issue.project.display_name }}</p><button class="text-button work-issue" type="button" @click="navigate(`/app/issues/${issue.identifier}`)"><code>{{ issue.identifier }}</code><strong>{{ issue.title }}</strong></button></div>
+        <div><p class="muted-copy">{{ issue.workspace.display_name }} / {{ issue.project.display_name }}</p><UButton color="neutral" variant="ghost" class="text-button work-issue" type="button" @click="navigate(`/app/issues/${issue.identifier}`)"><code>{{ issue.identifier }}</code><strong>{{ issue.title }}</strong></UButton></div>
         <div class="work-row-facts"><span>{{ issue.status.display_name }}</span><span>{{ priorityText(issue.priority, locale === 'zh-CN') }}</span><span>{{ issue.assignee?.display_name ?? t('issue.unassigned') }}</span><span v-if="issue.needs_reassignment" class="warning-chip">{{ ui('Needs reassignment', '需重指派') }}</span></div>
       </article>
-      <button v-if="page.cursor && !page.error" class="load-more" type="button" :disabled="page.loading" @click="load()">{{ page.loading ? ui('Loading…', '加载中…') : ui('Load more', '加载更多') }}</button>
+      <UButton color="neutral" variant="outline" v-if="page.cursor && !page.error" class="load-more" type="button" :disabled="page.loading" @click="load()">{{ page.loading ? ui('Loading…', '加载中…') : ui('Load more', '加载更多') }}</UButton>
     </section>
   </main>
 </template>
