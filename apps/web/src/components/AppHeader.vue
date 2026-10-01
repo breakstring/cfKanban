@@ -7,6 +7,7 @@ import { computed } from "vue";
 import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
 import ProjectSwitcher from "./ProjectSwitcher.vue";
 import LocaleSwitch from "./LocaleSwitch.vue";
+import NotificationBell from "./NotificationBell.vue";
 import { locale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
 import { projectDisplayRole, projectRoleLabel } from "../lib/scoped-management";
@@ -46,6 +47,7 @@ const accountItems = computed<DropdownMenuItem[][]>(() => [
       ? [{ label: locale.value === "zh-CN" ? "管理中心" : "Management center", onSelect: () => navigate("/app/admin") }]
       : []),
     { label: locale.value === "zh-CN" ? "个人设置" : "Personal settings", onSelect: () => navigate("/app/profile") },
+    { label: locale.value === "zh-CN" ? "通知" : "Notifications", onSelect: () => navigate("/app/notifications") },
   ],
   [{ label: t("action.logout"), color: "error", onSelect: () => emit("logout") }],
 ]);
@@ -63,6 +65,7 @@ const accountItems = computed<DropdownMenuItem[][]>(() => [
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
       <LocaleSwitch />
+      <NotificationBell :session="session" />
       <UDropdownMenu :items="accountItems" :content="{ align: 'end' }" :ui="{ content: 'account-menu' }">
         <UButton color="neutral" variant="ghost" class="account-trigger" type="button" :aria-label="locale === 'zh-CN' ? '账户菜单' : 'Account menu'">
           <svg class="account-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6.5" r="3" /><path d="M4 17v-1a6 6 0 0 1 12 0v1" /></svg>

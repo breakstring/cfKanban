@@ -858,7 +858,7 @@ async function loadAudit(reset = false): Promise<void> {
   if (reset) auditRequestId = requestId;
   auditLoadingMore.value = true;
   try {
-    const params = new URLSearchParams({ limit: "100" });
+    const params = new URLSearchParams({ limit: "100", order: "desc" });
     if (auditProjectId.value) params.set("project_id", auditProjectId.value);
     if (auditStream.value) params.set("stream", auditStream.value);
     if (!reset && auditNextCursor.value !== null) params.set("after", auditNextCursor.value);
@@ -1626,6 +1626,7 @@ onUnmounted(() => {
           <p class="overview-resource-note">{{ meta?.visible_scope.project_count ?? 0 }} {{ ui("Projects", "个项目") }} · {{ principals.length }}{{ principalsHasMore ? "+" : "" }} {{ ui("visible members", "位可见成员") }}</p>
         </div>
         <nav class="owner-shortcuts" :aria-label="ui('Administration shortcuts', '管理快捷入口')">
+          <UButton color="neutral" variant="ghost" class="owner-shortcut" type="button" @click="navigate('/app/notifications')"><span><strong>{{ ui("Instance announcements", "实例公告") }}</strong><small>{{ ui("Publish announcements or withdraw an earlier one.", "发布公告，或撤回先前的公告。") }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></UButton>
           <UButton color="neutral" variant="ghost" class="owner-shortcut" type="button" @click="navigate(sectionPath('access'))"><span><strong>{{ ui("Members & invitations", "成员与邀请") }}</strong><small>{{ ui("Review access and invite collaborators.", "查看访问权限，邀请协作者。") }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></UButton>
           <UButton color="neutral" variant="ghost" class="owner-shortcut" type="button" @click="navigate(sectionPath('audit'))"><span><strong>{{ ui("View activity", "查看操作记录") }}</strong><small>{{ ui("Follow changes across your instance.", "追踪实例中的业务与安全变更。") }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></UButton>
         </nav>
@@ -1736,7 +1737,7 @@ onUnmounted(() => {
         <label><span>{{ ui("Stream", "类型") }}</span><select v-model="auditStream" :disabled="auditLoadingMore" @change="resetAuditPagination"><option value="">{{ ui("Domain + security", "业务与安全") }}</option><option value="domain">{{ ui("Domain only", "仅业务") }}</option><option value="security">{{ ui("Security only", "仅安全") }}</option></select></label>
         <UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="auditLoadingMore">{{ auditLoadingMore ? "…" : ui("Apply filters", "应用筛选") }}</UButton>
       </form>
-      <p class="muted-copy">{{ ui("Filter by project or activity type to find the changes you need.", "按项目或操作类型筛选，查找你关心的变更。") }}</p>
+      <p class="muted-copy">{{ ui("Newest records first. Filter by project or activity type; load more to read older records, or apply filters again to see new changes.", "最新记录在前。按项目或操作类型筛选，加载更多查看较早记录；重新应用筛选可查看新变更。") }}</p>
       <p v-if="auditNextCursor" class="warning-panel">{{ ui("More records are available. Use “Load more” below to continue.", "还有更多记录，可在列表底部继续加载。") }}</p>
       <section class="audit-list">
         <article v-for="event in audit" :key="event.id" class="audit-event">
@@ -1785,7 +1786,7 @@ onUnmounted(() => {
         </article>
         <p v-if="audit.length === 0" class="empty-copy">{{ ui("No audit events match these filters", "没有符合当前筛选的审计事件") }}</p>
       </section>
-      <UButton color="neutral" variant="outline" v-if="auditNextCursor" class="load-more" type="button" :disabled="auditLoadingMore" @click="loadAudit(false)">{{ auditLoadingMore ? "…" : ui("Load more Audit events", "加载更多审计事件") }}</UButton>
+      <UButton color="neutral" variant="outline" v-if="auditNextCursor" class="load-more" type="button" :disabled="auditLoadingMore" @click="loadAudit(false)">{{ auditLoadingMore ? "…" : ui("Load older Audit events", "加载更早审计事件") }}</UButton>
     </template>
 
     <ModalDialog v-if="showWorkspace" :busy="busy" :title="ui('Create Workspace', '创建工作区')" @close="showWorkspace = false"><form class="form-stack" @submit.prevent="createWorkspace"><label>{{ ui("Name", "名称") }}<UInput class="w-full" v-model="workspaceForm.display_name" required maxlength="128" /></label><div class="form-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="showWorkspace = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy">{{ ui("Create", "创建") }}</UButton></div></form></ModalDialog>

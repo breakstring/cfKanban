@@ -17,6 +17,20 @@ The notice is public to signed-out visitors. Each language accepts up to 500 Uni
 
 Expect verified stored values and the corresponding public homepage text. Keep private Project details, Credentials, and recovery links out of the notice.
 
+## Publish an instance notification
+
+```text
+Use $cfkanban-admin to publish this notice to the instance:
+Title: Planned maintenance
+Body: Tonight 22:00–22:30, the site may be briefly unavailable.
+Expiry: <selected date and time with timezone, optional>
+Verify the publication in Owner history.
+```
+
+**In the Web UI:** Open **Notifications** from the account area or management overview → **Published by Owner**. Enter a title, body, and optional future expiry, then **Publish announcement**. Select **Withdraw announcement** for an exact published notice to stop reminders. Publication and withdrawal require Owner instance administration; a browser opened for one project or a scoped administrator cannot use them.
+
+Title accepts up to 200 Unicode characters and body up to 4000. Published text cannot be edited: publish a new notice to correct it. Expired or withdrawn notices remain in history with their body and status. Do not include credentials or private project content in an instance-wide notice. The publisher does not receive its own automatic reminder. The Owner cannot override a person's choice to disable reception; there is no per-person reading report. See [Owner notifications](../usage/notifications.md) for recipient controls and confirmation.
+
 ## Inspect usage
 
 ```text
@@ -48,7 +62,7 @@ The result changes the application budget only. It is neither actual R2 storage 
 Use $cfkanban-admin to show recent access changes in DemoProject, restricted to that Project, identifying the actor and the resource changed.
 ```
 
-**In the Web UI:** **Administration → Activity** → filter by project and event type, then load more as needed.
+**In the Web UI:** **Administration → Activity** displays the newest records first. Filter by project and event type, then **Load older Audit events** as needed. Apply filters again to include new changes in a fresh list.
 
 ## Origins and request limits
 

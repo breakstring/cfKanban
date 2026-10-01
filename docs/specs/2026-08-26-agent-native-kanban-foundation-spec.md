@@ -1,5 +1,9 @@
 # Agent-native Kanban Foundation SPEC
 
+> 2026-10-01 增量：[活动历史倒序](2026-10-01-event-history-order-spec.md)（Frozen）增加显式历史浏览和 schema 16 时间索引，Web 最新在前；既有正序增量 feed 与 write cursor 保持兼容。
+
+> 2026-10-01 增量：[Owner 实例通知](2026-10-01-instance-notifications-spec.md)（Frozen）仅覆盖 Owner 单向实例公告，定义本人接收偏好、逐条确认、Web/Agent 提醒与历史；其他通知、mention、外部投递及实时唤醒仍在范围外。
+
 > 2026-09-20 增量：[工作区与项目分级管理员](2026-09-20-scoped-administrators-spec.md)（Frozen，schema 9）覆盖仅 Owner 管理与工作区无继承权限的旧表述：两级支持多人，工作区管理员继承全部子项目，管理员计入项目人数并集配额；局部管理员不获得实例身份恢复、公开加入/限额配置或永久删除能力。新增 workspace Browser Launch 保持限定范围，既有窄 Session 不升级。
 
 > 2026-09-20 增量：[Principal 唯一显示名称](2026-09-20-principal-names-spec.md)（Frozen）覆盖用户显示名非唯一旧合同，定义字符、规范化判重、精确指派候选与 schema 8 迁移；容器名称不受影响。

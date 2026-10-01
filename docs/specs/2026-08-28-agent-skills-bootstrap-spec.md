@@ -1,5 +1,7 @@
 # cfKanban Agent Skills & Bootstrap SPEC
 
+> 2026-10-01 增量：[Owner 实例通知](2026-10-01-instance-notifications-spec.md)（Frozen）仅覆盖 Owner 单向实例公告，定义本人接收偏好、逐条确认、Web/Agent 提醒与历史；其他通知、mention、外部投递及实时唤醒仍在范围外。
+
 > 2026-09-20 增量：[首页实例说明设置](2026-09-20-homepage-settings-spec.md)（Frozen，schema 11）的读写通过 `cfkanban-admin` 暴露；项目维护者发版由仓库内的 `project-release` 组织，不加入对外 Skill bundle。Issue 单字段优先级修改仍复用既有日常 Skill 与 PATCH 合同。
 
 > [正式发行生命周期](2026-09-20-stable-release-lifecycle-spec.md)（Frozen，2026-09-30 修订）规定版本无关用户入口、正式 main 宿主更新渠道、最新 stable 发现与单次执行固定版本，以及独立的 `release_version` 展示。源码开发在专门分支进行，可直接使用项目主目录；普通默认分支安装仍须校验已发布正式工件，既有 API/schema 兼容字段保持不变。

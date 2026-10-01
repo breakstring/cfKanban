@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 14,
+  "schema_version": 16,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -357,6 +357,55 @@
       },
       "expected_data": {
         "instance_meta_schema_version_at_least": 14,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 15,
+      "name": "0015_instance_notifications.sql",
+      "sha256": "048c20849298d1a89868dec0bd02d037c81b7371dbdec9f75362ae9381ceb719",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "tables": [
+          "instance_notifications",
+          "notification_preferences",
+          "notification_acknowledgements"
+        ],
+        "indexes": [
+          "idx_notifications_created",
+          "idx_notifications_pending",
+          "idx_notification_acknowledgements_principal"
+        ],
+        "triggers": [
+          "notification_content_immutable",
+          "notification_history_retained",
+          "notification_acknowledgement_immutable",
+          "notification_acknowledgement_retained"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 15,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 16,
+      "name": "0016_event_history_indexes.sql",
+      "sha256": "cc5b0025ec421e7cfd48ab784a9d594855d71d42982527aee47948cb370aca4e",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "indexes": [
+          "idx_events_history",
+          "idx_events_stream_history",
+          "idx_events_project_stream_history"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 16,
         "allow_uninitialized": true
       }
     }

@@ -15,7 +15,8 @@
       { "slug": "issues", "en": "Find & create issues", "zh-CN": "查找与创建任务" },
       { "slug": "workflow", "en": "Move work forward", "zh-CN": "推进与完成任务" },
       { "slug": "collaboration", "en": "Comments & organization", "zh-CN": "评论、附件与整理" },
-      { "slug": "profile", "en": "Your profile & workspace", "zh-CN": "个人设置与目录关联" }
+      { "slug": "profile", "en": "Your profile & workspace", "zh-CN": "个人设置与目录关联" },
+      { "slug": "notifications", "en": "Owner notifications", "zh-CN": "Owner 实例通知" }
     ]
   },
   {

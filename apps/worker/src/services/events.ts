@@ -56,6 +56,13 @@ interface EventScope {
 }
 
 type AuditEventStream = "domain" | "security";
+type EventOrder = "asc" | "desc";
+
+interface EventHistoryCursor {
+  createdAt: number | null;
+  sequence: number | null;
+  upperSequence: number;
+}
 
 interface AuditEventFilter {
   projectId: string | null;
@@ -81,6 +88,8 @@ function eventSelect(eventsSource: string): string {
 }
 
 const EVENT_SELECT = eventSelect("events event");
+// 固定由有界候选驱动完整投影，避免优化器为排序重新扫描整个 Event 时间索引。
+const HISTORY_EVENT_SELECT = eventSelect("history_page selected_event CROSS JOIN events event ON event.sequence = selected_event.sequence");
 
 const EVENT_CANDIDATE_COLUMNS = `
   sequence, id, stream, type, operation_id, event_index,
@@ -157,6 +166,45 @@ function parseAuditEventCursor(last: JsonValue[] | null): number {
     || last[0] < 0
   ) throw invalidCursor();
   return last[0];
+}
+
+function requireEventOrder(url: URL): EventOrder {
+  const values = url.searchParams.getAll("order");
+  const order = values[0] ?? "asc";
+  if (values.length > 1 || (order !== "asc" && order !== "desc")) {
+    throw validationError("schema_validation_failed", { field: "order" });
+  }
+  return order;
+}
+
+function parseEventHistoryCursor(last: JsonValue[] | null): EventHistoryCursor | null {
+  if (last === null) return null;
+  const [createdAt, sequence, upperSequence] = last;
+  if (
+    last.length !== 3
+    || typeof upperSequence !== "number" || !Number.isSafeInteger(upperSequence) || upperSequence < 0
+    || (createdAt === null ? sequence !== null : (
+      typeof createdAt !== "number" || !Number.isSafeInteger(createdAt) || createdAt < 0
+      || typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence < 1
+      || sequence > upperSequence
+    ))
+  ) throw invalidCursor();
+  return { createdAt, sequence, upperSequence } as EventHistoryCursor;
+}
+
+async function eventHistoryStart(db: D1Database): Promise<EventHistoryCursor> {
+  try {
+    const row = await db.prepare("SELECT sequence FROM events ORDER BY sequence DESC LIMIT 1")
+      .first<{ sequence: number }>();
+    return { createdAt: null, sequence: null, upperSequence: row?.sequence ?? 0 };
+  } catch (error) {
+    throw platformUnavailable("d1", error);
+  }
+}
+
+function historyLast(page: EventRow[], cursor: EventHistoryCursor): JsonValue[] {
+  const last = page.at(-1);
+  return [last?.created_at ?? cursor.createdAt, last?.sequence ?? cursor.sequence, cursor.upperSequence];
 }
 
 function requireAuditEventFilter(url: URL): AuditEventFilter {
@@ -241,19 +289,131 @@ function resolvedEventScope(scope: EventScope): { [key: string]: JsonValue } {
   };
 }
 
+async function domainHistoryRows(
+  db: D1Database,
+  auth: AuthContext,
+  scope: EventScope,
+  cursor: EventHistoryCursor,
+  limit: number,
+  now: number,
+): Promise<EventRow[]> {
+  const authGuard = buildCurrentAuthGuard(auth, now, 6);
+  const cursorParameter = 6 + authGuard.values.length;
+  const result = await db.prepare(
+    `WITH current_visible_projects(id) AS MATERIALIZED (
+       SELECT current_project.id
+       FROM projects current_project
+       JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+       JOIN instance_meta current_instance ON current_instance.singleton = 1
+       WHERE current_project.id IN (SELECT value FROM json_each(?3))
+         AND current_project.deleted_at IS NULL AND current_workspace.deleted_at IS NULL
+         AND ${authGuard.sql}
+         AND (
+           current_instance.owner_principal_id = ?5
+           OR EXISTS (
+             SELECT 1 FROM effective_project_grants current_grant
+             WHERE current_grant.project_id = current_project.id
+               AND current_grant.principal_id = ?5 AND current_grant.revoked_at IS NULL
+           )
+         )
+     ), current_result_projects(id) AS MATERIALIZED (
+       SELECT id FROM current_visible_projects WHERE id IN (SELECT value FROM json_each(?2))
+     ), history_page(sequence) AS MATERIALIZED (
+       SELECT event.sequence FROM current_result_projects selected_project
+       CROSS JOIN events event ON event.sequence IN (
+         SELECT event.sequence FROM events event INDEXED BY idx_events_project_stream_history
+         WHERE event.project_id = selected_project.id AND event.stream = 'domain'
+           AND event.sequence <= ?1
+           ${cursor.createdAt === null ? "" : `AND (event.created_at, event.sequence) < (?${cursorParameter}, ?${cursorParameter + 1})`}
+           AND (event.relation_other_project_id IS NULL OR EXISTS (
+             SELECT 1 FROM current_visible_projects visible_relation_project
+             WHERE visible_relation_project.id = event.relation_other_project_id
+           ))
+         ORDER BY event.created_at DESC, event.sequence DESC LIMIT ?4
+       )
+       ORDER BY event.created_at DESC, event.sequence DESC LIMIT ?4
+     )
+     ${HISTORY_EVENT_SELECT}
+     ORDER BY event.created_at DESC, event.sequence DESC`,
+  ).bind(
+    cursor.upperSequence,
+    JSON.stringify(scope.projects.map((project) => project.projectId)),
+    JSON.stringify(scope.visibleProjects.map((project) => project.projectId)),
+    limit + 1,
+    auth.principalId,
+    ...authGuard.values,
+    ...(cursor.createdAt === null ? [] : [cursor.createdAt, cursor.sequence]),
+  ).all<EventRow>();
+  return result.results;
+}
+
+async function auditHistoryRows(
+  db: D1Database,
+  auth: AuthContext,
+  filter: AuditEventFilter,
+  cursor: EventHistoryCursor,
+  limit: number,
+  now: number,
+): Promise<EventRow[]> {
+  const values: Array<string | number | null> = [cursor.upperSequence, limit + 1];
+  const predicates = ["event.sequence <= ?1"];
+  if (cursor.createdAt !== null) {
+    const parameter = values.length + 1;
+    values.push(cursor.createdAt, cursor.sequence);
+    predicates.push(`(event.created_at, event.sequence) < (?${parameter}, ?${parameter + 1})`);
+  }
+  let pageSql: string;
+  if (filter.projectId !== null) {
+    values.push(filter.projectId, JSON.stringify(filter.streams));
+    const projectParameter = values.length - 1;
+    const streamsParameter = values.length;
+    pageSql = `selected_streams(stream) AS (SELECT value FROM json_each(?${streamsParameter})),
+     history_page(sequence) AS MATERIALIZED (
+       SELECT event.sequence FROM selected_streams selected_stream
+       CROSS JOIN events event ON event.sequence IN (
+         SELECT event.sequence FROM events event INDEXED BY idx_events_project_stream_history
+         WHERE event.project_id = ?${projectParameter} AND event.stream = selected_stream.stream
+           AND ${predicates.join(" AND ")}
+         ORDER BY event.created_at DESC, event.sequence DESC LIMIT ?2
+       )
+       ORDER BY event.created_at DESC, event.sequence DESC LIMIT ?2
+     )`;
+  } else {
+    if (filter.streams.length === 1) {
+      values.push(filter.streams[0] ?? null);
+      predicates.push(`event.stream = ?${values.length}`);
+    }
+    pageSql = `history_page(sequence) AS MATERIALIZED (
+       SELECT event.sequence FROM events event INDEXED BY ${filter.streams.length === 1 ? "idx_events_stream_history" : "idx_events_history"}
+       WHERE ${predicates.join(" AND ")}
+       ORDER BY event.created_at DESC, event.sequence DESC LIMIT ?2
+     )`;
+  }
+  const authGuard = buildCurrentAuthGuard(auth, now, values.length + 1, true);
+  const result = await db.prepare(
+    `WITH ${pageSql}
+     ${HISTORY_EVENT_SELECT}
+     WHERE ${authGuard.sql}
+     ORDER BY event.created_at DESC, event.sequence DESC`,
+  ).bind(...values, ...authGuard.values).all<EventRow>();
+  return result.results;
+}
+
 export async function listEvents(
   db: D1Database,
   auth: AuthContext,
   url: URL,
   now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
+  const order = requireEventOrder(url);
   const scope = await resolveEventScope(db, auth, url);
-  const filter: JsonValue = scope.projectTargets.length === 0 && scope.workspaceTargets.length === 0
+  const baseFilter: JsonValue = scope.projectTargets.length === 0 && scope.workspaceTargets.length === 0
     ? DEFAULT_EVENT_CURSOR_FILTER
     : {
       project_targets: scope.projectTargets,
       workspace_targets: scope.workspaceTargets,
     };
+  const filter: JsonValue = order === "asc" ? baseFilter : { order, scope: baseFilter };
   const context = await createCursorContext(
     "events",
     filter,
@@ -261,69 +421,75 @@ export async function listEvents(
     auth.principalId,
   );
   const afterValue = url.searchParams.get("after");
-  const afterEventId = parseDomainEventCursor(decodeCursor(afterValue, context));
+  const last = decodeCursor(afterValue, context);
+  const historyCursor = order === "desc" ? parseEventHistoryCursor(last) ?? await eventHistoryStart(db) : null;
+  const afterEventId = order === "asc" ? parseDomainEventCursor(last) : null;
   const afterSequence = await eventSequenceForAnchor(db, afterEventId);
   const limit = requireLimit(url);
   const authGuard = buildCurrentAuthGuard(auth, now, 6);
   let rows: EventRow[];
   try {
-    const result = await db.prepare(
-      `WITH current_visible_projects(id) AS MATERIALIZED (
-         SELECT current_project.id
-         FROM projects current_project
-         JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
-         JOIN instance_meta current_instance ON current_instance.singleton = 1
-         WHERE current_project.id IN (SELECT value FROM json_each(?3))
-           AND current_project.deleted_at IS NULL
-           AND current_workspace.deleted_at IS NULL
-           AND ${authGuard.sql}
-           AND (
-             current_instance.owner_principal_id = ?5
-             OR EXISTS (
-               SELECT 1 FROM effective_project_grants current_grant
-               WHERE current_grant.project_id = current_project.id
-                 AND current_grant.principal_id = ?5
-                 AND current_grant.revoked_at IS NULL
+    if (historyCursor !== null) {
+      rows = await domainHistoryRows(db, auth, scope, historyCursor, limit, now);
+    } else {
+      const result = await db.prepare(
+        `WITH current_visible_projects(id) AS MATERIALIZED (
+           SELECT current_project.id
+           FROM projects current_project
+           JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+           JOIN instance_meta current_instance ON current_instance.singleton = 1
+           WHERE current_project.id IN (SELECT value FROM json_each(?3))
+             AND current_project.deleted_at IS NULL
+             AND current_workspace.deleted_at IS NULL
+             AND ${authGuard.sql}
+             AND (
+               current_instance.owner_principal_id = ?5
+               OR EXISTS (
+                 SELECT 1 FROM effective_project_grants current_grant
+                 WHERE current_grant.project_id = current_project.id
+                   AND current_grant.principal_id = ?5
+                   AND current_grant.revoked_at IS NULL
+               )
              )
-           )
-       ), current_result_projects(id) AS MATERIALIZED (
-         SELECT id FROM current_visible_projects
-         WHERE id IN (SELECT value FROM json_each(?2))
-       ), non_relation_events AS (
-         SELECT ${EVENT_CANDIDATE_COLUMNS}
-         FROM events INDEXED BY idx_events_project_nonrelation_sequence
-         WHERE stream = 'domain' AND sequence > ?1
-           AND project_id IN (SELECT id FROM current_result_projects)
-           AND relation_other_project_id IS NULL
-         ORDER BY sequence ASC LIMIT ?4
-       ), relation_events AS (
-         SELECT ${EVENT_CANDIDATE_COLUMNS}
-         FROM events INDEXED BY idx_events_project_relation_sequence
-         WHERE stream = 'domain' AND sequence > ?1
-           AND project_id IN (SELECT id FROM current_result_projects)
-           AND relation_other_project_id IS NOT NULL
-           AND EXISTS (
-             SELECT 1 FROM current_visible_projects visible_relation_project
-             WHERE visible_relation_project.id = relation_other_project_id
-           )
-         ORDER BY sequence ASC LIMIT ?4
-       ), candidate_events AS (
-         SELECT ${EVENT_CANDIDATE_COLUMNS} FROM non_relation_events
-         UNION ALL
-         SELECT ${EVENT_CANDIDATE_COLUMNS} FROM relation_events
-         ORDER BY sequence ASC LIMIT ?4
-       )
-       ${eventSelect("candidate_events event")}
-       ORDER BY event.sequence ASC`,
-    ).bind(
-      afterSequence,
-      JSON.stringify(scope.projects.map((project) => project.projectId)),
-      JSON.stringify(scope.visibleProjects.map((project) => project.projectId)),
-      limit + 1,
-      auth.principalId,
-      ...authGuard.values,
-    ).all<EventRow>();
-    rows = result.results;
+         ), current_result_projects(id) AS MATERIALIZED (
+           SELECT id FROM current_visible_projects
+           WHERE id IN (SELECT value FROM json_each(?2))
+         ), non_relation_events AS (
+           SELECT ${EVENT_CANDIDATE_COLUMNS}
+           FROM events INDEXED BY idx_events_project_nonrelation_sequence
+           WHERE stream = 'domain' AND sequence > ?1
+             AND project_id IN (SELECT id FROM current_result_projects)
+             AND relation_other_project_id IS NULL
+           ORDER BY sequence ASC LIMIT ?4
+         ), relation_events AS (
+           SELECT ${EVENT_CANDIDATE_COLUMNS}
+           FROM events INDEXED BY idx_events_project_relation_sequence
+           WHERE stream = 'domain' AND sequence > ?1
+             AND project_id IN (SELECT id FROM current_result_projects)
+             AND relation_other_project_id IS NOT NULL
+             AND EXISTS (
+               SELECT 1 FROM current_visible_projects visible_relation_project
+               WHERE visible_relation_project.id = relation_other_project_id
+             )
+           ORDER BY sequence ASC LIMIT ?4
+         ), candidate_events AS (
+           SELECT ${EVENT_CANDIDATE_COLUMNS} FROM non_relation_events
+           UNION ALL
+           SELECT ${EVENT_CANDIDATE_COLUMNS} FROM relation_events
+           ORDER BY sequence ASC LIMIT ?4
+         )
+         ${eventSelect("candidate_events event")}
+         ORDER BY event.sequence ASC`,
+      ).bind(
+        afterSequence,
+        JSON.stringify(scope.projects.map((project) => project.projectId)),
+        JSON.stringify(scope.visibleProjects.map((project) => project.projectId)),
+        limit + 1,
+        auth.principalId,
+        ...authGuard.values,
+      ).all<EventRow>();
+      rows = result.results;
+    }
   } catch (error) {
     throw platformUnavailable("d1", error);
   }
@@ -356,7 +522,7 @@ export async function listEvents(
   return {
     has_more: hasMore,
     items: page.map((row) => eventResource(row)),
-    next_cursor: encodeCursor(responseContext, [lastEventId]),
+    next_cursor: encodeCursor(responseContext, historyCursor === null ? [lastEventId] : historyLast(page, historyCursor)),
     resolved_scope: resolvedEventScope(currentScope),
   };
 }
@@ -368,15 +534,19 @@ export async function listAuditEvents(
   now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
+  const order = requireEventOrder(url);
   const filter = requireAuditEventFilter(url);
+  const cursorFilter: JsonValue = { project_id: filter.projectId, streams: filter.streams };
   const context = await createCursorContext(
     "audit-events",
-    { project_id: filter.projectId, streams: filter.streams },
+    order === "asc" ? cursorFilter : { ...cursorFilter, order },
     [],
     auth.principalId,
   );
   const afterValue = url.searchParams.get("after");
-  const afterSequence = parseAuditEventCursor(decodeCursor(afterValue, context));
+  const last = decodeCursor(afterValue, context);
+  const historyCursor = order === "desc" ? parseEventHistoryCursor(last) ?? await eventHistoryStart(db) : null;
+  const afterSequence = order === "asc" ? parseAuditEventCursor(last) : 0;
   const limit = requireLimit(url);
   let bindings: Array<string | number | null>;
   let query: string;
@@ -421,8 +591,12 @@ export async function listAuditEvents(
   }
   let rows: EventRow[];
   try {
-    const result = await db.prepare(query).bind(...bindings).all<EventRow>();
-    rows = result.results;
+    if (historyCursor !== null) {
+      rows = await auditHistoryRows(db, auth, filter, historyCursor, limit, now);
+    } else {
+      const result = await db.prepare(query).bind(...bindings).all<EventRow>();
+      rows = result.results;
+    }
   } catch (error) {
     throw platformUnavailable("d1", error);
   }
@@ -433,7 +607,7 @@ export async function listAuditEvents(
   return {
     has_more: hasMore,
     items: page.map((row) => eventResource(row, true)),
-    next_cursor: encodeCursor(context, [lastSequence]),
+    next_cursor: encodeCursor(context, historyCursor === null ? [lastSequence] : historyLast(page, historyCursor)),
     resolved_filters: {
       project_id: filter.projectId,
       streams: filter.streams,

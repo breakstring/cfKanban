@@ -1,5 +1,9 @@
 # cfKanban API & D1 Schema SPEC
 
+> 2026-10-01 增量：[活动历史倒序](2026-10-01-event-history-order-spec.md)（Frozen）增加显式历史浏览和 schema 16 时间索引，Web 最新在前；既有正序增量 feed 与 write cursor 保持兼容。
+
+> 2026-10-01 增量：[Owner 实例通知](2026-10-01-instance-notifications-spec.md)（Frozen）仅覆盖 Owner 单向实例公告，定义本人接收偏好、逐条确认、Web/Agent 提醒与历史；其他通知、mention、外部投递及实时唤醒仍在范围外。
+
 > 2026-09-29 增量：[Issue 结构化筛选与有界查询](2026-09-29-issue-query-filters-spec.md)（Frozen）定义优先级、标签、未分配筛选和 schema 13 查询索引，以及 Web / Agent 等价入口。
 
 > 2026-09-20 增量：[首页实例说明设置](2026-09-20-homepage-settings-spec.md)（Frozen，schema 11）定义 Owner 双语说明的 CAS/幂等写入和公开 discovery 投影；字段只用于公开纯文本展示，不改变身份或权限。

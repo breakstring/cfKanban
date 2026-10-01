@@ -87,7 +87,11 @@ its goal, status, assignee, dependencies, verified results, and follow-ups. Do n
 
 You need read access to the relevant projects. Handoff summaries help you catch up quickly; ask the Agent to read relevant history if details were omitted.
 
-**In the Web UI:** The project description appears below the board title. Open **Project settings → Activity** to read project events; returning to the board preserves your submitted filters. Expand **Handoff summary** in issue details to read or copy it.
+**In the Web UI:** The project description appears below the board title. Open **Project settings → Activity** to read the newest project events first. **Load older activity** continues through earlier history; **Refresh** starts a fresh list that includes new changes. Returning to the board preserves your submitted filters. Expand **Handoff summary** in issue details to read or copy it.
+
+```text
+Use $cfkanban to show DemoProject's latest activity first. Read older history only as needed, and identify the actor and changed resource. Do not change the project.
+```
 
 ## Delete and restore issues
 

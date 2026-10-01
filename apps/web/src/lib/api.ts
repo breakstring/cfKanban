@@ -10,6 +10,7 @@ import {
 import { locale, t } from "./i18n";
 import { presentApiProblem } from "./error-presentation";
 import { isVerifiedServiceAccessFailure } from "./session-boundary";
+import { notifyBusinessSuccess } from "./notification-events";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const CSRF_COOKIE = "cfkanban_csrf";
@@ -241,6 +242,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
       }));
     }
     if (intent !== null) pendingIntents.complete(intent.signature);
+    notifyBusinessSuccess(path);
     return payload as T;
   };
 

@@ -333,7 +333,7 @@ for (const failure of ['response', 'exception']) test(`Cloudflare ${failure} 回
 });
 
 
-for (const schemaVersion of [9, 10, 11, 12, 13, 14]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
+for (const schemaVersion of [9, 10, 11, 12, 13, 14, 15, 16]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
   const f = await fixture(t);
   for (const name of ['0002_container_purge', '0003_container_uuid', '0004_issue_attachments', '0005_attachment_schema_version', '0006_usage_statistics', '0007_attachment_settings', '0008_principal_names', '0009_scoped_administrators']) {
     f.db.exec(await readFile(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'));
@@ -351,6 +351,14 @@ for (const schemaVersion of [9, 10, 11, 12, 13, 14]) test(`schema ${schemaVersio
     f.db.exec(await readFile(new URL('../../migrations/0014_principal_theme.sql', import.meta.url), 'utf8'));
     f.db.prepare("UPDATE principals SET theme = 'blue' WHERE id = ?").run(f.owner);
   }
+  if (schemaVersion >= 15) {
+    f.db.exec(await readFile(new URL('../../migrations/0015_instance_notifications.sql', import.meta.url), 'utf8'));
+    f.db.prepare('INSERT INTO instance_notifications(id,title,body,created_at,created_by_principal_id,created_operation_id,last_operation_id) VALUES (?, ?, ?, 1, ?, ?, ?)').run('notice', 'Maintenance', 'Keep this history', f.owner, 'notice-op', 'notice-op');
+    f.db.prepare('INSERT INTO notification_preferences VALUES (?, 0, 1, 2, ?)').run(f.owner, 'preference-op');
+    f.db.prepare('INSERT INTO notification_acknowledgements VALUES (?, ?, 2, ?)').run('notice', f.owner, 'ack-op');
+  }
+  if (schemaVersion >= 16) f.db.exec(await readFile(new URL('../../migrations/0016_event_history_indexes.sql', import.meta.url), 'utf8'));
+  const beforeNotifications = schemaVersion >= 15 ? ['instance_notifications', 'notification_preferences', 'notification_acknowledgements'].map(table => [table, f.db.prepare(`SELECT * FROM ${table}`).all()]) : [];
   const beforeDeviceNames = schemaVersion >= 12 ? f.db.prepare('SELECT id,device_name FROM credentials ORDER BY id').all() : null;
   const beforeHomepage = schemaVersion >= 11 ? f.db.prepare('SELECT * FROM homepage_settings').all() : null;
   const workspace = f.db.prepare('SELECT id FROM workspaces').get().id;
@@ -385,6 +393,7 @@ for (const schemaVersion of [9, 10, 11, 12, 13, 14]) test(`schema ${schemaVersio
   assert.equal(f.count('workspaces'), 1);
   assert.equal(f.count('projects'), 1);
   if (beforeHomepage) assert.deepEqual(f.db.prepare('SELECT * FROM homepage_settings').all(), beforeHomepage);
+  for (const [table, rows] of beforeNotifications) assert.deepEqual(f.db.prepare(`SELECT * FROM ${table}`).all(), rows);
   if (beforeDeviceNames) {
     assert.deepEqual(f.db.prepare("SELECT id,device_name FROM credentials WHERE revoked_at IS NOT NULL AND revoke_reason = 'owner_full_recovery' ORDER BY id").all(), beforeDeviceNames);
     const replacement = f.db.prepare('SELECT id,device_name FROM credentials WHERE principal_id = ? AND revoked_at IS NULL').get(f.owner);
@@ -393,9 +402,9 @@ for (const schemaVersion of [9, 10, 11, 12, 13, 14]) test(`schema ${schemaVersio
   }
 });
 
-test('schema 15 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
+test('schema 17 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
   const f = await fixture(t);
-  f.db.prepare('UPDATE instance_meta SET schema_version = 15').run();
+  f.db.prepare('UPDATE instance_meta SET schema_version = 17').run();
   await assert.rejects(inspectOwnerRecovery(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   await assert.rejects(createOwnerRecoveryPlan(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   assert.equal(f.writes, 0);

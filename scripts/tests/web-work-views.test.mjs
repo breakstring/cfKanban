@@ -468,16 +468,25 @@ test('scope changes discard old in-flight rows and never fall back to all projec
 test('project activity uses a bounded selected project request and retries continuation without duplicating rows', async () => {
   const calls = []; let fail = false;
   const event = { id: 'event-one', type: 'issue.updated', subject: { type: 'issue', id: 'resource-id' }, actor: { display_name: 'Pat' }, created_at: '2026-09-28T01:00:00Z', payload: { title_changed: true, unexpected: 'hidden payload' } };
-  globalThis.fetch = async path => { calls.push(path); if (fail) throw Error('offline'); return Response.json(page([event], calls.length === 1 ? 'event-next' : null)); };
+  const older = { ...event, id: 'event-older', type: 'issue.created', created_at: '2026-09-27T01:00:00Z' };
+  globalThis.fetch = async path => { calls.push(path); if (fail) throw Error('offline'); return Response.json(page(new URL(path, 'https://local.test').searchParams.has('after') ? [event, older] : [event], calls.length === 1 ? 'event-next' : null)); };
   const { app, host } = mount(Activity, { projectId: p1 });
   try {
     await until(() => text(host).includes('Issue updated'));
     assert.equal(new URL(calls[0], 'https://local.test').searchParams.get('project'), p1);
     assert.equal(new URL(calls[0], 'https://local.test').searchParams.get('limit'), '20');
+    assert.equal(new URL(calls[0], 'https://local.test').searchParams.get('order'), 'desc');
+    assert.match(text(host), /Newest project changes first/);
     assert.doesNotMatch(text(host), /hidden payload/);
-    fail = true; await button(host, 'Load more activity').props.onClick(); await nextTick();
-    fail = false; await button(host, 'Retry').props.onClick(); await nextTick();
+    fail = true; await button(host, 'Load older activity').props.onClick(); await nextTick();
+    fail = false; await button(host, 'Retry').props.onClick(); await until(() => text(host).includes('Issue created'));
     assert.equal(new URL(calls[2], 'https://local.test').searchParams.get('after'), 'event-next');
+    assert.equal(new URL(calls[2], 'https://local.test').searchParams.get('order'), 'desc');
+    const activityRows = all(host).filter(item => item.tag === 'li');
+    assert.equal(activityRows.length, 2);
+    assert.match(text(activityRows[0]), /Issue updated/); assert.match(text(activityRows[1]), /Issue created/);
+    await button(host, 'Refresh').props.onClick(); await nextTick();
+    assert.equal(new URL(calls[3], 'https://local.test').searchParams.has('after'), false);
     assert.equal(all(host).filter(item => item.tag === 'li').length, 1);
   } finally { app.unmount(); }
 });
@@ -735,7 +744,7 @@ test('activity page verifies the project before a bounded reader activity reques
     await until(() => text(host).includes('No visible project activity.'));
     assert.equal(calls.length, 2);
     const params = new URL(calls[1], 'https://local.test').searchParams;
-    assert.deepEqual(params.getAll('project'), [p2]); assert.equal(params.get('limit'), '20');
+    assert.deepEqual(params.getAll('project'), [p2]); assert.equal(params.get('limit'), '20'); assert.equal(params.get('order'), 'desc');
     button(host, '← Back to board').props.onClick();
     assert.deepEqual(navigations, [returnTo]);
   } finally { app.unmount(); }

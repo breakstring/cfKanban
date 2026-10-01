@@ -26,6 +26,30 @@ RC 转正式版时，从已验收候选的准确源码基线收敛版本与说�
 
 Git 分支与 GitHub Latest 不能原子推进。发布后、main 推进前的短暂不一致须在安装校验中识别；main 暂时保留上个正式版，不能据此宣称渠道更新完成。中断后读取远端 main、正式 tag 和 Latest，只续做仍匹配的步骤；若其他发行已推进，停止核对，不回退 Latest 或重写 tag。发行交付增加 main/tag/manifest/plugin 一致性证据，实例及本机技能读回仍分别报告。
 
+## 简洁双语发行说明
+
+后续发行以[可复用模板](../.agents/skills/project-release/templates/release-notes.md)为起点；[1.5.0 本地示例](../.agents/skills/project-release/examples/1.5.0.md)展示同一格式，只供后续编写参考，不替换历史 `release/notes/1.5.0.md` 或公开 Release 正文。公开页面先帮助用户判断收益与升级影响，完整验证输出留在对应 Issue、SPEC 或研究记录中，以链接补充。
+
+- 中文、英文各写一句版本概述和 3–5 条用户或管理员可感知的收益，覆盖相同事实。合并同类变化，说明新行为带来的用途；API 字段、内部模块、预算、测试数量和逐项实现细节只在影响用户操作或升级时进入正文。
+- 明确比较基线。正式版累计比较上一个正式版与本次正式候选，不只比较最后一个 RC；已验收 RC 可以作为验证来源另行链接。RC 明写相对上一个 RC 或上一个正式版的范围，连续 RC 只描述新增变化时也注明这一点。不要按版本号猜测上一个发行，先核对实际 tag、发行顺序和源码。
+- 用完整 commit SHA 固定比较两端。先核对基线是候选的祖先，再从实际 Git 区间确认收益、migration 和兼容性；`main`、`HEAD` 等浮动引用只用于寻找候选，不能留在最终 commit 或 compare 链接中。尚未固定最终发行 commit 时保留本地草稿；固定后补齐发布 config 的 `notes`，不为嵌入自身 SHA 改写已固定的 commit。
+- 在双语「升级与已知限制 / Upgrade and known limitations」中简短说明必须执行的迁移、兼容性或重要限制；没有新增 migration 时明确说明，并提醒仍需检查真实 ledger/schema。不能因产品版本变化虚构 schema 升级，也不能将本地验收写成线上结果。
+- 正文末尾只放一份默认折叠的「相关提交 / Commits」。选择实际支撑摘要收益的提交；同一提交支撑多条收益只列一次，按实际 Git 区间的 `--reverse --topo-order` 顺序排列。提交链接使用完整 SHA，标签可用短 SHA 与原提交标题；compare 链接涵盖完整基线到候选区间，包括未逐项列出的发行准备提交。不要把中英文提交列表重复一遍，也不自动粘贴全部日志代替收益摘要。
+
+在准确源码仓库本地核对以下内容；将占位符替换为已核验值，不根据 commit 标题自动生成或执行命令：
+
+```sh
+git rev-parse '<baseline-tag>^{commit}' '<candidate-ref>^{commit}'
+git merge-base --is-ancestor '<base-sha>' '<candidate-sha>'
+git log --reverse --topo-order --format='%H %s' '<base-sha>..<candidate-sha>'
+git diff --stat '<base-sha>..<candidate-sha>'
+git diff '<base-sha>..<candidate-sha>' -- migrations/ contracts/service-api.json
+```
+
+发布前检查双语标题、3–5 条收益的语义一致性、真实升级要求、提交去重与顺序，以及每个 commit/compare 链接的完整 SHA。示例中的 `1.4.0` 到 `1.5.0` 完整区间共有 5 个提交，折叠列表选取其中支撑收益的 3 个；migration manifest 从 schema `13` 到 `14`，唯一新增 SQL 为 `0014_principal_theme.sql`。这些是示例的历史事实，不能复制成下一版默认基线或升级要求。
+
+最终 Markdown 整体作为 config 的非空 `notes` 字符串，经人工检查后执行 `inspect`。模板和本地示例不参与自动上传；发布脚本继续原样使用该正文，`notes` 的全部内容仍绑定 `plan_digest` / `approvedPlanDigest`，已存在 draft 的正文必须逐字匹配。修改概述、链接或折叠区也需要重新 `inspect`；不得借格式调整更新已公开 Release、tag、manifest 或工件。
+
 ## 三个独立动作
 
 ```text

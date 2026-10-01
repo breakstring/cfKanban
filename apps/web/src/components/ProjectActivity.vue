@@ -37,7 +37,7 @@ function load(reset = false): Promise<boolean> {
   if (reset) { generation++; unavailable.value = false; }
   const current = generation;
   return page.load(async cursor => {
-    const params = new URLSearchParams({ limit: "20", project: props.projectId });
+    const params = new URLSearchParams({ limit: "20", project: props.projectId, order: "desc" });
     if (cursor) params.set("after", cursor);
     const response = await apiRequest<ListResult<EventResource>>(`/api/v1/events?${params}`);
     if (current === generation) unavailable.value = (resolvedWorkScope(response.resolved_scope)?.unresolvedProjects.length ?? 0) > 0;
@@ -50,12 +50,12 @@ onUnmounted(() => { generation++; page.reset(); });
 <template>
   <section class="project-activity">
     <div class="section-heading-row"><h2>{{ ui('Project activity', '项目活动') }}</h2><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="page.loading" @click="load(true)">{{ ui('Refresh', '刷新') }}</UButton></div>
-    <p class="muted-copy">{{ ui('Visible project changes in chronological order. Load more to continue toward newer activity.', '按时间先后显示可见的项目变更，加载更多可继续查看后续活动。') }}</p>
+    <p class="muted-copy">{{ ui('Newest project changes first. Load more to read older activity; refresh to see new changes.', '最新项目变更在前，加载更多可查看较早活动；刷新可查看新变更。') }}</p>
     <PageState :loading="page.loading && !page.items.length" :error="page.error ? errorText(page.error) : ''" :action-label="ui('Retry', '重试')" @retry="load()" />
     <p v-if="unavailable" class="warning-panel">{{ ui('This project is no longer available in your current scope.', '此项目已不在当前可访问范围。') }}</p>
     <ol class="event-list"><li v-for="event in page.items" :key="event.id"><strong>{{ eventName(event) }}</strong><p>{{ event.actor?.display_name ?? ui('System', '系统') }} · <time :datetime="event.created_at">{{ new Date(event.created_at).toLocaleString(locale) }}</time></p><p v-if="activityTargets(event).length" class="event-targets"><a v-for="target in activityTargets(event)" :key="target.path" :href="target.path" @click.prevent="openTarget(target.path)">{{ target.label }}</a></p><p v-if="changes(event)">{{ ui('Changed', '变更内容') }}：{{ changes(event) }}</p><details><summary>{{ ui('Event details', '事件详情') }}</summary><code>{{ event.type }}</code><p>{{ ui('Subject', '对象') }}：{{ event.subject.type }} · <code>{{ event.subject.id }}</code></p><p>{{ ui('Event', '事件') }}：<code>{{ event.id }}</code></p></details></li></ol>
     <p v-if="page.loaded && !page.items.length" class="empty-copy">{{ ui('No visible project activity.', '暂无可见项目活动。') }}</p>
-    <UButton color="neutral" variant="outline" v-if="page.cursor && !page.error" class="load-more" type="button" :disabled="page.loading" @click="load()">{{ page.loading ? ui('Loading…', '加载中…') : ui('Load more activity', '加载更多活动') }}</UButton>
+    <UButton color="neutral" variant="outline" v-if="page.cursor && !page.error" class="load-more" type="button" :disabled="page.loading" @click="load()">{{ page.loading ? ui('Loading…', '加载中…') : ui('Load older activity', '加载更早活动') }}</UButton>
   </section>
 </template>
 <style scoped>

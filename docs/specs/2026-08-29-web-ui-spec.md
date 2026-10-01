@@ -1,5 +1,9 @@
 # cfKanban 极简 Web UI SPEC
 
+> 2026-10-01 增量：[活动历史倒序](2026-10-01-event-history-order-spec.md)（Frozen）增加显式历史浏览和 schema 16 时间索引，Web 最新在前；既有正序增量 feed 与 write cursor 保持兼容。
+
+> 2026-10-01 增量：[Owner 实例通知](2026-10-01-instance-notifications-spec.md)（Frozen）仅覆盖 Owner 单向实例公告，定义本人接收偏好、逐条确认、Web/Agent 提醒与历史；其他通知、mention、外部投递及实时唤醒仍在范围外。
+
 > 2026-09-29 增量：[Issue 结构化筛选与有界查询](2026-09-29-issue-query-filters-spec.md)（Frozen）定义优先级、标签、未分配筛选和 schema 13 查询索引，以及 Web / Agent 等价入口。
 
 > 2026-09-20 增量：[正式发行生命周期](2026-09-20-stable-release-lifecycle-spec.md)（Frozen）规定版本无关用户入口、最新 stable 发现与执行时固定版本，以及独立的 `release_version` 展示；既有 API/schema 兼容字段保持不变。

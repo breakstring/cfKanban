@@ -11,6 +11,7 @@ import { classifyExecutionEnvironment, resolveStateRoot } from "./paths.mjs";
 import { checkTrustedOriginRebind } from "./rebind.mjs";
 import { getInstancePaths } from "./state.mjs";
 import { apiRequest } from "./transport.mjs";
+import { withNotificationAttention } from "./notifications.mjs";
 import { isPlainObject, readJson, requireString, requireUuid } from "./utils.mjs";
 
 const INVITE_CODE_PATTERN = /^cfi_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$/u;
@@ -517,7 +518,8 @@ export function assertGenericApiPathIsNonSensitive({ method = "GET", apiPath }) 
 
 export async function guardedApiRequest(input) {
   assertGenericApiPathIsNonSensitive(input);
-  return apiRequest(input);
+  const result = await apiRequest(input);
+  return withNotificationAttention(input, result);
 }
 
 export async function createBrowserLaunchAndDeliver({

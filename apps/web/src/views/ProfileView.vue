@@ -18,6 +18,7 @@ import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { normalizePrincipalDisplayName, principalDisplayNameProblem } from "../lib/principal-display-name";
 import { canRegisterPasskeyFromSession } from "../lib/session-capabilities";
+import { navigate } from "../lib/router";
 import { registrationCredential, registrationOptions } from "../lib/webauthn";
 import { WriteFence } from "../lib/write-fence";
 import { normalizeTheme, type Theme } from "../lib/theme";
@@ -250,6 +251,9 @@ onMounted(load);
     <ErrorNotice v-if="error && me" :error="error" />
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <template v-if="me">
+      <section class="profile-section">
+        <div class="section-heading-row"><div><h2>{{ locale === "zh-CN" ? "通知" : "Notifications" }}</h2><p>{{ locale === "zh-CN" ? "查看实例公告，选择是否接收提醒，并逐条确认已读正文。" : "Read instance announcements, choose whether to receive reminders, and confirm each announcement after opening it." }}</p></div><UButton color="neutral" variant="outline" @click="navigate('/app/notifications')">{{ locale === "zh-CN" ? "打开通知" : "Open notifications" }}</UButton></div>
+      </section>
       <section class="profile-section" aria-labelledby="theme-heading">
         <h2 id="theme-heading">{{ locale === "zh-CN" ? "外观主题" : "Appearance" }}</h2>
         <p class="muted-copy">{{ locale === "zh-CN" ? "选择适合你的配色。保存后应用到所有已登录页面，并随账号保留；布局与操作保持一致。" : "Choose your colors. Save to apply them across signed-in pages and devices. Layout and controls stay the same." }}</p>

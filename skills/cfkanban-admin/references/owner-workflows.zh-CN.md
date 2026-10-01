@@ -267,3 +267,7 @@ PATCH 返回 WriteResult，设置在 `resource` 中。随后 GET 读回并核对
 ## 附件容量设置
 
 Owner 修改前先读取 `GET /api/v1/admin/attachment-settings`。`configured=false` 表示尚未选择策略，不等于不限制；此时暂停新上传预留。通过 `PATCH /api/v1/admin/attachment-settings` 提交 `{limit_bytes: <正安全整数字节值或 null>, expected_version: <读回版本>}`，携带独立 Idempotency-Key，然后读回设置。null 明确表示 Owner 选择不限制。此操作改变应用设置，遵循普通领域写入的权限、CAS 与幂等合同，不属于统计缓存刷新例外。不得推断不限制，也不静默选择旧有 1 GiB。从旧固定策略迁移后需要 Owner 重新明确选择，部署不能代选或覆盖。已有对象仍计入预留字节，包括软删除但尚未实际回收的对象。应用容量不是 Cloudflare 账单上限。
+
+## Owner 实例通知
+
+“向实例发布这份维护通知”：先核对 Owner 实例控制范围及用户给出的准确标题、正文、选填过期时间，向 `/api/v1/admin/notifications` POST 单份公告，再 GET 发布历史读回。“撤回通知 <ID>”：先在历史读取该条最新版本，向 `/api/v1/admin/notifications/{id}/commands/withdraw` POST `expected_version`。每个原子写入使用独立稳定幂等键。正文不可修改，更正需另发公告。本人偏好及转述确认纪律见 SKILL.md；发布不能绕过用户关闭接收。

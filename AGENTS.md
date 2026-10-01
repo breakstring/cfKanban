@@ -47,6 +47,8 @@
 | Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](docs/specs/2026-09-20-homepage-settings-spec.md) |
 | Issue 优先级、标签、负责人筛选与查询索引 | [Issue 结构化筛选](docs/specs/2026-09-29-issue-query-filters-spec.md) |
 | 公开文档、双语手册、Agent 示例与静态打包 | [站内双语文档中心](docs/specs/2026-09-29-documentation-center-spec.md) |
+| Owner 实例公告、个人接收偏好、逐条确认与 Web/Agent 提醒 | [Owner 实例通知](docs/specs/2026-10-01-instance-notifications-spec.md) |
+| 活动与审计倒序历史、正序增量兼容与时间索引 | [活动历史倒序](docs/specs/2026-10-01-event-history-order-spec.md) |
 
 涉及治理接入或迁移、Roadmap 方向、执行工具同步、合同位置或完成证据方式变化时，使用项目管理治理技能。普通局部修改不因此自动扩展为治理任务。
 

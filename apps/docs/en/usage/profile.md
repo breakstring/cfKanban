@@ -29,6 +29,10 @@ Choose **Warm orange** (the default) or **Calm blue**. Both themes use the same 
 
 Any signed-in identity can save its own theme, including readers. If another profile change causes a version conflict, refresh the profile and review your selection before saving again. The Agent uses the same profile API to read and save this preference.
 
+## Owner notifications
+
+Personal settings links to **Notifications**, where you can choose reception, read pending reminders, and find history. Turning reminders off preserves explicit history; turning them on starts from now. See [Owner notifications](./notifications.md) for Web and Agent confirmation.
+
 ## View and revoke your Passkeys
 
 ```text

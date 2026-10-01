@@ -25,6 +25,7 @@ Use the index titles to select pages; these are topic hints, not a reason to fet
 | Priority/Label queries, assignment, pagination / 优先级、标签、分配与分页 | Usage → Find & create issues (`usage/issues`); collaboration only when Label maintenance is also asked |
 | Projects, members, scoped permissions / 项目、成员与权限 | Administration → Workspaces & projects / Members & invitations; Concepts & roles for a role distinction |
 | Install or upgrade / 安装或升级 | Deployment → Prepare & install Skills / Versions & updates; first deployment only for a new instance |
+| Owner reminders, reception and history / Owner 提醒、接收与历史 | Usage → Owner notifications (`usage/notifications`); Administration → Settings & usage for Owner publication/withdrawal |
 
 Handle incomplete sources explicitly:
 
@@ -56,6 +57,7 @@ Participants and Owners use `cfkanban` for ordinary Issue work. For a general �
 | Recover deleted work / 恢复已删除任务 | “Restore the deleted CFK-123.” / “恢复已删除的 CFK-123。” | One soft-deleted Issue is restored if permissions and quotas allow. / 权限和配额允许时恢复一项软删除任务。 |
 | Open the board / 打开看板 | “Open the DemoProject board in IAB.” / “在 IAB 打开 DemoProject 看板。” | Verified authenticated target in the requested browser, if supported. / 在受支持的指定浏览器进入已验证的登录页面。 |
 | My profile / 我的资料 | “Change my display name to <name>.” / “将我的显示名称改为 <名称>。” | Your name changes; stable identity and access remain unchanged. / 修改自己的名称，稳定身份与权限不变。 |
+| Owner notifications / Owner 通知 | “Show my notification history”; “Turn automatic Owner notifications off.” / “查看我的通知历史”；“关闭 Owner 自动通知。” | Compatible sites share personal reception and confirmations across Web/Agent. Normal work is completed before relaying notices; interruptions may repeat them. History remains available when reception is off; re-enabling starts from now. / 支持该能力的实例在 Web/Agent 共用个人偏好和确认；先完成正常任务再转述，中断时允许重提醒。关闭仍可查看历史，重开从现在开始。 |
 
 Prefix any example with “Use $cfkanban to…” / “请用 $cfkanban …” when explicit Skill selection helps. `reader` can read; `writer` can collaborate within its Project. Assignment and display names never grant access. Status keys are `backlog`, `todo`, `in_progress`, `done`, and `canceled`; completion uses the dedicated completion operation, not an ordinary status edit. Do not invent validation results when recording completion. “Finish this task” may also request implementation: follow the user's context and authority rather than merely marking it done.
 

@@ -56,6 +56,13 @@ const operations = [
   ["get", "/api/v1/meta", "getMeta", "meta", authenticated, "read"],
   ["get", "/api/v1/me", "getMe", "identity", authenticated, "read"],
   ["patch", "/api/v1/me", "updateMe", "identity", authenticated, "cas", "UpdatePrincipalDisplayNameRequest"],
+  ["get", "/api/v1/me/notification-preferences", "getNotificationPreferences", "identity", authenticated, "read"],
+  ["patch", "/api/v1/me/notification-preferences", "updateNotificationPreferences", "identity", authenticated, "idempotent-cas", "UpdateNotificationPreferencesRequest"],
+  ["get", "/api/v1/me/notifications", "listMyNotifications", "identity", authenticated, "read", "PersonalNotificationQuery"],
+  ["post", "/api/v1/me/notifications/{notification_id}/commands/acknowledge", "acknowledgeNotification", "identity", authenticated, "idempotent", "EmptyRequest"],
+  ["get", "/api/v1/admin/notifications", "listInstanceNotifications", "admin", authenticated, "read", "NotificationCursorQuery"],
+  ["post", "/api/v1/admin/notifications", "publishNotification", "admin", authenticated, "idempotent", "PublishNotificationRequest"],
+  ["post", "/api/v1/admin/notifications/{notification_id}/commands/withdraw", "withdrawNotification", "admin", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
   ["get", "/api/v1/events", "listEvents", "events", authenticated, "read", "EventQuery"],
 
   ["get", "/api/v1/workspaces", "listWorkspaces", "workspaces", authenticated, "read", "DeletedCursorQuery"],
@@ -346,7 +353,7 @@ const permissionGroups = {
   public: ["getHealth", "getOpenApi", "discoverInstance", "getInvitationBootstrap", "getWebLaunchPage", "listPublicProjects"],
   authenticated_principal: ["getMeta", "listEvents"],
   visible_scope_active_owner_tombstone: ["listWorkspaces", "getWorkspace", "listProjects", "getProject"],
-  current_principal: ["getMe", "updateMe", "getWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey"],
+  current_principal: ["getMe", "updateMe", "getWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey", "getNotificationPreferences", "updateNotificationPreferences", "listMyNotifications", "acknowledgeNotification"],
   deployment_owner: [
     "previewWorkspacePurge", "purgeWorkspace", "previewProjectPurge", "purgeProject",
     "createWorkspace", "deleteWorkspace", "restoreWorkspace",
@@ -355,6 +362,7 @@ const permissionGroups = {
     "getInstanceOrigin", "updateInstanceOrigin", "listAuditEvents", "revokePrincipalPasskey",
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
     "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings", "getHomepageSettings", "updateHomepageSettings",
+    "listInstanceNotifications", "publishNotification", "withdrawNotification",
   ],
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
@@ -889,6 +897,36 @@ const schemas = {
     properties: { expected_version: ref("Version"), notice_en: ref("HomepageNotice"), notice_zh_cn: ref("HomepageNotice") }, additionalProperties: false,
   },
   HomepageSettingsWriteResult: containerWriteResult("HomepageSettings"),
+  NotificationPreferences: {
+    type: "object", required: ["enabled", "version", "receive_after"],
+    properties: { enabled: { type: "boolean" }, version: ref("Version"), receive_after: ref("Timestamp") }, additionalProperties: false,
+  },
+  UpdateNotificationPreferencesRequest: {
+    type: "object", required: ["enabled", "expected_version"],
+    properties: { enabled: { type: "boolean" }, expected_version: ref("Version") }, additionalProperties: false,
+  },
+  NotificationPreferencesWriteResult: containerWriteResult("NotificationPreferences"),
+  InstanceNotification: {
+    type: "object", required: ["id", "title", "body", "created_at", "expires_at", "withdrawn_at", "version", "status", "acknowledged_at"],
+    properties: {
+      id: ref("Uuid"), title: string({ minLength: 1, maxLength: 200 }), body: string({ minLength: 1, maxLength: 4000 }),
+      created_at: ref("Timestamp"), expires_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+      withdrawn_at: { anyOf: [ref("Timestamp"), { type: "null" }] }, version: ref("Version"),
+      status: string({ enum: ["active", "expired", "withdrawn"] }), acknowledged_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+    }, additionalProperties: false,
+  },
+  PublishNotificationRequest: {
+    type: "object", required: ["title", "body"], properties: {
+      title: string({ minLength: 1, maxLength: 200, description: "Trimmed plain title, at most 200 Unicode code points." }),
+      body: string({ minLength: 1, maxLength: 4000, description: "Immutable plain text, at most 4000 Unicode code points; untrusted business content." }),
+      expires_at: { anyOf: [ref("Timestamp"), { type: "null" }], description: "Optional future UTC timestamp; expiration preserves history." },
+    }, additionalProperties: false,
+  },
+  InstanceNotificationWriteResult: containerWriteResult("InstanceNotification"),
+  InstanceNotificationList: {
+    type: "object", required: ["items", "next_cursor"],
+    properties: { items: { type: "array", maxItems: 50, items: ref("InstanceNotification") }, next_cursor: nullableString() }, additionalProperties: false,
+  },
   PublicHomepageNotice: {
     type: "object", required: ["en", "zh-CN"],
     properties: { en: ref("HomepageNotice"), "zh-CN": ref("HomepageNotice") }, additionalProperties: false,
@@ -2202,19 +2240,30 @@ const schemas = {
 };
 
 const querySets = {
+  NotificationCursorQuery: [
+    { name: "cursor", in: "query", required: false, schema: string() },
+    { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 50, default: 20 }) },
+  ],
+  PersonalNotificationQuery: [
+    { name: "pending", in: "query", required: false, schema: string({ enum: ["true", "false"], default: "false" }) },
+    { name: "cursor", in: "query", required: false, schema: string() },
+    { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 50, default: 20 }) },
+  ],
   AssigneeNameQuery: [{ name: "display_name", in: "query", required: false, schema: ref("PrincipalDisplayNameInput"), description: "Optional normalized exact match returning zero or one candidate; omission lists current Project Owner, administrators and writers. Only principal_id and display_name are exposed; readers are excluded. Requires Project read access and respects Browser Session scope." }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   InviteCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 1 }), description: "一次性 Invite code。" }],
   LaunchCodeQuery: [{ name: "code", in: "query", required: true, schema: string({ minLength: 59, maxLength: 59, pattern: "^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$" }), description: "一次性 Browser Launch code；GET 不消费该 code。" }],
   EventQuery: [
     { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true },
     { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true },
-    { name: "after", in: "query", required: false, schema: string(), description: "Opaque Event cursor returned by a write or an earlier Event page." },
+    { name: "order", in: "query", required: false, schema: string({ enum: ["asc", "desc"], default: "asc" }), description: "asc preserves the incremental sequence feed and write cursors; desc reads history by created_at descending with sequence as tie-breaker. Descending cursors bind the initial sequence upper bound; start a fresh read to see later events." },
+    { name: "after", in: "query", required: false, schema: string(), description: "Opaque cursor for the same order and scope. Write cursors are accepted only in the default ascending feed." },
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],
   AuditEventQuery: [
     { name: "project_id", in: "query", required: false, schema: ref("Uuid"), description: "Restrict the Owner audit feed to events bound to one immutable Project ID." },
     { name: "stream", in: "query", required: false, schema: string({ enum: ["domain", "security"] }), description: "Restrict the Owner audit feed to one event stream; omission reads both streams." },
-    { name: "after", in: "query", required: false, schema: string(), description: "Opaque Owner audit cursor." },
+    { name: "order", in: "query", required: false, schema: string({ enum: ["asc", "desc"], default: "asc" }), description: "asc preserves sequence order and existing cursors; desc reads history by created_at descending with sequence as tie-breaker and an initial sequence upper bound." },
+    { name: "after", in: "query", required: false, schema: string(), description: "Opaque Owner audit cursor bound to the same order, Project and streams." },
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],
   InvitationListQuery: [{ name: "project_id", in: "query", required: false, schema: ref("Uuid"), description: "Filter to Invitations containing this Project. Every target must still be manageable by the current Principal; partial visibility never reveals an Invitation." }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
@@ -2235,6 +2284,13 @@ const querySets = {
 querySets.IssueCountsQuery = querySets.IssueListQuery.filter(({ name }) => !["deleted", "cursor", "limit"].includes(name));
 
 const operationResponseSchemas = {
+  getNotificationPreferences: ref("NotificationPreferences"),
+  updateNotificationPreferences: ref("NotificationPreferencesWriteResult"),
+  listMyNotifications: ref("InstanceNotificationList"),
+  listInstanceNotifications: ref("InstanceNotificationList"),
+  publishNotification: ref("InstanceNotificationWriteResult"),
+  withdrawNotification: ref("InstanceNotificationWriteResult"),
+  acknowledgeNotification: ref("InstanceNotificationWriteResult"),
   getMe: ref("CurrentPrincipal"),
   listWorkspaceAdministratorCandidates: ref("AdministratorCandidateListResult"),
   listProjectAdministratorCandidates: ref("AdministratorCandidateListResult"),
@@ -2445,6 +2501,19 @@ paths["/api/v1/admin/homepage-settings"].get.responses["200"].headers = noStoreH
 paths["/api/v1/admin/homepage-settings"].patch.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/homepage-settings"].get.description = "Owner instance control only; a project-scoped Owner Session and scoped administrators cannot read these settings.";
 paths["/api/v1/admin/homepage-settings"].patch.description = "Owner instance control only. Update both public homepage translations with expected_version and Idempotency-Key; Cookie requests require CSRF. Trimmed empty strings become null and use locale/hostname fallback. CAS, idempotency snapshot and one security audit event commit atomically.";
+for (const [path, method] of [
+  ["/api/v1/me/notification-preferences", "get"], ["/api/v1/me/notification-preferences", "patch"],
+  ["/api/v1/me/notifications", "get"], ["/api/v1/me/notifications/{notification_id}/commands/acknowledge", "post"],
+  ["/api/v1/admin/notifications", "get"], ["/api/v1/admin/notifications", "post"],
+  ["/api/v1/admin/notifications/{notification_id}/commands/withdraw", "post"],
+]) paths[path][method].responses["200"].headers = noStoreHeader;
+paths["/api/v1/me/notifications"].get.description = "Current Principal with any valid Bearer Credential or Web Session, including no Project grants. History excludes the publisher's own notifications and includes retained expired/withdrawn text. pending=true returns only enabled, active, unacknowledged notifications created at or after the Principal's join/re-enable cutoff. Bounded descending created_at/id pagination binds the Principal, view and pending preference version; mutable pending membership may remove rows between pages.";
+paths["/api/v1/me/notification-preferences"].get.description = "Current Principal only; no Project grant required. Defaults to enabled=true, version=1, receive_after=Principal creation time without per-Principal fan-out writes.";
+paths["/api/v1/me/notification-preferences"].patch.description = "Current Principal only; no Project grant required. Independent preference CAS, Idempotency-Key, current authentication, immutable snapshot and security audit commit atomically. Cookie requires CSRF. Only a disabled-to-enabled transition advances receive_after; repeated enabled=true preserves it.";
+paths["/api/v1/me/notifications/{notification_id}/commands/acknowledge"].post.description = "Atomically acknowledge one non-self notification as the current Principal, shared by Web and Agent. No Project grant or notification version required; Cookie requires CSRF. Idempotency-Key, current authentication, acknowledgement, immutable result and personal security audit commit together. Existing acknowledgements retain their first timestamp; expiration/withdrawal does not erase history.";
+paths["/api/v1/admin/notifications"].get.description = "Deployment Owner Bearer or Owner admin Web Session only. Bounded history includes the publisher's own notifications and retained expired/withdrawn plain text.";
+paths["/api/v1/admin/notifications"].post.description = "Deployment Owner Bearer or Owner admin Web Session only. Publish one immutable instance notification; title <=200 and body <=4000 Unicode code points, with optional future expiry. Cookie requires CSRF. Idempotency-Key, current Owner authorization, snapshot and security audit commit atomically; never fan out inbox rows.";
+paths["/api/v1/admin/notifications/{notification_id}/commands/withdraw"].post.description = "Deployment Owner Bearer or Owner admin Web Session only. Withdraw one notification with expected_version and Idempotency-Key; Cookie requires CSRF. Current Owner authorization, CAS, withdrawal, immutable snapshot and security audit commit together. Retain title/body and personal acknowledgements permanently; published text cannot be edited.";
 paths["/api/v1/admin/attachment-settings"].get.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/attachment-settings"].patch.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/attachment-settings"].patch.description = "Owner-only explicit capacity choice: positive safe integer bytes or null for unlimited. Requires expected_version and Idempotency-Key; Cookie requests require CSRF. Lowering the limit preserves files and existing reservations. New reservations require configured=true and available capacity. An unset limit is not implicit unlimited capacity.";

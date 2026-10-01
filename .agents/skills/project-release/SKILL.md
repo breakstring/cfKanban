@@ -33,7 +33,17 @@ description: 为 cfKanban 源码仓库准备和发布 RC 或正式版，校验 G
 
 比较上个相关发行到候选 commit 的实际差异，建议纯修复用 patch、新增兼容功能用 minor；不兼容公共行为先明确合同与升级影响。示例序列是 `1.1.0-rc.1 → 1.1.0-rc.2 → 1.1.0`，不是固定下一版本。检查远端 tags/Releases 避免重名，tag 与版本相同，不加 `v`。
 
-新开发周期在专门分支将 `release/version.json` 和 `.codex-plugin/plugin.json` 同步到下一个准确预发行版本。准备发行时新增 `release/config/<version>.json` 与 `release/notes/<version>.md`；沿用当前结构和双语要求。已公开 RC 有任何修订都换新版本，不改旧 tag、manifest 或附件。API 版本、API 路径、schema 与产品版本独立，依据实际合同和 migration 更新，不机械跟随产品编号。
+新开发周期在专门分支将 `release/version.json` 和 `.codex-plugin/plugin.json` 同步到下一个准确预发行版本。准备发行时新增 `release/config/<version>.json` 与 `release/notes/<version>.md`，按下节编写简洁双语说明。已公开 RC 有任何修订都换新版本，不改旧 tag、manifest 或附件。API 版本、API 路径、schema 与产品版本独立，依据实际合同和 migration 更新，不机械跟随产品编号。
+
+## 编写发行说明
+
+从[双语模板](templates/release-notes.md)开始，按[发布说明中的核对方式](../../../docs/release-publication.md#简洁双语发行说明)固定真实基线、完整 SHA 与 compare 区间。[1.5.0 本地示例](examples/1.5.0.md)仅演示格式，不替换历史 notes 或公开正文。
+
+- 中文、英文各以一句概述和 3–5 条用户/管理收益为主体；两种语言覆盖相同事实，内部实现和详细回归结果链接到 Issue、SPEC 或研究记录。
+- 正式版累计比较上一个正式版到本次候选；RC 明确相对哪个正式版或 RC，不把最后一个 RC 的版本收敛当作正式版全部变化。
+- 简短保留必要的升级提醒和已知限制，按实际 migration/兼容性写入；不复制上一版要求，不宣称未执行的线上或宿主验证。
+- 末尾只有一份默认折叠的双语标题提交列表，选取支撑收益的真实提交，去重并按 Git `--reverse --topo-order` 排序。commit 与完整范围 compare URL 使用完整 SHA，不使用浮动分支。
+- 最终正文非空且含双语标题，整体原样放入发布 config 的 `notes`。固定发行 commit 后再补齐本地最终 body 的 SHA，不改写该 commit；正文任一变化都重新 `inspect`，保持 notes 与计划摘要绑定、已有 draft 正文逐字匹配和公开发行不可覆盖的要求。
 
 ## 本地技能验证
 

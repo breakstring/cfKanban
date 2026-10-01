@@ -11,6 +11,7 @@ import { clearAttachmentUploadDrafts } from "./lib/attachment-upload-drafts";
 import { boardReturnPath } from "./lib/board-navigation";
 import { locale, t } from "./lib/i18n";
 import { lazyPage } from "./lib/lazy-page";
+import { setNotificationSession } from "./lib/notifications";
 import { useLocalizedError } from "./lib/localized-error";
 import { currentPath, navigate, routePath } from "./lib/router";
 import { scheduleSessionExpiry } from "./lib/session-expiry";
@@ -25,6 +26,7 @@ const AppHeader = lazyPage(() => import("./components/AppHeader.vue"));
 const IssueDetailView = lazyPage(() => import("./views/IssueDetailView.vue"));
 const OwnerView = lazyPage(() => import("./views/OwnerView.vue"));
 const ProfileView = lazyPage(() => import("./views/ProfileView.vue"));
+const NotificationsView = lazyPage(() => import("./views/NotificationsView.vue"));
 const ProjectActivityView = lazyPage(() => import("./views/ProjectActivityView.vue"));
 const ProjectDeletedIssuesView = lazyPage(() => import("./views/ProjectDeletedIssuesView.vue"));
 const ProjectLabelsView = lazyPage(() => import("./views/ProjectLabelsView.vue"));
@@ -40,7 +42,7 @@ type AppRoute =
   | { kind: "selection" | "work" }
   | { identifier: string; kind: "issue" }
   | { kind: "owner"; section: OwnerSection }
-  | { kind: "profile" }
+  | { kind: "profile" | "notifications" }
   | { kind: "project" | "labels" | "activity" | "deleted"; projectId: string; workspaceId: string }
   | { kind: "manage"; workspaceId: string; projectId?: string }
   | { kind: "unknown" };
@@ -88,6 +90,7 @@ const route = computed<AppRoute>(() => {
     return { kind: "unknown" };
   }
   if (path === "/app/profile") return { kind: "profile" };
+  if (path === "/app/notifications") return { kind: "notifications" };
   if (path === "/app/admin") {
     const raw = new URLSearchParams(currentPath.value.split("?", 2)[1] ?? "").get("section");
     const section: OwnerSection = raw === "workspaces" || raw === "access" || raw === "invitations" || raw === "audit" || raw === "archive"
@@ -107,6 +110,7 @@ const route = computed<AppRoute>(() => {
 });
 
 const authenticatedRoute = computed(() => route.value.kind !== "home");
+watch(session, value => setNotificationSession(value), { flush: "sync" });
 
 watch([route, session], ([currentRoute, verifiedSession]) => {
   if (verifiedSession === null || currentRoute.kind === "home") return;
@@ -119,6 +123,7 @@ watch([route, session], ([currentRoute, verifiedSession]) => {
     : currentRoute.kind === "deleted" ? ProjectDeletedIssuesView
     : currentRoute.kind === "issue" ? IssueDetailView
     : currentRoute.kind === "profile" ? ProfileView
+    : currentRoute.kind === "notifications" ? NotificationsView
     : currentRoute.kind === "manage" ? ScopedManagementView
     : currentRoute.kind === "owner" && canAccessOwnerControlPlane(verifiedSession) ? OwnerView
     : null;
@@ -364,6 +369,12 @@ watch(currentPath, () => {
         :session="session"
         @context="context = $event"
         @updated="updateProfile"
+      />
+      <NotificationsView
+        v-else-if="route.kind === 'notifications'"
+        :key="`${sessionViewGeneration}:${currentPath}`"
+        :session="session"
+        @context="context = $event"
       />
       <ScopedManagementView
         v-else-if="route.kind === 'manage'"
