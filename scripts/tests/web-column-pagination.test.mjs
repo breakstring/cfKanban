@@ -30,7 +30,7 @@ test("filter reset discards late old success and failure without unlocking the n
     assert.deepEqual(column.items, [{ id: "fresh" }]);
   }
 });
-test("failed next page retains loaded rows and retries its cursor; invalid cursors restart", async () => {
+test("failed next page retains loaded rows and retries its cursor; default invalid cursor recovery clears rows", async () => {
   const column = new ColumnPagination();
   await column.load(async () => page([{ id: "1" }], "next"));
   await column.load(async () => { throw new Error("offline"); });
@@ -38,5 +38,87 @@ test("failed next page retains loaded rows and retries its cursor; invalid curso
   await column.load(async cursor => { assert.equal(cursor, "next"); throw { body: { code: "CURSOR_SCOPE_MISMATCH" } }; });
   assert.equal(column.loaded, false); assert.equal(column.cursor, null); assert.deepEqual(column.items, []);
   await column.load(async cursor => { assert.equal(cursor, undefined); return page([{ id: "fresh" }]); });
+  assert.equal(column.error, null);
+  assert.deepEqual(column.items, [{ id: "fresh" }]);
+});
+
+test("confirmed reconciliation preserves loaded pages and their continuation cursor", async () => {
+  const column = new ColumnPagination();
+  await column.load(async () => page([{ id: "1", title: "first" }], "page-2"));
+  await column.load(async () => page([{ id: "2", title: "second" }], "page-3"));
+  column.reconcile(items => items.map(item => item.id === "2" ? { ...item, title: "confirmed" } : item));
+  assert.deepEqual(column.items, [{ id: "1", title: "first" }, { id: "2", title: "confirmed" }]);
+  assert.equal(column.cursor, "page-3");
+  assert.equal(column.loaded, true);
+  assert.equal(column.loading, false);
+  await column.load(async cursor => {
+    assert.equal(cursor, "page-3");
+    return page([{ id: "3", title: "third" }]);
+  });
+  assert.equal(column.items.length, 3);
+});
+
+test("reconciliation discards late page success and failure without releasing a newer page request", async () => {
+  for (const fail of [false, true]) {
+    const column = new ColumnPagination();
+    await column.load(async () => page([{ id: "1", title: "old" }], "next"));
+    const old = deferred(), fresh = deferred();
+    const previous = column.load(async () => {
+      await old.promise;
+      if (fail) throw new Error("old page failure");
+      return page([{ id: "1", title: "stale" }, { id: "stale-page" }]);
+    });
+    column.reconcile(items => items.map(item => ({ ...item, title: "confirmed" })));
+    const next = column.load(async cursor => {
+      assert.equal(cursor, "next");
+      return fresh.promise;
+    });
+    old.resolve();
+    assert.equal(await previous, false);
+    assert.equal(column.loading, true);
+    assert.equal(column.error, null);
+    assert.equal(column.cursor, "next");
+    assert.deepEqual(column.items, [{ id: "1", title: "confirmed" }]);
+    fresh.resolve(page([{ id: "fresh-page" }]));
+    assert.equal(await next, true);
+    assert.deepEqual(column.items, [{ id: "1", title: "confirmed" }, { id: "fresh-page" }]);
+  }
+});
+
+test("opt-in invalid cursor recovery explicitly reloads the first page and merges matching IDs", async () => {
+  for (const code of ["INVALID_CURSOR", "CURSOR_SCOPE_MISMATCH"]) {
+    const column = new ColumnPagination(true);
+    await column.load(async () => page([{ id: "1", title: "old" }], "page-2"));
+    await column.load(async () => page([{ id: "2", title: "second page" }], "page-3"));
+    assert.equal(await column.load(async () => { throw { body: { code } }; }), false);
+    assert.equal(column.cursor, null);
+    assert.equal(column.loaded, false);
+    assert.deepEqual(column.items.map(item => item.id), ["1", "2"]);
+    assert.equal(column.error.body.code, code);
+    const first = deferred();
+    const reloading = column.load(async cursor => {
+      assert.equal(cursor, undefined);
+      return first.promise;
+    });
+    assert.deepEqual(column.items.map(item => item.id), ["1", "2"], "first-page retry keeps the current projection visible");
+    first.resolve(page([{ id: "1", title: "fresh" }, { id: "3", title: "new" }], "fresh-page-2"));
+    assert.equal(await reloading, true);
+    assert.deepEqual(column.items, [{ id: "1", title: "fresh" }, { id: "2", title: "second page" }, { id: "3", title: "new" }]);
+    assert.equal(column.cursor, "fresh-page-2");
+    assert.equal(column.loaded, true);
+    assert.equal(column.error, null);
+  }
+});
+
+test("explicit project or filter reset still clears loaded items and pagination state", async () => {
+  const column = new ColumnPagination(true);
+  await column.load(async () => page([{ id: "1" }], "next"));
+  await column.load(async () => { throw new Error("offline"); });
+  column.reconcile(items => [...items, { id: "confirmed" }]);
+  column.reset();
+  assert.deepEqual(column.items, []);
+  assert.equal(column.cursor, null);
+  assert.equal(column.loaded, false);
+  assert.equal(column.loading, false);
   assert.equal(column.error, null);
 });

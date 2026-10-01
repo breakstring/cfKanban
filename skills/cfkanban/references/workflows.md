@@ -120,6 +120,8 @@ Candidate selection has no silent assignment default. Start from `/api/v1/issues
 
 ## Efficient Issue queries
 
+For totals, supporting Services provide an explicit Project `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts`. It returns five-status `counts`, `total_count`, and `resolved_scope`, using ordinary-list `q / status / assignee / priority / label / blocked` semantics. It counts only undeleted Issues and rejects `deleted / cursor / limit`. Do not traverse pages to calculate totals; explain missing support on older Services. Counts are a separate read: re-read after concurrent changes and do not treat a count and a page as one snapshot.
+
 Priority/Label filtering and ordinary-list `assignee=unassigned` require a deployed Service that implements these filters and schema 13. Updating the local Skill alone does not upgrade the instance. On an older Service, explain the missing capability; do not silently download all Issues and filter them locally or claim a filter took effect without server support.
 
 Prefer a known Project scope and server-side filters before pagination. Apply OR within a repeated parameter and AND between dimensions:

@@ -38,6 +38,19 @@ export default defineConfig({
   }],
   build: {
     emptyOutDir: true,
+    manifest: true,
     outDir: "dist",
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "bootstrap", tags: ["$initial"], priority: 100 },
+            // 首页共用的轻量工具独立保留，避免合并小组时带入认证弹窗等 UI 依赖。
+            { name: "public-shared", test: /[\\/]src[\\/]lib[\\/](pagination|webauthn|homepage-notice|write-fence)\.ts$/, priority: 50 },
+            { name: "shared", minShareCount: 2, entriesAware: true, entriesAwareMergeThreshold: 20_000 },
+          ],
+        },
+      },
+    },
   },
 });

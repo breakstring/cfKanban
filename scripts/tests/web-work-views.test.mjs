@@ -66,6 +66,16 @@ const projects = [p1, p2].map((id, index) => ({ workspace_id: workspace, workspa
 const session = { allowed_scope: { kind: 'project_selection', projects }, principal: { id: principal, display_name: 'Pat', is_owner: false } };
 const filter = { projects: [p1], queue: 'all', status: '', assignee: '', search: '', priorities: [], labels: [] };
 const page = (items, cursor = null) => ({ items, has_more: !!cursor, next_cursor: cursor });
+const workflowStatuses = ['backlog', 'todo', 'in_progress', 'done', 'canceled'];
+function issueCounts(values = {}) {
+  const counts = { ...Object.fromEntries(workflowStatuses.map(key => [key, 0])), ...values };
+  return { counts, total_count: Object.values(counts).reduce((sum, count) => sum + count, 0), resolved_scope: {
+    broad_search: false, expanded_to_all_authorized_projects: false, project_targets: [],
+    projects: [{ project_id: p1, project_display_name: 'Project 0', workspace_id: workspace, workspace_display_name: 'Team' }],
+    filters: { assignees: [], statuses: [] }, target_identifier: null, unresolved_project_targets: [],
+    unresolved_workspace_targets: [], workspace_targets: [],
+  } };
+}
 const issue = (id = 'one') => ({ id, identifier: 'CFK-1', title: `Issue ${id}`, status: { key: 'todo', display_name: 'Todo' }, priority: 'none', workspace: { id: workspace, display_name: 'Team' }, project: { id: p1, display_name: 'Project 0' }, assignee: null, version: 2 });
 const button = (host, label) => all(host).find(item => item.tag === 'button' && text(item) === label);
 const select = (host, label) => all(host).find(item => item.tag === 'label' && text(item).startsWith(label))?.children.find(item => item.tag === 'select');
@@ -216,6 +226,7 @@ test('board disables query choices until the first project load finishes', async
   let resolveProject;
   globalThis.fetch = async path => {
     const url = new URL(path, 'https://local.test');
+    if (url.pathname.endsWith('/issues/counts')) return Response.json(issueCounts({ todo: 1 }));
     if (url.pathname.endsWith('/statuses')) return Response.json(page(['backlog', 'todo', 'in_progress', 'done', 'canceled'].map(key => ({ key, display_name: key }))));
     if (url.pathname.endsWith('/issues')) return Response.json(page(url.searchParams.get('status') === 'todo' ? [{ ...issue('initial'), labels: [] }] : []));
     return new Promise(resolve => { resolveProject = resolve; });
@@ -239,6 +250,7 @@ test('board filters reset every column, discard old continuation and request new
   globalThis.fetch = async path => {
     calls.push(path);
     const url = new URL(path, 'https://local.test');
+    if (url.pathname.endsWith('/issues/counts')) return Response.json(issueCounts({ todo: 1 }));
     if (url.pathname.endsWith('/labels')) return Response.json(page([{ id: labelId, name: 'Board label' }]));
     if (url.pathname.endsWith('/statuses')) return Response.json(page(['backlog', 'todo', 'in_progress', 'done', 'canceled'].map(key => ({ key, display_name: key }))));
     if (!url.pathname.endsWith('/issues')) return Response.json({ display_name: 'Project 0', workspace_display_name: 'Team' });
@@ -266,7 +278,48 @@ test('board filters reset every column, discard old continuation and request new
       assert.deepEqual(params.getAll('priority'), ['high', 'urgent']); assert.deepEqual(params.getAll('label'), [labelId]);
       assert.equal(params.has('cursor'), false); assert.equal(params.has('blocked'), false);
     }
+    const countQueries = calls.slice(before).filter(path => new URL(path, 'https://local.test').pathname.endsWith('/issues/counts'));
+    assert.equal(countQueries.length, 1);
+    const countParams = new URL(countQueries[0], 'https://local.test').searchParams;
+    assert.deepEqual(countParams.getAll('priority'), ['high', 'urgent']); assert.deepEqual(countParams.getAll('label'), [labelId]);
+    for (const key of ['status', 'limit', 'cursor', 'blocked']) assert.equal(countParams.has(key), false);
     assert.match(text(host), /Issue current/); assert.doesNotMatch(text(host), /Updating filtered results/);
+  } finally { app.unmount(); }
+});
+
+test('board column totals use the independent count response rather than loaded card pages', async () => {
+  const calls = [];
+  const totals = { backlog: 0, todo: 137, in_progress: 7, done: 45, canceled: 3 };
+  globalThis.fetch = async path => {
+    calls.push(path);
+    const url = new URL(path, 'https://local.test');
+    if (url.pathname.endsWith('/issues/counts')) return Response.json(issueCounts(totals));
+    if (url.pathname.endsWith('/statuses')) return Response.json(page(workflowStatuses.map(key => ({ key, display_name: key }))));
+    if (url.pathname.endsWith('/issues')) {
+      if (url.searchParams.get('status') !== 'todo') return Response.json(page([]));
+      return Response.json(url.searchParams.has('cursor')
+        ? page([{ ...issue('second-loaded'), labels: [] }])
+        : page([{ ...issue('only-loaded'), labels: [] }], 'todo-next'));
+    }
+    return Response.json(projectResource());
+  };
+  const { app, host } = mount(Board, { session, projectId: p1, workspaceId: workspace });
+  const badges = () => all(host).filter(item => item.props['aria-label']?.includes('Matching issues total:'));
+  try {
+    await until(() => text(host).includes('Issue only-loaded') && badges().length === 5);
+    assert.deepEqual(badges().map(item => text(item)), Object.values(totals).map(String));
+    assert.equal(all(host).filter(item => item.tag === 'article' && item.props.class === 'issue-card').length, 1);
+    const issueQueries = calls.map(path => new URL(path, 'https://local.test')).filter(url => url.pathname.endsWith('/issues'));
+    assert.equal(issueQueries.length, 5);
+    assert.deepEqual(issueQueries.map(url => url.searchParams.get('status')), workflowStatuses);
+    assert.ok(issueQueries.every(url => url.searchParams.get('limit') === '20' && !url.searchParams.has('cursor')));
+    const countQueries = calls.map(path => new URL(path, 'https://local.test')).filter(url => url.pathname.endsWith('/issues/counts'));
+    assert.equal(countQueries.length, 1);
+    for (const key of ['status', 'limit', 'cursor', 'deleted']) assert.equal(countQueries[0].searchParams.has(key), false);
+    await button(host, 'Load more').props.onClick(); await nextTick();
+    assert.match(text(host), /Issue only-loaded.*Issue second-loaded/);
+    assert.deepEqual(badges().map(item => text(item)), Object.values(totals).map(String));
+    assert.equal(calls.filter(path => new URL(path, 'https://local.test').pathname.endsWith('/issues/counts')).length, 1);
   } finally { app.unmount(); }
 });
 
@@ -274,6 +327,7 @@ test('board filter changes keep unsubmitted search out of requests and reuse pro
   const calls = [];
   globalThis.fetch = async path => {
     calls.push(path); const url = new URL(path, 'https://local.test');
+    if (url.pathname.endsWith('/issues/counts')) return Response.json(issueCounts());
     if (url.pathname.endsWith('/statuses')) return Response.json(page([]));
     if (url.pathname.endsWith('/issues')) return Response.json(page([]));
     return Response.json({ display_name: 'Board ready', context: 'Visible description' });
@@ -284,15 +338,19 @@ test('board filter changes keep unsubmitted search out of requests and reuse pro
     const before = calls.length;
     all(host).find(item => item.tag === 'input' && item.props.type === 'search').props['onUpdate:modelValue']('unsubmitted text');
     all(host).find(item => item.tag === 'input' && item.props.value === 'high').props.onChange();
-    await until(() => calls.length >= before + 5);
-    assert.equal(calls.length, before + 5);
+    await until(() => calls.length >= before + 6);
+    assert.equal(calls.length, before + 6);
+    assert.equal(calls.slice(before).filter(path => new URL(path, 'https://local.test').pathname.endsWith('/issues')).length, 5);
+    assert.equal(calls.slice(before).filter(path => new URL(path, 'https://local.test').pathname.endsWith('/issues/counts')).length, 1);
     for (const path of calls.slice(before)) {
       const url = new URL(path, 'https://local.test');
-      assert.ok(url.pathname.endsWith('/issues')); assert.equal(url.searchParams.has('q'), false);
+      assert.ok(url.pathname.endsWith('/issues') || url.pathname.endsWith('/issues/counts')); assert.equal(url.searchParams.has('q'), false);
       assert.deepEqual(url.searchParams.getAll('priority'), ['high']);
+      if (url.pathname.endsWith('/issues/counts')) for (const key of ['status', 'limit', 'cursor']) assert.equal(url.searchParams.has(key), false);
     }
     await submit(host); await nextTick();
     assert.ok(calls.filter(path => path.includes('/issues?')).slice(-5).every(path => new URL(path, 'https://local.test').searchParams.get('q') === 'unsubmitted text'));
+    assert.equal(new URL(calls.filter(path => path.includes('/issues/counts?')).at(-1), 'https://local.test').searchParams.get('q'), 'unsubmitted text');
   } finally { app.unmount(); }
 });
 
@@ -310,7 +368,7 @@ test('returning to the board preserves verified query values and rejects foreign
 test('board URL label selections survive initial project loading and pending filters stop on unmount', async () => {
   const label = '00000000-0000-4000-8000-000000000080';
   const calls = [];
-  globalThis.fetch = async path => { calls.push(path); return Response.json(path.includes('/issues?') || path.endsWith('/statuses') ? page([]) : {display_name:'Restored board'}); };
+  globalThis.fetch = async path => { calls.push(path); return Response.json(new URL(path, 'https://local.test').pathname.endsWith('/issues/counts') ? issueCounts() : path.includes('/issues?') || path.endsWith('/statuses') ? page([]) : {display_name:'Restored board'}); };
   const old = window.location.search;
   window.location.search = `?priority=high&label=${label}`;
   const {app,host} = mount(Board,{session,projectId:p1,workspaceId:workspace});
@@ -332,6 +390,7 @@ for (const status of [403, 404]) {
     globalThis.fetch = async path => {
       calls.push(path);
       const url = new URL(path, 'https://local.test');
+      if (url.pathname.endsWith('/issues/counts')) return Response.json(issueCounts({ todo: 1 }));
       if (phase === 'denied' && url.pathname === projectPath) {
         const requestId = '00000000-0000-4000-8000-000000000098';
         return Response.json({ category: status === 403 ? 'authorization' : 'not_found', code: status === 403 ? 'FORBIDDEN' : 'NOT_FOUND', details: {}, message: 'Project unavailable', recovery: 'request_access', request_id: requestId, retryable: false, source: 'service' }, { status, headers: { 'x-request-id': requestId } });
@@ -872,7 +931,7 @@ for (const [actions, destination] of [[['read'], 'activity'], [['read', 'update'
   test(`board has one project settings entry and defaults to ${destination} with its current filter`, async () => {
     const filtered = boardPath(workspace, p1, { search: 'saved search', priorities: ['high'], labels: [] });
     const history = installProjectHistory(filtered);
-    globalThis.fetch = async path => Response.json(path.includes('/issues?') || path.endsWith('/statuses') ? page([]) : projectResource({ allowed_actions: actions }));
+    globalThis.fetch = async path => Response.json(new URL(path, 'https://local.test').pathname.endsWith('/issues/counts') ? issueCounts() : path.includes('/issues?') || path.endsWith('/statuses') ? page([]) : projectResource({ allowed_actions: actions }));
     const { app, host } = mount(Board, { session, workspaceId: workspace, projectId: p1 });
     try {
       await until(() => !!button(host, 'Project settings'));

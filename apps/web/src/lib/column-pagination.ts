@@ -9,6 +9,8 @@ export class ColumnPagination<T extends { id: string }> {
   error: unknown = null;
   private generation = 0;
 
+  constructor(private readonly preserveItemsOnCursorRestart = false) {}
+
   reset(): void {
     this.generation += 1;
     this.items = [];
@@ -16,6 +18,12 @@ export class ColumnPagination<T extends { id: string }> {
     this.loading = false;
     this.loaded = false;
     this.error = null;
+  }
+
+  reconcile(update: (items: T[]) => T[]): void {
+    this.generation += 1;
+    this.loading = false;
+    this.items = update(this.items);
   }
 
   async load(fetchPage: (cursor?: string) => Promise<ListResult<T>>, reset = false): Promise<boolean> {
@@ -30,14 +38,14 @@ export class ColumnPagination<T extends { id: string }> {
       if (generation !== this.generation) return false;
       const next = continuationCursor(page);
       if (next !== null && next === cursor) throw new Error("The server repeated a continuation cursor.");
-      this.items = mergePageById(this.items, page.items, !this.loaded);
+      this.items = mergePageById(this.items, page.items, !this.loaded && !this.preserveItemsOnCursorRestart);
       this.cursor = next;
       this.loaded = true;
       return true;
     } catch (error) {
       if (generation !== this.generation) return false;
       if (cursorRequiresRestart(error)) {
-        this.items = [];
+        if (!this.preserveItemsOnCursorRestart) this.items = [];
         this.cursor = null;
         this.loaded = false;
       }

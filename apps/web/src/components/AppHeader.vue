@@ -6,7 +6,8 @@ import { computed } from "vue";
 
 import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
 import ProjectSwitcher from "./ProjectSwitcher.vue";
-import { locale, setLocale, t } from "../lib/i18n";
+import LocaleSwitch from "./LocaleSwitch.vue";
+import { locale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
 import { projectDisplayRole, projectRoleLabel } from "../lib/scoped-management";
 import { canAccessOwnerControlPlane } from "../lib/session-capabilities";
@@ -61,14 +62,7 @@ const accountItems = computed<DropdownMenuItem[][]>(() => [
       <ProjectSwitcher :session="session" :context="context" :project-id="projectId" :workspace-id="workspaceId" @verified="emit('verified', $event)" />
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
-      <UButton color="neutral" variant="ghost"
-        class="locale-switch"
-        type="button"
-        :aria-label="locale === 'en' ? '切换到简体中文' : 'Switch to English'"
-        @click="setLocale(locale === 'en' ? 'zh-CN' : 'en')"
-      >
-        {{ locale === "en" ? "简中" : "EN" }}
-      </UButton>
+      <LocaleSwitch />
       <UDropdownMenu :items="accountItems" :content="{ align: 'end' }" :ui="{ content: 'account-menu' }">
         <UButton color="neutral" variant="ghost" class="account-trigger" type="button" :aria-label="locale === 'zh-CN' ? '账户菜单' : 'Account menu'">
           <svg class="account-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6.5" r="3" /><path d="M4 17v-1a6 6 0 0 1 12 0v1" /></svg>

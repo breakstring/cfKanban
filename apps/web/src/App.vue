@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import UApp from "@nuxt/ui/components/App.vue";
 import { en, zh_cn } from "@nuxt/ui/locale";
 
 import AppFooter from "./components/AppFooter.vue";
-import AppHeader from "./components/AppHeader.vue";
 import ErrorNotice from "./components/ErrorNotice.vue";
 import LocaleSwitch from "./components/LocaleSwitch.vue";
 import PageState from "./components/PageState.vue";
@@ -12,6 +10,7 @@ import { ApiProblem, apiRequest } from "./lib/api";
 import { clearAttachmentUploadDrafts } from "./lib/attachment-upload-drafts";
 import { boardReturnPath } from "./lib/board-navigation";
 import { locale, t } from "./lib/i18n";
+import { lazyPage } from "./lib/lazy-page";
 import { useLocalizedError } from "./lib/localized-error";
 import { currentPath, navigate, routePath } from "./lib/router";
 import { scheduleSessionExpiry } from "./lib/session-expiry";
@@ -20,17 +19,20 @@ import { sameSessionBoundary, shouldClearAfterSessionRevalidation } from "./lib/
 import { applyTheme, latestPrincipalTheme } from "./lib/theme";
 import type { InstanceDiscovery, PrincipalResource } from "./types";
 import type { WebSessionView } from "./types";
-import IssueDetailView from "./views/IssueDetailView.vue";
-import OwnerView from "./views/OwnerView.vue";
-import ProfileView from "./views/ProfileView.vue";
-import ProjectActivityView from "./views/ProjectActivityView.vue";
-import ProjectDeletedIssuesView from "./views/ProjectDeletedIssuesView.vue";
-import ProjectLabelsView from "./views/ProjectLabelsView.vue";
-import ProjectBoardView from "./views/ProjectBoardView.vue";
-import WorkListView from "./views/WorkListView.vue";
-import ProjectSelectionView from "./views/ProjectSelectionView.vue";
-import PublicHomeView from "./views/PublicHomeView.vue";
-import ScopedManagementView from "./views/ScopedManagementView.vue";
+
+const UApp = lazyPage(() => import("@nuxt/ui/components/App.vue"));
+const AppHeader = lazyPage(() => import("./components/AppHeader.vue"));
+const IssueDetailView = lazyPage(() => import("./views/IssueDetailView.vue"));
+const OwnerView = lazyPage(() => import("./views/OwnerView.vue"));
+const ProfileView = lazyPage(() => import("./views/ProfileView.vue"));
+const ProjectActivityView = lazyPage(() => import("./views/ProjectActivityView.vue"));
+const ProjectDeletedIssuesView = lazyPage(() => import("./views/ProjectDeletedIssuesView.vue"));
+const ProjectLabelsView = lazyPage(() => import("./views/ProjectLabelsView.vue"));
+const ProjectBoardView = lazyPage(() => import("./views/ProjectBoardView.vue"));
+const WorkListView = lazyPage(() => import("./views/WorkListView.vue"));
+const ProjectSelectionView = lazyPage(() => import("./views/ProjectSelectionView.vue"));
+const PublicHomeView = lazyPage(() => import("./views/PublicHomeView.vue"));
+const ScopedManagementView = lazyPage(() => import("./views/ScopedManagementView.vue"));
 
 type OwnerSection = "overview" | "workspaces" | "access" | "invitations" | "audit" | "archive";
 type AppRoute =
@@ -105,6 +107,23 @@ const route = computed<AppRoute>(() => {
 });
 
 const authenticatedRoute = computed(() => route.value.kind !== "home");
+
+watch([route, session], ([currentRoute, verifiedSession]) => {
+  if (verifiedSession === null || currentRoute.kind === "home") return;
+  void AppHeader.preload().catch(() => {});
+  const page = currentRoute.kind === "selection" ? ProjectSelectionView
+    : currentRoute.kind === "work" ? WorkListView
+    : currentRoute.kind === "project" ? ProjectBoardView
+    : currentRoute.kind === "labels" ? ProjectLabelsView
+    : currentRoute.kind === "activity" ? ProjectActivityView
+    : currentRoute.kind === "deleted" ? ProjectDeletedIssuesView
+    : currentRoute.kind === "issue" ? IssueDetailView
+    : currentRoute.kind === "profile" ? ProfileView
+    : currentRoute.kind === "manage" ? ScopedManagementView
+    : currentRoute.kind === "owner" && canAccessOwnerControlPlane(verifiedSession) ? OwnerView
+    : null;
+  void page?.preload().catch(() => {});
+}, { immediate: true });
 
 watch(() => session.value !== null, async authenticated => {
   discovery.value = null;

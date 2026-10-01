@@ -120,6 +120,8 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 
 ## 高效查询 Issue
 
+需要总数时，支持该能力的 Service 提供显式 Project `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts`。它返回五状态 `counts`、`total_count` 和 `resolved_scope`，使用与普通列表相同的 `q / status / assignee / priority / label / blocked`；只计未删除 Issue，拒绝 `deleted / cursor / limit`。不要为了总数自动遍历分页；旧 Service 不支持时如实说明。聚合是独立读取，外部并发变化后重新读取，不能把计数和某页当作同一快照。
+
 优先级、标签筛选与普通列表的 `assignee=unassigned` 需要实例部署支持这些条件的 Service，并应用 schema 13。仅更新本地 Skill 不会升级实例。旧 Service 缺少能力时应说明，不静默拉取全部 Issue 在本地筛选，也不在缺少服务端支持时声称筛选已生效。
 
 优先限定已知项目，并在服务端分页前筛选。同一参数重复值之间取 OR，不同维度之间取 AND：

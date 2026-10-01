@@ -9,6 +9,7 @@ import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
 import {
   assignIssueToMe,
   clearIssueBlocked,
+  countProjectIssues,
   createIssue,
   deleteIssue,
   getIssue,
@@ -72,6 +73,17 @@ export function registerWp05Routes(router: Router): Router {
     .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       return jsonResponse(await listProjectIssues(
+        env.DB,
+        auth,
+        path(context, "workspace_id"),
+        path(context, "project_id"),
+        context.url,
+        context.startedAt,
+      ), context.requestId);
+    })
+    .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      return jsonResponse(await countProjectIssues(
         env.DB,
         auth,
         path(context, "workspace_id"),

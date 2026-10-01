@@ -22,6 +22,12 @@ export interface ListResult<T> {
   resolved_scope?: Record<string, unknown>;
 }
 
+export interface IssueCounts {
+  counts: Record<StatusKey, number>;
+  total_count: number;
+  resolved_scope: Record<string, unknown>;
+}
+
 export interface ProjectScopeItem {
   project_id: string;
   project_display_name: string;

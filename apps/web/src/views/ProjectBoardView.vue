@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import UAvatar from "@nuxt/ui/components/Avatar.vue";
 import UBadge from "@nuxt/ui/components/Badge.vue";
 import UButton from "@nuxt/ui/components/Button.vue";
@@ -25,6 +25,7 @@ import { projectInventoryBoundary } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { boardFilters, boardPath } from "../lib/board-navigation";
+import { matchesBoardFilters, sortBoardIssues } from "../lib/board-projection";
 import { ColumnPagination } from "../lib/column-pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { protectNavigationDraft } from "../lib/navigation-draft";
@@ -36,6 +37,7 @@ import { WriteFence } from "../lib/write-fence";
 import type {
   ContainerResource,
   IssueSummary,
+  IssueCounts,
   ListResult,
   PriorityKey,
   ProjectScopeItem,
@@ -55,7 +57,11 @@ const emit = defineEmits<{ context: [value: { label: string; role: string }] }>(
 const statusOrder: StatusKey[] = ["backlog", "todo", "in_progress", "done", "canceled"];
 const project = ref<ContainerResource | null>(null);
 const statuses = ref<ProjectStatusResource[]>([]);
-const columns = reactive(Object.fromEntries(statusOrder.map(key => [key, new ColumnPagination<IssueSummary>()])) as Record<StatusKey, ColumnPagination<IssueSummary>>);
+const columns = reactive(Object.fromEntries(statusOrder.map(key => [key, new ColumnPagination<IssueSummary>(true)])) as Record<StatusKey, ColumnPagination<IssueSummary>>);
+const counts = ref<IssueCounts | null>(null);
+const countsLoading = ref(false);
+const countsError = ref<unknown>(null);
+let countsRequestId = 0;
 const initialFilters = boardFilters(window.location.search);
 const appliedSearch = ref(initialFilters.search);
 const priorities = ref<PriorityKey[]>(initialFilters.priorities);
@@ -68,6 +74,8 @@ const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocal
 const search = ref(initialFilters.search);
 const saving = ref(new Set<string>());
 const pendingPriorities = ref<Record<string, { issue: IssueSummary; priority: PriorityKey }>>({});
+const pendingStatuses = ref<Record<string, { issue: IssueSummary; status: StatusKey }>>({});
+const confirmedVersions = new Map<string, number>();
 const dragged = ref<IssueSummary | null>(null);
 const showNewIssue = ref(false);
 const formBusy = ref(false);
@@ -98,7 +106,8 @@ const filterProjects = computed<ProjectScopeItem[]>(() => project.value && proje
   project_display_name: project.value.display_name,
   workspace_display_name: project.value.workspace_display_name ?? "",
 }] : []);
-protectNavigationDraft(() => formBusy.value || saving.value.size > 0 || Object.keys(pendingPriorities.value).length > 0 || (showNewIssue.value && (!!newIssue.value.title.trim() || !!newIssue.value.body.trim() || newIssue.value.priority_key !== "none" || newIssue.value.status_key !== "backlog")));
+const hasPendingWrites = computed(() => Object.keys(pendingPriorities.value).length > 0 || Object.keys(pendingStatuses.value).length > 0);
+protectNavigationDraft(() => formBusy.value || saving.value.size > 0 || hasPendingWrites.value || casConflict.value !== null || (showNewIssue.value && (!!newIssue.value.title.trim() || !!newIssue.value.body.trim() || newIssue.value.priority_key !== "none" || newIssue.value.status_key !== "backlog")));
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 
 function projectIsActive(): boolean {
@@ -118,6 +127,10 @@ function clearProjectProjection(): void {
   loadRequestId += 1;
   project.value = null;
   pendingPriorities.value = {};
+  pendingStatuses.value = {};
+  confirmedVersions.clear();
+  dismissCasConflict();
+  resetCounts();
   statuses.value = [];
   for (const column of Object.values(columns)) column.reset();
   loading.value = false;
@@ -145,13 +158,60 @@ function refreshProjectInventory(): void {
   void load();
 }
 
-function query(status: StatusKey, cursor?: string): string {
-  const params = new URLSearchParams({ limit: "20", status });
+function filterParams(): URLSearchParams {
+  const params = new URLSearchParams();
   if (appliedSearch.value) params.set("q", appliedSearch.value);
   for (const priority of appliedPriorities.value) params.append("priority", priority);
   for (const label of appliedLabelIds.value) params.append("label", label);
+  return params;
+}
+
+function query(status: StatusKey, cursor?: string): string {
+  const params = filterParams();
+  params.set("limit", "20");
+  params.set("status", status);
   if (cursor) params.set("cursor", cursor);
   return `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues?${params}`;
+}
+
+function resetCounts(): void {
+  countsRequestId += 1;
+  counts.value = null;
+  countsLoading.value = false;
+  countsError.value = null;
+}
+
+async function loadCounts(): Promise<void> {
+  if (!projectIsActive()) return;
+  const generation = projectionGeneration.capture();
+  const requestId = ++countsRequestId;
+  countsLoading.value = true;
+  countsError.value = null;
+  try {
+    const result = await apiRequest<IssueCounts>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues/counts?${filterParams()}`);
+    if (requestId !== countsRequestId || !projectionIsCurrent(generation)) return;
+    counts.value = result;
+  } catch (caught) {
+    if (requestId !== countsRequestId || !projectionIsCurrent(generation)) return;
+    counts.value = null;
+    countsError.value = caught;
+    if (caught instanceof ApiProblem && [403, 404].includes(caught.status)) {
+      try {
+        await apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}`);
+      } catch (projectError) {
+        if (requestId === countsRequestId && projectionIsCurrent(generation) && projectError instanceof ApiProblem && [403, 404].includes(projectError.status)) clearProjectProjection();
+      }
+    }
+  } finally {
+    if (requestId === countsRequestId) countsLoading.value = false;
+  }
+}
+
+function countLabel(status: StatusKey): string {
+  const name = statusMap.value.get(status)?.display_name ?? status;
+  if (countsLoading.value) return `${name} · ${locale.value === "zh-CN" ? "正在读取总数" : "Loading total"}`;
+  if (countsError.value || !counts.value) return `${name} · ${locale.value === "zh-CN" ? "总数不可用" : "Total unavailable"}`;
+  return `${name} · ${locale.value === "zh-CN" ? "匹配事项总数" : "Matching issues total"}: ${counts.value.counts[status]}`;
 }
 
 async function loadColumn(status: StatusKey, reset = false, throwOnFailure = false): Promise<void> {
@@ -187,7 +247,10 @@ async function load(_reset = true, throwOnFailure = false): Promise<void> {
   appliedPriorities.value = [...priorities.value];
   appliedLabelIds.value = [...labelIds.value];
   filtersPending.value = false;
+  resetCounts();
+  void loadCounts();
   for (const column of Object.values(columns)) column.reset();
+  confirmedVersions.clear();
   loading.value = true;
   clearError();
   try {
@@ -212,8 +275,9 @@ async function recoverCasConflict(
   caught: unknown,
   resource: string | LocalizedText,
   draft: unknown,
-  readback: () => Promise<void> = () => load(true, true),
+  readback: () => Promise<void>,
 ): Promise<boolean> {
+  const projection = projectionGeneration.capture();
   const conflict = captureCasConflict(caught, resource, draft);
   if (conflict === null) return false;
   const recoveryGeneration = casRecoveryGeneration + 1;
@@ -223,9 +287,9 @@ async function recoverCasConflict(
   setErrorKey("error.conflict");
   try {
     await readback();
-    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
+    if (projectionIsCurrent(projection) && casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(conflict);
   } catch {
-    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(conflict);
+    if (projectionIsCurrent(projection) && casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(conflict);
   }
   return true;
 }
@@ -240,6 +304,7 @@ async function refreshCasFacts(): Promise<void> {
   const conflict = casConflict.value;
   const readback = casReadback;
   if (conflict === null || readback === null || casReadbackInFlight) return;
+  const projection = projectionGeneration.capture();
   const recoveryGeneration = casRecoveryGeneration + 1;
   casRecoveryGeneration = recoveryGeneration;
   const pending = { ...conflict, readbackState: "pending" as const };
@@ -247,9 +312,9 @@ async function refreshCasFacts(): Promise<void> {
   casReadbackInFlight = true;
   try {
     await readback();
-    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(pending);
+    if (projectionIsCurrent(projection) && casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackComplete(pending);
   } catch {
-    if (casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(pending);
+    if (projectionIsCurrent(projection) && casRecoveryGeneration === recoveryGeneration) casConflict.value = markCasReadbackFailed(pending);
   } finally {
     casReadbackInFlight = false;
   }
@@ -257,6 +322,8 @@ async function refreshCasFacts(): Promise<void> {
 
 async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void> {
   const fenceKey = `issue-status:${issue.id}`;
+  const pending = pendingStatuses.value[issue.id];
+  if (pending && (pending.issue.version !== issue.version || pending.status !== status)) return;
   if (!canWrite.value || pendingPriorities.value[issue.id] || issue.status.key === status || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
   saving.value = new Set(saving.value).add(issue.id);
   clearError();
@@ -268,13 +335,24 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
     });
     if (projectionIsCurrent(generation)) {
       dismissCasConflict();
-      await Promise.all([...new Set([issue.status.key, result.resource.status.key])].map(key => loadColumn(key, true)));
+      delete pendingStatuses.value[issue.id];
+      await reconcileIssue(result.resource);
+      if (projectionIsCurrent(generation)) void loadCounts();
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (!await recoverCasConflict(caught, localizedText(`${issue.identifier} status`, `${issue.identifier} 状态`), { status_key: status }, async () => {
-      await load(true, true);
-    })) {
+    if (prioritySaveIsUncertain(caught)) {
+      pendingStatuses.value[issue.id] = { issue, status };
+      await readbackIssue(issue.identifier).catch(() => {});
+    } else delete pendingStatuses.value[issue.id];
+    if (!projectionIsCurrent(generation)) return;
+    if (caught instanceof ApiProblem && [403, 404].includes(caught.status)) await readbackIssue(issue.identifier).catch(() => {});
+    if (!projectionIsCurrent(generation)) return;
+    const recovered = await recoverCasConflict(caught, localizedText(`${issue.identifier} status`, `${issue.identifier} 状态`), { status_key: status }, async () => {
+      await readbackIssue(issue.identifier);
+    });
+    if (!projectionIsCurrent(generation)) return;
+    if (!recovered) {
       setError(caught);
     }
   } finally {
@@ -288,7 +366,7 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
 function onStatusSelection(issue: IssueSummary, event: Event): void {
   const select = event.target as HTMLSelectElement;
   const status = select.value as StatusKey;
-  if (status === "done") select.value = issue.status.key;
+  select.value = issue.status.key;
   void saveStatus(issue, status);
 }
 
@@ -296,7 +374,7 @@ async function savePriority(issue: IssueSummary, priority: PriorityKey): Promise
   const fenceKey = `issue-priority:${issue.id}`;
   const pending = pendingPriorities.value[issue.id];
   if (pending && (pending.issue.version !== issue.version || pending.priority !== priority)) return;
-  if (!canWrite.value || issue.priority === priority || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
+  if (!canWrite.value || pendingStatuses.value[issue.id] || issue.priority === priority || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   saving.value = new Set(saving.value).add(issue.id);
   clearError();
@@ -307,13 +385,21 @@ async function savePriority(issue: IssueSummary, priority: PriorityKey): Promise
     if (projectionIsCurrent(generation)) {
       dismissCasConflict();
       delete pendingPriorities.value[issue.id];
-      await loadColumn(result.resource.status.key, true);
+      await reconcileIssue(result.resource);
+      if (projectionIsCurrent(generation)) void loadCounts();
     }
   } catch (caught) {
     if (!projectionIsCurrent(generation)) return;
-    if (prioritySaveIsUncertain(caught)) pendingPriorities.value[issue.id] = { issue, priority };
+    if (prioritySaveIsUncertain(caught)) {
+      pendingPriorities.value[issue.id] = { issue, priority };
+      await readbackIssue(issue.identifier).catch(() => {});
+    }
     else delete pendingPriorities.value[issue.id];
-    if (!await recoverCasConflict(caught, issue.identifier, { priority_key: priority })) setError(caught);
+    if (!projectionIsCurrent(generation)) return;
+    if (caught instanceof ApiProblem && [403, 404].includes(caught.status)) await readbackIssue(issue.identifier).catch(() => {});
+    if (!projectionIsCurrent(generation)) return;
+    const recovered = await recoverCasConflict(caught, issue.identifier, { priority_key: priority }, () => readbackIssue(issue.identifier));
+    if (projectionIsCurrent(generation) && !recovered) setError(caught);
   } finally {
     writeFence.leave(fenceKey);
     const current = new Set(saving.value); current.delete(issue.id); saving.value = current;
@@ -340,7 +426,9 @@ async function createIssue(): Promise<void> {
       },
     );
     if (projectionIsCurrent(generation)) {
-      await loadColumn(result.resource.status.key, true);
+      await reconcileIssue(result.resource);
+      if (!projectionIsCurrent(generation)) return;
+      void loadCounts();
       newIssue.value = { body: "", priority_key: "none", status_key: "backlog", title: "" };
       showNewIssue.value = false;
     }
@@ -354,7 +442,60 @@ async function createIssue(): Promise<void> {
 }
 
 function issuesFor(status: StatusKey): IssueSummary[] {
-  return columns[status].items;
+  return sortBoardIssues([...columns[status].items]);
+}
+
+async function reconcileIssue(issue: IssueSummary): Promise<void> {
+  const generation = projectionGeneration.capture();
+  const knownVersion = Math.max(confirmedVersions.get(issue.id) ?? 0,
+    ...statusOrder.flatMap(key => columns[key].items.filter(item => item.id === issue.id).map(item => item.version)));
+  if (issue.version < knownVersion) return;
+  confirmedVersions.set(issue.id, issue.version);
+  const matches = matchesBoardFilters(issue, { search: appliedSearch.value, priorities: appliedPriorities.value, labels: appliedLabelIds.value });
+  const positions: Array<{ element: HTMLElement; top: number }> = [];
+  const initialColumns: StatusKey[] = [];
+  for (const key of statusOrder) {
+    const column = columns[key];
+    const include = matches && issue.status.key === key;
+    if (!include && !column.items.some(item => item.id === issue.id)) continue;
+    const element = document.getElementById(`board-column-${key}`);
+    if (element) positions.push({ element, top: element.scrollTop });
+    if (!column.loaded && column.error === null) initialColumns.push(key);
+    column.reconcile(items => sortBoardIssues([...items.filter(item => item.id !== issue.id), ...(include ? [issue] : [])]));
+  }
+  await nextTick();
+  if (!projectionIsCurrent(generation)) return;
+  for (const { element, top } of positions) if (element.isConnected) element.scrollTop = top;
+  // 目标列首屏若尚未读完，失效旧读取后补一页，保留刚确认的卡片。
+  for (const key of initialColumns) void loadColumn(key);
+}
+
+async function readbackIssue(identifier: string): Promise<void> {
+  const generation = projectionGeneration.capture();
+  try {
+    const issue = await apiRequest<IssueSummary>(`/api/v1/issues/${identifier}`);
+    if (!projectionIsCurrent(generation)) return;
+    await reconcileIssue(issue);
+    if (projectionIsCurrent(generation)) void loadCounts();
+  } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
+    if (caught instanceof ApiProblem && caught.status === 403) clearProjectProjection();
+    if (caught instanceof ApiProblem && caught.status === 404) {
+      try {
+        await apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}`);
+      } catch (projectError) {
+        if (projectionIsCurrent(generation) && projectError instanceof ApiProblem && [403, 404].includes(projectError.status)) clearProjectProjection();
+        throw projectError;
+      }
+      if (!projectionIsCurrent(generation)) return;
+      for (const column of Object.values(columns)) {
+        if (column.items.some(item => item.identifier === identifier)) column.reconcile(items => items.filter(item => item.identifier !== identifier));
+      }
+      void loadCounts();
+      return;
+    }
+    throw caught;
+  }
 }
 
 function priorityLabel(priority: PriorityKey): string {
@@ -377,6 +518,7 @@ function onDrop(status: StatusKey): void {
 onMounted(() => load());
 onUnmounted(() => {
   projectionGeneration.invalidate();
+  resetCounts();
   clearTimeout(filterTimer);
   loadRequestId += 1;
   for (const column of Object.values(columns)) column.reset();
@@ -388,6 +530,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
   projectionGeneration.invalidate();
   loadRequestId += 1;
   for (const column of Object.values(columns)) column.reset();
+  resetCounts();
   dragged.value = null;
   loading.value = false;
   filtersPending.value = false;
@@ -399,6 +542,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
     appliedPriorities.value = [...priorities.value];
     appliedLabelIds.value = [...labelIds.value];
     filtersPending.value = false;
+    void loadCounts();
     await Promise.all(statusOrder.map(status => loadColumn(status)));
   }, 180);
 }, { flush: "sync" });
@@ -423,17 +567,22 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
       </div>
       <div class="board-utility-bar">
         <form class="board-search" role="search" @submit.prevent="load()">
-          <UInput v-model="search" class="board-search-field" type="search" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'">
+          <UInput v-model="search" class="board-search-field" type="search" :disabled="loading || saving.size > 0 || hasPendingWrites" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'">
             <template #leading><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg></template>
           </UInput>
-          <UButton color="neutral" variant="outline" type="submit" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</UButton>
+          <UButton color="neutral" variant="outline" type="submit" :disabled="loading || saving.size > 0 || hasPendingWrites">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</UButton>
         </form>
-        <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || Object.keys(pendingPriorities).length > 0" />
+        <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || hasPendingWrites" />
       </div>
     </header>
     <p v-if="filtersPending" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '正在更新筛选结果…' : 'Updating filtered results…' }}</p>
     <ErrorNotice v-if="error" :error="error" />
+    <div v-if="countsError" class="column-count-error" role="status">
+      <span>{{ locale === 'zh-CN' ? '总数暂不可用。' : 'Totals are temporarily unavailable.' }} {{ errorText(countsError) }}</span>
+      <button class="text-button" type="button" :disabled="countsLoading" @click="loadCounts">{{ locale === 'zh-CN' ? '重试总数' : 'Retry totals' }}</button>
+    </div>
     <p v-for="pending in pendingPriorities" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '优先级保存结果尚未确认，请核实原操作后继续。' : 'Priority save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="savePriority(pending.issue, pending.priority)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
+    <p v-for="pending in pendingStatuses" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '状态保存结果尚未确认，请核实原操作后继续。' : 'Status save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="saveStatus(pending.issue, pending.status)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
@@ -461,7 +610,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
         >
           <header class="column-header">
             <h2>{{ statusMap.get(statusKey)?.display_name ?? statusKey }}</h2>
-            <UBadge color="neutral" variant="soft" size="md" :title="locale === 'zh-CN' ? '已加载事项数量，非项目总数' : 'Loaded issues, not the project total'" :aria-label="`${locale === 'zh-CN' ? '已加载' : 'Loaded'} ${issuesFor(statusKey).length}${columns[statusKey].cursor ? '+' : ''}`">{{ locale === 'zh-CN' ? '已加载' : 'Loaded' }} {{ issuesFor(statusKey).length }}{{ columns[statusKey].cursor ? "+" : "" }}</UBadge>
+            <UBadge color="neutral" variant="soft" size="md" :title="countLabel(statusKey)" :aria-label="countLabel(statusKey)" :aria-busy="countsLoading">{{ countsLoading ? '…' : counts ? counts.counts[statusKey] : '—' }}</UBadge>
           </header>
           <div :id="`board-column-${statusKey}`" class="column-content" tabindex="0" :aria-label="`${statusMap.get(statusKey)?.display_name ?? statusKey} · ${locale === 'zh-CN' ? '事项列表' : 'Issues'}`" @scroll="onColumnScroll(statusKey, $event)">
             <article
@@ -469,13 +618,13 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
               :key="issue.id"
               class="issue-card"
               :class="{ saving: saving.has(issue.id) }"
-              :draggable="canWrite && !saving.has(issue.id) && !pendingPriorities[issue.id]"
+              :draggable="canWrite && !saving.has(issue.id) && !pendingPriorities[issue.id] && !pendingStatuses[issue.id]"
               :aria-busy="saving.has(issue.id)"
               @dragstart="onDragStart(issue, $event)"
             >
               <div class="card-topline">
                 <code>{{ issue.identifier }}</code>
-                <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
+                <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
                 <span v-else class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
               </div>
               <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
@@ -496,7 +645,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
                 v-if="canWrite"
                 class="card-status-select"
                 :value="issue.status.key"
-                :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id]"
+                :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id]"
                 :aria-label="`${issue.identifier} · ${locale === 'zh-CN' ? '变更状态' : 'Change status'}`"
                 :draggable="false"
                 @pointerdown.stop

@@ -14,7 +14,13 @@ Find issues with “login” in their title in DemoProject. List the results wit
 
 You need read access to the project. Search covers titles and issue numbers. Include the workspace when projects have the same name. “Unfinished” includes Backlog, Todo, and In Progress.
 
-**In the Web UI:** On the board, enter a title or issue number and press Enter or select **Search**. Priority and label selections apply immediately; any unsubmitted text in the search box remains unapplied. Each column can load more issues; its count shows how many are currently loaded.
+**In the Web UI:** On the board, enter a title or issue number and press Enter or select **Search**. Priority and label selections apply immediately; any unsubmitted text in the search box remains unapplied. Each column can load more issues. Its header shows the total matching undeleted issues in that status for the applied filters, regardless of loaded pages. An ellipsis means loading; a dash means the total is unavailable and can be retried separately while cards remain usable. Submit the search again or refresh to check concurrent updates.
+
+```text
+Use $cfkanban to read issue totals by status in DemoProject, counting only undeleted high-priority issues with “login” in their title. Do not traverse every page.
+```
+
+Select the translation icon at the top right to switch between English and Simplified Chinese. Its tooltip names the current language and the target. Priorities, buttons, and system messages follow that choice. Custom project status names keep their original text; default status names stay in English. Switching language preserves unsaved form content.
 
 For several projects, open the account menu at the top right → **Work list**, choose projects, a view, and filters, then select **Show work** again after each change. Its status selector offers one status or all statuses. Ask your Agent to combine several specific statuses into one result.
 
@@ -72,11 +78,14 @@ You need write access. Priorities are None, Low, Medium, High, and Urgent. Choos
 
 **In the Web UI:** Open an issue → **Edit issue** → edit and save. Set priority directly on a board card or in issue details.
 
+After a status/priority save or single-card drag, the board updates the affected card only after the server confirms it, then checks totals again. Loaded cards and column scroll positions remain. Cards follow latest-update order, so an edited card can move to the top or leave the current filters. A conflict reads back that issue and preserves your intended change. An uncertain result reads back facts first; select **Verify save** to check the original operation, without automatic write replay.
+
 ## If something goes wrong
 
 - **An issue is missing:** Check the project and filters. Members with write access can also look under **Project settings → Deleted issues**.
 - **No edit button:** Check your project access and whether your sign-in has expired.
 - **Someone else changed the issue:** Read the latest content before saving again.
 - **Saving timed out:** Ask the Agent to verify the original result or use the page's retry action to avoid duplicates.
+- **A page failed to load:** Select **Retry page**. If a deployment changed and retry still fails, select **Refresh page** to get the latest version. Save drafts first; the existing unsaved-content warning still applies to refresh.
 
 Next: [Assign, progress, and complete work](./workflow.md).

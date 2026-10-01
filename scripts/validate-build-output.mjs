@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { verifyDocsBuild } from "./lib/docs-build.mjs";
+import { verifyWebAssetManifest } from "./lib/web-asset-manifest.mjs";
 
 async function filesUnder(root) {
   const entries = await readdir(root, { withFileTypes: true, recursive: true });
@@ -11,6 +12,8 @@ async function filesUnder(root) {
 const webRoot = new URL("../apps/web/dist/", import.meta.url);
 const workerRoot = new URL("../apps/worker/dist/", import.meta.url);
 const release = JSON.parse(await readFile(new URL("../release/version.json", import.meta.url), "utf8"));
+const webBudget = JSON.parse(await readFile(new URL("./web-performance-budget.json", import.meta.url), "utf8"));
+const webAssets = await verifyWebAssetManifest({ outputDirectory: fileURLToPath(webRoot), budget: webBudget });
 const docsRoot = new URL("docs/", webRoot);
 await verifyDocsBuild({ outputDirectory: fileURLToPath(docsRoot), version: release.version });
 const catalog = JSON.parse(await readFile(new URL("../apps/docs/catalog.json", import.meta.url), "utf8"));
@@ -69,4 +72,5 @@ const workerSource = await readFile(workerEntry, "utf8");
 assert.ok(!workerSource.startsWith("------formdata-"), "Worker build output must not be Wrangler's multipart upload body");
 assert.match(workerSource, /fetchWorker/, "Worker build output must contain the implemented Worker entry point");
 
+console.log(`Web gzip budgets passed: entry ${webAssets.entry_gzip_bytes} B, synchronous JavaScript ${webAssets.initial_javascript_gzip_bytes} B, largest chunk ${webAssets.largest_chunk_gzip_bytes} B.`);
 console.log(`Build output checks passed for ${webFiles.length} Web files and ${workerFiles.length} Worker files.`);

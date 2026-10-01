@@ -20,7 +20,9 @@ const emit = defineEmits<{ close: [] }>();
     :ui="{ content: 'cfk-modal-content', header: 'cfk-modal-header', body: 'cfk-modal-body' }"
     @update:open="!$event && !busy && emit('close')"
   >
-    <template #body><slot /></template>
+    <template #body>
+      <slot />
+    </template>
   </UModal>
 </template>
 

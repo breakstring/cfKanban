@@ -936,6 +936,46 @@ function resolvedScope(
   };
 }
 
+function ordinaryIssuePredicates(
+  issueFilter: IssueListFilter,
+  search: SearchFilter,
+  deletionView: "exclude" | "only",
+  cursor: [number, number] | null,
+): string {
+  return `1 = 1
+           ${issueFilter.blocked === null ? "" : `AND ${issueFilter.blocked === "exclude" ? "NOT" : ""} (
+             i.blocked_reason IS NOT NULL OR (i.deleted_at IS NULL
+               AND i.project_id IN (SELECT id FROM current_relation_projects)
+               AND EXISTS (
+                 SELECT 1 FROM issue_relations blocked_relation
+                 JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
+                 WHERE blocked_relation.target_issue_id = i.id
+                   AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
+                   AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
+                   AND blocker.project_id IN (SELECT id FROM current_relation_projects)
+               ))
+           )`}
+           AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
+           ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
+           ${issueFilter.statuses.length === 0 ? "" : issueFilter.statuses.length === 1
+             ? "AND i.status_key = json_extract(?6, '$[0]')"
+             : "AND i.status_key IN (SELECT value FROM json_each(?6))"}
+           ${issueFilter.assignees.length === 0 ? "" : `AND (
+             i.assignee_principal_id IN (SELECT value FROM json_each(?7))
+             ${issueFilter.assignees.includes("unassigned") ? "OR i.assignee_principal_id IS NULL" : ""}
+           )`}
+           ${issueFilter.priorities.length === 0 ? "" : "AND i.priority_key IN (SELECT value FROM json_each(?11))"}
+           ${cursor === null ? "" : `AND (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"}, i.number) < (?4, ?5)`}
+`;
+}
+
+function sameProjectIds(previous: readonly VisibleProject[], current: readonly VisibleProject[]): boolean {
+  const previousIds = previous.map((project) => project.projectId).sort();
+  const currentIds = current.map((project) => project.projectId).sort();
+  return previousIds.length === currentIds.length
+    && previousIds.every((projectId, index) => projectId === currentIds[index]);
+}
+
 function issuePageSql(
   filter: IssueListFilter,
   predicates: string,
@@ -1134,31 +1174,7 @@ async function listIssueRows(
     } else {
       const cursor = parsedCursor as [number, number] | null;
       const currentAuthGuard = buildCurrentAuthGuard(auth, now, 13);
-      const ordinaryPredicates = `1 = 1
-           ${issueFilter.blocked === null ? "" : `AND ${issueFilter.blocked === "exclude" ? "NOT" : ""} (
-             i.blocked_reason IS NOT NULL OR (i.deleted_at IS NULL
-               AND i.project_id IN (SELECT id FROM current_relation_projects)
-               AND EXISTS (
-                 SELECT 1 FROM issue_relations blocked_relation
-                 JOIN issues blocker ON blocker.id = blocked_relation.source_issue_id
-                 WHERE blocked_relation.target_issue_id = i.id
-                   AND blocked_relation.kind = 'blocks' AND blocked_relation.deleted_at IS NULL
-                   AND blocker.deleted_at IS NULL AND blocker.status_key <> 'done'
-                   AND blocker.project_id IN (SELECT id FROM current_relation_projects)
-               ))
-           )`}
-           AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
-           ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
-           ${issueFilter.statuses.length === 0 ? "" : issueFilter.statuses.length === 1
-             ? "AND i.status_key = json_extract(?6, '$[0]')"
-             : "AND i.status_key IN (SELECT value FROM json_each(?6))"}
-           ${issueFilter.assignees.length === 0 ? "" : `AND (
-             i.assignee_principal_id IN (SELECT value FROM json_each(?7))
-             ${issueFilter.assignees.includes("unassigned") ? "OR i.assignee_principal_id IS NULL" : ""}
-           )`}
-           ${issueFilter.priorities.length === 0 ? "" : "AND i.priority_key IN (SELECT value FROM json_each(?11))"}
-           ${cursor === null ? "" : `AND (${deletionView === "only" ? "i.deleted_at" : "i.updated_at"}, i.number) < (?4, ?5)`}
-`;
+      const ordinaryPredicates = ordinaryIssuePredicates(issueFilter, search, deletionView, cursor);
       const statement = db.prepare(
         `WITH current_result_projects(id) AS MATERIALIZED (
            SELECT current_project.id
@@ -1301,12 +1317,6 @@ async function listIssuesInternal(
     forcedProject !== null
     && !currentScope.projects.some((project) => project.projectId === forcedProject.projectId)
   ) throw notFound();
-  const sameProjectIds = (previous: readonly VisibleProject[], current: readonly VisibleProject[]) => {
-    const previousIds = previous.map((project) => project.projectId).sort();
-    const currentIds = current.map((project) => project.projectId).sort();
-    return previousIds.length === currentIds.length
-      && previousIds.every((projectId, index) => projectId === currentIds[index]);
-  };
   if (
     !sameProjectIds(scope.projects, currentScope.projects)
     || !sameProjectIds(scope.relationProjects, currentScope.relationProjects)
@@ -1369,6 +1379,99 @@ export async function listProjectIssues(
     : await requireVisibleProject(db, auth, workspaceId, projectId);
   if (project === undefined) throw notFound();
   return listIssuesInternal(db, auth, url, false, project, now);
+}
+
+export async function countProjectIssues(
+  db: D1Database,
+  auth: AuthContext,
+  workspaceIdValue: JsonValue,
+  projectIdValue: JsonValue,
+  url: URL,
+  now = Date.now(),
+): Promise<{ [key: string]: JsonValue }> {
+  for (const field of ["deleted", "cursor", "limit"]) {
+    if (url.searchParams.has(field)) throw validationError("unsupported_issue_count_parameter", { field });
+  }
+  const workspaceId = requireUuid(workspaceIdValue, "workspace_id");
+  const projectId = requireUuid(projectIdValue, "project_id");
+  const project = await requireVisibleProject(db, auth, workspaceId, projectId);
+  const scope = await resolveIssueScope(db, auth, url, project);
+  const search = searchFilter(url);
+  const filter = requireIssueListFilter(url);
+  const guard = buildCurrentAuthGuard(auth, now, 13);
+  let index = "idx_issues_active_status_order";
+  if (filter.assignees.length > 0 && !filter.assignees.includes("unassigned")) index = "idx_issues_active_assignee_order";
+  else if (filter.priorities.length > 0) index = "idx_issues_active_priority_order";
+  const labelMatches = filter.labels.length === 0 ? "" : `, matched_label_issues(id) AS MATERIALIZED (
+    SELECT DISTINCT association.issue_id
+    FROM json_each(?12) requested_label
+    CROSS JOIN labels selected_label ON selected_label.id = requested_label.value
+      AND selected_label.deleted_at IS NULL
+      AND selected_label.project_id IN (SELECT id FROM current_result_projects)
+    CROSS JOIN issue_labels association ON association.label_id = selected_label.id
+  )`;
+  let rows: { status_key: StatusKey; count: number }[];
+  try {
+    const result = await db.prepare(
+      `WITH current_result_projects(id) AS MATERIALIZED (
+         SELECT current_project.id
+         FROM projects current_project
+         JOIN workspaces current_workspace ON current_workspace.id = current_project.workspace_id
+         JOIN instance_meta current_instance ON current_instance.singleton = 1
+         WHERE current_project.id IN (SELECT value FROM json_each(?1))
+           AND current_project.deleted_at IS NULL AND current_workspace.deleted_at IS NULL
+           AND ${guard.sql}
+           AND (current_instance.owner_principal_id = ?9 OR EXISTS (
+             SELECT 1 FROM effective_project_grants current_grant
+             WHERE current_grant.project_id = current_project.id
+               AND current_grant.principal_id = ?9 AND current_grant.revoked_at IS NULL
+           ))
+       ), current_relation_projects(id) AS MATERIALIZED (
+         SELECT relation_project.id
+         FROM projects relation_project
+         JOIN workspaces relation_workspace ON relation_workspace.id = relation_project.workspace_id
+         JOIN instance_meta relation_instance ON relation_instance.singleton = 1
+         WHERE relation_project.id IN (SELECT value FROM json_each(?10))
+           AND relation_project.deleted_at IS NULL AND relation_workspace.deleted_at IS NULL
+           AND ${guard.sql}
+           AND (relation_instance.owner_principal_id = ?9 OR EXISTS (
+             SELECT 1 FROM effective_project_grants relation_grant
+             WHERE relation_grant.project_id = relation_project.id
+               AND relation_grant.principal_id = ?9 AND relation_grant.revoked_at IS NULL
+           ))
+       )${labelMatches}
+       SELECT i.status_key, COUNT(*) AS count
+       ${filter.labels.length === 0
+         ? `FROM current_result_projects result_project
+            CROSS JOIN issues i INDEXED BY ${index} ON i.project_id = result_project.id`
+         : `FROM matched_label_issues matching
+            CROSS JOIN issues i ON i.id = matching.id
+            WHERE i.project_id IN (SELECT id FROM current_result_projects) AND`}
+       ${filter.labels.length === 0 ? "WHERE" : ""} ${ordinaryIssuePredicates(filter, search, "exclude", null)}
+       GROUP BY i.status_key`,
+    ).bind(
+      JSON.stringify(scope.projects.map((visible) => visible.projectId)), search.number, search.normalized,
+      null, null, JSON.stringify(filter.statuses), JSON.stringify(filter.assignees), null, auth.principalId,
+      JSON.stringify(scope.relationProjects.map((visible) => visible.projectId)), JSON.stringify(filter.priorities),
+      JSON.stringify(filter.labels), ...guard.values,
+    ).all<{ status_key: StatusKey; count: number }>();
+    rows = result.results;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw platformUnavailable("d1", error);
+  }
+  await verifyCurrentAuth(db, auth, now);
+  const currentScope = await resolveIssueScope(db, auth, url, project);
+  if (!currentScope.projects.some((visible) => visible.projectId === projectId)) throw notFound();
+  if (!sameProjectIds(scope.projects, currentScope.projects)
+    || !sameProjectIds(scope.relationProjects, currentScope.relationProjects)) throw cursorScopeMismatch();
+  const counts: { [key: string]: JsonValue } = Object.fromEntries(WORKFLOW_STATUSES.map(({ key }) => [key, 0]));
+  for (const row of rows) counts[row.status_key] = row.count;
+  return {
+    counts,
+    total_count: rows.reduce((total, row) => total + row.count, 0),
+    resolved_scope: resolvedScope(currentScope, search, null, filter),
+  };
 }
 
 async function visibleRelations(

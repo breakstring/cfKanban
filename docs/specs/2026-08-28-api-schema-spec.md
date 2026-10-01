@@ -28,7 +28,7 @@
 - Web 合同：[极简 Web UI SPEC](2026-08-29-web-ui-spec.md)（Frozen）
 - 架构基线：[Cloudflare 架构基线](../architecture/cloudflare-baseline.md)
 - 平台快照：[2026-08-28 Cloudflare 平台快照](../research/cloudflare-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-10-01（CFK-528，Principal 主题与 schema 14）
+- 最近更新：2026-10-01（CFK-528 Principal 主题与 schema 14；CFK-532 独立项目状态计数）
 - 冻结日期：2026-08-29
 
 ## 1. 目的与边界
@@ -184,6 +184,8 @@ cursor 不包含 secret，也不以保密性作为安全边界。服务端每次
 ### 4.2 分页和排序
 
 - 默认 `limit=20`，最大 100；查询使用 `limit + 1` 推导 `has_more`，不为普通列表执行总数 `COUNT(*)`。
+- 2026-10-01 用户授权 CFK-532：显式 `GET /api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts` 独立读取当前项目未删除 Issue 的匹配总数；普通列表不附带计数。返回固定五状态的 `counts`、其和 `total_count` 及 `resolved_scope`，空状态填 0。复用普通列表的 `q / status / assignee / priority / label / blocked` 和规范化筛选、实时权限与标签去重语义；Project 路径限定读取范围。拒绝 `deleted / limit / cursor`，不遍历分页。
+- 计数只用一条参数化聚合 SQL，五状态来自同一次读取；查询及返回前重新核验凭据、Session、容器和有效权限，期间权限范围漂移拒绝旧聚合。列表和计数是独立读取，不承诺同一快照；并发写入后客户端显式重新读取。复用现有 active 索引，不增加写入计数器或 migration；读取成本随匹配项目及筛选规模增长，标题 substring、标签和阻塞关系可能增加扫描，不宣称计数具有分页的固定读取上界。
 - 普通 Issue 列表按 `updated_at DESC, number DESC`；候选列表按 `priority_rank ASC, created_at ASC, number ASC`。
 - Comment 按 `created_at ASC, id ASC`；Event 按 `sequence ASC`；tombstone 按 `deleted_at DESC, stable_id DESC`。
 - 禁止 offset pagination 和 `ORDER BY RANDOM()`。
@@ -243,6 +245,7 @@ cursor 不包含 secret，也不以保密性作为安全边界。服务端每次
 | GET | `/api/v1/issues` | Authenticated | 跨授权 Project 聚合列表 |
 | GET | `/api/v1/issues/candidates` | Authenticated | 只读确定性候选列表 |
 | GET/POST | `/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues` | reader / writer | Project 列表；创建一个 Issue |
+| GET | `/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts` | reader | 显式读取当前项目未删除 Issue 按状态的匹配总数，独立于分页 |
 | GET/PATCH/DELETE | `/api/v1/issues/{identifier}` | reader / writer | detail；普通字段/CAS 更新；soft delete |
 | POST | `/api/v1/issues/{identifier}/commands/restore` | writer | 恢复一个 Issue |
 | GET | `/api/v1/issues/{identifier}/context` | reader | 64 KiB 有界 Agent context |

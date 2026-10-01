@@ -93,6 +93,7 @@ const operations = [
   ["get", "/api/v1/issues", "listIssues", "issues", authenticated, "read", "IssueListQuery"],
   ["get", "/api/v1/issues/candidates", "listIssueCandidates", "issues", authenticated, "read", "CandidateListQuery"],
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", "listProjectIssues", "issues", authenticated, "read", "IssueListQuery"],
+  ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts", "countProjectIssues", "issues", authenticated, "read", "IssueCountsQuery"],
   ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", "createIssue", "issues", authenticated, "idempotent", "CreateIssueRequest"],
   ["get", "/api/v1/issues/{identifier}", "getIssue", "issues", authenticated, "read", "IssueDetailQuery"],
   ["patch", "/api/v1/issues/{identifier}", "updateIssue", "issues", authenticated, "cas", "UpdateIssueRequest"],
@@ -358,7 +359,7 @@ const permissionGroups = {
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
   scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
-  project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext"],
+  project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "countProjectIssues"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
     "listAttachments", "listComments", "getComment", "listLabels", "getLabel",
@@ -1127,6 +1128,21 @@ const schemas = {
       has_more: { type: "boolean" },
       items: { type: "array", items: { oneOf: [ref("IssueSummary"), ref("IssueTombstone")] } },
       next_cursor: nullableString(),
+      resolved_scope: ref("IssueResolvedScope"),
+    },
+    additionalProperties: false,
+  },
+  IssueCountsResult: {
+    type: "object",
+    required: ["counts", "total_count", "resolved_scope"],
+    properties: {
+      counts: {
+        type: "object",
+        required: ["backlog", "todo", "in_progress", "done", "canceled"],
+        properties: Object.fromEntries(["backlog", "todo", "in_progress", "done", "canceled"].map((key) => [key, integer({ minimum: 0 })])),
+        additionalProperties: false,
+      },
+      total_count: integer({ minimum: 0 }),
       resolved_scope: ref("IssueResolvedScope"),
     },
     additionalProperties: false,
@@ -2216,6 +2232,7 @@ const querySets = {
   PrincipalListQuery: [{ name: "q", in: "query", required: false, schema: string({ maxLength: 128 }) }, { name: "project_id", in: "query", required: false, schema: ref("Uuid") }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   RelationDeleteQuery: [],
 };
+querySets.IssueCountsQuery = querySets.IssueListQuery.filter(({ name }) => !["deleted", "cursor", "limit"].includes(name));
 
 const operationResponseSchemas = {
   getMe: ref("CurrentPrincipal"),
@@ -2291,6 +2308,7 @@ const operationResponseSchemas = {
   listIssues: ref("IssueListResult"),
   listIssueCandidates: ref("ActiveIssueListResult"),
   listProjectIssues: ref("IssueListResult"),
+  countProjectIssues: ref("IssueCountsResult"),
   getIssue: { oneOf: [ref("IssueFullDetail"), ref("IssueTombstone")] },
   getIssueContext: ref("IssueContext"),
   createIssue: ref("ActiveIssueWriteResult"),
@@ -2413,6 +2431,8 @@ for (const operation of operations) {
 
 const requestIdHeader = { "X-Request-ID": { $ref: "#/components/headers/RequestId" } };
 const noStoreHeader = { ...requestIdHeader, "Cache-Control": { required: true, schema: { type: "string", const: "no-store" } } };
+paths["/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts"].get.description = "Read exact counts for all five fixed workflow statuses and their total within one active Project, using the same normalized filters and current authorization as the ordinary Issue list. Deleted Issues are excluded; deleted, cursor and limit parameters are rejected. Counts are aggregated by one SQL statement, do not load all Issue pages, and are independent of list request snapshots. Filtered counts may scan all matching candidates; no fixed rows-read cost is promised.";
+paths["/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts"].get.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/owner-credentials/add-device"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Explicitly approve an Agent-generated non-secret pairing request for the same instance and Owner. Requires at least one active Owner API Credential and enforces the 100 active Credential limit atomically. Principal CAS, idempotency and security audit commit together. The new Agent must still verify its pending Credential locally; this is not an all-credentials-lost recovery endpoint.";
 paths["/api/v1/admin/owner-credentials/{credential_id}/revoke"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Atomically revoke another Owner device and its derived Session/Launch capabilities with Principal CAS, idempotency and security audit. Reject the caller's Bearer Credential, an Agent Session's source Credential and the last active Owner API Credential. Passkey Sessions remain independent. Generic Credential DELETE and Owner rotation retain their separate restrictions.";
 paths["/api/v1/admin/owner-credentials/{credential_id}/rename"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Set or change the display name of an exact active Owner Credential, including the caller's and last active device. Principal CAS, idempotency, the immutable result snapshot and security audit commit atomically. Does not rotate/revoke credentials or change secrets, fingerprints, Principal identity, sessions or permissions. Revoked and non-Owner targets are rejected.";
