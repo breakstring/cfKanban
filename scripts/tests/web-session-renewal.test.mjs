@@ -33,6 +33,47 @@ function harness(overrides = {}) {
   return { timer, controller, calls, accepted, get active() { return active; }, get expired() { return expired; }, get notified() { return notified; }, set visible(value) { visible = value; }, set server(value) { server = value; }, close: () => controller.setSession(null) };
 }
 
+test("default browser timers retain their global receiver during renewal, hints and cancellation", async () => {
+  const timers = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const timer = clock(), calls = [];
+  let controller, server = facts(), pendingRead;
+  globalThis.setTimeout = function(callback, delay) {
+    assert.ok(this === globalThis, "native browser timers require the global receiver");
+    return timer.set(callback, delay);
+  };
+  globalThis.clearTimeout = function(handle) {
+    assert.ok(this === globalThis, "native browser timer cleanup requires the global receiver");
+    timer.clear(handle);
+  };
+  try {
+    controller = new SessionRenewalController({ now: timer.now, visible: () => true,
+      read: async signal => { calls.push({ kind: "GET", signal }); return pendingRead ? new Promise(() => {}) : server; },
+      renew: async () => { calls.push({ kind: "POST" }); server = facts({ version: 2, expires_at: iso(timer.now() + 8 * HOUR), renewal: { ...server.renewal, renew_after: iso(timer.now() + HOUR / 2) } }); },
+      accept: value => controller.setSession(value), expire: () => assert.fail("the active session must not expire"),
+      accessFailure: () => false, versionConflict: () => false });
+    controller.setSession(server);
+    await timer.advance(HOUR);
+    controller.activity({ type: "keydown", isTrusted: true }); await flush();
+    assert.deepEqual(calls.map(call => call.kind), ["POST", "GET"]);
+    assert.equal(timer.jobs.size, 1, "successful renewal clears its request timeout and replaces the deadline timer");
+    controller.hint(); await flush(); controller.hint();
+    await timer.advance(30_000);
+    assert.equal(calls.filter(call => call.kind === "GET").length, 3);
+    pendingRead = true;
+    const canceled = controller.revalidate();
+    controller.setSession(null); await canceled;
+    assert.equal(calls.at(-1).signal.aborted, true);
+    assert.equal(timer.jobs.size, 0, "logout cancels the request and deadline timers");
+    controller.setSession(server);
+    const timedOut = controller.revalidate();
+    await timer.advance(5_000); await timedOut;
+    assert.equal(calls.at(-1).signal.aborted, true);
+  } finally {
+    controller?.setSession(null);
+    Object.assign(globalThis, timers);
+  }
+});
+
 for (const kind of ["credential", "web_authenticator"]) test(`${kind}: only trusted visible interaction renews after the server throttle`, async () => {
   const value = harness(); value.server = facts({ source: { kind, id: "source" } });
   value.controller.setSession(facts({ source: { kind, id: "source" } }));

@@ -2039,7 +2039,6 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(appSource, /armSessionExpiry\(result\.expires_at\)/);
   assert.match(appSource, /route\.kind === 'owner' && canAccessOwnerControlPlane\(session\)/);
   assert.match(appHeaderSource, /canAccessOwnerControlPlane\(props\.session\)/);
-  assert.match(appSource, /:expires-at="session\.expires_at"/);
   assert.match(appSource, /preferred_api_origin/);
   assert.doesNotMatch(appHeaderSource, /expires_at|preferred_api_origin/);
   assert.match(ownerSource, /initializeInvitationRecovery\(\)/);

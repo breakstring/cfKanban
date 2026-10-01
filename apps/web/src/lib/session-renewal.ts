@@ -66,8 +66,8 @@ export class SessionRenewalController {
   constructor(options: SessionRenewalOptions) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
-    this.#set = options.set ?? setTimeout;
-    this.#clear = options.clear ?? clearTimeout;
+    this.#set = options.set ?? ((callback, delay) => globalThis.setTimeout(callback, delay));
+    this.#clear = options.clear ?? (handle => globalThis.clearTimeout(handle));
   }
 
   setSession(session: WebSessionView | null): void {
