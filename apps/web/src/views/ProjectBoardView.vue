@@ -8,6 +8,7 @@ import USelect from "@nuxt/ui/components/Select.vue";
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
 
 import CasConflictNotice from "../components/CasConflictNotice.vue";
+import AssigneeMenu from "../components/AssigneeMenu.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
@@ -234,16 +235,9 @@ function ensureAssigneesLoaded(): void {
   if (!assigneesLoaded.value && !assigneesError.value) void loadAssignees();
 }
 
-function onAssigneeSelection(issue: IssueSummary, event: Event): void {
-  const select = event.target as HTMLSelectElement;
-  const value = select.value;
-  select.value = issue.assignee?.principal_id ?? "";
-  if (value === "load-assignees") {
-    void loadAssignees(assigneesError.value !== null || !assigneesLoaded.value);
-    return;
-  }
-  if (value !== "" && !assignees.value.some(candidate => candidate.principal_id === value)) return;
-  void saveAssignee(issue, value || null);
+function onAssigneeSelection(issue: IssueSummary, principalId: string | null): void {
+  if (principalId !== null && !assignees.value.some(candidate => candidate.principal_id === principalId)) return;
+  void saveAssignee(issue, principalId);
 }
 
 function filterParams(): URLSearchParams {
@@ -713,8 +707,6 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
     <p v-for="pending in pendingPriorities" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '优先级保存结果尚未确认，请核实原操作后继续。' : 'Priority save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="savePriority(pending.issue, pending.priority)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
     <p v-for="pending in pendingStatuses" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '状态保存结果尚未确认，请核实原操作后继续。' : 'Status save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="saveStatus(pending.issue, pending.status)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
     <p v-for="pending in pendingAssignees" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '负责人保存结果尚未确认，请核实原操作后继续。' : 'Assignee save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="saveAssignee(pending.issue, pending.principalId)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
-    <p v-if="assigneesLoading" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '正在加载可指派人员…' : 'Loading eligible people…' }}</p>
-    <div v-if="assigneesError" class="inline-alert" role="alert">{{ errorText(assigneesError) }} <UButton color="neutral" variant="ghost" type="button" :disabled="assigneesLoading || !canWrite" @click="loadAssignees()">{{ locale === 'zh-CN' ? '重试加载人员' : 'Retry loading people' }}</UButton></div>
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
@@ -772,32 +764,26 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
                 </span>
               </button>
               <div class="card-meta">
-                <span class="card-assignee" :title="issue.assignee?.display_name ?? t('issue.unassigned')">
-                  <UAvatar :alt="issue.assignee?.display_name ?? '—'" size="2xs" />
-                  <select
+                <div class="card-assignee">
+                  <AssigneeMenu
                     v-if="canWrite"
-                    class="card-assignee-select"
-                    :value="issue.assignee?.principal_id ?? ''"
+                    :assignee="issue.assignee"
+                    :candidates="assignees"
                     :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id] || !!pendingAssignees[issue.id]"
-                    :aria-label="`${issue.identifier} · ${t('issue.assignee')}`"
-                    :aria-busy="assigneesLoading || saving.has(issue.id)"
-                    :draggable="false"
-                    @focus="ensureAssigneesLoaded"
-                    @pointerdown.stop="ensureAssigneesLoaded"
-                    @mousedown.stop
-                    @click.stop
-                    @keydown.stop
-                    @dragstart.stop.prevent
-                    @change.stop="onAssigneeSelection(issue, $event)"
-                  >
-                    <option value="">{{ t('issue.unassigned') }}</option>
-                    <option v-if="issue.assignee && !assignees.some(candidate => candidate.principal_id === issue.assignee?.principal_id)" :value="issue.assignee.principal_id" disabled>{{ issue.assignee.display_name }}</option>
-                    <option v-for="candidate in assignees" :key="candidate.principal_id" :value="candidate.principal_id">{{ candidate.display_name }}</option>
-                    <option v-if="assigneesLoading" disabled>{{ locale === 'zh-CN' ? '正在加载可指派人员…' : 'Loading eligible people…' }}</option>
-                    <option v-else-if="assigneesError || assigneesCursor" value="load-assignees">{{ assigneesError ? (locale === 'zh-CN' ? '重试加载人员…' : 'Retry loading people…') : (locale === 'zh-CN' ? '加载更多人员…' : 'Load more people…') }}</option>
-                  </select>
-                  <span v-else>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
-                </span>
+                    :loading="assigneesLoading"
+                    :has-more="assigneesCursor !== null"
+                    :load-error="assigneesError ? errorText(assigneesError) : null"
+                    :label="`${issue.identifier} · ${t('issue.assignee')}`"
+                    @open="ensureAssigneesLoaded"
+                    @select="onAssigneeSelection(issue, $event)"
+                    @load-more="loadAssignees(false)"
+                    @retry="loadAssignees()"
+                  />
+                  <template v-else>
+                    <UAvatar :text="issue.assignee ? [...issue.assignee.display_name][0] ?? '—' : '—'" size="2xs" />
+                    <span :title="issue.assignee?.display_name ?? t('issue.unassigned')">{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
+                  </template>
+                </div>
               <select
                 v-if="canWrite"
                 class="card-status-select"
@@ -880,14 +866,12 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
 .card-meta { flex-wrap: nowrap; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .card-assignee { display: flex; align-items: center; gap: 6px; flex: 1 1 0; text-align: left; }
 .card-assignee > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card-assignee-select { flex: 1 1 0; min-width: 0; width: 100%; min-height: 32px; padding: 4px 2px; border-color: transparent; background-color: transparent; font-size: 12px; text-overflow: ellipsis; }
-.card-assignee-select:hover:not(:disabled) { border-color: var(--color-border-strong); }
 .card-status-select { flex: 0 1 auto; max-width: 54%; padding: 4px 2px; min-height: 32px; font-size: 12px; text-align: right; }
 .column-empty { padding: 16px 8px; border-top: 0; color: var(--color-text-muted); font-size: 12px; }
 .form-stack :deep(.relative), .form-grid :deep(.relative) { width: 100%; }
 @media (max-width: 940px) {
   .board-page--nuxt { padding: 20px 16px 12px; }
-  .board-toolbar-actions :deep(button), .board-search :deep(input), .board-search :deep(button), .card-assignee-select, .card-status-select, .issue-card-open { min-height: 44px; }
+  .board-toolbar-actions :deep(button), .board-search :deep(input), .board-search :deep(button), .card-status-select, .issue-card-open { min-height: 44px; }
 }
 @media (max-width: 640px) {
   .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 16px; }

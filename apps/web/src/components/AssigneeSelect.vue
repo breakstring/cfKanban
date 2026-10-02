@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import UButton from "@nuxt/ui/components/Button.vue";
 import { onUnmounted, ref, watch } from "vue";
+import AssigneeMenu from "./AssigneeMenu.vue";
 import { apiRequest } from "../lib/api";
 import { locale, t } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
@@ -48,10 +48,7 @@ async function load(reset = true): Promise<void> {
   }
 }
 
-function select(event: Event): void {
-  const element = event.target as HTMLSelectElement;
-  const principalId = element.value || null;
-  element.value = props.assignee?.principal_id ?? "";
+function select(principalId: string | null): void {
   if (props.disabled || loading.value || principalId === (props.assignee?.principal_id ?? null)) return;
   emit("select", principalId);
 }
@@ -62,14 +59,7 @@ onUnmounted(() => { generation += 1; });
 
 <template>
   <div class="assignee-control">
-    <select :value="assignee?.principal_id ?? ''" :aria-label="t('issue.assignee')" :disabled="disabled || loading" @change="select">
-      <option value="">{{ t("issue.unassigned") }}</option>
-      <option v-if="assignee && !candidates.some(item => item.principal_id === assignee?.principal_id)" :value="assignee.principal_id" disabled>{{ assignee.display_name }}</option>
-      <option v-for="candidate in candidates" :key="candidate.principal_id" :value="candidate.principal_id">{{ candidate.display_name }}</option>
-    </select>
+    <AssigneeMenu :assignee="assignee" :candidates="candidates" :disabled="disabled" :loading="loading" :has-more="nextCursor !== null" :load-error="error" :label="t('issue.assignee')" @select="select" @load-more="load(false)" @retry="load()" />
     <small v-if="assignee && !assignee.available" class="inline-alert">{{ locale === 'zh-CN' ? '原负责人已无指派资格，请重新选择。' : 'The current assignee is no longer eligible. Choose another person.' }}</small>
-    <small v-if="loading" role="status">{{ locale === 'zh-CN' ? '正在加载可指派人员…' : 'Loading eligible people…' }}</small>
-    <template v-if="error"><small class="inline-alert" role="alert">{{ error }}</small><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="loading || disabled" @click="load()">{{ t('action.refresh') }}</UButton></template>
-    <UButton color="neutral" variant="ghost" v-else-if="nextCursor" class="text-button" type="button" :disabled="loading || disabled" @click="load(false)">{{ locale === 'zh-CN' ? '加载更多人员' : 'Load more people' }}</UButton>
   </div>
 </template>

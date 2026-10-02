@@ -247,11 +247,13 @@ test('board disables query choices until the first project load finishes', async
 
 const assigneePerson = { principal_id: '00000000-0000-4000-8000-000000000081', display_name: 'Eligible writer' };
 const otherAssignee = { principal_id: '00000000-0000-4000-8000-000000000082', display_name: 'Another writer' };
-const boardAssigneeSelect = (host, identifier = 'CFK-1') => all(host).find(item => item.tag === 'select' && item.props['aria-label'] === `${identifier} · ${locale.value === 'zh-CN' ? '负责人' : 'Assignee'}`);
+const boardAssigneeMenu = (host, identifier = 'CFK-1') => all(host).find(item => item.tag === 'button' && item.props['aria-label']?.startsWith(`${identifier} · ${locale.value === 'zh-CN' ? '负责人' : 'Assignee'} · `))?.parent;
 function chooseBoardAssignee(host, value, identifier = 'CFK-1') {
-  const target = { value };
-  boardAssigneeSelect(host, identifier).props.onChange({ target, stopPropagation() {} });
-  return target;
+  const menu = boardAssigneeMenu(host, identifier);
+  const option = menu.children.find(item => item.tag === 'button' && (value === 'load-assignees' ? text(item) === 'Load more people' : item.props.value === value));
+  assert.ok(option, 'requested candidate or continuation must be rendered');
+  option.props.onClick({ preventDefault() {}, stopPropagation() {} });
+  return { value: menu.props.value };
 }
 function assigneeBoardFixture({ rows, write, candidates, readback } = {}) {
   const calls = [];
@@ -280,23 +282,23 @@ test('board assignee selection and clearing use stable IDs and confirmed CAS val
   const fixture = assigneeBoardFixture();
   const { app, host } = mount(Board, { session, workspaceId: workspace, projectId: p1 });
   try {
-    await until(() => !!boardAssigneeSelect(host));
+    await until(() => !!boardAssigneeMenu(host));
     assert.equal(fixture.peopleReads().length, 0, 'unopened card controls do not fetch people');
-    boardAssigneeSelect(host).props.onFocus();
-    await until(() => boardAssigneeSelect(host).children.some(option => option.props.value === assigneePerson.principal_id));
+    boardAssigneeMenu(host).props.onOpen();
+    await until(() => boardAssigneeMenu(host).children.some(option => option.props.value === assigneePerson.principal_id));
     const target = chooseBoardAssignee(host, assigneePerson.principal_id);
-    assert.equal(target.value, '', 'the native control keeps the last confirmed value during save');
-    await until(() => boardAssigneeSelect(host).props.value === assigneePerson.principal_id);
+    assert.equal(target.value, '', 'the menu keeps the last confirmed value during save');
+    await until(() => boardAssigneeMenu(host).props.value === assigneePerson.principal_id);
     assert.deepEqual(JSON.parse(fixture.writes()[0].init.body), { expected_version: 2, assignee_principal_id: assigneePerson.principal_id });
     chooseBoardAssignee(host, assigneePerson.principal_id); await nextTick();
     assert.equal(fixture.writes().length, 1, 'selecting the current stable ID is a no-op');
     const clearTarget = chooseBoardAssignee(host, '');
     assert.equal(clearTarget.value, assigneePerson.principal_id);
-    await until(() => boardAssigneeSelect(host).props.value === '');
+    await until(() => boardAssigneeMenu(host).props.value === '');
     assert.deepEqual(JSON.parse(fixture.writes()[1].init.body), { expected_version: 3, assignee_principal_id: null });
     locale.value = 'zh-CN'; await nextTick();
-    assert.ok(boardAssigneeSelect(host));
-    assert.equal(text(boardAssigneeSelect(host).children[0]), '未分配');
+    assert.ok(boardAssigneeMenu(host));
+    assert.equal(text(boardAssigneeMenu(host).children.find(item => item.props.value === '')), '未分配');
     assert.equal(fixture.peopleReads().length, 1);
   } finally { app.unmount(); }
 });
@@ -310,20 +312,20 @@ test('board cards share bounded on-demand assignee pages and preserve an absent 
     : new Promise(resolve => { resolveFirst = () => resolve(Response.json(page([assigneePerson], 'people-next'))); }) });
   const { app, host } = mount(Board, { session, workspaceId: workspace, projectId: p1 });
   try {
-    await until(() => !!boardAssigneeSelect(host));
-    assert.equal(boardAssigneeSelect(host).props.value, otherAssignee.principal_id);
-    const preserved = boardAssigneeSelect(host).children.find(option => option.props.value === otherAssignee.principal_id);
+    await until(() => !!boardAssigneeMenu(host));
+    assert.equal(boardAssigneeMenu(host).props.value, otherAssignee.principal_id);
+    const preserved = boardAssigneeMenu(host).children.find(option => option.props.value === otherAssignee.principal_id);
     assert.equal(text(preserved), otherAssignee.display_name); assert.notEqual(preserved.props.disabled, undefined);
-    boardAssigneeSelect(host).props.onFocus(); boardAssigneeSelect(host, 'CFK-2').props.onFocus();
+    boardAssigneeMenu(host).props.onOpen(); boardAssigneeMenu(host, 'CFK-2').props.onOpen();
     await until(() => !!resolveFirst); assert.equal(fixture.peopleReads().length, 1);
     resolveFirst();
-    await until(() => boardAssigneeSelect(host).children.some(option => option.props.value === 'load-assignees'));
-    assert.equal(boardAssigneeSelect(host).props.value, otherAssignee.principal_id);
+    await until(() => boardAssigneeMenu(host).children.some(option => text(option) === 'Load more people'));
+    assert.equal(boardAssigneeMenu(host).props.value, otherAssignee.principal_id);
     const target = chooseBoardAssignee(host, 'load-assignees'); assert.equal(target.value, otherAssignee.principal_id);
-    await until(() => fixture.peopleReads().length === 2 && !boardAssigneeSelect(host).children.some(option => option.props.value === 'load-assignees'));
+    await until(() => fixture.peopleReads().length === 2 && !boardAssigneeMenu(host).children.some(option => text(option) === 'Load more people'));
     assert.equal(new URL(fixture.peopleReads()[1].path, 'https://local.test').searchParams.get('cursor'), 'people-next');
     assert.ok(fixture.peopleReads().every(call => new URL(call.path, 'https://local.test').searchParams.get('limit') === '50'));
-    for (const id of ['CFK-1', 'CFK-2']) assert.equal(boardAssigneeSelect(host, id).children.filter(option => option.props.value === assigneePerson.principal_id).length, 1);
+    for (const id of ['CFK-1', 'CFK-2']) assert.equal(boardAssigneeMenu(host, id).children.filter(option => option.props.value === assigneePerson.principal_id).length, 1);
     assert.equal(fixture.writes().length, 0);
   } finally { app.unmount(); }
 });
@@ -334,7 +336,7 @@ test('reader board cards retain assignee names and do not expose or fetch writab
   const { app, host } = mount(Board, { session: reader, workspaceId: workspace, projectId: p1 });
   try {
     await until(() => text(host).includes('Eligible writer'));
-    assert.equal(boardAssigneeSelect(host), undefined);
+    assert.equal(boardAssigneeMenu(host), undefined);
     assert.equal(fixture.peopleReads().length, 0); assert.equal(fixture.writes().length, 0);
     assert.match(text(host), /Read-only/);
   } finally { app.unmount(); }
@@ -350,11 +352,11 @@ test('board assignee CAS conflict reads the single Issue and keeps the new confi
   });
   const { app, host } = mount(Board, { session, workspaceId: workspace, projectId: p1 });
   try {
-    await until(() => !!boardAssigneeSelect(host)); boardAssigneeSelect(host).props.onFocus();
-    await until(() => boardAssigneeSelect(host).children.some(option => option.props.value === assigneePerson.principal_id));
+    await until(() => !!boardAssigneeMenu(host)); boardAssigneeMenu(host).props.onOpen();
+    await until(() => boardAssigneeMenu(host).children.some(option => option.props.value === assigneePerson.principal_id));
     chooseBoardAssignee(host, assigneePerson.principal_id);
     await until(() => text(host).includes('latest fact was read back'));
-    assert.equal(boardAssigneeSelect(host).props.value, otherAssignee.principal_id);
+    assert.equal(boardAssigneeMenu(host).props.value, otherAssignee.principal_id);
     assert.equal(fixture.writes().length, 1);
     assert.equal(fixture.calls.filter(call => call.path === '/api/v1/issues/CFK-1' && call.init.method === 'GET').length, 1);
     assert.equal(fixture.calls.filter(call => new URL(call.path, 'https://local.test').pathname.endsWith('/issues')).length, 5, 'conflict does not reload all columns');
@@ -371,18 +373,18 @@ test('uncertain assignee writes fence the card and retry the original version, p
   } });
   const { app, host } = mount(Board, { session, workspaceId: workspace, projectId: p1 });
   try {
-    await until(() => !!boardAssigneeSelect(host)); boardAssigneeSelect(host).props.onFocus();
-    await until(() => boardAssigneeSelect(host).children.some(option => option.props.value === assigneePerson.principal_id));
+    await until(() => !!boardAssigneeMenu(host)); boardAssigneeMenu(host).props.onOpen();
+    await until(() => boardAssigneeMenu(host).children.some(option => option.props.value === assigneePerson.principal_id));
     chooseBoardAssignee(host, assigneePerson.principal_id);
     await until(() => !!button(host, 'CFK-1 · Verify save'));
-    assert.equal(boardAssigneeSelect(host).props.value, '');
-    assert.equal(boardAssigneeSelect(host).props.disabled, true);
+    assert.equal(boardAssigneeMenu(host).props.value, '');
+    assert.equal(boardAssigneeMenu(host).props.disabled, true);
     assert.ok(all(host).filter(item => item.tag === 'select' && item.props['aria-label']?.startsWith('CFK-1')).every(item => item.props.disabled));
     assert.equal(all(host).find(item => item.props.class?.includes?.('issue-card') && item.tag === 'article').props.draggable, false);
     assert.ok(all(host).find(item => item.tag === 'input' && item.props.type === 'search').props.disabled);
     assert.equal(fixture.writes().length, 1);
     button(host, 'CFK-1 · Verify save').props.onClick();
-    await until(() => boardAssigneeSelect(host).props.value === assigneePerson.principal_id && !boardAssigneeSelect(host).props.disabled);
+    await until(() => boardAssigneeMenu(host).props.value === assigneePerson.principal_id && !boardAssigneeMenu(host).props.disabled);
     const writes = fixture.writes(); assert.equal(writes.length, 2);
     assert.equal(writes[0].init.body, writes[1].init.body);
     assert.equal(writes[0].init.headers.get('idempotency-key'), writes[1].init.headers.get('idempotency-key'));
@@ -401,13 +403,13 @@ test('candidate cursor errors clear stale people and retry the first bounded pag
   } });
   const { app, host } = mount(Board, { session, workspaceId: workspace, projectId: p1 });
   try {
-    await until(() => !!boardAssigneeSelect(host)); boardAssigneeSelect(host).props.onFocus();
-    await until(() => boardAssigneeSelect(host).children.some(option => option.props.value === 'load-assignees'));
+    await until(() => !!boardAssigneeMenu(host)); boardAssigneeMenu(host).props.onOpen();
+    await until(() => boardAssigneeMenu(host).children.some(option => text(option) === 'Load more people'));
     phase = 'expired'; chooseBoardAssignee(host, 'load-assignees');
     await until(() => !!button(host, 'Retry loading people'));
-    assert.equal(boardAssigneeSelect(host).children.some(option => option.props.value === assigneePerson.principal_id), false);
-    phase = 'fresh'; button(host, 'Retry loading people').props.onClick();
-    await until(() => boardAssigneeSelect(host).children.some(option => option.props.value === otherAssignee.principal_id));
+    assert.equal(boardAssigneeMenu(host).children.some(option => option.props.value === assigneePerson.principal_id), false);
+    phase = 'fresh'; button(host, 'Retry loading people').props.onClick({ preventDefault() {} });
+    await until(() => boardAssigneeMenu(host).children.some(option => option.props.value === otherAssignee.principal_id));
     assert.equal(new URL(fixture.peopleReads().at(-1).path, 'https://local.test').searchParams.has('cursor'), false);
     assert.equal(fixture.writes().length, 0);
   } finally { app.unmount(); }
@@ -418,20 +420,20 @@ test('saving an assignee disables repeated card inputs and rejected eligibility 
   const fixture = assigneeBoardFixture({ write: () => new Promise(resolve => { resolveWrite = resolve; }) });
   const { app, host } = mount(Board, { session, workspaceId: workspace, projectId: p1 });
   try {
-    await until(() => !!boardAssigneeSelect(host)); boardAssigneeSelect(host).props.onFocus();
-    await until(() => boardAssigneeSelect(host).children.some(option => option.props.value === assigneePerson.principal_id));
+    await until(() => !!boardAssigneeMenu(host)); boardAssigneeMenu(host).props.onOpen();
+    await until(() => boardAssigneeMenu(host).children.some(option => option.props.value === assigneePerson.principal_id));
     chooseBoardAssignee(host, assigneePerson.principal_id);
-    await until(() => !!resolveWrite && boardAssigneeSelect(host).props.disabled);
-    assert.equal(boardAssigneeSelect(host).props.value, '');
+    await until(() => !!resolveWrite && boardAssigneeMenu(host).props.disabled);
+    assert.equal(boardAssigneeMenu(host).props.value, '');
     assert.ok(all(host).filter(item => item.tag === 'select' && item.props['aria-label']?.startsWith('CFK-1')).every(item => item.props.disabled));
     chooseBoardAssignee(host, otherAssignee.principal_id);
     assert.equal(fixture.writes().length, 1);
     const requestId = '00000000-0000-4000-8000-000000000098';
     resolveWrite(Response.json({ category: 'conflict', code: 'ASSIGNEE_NOT_ELIGIBLE', details: {}, message: 'The selected Principal is not eligible for assignment in this Project.', recovery: 'refresh_resource', request_id: requestId, retryable: false, source: 'service' }, { status: 409, headers: { 'x-request-id': requestId } }));
-    await until(() => !boardAssigneeSelect(host).props.disabled);
-    assert.equal(boardAssigneeSelect(host).props.value, '');
+    await until(() => !boardAssigneeMenu(host).props.disabled);
+    assert.equal(boardAssigneeMenu(host).props.value, '');
     assert.match(text(host), /ASSIGNEE_NOT_ELIGIBLE/);
-    assert.equal(boardAssigneeSelect(host).children.some(option => option.props.value === assigneePerson.principal_id), false, 'eligibility rejection invalidates cached candidates');
+    assert.equal(boardAssigneeMenu(host).children.some(option => option.props.value === assigneePerson.principal_id), false, 'eligibility rejection invalidates cached candidates');
     assert.equal(fixture.writes().length, 1);
     assert.equal(button(host, 'CFK-1 · Verify save'), undefined);
   } finally { app.unmount(); }
@@ -444,13 +446,13 @@ test('assignee candidate responses arriving after writer access becomes reader a
   const Wrapper = { setup: () => () => h(Board, { session: currentSession.value, workspaceId: workspace, projectId: p1 }) };
   const { app, host } = mount(Wrapper);
   try {
-    await until(() => !!boardAssigneeSelect(host)); boardAssigneeSelect(host).props.onFocus();
+    await until(() => !!boardAssigneeMenu(host)); boardAssigneeMenu(host).props.onOpen();
     await until(() => !!resolvePeople);
     currentSession.value = { ...session, allowed_scope: { ...session.allowed_scope, projects: projects.map(project => ({ ...project, role: 'reader' })) } };
     await nextTick();
     resolvePeople(Response.json(page([assigneePerson])));
     await new Promise(resolve => setTimeout(resolve, 0)); await nextTick();
-    assert.equal(boardAssigneeSelect(host), undefined);
+    assert.equal(boardAssigneeMenu(host), undefined);
     assert.doesNotMatch(text(host), /Eligible writer|Loading eligible people/);
     assert.equal(fixture.peopleReads().length, 1); assert.equal(fixture.writes().length, 0);
   } finally { app.unmount(); }

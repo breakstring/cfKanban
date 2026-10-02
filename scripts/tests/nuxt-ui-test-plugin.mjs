@@ -22,16 +22,25 @@ import { defineComponent, h } from "vue";
 export default defineComponent({
   name: "U${name}TestAdapter",
   inheritAttrs: false,
-  props: ["modelValue", "modelModifiers", "items", "open", "title", "close", "dismissible", "color", "variant", "size", "ui", "icon", "leadingIcon", "trailingIcon", "loading", "alt", "label", "to", "href"],
+  props: ["modelValue", "modelModifiers", "items", "open", "title", "close", "dismissible", "color", "variant", "size", "ui", "icon", "leadingIcon", "trailingIcon", "loading", "alt", "text", "label", "to", "href"],
   emits: ["update:modelValue", "update:open"],
   setup(props, { attrs, slots, emit }) {
     const value = event => event?.target?.value ?? event;
     const update = next => emit("update:modelValue", next);
     return () => {
       const name = ${JSON.stringify(name)};
-      if (name === "DropdownMenu") return h("div", attrs, [
+      if (name === "DropdownMenu") return h("div", {
+        ...attrs,
+        value: (props.items ?? []).flat().find(item => item.checked && "principalId" in item)?.principalId ?? "",
+        onOpen: () => emit("update:open", true),
+      }, [
         slots.default?.(), slots["content-top"]?.(),
-        ...(props.items ?? []).flat().map(item => h("button", { type: "button", disabled: item.disabled, onClick: item.onSelect }, item.label)),
+        ...(props.items ?? []).flat().map(item => h("button", {
+          type: "button", disabled: item.disabled,
+          ...(item.principalId === undefined ? {} : { value: item.principalId ?? "" }),
+          ...(item.type === "checkbox" ? { role: "menuitemcheckbox", "aria-checked": item.checked } : {}),
+          onClick: item.onSelect,
+        }, item.label)),
       ]);
       if (name === "Modal") {
         if (props.open === false) return null;
@@ -64,7 +73,7 @@ export default defineComponent({
         }) : undefined;
         return h(tag, inputProps, options);
       }
-      if (name === "Avatar") return h("span", { ...attrs, "aria-hidden": "true" }, (props.alt ?? "").slice(0, 1));
+      if (name === "Avatar") return h("span", { ...attrs, "aria-hidden": "true" }, props.text ?? (props.alt ?? "").slice(0, 1));
       const tag = name === "Button" ? (props.to || props.href ? "a" : "button") : name === "Badge" ? "span" : name === "Card" ? "article" : "div";
       return h(tag, {
         ...attrs,
