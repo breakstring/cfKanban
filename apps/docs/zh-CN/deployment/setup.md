@@ -1,6 +1,6 @@
-# 部署准备与技能安装
+# 部署准备
 
-只安装技能不需要 Cloudflare 账户。托管或维护自己的站点才需要云端权限。
+托管或维护自己的 cfKanban 实例，需要 Cloudflare 权限与持久私有维护记录。把 Agent 接入已有看板的步骤放在[代理集成](../integrations/index.md)。
 
 ## 检查准备情况
 
@@ -9,20 +9,11 @@
 说明还需要哪些工具、登录和本地存储准备。
 ```
 
-Agent 会检查并尽量复用兼容工具。需要安装或修改环境时，会先说明影响。若使用容器、远端或临时环境，确认退出后仍能保留私有身份和维护记录；Windows 与 WSL 需要分别准备。
+Agent 核对所选发行、工具、执行环境与存储，尽量复用兼容工具；需要安装或修改环境时先说明影响。若使用容器、远端或临时环境，确认退出后仍能保留私有身份和维护记录；Windows 原生与 WSL 需要分别准备。
 
 ## 安装技能
 
-```text
-请为当前 Agent 宿主安装 cfKanban 的官方正式版技能，
-说明本地安装影响，并核对安装后能否正常加载。
-```
-
-Agent 先识别当前宿主及其支持的安装方式，再发现并校验官方正式发行。完整包包含日常使用、管理、部署和 Howto 讲解四个技能，以及必须与技能一起保留的共享 runtime。
-
-支持兼容 Git plugin 或 marketplace 来源的宿主，可跟随只承载已公开正式发行的默认 `main` 分支。支持 plugin 的 Codex 是其中一个例子，普通安装省略 `--ref`，即使 Agent 为本次安装校验固定了准确版本与摘要。通过本地 Skill 目录加载的宿主，按自身支持的目录布局安装完整已验证 bundle。两种方式都核对所选发行、实际安装内容和已保存的更新来源。
-
-安装后可能需要新开会话；已有兼容版本可以直接使用，无需每次重新安装。只有固定旧 tag 的 Git 来源安装，才需要按[技能更新](./updates.md)一次性切换已保存的来源。
+按[通用安装](../integrations/general.md#安装技能)安装完整四 Skill bundle 并核验 `cfkanban-deploy` 入口；使用 DSH 时阅读 [DeepSeek Harness 插件](../integrations/deepseek-harness.md)。本地安装和更新不需要 Cloudflare 账户，也不创建或升级实例。
 
 ## 登录 Cloudflare
 
@@ -31,8 +22,8 @@ Agent 先识别当前宿主及其支持的安装方式，再发现并校验官�
 需要新登录或额外权限时先说明，再由我确认。
 ```
 
-**在浏览器中：** 在 Cloudflare 官方页面核对账户和权限，再完成登录。多个账户时选准部署目标。不要把 Cloudflare Token 或 cfKanban 凭据粘贴到聊天。
+**在浏览器中：** 在 Cloudflare 官方页面核对账户和权限，再完成登录。多个账户时选准部署目标，不把 Cloudflare Token 或 cfKanban 凭据粘贴到聊天。
 
-cfKanban 的 Owner 身份与 Cloudflare 权限分别管理。登录 Cloudflare 不会立即创建资源；下一步是[首次部署](./first-deployment.md)。
+cfKanban Owner 身份与 Cloudflare 权限分别核验。登录不会立即创建资源；下一步是[首次部署](./first-deployment.md)。
 
 如果只是使用别人的看板，请阅读[加入与登录](../usage/access.md)。

@@ -3,8 +3,11 @@ import { computed } from "vue";
 
 import { renderMarkdown } from "../lib/markdown";
 
-const props = defineProps<{ source: string }>();
-const html = computed(() => renderMarkdown(props.source));
+const props = defineProps<{ source: string; baseUrl?: string; linkTarget?: "_blank" }>();
+const html = computed(() => renderMarkdown(props.source, {
+  ...(props.baseUrl === undefined ? {} : { baseUrl: props.baseUrl }),
+  ...(props.linkTarget === undefined ? {} : { linkTarget: props.linkTarget }),
+}));
 </script>
 
 <template>

@@ -16,7 +16,16 @@
       { "slug": "workflow", "en": "Move work forward", "zh-CN": "推进与完成任务" },
       { "slug": "collaboration", "en": "Comments & organization", "zh-CN": "评论、附件与整理" },
       { "slug": "profile", "en": "Your profile & workspace", "zh-CN": "个人设置与目录关联" },
-      { "slug": "notifications", "en": "Owner notifications", "zh-CN": "Owner 实例通知" }
+      { "slug": "notifications", "en": "Owner notifications", "zh-CN": "Owner 实例通知" },
+      { "slug": "agents", "en": "Agent integration guide", "zh-CN": "代理接入指南", "hidden": true }
+    ]
+  },
+  {
+    "slug": "integrations", "en": "Agent integrations", "zh-CN": "代理集成",
+    "pages": [
+      { "slug": "index", "en": "Choose an integration", "zh-CN": "选择接入方式" },
+      { "slug": "general", "en": "General", "zh-CN": "通用" },
+      { "slug": "deepseek-harness", "en": "DeepSeek Harness", "zh-CN": "DeepSeek Harness" }
     ]
   },
   {
@@ -35,9 +44,9 @@
     "slug": "deployment", "en": "Deployment", "zh-CN": "部署",
     "pages": [
       { "slug": "index", "en": "Deployment overview", "zh-CN": "部署维护概览" },
-      { "slug": "setup", "en": "Prepare & install Skills", "zh-CN": "准备与安装技能" },
+      { "slug": "setup", "en": "Prepare for deployment", "zh-CN": "部署准备" },
       { "slug": "first-deployment", "en": "Your first deployment", "zh-CN": "首次部署" },
-      { "slug": "updates", "en": "Versions & updates", "zh-CN": "版本与更新" },
+      { "slug": "updates", "en": "Instance upgrades", "zh-CN": "实例升级" },
       { "slug": "attach", "en": "Use another computer", "zh-CN": "新电脑接入" },
       { "slug": "recovery", "en": "Resume & recover", "zh-CN": "中断与身份恢复" },
       { "slug": "optional", "en": "Optional capabilities", "zh-CN": "域名与可选能力" }

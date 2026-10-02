@@ -4,6 +4,7 @@ import { preflightBrowser } from "./browser-preflight.mjs";
 import { discoverOwnerRecoveryCandidates } from "./owner-recovery-discovery.mjs";
 import { createOwnerRecoveryPlan, executeOwnerRecovery, inspectOwnerRecovery } from "./owner-recovery.mjs";
 import { resolveWebInstance } from "./web-resolve.mjs";
+import { openWeb } from "./web-open.mjs";
 import { downloadAttachment, uploadAttachment } from "./attachments.mjs";
 import { provisionR2Storage, readR2Storage } from "./r2-storage.mjs";
 import { buildCapabilityReport } from "./capabilities.mjs";
@@ -49,6 +50,7 @@ function command({ description, effect, inputFields = [], output = "ordinary", s
 }
 
 const COMMANDS = new Map([
+  ["web open", command({ description: "Open the shared local project/Issue workbench by default, or explicitly choose online Browser Launch. Supply the user's actual working directory for local mode. Preflight the requested browser; keep the local process alive until closed. Management targets require online mode.", effect: "local_web_service_or_authenticated_browser_delivery", inputFields: ["mode", "directory", "instanceId", "target", "delivery", "idempotencyKey", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["daily", "admin"], run: openWeb })],
   ["capabilities", command({ description: "Inspect the current host, paths, and PATH-level tools without installing anything; Wrangler usability still requires runtime resolve-wrangler.", effect: "read_only", run: buildCapabilityReport })],
   ["state init", command({ description: "Create and verify the private cfKanban user root.", effect: "local_write", inputFields: ["home", "repoRoot", "persistenceConfirmed"], run: initializeStateRoot })],
   ["state put-instance", command({ description: "Store non-secret metadata for one trusted instance.", effect: "local_write", inputFields: ["instanceId", "trustedApiOrigin", "originVersion"], surfaces: ["daily", "deploy"], run: putInstanceMetadata })],
@@ -186,11 +188,12 @@ export async function main(argv = process.argv.slice(2), { surface = "all" } = {
       ? getCommandCatalog({ surface })
       : await dispatch(commandName, {
         ...await readStdinJson(),
-        ...(["web launch", "web preflight"].includes(commandName) ? { onRelayReady: (event) => {
+        ...(["web launch", "web open", "web preflight"].includes(commandName) ? { onRelayReady: (event) => {
           process.stdout.write(`${JSON.stringify(event)}\n`);
         } } : {}),
       }, { surface });
     process.stdout.write(`${JSON.stringify({ ok: true, result }, null, 2)}\n`);
+    if (result?.closed instanceof Promise) await result.closed;
     return 0;
   } catch (error) {
     process.stderr.write(`${JSON.stringify(serializeError(error), null, 2)}\n`);

@@ -24,7 +24,8 @@ Use the index titles to select pages; these are topic hints, not a reason to fet
 | --- | --- |
 | Priority/Label queries, assignment, pagination / 优先级、标签、分配与分页 | Usage → Find & create issues (`usage/issues`); collaboration only when Label maintenance is also asked |
 | Projects, members, scoped permissions / 项目、成员与权限 | Administration → Workspaces & projects / Members & invitations; Concepts & roles for a role distinction |
-| Install or upgrade / 安装或升级 | Deployment → Prepare & install Skills / Versions & updates; first deployment only for a new instance |
+| Install or update an Agent integration / 安装或更新代理接入 | Agent integrations → General Skills & MCP / DeepSeek Harness; use Deployment → Prepare & install Skills when the known instance's older index still places installation there |
+| Deploy or upgrade an Instance / 部署或升级实例 | Deployment → Your first deployment / Versions & updates; first deployment only for a new instance |
 | Owner reminders, reception and history / Owner 提醒、接收与历史 | Usage → Owner notifications (`usage/notifications`); Administration → Settings & usage for Owner publication/withdrawal |
 
 Handle incomplete sources explicitly:
@@ -62,6 +63,8 @@ Participants and Owners use `cfkanban` for ordinary Issue work. For a general �
 Prefix any example with “Use $cfkanban to…” / “请用 $cfkanban …” when explicit Skill selection helps. `reader` can read; `writer` can collaborate within its Project. Assignment and display names never grant access. Status keys are `backlog`, `todo`, `in_progress`, `done`, and `canceled`; completion uses the dedicated completion operation, not an ordinary status edit. Do not invent validation results when recording completion. “Finish this task” may also request implementation: follow the user's context and authority rather than merely marking it done.
 
 Joining is for people who do not yet have access: “Use $cfkanban to join this Project: <Invite URL>.” / “请用 $cfkanban 加入这个项目：<邀请链接>。” Expect inspection of the exact Project and role, one combined join plan, and verified access after approval. Joining an existing instance needs no personal Cloudflare deployment. Web project switching selects already authorized Projects; explain support according to the deployed Service, not a source-only feature.
+
+Explain the two WebUI modes: the local Vue workbench is the default for project switching, Kanban/list, direct priority/status/assignee edits and Issue details; explicit online mode opens the full UI through Browser Launch. On Codex App prefer a verified IAB path using trusted host context, not environment guessing. Local mode uses an active loopback process and short local session, distinct from the online lifetimes below. Users share Issue IDs/URLs and raw Markdown through copy actions; no Agent-session send or duplicate summary is present.
 
 When explaining browser access, distinguish API identity from browser-session delivery. Opening a board, Issue, or administration page routes to the operational Skill's browser preflight and authenticated-target verification. A failed browser handoff alone does not mean the user needs a new Credential or identity. Honor the requested browser; explain a concrete supported recovery path without promising that every host can automate it. Cloudflare OAuth belongs to `cfkanban-deploy` and is a separate login, not a cfKanban Browser Launch.
 

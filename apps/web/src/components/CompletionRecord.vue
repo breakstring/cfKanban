@@ -2,7 +2,7 @@
 import { computed } from "vue";
 
 import { parseCompletionRecord, safeArtifactHref } from "../lib/completion-record";
-import { locale } from "../lib/i18n";
+import { locale } from "../lib/i18n-core";
 
 const props = defineProps<{ value: unknown }>();
 const completion = computed(() => parseCompletionRecord(props.value));

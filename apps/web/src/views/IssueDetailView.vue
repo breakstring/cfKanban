@@ -8,7 +8,8 @@ import UTextarea from "@nuxt/ui/components/Textarea.vue";
 
 import AssigneeSelect from "../components/AssigneeSelect.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
-import IssueContext from "../components/IssueContext.vue";
+import CopyButton from "../components/CopyButton.vue";
+import IssueShare from "../components/IssueShare.vue";
 import CompletionRecord from "../components/CompletionRecord.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import IssueAttachments from "../components/IssueAttachments.vue";
@@ -49,11 +50,11 @@ import type {
   WriteResult,
 } from "../types";
 
-const showContext = ref(false);
 const props = defineProps<{ identifier: string; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string; workspaceId?: string; projectId?: string }] }>();
 
 const issue = ref<IssueDetail | null>(null);
+const shareOrigin = globalThis.location?.origin;
 const statuses = ref<ProjectStatusResource[]>([]);
 const labels = ref<LabelResource[]>([]);
 const labelsNextCursor = ref<string | null>(null);
@@ -973,6 +974,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
           </div>
         </div>
         <div class="issue-actions">
+          <IssueShare :identifier="issue.identifier" :origin="shareOrigin" />
           <UButton color="neutral" variant="outline" v-if="canUpdate" type="button" @click="editMode = !editMode">{{ t("action.edit") }}</UButton>
           <UButton color="primary" variant="solid" v-if="canRestore" type="button" @click="deleteOrRestore">{{ t("action.restore") }}</UButton>
           <UButton color="neutral" variant="ghost" v-else-if="canDelete" type="button" @click="showDelete = true">{{ t("action.delete") }}</UButton>
@@ -988,14 +990,9 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             <div class="form-actions"><UButton color="neutral" variant="outline" type="button" @click="editMode = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="writeBusy">{{ t("action.save") }}</UButton></div>
           </form>
           <section v-else id="issue-description" class="content-section">
-            <h2>{{ t("issue.body") }}</h2>
+            <div class="section-heading-row"><h2>{{ t("issue.body") }}</h2><CopyButton :value="issue.body || ''" :label="ui('Copy description Markdown', '复制描述 Markdown')" /></div>
             <MarkdownContent :source="issue.body || ''" />
           </section>
-
-          <details v-if="!issue.deleted_at" class="content-section" @toggle="($event.target as HTMLDetailsElement).open && (showContext = true)">
-            <summary>{{ ui('Handoff summary', '交接摘要') }}</summary>
-            <IssueContext v-if="showContext" :key="`${issue.identifier}:${issue.version}`" :identifier="issue.identifier" :scope-boundary="projectInventoryBoundary(session.allowed_scope.projects)" />
-          </details>
 
           <IssueAttachments :key="`${session.session_id}:${issue.identifier}`" :identifier="issue.identifier" :can-upload="canUpdate" :session-id="session.session_id" :principal-id="session.principal.id" />
 
@@ -1006,7 +1003,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             </div>
             <div class="comment-stream">
               <article v-for="entry in comments" :key="entry.id" class="comment-entry" :class="{ completion: entry.kind === 'completion' }">
-                <header><strong>{{ entry.author.display_name }}</strong><span>{{ formatTime(entry.created_at) }}</span><UBadge v-if="entry.kind === 'completion'" color="success" variant="soft" size="md">{{ locale === "zh-CN" ? "完成记录" : "completion" }}</UBadge><UButton color="error" variant="ghost" v-if="entry.allowed_actions.includes('delete')" type="button" :disabled="writeBusy" @click="deleteComment(entry)">{{ t("action.delete") }}</UButton></header>
+                <header><strong>{{ entry.author.display_name }}</strong><span>{{ formatTime(entry.created_at) }}</span><CopyButton :value="entry.body || ''" :label="ui('Copy comment Markdown', '复制评论 Markdown')" /><UBadge v-if="entry.kind === 'completion'" color="success" variant="soft" size="md">{{ locale === "zh-CN" ? "完成记录" : "completion" }}</UBadge><UButton color="error" variant="ghost" v-if="entry.allowed_actions.includes('delete')" type="button" :disabled="writeBusy" @click="deleteComment(entry)">{{ t("action.delete") }}</UButton></header>
                 <CompletionRecord v-if="entry.kind === 'completion'" :value="entry.completion"><MarkdownContent :source="entry.body || ''" /></CompletionRecord>
                 <MarkdownContent v-else :source="entry.body || ''" />
               </article>

@@ -16,7 +16,8 @@ If you already have project access, you can start immediately. The Agent reads t
 | Record issues, search, or add progress from your existing work context | Describe the goal to an Agent using the `cfkanban` Skill |
 | Browse the project, edit manually, or read attachments and discussions | The Web board and issue details |
 | Invite members, configure projects, or manage access | The `cfkanban-admin` Skill or the relevant Web management page |
-| Deploy a site, maintain cloud resources, or update Skills and instances | The `cfkanban-deploy` Skill |
+| Install or update this Agent host's Skills, MCP, or plugin | [Agent integrations](../integrations/index.md) |
+| Deploy a site, maintain cloud resources, or upgrade an instance | The `cfkanban-deploy` Skill and [Deployment](../deployment/index.md) |
 | Understand capabilities and choose the next step | This documentation or the teaching Skill `cfkanban-howto` |
 
 Agents and the Web UI use the same project permissions.
@@ -25,6 +26,7 @@ Agents and the Web UI use the same project permissions.
 
 - **Already joined a project:** Go directly to [daily use](../usage/index.md).
 - **Received an invitation or want to join a public project:** Read [Quick start](./quick-start.md).
+- **Setting up an Agent host:** Read [General integration](../integrations/general.md) or the [DeepSeek Harness plugin guide](../integrations/deepseek-harness.md).
 - **Organizing projects and people:** Read [Administration](../administration/index.md).
 - **Want your own instance:** Read [Deployment](../deployment/index.md).
 

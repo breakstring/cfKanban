@@ -1,0 +1,11 @@
+# cfKanban local MCP
+
+This package builds the shared local stdio adapter and internal Host facade. The repository root lockfile fixes its SDK and build dependencies. Run the root build, or `npm run build --workspace @cfkanban/mcp` after `npm ci`.
+
+The build reads the fixed version from `release/version.json` and emits `dist/server.mjs`, `dist/facade.mjs`, `dist/build-metadata.json`, and `dist/THIRD_PARTY_NOTICES.txt`. Both modules include their runtime dependencies; installed artifacts need Node.js >=22.12.0 and no package download or compilation at launch. Releases copy these files into `mcp/` in the verified Skill bundle.
+
+Hosts start the installed `mcp/server.mjs` with a verified absolute Node executable and an argument array. The server takes no arguments or state-path overrides. It reads private state from the actual execution user's home for each operation. Its stdout carries MCP protocol messages only; stderr diagnostics contain fixed, non-sensitive text.
+
+Native Host integrations import `createMcpFacade` from the installed `mcp/facade.mjs`. `listTools()` supplies the exact strict schemas; `callTool(name, arguments, { signal })` returns the Service result or a safe local refusal. Internal bindings fix instance, Principal, and Project IDs. An identity-only binding with empty Project IDs permits only connection inspection and Workspace/Project discovery. Tool arguments cannot change a binding or access arbitrary URLs, files, credentials, administration, deployment, or Browser Launch delivery.
+
+Each write requires one stable key and the applicable CAS versions. A timeout, cancellation, or response loss can leave `outcome_unknown`; retain `recovery_request` and read back before deciding whether to replay the identical request. There is no automatic retry, completion, or write orchestration. Repository Project scope is not read by this first adapter; callers supply explicit Project IDs, or explicitly acknowledge an authorized aggregate read.

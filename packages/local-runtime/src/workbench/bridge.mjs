@@ -1,0 +1,351 @@
+import { randomUUID } from 'node:crypto';
+import { PANEL_PROTOCOL, PanelError, record, uuid, identifier, boundedText, canonical, STATUSES, PRIORITIES, scopeFailureCode } from './shared.mjs';
+import { readWorkspaceScope } from './scope.mjs';
+import { validateCheckpoint } from './checkpoint.mjs';
+
+const ok = data => ({ ok: true, status: 200, data });
+const fail = (code, message, details = {}) => ({ ok: false, status: 400, error: { code, message, details } });
+const operationPending = operation => !operation.settled || (operation.result?.ok && !operation.readback);
+const operationResult = (operation, result, readback = operation.readback ?? null) => ({ ...result, panel: { readback, recovery_required: !operation.settled || (operation.stage === 'sent' && !readback), original_settled: operation.settled, write_stage: operation.stage, idempotency_key: operation.original.idempotency_key } });
+const dataOf = result => {
+  if (!result?.ok) throw new PanelError(result?.error?.code ?? 'PANEL_FOUNDATION_UNAVAILABLE', result?.error?.message ?? 'cfKanban foundation is unavailable.', result?.error?.details ?? {});
+  return result.data;
+};
+
+export function assertLocalHost({ singleUserLocal, webHost, hasWebServer, operator }, peer) {
+  if (singleUserLocal !== true || !operator || peer !== operator || (hasWebServer && webHost !== '127.0.0.1')) {
+    throw new PanelError('PANEL_LOCAL_HOST_REQUIRED', 'Use an explicitly enabled single-user local runtime. Remote and multi-user Hosts are unsupported.');
+  }
+}
+
+export class WorkbenchBridge {
+  constructor({ createFacade, host, sessionContext, directory, directoryReader, scopeReader = readWorkspaceScope, now = Date.now, timeoutMs = 30000 }) {
+    this.createFacade = createFacade;
+    this.host = host;
+    this.sessions = sessionContext;
+    this.directory = directory;
+    this.directoryReader = directoryReader;
+    this.scopeReader = scopeReader;
+    this.now = now;
+    this.timeoutMs = timeoutMs;
+    this.bindings = new Map();
+    this.lifetime = new AbortController();
+  }
+
+  dispose() {
+    this.lifetime.abort();
+    this.bindings.clear();
+  }
+
+  async call(endpoint, payload, signal, peer) {
+    try {
+      assertLocalHost(this.host, peer);
+      const input = record(payload, ['protocol', 'input'], ['protocol', 'input']);
+      if (input.protocol !== PANEL_PROTOCOL) throw new PanelError('PANEL_VERSION_MISMATCH', 'Rebuild or reinstall the matching cfKanban panel and foundation.');
+      const combined = AbortSignal.any([signal ?? new AbortController().signal, this.lifetime.signal, AbortSignal.timeout(this.timeoutMs)]);
+      combined.throwIfAborted();
+      return await this.dispatch(endpoint, input.input, combined);
+    } catch (error) {
+      if (error instanceof PanelError) return { ...fail(error.code, error.message, error.details), ...((error.details.outcome_unknown || (endpoint === 'recover' && error.code === 'PANEL_BINDING_EXPIRED')) ? { outcome_unknown: true } : {}) };
+      return { ...fail('PANEL_REQUEST_UNCERTAIN', 'Request interrupted or unavailable. A write may have committed; retain its original key and recover explicitly.'), ...(['mutate', 'recover'].includes(endpoint) ? { outcome_unknown: true } : {}) };
+    }
+  }
+
+  facade(binding) {
+    const value = this.createFacade(binding ? { binding: { instance_id: binding.instance_id, expected_principal_id: binding.principal_id, project_ids: [binding.project_id] } } : undefined);
+    if (!value || typeof value.callTool !== 'function') throw new PanelError('PANEL_FOUNDATION_UNAVAILABLE', 'Install the matching cfKanban MCP foundation in this Host environment.');
+    return value;
+  }
+
+  binding(input) {
+    uuid(input.binding_id, 'binding_id');
+    const binding = this.bindings.get(input.binding_id);
+    if (!binding || (this.now() - binding.created > 8 * 60 * 60 * 1000 && !this.hasPending(binding))) throw new PanelError('PANEL_BINDING_EXPIRED', 'Select and verify your Instance, Principal and Project again.');
+    return binding;
+  }
+
+  hasPending(binding) {
+    if (!binding) return [...this.bindings.values()].some(value => this.hasPending(value));
+    return [...binding.operations.values()].some(operationPending);
+  }
+
+  acceptsCheckpoint(value) {
+    const checkpoint = validateCheckpoint(value);
+    if (!checkpoint) return false;
+    const pending = [...this.bindings].flatMap(([binding_id, binding]) => [...binding.operations.values()].filter(operationPending).map(operation => ({ binding_id, operation })));
+    if (!pending.length) return true;
+    if (pending.length !== 1 || checkpoint.state.binding?.binding_id !== pending[0].binding_id || !checkpoint.state.pending) return false;
+    return canonical(checkpoint.state.pending) === canonical(pending[0].operation.original);
+  }
+
+  async tool(binding, name, args, signal) {
+    const result = await this.facade(binding).callTool(name, { instance_id: binding.instance_id, ...args }, { signal });
+    if (name === 'cfkanban_issues_get' && result.ok && result.data?.project?.id !== binding.project_id) throw new PanelError('PANEL_SCOPE_DENIED', 'The Issue is outside the bound Project.');
+    return result;
+  }
+
+  async discovery(input, name, args, signal) {
+    uuid(input.instance_id, 'instance_id');
+    uuid(input.expected_principal_id, 'expected_principal_id');
+    const binding = { instance_id: input.instance_id, principal_id: input.expected_principal_id, project_id: args.project_id };
+    const facade = this.createFacade({ binding: { instance_id: binding.instance_id, expected_principal_id: binding.principal_id, project_ids: args.project_id ? [args.project_id] : [] } });
+    return facade.callTool(name, { instance_id: input.instance_id, ...args }, { signal });
+  }
+
+  async rowPermissions(binding, signal) {
+    const identity = dataOf(await this.tool(binding, 'cfkanban_connection_inspect', {}, signal));
+    const principal = identity.principal;
+    return principal?.is_owner === true || principal?.grants?.some(grant => grant.workspace_id === binding.workspace_id && grant.project_id === binding.project_id && ['owner', 'writer'].includes(grant.role));
+  }
+
+  rowActions(rows, writer) {
+    return rows.map(row => ({ ...row, allowed_actions: ['read', ...(writer && !row.deleted_at ? ['update'] : [])] }));
+  }
+
+  async dispatch(endpoint, input, signal) {
+    if (endpoint === 'workspace_scope') {
+      record(input, []);
+      return ok(await this.workspaceScope(signal));
+    }
+    if (endpoint === 'session_scope') {
+      record(input, ['session_id'], ['session_id']);
+      return ok(await this.sessionScope(input.session_id, signal));
+    }
+    if (endpoint === 'scope_targets') {
+      record(input, ['session_id', 'instance_id', 'offset']);
+      if (input.instance_id !== undefined) uuid(input.instance_id, 'instance_id');
+      const scope = input.session_id === undefined ? await this.workspaceScope(signal) : await this.sessionScope(input.session_id, signal);
+      if (scope.status !== 'configured') throw new PanelError('PANEL_SCOPE_UNAVAILABLE', 'The Workspace recommendation is unavailable. Select a Project manually.');
+      const targets = scope.targets.filter(target => input.instance_id === undefined || target.instance_id === input.instance_id);
+      const offset = input.offset ?? 0;
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset > targets.length) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid recommendation page.');
+      const page = targets.slice(offset, offset + 8);
+      const items = await Promise.all(page.map(async target => {
+        try {
+          const identity = dataOf(await this.facade().callTool('cfkanban_connection_inspect', { instance_id: target.instance_id }, { signal }));
+          const binding = { ...target, principal_id: identity.principal?.principal_id ?? identity.principal?.id };
+          uuid(binding.principal_id, 'principal');
+          const project = dataOf(await this.tool(binding, 'cfkanban_projects_get', { workspace_id: target.workspace_id, project_id: target.project_id }, signal));
+          return { ...target, display_name: project.display_name, available: true };
+        } catch (error) { return { ...target, available: false, unavailability: scopeFailureCode(error.code) }; }
+      }));
+      return ok({ items, next_offset: offset + page.length < targets.length ? offset + page.length : null });
+    }
+    if (endpoint === 'bind_scope') {
+      record(input, ['session_id', 'target'], ['target']);
+      record(input.target, ['instance_id', 'workspace_id', 'project_id'], ['instance_id', 'workspace_id', 'project_id']);
+      Object.entries(input.target).forEach(([key, value]) => uuid(value, key));
+      const scope = input.session_id === undefined ? await this.workspaceScope(signal) : await this.sessionScope(input.session_id, signal);
+      if (scope.status !== 'configured' || !scope.targets.some(target => canonical(target) === canonical(input.target))) throw new PanelError('PANEL_SCOPE_TARGET_UNAVAILABLE', 'The selected Project is no longer recommended by this Workspace. Select it manually.');
+      const identity = dataOf(await this.facade().callTool('cfkanban_connection_inspect', { instance_id: input.target.instance_id }, { signal }));
+      const principal_id = identity.principal?.principal_id ?? identity.principal?.id;
+      uuid(principal_id, 'principal');
+      return this.dispatch('bind', { ...input.target, expected_principal_id: principal_id }, signal);
+    }
+    if (endpoint === 'connections') {
+      record(input, []);
+      return this.facade().callTool('cfkanban_connection_inspect', {}, { signal });
+    }
+    if (endpoint === 'identity') {
+      record(input, ['instance_id'], ['instance_id']);
+      uuid(input.instance_id, 'instance_id');
+      return this.facade().callTool('cfkanban_connection_inspect', input, { signal });
+    }
+    if (endpoint === 'workspaces' || endpoint === 'projects') {
+      record(input, ['instance_id', 'expected_principal_id', 'workspace_id', 'cursor'], ['instance_id', 'expected_principal_id', ...(endpoint === 'projects' ? ['workspace_id'] : [])]);
+      const args = { limit: 50 };
+      if (input.cursor !== undefined) args.cursor = boundedText(input.cursor, 4096, 'cursor');
+      if (endpoint === 'projects') args.workspace_id = uuid(input.workspace_id, 'workspace_id');
+      return this.discovery(input, endpoint === 'projects' ? 'cfkanban_projects_list' : 'cfkanban_workspaces_list', args, signal);
+    }
+    if (endpoint === 'bind') {
+      record(input, ['instance_id', 'expected_principal_id', 'workspace_id', 'project_id'], ['instance_id', 'expected_principal_id', 'workspace_id', 'project_id']);
+      Object.entries(input).forEach(([key, value]) => uuid(value, key));
+      if (this.bindings.size >= 128) throw new PanelError('PANEL_CAPACITY', 'Close and restart this panel Host before binding more Projects.');
+      const binding = { instance_id: input.instance_id, principal_id: input.expected_principal_id, project_id: input.project_id, workspace_id: input.workspace_id, created: this.now(), operations: new Map() };
+      const identity = dataOf(await this.tool(binding, 'cfkanban_connection_inspect', {}, signal));
+      if ((identity.principal?.principal_id ?? identity.principal?.id) !== binding.principal_id) throw new PanelError('PANEL_IDENTITY_CHANGED', 'The Host identity changed. Select it again.');
+      const project = dataOf(await this.tool(binding, 'cfkanban_projects_get', { workspace_id: binding.workspace_id, project_id: binding.project_id }, signal));
+      const statuses = dataOf(await this.tool(binding, 'cfkanban_statuses_list', { workspace_id: binding.workspace_id, project_id: binding.project_id }, signal));
+      binding.statuses = [...new Map((Array.isArray(statuses) ? statuses : statuses.items ?? statuses.statuses ?? []).filter(row => STATUSES.includes(row.key)).map(row => [row.key, row])).values()].slice(0, STATUSES.length);
+      binding.trusted_api_origin = identity.instance?.trusted_api_origin;
+      const binding_id = randomUUID();
+      this.bindings.set(binding_id, binding);
+      return ok({ binding_id, identity, project, statuses, local_only: true });
+    }
+    if (endpoint === 'unbind') {
+      record(input, ['binding_id'], ['binding_id']);
+      const binding = this.binding(input);
+      if (this.hasPending(binding)) throw new PanelError('PANEL_OPERATION_PENDING', 'Resolve the retained operation before changing the binding.', { outcome_unknown: true });
+      this.bindings.delete(input.binding_id);
+      return ok({ unbound: true });
+    }
+    if (endpoint === 'list') {
+      record(input, ['binding_id', 'status', 'priority', 'assignment', 'cursor'], ['binding_id']);
+      const binding = this.binding(input);
+      const args = { project_ids: [binding.project_id], limit: 25 };
+      if (input.status) { if (!STATUSES.includes(input.status)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid status.'); args.status = [input.status]; }
+      if (input.priority) { if (!PRIORITIES.includes(input.priority)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid priority.'); args.priority = [input.priority]; }
+      if (input.assignment === 'mine') args.assignee = [binding.principal_id];
+      else if (input.assignment !== undefined && input.assignment !== 'all') throw new PanelError('PANEL_INVALID_INPUT', 'Invalid assignment.');
+      if (input.cursor) args.cursor = boundedText(input.cursor, 4096, 'cursor');
+      const writer = await this.rowPermissions(binding, signal);
+      const page = await this.tool(binding, 'cfkanban_issues_list', args, signal);
+      if (!page.ok) return page;
+      return { ...page, data: { ...page.data, items: this.rowActions(page.data.items ?? [], writer) } };
+    }
+    if (endpoint === 'board') {
+      record(input, ['binding_id', 'status_key', 'priority', 'assignment', 'cursor'], ['binding_id']);
+      const binding = this.binding(input);
+      const columns = binding.statuses;
+      const selected = input.status_key === undefined ? columns : columns.filter(row => row.key === input.status_key);
+      if (!selected.length || (input.status_key !== undefined && !STATUSES.includes(input.status_key)) || (input.cursor !== undefined && input.status_key === undefined)) throw new PanelError('PANEL_INVALID_INPUT', 'Select a current Project status for column pagination.');
+      const args = { project_ids: [binding.project_id], limit: 25 };
+      if (input.priority) { if (!PRIORITIES.includes(input.priority)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid priority.'); args.priority = [input.priority]; }
+      if (input.assignment === 'mine') args.assignee = [binding.principal_id];
+      else if (input.assignment !== undefined && input.assignment !== 'all') throw new PanelError('PANEL_INVALID_INPUT', 'Invalid assignment.');
+      if (input.cursor !== undefined) args.cursor = boundedText(input.cursor, 4096, 'cursor');
+      const result = [];
+      const writer = await this.rowPermissions(binding, signal);
+      for (const column of selected) {
+        const page = dataOf(await this.tool(binding, 'cfkanban_issues_list', { ...args, status: [column.key] }, signal));
+        result.push({ key: column.key, display_name: column.display_name, items: this.rowActions(Array.isArray(page) ? page : page.items ?? [], writer), next_cursor: page.next_cursor ?? page.continuation?.next_cursor ?? null });
+      }
+      return ok({ columns: result });
+    }
+    if (endpoint === 'assignees') {
+      record(input, ['binding_id', 'cursor'], ['binding_id']);
+      const binding = this.binding(input);
+      return this.tool(binding, 'cfkanban_assignees_list', { workspace_id: binding.workspace_id, project_id: binding.project_id, limit: 20, ...(input.cursor === undefined ? {} : { cursor: boundedText(input.cursor, 4096, 'cursor') }) }, signal);
+    }
+    if (endpoint === 'detail' || endpoint === 'comments') {
+      record(input, ['binding_id', 'identifier', 'cursor'], ['binding_id', 'identifier']);
+      const binding = this.binding(input);
+      const args = { identifier: identifier(input.identifier) };
+      if (endpoint === 'comments') { args.limit = 25; if (input.cursor) args.cursor = boundedText(input.cursor, 4096, 'cursor'); }
+      return this.tool(binding, endpoint === 'detail' ? 'cfkanban_issues_get' : 'cfkanban_comments_list', args, signal);
+    }
+    if (endpoint === 'mutate' || endpoint === 'recover') return this.mutate(endpoint, input, signal);
+    throw new PanelError('PANEL_UNKNOWN_OPERATION', 'This panel operation is unavailable.');
+  }
+
+  async sessionScope(sessionId, signal) {
+    if (!this.sessions) throw new PanelError('PANEL_SESSION_UNAVAILABLE', 'This runtime has no Session context.');
+    boundedText(sessionId, 128, 'Session');
+    const workspace = this.sessions.workspaces().find(row => row.sessionIds.includes(sessionId));
+    if (!workspace) throw new PanelError('PANEL_SESSION_UNAVAILABLE', 'Open an accessible Session before reading its Workspace recommendation.');
+    const verified = await this.verifySession(workspace.id, sessionId, signal);
+    const scope = await this.scopeReader({ workspacePath: verified.path }, { signal });
+    return { ...scope, source: 'workspace', source_session_id: sessionId, source_workspace_id: workspace.id };
+  }
+
+  async workspaceScope(signal) {
+    const scope = this.directoryReader ? await this.directoryReader({ signal }) : await this.scopeReader({ workspacePath: this.directory }, { signal });
+    return { ...scope, source: 'directory' };
+  }
+
+  async verifiedTarget(binding_id, signal, identifierValue) {
+    const binding = this.binding({ binding_id });
+    const identity = dataOf(await this.tool(binding, 'cfkanban_connection_inspect', {}, signal));
+    dataOf(await this.tool(binding, 'cfkanban_projects_get', { workspace_id: binding.workspace_id, project_id: binding.project_id }, signal));
+    if (identifierValue !== undefined) dataOf(await this.tool(binding, 'cfkanban_issues_get', { identifier: identifier(identifierValue) }, signal));
+    return { instance_id: binding.instance_id, principal_id: binding.principal_id, workspace_id: binding.workspace_id, project_id: binding.project_id, trusted_api_origin: identity.instance?.trusted_api_origin, ...(identifierValue === undefined ? {} : { identifier: identifierValue }) };
+  }
+
+  async mutate(endpoint, input, signal) {
+    record(input, ['binding_id', 'identifier', 'operation', 'expected_version', 'idempotency_key', 'change'], ['binding_id', 'identifier', 'operation', 'expected_version', 'idempotency_key', 'change']);
+    const binding = this.binding(input);
+    identifier(input.identifier);
+    uuid(input.idempotency_key, 'idempotency_key');
+    if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 1) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid version.');
+    const change = input.change;
+    let name;
+    if (input.operation === 'update') {
+      record(change, ['status_key', 'priority_key', 'assignee_principal_id']);
+      if (!Object.keys(change).length || (change.status_key !== undefined && (!STATUSES.includes(change.status_key) || change.status_key === 'done')) || (change.priority_key !== undefined && !PRIORITIES.includes(change.priority_key))) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid Issue change.');
+      if (change.assignee_principal_id !== undefined && change.assignee_principal_id !== null) uuid(change.assignee_principal_id, 'assignee');
+      name = 'cfkanban_issues_update';
+    } else if (input.operation === 'comment') {
+      record(change, ['body'], ['body']);
+      boundedText(change.body, 32768, 'comment');
+      name = 'cfkanban_comments_create';
+    } else if (input.operation === 'complete') {
+      record(change, ['summary', 'verification', 'artifacts', 'follow_ups'], ['summary']);
+      boundedText(change.summary, 8192, 'summary', true);
+      for (const key of ['verification', 'follow_ups']) if (change[key] !== undefined && (!Array.isArray(change[key]) || change[key].length > 50 || change[key].some(value => typeof value !== 'string' || value.length > (key === 'follow_ups' ? 2048 : 1024)))) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid completion evidence.');
+      if (change.artifacts !== undefined && (!Array.isArray(change.artifacts) || change.artifacts.length > 50)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid artifacts.');
+      for (const artifact of change.artifacts ?? []) { record(artifact, ['kind', 'value'], ['kind', 'value']); if (!['url', 'commit', 'path', 'other'].includes(artifact.kind)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid artifact kind.'); boundedText(artifact.value, 2048, 'artifact'); }
+      name = 'cfkanban_issues_complete';
+    } else throw new PanelError('PANEL_INVALID_INPUT', 'Invalid operation.');
+    const args = { identifier: input.identifier, idempotency_key: input.idempotency_key, ...(input.operation === 'update' ? { expected_version: input.expected_version, changes: change } : input.operation === 'complete' ? { expected_version: input.expected_version, ...change } : change) };
+    const fingerprint = canonical({ name, args });
+    let operation = binding.operations.get(input.idempotency_key);
+    if (operation && (operation.fingerprint !== fingerprint || canonical(operation.original) !== canonical(input))) throw new PanelError('PANEL_KEY_REUSED', 'The original key belongs to a different operation.');
+    if (endpoint === 'recover' && !operation) throw new PanelError('PANEL_RECOVERY_UNAVAILABLE', 'This Host no longer holds the original operation. Inspect the Issue before acting again.', { outcome_unknown: true });
+    if (!operation) {
+      if (binding.operations.size >= 64) {
+        const settled = [...binding.operations].find(([, item]) => !operationPending(item));
+        if (!settled) throw new PanelError('PANEL_CAPACITY', 'Resolve pending operations before starting another write.');
+        binding.operations.delete(settled[0]);
+      }
+      // 预读也会被 pagehide/超时取消；先保留完整原请求，才能证明未发送并显式恢复。
+      operation = { fingerprint, original: structuredClone(input), args: structuredClone(args), name, stage: 'not_sent', settled: false };
+      binding.operations.set(input.idempotency_key, operation);
+    }
+    if (operation.running) throw new PanelError('PANEL_OPERATION_PENDING', 'This operation is already running.');
+    if (operation.settled && operation.result) {
+      const current = await this.tool(binding, 'cfkanban_issues_get', { identifier: input.identifier }, signal);
+      if (!current.ok) return operation.stage === 'not_sent' ? operationResult(operation, current, null) : current;
+      operation.readback = current.data;
+      operation.result = operationResult(operation, operation.result);
+      return operation.result;
+    }
+    operation.running = true;
+    try {
+      const original = operation.original;
+      if (operation.stage === 'not_sent') {
+        try {
+          signal.throwIfAborted();
+          const preflight = await this.tool(binding, 'cfkanban_issues_get', { identifier: original.identifier }, signal);
+          signal.throwIfAborted();
+          if (!preflight.ok) {
+            operation.settled = preflight.status >= 400 && preflight.status < 500 && !preflight.outcome_unknown;
+            operation.result = operationResult(operation, { ...preflight, outcome_unknown: false });
+            return operation.result;
+          }
+          const issue = preflight.data;
+          if (!issue.allowed_actions?.includes('update')) throw new PanelError('PANEL_PERMISSION_DENIED', 'Refresh the Issue and verify writer permission.');
+          if (original.operation !== 'comment' && issue.version !== original.expected_version) throw new PanelError('PANEL_VERSION_CONFLICT', 'The Issue changed. Refresh and review it before starting another operation.', { current_version: issue.version });
+        } catch (error) {
+          operation.settled = error instanceof PanelError && ['PANEL_PERMISSION_DENIED', 'PANEL_VERSION_CONFLICT', 'PANEL_SCOPE_DENIED'].includes(error.code);
+          operation.result = operationResult(operation, operation.settled ? fail(error.code, error.message, error.details) : fail('PANEL_REQUEST_UNCERTAIN', 'Permission pre-read interrupted or unavailable. No write was sent; recover the original request explicitly.'));
+          return operation.result;
+        }
+      } else if (endpoint === 'recover') {
+        const current = await this.tool(binding, 'cfkanban_issues_get', { identifier: original.identifier }, signal);
+        if (!current.ok) return current;
+      }
+      signal.throwIfAborted();
+      // 标记后视为可能发送；任何中断都只能沿原参数/key核实，不推断远端未提交。
+      operation.stage = 'sent';
+      delete operation.readback;
+      const result = await this.tool(binding, operation.name, operation.args, signal);
+      operation.result = result;
+      operation.settled = result.ok || (endpoint === 'mutate' && result.status >= 400 && result.status < 500 && !result.outcome_unknown);
+      const readback = await this.tool(binding, 'cfkanban_issues_get', { identifier: original.identifier }, signal);
+      if (readback.ok) operation.readback = readback.data;
+      operation.result = operationResult(operation, result, readback.ok ? readback.data : null);
+      return operation.result;
+    } finally { operation.running = false; }
+  }
+
+  async verifySession(workspaceId, sessionId, signal) {
+    const workspace = this.sessions?.workspace(workspaceId);
+    if (!workspace || !workspace.sessionIds.includes(sessionId)) throw new PanelError('PANEL_SESSION_UNAVAILABLE', 'Select an accessible Session in the explicit Workspace.');
+    const inspection = await this.sessions.inspect(sessionId, signal);
+    if (inspection.meta?.cwd !== workspace.path) throw new PanelError('PANEL_WORKSPACE_CHANGED', 'The Session no longer belongs to the selected Workspace.');
+    return workspace;
+  }
+}
+
+export const PanelBridge = WorkbenchBridge;

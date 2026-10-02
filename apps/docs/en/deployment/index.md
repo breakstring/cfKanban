@@ -1,6 +1,6 @@
 # Deployment
 
-Use `cfkanban-deploy` for local Skill installation and updates, Cloudflare deployment and upgrades, connecting an existing deployment, and out-of-band Owner recovery. Joining someone else's Project or using a board does not require your own deployment.
+Use `cfkanban-deploy` for Cloudflare deployment and upgrades, deployment maintenance on another computer, and out-of-band Owner recovery. Host Skill/MCP/plugin installation is covered by [Agent integrations](../integrations/index.md). Joining someone else's Project or using a board does not require your own deployment.
 
 ## Start with your goal
 
@@ -12,7 +12,7 @@ The Agent checks verified stable releases, tools, and environment capabilities, 
 
 | Goal | Workflow | Required access |
 | --- | --- | --- |
-| Install or update local Skills | [Preparation](./setup.md), [Updates](./updates.md) | Local installation; no Cloudflare access |
+| Install or update host Skills, MCP, or plugins | [Agent integrations](../integrations/index.md) | Local installation; no Cloudflare access |
 | Create your instance | [First deployment](./first-deployment.md) | Control of the exact Cloudflare account |
 | Upgrade a running instance | [Updates and upgrades](./updates.md) | Maintenance record, Owner and Cloudflare access |
 | Manage the application from another computer | [Owner devices](../administration/devices.md) | Approval by an existing Owner |

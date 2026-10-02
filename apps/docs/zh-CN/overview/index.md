@@ -16,7 +16,8 @@ cfKanban 是让人与 Agent 共同使用的任务看板。你可以用自然语�
 | 在已有工作上下文里记录任务、搜索、补充进展 | 直接向 Agent 描述目标，使用 `cfkanban` 技能 |
 | 浏览项目全貌、手动编辑、查看附件和讨论 | 网页看板与事项详情 |
 | 邀请成员、配置项目与管理权限 | `cfkanban-admin` 技能，或对应范围的网页管理页 |
-| 部署站点、维护云资源、更新技能或实例 | `cfkanban-deploy` 技能 |
+| 安装或更新当前 Agent 宿主的 Skills、MCP、插件 | [代理集成](../integrations/index.md) |
+| 部署站点、维护云资源或升级实例 | `cfkanban-deploy` 技能与[部署](../deployment/index.md) |
 | 了解能力与选择下一步 | 这份文档，或 `cfkanban-howto` 教学技能 |
 
 Agent 和网页使用相同的项目权限。
@@ -25,6 +26,7 @@ Agent 和网页使用相同的项目权限。
 
 - **已经加入项目：** 直接查看[日常使用](../usage/index.md)。
 - **刚收到邀请或想加入公开项目：** 阅读[快速开始](./quick-start.md)。
+- **准备 Agent 宿主：** 阅读[通用集成](../integrations/general.md)或 [DeepSeek Harness 插件指南](../integrations/deepseek-harness.md)。
 - **组织团队与项目：** 阅读[管理](../administration/index.md)。
 - **想拥有自己的实例：** 阅读[部署](../deployment/index.md)。
 

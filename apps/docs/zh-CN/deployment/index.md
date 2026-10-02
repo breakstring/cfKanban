@@ -1,6 +1,6 @@
 # 部署
 
-`cfkanban-deploy` 负责本地技能安装与更新、Cloudflare 实例部署与升级、已有部署接入和部署外 Owner 恢复。加入他人的项目或使用看板，不需要部署自己的实例。
+`cfkanban-deploy` 负责 Cloudflare 实例部署与升级、新电脑部署维护和部署外 Owner 恢复。宿主 Skills/MCP/插件安装见[代理集成](../integrations/index.md)。加入他人的项目或使用看板，不需要部署自己的实例。
 
 ## 从你的目标开始
 
@@ -12,7 +12,7 @@ Agent 会检查可验证的正式发行、工具与环境能力，说明已满�
 
 | 你要完成的事 | 对应路径 | 需要的权限 |
 | --- | --- | --- |
-| 安装或更新本地技能 | [准备](./setup.md)、[更新](./updates.md) | 本地安装权限，无需 Cloudflare |
+| 安装或更新宿主 Skills、MCP、插件 | [代理集成](../integrations/index.md) | 本地安装权限，无需 Cloudflare |
 | 创建自己的实例 | [首次部署](./first-deployment.md) | 准确 Cloudflare 账户控制权限 |
 | 升级线上实例 | [更新与升级](./updates.md) | 实例维护记录、Owner 与 Cloudflare 权限 |
 | 换电脑管理应用 | [Owner 设备](../administration/devices.md) | 现有 Owner 批准 |

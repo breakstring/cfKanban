@@ -3,6 +3,8 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { verifyDocsBuild } from "./lib/docs-build.mjs";
 import { verifyWebAssetManifest } from "./lib/web-asset-manifest.mjs";
+import { verifyEmbeddedBuild } from "./lib/embedded-build.mjs";
+import { verifyLocalRuntimeBuild } from "../packages/local-runtime/scripts/build.mjs";
 
 async function filesUnder(root) {
   const entries = await readdir(root, { withFileTypes: true, recursive: true });
@@ -12,11 +14,14 @@ async function filesUnder(root) {
 const webRoot = new URL("../apps/web/dist/", import.meta.url);
 const workerRoot = new URL("../apps/worker/dist/", import.meta.url);
 const release = JSON.parse(await readFile(new URL("../release/version.json", import.meta.url), "utf8"));
+await verifyEmbeddedBuild({ outputDirectory: fileURLToPath(new URL("../apps/web/dist-embedded/", import.meta.url)), version: release.version });
+await verifyLocalRuntimeBuild({ outputDirectory: fileURLToPath(new URL("../packages/local-runtime/dist/", import.meta.url)), version: release.version });
 const webBudget = JSON.parse(await readFile(new URL("./web-performance-budget.json", import.meta.url), "utf8"));
 const webAssets = await verifyWebAssetManifest({ outputDirectory: fileURLToPath(webRoot), budget: webBudget });
 const docsRoot = new URL("docs/", webRoot);
 await verifyDocsBuild({ outputDirectory: fileURLToPath(docsRoot), version: release.version });
 const catalog = JSON.parse(await readFile(new URL("../apps/docs/catalog.json", import.meta.url), "utf8"));
+const docsIndex = await readFile(new URL("llms.txt", docsRoot), "utf8");
 for (const locale of ["en", "zh-CN"]) {
   for (const group of catalog) {
     for (const page of group.pages) {
@@ -26,6 +31,7 @@ for (const locale of ["en", "zh-CN"]) {
       assert.match(html, /<link rel="icon" href="\/docs\/assets\/cfkanban-mark\.[^"/]+\.png">/u, `${prefix} must load the local brand mark`);
       assert.ok(html.includes(`content="${release.version}"`), `${prefix} must match the release version`);
       assert.equal(await readFile(new URL(`${prefix}.md`, docsRoot), "utf8"), await readFile(new URL(`../apps/docs/${prefix}.md`, import.meta.url), "utf8"));
+      assert.equal(docsIndex.includes(`](/docs/${prefix}.md)`), !page.hidden, `${prefix} must match its Agent discovery visibility`);
       assert.ok(!/<link[^>]+href="https?:/u.test(html), `${prefix} must not load external fonts/styles`);
     }
   }

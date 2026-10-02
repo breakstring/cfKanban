@@ -78,16 +78,16 @@ The four relation types are blocks, parent, related, and duplicate. Both issues 
 
 **In the Web UI:** Issue details → **Relations** → **Add** → choose the kind and enter the target `CFK-` identifier → leave the field and verify the target project and title → **Save**. Directed relations start from the current issue: it blocks the target, is its parent, or duplicates it. Delete a relation beside its row; restore it through **Restore deleted collaboration items**. Relations are visible only when you can read both endpoints.
 
-## Read the project description, activity, and a handoff summary
+## Read project information and copy Issue content
 
 ```text
-Use $cfkanban to read DemoProject's description and summarize CFK-123 for handoff:
+Use $cfkanban to read DemoProject's description and the current context of CFK-123:
 its goal, status, assignee, dependencies, verified results, and follow-ups. Do not change the issue.
 ```
 
-You need read access to the relevant projects. Handoff summaries help you catch up quickly; ask the Agent to read relevant history if details were omitted.
+You need read access to the relevant projects. Give the Agent the CFK identifier or Issue URL and let Skills read the latest Issue context and relevant history.
 
-**In the Web UI:** The project description appears below the board title. Open **Project settings → Activity** to read the newest project events first. **Load older activity** continues through earlier history; **Refresh** starts a fresh list that includes new changes. Returning to the board preserves your submitted filters. Expand **Handoff summary** in issue details to read or copy it.
+**In the Web UI:** The project description appears below the board title. Open **Project settings → Activity** to read the newest project events first. **Load older activity** continues through earlier history; **Refresh** starts a fresh list that includes new changes. Returning to the board preserves your submitted filters. Copy the CFK identifier or Issue URL in the details, or use the small buttons beside the description and each comment to copy their original Markdown. If clipboard access is restricted, the displayed plain text can be copied manually.
 
 ```text
 Use $cfkanban to show DemoProject's latest activity first. Read older history only as needed, and identify the actor and changed resource. Do not change the project.

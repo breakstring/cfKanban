@@ -21,7 +21,7 @@ import { createRenderer, h, nextTick, ref } from 'vue';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
-  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as LabelsPage } from './apps/web/src/views/ProjectLabelsView.vue'; export { default as ManagementPage } from './apps/web/src/views/ScopedManagementView.vue'; export { default as SettingsHeader } from './apps/web/src/components/ProjectSettingsHeader.vue'; export { projectSettingsPath, projectSettingsSections } from './apps/web/src/lib/project-settings.ts'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as ActivityPage } from './apps/web/src/views/ProjectActivityView.vue'; export { default as DeletedPage } from './apps/web/src/views/ProjectDeletedIssuesView.vue'; export { default as Context } from './apps/web/src/components/IssueContext.vue'; export { default as Footer } from './apps/web/src/components/AppFooter.vue'; export { navigate, registerNavigationGuard, currentPath } from './apps/web/src/lib/router.ts'; export { boardFilters, boardPath, boardReturnPath } from './apps/web/src/lib/board-navigation.ts'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { contextHandoff } from './apps/web/src/lib/issue-context.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
+  stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as LabelsPage } from './apps/web/src/views/ProjectLabelsView.vue'; export { default as ManagementPage } from './apps/web/src/views/ScopedManagementView.vue'; export { default as SettingsHeader } from './apps/web/src/components/ProjectSettingsHeader.vue'; export { projectSettingsPath, projectSettingsSections } from './apps/web/src/lib/project-settings.ts'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as ActivityPage } from './apps/web/src/views/ProjectActivityView.vue'; export { default as DeletedPage } from './apps/web/src/views/ProjectDeletedIssuesView.vue'; export { default as Share } from './apps/web/src/components/IssueShare.vue'; export { default as Copy } from './apps/web/src/components/CopyButton.vue'; export { default as Footer } from './apps/web/src/components/AppFooter.vue'; export { navigate, registerNavigationGuard, currentPath } from './apps/web/src/lib/router.ts'; export { boardFilters, boardPath, boardReturnPath } from './apps/web/src/lib/board-navigation.ts'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent', loader: { '.png': 'dataurl' },
   plugins: [nuxtUiTestPlugin(), { name: 'vue-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
@@ -32,7 +32,7 @@ const output = await build({
     builder.onResolve({ filter: /^vue$/ }, () => ({ path: new URL('../../node_modules/vue/index.mjs', import.meta.url).href, external: true }));
   } }],
 });
-const { WorkList, Board, LabelsPage, ManagementPage, SettingsHeader, projectSettingsPath, projectSettingsSections, Activity, ActivityPage, DeletedPage, Context, Footer, navigate, registerNavigationGuard, currentPath, boardFilters, boardPath, boardReturnPath, workListPath, workProjects, contextHandoff, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
+const { WorkList, Board, LabelsPage, ManagementPage, SettingsHeader, projectSettingsPath, projectSettingsSections, Activity, ActivityPage, DeletedPage, Share, Copy, Footer, navigate, registerNavigationGuard, currentPath, boardFilters, boardPath, boardReturnPath, workListPath, workProjects, activityTargets, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
 
 
 
@@ -705,62 +705,6 @@ test('project activity uses a bounded selected project request and retries conti
   } finally { app.unmount(); }
 });
 
-const contextFixture = () => ({ issue: issue(), truncated: true, sections: {
-  body: { content: '<script>alert(1)</script>', omitted_bytes: 5, truncated: true, continuation: '/api/v1/issues/CFK-1' },
-  project_context: { content: 'Project excerpt', omitted_bytes: 10, truncated: true, continuation: 'https://untrusted.test/do-not-fetch' },
-  comments: { items: [{ id: '00000000-0000-4000-8000-000000000005', kind: 'completion', author: { display_name: 'Pat', principal_id: principal }, created_at: '2026-09-28T01:00:00Z', version: 1, body: 'Verified', completion: { summary: 'Verified', verification: ['Unit test'], artifacts: [{ kind: 'url', value: 'javascript:alert(1)' }], follow_ups: ['Next task'] } }], omitted_count: 3, continuation: '/api/v1/issues/CFK-1/comments' },
-  relations: { items: [], omitted_count: 2, continuation: '/api/v1/issues/CFK-1/relations' },
-} });
-test('handoff renders safe structured sections, explicit omitted counts, local continuation and copy fallback', async () => {
-  const calls = []; globalThis.fetch = async path => { calls.push(path); return Response.json(path.endsWith('/context') ? contextFixture() : { context: 'Full background' }); };
-  const { app, host } = mount(Context, { identifier: 'CFK-1', scopeBoundary: 'initial-scope' });
-  try {
-    await until(() => text(host).includes('Project excerpt') || all(host).some(item => item.props.innerHTML?.includes('Project excerpt')));
-    assert.match(text(host), /bounded excerpt|Omitted bytes/);
-    const rendered = all(host).filter(item => item.props.innerHTML).map(item => item.props.innerHTML).join('');
-    assert.doesNotMatch(rendered, /<script>/); assert.match(rendered, /&lt;script&gt;/);
-    assert.ok(all(host).some(item => item.tag === 'a' && item.props.href === '#issue-activity'));
-    assert.ok(all(host).some(item => item.tag === 'a' && item.props.href === '#issue-relations'));
-    assert.ok(!all(host).some(item => item.tag === 'a' && item.props.href?.startsWith('javascript:')));
-    assert.match(text(host), /Verified.*Verification.*Unit test.*Artifacts.*javascript:alert\(1\).*Follow-ups.*Next task/);
-    await button(host, 'Read full project background').props.onClick(); await nextTick();
-    assert.equal(calls[1], `/api/v1/workspaces/${workspace}/projects/${p1}`);
-    await button(host, 'Copy handoff summary').props.onClick(); await nextTick();
-    const copy = all(host).find(item => item.tag === 'textarea'); assert.ok(copy);
-    assert.match(copy.props.value, /Verification: Unit test/);
-    assert.match(copy.props.value, /Artifacts: javascript:alert\(1\)/);
-    assert.match(copy.props.value, /Follow-ups: Next task/);
-    assert.doesNotMatch(copy.props.value, /"verification"|"allowed_actions"/);
-    assert.match(contextHandoff(contextFixture(), true), /省略|继续阅读|后续/);
-  } finally { app.unmount(); }
-});
-
-test('handoff preserves completion evidence with an empty summary and never renders its storage JSON', async () => {
-  const context = contextFixture();
-  context.sections.comments.items[0].body = '';
-  context.sections.comments.items[0].completion.summary = '';
-  context.sections.comments.items.push({
-    id: '00000000-0000-4000-8000-000000000006', kind: 'standard', version: 1,
-    author: { display_name: 'Pat', principal_id: principal }, created_at: '2026-09-28T02:00:00Z',
-    body: 'Ordinary follow-up', completion: null,
-  });
-  globalThis.fetch = async () => Response.json(context);
-  const { app, host } = mount(Context, { identifier: 'CFK-1', scopeBoundary: 'initial-scope' });
-  try {
-    await until(() => text(host).includes('Completed'));
-    assert.match(text(host), /Completed.*Verification.*Unit test.*Artifacts.*Follow-ups.*Next task/);
-    assert.ok(all(host).some(item => item.props.innerHTML?.includes('Ordinary follow-up')));
-    await button(host, 'Copy handoff summary').props.onClick(); await nextTick();
-    const copy = all(host).find(item => item.tag === 'textarea').props.value;
-    assert.match(copy, /Completed\nVerification: Unit test\nArtifacts: javascript:alert\(1\)\nFollow-ups: Next task/);
-    assert.match(copy, /Ordinary follow-up/);
-    assert.doesNotMatch(copy, /"summary"|"verification"|"artifacts"|"follow_ups"/);
-    locale.value = 'zh-CN'; await nextTick();
-    assert.match(text(host), /已完成.*验证.*Unit test.*产物.*后续.*Next task/);
-    assert.match(contextHandoff(context, true), /已完成\n验证: Unit test/);
-  } finally { app.unmount(); }
-});
-
 test('assignee filter fetches chosen projects only, retries partial failure and sends a stable selected identity', async () => {
   const calls = []; let retry = false;
   const other = '00000000-0000-4000-8000-000000000099';
@@ -817,55 +761,6 @@ test('assignee cursor visibility failure clears people, selection and failed cur
     assert.equal(select(host, 'Assignee').props.value, '');
     await button(host, 'Retry people').props.onClick(); await nextTick();
     assert.equal(new URL(calls[2], 'https://local.test').searchParams.has('cursor'), false);
-  } finally { app.unmount(); }
-});
-
-test('refreshing handoff during project continuation permits a fresh continuation and discards the old response', async () => {
-  let resolveOld; let projectCalls = 0;
-  globalThis.fetch = async path => {
-    if (path.endsWith('/context')) return Response.json(contextFixture());
-    projectCalls++;
-    if (projectCalls === 1) return new Promise(resolve => { resolveOld = resolve; });
-    return Response.json({ context: 'Current full background' });
-  };
-  const { app, host } = mount(Context, { identifier: 'CFK-1', scopeBoundary: 'initial-scope' });
-  try {
-    await until(() => !!button(host, 'Read full project background'));
-    const pending = button(host, 'Read full project background').props.onClick(); await nextTick();
-    assert.equal(button(host, 'Read full project background').props.disabled, true);
-    await button(host, 'Refresh').props.onClick(); await nextTick();
-    assert.equal(button(host, 'Read full project background').props.disabled, false);
-    resolveOld(Response.json({ context: 'Obsolete background' })); await pending; await nextTick();
-    assert.ok(!all(host).some(item => item.props.innerHTML?.includes('Obsolete background')));
-    await button(host, 'Read full project background').props.onClick(); await nextTick();
-    assert.equal(projectCalls, 2);
-    assert.ok(all(host).some(item => item.props.innerHTML?.includes('Current full background')));
-  } finally { app.unmount(); }
-});
-
-test('unchanged issue version still clears rendered and copyable context after a project visibility change', async () => {
-  const scope = ref('two-projects'); let resolveFresh; let calls = 0;
-  globalThis.fetch = async () => {
-    calls++;
-    if (calls === 1) {
-      const context = contextFixture();
-      context.sections.relations.items = [{ id: 'cross-project', source_identifier: 'CFK-1', target_identifier: 'CFK-99', kind: 'related', version: 1 }];
-      return Response.json(context);
-    }
-    return new Promise(resolve => { resolveFresh = resolve; });
-  };
-  const Wrapper = { setup: () => () => h(Context, { identifier: 'CFK-1', scopeBoundary: scope.value }) };
-  const { app, host } = mount(Wrapper);
-  try {
-    await until(() => text(host).includes('CFK-99'));
-    await button(host, 'Copy handoff summary').props.onClick(); await nextTick();
-    assert.match(all(host).find(item => item.tag === 'textarea').props.value, /CFK-99/);
-    scope.value = 'one-project'; await nextTick();
-    assert.doesNotMatch(text(host), /CFK-99/);
-    assert.equal(button(host, 'Copy handoff summary'), undefined);
-    assert.equal(all(host).find(item => item.tag === 'textarea'), undefined);
-    resolveFresh(Response.json(contextFixture())); await until(() => !!button(host, 'Copy handoff summary'));
-    assert.equal(calls, 2); assert.doesNotMatch(text(host), /CFK-99/);
   } finally { app.unmount(); }
 });
 
@@ -1271,4 +1166,22 @@ test('workspace management remains separate from project settings tabs', async (
     assert.equal(button(host, 'Deleted issues'), undefined);
     assert.deepEqual(calls, [`/api/v1/workspaces/${workspace}`]);
   } finally { app.unmount(); }
+});
+
+
+test('sharing copies only canonical ID/link and falls back to selectable original Markdown', async () => {
+  const { app, host } = mount(Share, { identifier: 'CFK-42', origin: 'https://example.test' });
+  try {
+    await button(host, 'Copy link').props.onClick({ stopPropagation() {} }); await nextTick();
+    assert.equal(all(host).find(item => item.tag === 'textarea').props.value, 'https://example.test/app/issues/CFK-42');
+    assert.doesNotMatch(text(host), /Handoff summary|Start with|Agent session/);
+  } finally { app.unmount(); }
+  const invalid = mount(Share, { identifier: 'CFK-42', origin: 'https://example.test/app/launch?code=must-not-copy' });
+  try { assert.equal(button(invalid.host, 'Copy link'), undefined); } finally { invalid.app.unmount(); }
+  const raw = '**Original**\n\n- [ ] Task';
+  const copy = mount(Copy, { value: raw, label: 'Copy Markdown', showLabel: true });
+  try {
+    await button(copy.host, 'Copy Markdown').props.onClick({ stopPropagation() {} }); await nextTick();
+    assert.equal(all(copy.host).find(item => item.tag === 'textarea').props.value, raw);
+  } finally { copy.app.unmount(); }
 });

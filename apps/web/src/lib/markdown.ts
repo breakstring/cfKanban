@@ -7,13 +7,23 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function safeUrl(value: string): string | null {
+export interface MarkdownOptions {
+  baseUrl?: string;
+  linkTarget?: "_blank";
+}
+
+function safeUrl(value: string, options: MarkdownOptions): string | null {
   const trimmed = value.trim();
-  if (trimmed.startsWith("#")) return trimmed;
+  if (trimmed.startsWith("#") && options.baseUrl === undefined) return trimmed;
   try {
     const parsed = new URL(trimmed, "https://cfkanban.invalid");
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:" && parsed.protocol !== "mailto:") {
       return null;
+    }
+    if (options.baseUrl !== undefined && !/^[a-z][a-z\d+.-]*:/i.test(trimmed)) {
+      const base = new URL(options.baseUrl);
+      if (base.protocol !== "https:") return null;
+      return new URL(trimmed, base).href;
     }
     return trimmed;
   } catch {
@@ -21,7 +31,7 @@ function safeUrl(value: string): string | null {
   }
 }
 
-function inline(value: string): string {
+function inline(value: string, options: MarkdownOptions): string {
   const token = /(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\)|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g;
   let output = "";
   let cursor = 0;
@@ -37,9 +47,10 @@ function inline(value: string): string {
       output += `<em>${escapeHtml(raw.slice(1, -1))}</em>`;
     } else {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(raw);
-      const href = link === null ? null : safeUrl(link[2] ?? "");
+      const href = link === null ? null : safeUrl(link[2] ?? "", options);
       if (link !== null && href !== null) {
-        output += `<a href="${escapeHtml(href)}" rel="noreferrer noopener">${escapeHtml(link[1] ?? "")}</a>`;
+        const target = options.linkTarget === "_blank" ? ' target="_blank"' : "";
+        output += `<a href="${escapeHtml(href)}"${target} rel="noreferrer noopener">${escapeHtml(link[1] ?? "")}</a>`;
       } else {
         output += escapeHtml(raw);
       }
@@ -49,7 +60,7 @@ function inline(value: string): string {
   return output + escapeHtml(value.slice(cursor));
 }
 
-export function renderMarkdown(source: string): string {
+export function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
   const lines = source.replaceAll("\r\n", "\n").split("\n");
   const output: string[] = [];
   let code: string[] | null = null;
@@ -79,21 +90,21 @@ export function renderMarkdown(source: string): string {
     if (heading !== null) {
       closeList();
       const level = heading[1]?.length ?? 1;
-      output.push(`<h${level}>${inline(heading[2] ?? "")}</h${level}>`);
+      output.push(`<h${level}>${inline(heading[2] ?? "", options)}</h${level}>`);
       continue;
     }
     const item = /^[-*]\s+(.+)$/.exec(line);
     if (item !== null) {
       if (!listOpen) output.push("<ul>");
       listOpen = true;
-      output.push(`<li>${inline(item[1] ?? "")}</li>`);
+      output.push(`<li>${inline(item[1] ?? "", options)}</li>`);
       continue;
     }
     closeList();
     if (line.trim() === "") {
       continue;
     }
-    output.push(`<p>${inline(line)}</p>`);
+    output.push(`<p>${inline(line, options)}</p>`);
   }
   closeList();
   if (code !== null) output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);

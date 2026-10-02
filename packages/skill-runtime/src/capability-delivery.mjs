@@ -525,6 +525,7 @@ export async function guardedApiRequest(input) {
 export async function createBrowserLaunchAndDeliver({
   stateRoot = resolveStateRoot(),
   instanceId,
+  expectedPrincipalId,
   target,
   idempotencyKey,
   delivery: requestedDelivery,
@@ -532,6 +533,7 @@ export async function createBrowserLaunchAndDeliver({
   fetchImpl = globalThis.fetch,
   browserOpener = null,
   onRelayReady = null,
+  signal = AbortSignal.timeout(15_000),
 } = {}) {
   const delivery = requireDelivery(requestedDelivery, ["system_browser", "host_browser", "stdout_once"], "system_browser");
   if (delivery === "host_browser" && typeof onRelayReady !== "function") {
@@ -547,10 +549,13 @@ export async function createBrowserLaunchAndDeliver({
     requireSensitiveStdoutAcknowledgement(sensitiveOutputAcknowledgement);
   }
   await checkTrustedOriginRebind({ stateRoot, instanceId, fetchImpl });
+  signal.throwIfAborted();
   const metadata = await readJson(getInstancePaths({ stateRoot, instanceId }).instanceMetadata);
   const operation = await apiRequest({
     stateRoot,
     instanceId,
+    expectedPrincipalId,
+    signal,
     method: "POST",
     apiPath: "/api/v1/web-launches",
     body: { target },

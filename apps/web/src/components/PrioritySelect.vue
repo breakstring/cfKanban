@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { locale } from "../lib/i18n";
+import { locale } from "../lib/i18n-core";
 import { priorityOrder, priorityText } from "../lib/priority";
 import type { PriorityKey } from "../types";
 

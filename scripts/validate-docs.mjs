@@ -7,7 +7,12 @@ const root = fileURLToPath(new URL("../apps/docs/", import.meta.url));
 
 export async function validateDocs() {
   const catalog = JSON.parse(await readFile(path.join(root, "catalog.json"), "utf8"));
-  assert.deepEqual(catalog.map(group => group.slug), ["overview", "usage", "administration", "deployment"]);
+  assert.deepEqual(catalog.map(group => group.slug), ["overview", "usage", "integrations", "administration", "deployment"]);
+  for (const group of catalog) {
+    for (const page of group.pages) {
+      assert.ok(page.hidden === undefined || typeof page.hidden === "boolean", `${group.slug}/${page.slug}: hidden must be a boolean`);
+    }
+  }
   let count = 0;
   for (const locale of ["en", "zh-CN"]) {
     const expected = catalog.flatMap(group => group.pages.map(page => `${group.slug}/${page.slug}.md`)).sort();

@@ -271,6 +271,18 @@ Project Invite 可以授予一个或多个显式 Project roles。Recovery Invite
 
 不得循环多个 Projects、实现 Team Join、静默把 `writer` 降为 `reader`，也不能假设 Project 仍公开时撤权会阻止再次加入。
 
+## 本地工作台与线上模式
+
+普通打开 WebUI 使用 `web open`，`mode` 默认 `local`。`directory` 必须是用户当前真实项目的绝对工作目录，不是 Skill/cache 目录。可明确传 `instanceId` 和 `target:{kind:"project",workspace_id,project_id}` 或 `target:{kind:"issue",identifier}`。Host 只读取该目录固定 `.cfkanban-scope.json`；单目标经身份/权限核验后自动打开，多目标提供项目选择，无效/无权目标明确显示且不静默换目标。scope 只推荐范围，不提供授权。
+
+本地共用 Vue 工作台提供项目切换、Kanban/列表、直接修改优先级/状态/负责人、详情、评论和完成证据；选择完成时打开完成表单。私有 runtime 使用当前环境凭据访问可信 REST，不创建线上 Web Session，也不把长期 Credential 交给浏览器。可复制事项编号/链接，或正文/评论原始 Markdown；没有发送 Agent 会话或重复摘要段落。管理/自定义页面使用明确的线上模式。
+
+可信宿主上下文确认 Codex App 且可用 IAB 导航工具时，优先本地 IAB，不从环境变量猜宿主。应用提供支持 browser target 的 `open_in_codex` 时优先使用该原生 IAB 打开接口，并核对实际页面；仅返回 queued 不证明导航成功。先用 `web preflight` 验证 `host_browser` 的真实回环可达，再以短 shell yield 调用 `web open`、`delivery:"host_browser"`。立即在 IAB 导航到精确 `browser_relay_ready.local_url` 一次；不另行 fetch/probe，不向用户复述或保存该能力，60秒后失效。其它环境按已验证的指定浏览器交付路径打开。回环被拒绝/不可达时说明具体限制，不绕过宿主政策或静默改成线上。
+
+交付后 CLI 返回脱敏模式/版本 metadata并持续服务，工作台打开期间保留进程。普通视图在30分钟无请求后由服务端拒绝；HttpOnly Cookie只保留至服务固定8小时截止，让原视图在普通超时后仍能核实未确定操作，新视图不能继承。无未确定写入时闲置15分钟关闭。同cookie页面刷新仅在该进程存活时恢复内存checkpoint；关闭/终止会丢草稿，且不证明不确定写入未提交，应保留原请求/幂等键读回，不自动重放。存在pending时普通关闭被阻止。线上打开结果未确定时也锁住绑定切换和新写入，直至使用原目标、原key核实。父载体的完整线上看板按钮核验当前绑定后在系统浏览器打开，线上临时能力不进入Vue。
+
+明确选择 `mode:"online"` 时，传 `instanceId`、线上 `target`、稳定 `idempotencyKey` 和交付渠道，沿用下面的 Browser Launch/Passkey 合同；旧 `web launch` 继续只打开线上。线上5分钟票据与Web续期和本地会话不同。Node/工件缺失、scope无效或交付失败须给出可操作原因，切换模式需要用户明确选择。
+
 ## Browser Launch 与 Passkey
 
 ### 解析实例与已认证目标

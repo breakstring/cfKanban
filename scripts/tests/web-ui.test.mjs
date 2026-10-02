@@ -485,6 +485,17 @@ test("Markdown rendering keeps supported structure deterministic", () => {
   );
 });
 
+test("Markdown supports an explicit link base without changing escaping or allowed schemes", () => {
+  const options = { baseUrl: "https://example.test/", linkTarget: "_blank" };
+  const rendered = renderMarkdown("[Issue](/app/issues/CFK-1) [fragment](#summary) [query](/app?q=a&b=c) [unsafe](javascript:boom) <script>boom</script>", options);
+  assert.match(rendered, /href="https:\/\/example\.test\/app\/issues\/CFK-1" target="_blank" rel="noreferrer noopener"/);
+  assert.match(rendered, /href="https:\/\/example\.test\/#summary"/);
+  assert.match(rendered, /href="https:\/\/example\.test\/app\?q=a&amp;b=c"/);
+  assert.doesNotMatch(rendered, /href="javascript:|<script>/);
+  assert.doesNotMatch(renderMarkdown("[relative](/app)", { baseUrl: "file:///private/" }), /<a /);
+  assert.equal(renderMarkdown("[relative](/app)"), '<p><a href="/app" rel="noreferrer noopener">relative</a></p>');
+});
+
 test("stable API errors become localized UI copy without echoing server messages", () => {
   const english = presentApiProblem(
     apiError("platform_failure", "PLATFORM_UNAVAILABLE", "request-en"),
@@ -691,7 +702,7 @@ test("Public Join consent covers every quota, recovery, and rejoin consequence i
 });
 
 test("public-home copy keeps the Agent-first promise playful and concrete", async () => {
-  const source = await readFile(new URL("../../apps/web/src/lib/i18n.ts", import.meta.url), "utf8");
+  const source = await readFile(new URL("../../apps/web/src/lib/i18n-core.ts", import.meta.url), "utf8");
   const chineseBlock = source.match(/"zh-CN": \{([\s\S]*?)\n  \},\n\} as const;/)?.[1];
   assert.ok(chineseBlock);
   assert.match(chineseBlock, /"home\.headingFirst": "有事代理干，"/);

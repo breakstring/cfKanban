@@ -15,6 +15,7 @@ import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
 import IssueQueryFilters from "../components/IssueQueryFilters.vue";
+import KanbanStatusNavigation from "../components/KanbanStatusNavigation.vue";
 import { ApiProblem, apiRequest, errorText, hasUncertainWrite } from "../lib/api";
 import {
   type CasConflictState,
@@ -133,6 +134,8 @@ useSessionTextDraft({
   uncertain: () => formBusy.value || hasUncertainWrite(`/api/v1/workspaces/${props.workspaceId}/projects/${props.projectId}/issues`),
 });
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
+const boardRegion = ref<HTMLElement | null>(null);
+const statusNavigation = computed(() => statusOrder.map(key => ({ key, display_name: statusMap.value.get(key)?.display_name ?? key, loaded: columns[key].items.length, has_more: Boolean(columns[key].cursor), target_id: `board-status-${key}` })));
 
 function projectIsActive(): boolean {
   const scope = props.session.allowed_scope.projects;
@@ -710,6 +713,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
+    <KanbanStatusNavigation v-if="!loading" :columns="statusNavigation" :region="boardRegion" />
     <p v-if="!loading" id="board-scroll-hint" class="board-scroll-hint">
       {{ locale === "zh-CN"
         ? "左右滑动查看全部 5 列；不方便拖拽时，可用卡片下方的状态菜单。"
@@ -717,6 +721,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
     </p>
     <div
       v-if="!loading"
+      ref="boardRegion"
       class="kanban-scroll"
       role="region"
       tabindex="0"
@@ -727,6 +732,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
         <article
           v-for="statusKey in statusOrder"
           :key="statusKey"
+          :id="`board-status-${statusKey}`"
           class="kanban-column"
           :data-status="statusKey"
           @dragover.prevent

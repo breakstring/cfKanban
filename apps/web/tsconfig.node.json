@@ -10,6 +10,7 @@
     ]
   },
   "include": [
-    "vite.config.ts"
+    "vite.config.ts",
+    "vite.embedded.config.ts"
   ]
 }

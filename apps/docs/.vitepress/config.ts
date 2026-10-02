@@ -9,7 +9,7 @@ function sidebar(locale: Locale): DefaultTheme.SidebarItem[] {
   return catalog.map(group => ({
     text: group[locale],
     collapsed: true,
-    items: group.pages.map(page => ({
+    items: group.pages.filter(page => !("hidden" in page && page.hidden)).map(page => ({
       text: page[locale],
       link: `/${locale}/${group.slug}/${page.slug === "index" ? "" : page.slug}`,
     })),
@@ -31,7 +31,7 @@ function theme(locale: Locale): DefaultTheme.Config {
 
 export default defineConfig({
   title: "cfKanban",
-  description: "Agent-first collaboration. Guides for using, administering and deploying cfKanban.",
+  description: "Agent-first collaboration. Guides for using, integrating, administering and deploying cfKanban.",
   base: "/docs/",
   outDir: "../web/dist/docs",
   cleanUrls: true,
@@ -47,7 +47,7 @@ export default defineConfig({
   },
   locales: {
     en: { label: "English", lang: "en", themeConfig: theme("en") },
-    "zh-CN": { label: "简体中文", lang: "zh-CN", description: "以 Agent 为先的协作看板。了解如何使用、管理和部署 cfKanban。", themeConfig: theme("zh-CN") },
+    "zh-CN": { label: "简体中文", lang: "zh-CN", description: "以 Agent 为先的协作看板。了解如何使用、集成代理、管理和部署 cfKanban。", themeConfig: theme("zh-CN") },
   },
   themeConfig: {
     siteTitle: false,

@@ -1,0 +1,73 @@
+{
+  "name": "@cfkanban/dsh-plugin",
+  "version": "0.0.0",
+  "description": "cfKanban Skills, local MCP and task panel for DeepSeek Harness",
+  "type": "module",
+  "main": "./src/host/index.mjs",
+  "exports": {
+    ".": "./src/host/index.mjs",
+    "./client": "./lib/client.js",
+    "./panel-host": "./src/host/index.mjs",
+    "./package.json": "./package.json",
+    "./bundle": "./src/bundle.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-mcp-client": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-skill-filesystem": "0.2.0-rc.2",
+    "react": "^18.2.0",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-mcp-client": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-skill-filesystem": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-connection": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "src",
+    "lib",
+    "embedded",
+    "mcp",
+    "local-runtime",
+    "skills",
+    "packages/skill-runtime",
+    "cordis.patch.yml",
+    "artifact-manifest.json",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/breakstring/cfKanban.git",
+    "directory": "packages/dsh-plugin"
+  },
+  "license": "MIT"
+}

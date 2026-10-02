@@ -45,6 +45,14 @@ Howto 从明确实例的 `/docs/llms.txt` 发现公开页面，只读取当前�
 
 ## 安装与更新
 
+匹配实例的公开文档现在提供与 Cloudflare「部署」分开的「代理集成」入口：`/docs/zh-CN/integrations/` 对照本地与线上 Web UI，`/docs/zh-CN/integrations/general` 说明常规 Skills 安装/更新和本地 MCP，`/docs/zh-CN/integrations/deepseek-harness` 说明 DSH 桌面/Web 插件。同一实例的 `/docs/llms.txt` 列出对应 Markdown 页面。使用前核验所选发行 bundle 包含需要的工件；源码候选不属于公开安装目标。
+
+完整 bundle 提供预构建 `local-runtime/`、本地 stdio MCP 日常结构化工具入口，以及同一自包含 `web-embedded/embedded.html` Vue 页面。`web open` 默认打开项目或任务的本地工作台，需要已安装的匹配 runtime 和 Node 22.12 或更高。Node 缺失、工件不匹配或启动失败会明确报告，不静默改为线上模式。需要实例 Web UI 或管理页时选 `mode=online`，保留专用 Browser Launch。Codex App 先核验宿主浏览器或 IAB，再用 `host_browser` 交付；其它宿主通常使用 `system_browser`。前端资源在本机不意味着任务数据离线，查询与写入仍访问可信 Service。
+
+使用已核验 Node 的绝对路径和 `mcp/server.mjs`，Credential 仍只由已有私有 runtime 内部处理。DSH 包接入四 Skills、共享 MCP、通用 local runtime 与可选的本机单用户侧栏，薄适配器挂载同一 Vue 页面。可切换项目，使用看板 / 列表、详情及权限允许的优先级、状态和负责人控件；请 Agent 处理任务时复制 CFK 编号或 Issue URL，由 Skills 读取最新数据。桌面和 Web profile 需要分别安装、核验。本地服务独立启动、停止和重启，更新文件不更新已运行的进程；每个执行环境保留自己的私有身份。通过实例 `/docs/llms.txt` 查找本地工作台、MCP 与 DSH 双语指南，配置与恢复步骤随包交付。源码测试不证明公开发行已可用。
+
+正文及每条评论旁也有小按钮可复制原始 Markdown；剪贴板访问受限时显示纯文本供手动复制。线上视图与本地工作台共用这些复制控件。
+
 普通用户无需填写版本号。请让 Agent 阅读[安装引导](https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md)，安装最新正式发行的 Skills。首次安装和新部署从 [canonical stable pointer](https://github.com/breakstring/cfKanban/releases/latest/download/stable.json) 发现目标，随后固定 immutable manifest、准确版本与摘要；测试版和历史版须明确选择。
 
 已有可信且兼容的安装可以复用；加入项目不隐含技能更新或实例升级。检查更新只报告可用版本与兼容性。明确更新时，Agent 校验目标及来源连续性，展示本地安装计划和回退边界。若最新 Skills 不兼容旧实例，复用兼容版本，或提出明确的兼容历史正式版方案，不强制升级服务器。

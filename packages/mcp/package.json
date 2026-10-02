@@ -1,0 +1,10 @@
+{
+  "name": "@cfkanban/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": { "build": "node scripts/build.mjs" },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.31.0" },
+  "devDependencies": { "esbuild": "0.28.1" }
+}

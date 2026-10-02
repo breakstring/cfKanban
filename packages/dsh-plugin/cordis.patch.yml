@@ -1,0 +1,27 @@
+- insert:
+    - id: cfkanban-bundle
+      name: '@cfkanban/dsh-plugin/bundle'
+    - id: cfkanban-skills
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      inject: [cfkanbanBundle]
+      config:
+        providerName: cfkanban
+        includeDefaultRoots: false
+        bundledSkillDir: !!js ctx.cfkanbanBundle.skillsDirectory
+        watch: false
+    - id: cfkanban-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      inject: [cfkanbanBundle]
+      config:
+        serverName: cfkanban
+        transport: stdio
+        command: !!js ctx.cfkanbanBundle.nodeCommand
+        args: !!js '[...ctx.cfkanbanBundle.mcpArgs]'
+        env: !!js '({ ...ctx.cfkanbanBundle.mcpEnvironment })'
+        failOnStartupError: true
+        toolCallTimeoutMs: 30000
+    - id: cfkanban-panel
+      name: '@cfkanban/dsh-plugin'
+      inject: [cfkanbanBundle]
+      config:
+        singleUserLocal: true

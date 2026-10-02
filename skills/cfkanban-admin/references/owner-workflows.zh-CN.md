@@ -57,7 +57,7 @@
 
 邀请只能授予普通 reader/writer，不授予管理身份。非 Owner 的 `invite create` 每次仅一个受管项目；Owner 保留多项目邀请。局部管理员只能查看/撤销全部目标均可管理的普通邀请，不能看到恢复邀请或夹带无权项目的邀请。创建与兑换校验准确签发管理授权 ID/generation；撤权永久使未兑换邀请失效，其他来源或重新授予都不复活。已兑换成员保留。容器归档只暂停兑换，恢复仍受原有效期和签发授权约束。身份恢复、Credential/Passkey 管理仍仅 Owner。
 
-已有项目使用 Project/Issue `web launch`。空工作区或明确工作区管理使用 `{kind:"workspace",workspace_id:"<UUID>"}`，初始路径为 `/app/manage?workspace=<UUID>`，不能得到实例管理范围。新非 Owner Session 使用实时 `project_selection`；固定 Project/Issue Session 不扩大为工作区管理。Owner 仅在未指定更窄目标时默认 admin Overview。核对服务端实际 scope/target，不从本地技能版本推断线上支持。
+已有 Project/Issue 默认使用本地 `web open` 工作台；明确要求线上页面时使用 `mode:"online"`（或旧 `web launch`）。空工作区或明确工作区管理使用线上模式和 `{kind:"workspace",workspace_id:"<UUID>"}`，初始路径为 `/app/manage?workspace=<UUID>`，不能得到实例管理范围。新非 Owner Session 使用实时 `project_selection`；固定 Project/Issue Session 不扩大为工作区管理。Owner 仅在未指定更窄目标时默认 admin Overview。核对服务端实际 scope/target，不从本地技能版本推断线上支持。
 
 ## 部署后的第一个可用看板
 
@@ -177,6 +177,18 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 ## Preferred origin 与 Owner Web
 
 修改 preferred origin 前，不带 Credential 探测目标 HTTPS origin，使用 current expected version 更新，再从新旧 origin 分别读取 public discovery document。认证请求不依赖跨 origin redirect。
+
+## 本地工作台与线上模式
+
+普通打开 WebUI 使用 `web open`，`mode` 默认 `local`。`directory` 必须是用户当前真实项目的绝对工作目录，不是 Skill/cache 目录。可明确传 `instanceId` 和 `target:{kind:"project",workspace_id,project_id}` 或 `target:{kind:"issue",identifier}`。Host 只读取该目录固定 `.cfkanban-scope.json`；单目标经身份/权限核验后自动打开，多目标提供项目选择，无效/无权目标明确显示且不静默换目标。scope 只推荐范围，不提供授权。
+
+本地共用 Vue 工作台提供项目切换、Kanban/列表、直接修改优先级/状态/负责人、详情、评论和完成证据；选择完成时打开完成表单。私有 runtime 使用当前环境凭据访问可信 REST，不创建线上 Web Session，也不把长期 Credential 交给浏览器。可复制事项编号/链接，或正文/评论原始 Markdown；没有发送 Agent 会话或重复摘要段落。管理/自定义页面使用明确的线上模式。
+
+可信宿主上下文确认 Codex App 且可用 IAB 导航工具时，优先本地 IAB，不从环境变量猜宿主。应用提供支持 browser target 的 `open_in_codex` 时优先使用该原生 IAB 打开接口，并核对实际页面；仅返回 queued 不证明导航成功。先用 `web preflight` 验证 `host_browser` 的真实回环可达，再以短 shell yield 调用 `web open`、`delivery:"host_browser"`。立即在 IAB 导航到精确 `browser_relay_ready.local_url` 一次；不另行 fetch/probe，不向用户复述或保存该能力，60秒后失效。其它环境按已验证的指定浏览器交付路径打开。回环被拒绝/不可达时说明具体限制，不绕过宿主政策或静默改成线上。
+
+交付后 CLI 返回脱敏模式/版本 metadata并持续服务，工作台打开期间保留进程。普通视图在30分钟无请求后由服务端拒绝；HttpOnly Cookie只保留至服务固定8小时截止，让原视图在普通超时后仍能核实未确定操作，新视图不能继承。无未确定写入时闲置15分钟关闭。同cookie页面刷新仅在该进程存活时恢复内存checkpoint；关闭/终止会丢草稿，且不证明不确定写入未提交，应保留原请求/幂等键读回，不自动重放。存在pending时普通关闭被阻止。线上打开结果未确定时也锁住绑定切换和新写入，直至使用原目标、原key核实。父载体的完整线上看板按钮核验当前绑定后在系统浏览器打开，线上临时能力不进入Vue。
+
+明确选择 `mode:"online"` 时，传 `instanceId`、线上 `target`、稳定 `idempotencyKey` 和交付渠道，沿用下面的 Browser Launch/Passkey 合同；旧 `web launch` 继续只打开线上。线上5分钟票据与Web续期和本地会话不同。Node/工件缺失、scope无效或交付失败须给出可操作原因，切换模式需要用户明确选择。
 
 ### 解析实例与已认证目标
 

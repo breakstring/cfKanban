@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { toolError } from "./errors.mjs";
 import { getInstancePaths, loadCurrentCredentialSecret } from "./state.mjs";
-import { readJson, requireString } from "./utils.mjs";
+import { readJson, requireHttpsOrigin, requireString, requireUuid } from "./utils.mjs";
 import { resolveStateRoot } from "./paths.mjs";
 
 const ERROR_CATEGORIES = new Set([
@@ -184,6 +184,7 @@ export async function trustedApiRequest({
   idempotencyKey = null,
   authorizationToken = null,
   fetchImpl = globalThis.fetch,
+  signal = AbortSignal.timeout(15_000),
 }) {
   requireString(apiPath, "api_path");
   if (!apiPath.startsWith("/") || apiPath.startsWith("//")) {
@@ -191,17 +192,24 @@ export async function trustedApiRequest({
   }
   const paths = getInstancePaths({ stateRoot, instanceId });
   const instance = await readJson(paths.instanceMetadata);
+  const trustedOrigin = requireHttpsOrigin(instance.trusted_api_origin, "trusted_api_origin");
+  const requestUrl = new URL(apiPath, trustedOrigin);
+  // URL 解析会规范化反斜杠与控制字符，发送凭据前核对最终目标。
+  if (requestUrl.origin !== trustedOrigin || requestUrl.username || requestUrl.password) {
+    throw toolError("INVALID_API_PATH", "API path must resolve to the trusted origin");
+  }
   const headers = new Headers({ accept: "application/json" });
   if (authorizationToken !== null) headers.set("authorization", `Bearer ${authorizationToken}`);
   if (body !== undefined) headers.set("content-type", "application/json");
   if (idempotencyKey !== null) headers.set("idempotency-key", requireString(idempotencyKey, "idempotency_key", { max: 128 }));
   let response;
   try {
-    response = await fetchImpl(new URL(apiPath, instance.trusted_api_origin), {
+    response = await fetchImpl(requestUrl, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: "manual",
+      signal,
     });
   } catch (error) {
     return normalizeNetworkFailure(error);
@@ -221,9 +229,14 @@ export async function trustedApiRequest({
 }
 
 export async function apiRequest(options) {
-  const { token } = await loadCurrentCredentialSecret({
+  const { token, metadata } = await loadCurrentCredentialSecret({
     stateRoot: options.stateRoot ?? resolveStateRoot(),
     instanceId: options.instanceId,
   });
+  // 宿主绑定必须核对提供 Bearer 的同一凭据快照。
+  if (options.expectedPrincipalId !== undefined
+    && metadata.principal_id !== requireUuid(options.expectedPrincipalId, "expected_principal_id")) {
+    throw toolError("PRINCIPAL_BINDING_MISMATCH", "The current identity changed; verify the connection again");
+  }
   return trustedApiRequest({ ...options, authorizationToken: token });
 }

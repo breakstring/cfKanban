@@ -4,7 +4,7 @@ import UButton from "@nuxt/ui/components/Button.vue";
 import UDropdownMenu from "@nuxt/ui/components/DropdownMenu.vue";
 import type { DropdownMenuItem } from "@nuxt/ui";
 import { computed, ref, watch } from "vue";
-import { locale, t } from "../lib/i18n";
+import { locale, t } from "../lib/i18n-core";
 import type { IssueSummary } from "../types";
 
 interface Candidate { principal_id: string; display_name: string }

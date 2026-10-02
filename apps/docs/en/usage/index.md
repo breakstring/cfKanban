@@ -14,7 +14,7 @@ You need read access to the target project. Expect issues and details from the c
 | Accept an invitation, join a public project, sign in, or switch projects | [Joining and signing in](./access.md) |
 | Find, create, edit titles/descriptions, or set priority | [Find, create, and edit issues](./issues.md) |
 | Claim and assign work, change status, complete, reopen, or report blockers | [Workflow and assignees](./workflow.md) |
-| Comments, attachments, labels, relations, handoffs, and restoration | [Collaboration and attachments](./collaboration.md) |
+| Comments, attachments, labels, relations, copying Issue content, and restoration | [Collaboration and attachments](./collaboration.md) |
 | Change your name or theme, manage Passkeys, or associate a working directory | [Profile and directory association](./profile.md) |
 
 **In the Web UI:** Use a project board to browse one project's work. Open the account menu at the top right → **Work list** to read multiple projects you explicitly select. Open an issue card for editing, comments, and other actions. Select the workspace/project name to switch projects.
@@ -29,4 +29,4 @@ Readers can browse. Writers and authorized administrators can change content in 
 
 If a save conflicts with someone else’s change, read the latest content first. If it times out, verify the result before creating another issue or comment.
 
-For invitations, access, and project settings, go to [Administration](../administration/index.md). For site upgrades or enabling attachment storage, go to [Deployment](../deployment/index.md).
+For Skills/MCP/plugin installation or opening the local workbench, go to [Agent integrations](../integrations/index.md). For invitations, access, and project settings, go to [Administration](../administration/index.md). For site upgrades or enabling attachment storage, go to [Deployment](../deployment/index.md).

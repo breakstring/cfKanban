@@ -22,7 +22,7 @@ for (const locale of ["en", "zh-CN"]) {
       const relative = `${locale}/${group.slug}/${page.slug}.md`;
       await mkdir(path.dirname(path.join(outputDirectory, relative)), { recursive: true });
       await cp(path.join(root, "apps/docs", relative), path.join(outputDirectory, relative));
-      index.push(`- [${page[locale]}](/docs/${relative})`);
+      if (!page.hidden) index.push(`- [${page[locale]}](/docs/${relative})`);
     }
   }
   index.push("");
