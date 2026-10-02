@@ -14,18 +14,59 @@
 
 ## 产品与合同
 
-- [Issue 结构化筛选与有界查询](specs/2026-09-29-issue-query-filters-spec.md)：优先级、标签、未分配筛选及 schema 13 查询索引。
 - [产品简报](product/product-brief.md)：产品为何存在、为谁服务、MVP 与非目标。
 - [用户使用 Storyboard](product/user-storyboard.md)：从首次部署到日常协作与恢复的逐卡产品验收故事。
-- [Agent-native Kanban Foundation SPEC](specs/2026-08-26-agent-native-kanban-foundation-spec.md)：已冻结的领域、身份、assignment、基础 API 语义和可靠性合同。
-- [Agent Skills & Bootstrap SPEC](specs/2026-08-28-agent-skills-bootstrap-spec.md)：已冻结的 Skill 能力暴露、可覆盖 Agent Guidance、宿主兼容、跨平台 Node scripts、部署与凭据安全体验合同；不替上层 Agent 作最终工作决策。
-- [API & D1 Schema SPEC](specs/2026-08-28-api-schema-spec.md)：已冻结的 v0 HTTP/OpenAPI、D1 schema、索引和原子写入合同。
-- [Web UI SPEC](specs/2026-08-29-web-ui-spec.md)：已冻结的极简第一方 Web、Browser Launch/Session、参与者轻量操作和 Owner 维护合同。
-- [站内双语文档中心](specs/2026-09-29-documentation-center-spec.md)：公开文档的栏目、提示词、双语维护、旧指南兼容与同版本静态打包。
-- [Web 视觉设计合同](../DESIGN.md)：已冻结的 warm editorial workbench 颜色、排版、布局、组件状态与无障碍约束。
-- [v0 Implementation Plan](plans/2026-08-29-v0-implementation-plan.md)：WP-01～WP-11 的范围、依赖、验收和停止条件；执行状态以 Linear 为准。
+- [Web 视觉设计合同](../DESIGN.md)：颜色、排版、布局、组件状态与无障碍约束。
 
-- [正式发行生命周期](specs/2026-09-20-stable-release-lifecycle-spec.md)：版本无关用户入口、stable 发现、准确发行版本展示和开发环境边界。
+按任务读取相关基础合同及适用增量，不默认通读全部 SPEC。增量只在明确覆盖的范围内替代旧条款，其余约束继续有效；状态和具体语义以各文档本身为准。
+
+### 基础合同
+
+| 涉及范围 | 入口 |
+| --- | --- |
+| 领域、身份、权限、并发与原子操作 | [Agent-native Kanban Foundation](specs/2026-08-26-agent-native-kanban-foundation-spec.md) |
+| HTTP、错误、OpenAPI、D1 schema 与索引 | [API & D1 Schema](specs/2026-08-28-api-schema-spec.md)；机器合同见 [`contracts/`](../contracts/) |
+| Skills、bootstrap、宿主、凭据、部署与恢复 | [Agent Skills & Bootstrap](specs/2026-08-28-agent-skills-bootstrap-spec.md) |
+| Web 交互、认证、Public Join、语言与域名迁移 | [Web UI](specs/2026-08-29-web-ui-spec.md) |
+
+### 增量合同：容器与协作数据
+
+| 涉及范围 | 入口 |
+| --- | --- |
+| 容器 UUID、API / URL / scope 寻址 | [容器 UUID](specs/2026-09-08-container-uuid-spec.md) |
+| 归档、恢复、永久删除与历史保留 | [容器清理](specs/2026-09-08-container-purge-spec.md) |
+| 附件、私有 R2、容量与清理 | [Issue 附件](specs/2026-09-19-issue-attachments-spec.md) |
+| Issue 优先级、标签、负责人筛选与查询索引 | [Issue 结构化筛选](specs/2026-09-29-issue-query-filters-spec.md) |
+| 活动与审计倒序历史、正序增量兼容与时间索引 | [活动历史倒序](specs/2026-10-01-event-history-order-spec.md) |
+| 用量、限额与可选采集 | [用量统计](specs/2026-09-19-usage-statistics-spec.md) |
+| Owner 实例公告、个人接收偏好、逐条确认与 Web/Agent 提醒 | [Owner 实例通知](specs/2026-10-01-instance-notifications-spec.md) |
+
+### 增量合同：身份、管理与 Web Session
+
+| 涉及范围 | 入口 |
+| --- | --- |
+| Principal 名称唯一性、规范化与人员解析 | [Principal 名称](specs/2026-09-20-principal-names-spec.md) |
+| 工作区 / 项目管理员、权限继承、邀请与人数配额 | [分级管理员](specs/2026-09-20-scoped-administrators-spec.md) |
+| Owner Credential 全失恢复 | [Owner 恢复](specs/2026-09-20-owner-credential-recovery-spec.md) |
+| Owner 多设备、独立凭据与新电脑接入已有部署 | [多设备与部署接入](specs/2026-09-27-owner-devices-deployment-attachment-spec.md) |
+| Owner 设备网页批准/撤销、已有本地身份切换与恢复 | [网页与身份切换](specs/2026-09-28-owner-device-web-identity-switch-spec.md) |
+| 已登录参与者网页接受普通邀请、Bearer 本人 Passkey 管理 | [参与者邀请与 Passkey](specs/2026-09-28-participant-invitation-passkey-parity-spec.md) |
+| 参与者 Web 项目切换与 Session 范围 | [参与者项目切换](specs/2026-09-19-participant-project-switching-spec.md) |
+| Web 活动续期、绝对到期、多标签页和文字草稿恢复 | [Web Session 续期](specs/2026-10-01-web-session-renewal-spec.md) |
+
+### 增量合同：公开内容与发行
+
+| 涉及范围 | 入口 |
+| --- | --- |
+| Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](specs/2026-09-20-homepage-settings-spec.md) |
+| 公开文档、双语手册、Agent 示例与静态打包 | [站内双语文档中心](specs/2026-09-29-documentation-center-spec.md) |
+| stable 发现、发行版本、工件与更新 | [正式发行生命周期](specs/2026-09-20-stable-release-lifecycle-spec.md) |
+
+## Skills 与发行维护
+
+- [Agent Skills 说明（English）](skills/README.md) / [简体中文](skills/README.zh-CN.md)：对外技能的职责、使用入口、安装与更新。
+- [项目发版技能](../.agents/skills/project-release/SKILL.md)：维护者 RC/正式发行、stable 推进及默认测试实例升级流程，不对外分发。
+- [GitHub Release 发布与恢复](release-publication.md)：源码维护者的工件准备、发布工具及恢复说明。
 
 ## 技术与研究
 
@@ -40,11 +81,10 @@
 
 ## 项目治理
 
-- [项目发版技能](../.agents/skills/project-release/SKILL.md)：维护者 RC/正式发行、stable 推进及默认测试实例升级流程，不对外分发。
-- [首页实例说明设置](specs/2026-09-20-homepage-settings-spec.md)：Owner 双语公开说明与持久测试实例的缺省提示。
-- [Roadmap](project/roadmap.md)：方向真相和推荐顺序。
+- [Roadmap](project/roadmap.md)：方向、基线、推荐顺序与暂缓项。
 - [决策登记表](project/decision-register.md)：确认、建议和延后项。
 - [待讨论问题](project/open-questions.md)：会实质改变合同的选择。
-- [cfKanban 协作约定](project/cfkanban.md)：线上项目、真相边界与 Linear 历史迁移映射。
+- [`plans/`](plans/)：实施配方；[v0 Implementation Plan](plans/2026-08-29-v0-implementation-plan.md)保留 WP-01～WP-11 的范围、依赖、验收和停止条件，供历史参考。
+- [cfKanban 协作约定](project/cfkanban.md)：当前执行入口、准确线上项目、真相边界与 Linear 历史迁移映射。
 
-当前不采用独立 progress log。进入实现阶段后，再根据实际协作强度决定是否启用。
+执行状态和完成证据保存在协作约定指向的 Issue 中，完成使用结构化 `complete`；不在仓库另建动态 backlog 或独立 progress log。Linear 仅保留历史来源。
