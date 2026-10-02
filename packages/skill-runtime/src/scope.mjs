@@ -1,8 +1,62 @@
+import { execFile } from "node:child_process";
+import { stat } from "node:fs/promises";
 import path from "node:path";
-import { atomicWritePublicJson, readJson, requireUuid } from "./utils.mjs";
+import { promisify } from "node:util";
+import { atomicWritePublicJson, readJson, requireString, requireUuid } from "./utils.mjs";
 import { toolError } from "./errors.mjs";
 
 export const SCOPE_FILE_NAME = ".cfkanban-scope.json";
+const execFileAsync = promisify(execFile);
+const NOT_REPOSITORY = /^fatal: not a git repository \(or any of the parent directories\): \.git\r?\n?$/;
+const FILESYSTEM_BOUNDARY = /^fatal: not a git repository \(or any parent up to mount point [^\r\n]+\)\r?\nStopping at filesystem boundary \(GIT_DISCOVERY_ACROSS_FILESYSTEM not set\)\.\r?\n?$/;
+
+function gitEnvironment(environment) {
+  return {
+    ...Object.fromEntries(Object.entries(environment).filter(([key]) => !/^git_/i.test(key))),
+    LC_ALL: "C", LANG: "C", LANGUAGE: "C",
+  };
+}
+
+async function inspectGitDirectory(directory, { gitRunner, environment }) {
+  try {
+    if (!(await stat(directory)).isDirectory()) return { status: "unknown", root: null };
+  } catch {
+    return { status: "unknown", root: null };
+  }
+  const options = {
+    cwd: directory, env: gitEnvironment(environment), shell: false, windowsHide: true,
+    timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 64 * 1024, encoding: "utf8",
+  };
+  let insideWorkTree = false;
+  try {
+    const inside = await gitRunner("git", ["rev-parse", "--is-inside-work-tree"], options);
+    if (inside.stdout === "false\n" || inside.stdout === "false\r\n") return { status: "not_repository", root: null };
+    if (inside.stdout !== "true\n" && inside.stdout !== "true\r\n") return { status: "unknown", root: null };
+    insideWorkTree = true;
+    const result = await gitRunner("git", ["rev-parse", "--show-toplevel"], options);
+    const root = typeof result.stdout === "string" ? result.stdout.replace(/\r?\n$/, "") : "";
+    if (!path.isAbsolute(root) || /[\r\n\u0000]/.test(root)) return { status: "unknown", root: null };
+    return { status: "repository", root: path.resolve(root) };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { status: "unavailable", root: null };
+    if (!insideWorkTree && error?.code === 128 && !error.killed && (NOT_REPOSITORY.test(error.stderr) || FILESYSTEM_BOUNDARY.test(error.stderr))) {
+      return { status: "not_repository", root: null };
+    }
+    return { status: "unknown", root: null };
+  }
+}
+
+export async function inspectScopeDirectory({ directory = process.cwd() } = {}, { gitRunner = execFileAsync, environment = process.env } = {}) {
+  const absoluteDirectory = path.resolve(requireString(directory, "directory"));
+  const git = await inspectGitDirectory(absoluteDirectory, { gitRunner, environment });
+  const scopeDirectory = git.root ?? absoluteDirectory;
+  const scope = await readRepoScope({ repoRoot: scopeDirectory });
+  return {
+    directory: absoluteDirectory, git, scope_directory: scopeDirectory,
+    scope_file: path.join(scopeDirectory, SCOPE_FILE_NAME), scope,
+    association_recommended: git.status === "repository" && scope === null,
+  };
+}
 
 function validateTarget(target) {
   if (target === null || typeof target !== "object" || Array.isArray(target)) {

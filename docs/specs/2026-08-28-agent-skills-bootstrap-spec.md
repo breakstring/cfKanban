@@ -6,7 +6,7 @@
 
 > 2026-09-20 增量：[首页实例说明设置](2026-09-20-homepage-settings-spec.md)（Frozen，schema 11）的读写通过 `cfkanban-admin` 暴露；项目维护者发版由仓库内的 `project-release` 组织，不加入对外 Skill bundle。Issue 单字段优先级修改仍复用既有日常 Skill 与 PATCH 合同。
 
-> [正式发行生命周期](2026-09-20-stable-release-lifecycle-spec.md)（Frozen，2026-09-30 修订）规定版本无关用户入口、正式 main 宿主更新渠道、最新 stable 发现与单次执行固定版本，以及独立的 `release_version` 展示。源码开发在专门分支进行，可直接使用项目主目录；普通默认分支安装仍须校验已发布正式工件，既有 API/schema 兼容字段保持不变。
+> [正式发行生命周期](2026-09-20-stable-release-lifecycle-spec.md)（Frozen，2026-10-02 修订）规定版本无关用户入口、正式 main 宿主更新渠道、文字更新的明确会话目标、宿主原生稳定更新与独立的单次工件快照，以及 `release_version` 展示。源码开发在专门分支进行，可直接使用项目主目录；普通默认分支安装仍须校验已发布正式工件，既有 API/schema 兼容字段保持不变。
 
 > 2026-09-20 增量：[工作区与项目分级管理员](2026-09-20-scoped-administrators-spec.md)（Frozen，schema 9）覆盖仅 Owner 管理与工作区无继承权限的旧表述：两级支持多人，工作区管理员继承全部子项目，管理员计入项目人数并集配额；局部管理员不获得实例身份恢复、公开加入/限额配置或永久删除能力。新增 workspace Browser Launch 保持限定范围，既有窄 Session 不升级。
 
@@ -31,9 +31,9 @@
 - 关联 Storyboard：[用户使用 Storyboard](../product/user-storyboard.md)
 - 关联 Foundation：[Agent-native Kanban Foundation SPEC](2026-08-26-agent-native-kanban-foundation-spec.md)
 - 事实快照：[Agent Skill 与本地部署环境能力快照](../research/agent-skill-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-09-08
+- 最近更新：2026-10-02
 - 冻结日期：2026-08-28
-- 最近修订：2026-09-08（D-270）
+- 最近修订：2026-10-02（用户授权 Git 工作目录检测与关联提醒调整；本次不授权安装、提交、推送或部署）
 
 ## 1. 目的与边界
 
@@ -116,7 +116,7 @@ Guidance 随 Skill bundle 版本发布，不由服务端在运行时静默改写
 首版至少需要向上层 Agent 暴露以下全局指导：
 
 - cfKanban 自管持久数据统一位于当前执行环境 home 下的 `.cfkanban/`：实例/Credential/journal/receipt 使用 `instances/`，验证后的版本化 Skill 使用 `skill-releases/`，私有 Wrangler 使用 `tool-runtime/`。宿主必须管理的 marketplace/plugin metadata 与发现投影、Agent plugin cache、Cloudflare auth 仍留在各自所有者目录；任何 cfKanban 状态都不能写入 Repo、同步盘或临时目录。
-- Repo 可选 scope 文件为根目录 `.cfkanban-scope.json`，只保存非秘密 Project targets；它是推荐过滤输入，不是身份、Grant 或服务端默认 Project。
+- Repo 可选 scope 文件为工作树根目录 `.cfkanban-scope.json`，非 Git 目录也可在用户主动要求时保存；只保存非秘密 Project targets，是推荐过滤输入，不是身份、Grant 或服务端默认 Project。用只读 `scope inspect-directory` 检测用户目录及 Git 根；Git 工作上下文缺配置时建议关联一次，非 Git 不主动建议，未知或 Git 不可用时不猜测。
 - Project Invite role 按“明确的上层 role → cfKanban 推荐 `writer`”解析；明确只读就是 `reader`。无论推荐结果如何，API 请求都必须显式提交最终 role。
 - 查询 Issue 的推荐 scope 顺序是“本次显式 Project targets → Repo `.cfkanban-scope.json` targets → 无过滤聚合并醒目标示范围扩大”。API 允许省略 filters；Skill 必须呈现 resolved scope 和失效 target 警告，上层可以覆盖这套推荐顺序。
 - 服务只提供原子写能力；Skill 可以说明安全组合范式与失败恢复，但上层决定是否拆分、调用顺序和续做。
@@ -418,13 +418,13 @@ Owner Credential 的本地文件风险提示必须额外说明它拥有整个部
 
 ### 7.6 Repo 工作 scope 与服务端 external reference
 
-- Skill 可以建议保存不含 Credential 的本地工作 scope，用明确的 instance、Workspace 与一个或多个 Project 标识帮助日常读取过滤；同一 Repo 可以映射多个 Project。
+- Skill 在已确认 Git 工作上下文缺少 scope 时建议一次保存关联，用明确的 instance、Workspace 与一个或多个 Project 标识帮助日常读取过滤；明确单次 Project 目标不取消提醒。已配置或用户拒绝后不重复提醒，不阻塞原操作。非 Git 目录仅用户主动要求时提供关联；同一 Repo 可以映射多个 Project。
 - scope 只提供候选读取范围，不能隐含身份、Grant 或唯一写入目标。单项写操作的 wire request 必须携带一个明确的 workspace-qualified Project；上层调用方负责解析目标和处理歧义。
 - Agent 可以只读检查当前 Repo 的 Git metadata，但用户说“用 Project 跟踪这个 Repo”不授权上传本地绝对路径、remote URL、branch 或 worktree 信息。
 - 只有用户明确要求发布 canonical Repo URL 时，才把它作为服务端非授权 external reference 单独写入；v0 不建立 Repository 实体。
-- scope 配置与 Credential 必须分离。其用户级或 Repo 级位置、文件名、格式和优先级仍由 SB-11、SB-12 与 SB-19 共同确认，不能在实现中提前假定。
+- scope 配置与 Credential 必须分离。保存位置、格式和优先级遵循下述已确认规则；Git 只用于本地工作目录定位，不从 remote、目录名或分支推断 Project。
 
-Invite 兑换和 discover 都不自动修改 Repo；Skill 另行提供显式创建/合并 Repo 根目录 `.cfkanban-scope.json` 的 helper。文件使用 schema_version 2，旧 key 配置明确拒绝而不静默扩大范围；只保存一个或多个 `instance_id + workspace_id + project_id` target，不保存 Credential、API origin、绝对路径、Git metadata、role 或权限快照。多个 target 平级，不保存优先级或 last-used 默认。API 允许一个、多个或省略 Project filters；Skill 推荐“本次显式 targets → Repo targets → 无过滤并提示扩大”的解析顺序，始终暴露无效 target 与 resolved scope，上层可以覆盖。跨实例 targets 分别请求并按实例分组，不声称服务端提供跨实例全局排序。单项写入的 wire request 必须携带一个明确 Project，上层负责目标解析。
+Invite 兑换和 discover 都不自动修改 Repo。`scope inspect-directory` 只读检测用户指定目录，跨平台使用有界、无 shell 的 Git 查询；Git 子目录和 linked worktree 解析到各自工作树根，非仓库、Git 缺失及未知失败分别呈现，不安装 Git、不改变目录或上传本地信息。确认的 Git 仓库在根目录读取 `.cfkanban-scope.json`，其他情况读取指定目录；仅确认 Git 且缺配置时返回关联建议。Skill 使用该结果，无需外层重复手工检测 Git。`scope read/merge` 保留指定目录的精确读写语义，不隐式向父目录搜索。用户明确要求关联或同意具体建议后，核对准确目标、读取原配置，以检测返回的目录创建/合并并读回；非 Git 文件夹仍可按主动请求关联。文件使用 schema_version 2，旧 key 配置明确拒绝而不静默扩大范围；只保存一个或多个 `instance_id + workspace_id + project_id` target，不保存 Credential、API origin、绝对路径、Git metadata、role 或权限快照。多个 target 平级，不保存优先级或 last-used 默认。API 允许一个、多个或省略 Project filters；Skill 推荐“本次显式 targets → Repo targets → 无过滤并提示扩大”的解析顺序，始终暴露无效 target 与 resolved scope，上层可以覆盖。跨实例 targets 分别请求并按实例分组，不声称服务端提供跨实例全局排序。单项写入的 wire request 必须携带一个明确 Project，上层负责目标解析。
 
 ## 8. 两类更新与兼容
 

@@ -51,7 +51,7 @@ Howto 从明确实例的 `/docs/llms.txt` 发现公开页面，只读取当前�
 
 先识别当前 Agent 宿主及其支持的 Skill 安装和发现方式。安装完整 plugin/bundle，保留四个 Skills、共享 `packages/skill-runtime` 和相对目录，不能只复制某个 `SKILL.md` 或单个 Skill 目录。共享模块是 JavaScript 源码，不是内嵌 Node.js 可执行程序。通过本地 Skill 目录加载的宿主，按自身支持的发现布局安装已验证 bundle；不支持时说明限制，不能以不完整复制代替。
 
-支持兼容 Git marketplace 或 plugin 来源的宿主，可跟随只承载已公开正式发行的默认 `main` 分支。核对其 commit 与本次固定发行的已发布 tag 一致，再核对实际安装文件与所选 Skill bundle 匹配；仅版本字符串相同不足以证明已验证。若 `main` 落后 Latest 或安装期间变化，说明不一致并重新检查，不静默改用 tag 或开发源码。支持 plugin 的 Codex 是其中一个例子：普通安装省略 `--ref`，只有明确选择历史发行或 RC 时才使用准确已验证 tag。
+支持兼容 Git marketplace 或 plugin 来源的宿主，可跟随只承载已公开正式发行的默认 `main` 分支。核对其 commit 与本次固定发行的已发布 tag 一致，再核对实际安装文件与所选 Skill bundle 匹配；仅版本字符串相同不足以证明已验证。若 `main` 落后 Latest 或安装期间变化，说明不一致并重新检查，不静默改用 tag 或开发源码。支持 plugin 的 Codex 是其中一个例子：普通安装省略 `--ref`。文字更新使用用户明确目标或可信会话明确承接的准确发行，例如刚发布且准备验收的 RC；没有该目标则使用最新正式版。`release discover` 将 `selectionMode` 与工件 `version` 分开：默认 `latest_stable`，保留正式快照时仍为 `marketplace.ref: null`；`exact_version` 必须给出准确目标版本。宿主原生更新跟随稳定渠道。RC 临时安装保留或恢复该长期来源，分别核对保存来源与已安装 RC；宿主无法分离两者时说明原生稳定更新前的来源切换要求。
 
 只有固定旧 tag 的 Git 安装，才需要一次性切换已保存的来源以跟随默认分支。先检查当前来源，展示变更和回退，在用户授权内按宿主支持的方式操作；只从复制的 Codex 命令中删掉 `--ref` 不会修改已保存注册。本地目录安装继续使用已验证 bundle 更新流程。两种方式都不会隐含刷新宿主或当前任务，并保留私有 `.cfkanban/` 身份和部署记录。
 

@@ -20,6 +20,10 @@ Do not upgrade the live site.
 
 This requires local installation access, without Cloudflare sign-in. The Agent identifies your host’s update method, verifies the release and compatibility, and keeps a recoverable previous version. A compatible Git plugin or marketplace source can follow the default `main` branch without choosing a new tag for each release. Local Skill directory installations receive the complete verified bundle, preserving its shared runtime and relative paths. Both paths require an actual host update and verification; some hosts need a new conversation to load updated Skills.
 
+For a text request such as “update the cfKanban plugin and Skills”, an explicit version takes priority. The Agent may also carry forward an exact RC just published when your conversation clearly asks to test that RC; an incidental RC mention or development branch does not select it. If the target is ambiguous, it asks once; otherwise it selects latest stable. Fixing that installation's version and digest does not add a long-term `--ref` pin to a normal Codex marketplace source.
+
+Your host's built-in plugin/Skill update action uses the stable channel. Its saved source must follow stable for this to work; refreshing a fixed tag cannot move to a newer stable release. The Agent checks the installed version and saved source separately. For RC testing, it temporarily uses the same host entry and keeps or restores its default stable update source. If the host cannot preserve the RC installation while restoring the source, the Agent explains the limitation and the switch back required before a later built-in stable update.
+
 ### Switch a Git installation pinned to an old tag
 
 Use this only if your host has a Git-based installation pinned to a tag, such as a Codex marketplace registration. Local-directory installations do not need this migration.
@@ -29,7 +33,7 @@ Switch my existing cfKanban Git installation source from its fixed version tag t
 Show the saved source and proposed change first. Keep my cfKanban identity and deployment records, and do not upgrade the live site.
 ```
 
-This is a one-time change to the registered Git source; in Codex, removing `--ref` from a command you copied earlier does not update its saved setting. The Agent verifies that the default branch and installed files match the selected stable release. If the branch still trails the latest release or changes during installation, it reports the mismatch for a fresh check rather than choosing another source silently. Historical versions and RCs remain explicit choices with an exact tag.
+This changes the registered Git source; in Codex, removing `--ref` from a command you copied earlier does not update its saved setting. The Agent verifies that the default branch, installed files, and saved update source match the selected stable release. If the branch still trails the latest release or changes during installation, it reports the mismatch for a fresh check rather than choosing another source silently. You can still choose an exact version, including a historical release or RC; the Agent verifies that target and explains its effect on later updates.
 
 ## Upgrade the live site
 

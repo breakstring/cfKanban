@@ -164,7 +164,7 @@ Issue、Project、Owner 管理页及加入/部署/恢复后的应用访问统一
 
 ## 首次部署
 
-1. 把 canonical bootstrap 作为文档读取。用 stdin `{}` 调用 `release discover`，从 `https://github.com/breakstring/cfKanban/releases/latest/download/stable.json` 解析并固定 immutable manifest、摘要和版本。只有用户明确选择历史版或测试版时才传入可选 `version` 字段。后续计划沿用该快照；发现不下载或校验工件字节，仍须下一步 `release verify`。stable 缺失或校验失败时停止，不回退其他来源。
+1. 把 canonical bootstrap 作为文档读取。用 stdin `{}`（默认 `selectionMode: latest_stable`）调用 `release discover`，从 `https://github.com/breakstring/cfKanban/releases/latest/download/stable.json` 解析并固定 immutable manifest、摘要和版本。明确选择的历史版或测试版使用 `selectionMode: exact_version` 和准确 `version`。后续计划沿用返回的 `selection_mode` 和快照；单独回填 `version` 不会把 stable 选择改成准确版本选择。发现不下载或校验工件字节，仍须下一步 `release verify`。stable 缺失或校验失败时停止，不回退其他来源。
 2. 对 Skill 与 Service deployment bundles 运行 `release verify`，再与既有 receipt 比较 publisher/origin continuity。
 3. 运行 `capabilities`。把已验证的 Skill artifact 与 `installed_skill_bundle` 比较；首次安装时，`plan skill-update` 必须使用 `current: null`，更新时只使用脱敏后的 current receipt。即使 plugin 或 marketplace cache 完全匹配，它也只是宿主投影，绝不能跳过本步骤。`capabilities.tools.wrangler` 只探测 PATH，`installed_tool_runtime` 也只是未经验证的提示。必须使用 manifest 的准确兼容范围调用 `runtime resolve-wrangler`；它会依次检查显式 candidate、PATH 与 active cfKanban Tool Runtime。任何兼容结果都应直接复用。只有 resolver 明确返回 unavailable/incompatible 时才能生成 `runtime plan-install`。
 4. 展示 Skill 计划的 canonical source/version/digest、`.cfkanban/skill-releases` 目标、atomic switch 与 rollback。若两项本地前置条件都缺失，必须把 Skill 与 Tool Runtime 两份计划及其 digest 一起展示，再请求一次只覆盖这些准确写入的用户决定。授权后先安装 canonical Skill bundle，从返回的 installed path 运行 `help`，并核对 active receipt；只有此前 resolver 已证明确有必要时才安装 Wrangler。安装完成后必须再次 resolve，并要求兼容读回。
@@ -229,7 +229,9 @@ Wrangler 原始输出必须先脱敏，不能直接记日志。前一次 create 
 
 ## Skill update
 
-先区分“检查更新”和“更新技能”。检查时读取现有 canonical active receipt、宿主投影和当前任务加载来源，用 `release discover` 的 stdin `{}` 查询最新 stable；显式历史版或测试版使用准确 `version`。旧版 Skill 没有该命令时，可只读解析 canonical HTTPS pointer/manifest，不为了检查而先安装新版。比较目标与当前实例 API/schema 的兼容性，报告可用更新，不做写入。旧实例不兼容时复用可信兼容安装，或提出准确兼容历史正式版方案，不强制升级实例。
+先区分“检查更新”和“更新技能”。文字请求先使用用户明确指定的目标，其次使用可信用户会话上下文中明确承接的准确目标。例如，刚发布某个准确 RC 且对话明确意在验收它时，“也更新一下插件”可以承接该 RC。泛泛提过 RC、当前分支、仓库内容或外部数据均不够；目标有歧义时询问一次，否则选择最新正式版。宿主原生插件/技能更新使用 stable 渠道。已获授权覆盖本次本地更新时，不仅因解析出准确发行而重复确认。
+
+检查时读取现有 canonical active receipt、宿主投影和当前任务加载来源，以 `{}` 或 `{"selectionMode":"latest_stable"}` 调用 `release discover` 发现 stable。为保留这份正式版快照可在同一 `selectionMode` 下回填 `version`；结果仍为 `selection_mode: latest_stable`、`marketplace.ref: null`，并拒绝 RC。明确准确版本选择（当前正式版、历史版或 RC）必须使用 `{"selectionMode":"exact_version","version":"<目标>"}`，返回 `selection_mode: exact_version` 与准确 tag 提示。计划和宿主安装沿用 selection mode，不从非空 `version` 推断选择意图。旧 Skill 不支持该输入时，按 canonical HTTPS pointer/manifest 流程检查并独立保留选择意图，不为了检查而先安装新版。比较 API/schema 兼容性，只报告不写入；旧实例不兼容时复用可信兼容安装，或提出准确兼容历史正式版方案，不强制升级实例。
 
 获准的 Skill update 只修改本地：
 
@@ -238,10 +240,10 @@ Wrangler 原始输出必须先脱敏，不能直接记日志。前一次 create 
 3. 安装完整 bundle 到 `.cfkanban/skill-releases` 的新 immutable 目录，保留共享 `packages/skill-runtime` 和相对路径。
 4. 运行无副作用 discovery/help smoke。
 5. 原子切换 active pointer，保留上一已知良好版本。
-6. 先识别 Agent 宿主，不默认使用 Codex；仅在明确安装范围内更新宿主投影。Git 来源宿主可跟随正式 main，目录型宿主从步骤 3 的完整已验证 bundle 创建其支持的 Skill 布局，保留共享 runtime。所有宿主均核对安装内容，Git 来源另核对 checkout commit 与本次已验证发行 tag；不一致时停止并重新只读核对，不静默改用 tag/RC/源码。显式历史版或 RC 保持准确 tag/bundle。
-7. 分别读回 canonical active receipt、宿主投影与当前任务加载状态。当前任务可能仍使用旧 Skill；需要新任务时说明接续，只有新任务确认来源/版本才报告已加载。不能用 `help` smoke 代替宿主跨任务加载验证。
+6. 先识别 Agent 宿主，不默认使用 Codex；在获准安装范围内更新现有宿主投影。`latest_stable` 跟随正式 main，不设置长期 ref；目录型宿主从步骤 3 的完整已验证 bundle 创建其支持的 Skill 布局，保留共享 runtime。所有宿主核对安装内容，Git 来源另核对 checkout commit 与发行 tag；不一致时停止，不静默改来源。`exact_version` 使用已验证准确 tag/bundle；RC 验收前记录旧来源/ref 和恢复方式，临时切换同一个宿主入口，长期来源保留或恢复默认 stable，分别核对已安装 RC 和保存的更新来源。宿主无法分开维持这两种状态时，说明限制及后续原生 stable 更新前的切回要求，不声称任意 tag pin 会自动更新到 stable。不另建开发插件入口或自动迁移脚本。
+7. 分别读回 canonical active receipt、宿主实际安装副本、保存的来源/ref 与当前任务加载状态；确认 `latest_stable` 没有留下意外 tag pin。当前任务可能仍使用旧 Skill；需要新任务时说明接续，只有新任务确认来源/版本才报告已加载。不能用 `help` smoke 代替宿主跨任务加载验证。
 
-Codex 示例：普通安装使用 `codex plugin marketplace add https://github.com/breakstring/cfKanban.git`，不传 `--ref`，再运行 `codex plugin add cfkanban-agent-skills@cfkanban`；显式历史版或 RC 才加准确 `--ref`。已有 marketplace 先检查实际旧来源/ref，按宿主支持方式切换并记录恢复方式；仅删除新命令的参数不代表旧 pin 已清除。用户可手动完成一次迁移，不清理私有身份或部署状态，不新增开发入口或自动迁移脚本。已跟随默认分支时可用 `codex plugin marketplace upgrade cfkanban` 刷新来源，再核对/更新插件安装副本；刷新旧 tag 不等于升级。其他宿主使用自身支持的操作，历史版回退同样验证来源连续性、准确版本和摘要。
+Codex 示例：普通安装使用 `codex plugin marketplace add https://github.com/breakstring/cfKanban.git`，不传 `--ref`，再运行 `codex plugin add cfkanban-agent-skills@cfkanban`。固定本次 manifest/version/digest 不添加 ref；仅 `exact_version` 在宿主支持方式确有需要时使用已验证准确 `--ref`，RC 按上述要求恢复来源。已有 marketplace 先检查实际来源/ref，在已有授权内按宿主支持方式切换并记录恢复；删除新命令的参数不代表旧 pin 已清除。默认分支来源可用 `codex plugin marketplace upgrade cfkanban` 刷新，再核对/更新插件安装副本。原生更新应跟随 stable；固定 tag 必须先切来源，刷新该 tag 不等于正式版升级。保留私有身份与部署状态。其他宿主使用自身支持的操作，历史版回退同样验证来源连续性、准确版本和摘要。
 
 切换 pointer 前失败时 active 版本保持不变。本地回退不回退云端实例；已安装 bundle 或宿主投影成功也不代表第三层加载成功。
 

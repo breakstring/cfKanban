@@ -8,6 +8,8 @@
 
 先读取 `/api/v1/me` 的 `is_owner`、`management_grants` 与目标 `allowed_actions`；Owner 专属操作仍要求 `is_owner=true`。这些是应用操作，不是 Cloudflare 部署；Owner 的日常 Issue 工作仍使用 `cfkanban`。
 
+核对具体 Project 后，使用或复用日常 `cfkanban` Skill 对用户工作目录的 `scope inspect-directory` 结果。仅已确认 Git 工作树且缺少 scope 时简短建议关联一次；非 Git 目录不主动建议，检测失败时不猜测。用户明确要求或同意建议后，路由日常 Skill 在 `scope_directory` 合并已验证目标并读回。保留既有关联，用户拒绝后不重复提醒，目录设置不阻塞管理任务。
+
 | 用户请求 | 预期结果 |
 | --- | --- |
 | “在 Product 工作区创建 DemoProject 项目。” | 解析既有名称或创建请求的容器，读回 UUID 并报告项目，用户请求时再打开看板；不自动创建 Issue、添加成员或开启公开加入。 |

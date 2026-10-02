@@ -37,6 +37,7 @@ test("default discovery pins a stable snapshot without downloading bundles or mu
   const remote = release();
   const result = await discoverRelease({}, remote);
   assert.deepEqual(remote.calls, [STABLE_RELEASE_POINTER, remote.pointer.manifest_url]);
+  assert.equal(result.selection_mode, "latest_stable");
   assert.equal(result.release_version, "1.0.0");
   assert.equal(result.release_pointer_url, "https://github.com/breakstring/cfKanban/releases/download/1.0.0/stable.json");
   assert.deepEqual(result.marketplace, { source: "https://github.com/breakstring/cfKanban.git", ref: null });
@@ -49,7 +50,7 @@ test("default discovery pins a stable snapshot without downloading bundles or mu
 test("discovery accepts legacy and independent API manifests, but rejects unsupported formats before artifact use", async () => {
   for (const schemaVersion of [1, 2]) {
     const remote = release("1.4.0-rc.2", schemaVersion);
-    const discovered = await discoverRelease({ version: "1.4.0-rc.2" }, remote);
+    const discovered = await discoverRelease({ selectionMode: "exact_version", version: "1.4.0-rc.2" }, remote);
     assert.equal(discovered.manifest.schema_version, schemaVersion);
     assert.equal(discovered.pointer.schema_version, 1);
     assert.equal(discovered.manifest.compatibility.service_api, ">=0.1.0 <0.2.0");
@@ -57,19 +58,20 @@ test("discovery accepts legacy and independent API manifests, but rejects unsupp
   }
   for (const schemaVersion of [0, 3]) {
     const remote = release("1.4.0-rc.2", schemaVersion);
-    await assert.rejects(discoverRelease({ version: "1.4.0-rc.2" }, remote), { code: "INVALID_RELEASE_MANIFEST" });
+    await assert.rejects(discoverRelease({ selectionMode: "exact_version", version: "1.4.0-rc.2" }, remote), { code: "INVALID_RELEASE_MANIFEST" });
     assert.equal(remote.calls.length, 2);
   }
   const mismatch = release("1.4.0-rc.2", 2);
   mismatch.manifest.compatibility.bootstrap_schema = 1;
   mismatch.pointer.manifest_sha256 = sha256Bytes(Buffer.from(JSON.stringify(mismatch.manifest)));
-  await assert.rejects(discoverRelease({ version: "1.4.0-rc.2" }, mismatch), { code: "INVALID_RELEASE_MANIFEST" });
+  await assert.rejects(discoverRelease({ selectionMode: "exact_version", version: "1.4.0-rc.2" }, mismatch), { code: "INVALID_RELEASE_MANIFEST" });
 });
 
 test("explicit historical stable and prerelease selections use only that immutable target", async () => {
   for (const version of ["1.0.0", "1.1.0-rc.1"]) {
     const remote = release(version);
-    const result = await discoverRelease({ version }, remote);
+    const result = await discoverRelease({ selectionMode: "exact_version", version }, remote);
+    assert.equal(result.selection_mode, "exact_version");
     assert.equal(result.release_version, version);
     assert.equal(result.marketplace.ref, version);
     assert.equal(remote.calls[0], `https://github.com/breakstring/cfKanban/releases/download/${version}/${version.includes("-") ? "prerelease" : "stable"}.json`);
@@ -79,10 +81,27 @@ test("explicit historical stable and prerelease selections use only that immutab
   }
 });
 
-test("explicitly selecting the latest stable version still pins the marketplace ref", async () => {
+test("reusing the resolved stable snapshot preserves the original unpinned marketplace selection", async () => {
+  for (const selectionMode of [undefined, "latest_stable"]) {
+    const remote = release();
+    const latest = await discoverRelease({}, remote);
+    const snapshot = await discoverRelease({ selectionMode, version: latest.release_version }, remote);
+    assert.equal(snapshot.selection_mode, "latest_stable");
+    assert.equal(snapshot.marketplace.ref, null);
+    assert.equal(snapshot.release_version, latest.release_version);
+    assert.equal(snapshot.manifest_sha256, latest.manifest_sha256);
+    assert.deepEqual(remote.calls, [
+      STABLE_RELEASE_POINTER, remote.pointer.manifest_url,
+      latest.release_pointer_url, remote.pointer.manifest_url,
+    ]);
+  }
+});
+
+test("explicit exact selection of the latest stable version pins the marketplace ref", async () => {
   const remote = release();
   const latest = await discoverRelease({}, remote);
-  const selected = await discoverRelease({ version: latest.release_version }, remote);
+  const selected = await discoverRelease({ selectionMode: "exact_version", version: latest.release_version }, remote);
+  assert.equal(selected.selection_mode, "exact_version");
   assert.equal(latest.marketplace.ref, null);
   assert.equal(selected.marketplace.ref, latest.release_version);
   assert.equal(selected.manifest_sha256, latest.manifest_sha256);
@@ -90,6 +109,19 @@ test("explicitly selecting the latest stable version still pins the marketplace 
     STABLE_RELEASE_POINTER, remote.pointer.manifest_url,
     latest.release_pointer_url, remote.pointer.manifest_url,
   ]);
+});
+
+test("invalid selection modes, missing exact versions and implicit prereleases never fetch", async () => {
+  const noFetch = { fetchImpl: () => assert.fail("Invalid selection must not fetch") };
+  for (const selectionMode of [null, "stable", "prerelease", "", 1, {}]) {
+    await assert.rejects(discoverRelease({ selectionMode, version: "1.0.0" }, noFetch), { code: "INVALID_INPUT" });
+  }
+  for (const version of [undefined, null]) {
+    await assert.rejects(discoverRelease({ selectionMode: "exact_version", version }, noFetch), { code: "INVALID_INPUT" });
+  }
+  for (const selectionMode of [undefined, "latest_stable"]) {
+    await assert.rejects(discoverRelease({ selectionMode, version: "1.1.0-rc.1" }, noFetch), { code: "INVALID_INPUT" });
+  }
 });
 
 test("missing stable and network failure never fall back or expose remote error details", async () => {

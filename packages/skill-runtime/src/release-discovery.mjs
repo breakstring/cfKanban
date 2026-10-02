@@ -57,9 +57,18 @@ function parseDocument(bytes) {
   catch { throw toolError("INVALID_RELEASE_DISCOVERY", "Release discovery returned an invalid JSON document"); }
 }
 
-export async function discoverRelease({ version = null } = {}, { fetchImpl = fetch } = {}) {
+export async function discoverRelease({ selectionMode = "latest_stable", version = null } = {}, { fetchImpl = fetch } = {}) {
+  if (!["latest_stable", "exact_version"].includes(selectionMode)) {
+    throw toolError("INVALID_INPUT", "selectionMode must be latest_stable or exact_version");
+  }
   if (version !== null && (typeof version !== "string" || !VERSION.test(version))) {
-    throw toolError("INVALID_INPUT", "version must be an exact release version; omit it to discover the latest stable release");
+    throw toolError("INVALID_INPUT", "version must be an exact release version");
+  }
+  if (selectionMode === "exact_version" && version === null) {
+    throw toolError("INVALID_INPUT", "exact_version selection requires an exact version");
+  }
+  if (selectionMode === "latest_stable" && version?.includes("-")) {
+    throw toolError("INVALID_INPUT", "latest_stable selection only accepts a stable release snapshot; prereleases require exact_version selection");
   }
   const channel = version?.includes("-") ? "prerelease" : "stable";
   const discoveryUrl = version === null ? STABLE_RELEASE_POINTER : `${RELEASE_BASE}${version}/${channel}.json`;
@@ -89,6 +98,7 @@ export async function discoverRelease({ version = null } = {}, { fetchImpl = fet
       && artifact.allowed_origins.length === 1 && artifact.allowed_origins[0] === "https://github.com");
   }
   return {
+    selection_mode: selectionMode,
     discovery_url: discoveryUrl,
     release_pointer_url: `${base}${channel}.json`,
     release_version: resolvedVersion,
@@ -96,6 +106,6 @@ export async function discoverRelease({ version = null } = {}, { fetchImpl = fet
     pointer,
     manifest,
     artifacts_verified: false,
-    marketplace: { source: "https://github.com/breakstring/cfKanban.git", ref: version === null ? null : resolvedVersion },
+    marketplace: { source: "https://github.com/breakstring/cfKanban.git", ref: selectionMode === "exact_version" ? resolvedVersion : null },
   };
 }

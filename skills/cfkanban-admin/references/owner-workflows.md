@@ -8,6 +8,8 @@ Read the relevant section only. Run `node scripts/cfkanban-tool.mjs help` once p
 
 Verify `/api/v1/me`, its `is_owner` and `management_grants`, then target `allowed_actions`. Require `is_owner=true` for Owner-exclusive operations. These are application operations, not Cloudflare deployment. Daily Issue work remains in `cfkanban` even for an Owner.
 
+After verifying a concrete Project, use or reuse the daily `cfkanban` Skill's `scope inspect-directory` result for the user's working directory. Offer association once only for a confirmed Git worktree with missing scope; do not proactively offer it in a non-Git directory or guess after detection failure. An explicit association request or acceptance of the offer routes to the daily Skill to merge the verified targets at `scope_directory` and read them back. Keep existing associations, honor a declined offer, and continue the administration task without requiring setup.
+
 | User request | Expected result |
 | --- | --- |
 | “Create DemoProject in workspace Product.” | Resolve existing names or create requested containers; read back UUIDs and report the Project. Open the board when requested. No automatic Issue, membership, or Public Join. |

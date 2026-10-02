@@ -72,7 +72,7 @@ Preserve its existing associations with other projects.
 Also associate this directory with Mobile for future issue searches.
 ```
 
-Directory association helps when you regularly work on the same projects from one repository or folder. The Agent verifies the projects and saves the local setting while preserving other associations.
+Directory association helps when you regularly work on the same projects from one repository or folder. In a Git repository without an association, the Agent may offer once to create `.cfkanban-scope.json` at its worktree root; subdirectories use that same root. It saves only after you accept or ask for an association, verifies the projects, and preserves other associations. Outside Git repositories, it only handles associations when you ask and does not proactively offer file creation. Declining never blocks your current work or triggers repeated reminders.
 
 You can then omit the project name. A project explicitly named in your request still takes precedence. Association does not grant new access.
 

@@ -67,7 +67,8 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 | 无副作用检查宿主 | `capabilities` | OS/环境分类、Node/Wrangler 探测和统一的 `.cfkanban` 路径。 |
 | 检查实例槽位 | `state inspect` | trusted origin，以及已脱敏的 current/pending Credential metadata。 |
 | 检查 origin 迁移 | `origin rebind-check` | 无 Credential 交叉验证；只有新旧 origin 连续性成立才更新 metadata。 |
-| 读取 Repo 推荐范围 | `scope read` | 可选 `.cfkanban-scope.json` targets。 |
+| 检查工作目录 | `scope inspect-directory` | 只读检测 Git/worktree、scope 目录与已保存推荐范围。 |
+| 读取准确目录推荐 | `scope read` | 显式 `repoRoot` 中的可选 `.cfkanban-scope.json` targets。 |
 | 解析有效范围 | `scope resolve` | `explicit`、`repository` 或带警告的 `unfiltered` scope；需要严格校验时传 `validTargets` 与 `allowUnfiltered=false`。 |
 | 增加显式 Repo targets | `scope merge` | 非秘密、去重后的 scope 文件；Invite/discovery 后不得隐式执行。 |
 | 确认服务端身份 | `api request` → `GET /api/v1/me` | Principal ID、display name、version、current Credential fingerprint、Grants 和 Owner 标记。 |
@@ -76,11 +77,15 @@ Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 P
 
 ## Working-directory association / 工作目录关联
 
-用户问“当前目录关联了哪些项目”时，用 `scope read`，显式将绝对路径 `repoRoot` 指向用户的工作目录，而不是 Skill 目录。普通文件夹也可使用，不依赖 Git；脚本只读取指定目录，不向父目录搜索。缺少配置表示“没有保存目录推荐范围”，不表示“没有项目权限”。根据已验证的授权项目资料展示名称与保存的 ID，标出失效目标。
+本任务中对同一用户工作目录检测一次即可：用 `scope inspect-directory`，将绝对路径 `directory` 指向用户的工作目录，而不是 Skill 目录。输出包含 `directory`、`git.status`（`repository | not_repository | unavailable | unknown`）、`git.root`、`scope_directory`、`scope_file`、`scope` 和 `association_recommended`。Git 子目录或 worktree 使用对应工作树根目录；确认非 Git 时使用指定目录。缺少 Git 或探测不确定时，不猜测根目录，也不当成已确认非 Git。命令不写文件、不修改 Git 配置，也不根据 Git remote 推断项目。
 
-用户要求“将当前目录关联到 DemoProject”时，核对可信实例与已授权项目的 Workspace/Project UUID；仅在目标有歧义时询问。先读现有 scope，再以相同 `repoRoot` 和用户要求的 `targets` 调用 `scope merge`：创建 schema version 2 文件，或去重追加目标，保留既有关联。随后用 `scope read` 读回并报告文件路径与关联项目。merge 不代表替换，不静默修复无效配置；不根据文件夹名称或 Git remote 猜项目、不上传本地路径、不修改 Grants。
+用户问“当前目录关联了哪些项目”时，用返回的 `scope` 和已验证授权项目资料展示名称与保存的 ID，标出失效目标。缺少配置表示“没有保存目录推荐范围”，不表示“没有项目权限”。`scope read` 和 `scope merge` 仍要求显式 `repoRoot`，只处理准确指定目录，不向父目录搜索；后续复用检测结果和 `scope_directory`。`scope resolve` 则将返回的 `scope.targets`（`scope` 为 null 时使用 `[]`）作为 `repoTargets`。保存后读回 scope 即可，不重复 Git 检测。Git 探测不可用或不确定且用户要求保存时，先与用户明确绝对目标目录，不猜测。
 
-保存需要用户明确提出目录关联要求；要求已清晰且获授权时，不额外设置确认步骤。只读查询配置或加入项目本身不授权写文件。该文件只保存非秘密推荐过滤，与 `~/.cfkanban/` 私有身份状态分开；Git 跟踪遵循 Repo 规则，不静默修改 ignore 设置。本次明确目标优先于目录推荐，按明确编号访问有权限的 Issue 不受该文件限制。
+检测到 Git 仓库且 `association_recommended=true` 时，轻量提醒一次：可以在 `scope_directory` 创建 `.cfkanban-scope.json`，记录相关已验证项目。普通 cfKanban 操作也适用，包括明确指定 Project 的单次操作，不仅是加入项目或无过滤查询。提醒不阻塞主操作；已有关联或已拒绝时不重复提醒。确认非 Git 时不主动建议，仅处理用户主动要求的关联或关联查询；`unknown` 或 `unavailable` 不触发提醒。
+
+用户要求“将当前目录关联到 DemoProject”或接受上述建议时，核对可信实例与已授权项目的 Workspace/Project UUID；仅在目标有歧义时询问。先读现有 scope，再将检测返回的 `scope_directory` 作为 `repoRoot`，以用户要求的 `targets` 调用 `scope merge`：创建 schema version 2 文件，或去重追加目标，保留既有关联。随后用 `scope read` 读回并报告文件路径与关联项目。merge 不代表替换，不静默修复无效配置；不根据文件夹名称或 Git remote 猜项目、不上传本地路径、不修改 Grants。
+
+明确关联要求或接受已说明的文件创建建议即授权保存；要求已清晰且获授权时，不额外设置确认步骤。只读查询配置或加入项目本身不授权写文件。该文件只保存非秘密推荐过滤，与 `~/.cfkanban/` 私有身份状态分开；Git 跟踪遵循 Repo 规则，不静默修改 ignore 设置。本次明确目标优先于目录推荐，按明确编号访问有权限的 Issue 不受该文件限制。
 
 ## 个人主题配色
 
