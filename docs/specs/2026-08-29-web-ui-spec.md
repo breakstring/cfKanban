@@ -100,7 +100,7 @@ SB-26 的 v0 交互进一步固定为：
 
 - Project header 展示 Workspace/Project；已登录页面右上角只保留独立的语言切换与账户菜单触发器。当前名称、角色摘要收进账户菜单，并与「工作清单」「管理中心」（当前权限与 Session scope 允许时）、「个人设置」「退出登录」统一组织。桌面与小屏使用同一菜单，Session 到期说明与推荐访问地址统一置于应用页脚，不另设头部 Session 信息行或独立退出按钮；菜单具备键盘、触屏和可见焦点，关闭后焦点返回触发器。reader 页面仍醒目标记“只读”，不渲染无效写按钮。
 - 账户菜单中的“个人设置”打开当前 Principal 的资料页。所有已认证 Principal，不论 Owner、reader 或 writer，都可以查看只读 principal ID、当前 display name、主题偏好与身份摘要，并通过同一 `PATCH /api/v1/me` + `expected_version` 合同修改自己的 display name 或主题；不增加头像、邮箱、简介或他人资料编辑。名称继续满足唯一名称增量合同。Passkey 列举/撤销属于认证设置，不与资料修改合并成隐藏复合写入。
-- Board 卡片点击进入同页 Issue 详情；writer 可以从 Board 创建单个 Issue，卡片 priority 支持独立快捷修改（CFK-434）；assignee、labels、relations 等编辑集中在详情。
+- Board 卡片点击进入同页 Issue 详情；writer 可以从 Board 创建单个 Issue，卡片 priority 与 assignee 支持独立快捷修改，负责人选择包含未分配及当前项目有资格的人员；候选按需分页，同一看板共享读取结果，不逐卡重复请求。只读者仍仅看到负责人摘要，历史负责人失去资格时保留显示及需重新指派提示。labels、relations 等编辑集中在详情。
 - 拖拽落列采用状态自动保存；Issue title/body 等文本编辑仍使用普通文本框/textarea 和显式 Save，不做后台 autosave，避免输入过程持续写 D1。正文与 Comment 以 Markdown 源码编辑，并在详情、评论流和可选预览中安全渲染；不引入 WYSIWYG 富文本编辑器。
 - 每次保存只提交一个资源的显式改动，并等待服务端成功后更新页面。`VERSION_CONFLICT` 保留尚未提交的当前页草稿，展示远端新 version 与刷新/复制草稿选项，不做自动 merge 或自动重放。
 - 普通 Comment 只有追加、软删除和恢复，没有编辑；completion Comment 只读。评论输入使用普通 Markdown textarea，不做 WYSIWYG。

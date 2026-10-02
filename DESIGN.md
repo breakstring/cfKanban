@@ -186,12 +186,12 @@ The visual order is:
 1. `CFK-<number>` and priority on a compact top row;
 2. the issue title as the main detail entry;
 3. a compact summary of labels or exceptional markers, only when present;
-4. assignee or `Unassigned` and the writable quick status control in a quiet footer.
+4. assignee or `Unassigned`, with writable quick assignee and status controls in a quiet footer.
 
 - Cards use `surface`, a light boundary, 9px radius, and compact spacing on the 4px scale. Keep title, labels, and assignee readable without a fixed card height. Long titles, labels, and exceptional markers may increase height.
 - Show at most three label chips and a `+N` count for additional labels. The summary stays on one line when possible; long chips truncate without splitting ordinary characters, with full names in accessible text and titles. Issue detail retains all labels. Do not reserve a summary row when labels and exceptional markers are absent.
 - A subtle divider may separate the assignee/status footer. Preserve explicit `Unassigned` text; long assignee names may truncate with the full name in the title. Allow metadata to wrap when necessary.
-- Priority and status retain transparent resting surfaces and a 32px minimum desktop height. The detail entry and both selectors use at least 44px below or at 940px viewport width. Keep selectors outside the detail button and isolate their pointer, keyboard, and drag events; saving disables both selectors and dragging.
+- Priority, assignee, and status retain transparent resting surfaces and a 32px minimum desktop height. The detail entry and all selectors use at least 44px below or at 940px viewport width. Keep selectors outside the detail button and isolate their pointer, keyboard, and drag events; saving disables all selectors and dragging.
 - A card title normally occupies no more than two lines on the board, with its complete text retained in the accessible detail entry and title. Full content belongs in Issue detail.
 - Empty columns remain visually quiet. Do not fill them with a permanent dashed drop box; show a drop target only during an active drag.
 - `saving` disables repeated movement of the same card and shows a compact progress cue.

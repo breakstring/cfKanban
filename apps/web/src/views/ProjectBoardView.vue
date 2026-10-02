@@ -32,6 +32,7 @@ import { protectNavigationDraft } from "../lib/navigation-draft";
 import { changedTextFields, useSessionTextDraft, verifySessionTextDraftIdentity } from "../lib/session-drafts";
 import { priorityOrder, prioritySaveIsUncertain, priorityText } from "../lib/priority";
 import { navigate } from "../lib/router";
+import { continuationCursor, cursorRequiresRestart } from "../lib/pagination";
 import { hasManagementActions } from "../lib/scoped-management";
 import { projectSettingsPath } from "../lib/project-settings";
 import { WriteFence } from "../lib/write-fence";
@@ -76,6 +77,13 @@ const search = ref(initialFilters.search);
 const saving = ref(new Set<string>());
 const pendingPriorities = ref<Record<string, { issue: IssueSummary; priority: PriorityKey }>>({});
 const pendingStatuses = ref<Record<string, { issue: IssueSummary; status: StatusKey }>>({});
+const pendingAssignees = ref<Record<string, { issue: IssueSummary; principalId: string | null }>>({});
+const assignees = ref<Array<{ principal_id: string; display_name: string }>>([]);
+const assigneesCursor = ref<string | null>(null);
+const assigneesLoaded = ref(false);
+const assigneesLoading = ref(false);
+const assigneesError = ref<unknown>(null);
+let assigneesGeneration = 0;
 const confirmedVersions = new Map<string, number>();
 const dragged = ref<IssueSummary | null>(null);
 const showNewIssue = ref(false);
@@ -107,7 +115,7 @@ const filterProjects = computed<ProjectScopeItem[]>(() => project.value && proje
   project_display_name: project.value.display_name,
   workspace_display_name: project.value.workspace_display_name ?? "",
 }] : []);
-const hasPendingWrites = computed(() => Object.keys(pendingPriorities.value).length > 0 || Object.keys(pendingStatuses.value).length > 0);
+const hasPendingWrites = computed(() => Object.keys(pendingPriorities.value).length > 0 || Object.keys(pendingStatuses.value).length > 0 || Object.keys(pendingAssignees.value).length > 0);
 protectNavigationDraft(() => formBusy.value || saving.value.size > 0 || hasPendingWrites.value || casConflict.value !== null || (showNewIssue.value && (!!newIssue.value.title.trim() || !!newIssue.value.body.trim() || newIssue.value.priority_key !== "none" || newIssue.value.status_key !== "backlog")));
 useSessionTextDraft({
   key: `new-issue:${props.workspaceId}:${props.projectId}`, path: `/app/w/${props.workspaceId}/p/${props.projectId}`,
@@ -143,6 +151,8 @@ function clearProjectProjection(): void {
   project.value = null;
   pendingPriorities.value = {};
   pendingStatuses.value = {};
+  pendingAssignees.value = {};
+  resetAssignees();
   confirmedVersions.clear();
   dismissCasConflict();
   resetCounts();
@@ -164,6 +174,7 @@ function refreshProjectNames(): void {
 }
 
 function refreshProjectInventory(): void {
+  resetAssignees();
   projectionGeneration.invalidate();
   loadRequestId += 1;
   if (!projectIsActive()) {
@@ -171,6 +182,68 @@ function refreshProjectInventory(): void {
     return;
   }
   void load();
+}
+
+function resetAssignees(): void {
+  assigneesGeneration += 1;
+  assignees.value = [];
+  assigneesCursor.value = null;
+  assigneesLoaded.value = false;
+  assigneesLoading.value = false;
+  assigneesError.value = null;
+}
+
+async function loadAssignees(reset = true): Promise<void> {
+  if (!canWrite.value || assigneesLoading.value || (!reset && assigneesCursor.value === null)) return;
+  const request = ++assigneesGeneration;
+  const isCurrent = () => request === assigneesGeneration && canWrite.value;
+  assigneesLoading.value = true;
+  assigneesError.value = null;
+  if (reset) {
+    assignees.value = [];
+    assigneesCursor.value = null;
+    assigneesLoaded.value = false;
+  }
+  const params = new URLSearchParams({ limit: "50" });
+  if (!reset && assigneesCursor.value) params.set("cursor", assigneesCursor.value);
+  try {
+    const result = await apiRequest<ListResult<{ principal_id: string; display_name: string }>>(
+      `/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/assignees?${params}`,
+      { authorizationCurrent: isCurrent },
+    );
+    if (!isCurrent()) return;
+    const cursor = continuationCursor(result);
+    assignees.value = [...new Map([...assignees.value, ...result.items].map(item => [item.principal_id, item])).values()];
+    assigneesCursor.value = cursor;
+    assigneesLoaded.value = true;
+  } catch (caught) {
+    if (!isCurrent()) return;
+    if (cursorRequiresRestart(caught)) {
+      assignees.value = [];
+      assigneesCursor.value = null;
+      assigneesLoaded.value = false;
+    }
+    assigneesError.value = caught;
+    if (caught instanceof ApiProblem && [403, 404].includes(caught.status)) clearProjectProjection();
+  } finally {
+    if (request === assigneesGeneration) assigneesLoading.value = false;
+  }
+}
+
+function ensureAssigneesLoaded(): void {
+  if (!assigneesLoaded.value && !assigneesError.value) void loadAssignees();
+}
+
+function onAssigneeSelection(issue: IssueSummary, event: Event): void {
+  const select = event.target as HTMLSelectElement;
+  const value = select.value;
+  select.value = issue.assignee?.principal_id ?? "";
+  if (value === "load-assignees") {
+    void loadAssignees(assigneesError.value !== null || !assigneesLoaded.value);
+    return;
+  }
+  if (value !== "" && !assignees.value.some(candidate => candidate.principal_id === value)) return;
+  void saveAssignee(issue, value || null);
 }
 
 function filterParams(): URLSearchParams {
@@ -339,7 +412,7 @@ async function saveStatus(issue: IssueSummary, status: StatusKey): Promise<void>
   const fenceKey = `issue-status:${issue.id}`;
   const pending = pendingStatuses.value[issue.id];
   if (pending && (pending.issue.version !== issue.version || pending.status !== status)) return;
-  if (!canWrite.value || pendingPriorities.value[issue.id] || issue.status.key === status || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
+  if (!canWrite.value || pendingPriorities.value[issue.id] || pendingAssignees.value[issue.id] || issue.status.key === status || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
   saving.value = new Set(saving.value).add(issue.id);
   clearError();
   const generation = projectionGeneration.capture();
@@ -389,7 +462,7 @@ async function savePriority(issue: IssueSummary, priority: PriorityKey): Promise
   const fenceKey = `issue-priority:${issue.id}`;
   const pending = pendingPriorities.value[issue.id];
   if (pending && (pending.issue.version !== issue.version || pending.priority !== priority)) return;
-  if (!canWrite.value || pendingStatuses.value[issue.id] || issue.priority === priority || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
+  if (!canWrite.value || pendingStatuses.value[issue.id] || pendingAssignees.value[issue.id] || issue.priority === priority || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
   const generation = projectionGeneration.capture();
   saving.value = new Set(saving.value).add(issue.id);
   clearError();
@@ -414,6 +487,44 @@ async function savePriority(issue: IssueSummary, priority: PriorityKey): Promise
     if (caught instanceof ApiProblem && [403, 404].includes(caught.status)) await readbackIssue(issue.identifier).catch(() => {});
     if (!projectionIsCurrent(generation)) return;
     const recovered = await recoverCasConflict(caught, issue.identifier, { priority_key: priority }, () => readbackIssue(issue.identifier));
+    if (projectionIsCurrent(generation) && !recovered) setError(caught);
+  } finally {
+    writeFence.leave(fenceKey);
+    const current = new Set(saving.value); current.delete(issue.id); saving.value = current;
+  }
+}
+
+async function saveAssignee(issue: IssueSummary, principalId: string | null): Promise<void> {
+  const fenceKey = `issue-assignee:${issue.id}`;
+  const pending = pendingAssignees.value[issue.id];
+  if (pending && (pending.issue.version !== issue.version || pending.principalId !== principalId)) return;
+  if (!canWrite.value || pendingPriorities.value[issue.id] || pendingStatuses.value[issue.id]
+    || (issue.assignee?.principal_id ?? null) === principalId || saving.value.has(issue.id) || !writeFence.enter(fenceKey)) return;
+  const generation = projectionGeneration.capture();
+  saving.value = new Set(saving.value).add(issue.id);
+  clearError();
+  try {
+    const result = await apiRequest<WriteResult<IssueSummary>>(`/api/v1/issues/${issue.identifier}`, {
+      method: "PATCH", body: { expected_version: issue.version, assignee_principal_id: principalId },
+    });
+    if (projectionIsCurrent(generation)) {
+      dismissCasConflict();
+      delete pendingAssignees.value[issue.id];
+      await reconcileIssue(result.resource);
+      if (projectionIsCurrent(generation)) void loadCounts();
+    }
+  } catch (caught) {
+    if (!projectionIsCurrent(generation)) return;
+    if (prioritySaveIsUncertain(caught)) {
+      pendingAssignees.value[issue.id] = { issue, principalId };
+      await readbackIssue(issue.identifier).catch(() => {});
+    } else delete pendingAssignees.value[issue.id];
+    if (!projectionIsCurrent(generation)) return;
+    if (caught instanceof ApiProblem && caught.body.code === "ASSIGNEE_NOT_ELIGIBLE") resetAssignees();
+    if (caught instanceof ApiProblem && [403, 404].includes(caught.status)) await readbackIssue(issue.identifier).catch(() => {});
+    if (!projectionIsCurrent(generation)) return;
+    const recovered = await recoverCasConflict(caught, localizedText(`${issue.identifier} assignee`, `${issue.identifier} 负责人`),
+      { assignee_principal_id: principalId }, () => readbackIssue(issue.identifier));
     if (projectionIsCurrent(generation) && !recovered) setError(caught);
   } finally {
     writeFence.leave(fenceKey);
@@ -533,6 +644,7 @@ function onDrop(status: StatusKey): void {
 onMounted(() => load());
 onUnmounted(() => {
   projectionGeneration.invalidate();
+  resetAssignees();
   resetCounts();
   clearTimeout(filterTimer);
   loadRequestId += 1;
@@ -540,6 +652,8 @@ onUnmounted(() => {
 });
 watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refreshProjectInventory);
 watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
+watch(() => props.session.session_id, resetAssignees);
+watch(canWrite, writable => { if (!writable) resetAssignees(); });
 watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
   clearTimeout(filterTimer);
   projectionGeneration.invalidate();
@@ -598,6 +712,9 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
     </div>
     <p v-for="pending in pendingPriorities" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '优先级保存结果尚未确认，请核实原操作后继续。' : 'Priority save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="savePriority(pending.issue, pending.priority)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
     <p v-for="pending in pendingStatuses" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '状态保存结果尚未确认，请核实原操作后继续。' : 'Status save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="saveStatus(pending.issue, pending.status)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
+    <p v-for="pending in pendingAssignees" :key="pending.issue.id" class="warning-panel" role="status">{{ locale === 'zh-CN' ? '负责人保存结果尚未确认，请核实原操作后继续。' : 'Assignee save is unconfirmed. Verify the original operation before continuing.' }} <UButton color="neutral" variant="ghost" type="button" :disabled="saving.has(pending.issue.id) || !canWrite" @click="saveAssignee(pending.issue, pending.principalId)">{{ pending.issue.identifier }} · {{ locale === 'zh-CN' ? '核实保存' : 'Verify save' }}</UButton></p>
+    <p v-if="assigneesLoading" class="muted-copy" role="status">{{ locale === 'zh-CN' ? '正在加载可指派人员…' : 'Loading eligible people…' }}</p>
+    <div v-if="assigneesError" class="inline-alert" role="alert">{{ errorText(assigneesError) }} <UButton color="neutral" variant="ghost" type="button" :disabled="assigneesLoading || !canWrite" @click="loadAssignees()">{{ locale === 'zh-CN' ? '重试加载人员' : 'Retry loading people' }}</UButton></div>
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
@@ -633,13 +750,13 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
               :key="issue.id"
               class="issue-card"
               :class="{ saving: saving.has(issue.id) }"
-              :draggable="canWrite && !saving.has(issue.id) && !pendingPriorities[issue.id] && !pendingStatuses[issue.id]"
+              :draggable="canWrite && !saving.has(issue.id) && !pendingPriorities[issue.id] && !pendingStatuses[issue.id] && !pendingAssignees[issue.id]"
               :aria-busy="saving.has(issue.id)"
               @dragstart="onDragStart(issue, $event)"
             >
               <div class="card-topline">
                 <code>{{ issue.identifier }}</code>
-                <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
+                <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id] || !!pendingAssignees[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
                 <span v-else class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
               </div>
               <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
@@ -655,12 +772,37 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
                 </span>
               </button>
               <div class="card-meta">
-                <span class="card-assignee" :title="issue.assignee?.display_name ?? t('issue.unassigned')"><UAvatar :alt="issue.assignee?.display_name ?? '—'" size="2xs" /><span>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span></span>
+                <span class="card-assignee" :title="issue.assignee?.display_name ?? t('issue.unassigned')">
+                  <UAvatar :alt="issue.assignee?.display_name ?? '—'" size="2xs" />
+                  <select
+                    v-if="canWrite"
+                    class="card-assignee-select"
+                    :value="issue.assignee?.principal_id ?? ''"
+                    :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id] || !!pendingAssignees[issue.id]"
+                    :aria-label="`${issue.identifier} · ${t('issue.assignee')}`"
+                    :aria-busy="assigneesLoading || saving.has(issue.id)"
+                    :draggable="false"
+                    @focus="ensureAssigneesLoaded"
+                    @pointerdown.stop="ensureAssigneesLoaded"
+                    @mousedown.stop
+                    @click.stop
+                    @keydown.stop
+                    @dragstart.stop.prevent
+                    @change.stop="onAssigneeSelection(issue, $event)"
+                  >
+                    <option value="">{{ t('issue.unassigned') }}</option>
+                    <option v-if="issue.assignee && !assignees.some(candidate => candidate.principal_id === issue.assignee?.principal_id)" :value="issue.assignee.principal_id" disabled>{{ issue.assignee.display_name }}</option>
+                    <option v-for="candidate in assignees" :key="candidate.principal_id" :value="candidate.principal_id">{{ candidate.display_name }}</option>
+                    <option v-if="assigneesLoading" disabled>{{ locale === 'zh-CN' ? '正在加载可指派人员…' : 'Loading eligible people…' }}</option>
+                    <option v-else-if="assigneesError || assigneesCursor" value="load-assignees">{{ assigneesError ? (locale === 'zh-CN' ? '重试加载人员…' : 'Retry loading people…') : (locale === 'zh-CN' ? '加载更多人员…' : 'Load more people…') }}</option>
+                  </select>
+                  <span v-else>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
+                </span>
               <select
                 v-if="canWrite"
                 class="card-status-select"
                 :value="issue.status.key"
-                :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id]"
+                :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id] || !!pendingAssignees[issue.id]"
                 :aria-label="`${issue.identifier} · ${locale === 'zh-CN' ? '变更状态' : 'Change status'}`"
                 :draggable="false"
                 @pointerdown.stop
@@ -738,12 +880,14 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
 .card-meta { flex-wrap: nowrap; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .card-assignee { display: flex; align-items: center; gap: 6px; flex: 1 1 0; text-align: left; }
 .card-assignee > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-assignee-select { flex: 1 1 0; min-width: 0; width: 100%; min-height: 32px; padding: 4px 2px; border-color: transparent; background-color: transparent; font-size: 12px; text-overflow: ellipsis; }
+.card-assignee-select:hover:not(:disabled) { border-color: var(--color-border-strong); }
 .card-status-select { flex: 0 1 auto; max-width: 54%; padding: 4px 2px; min-height: 32px; font-size: 12px; text-align: right; }
 .column-empty { padding: 16px 8px; border-top: 0; color: var(--color-text-muted); font-size: 12px; }
 .form-stack :deep(.relative), .form-grid :deep(.relative) { width: 100%; }
 @media (max-width: 940px) {
   .board-page--nuxt { padding: 20px 16px 12px; }
-  .board-toolbar-actions :deep(button), .board-search :deep(input), .board-search :deep(button), .card-status-select, .issue-card-open { min-height: 44px; }
+  .board-toolbar-actions :deep(button), .board-search :deep(input), .board-search :deep(button), .card-assignee-select, .card-status-select, .issue-card-open { min-height: 44px; }
 }
 @media (max-width: 640px) {
   .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 16px; }

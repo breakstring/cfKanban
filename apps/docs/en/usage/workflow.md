@@ -33,11 +33,11 @@ Assign CFK-123 to Lin_Design.
 Unassign CFK-123 without changing anything else.
 ```
 
-You need write access, and the assignee must also be able to write to the project. If someone is missing, ask an administrator to check their access.
+You need write access, and the assignee must also be able to write to the project. Eligible people include the Owner, administrators of this project or its workspace, and Writers. Reader access alone is insufficient. Overlapping roles and multiple credentials for one identity produce one person in the list. If someone is missing, ask an administrator to check their access.
 
 Assignment changes only the responsible person. It does not start the issue or lock it. If an assignee later loses write eligibility, the historical assignment remains and may show **Needs reassignment**; another person is not silently substituted.
 
-**In the Web UI:** Issue details → **Assignee** → choose an eligible person or the unassigned option. Candidates load as needed. If a person is missing, ask an administrator to check their project access first.
+**In the Web UI:** Select the assignee at the bottom of a board card, or open issue details → **Assignee**. Choose an eligible person or **Unassigned**; the choice saves after server confirmation and keeps the current status. Candidates load as needed, with **Load more** for later pages. Readers see the current assignee without an edit control. If a person is missing, ask an administrator to check their project access first.
 
 ## Find work ready to claim or reassign
 

@@ -78,7 +78,7 @@ You need write access. Priorities are None, Low, Medium, High, and Urgent. Choos
 
 **In the Web UI:** Open an issue → **Edit issue** → edit and save. Set priority directly on a board card or in issue details.
 
-After a status/priority save or single-card drag, the board updates the affected card only after the server confirms it, then checks totals again. Loaded cards and column scroll positions remain. Cards follow latest-update order, so an edited card can move to the top or leave the current filters. A conflict reads back that issue and preserves your intended change. An uncertain result reads back facts first; select **Verify save** to check the original operation, without automatic write replay.
+After a status, priority, or assignee save or single-card drag, the board updates the affected card only after the server confirms it, then checks totals again. Loaded cards and column scroll positions remain. Cards follow latest-update order, so an edited card can move to the top or leave the current filters. A conflict reads back that issue and preserves your intended change. An uncertain result reads back facts first; select **Verify save** to check the original operation, without automatic write replay.
 
 ## If something goes wrong
 

@@ -200,3 +200,87 @@ test("Principal names are normalized, unique, atomic, and resolved only inside a
   }, "POST", {});
   assert.equal(joined.status, 200, JSON.stringify(joined.body));
 });
+
+test("指派候选按当前项目有效写资格和 Principal ID 归一，多凭据与重叠角色不重复跨页", async () => {
+  const resource = async (path, body, method = "POST") => {
+    const result = await write(path, body, method);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    return result.body.resource;
+  };
+  const workspace = await resource("/api/v1/workspaces", { display_name: "AssigneeIdentityWorkspace" });
+  const otherWorkspace = await resource("/api/v1/workspaces", { display_name: "AssigneeIdentityOtherWorkspace" });
+  const workspacePath = `/api/v1/workspaces/${workspace.id}`;
+  const otherWorkspacePath = `/api/v1/workspaces/${otherWorkspace.id}`;
+  const project = await resource(`${workspacePath}/projects`, { display_name: "AssigneeIdentityProject" });
+  const sibling = await resource(`${workspacePath}/projects`, { display_name: "AssigneeIdentitySibling" });
+  const otherProject = await resource(`${otherWorkspacePath}/projects`, { display_name: "AssigneeIdentityOtherProject" });
+  const projectPath = `${workspacePath}/projects/${project.id}`;
+  const writer = await seed("IdentityDirectWriter", project.id);
+  const reader = await seed("IdentityReaderOnly", project.id, "reader");
+  const revoked = await seed("IdentityRevokedWriter", project.id);
+  const elsewhere = await seed("IdentitySiblingWriter", sibling.id);
+  const otherWorkspaceAdmin = await seed("IdentityOtherWorkspaceAdmin", otherProject.id, "reader");
+  const projectAdmin = await seed("IdentityProjectAdmin", project.id, "reader");
+  const workspaceAdmin = await seed("IdentityWorkspaceAdmin", project.id, "reader");
+  const overlapping = await seed("IdentityOverlappingMember", project.id, "reader");
+  await db.prepare("UPDATE project_grants SET revoked_at=?1,revoked_by_principal_id=?3 WHERE id=?2")
+    .bind(Date.now(), revoked.grantId, ownerId).run();
+  await resource(`${otherWorkspacePath}/administrators`, { principal_id: otherWorkspaceAdmin.id, expected_version: 0 });
+  await resource(`${projectPath}/administrators`, { principal_id: projectAdmin.id, expected_version: 0 });
+  await resource(`${workspacePath}/administrators`, { principal_id: workspaceAdmin.id, expected_version: 0 });
+  const overlappingProjectGrant = await resource(`${projectPath}/administrators`, { principal_id: overlapping.id, expected_version: 0 });
+  const overlappingWorkspaceGrant = await resource(`${workspacePath}/administrators`, { principal_id: overlapping.id, expected_version: 0 });
+  const secondCredentialId = crypto.randomUUID();
+  const secondPrefix = secondCredentialId.replaceAll("-", "");
+  const secondToken = `cfk_v1_${secondPrefix}_${"C".repeat(43)}`;
+  await db.prepare("INSERT INTO credentials (id,principal_id,token_prefix,token_digest,issued_at,created_operation_id) VALUES (?1,?2,?3,?4,?5,?6)")
+    .bind(secondCredentialId, overlapping.id, secondPrefix, await sha256Hex(secondToken), Date.now(), crypto.randomUUID()).run();
+  assert.equal((await db.prepare("SELECT count(*) AS count FROM credentials WHERE principal_id=?1 AND revoked_at IS NULL")
+    .bind(overlapping.id).first()).count, 2);
+  for (const token of [overlapping.token, secondToken]) {
+    const me = await request("/api/v1/me", { headers: bearer(token) });
+    assert.equal(me.status, 200, JSON.stringify(me.body));
+    assert.equal(me.body.principal_id, overlapping.id);
+  }
+  const listEndpoint = `${projectPath}/assignees`;
+  const collect = async (expectedIds, tokens = [overlapping.token, secondToken]) => {
+    const collected = [];
+    const cursors = new Set();
+    let nextCursor = null;
+    do {
+      const result = await request(`${listEndpoint}?limit=1${nextCursor ? `&cursor=${encodeURIComponent(nextCursor)}` : ""}`, {
+        headers: bearer(tokens[collected.length % tokens.length]),
+      });
+      assert.equal(result.status, 200, JSON.stringify(result.body));
+      assert.equal(result.body.items.length, 1);
+      assert.deepEqual(Object.keys(result.body.items[0]).sort(), ["display_name", "principal_id"]);
+      const principalId = result.body.items[0].principal_id;
+      assert.equal(collected.includes(principalId), false, "每个 Principal 只占一项候选，不按 Credential 或角色重复");
+      if (collected.length) assert.ok(principalId > collected.at(-1));
+      collected.push(principalId);
+      assert.ok(collected.length <= expectedIds.length, "其他项目或无写资格人员不能出现在分页中");
+      nextCursor = result.body.next_cursor;
+      assert.equal(result.body.has_more, nextCursor !== null);
+      if (nextCursor !== null) {
+        assert.equal(cursors.has(nextCursor), false);
+        cursors.add(nextCursor);
+      }
+    } while (nextCursor);
+    assert.deepEqual(collected, [...expectedIds].sort(), "limit=1 跨页必须精确包含全部合资格 Principal，无重复或遗漏");
+    return collected;
+  };
+  const expectedIds = [ownerId, writer.id, projectAdmin.id, workspaceAdmin.id, overlapping.id];
+  const initial = await collect(expectedIds);
+  for (const excluded of [reader, revoked, elsewhere, otherWorkspaceAdmin]) assert.equal(initial.includes(excluded.id), false);
+  await collect(expectedIds, [reader.token]);
+
+  const revokedProjectAdmin = await resource(`${projectPath}/administrators/${overlappingProjectGrant.id}?expected_version=${overlappingProjectGrant.version}`, undefined, "DELETE");
+  assert.notEqual(revokedProjectAdmin.revoked_at, null);
+  await collect(expectedIds);
+  const revokedWorkspaceAdmin = await resource(`${workspacePath}/administrators/${overlappingWorkspaceGrant.id}?expected_version=${overlappingWorkspaceGrant.version}`, undefined, "DELETE");
+  assert.notEqual(revokedWorkspaceAdmin.revoked_at, null);
+  const finalIds = await collect(expectedIds.filter(id => id !== overlapping.id));
+  assert.equal(finalIds.includes(overlapping.id), false);
+  const remainingDirectGrant = await db.prepare("SELECT role,revoked_at FROM project_grants WHERE id=?1").bind(overlapping.grantId).first();
+  assert.deepEqual(remainingDirectGrant, { role: "reader", revoked_at: null });
+});
