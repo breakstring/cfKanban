@@ -273,6 +273,8 @@ Do not loop over Projects, implement Team Join, silently downgrade `writer`, or 
 
 ## Local workbench and online mode
 
+When starting from a Git plugin projection, first verify that `cfkanban-deploy` installed the complete bundle of the same release in this execution environment's private state. The projection has no prebuilt page; the runtime verifies the matching canonical active receipt and full tree digest. Missing, modified, or mismatched artifacts keep local mode and produce an explicit failure, without compilation, download, or another release.
+
 Use `web open` for ordinary WebUI requests. `mode` defaults to `local`; supply `directory` as the user's actual absolute project directory, never the Skill package/cache directory. Optional `instanceId` and `target:{kind:"project",workspace_id,project_id}` or `target:{kind:"issue",identifier}` retain the exact requested target. The safe host reads only the fixed `.cfkanban-scope.json`: a single verified target opens automatically, several offer a picker, and an invalid/inaccessible target is shown without silently substituting another. Scope is a recommendation, not authorization.
 
 The local Vue workbench includes project switching, Kanban/list, direct priority/status/assignee changes, Issue details, comments and completion evidence. A done action opens the completion form. It runs through the current environment's private runtime and REST API; no remote Web Session or long-lived browser Credential is created. Copy an Issue ID/link, or original description/comment Markdown, to share it. There is no automatic Agent send or separate summary section. Administrative/customization pages require explicit online mode.

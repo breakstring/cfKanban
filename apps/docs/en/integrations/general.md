@@ -24,6 +24,8 @@ Install the complete bundle, keeping all four Skills, shared `packages/skill-run
 
 If `main` trails the selected release or changes during installation, report the mismatch and recheck. Do not silently choose a development branch or another tag. A host without a compatible discovery layout needs an explained limit, not an incomplete copy.
 
+Git plugin projections provide guidance and source, without prebuilt local pages. Before using local MCP or the workbench, use `cfkanban-deploy` to install the complete verified Skill bundle of **the same release**. The workbench verifies the private active receipt and full tree digest before loading matching assets. Missing, modified, or different-version bundles are refused; it neither compiles in the plugin cache nor downloads another version automatically. Online WebUI alone does not require local page artifacts.
+
 Verify that `cfkanban-howto`, `cfkanban`, `cfkanban-admin`, and `cfkanban-deploy` load, including a referenced resource. The first explains capabilities without executing; the other three handle daily collaboration, application administration, and installation/deployment respectively. Run `node scripts/cfkanban-tool.mjs help` from each resolved operational Skill directory to inspect its command surface. Some hosts require a new conversation after installation; verify the version actually loaded there.
 
 ## Connect an existing identity and scope

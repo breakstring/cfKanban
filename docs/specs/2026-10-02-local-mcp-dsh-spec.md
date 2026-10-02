@@ -52,6 +52,8 @@ MCP adapter、本地 Web bridge 与 DSH Host bridge 复用同一有界业务 fac
 
 ## 工件与生命周期
 
+Git plugin 投影保存指引和源码，不携带 ignored 的预构建页面。投影的本地 `web open` 在自身固定构建布局缺失时，只能加载当前环境私有 canonical Skill active 中同发行的完整预构建 runtime；先核验私有路径、receipt、完整 tree、发布者/来源以及投影内容一致性。缺失、被修改或版本/来源不符须明确拒绝，不接受 Client 路径覆盖，不在启动时构建、拉包或改用线上模式。
+
 预构建 `mcp/server.mjs` 提供 stdio 入口，`mcp/facade.mjs` 提供 Host 内部业务接口；构建包含固定 SDK 依赖与 runtime，不依赖源码 checkout、启动时编译、开发机 node_modules、npx/bunx 或在线拉包。Node 基线为 `>=22.12.0`。宿主配置使用已核验 Node 的绝对路径与固定工件入口；带空格路径使用 argv 数组，不拼 shell。
 
 MCP、`local-runtime/{server,launcher,browser,workbench}.mjs` 与固定 `local-runtime/embedded/{embedded.html,embedded-build.json}`、metadata/第三方声明随完整 Skill bundle 分发。DSH 元数据单独生成，包含 `dsh.bundle`、Cordis patch、四 Skills 全部资源、共享 runtime、MCP 预构建入口、同字节通用 Web runtime/Vue 页面与 Client / Host 产物；不把 Codex manifest 当 DSH metadata。Vue 页面由现有 Web Vite / Nuxt UI 工程生成，JS、CSS 与 logo 内联，不在安装或启动时下载依赖。版本跟随 `release/version.json`，摘要与不可变 bundle 绑定；源码测试包明确记录 checkout / dirty 状态，不能冒充 canonical release。已有公开发行资产不改写，未来发行资产 / manifest 由原有工程生成流程纳入，不能手改生成结果。
