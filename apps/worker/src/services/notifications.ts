@@ -138,7 +138,7 @@ export async function listNotifications(db: D1Database, auth: AuthContext, url: 
   const conditions: string[] = admin ? [] : ["n.created_by_principal_id<>?1"];
   if (last !== null) {
     const start = values.length + 1;
-    conditions.push(`(n.created_at<?${start} OR (n.created_at=?${start} AND n.id<?${start + 1}))`);
+    conditions.push(`(n.created_at,n.id)<(?${start},?${start + 1})`);
     values.push(last[0] as number, last[1] as string);
   }
   const guard = buildCurrentAuthGuard(auth, Date.now(), values.length + 1, admin);

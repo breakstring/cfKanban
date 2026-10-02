@@ -1523,12 +1523,24 @@ async function visibleRelations(
 async function recentComments(db: D1Database, issueId: string): Promise<BoundedSection<CommentRow>> {
   try {
     const result = await db.prepare(
-      `SELECT c.id, c.kind, c.body, c.completion_json, c.author_principal_id,
+      `WITH recent_comments AS MATERIALIZED (
+         SELECT c.id, c.created_at
+         FROM comments c INDEXED BY idx_comments_issue_list
+         WHERE c.issue_id = ?1 AND c.deleted_at IS NULL
+         ORDER BY c.created_at DESC, c.id DESC LIMIT 10
+       ), comment_count AS MATERIALIZED (
+         SELECT COUNT(*) AS total_count
+         FROM comments c INDEXED BY idx_comments_issue_list
+         WHERE c.issue_id = ?1 AND c.deleted_at IS NULL
+       )
+       SELECT c.id, c.kind, c.body, c.completion_json, c.author_principal_id,
               author.display_name AS author_display_name, c.version, c.created_at,
-              COUNT(*) OVER () AS total_count
-       FROM comments c JOIN principals author ON author.id = c.author_principal_id
-       WHERE c.issue_id = ?1 AND c.deleted_at IS NULL
-       ORDER BY c.created_at DESC, c.id DESC LIMIT 10`,
+              comment_count.total_count
+       FROM recent_comments recent
+       JOIN comments c ON c.id = recent.id
+       JOIN principals author ON author.id = c.author_principal_id
+       CROSS JOIN comment_count
+       ORDER BY c.created_at DESC, c.id DESC`,
     ).bind(issueId).all<CountedCommentRow>();
     return {
       items: result.results.map(({ total_count: _totalCount, ...row }) => row).reverse(),

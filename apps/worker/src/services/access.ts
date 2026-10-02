@@ -32,6 +32,7 @@ import {
   runIdempotentOperation,
 } from "../kernel/idempotency.ts";
 import type { AuthContext, BearerAuthContext, JsonValue } from "../kernel/types.ts";
+import { activeProjectPrincipalCountSql } from "./project-members.ts";
 import {
   actorCredentialId,
   requireIdempotencyKey,
@@ -503,7 +504,7 @@ export async function listPrincipalCredentials(
               c.revoked_at, c.revoke_reason, p.display_name AS principal_display_name
        FROM credentials AS c JOIN principals AS p ON p.id = c.principal_id
        WHERE c.principal_id = ?1
-         AND (?2 IS NULL OR c.issued_at < ?2 OR (c.issued_at = ?2 AND c.id < ?3))
+         ${position === null ? "" : "AND (c.issued_at, c.id) < (?2, ?3)"}
        ORDER BY c.issued_at DESC, c.id DESC
        LIMIT ?4`,
     ).bind(principalId, position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<CredentialRow>();
@@ -828,7 +829,7 @@ export async function listProjectGrants(
        JOIN projects AS p ON p.id = g.project_id
        JOIN workspaces AS w ON w.id = p.workspace_id
        WHERE g.project_id = ?1
-         AND (?2 IS NULL OR g.created_at > ?2 OR (g.created_at = ?2 AND g.id > ?3))
+         ${position === null ? "" : "AND (g.created_at, g.id) > (?2, ?3)"}
        ORDER BY g.created_at, g.id
        LIMIT ?4`,
     ).bind(projectId, position?.[0] ?? null, position?.[1] ?? null, limit + 1).all<GrantRow>();
@@ -1007,7 +1008,7 @@ export async function createProjectGrant(
             ).bind(grantId, principalId, projectId, role, now, auth.principalId, operationId, ...guard.values),
             db.prepare(
               `UPDATE project_usage
-               SET active_principal_count = (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = project_usage.project_id),
+               SET active_principal_count = ${activeProjectPrincipalCountSql("project_usage.project_id")},
                    updated_at = ?1, last_operation_id = ?2
                WHERE project_id = ?3 AND EXISTS (
                  SELECT 1 FROM project_grants g
@@ -1166,7 +1167,7 @@ export async function revokeProjectGrant(
         ).bind(now, auth.principalId, operationId, grantId, expectedVersion, auth.principalId, ...guard.values),
         db.prepare(
           `UPDATE project_usage
-           SET active_principal_count = (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = project_usage.project_id),
+           SET active_principal_count = ${activeProjectPrincipalCountSql("project_usage.project_id")},
                updated_at = ?1, last_operation_id = ?2
            WHERE project_id = ?3 AND active_principal_count > 0
              AND EXISTS (SELECT 1 FROM project_grants g

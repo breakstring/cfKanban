@@ -1,5 +1,6 @@
 import { buildManagementGuard, managementAuthorization, requireManagementAuthorization } from "../kernel/scoped-authorization.ts";
 import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
+import { activeProjectPrincipalCountSql } from "./project-members.ts";
 import {
   principalDisplayNameKey,
   generateInvitationCode,
@@ -471,25 +472,81 @@ export async function listInvitations(
     auth.principalId,
   );
   const position = parseCursor(decodeCursor(url.searchParams.get("cursor"), cursorContext));
+  const values: (string | number | null)[] = [];
+  const bind = (value: string | number | null): string => {
+    values.push(value);
+    return `?${values.length}`;
+  };
+  const projectParameter = projectFilter === null ? null : bind(projectFilter);
+  const managedParameter = managedIds === null ? null : bind(JSON.stringify(managedIds));
+  const cursorCondition = position === null ? "1 = 1"
+    : `(i.created_at, i.id) < (${bind(position[0])}, ${bind(position[1])})`;
+  const conditions = ["1 = 1"];
+  if (projectParameter !== null) conditions.push(`EXISTS (
+    SELECT 1 FROM invitation_project_grants targets
+    WHERE targets.invitation_id = i.id AND targets.project_id = ${projectParameter})`);
+  if (managedParameter !== null) conditions.push(`i.kind = 'project_grant'
+    AND EXISTS (SELECT 1 FROM invitation_project_grants targets WHERE targets.invitation_id = i.id)
+    AND NOT EXISTS (SELECT 1 FROM invitation_project_grants targets WHERE targets.invitation_id = i.id
+      AND targets.project_id NOT IN (SELECT value FROM json_each(${managedParameter})))`);
+  const pageLimit = bind(limit + 1);
+  let candidates = "";
+  if (projectParameter !== null || managedParameter !== null) {
+    const probeLimit = bind(Math.max(limit + 1, 32));
+    const targetSource = projectParameter !== null
+      ? `CROSS JOIN invitation_project_grants filtered_target INDEXED BY idx_invitation_project_grants_project
+           ON filtered_target.project_id = ${projectParameter}`
+      : `CROSS JOIN json_each(${managedParameter}) managed_project
+         CROSS JOIN invitation_project_grants filtered_target INDEXED BY idx_invitation_project_grants_project
+           ON filtered_target.project_id = managed_project.value`;
+    // 密集目标从时间索引提前停止；不足一页时才反查稀疏目标，两个范围严格互斥。
+    candidates = `WITH history_probe AS MATERIALIZED (
+        SELECT i.id, i.created_at${managedParameter === null ? "" : ", i.kind"}
+        FROM invitations AS i INDEXED BY idx_invitations_history
+        WHERE ${cursorCondition} ${managedIds?.length === 0 ? "AND 0 = 1" : ""}
+        ORDER BY i.created_at DESC, i.id DESC LIMIT ${probeLimit}
+      ), probe_matches AS MATERIALIZED (
+        SELECT i.id, i.created_at FROM history_probe i
+        WHERE ${conditions.join(" AND ")}
+        ORDER BY i.created_at DESC, i.id DESC LIMIT ${pageLimit}
+      ), probe_status AS MATERIALIZED (
+        SELECT (SELECT COUNT(*) FROM history_probe) AS scanned,
+               (SELECT COUNT(*) FROM probe_matches) AS matched
+      ), fallback_gate AS MATERIALIZED (
+        SELECT history_probe.id, history_probe.created_at
+        FROM probe_status CROSS JOIN history_probe
+        WHERE scanned = ${probeLimit} AND matched < ${pageLimit}
+        ORDER BY history_probe.created_at, history_probe.id LIMIT 1
+      ), fallback_matches AS MATERIALIZED (
+        SELECT DISTINCT i.id, i.created_at
+        FROM fallback_gate gate
+        ${targetSource}
+        CROSS JOIN invitations i ON i.id = filtered_target.invitation_id
+        WHERE (i.created_at, i.id) < (gate.created_at, gate.id)
+          AND ${conditions.join(" AND ")}
+        ORDER BY i.created_at DESC, i.id DESC
+        LIMIT (${pageLimit} - (SELECT COUNT(*) FROM probe_matches))
+      ), page_candidates AS MATERIALIZED (
+        SELECT id, created_at FROM probe_matches
+        UNION ALL
+        SELECT id, created_at FROM fallback_matches
+      )`;
+  }
   let rows: InvitationRow[];
   try {
     const result = await db.prepare(
-      `SELECT i.id, i.kind, i.code_prefix, i.code_digest, i.bound_principal_id,
+      `${candidates}
+       SELECT i.id, i.kind, i.code_prefix, i.code_digest, i.bound_principal_id,
               bound.display_name AS bound_display_name, i.recovery_mode,
               i.expires_at, i.revoked_at, i.redeemed_at,
               i.redeemed_by_principal_id, i.created_at,
               i.created_by_owner_principal_id, i.last_operation_id, i.issuer_administrator_id, i.issuer_administrator_generation
-       FROM invitations AS i
+       ${candidates === "" ? "FROM invitations AS i" : "FROM page_candidates candidate CROSS JOIN invitations AS i ON i.id = candidate.id"}
        LEFT JOIN principals AS bound ON bound.id = i.bound_principal_id
-       WHERE (?1 IS NULL OR i.created_at < ?1 OR (i.created_at = ?1 AND i.id < ?2))
-         AND (?4 IS NULL OR (i.kind = 'project_grant'
-           AND EXISTS (SELECT 1 FROM invitation_project_grants targets WHERE targets.invitation_id = i.id)
-           AND NOT EXISTS (SELECT 1 FROM invitation_project_grants targets WHERE targets.invitation_id = i.id
-             AND targets.project_id NOT IN (SELECT value FROM json_each(?4)))))
-         AND (?5 IS NULL OR EXISTS (SELECT 1 FROM invitation_project_grants targets WHERE targets.invitation_id = i.id AND targets.project_id = ?5))
+       ${candidates === "" ? `WHERE ${cursorCondition}` : ""}
        ORDER BY i.created_at DESC, i.id DESC
-       LIMIT ?3`,
-    ).bind(position?.[0] ?? null, position?.[1] ?? null, limit + 1, managedIds === null ? null : JSON.stringify(managedIds), projectFilter).all<InvitationRow>();
+       LIMIT ${pageLimit}`,
+    ).bind(...values).all<InvitationRow>();
     rows = result.results;
   } catch (error) {
     throw platformUnavailable("d1", error);
@@ -497,12 +554,10 @@ export async function listInvitations(
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;
   const tail = page.at(-1);
-  if (managedIds !== null) {
-    for (const row of page) await requireInvitationManagement(db, auth, row, now);
-  }
   const grants = await readInvitationGrantPages(db, page.map((row) => row.id));
   const items = await Promise.all(page.map((row) => invitationResource(db, row, now, grants.get(row.id) ?? [])));
   if (managedIds === null) await verifyCurrentAuth(db, auth, now);
+  else await requireInvitationPageManagement(db, auth, page, grants, now);
   return {
     has_more: hasMore,
     items,
@@ -1453,7 +1508,7 @@ async function executeProjectInviteRedeem(
 
   statements.push(db.prepare(
     `UPDATE project_usage
-     SET active_principal_count = (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = project_usage.project_id),
+     SET active_principal_count = ${activeProjectPrincipalCountSql("project_usage.project_id")},
          updated_at = ?1, last_operation_id = ?2
      WHERE project_id IN (
        SELECT iri.project_id
@@ -1936,6 +1991,56 @@ async function requireInvitationProject(db: D1Database, auth: AuthContext, proje
   const scope = { workspaceId: project.workspace_id, projectId };
   const authorization = await requireManagementAuthorization(db, auth, scope, "manage_members", now);
   return { scope, authorization };
+}
+
+async function requireInvitationPageManagement(
+  db: D1Database,
+  auth: AuthContext,
+  page: readonly InvitationRow[],
+  grants: ReadonlyMap<string, readonly InvitationGrantRow[]>,
+  now: number,
+): Promise<void> {
+  const scopes = new Map<string, { workspace_id: string; project_id: string; administrator_id: string | null; generation: string | null; workspace_admin: boolean }>();
+  for (const invitation of page) {
+    const targets = grants.get(invitation.id) ?? [];
+    if (invitation.kind !== "project_grant" || targets.length === 0) throw notFound();
+    for (const target of targets) {
+      if (scopes.has(target.project_id)) continue;
+      const source = managementAuthorization(auth, { workspaceId: target.workspace_id, projectId: target.project_id }, "manage_members");
+      if (source === null) throw forbidden();
+      scopes.set(target.project_id, {
+        workspace_id: target.workspace_id, project_id: target.project_id,
+        administrator_id: source.administratorGrantId, generation: source.administratorGeneration,
+        workspace_admin: source.authorizedVia === "workspace_admin",
+      });
+    }
+  }
+  // 投影后一次核对全部不同目标，保留 Session 交集及原授权 generation，避免逐邀请重复鉴权。
+  const guard = buildCurrentAuthGuard(auth, now, 3);
+  try {
+    const allowed = await db.prepare(`SELECT 1 AS allowed WHERE ${guard.sql}
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(?1) target
+        LEFT JOIN projects project ON project.id = json_extract(target.value, '$.project_id')
+        LEFT JOIN workspaces workspace ON workspace.id = json_extract(target.value, '$.workspace_id')
+        LEFT JOIN scoped_administrator_grants administrator ON administrator.id = json_extract(target.value, '$.administrator_id')
+        WHERE project.id IS NULL OR project.purged_at IS NOT NULL OR project.deleted_at IS NOT NULL
+          OR workspace.id IS NULL OR project.workspace_id <> workspace.id
+          ${auth.isOwner ? `OR NOT EXISTS (SELECT 1 FROM instance_meta WHERE singleton = 1 AND owner_principal_id = ?2)` : `OR workspace.deleted_at IS NOT NULL
+          OR administrator.id IS NULL OR administrator.revoked_at IS NOT NULL
+          OR administrator.principal_id <> ?2 OR administrator.workspace_id <> workspace.id
+          OR administrator.generation IS NOT json_extract(target.value, '$.generation')
+          OR (json_extract(target.value, '$.workspace_admin') = 1 AND administrator.project_id IS NOT NULL)
+          OR (json_extract(target.value, '$.workspace_admin') = 0 AND (administrator.project_id IS NULL OR administrator.project_id <> project.id))`}
+      )`).bind(JSON.stringify([...scopes.values()]), auth.principalId, ...guard.values).first();
+    if (allowed === null) {
+      await verifyCurrentAuth(db, auth, now);
+      throw notFound();
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw platformUnavailable("d1", error);
+  }
 }
 
 async function authorizeInvitationCreation(db: D1Database, auth: AuthContext, kind: InvitationKind, grants: readonly InvitationGrantInput[], now: number) {

@@ -227,7 +227,34 @@ function deletedRelationListSql(withCursor: boolean, authGuardSql: string): stri
          ORDER BY relation.deleted_at DESC, relation.id DESC`;
 }
 
-function activeRelationListSql(authGuardSql: string): string {
+function activeRelationListSql(withCursor: boolean, authGuardSql: string): string {
+  const cursorPredicate = withCursor
+    ? "AND (relation.created_at, relation.id) > (?3, ?4)"
+    : "";
+  const limitParameter = withCursor ? "?5" : "?3";
+  const principalParameter = withCursor ? "?6" : "?4";
+  // 固定候选为投影起点，避免优化器先连接全部关系再过滤有界页面。
+  const projection = RELATION_SELECT
+    .replace("FROM issue_relations relation", `FROM candidate_relations candidate
+  CROSS JOIN issue_relations relation ON relation.id = candidate.id`)
+    .replaceAll("\n  JOIN ", "\n  CROSS JOIN ");
+  const candidates = (direction: "source" | "target") => `
+           SELECT relation.id, relation.created_at
+           FROM issue_relations relation INDEXED BY idx_issue_relations_${direction}_active_order
+           CROSS JOIN issues source ON source.id = relation.source_issue_id
+           CROSS JOIN issues target ON target.id = relation.target_issue_id
+           CROSS JOIN workspaces workspace ON workspace.id = relation.workspace_id
+           WHERE relation.${direction}_issue_id = ?1
+             AND relation.source_project_id = source.project_id
+             AND relation.target_project_id = target.project_id
+             AND relation.deleted_at IS NULL
+             AND workspace.deleted_at IS NULL
+             AND source.deleted_at IS NULL AND target.deleted_at IS NULL
+             AND source.project_id IN (SELECT id FROM current_visible_projects)
+             AND target.project_id IN (SELECT id FROM current_visible_projects)
+             ${cursorPredicate}
+           ORDER BY relation.created_at ASC, relation.id ASC
+           LIMIT ${limitParameter}`;
   return `WITH current_visible_projects(id) AS MATERIALIZED (
            SELECT current_project.id
            FROM projects current_project
@@ -238,18 +265,25 @@ function activeRelationListSql(authGuardSql: string): string {
              AND current_workspace.deleted_at IS NULL
              AND ${authGuardSql}
              AND (
-               current_instance.owner_principal_id = ?6
+               current_instance.owner_principal_id = ${principalParameter}
                OR EXISTS (
                  SELECT 1 FROM effective_project_grants current_grant
                  WHERE current_grant.project_id = current_project.id
-                   AND current_grant.principal_id = ?6
+                   AND current_grant.principal_id = ${principalParameter}
                    AND current_grant.revoked_at IS NULL
                )
              )
+         ), source_candidates AS (${candidates("source")}
+         ), target_candidates AS (${candidates("target")}
+         ), candidate_relations AS MATERIALIZED (
+           SELECT id, created_at FROM source_candidates
+           UNION ALL
+           SELECT id, created_at FROM target_candidates
+           ORDER BY created_at ASC, id ASC
+           LIMIT ${limitParameter}
          )
-         ${RELATION_SELECT}
-         WHERE (relation.source_issue_id = ?1 OR relation.target_issue_id = ?1)
-           AND relation.source_project_id = source.project_id
+         ${projection}
+         WHERE relation.source_project_id = source.project_id
            AND relation.target_project_id = target.project_id
            AND relation.deleted_at IS NULL
            AND workspace.deleted_at IS NULL
@@ -257,10 +291,7 @@ function activeRelationListSql(authGuardSql: string): string {
            AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
            AND source.project_id IN (SELECT id FROM current_visible_projects)
            AND target.project_id IN (SELECT id FROM current_visible_projects)
-           AND (?3 IS NULL OR relation.created_at > ?3
-                OR (relation.created_at = ?3 AND relation.id > ?4))
-         ORDER BY relation.created_at ASC, relation.id ASC
-         LIMIT ?5`;
+         ORDER BY relation.created_at ASC, relation.id ASC`;
 }
 
 async function readRelation(
@@ -590,7 +621,7 @@ export async function listIssueRelations(
   const authGuard = buildCurrentAuthGuard(
     auth,
     now,
-    deletedMode === "only" && cursor === null ? 5 : 7,
+    cursor === null ? 5 : 7,
   );
   let rows: RelationRow[];
   try {
@@ -612,15 +643,23 @@ export async function listIssueRelations(
           auth.principalId,
           ...authGuard.values,
         ).all<RelationRow>()
-      : await db.prepare(activeRelationListSql(authGuard.sql)).bind(
-        issue.id,
-        JSON.stringify(visibleIds),
-        cursor?.[0] ?? null,
-        cursor?.[1] ?? null,
-        limit + 1,
-        auth.principalId,
-        ...authGuard.values,
-      ).all<RelationRow>();
+      : cursor === null
+        ? await db.prepare(activeRelationListSql(false, authGuard.sql)).bind(
+          issue.id,
+          JSON.stringify(visibleIds),
+          limit + 1,
+          auth.principalId,
+          ...authGuard.values,
+        ).all<RelationRow>()
+        : await db.prepare(activeRelationListSql(true, authGuard.sql)).bind(
+          issue.id,
+          JSON.stringify(visibleIds),
+          cursor[0],
+          cursor[1],
+          limit + 1,
+          auth.principalId,
+          ...authGuard.values,
+        ).all<RelationRow>();
     rows = result.results;
   } catch (error) {
     throw platformUnavailable("d1", error);

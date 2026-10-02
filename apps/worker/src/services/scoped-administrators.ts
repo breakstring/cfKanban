@@ -5,6 +5,7 @@ import { ApiError, businessQuotaExceeded, forbidden, notFound, platformUnavailab
 import { readOperationSnapshot, runIdempotentOperation } from "../kernel/idempotency.ts";
 import { buildManagementGuard, managementAuthorization, requireManagementAuthorization, sessionAllowsManagement, type ManagementScope } from "../kernel/scoped-authorization.ts";
 import type { AuthContext, JsonValue, ScopedAdministrator } from "../kernel/types.ts";
+import { activeProjectPrincipalCountSql } from "./project-members.ts";
 import { actorCredentialId, requireIdempotencyKey, requireLimit, writeResult } from "./shared.ts";
 
 interface AdministratorRow extends ScopedAdministrator {
@@ -59,7 +60,7 @@ export async function listAdministrators(db: D1Database, auth: AuthContext, scop
   const result = await db.prepare(
     `SELECT a.*, p.display_name FROM scoped_administrator_grants a
      JOIN principals p ON p.id = a.principal_id
-     WHERE a.workspace_id = ?1 AND a.project_id IS ?2 AND (?3 IS NULL OR a.id > ?3)
+     WHERE a.workspace_id = ?1 AND a.project_id IS ?2 ${after === null ? "" : "AND a.id > ?3"}
        AND ${guard.sql} ORDER BY a.id LIMIT ?4`,
   ).bind(scope.workspaceId, scope.projectId ?? null, after, limit + 1, ...guard.values).all<AdministratorRow>();
   await authorizeRead(db, auth, scope, now);
@@ -106,7 +107,7 @@ export async function listAdministratorCandidates(db: D1Database, auth: AuthCont
       AND NOT EXISTS (SELECT 1 FROM scoped_administrator_grants inherited
         WHERE inherited.workspace_id=?1 AND inherited.project_id IS NULL
           AND inherited.principal_id=p.id AND inherited.revoked_at IS NULL)
-      AND (?3 IS NULL OR p.id > ?3) AND instr(p.display_name_key, ?4) > 0
+      ${after === null ? "" : "AND p.id > ?3"} AND instr(p.display_name_key, ?4) > 0
       AND ${guard.sql}
     ORDER BY p.id LIMIT ?5
   `).bind(scope.workspaceId, scope.projectId ?? null, after, query, limit + 1, ...guard.values)
@@ -145,7 +146,7 @@ export async function listProjectMemberCandidates(db: D1Database, auth: AuthCont
     WHERE p.id != (SELECT owner_principal_id FROM instance_meta WHERE singleton=1)
       AND NOT EXISTS (SELECT 1 FROM project_grants direct
         WHERE direct.project_id=?1 AND direct.principal_id=p.id AND direct.revoked_at IS NULL)
-      AND (?2 IS NULL OR p.id > ?2) AND instr(p.display_name_key, ?3) > 0
+      ${after === null ? "" : "AND p.id > ?2"} AND instr(p.display_name_key, ?3) > 0
       AND ${guard.sql}
     ORDER BY p.id LIMIT ?4
   `).bind(scope.projectId!, after, query, limit + 1, ...guard.values)
@@ -168,15 +169,14 @@ async function readAdministrator(db: D1Database, scope: ManagementScope, princip
 
 async function capacityFailure(db: D1Database, scope: ManagementScope, principalId: string) {
   return db.prepare(
-    `SELECT p.id, p.principal_limit, COUNT(g.principal_id) AS current_usage FROM projects p
+    `SELECT p.id, p.principal_limit, ${activeProjectPrincipalCountSql("p.id")} AS current_usage FROM projects p
      JOIN workspaces w ON w.id=p.workspace_id
      JOIN public_join_policies policy ON policy.project_id=p.id
-     LEFT JOIN effective_project_grants g ON g.project_id=p.id
      WHERE p.workspace_id=?1 AND (?2 IS NULL OR p.id=?2)
        AND p.deleted_at IS NULL AND w.deleted_at IS NULL
        AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM effective_project_grants existing WHERE existing.project_id=p.id AND existing.principal_id=?3)
-     GROUP BY p.id HAVING p.principal_limit IS NULL OR COUNT(g.principal_id)>=p.principal_limit
+       AND (p.principal_limit IS NULL OR ${activeProjectPrincipalCountSql("p.id")}>=p.principal_limit)
      ORDER BY p.id LIMIT 1`,
   ).bind(scope.workspaceId, scope.projectId ?? null, principalId).first<{ id: string; principal_limit: number | null; current_usage: number }>();
 }
@@ -230,7 +230,7 @@ export async function changeAdministrator(
           AND policy.enabled_at IS NOT NULL AND policy.disabled_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM effective_project_grants already WHERE already.project_id=quota_project.id AND already.principal_id=?2)
           AND (quota_project.principal_limit IS NULL OR
-            (SELECT COUNT(*) FROM effective_project_grants members WHERE members.project_id=quota_project.id)>=quota_project.principal_limit)
+            ${activeProjectPrincipalCountSql("quota_project.id")}>=quota_project.principal_limit)
       )`;
       const statement = deleting
         ? `UPDATE scoped_administrator_grants SET revoked_at=?6, revoked_by_principal_id=?7,
@@ -258,7 +258,7 @@ export async function changeAdministrator(
           businessStatements: [
             db.prepare(statement).bind(id, principalId, scope.workspaceId, scope.projectId ?? null, generation,
               now, auth.principalId, operationId, input.expectedVersion, deleting ? 1 : 0, ...guard.values),
-            db.prepare(`UPDATE project_usage SET active_principal_count=(SELECT COUNT(*) FROM effective_project_grants g WHERE g.project_id=project_usage.project_id),
+            db.prepare(`UPDATE project_usage SET active_principal_count=${activeProjectPrincipalCountSql("project_usage.project_id")},
               updated_at=?1,last_operation_id=?2
               WHERE project_id IN (SELECT id FROM projects WHERE workspace_id=?3 AND (?4 IS NULL OR id=?4))
                 AND EXISTS (SELECT 1 FROM scoped_administrator_grants a WHERE a.id=?5 AND a.last_operation_id=?2)`)
@@ -310,11 +310,34 @@ export async function listProjectMembers(db: D1Database, auth: AuthContext, scop
     [scope.projectId!, source.administratorGrantId ?? "owner", source.administratorGeneration ?? "owner"], auth.principalId);
   const after = cursorPosition(decodeCursor(url.searchParams.get("cursor"), context));
   const guard = buildManagementGuard(auth, now, 4, scope, "manage_members");
-  const result = await db.prepare(`SELECT p.id AS principal_id,p.display_name,
-      CASE WHEN p.id=im.owner_principal_id THEN 'owner' ELSE g.role END AS effective_role
-    FROM principals p JOIN instance_meta im ON im.singleton=1
-    LEFT JOIN effective_project_grants g ON g.principal_id=p.id AND g.project_id=?1
-    WHERE (p.id=im.owner_principal_id OR g.principal_id IS NOT NULL) AND (?2 IS NULL OR p.id>?2)
+  // 来源与排序沿用 effective_project_grants，但在各分支先限定目标，避免其他范围的管理员历史进入窗口。
+  const result = await db.prepare(`WITH member_sources AS (
+      SELECT direct.principal_id, direct.role, 1 AS precedence, direct.id AS source_id
+      FROM project_grants direct WHERE direct.project_id=?1 AND direct.revoked_at IS NULL
+      UNION ALL
+      SELECT administrator.principal_id, 'writer', 2, administrator.id
+      FROM scoped_administrator_grants administrator
+      WHERE administrator.project_id=?1
+        AND administrator.workspace_id=(SELECT workspace_id FROM projects WHERE id=?1)
+        AND administrator.revoked_at IS NULL
+      UNION ALL
+      SELECT administrator.principal_id, 'writer', 3, administrator.id
+      FROM scoped_administrator_grants administrator
+      WHERE administrator.project_id IS NULL
+        AND administrator.workspace_id=(SELECT workspace_id FROM projects WHERE id=?1)
+        AND administrator.revoked_at IS NULL
+    ), member_candidates AS MATERIALIZED (
+      SELECT principal_id, role AS effective_role FROM (
+        SELECT member_sources.*, ROW_NUMBER() OVER (
+          PARTITION BY principal_id ORDER BY (role='writer') DESC, precedence DESC, source_id
+        ) AS source_rank FROM member_sources
+      ) WHERE source_rank=1 AND principal_id<>(SELECT owner_principal_id FROM instance_meta WHERE singleton=1)
+      UNION ALL
+      SELECT owner_principal_id, 'owner' FROM instance_meta WHERE singleton=1
+    )
+    SELECT p.id AS principal_id,p.display_name,candidate.effective_role
+    FROM member_candidates candidate JOIN principals p ON p.id=candidate.principal_id
+    WHERE ${after === null ? "1=1" : "p.id>?2"}
       AND ${guard.sql} ORDER BY p.id LIMIT ?3`)
     .bind(scope.projectId!, after, limit + 1, ...guard.values).all<{ principal_id: string; display_name: string; effective_role: string }>();
   const rows = result.results.slice(0, limit);

@@ -171,9 +171,10 @@ export async function listAttachments(env: WorkerEnv, auth: AuthContext, identif
   const limit = requireLimit(url);
   let rows: AttachmentRow[];
   try {
+    const values = cursor === null ? [issue.id, limit + 1] : [issue.id, cursor[0], cursor[1], limit + 1];
     rows = (await env.DB.prepare(`${selectAttachment} WHERE a.issue_id=?1 AND a.deleted_at IS ${deleted === "only" ? "NOT " : ""}NULL
-      AND (?2 IS NULL OR a.created_at>?2 OR (a.created_at=?2 AND a.id>?3)) ORDER BY a.created_at,a.id LIMIT ?4`)
-      .bind(issue.id, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<AttachmentRow>()).results;
+      ${cursor === null ? "" : "AND (a.created_at,a.id)>(?2,?3)"} ORDER BY a.created_at,a.id LIMIT ?${values.length}`)
+      .bind(...values).all<AttachmentRow>()).results;
   } catch (error) { throw platformUnavailable("d1", error); }
   const settings = await readAttachmentStorage(env.DB);
   const page = rows.slice(0, limit), tail = page.at(-1), more = rows.length > limit;
@@ -345,9 +346,14 @@ export async function collectAttachmentGarbage(env: WorkerEnv, now = Date.now())
   // 避免持续的新记录饿死已检查墓碑，使晚到 PUT 永久留在预算之外。
   const candidates = (await db.prepare(`SELECT id,object_key,budget_released_at FROM attachment_objects WHERE state='garbage'
     ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1`).bind(CLEANUP_BATCH).all<{ id: string; object_key: string; budget_released_at: number | null }>()).results;
+  if (candidates.length > 0) {
+    // 检查失败也推进 FIFO 回访时间；同轮候选共享时间戳，可一次写入有界集合。
+    // 显式主键索引避免优化器从 state 索引扫描全部墓碑后过滤候选 ID。
+    await db.prepare(`UPDATE attachment_objects INDEXED BY sqlite_autoindex_attachment_objects_1 SET last_checked_at=?1 WHERE state='garbage'
+      AND id IN (${candidates.map((_, index) => `?${index + 2}`).join(",")})`).bind(now, ...candidates.map(object => object.id)).run();
+  }
   let deleted = 0;
   for (const object of candidates) {
-    await db.prepare("UPDATE attachment_objects SET last_checked_at=?2 WHERE id=?1 AND state='garbage'").bind(object.id, now).run();
     try {
       await bucket.delete(object.object_key);
       if (await bucket.head(object.object_key) !== null) continue;

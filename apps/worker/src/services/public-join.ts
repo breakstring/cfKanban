@@ -1,4 +1,5 @@
 import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
+import { activeProjectPrincipalCountSql } from "./project-members.ts";
 import {
   principalDisplayNameKey,
   requireCredentialToken,
@@ -308,10 +309,7 @@ async function readPolicyControl(
                 WHERE comment_issue.project_id = project.id
                   AND comment_issue.deleted_at IS NULL AND comment.deleted_at IS NULL
               )) AS active_comment_count,
-              COALESCE(usage.active_principal_count, (
-                SELECT COUNT(*) FROM effective_project_grants grant_row
-                WHERE grant_row.project_id = project.id AND grant_row.revoked_at IS NULL
-              )) AS active_principal_count
+              COALESCE(usage.active_principal_count, ${activeProjectPrincipalCountSql("project.id")}) AS active_principal_count
        FROM projects project
        JOIN workspaces workspace ON workspace.id = project.workspace_id
        LEFT JOIN public_join_policies policy ON policy.project_id = project.id
@@ -537,9 +535,7 @@ export async function enablePublicJoin(
                        WHERE comment_issue.project_id = project.id
                          AND comment_issue.deleted_at IS NULL
                          AND comment.deleted_at IS NULL),
-                      (SELECT COUNT(*) FROM effective_project_grants grant_row
-                       WHERE grant_row.project_id = project.id
-                         AND grant_row.revoked_at IS NULL),
+                      ${activeProjectPrincipalCountSql("project.id")},
                       ?1, ?2
                FROM projects project
                JOIN public_join_policies policy ON policy.project_id = project.id
@@ -716,9 +712,7 @@ export async function disablePublicJoin(
                                    WHERE comment_issue.project_id = project.id
                                      AND comment_issue.deleted_at IS NULL
                                      AND comment.deleted_at IS NULL),
-                      'principals', (SELECT COUNT(*) FROM effective_project_grants grant_row
-                                    WHERE grant_row.project_id = project.id
-                                      AND grant_row.revoked_at IS NULL)
+                      'principals', ${activeProjectPrincipalCountSql("project.id")}
                     )
                   ), ?5
            FROM projects project
@@ -1637,7 +1631,7 @@ export async function redeemPublicJoin(
       if (expectedOutcome.usageDelta === 1) {
         statements.push(db.prepare(
           `UPDATE project_usage
-           SET active_principal_count = (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = project_usage.project_id),
+           SET active_principal_count = ${activeProjectPrincipalCountSql("project_usage.project_id")},
                updated_at = ?1, last_operation_id = ?2
            WHERE project_id = (
              SELECT project_id FROM public_join_policies WHERE public_id = ?3

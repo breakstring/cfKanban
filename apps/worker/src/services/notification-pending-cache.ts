@@ -53,7 +53,7 @@ export async function readPendingNotifications<T extends IdentifiedRow>(db: D1Da
     }
     if (last !== null) {
       const start = values.length + 1;
-      conditions.push(`(n.created_at<?${start} OR (n.created_at=?${start} AND n.id<?${start + 1}))`);
+      conditions.push(`(n.created_at,n.id)<(?${start},?${start + 1})`);
       values.push(...last);
     }
     const guard = buildCurrentAuthGuard(auth, Date.now(), values.length + 1);

@@ -78,6 +78,7 @@
 - [Cloudflare Worker 域名与实例发现能力快照（2026-08-29）](research/cloudflare-worker-domain-discovery-snapshot-2026-08-29.md)：Custom Domains、控制面枚举、第三方代理域名与本地 trusted origin 迁移边界。
 - [Edgechat 架构与部署工程快照（2026-08-29）](research/edgechat-architecture-snapshot-2026-08-29.md)：同 Worker 的 Web/API 部署、Cloudflare 产品取舍、D1 migration 与 GitHub Actions 借鉴边界。
 - [API / D1 合同验证快照（2026-08-29）](research/api-d1-contract-validation-2026-08-29.md)：OpenAPI、D1 schema、原子操作、Web 安全与错误归一化的实现前证据。
+- [D1 读取优化验证（2026-10-02）](research/d1-read-optimization-2026-10-02.md)：schema 18 定向索引、读取成本、写入代价与权限/分页回归边界。
 
 ## 项目治理
 

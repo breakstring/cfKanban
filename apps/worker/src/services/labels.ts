@@ -293,6 +293,7 @@ export async function listLabels(
   const limit = requireLimit(url);
   let rows: LabelRow[];
   try {
+    // 名称唯一索引也包含墓碑；实测优化器会优先选择它，因此活动页固定使用部分索引。
     const result = deletedMode === "only"
       ? await db.prepare(
         `SELECT label.id, label.project_id, label.name, label.color,
@@ -307,8 +308,7 @@ export async function listLabels(
          JOIN projects project ON project.id = label.project_id
          JOIN workspaces workspace ON workspace.id = project.workspace_id
          WHERE label.project_id = ?1 AND label.deleted_at IS NOT NULL
-           AND (?2 IS NULL OR label.deleted_at < ?2
-                OR (label.deleted_at = ?2 AND label.id < ?3))
+           ${cursor === null ? "" : "AND (label.deleted_at, label.id) < (?2, ?3)"}
          ORDER BY label.deleted_at DESC, label.id DESC
          LIMIT ?4`,
       ).bind(project.projectId, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<LabelRow>()
@@ -321,12 +321,11 @@ export async function listLabels(
                 workspace.id AS workspace_id,
                 workspace.display_name AS workspace_name,
                 workspace.deleted_at AS workspace_deleted_at
-         FROM labels label
+         FROM labels label INDEXED BY idx_labels_active_name
          JOIN projects project ON project.id = label.project_id
          JOIN workspaces workspace ON workspace.id = project.workspace_id
          WHERE label.project_id = ?1 AND label.deleted_at IS NULL
-           AND (?2 IS NULL OR label.name > ?2 COLLATE NOCASE
-                OR (label.name = ?2 COLLATE NOCASE AND label.id > ?3))
+           ${cursor === null ? "" : "AND label.name > ?2 COLLATE NOCASE"}
          ORDER BY label.name COLLATE NOCASE ASC, label.id ASC
          LIMIT ?4`,
       ).bind(project.projectId, cursor?.[0] ?? null, cursor?.[1] ?? null, limit + 1).all<LabelRow>();

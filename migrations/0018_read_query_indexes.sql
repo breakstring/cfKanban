@@ -1,0 +1,12 @@
+CREATE INDEX idx_workspaces_active_order ON workspaces(purged_at, deleted_at, display_name, id);
+CREATE INDEX idx_credentials_principal_history ON credentials(principal_id, issued_at DESC, id DESC);
+CREATE INDEX idx_project_grants_project_history ON project_grants(project_id, created_at, id);
+CREATE INDEX idx_scoped_admin_scope_history ON scoped_administrator_grants(workspace_id, project_id, id);
+CREATE INDEX idx_invitation_project_grants_project ON invitation_project_grants(project_id, invitation_id);
+CREATE INDEX idx_invitations_history ON invitations(created_at DESC, id DESC);
+CREATE INDEX idx_labels_active_name ON labels(project_id, name COLLATE NOCASE, id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_issue_relations_source_active_order ON issue_relations(source_issue_id, created_at, id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_issue_relations_target_active_order ON issue_relations(target_issue_id, created_at, id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_issue_attachments_deleted_order ON issue_attachments(issue_id, created_at, id) WHERE deleted_at IS NOT NULL;
+CREATE INDEX idx_web_authenticators_principal_history ON web_authenticators(principal_id, created_at DESC, id DESC);
+UPDATE instance_meta SET schema_version = 18 WHERE schema_version = 17;

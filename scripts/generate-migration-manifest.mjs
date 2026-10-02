@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 17,
+  schema_version: 18,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -230,6 +230,23 @@ const manifest = {
       reentry: "wrangler_migration_ledger_only",
       expected_artifacts: { columns: ["web_sessions.version"], indexes: ["idx_web_sessions_expiry_cleanup"] },
       expected_data: { instance_meta_schema_version_at_least: 17, allow_uninitialized: true },
+    },
+    {
+      sequence: 18,
+      name: "0018_read_query_indexes.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0018_read_query_indexes.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        indexes: [
+          "idx_workspaces_active_order", "idx_credentials_principal_history", "idx_project_grants_project_history",
+          "idx_scoped_admin_scope_history", "idx_invitation_project_grants_project", "idx_invitations_history",
+          "idx_labels_active_name", "idx_issue_relations_source_active_order", "idx_issue_relations_target_active_order",
+          "idx_issue_attachments_deleted_order", "idx_web_authenticators_principal_history",
+        ],
+      },
+      expected_data: { instance_meta_schema_version_at_least: 18, allow_uninitialized: true },
     },
   ],
 };

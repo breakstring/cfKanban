@@ -12,13 +12,15 @@ import {
   buildCurrentAuthGuard,
   reauthenticateOwner,
   requireOwnerControl,
+  requireVisibleProject,
   resolveVisibleProjects,
   verifyCurrentAuth,
 } from "../kernel/authorization.ts";
 import { createCursorContext, decodeCursor, encodeCursor, invalidCursor } from "../kernel/cursor.ts";
 import { isUuid } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, type OperationCommit } from "../kernel/d1.ts";
-import { conflict, forbidden, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
+import { ApiError, conflict, forbidden, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
+import { activeProjectPrincipalCountSql } from "./project-members.ts";
 import {
   operationSnapshotStatement,
   readOperationSnapshot,
@@ -247,7 +249,7 @@ async function readProject(
               p.version, p.deleted_at, p.created_at, p.updated_at,
               COALESCE(pu.active_issue_count, 0) AS active_issue_count,
               COALESCE(pu.active_comment_count, 0) AS active_comment_count,
-              COALESCE(pu.active_principal_count, (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = p.id)) AS active_principal_count,
+              COALESCE(pu.active_principal_count, ${activeProjectPrincipalCountSql("p.id")}) AS active_principal_count,
               CASE WHEN pu.project_id IS NULL THEN 0 ELSE 1 END AS usage_present,
               pjp.public_summary AS public_join_public_summary,
               CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
@@ -265,18 +267,26 @@ async function readProject(
   }
 }
 
-async function workspaceIsVisible(db: D1Database, auth: AuthContext, workspaceId: string): Promise<boolean> {
+async function workspaceIsVisible(db: D1Database, auth: AuthContext, workspaceId: string, visibleWorkspaceIds?: readonly string[]): Promise<boolean> {
   if (canManageContainers(auth)) return true;
   if (managementAuthorization(auth, { workspaceId }, "manage_workspace") !== null) {
     await requireManagementAuthorization(db, auth, { workspaceId }, "manage_workspace", Date.now());
     return true;
   }
-  return (await resolveVisibleProjects(db, auth)).some((project) => project.workspaceId === workspaceId);
+  return visibleWorkspaceIds === undefined
+    ? (await resolveVisibleProjects(db, auth)).some((project) => project.workspaceId === workspaceId)
+    : visibleWorkspaceIds.includes(workspaceId);
 }
 
-async function projectIsVisible(db: D1Database, auth: AuthContext, projectId: string): Promise<boolean> {
+async function projectIsVisible(db: D1Database, auth: AuthContext, workspaceId: string, projectId: string): Promise<boolean> {
   if (canManageContainers(auth)) return true;
-  return (await resolveVisibleProjects(db, auth)).some((project) => project.projectId === projectId);
+  try {
+    await requireVisibleProject(db, auth, workspaceId, projectId);
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return false;
+    throw error;
+  }
 }
 
 async function readWorkspacePage(
@@ -307,9 +317,9 @@ async function readWorkspacePage(
          ) OR id IN (SELECT workspace_id FROM scoped_administrator_grants
            WHERE principal_id = ?5 AND project_id IS NULL AND revoked_at IS NULL
              AND id IN (SELECT value FROM json_each(?6)) ) OR id = ?7)
-         AND (?2 IS NULL OR ${deleted === "only"
-           ? "deleted_at < ?2 OR (deleted_at = ?2 AND id < ?3)"
-           : "display_name > ?2 OR (display_name = ?2 AND id > ?3)"})
+         ${position === null ? "" : `AND ${deleted === "only"
+           ? "(deleted_at, id) < (?2, ?3)"
+           : "(display_name, id) > (?2, ?3)"}`}
          ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        ORDER BY ${deleted === "only" ? "deleted_at DESC, id DESC" : "display_name, id"}
        LIMIT ?4`,
@@ -347,7 +357,7 @@ async function readProjectPage(
               p.version, p.deleted_at, p.created_at, p.updated_at,
               COALESCE(pu.active_issue_count, 0) AS active_issue_count,
               COALESCE(pu.active_comment_count, 0) AS active_comment_count,
-              COALESCE(pu.active_principal_count, (SELECT COUNT(*) FROM effective_project_grants effective WHERE effective.project_id = p.id)) AS active_principal_count,
+              COALESCE(pu.active_principal_count, ${activeProjectPrincipalCountSql("p.id")}) AS active_principal_count,
               CASE WHEN pu.project_id IS NULL THEN 0 ELSE 1 END AS usage_present,
               pjp.public_summary AS public_join_public_summary,
               CASE WHEN pjp.enabled_at IS NOT NULL AND pjp.disabled_at IS NULL THEN 1 ELSE 0 END AS public_join_enabled
@@ -359,9 +369,9 @@ async function readProjectPage(
          ${deleted === "only" ? "" : "AND w.deleted_at IS NULL"}
          AND (?2 IS NULL OR p.id IN (SELECT value FROM json_each(?2)))
          AND ${deleted === "only" || auth?.isOwner === true ? "?6 IS NOT NULL" : `EXISTS (SELECT 1 FROM effective_project_grants visible_access WHERE visible_access.project_id = p.id AND visible_access.principal_id = ?6)`}
-         AND (?3 IS NULL OR ${deleted === "only"
-           ? "p.deleted_at < ?3 OR (p.deleted_at = ?3 AND p.id < ?4)"
-           : "p.display_name > ?3 OR (p.display_name = ?3 AND p.id > ?4)"})
+         ${position === null ? "" : `AND ${deleted === "only"
+           ? "(p.deleted_at, p.id) < (?3, ?4)"
+           : "(p.display_name, p.id) > (?3, ?4)"}`}
          ${currentAuth === null ? "" : `AND ${currentAuth.sql}`}
        ORDER BY ${deleted === "only" ? "p.deleted_at DESC, p.id DESC" : "p.display_name, p.id"}
        LIMIT ?5`,
@@ -507,7 +517,7 @@ export async function listProjects(
   if (workspace === null && deleted === "only") await verifyCurrentAuth(db, auth, now);
   if (workspace === null) throw notFound();
   const visibleProjects = await resolveVisibleProjects(db, auth);
-  if (deleted === "exclude" && !(await workspaceIsVisible(db, auth, workspace.id))) {
+  if (deleted === "exclude" && !(await workspaceIsVisible(db, auth, workspace.id, visibleProjects.map((project) => project.workspaceId)))) {
     throw notFound();
   }
   const cursorContext = await createCursorContext(
@@ -531,6 +541,8 @@ export async function listProjects(
     auth,
     now,
   );
+  if (rows.length === 0 && deleted === "exclude" && !canManageContainers(auth)
+    && !(await workspaceIsVisible(db, auth, workspaceId))) throw notFound();
   const hasMore = rows.length > limit;
   const items = rows.slice(0, limit);
   const tail = items.at(-1);
@@ -569,7 +581,7 @@ export async function getProject(
   if (row === null && deleted === "only") await verifyCurrentAuth(db, auth, now);
   if (
     row === null
-    || (deleted === "only" ? row.deleted_at === null : !(await projectIsVisible(db, auth, row.id)))
+    || (deleted === "only" ? row.deleted_at === null : !(await projectIsVisible(db, auth, row.workspace_id, row.id)))
   ) throw notFound();
   const resource = projectResource(row, auth);
   if (deleted === "only") await verifyCurrentAuth(db, auth, now);
@@ -1446,7 +1458,7 @@ export async function listStatuses(
   const workspaceId = requireUuid(workspaceIdValue, "workspace_id");
   const projectId = requireUuid(projectIdValue, "project_id");
   const project = await readProject(db, workspaceId, projectId);
-  if (project === null || !(await projectIsVisible(db, auth, project.id))) throw notFound();
+  if (project === null || !(await projectIsVisible(db, auth, project.workspace_id, project.id))) throw notFound();
   let overrides: StatusNameRow[];
   try {
     const result = await db.prepare(
