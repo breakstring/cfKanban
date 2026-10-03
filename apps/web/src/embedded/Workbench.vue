@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, reactive, ref, watch } from "vue";
 import UApp from "@nuxt/ui/components/App.vue";
 import UBadge from "@nuxt/ui/components/Badge.vue";
 import UButton from "@nuxt/ui/components/Button.vue";
@@ -40,6 +40,7 @@ const client = createEmbedClient({
   window,
   onConnect(value) { setLocale(value); document.documentElement.lang = value; connected.value = true; },
   onSnapshot(value) { if (value.locale) { setLocale(value.locale); document.documentElement.lang = value.locale; } state.value = value; },
+  async afterRender() { await nextTick(); },
   onError(code) { localError.value = code; },
 });
 onUnmounted(() => client.dispose());

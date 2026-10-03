@@ -34,9 +34,11 @@ bundle 新增独立 `cfkanban-skills` 和 `cfkanban-mcp` 行，保留已有 prov
 
 调用 `mcp__cfkanban__cfkanban_connection_inspect`，选择准确可信实例，核对 `/me`、Principal 和明确 Project 范围后操作任务。MCP 只提供有界日常协作 adapter；加入、恢复、管理、部署及敏感 Browser Launch 继续使用 Skills 专用流程。打开认证 Web 前先做 delivery preflight，再交付 Launch 并核对最终身份和范围。
 
-点击聊天旁的 cfKanban logo 图标打开任务 Tab。Host 核对当前 Session 注册的 DSH 工作区，只读取该目录的 `.cfkanban-scope.json`。单个 Instance / Project 目标通过可信实例、实时 `/me` 和项目权限核验后自动绑定；多个目标先在推荐范围内选择。scope 缺失、非法或无权时显示明确结果并保留手动选择入口。自动绑定不授予权限、不启动工作、不写入 Issue，也不修改 scope 文件。
+插件启用后提供独立于业务 MCP 的宿主工具 `cfkanban_view_open`。先发现真实 schema；目标为 `instance_id`、`workspace_id`、`project_id` 及可选事项 `identifier`。通过可用 MCP 只读查询或已有核验上下文解析准确 ID；调用来源 Session 由 Host 提供，不作为工具参数。用户只需说「在侧边栏打开 CFK-123」。工具明确确认 `opened` 且目标一致后，Agent 才能报告成功。权限/目标失败或结果不确定时不能改用浏览器重试。明确侧栏请求遇到能力缺失时直接说明，不据此安装插件、翻源码或调用内部路由。
 
-面板支持项目切换、看板、列表、详情和手动刷新，复用 Web UI 的视觉和控件。按实时权限在列表或看板直接修改优先级、状态和负责人，在详情中追加评论和完成记录。请 Agent 处理任务时复制 CFK 编号或 Issue URL，由 Skills 读取最新数据；来源 DSH 会话仅用于核验 scope 所属工作区目录。面板首版仅支持本机单用户 Host；公网、未知、远程、容器或多用户执行环境不继承本机凭据和授权。
+手动打开时，点击聊天旁的 cfKanban logo 图标进入任务 Tab。Host 核对当前 Session 注册的 DSH 工作区，只读取该目录的 `.cfkanban-scope.json`。单个 Instance / Project 目标通过可信实例、实时 `/me` 和项目权限核验后自动绑定；多个目标先在推荐范围内选择。scope 缺失、非法或无权时显示明确结果并保留手动选择入口。自动绑定不授予权限、不启动工作、不写入 Issue，也不修改 scope 文件。
+
+面板支持项目切换、看板、列表、详情和手动刷新，复用 Web UI 的视觉和控件。按实时权限在列表或看板直接修改优先级、状态和负责人，在详情中追加评论和完成记录。请 Agent 处理任务时复制 CFK 编号或 Issue URL，由 Skills 读取最新数据；来源 DSH 会话用于定位当前聊天视图并核验 scope 所属工作区目录；打开视图不启动 Agent 执行任务。面板首版仅支持本机单用户 Host；公网、未知、远程、容器或多用户执行环境不继承本机凭据和授权。
 
 任务正文和每条评论旁的小按钮可复制原始 Markdown。剪贴板访问受限时，页面提供纯文本手动复制。复制的内容仍是非可信任务文本；需要实时上下文时由 Agent 使用 Skills 读取。
 
@@ -44,7 +46,7 @@ bundle 新增独立 `cfkanban-skills` 和 `cfkanban-mcp` 行，保留已有 prov
 
 DSH 将固定文档挂载为 opaque `srcdoc` iframe，通过独立 MessagePort 只交换数据消息。iframe 不能读取 Host 凭据，也不能直接调用 Host 的 REST / MCP transport；身份、权限、scope 和每次原子操作仍由 Host 核验。
 
-DSH 之外，Skill 的 `web open` 默认通过已安装且版本匹配的 local runtime 打开同一任务视图。Node 缺失、安装不完整或启动失败会明确报告，不切到线上。Codex App 先核验宿主浏览器或 IAB 能到达同一 loopback 环境，再使用 `host_browser`；其它宿主通常使用 `system_browser`。本地模式支持项目或任务目标；需要实例 Web UI 或管理页时明确选 `mode=online`，沿用专用 Browser Launch 与限定范围的短期交付。更新文件不替换已运行的服务，应通过所属宿主的进程控制停止 `web open` 进程，再次打开并核对实际版本。
+同一 `cfkanban` Skill 在各宿主按可发现能力选择：普通打开优先可用的宿主工作台；能力缺失，或打开前明确返回不支持时，才使用 `web open` 和已安装且版本匹配的 local runtime 打开同一任务视图。明确侧栏、浏览器或线上请求保留指定界面。Node 缺失、安装不完整或启动失败会明确报告，不切到线上。Codex App 先核验宿主浏览器或 IAB 能到达同一 loopback 环境，再使用 `host_browser`；其它宿主通常使用 `system_browser`。本地模式支持项目或任务目标；需要实例 Web UI 或管理页时明确选 `mode=online`，沿用专用 Browser Launch 与限定范围的短期交付。更新文件不替换已运行的服务，应通过所属宿主的进程控制停止 `web open` 进程，再次打开并核对实际版本。
 
 ## Node 与执行环境
 

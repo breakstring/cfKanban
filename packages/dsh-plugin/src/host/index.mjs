@@ -2,9 +2,12 @@ import { PanelBridge } from './bridge.mjs';
 import { PanelError } from '../shared/panel.mjs';
 import { clientRequestSchema, serverResponseSchema, RpcId } from '@deepseek-ai/dsh-client-connection';
 import { registerPanelTransport } from './transport.mjs';
+import { defineTool } from '@deepseek-ai/dsh-tools';
+import { PanelNavigation } from './navigation.mjs';
+import { navigationTool } from './navigation-tool.mjs';
 
 export const name = 'cfkanban-panel';
-export const inject = ['connection', 'workspaceRegistry', 'sessionController', 'webServer'];
+export const inject = ['connection', 'workspaceRegistry', 'sessionController', 'webServer', 'tools'];
 
 export async function apply(ctx, config = {}) {
   let createFacade;
@@ -25,5 +28,8 @@ export async function apply(ctx, config = {}) {
     },
   });
   ctx.effect(() => () => bridge.dispose());
-  registerPanelTransport(ctx, bridge, { clientRequestSchema, serverResponseSchema, RpcId });
+  const navigation = new PanelNavigation({ bridge });
+  ctx.effect(() => () => navigation.dispose());
+  ctx.effect(() => ctx.tools.register(navigationTool(navigation, defineTool)));
+  registerPanelTransport(ctx, bridge, { clientRequestSchema, serverResponseSchema, RpcId }, navigation);
 }

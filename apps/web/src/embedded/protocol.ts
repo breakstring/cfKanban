@@ -40,6 +40,10 @@ export type EmbedAction = keyof ActionPayloads;
 export type ActionMessage = { [K in EmbedAction]: { type: "action"; id: string; action: K; payload: ActionPayloads[K] } }[EmbedAction];
 export type PublicError = { code: string; message?: string };
 export type PublicResult = { ok: boolean; error?: PublicError; outcome_unknown?: boolean };
+export type RenderTarget = { instance_id: string; principal_id: string; workspace_id: string; project_id: string; identifier?: string };
+export type RenderCheckMessage = { type: "render_check"; id: string; target: RenderTarget };
+export type RenderedMessage = { type: "rendered"; id: string; target: RenderTarget };
+export type RenderCancelMessage = { type: "render_cancel"; id: string };
 export type PublicResource = { id?: string; instance_id?: string; principal_id?: string; display_name?: string; title?: string; name?: string; api_origin?: string; trusted_api_origin?: string; origin?: string; role?: string; available?: boolean };
 export type PublicIdentity = { instance: PublicResource; principal: PublicResource };
 export type PublicStatus = { key: Status; display_name?: string; name?: string };
@@ -108,6 +112,31 @@ function text(value: unknown, max: number): value is string { return typeof valu
 function member(value: unknown, values: ReadonlySet<string> | readonly string[]): value is string { return typeof value === "string" && (Array.isArray(values) ? values.includes(value) : (values as ReadonlySet<string>).has(value)); }
 function uuid(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 function issueIdentifier(value: unknown): value is string { return typeof value === "string" && /^[A-Z][A-Z0-9]{1,11}-[1-9][0-9]{0,14}$/.test(value); }
+export function parseRenderTarget(value: unknown): RenderTarget | null {
+  if (!record(value, ["instance_id", "principal_id", "workspace_id", "project_id", "identifier"], ["instance_id", "principal_id", "workspace_id", "project_id"])
+    || ![value.instance_id, value.principal_id, value.workspace_id, value.project_id].every(uuid)
+    || (value.identifier !== undefined && !issueIdentifier(value.identifier))) return null;
+  return { instance_id: value.instance_id, principal_id: value.principal_id, workspace_id: value.workspace_id, project_id: value.project_id, ...(value.identifier === undefined ? {} : { identifier: value.identifier }) } as RenderTarget;
+}
+export function snapshotRenderTarget(state: EmbedSnapshot): RenderTarget | null {
+  if (!state.binding) return null;
+  const identity = state.binding.identity ?? state.identity;
+  const instance = identity?.instance ?? state.binding.instance;
+  const principal = identity?.principal ?? state.binding.principal;
+  return parseRenderTarget({ instance_id: instance?.instance_id ?? instance?.id, principal_id: principal?.principal_id ?? principal?.id, workspace_id: state.workspace_id, project_id: state.binding.project.id, ...(state.issue ? { identifier: state.issue.identifier } : {}) });
+}
+export function sameRenderTarget(left: RenderTarget | null, right: RenderTarget | null): boolean {
+  return Boolean(left && right && left.instance_id === right.instance_id && left.principal_id === right.principal_id && left.workspace_id === right.workspace_id && left.project_id === right.project_id && left.identifier === right.identifier);
+}
+export function parseRenderCheckMessage(value: unknown): RenderCheckMessage | null {
+  return record(value, ["type", "id", "target"]) && value.type === "render_check" && uuid(value.id) && parseRenderTarget(value.target) ? value as RenderCheckMessage : null;
+}
+export function parseRenderedMessage(value: unknown): RenderedMessage | null {
+  return record(value, ["type", "id", "target"]) && value.type === "rendered" && uuid(value.id) && parseRenderTarget(value.target) ? value as RenderedMessage : null;
+}
+export function parseRenderCancelMessage(value: unknown): RenderCancelMessage | null {
+  return record(value, ["type", "id"]) && value.type === "render_cancel" && uuid(value.id) ? value as RenderCancelMessage : null;
+}
 function list(value: unknown, max = 1024): value is string[] { return Array.isArray(value) && value.length <= 50 && value.every(item => text(item, max)); }
 function boundedJson(value: unknown, limit: number, forbidPrivate = false): boolean {
   let count = 0;

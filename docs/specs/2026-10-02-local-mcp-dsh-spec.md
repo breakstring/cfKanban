@@ -1,7 +1,7 @@
 # 本地 MCP、共用 Vue 工作台与 DSH 接入增量 SPEC
 
 - 文档状态：Frozen
-- 授权依据：2026-10-02 用户要求在 `feat/v1.8.0` 完成 CFK-548、CFK-544、CFK-546，并授权本机 DSH 桌面 / Web、网络与 LLM 验证；随后明确采用本地/线上两种 WebUI、共享 Vue、列表/看板快捷修改及复制编号/链接/原始 Markdown，取消发送到 Agent 和重复交接摘要。
+- 授权依据：2026-10-02 用户要求在 `feat/v1.8.0` 完成 CFK-548、CFK-544、CFK-546，并授权本机 DSH 桌面 / Web、网络与 LLM 验证；随后明确采用本地/线上两种 WebUI、共享 Vue、列表/看板快捷修改及复制编号/链接/原始 Markdown，取消发送到 Agent 和重复交接摘要。2026-10-03 授权 [CFK-563](https://cfkanban.dev/app/issues/CFK-563)：通用技能按宿主可用能力打开视图，由 DSH 插件提供 Agent 侧栏导航工具。
 - 适用范围：本地 stdio MCP、通用回环 Web 服务、共用 Vue 精简工作台、Skills 本地/线上打开能力与 DSH 薄适配；不修改 REST / D1 的业务语义。
 - 上游：[Bootstrap](2026-08-28-agent-skills-bootstrap-spec.md)、[API / Schema](2026-08-28-api-schema-spec.md)、[发行生命周期](2026-09-20-stable-release-lifecycle-spec.md)。
 
@@ -92,6 +92,18 @@ DSH `0.2.0-rc.2` 的 `connection.rpc.handle` 在默认 Connection provider 中�
 
 ## 共用工作台、快捷操作与复制
 
+### Agent 打开宿主视图
+
+通用技能首先发现当前宿主已暴露的视图工具及准确 schema；业务目标仍由原 MCP / 安全 runtime 解析核验，不新增 DSH 专用 Skill 或将宿主界面控制混入通用业务 MCP。普通项目 / Issue 打开优先可用宿主工作台，否则沿既有本地浏览器路径；明确侧栏、指定浏览器或线上模式时遵守用户选择。缺少侧栏工具或界面时直接报告，不为打开而翻插件源码、猜内部路由、安装插件或擅自换载体。权限拒绝、目标不符和结果不确定不能触发跨载体重试。
+
+DSH 插件提供 `cfkanban_view_open`，只接受明确 `instance_id`、`workspace_id`、`project_id` 和可选 `identifier`；来源 Session 取自宿主工具执行上下文，不允许模型指定 Session、任意 URL、文件路径或 Credential。Host 复用业务 facade 核验实时身份及准确目标，导航不得写入业务数据或关联文件。一个前台 Client 订阅自己的 Session 导航；无可用 Client、多 Client 歧义、取消和超时返回固定分类，不将请求转发到另一聊天。订阅经已有 Connection admission 的固定 RPC，等待事件后重建；没有定时业务查询或持久导航队列。
+
+Client 使用官方 `sidebarRight.openTab` 与导航参数展开并复用 cfKanban 标签，保留原会话归属。已有未确定业务写入或线上投递先恢复，不能被导航覆盖。Host 发出请求仅表示投递；Client 核验当前前台 Session、准确身份 / 项目 / Issue，并等待共用 Vue 页的匹配渲染确认后才回报 `opened`。未确认、超时、界面关闭、切换会话及迟到结果都不冒充打开成功。
+
+共用 MessagePort 增加可选 `render_check` / `rendered` / `render_cancel`，不改变既有 protocol 1 的快照和业务动作合同。确认使用一次性随机非秘密 nonce，绑定准确实例、身份、工作区、项目及可选 Issue；Vue 应用最新快照并完成渲染后回传。新快照、替代等待、取消、超时及卸载使旧确认失效；确认本身不授予权限、不执行写入、不携带凭据。
+
+### 视图与业务操作
+
 官方右侧 Tab 与聊天并排。面板展示已核验 Instance / Principal / Project，提供项目切换、Kanban/列表、项目 / 我的任务筛选、分页、详情、状态 / 优先级 / 负责人、评论与完成证据，通过手动刷新取新数据。写入口按 `allowed_actions` 展示；冲突先刷新核对，响应不确定保留原 key。任务数据源仍为 Service。
 
 聊天入口使用现有 cfKanban logo 图标，提供双语可访问名称及 tooltip。面板打开时由 Host 核对来源 Session 及其准确 DSH 工作区；本地浏览器使用启动时已核验的真实目录。两者只读取该目录固定的 `.cfkanban-scope.json`，沿用 schema 2 的 UUID targets。单目标在可信实例、实时 `/me` 和项目权限核验后自动绑定；多目标先在推荐范围内选择，不静默选第一个。无文件、非法文件或无权目标保留明确结果和手动入口，不退回全实例聚合；Client 不能提交路径或扩大读取范围。读取有界并拒绝 symlink，返回仅包含固定分类和已校验的非秘密 targets。自动绑定不领取、执行或写入 Issue。
@@ -104,7 +116,7 @@ DSH 将自包含页面挂载为 opaque `srcdoc` iframe，仅开放 `allow-script
 
 列表/看板每行直接修改优先级、负责人和状态，复用Web的PrioritySelect、AssigneeMenu与UI主题。父Controller仅从当前已加载行取version，核对当前绑定与真实Issue，再执行单笔CAS/幂等写；iframe不能提交version、key或扩大项目。可指派人员按准确项目有界分页；无权/已失资格不静默换人。快捷完成打开详情完成表单，不把done映射为PATCH。冲突保留草稿并要求核对，不确定写锁住切换并保留原操作恢复。
 
-各载体统一提供复制准确CFK编号与canonical实例Issue URL；详情正文与每条评论旁可复制原始Markdown。复制动作不执行Agent、不改变Issue状态、不创建分享能力；复制链接也不提供接收者权限。剪贴板被宿主限制时显示原文本供手动选择，不伪造复制成功。取消发送到Agent、自动prompt/执行会话关联和重复交接摘要区，DSH来源Session仅用于scope目录。该展示合同覆盖基础WebUI SPEC原 `/context`摘要展示条款；服务端有界context API继续供Agent按需读取最新业务信息。复制和Issue内容不构成新增授权。
+各载体统一提供复制准确CFK编号与canonical实例Issue URL；详情正文与每条评论旁可复制原始Markdown。复制动作不执行Agent、不改变Issue状态、不创建分享能力；复制链接也不提供接收者权限。剪贴板被宿主限制时显示原文本供手动选择，不伪造复制成功。取消发送到Agent、自动prompt/执行会话关联和重复交接摘要区，DSH来源Session用于scope目录核验与显式请求的侧栏导航。该展示合同覆盖基础WebUI SPEC原 `/context`摘要展示条款；服务端有界context API继续供Agent按需读取最新业务信息。复制和Issue内容不构成新增授权。
 
 ## 验证证据要求
 

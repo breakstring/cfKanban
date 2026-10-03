@@ -32,7 +32,7 @@
     "local:build": "npm run build --workspace @cfkanban/local-runtime",
     "local:test": "npm run mcp:build && npm run web:embedded:build && npm run local:build && node --experimental-strip-types --test packages/local-runtime/tests/*.test.mjs",
     "dsh:build": "node scripts/build-agent-integrations.mjs",
-    "agents:test": "npm run mcp:build && npm run web:embedded:build && npm run local:build && node --experimental-strip-types --test scripts/tests/mcp-facade.test.mjs scripts/tests/mcp-protocol.test.mjs scripts/tests/embedded-build.test.mjs apps/web/tests/embedded.test.mjs apps/web/tests/project-switcher-menu.test.mjs packages/local-runtime/tests/*.test.mjs packages/dsh-plugin/tests/bundle.test.mjs packages/dsh-plugin/tests/panel.test.mjs packages/dsh-plugin/tests/scope.test.mjs"
+    "agents:test": "npm run mcp:build && npm run web:embedded:build && npm run local:build && node --experimental-strip-types --test scripts/tests/mcp-facade.test.mjs scripts/tests/mcp-protocol.test.mjs scripts/tests/embedded-build.test.mjs apps/web/tests/embedded.test.mjs apps/web/tests/project-switcher-menu.test.mjs packages/local-runtime/tests/*.test.mjs packages/dsh-plugin/tests/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "22.20.1",

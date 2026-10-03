@@ -66,11 +66,11 @@ export class WorkbenchController {
     this.collectionFlights.set(key, request);
     return request;
   }
-  async request(endpoint, input, channel = endpoint, matches = () => true) {
+  async request(endpoint, input, channel = endpoint, matches = () => true, signal) {
     const revision = (this.revisions.get(channel) ?? 0) + 1;
     this.revisions.set(channel, revision);
     this.patch({ busy: this.state.busy + 1, error: null });
-    const requestSignal = AbortSignal.any([this.signal, AbortSignal.timeout(this.requestTimeoutMs)]);
+    const requestSignal = AbortSignal.any([this.signal, AbortSignal.timeout(this.requestTimeoutMs), ...(signal ? [signal] : [])]);
     let removeAbort = () => {};
     try {
       requestSignal.throwIfAborted();
@@ -81,12 +81,12 @@ export class WorkbenchController {
       });
       const wire = await Promise.race([this.rpc.call(endpoint, { protocol: PANEL_PROTOCOL, input }, requestSignal), interrupted]);
       const result = wire.ok ? wire.value : { ok: false, error: wire.error, outcome_unknown: ['mutate', 'recover'].includes(endpoint) };
-      const current = !this.signal.aborted && this.revisions.get(channel) === revision && matches();
+      const current = !requestSignal.aborted && this.revisions.get(channel) === revision && matches();
       if (current && !result.ok) this.patch({ error: result.error });
       return { result, current };
     } catch {
       const result = { ok: false, outcome_unknown: ['mutate', 'recover'].includes(endpoint), error: { code: 'PANEL_REQUEST_UNCERTAIN', message: 'Request interrupted. Retain the original operation for explicit recovery.' } };
-      if (!this.signal.aborted && this.revisions.get(channel) === revision && matches()) this.patch({ error: result.error });
+      if (!this.signal.aborted && !signal?.aborted && this.revisions.get(channel) === revision && matches()) this.patch({ error: result.error });
       return { result, current: false };
     } finally { removeAbort(); this.patch({ busy: Math.max(0, this.state.busy - 1) }); }
   }
@@ -161,12 +161,12 @@ export class WorkbenchController {
     }
     await this.loadCandidates();
   }
-  async selectInstance(instance_id) {
-    if (!this.canChangeBinding()) return;
+  async selectInstance(instance_id, signal) {
+    if (signal?.aborted || !this.canChangeBinding()) return;
     if (this.state.scope_instance_id && instance_id !== this.state.scope_instance_id) { this.patch({ error: { code: 'PANEL_SCOPE_DENIED' } }); return; }
     this.patch({ identity: null, workspaces: [], projects: [], binding: null, page: null, board: null, issue: null, pending: null });
-    const { result, current } = await this.request('identity', { instance_id });
-    if (current && result.ok) this.patch({ identity: result.data });
+    const { result, current } = await this.request('identity', { instance_id }, undefined, undefined, signal);
+    if (current && result.ok && !signal?.aborted) this.patch({ identity: result.data });
   }
   identityInput() { return { instance_id: this.state.identity.instance.instance_id, expected_principal_id: this.state.identity.principal.principal_id ?? this.state.identity.principal.id }; }
   async loadWorkspaces(cursor) {
@@ -179,10 +179,10 @@ export class WorkbenchController {
     const { result, current } = await this.request('projects', { ...this.identityInput(), workspace_id, ...(cursor ? { cursor } : {}) });
     if (current && result.ok) this.patch({ projects: items(result.data), project_cursor: nextCursor(result.data) });
   }
-  async bind(project_id) {
-    if (!this.canChangeBinding()) return;
-    const { result, current } = await this.request('bind', { ...this.identityInput(), workspace_id: this.state.workspace_id, project_id });
-    if (current && result.ok) { this.patch({ binding: result.data, issue: null, page: null, board: null }); await this.refresh(); }
+  async bind(project_id, signal) {
+    if (signal?.aborted || !this.canChangeBinding()) return;
+    const { result, current } = await this.request('bind', { ...this.identityInput(), workspace_id: this.state.workspace_id, project_id }, undefined, undefined, signal);
+    if (current && result.ok && !signal?.aborted) { this.patch({ binding: result.data, issue: null, page: null, board: null }); await this.refresh(undefined, signal); }
   }
   async unbind() {
     if (!this.canChangeBinding()) return false;
@@ -191,17 +191,17 @@ export class WorkbenchController {
     await this.loadCandidates();
     return true;
   }
-  async refresh(cursor) {
-    if (!this.state.binding) return;
-    if (this.state.view === 'board') return this.refreshBoard();
+  async refresh(cursor, signal) {
+    if (signal?.aborted || !this.state.binding) return;
+    if (this.state.view === 'board') return this.refreshBoard(undefined, undefined, signal);
     if (cursor && (cursor !== nextCursor(this.state.page) || this.state.page?.capacity_reached)) return;
     if (!cursor) this.invalidateCollections();
     const revision = this.collectionRevision;
     const key = `${revision}:list:${cursor ?? ''}`;
     if (cursor && this.collectionCursors.has(key)) { this.patch({ error: { code: 'PANEL_PAGINATION_STALLED' } }); return; }
     return this.collectionRequest(key, async () => {
-      const { result, current } = await this.request('list', { binding_id: this.state.binding.binding_id, ...this.state.filters, ...(cursor ? { cursor } : {}) }, 'list', () => revision === this.collectionRevision && this.state.view === 'list');
-      if (current && result.ok) {
+      const { result, current } = await this.request('list', { binding_id: this.state.binding.binding_id, ...this.state.filters, ...(cursor ? { cursor } : {}) }, 'list', () => revision === this.collectionRevision && this.state.view === 'list', signal);
+      if (current && result.ok && !signal?.aborted) {
         const merged = mergeRows(cursor ? items(this.state.page) : [], items(result.data));
         const pages = (cursor ? this.collectionPages.get('list') ?? 0 : 0) + 1;
         const page = { items: merged, next_cursor: nextCursor(result.data), capacity_reached: Boolean(nextCursor(result.data) && (merged.length >= ISSUE_COLLECTION_LIMIT || pages >= MAX_COLLECTION_PAGES)) };
@@ -219,8 +219,8 @@ export class WorkbenchController {
     });
   }
   async setView(view) { if (!['list', 'board'].includes(view) || !this.canChangeBinding()) return; this.patch({ view, page: null, board: null }); await this.refresh(); }
-  async refreshBoard(status_key, cursor) {
-    if (!this.state.binding || this.state.view !== 'board') return;
+  async refreshBoard(status_key, cursor, signal) {
+    if (signal?.aborted || !this.state.binding || this.state.view !== 'board') return;
     const { assignment, priority, status } = this.state.filters;
     if (status_key && status && status_key !== status) return;
     const selectedStatus = status_key || status;
@@ -231,8 +231,8 @@ export class WorkbenchController {
     const key = `${revision}:board:${selectedStatus ?? 'all'}:${cursor ?? ''}`;
     if (cursor && this.collectionCursors.has(key)) { this.patch({ error: { code: 'PANEL_PAGINATION_STALLED' } }); return; }
     return this.collectionRequest(key, async () => {
-      const { result, current } = await this.request('board', { binding_id: this.state.binding.binding_id, assignment, priority, ...(selectedStatus ? { status_key: selectedStatus } : {}), ...(cursor ? { cursor } : {}) }, `board:${selectedStatus ?? 'all'}`, () => revision === this.collectionRevision && this.state.view === 'board');
-      if (current && result.ok) {
+      const { result, current } = await this.request('board', { binding_id: this.state.binding.binding_id, assignment, priority, ...(selectedStatus ? { status_key: selectedStatus } : {}), ...(cursor ? { cursor } : {}) }, `board:${selectedStatus ?? 'all'}`, () => revision === this.collectionRevision && this.state.view === 'board', signal);
+      if (current && result.ok && !signal?.aborted) {
         const updated = result.data.columns.map(column => {
           const previous = this.state.board?.columns.find(row => row.key === column.key);
           const merged = mergeRows(cursor ? previous?.items ?? [] : [], column.items);
@@ -276,20 +276,22 @@ export class WorkbenchController {
     if (!subject?.allowed_actions?.includes('update') || change.status_key === 'done') return;
     return this.mutate('update', change, false, subject);
   }
-  async openIssue(identifier) {
+  async openIssue(identifier, signal) {
+    if (signal?.aborted) return;
     const sameIssue = this.state.issue?.identifier === identifier;
     if (!sameIssue && (this.state.pending)) return;
     this.patch({ ...(sameIssue ? {} : { issue: null, comments: [] }) });
-    const { result, current } = await this.request('detail', { binding_id: this.state.binding.binding_id, identifier });
-    if (current && result.ok) {
+    const { result, current } = await this.request('detail', { binding_id: this.state.binding.binding_id, identifier }, undefined, undefined, signal);
+    if (current && result.ok && !signal?.aborted) {
       this.patch({ issue: result.data, comments: result.data.comments ?? [], comment_cursor: null, comments_has_more: Boolean(result.data.comment_continuation) });
 
     }
   }
-  async comments() {
+  async comments(signal) {
+    if (signal?.aborted) return;
     const identifier = this.state.issue.identifier;
-    const { result, current } = await this.request('comments', { binding_id: this.state.binding.binding_id, identifier, ...(this.state.comment_cursor ? { cursor: this.state.comment_cursor } : {}) });
-    if (current && result.ok && this.state.issue?.identifier === identifier) {
+    const { result, current } = await this.request('comments', { binding_id: this.state.binding.binding_id, identifier, ...(this.state.comment_cursor ? { cursor: this.state.comment_cursor } : {}) }, undefined, undefined, signal);
+    if (current && result.ok && !signal?.aborted && this.state.issue?.identifier === identifier) {
       const comments = [...new Map([...this.state.comments, ...items(result.data)].map(row => [row.id, row])).values()].sort((a, b) => a.created_at.localeCompare(b.created_at));
       this.patch({ comments, comment_cursor: nextCursor(result.data), comments_has_more: Boolean(nextCursor(result.data)) });
     }

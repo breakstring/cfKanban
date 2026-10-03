@@ -1,10 +1,11 @@
-import { isConnectMessage, parseActionMessage, parseResultMessage, parseSnapshotMessage } from "./protocol";
-import type { ActionPayloads, EmbedAction, EmbedLocale, EmbedSnapshot, PublicResult } from "./protocol";
+import { isConnectMessage, parseActionMessage, parseRenderCancelMessage, parseRenderCheckMessage, parseResultMessage, parseSnapshotMessage, sameRenderTarget, snapshotRenderTarget } from "./protocol";
+import type { ActionPayloads, EmbedAction, EmbedLocale, EmbedSnapshot, PublicResult, RenderCheckMessage } from "./protocol";
 
 export interface EmbedClientOptions {
   window: Pick<Window, "parent" | "addEventListener" | "removeEventListener">;
   onConnect: (locale: EmbedLocale) => void;
   onSnapshot: (state: EmbedSnapshot) => void;
+  afterRender?: () => Promise<void>;
   onError: (code: string) => void;
   makeId?: () => string;
   timeoutMs?: number;
@@ -14,6 +15,8 @@ export function createEmbedClient(options: EmbedClientOptions) {
   let port: MessagePort | null = null;
   let connected = false;
   let disposed = false;
+  let snapshot: EmbedSnapshot | null = null;
+  let renderCheck: RenderCheckMessage | null = null;
   const pending = new Map<string, { resolve: (result: PublicResult) => void; timer: ReturnType<typeof setTimeout>; uncertain: boolean }>();
   const failed = (code: string): PublicResult => ({ ok: false, error: { code } });
   const finish = (id: string, result: PublicResult) => {
@@ -23,9 +26,32 @@ export function createEmbedClient(options: EmbedClientOptions) {
     pending.delete(id);
     waiter.resolve(result);
   };
+  const confirmRendered = async (message: RenderCheckMessage) => {
+    const expectedSnapshot = snapshot;
+    const expectedPort = port;
+    renderCheck = message;
+    if (!expectedSnapshot || !expectedPort || !options.afterRender || !sameRenderTarget(snapshotRenderTarget(expectedSnapshot), message.target)) return;
+    try {
+      await options.afterRender();
+      if (disposed || renderCheck !== message || port !== expectedPort || snapshot !== expectedSnapshot
+        || !sameRenderTarget(snapshotRenderTarget(snapshot), message.target)) return;
+      renderCheck = null;
+      expectedPort.postMessage({ type: "rendered", id: message.id, target: message.target });
+    } catch { if (renderCheck === message) renderCheck = null; }
+  };
   const receive = (event: MessageEvent) => {
-    const snapshot = parseSnapshotMessage(event.data);
-    if (snapshot) { options.onSnapshot(snapshot.state); return; }
+    if (disposed) return;
+    const receivedSnapshot = parseSnapshotMessage(event.data);
+    if (receivedSnapshot) {
+      renderCheck = null;
+      snapshot = receivedSnapshot.state;
+      options.onSnapshot(snapshot);
+      return;
+    }
+    const check = parseRenderCheckMessage(event.data);
+    if (check) { void confirmRendered(check); return; }
+    const cancel = parseRenderCancelMessage(event.data);
+    if (cancel) { if (renderCheck?.id === cancel.id) renderCheck = null; return; }
     const result = parseResultMessage(event.data);
     if (result) { if (!pending.has(result.id) && result.result.error) options.onError(result.result.error.code); finish(result.id, result.result); return; }
     options.onError("EMBED_INVALID_MESSAGE");
@@ -66,6 +92,8 @@ export function createEmbedClient(options: EmbedClientOptions) {
     dispose() {
       if (disposed) return;
       disposed = true;
+      renderCheck = null;
+      snapshot = null;
       options.window.removeEventListener("message", connect as EventListener);
       port?.removeEventListener("message", receive);
       port?.close();

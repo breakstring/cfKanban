@@ -28,12 +28,16 @@
     }
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/dsh-mcp-client": "0.2.0-rc.2",
     "@deepseek-ai/dsh-skill-filesystem": "0.2.0-rc.2",
     "react": "^18.2.0",
     "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2"
   },
   "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-mcp-client": {
       "optional": true
     },

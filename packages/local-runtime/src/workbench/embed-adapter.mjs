@@ -1,4 +1,4 @@
-import { EMBED_PROTOCOL, emptySnapshot, parseActionMessage, parseSnapshotMessage } from '../../../../apps/web/src/embedded/protocol.ts';
+import { EMBED_PROTOCOL, emptySnapshot, parseActionMessage, parseRenderedMessage, parseRenderTarget, parseSnapshotMessage, sameRenderTarget, snapshotRenderTarget } from '../../../../apps/web/src/embedded/protocol.ts';
 import { canonical } from './shared.mjs';
 import { items, nextCursor, recoveryId, sessionReference } from './controller.mjs';
 
@@ -20,9 +20,10 @@ const unavailable = (code = 'PANEL_INVALID_INPUT', outcome_unknown = false) => (
 export function projectSnapshot(state, sourceSessionId) {
   const writer = Boolean(state.binding && state.issue && strings(state.issue.allowed_actions).includes('update'));
   const pending = state.pending ? pick(state.pending, ['identifier', 'expected_version', 'operation']) : null;
+  const workspaceId = state.binding?.project?.workspace_id ?? state.workspace_id;
   return {
     candidates: rows(state.candidates).map(resource), identity: identity(state.identity), workspaces: rows(state.workspaces).map(resource), projects: rows(state.projects).map(resource),
-    ...(state.workspace_id ? { workspace_id: state.workspace_id } : {}), workspace_has_more: Boolean(state.workspace_cursor), project_has_more: Boolean(state.project_cursor),
+    ...(workspaceId ? { workspace_id: workspaceId } : {}), workspace_has_more: Boolean(state.workspace_cursor), project_has_more: Boolean(state.project_cursor),
     binding: state.binding ? { project: resource(state.binding.project), identity: identity(state.binding.identity), statuses: rows(items(state.binding.statuses)).map(value => pick(value, ['key', 'display_name'])) } : null,
     page: state.page ? { items: rows(items(state.page)).map(value => { const { body, ...row } = issue(value); return row; }), next_cursor: nextCursor(state.page) ? 'available' : null, capacity_reached: Boolean(state.page.capacity_reached) } : null,
     view: state.view, board: state.board ? { columns: rows(state.board.columns).map(column => ({ ...pick(column, ['key', 'display_name']), items: rows(column.items).map(value => { const { body, ...row } = issue(value); return row; }), has_more: Boolean(column.next_cursor), capacity_reached: Boolean(column.capacity_reached) })) } : null,
@@ -54,6 +55,8 @@ export class WorkbenchAdapter {
     this.receipts = new Map();
     this.attempts = [];
     this.running = false;
+    this.disposed = false;
+    this.renderWaiter = null;
     this.port = null;
     this.frameConnected = false;
     this.frameBlocked = false;
@@ -64,8 +67,10 @@ export class WorkbenchAdapter {
     controller.signal.addEventListener('abort', this.onAbort, { once: true });
   }
   frameLoaded(frame, locale, channelFactory) {
+    if (this.disposed || this.controller.signal.aborted) return false;
     if (this.frameConnected || this.frameBlocked) {
       this.frameBlocked = true;
+      this.finishRendered(unavailable('PANEL_FRAME_RELOADED'));
       this.port?.close();
       this.port = null;
       this.controller.patch({ error: { code: 'PANEL_FRAME_RELOADED' } });
@@ -80,22 +85,73 @@ export class WorkbenchAdapter {
   }
   setLocale(locale) { this.locale = locale; this.publish(); }
   attach(port) {
+    if (this.port) this.finishRendered(unavailable('PANEL_RENDER_UNAVAILABLE'));
     this.port?.close();
-    if (this.controller.signal.aborted || this.frameBlocked) { port.close(); return; }
+    if (this.disposed || this.controller.signal.aborted || this.frameBlocked) { port.close(); return; }
     this.port = port;
-    port.onmessage = event => { void this.receive(event.data); };
+    port.onmessage = event => { if (this.port === port) void this.receive(event.data); };
     port.start();
     this.publish();
   }
-  publish() {
-    if (!this.port || this.controller.signal.aborted) return;
+  snapshotMessage() {
     let message;
     try { message = { type: 'snapshot', state: { ...projectSnapshot(this.controller.state, this.sourceSessionId), locale: this.locale } }; }
     catch { message = null; }
-    if (message && parseSnapshotMessage(message)) this.port.postMessage(message);
-    else this.port.postMessage({ type: 'snapshot', state: { ...emptySnapshot(), locale: this.locale, error: { code: 'PANEL_CONTEXT_TOO_LARGE' } } });
+    return message && parseSnapshotMessage(message) ? message : { type: 'snapshot', state: { ...emptySnapshot(), locale: this.locale, error: { code: 'PANEL_CONTEXT_TOO_LARGE' } } };
+  }
+  publish() {
+    if (this.disposed || this.controller.signal.aborted || (!this.port && !this.renderWaiter)) return;
+    const message = this.snapshotMessage();
+    if (this.renderWaiter && !sameRenderTarget(snapshotRenderTarget(message.state), this.renderWaiter.target)) this.finishRendered(unavailable('PANEL_RENDER_TARGET_CHANGED'));
+    if (!this.port) return;
+    try {
+      this.port.postMessage(message);
+      const waiter = this.renderWaiter;
+      if (!waiter) return;
+      // 每份新快照都有新挑战；上一份快照的迟到确认不能完成当前等待。
+      waiter.id = crypto.randomUUID();
+      this.port.postMessage({ type: 'render_check', id: waiter.id, target: waiter.target });
+    } catch { this.finishRendered(unavailable('PANEL_RENDER_UNAVAILABLE')); }
+  }
+  waitForRendered(target, { signal, timeoutMs = 5000 } = {}) {
+    const parsedTarget = parseRenderTarget(target);
+    if (!parsedTarget || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 30_000) return Promise.resolve(unavailable('PANEL_INVALID_INPUT'));
+    if (this.disposed || this.controller.signal.aborted || this.frameBlocked) return Promise.resolve(unavailable('PANEL_RENDER_UNAVAILABLE'));
+    if (signal?.aborted) return Promise.resolve(unavailable('PANEL_RENDER_ABORTED'));
+    this.finishRendered(unavailable('PANEL_RENDER_REPLACED'));
+    if (!sameRenderTarget(snapshotRenderTarget(this.snapshotMessage().state), parsedTarget)) return Promise.resolve(unavailable('PANEL_RENDER_TARGET_CHANGED'));
+    return new Promise(resolve => {
+      const waiter = { target: parsedTarget, resolve, id: null, signal, timer: null, abort: null };
+      this.renderWaiter = waiter;
+      waiter.abort = () => this.finishRendered(unavailable('PANEL_RENDER_ABORTED'), waiter);
+      signal?.addEventListener('abort', waiter.abort, { once: true });
+      waiter.timer = setTimeout(() => this.finishRendered(unavailable('PANEL_RENDER_TIMEOUT'), waiter), timeoutMs);
+      this.publish();
+    });
+  }
+  finishRendered(result, waiter = this.renderWaiter) {
+    if (!waiter || waiter !== this.renderWaiter) return;
+    this.renderWaiter = null;
+    clearTimeout(waiter.timer);
+    waiter.signal?.removeEventListener('abort', waiter.abort);
+    if (waiter.id && !result.ok) {
+      try { this.port?.postMessage({ type: 'render_cancel', id: waiter.id }); } catch {}
+    }
+    waiter.resolve(result);
+  }
+  receiveRendered(message) {
+    const waiter = this.renderWaiter;
+    if (!waiter || message.id !== waiter.id || !sameRenderTarget(message.target, waiter.target)) return;
+    if (!sameRenderTarget(snapshotRenderTarget(this.snapshotMessage().state), waiter.target)) {
+      this.finishRendered(unavailable('PANEL_RENDER_TARGET_CHANGED'), waiter);
+      return;
+    }
+    this.finishRendered({ ok: true, target: waiter.target, receipt_id: waiter.id }, waiter);
   }
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.finishRendered(unavailable('PANEL_RENDER_UNAVAILABLE'));
     this.port?.close();
     this.port = null;
     this.unsubscribe();
@@ -103,7 +159,10 @@ export class WorkbenchAdapter {
     this.controller.signal.removeEventListener('abort', this.onAbort);
   }
   async receive(raw) {
-    if (this.controller.signal.aborted || this.frameBlocked) return;
+    if (this.disposed || this.controller.signal.aborted || this.frameBlocked) return;
+    const rendered = parseRenderedMessage(raw);
+    if (rendered) { this.receiveRendered(rendered); return; }
+    if (raw?.type === 'rendered') return;
     const time = this.now();
     this.attempts = this.attempts.filter(at => time - at < 10_000);
     if (this.attempts.length >= 30) {

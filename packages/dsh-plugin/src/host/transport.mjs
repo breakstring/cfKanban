@@ -1,9 +1,10 @@
 import { PANEL_CHANNEL, PANEL_NAMESPACE, WORKBENCH_ENDPOINTS, ONLINE_PANEL_ENDPOINTS } from '../shared/panel.mjs';
+import { NAVIGATION_ENDPOINTS } from './navigation.mjs';
 
-export const PANEL_ENDPOINTS = Object.freeze([...WORKBENCH_ENDPOINTS, ...ONLINE_PANEL_ENDPOINTS]);
+export const PANEL_ENDPOINTS = Object.freeze([...WORKBENCH_ENDPOINTS, ...ONLINE_PANEL_ENDPOINTS, ...NAVIGATION_ENDPOINTS]);
 const MAX_REQUEST_BYTES = 1024 * 1024;
 
-export function registerPanelTransport(ctx, bridge, { clientRequestSchema, serverResponseSchema, RpcId }) {
+export function registerPanelTransport(ctx, bridge, { clientRequestSchema, serverResponseSchema, RpcId }, navigation) {
   const respond = (rpcId, result) => Response.json(serverResponseSchema.parse({ type: 'server-response', rpcId, result }), { headers: { 'cache-control': 'no-store' } });
   const invalid = rpcId => respond(rpcId, { ok: false, error: { code: 'gateway/bad-request', message: 'Invalid cfKanban panel RPC request.', details: {} } });
   for (const endpoint of PANEL_ENDPOINTS) ctx.effect(() => ctx.connection.fetch.register({
@@ -23,7 +24,8 @@ export function registerPanelTransport(ctx, bridge, { clientRequestSchema, serve
       if (message.method !== `${PANEL_NAMESPACE}/${endpoint}`) return invalid(message.rpcId);
       // Exact Fetch routes run behind Connection's existing /api admission and
       // request-lifetime bridge. The panel never creates an authentication carrier.
-      const value = await bridge.call(endpoint, message.payload, request.signal, ctx.connection.operator);
+      const handler = NAVIGATION_ENDPOINTS.includes(endpoint) ? navigation : bridge;
+      const value = handler ? await handler.call(endpoint, message.payload, request.signal, ctx.connection.operator) : { ok: false, error: { code: 'PANEL_NAVIGATION_UNAVAILABLE', message: 'The cfKanban navigation service is unavailable.' } };
       return respond(message.rpcId, { ok: true, value });
     },
   }));

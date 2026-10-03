@@ -180,7 +180,7 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 ## 本地工作台与线上模式
 
-普通打开 WebUI 使用 `web open`，`mode` 默认 `local`。`directory` 必须是用户当前真实项目的绝对工作目录，不是 Skill/cache 目录。可明确传 `instanceId` 和 `target:{kind:"project",workspace_id,project_id}` 或 `target:{kind:"issue",identifier}`。Host 只读取该目录固定 `.cfkanban-scope.json`；单目标经身份/权限核验后自动打开，多目标提供项目选择，无效/无权目标明确显示且不静默换目标。scope 只推荐范围，不提供授权。
+普通项目/事项打开先遵循 [cfkanban 的通用宿主能力选择](../../cfkanban/references/workflows.zh-CN.md#本地工作台与线上模式)。选定本地浏览器后使用 `web open`，`mode` 默认 `local`。`directory` 必须是用户当前真实项目的绝对工作目录，不是 Skill/cache 目录。可明确传 `instanceId` 和 `target:{kind:"project",workspace_id,project_id}` 或 `target:{kind:"issue",identifier}`。Host 只读取该目录固定 `.cfkanban-scope.json`；单目标经身份/权限核验后自动打开，多目标提供项目选择，无效/无权目标明确显示且不静默换目标。scope 只推荐范围，不提供授权。
 
 本地共用 Vue 工作台提供项目切换、Kanban/列表、直接修改优先级/状态/负责人、详情、评论和完成证据；选择完成时打开完成表单。私有 runtime 使用当前环境凭据访问可信 REST，不创建线上 Web Session，也不把长期 Credential 交给浏览器。可复制事项编号/链接，或正文/评论原始 Markdown；没有发送 Agent 会话或重复摘要段落。管理/自定义页面使用明确的线上模式。
 

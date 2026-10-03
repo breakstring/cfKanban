@@ -33,6 +33,16 @@ Open **Plugins → Add plugin**, enter the local `.tgz` path provided by the Age
 
 ## Open the project sidebar
 
+With a compatible plugin enabled, ask your Agent:
+
+```text
+Open CFK-123 in the sidebar.
+```
+
+You can also name a project. The Agent checks access, opens the sidebar and confirms it has reached the requested page. If the sidebar capability is unavailable, it explains the limitation without opening a browser instead. Asking to open a view does not install or enable a plugin.
+
+To open it manually:
+
 1. Open your working project directory in DSH.
 2. Select the **cfKanban logo** beside the chat panel.
 3. If the directory has a project association, the sidebar checks your identity and access, then opens the sole matching project. Choose a target when there are several.

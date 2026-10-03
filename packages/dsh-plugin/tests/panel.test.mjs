@@ -116,7 +116,7 @@ test('thin native carrier keeps the original logo, owned opaque Document and off
   vm.runInNewContext(client.outputFiles[0].text, { module, exports: module.exports, require: () => react, AbortController, AbortSignal, TextEncoder });
   let locales;
   let nativeTab;
-  module.exports.apply({ effect: factory => factory(), locale: { bind: () => key => key, register: (_ns, translations) => { locales = translations; return () => {}; } }, sidebarRightTabs: { register: tab => { nativeTab = tab; return () => {}; } }, slots: { inject: (_name, factory) => factory(), register: () => () => {} } });
+  module.exports.apply({ connection: { rpc: {} }, sidebarRight: {}, effect: factory => factory(), locale: { bind: () => key => key, register: (_ns, translations) => { locales = translations; return () => {}; } }, sidebarRightTabs: { register: tab => { nativeTab = tab; return () => {}; } }, slots: { inject: (_name, factory) => factory(), register: () => () => {} } });
   assert.equal(nativeTab.keepMounted, true);
   const logo = `data:image/png;base64,${(await readFile(new URL('../../../apps/web/src/assets/cfkanban-mark.png', import.meta.url))).toString('base64')}`;
   for (const language of ['en', 'zh']) {
