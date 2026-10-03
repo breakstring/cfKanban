@@ -625,7 +625,13 @@ test('an online carrier deadline retains its generation, ignores late replies an
   controller.patch({ binding });
   const online = new OnlinePanelController(controller);
   await online.initialize();
-  assert.equal((await online.open()).outcome_unknown, true);
+  // AbortSignal.timeout 不保持事件循环存活，测试需要等到该截止时间触发。
+  const alive = setTimeout(() => {}, 1000);
+  try {
+    assert.equal((await online.open()).outcome_unknown, true);
+  } finally {
+    clearTimeout(alive);
+  }
   const original = online.getSnapshot();
   assert.equal(original.active, false);
   assert.equal(online.blocked, true);
