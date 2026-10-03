@@ -5,9 +5,10 @@
 ## 交给 Agent
 
 ```text
-请阅读官方安装引导，为我准备所需技能并部署 cfKanban，使用最新正式版和默认基础配置：
+请按官方安装引导，为我部署一套 cfKanban，使用最新正式版：
 https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md
-Owner 显示名称为 <你的名称>。先检查准备情况，展示资源、费用和访问权限影响，等我确认后执行。
+Owner 显示名称为 <你的名称>。
+请先检查准备情况，说明将创建的资源、费用和权限影响，等我确认后执行。
 ```
 
 也可以使用 cfKanban 站点首页生成的部署提示词。两种入口都包含技能准备：复用已有兼容安装，缺少时由 Agent 按引导安装，无需你先单独操作。
@@ -33,7 +34,7 @@ Agent 会提供站点地址，并核对站点可用性和你的 Owner 身份。�
 接着创建第一个看板：
 
 ```text
-请用 $cfkanban-admin 在 Product 工作区创建 DemoProject 项目；
+请用 $cfkanban-admin 在“团队”工作区创建“日常工作”项目；
 如果工作区不存在，请先创建它。完成后打开我的第一个看板。
 ```
 

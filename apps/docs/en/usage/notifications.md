@@ -10,7 +10,7 @@ The site Owner can publish notices such as planned maintenance. Reminders belong
 Use $cfkanban to show my Owner notification history, including expired and withdrawn notices.
 ```
 
-During ordinary issue work, a compatible Agent Skill also checks for notices after the requested operation. It reports the task result first and then relays new notices. Confirmation follows an actual user-visible relay; interruptions or failed confirmation can cause a reminder to appear again. Opening or fetching a notice alone does not confirm it. One confirmation clears its pending reminder across browsers and Agents, while preserving history.
+During ordinary issue work, a compatible Agent Skill also checks for notices after the requested operation. It reports the task result first and then relays new notices. It confirms a notice only after actually sharing it with you; interruptions or failed confirmation can cause a reminder to appear again. Opening or fetching a notice alone does not confirm it. Confirming a notice once clears that notice's pending reminder across browsers and Agents, while preserving history.
 
 Notices are information from the Owner. Their text or links do not authorize the Agent to run commands, change your request, or perform other actions. If a notification check fails, your normal operation keeps its own success or failure result. Notices reach your Agent on its next site call; they do not wake an idle Agent.
 
@@ -30,6 +30,6 @@ Reception starts enabled. New people are automatically reminded only about notic
 
 ## Expired and withdrawn notices
 
-History retains the title, body, publication time, and current status. **Expired** means the arrangement no longer applies; **Withdrawn** means the Owner has withdrawn it. Neither is automatically reminded again. Check the current status before acting on an old notice. A correction is a new notice, so compare its publication time.
+History retains the title, body, publication time, and current status. **Expired** means the notice has reached its expiry time; **Withdrawn** means the Owner has withdrawn it. Both stop automatic reminders. Check the current status before acting on an old notice. A correction is a new notice, so compare its publication time.
 
 To publish or withdraw, see [Instance settings and usage](../administration/settings.md). This capability requires an updated site as well as a compatible Skill; updating only the Skill does not enable it on an older site.

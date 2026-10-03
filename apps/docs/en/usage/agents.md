@@ -8,13 +8,13 @@ next: false
 
 Installation, local MCP, the local workbench, and host plugins are now collected under [Install & connect](../integrations/index.md). This address remains available for existing links.
 
-- [General](../integrations/general.md) covers ordinary Skills, verified installation and updates, local MCP, identity/scope, and local or online browser opening.
-- [DeepSeek Harness](../integrations/deepseek-harness.md) covers its Desktop/Web plugin installation, Skills/MCP discovery, sidebar, and recovery.
-- [Local and online Web UI](../integrations/webui.md) compares the focused local task view with the full instance website.
+- [General Agents](../integrations/general.md): install and update in Codex, Claude Code, and other hosts.
+- [DeepSeek Harness](../integrations/deepseek-harness.md): install the desktop or Web plugin and use the sidebar.
+- [Open a board](../integrations/webui.md): choose the local workbench or full online Web app when you want to see the interface.
 
 ```text
-Use $cfkanban-howto and the installation guides at <instance address> to explain the supported integration for my host.
-Include the installation and browser-opening steps; do not install or change anything yet.
+Explain how to use cfKanban at <instance address> with my current Agent,
+including installation and how to open a board when needed.
 ```
 
 To create or upgrade the Cloudflare instance, use [Deployment](../deployment/index.md).

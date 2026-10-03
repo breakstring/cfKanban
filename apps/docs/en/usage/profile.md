@@ -3,7 +3,7 @@
 ## View or change your name
 
 ```text
-Use $cfkanban to show my current display name and identity ID without exposing any credential.
+Show my current display name and identity ID.
 ```
 
 ```text
@@ -19,15 +19,14 @@ Names must be unique within the site and contain 1–128 characters. Use letters
 ## Save your color theme
 
 ```text
-Use $cfkanban to show my saved theme, then change it to Calm blue.
-Keep my display name unchanged and verify that the preference was saved.
+Change my theme to Calm blue.
 ```
 
 Choose **Warm orange** (the default) or **Calm blue**. Both themes use the same layout, controls, and interactions; only their colors change.
 
 **In the Web UI:** Open the account menu → **Personal settings** → choose a theme → **Save theme**. The saved theme applies across signed-in pages, including management pages. It belongs to your identity in this site, so it is available when you sign in again or use another browser. Other people's themes are unchanged.
 
-Any signed-in identity can save its own theme, including readers. If another profile change causes a version conflict, refresh the profile and review your selection before saving again. The Agent uses the same profile API to read and save this preference.
+Any signed-in identity can save its own theme, including readers. If another profile change causes a version conflict, refresh the profile and review your selection before saving again.
 
 ## Owner notifications
 
@@ -36,20 +35,18 @@ Personal settings links to **Notifications**, where you can choose reception, re
 ## View and revoke your Passkeys
 
 ```text
-Use $cfkanban to list the Passkeys registered for my identity in this instance.
-Show their registration time, last use, and status without revoking anything.
+List my Passkeys for this site, including registration time, last use, and status.
 ```
 
 ```text
 Revoke the Passkey I selected: <Passkey ID>.
-I understand that browser sessions created with it will stop immediately.
 ```
 
 Check the registration and its last-use time in your list before selecting it for revocation.
 
 Revocation immediately ends all browser sessions created by that Passkey. Other Passkeys, Agent credentials, and project access remain unchanged. If your current browser session came from that Passkey, you will lose that session too.
 
-**In the Web UI:** Open the account menu → **Personal settings** → **Passkeys**, check the record, and select **Revoke** for the correct entry. Registering another Passkey still requires an Agent-opened session and your browser/system interaction; see [Joining and signing in](./access.md).
+**In the Web UI:** Open the account menu → **Personal settings** → **Passkeys**, check the record, and select **Revoke** for the correct entry. To register a new Passkey, simply ask the Agent to open the online board, then complete the browser or system confirmation. You do not need to state that purpose in your request. A session opened with an existing Passkey cannot add another; see [Joining and signing in](./access.md).
 
 ## Session expiry and unsaved text
 
@@ -60,11 +57,11 @@ Keep the original page open if it offers a business text draft for recovery. The
 ## Associate a working directory with projects
 
 ```text
-Use $cfkanban to show which projects this directory is associated with.
+Show which projects this directory is associated with.
 ```
 
 ```text
-Use $cfkanban to associate this directory with DemoProject in the Product workspace.
+Associate this directory with DemoProject in the Product workspace.
 Preserve its existing associations with other projects.
 ```
 

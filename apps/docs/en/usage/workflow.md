@@ -3,7 +3,7 @@
 ## Progress or cancel work
 
 ```text
-Use $cfkanban to move CFK-123 from Backlog to Todo.
+Move CFK-123 from Backlog to Todo.
 ```
 
 ```text
@@ -22,7 +22,7 @@ You need write access. Changing status records progress; it does not change the 
 ## Claim, assign, and unassign work
 
 ```text
-Assign CFK-123 to me and preserve its current status.
+Assign CFK-123 to me.
 ```
 
 ```text
@@ -30,7 +30,7 @@ Assign CFK-123 to Lin_Design.
 ```
 
 ```text
-Unassign CFK-123 without changing anything else.
+Unassign CFK-123.
 ```
 
 You need write access, and the assignee must also be able to write to the project. Eligible people include the Owner, administrators of this project or its workspace, and Writers. Reader access alone is insufficient. Overlapping roles and multiple credentials for one identity produce one person in the list. If someone is missing, ask an administrator to check their access.
@@ -42,8 +42,7 @@ Assignment changes only the responsible person. It does not start the issue or l
 ## Find work ready to claim or reassign
 
 ```text
-Use $cfkanban to list unblocked Todo issues ready to claim in DemoProject,
-in the service's candidate order. Do not claim any automatically.
+List unassigned, unblocked Todo issues in DemoProject.
 ```
 
 ```text
@@ -62,10 +61,9 @@ Summary: <what was completed>
 Verification: <checks actually performed and their outcomes>
 Artifacts: <links, commits, or file paths>
 Follow-ups: <remaining work; write none if there is none>
-Do not invent verification results I have not provided.
 ```
 
-You need write access. Completion saves a record that cannot be edited or deleted. Notes are optional; use them for actual results, checks, artifacts, and follow-ups.
+You need write access. Completion saves a record that cannot be edited or deleted. Notes are optional; use them for results, checks, artifacts, and follow-ups. Record only work and verification that actually happened.
 
 **In the Web UI:** Issue details → **Complete issue** → enter an optional note → confirm. Selecting Done from the details' status selector opens the same dialog. The current Web form provides a text note; write the result and checks there, or use the Agent for separate structured verification, artifact, and follow-up lists.
 
@@ -74,7 +72,7 @@ Dragging a board card directly into Done, or selecting Done on a card, completes
 ## Reopen work
 
 ```text
-The problem returned. Reopen CFK-123 as Todo and preserve its earlier completion records.
+The problem returned. Reopen CFK-123 as Todo.
 ```
 
 You need write access. Done and Canceled issues can return to a non-completed stage while retaining prior completion records. Completing the issue again appends a new record instead of overwriting the previous round. Add a correcting comment for an incorrect record; if the completion itself is no longer valid, reopen the issue and complete it again after resolving the work.
@@ -85,7 +83,6 @@ You need write access. Done and Canceled issues can return to a non-completed st
 
 ```text
 Mark CFK-123 blocked because the test environment is unavailable.
-Preserve its current status and assignee.
 ```
 
 ```text

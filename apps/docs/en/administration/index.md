@@ -7,7 +7,7 @@ The Owner can manage these too. For instance settings, Public Join, devices, and
 ## Find your management scope
 
 ```text
-Use $cfkanban-admin to check my identity and management scope at <instance address>, and list the Workspaces and Projects I can manage.
+List the workspaces and projects I can manage at <instance address>.
 ```
 
 The Agent returns the workspaces and projects you can manage. Reader or writer access does not automatically grant administration. Include the site address if you use several.
@@ -29,7 +29,7 @@ Workspace administrators inherit management and read/write access to all current
 ## Open management
 
 ```text
-Use $cfkanban-admin to open the management page available to me in <requested browser>.
+Open the management page available to me in <requested browser>.
 ```
 
 **In the full online app:** The Owner can open the account menu at the top right → **Management center**. The full management entry is `/app/admin`, with **Overview**, **Workspaces & Projects**, **Members & access**, **Activity**, and **Archived**. Scoped administrators open **Project settings → Management** from an authorized Project and see only their settings, members, and Projects. The Agent can also open management for an empty authorized Workspace.
@@ -42,4 +42,4 @@ Browser Session scope also limits access. An Owner Session opened for a single P
 - [Members, invitations, and administrators](./members.md): collaborators and direct or inherited access.
 - [Owner getting started](../deployment/index.md): instance settings, Public Join, device recovery, and permanent cleanup.
 
-The local workbench focuses on daily tasks; [open the full online app](../integrations/webui.md) for management. If saving fails or its result is uncertain, ask the Agent to verify the original operation before repeating an invitation, deletion, or permission change.
+You can ask the Agent to handle management directly. If you want to use the Web UI, [open the full online app](../integrations/webui.md); the local workbench focuses on daily tasks. If saving fails or its result is uncertain, ask the Agent to verify the original operation before repeating an invitation, deletion, or permission change.

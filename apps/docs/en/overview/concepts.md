@@ -3,11 +3,10 @@
 ## Instances, workspaces, projects, and issues
 
 ```text
-Use $cfkanban to confirm my current instance, identity, and accessible projects.
-Show only non-sensitive information and do not change any permissions.
+Which cfKanban site am I using, and which projects can I access?
 ```
 
-The Agent needs a trusted local identity in the current environment. Expect the exact site, current identity, and authorized projects, without credential contents.
+If you have already connected cfKanban, your Agent can show the site, your identity, and the projects you can access.
 
 | Concept | Meaning |
 | --- | --- |
@@ -20,7 +19,7 @@ The Agent needs a trusted local identity in the current environment. Expect the 
 
 Projects can share a name; include the workspace when needed. Different sites can also have the same issue number, so include the site address when working across instances.
 
-**In the Web UI:** The header shows the current workspace and project. Open the account menu at the top right to see your name and current role; choose **Personal settings** to view your identity ID. Select the workspace/project name to see the projects available to the current session.
+**In the full online app:** The header shows the current workspace and project. Open the account menu at the top right to see your name and current role; choose **Personal settings** to view your identity ID. Select the workspace/project name to see the projects available to the current session.
 
 ## Who can do what
 
@@ -34,7 +33,7 @@ Projects can share a name; include the workspace when needed. Different sites ca
 
 A writer is not automatically an administrator. Ordinary invitations and Public Join grant reader or writer access, not administration. Deployment also needs separate Cloudflare authority; application Owner access does not grant control of a cloud account.
 
-A person can have both direct project access and administrator access. Removing one source can leave another effective source intact. See [Administration](../administration/index.md) for details.
+A person can have both direct project access and administrator access. Removing one source can leave another effective source intact. See [Manage workspaces and projects](../administration/index.md) for details.
 
 ## Workflow and history
 
@@ -50,6 +49,6 @@ Projects can customize column labels, but cannot add a sixth status or change th
 
 ## Authentication and access scope
 
-Agents use a securely stored local identity. The Web UI uses an expiring session. For first access, ask an Agent to open an authenticated board, then register a Passkey to sign in directly on the same hostname later.
+Agents use a securely stored local identity; the online app uses an expiring session. Daily work with your Agent does not require opening a browser. When you want to browse the board yourself, [ask the Agent to open it](../integrations/webui.md). You can register a Passkey on an Agent-opened online page to sign in directly on the same hostname later.
 
 Switching projects does not grant access or extend your sign-in. If a project is missing, ask the Agent to check your access and open it again; see [Joining and signing in](../usage/access.md).

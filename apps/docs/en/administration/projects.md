@@ -5,18 +5,18 @@ A workspace organizes projects. Each project has its own board, issues, labels, 
 ## Create a Workspace and Project
 
 ```text
-Use $cfkanban-admin to create DemoProject in the Product workspace with the notes “Mobile product collaboration”.
-Create Product if it does not exist, then open the board.
+Create DemoProject in the Product workspace with the notes “Mobile product collaboration”.
+Create Product first if it does not exist.
 ```
 
-Creating a Workspace requires the Owner. The Owner or a Workspace administrator can create Projects in that Workspace. Project administrators cannot create sibling Projects. The Agent checks existing containers, resolves ambiguous names, and reports the exact containers. Project creation does not automatically add ordinary members, Issues, or Public Join.
+Only the Owner can create a workspace. The Owner or a workspace administrator can create projects within that workspace; project administrators cannot create sibling projects. The Agent checks for existing workspaces and projects and resolves ambiguous names. Creating a project does not add ordinary members or tasks, or enable Public Join.
 
-**In the Web UI:** The Owner opens **Administration → Workspaces & Projects**, creates a Workspace, then creates a Project inside it with a name and optional notes. Workspace administrators open their Workspace management **Projects** section, enter **New project name**, and create it.
+**In the Web UI:** The Owner opens **Management center → Workspaces & Projects**, creates a Workspace, then creates a Project inside it with a name and optional notes. Workspace administrators open their Workspace management **Projects** section, enter **New project name**, and create it.
 
 ## Change names and Project notes
 
 ```text
-Use $cfkanban-admin to rename DemoProject to Mobile and update its Project notes to:
+Rename DemoProject to Mobile and update its Project notes to:
 <goals, scope, delivery conventions, and relevant non-secret links>
 ```
 
@@ -29,7 +29,7 @@ Internal Project notes are separate from the [Public Join summary](./public-join
 ## Rename board columns
 
 ```text
-Use $cfkanban-admin to change the display label of DemoProject's todo column to “Ready”, leaving the other columns unchanged.
+Change the display label of DemoProject's todo column to “Ready”, leaving the other columns unchanged.
 ```
 
 You need project management access. This changes the displayed column name while preserving the five statuses—Backlog, Todo, In Progress, Done, and Canceled—and their order.
@@ -40,6 +40,6 @@ You need project management access. This changes the displayed column name while
 
 **Why is a named Project missing?** Names may be duplicated, the Project may be archived, or it may be outside your access. Supply its Workspace, instance, or existing link so the Agent can resolve it first.
 
-**Does renaming break a directory association?** Valid associations use stable Project IDs, so renaming does not change them. See the [Usage overview](../usage/index.md) for directory associations.
+**Does renaming break a directory association?** No. Associations use a project ID that stays the same when the name changes. See [Directory association](../usage/profile.md).
 
 **How do I stop access to an old Project?** Use [Archive and permanent cleanup](./cleanup.md). Renaming or clearing notes does not archive content.

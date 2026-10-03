@@ -24,8 +24,8 @@ After installation, four Skills should be available: `cfkanban-howto` explains u
 The Codex Git plugin provides Skill guidance, but does not include the prebuilt local workbench. If the local components are missing, tell the Agent:
 
 ```text
-I have installed the cfKanban plugin. Check and complete local setup for the current version,
-preserve my identity and project associations, then open the workbench for the current project.
+I have installed the cfKanban plugin. Check and complete setup for the current version,
+preserve my identity and project associations, and tell me if anything still needs my attention.
 ```
 
 You do not need local page components if you only use the full online Web app. Native plugin support in other hosts depends on that host; do not use Codex installation commands for them.
@@ -41,20 +41,26 @@ The Agent handles configuration; you do not need to fill in paths, credentials, 
 If cfKanban is already installed, ask the Agent to complete or check the connection:
 
 ```text
-Check my existing cfKanban setup, prepare matching local components, and configure and verify MCP if this host supports it.
-Preserve my identity and other MCP settings, and tell me whether I need to reopen the session.
+Check and complete cfKanban setup for this Agent.
+Preserve my identity and other connections, and tell me if I need to do anything afterward.
 ```
 
 Only read the [MCP connection reference](./mcp.md) if you need to connect another program or configure it yourself.
 
 ## Start working and keep it updated
 
-If you already have an identity, ask the Agent to [open a board](./webui.md). The local workbench is suited to daily tasks; account settings and management use the full online app. If you often work in the same code directory, [associate it with a project](../usage/profile.md) to reduce repeated selection.
+If you have already joined a project, tell the Agent what you want to do, for example:
+
+```text
+Show my unfinished tasks in the current project, ordered by priority.
+```
+
+You can also [open a board](./webui.md) to browse or make changes yourself. The local workbench is suited to daily tasks; account settings and management use the full online app. If you often work in the same code directory, [associate it with a project](../usage/profile.md) to reduce repeated selection.
 
 When you want to update:
 
 ```text
-Update my local cfKanban Skills and this Agent's entry point to the latest compatible stable release.
+Update my local cfKanban installation to the latest compatible stable release.
 Preserve my identity and project associations, and do not upgrade the online instance.
 Tell me which sessions or local services need to restart afterward.
 ```

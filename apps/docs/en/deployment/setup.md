@@ -10,7 +10,7 @@ https://github.com/breakstring/cfKanban/releases/latest/download/install.md
 Only inspect readiness. List missing tools, sign-in, or storage requirements; do not install anything or create resources.
 ```
 
-The Agent reuses compatible Skills and tools where possible. When you start [First deployment](./first-deployment.md), it can prepare missing Skills as part of the workflow. It explains the impact before installing tools or changing the environment. Read [Installation and connections](../integrations/index.md) only if you want to prepare the host in advance.
+The Agent reuses compatible Skills and tools where possible. When you start [First deployment](./first-deployment.md), it can prepare missing Skills as part of the workflow. It explains the impact before installing tools or changing the environment. If you want to prepare your Agent environment in advance, see [Installation and connections](../integrations/index.md).
 
 ## Three things to confirm
 

@@ -1,6 +1,6 @@
 # Devices and identity recovery
 
-Owner devices let trusted execution environments manage the same instance with independent Credentials. Adding a device does not copy a long-lived secret or grant Cloudflare deployment access.
+You can use the same Owner identity on several trusted devices, with a separate credential in each execution environment. Adding a device does not copy a long-lived credential or grant Cloudflare deployment access.
 
 ## Add an Owner device
 
@@ -43,7 +43,7 @@ Revocation invalidates the selected Credential and its derived browser access. O
 Use $cfkanban-admin to switch this computer to the Owner of <instance address>, keeping my current identity available for restoration.
 ```
 
-You must explicitly choose to replace the local current identity and use Skills supporting identity switching. The previous identity remains usable until approval and verification. It is then saved in a private restoration slot. Its Principal and access are not promoted, merged, or deleted.
+You must explicitly choose to replace the local current identity and use Skills supporting identity switching. The previous identity remains usable until approval and verification are complete. After switching, it is kept in private local storage so you can switch back later. Its identity and permissions are not promoted, merged, or deleted.
 
 ```text
 Use $cfkanban-admin to restore this computer's previously saved identity for <instance address>.
@@ -62,13 +62,13 @@ You need a working Owner credential. The Agent safely replaces this device’s c
 ## Recover a participant identity
 
 ```text
-Use $cfkanban-admin to inspect recovery options for <participant name or stable ID>.
+Use $cfkanban-admin to inspect recovery options for <participant name>.
 Explain which access ordinary rotation and full recovery would revoke, then verify the exact identity before creating a recovery invitation.
 ```
 
 Only the Owner can issue recovery invitations, which last one hour. Ordinary rotation requires working access and replaces only the credential used. Full recovery needs no old credential and revokes all previous Agent credentials for that identity. Browser sign-ins created through revoked credentials also end. Both options preserve issues, access, history, and independent Passkeys.
 
-**In the Web UI:** The Owner finds the participant under **Members & access**, opens their details, verifies the stable identity and recovery mode, and confirms inherited access and revocation effects before creating the invitation. Deliver it safely to the intended person, who completes recovery with an Agent. The browser does not save the replacement long-lived Credential. The Owner can also inspect and revoke a participant's specific Credential or Passkey from their details, after checking which sign-ins will be invalidated.
+**In the Web UI:** The Owner finds the participant under **Members & access**, opens their details, checks the identity ID and recovery mode, and confirms which permissions remain and which access will be revoked before creating the invitation. The Agent also verifies the exact identity rather than relying on a display name alone. Deliver the invitation safely to the intended person, who completes recovery with an Agent. The browser does not save the replacement long-lived credential. The Owner can also inspect and revoke a participant's specific credential or Passkey from their details, after checking which sign-ins will be invalidated.
 
 ## All Owner Credentials are lost
 

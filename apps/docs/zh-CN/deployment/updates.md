@@ -1,6 +1,6 @@
 # 实例升级
 
-本页负责线上 Cloudflare 实例。本地 Skills、MCP 和宿主插件使用独立[更新流程](../integrations/general.md)，更新它们不会升级站点。
+本页介绍线上 Cloudflare 站点的升级。Agent 中的本地 cfKanban 安装使用独立[更新流程](../integrations/general.md)，更新它不会升级站点。
 
 ## 检查版本
 
@@ -13,7 +13,7 @@
 
 ## 更新本地技能
 
-本地技能更新、已保存 Git 来源切换与宿主刷新，见[通用 Agent](../integrations/general.md)；DSH profile 安装与重启见 [DeepSeek Harness](../integrations/deepseek-harness.md)。
+请按[通用 Agent](../integrations/general.md)更新本地技能，并完成所用 Agent 要求的刷新或重启。DeepSeek Harness 用户请看[对应接入指南](../integrations/deepseek-harness.md)。
 
 ## 升级线上站点
 

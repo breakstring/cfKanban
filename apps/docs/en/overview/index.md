@@ -1,6 +1,6 @@
 # Start here
 
-cfKanban is a shared task board for people and Agents. Ask an Agent to record and move work forward, or browse, edit, and discuss it yourself in the Web UI. Both use the same tasks and permissions.
+cfKanban is an **Agent first** task board. Your Agent can handle most daily collaboration without opening a UI. When you want to browse or make changes yourself, choose the lightweight local workbench or the full online app. Agents and the Web UI use the same tasks and business permissions.
 
 ## What would you like to do?
 
@@ -16,16 +16,16 @@ cfKanban is a shared task board for people and Agents. Ask an Agent to record an
 
 ## How these docs are organized
 
-- **Get started:** shared setup, opening boards, and basic concepts.
-- **Join and use:** daily collaboration for members and administration for workspace and project managers.
-- **Deploy and manage:** instance settings, devices, upgrades, and recovery for the Owner.
+- **Start here:** shared setup, opening boards, and basic concepts.
+- **Join & work:** daily collaboration for members and administration for workspace and project managers.
+- **Deploy & manage:** instance settings, devices, upgrades, and recovery for the Owner.
 
 Once installed, describe your task directly to the Agent:
 
 ```text
-Show my unfinished tasks in DemoProject, ordered by priority, and open the board.
+Show my unfinished tasks in DemoProject, ordered by priority.
 ```
 
-Replace `DemoProject`, `CFK-123`, and angle-bracket placeholders with your targets. Examples can make real changes, so only send requests you want carried out.
+These prompts are examples, not fixed commands; describe what you want to do in your own words. Replace `DemoProject`, `CFK-123`, and angle-bracket placeholders with your targets, or omit details already clear from context. Examples can make real changes, so only send requests you want carried out.
 
 The homepage and application footer both have a **Docs** link, so you do not need to leave the board. These docs ship with the site; local Skills and the site update separately. If an entry point differs, ask the Agent to check the version and your permissions. For the difference between an instance, workspace, and project, see [Concepts and roles](./concepts.md).

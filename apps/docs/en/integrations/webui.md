@@ -1,6 +1,12 @@
 # Open a board
 
-cfKanban offers a local workbench and a full online app. **They access the same instance's tasks with the same permissions; the local workbench is not an offline copy.** Use the local workbench for daily tasks and the full online app for account or management features.
+::: tip Most of the time, just ask your Agent
+cfKanban is an **Agent first** Kanban system. You can usually find tasks, record requirements, change status, assign people, add comments, or complete work by telling your Agent what you need, without opening a UI.
+
+When you want to see progress, browse details, or make changes yourself, choose the **lightweight local workbench** or the **full online app**.
+:::
+
+Both interfaces access the same instance's tasks under the same business permissions. The local workbench is convenient for viewing and handling tasks beside your Agent; the full online app includes account and management features. The local workbench also needs a connection to the online instance; it is not an offline copy.
 
 | | Local workbench / DSH sidebar | Full online app |
 | --- | --- | --- |
@@ -13,7 +19,7 @@ cfKanban offers a local workbench and a full online app. **They access the same 
 ## Open the local workbench
 
 ```text
-Open the local workbench for DemoProject using my current cfKanban identity.
+Open the board for DemoProject.
 ```
 
 You can also name a task:
@@ -29,17 +35,13 @@ A [directory association](../usage/profile.md) can open the board for your curre
 ## Open the full online app
 
 ```text
-Open the full online board for DemoProject.
+Open the online board for DemoProject.
 ```
 
-The local workbench and DSH sidebar also have an **Open full online board** icon at the top right; hover to see its description. It opens the matching project or Issue with your current identity, usually without another sign-in. For management features, ask the Agent to open the appropriate management entry with a matching management session.
+The local workbench and DSH sidebar also have an **Open full online board** icon at the top right; hover to see its description. It opens the matching project or task with your current identity, usually without another sign-in. For management features, ask the Agent to open the management page you need.
 
-To register a Passkey, be explicit:
+On an online page opened by your Agent, you can also register a Passkey through the account menu at the top right → **Personal settings** → **Register Passkey**, then sign in directly from the site's homepage. **You do not need to mention Passkey registration when asking to open the page**; follow the browser or system prompts when registering. First and additional registrations both require an Agent-opened online session. See [Joining and signing in](../usage/access.md) for the steps.
 
-```text
-Open the full online app so I can register a Passkey for my current identity.
-```
-
-After registration, you can sign in directly from the site's homepage. See [Joining and signing in](../usage/access.md) for the steps. Workspace and project administrators can use the [management entry points](../administration/index.md); instance-wide Owner features are under [Deploy and manage](../deployment/index.md).
+Workspace and project administrators can use the [management entry points](../administration/index.md); instance-wide Owner features are under [Deploy and manage](../deployment/index.md).
 
 Both interfaces need network access to the online instance. Closing the local page does not sign you out of the online app. After updating local components, restart the workbench or DSH as instructed by the Agent to use the new version.

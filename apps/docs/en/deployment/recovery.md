@@ -5,11 +5,11 @@ If deployment stops or identity access is lost, check the existing state first. 
 ## Resume deployment or upgrade
 
 ```text
-Use $cfkanban-deploy to inspect my interrupted operation for <instance address or deployment target>.
-Keep the original plan and maintenance records, verify completed steps, then continue the remaining work. Explain any changes first.
+Use $cfkanban-deploy to resume my interrupted deployment or upgrade for <instance address or deployment target>.
+Check which steps have completed, then continue the remaining work. Tell me first if the original plan needs to change.
 ```
 
-You need the relevant Cloudflare authority and original maintenance records. A timeout does not mean nothing happened in the cloud. Keep the records and let the Agent check before resuming. Do not rename resources, delete local records, or create a new identity just to retry.
+You need the relevant Cloudflare authority and original maintenance records. The Agent keeps the original plan and records and checks what happened before resuming. A timeout does not mean nothing happened in the cloud. Do not rename resources, delete local records, or create a new identity just to retry.
 
 **In the Web UI:** There is no deployment-resume button. An accessible homepage alone does not prove every deployment step completed.
 
@@ -17,7 +17,7 @@ You need the relevant Cloudflare authority and original maintenance records. A t
 
 | Situation | Next step |
 | --- | --- |
-| The Owner still works on another computer | [Add an Owner device](../administration/devices.md) |
+| Your Owner identity still works on another computer | [Add an Owner device](../administration/devices.md) |
 | An Owner administration page is still usable | Ask the Agent to check whether Web approval can connect a new device |
 | A participant cannot use their original identity | Ask the Owner for an identity recovery invitation |
 | No Owner connection route remains, or all old device credentials must be revoked | Use total Owner recovery below |

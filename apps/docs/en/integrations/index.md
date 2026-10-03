@@ -9,7 +9,7 @@ The same cfKanban Skills work whether you are joining a team or deploying your o
 | Accept an invitation | Give the Agent the administrator's **complete invitation message**; the [joining workflow](../usage/access.md) reuses or installs Skills as needed |
 | Join a public project | Copy the homepage's Agent prompt for the project and follow the guide |
 | Deploy your own instance | Go straight to [First deployment](../deployment/first-deployment.md); Skill setup is part of it |
-| Use an existing identity in a new Agent, or prepare the Agent first | Choose your host below |
+| Connect a new Agent, or prepare your current Agent first | Choose your host below |
 | Only use an online site you can already sign in to | No local components are needed; see [Joining and signing in](../usage/access.md) for first identity creation and Passkey registration |
 
 The Agent handles installation when needed and explains local changes. Merely opening an invitation or deployment page does not install software. Trusted, compatible Skills are reused; joining a project does not automatically update them.
@@ -35,4 +35,4 @@ If you have an older installation or only the Git plugin, ask the Agent to [comp
 
 For another MCP client or your own program, see the [MCP connection reference](./mcp.md). Ordinary users do not need this technical reference.
 
-Once ready, continue with [Joining and signing in](../usage/access.md) or [Open a board](./webui.md). Installation does not grant project access. An existing Owner moving to another computer should use [Device connections](../administration/devices.md).
+Once ready, continue with [Joining and signing in](../usage/access.md). If you have already joined, start [working on tasks](../usage/index.md); open a [board](./webui.md) whenever you want to browse it yourself. Installation does not grant project access. An existing Owner moving to another computer should use [Device connections](../administration/devices.md).

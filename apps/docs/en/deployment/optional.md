@@ -28,10 +28,10 @@ Each file can be up to 10 MiB, with at most 20 active attachments per issue. Unl
 
 ```text
 Use $cfkanban-deploy to check how to enable Cloudflare usage metrics for this instance.
-Explain the required read-only permissions and safe setup, without receiving or printing secrets.
+Explain the permissions and safe setup steps without changing anything yet.
 ```
 
-Metrics are optional; unconfigured metrics do not prevent task collaboration. Setup needs additional read-only analytics authorization. The deployment Skill does not write the analytics secret automatically; follow the Agent's guidance for a secure Cloudflare configuration entry. Do not paste Tokens into chat.
+Metrics are optional; leaving them unconfigured does not prevent task collaboration. Setup needs additional read-only analytics authorization. The deployment Skill does not write the analytics secret automatically; follow the Agent's guidance for a secure Cloudflare configuration entry. Do not paste tokens into chat or ask the Agent to print them.
 
 **In the Web UI:** **Overview → Usage & limits** shows status and lets you refresh data. Observations may be delayed and are neither a real-time bill nor your account's remaining allowance.
 

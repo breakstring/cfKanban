@@ -1,6 +1,6 @@
 # Instance upgrades
 
-This page covers the live Cloudflare instance. Local Skills, MCP, and host plugins have a separate [update workflow](../integrations/general.md); updating them does not upgrade the site.
+This page covers upgrades to the live Cloudflare site. Your Agent's local cfKanban installation has a separate [update workflow](../integrations/general.md); updating it does not upgrade the site.
 
 ## Check versions
 
@@ -13,7 +13,7 @@ Show compatible stable updates without installing anything.
 
 ## Update local Skills
 
-Use [General agents](../integrations/general.md) for local Skill updates, saved Git-source changes, and host reloads. For DSH profile installation and restart, see [DeepSeek Harness](../integrations/deepseek-harness.md).
+Follow [General agents](../integrations/general.md) to update local Skills and complete any refresh or restart your Agent requires. DeepSeek Harness users should follow its [connection guide](../integrations/deepseek-harness.md).
 
 ## Upgrade the live site
 

@@ -1,6 +1,6 @@
-# Owner getting started
+# Getting started as an Owner
 
-For Owners preparing to run or already maintaining a cfKanban instance. If you only want to use a team's board or administer an authorized workspace or project, see [Join and use](../usage/index.md). You do not need a Cloudflare account.
+Start here if you want to deploy your own cfKanban site or already maintain one as its Owner. If you only want to use a team's board or administer an authorized workspace or project, see [Join and use](../usage/index.md). You do not need a Cloudflare account.
 
 ## Your first deployment
 
@@ -30,4 +30,4 @@ See [Prepare for deployment](./setup.md) for local, account, and persistent stor
 
 **In the Web UI:** The full online app's management center provides application settings within your permissions. The Agent handles creating cloud resources and upgrading or recovering deployments; the Web UI is not a deployment console.
 
-Owner application identity and Cloudflare account permissions are checked separately. Moving to another computer only to manage the application does not require taking over cloud deployment too. To update only Agent Skills or the DSH plugin, see [Installation and connections](../integrations/index.md); this does not upgrade the online instance.
+Your Owner identity lets you manage cfKanban; Cloudflare account permissions let you maintain its cloud resources. They are checked separately. Moving to another computer only to manage the application does not require taking over cloud deployment too. To update only Agent Skills or the DSH plugin, see [Installation and connections](../integrations/index.md); this does not upgrade the online instance.

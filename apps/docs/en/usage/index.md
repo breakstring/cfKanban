@@ -2,14 +2,13 @@
 
 This section is for ordinary members and people who manage workspaces or projects. Only the Owner maintaining the whole site needs [Deploy and manage](../deployment/index.md).
 
-Once you have joined a project, tell the Agent what you want to find, record, or move forward. Daily actions use the `cfkanban` Skill; you do not need to repeat installation or joining.
+Once you have joined a project, tell the Agent what you want to find, record, or move forward. You do not need to repeat installation or joining. Daily work can stay in the conversation; ask to open a board when you want to see it yourself.
 
 ```text
-Use $cfkanban to show my unfinished tasks in DemoProject
-and open the details of CFK-123. Do not change anything yet.
+List my unfinished tasks in DemoProject and summarize the latest progress on CFK-123.
 ```
 
-This requires read access to the target project. The Agent should return tasks and details from the correct project. A read-only request does not claim tasks or change their status.
+Viewing tasks requires read access to the target project. It does not claim tasks or change their status.
 
 | Goal | Read |
 | --- | --- |

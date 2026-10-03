@@ -1,6 +1,6 @@
 # Owner 入门
 
-这里面向准备拥有、或已经维护一套 cfKanban 实例的 Owner。只想使用团队看板，或管理获授权的工作区、项目，请走[加入与使用](../usage/index.md)，无需 Cloudflare 账户。
+如果你准备部署自己的 cfKanban 站点，或已经是站点 Owner，从这里开始。只想使用团队看板，或管理获授权的工作区、项目，请看[加入与使用](../usage/index.md)，无需 Cloudflare 账户。
 
 ## 第一次部署
 
@@ -30,4 +30,4 @@ https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.m
 
 **在网页中：** 线上完整版的管理中心提供权限内的应用设置；创建云资源、升级和恢复部署由 Agent 完成，网页不提供部署控制台。
 
-Owner 应用身份与 Cloudflare 账户权限分别核验。换电脑只管理应用时，不必同时接管云端部署。只更新 Agent 技能或 DSH 插件，请看[安装与接入](../integrations/index.md)，不会因此升级线上实例。
+Owner 身份用于管理 cfKanban，Cloudflare 账户权限用于维护云资源，两者分别核验。换电脑只管理应用时，不必同时接管云端部署。只更新 Agent 技能或 DSH 插件，请看[安装与接入](../integrations/index.md)，不会因此升级线上实例。

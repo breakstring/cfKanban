@@ -3,7 +3,7 @@
 ## Comments and corrections
 
 ```text
-Use $cfkanban to add this progress comment to CFK-123:
+Add this progress comment to CFK-123:
 Reproduced on a phone. It happens only on the first login after switching networks; next I will check the retry logic.
 ```
 
@@ -18,12 +18,11 @@ You need write access. Ordinary comments are appended to the issue's activity an
 ## Upload, download, and restore attachments
 
 ```text
-Use $cfkanban to attach <absolute file path> to CFK-123. Upload only this file.
+Attach <absolute file path> to CFK-123.
 ```
 
 ```text
-List the attachments on CFK-123, then download my selected <attachment ID>
-to <new absolute file path>. Do not overwrite an existing file or open it automatically.
+Download attachment <attachment ID> from CFK-123 to <new absolute file path>.
 ```
 
 ```text
@@ -32,7 +31,7 @@ Restore the deleted attachment <attachment ID> on CFK-123.
 
 The Owner must enable attachments and set capacity first. Readers can view and download; people with write access can upload, delete, and restore. Upload one nonempty file at a time, up to 10 MiB, with at most 20 active attachments per issue, including uploads in progress.
 
-Attachments require sign-in and project access to download. Mention an attachment when completing the issue if you want it included in the completion record.
+Attachments require sign-in and project access to download. The Agent downloads to a new file. It does not overwrite existing files or open downloads automatically. Mention an attachment when completing the issue if you want it included in the completion record.
 
 **In the Web UI:** Issue details → **Attachments** → **Choose a file** or drop one file → **Upload**. Existing files can be downloaded, and supported images can be previewed. Select **Deleted files** to restore a file. Selecting a file does not upload it automatically; use the same upload item's retry action if it fails.
 
@@ -81,16 +80,15 @@ The four relation types are blocks, parent, related, and duplicate. Both issues 
 ## Read project information and copy Issue content
 
 ```text
-Use $cfkanban to read DemoProject's description and the current context of CFK-123:
-its goal, status, assignee, dependencies, verified results, and follow-ups. Do not change the issue.
+Summarize DemoProject's notes and CFK-123's goal, progress, assignee, dependencies, and follow-ups.
 ```
 
-You need read access to the relevant projects. Give the Agent the CFK identifier or Issue URL and let Skills read the latest Issue context and relevant history.
+You need read access to the relevant projects. Give the Agent a task ID or link to read its latest content and relevant history; you do not need to open a board first.
 
 **In the Web UI:** The project description appears below the board title. Open **Project settings → Activity** to read the newest project events first. **Load older activity** continues through earlier history; **Refresh** starts a fresh list that includes new changes. Returning to the board preserves your submitted filters. Copy the CFK identifier or Issue URL in the details, or use the small buttons beside the description and each comment to copy their original Markdown. If clipboard access is restricted, the displayed plain text can be copied manually.
 
 ```text
-Use $cfkanban to show DemoProject's latest activity first. Read older history only as needed, and identify the actor and changed resource. Do not change the project.
+Show DemoProject's recent activity, including who changed what.
 ```
 
 ## Delete and restore issues
@@ -100,7 +98,7 @@ Soft-delete CFK-123 after checking its identifier and title.
 ```
 
 ```text
-Restore the deleted CFK-123 and verify its restored state.
+Restore the deleted CFK-123.
 ```
 
 You need write access. Deleting an issue is a recoverable soft delete, not permanent erasure or physical storage cleanup. Restoration checks current permissions, parent project availability, and capacity. It can fail if the issue and its comments cannot fit within the limits.

@@ -10,7 +10,7 @@ https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.m
 先只读检查，列出缺少的工具、登录或存储条件，不安装、不创建资源。
 ```
 
-Agent 会尽量复用现有兼容技能和工具。真正开始[首次部署](./first-deployment.md)时，缺少的技能可一并准备；需要安装工具或修改环境时，会先说明影响。只有你想提前准备宿主，才需要阅读[安装与接入](../integrations/index.md)。
+Agent 会尽量复用现有兼容技能和工具。真正开始[首次部署](./first-deployment.md)时，缺少的技能可一并准备；需要安装工具或修改环境时，会先说明影响。如果想提前准备 Agent 环境，可以阅读[安装与接入](../integrations/index.md)。
 
 ## 你需要确认的三件事
 

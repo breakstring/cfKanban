@@ -5,21 +5,21 @@ Public Join lets visitors choose a Project on the instance homepage and join wit
 ## Inspect the public scope
 
 ```text
-Use $cfkanban-admin to inspect DemoProject's Public Join status, current usage, and resource limits.
+Use $cfkanban-admin to check Public Join status, current usage, and resource limits for <project name>.
 Explain the access and effects of enabling it without changing anything.
 ```
 
-This requires Owner instance administration. The result includes public status, an explicitly public summary, and usage and quotas for Issues, Comments, and non-Owner members. It does not automatically publish internal Project notes.
+This requires Owner instance administration. The Agent explains whether Public Join is enabled, which summary visitors can see, and the usage and quotas for issues, comments, and non-Owner members. Internal project notes are not published automatically.
 
 Visitors may choose reader or writer access. Writers can edit and delete project content. Public Join needs no individual approval, so enable it only when the project welcomes unknown participants.
 
 ## Enable or adjust Public Join
 
 ```text
-Use $cfkanban-admin to enable Public Join for DemoProject.
+Use $cfkanban-admin to enable Public Join for <project name>.
 Use “<an introduction suitable for all visitors>” as the public summary.
 Set active limits to 50 Issues, 500 Comments, and 50 non-Owner members.
-Check current usage and explain the effects before applying this scope.
+Check current usage and explain the effects before applying these settings.
 ```
 
 The `50 / 500 / 50` values are an example choice, not defaults applied automatically. All three limits must be explicit when enabling. A limit may be lower than current usage: existing content and access remain, while operations that increase the corresponding count are blocked.
@@ -31,7 +31,7 @@ Membership includes ordinary members, direct Project administrators, and inherit
 ## Disable Public Join
 
 ```text
-Use $cfkanban-admin to disable Public Join for DemoProject and verify the result.
+Use $cfkanban-admin to disable Public Join for <project name> and verify the result.
 Keep existing member access.
 ```
 

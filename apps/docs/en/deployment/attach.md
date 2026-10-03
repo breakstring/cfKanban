@@ -16,10 +16,10 @@ This gives you application management access. Continue below if you also want to
 
 ```text
 Use $cfkanban-deploy to connect this computer to the existing deployment at <instance address> for future maintenance.
-Verify my Owner identity and Cloudflare account. Save local maintenance records without upgrading or changing remote resources.
+Do not upgrade the site or change cloud resources yet.
 ```
 
-You need current Owner access and authority over the corresponding Cloudflare account. The Agent checks the site, cloud resources, and existing settings, then saves private maintenance records on this computer. Existing data and access stay unchanged.
+You need current Owner access and authority over the corresponding Cloudflare account. The Agent checks your identity, account, site, cloud resources, and existing settings, then saves private maintenance records on this computer. Connecting writes only those local records; existing data and access stay unchanged.
 
 Use an Agent for this step; there is no Web button. After connecting, make a separate [upgrade request](./updates.md) when needed.
 

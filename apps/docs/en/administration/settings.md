@@ -15,7 +15,7 @@ The notice is public to signed-out visitors. Each language accepts up to 500 Uni
 
 **In the Web UI:** **Administration → Overview → Homepage instance notice** provides both language fields, saving, and restoring defaults. Restoring defaults clears the draft; save it to apply the change.
 
-Expect verified stored values and the corresponding public homepage text. Keep private Project details, Credentials, and recovery links out of the notice.
+After saving, the Agent verifies both language versions and the homepage shows the corresponding text. Keep private project details, credentials, and recovery links out of the notice.
 
 ## Publish an instance notification
 
@@ -46,40 +46,41 @@ Attachment capacity includes uploading, uploaded, and deleted files awaiting cle
 ## Choose attachment capacity
 
 ```text
-Use $cfkanban-admin to set this instance's attachment application capacity to 2 GiB.
-Check the current reserved bytes first and verify the saved setting.
+Use $cfkanban-admin to set this instance's total attachment capacity limit to 2 GiB.
+Check current usage first, then confirm that the setting has taken effect.
 ```
 
 You can explicitly choose unlimited capacity. Unset capacity blocks new uploads. Changing it requires Owner access. Uploading also needs attachment storage enabled; setting capacity does not enable it automatically.
 
 **In the Web UI:** Open **Overview → Usage & limits → Attachment application budget → Set limit**. Choose a mode, enter finite capacity in MiB, and verify after saving. `1 GiB = 1024 MiB`. Lowering the limit keeps existing files and pauses new uploads above the limit.
 
-The result changes the application budget only. It is neither actual R2 storage nor a Cloudflare billing cap. Soft-deleted files release reserved bytes only after reclamation succeeds.
+This limit controls uploads in cfKanban and is labeled **Attachment application budget** in the Web UI. It is neither actual R2 storage use nor a Cloudflare billing cap. Deleted files release capacity only after cleanup succeeds.
 
 ## Read activity records
 
 ```text
-Use $cfkanban-admin to show recent access changes in DemoProject, restricted to that Project, identifying the actor and the resource changed.
+Use $cfkanban-admin to show recent permission changes in <project name>.
+Limit the results to this project and explain who changed whose permissions.
 ```
 
 **In the Web UI:** **Administration → Activity** displays the newest records first. Filter by project and event type, then **Load older Audit events** as needed. Apply filters again to include new changes in a fresh list.
 
-## Origins and request limits
+## Connection address and request limits
 
 ```text
-Use $cfkanban-admin to inspect this instance's preferred API origin and deployed request-rate settings without changing them.
+Use $cfkanban-admin to check the address Agents use to connect to this instance and its current request-rate limits without changing them.
 ```
 
 **In the Web UI:** **Overview → Service information & access limits** displays the release, instance addresses, and request limits as read-only information.
 
-Use an Agent to change an already configured preferred origin:
+The **preferred API origin** tells Agents which connection address to prefer. Once the new domain is configured, ask your Agent to check the proposed address change:
 
 ```text
-Use $cfkanban-admin to verify that https://<new-domain> reaches this same instance without sending it a Credential first.
-If verification succeeds, propose the preferred API origin change and verify both origins.
+Use $cfkanban-admin to verify that https://<new-domain> reaches this same instance.
+If verification succeeds, propose the connection address change and check both the old and new addresses.
 ```
 
-The domain must be configured first. Domain bindings, DNS, and request-rate changes are [deployment operations](../deployment/optional.md); changing the application address alone does not configure them.
+The Agent checks the new address before sending it any credentials. Domain bindings, DNS, and request-rate changes are [deployment operations](../deployment/optional.md); changing the application address alone does not configure them.
 
 ## If saving fails
 
