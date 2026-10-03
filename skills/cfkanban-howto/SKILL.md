@@ -1,6 +1,6 @@
 ---
 name: cfkanban-howto
-description: Explain cfKanban usage, scoped administration, and deployment, using relevant public instance documentation when available. Use for onboarding, capability questions, and choosing among the three operational Skills; this guide does not execute operations.
+description: Explain cfKanban installation, usage, scoped administration, and deployment, using relevant public instance documentation when available. Use for onboarding, capability questions, and choosing among the three operational Skills; this guide does not execute operations.
 ---
 
 # cfKanban Howto
@@ -22,11 +22,13 @@ Use the index titles to select pages; these are topic hints, not a reason to fet
 
 | Question | Relevant topics |
 | --- | --- |
-| Priority/Label queries, assignment, pagination / 优先级、标签、分配与分页 | Usage → Find & create issues (`usage/issues`); collaboration only when Label maintenance is also asked |
-| Projects, members, scoped permissions / 项目、成员与权限 | Administration → Workspaces & projects / Members & invitations; Concepts & roles for a role distinction |
-| Install or update an Agent integration / 安装或更新代理接入 | Agent integrations → General Skills & MCP / DeepSeek Harness; use Deployment → Prepare & install Skills when the known instance's older index still places installation there |
-| Deploy or upgrade an Instance / 部署或升级实例 | Deployment → Your first deployment / Versions & updates; first deployment only for a new instance |
-| Owner reminders, reception and history / Owner 提醒、接收与历史 | Usage → Owner notifications (`usage/notifications`); Administration → Settings & usage for Owner publication/withdrawal |
+| Priority/Label queries, assignment, pagination / 优先级、标签、分配与分页 | Join & work → Find & create issues (`usage/issues`); collaboration only when Label maintenance is also asked |
+| Projects, members, scoped permissions / 项目、成员与权限 | Join & work → Workspaces & projects / Members & invitations; Concepts & roles for a role distinction |
+| Install or update an Agent integration / 安装或更新代理接入 | Start here → Install & connect / General agents / DeepSeek Harness / Open a board; MCP reference only for other clients or explicit configuration questions; follow the actual index when an older instance uses Agent integrations or Deployment → Prepare & install Skills |
+| Local or online board, browser access / 本地或线上看板、浏览器入口 | Start here → Open a board (`integrations/webui`); Join & work → Join & sign in for online identity/Passkeys, Manage your workspace for a matching management entry |
+| Connect another MCP client / 连接其他 MCP 客户端 | Start here → MCP reference (`integrations/mcp`); ordinary Agent setup stays with Install & connect rather than requiring users to configure MCP |
+| Deploy or upgrade an Instance / 部署或升级实例 | Deploy & manage → Your first deployment / Instance upgrades; first deployment only for a new instance |
+| Owner reminders, reception and history / Owner 提醒、接收与历史 | Deploy & manage → Owner notifications (`usage/notifications`) / Settings & usage for Owner publication/withdrawal |
 
 Handle incomplete sources explicitly:
 
@@ -40,6 +42,8 @@ Handle incomplete sources explicitly:
 ## 1. Already joined? Start with daily work — cfkanban
 
 Participants and Owners use `cfkanban` for ordinary Issue work. For a general “what can I do?” question, lead with finding, creating, editing, changing status, completing/reopening, and commenting. Explain setup only when the user needs it. The examples below are prompts to adapt, not an instruction to execute every row.
+
+For requested execution, route to `cfkanban`: it prefers the current host's connected MCP when the discovered schema covers the daily operation, and retains safe scripts for uncovered capabilities or hosts without MCP. Users need not choose this internal path. That Skill owns tool discovery, permissions and recovery; this howto does not call business tools or make a failed or unknown write retry through another channel.
 
 | Goal / 目标 | Example prompt / 自然语言示例 | Expected result / 预期结果 |
 | --- | --- | --- |
@@ -56,7 +60,7 @@ Participants and Owners use `cfkanban` for ordinary Issue work. For a general �
 | Organize / 整理关联 | “Add the existing ‘bug’ Label to CFK-123.” / “给 CFK-123 添加已有的 bug 标签。”; “Record that CFK-123 blocks CFK-124.” / “记录 CFK-123 阻塞 CFK-124。” | Project Labels or supported relations; relations do not change status or access. / 使用项目标签或受支持关系，关系不会改变状态或权限。 |
 | Attach evidence / 附件 | “Attach <absolute file path> to CFK-123.” / “将 <文件绝对路径> 附加到 CFK-123。” | One selected file when attachment storage and capacity permit; no implicit upload of other files. / 存储及容量允许时上传一个指定文件，不自动上传其它文件。 |
 | Recover deleted work / 恢复已删除任务 | “Restore the deleted CFK-123.” / “恢复已删除的 CFK-123。” | One soft-deleted Issue is restored if permissions and quotas allow. / 权限和配额允许时恢复一项软删除任务。 |
-| Open the board / 打开看板 | “Open the DemoProject board in IAB.” / “在 IAB 打开 DemoProject 看板。” | Verified authenticated target in the requested browser, if supported. / 在受支持的指定浏览器进入已验证的登录页面。 |
+| Open the board / 打开看板 | “Open the DemoProject board in IAB.” / “在 IAB 打开 DemoProject 看板。” | Verified local workbench by default; explicitly request online for the full app. Honor the requested supported browser. / 默认打开已验证的本地工作台；线上完整版需明确要求，并遵守受支持的指定浏览器。 |
 | My profile / 我的资料 | “Change my display name to <name>.” / “将我的显示名称改为 <名称>。” | Your name changes; stable identity and access remain unchanged. / 修改自己的名称，稳定身份与权限不变。 |
 | Owner notifications / Owner 通知 | “Show my notification history”; “Turn automatic Owner notifications off.” / “查看我的通知历史”；“关闭 Owner 自动通知。” | Compatible sites share personal reception and confirmations across Web/Agent. Normal work is completed before relaying notices; interruptions may repeat them. History remains available when reception is off; re-enabling starts from now. / 支持该能力的实例在 Web/Agent 共用个人偏好和确认；先完成正常任务再转述，中断时允许重提醒。关闭仍可查看历史，重开从现在开始。 |
 
@@ -64,15 +68,17 @@ Prefix any example with “Use $cfkanban to…” / “请用 $cfkanban …” w
 
 Joining is for people who do not yet have access: “Use $cfkanban to join this Project: <Invite URL>.” / “请用 $cfkanban 加入这个项目：<邀请链接>。” Expect inspection of the exact Project and role, one combined join plan, and verified access after approval. Joining an existing instance needs no personal Cloudflare deployment. Web project switching selects already authorized Projects; explain support according to the deployed Service, not a source-only feature.
 
-Explain the two WebUI modes: the local Vue workbench is the default for project switching, Kanban/list, direct priority/status/assignee edits and Issue details; explicit online mode opens the full UI through Browser Launch. On Codex App prefer a verified IAB path using trusted host context, not environment guessing. Local mode uses an active loopback process and short local session, distinct from the online lifetimes below. Users share Issue IDs/URLs and raw Markdown through copy actions; no Agent-session send or duplicate summary is present.
+Explain the two WebUI modes: the local Vue workbench is the default for project switching, Kanban/list, direct priority/status/assignee edits, Issue details, Comments and completion. It reads and writes the same online instance with the same business permissions; it is not an offline copy. Explicit online mode opens the full UI through Browser Launch, without a silent fallback when local startup fails. On Codex App prefer a verified IAB path using trusted host context, not environment guessing. Keep the local process or DSH Host running; DSH hosts the workbench in its sidebar. Local view lifetime differs from the online lifetimes below. Users share Issue IDs/URLs and raw Markdown through copy actions.
+
+The local/DSH **Open full online board** button opens the current Project or Issue; it does not widen Session scope. For workspace, member or Owner management, route to `cfkanban-admin` to open the appropriate management entry with a matching Session. An Owner's Project/Issue Session cannot perform instance administration. Explain this in terms of the requested page, without requiring the user to supply target JSON. / 本地和 DSH 的「打开完整线上看板」只打开当前项目或任务，不扩大会话范围；管理工作区、成员或实例时交给 `cfkanban-admin` 打开匹配的管理入口。Owner 的项目/任务会话不能直接管理整个实例，用户无需填写底层参数。
 
 When explaining browser access, distinguish API identity from browser-session delivery. Opening a board, Issue, or administration page routes to the operational Skill's browser preflight and authenticated-target verification. A failed browser handoff alone does not mean the user needs a new Credential or identity. Honor the requested browser; explain a concrete supported recovery path without promising that every host can automate it. Cloudflare OAuth belongs to `cfkanban-deploy` and is a separate login, not a cfKanban Browser Launch.
 
-### Browser Session activity and unsaved text / 网页会话活动与未提交文本
+### Online Browser Session activity and unsaved text / 线上网页会话活动与未提交文本
 
-On supporting instances, both Agent-opened and Passkey browser Sessions start with eight hours. Real foreground mouse, keyboard, or touch activity, including editing, can renew them for eight hours, at most one actual extension every 30 minutes and never past seven days from the original Session creation. Background polling, hidden tabs, refresh, and focus checks do not renew. The Web uses a Cookie-only, same-origin/CSRF renewal endpoint; Skill Bearer requests cannot extend it. Identity, sign-in source, and scope stay unchanged. If Session renewal metadata is missing, explain the old fixed eight-hour expiry; an installed Skill version does not prove deployed support. Browser Launch remains a five-minute, single-use capability.
+On supporting instances, both Agent-opened and Passkey online browser Sessions start with eight hours. Real foreground mouse, keyboard, or touch activity, including editing, can renew them for eight hours, at most one actual extension every 30 minutes and never past seven days from the original Session creation. Background polling, hidden tabs, refresh, and focus checks do not renew. The Web uses a Cookie-only, same-origin/CSRF renewal endpoint; Skill Bearer requests cannot extend it. Identity, sign-in source, and scope stay unchanged. If Session renewal metadata is missing, explain the old fixed eight-hour expiry; an installed Skill version does not prove deployed support. Browser Launch remains a five-minute, single-use capability.
 
-支持续期的实例对 Agent 打开与 Passkey 登录的网页会话都采用初始 8 小时期限。真实前台鼠标、键盘或触屏操作，包括编辑，可续期 8 小时，每 30 分钟最多实际延长一次，且不得超过原会话创建起 7 天。后台轮询、隐藏页签、刷新和焦点校验不续期。Web 使用 Cookie-only、同源与 CSRF 保护的续期入口，Skill Bearer 请求不能代为延长。身份、登录来源与范围保持不变。缺少会话续期 metadata 时，说明旧的固定 8 小时到期规则；安装的 Skill 版本不能证明线上支持。Browser Launch 仍为 5 分钟且只能兑换一次。
+支持续期的实例对 Agent 打开与 Passkey 登录的线上网页会话都采用初始 8 小时期限。真实前台鼠标、键盘或触屏操作，包括编辑，可续期 8 小时，每 30 分钟最多实际延长一次，且不得超过原会话创建起 7 天。后台轮询、隐藏页签、刷新和焦点校验不续期。Web 使用 Cookie-only、同源与 CSRF 保护的续期入口，Skill Bearer 请求不能代为延长。身份、登录来源与范围保持不变。缺少会话续期 metadata 时，说明旧的固定 8 小时到期规则；安装的 Skill 版本不能证明线上支持。Browser Launch 仍为 5 分钟且只能兑换一次。
 
 Expiry or source revocation requires a fresh Passkey sign-in or a new authenticated Agent launch. Keep the original page open if it offers an unsubmitted business text draft: the draft stays only in page memory, is lost on refresh/close, and is cleared by explicit sign-out. The same identity must explicitly restore or copy and review the text before deciding to submit; another identity does not automatically restore it. Credentials, sign-in/invitation capabilities, and attachment bytes are excluded. Never replay a write automatically. Example: “Reopen this Project with my current identity; keep the original page open so I can recover my text draft, and do not resubmit the previous write.”
 
@@ -138,19 +144,22 @@ Use this Skill when hosting an instance or maintaining local Skills/cloud resour
 | Goal / 目标 | Example prompt / 自然语言示例 | Expected result / 预期结果 |
 | --- | --- | --- |
 | Check readiness / 检查准备情况 | “Check what I need to deploy cfKanban.” / “检查部署 cfKanban 还需要准备什么。” | Read-only environment and verified-release findings; no installation. / 只读检查环境与可验证发行，不安装。 |
+| Install locally / 本地安装 | “Install cfKanban for this Agent and preserve my identity.” / “为当前 Agent 安装 cfKanban，保留我的身份。” | Verified Skills and a configured, connected MCP on supported hosts; explain any pending host steps. / 核验技能，并在受支持宿主配置、连接 MCP；说明未完成的宿主操作。 |
 | Deploy / 部署 | “Deploy cfKanban for me.” / “为我部署一套 cfKanban。” | Discovery, missing Owner name if needed, exact plan, then authorized deployment and readback. / 先检查、补齐必要 Owner 名称并展示准确计划，获准后部署和读回。 |
 | Check versions / 检查版本 | “Check local Skill and instance versions without updating.” / “检查本地技能和实例版本，先不要更新。” | Report the two versions separately without upgrading either. / 分别报告两个版本，不更新任一方。 |
-| Update Skills / 更新技能 | “Update my local cfKanban Skills to the latest stable release.” / “将本地 cfKanban 技能更新到最新正式版。” | Authorized local Skill update; the deployed Instance stays unchanged. / 按授权更新本地技能，线上实例不变。 |
+| Update locally / 本地更新 | “Update my local cfKanban installation to the latest stable release.” / “将本地 cfKanban 安装更新到最新正式版。” | Authorized local update and connection verification; the deployed Instance stays unchanged. / 按授权更新本地安装并核验连接，线上实例不变。 |
 | Upgrade Service / 升级实例 | “Plan an upgrade of this instance to the latest stable release.” / “制定将此实例升级到最新正式版的计划。” | Exact resource/migration effects for approval; planning alone does not execute. / 展示准确资源和迁移影响供批准，仅计划不执行。 |
 | Resume / 继续中断部署 | “Check and resume my interrupted deployment.” / “检查并继续我中断的部署。” | Read back the journaled operation and continue only within valid authorization. / 读回已记录操作，仅在有效授权范围内继续。 |
 
 Prefix these with `$cfkanban-deploy`. Default deployment is one Worker and one D1; optional private R2 attachments and custom domains need explicit plans. Local Skill update and cloud Instance upgrade are separate. Do not describe a prerelease as stable or infer availability from a plugin version. After deployment, use `cfkanban-admin` to create the first Workspace/Project, then `cfkanban` for Issues; these are separate requested actions.
 
+For a local installation/update request, explain that supported hosts receive MCP setup and connection verification by default within the authorized installation; no separate “enable MCP” request is needed. DSH's plugin includes this connection. Preserve an explicit Skills-only choice or deliberate MCP disablement. Missing runtime/artifacts or a required host action leaves a specific pending step, not a connected-MCP claim. A help question performs none of this setup. / 本地安装或更新默认由操作 Skill 为受支持宿主配好并核验 MCP；DSH 插件已包含，无需另说「启用 MCP」。保留只装 Skills 或主动停用的选择；缺少组件或必要宿主操作时说明待完成项，不能声称已连接。仅询问用法不执行安装。
+
 Users do not need to supply version numbers. A text update request uses the user's explicit target first, then an exact target clearly carried forward in trusted user conversation context, such as installing the RC just published for its acceptance test; an incidental RC mention or development branch is insufficient. Ask once if the intended target is ambiguous; otherwise use latest stable. Native host plugin/Skill updates use the stable channel. Pinning a manifest/version/digest for one operation does not pin the host's long-term Git source: normal Codex registration omits `--ref`. A fixed tag must be switched back before native updates can follow stable; refreshing it alone does not do so. RC testing uses the same host entry and preserves/restores the default stable source, subject to host support.
 
-Existing trusted, compatible Skills can be reused; joining a Project does not update Skills or its server. Checking updates is read-only; installation, host projection, and current-task loading have separate verification states. An incompatible older instance needs an explained compatibility choice, never a forced upgrade. Switching between test and production instances selects an exact instance/Project; it does not require changing compatible Skills.
+Existing trusted, compatible Skills can be reused; joining a Project does not update Skills, activate MCP or upgrade its server. Checking updates is read-only; installation, host projection, current-task loading and running MCP connection have separate verification states. An incompatible older instance needs an explained compatibility choice, never a forced upgrade. Switching between test and production instances selects an exact instance/Project; it does not require changing compatible Skills.
 
-用户无需填写版本号。首次安装和新部署默认发现最新正式发行，再固定并校验准确版本。已有可信兼容 Skills 可以复用，加入项目不更新技能或服务器。检查更新只读；canonical 安装、宿主投影与当前任务加载分别验证。旧实例不兼容时说明选择，不强制升级。测试与正式环境通过准确实例和 Project 切换，同一套兼容技能无需重装。
+用户无需填写版本号。首次安装和新部署默认发现最新正式发行，再固定并校验准确版本。已有可信兼容 Skills 可以复用，加入项目本身不更新技能、启用 MCP 或升级服务器。检查更新只读；canonical 安装、宿主投影、当前任务加载与运行中的 MCP 连接分别验证。旧实例不兼容时说明选择，不强制升级。测试与正式环境通过准确实例和 Project 切换，同一套兼容技能无需重装。
 
 For execution, read [cfkanban-deploy](../cfkanban-deploy/SKILL.md).
 

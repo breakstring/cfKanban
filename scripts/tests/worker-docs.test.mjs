@@ -23,10 +23,9 @@ function fixture({ missing = [], appFallback = [], missingResponse = "spa" } = {
   for (const locale of ["en", "zh-CN"]) {
     for (const group of catalog) {
       for (const page of group.pages) {
-        const directory = `/docs/${locale}/${group.slug}/`;
-        const path = page.slug === "index" ? directory : `${directory}${page.slug}`;
+        const path = `/docs/${locale}/${page.path.replace(/\/index$/u, "/")}`;
         files.set(path, { body: docsHtml(page[locale]), type: "text/html; charset=utf-8" });
-        files.set(`${directory}${page.slug}.md`, { body: `# ${page[locale]}\n`, type: "text/markdown" });
+        files.set(`/docs/${locale}/${page.path}.md`, { body: `# ${page[locale]}\n`, type: "text/markdown" });
       }
     }
   }
@@ -74,6 +73,10 @@ test("documentation roots and HTML aliases redirect to their canonical public pa
     ["/docs/en/usage/index.html", "/docs/en/usage/"],
     ["/docs/en/usage/issues.html", "/docs/en/usage/issues"],
     ["/docs/en/usage/issues/", "/docs/en/usage/issues"],
+    ["/docs/en/integrations", "/docs/en/integrations/"],
+    ["/docs/zh-CN/administration/index.html", "/docs/zh-CN/administration/"],
+    ["/docs/en/overview/quick-start.html", "/docs/en/overview/quick-start"],
+    ["/docs/zh-CN/usage/agents/", "/docs/zh-CN/usage/agents"],
   ];
   for (const [path, location] of redirects) {
     const response = await request(path);
@@ -92,7 +95,7 @@ test("all catalog deep links render public documentation without API, auth or D1
   for (const locale of ["en", "zh-CN"]) {
     for (const group of catalog) {
       for (const page of group.pages) {
-        const path = `/docs/${locale}/${group.slug}/${page.slug === "index" ? "" : page.slug}`;
+        const path = `/docs/${locale}/${page.path.replace(/\/index$/u, "/")}`;
         const response = await request(`${path}?search=example`, {
           headers: { cookie: "synthetic-session-cookie", authorization: "Bearer synthetic-test-value" },
         });
@@ -104,6 +107,27 @@ test("all catalog deep links render public documentation without API, auth or D1
   }
   assert.ok(requests.every(({ path }) => !path.endsWith(".html")), "ASSETS must receive clean URLs to avoid redirect loops");
   assert.ok(requests.every(({ headers }) => !headers.has("cookie") && !headers.has("authorization")));
+});
+
+test("navigation grouping preserves content URLs and hidden compatibility entries", async () => {
+  const { request } = fixture();
+  for (const locale of ["en", "zh-CN"]) {
+    for (const path of ["integrations/general", "integrations/deepseek-harness", "integrations/mcp", "integrations/webui", "administration/projects", "administration/settings", "overview/quick-start", "usage/agents"]) {
+      const response = await request(`/docs/${locale}/${path}`);
+      assert.equal(response.status, 200, path);
+      assert.match(await response.text(), /name="cfkanban-docs"/, path);
+      assertDocumentHeaders(response);
+      const markdown = await request(`/docs/${locale}/${path}.md`);
+      assert.equal(markdown.status, 200, path);
+      assert.equal(markdown.headers.get("content-type"), "text/plain; charset=utf-8", path);
+      assertDocumentHeaders(markdown);
+    }
+    for (const path of ["overview/general", "overview/deepseek-harness", "usage/projects", "deployment/settings"]) {
+      const response = await request(`/docs/${locale}/${path}`);
+      assert.equal(response.status, 404, path);
+      assert.match(await response.text(), /Documentation not found/, path);
+    }
+  }
 });
 
 test("unknown documentation paths return the documentation 404 and never the app shell", async () => {

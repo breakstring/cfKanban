@@ -7,15 +7,21 @@ const root = fileURLToPath(new URL("../apps/docs/", import.meta.url));
 
 export async function validateDocs() {
   const catalog = JSON.parse(await readFile(path.join(root, "catalog.json"), "utf8"));
-  assert.deepEqual(catalog.map(group => group.slug), ["overview", "usage", "integrations", "administration", "deployment"]);
+  assert.deepEqual(catalog.map(group => group.slug), ["overview", "usage", "deployment"]);
+  const paths = new Set();
   for (const group of catalog) {
     for (const page of group.pages) {
-      assert.ok(page.hidden === undefined || typeof page.hidden === "boolean", `${group.slug}/${page.slug}: hidden must be a boolean`);
+      assert.equal(page.slug, undefined, `${group.slug}: pages must use an explicit content path`);
+      assert.equal(typeof page.path, "string", `${group.slug}: missing content path`);
+      assert.match(page.path, /^[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)+$/u, `${group.slug}: invalid content path ${page.path}`);
+      assert.ok(!paths.has(page.path), `Duplicate documentation path: ${page.path}`);
+      paths.add(page.path);
+      assert.ok(page.hidden === undefined || typeof page.hidden === "boolean", `${page.path}: hidden must be a boolean`);
     }
   }
   let count = 0;
   for (const locale of ["en", "zh-CN"]) {
-    const expected = catalog.flatMap(group => group.pages.map(page => `${group.slug}/${page.slug}.md`)).sort();
+    const expected = [...paths].map(pagePath => `${pagePath}.md`).sort();
     const actual = (await readdir(path.join(root, locale), { recursive: true })).filter(file => file.endsWith(".md")).map(file => file.replaceAll(path.sep, "/")).sort();
     assert.deepEqual(actual, expected, `${locale}: content and public navigation must match`);
     for (const relative of expected) {

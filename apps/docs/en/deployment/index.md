@@ -1,33 +1,33 @@
-# Deployment
+# Owner getting started
 
-Use `cfkanban-deploy` for Cloudflare deployment and upgrades, deployment maintenance on another computer, and out-of-band Owner recovery. Host Skill/MCP/plugin installation is covered by [Agent integrations](../integrations/index.md). Joining someone else's Project or using a board does not require your own deployment.
+For Owners preparing to run or already maintaining a cfKanban instance. If you only want to use a team's board or administer an authorized workspace or project, see [Join and use](../usage/index.md). You do not need a Cloudflare account.
 
-## Start with your goal
+## Your first deployment
+
+Start with [First deployment](./first-deployment.md). Prepare a Cloudflare account and Owner display name, then give the deployment request to your Agent. **Skills are installed during the workflow when needed; you do not need another installation tutorial first.** The default setup uses one Worker, one D1 database, and a `workers.dev` address, including the Web UI and docs.
 
 ```text
-Use $cfkanban-deploy to check what I still need to deploy cfKanban. Keep this check read-only.
+I want to deploy my own cfKanban site. First check readiness using the official installation guide:
+https://github.com/breakstring/cfKanban/releases/latest/download/install.md
+Tell me what I need to prepare. Do not install anything or create resources yet.
 ```
 
-The Agent checks verified stable releases, tools, and environment capabilities, then explains readiness and missing prerequisites. Checking does not automatically install software, sign in to Cloudflare, or create resources.
+See [Prepare for deployment](./setup.md) for local, account, and persistent storage requirements. Before execution, the Agent shows the specific resources, version, and cost implications for your confirmation.
 
-| Goal | Workflow | Required access |
-| --- | --- | --- |
-| Install or update host Skills, MCP, or plugins | [Agent integrations](../integrations/index.md) | Local installation; no Cloudflare access |
-| Create your instance | [First deployment](./first-deployment.md) | Control of the exact Cloudflare account |
-| Upgrade a running instance | [Updates and upgrades](./updates.md) | Maintenance record, Owner and Cloudflare access |
-| Manage the application from another computer | [Owner devices](../administration/devices.md) | Approval by an existing Owner |
-| Maintain deployment from another computer | [Connect an existing deployment](./attach.md) | Current Owner and exact Cloudflare access |
-| Resume work or recover the Owner | [Interruption and recovery](./recovery.md) | The relevant plan and recovery authority |
-| Configure domains, R2, metrics, or rate limits | [Optional configuration](./optional.md) | Explicit deployment and external-effects scope |
+## Already an Owner?
 
-The Owner controls the application. Cloudflare authentication controls infrastructure. Both are verified separately; one identity does not imply the other authority.
+| What you want to do | Read |
+| --- | --- |
+| Create workspaces and organize projects and members | [Manage workspaces and projects](../administration/index.md) |
+| Change site text, inspect usage, or publish notices | [Instance settings and usage](../administration/settings.md) |
+| Allow visitors to join selected projects | [Public Join and quotas](../administration/public-join.md) |
+| Add Owner devices or recover participant identities | [Devices and identity recovery](../administration/devices.md) |
+| Archive, restore, or permanently remove content | [Archive and cleanup](../administration/cleanup.md) |
+| Upgrade the online version | [Instance upgrades](./updates.md) |
+| Maintain deployment from another computer | [Connect another computer](./attach.md) |
+| Resume interrupted work or recover the Owner | [Interruptions and recovery](./recovery.md) |
+| Configure domains, attachment storage, or other options | [Domains and optional features](./optional.md) |
 
-## Default deployment and releases
+**In the Web UI:** The full online app's management center provides application settings within your permissions. The Agent handles creating cloud resources and upgrading or recovering deployments; the Web UI is not a deployment console.
 
-The default uses one Worker, one D1 database, and a website at a `workers.dev` address. It selects the latest stable release. Attachments, custom domains, and prereleases are explicit choices.
-
-**In the Web UI:** Administration shows the instance version, usage, and selected application settings. cfKanban does not provide a cloud deployment console. Deployment uses the Agent and verified tools. A browser may participate in Cloudflare authentication or consent, without replacing the deployment plan.
-
-## Expected delivery
-
-Review resources and effects before execution, then receive the site address and verification results. If interrupted, keep maintenance records and ask the Agent to check before resuming.
+Owner application identity and Cloudflare account permissions are checked separately. Moving to another computer only to manage the application does not require taking over cloud deployment too. To update only Agent Skills or the DSH plugin, see [Installation and connections](../integrations/index.md); this does not upgrade the online instance.

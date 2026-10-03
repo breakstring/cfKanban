@@ -15,14 +15,15 @@ for (const locale of ["en", "zh-CN"]) {
   redirects.set(`/docs/${locale}/`, `/docs/${locale}/overview/`);
   for (const group of catalog) {
     for (const page of group.pages) {
-      const directory = `/docs/${locale}/${group.slug}/`;
-      const path = page.slug === "index" ? directory : `${directory}${page.slug}`;
+      const sourcePath = `/docs/${locale}/${page.path}`;
+      const isIndex = page.path.endsWith("/index");
+      const path = isIndex ? sourcePath.slice(0, -"index".length) : sourcePath;
       documentPaths.add(path);
-      markdownPaths.add(`${directory}${page.slug}.md`);
-      if (page.slug === "index") {
-        redirects.set(directory.slice(0, -1), path);
-        redirects.set(`${directory}index`, path);
-        redirects.set(`${directory}index.html`, path);
+      markdownPaths.add(`${sourcePath}.md`);
+      if (isIndex) {
+        redirects.set(path.slice(0, -1), path);
+        redirects.set(sourcePath, path);
+        redirects.set(`${sourcePath}.html`, path);
       } else {
         redirects.set(`${path}/`, path);
         redirects.set(`${path}.html`, path);

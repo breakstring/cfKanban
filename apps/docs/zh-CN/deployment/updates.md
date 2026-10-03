@@ -1,6 +1,6 @@
 # 实例升级
 
-本页负责线上 Cloudflare 实例。本地 Skills、MCP 和宿主插件使用独立[更新流程](../integrations/general.md#更新本地技能)，更新它们不会升级站点。
+本页负责线上 Cloudflare 实例。本地 Skills、MCP 和宿主插件使用独立[更新流程](../integrations/general.md)，更新它们不会升级站点。
 
 ## 检查版本
 
@@ -13,7 +13,7 @@
 
 ## 更新本地技能
 
-本地技能更新、已保存 Git 来源切换与宿主刷新，见[代理集成：通用](../integrations/general.md#更新本地技能)；DSH profile 安装与重启见 [DeepSeek Harness](../integrations/deepseek-harness.md#更新、停用和卸载)。
+本地技能更新、已保存 Git 来源切换与宿主刷新，见[通用 Agent](../integrations/general.md)；DSH profile 安装与重启见 [DeepSeek Harness](../integrations/deepseek-harness.md)。
 
 ## 升级线上站点
 
@@ -24,7 +24,7 @@
 
 需要当前 Owner 身份、Cloudflare 账户权限和本机维护记录。换电脑时先[接入已有部署](./attach.md)。Agent 说明资源、数据与费用影响，升级后核对站点版本、访问能力和原有身份。
 
-站点升级通过 Agent 完成，网页没有升级按钮。旧技能无法处理新版发行时，先通过代理集成更新本地技能。
+站点升级通过 Agent 完成，网页没有升级按钮。旧技能无法处理新版发行时，先通过安装与接入指南更新本地技能。
 
 ## 升级中断或失败
 

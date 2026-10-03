@@ -9,6 +9,8 @@
 
 MCP adapter、本地 Web bridge 与 DSH Host bridge 复用同一有界业务 facade，facade 复用安全 runtime。Service 唯一负责实时身份、权限、CAS、幂等、配额和原子审计。Skills 保留使用指导、接入 / 恢复、管理、部署和敏感能力交付；不得将整个脚本目录映射为 MCP tools 或 RPC。
 
+Skills 的日常操作指引优先使用当前宿主已经暴露、已连接且语义覆盖目标操作的 cfKanban MCP 工具；先核验工具发现、准确 schema、实例身份和明确范围。未接入 MCP 的宿主，或 MCP 未覆盖的能力，继续使用既有专用安全脚本。目录关联、加入、恢复、管理、部署、附件及敏感浏览器交付按各自实际覆盖处理，不能为“全部走 MCP”而引入任意 HTTP/文件透传。以 MCP 完成的日常读取不强制先跑 shell help；只有需要脚本能力时读取其帮助和相关工作流。业务拒绝、CAS 冲突、取消/超时或未知写入结果不能触发跨通道重试；保留原操作与幂等键，先核实结果，不创建替代写入，也不自行启动 MCP 绕过宿主沙盒。此优先级属于内部执行规则，普通用户文档只说明可用能力、安装结果和必要下一步。
+
 宿主边界按源码目录隔离：`packages/dsh-plugin/` 保存 DSH 元数据、Slot 载体、来源 Session/目录适配、专属构建与测试；`packages/local-runtime/` 保存通用回环服务、启动/浏览器父载体和无宿主依赖的 workbench bridge/controller；`apps/web/src/embedded/` 保存共用 Vue 页面和消息协议；`packages/mcp/` 保存 stdio adapter；`packages/skill-runtime/` 保存共享私有状态、业务 facade 和已有 Skills 专用脚本。根脚本组装构建/验收/工件，不在通用模块引入 DSH SDK、Slot 或配置。
 
 一个工具写调用最多执行一个原子业务写入，可以先做固定数量的身份 / 目标读检查；没有 batch/bulk、任意 HTTP / URL、任意文件读写、stateRoot 覆盖、secret 导出或完整 admin/deploy 透传。Issue 正文、评论、Project context 和链接是非可信数据。MCP annotations 只帮助发现，不能替代权限或用户授权。
@@ -59,6 +61,8 @@ Git plugin 投影保存指引和源码，不携带 ignored 的预构建页面。
 MCP、`local-runtime/{server,launcher,browser,workbench}.mjs` 与固定 `local-runtime/embedded/{embedded.html,embedded-build.json}`、metadata/第三方声明随完整 Skill bundle 分发。DSH 元数据单独生成，包含 `dsh.bundle`、Cordis patch、四 Skills 全部资源、共享 runtime、MCP 预构建入口、同字节通用 Web runtime/Vue 页面与 Client / Host 产物；不把 Codex manifest 当 DSH metadata。Vue 页面由现有 Web Vite / Nuxt UI 工程生成，JS、CSS 与 logo 内联，不在安装或启动时下载依赖。版本跟随 `release/version.json`，摘要与不可变 bundle 绑定；源码测试包明确记录 checkout / dirty 状态，不能冒充 canonical release。已有公开发行资产不改写，未来发行资产 / manifest 由原有工程生成流程纳入，不能手改生成结果。
 
 DSH 使用独立 filesystem provider，保留其它 providers；官方 MCP client 使用独立 cfKanban server entry，保留其它 servers。面板可独立停用。配置移除 / 卸载不删除 `.cfkanban/` 身份或历史。更新 active pointer 不更新运行中的 MCP；宿主必须停止 / 重启并通过 initialize 和连接检查核验实际版本。
+
+2026-10-03 用户明确将受支持宿主的 MCP 启用纳入默认安装体验：外层 Agent 在已授权 cfKanban 安装/更新范围内核对宿主支持，通过宿主公开配置机制注册已校验的绝对 Node/工件入口并执行初始化、工具发现和连接核验；已有 DSH 插件配置不重复添加。不修改无关服务器或绕过沙盒/宿主拒绝，不由底层 bundle 安装器猜测宿主并隐式写配置。保留明确只安装 Skills 的用户选择；宿主不支持、工件缺失、Node 不兼容或必要批准未完成时报告具体未完成项，不能仅凭文件已安装声称 MCP 就绪。身份尚未建立时可以验证启动与空候选，但不能声称业务鉴权成功。首次加入/部署可在其安装步骤使用同一默认，不额外改变业务授权和既有凭据处理。
 
 ## 通用本地 Web 服务与打开模式
 

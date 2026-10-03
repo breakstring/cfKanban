@@ -18,14 +18,15 @@ const index = [`# cfKanban ${version} documentation`, "", "Public user documenta
 for (const locale of ["en", "zh-CN"]) {
   index.push(`## ${locale === "en" ? "English" : "简体中文"}`, "");
   for (const group of catalog) {
+    index.push(`### ${group[locale]}`, "");
     for (const page of group.pages) {
-      const relative = `${locale}/${group.slug}/${page.slug}.md`;
+      const relative = `${locale}/${page.path}.md`;
       await mkdir(path.dirname(path.join(outputDirectory, relative)), { recursive: true });
       await cp(path.join(root, "apps/docs", relative), path.join(outputDirectory, relative));
       if (!page.hidden) index.push(`- [${page[locale]}](/docs/${relative})`);
     }
+    index.push("");
   }
-  index.push("");
 }
 await writeFile(path.join(outputDirectory, "llms.txt"), `${index.join("\n")}\n`);
 await writeDocsBuild({ outputDirectory, version });

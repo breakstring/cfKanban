@@ -25,7 +25,7 @@ const docsIndex = await readFile(new URL("llms.txt", docsRoot), "utf8");
 for (const locale of ["en", "zh-CN"]) {
   for (const group of catalog) {
     for (const page of group.pages) {
-      const prefix = `${locale}/${group.slug}/${page.slug}`;
+      const prefix = `${locale}/${page.path}`;
       const html = await readFile(new URL(`${prefix}.html`, docsRoot), "utf8");
       assert.match(html, /<meta name="cfkanban-docs"/u, `${prefix} must identify itself as documentation`);
       assert.match(html, /<link rel="icon" href="\/docs\/assets\/cfkanban-mark\.[^"/]+\.png">/u, `${prefix} must load the local brand mark`);

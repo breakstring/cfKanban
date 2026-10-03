@@ -1,32 +1,34 @@
-# Use
+# Daily collaboration
 
-Once you have joined a project, tell the Agent what you want to find, record, or progress. Daily operations use the `cfkanban` Skill. You do not need to repeat installation or joining first.
+This section is for ordinary members and people who manage workspaces or projects. Only the Owner maintaining the whole site needs [Deploy and manage](../deployment/index.md).
+
+Once you have joined a project, tell the Agent what you want to find, record, or move forward. Daily actions use the `cfkanban` Skill; you do not need to repeat installation or joining.
 
 ```text
-Use $cfkanban to show my unfinished issues in DemoProject,
-then open the details of CFK-123 without making changes.
+Use $cfkanban to show my unfinished tasks in DemoProject
+and open the details of CFK-123. Do not change anything yet.
 ```
 
-You need read access to the target project. Expect issues and details from the correct project. A read request neither claims work nor changes its status.
+This requires read access to the target project. The Agent should return tasks and details from the correct project. A read-only request does not claim tasks or change their status.
 
 | Goal | Read |
 | --- | --- |
 | Accept an invitation, join a public project, sign in, or switch projects | [Joining and signing in](./access.md) |
-| Find, create, edit titles/descriptions, or set priority | [Find, create, and edit issues](./issues.md) |
-| Claim and assign work, change status, complete, reopen, or report blockers | [Workflow and assignees](./workflow.md) |
-| Comments, attachments, labels, relations, copying Issue content, and restoration | [Collaboration and attachments](./collaboration.md) |
-| Change your name or theme, manage Passkeys, or associate a working directory | [Profile and directory association](./profile.md) |
+| Find, create, edit titles/descriptions, or set priority | [Find, create, and edit tasks](./issues.md) |
+| Claim or assign, move status, complete, reopen, or report a block | [Workflow and assignees](./workflow.md) |
+| Comments, attachments, labels, relations, copying task content, and deletion recovery | [Collaboration and attachments](./collaboration.md) |
+| Change your name or theme, manage Passkeys, or associate a working directory | [Profile and directory associations](./profile.md) |
 
-**In the Web UI:** Use a project board to browse one project's work. Open the account menu at the top right → **Work list** to read multiple projects you explicitly select. Open an issue card for editing, comments, and other actions. Select the workspace/project name to switch projects.
+**In the full online app:** Use the project board to browse one project's work. The account menu at the top right → **Work list** reads multiple explicitly selected projects. Select a task card to open its details, edit, comment, and take other actions. Use the workspace/project name in the header to switch projects.
 
-The account menu contains your name, role, **Work list**, **Management center** when available, **Personal settings**, and **Sign out**. The language switch stays outside the menu. When you are using another address, the footer shows the site’s recommended address.
+The account menu brings together your name, role, **Work list**, **Management center** when authorized, **Personal settings**, and **Sign out**. Language selection remains outside it. If you use a different access address, the footer shows the site's recommended address.
 
-Use the board’s **Project settings** button for the project’s management, labels, activity, and deleted issues; available tabs follow your current access.
+The board's **Project settings** provides project management, labels, project activity, and deleted tasks. Available tabs depend on your permissions.
 
 ## Daily work boundaries
 
-Readers can browse. Writers and authorized administrators can change content in their projects. “Move this to In Progress” updates the board; “Finish this work” may also ask the Agent to do the underlying work. Be clear whether you want implementation, verification, or a record of an existing result.
+Readers can browse; writers and authorized administrators can write within the relevant project. “Change the status to In Progress” only updates the board. “Complete this work” may also ask the Agent to do the work itself, so specify whether you want implementation, verification, or only a recorded result.
 
-If a save conflicts with someone else’s change, read the latest content first. If it times out, verify the result before creating another issue or comment.
+If collaborators encounter a save conflict, read the latest content first. If a save times out, verify its result before creating another task or comment.
 
-For Skills/MCP/plugin installation or opening the local workbench, go to [Agent integrations](../integrations/index.md). For invitations, access, and project settings, go to [Administration](../administration/index.md). For site upgrades or enabling attachment storage, go to [Deployment](../deployment/index.md).
+To connect your current Agent, see [Installation and connections](../integrations/index.md). To choose the local or online interface, see [Open a board](../integrations/webui.md). For inviting members or maintaining projects, continue with [Manage workspaces and projects](../administration/index.md); you do not need to deploy a site.

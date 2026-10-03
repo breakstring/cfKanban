@@ -1,33 +1,33 @@
-# 部署
+# Owner 入门
 
-`cfkanban-deploy` 负责 Cloudflare 实例部署与升级、新电脑部署维护和部署外 Owner 恢复。宿主 Skills/MCP/插件安装见[代理集成](../integrations/index.md)。加入他人的项目或使用看板，不需要部署自己的实例。
+这里面向准备拥有、或已经维护一套 cfKanban 实例的 Owner。只想使用团队看板，或管理获授权的工作区、项目，请走[加入与使用](../usage/index.md)，无需 Cloudflare 账户。
 
-## 从你的目标开始
+## 第一次部署
+
+从[首次部署](./first-deployment.md)开始。你准备 Cloudflare 账户和 Owner 显示名称，把部署请求交给 Agent；**技能会在流程中按需安装，无需先读另一套安装教程。** 默认使用一个 Worker、一个 D1 数据库和 `workers.dev` 地址，包含网页与文档。
 
 ```text
-请用 $cfkanban-deploy 检查我部署 cfKanban 还需要准备什么，先只读检查。
+我想部署自己的 cfKanban 站点。请先根据官方安装引导检查准备情况：
+https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md
+告诉我需要准备什么，暂不安装或创建资源。
 ```
 
-Agent 会检查可验证的正式发行、工具与环境能力，说明已满足的条件和仍缺少的准备。检查不会自动安装工具、登录 Cloudflare 或创建资源。
+想提前了解本机、账户与持久存储要求，见[部署准备](./setup.md)。执行前 Agent 会展示具体资源、版本和费用影响，等待你的确认。
 
-| 你要完成的事 | 对应路径 | 需要的权限 |
-| --- | --- | --- |
-| 安装或更新宿主 Skills、MCP、插件 | [代理集成](../integrations/index.md) | 本地安装权限，无需 Cloudflare |
-| 创建自己的实例 | [首次部署](./first-deployment.md) | 准确 Cloudflare 账户控制权限 |
-| 升级线上实例 | [更新与升级](./updates.md) | 实例维护记录、Owner 与 Cloudflare 权限 |
-| 换电脑管理应用 | [Owner 设备](../administration/devices.md) | 现有 Owner 批准 |
-| 换电脑维护部署 | [接入已有部署](./attach.md) | 当前 Owner 与准确 Cloudflare 权限 |
-| 继续中断操作或恢复 Owner | [中断与恢复](./recovery.md) | 对应计划与恢复路径所需权限 |
-| 配置域名、R2、统计或限流 | [可选配置](./optional.md) | 明确的部署与外部影响授权 |
+## 已经是 Owner
 
-Owner 是应用内的唯一所有者；Cloudflare 登录控制基础设施。两者分别核验，不因拥有其中一种身份就假定另一种权限。
+| 你要做什么 | 阅读 |
+| --- | --- |
+| 创建工作区、组织项目和成员 | [管理工作区与项目](../administration/index.md) |
+| 调整站点文案、查看用量、发布通知 | [实例设置与用量](../administration/settings.md) |
+| 允许访客加入指定项目 | [公开加入与配额](../administration/public-join.md) |
+| 增加 Owner 设备或恢复参与者身份 | [设备与身份恢复](../administration/devices.md) |
+| 归档、恢复或永久清理内容 | [归档与清理](../administration/cleanup.md) |
+| 升级线上版本 | [实例升级](./updates.md) |
+| 在另一台电脑维护部署 | [新电脑接入](./attach.md) |
+| 继续中断操作或找回 Owner | [中断与恢复](./recovery.md) |
+| 配置域名、附件存储等能力 | [域名与可选能力](./optional.md) |
 
-## 默认部署与发行
+**在网页中：** 线上完整版的管理中心提供权限内的应用设置；创建云资源、升级和恢复部署由 Agent 完成，网页不提供部署控制台。
 
-默认使用一个 Worker、一个 D1 数据库和 `workers.dev` 地址，包含网页。默认选择最新正式版；附件、域名及测试版需要明确选择。
-
-**在网页中：** 管理中心可查看实例版本、用量和部分应用设置。cfKanban 不提供云端部署控制台；部署通过 Agent 与已核验工具完成。浏览器可能参与 Cloudflare 登录或批准，但不会替代部署计划。
-
-## 预期交付
-
-执行前核对资源和影响；完成后获取站点地址和验证结果。中断时保留维护记录，让 Agent 检查后继续。
+Owner 应用身份与 Cloudflare 账户权限分别核验。换电脑只管理应用时，不必同时接管云端部署。只更新 Agent 技能或 DSH 插件，请看[安装与接入](../integrations/index.md)，不会因此升级线上实例。

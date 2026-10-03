@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from "vue";
-import { useData, withBase } from "vitepress";
+import { computed, onMounted } from "vue";
+import { onContentUpdated, useData, withBase } from "vitepress";
 import DefaultTheme from "vitepress/theme-without-fonts";
 import version from "../../../../release/version.json";
 import mark from "../../../web/src/assets/cfkanban-mark.png";
@@ -14,13 +14,14 @@ function updatePage(): void {
     : page.value.relativePath.startsWith("en/") ? "en" : null;
   if (locale) writeStoredLocale(() => window.localStorage, "cfkanban_locale", locale);
   for (const button of document.querySelectorAll<HTMLButtonElement>("div[class*='language-'] > button.copy")) {
-    button.title = zh.value ? "复制提示词" : "Copy prompt";
+    const isPrompt = button.parentElement?.classList.contains("language-text");
+    button.title = isPrompt ? (zh.value ? "复制提示词" : "Copy prompt") : (zh.value ? "复制代码" : "Copy code");
     button.setAttribute("aria-label", button.title);
     button.setAttribute("data-copied", zh.value ? "已复制" : "Copied");
   }
 }
 onMounted(updatePage);
-watch(() => page.value.relativePath, updatePage, { flush: "post" });
+onContentUpdated(updatePage);
 </script>
 
 <template>

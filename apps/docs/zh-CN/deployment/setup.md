@@ -1,29 +1,23 @@
 # 部署准备
 
-托管或维护自己的 cfKanban 实例，需要 Cloudflare 权限与持久私有维护记录。把 Agent 接入已有看板的步骤放在[代理集成](../integrations/index.md)。
+你需要准备 Cloudflare 账户、Owner 显示名称，以及能够保留私有身份和维护记录的 Agent 环境。技能、兼容工具和登录状态由 Agent 在部署流程中检查，不要求你先独立安装一遍。
 
-## 检查准备情况
-
-```text
-请用 $cfkanban-deploy 检查这台电脑能否部署 cfKanban，先不要修改。
-说明还需要哪些工具、登录和本地存储准备。
-```
-
-Agent 核对所选发行、工具、执行环境与存储，尽量复用兼容工具；需要安装或修改环境时先说明影响。若使用容器、远端或临时环境，确认退出后仍能保留私有身份和维护记录；Windows 原生与 WSL 需要分别准备。
-
-## 安装技能
-
-按[通用安装](../integrations/general.md#安装技能)安装完整四 Skill bundle 并核验 `cfkanban-deploy` 入口；使用 DSH 时阅读 [DeepSeek Harness 插件](../integrations/deepseek-harness.md)。本地安装和更新不需要 Cloudflare 账户，也不创建或升级实例。
-
-## 登录 Cloudflare
+## 先检查，再决定
 
 ```text
-请用 $cfkanban-deploy 检查当前 Cloudflare 登录和目标账户。
-需要新登录或额外权限时先说明，再由我确认。
+请阅读 cfKanban 官方安装引导，检查这台电脑是否适合部署：
+https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md
+先只读检查，列出缺少的工具、登录或存储条件，不安装、不创建资源。
 ```
 
-**在浏览器中：** 在 Cloudflare 官方页面核对账户和权限，再完成登录。多个账户时选准部署目标，不把 Cloudflare Token 或 cfKanban 凭据粘贴到聊天。
+Agent 会尽量复用现有兼容技能和工具。真正开始[首次部署](./first-deployment.md)时，缺少的技能可一并准备；需要安装工具或修改环境时，会先说明影响。只有你想提前准备宿主，才需要阅读[安装与接入](../integrations/index.md)。
 
-cfKanban Owner 身份与 Cloudflare 权限分别核验。登录不会立即创建资源；下一步是[首次部署](./first-deployment.md)。
+## 你需要确认的三件事
 
-如果只是使用别人的看板，请阅读[加入与登录](../usage/access.md)。
+1. **使用哪个 Cloudflare 账户。** 多账户时明确目标；需要登录时，在浏览器的 Cloudflare 官方页面完成。不要把 Token 粘贴到聊天。
+2. **Owner 显示名称。** 这是新实例中的身份名称；完成部署后由你管理站点。
+3. **本地记录是否能保留。** 选择日后还可以访问的私有存储。临时容器、远程环境和 WSL 与本机不是同一个环境，需要分别核对。
+
+登录 Cloudflare 不会立即创建资源。Agent 展示部署计划后，再由你确认资源、费用与权限影响。已有实例应走[接入已有部署](./attach.md)，避免重复初始化。
+
+如果只是使用别人的项目，直接[加入与登录](../usage/access.md)，无需准备 Cloudflare。

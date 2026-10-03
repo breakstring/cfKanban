@@ -1,39 +1,38 @@
-# Agent integrations
+# Installation and connections
 
-Connect your Agent host to an existing cfKanban instance. This section covers installing and updating Skills, the local MCP, and host plugins; selecting an identity and Project; and opening a task view. You do not need a Cloudflare account to use someone else's board.
+The same cfKanban Skills work whether you are joining a team or deploying your own site. Usually, you can let the Agent prepare what your current goal needs without learning about packages, MCP configuration, or plugin internals first.
 
-| Your host or goal | Guide |
+## Do you need a separate installation?
+
+| What you want to do | Next step |
 | --- | --- |
-| Use the four Skills in a host that supports Skill discovery | [General](./general.md) |
-| Configure local stdio MCP or open the local workbench | [General: MCP and workbench](./general.md#local-mcp-and-workbench) |
-| Install the plugin in DeepSeek Harness Desktop or Web | [DeepSeek Harness](./deepseek-harness.md) |
-| Create, upgrade, or recover the Cloudflare instance itself | [Deployment](../deployment/index.md) |
+| Accept an invitation | Give the Agent the administrator's **complete invitation message**; the [joining workflow](../usage/access.md) reuses or installs Skills as needed |
+| Join a public project | Copy the homepage's Agent prompt for the project and follow the guide |
+| Deploy your own instance | Go straight to [First deployment](../deployment/first-deployment.md); Skill setup is part of it |
+| Use an existing identity in a new Agent, or prepare the Agent first | Choose your host below |
+| Only use an online site you can already sign in to | No local components are needed; see [Joining and signing in](../usage/access.md) for first identity creation and Passkey registration |
 
-Skills provide guidance, joining, recovery, management, and deployment workflows. The local MCP exposes bounded tools for daily task operations. DeepSeek Harness adds its own installation adapter and an optional task sidebar using the same local runtime and Vue task view. Installing an integration grants no application or Cloudflare permissions.
+The Agent handles installation when needed and explains local changes. Merely opening an invitation or deployment page does not install software. Trusted, compatible Skills are reused; joining a project does not automatically update them.
 
-## Begin with the host and instance
+## Choose your Agent
 
-```text
-Check which cfKanban integration this Agent host supports and whether my installed version is compatible with <instance address>.
-Keep the check read-only. Explain the installation or connection step I need next.
-```
+- **Codex, Claude Code, and other Agents that support Skills** → [General Agents](./general.md).
+- **DeepSeek Harness desktop or Web** → [DSH plugin](./deepseek-harness.md), which installs Skills, MCP, and the sidebar together.
 
-Reuse a trusted, compatible installation. If you have not joined yet, follow [Join and sign in](../usage/access.md); an Owner adding another computer uses [Owner devices](../administration/devices.md). Verify the actual identity and explicit Project scope before working. For everyday task operations, continue with [Usage](../usage/index.md).
+## Does MCP need a separate installation?
 
-## Release availability
+**No. When installing cfKanban, the Agent configures and verifies a supported MCP connection by default.** The DSH plugin includes this step; in other hosts, the Agent uses that host's supported configuration method. You only need to follow instructions for a UI confirmation or a new session. You do not need to write configuration files.
 
-Select published stable Skills by default. Historical versions and prereleases require an explicit target. MCP, the local workbench, and the DSH plugin require a release whose verified Skill bundle contains those artifacts. An older stable bundle may not contain them; a source candidate or local test archive does not make them available as an official release. If the selected release is missing an artifact or cannot be verified, stop installation and report that limit.
-
-In the browser, you can keep using the instance's Web UI with your existing access. Installing or updating the host integration is separate from [upgrading the instance](../deployment/updates.md).
-
-## Local and online Web UI
-
-Both views read and write the same trusted online instance with the same permissions, CAS, and business history. The local view is not an offline copy.
-
-| View | Entry and scope | Suitable work |
+| Component | Purpose | Who handles setup |
 | --- | --- | --- |
-| Local workbench | `web open` defaults to local mode for a Project or Issue; a matching local process serves the self-contained Vue view. | Project switching, board/list, inline priority/status/assignee, Issue details, comments, completion, and copying identifiers, links, or raw Markdown. |
-| DSH sidebar | The DSH Host carries that same Vue view through an embedded document and message channel; the browser need not access a separate localhost page. | The same focused task work beside chat, using the Session's verified directory scope. |
-| Full online Web UI | Explicit online mode or the local view's **Open full online board** uses the existing temporary Browser Launch for the verified target. | The complete board and account, Project/Workspace management, members, permissions, and settings within your access. Cloud deployment still uses [Deployment](../deployment/index.md). |
+| Skills | Guide the Agent through tasks, joining, administration, and deployment | The Agent installs them in the current host |
+| Local MCP | Provides task queries, edits, comments, and other tools to MCP clients | The complete package includes the server; the Agent configures and verifies the host connection by default, or the DSH plugin connects it |
+| Local workbench | Lets you view and use a board beside your Agent | Included in the complete package and started when needed; DSH uses its sidebar |
 
-Local assets require the installed runtime and an owning process; updates need a restart. Missing artifacts or a startup failure are reported without silently switching online. Use [General](./general.md#local-mcp-and-workbench) for local opening, or [DeepSeek Harness](./deepseek-harness.md) for its sidebar.
+Let the Agent handle installation, connection, and availability checks. Hosts without MCP support can still use cfKanban through Skills, and the Agent explains any limitations. You can also explicitly request Skills only. Connecting MCP does not join a project.
+
+If you have an older installation or only the Git plugin, ask the Agent to [complete local setup](./general.md). The local workbench, MCP, and DSH plugin require a release containing those capabilities. Installation defaults to a stable release; specify the exact version when testing a prerelease.
+
+For another MCP client or your own program, see the [MCP connection reference](./mcp.md). Ordinary users do not need this technical reference.
+
+Once ready, continue with [Joining and signing in](../usage/access.md) or [Open a board](./webui.md). Installation does not grant project access. An existing Owner moving to another computer should use [Device connections](../administration/devices.md).

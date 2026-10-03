@@ -15,6 +15,7 @@ Schema 5 通过新增迁移修复 alpha.55 遗漏的实例版本更新。manifes
 | “检查部署还需要准备什么。” | 只读检查环境及发行，说明缺少的选择或阻碍，不安装或写入云资源。 |
 | “为我部署 cfKanban。” | 解析已验证发行及环境，询问缺少的 Owner 显示名称，展示准确计划，仅执行获准写入和读回；不默认创建工作区/项目。 |
 | “检查版本，先不要更新。” | 分别报告本地技能与线上实例版本，不更新任一平面。 |
+| “安装 cfKanban”或“更新本地 cfKanban 安装。” | 核验 Skills，并在受支持宿主上于获准安装范围内注册、启动和验证本地 MCP 连接。 |
 | “只将本地技能更新到 <版本>。” | 验证本地更新计划并按授权原子切换，不隐含 Cloudflare 登录或服务升级。 |
 | “制定实例升级到 <版本> 的计划。” | 验证既有资源与迁移影响；制定计划不授权执行，也不授权更新本地技能。 |
 | “继续中断的部署。” | 读取 journal 和远端状态、比较计划，再于有效的任务绑定授权内继续；漂移需重新授权。 |
@@ -242,12 +243,24 @@ Wrangler 原始输出必须先脱敏，不能直接记日志。前一次 create 
 5. 原子切换 active pointer，保留上一已知良好版本。
 6. 先识别 Agent 宿主，不默认使用 Codex；在获准安装范围内更新现有宿主投影。`latest_stable` 跟随正式 main，不设置长期 ref；目录型宿主从步骤 3 的完整已验证 bundle 创建其支持的 Skill 布局，保留共享 runtime。所有宿主核对安装内容，Git 来源另核对 checkout commit 与发行 tag；不一致时停止，不静默改来源。`exact_version` 使用已验证准确 tag/bundle；RC 验收前记录旧来源/ref 和恢复方式，临时切换同一个宿主入口，长期来源保留或恢复默认 stable，分别核对已安装 RC 和保存的更新来源。宿主无法分开维持这两种状态时，说明限制及后续原生 stable 更新前的切回要求，不声称任意 tag pin 会自动更新到 stable。不另建开发插件入口或自动迁移脚本。
 7. 分别读回 canonical active receipt、宿主实际安装副本、保存的来源/ref 与当前任务加载状态；确认 `latest_stable` 没有留下意外 tag pin。当前任务可能仍使用旧 Skill；需要新任务时说明接续，只有新任务确认来源/版本才报告已加载。不能用 `help` smoke 代替宿主跨任务加载验证。
+8. 对支持的宿主完成下方“本地 MCP 接入”，除非用户明确选择只装 Skills 或主动停用 MCP。更新 active bundle 不会替换已运行的 MCP 进程。
 
 Codex 示例：普通安装使用 `codex plugin marketplace add https://github.com/breakstring/cfKanban.git`，不传 `--ref`，再运行 `codex plugin add cfkanban-agent-skills@cfkanban`。固定本次 manifest/version/digest 不添加 ref；仅 `exact_version` 在宿主支持方式确有需要时使用已验证准确 `--ref`，RC 按上述要求恢复来源。已有 marketplace 先检查实际来源/ref，在已有授权内按宿主支持方式切换并记录恢复；删除新命令的参数不代表旧 pin 已清除。默认分支来源可用 `codex plugin marketplace upgrade cfkanban` 刷新，再核对/更新插件安装副本。原生更新应跟随 stable；固定 tag 必须先切来源，刷新该 tag 不等于正式版升级。保留私有身份与部署状态。其他宿主使用自身支持的操作，历史版回退同样验证来源连续性、准确版本和摘要。
 
 切换 pointer 前失败时 active 版本保持不变。本地回退不回退云端实例；已安装 bundle 或宿主投影成功也不代表第三层加载成功。
 
 `release install-skill-bundle` 自行执行步骤 3–5：切换前通过三个暂存 Skill entrypoints 运行 `help`，检查 JSON catalogs 和 surfaces，并在 receipt 写入有界 `discovery_smoke`。缺失文件、失败/格式异常、超时、输出过大或暂存文件变化时以 `SKILL_DISCOVERY_SMOKE_FAILED` 停止，不返回原始子进程输出。探测使用当前 Node，不继承秘密或 Node hooks；这是可信发行健康检查，不是不可信代码沙箱。安装后仍独立检查 `help` 和 active receipt。
+
+## 本地 MCP 接入
+
+普通 cfKanban 安装在支持的宿主上默认包含本地 stdio MCP；用户无需知道 MCP 名称，也无需安装后再说“启用 MCP”。复用已覆盖当前宿主、scope、配置变更和连接检查的安装授权。明确只装 Skills 时保留该范围，更新时保留用户主动停用 MCP 的选择。使用兼容的现有 Skills 加入项目，本身不构成更新或 MCP 接入请求。只读安装检查不注册或启动服务。
+
+1. 从可信宿主上下文或文档识别实际宿主、执行环境及受支持的 MCP 配置方式。只检查其相关 cfKanban entry，保留其它设置和 servers。在本地安装计划中展示目标 scope、配置影响及回退；新增 scope、权限或依赖安装遵循各自授权。不能从环境变量猜宿主，也不扫描和批量改写其它宿主配置。
+2. 核验兼容 Node executable，并用已验证 bundle/receipt 核对所装发行完整的 `mcp/` 预构建文件及 metadata。Git Skill/plugin 投影可能不含这些构建产物，应使用 `.cfkanban/skill-releases/` 下匹配的已验证 canonical release。command 使用 Node 绝对路径，argv 数组只包含版本目录内 `mcp/server.mjs` 的绝对路径；服务不接受其它参数。不加入 Credential、token、state-path override、shell 字符串、启动期 `npx`、下载或构建。Node 必须符合发行声明范围，当前 MCP 要求 `>=22.12.0`。
+3. 通过宿主支持的管理 API、CLI 或配置格式复用或更新现有 cfKanban server entry，缺失时才新增，同一安装只保留一个 entry。DSH 已验证 bundle 已通过官方 client 注册 MCP，应直接核验目标 `desktop` 或 `web` profile 的 entry，不再新增第二个 server；两种 profile 独立。确需用户在宿主 UI 完成的动作，明确具体操作并在完成前报告待接入，不能再要求用户选择是否启用 MCP。
+4. 通过宿主启动或重连，保留其正常审批和沙盒。更新后重启所属 server，使固定工件路径和运行进程对应本次目标发行。读回已保存 entry，执行 MCP `initialize`，核对 `serverInfo.version`、`tools/list`，再调用不含秘密的 `cfkanban_connection_inspect`。已有明确可信实例时，用同一只读工具核验该实例；本地尚无身份时，报告 MCP 已连接、身份接入仍待完成。不为安装验证创建身份、加入项目或写入任务。
+
+分别报告 Skill 发现、MCP 注册、运行中的 MCP 版本及连接/身份结果。已保存 entry 或 Skill `help` 成功不代表 MCP 已连接；脱离宿主的独立探测也不能证明宿主已加载。兼容 Node/预构建文件缺失、不支持本地 stdio、权限拒绝或连接无法核验时，明确 MCP 未启用或未验证及具体后续步骤，保留可用 Skills，不冒充完整 MCP 安装。不能绕过宿主拒绝、跨执行环境搬运私有状态或静默安装 Node。底层 `release install-skill-bundle` 保持宿主无关，不修改 MCP 配置；该接入由外层 Agent 完成。
 
 ## Instance upgrade
 

@@ -5,11 +5,14 @@
 ## 交给 Agent
 
 ```text
-请用 $cfkanban-deploy 为我部署 cfKanban，使用最新正式版和默认基础配置。
+请阅读官方安装引导，为我准备所需技能并部署 cfKanban，使用最新正式版和默认基础配置：
+https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md
 Owner 显示名称为 <你的名称>。先检查准备情况，展示资源、费用和访问权限影响，等我确认后执行。
 ```
 
-需要支持 cfKanban 技能的 Agent 环境、可持久保存私有数据的本机空间，以及 Cloudflare 账户控制权限。缺少工具或登录时，按[部署准备](./setup.md)完成。
+也可以使用 cfKanban 站点首页生成的部署提示词。两种入口都包含技能准备：复用已有兼容安装，缺少时由 Agent 按引导安装，无需你先单独操作。
+
+需要支持 Skills 的 Agent、能持久保存私有数据的环境，以及 Cloudflare 账户控制权限。缺少工具或登录时，Agent 会说明下一步；前提见[部署准备](./setup.md)。
 
 ## 确认部署计划
 

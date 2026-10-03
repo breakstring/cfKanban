@@ -1,6 +1,8 @@
-# Administration
+# Manage workspaces and projects
 
-Use `cfkanban-admin` to organize Workspaces and Projects, manage members and invitations, and maintain Owner settings. See [Usage](../usage/index.md) for daily collaboration and [Deployment](../deployment/index.md) for Cloudflare maintenance.
+You can manage settings, members, and invitations within an authorized workspace or project without being the Owner or having a Cloudflare account. Use the `cfkanban-admin` Skill or the corresponding management pages in the full online app.
+
+The Owner can manage these too. For instance settings, Public Join, devices, and deployment maintenance, start with [Owner getting started](../deployment/index.md).
 
 ## Find your management scope
 
@@ -30,17 +32,14 @@ Workspace administrators inherit management and read/write access to all current
 Use $cfkanban-admin to open the management page available to me in <requested browser>.
 ```
 
-**In the Web UI:** The Owner can open the account menu at the top right → **Management center**. The full management entry is `/app/admin`, with **Overview**, **Workspaces & Projects**, **Members & access**, **Activity**, and **Archived**. Scoped administrators open **Project settings → Management** from an authorized Project and see only their settings, members, and Projects. The Agent can also open management for an empty authorized Workspace.
+**In the full online app:** The Owner can open the account menu at the top right → **Management center**. The full management entry is `/app/admin`, with **Overview**, **Workspaces & Projects**, **Members & access**, **Activity**, and **Archived**. Scoped administrators open **Project settings → Management** from an authorized Project and see only their settings, members, and Projects. The Agent can also open management for an empty authorized Workspace.
 
 Browser Session scope also limits access. An Owner Session opened for a single Project does not automatically gain instance administration. Ask the Agent to open the full administration target. If an action is missing, check the current identity, scope, and deployed version first.
 
 ## Continue by goal
 
-- [Workspaces and Projects](./projects.md): containers, Project notes, and column labels.
+- [Workspaces and Projects](./projects.md): Project notes, column labels, creation, archiving, and other actions within your permissions.
 - [Members, invitations, and administrators](./members.md): collaborators and direct or inherited access.
-- [Public Join and quotas](./public-join.md): public participation and resource limits.
-- [Instance settings and usage](./settings.md): homepage text, attachment capacity, statistics, and audit.
-- [Devices and identity recovery](./devices.md): Owner devices, rotation, and participant recovery.
-- [Archive and permanent cleanup](./cleanup.md): pause access, restore, or preview irreversible deletion.
+- [Owner getting started](../deployment/index.md): instance settings, Public Join, device recovery, and permanent cleanup.
 
-If saving fails or its result is uncertain, ask the Agent to verify the original operation before repeating an invitation, deletion, or permission change.
+The local workbench focuses on daily tasks; [open the full online app](../integrations/webui.md) for management. If saving fails or its result is uncertain, ask the Agent to verify the original operation before repeating an invitation, deletion, or permission change.

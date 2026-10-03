@@ -1,6 +1,6 @@
 # Instance upgrades
 
-This page covers the live Cloudflare instance. Local Skills, MCP, and host plugins have a separate [update workflow](../integrations/general.md#update-local-skills); updating them does not upgrade the site.
+This page covers the live Cloudflare instance. Local Skills, MCP, and host plugins have a separate [update workflow](../integrations/general.md); updating them does not upgrade the site.
 
 ## Check versions
 
@@ -13,7 +13,7 @@ Show compatible stable updates without installing anything.
 
 ## Update local Skills
 
-Use [Agent integrations: General](../integrations/general.md#update-local-skills) for local Skill updates, saved Git-source changes, and host reloads. For DSH profile installation and restart, see [DeepSeek Harness](../integrations/deepseek-harness.md#update-disable-and-remove).
+Use [General agents](../integrations/general.md) for local Skill updates, saved Git-source changes, and host reloads. For DSH profile installation and restart, see [DeepSeek Harness](../integrations/deepseek-harness.md).
 
 ## Upgrade the live site
 
@@ -24,7 +24,7 @@ Explain the version, database changes, expected effects, and recovery options fo
 
 You need current Owner access, Cloudflare account authority, and local maintenance records. On a new computer, first [connect the existing deployment](./attach.md). The Agent explains resource, data, and cost effects, then verifies the site's version, access, and original identity after upgrading.
 
-Use an Agent to upgrade; there is no Web upgrade button. If older Skills cannot handle the new release, update the local Skills first through Agent integrations.
+Use an Agent to upgrade; there is no Web upgrade button. If older Skills cannot handle the new release, update the local Skills first using the installation guide.
 
 ## If an upgrade stops or fails
 

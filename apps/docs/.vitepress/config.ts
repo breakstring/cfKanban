@@ -11,7 +11,7 @@ function sidebar(locale: Locale): DefaultTheme.SidebarItem[] {
     collapsed: true,
     items: group.pages.filter(page => !("hidden" in page && page.hidden)).map(page => ({
       text: page[locale],
-      link: `/${locale}/${group.slug}/${page.slug === "index" ? "" : page.slug}`,
+      link: `/${locale}/${page.path.replace(/\/index$/u, "/")}`,
     })),
   }));
 }

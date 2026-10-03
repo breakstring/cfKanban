@@ -4,10 +4,14 @@ Joining a project determines what you may do. Signing in determines the browser 
 
 ## Accept a project invitation
 
+Give your Agent the administrator's **complete invitation message**. It contains the invitation link and joining guide. On first use, the Agent can prepare Skills through that guide; you do not need to install them beforehand.
+
 ```text
-Use $cfkanban to join this project: <invitation link>.
-Check the site, projects, roles, and my existing local identity, then explain what needs confirmation before continuing.
+Join the project using the complete invitation message below. I have not installed the Skills yet; prepare them through the guide too.
+<paste the complete invitation message>
 ```
+
+If the Skills are already installed, simply send the invitation message; the Agent reuses compatible Skills. If you only received a link, ask the administrator to copy the complete invitation message again.
 
 You need a valid invitation. First-time use may require a display name; if you already have an identity, the Agent checks whether it can be reused.
 
@@ -24,6 +28,8 @@ I want to join DemoProject, listed on the homepage at <site address>, as a reade
 Use $cfkanban to verify the public entry point and my local identity, then explain the join plan.
 ```
 
+If the Skills are not installed, use the homepage's complete generated prompt. The joining guide prepares them when needed; you do not need a separate installation first.
+
 The Owner must have enabled Public Join for the project. Choose one public project at a time and explicitly select Reader or Writer. The easiest approach is to use the homepage's generated Agent prompt for that project and role; it includes the exact target and joining guide in your language.
 
 After confirmation and a successful join, you receive access to that project. Public Join does not grant an entire workspace. Joining can fail if the project is full or its public entry has closed.
@@ -32,12 +38,14 @@ After confirmation and a successful join, you receive access to that project. Pu
 
 ## Ask an Agent to open an authenticated page
 
+The following instructions are for the full online app. For daily tasks beside your Agent, you can [open the local workbench](../integrations/webui.md) without registering a Passkey first.
+
 ```text
-Use $cfkanban to open the DemoProject board in my browser.
+Open the full online board for DemoProject in my browser.
 ```
 
 ```text
-Open CFK-123 in IAB using my current cfKanban identity.
+Open CFK-123 in the full online app in IAB, using my current cfKanban identity.
 ```
 
 You need a usable local identity, access to the target, and browser delivery supported by your host. The Agent verifies the site and identity, then opens an authenticated page through the dedicated entry point. If the requested browser is unavailable, it should explain the problem instead of silently choosing another.
@@ -51,7 +59,7 @@ When the current address differs from the site’s recommended address, the foot
 ## Sign in with a Passkey
 
 ```text
-Use $cfkanban to open an authenticated DemoProject page so I can register a Passkey for my current identity.
+Open the full online app for DemoProject so I can register a Passkey for my current identity.
 ```
 
 Both first registration and additional registrations require an Agent-opened session. You complete registration through the browser or operating system. The Agent cannot replace your biometric check, security key interaction, or system confirmation.
@@ -71,7 +79,7 @@ On a renewal-capable instance, a new sign-in keeps its Session and CSRF cookies 
 After expiry, sign-out, or revocation of the sign-in source, sign in again with a registered Passkey or ask the Agent to reopen the page. Keep the original page open if it offers an unsubmitted text draft for recovery. These business text drafts remain only in that page's memory: refreshing or closing it loses them, and explicit sign-out clears them. After signing in as the same identity, explicitly restore or copy the text, review the current state, and decide whether to submit. Signing in as another identity does not automatically restore it, and signing in never automatically replays a write. Draft recovery excludes credentials, sign-in or invitation links, and attachment files.
 
 ```text
-Use $cfkanban to reopen this project with my current identity. Keep my original page open so I can recover its text draft; do not resubmit the previous write.
+Reopen this project in the full online app with my current identity. Keep my original page open so I can recover its text draft; do not resubmit the previous write.
 ```
 
 ## Switch projects

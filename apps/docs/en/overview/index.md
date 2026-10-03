@@ -1,51 +1,31 @@
-# Overview
+# Start here
 
-cfKanban is a task board for people and Agents working together. Ask an Agent to find, create, and progress issues in natural language, or use the Web UI to browse boards, edit content, assign work, and review completion results. Both interfaces share the same issues, permissions, and history.
+cfKanban is a shared task board for people and Agents. Ask an Agent to record and move work forward, or browse, edit, and discuss it yourself in the Web UI. Both use the same tasks and permissions.
 
-```text
-Use $cfkanban to list the Todo issues in DemoProject by priority.
-Tell me which ones are assigned to me. Do not change anything yet.
-```
+## What would you like to do?
 
-If you already have project access, you can start immediately. The Agent reads the selected project and reports actual results. You do not need to deploy your own site or join the project again for each request.
-
-## How Agents and the Web UI work together
-
-| What you want to do | Where to start |
+| Your situation | Continue here |
 | --- | --- |
-| Record issues, search, or add progress from your existing work context | Describe the goal to an Agent using the `cfkanban` Skill |
-| Browse the project, edit manually, or read attachments and discussions | The Web board and issue details |
-| Invite members, configure projects, or manage access | The `cfkanban-admin` Skill or the relevant Web management page |
-| Install or update this Agent host's Skills, MCP, or plugin | [Agent integrations](../integrations/index.md) |
-| Deploy a site, maintain cloud resources, or upgrade an instance | The `cfkanban-deploy` Skill and [Deployment](../deployment/index.md) |
-| Understand capabilities and choose the next step | This documentation or the teaching Skill `cfkanban-howto` |
+| You received a team invitation or want to join a public project | [Joining and signing in](../usage/access.md): give your Agent the complete invitation message or the joining prompt from the homepage |
+| You have joined and want to work on tasks | [Daily collaboration](../usage/index.md) or [Open a board](../integrations/webui.md) |
+| You manage a workspace, project, or its members | [Manage workspaces and projects](../administration/index.md): work within your management scope without deploying a site |
+| You want your own cfKanban site | [Owner getting started](../deployment/index.md): prepare, deploy, and maintain your instance |
+| You only want to set up your current Agent | [Installation and connections](../integrations/index.md): general Skills or the DSH plugin |
 
-Agents and the Web UI use the same project permissions.
+**Joining for the first time and deploying for the first time both include Skill setup when needed.** Start with the relevant guide; you do not need a separate installation tutorial first. A compatible installation is reused. Installing Skills alone does not join a project or create cloud resources.
 
-## Where to go next
+## How these docs are organized
 
-- **Already joined a project:** Go directly to [daily use](../usage/index.md).
-- **Received an invitation or want to join a public project:** Read [Quick start](./quick-start.md).
-- **Setting up an Agent host:** Read [General integration](../integrations/general.md) or the [DeepSeek Harness plugin guide](../integrations/deepseek-harness.md).
-- **Organizing projects and people:** Read [Administration](../administration/index.md).
-- **Want your own instance:** Read [Deployment](../deployment/index.md).
+- **Get started:** shared setup, opening boards, and basic concepts.
+- **Join and use:** daily collaboration for members and administration for workspace and project managers.
+- **Deploy and manage:** instance settings, devices, upgrades, and recovery for the Owner.
 
-## How to use these pages
-
-Open **Documentation** from the public home header or footer. After signing in, the application footer also links to these pages in your current language, alongside GitHub. Documentation opens in a new tab so you can keep your board or management page open; you do not need to sign out, and your session access stays the same.
-
-You can also ask Howto to read the relevant pages and cite them:
+Once installed, describe your task directly to the Agent:
 
 ```text
-Use $cfkanban-howto and the docs at <instance URL> to explain how to find
-high-priority issues tagged bug in DemoProject. Include the permissions,
-Web entry, and source links. Explain only; do not run the query.
+Show my unfinished tasks in DemoProject, ordered by priority, and open the board.
 ```
 
-Howto reads relevant documentation and cites its sources, explaining any limits. It requires no sign-in and does not execute the examples it explains.
+Replace `DemoProject`, `CFK-123`, and angle-bracket placeholders with your targets. Examples can make real changes, so only send requests you want carried out.
 
-Each feature starts with a prompt you can copy, followed by permissions, expected results, and Web instructions. Replace `DemoProject`, `CFK-123`, and angle-bracket placeholders with your own targets. Example requests can make real changes; send only the actions you want performed.
-
-An Issue is a task. The interface supports English and Simplified Chinese; project names, issue descriptions, comments, and other collaboration content are not translated automatically. Project administrators can customize status display names, so your column labels may differ from the defaults used here.
-
-These docs are provided with the site's release. Local Skills and the site are updated separately. If a feature is unavailable, ask the Agent to check both versions, or read [Concepts and roles](./concepts.md) to check your access scope.
+The homepage and application footer both have a **Docs** link, so you do not need to leave the board. These docs ship with the site; local Skills and the site update separately. If an entry point differs, ask the Agent to check the version and your permissions. For the difference between an instance, workspace, and project, see [Concepts and roles](./concepts.md).
