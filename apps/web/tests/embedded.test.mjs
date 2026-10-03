@@ -7,7 +7,8 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { MessageChannel } from "node:worker_threads";
 import test, { after } from "node:test";
 import { build } from "esbuild";
-import { parse as parseVue } from "@vue/compiler-sfc";
+import { compileScript, parse as parseVue } from "@vue/compiler-sfc";
+import { createRenderer, h, nextTick } from "vue";
 import { assertEmbeddedHtml } from "../scripts/build-embedded.mjs";
 import { ISSUE_COLLECTION_LIMIT as CONTROLLER_COLLECTION_LIMIT } from "../../../packages/local-runtime/src/workbench/controller.mjs";
 
@@ -15,7 +16,22 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 const temporary = await mkdtemp(path.join(tmpdir(), "cfkanban-embedded-test-"));
 const moduleFile = path.join(temporary, "protocol.mjs");
 await build({ stdin: { contents: 'export * from "./src/embedded/protocol.ts"; export * from "./src/embedded/client.ts"; export * from "./src/embedded/drafts.ts"; export * from "./src/embedded/pagination.ts"; export * from "./src/lib/markdown.ts";', resolveDir: path.join(root, "apps/web"), loader: "ts" }, outfile: moduleFile, bundle: true, platform: "node", format: "esm", logLevel: "silent" });
-const { ISSUE_COLLECTION_LIMIT, parseActionMessage, parseSnapshotMessage, parseResultMessage, isConnectMessage, isSessionReference, emptySnapshot, createEmbedClient, renderMarkdown, reconcileCompletedDraft, reconcileIssueDraft, canAutoAppend } = await import(pathToFileURL(moduleFile));
+const { ISSUE_COLLECTION_LIMIT, parseActionMessage, parseSnapshotMessage, parseResultMessage, isConnectMessage, isSessionReference, emptySnapshot, createEmbedClient, renderMarkdown, reconcileCompletedDraft, canAutoAppend } = await import(pathToFileURL(moduleFile));
+const detailModule = path.join(temporary, "workbench.mjs");
+await build({
+  entryPoints: [path.join(root, "apps/web/src/embedded/Workbench.vue")], outfile: detailModule, bundle: true, platform: "node", format: "esm", logLevel: "silent", loader: { ".png": "empty" },
+  plugins: [{ name: "embedded-detail-test", setup(builder) {
+    builder.onLoad({ filter: /\.vue$/ }, async ({ path: filename }) => {
+      if (!filename.endsWith("/embedded/Workbench.vue")) return { contents: "export default {}", loader: "js" };
+      const { descriptor } = parseVue(await readFile(filename, "utf8"), { filename });
+      return { contents: compileScript(descriptor, { id: "embedded-detail-test" }).content, loader: "ts", resolveDir: path.dirname(filename) };
+    });
+    builder.onResolve({ filter: /^@nuxt\/ui\/locale$/ }, () => ({ path: "locale", namespace: "embedded-detail-test" }));
+    builder.onLoad({ filter: /.*/, namespace: "embedded-detail-test" }, () => ({ contents: "export const en = {}; export const zh_cn = {};", loader: "js" }));
+    builder.onResolve({ filter: /^vue$/ }, () => ({ path: pathToFileURL(path.join(root, "node_modules/vue/index.mjs")).href, external: true }));
+  } }],
+});
+const { default: Workbench } = await import(pathToFileURL(detailModule));
 after(() => rm(temporary, { recursive: true, force: true }));
 const action = (name, payload) => ({ type: "action", id: randomUUID(), action: name, payload });
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -34,6 +50,121 @@ function connectedClient(options = {}) {
   const connect = { source: surface.parent, data: { type: "cfkanban.embed.connect", protocol: 1, locale: "zh-CN" }, ports: [channel.port1] };
   return { surface, channel, errors, snapshots, locales, client, connect, close: () => { client.dispose(); channel.port2.close(); } };
 }
+
+function node() { return { children: [], parent: null }; }
+const renderer = createRenderer({ createElement: node, createText: node, createComment: node, setText() {}, setElementText() {}, patchProp() {}, insert(target, parent) { target.parent = parent; parent.children.push(target); }, remove(target) { if (target.parent) target.parent.children.splice(target.parent.children.indexOf(target), 1); }, parentNode: target => target.parent, nextSibling: () => null });
+async function mountedDetail() {
+  const saved = { window: globalThis.window, document: globalThis.document };
+  const surface = fakeWindow();
+  const channel = new MessageChannel();
+  globalThis.window = surface;
+  globalThis.document = { documentElement: { lang: "en" }, getElementById() { return null; } };
+  const app = renderer.createApp({ render: () => h({ ...Workbench, render: () => null }) });
+  app.mount(node());
+  const vm = app._instance.subTree.component.setupState;
+  surface.emit({ source: surface.parent, data: { type: "cfkanban.embed.connect", protocol: 1, locale: "en" }, ports: [channel.port1] });
+  vm.state = { ...emptySnapshot(), issue: { identifier: "CFK-548", title: "Fixture", body: "", version: 2, status: { key: "todo" }, priority: "high" }, binding: { project: { id: randomUUID() }, statuses: ["backlog", "todo", "in_progress", "done", "canceled"].map(key => ({ key })) }, capabilities: { update: true, comment: true, complete: true } };
+  await nextTick();
+  const fixture = { vm, calls: [], result: { ok: true }, respond: null, close() { app.unmount(); channel.port2.close(); Object.assign(globalThis, saved); } };
+  channel.port2.on("message", message => {
+    fixture.calls.push(message);
+    fixture.respond?.(message);
+    channel.port2.postMessage({ type: "result", id: message.id, result: fixture.result });
+  });
+  return fixture;
+}
+
+test("detail properties save one choice, done opens confirmation, and blocked or unchanged choices do not write", async () => {
+  const f = await mountedDetail();
+  try {
+    const select = { value: "done" };
+    f.vm.statusChanged({ target: select });
+    assert.equal(select.value, "todo");
+    assert.equal(f.vm.showCompletion, true);
+    await tick();
+    assert.deepEqual(f.calls, [], "done must not create a normal status PATCH or complete before confirmation");
+    f.vm.showCompletion = false;
+    for (const value of ["todo", "invalid"]) f.vm.statusChanged({ target: { value } });
+    await f.vm.updateDetail({ priority_key: "high" });
+    await f.vm.updateDetail({ assignee_principal_id: null });
+    assert.equal(f.calls.length, 0);
+    await f.vm.updateDetail({ priority_key: "urgent" });
+    assert.deepEqual(f.calls[0].payload, { operation: "update", change: { priority_key: "urgent" } });
+    assert.equal(f.vm.state.issue.priority, "high", "displayed value follows confirmed Host snapshots");
+    f.vm.state.capabilities.update = false;
+    await f.vm.updateDetail({ priority_key: "low" });
+    f.vm.statusChanged({ target: { value: "in_progress" } });
+    f.vm.state.capabilities.update = true;
+    f.vm.state.pending = { operation: "update" };
+    await f.vm.updateDetail({ priority_key: "low" });
+    f.vm.openCompletion();
+    assert.equal(f.vm.showCompletion, false);
+    assert.equal(f.calls.length, 1);
+    f.vm.state.pending = null;
+    f.vm.state.busy = 1;
+    await f.vm.updateDetail({ priority_key: "low" });
+    assert.equal(f.calls.length, 1);
+    f.vm.state.busy = 0;
+    await f.vm.updateDetail({ status_key: "in_progress" });
+    assert.deepEqual(f.calls[1].payload, { operation: "update", change: { status_key: "in_progress" } });
+    const principalId = randomUUID();
+    await f.vm.updateDetail({ assignee_principal_id: principalId });
+    assert.deepEqual(f.calls[2].payload, { operation: "update", change: { assignee_principal_id: principalId } });
+  } finally { f.close(); }
+});
+
+test("view properties scrolls and focuses within the embedded document without a navigation action", async () => {
+  const f = await mountedDetail();
+  try {
+    const events = [];
+    document.getElementById = id => {
+      assert.equal(id, "embedded-properties");
+      return { scrollIntoView: options => events.push(["scroll", options]), focus: options => events.push(["focus", options]) };
+    };
+    f.vm.showProperties();
+    assert.deepEqual(events, [["scroll", { block: "start" }], ["focus", { preventScroll: true }]]);
+    assert.deepEqual(f.calls, []);
+    document.getElementById = () => null;
+    assert.doesNotThrow(() => f.vm.showProperties());
+    const source = await readFile(path.join(root, "apps/web/src/embedded/Workbench.vue"), "utf8");
+    assert.match(source, /<button type="button" class="embedded-properties-link" @click="showProperties">/);
+    assert.doesNotMatch(source, /href="#embedded-properties"/);
+  } finally { f.close(); }
+});
+
+test("completion failure and unknown result keep evidence through same-Issue readback, with explicit recovery clearing only confirmed completion", async () => {
+  const f = await mountedDetail();
+  try {
+    Object.assign(f.vm.completion, { summary: "Actual work", verification: "One check\n\nSecond check", artifacts: "src/file.ts", artifactKind: "path", followUps: "Next step" });
+    f.vm.comment = "Unsent comment";
+    f.vm.openCompletion();
+    const draft = { ...f.vm.completion };
+    f.result = { ok: false, error: { code: "VERSION_CONFLICT" } };
+    await f.vm.complete();
+    assert.equal(f.vm.showCompletion, true);
+    assert.deepEqual({ ...f.vm.completion }, draft);
+    assert.deepEqual(f.calls[0].payload.change, { summary: "Actual work", verification: ["One check", "Second check"], artifacts: [{ kind: "path", value: "src/file.ts" }], follow_ups: ["Next step"] });
+    f.vm.state.issue = { ...f.vm.state.issue, version: 3, status: { key: "in_progress" }, priority: "low" };
+    await nextTick();
+    assert.deepEqual({ ...f.vm.completion }, draft);
+    assert.equal(f.vm.comment, "Unsent comment");
+    f.result = { ok: false, outcome_unknown: true };
+    f.respond = () => { f.vm.state.pending = { operation: "complete" }; };
+    await f.vm.complete();
+    assert.equal(f.vm.showCompletion, true);
+    assert.deepEqual({ ...f.vm.completion }, draft);
+    await f.vm.complete();
+    assert.equal(f.calls.length, 2, "unknown completion cannot submit another write");
+    f.result = { ok: true };
+    f.respond = () => { f.vm.state.pending = null; f.vm.state.issue = { ...f.vm.state.issue, status: { key: "done" }, version: 4 }; };
+    await f.vm.recover();
+    assert.equal(f.calls[2].action, "recover");
+    assert.deepEqual(f.calls[2].payload, {});
+    assert.equal(f.vm.showCompletion, false);
+    assert.equal(f.vm.completion.summary, "");
+    assert.equal(f.vm.comment, "Unsent comment", "completion recovery does not consume an unrelated comment draft");
+  } finally { f.close(); }
+});
 
 test("actions accept only atomic public fields, exact enum strings and bounded evidence", () => {
   for (const [name, payload] of [["scope_retry", {}], ["scope_bind", { target_id: "scope/known-project" }], ["select_instance", { instance_id: randomUUID() }], ["filters", { assignment: "mine", status: "todo", priority: "high" }], ["mutate", { operation: "comment", change: { body: "Actual comment" } }], ["mutate", { operation: "complete", change: { summary: "Actual work", verification: ["Confirmed"], artifacts: [{ kind: "path", value: "src/file.ts" }], follow_ups: [] } }], ["view", { mode: "board" }], ["board_page", { status_key: "todo", next: true }], ["quick_update", { identifier: "CFK-548", change: { assignee_principal_id: null } }]]) assert.ok(parseActionMessage(action(name, payload)));
@@ -161,12 +292,17 @@ test("explicit write actions bypass native form submission under the fixed sandb
   const template = descriptor.template.content;
   assert.doesNotMatch(template, /<form\b|@submit\b|type="submit"/);
   const buttons = [...template.matchAll(/<UButton\b([^>]*)>/g)].map(match => match[1]);
-  for (const handler of ["applyFilters", "saveUpdate", "addComment", "complete"]) {
+  for (const handler of ["applyFilters", "addComment", "complete", "openCompletion"]) {
     const button = buttons.find(attributes => attributes.includes(`@click="${handler}"`));
     assert.ok(button, `${handler} must have an explicit click path`);
     assert.match(button, /type="button"/);
   }
   assert.doesNotMatch(template, /@keydown(?:\.enter)?\.prevent/);
+  const detail = template.slice(template.indexOf('<article v-else class="embedded-detail">'));
+  for (const [, attributes] of detail.matchAll(/<UButton\b([^>]*)>/g)) assert.match(attributes, /type="button"/);
+  assert.match(detail, /:dismissible="!busy && !pending"/);
+  assert.match(detail, /@update:open="!\$event && !busy && !pending/);
+  assert.match(detail, /<UModal[\s\S]*@click="recover"[\s\S]*<\/UModal>/, "pending completion can recover without leaving the modal");
   const carrier = await readFile(path.join(root, "packages/local-runtime/src/workbench/embed-adapter.mjs"), "utf8");
   assert.match(carrier, /FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox'/);
 });
@@ -208,41 +344,21 @@ test("list and column scrolling retain an accessible explicit fallback inside th
   assert.equal(containsClass(hint, "sr-only"), false);
 });
 
-test("known completion readback aligns edit fields while conflicts and uncertain recovery retain drafts", () => {
+test("known completion clears submitted evidence while conflicts and uncertain recovery retain every draft field", () => {
   const completed = { identifier: "CFK-548", title: "Fixture", version: 3, status: { key: "done" }, priority: "high" };
+  const evidence = { summary: "Actual work", verification: "Checked", artifacts: "src/file.ts", artifactKind: "commit", followUps: "Next step" };
   for (const result of [{ ok: false, error: { code: "VERSION_CONFLICT" } }, { ok: false, outcome_unknown: true }, { ok: true, outcome_unknown: true }]) {
-    const draft = { status: "todo", priority: "urgent" };
+    const draft = { ...evidence };
     assert.equal(reconcileCompletedDraft(draft, completed, result), false);
-    assert.deepEqual(draft, { status: "todo", priority: "urgent" });
+    assert.deepEqual(draft, evidence);
   }
-  const draft = { status: "todo", priority: "none" };
+  const draft = { ...evidence };
   assert.equal(reconcileCompletedDraft(draft, null, { ok: true }), false);
-  assert.deepEqual(draft, { status: "todo", priority: "none" });
+  assert.deepEqual(draft, evidence);
   assert.equal(reconcileCompletedDraft(draft, completed, { ok: true }), true);
-  assert.deepEqual(draft, { status: "done", priority: "high" });
-  draft.priority = "urgent";
-  const changes = { ...(draft.status !== completed.status.key ? { status_key: draft.status } : {}), ...(draft.priority !== completed.priority ? { priority_key: draft.priority } : {}) };
-  assert.deepEqual(changes, { priority_key: "urgent" });
+  assert.deepEqual(draft, { summary: "", verification: "", artifacts: "", artifactKind: "path", followUps: "" });
 });
 
-test("same-Issue readback updates clean fields without overwriting real drafts", () => {
-  const previous = { identifier: "CFK-548", title: "Fixture", version: 2, status: { key: "todo" }, priority: "high" };
-  const fresh = { ...previous, version: 3, status: { key: "in_progress" }, priority: "low" };
-  const clean = { status: "todo", priority: "high" };
-  reconcileIssueDraft(clean, fresh, previous);
-  assert.deepEqual(clean, { status: "in_progress", priority: "low" });
-  const edited = { status: "todo", priority: "urgent" };
-  reconcileIssueDraft(edited, fresh, previous);
-  assert.deepEqual(edited, { status: "in_progress", priority: "urgent" });
-  assert.deepEqual({ ...(edited.status !== fresh.status.key ? { status_key: edited.status } : {}), ...(edited.priority !== fresh.priority ? { priority_key: edited.priority } : {}) }, { priority_key: "urgent" });
-  const conflict = { status: "backlog", priority: "urgent" };
-  reconcileIssueDraft(conflict, fresh, previous);
-  assert.deepEqual(conflict, { status: "backlog", priority: "urgent" });
-  reconcileIssueDraft(conflict, { ...fresh, identifier: "CFK-549" }, fresh);
-  assert.deepEqual(conflict, { status: "in_progress", priority: "low" });
-  reconcileIssueDraft(conflict, null, fresh);
-  assert.deepEqual(conflict, { status: "", priority: "none" });
-});
 
 test("completion accepts the same optional summary and evidence bounds as the service", () => {
   for (const summary of ["", "   ", "Actual result"]) assert.ok(parseActionMessage(action("mutate", { operation: "complete", change: { summary, follow_ups: ["x".repeat(2048)], artifacts: [{ kind: "other", value: "Manual result" }] } })));

@@ -1,17 +1,24 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import UApp from "@nuxt/ui/components/App.vue";
 import UBadge from "@nuxt/ui/components/Badge.vue";
 import UButton from "@nuxt/ui/components/Button.vue";
+import UModal from "@nuxt/ui/components/Modal.vue";
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
 import { en, zh_cn } from "@nuxt/ui/locale";
 
 import CopyButton from "../components/CopyButton.vue";
 import IssueShare from "../components/IssueShare.vue";
+import IssueMetadataSummary from "../components/IssueMetadataSummary.vue";
+import IssueDetailHeader from "../components/IssueDetailHeader.vue";
+import IssueDetailLayout from "../components/IssueDetailLayout.vue";
+import IssueContentSection from "../components/IssueContentSection.vue";
+import IssueCommentItem from "../components/IssueComment.vue";
 import KanbanStatusNavigation from "../components/KanbanStatusNavigation.vue";
 import ProjectSwitcherMenu from "../components/ProjectSwitcherMenu.vue";
 import type { ProjectSwitcherItem } from "../components/ProjectSwitcherMenu.vue";
 import AssigneeMenu from "../components/AssigneeMenu.vue";
+import PrioritySelect from "../components/PrioritySelect.vue";
 import CompletionRecord from "../components/CompletionRecord.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import { locale, setLocale, t } from "../lib/i18n-core";
@@ -19,7 +26,7 @@ import { priorityOrder, priorityText } from "../lib/priority";
 import logo from "../assets/cfkanban-mark.png";
 import IssueCard from "./IssueCard.vue";
 import { createEmbedClient } from "./client";
-import { reconcileCompletedDraft, reconcileIssueDraft } from "./drafts";
+import { reconcileCompletedDraft, resetCompletionDraft } from "./drafts";
 import { e } from "./i18n";
 import { canAutoAppend } from "./pagination";
 import { emptySnapshot } from "./protocol";
@@ -52,11 +59,9 @@ const rows = computed(() => state.value.page?.items ?? state.value.page?.issues 
 const nextPage = computed(() => Boolean(state.value.page?.next_cursor ?? state.value.page?.continuation?.next_cursor));
 const filters = reactive({ assignment: "all" as "all" | "mine" | "unassigned", status: "" as Status | "", priority: "" as Priority | "" });
 watch(() => state.value.filters, value => Object.assign(filters, value), { deep: true });
-const edit = reactive({ status: "" as Status | "", priority: "none" as Priority });
 const comment = ref("");
 const completion = reactive({ summary: "", verification: "", artifacts: "", artifactKind: "path" as Artifact["kind"], followUps: "" });
 const showCompletion = ref(false);
-const showEdit = ref(false);
 const showIdentity = ref(false);
 const showFilters = ref(false);
 const projectMenuOpen = ref(false);
@@ -80,12 +85,10 @@ async function chooseProject(id: string) {
 }
 const activeFilterCount = computed(() => Number(state.value.filters.assignment !== "all") + Number(Boolean(state.value.filters.status)) + Number(Boolean(state.value.filters.priority)));
 watch(() => state.value.issue, (issue, previous) => {
-  reconcileIssueDraft(edit, issue, previous ?? null);
   if (issue?.identifier === previous?.identifier) return;
   comment.value = "";
-  Object.assign(completion, { summary: "", verification: "", artifacts: "", artifactKind: "path", followUps: "" });
+  resetCompletionDraft(completion);
   showCompletion.value = false;
-  showEdit.value = false;
 });
 const statusItems = computed(() => state.value.binding?.statuses ?? []);
 const errorCode = computed(() => localError.value ?? state.value.error?.code);
@@ -169,19 +172,33 @@ async function quickComplete(identifier: string) {
   const result = await send("open_issue", { identifier });
   if (result.ok && state.value.capabilities.complete) await openCompletion();
 }
-async function openCompletion() {
+function openCompletion() {
+  if (busy.value || pending.value || !state.value.capabilities.complete || state.value.issue?.status.key === "done") return;
   showCompletion.value = true;
-  await nextTick();
-  document.getElementById("embedded-summary")?.focus();
+}
+function focusCompletion() { document.getElementById("embedded-summary")?.focus(); }
+function showProperties() {
+  const properties = document.getElementById("embedded-properties");
+  properties?.scrollIntoView({ block: "start" });
+  properties?.focus({ preventScroll: true });
 }
 function quickUpdate(identifier: string, change: IssueChange) { void send("quick_update", { identifier, change }); }
-function saveUpdate() {
+function updateDetail(change: IssueChange) {
   const issue = state.value.issue;
-  if (!issue || !edit.status) return;
-  const change: IssueChange = {};
-  if (edit.status !== issue.status.key && edit.status !== "done") change.status_key = edit.status;
-  if (edit.priority !== issue.priority) change.priority_key = edit.priority;
-  if (Object.keys(change).length) void send("mutate", { operation: "update", change });
+  if (!issue || busy.value || pending.value || !state.value.capabilities.update) return;
+  if (change.status_key === issue.status.key || change.priority_key === issue.priority
+    || (Object.hasOwn(change, "assignee_principal_id") && change.assignee_principal_id === (issue.assignee?.principal_id ?? null))) return;
+  return send("mutate", { operation: "update", change });
+}
+function statusChanged(event: Event) {
+  const select = event.target as HTMLSelectElement;
+  const key = select.value as Status;
+  const issue = state.value.issue;
+  if (!issue) return;
+  select.value = issue.status.key;
+  if (busy.value || pending.value || !state.value.capabilities.update || key === issue.status.key || !statusItems.value.some(status => status.key === key)) return;
+  if (key === "done") openCompletion();
+  else void updateDetail({ status_key: key });
 }
 async function addComment() {
   const result = await send("mutate", { operation: "comment", change: { body: comment.value } });
@@ -192,13 +209,14 @@ async function recover() {
   const result = await send("recover", {});
   if (result.ok && !result.outcome_unknown) {
     if (operation === "comment") comment.value = "";
-    if (operation === "complete" && reconcileCompletedDraft(edit, state.value.issue, result)) showCompletion.value = false;
+    if (operation === "complete" && reconcileCompletedDraft(completion, state.value.issue, result)) showCompletion.value = false;
   }
 }
 function lines(value: string): string[] { return value.split("\n").map(line => line.trim()).filter(Boolean); }
 async function complete() {
+  if (busy.value || pending.value || !state.value.capabilities.complete) return;
   const result = await send("mutate", { operation: "complete", change: { summary: completion.summary, verification: lines(completion.verification), artifacts: lines(completion.artifacts).map(value => ({ kind: completion.artifactKind, value })), follow_ups: lines(completion.followUps) } });
-  if (reconcileCompletedDraft(edit, state.value.issue, result)) showCompletion.value = false;
+  if (reconcileCompletedDraft(completion, state.value.issue, result)) showCompletion.value = false;
 }
 </script>
 
@@ -300,40 +318,64 @@ async function complete() {
           </section>
 
           <article v-else class="embedded-detail">
-            <UButton color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="send('issue_back', {})">← {{ e('back') }}</UButton>
-            <div class="embedded-detail-heading"><span class="embedded-identifier">{{ state.issue.identifier }}</span><span class="embedded-muted">{{ e('version') }} {{ state.issue.version }}</span></div>
-            <h1>{{ state.issue.title }}</h1><IssueShare :identifier="state.issue.identifier" :origin="verifiedOrigin" />
-            <div class="embedded-detail-meta"><UBadge color="neutral" variant="subtle">{{ state.issue.status.display_name || state.issue.status.key }}</UBadge><UBadge color="neutral" variant="subtle">{{ priorityText(state.issue.priority, locale === 'zh-CN') }}</UBadge><span>{{ state.issue.assignee?.display_name || e('unassigned') }}</span></div>
-            <div class="embedded-detail-actions embedded-actions"><UButton v-if="state.capabilities.update" color="neutral" variant="outline" size="sm" :aria-expanded="showEdit" :disabled="busy || pending" @click="showEdit = !showEdit">{{ t('action.edit') }}</UButton><UButton v-if="state.capabilities.complete && !showCompletion" color="neutral" variant="outline" size="sm" :disabled="busy || pending" @click="openCompletion">{{ t('complete.title') }}</UButton></div>
-            <section v-if="state.issue.body" class="embedded-section"><div class="embedded-section-heading"><h2>{{ e('body') }}</h2><CopyButton :value="state.issue.body" :label="e('copyMarkdown')" /></div><MarkdownContent :source="state.issue.body" v-bind="markdownProps" /></section>
-            <CompletionRecord v-if="state.issue.completion_record || state.issue.completion" :value="state.issue.completion_record || state.issue.completion" />
-            <section v-if="state.capabilities.update && showEdit" class="embedded-section">
-              <label>{{ t('issue.assignee') }}<AssigneeMenu :assignee="detailAssignee" :candidates="candidates" :has-more="!!state.assignees_has_more" :loading="peopleLoading" :disabled="(busy && !peopleLoading) || pending" @open="loadPeople(false)" @load-more="loadPeople(true)" @select="send('mutate', { operation: 'update', change: { assignee_principal_id: $event } })" /></label>
-              <h2>{{ t('action.edit') }}</h2>
-              <section class="embedded-form" role="form" :aria-label="t('action.edit')">
-                <label>{{ e('status') }}<select v-model="edit.status" :disabled="busy || pending"><option v-if="state.issue.status.key === 'done'" value="done" disabled>{{ state.issue.status.display_name || 'done' }}</option><option v-for="status in statusItems.filter(row => row.key !== 'done')" :key="status.key" :value="status.key">{{ status.display_name || status.name || status.key }}</option></select></label>
-                <label>{{ e('priority') }}<select v-model="edit.priority" :disabled="busy || pending"><option v-for="priority in priorityOrder" :key="priority" :value="priority">{{ priorityText(priority, locale === 'zh-CN') }}</option></select></label>
-                <p class="embedded-muted">{{ e('updateHelp') }}</p><UButton type="button" size="sm" :disabled="busy || pending || (edit.status === state.issue.status.key && edit.priority === state.issue.priority)" @click="saveUpdate">{{ e('save') }}</UButton>
-              </section>
-            </section>
-            <section class="embedded-section">
-              <h2>{{ e('activity') }}</h2>
-              <p v-if="!state.comments.length" class="embedded-muted">{{ e('commentEmpty') }}</p>
-              <article v-for="entry in state.comments" :key="entry.id" class="embedded-comment"><header><strong>{{ entry.author?.display_name || entry.principal?.display_name }}</strong><time>{{ entry.created_at }}</time><CopyButton :value="entry.body || ''" :label="e('copyMarkdown')" /></header><CompletionRecord :value="entry.completion_record || entry.completion"><MarkdownContent :source="entry.body || ''" v-bind="markdownProps" /></CompletionRecord></article>
-              <UButton v-if="state.comments_has_more" color="neutral" variant="outline" size="sm" :disabled="busy" @click="send('comments', {})">{{ e('loadComments') }}</UButton>
-              <section v-if="state.capabilities.comment" class="embedded-form" role="form" :aria-label="e('comment')"><label :for="'embedded-comment'">{{ e('comment') }}</label><UTextarea id="embedded-comment" v-model="comment" :placeholder="t('comment.placeholder')" :rows="4" :maxlength="32768" :disabled="busy || pending" class="embedded-field" /><UButton type="button" size="sm" :disabled="busy || pending || !comment.trim()" @click="addComment">{{ t('action.comment') }}</UButton></section>
-            </section>
-            <section v-if="state.capabilities.complete && showCompletion" class="embedded-section">
-              <section class="embedded-form" role="form" :aria-label="t('complete.title')">
-                <h2>{{ t('complete.title') }}</h2><p class="embedded-muted">{{ e('completionHelp') }}</p>
-                <label for="embedded-summary">{{ e('summary') }}</label><UTextarea id="embedded-summary" v-model="completion.summary" :rows="3" :maxlength="8192" :disabled="busy || pending" class="embedded-field" />
-                <label for="embedded-verification">{{ e('verification') }}</label><UTextarea id="embedded-verification" v-model="completion.verification" :rows="3" :disabled="busy || pending" class="embedded-field" />
-                <label>{{ e('artifactKind') }}<select v-model="completion.artifactKind" :disabled="busy || pending"><option value="path">path</option><option value="url">url</option><option value="commit">commit</option><option value="other">other</option></select></label>
-                <label for="embedded-artifacts">{{ e('artifacts') }}</label><UTextarea id="embedded-artifacts" v-model="completion.artifacts" :rows="2" :disabled="busy || pending" class="embedded-field" />
-                <label for="embedded-followups">{{ e('followUps') }}</label><UTextarea id="embedded-followups" v-model="completion.followUps" :rows="2" :disabled="busy || pending" class="embedded-field" />
-                <div class="embedded-actions"><UButton type="button" size="sm" :disabled="busy || pending" @click="complete">{{ e('complete') }}</UButton><UButton color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="showCompletion = false">{{ t('action.cancel') }}</UButton></div>
-              </section>
-            </section>
+            <UButton type="button" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="send('issue_back', {})">← {{ e('back') }}</UButton>
+            <IssueDetailHeader :identifier="state.issue.identifier" :title="state.issue.title">
+                  <IssueMetadataSummary :status-key="state.issue.status.key" :status-label="state.issue.status.display_name || state.issue.status.key" :priority="state.issue.priority" :assignee-name="state.issue.assignee?.display_name" />
+                  <button type="button" class="embedded-properties-link" @click="showProperties">{{ e('viewProperties') }}</button>
+              <template #actions><IssueShare :identifier="state.issue.identifier" :origin="verifiedOrigin" /></template>
+            </IssueDetailHeader>
+
+            <IssueDetailLayout properties-id="embedded-properties" :properties-label="e('properties')">
+              <template #default>
+                <IssueContentSection :title="e('body')">
+                  <template #actions><CopyButton :value="state.issue.body || ''" :label="e('copyMarkdown')" /></template>
+                  <MarkdownContent v-if="state.issue.body" :source="state.issue.body" v-bind="markdownProps" />
+                  <p v-else class="embedded-muted">{{ e('bodyEmpty') }}</p>
+                </IssueContentSection>
+                <IssueContentSection v-if="state.issue.completion_record || state.issue.completion" :title="e('completed')"><CompletionRecord :value="state.issue.completion_record || state.issue.completion" /></IssueContentSection>
+                <IssueContentSection :title="e('activity')">
+                  <template #actions><span>{{ state.comments.length }}</span></template>
+                  <div class="comment-stream">
+                  <p v-if="!state.comments.length" class="embedded-muted">{{ e('commentEmpty') }}</p>
+                  <IssueCommentItem v-for="entry in state.comments" :key="entry.id" :author-name="entry.author?.display_name || entry.principal?.display_name" :created-at="entry.created_at" :completed="entry.kind === 'completion'">
+                    <template #actions><CopyButton :value="entry.body || ''" :label="e('copyMarkdown')" /></template>
+                    <CompletionRecord :value="entry.completion_record || entry.completion"><MarkdownContent :source="entry.body || ''" v-bind="markdownProps" /></CompletionRecord>
+                  </IssueCommentItem>
+                  </div>
+                  <UButton v-if="state.comments_has_more" type="button" color="neutral" variant="ghost" size="sm" :disabled="busy" @click="send('comments', {})">{{ e('loadComments') }}</UButton>
+                  <section v-if="state.capabilities.comment" class="issue-comment-form" role="form" :aria-label="e('comment')"><label for="embedded-comment">{{ e('comment') }}<UTextarea id="embedded-comment" v-model="comment" :placeholder="t('comment.placeholder')" :rows="5" :maxlength="32768" :disabled="busy || pending" /></label><UButton type="button" color="primary" variant="solid" :disabled="busy || pending || !comment.trim()" @click="addComment">{{ t('action.comment') }}</UButton></section>
+                </IssueContentSection>
+              </template>
+
+              <template #properties>
+                <dl class="issue-property-list">
+                  <div><dt>{{ e('status') }}</dt><dd><select v-if="state.capabilities.update" :aria-label="e('status')" :value="state.issue.status.key" :disabled="busy || pending" @change="statusChanged"><option v-for="status in statusItems" :key="status.key" :value="status.key" :disabled="status.key === 'done' && !state.capabilities.complete">{{ status.display_name || status.name || status.key }}</option></select><span v-else>{{ state.issue.status.display_name || state.issue.status.key }}</span></dd></div>
+                  <div><dt>{{ e('priority') }}</dt><dd><PrioritySelect v-if="state.capabilities.update" :value="state.issue.priority" :label="e('priority')" :disabled="busy || pending" @change="updateDetail({ priority_key: $event })" /><span v-else>{{ priorityText(state.issue.priority, locale === 'zh-CN') }}</span></dd></div>
+                  <div><dt>{{ t('issue.assignee') }}</dt><dd><AssigneeMenu v-if="state.capabilities.update" :assignee="detailAssignee" :candidates="candidates" :has-more="!!state.assignees_has_more" :loading="peopleLoading" :disabled="(busy && !peopleLoading) || pending" @open="loadPeople(false)" @load-more="loadPeople(true)" @select="updateDetail({ assignee_principal_id: $event })" /><span v-else>{{ state.issue.assignee?.display_name || e('unassigned') }}</span></dd></div>
+                </dl>
+                <div v-if="state.capabilities.complete && state.issue.status.key !== 'done'" class="sidebar-actions"><UButton type="button" color="primary" variant="solid" :disabled="busy || pending" @click="openCompletion">{{ t('complete.title') }}</UButton></div>
+              </template>
+            </IssueDetailLayout>
+
+            <UModal v-if="showCompletion" :open="true" :title="t('complete.title')" :description="e('completionHelp')" :dismissible="!busy && !pending" :close="{ type: 'button', disabled: busy || pending, 'aria-label': t('action.cancel') }" :ui="{ content: 'embedded-completion-modal', header: 'embedded-modal-header', body: 'embedded-modal-body', footer: 'embedded-modal-footer' }" @update:open="!$event && !busy && !pending && (showCompletion = false)" @after:enter="focusCompletion">
+              <template #body>
+                <div v-if="errorCode" class="embedded-alert" role="alert"><p>{{ errorText }}</p><code>{{ errorCode }}</code></div>
+                <div v-if="state.pending" class="embedded-recovery" role="status"><p>{{ e(busy ? 'saving' : 'pending') }}</p><UButton type="button" size="sm" :disabled="busy || state.session_context_changed" @click="recover">{{ e('recover') }}</UButton></div>
+                <section class="embedded-form" role="form" :aria-label="t('complete.title')">
+                  <label for="embedded-summary">{{ e('summary') }}</label><UTextarea id="embedded-summary" v-model="completion.summary" :rows="4" :maxlength="8192" :disabled="busy || pending" class="embedded-field" />
+                  <details class="embedded-completion-evidence">
+                    <summary>{{ e('completionEvidence') }}</summary>
+                    <div class="embedded-form">
+                      <label for="embedded-verification">{{ e('verification') }}</label><UTextarea id="embedded-verification" v-model="completion.verification" :rows="3" :disabled="busy || pending" class="embedded-field" />
+                      <label>{{ e('artifactKind') }}<select v-model="completion.artifactKind" :disabled="busy || pending"><option value="path">path</option><option value="url">url</option><option value="commit">commit</option><option value="other">other</option></select></label>
+                      <label for="embedded-artifacts">{{ e('artifacts') }}</label><UTextarea id="embedded-artifacts" v-model="completion.artifacts" :rows="2" :disabled="busy || pending" class="embedded-field" />
+                      <label for="embedded-followups">{{ e('followUps') }}</label><UTextarea id="embedded-followups" v-model="completion.followUps" :rows="2" :disabled="busy || pending" class="embedded-field" />
+                    </div>
+                  </details>
+                </section>
+              </template>
+              <template #footer><UButton type="button" color="neutral" variant="outline" :disabled="busy || pending" @click="showCompletion = false">{{ t('action.cancel') }}</UButton><UButton type="button" :disabled="busy || pending" @click="complete">{{ e('complete') }}</UButton></template>
+            </UModal>
           </article>
         </template>
         <p v-if="busy" class="embedded-loading" aria-live="polite">{{ e('loading') }}</p>

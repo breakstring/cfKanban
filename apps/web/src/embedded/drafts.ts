@@ -1,18 +1,13 @@
-import type { Priority, PublicIssue, PublicResult, Status } from "./protocol";
+import type { Artifact, PublicIssue, PublicResult } from "./protocol";
 
-export function reconcileIssueDraft(draft: { status: Status | ""; priority: Priority }, issue: PublicIssue | null, previous: PublicIssue | null): void {
-  if (!issue || !previous || issue.identifier !== previous.identifier) {
-    draft.status = issue?.status.key ?? "";
-    draft.priority = issue?.priority ?? "none";
-    return;
-  }
-  if (draft.status === previous.status.key) draft.status = issue.status.key;
-  if (draft.priority === previous.priority) draft.priority = issue.priority;
+type CompletionDraft = { summary: string; verification: string; artifacts: string; artifactKind: Artifact["kind"]; followUps: string };
+
+export function resetCompletionDraft(draft: CompletionDraft): void {
+  Object.assign(draft, { summary: "", verification: "", artifacts: "", artifactKind: "path", followUps: "" });
 }
 
-export function reconcileCompletedDraft(draft: { status: Status | ""; priority: Priority }, issue: PublicIssue | null, result: PublicResult): boolean {
+export function reconcileCompletedDraft(draft: CompletionDraft, issue: PublicIssue | null, result: PublicResult): boolean {
   if (!issue || !result.ok || result.outcome_unknown) return false;
-  draft.status = issue.status.key;
-  draft.priority = issue.priority;
+  resetCompletionDraft(draft);
   return true;
 }

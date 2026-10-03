@@ -30,7 +30,9 @@ Open CFK-123 in the local workbench.
 
 The Agent opens projects and tasks in local mode by default, starting the service when needed. In Codex App, it prefers the in-app browser when available; you can also request a specific browser. In DSH, use the sidebar beside your chat. If startup fails, the Agent explains the cause rather than switching to online mode without asking.
 
-A [directory association](../usage/profile.md) can open the board for your current code project automatically; multiple matches still require a choice. Scroll the board horizontally to see all status columns and toward the bottom to load more tasks. Copy Markdown from details and comments, or copy a task ID or link to give to the Agent.
+When opening in a browser, a brief connectivity check may appear first. If the host can control browser tabs, the Agent reuses that tab for the workbench. A system browser opener without tab control may leave a separate check tab.
+
+A [directory association](../usage/profile.md) can open the board for your current code project automatically; multiple matches still require a choice. Scroll the board horizontally to see all status columns and toward the bottom to load more tasks. Use the small buttons beside descriptions and comments to copy Markdown. The **Copy** menu at the top right of an Issue offers its ID or full online URL. The local workbench also copies the online Issue URL, ready to share or give to the Agent.
 
 ## Open the full online app
 

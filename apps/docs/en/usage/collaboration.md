@@ -85,7 +85,7 @@ Summarize DemoProject's notes and CFK-123's goal, progress, assignee, dependenci
 
 You need read access to the relevant projects. Give the Agent a task ID or link to read its latest content and relevant history; you do not need to open a board first.
 
-**In the Web UI:** The project description appears below the board title. Open **Project settings → Activity** to read the newest project events first. **Load older activity** continues through earlier history; **Refresh** starts a fresh list that includes new changes. Returning to the board preserves your submitted filters. Copy the CFK identifier or Issue URL in the details, or use the small buttons beside the description and each comment to copy their original Markdown. If clipboard access is restricted, the displayed plain text can be copied manually.
+**In the Web UI:** The project description appears below the board title. Open **Project settings → Activity** to read the newest project events first. **Load older activity** continues through earlier history; **Refresh** starts a fresh list that includes new changes. Returning to the board preserves your submitted filters. The **Copy** menu at the top right of an Issue offers its CFK identifier or online URL. Use the small buttons beside the description and each comment to copy their original Markdown. If clipboard access is restricted, the displayed plain text can be copied manually.
 
 ```text
 Show DemoProject's recent activity, including who changed what.

@@ -39,6 +39,7 @@ export async function preflightBrowser({ delivery = "host_browser", onRelayReady
       Promise.resolve().then(() => delivery === "system_browser" ? opener.open(localUrl) : onRelayReady({
         event: "browser_probe_ready", channel: delivery, local_url: localUrl,
         expires_in_seconds: Math.ceil(timeoutMs / 1000), classification: "non_sensitive_connectivity_probe",
+        navigation_hint: "retain_probe_tab",
       })).then(() => reached),
       new Promise((resolve) => { timer = setTimeout(() => resolve({ reachable: false, cause_code: "BROWSER_OPEN_TIMEOUT" }), timeoutMs); }),
     ]).catch((error) => ({ reachable: false, cause_code: safeBrowserFailureCode(error) }));

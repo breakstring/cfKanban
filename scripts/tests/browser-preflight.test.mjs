@@ -7,6 +7,7 @@ test('probe serves a non-sensitive page and closes after a valid navigation', as
   let url;
   const result = await preflightBrowser({ onRelayReady: async (event) => {
     assert.equal(event.classification, 'non_sensitive_connectivity_probe');
+    assert.equal(event.navigation_hint, 'retain_probe_tab');
     url = event.local_url;
     const response = await fetch(url);
     assert.equal(response.status, 200);

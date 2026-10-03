@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import UBadge from "@nuxt/ui/components/Badge.vue";
 import UButton from "@nuxt/ui/components/Button.vue";
 import UInput from "@nuxt/ui/components/Input.vue";
 import USelect from "@nuxt/ui/components/Select.vue";
@@ -10,6 +9,11 @@ import AssigneeSelect from "../components/AssigneeSelect.vue";
 import CasConflictNotice from "../components/CasConflictNotice.vue";
 import CopyButton from "../components/CopyButton.vue";
 import IssueShare from "../components/IssueShare.vue";
+import IssueMetadataSummary from "../components/IssueMetadataSummary.vue";
+import IssueDetailHeader from "../components/IssueDetailHeader.vue";
+import IssueDetailLayout from "../components/IssueDetailLayout.vue";
+import IssueContentSection from "../components/IssueContentSection.vue";
+import IssueCommentItem from "../components/IssueComment.vue";
 import CompletionRecord from "../components/CompletionRecord.vue";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import IssueAttachments from "../components/IssueAttachments.vue";
@@ -961,64 +965,52 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
       <ErrorNotice v-if="error" :error="error" />
       <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
 
-      <header class="issue-title-row">
-        <div>
-          <p class="issue-identifier">{{ issue.identifier }}</p>
-          <h1>{{ issue.title }}</h1>
-          <p class="issue-subtitle">{{ issue.workspace.display_name }} / {{ issue.project.display_name }} · v{{ issue.version }}</p>
-          <div class="issue-summary">
-            <span class="status-summary" :data-status="issue.status.key">{{ issue.status.display_name }}</span>
-            <span v-if="issue.priority !== 'none'" class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
-            <span>{{ issue.assignee?.display_name ?? t("issue.unassigned") }}</span>
+      <IssueDetailHeader :identifier="issue.identifier" :title="issue.title">
+            <IssueMetadataSummary :status-key="issue.status.key" :status-label="issue.status.display_name" :priority="issue.priority" :assignee-name="issue.assignee?.display_name" />
             <a class="issue-properties-link" href="#issue-properties">{{ locale === 'zh-CN' ? '查看属性' : 'View properties' }}</a>
-          </div>
-        </div>
-        <div class="issue-actions">
+        <template #actions>
           <IssueShare :identifier="issue.identifier" :origin="shareOrigin" />
           <UButton color="neutral" variant="outline" v-if="canUpdate" type="button" @click="editMode = !editMode">{{ t("action.edit") }}</UButton>
           <UButton color="primary" variant="solid" v-if="canRestore" type="button" @click="deleteOrRestore">{{ t("action.restore") }}</UButton>
           <UButton color="neutral" variant="ghost" v-else-if="canDelete" type="button" @click="showDelete = true">{{ t("action.delete") }}</UButton>
-        </div>
-      </header>
+        </template>
+      </IssueDetailHeader>
 
-      <section class="issue-layout">
-        <div class="issue-main">
+      <IssueDetailLayout properties-id="issue-properties" :properties-label="locale === 'zh-CN' ? '事项属性' : 'Issue properties'">
+        <template #default>
           <form v-if="editMode" class="editor-panel form-stack" @submit.prevent="saveEdit">
             <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="edit.title" maxlength="256" required /></label>
             <label>{{ t("issue.body") }}<UTextarea v-model="edit.body" :rows="12" /></label>
             <label>{{ t("issue.priority") }}<USelect v-model="edit.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" /></label>
             <div class="form-actions"><UButton color="neutral" variant="outline" type="button" @click="editMode = false">{{ t("action.cancel") }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="writeBusy">{{ t("action.save") }}</UButton></div>
           </form>
-          <section v-else id="issue-description" class="content-section">
-            <div class="section-heading-row"><h2>{{ t("issue.body") }}</h2><CopyButton :value="issue.body || ''" :label="ui('Copy description Markdown', '复制描述 Markdown')" /></div>
+          <IssueContentSection v-else id="issue-description" :title="t('issue.body')">
+            <template #actions><CopyButton :value="issue.body || ''" :label="ui('Copy description Markdown', '复制描述 Markdown')" /></template>
             <MarkdownContent :source="issue.body || ''" />
-          </section>
+          </IssueContentSection>
 
           <IssueAttachments :key="`${session.session_id}:${issue.identifier}`" :identifier="issue.identifier" :can-upload="canUpdate" :session-id="session.session_id" :principal-id="session.principal.id" />
 
-          <section id="issue-activity" class="content-section">
-            <div class="section-heading-row compact">
-              <h2>{{ t("issue.activity") }}</h2>
-              <span>{{ comments.length }}</span>
-            </div>
+          <IssueContentSection id="issue-activity" :title="t('issue.activity')">
+            <template #actions><span>{{ comments.length }}</span></template>
             <div class="comment-stream">
-              <article v-for="entry in comments" :key="entry.id" class="comment-entry" :class="{ completion: entry.kind === 'completion' }">
-                <header><strong>{{ entry.author.display_name }}</strong><span>{{ formatTime(entry.created_at) }}</span><CopyButton :value="entry.body || ''" :label="ui('Copy comment Markdown', '复制评论 Markdown')" /><UBadge v-if="entry.kind === 'completion'" color="success" variant="soft" size="md">{{ locale === "zh-CN" ? "完成记录" : "completion" }}</UBadge><UButton color="error" variant="ghost" v-if="entry.allowed_actions.includes('delete')" type="button" :disabled="writeBusy" @click="deleteComment(entry)">{{ t("action.delete") }}</UButton></header>
+              <IssueCommentItem v-for="entry in comments" :key="entry.id" :author-name="entry.author.display_name" :created-at="entry.created_at" :completed="entry.kind === 'completion'">
+                <template #actions><CopyButton :value="entry.body || ''" :label="ui('Copy comment Markdown', '复制评论 Markdown')" /><UButton color="error" variant="ghost" v-if="entry.allowed_actions.includes('delete')" type="button" :disabled="writeBusy" @click="deleteComment(entry)">{{ t("action.delete") }}</UButton></template>
                 <CompletionRecord v-if="entry.kind === 'completion'" :value="entry.completion"><MarkdownContent :source="entry.body || ''" /></CompletionRecord>
                 <MarkdownContent v-else :source="entry.body || ''" />
-              </article>
+              </IssueCommentItem>
               <p v-if="!comments.length" class="empty-copy">{{ locale === "zh-CN" ? "还没有评论。" : "No comments yet." }}</p>
             </div>
             <UButton color="neutral" variant="ghost" v-if="commentNextCursor" class="load-more" type="button" :disabled="commentLoadingMore" @click="loadMoreComments">{{ commentLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多活动" : "Load more activity") }}</UButton>
-            <form v-if="canUpdate" class="comment-form" @submit.prevent="addComment">
+            <form v-if="canUpdate" class="issue-comment-form" @submit.prevent="addComment">
               <label>{{ t("comment.add") }}<UTextarea v-model="comment" :rows="5" :placeholder="t('comment.placeholder')" /></label>
               <UButton color="primary" variant="solid" type="submit" :disabled="writeBusy || !comment.trim()">{{ t("action.comment") }}</UButton>
             </form>
-          </section>
-        </div>
+          </IssueContentSection>
+        </template>
 
-        <aside id="issue-properties" class="issue-sidebar" :aria-label="locale === 'zh-CN' ? '事项属性' : 'Issue properties'">
-          <dl class="metadata-list">
+        <template #properties>
+          <dl class="issue-property-list">
             <div><dt>{{ t("issue.status") }}</dt><dd><select v-if="canUpdate" :aria-label="t('issue.status')" :value="issue.status.key" :disabled="writeBusy" @change="onStatusSelection"><option v-for="status in statuses" :key="status.key" :value="status.key">{{ status.display_name }}</option></select><span v-else>{{ issue.status.display_name }}</span></dd></div>
             <div><dt>{{ t("issue.priority") }}</dt><dd><PrioritySelect v-if="canUpdate" :value="issue.priority" :disabled="writeBusy" :label="t('issue.priority')" @change="savePriority" /><span v-else>{{ priorityLabel(issue.priority) }}</span></dd></div>
             <div><dt>{{ t("issue.assignee") }}</dt><dd>
@@ -1056,8 +1048,8 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
             <UButton color="neutral" variant="ghost" v-if="relationsNextCursor" type="button" :disabled="relationsLoadingMore" @click="loadMoreRelations">{{ relationsLoadingMore ? "…" : (locale === "zh-CN" ? "加载更多关系" : "Load more relations") }}</UButton>
             <UButton color="neutral" variant="ghost" v-if="canUpdate" type="button" @click="loadCollaborationRecovery()">{{ locale === "zh-CN" ? "恢复已删除的协作项" : "Restore deleted collaboration items" }}</UButton>
           </section>
-        </aside>
-      </section>
+        </template>
+      </IssueDetailLayout>
 
       <ModalDialog v-if="showComplete" :busy="busy" :title="t('complete.title')" @close="showComplete = false">
         <p class="muted-copy">{{ ui("Confirm to mark this Issue as done. You can add a completion note, or leave it empty.", "确认后将事项设为已完成。可以补充完成说明，也可以留空直接完成。") }}</p>
@@ -1083,42 +1075,19 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
 <style scoped>
 .issue-page--nuxt { max-width: 1360px; padding-top: 24px; }
 .ui-action-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.issue-title-row { padding-top: 24px; padding-bottom: 24px; margin-bottom: 0; border-bottom: 1px solid var(--color-border); gap: 24px; }
-.issue-title-row h1 { font-family: var(--font-ui); font-size: clamp(24px, 2.5vw, 32px); line-height: 1.4; font-weight: 650; }
-.issue-identifier { margin-bottom: 8px; color: var(--color-text-muted); font-size: 13px; }
-.issue-subtitle { margin-top: 10px; font-size: 13px; }
-.issue-summary { margin-top: 14px; font-size: 13px; }
-.issue-actions { gap: 8px; }
-.issue-layout { gap: 32px; margin-top: 28px; }
-.issue-main { min-width: 0; }
-.issue-sidebar { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
-.content-section { margin-bottom: 24px; }
 .content-section h2, .sidebar-section h2 { font-size: 14px; font-weight: 650; }
-.metadata-list { gap: 16px; }
-.metadata-list dt { margin-bottom: 6px; font-size: 12px; }
-.metadata-list dd { font-size: 13px; }
-.metadata-list select { min-height: 36px; font-size: 13px; }
 .sidebar-section { margin-top: 20px; padding-top: 20px; }
-.sidebar-actions :deep(button) { width: 100%; justify-content: center; }
-.comment-entry { border: 1px solid var(--color-border); border-radius: 10px; padding: 16px; background: var(--color-surface); }
-.comment-entry header { gap: 8px 12px; font-size: 12px; }
-.comment-entry header > :last-child:is(button) { margin-left: auto; }
-.comment-entry.completion { border-color: color-mix(in srgb, var(--color-success) 25%, var(--color-border)); background: var(--color-surface); }
-.comment-form { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
-.comment-form > label, .editor-panel > label, .label-input { display: grid; gap: 8px; }
-.comment-form > :last-child { justify-self: start; }
-.comment-form :deep(.relative), .editor-panel :deep(.relative), .label-input :deep(.relative) { width: 100%; }
+.editor-panel > label, .label-input { display: grid; gap: 8px; }
+.editor-panel :deep(.relative), .label-input :deep(.relative) { width: 100%; }
 .editor-panel { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; }
 .label-picker .label-chip { color: var(--color-text-muted); background: var(--color-surface-muted); border-radius: 5px; }
 .label-picker .label-chip :deep(button) { min-height: 24px; padding: 0 4px; }
 .relation-row { min-width: 0; justify-content: flex-start; }
 @media (max-width: 940px) {
   .issue-page--nuxt :deep(button), .issue-page--nuxt :deep(input), .issue-page--nuxt :deep(select) { min-height: 44px; }
-  .issue-layout { gap: 20px; }
 }
 @media (max-width: 640px) {
   .issue-page--nuxt { padding-top: 16px; }
-  .issue-title-row { padding-top: 20px; }
-  .issue-sidebar, .comment-form, .editor-panel { padding: 16px; }
+  .editor-panel { padding: 16px; }
 }
 </style>

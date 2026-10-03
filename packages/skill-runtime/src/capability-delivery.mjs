@@ -599,6 +599,7 @@ export async function createBrowserLaunchAndDeliver({
         local_url: localUrl,
         expires_in_seconds: 60,
         classification: "local_one_time_browser_handoff",
+        navigation_hint: "reuse_verified_probe_tab",
       })
       : resolvedBrowserOpener.open, { timeoutMs: delivery === "host_browser" ? 60_000 : 15_000 });
   } catch (error) {

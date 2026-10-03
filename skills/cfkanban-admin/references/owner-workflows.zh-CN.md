@@ -184,7 +184,7 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 本地共用 Vue 工作台提供项目切换、Kanban/列表、直接修改优先级/状态/负责人、详情、评论和完成证据；选择完成时打开完成表单。私有 runtime 使用当前环境凭据访问可信 REST，不创建线上 Web Session，也不把长期 Credential 交给浏览器。可复制事项编号/链接，或正文/评论原始 Markdown；没有发送 Agent 会话或重复摘要段落。管理/自定义页面使用明确的线上模式。
 
-可信宿主上下文确认 Codex App 且可用 IAB 导航工具时，优先本地 IAB，不从环境变量猜宿主。应用提供支持 browser target 的 `open_in_codex` 时优先使用该原生 IAB 打开接口，并核对实际页面；仅返回 queued 不证明导航成功。先用 `web preflight` 验证 `host_browser` 的真实回环可达，再以短 shell yield 调用 `web open`、`delivery:"host_browser"`。立即在 IAB 导航到精确 `browser_relay_ready.local_url` 一次；不另行 fetch/probe，不向用户复述或保存该能力，60秒后失效。其它环境按已验证的指定浏览器交付路径打开。回环被拒绝/不可达时说明具体限制，不绕过宿主政策或静默改成线上。
+可信宿主上下文确认 Codex App 且可用 IAB 导航工具时，优先本地 IAB，不从环境变量猜宿主。应用提供支持 browser target 的 `open_in_codex` 时优先使用该原生 IAB 接口，保留 probe 的标签 ID，正式打开的 browser target 继续传同一 `tabId`；其它接口使用所保留标签的导航方法。核对实际页面；仅返回 queued 不证明导航成功。先用 `web preflight` 验证未经核实的 `host_browser` 路径真实回环可达，再以短 shell yield 调用 `web open`、`delivery:"host_browser"`。立即在已验证的 probe 标签中导航到精确 `browser_relay_ready.local_url` 一次；不另行 fetch/probe，不向用户复述或保存该能力，60秒后失效。其它环境按已验证的指定浏览器交付路径打开。回环被拒绝/不可达时说明具体限制，不绕过宿主政策或静默改成线上。
 
 交付后 CLI 返回脱敏模式/版本 metadata并持续服务，工作台打开期间保留进程。普通视图在30分钟无请求后由服务端拒绝；HttpOnly Cookie只保留至服务固定8小时截止，让原视图在普通超时后仍能核实未确定操作，新视图不能继承。无未确定写入时闲置15分钟关闭。同cookie页面刷新仅在该进程存活时恢复内存checkpoint；关闭/终止会丢草稿，且不证明不确定写入未提交，应保留原请求/幂等键读回，不自动重放。存在pending时普通关闭被阻止。线上打开结果未确定时也锁住绑定切换和新写入，直至使用原目标、原key核实。父载体的完整线上看板按钮核验当前绑定后在系统浏览器打开，线上临时能力不进入Vue。
 
@@ -203,8 +203,9 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 对未经验证的浏览器交付路径，创建票据前运行 `node scripts/cfkanban-tool.mjs web preflight`，stdin 为 `{"delivery":"host_browser"}` 或 `{"delivery":"system_browser"}`。它只启动最长 60 秒的 loopback 测试服务，不读取凭据、不访问实例、不创建票据，也不重定向。复用同一任务内未变化的成功预检，不为每次打开重复测试。
 
-`host_browser` 输出 `browser_probe_ready` 和标为 `non_sensitive_connectivity_probe` 的 `/probe` 地址。让指定浏览器访问并核对成功页面，再收取结果。只有这个无秘密地址可以交给用户手动粘贴来做对照；正式 `browser_relay_ready` 的一次性入口仍不得复述。预检 `reachable=true` 只证明有符合中转校验的请求到达，不能证明浏览器身份、页面可见或已登录；必须核对实际浏览器和页面。不要用 curl/fetch 的成功冒充浏览器预检。
+`host_browser` 输出 `browser_probe_ready` 和标为 `non_sensitive_connectivity_probe` 的 `/probe` 地址。让指定浏览器访问并核对成功页面，再收取结果。event 中的 `retain_probe_tab` 提示要求在当前宿主上下文保留该标签的句柄/ID，用于后续交付；它不构成浏览器身份验证。正式交付前不要关闭已验证的 probe 标签。只有这个无秘密地址可以交给用户手动粘贴来做对照；正式 `browser_relay_ready` 的一次性入口仍不得复述。预检 `reachable=true` 只证明有符合中转校验的请求到达，不能证明浏览器身份、页面可见或已登录；必须核对实际浏览器和页面。不要用 curl/fetch 的成功冒充浏览器预检。
 
+- 宿主确实提供指定浏览器的标签导航能力时（包括在 DSH 中），优先使用 `host_browser`，让 probe 和工作台沿用一个标签。普通 `system_browser` opener 不返回标签句柄，也没有现有标签导航接口，每次 URL 交付可能另开标签；不能声称保证单标签，也不为此修改浏览器设置。
 - 指定浏览器恰好是经过核验的系统默认浏览器时，可选择 `system_browser`，不必强制经过自动化导航。默认未知或不匹配时不能静默换浏览器；IAB 不能用系统浏览器代替。
 - 自动化报 `ERR_BLOCKED_BY_CLIENT` 时停止生成票据。若宿主允许，可用无秘密测试页做用户手动导航对照；不得绕过工具明确的安全拒绝。`rejected_cross_site=true` 只说明观察到过被拒绝的跨站请求，不能断言它就是顶层导航，也不能据此移除中转的 Origin/Host/Fetch Metadata 检查。
 - opener 存在不等于可执行。`DELIVERY_HELPER_FAILED` 或 `DELIVERY_HELPER_UNAVAILABLE` 先在同一执行环境跑无秘密 `system_browser` 预检。若证据指向沙箱限制，按宿主审批机制申请准确操作并重新预检；不自动提权、不关闭安全保护、不把所有 helper 失败都归因于沙箱或 LaunchServices。
@@ -213,7 +214,7 @@ Policy 响应会有意展示两个版本号：Public Join 开启、更新、关�
 
 ### 交付到 IAB 或其他宿主控制的浏览器
 
-使用 IAB 或宿主导航（而非经过核验的同名系统默认浏览器）时，先确认浏览器工具能够访问当前进程的 loopback，再使用 `delivery=host_browser`。以短 shell yield 启动 CLI，保留运行进程；CLI 先流式输出包含 `local_url` 的 `browser_relay_ready` event，等待浏览器 GET 后再输出最终结果。立即用指定浏览器的导航工具打开准确的本地 URL。不要先用 fetch、curl、预览或其他浏览器探测：GET 会消费本地交付能力。导航后收取仍在运行的 CLI 最终结果。
+使用 IAB 或宿主导航（而非经过核验的同名系统默认浏览器）时，先确认浏览器工具能够访问当前进程的 loopback，再使用 `delivery=host_browser`。以短 shell yield 启动 CLI，保留运行进程；CLI 先流式输出包含 `local_url` 的 `browser_relay_ready` event，等待浏览器 GET 后再输出最终结果。event 中的 `reuse_verified_probe_tab` 提示要求使用所保留、已验证的 probe 标签句柄/ID，立即在同一标签导航到准确的本地 URL；该提示不会自动创建或选择标签。创建 launch 前重新核对句柄仍对应本任务的 probe 页面。只有 probe 标签已关闭或无法复用时才新建；不覆盖无关用户标签、含草稿或未确定操作的工作台。不要先用 fetch、curl、预览或其他浏览器探测：GET 会消费本地交付能力。导航后收取仍在运行的 CLI 最终结果。
 
 随机路径的 loopback 入口只能使用一次，60 秒失效。它是短暂进入宿主工具上下文的敏感本地 capability，不在回复中复述，也不写文件、日志、receipt 或报告；远端 ticket URL/code 始终只在进程内存，不打印。远端票据仍为 5 分钟且只能兑换一次，Session 初始有效 8 小时，本地 60 秒不改变票据时效或下述活动续期规则。若指定浏览器与进程处于不同宿主/网络空间，或缺少可用导航工具，应在创建票据前停止并解释交付限制，不静默换浏览器。relay 成功仅证明交付，还须检查最终页面；无法验证登录时如实说明。默认 `system_browser` 与显式确认的 `stdout_once` 行为保持不变。
 

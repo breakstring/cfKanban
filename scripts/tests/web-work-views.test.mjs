@@ -1172,8 +1172,16 @@ test('workspace management remains separate from project settings tabs', async (
 test('sharing copies only canonical ID/link and falls back to selectable original Markdown', async () => {
   const { app, host } = mount(Share, { identifier: 'CFK-42', origin: 'https://example.test' });
   try {
+    const trigger = all(host).filter(item => item.tag === 'button' && item.props['aria-label'] === 'Copy issue');
+    assert.equal(trigger.length, 1);
+    assert.equal(text(trigger[0]), 'Copy');
+    const menu = all(host).find(item => item.props.onOpen);
+    assert.deepEqual(menu.props.content, { align: 'end', sideOffset: 4, collisionPadding: 8 });
+    menu.props.onOpen(); await nextTick();
     await button(host, 'Copy link').props.onClick({ stopPropagation() {} }); await nextTick();
     assert.equal(all(host).find(item => item.tag === 'textarea').props.value, 'https://example.test/app/issues/CFK-42');
+    assert.ok(all(host).some(item => item.props.role === 'alert'));
+    assert.equal(all(host).some(item => item.props.role === 'status'), false);
     assert.doesNotMatch(text(host), /Handoff summary|Start with|Agent session/);
   } finally { app.unmount(); }
   const invalid = mount(Share, { identifier: 'CFK-42', origin: 'https://example.test/app/launch?code=must-not-copy' });
@@ -1184,4 +1192,74 @@ test('sharing copies only canonical ID/link and falls back to selectable origina
     await button(copy.host, 'Copy Markdown').props.onClick({ stopPropagation() {} }); await nextTick();
     assert.equal(all(copy.host).find(item => item.tag === 'textarea').props.value, raw);
   } finally { copy.app.unmount(); }
+});
+
+function useClipboard(t, writeText) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText } } });
+  t.after(() => { if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor); else delete globalThis.navigator; });
+}
+
+test('the shared copy menu writes the selected canonical value with localized success and honors disabled state', async t => {
+  const writes = [];
+  useClipboard(t, async value => { writes.push(value); });
+  for (const [language, idLabel, linkLabel, success] of [['en', 'Copy ID', 'Copy link', 'Link copied'], ['zh-CN', '复制编号', '复制链接', '链接已复制']]) {
+    locale.value = language;
+    const { app, host } = mount(Share, { identifier: 'CFK-42', origin: 'https://EXAMPLE.test:443/' });
+    try {
+      await button(host, idLabel).props.onClick(); await nextTick();
+      assert.equal(writes.at(-1), 'CFK-42');
+      await button(host, linkLabel).props.onClick(); await nextTick();
+      assert.equal(writes.at(-1), 'https://example.test/app/issues/CFK-42');
+      assert.equal(text(all(host).find(item => item.props.role === 'status')), success);
+      assert.equal(all(host).find(item => item.tag === 'textarea'), undefined);
+    } finally { app.unmount(); }
+  }
+  locale.value = 'en';
+  const disabled = mount(Share, { identifier: 'CFK-42', origin: 'https://example.test', disabled: true });
+  try {
+    const before = writes.length;
+    assert.ok(all(disabled.host).filter(item => item.tag === 'button').every(item => item.props.disabled));
+    await button(disabled.host, 'Copy ID').props.onClick();
+    await button(disabled.host, 'Copy link').props.onClick();
+    assert.equal(writes.length, before);
+  } finally { disabled.app.unmount(); }
+});
+
+test('copy feedback ignores an old Issue result and failed retries retain the exact text without stale success', async t => {
+  let settle;
+  let rejectCopy = false;
+  const writes = [];
+  useClipboard(t, value => {
+    writes.push(value);
+    if (rejectCopy) return Promise.reject(new Error('Clipboard denied'));
+    return new Promise(resolve => { settle = resolve; });
+  });
+  const props = ref({ identifier: 'CFK-42', origin: 'https://example.test' });
+  const { app, host } = mount({ setup: () => () => h(Share, props.value) });
+  try {
+    const first = button(host, 'Copy ID').props.onClick(); await nextTick();
+    await button(host, 'Copy link').props.onClick();
+    assert.deepEqual(writes, ['CFK-42']);
+    assert.equal(all(host).some(item => item.props.role === 'status'), false);
+    props.value = { identifier: 'CFK-43', origin: 'https://other.test' }; await nextTick();
+    assert.equal(all(host).find(item => item.props['aria-label'] === 'Copy issue').props.disabled, true);
+    settle(); await first; await nextTick();
+    assert.equal(all(host).some(item => item.props.role === 'status'), false);
+    const succeeded = button(host, 'Copy link').props.onClick();
+    settle(); await succeeded; await nextTick();
+    assert.match(text(host), /Link copied/);
+    rejectCopy = true;
+    await button(host, 'Copy link').props.onClick(); await nextTick();
+    assert.equal(all(host).some(item => item.props.role === 'status'), false);
+    assert.equal(text(all(host).find(item => item.props['aria-label'] === 'Copy issue')), 'Copy');
+    const fallback = all(host).find(item => item.tag === 'textarea');
+    assert.equal(fallback.props.value, 'https://other.test/app/issues/CFK-43');
+    let selected = false;
+    fallback.props.onFocus({ target: { select() { selected = true; } } });
+    assert.equal(selected, true);
+    props.value = { identifier: 'CFK-44', origin: 'http://127.0.0.1:49152' }; await nextTick();
+    assert.equal(all(host).find(item => item.tag === 'textarea'), undefined);
+    assert.equal(button(host, 'Copy link'), undefined);
+  } finally { app.unmount(); }
 });

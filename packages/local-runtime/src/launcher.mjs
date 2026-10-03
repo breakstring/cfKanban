@@ -61,7 +61,7 @@ export async function openLocalWorkbench({ directory, instanceId, target, delive
   runtime.closed.finally(() => { process.removeListener('SIGINT', terminate); process.removeListener('SIGTERM', terminate); signal?.removeEventListener('abort', terminate); });
   try {
     if (signal?.aborted) throw new LocalRuntimeError('LOCAL_SERVICE_CLOSED');
-    await runtime.deliverView(localUrl => delivery === 'host_browser' ? onRelayReady({ event: 'browser_relay_ready', channel: 'host_browser', local_url: localUrl, expires_in_seconds: 60, classification: 'local_one_time_browser_handoff' }) : opener.open(localUrl));
+    await runtime.deliverView(localUrl => delivery === 'host_browser' ? onRelayReady({ event: 'browser_relay_ready', channel: 'host_browser', local_url: localUrl, expires_in_seconds: 60, classification: 'local_one_time_browser_handoff', navigation_hint: 'reuse_verified_probe_tab' }) : opener.open(localUrl));
     const metadata = { ok: true, mode: 'local', channel: delivery, delivered: true, release_version: version, secret_values_exposed: false };
     Object.defineProperties(metadata, { closed: { value: runtime.closed }, close: { value: runtime.close } });
     return metadata;

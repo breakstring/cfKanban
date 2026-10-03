@@ -940,6 +940,7 @@ test("one-time capability creation is blocked on generic API output and uses ded
     },
   });
   assert.equal(relayEvent.event, "browser_relay_ready");
+  assert.equal(relayEvent.navigation_hint, "reuse_verified_probe_tab");
   assert.equal(hostLaunch.delivery.channel, "host_browser");
   assert.equal(hostLaunch.delivery.delivered, true);
   assert.equal(JSON.stringify(hostLaunch).includes(launchCode), false);
