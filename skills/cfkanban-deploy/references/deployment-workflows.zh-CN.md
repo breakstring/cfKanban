@@ -273,6 +273,8 @@ Instance upgrade 是独立 Cloudflare plan：
 5. 先运行固定 migration 读回。每条 planned migration 只执行下一条 pending 的 verified canonical bundle migration：将完整、未改动的公开 SQL 通过单次 `wrangler d1 execute --remote --command=<SQL>` 提交到 `/query`。每条 SQL 最多 24 KiB UTF-8（24,576 字节），这是兼顾 Windows argv 的保守限额，不是 D1 平台最大值。超限必须在写入前停止，不逐语句执行、不分块，失败也不回退 `--file`。checksum 与 Owner-bootstrap 的文件执行方式不变。随后再次读回；必须让 `migrations assess-ledger-recovery` 证明准确的 post-apply checksum 缺行；再写入绑定计划的固定路径 SQL、记录 checksum，最后重新读回并 reconcile。不能跳过 apply 后证明。
 6. 执行 Worker dry run，只部署一次，再用 `worker_deployment_readback` 证明新的单版本 deployment。最后运行 `deployment finalize-upgrade`，验证 canonical release、最终 migration/schema、公开 health/discovery、认证 `/meta` 与 `/me`、未变化的 Owner Credential，并写入幂等脱敏 receipt。
 
+已验证完整 bundle 提供公共 CLI 时，可用 `cfkanban deploy upgrade plan` 准备计划，再由 `cfkanban deploy upgrade apply` 或 `cfkanban deploy upgrade resume` 编排上述步骤。通过非秘密 JSON 输入完整冻结 plan、绑定 task/operation/instance/digest 的 authorization 及已验证工件路径。已有实例使用当前私有状态中的可信 origin，支持已验证的自定义域名；写入前核对域名与 Owner，发送 Credential 前重新绑定当前可信 origin，最终拒绝 origin version 回退。域名迁移先走独立 rebind 流程；历史部署回执可以保留迁移前的地址。首次部署仍核验准确的 `workers.dev` 地址。
+
 对接入的 `remote_observed` 基线，安全脚本先将绑定冻结计划、配置和目标 bundle 的非秘密发布标识记入 journal，再通过 Wrangler 写入版本注解。发布响应丢失或失败时，保留同一计划和 journal，先运行 `worker_deployment_readback` 再决定是否重试部署。只有新的 deployment/version、精确发布标识、目标 bindings、适用的存储/Cron 校验和第二次稳定 deployment 读回全部通过，才能恢复。恢复证据与本地命令成功分别记录，最终回执保留此区别；标识缺失/不符或远端漂移时停止。
 
 Skill update 始终是独立的本地计划。较新的 active Skill 可以是 compatibility 前置条件，但绝不会静默升级 Instance。

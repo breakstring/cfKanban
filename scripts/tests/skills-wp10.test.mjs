@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { request as httpRequest } from "node:http";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -2173,6 +2173,8 @@ for (const [bootstrapSchema, productVersion] of [[1, null], [8, null], [8, "1.4.
 
 for (const deploymentOutcome of ["success", "observed_success", "response_lost", "error_after_deploy"]) test(`existing Instance upgrade consumes a verified Service cache and preserves the Owner Credential (${deploymentOutcome})`, async (t) => {
   const productVersion = deploymentOutcome === "success" ? "1.4.0-rc.2" : null;
+  const apiOrigin = deploymentOutcome === "success" ? "https://kanban.example.test" : "https://example.workers.dev";
+  const originVersion = deploymentOutcome === "success" ? 2 : 1;
   const observedCurrent = deploymentOutcome !== "success";
   const recoverDeployment = ["response_lost", "error_after_deploy"].includes(deploymentOutcome);
   const { home, stateRoot } = await fixtureState();
@@ -2288,6 +2290,25 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
   });
   const secret = await loadCurrentCredentialSecret({ stateRoot, instanceId: INSTANCE_ID });
   const base = upgradePlanInput();
+  base.cloudflare.api_origin = apiOrigin;
+  await putInstanceMetadata({
+    stateRoot, home, persistenceConfirmed: true, instanceId: INSTANCE_ID,
+    trustedApiOrigin: "https://example.workers.dev", originVersion: 1,
+    serviceVersion: "0.1.0", schemaVersion: 1,
+  });
+  if (deploymentOutcome === "success") {
+    const rebound = await checkTrustedOriginRebind({
+      stateRoot, instanceId: INSTANCE_ID,
+      fetchImpl: async (url, options) => {
+        assert.equal(new Headers(options.headers).has("authorization"), false);
+        return new Response(JSON.stringify({
+          discovery_version: 1, instance_id: INSTANCE_ID, observed_origin: url.origin,
+          preferred_api_origin: apiOrigin, origin_version: originVersion, service_version: "0.1.0",
+        }), { headers: { "content-type": "application/json" } });
+      },
+    });
+    assert.equal(rebound.trusted_api_origin, apiOrigin);
+  }
   const current = {
     ...base.current,
     publisher: generated.manifest.publisher.canonical_origin,
@@ -2625,14 +2646,22 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
     await readback();
     assert.equal((await readJson(journalPath)).events.filter(event => event.type === "worker_deployment_recovered").length, 1);
   }
-  const fetchImpl = async (url) => {
+  const requests = [];
+  let readbackOriginVersion = originVersion;
+  let authenticatedRedirect = false;
+  const fetchImpl = async (url, options) => {
+    requests.push({ origin: url.origin, path: url.pathname, authorization_present: new Headers(options.headers).has("authorization") });
+    assert.equal(options.redirect, "manual");
+    if (authenticatedRedirect && url.pathname === "/api/v1/meta") {
+      return new Response(null, { status: 302, headers: { location: "https://untrusted.example.test/api/v1/meta" } });
+    }
     let body;
     if (url.pathname === "/healthz") {
       body = { d1: "reachable", service_version: "0.1.0", schema_version: 2 };
     } else if (url.pathname === "/.well-known/cfkanban-instance.json") {
-      body = { discovery_version: 1, instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0" };
+      body = { discovery_version: 1, instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: readbackOriginVersion, service_version: "0.1.0" };
     } else if (url.pathname === "/api/v1/meta") {
-      body = { instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: 1, service_version: "0.1.0", schema_version: 2, principal: { id: PRINCIPAL_ID, is_owner: true } };
+      body = { instance_id: INSTANCE_ID, observed_origin: url.origin, preferred_api_origin: url.origin, origin_version: readbackOriginVersion, service_version: "0.1.0", schema_version: 2, principal: { id: PRINCIPAL_ID, is_owner: true } };
     } else {
       body = { id: PRINCIPAL_ID, principal_id: PRINCIPAL_ID, display_name: "Example_Owner", is_owner: true, credential: { id: CREDENTIAL_ID, fingerprint: credential.fingerprint } };
     }
@@ -2648,19 +2677,89 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
     taskId: plan.task_id,
     plan,
     configPath: config.wrangler_config_path,
-    apiOrigin: "https://example.workers.dev",
+    apiOrigin,
     currentReceiptPath,
     releasePointerPath: generated.pointerPath,
     manifestPath: generated.manifestPath,
     artifactFiles: { skill_bundle: skillBundle, service_deployment_bundle: serviceBundle },
     fetchImpl,
   };
+  if (deploymentOutcome === "success") {
+    const trustedMetadata = await readJson(paths.instanceMetadata);
+    const credentialMetadata = await readJson(paths.currentMetadata);
+    const receiptPath = path.join(paths.receiptsRoot, OPERATION_ID + ".upgrade.json");
+    async function assertBlockedBeforeNetwork(code) {
+      const offset = requests.length;
+      await assert.rejects(finalizeInstanceUpgrade(finalizeInput), { code });
+      assert.deepEqual(requests.slice(offset), []);
+      assert.equal(await readJson(receiptPath, { allowMissing: true }), null);
+    }
+    for (const [name, change, code] of [
+      ["frozen origin is not the current trusted origin", { trusted_api_origin: "https://example.workers.dev" }, "TRUSTED_ORIGIN_BINDING_MISMATCH"],
+      ["private Instance ID drift", { instance_id: OTHER_PRINCIPAL_ID }, "STATE_INSTANCE_CONFLICT"],
+    ]) {
+      await t.test(name, async () => {
+        await writeFile(paths.instanceMetadata, JSON.stringify({ ...trustedMetadata, ...change }));
+        try { await assertBlockedBeforeNetwork(code); }
+        finally { await writeFile(paths.instanceMetadata, JSON.stringify(trustedMetadata)); }
+      });
+    }
+    await t.test("private origin metadata permission drift", { skip: process.platform === "win32" }, async () => {
+      await chmod(paths.instanceMetadata, 0o644);
+      try { await assertBlockedBeforeNetwork("STATE_PERMISSION_DRIFT"); }
+      finally { await chmod(paths.instanceMetadata, 0o600); }
+    });
+    await t.test("private origin metadata symlink", { skip: process.platform === "win32" }, async () => {
+      const linkedMetadata = path.join(home, "linked-instance.json");
+      await writeFile(linkedMetadata, JSON.stringify(trustedMetadata), { mode: 0o600 });
+      await rm(paths.instanceMetadata);
+      await symlink(linkedMetadata, paths.instanceMetadata);
+      try { await assertBlockedBeforeNetwork("STATE_SYMLINK_REJECTED"); }
+      finally {
+        await rm(paths.instanceMetadata);
+        await writeFile(paths.instanceMetadata, JSON.stringify(trustedMetadata), { mode: 0o600 });
+      }
+    });
+    for (const [field, value] of [
+      ["instance_id", OTHER_PRINCIPAL_ID], ["principal_id", OTHER_PRINCIPAL_ID],
+      ["credential_id", OPERATION_ID], ["fingerprint", "changed-fingerprint"], ["state", "pending"],
+    ]) {
+      await t.test(`loaded Credential ${field} drift`, async () => {
+        await writeFile(paths.currentMetadata, JSON.stringify({ ...credentialMetadata, [field]: value }));
+        try { await assertBlockedBeforeNetwork("STATE_IDENTITY_CONFLICT"); }
+        finally { await writeFile(paths.currentMetadata, JSON.stringify(credentialMetadata)); }
+      });
+    }
+    await t.test("origin version rollback preserves local trust and creates no receipt", async () => {
+      readbackOriginVersion = 1;
+      try { await assert.rejects(finalizeInstanceUpgrade(finalizeInput), { code: "DISCOVERY_VERSION_ROLLBACK" }); }
+      finally { readbackOriginVersion = originVersion; }
+      assert.deepEqual(await readJson(paths.instanceMetadata), trustedMetadata);
+      assert.equal(await readJson(receiptPath, { allowMissing: true }), null);
+    });
+    await t.test("authenticated redirect is rejected without forwarding Credential", async () => {
+      authenticatedRedirect = true;
+      try { await assert.rejects(finalizeInstanceUpgrade(finalizeInput), { code: "DEPLOYMENT_READBACK_FAILED" }); }
+      finally { authenticatedRedirect = false; }
+      assert.ok(requests.every(request => request.origin === apiOrigin));
+      assert.deepEqual(await readJson(paths.instanceMetadata), trustedMetadata);
+      assert.equal(await readJson(receiptPath, { allowMissing: true }), null);
+    });
+    assert.equal((await readJson(currentReceiptPath)).instance.api_origin, "https://example.workers.dev");
+    assert.equal(trustedMetadata.trusted_api_origin, apiOrigin);
+  }
   const finalized = await finalizeInstanceUpgrade(finalizeInput);
   assert.equal(finalized.finalized, true);
   assert.equal(finalized.credential_unchanged, true);
   assert.equal(finalized.worker_deployment_id, afterDeploymentId);
   const receipt = await readJson(finalized.receipt_path);
   assert.equal(receipt.kind, "cfkanban_instance_upgrade_receipt");
+  assert.equal(receipt.instance.api_origin, apiOrigin);
+  assert.equal(receipt.instance.origin_version, originVersion);
+  assert.ok(requests.every(request => request.origin === apiOrigin));
+  assert.ok(requests.some(request => request.path === "/api/v1/meta" && request.authorization_present));
+  assert.ok(requests.some(request => request.path === "/api/v1/me" && request.authorization_present));
+  assert.ok(requests.filter(request => ["/healthz", "/.well-known/cfkanban-instance.json"].includes(request.path)).every(request => !request.authorization_present));
   assert.equal(receipt.service_release.before.service_bundle_version, "0.1.0-alpha.8");
   assert.equal(receipt.service_release.after.service_bundle_version, productVersion ?? "0.1.0-alpha.19");
   assert.equal(receipt.cloudflare.worker.after_version_id, afterVersionId);

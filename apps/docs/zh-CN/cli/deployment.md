@@ -19,6 +19,8 @@ cfkanban deploy recovery --help
 
 部署保留必要的显式实例、Cloudflare 账户与资源目标。Apply/resume 使用已冻结的获批计划；切换目录或修改 CLI 保存上下文不会改选该计划目标，也不能代替确认。
 
+首次部署核验准确的 Cloudflare `workers.dev` 地址。已有实例升级使用当前可信地址，包括自定义域名，并在云端写入前确认它与冻结计划一致。域名变更沿独立的可信 origin rebind 流程处理；在升级计划中填写另一个 URL 不建立信任。最终读回核对同一实例与 Owner，并拒绝较旧的 origin version。
+
 Cloudflare 登录、GUI/UAC 和浏览器步骤可能需要人完成，WebUI 不持有 Cloudflare 凭据。本地 Skills/CLI 更新不隐式升级实例。Worker rollback 不回退 D1，Time Travel restore 不自动执行。外部实测需要单独获准的隔离环境。
 
 设备认证的验证 URL 和代码只交付到真实专用终端。无终端进程在启动登录前失败；人工完成获准的官方 Wrangler 登录后，核对准确 profile 和账户。中断的认证动作不自动重复执行。人工登录后的接续要求原计划绑定的证据、显式 profile/账户和实时读回；记录外部核验结果，同时保留原动作提交未证实的事实。

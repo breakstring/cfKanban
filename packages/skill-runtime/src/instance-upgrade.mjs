@@ -22,7 +22,9 @@ import {
   getInstancePaths,
   loadCurrentCredentialSecret,
   putInstanceMetadata,
+  validatePrivatePath,
 } from "./state.mjs";
+import { trustedApiRequest } from "./transport.mjs";
 import {
   assertNoSymlinkPath,
   atomicWriteJson,
@@ -45,6 +47,21 @@ function latestFinished(events, action) {
 
 function receiptRelease(receipt) {
   return receipt?.service_release?.after || receipt?.service_release || null;
+}
+
+async function requestTrustedReadback({ stateRoot, instanceId, origin, apiPath, token, fetchImpl }) {
+  const response = await trustedApiRequest({
+    stateRoot,
+    instanceId,
+    apiPath,
+    expectedApiOrigin: origin,
+    authorizationToken: token,
+    fetchImpl,
+  });
+  if (!response.ok) {
+    throw toolError("DEPLOYMENT_READBACK_FAILED", "Upgrade finalization did not receive a direct JSON success response", { apiPath, status: response.status });
+  }
+  return response.data;
 }
 
 export function assertPriorReceipt(receipt, plan) {
@@ -219,22 +236,38 @@ export async function finalizeInstanceUpgrade({
   }
 
   const paths = getInstancePaths({ stateRoot, instanceId: instance });
-  const currentMetadata = await readJson(paths.currentMetadata);
-  if (currentMetadata.principal_id !== plan.owner.principal_id
+  await assertNoSymlinkPath(paths.instanceMetadata, stateRoot);
+  await validatePrivatePath(paths.instanceRoot, "directory");
+  await validatePrivatePath(paths.instanceMetadata, "file");
+  const trustedInstance = await readJson(paths.instanceMetadata);
+  if (trustedInstance.instance_id !== instance
+    || !Number.isSafeInteger(trustedInstance.origin_version)
+    || trustedInstance.origin_version < 1) {
+    throw toolError("STATE_INSTANCE_CONFLICT", "Trusted Instance metadata differs from its immutable state slot");
+  }
+  if (requireHttpsOrigin(trustedInstance.trusted_api_origin, "trusted_api_origin") !== origin) {
+    throw toolError("TRUSTED_ORIGIN_BINDING_MISMATCH", "Upgrade finalization origin differs from the current trusted origin");
+  }
+  const currentCredential = await loadCurrentCredentialSecret({ stateRoot, instanceId: instance });
+  const currentMetadata = currentCredential.metadata;
+  if (currentMetadata.instance_id !== instance
+    || currentMetadata.principal_id !== plan.owner.principal_id
     || currentMetadata.credential_id !== plan.owner.credential_id
     || currentMetadata.fingerprint !== plan.owner.credential_fingerprint
     || currentMetadata.state !== "current") {
     throw toolError("STATE_IDENTITY_CONFLICT", "Current local Owner Credential metadata differs from the upgrade plan");
   }
-  const currentCredential = await loadCurrentCredentialSecret({ stateRoot, instanceId: instance });
   const [health, rawDiscovery, meta, me] = await Promise.all([
     requestJson(origin, "/healthz", { fetchImpl }),
     fetchDiscovery(origin, fetchImpl),
-    requestJson(origin, "/api/v1/meta", { token: currentCredential.token, fetchImpl }),
-    requestJson(origin, "/api/v1/me", { token: currentCredential.token, fetchImpl }),
+    requestTrustedReadback({ stateRoot, instanceId: instance, origin, apiPath: "/api/v1/meta", token: currentCredential.token, fetchImpl }),
+    requestTrustedReadback({ stateRoot, instanceId: instance, origin, apiPath: "/api/v1/me", token: currentCredential.token, fetchImpl }),
   ]);
   if (Boolean(meta.capabilities?.attachments) !== Boolean(plan.resources.r2)) throw toolError("R2_CAPABILITY_DRIFT", "Deployed attachment capability differs from the plan");
   const discovery = validateDiscovery(rawDiscovery, origin);
+  if (discovery.origin_version < trustedInstance.origin_version) {
+    throw toolError("DISCOVERY_VERSION_ROLLBACK", "Upgrade readback reported an older origin version than the current trusted Instance");
+  }
   const identity = assertReadback({
     health,
     discovery,

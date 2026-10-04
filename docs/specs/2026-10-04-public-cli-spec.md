@@ -80,6 +80,8 @@ CLI 在请求前于已核验私有状态保存非秘密 operation：稳定本地
 
 Cloudflare 平台的 Worker rollback 与 D1 Time Travel 是不同操作。当前三个 Skills 的安全 runtime 没有 Worker rollback 执行命令或对应冻结计划；CLI 不凭边界说明新增云端回退流程。需要此操作时按 Cloudflare 控制面及原部署合同单独核对和授权，不能通过 CLI Instance upgrade 猜测回退或把 Worker 回退描述成数据库恢复。此限制与缺少其它 OS 实测是两项不同证据边界。
 
+首次部署核验 Cloudflare 控制面证明的准确 `workers.dev` 地址；已有实例升级沿当前私有状态中的可信 origin，支持已验证的自定义域名。升级 apply/resume 在云端写入前核对计划、输入和当前可信 origin 及 Owner 身份一致；域名变更仍走 Bootstrap 的独立 rebind 合同，不靠新地址自报实例 ID 建立信任。共享升级 finalizer 在发送 Credential 前核验私有实例记录和同一凭据快照，只向当前可信 origin 发起认证读回，拒绝 origin version 回退；合法已完成 rebind 后的历史部署回执可以保留旧 origin。
+
 Cloudflare 认证使用原计划摘要及私有阶段记录。设备授权 URL/代码仅交付到真实专用终端，不进入 CLI 的 stdout、stderr、JSON 或 journal；无终端时在启动认证动作前拒绝，并引导人工完成获准的官方 Wrangler 登录。未知认证动作不自动重放；人工接续须提供原计划绑定的外部认证记录、准确 profile、显式账户及完整步骤，再核验当前工具/keyring/profile 与账户。该核验解除 pending，但保留原动作提交未证实的事实，不以当前认证状态相同宣称原 OAuth 已提交。
 
 ## 验证与收口
