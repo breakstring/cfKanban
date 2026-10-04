@@ -1,4 +1,5 @@
 import { EMBED_PROTOCOL, emptySnapshot, parseActionMessage, parseRenderedMessage, parseRenderTarget, parseSnapshotMessage, sameRenderTarget, snapshotRenderTarget } from '../../../../apps/web/src/embedded/protocol.ts';
+import { readIssueHierarchy } from '../../../../apps/web/src/lib/issue-hierarchy.ts';
 import { canonical } from './shared.mjs';
 import { items, nextCursor, recoveryId, sessionReference } from './controller.mjs';
 
@@ -12,7 +13,7 @@ const strings = value => Array.isArray(value) ? value.filter(item => typeof item
 const rows = value => Array.isArray(value) ? value : [];
 const completion = value => value && typeof value === 'object' ? { ...pick(value, ['summary']), verification: strings(value.verification), artifacts: rows(value.artifacts).map(row => pick(row, ['kind', 'value'])), follow_ups: strings(value.follow_ups) } : undefined;
 const labels = value => rows(value).map(row => pick(row, ['id', 'name']));
-const issue = value => value ? { ...pick(value, ['id', 'identifier', 'title', 'body', 'version', 'priority', 'is_blocked']), status: pick(value.status, ['key', 'display_name']), assignee: value.assignee ? resource(value.assignee) : null, labels: labels(value.labels), allowed_actions: strings(value.allowed_actions) } : null;
+const issue = value => value ? { ...pick(value, ['id', 'identifier', 'title', 'body', 'version', 'priority', 'is_blocked']), ...(readIssueHierarchy(value.hierarchy) ? { hierarchy: readIssueHierarchy(value.hierarchy) } : {}), status: pick(value.status, ['key', 'display_name']), assignee: value.assignee ? resource(value.assignee) : null, labels: labels(value.labels), allowed_actions: strings(value.allowed_actions) } : null;
 const comment = value => ({ ...pick(value, ['id', 'body', 'created_at', 'kind']), author: resource(value.author), ...(value.completion ? { completion: completion(value.completion) } : {}) });
 const publicError = value => value ? { code: value.code === 'PANEL_PAGINATION_STALLED' || errorCodes.has(value.code) ? value.code : 'PANEL_REQUEST_UNCERTAIN' } : null;
 export const scopeTargetId = value => `${value.instance_id}/${value.workspace_id}/${value.project_id}`;
@@ -229,13 +230,13 @@ export class WorkbenchAdapter {
       case 'unbind': this.require(changeable); return c.unbind();
       case 'filters': this.require(bound && clean && ['all', 'mine'].includes(p.assignment)); return c.filter(p);
       case 'view': this.require(bound && clean && ['list', 'board'].includes(p.mode)); return c.setView(p.mode);
-      case 'board_page': this.require(bound && s.view === 'board' && rows(s.board?.columns).some(column => column.key === p.status_key && (!p.next || column.next_cursor && !column.capacity_reached))); return c.boardPage(p.status_key, p.next);
+      case 'board_page': this.require(bound && rows(s.board?.columns).some(column => column.key === p.status_key && (!p.next || column.next_cursor && !column.capacity_reached))); return c.boardPage(p.status_key, p.next);
       case 'assignees': this.require(bound && (!p.next || s.assignee_cursor)); return c.loadAssignees(p.next);
       case 'labels': this.require(bound && (!p.next || s.label_cursor)); return c.loadLabels(p.next);
       case 'set_locale': this.require(bound && clean); return c.setLocale(p.locale);
       case 'quick_update': { const subject = c.loadedIssue(p.identifier); this.require(bound && clean && subject && strings(subject.allowed_actions).includes('update') && p.change.status_key !== 'done' && (p.change.assignee_principal_id == null || rows(s.assignees).some(row => row.principal_id === p.change.assignee_principal_id))); return c.quickUpdate(p.identifier, p.change); }
-      case 'page': this.require(bound && s.view === 'list' && (!p.next || nextCursor(s.page) && !s.page?.capacity_reached)); return c.refresh(p.next ? nextCursor(s.page) : undefined);
-      case 'open_issue': this.require(bound && (s.issue?.identifier === p.identifier || (clean && [...items(s.page), ...rows(s.board?.columns).flatMap(column => rows(column.items))].some(row => row.identifier === p.identifier)))); return c.openIssue(p.identifier);
+      case 'page': this.require(bound && s.view === 'list' && !p.next); return c.refresh();
+      case 'open_issue': this.require(bound && (s.issue?.identifier === p.identifier || (clean && [...items(s.page), ...rows(s.board?.columns).flatMap(column => rows(column.items))].some(row => row.identifier === p.identifier || row.hierarchy?.parents?.some(parent => parent.identifier === p.identifier && parent.project_id === s.binding.project.id))))); return c.openIssue(p.identifier);
       case 'issue_back': this.require(currentIssue && clean); return c.patch({ issue: null });
       case 'comments': this.require(currentIssue && s.comments_has_more); return c.comments();
       case 'mutate': this.require(writer && (p.operation !== 'complete' || s.issue.status.key !== 'done') && p.change.status_key !== 'done');

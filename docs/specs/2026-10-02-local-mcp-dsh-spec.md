@@ -71,6 +71,8 @@ DSH 使用独立 filesystem provider，保留其它 providers；官方 MCP clien
 
 ## 通用本地 Web 服务与打开模式
 
+2026-10-04 的[导航与 Issue 层级增量](2026-10-04-issue-hierarchy-navigation-spec.md)覆盖下述普通视图闲置删除、无 view 时退出及分组列表展示条款；固定 8 小时上限和实时身份 / 权限核验继续有效。
+
 保留本地 stdio MCP，增加按需回环服务；Worker 仍托管 REST 与线上 Web，远程 Worker MCP/OAuth 是独立后续设计。MCP 降低部分宿主 shell 沙盒访问私有状态的摩擦，但实际运行用户、OS/ACL、容器及宿主限制仍适用，不保证所有 Agent 沙盒可访问同一 home。
 
 服务只监听确切 `127.0.0.1` 的系统分配随机端口，Node `>=22.12.0`，启动先核验固定工件 release/protocol/files 摘要，安装或启动不编译/下载。服务在当前进程内持有，不 fork 全局 daemon。单次随机 `/launch/<code>` 能力60秒有效，专用交付换为干净 `/view/<UUID>/` 地址和每 view 独立 HttpOnly/SameSite=Strict Cookie，Cookie路径与该view API一致，不覆盖其它视图。普通视图30分钟无请求后由服务端拒绝。Cookie仅存活至服务固定8小时截止，原pending视图可在普通超时后核实原操作，新视图不能继承；无未确定写入时闲置15分钟关闭，服务最长8小时。

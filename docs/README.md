@@ -52,6 +52,7 @@
 | Owner 设备网页批准/撤销、已有本地身份切换与恢复 | [网页与身份切换](specs/2026-09-28-owner-device-web-identity-switch-spec.md) |
 | 已登录参与者网页接受普通邀请、Bearer 本人 Passkey 管理 | [参与者邀请与 Passkey](specs/2026-09-28-participant-invitation-passkey-parity-spec.md) |
 | 参与者 Web 项目切换与 Session 范围 | [参与者项目切换](specs/2026-09-19-participant-project-switching-spec.md) |
+| 首页账户返回、本地闲置恢复、状态分组、父子进度与防环 | [导航与 Issue 层级](specs/2026-10-04-issue-hierarchy-navigation-spec.md) |
 | Web 活动续期、绝对到期、多标签页和文字草稿恢复 | [Web Session 续期](specs/2026-10-01-web-session-renewal-spec.md) |
 
 ### 增量合同：公开内容与发行

@@ -7450,7 +7450,7 @@
           "relations"
         ],
         "summary": "Create Issue Relation",
-        "description": "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators. Atomic cfKanban idempotent operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators. Create one relation with both endpoint Issue versions, current writer access and idempotency. Parent means source child to target parent; multiple parents remain allowed. Parent insertion atomically rejects a cycle and fails closed beyond 1000 distinct ancestors, including the target. Validation follows all undeleted parent edges in the Workspace, including inaccessible or suspended intermediate endpoints; no path or hidden endpoint is disclosed. Historical cycles are preserved.",
         "security": [
           {
             "BearerCredential": []
@@ -7527,6 +7527,22 @@
                 "$ref": "#/components/schemas/CreateRelationRequest"
               }
             }
+          }
+        },
+        "x-cfkanban-parent-validation": {
+          "ancestor_limit": 1000,
+          "includes_target": true,
+          "cycle_error": {
+            "code": "RELATION_CYCLE",
+            "status": 409,
+            "recovery": "choose_different_parent",
+            "retryable": false
+          },
+          "budget_error": {
+            "code": "RELATION_GRAPH_TOO_LARGE",
+            "status": 400,
+            "recovery": "simplify_parent_graph",
+            "retryable": false
           }
         }
       }
@@ -7707,7 +7723,7 @@
           "relations"
         ],
         "summary": "Restore Relation",
-        "description": "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "Deployment Owner or effective writer access for both Relation endpoint Projects, including scoped administrators. Restore one deleted relation with relation and both endpoint CAS, current writer access and idempotency. Parent restoration performs the same atomic cycle and 1000-ancestor budget checks as creation. A cycle returns 409 RELATION_CYCLE with choose_different_parent; excessive scope returns 400 RELATION_GRAPH_TOO_LARGE with simplify_parent_graph and only the fixed max_ancestors=1000. Both are non-retryable.",
         "security": [
           {
             "BearerCredential": []
@@ -7783,6 +7799,22 @@
                 "$ref": "#/components/schemas/RelationVersionsRequest"
               }
             }
+          }
+        },
+        "x-cfkanban-parent-validation": {
+          "ancestor_limit": 1000,
+          "includes_target": true,
+          "cycle_error": {
+            "code": "RELATION_CYCLE",
+            "status": 409,
+            "recovery": "choose_different_parent",
+            "retryable": false
+          },
+          "budget_error": {
+            "code": "RELATION_GRAPH_TOO_LARGE",
+            "status": 400,
+            "recovery": "simplify_parent_graph",
+            "retryable": false
           }
         }
       }
@@ -15465,6 +15497,100 @@
         },
         "additionalProperties": false
       },
+      "IssueParentSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "project_id",
+          "status",
+          "title",
+          "workspace_id"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "status": {
+            "type": "object",
+            "required": [
+              "display_name",
+              "key"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "key": {
+                "$ref": "#/components/schemas/StatusKey"
+              }
+            },
+            "additionalProperties": false
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "IssueHierarchy": {
+        "type": "object",
+        "description": "Optional read projection of visible, active direct parent relations. The relation direction is source child to target parent; multiple parents and historical cycles are preserved. New or restored cycle-closing parent relations are rejected atomically. Counts do not inherit the Issue list filters.",
+        "required": [
+          "children",
+          "parent_count",
+          "parents"
+        ],
+        "properties": {
+          "children": {
+            "type": "object",
+            "required": [
+              "done",
+              "total"
+            ],
+            "properties": {
+              "done": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "description": "Visible direct children whose status is done; canceled is not done."
+              },
+              "total": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "description": "All visible, active direct children."
+              }
+            },
+            "additionalProperties": false
+          },
+          "parent_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "description": "Total visible, active direct parents, including summaries omitted by the ten-parent bound."
+          },
+          "parents": {
+            "type": "array",
+            "maxItems": 10,
+            "description": "First ten visible direct parents ordered by their stable Issue number. Further parents can be read through the existing Issue relations endpoint.",
+            "items": {
+              "$ref": "#/components/schemas/IssueParentSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "IssueSummary": {
         "type": "object",
         "required": [
@@ -15525,6 +15651,9 @@
                 "type": "null"
               }
             ]
+          },
+          "hierarchy": {
+            "$ref": "#/components/schemas/IssueHierarchy"
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -15691,6 +15820,9 @@
                 "type": "null"
               }
             ]
+          },
+          "hierarchy": {
+            "$ref": "#/components/schemas/IssueHierarchy"
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -15973,6 +16105,9 @@
               }
             ]
           },
+          "hierarchy": {
+            "$ref": "#/components/schemas/IssueHierarchy"
+          },
           "id": {
             "$ref": "#/components/schemas/Uuid"
           },
@@ -16191,6 +16326,9 @@
                 "type": "null"
               }
             ]
+          },
+          "hierarchy": {
+            "$ref": "#/components/schemas/IssueHierarchy"
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"
@@ -16718,6 +16856,9 @@
                   }
                 ]
               },
+              "hierarchy": {
+                "$ref": "#/components/schemas/IssueHierarchy"
+              },
               "id": {
                 "$ref": "#/components/schemas/Uuid"
               },
@@ -17048,6 +17189,9 @@
                 "type": "null"
               }
             ]
+          },
+          "hierarchy": {
+            "$ref": "#/components/schemas/IssueHierarchy"
           },
           "id": {
             "$ref": "#/components/schemas/Uuid"

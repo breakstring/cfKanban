@@ -15,6 +15,72 @@ function element(value = '') {
     addEventListener: (event, handler) => listeners.set(event, handler), remove() {},
   };
 }
+
+test('parent keeps BFCache views and releases only the current page receipt with same-origin keepalive', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'cfkanban-parent-release-'));
+  let mounted;
+  try {
+    const script = path.join(directory, 'browser.mjs');
+    await build({ entryPoints: [new URL('../src/browser.mjs', import.meta.url).pathname], outfile: script, bundle: true, platform: 'browser', format: 'esm', target: 'es2022', logLevel: 'silent' });
+    const { mountLocalWorkbench } = await import(pathToFileURL(script));
+    const pageId = randomUUID();
+    const doc = parentDocument({ csrf: 'synthetic-csrf', page_id: pageId, embeddedHtml: '<html></html>', locale: 'en' });
+    const listeners = new Map();
+    const requests = [];
+    mounted = await mountLocalWorkbench({ document: doc, window: { addEventListener: (name, listener) => listeners.set(name, listener) }, fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      return Response.json({ ok: true, value: { ok: true, data: url.endsWith('connections') ? { candidates: [] } : { status: 'missing', targets: [] } } });
+    } });
+    const before = requests.length;
+    listeners.get('pagehide')({ persisted: true });
+    assert.equal(requests.length, before);
+    await mounted.controller.loadCandidates();
+    assert.equal(requests.length, before + 1);
+    listeners.get('pagehide')({ persisted: false });
+    const release = requests.at(-1);
+    assert.equal(release.url, './api/view-release');
+    assert.equal(release.options.keepalive, true);
+    assert.equal(release.options.credentials, 'same-origin');
+    assert.equal(release.options.headers['x-cfkanban-csrf'], 'synthetic-csrf');
+    assert.deepEqual(JSON.parse(release.options.body), { protocol: 1, input: { page_id: pageId } });
+    assert.equal(release.options.signal, undefined, 'client disposal must not abort the release delivery');
+    listeners.get('pagehide')({ persisted: false });
+    assert.equal(requests.filter(request => request.url.endsWith('view-release')).length, 1);
+  } finally { mounted?.dispose(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('expired or closed local service reports how to reopen without automatically replaying a read or pending write', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'cfkanban-parent-expiry-'));
+  try {
+    const script = path.join(directory, 'browser.mjs');
+    await build({ entryPoints: [new URL('../src/browser.mjs', import.meta.url).pathname], outfile: script, bundle: true, platform: 'browser', format: 'esm', target: 'es2022', logLevel: 'silent' });
+    const { mountLocalWorkbench } = await import(pathToFileURL(script));
+    for (const code of ['LOCAL_SERVICE_EXPIRED', 'LOCAL_AUTH_REQUIRED', 'disconnected']) {
+      let failure = false;
+      const requests = [];
+      const doc = parentDocument({ csrf: 'synthetic-csrf', page_id: randomUUID(), embeddedHtml: '<html></html>', locale: 'zh-CN' });
+      const mounted = await mountLocalWorkbench({ document: doc, window: { addEventListener() {} }, fetchImpl: async url => {
+        requests.push(url);
+        if (failure) {
+          if (code === 'disconnected') throw new TypeError('Synthetic closed socket');
+          return Response.json({ ok: false, error: { code } }, { status: code === 'LOCAL_AUTH_REQUIRED' ? 401 : 410 });
+        }
+        return Response.json({ ok: true, value: { ok: true, data: url.endsWith('connections') ? { candidates: [] } : { status: 'missing', targets: [] } } });
+      } });
+      try {
+        const original = { binding_id: randomUUID(), identifier: 'CFK-123', operation: 'comment', expected_version: 1, change: { body: 'Synthetic retained draft' }, idempotency_key: randomUUID() };
+        mounted.controller.patch({ pending: original });
+        failure = true;
+        await mounted.controller.request('detail', { binding_id: original.binding_id, identifier: original.identifier });
+        await new Promise(resolve => setTimeout(resolve, 125));
+        assert.match(doc.elements.get('status').textContent, /让 Agent 重新打开；未确定操作须先核实/);
+        assert.deepEqual(mounted.controller.getSnapshot().pending, original);
+        assert.equal(requests.filter(url => url === './api/detail').length, 1);
+        assert.equal(requests.some(url => /\/(mutate|recover)$/.test(url)), false);
+      } finally { mounted.dispose(); }
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 function parentDocument(config) {
   const elements = new Map(['workbench', 'status', 'online', 'close'].map(id => [id, element()]));
   elements.set('configuration', element(JSON.stringify(config)));

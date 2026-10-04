@@ -1,3 +1,4 @@
+import type { IssueHierarchy } from "./lib/issue-hierarchy";
 export type Locale = "en" | "zh-CN";
 export type ProjectRole = "reader" | "writer" | "owner";
 export type StatusKey = "backlog" | "todo" | "in_progress" | "done" | "canceled";
@@ -110,6 +111,7 @@ export interface ProjectStatusResource extends IssueStatus {
 }
 
 export interface IssueSummary {
+  hierarchy?: IssueHierarchy;
   assignee: null | {
     available: boolean;
     display_name: string;

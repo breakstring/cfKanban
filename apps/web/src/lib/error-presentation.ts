@@ -61,6 +61,8 @@ function recoveryAction(error: PresentableApiProblem, selectedLocale: SupportedL
   const { body, retryAfter } = error;
   const chinese = selectedLocale === "zh-CN";
   if (body.recovery === "choose_another_display_name") return chinese ? "更换显示名称后重新保存" : "Choose another display name and save again";
+  if (body.recovery === "choose_different_parent") return chinese ? "更换父事项以避免循环" : "Choose a different parent";
+  if (body.recovery === "simplify_parent_graph") return chinese ? "简化父子关系后重试" : "Simplify parent relations before retrying";
   if (body.recovery === "reauthenticate") return chinese ? "重新登录" : "Sign in again";
   if (body.recovery === "refresh_resource") {
     return chinese ? "刷新远端事实后重新决定" : "Refresh the remote facts before deciding again";

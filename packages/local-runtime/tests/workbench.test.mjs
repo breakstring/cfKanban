@@ -110,18 +110,30 @@ test('standalone directory scope binds without a fabricated Session and rejects 
   f.controller.dispose(); f.bridge.dispose();
 });
 
-test('board reads only explicit bounded columns and paginates one column with its retained cursor', async () => {
-  const f = fixture(); await f.controller.bootstrap();
-  const pages = f.calls.filter(row => row.name === 'cfkanban_issues_list');
-  assert.equal(pages.length, 5);
-  assert.deepEqual(pages.map(row => row.args.status[0]), STATUSES);
-  assert.ok(pages.every(row => row.args.limit === 25 && row.args.project_ids.length === 1 && row.args.project_ids[0] === f.ids.project_id));
-  await f.controller.boardPage('todo', true);
-  const next = f.calls.filter(row => row.name === 'cfkanban_issues_list').at(-1);
-  assert.equal(next.args.cursor, 'private-column-cursor');
-  assert.deepEqual(next.args.status, ['todo']);
-  assert.equal((await f.call('board', { binding_id: f.controller.state.binding.binding_id, cursor: 'unscoped' })).error.code, 'PANEL_INVALID_INPUT');
-  f.controller.dispose(); f.bridge.dispose();
+test('list and board read explicit bounded status groups and paginate one group with its retained cursor', async () => {
+  for (const view of ['list', 'board']) {
+    const f = fixture();
+    try {
+      await f.controller.bootstrap(null, { view });
+      const pages = f.calls.filter(row => row.name === 'cfkanban_issues_list');
+      assert.equal(f.controller.state.view, view);
+      assert.equal(f.controller.state.page, null);
+      assert.equal(pages.length, 5);
+      assert.deepEqual(pages.map(row => row.args.status[0]), STATUSES);
+      assert.ok(pages.every(row => row.args.limit === 25 && row.args.project_ids.length === 1 && row.args.project_ids[0] === f.ids.project_id));
+      const { WorkbenchAdapter } = await adapterExports();
+      const adapter = new WorkbenchAdapter(f.controller);
+      try {
+        assert.equal((await adapter.receive(action('board_page', { status_key: 'todo', next: true }))).ok, true);
+        const next = f.calls.filter(row => row.name === 'cfkanban_issues_list').at(-1);
+        assert.equal(next.args.cursor, 'private-column-cursor');
+        assert.deepEqual(next.args.status, ['todo']);
+        assert.equal(adapter.snapshotMessage().state.board.columns.find(column => column.key === 'todo').has_more, false);
+        assert.doesNotMatch(JSON.stringify(adapter.snapshotMessage()), /private-column-cursor/);
+        assert.equal((await f.call('board', { binding_id: f.controller.state.binding.binding_id, cursor: 'unscoped' })).error.code, 'PANEL_INVALID_INPUT');
+      } finally { adapter.dispose(); }
+    } finally { f.controller.dispose(); f.bridge.dispose(); }
+  }
 });
 
 test('quick edits use the displayed row CAS, exact loaded assignees and the original recovery key', async () => {
@@ -302,27 +314,32 @@ test('missing matching recommendations keep manual selection in the explicit ins
   }
 });
 
-test('board status filters query one matching column and clearing them restores all bounded columns', async () => {
-  const f = fixture(); await f.controller.bootstrap();
-  let before = f.calls.length;
-  await f.controller.filter({ assignment: 'mine', status: 'todo', priority: 'high' });
-  const filtered = f.calls.slice(before).filter(row => row.name === 'cfkanban_issues_list');
-  assert.equal(filtered.length, 1);
-  assert.deepEqual(filtered[0].args.status, ['todo']);
-  assert.deepEqual(filtered[0].args.priority, ['high']);
-  assert.deepEqual(filtered[0].args.assignee, [f.ids.principal_id]);
-  assert.deepEqual(f.controller.state.board.columns.map(row => row.key), ['todo']);
-  await f.controller.boardPage('todo', true);
-  assert.equal(f.calls.filter(row => row.name === 'cfkanban_issues_list').at(-1).args.cursor, 'private-column-cursor');
-  assert.deepEqual(f.controller.state.board.columns.map(row => row.key), ['todo']);
-  before = f.calls.length;
-  await f.controller.filter({ assignment: 'all', status: '', priority: '' });
-  const cleared = f.calls.slice(before).filter(row => row.name === 'cfkanban_issues_list');
-  assert.equal(cleared.length, 5);
-  assert.deepEqual(cleared.map(row => row.args.status[0]), STATUSES);
-  assert.deepEqual(f.controller.state.board.columns.map(row => row.key), STATUSES);
-  assert.ok(cleared.every(row => row.args.limit === 25 && row.args.cursor === undefined));
-  f.controller.dispose(); f.bridge.dispose();
+test('list and board status filters query one matching group and clearing them restores all bounded groups', async () => {
+  for (const view of ['list', 'board']) {
+    const f = fixture();
+    try {
+      await f.controller.bootstrap(null, { view });
+      let before = f.calls.length;
+      await f.controller.filter({ assignment: 'mine', status: 'todo', priority: 'high' });
+      const filtered = f.calls.slice(before).filter(row => row.name === 'cfkanban_issues_list');
+      assert.equal(filtered.length, 1);
+      assert.deepEqual(filtered[0].args.status, ['todo']);
+      assert.deepEqual(filtered[0].args.priority, ['high']);
+      assert.deepEqual(filtered[0].args.assignee, [f.ids.principal_id]);
+      assert.deepEqual(f.controller.state.board.columns.map(row => row.key), ['todo']);
+      await f.controller.boardPage('todo', true);
+      assert.equal(f.calls.filter(row => row.name === 'cfkanban_issues_list').at(-1).args.cursor, 'private-column-cursor');
+      assert.deepEqual(f.controller.state.board.columns.map(row => row.key), ['todo']);
+      before = f.calls.length;
+      await f.controller.filter({ assignment: 'all', status: '', priority: '' });
+      const cleared = f.calls.slice(before).filter(row => row.name === 'cfkanban_issues_list');
+      assert.equal(cleared.length, 5);
+      assert.deepEqual(cleared.map(row => row.args.status[0]), STATUSES);
+      assert.deepEqual(f.controller.state.board.columns.map(row => row.key), STATUSES);
+      assert.equal(f.controller.state.page, null);
+      assert.ok(cleared.every(row => row.args.limit === 25 && row.args.cursor === undefined));
+    } finally { f.controller.dispose(); f.bridge.dispose(); }
+  }
 });
 
 test('uncertain quick edit receipts survive read eviction and replay without a new operation', async () => {
@@ -431,150 +448,213 @@ test('checkpoint guard includes successful writes awaiting readback and refuses 
   multiple.controller.dispose(); multiple.bridge.dispose();
 });
 
-test('column pagination appends unique newer summaries once per cursor and preserves other columns', async () => {
-  let finish;
-  const f = paginationController(async (_endpoint, input) => input.cursor ? await new Promise(resolve => { finish = resolve; }) : ok({ columns: [
-    { key: 'todo', items: [paginationRow(1, 'todo', 3), paginationRow(2)], next_cursor: 'private-next' },
-    { key: 'done', items: [paginationRow(9, 'done')], next_cursor: null },
-  ] }));
-  try {
-    await f.controller.refresh();
-    const done = f.controller.state.board.columns[1];
-    const first = f.controller.boardPage('todo', true);
-    const duplicate = f.controller.boardPage('todo', true);
-    assert.equal(f.calls.length, 2);
-    finish(ok({ columns: [{ key: 'todo', items: [paginationRow(1, 'todo', 2), paginationRow(2, 'todo', 5), paginationRow(3)], next_cursor: 'private-next' }] }));
-    await Promise.all([first, duplicate]);
-    const todo = f.controller.state.board.columns[0];
-    assert.deepEqual(todo.items.map(row => [row.identifier, row.version]), [['CFK-1', 3], ['CFK-2', 5], ['CFK-3', 1]]);
-    assert.equal(todo.items.some(row => Object.hasOwn(row, 'body')), false);
-    assert.equal(f.controller.state.board.columns[1], done);
-    await f.controller.boardPage('todo', true);
-    assert.equal(f.calls.length, 2);
-    assert.equal(f.controller.state.error.code, 'PANEL_PAGINATION_STALLED');
-  } finally { f.controller.dispose(); }
+test('group pagination appends unique summaries once per cursor and refreshes same-version child progress', async () => {
+  for (const view of ['list', 'board']) {
+    let finish;
+    const hierarchy = done => ({ parents: [], parent_count: 0, children: { total: 2, done } });
+    const f = paginationController(async (_endpoint, input) => input.cursor ? await new Promise(resolve => { finish = resolve; }) : ok({ columns: [
+      { key: 'todo', items: [{ ...paginationRow(1, 'todo', 3), hierarchy: hierarchy(0) }, paginationRow(2), { ...paginationRow(4, 'todo', 7), hierarchy: hierarchy(0) }], next_cursor: 'private-next' },
+      { key: 'done', items: [paginationRow(9, 'done')], next_cursor: null },
+    ] }), view);
+    try {
+      await f.controller.refresh();
+      const done = f.controller.state.board.columns[1];
+      const first = f.controller.boardPage('todo', true);
+      const duplicate = f.controller.boardPage('todo', true);
+      assert.equal(f.calls.length, 2);
+      finish(ok({ columns: [{ key: 'todo', items: [{ ...paginationRow(1, 'todo', 2), hierarchy: hierarchy(2) }, paginationRow(2, 'todo', 5), paginationRow(3), { ...paginationRow(4, 'todo', 7), hierarchy: hierarchy(1) }], next_cursor: 'private-next' }] }));
+      await Promise.all([first, duplicate]);
+      const todo = f.controller.state.board.columns[0];
+      assert.deepEqual(todo.items.map(row => [row.identifier, row.version]), [['CFK-1', 3], ['CFK-2', 5], ['CFK-4', 7], ['CFK-3', 1]]);
+      assert.deepEqual(todo.items.find(row => row.identifier === 'CFK-1').hierarchy, hierarchy(0));
+      assert.deepEqual(todo.items.find(row => row.identifier === 'CFK-4').hierarchy, hierarchy(1));
+      assert.equal(todo.items.some(row => Object.hasOwn(row, 'body')), false);
+      assert.equal(f.controller.state.board.columns[1], done);
+      assert.equal(f.controller.state.page, null);
+      assert.ok(f.calls.every(call => call.endpoint === 'board'));
+      await f.controller.boardPage('todo', true);
+      assert.equal(f.calls.length, 2);
+      assert.equal(f.controller.state.error.code, 'PANEL_PAGINATION_STALLED');
+    } finally { f.controller.dispose(); }
+  }
 });
 
-test('different column pages remain current concurrently and a failed page retains its cursor for retry', async () => {
-  const finishes = new Map();
-  let fail = true;
-  const f = paginationController(async (_endpoint, input) => input.cursor ? input.status_key === 'todo' && fail ? (fail = false, { ok: false, error: { code: 'PLATFORM_UNAVAILABLE' } }) : await new Promise(resolve => { finishes.set(input.status_key, resolve); }) : ok({ columns: ['todo', 'done'].map((key, index) => ({ key, items: [paginationRow(index + 1, key)], next_cursor: `private-${key}` })) }));
-  try {
-    await f.controller.refresh();
-    const original = f.controller.state.board.columns[0];
-    assert.equal((await f.controller.boardPage('todo', true)).ok, false);
-    assert.equal(f.controller.state.board.columns[0], original);
-    const todo = f.controller.boardPage('todo', true);
-    const done = f.controller.boardPage('done', true);
-    finishes.get('done')(ok({ columns: [{ key: 'done', items: [paginationRow(4, 'done')], next_cursor: null }] }));
-    await done;
-    finishes.get('todo')(ok({ columns: [{ key: 'todo', items: [paginationRow(3)], next_cursor: null }] }));
-    await todo;
-    assert.deepEqual(f.controller.state.board.columns.map(column => column.items.map(row => row.identifier)), [['CFK-1', 'CFK-3'], ['CFK-2', 'CFK-4']]);
-    assert.equal(f.calls.filter(call => call.input.cursor === 'private-todo').length, 2);
-  } finally { f.controller.dispose(); }
+test('different status groups remain current concurrently and a failed page retains its cursor for retry', async () => {
+  for (const view of ['list', 'board']) {
+    const finishes = new Map();
+    let fail = true;
+    const f = paginationController(async (_endpoint, input) => input.cursor ? input.status_key === 'todo' && fail ? (fail = false, { ok: false, error: { code: 'PLATFORM_UNAVAILABLE' } }) : await new Promise(resolve => { finishes.set(input.status_key, resolve); }) : ok({ columns: ['todo', 'done'].map((key, index) => ({ key, items: [paginationRow(index + 1, key)], next_cursor: `private-${key}` })) }), view);
+    try {
+      await f.controller.refresh();
+      const original = f.controller.state.board.columns[0];
+      assert.equal((await f.controller.boardPage('todo', true)).ok, false);
+      assert.equal(f.controller.state.board.columns[0], original);
+      assert.equal(original.next_cursor, 'private-todo');
+      const todo = f.controller.boardPage('todo', true);
+      const done = f.controller.boardPage('done', true);
+      finishes.get('done')(ok({ columns: [{ key: 'done', items: [paginationRow(4, 'done')], next_cursor: null }] }));
+      assert.equal((await done).ok, true);
+      assert.deepEqual(f.controller.state.board.columns.map(column => column.items.map(row => row.identifier)), [['CFK-1'], ['CFK-2', 'CFK-4']]);
+      finishes.get('todo')(ok({ columns: [{ key: 'todo', items: [paginationRow(3)], next_cursor: null }] }));
+      assert.equal((await todo).ok, true);
+      assert.deepEqual(f.controller.state.board.columns.map(column => column.items.map(row => row.identifier)), [['CFK-1', 'CFK-3'], ['CFK-2', 'CFK-4']]);
+      assert.equal(f.calls.filter(call => call.input.cursor === 'private-todo').length, 2);
+      assert.equal(f.calls.filter(call => call.input.cursor === 'private-done').length, 1);
+    } finally { f.controller.dispose(); }
+  }
 });
 
 test('collection epochs discard pages and errors after binding, filter, view or refresh changes', async () => {
-  for (const change of ['binding', 'filter', 'view', 'refresh']) {
+  for (const view of ['list', 'board']) for (const change of ['binding', 'filter', 'view', 'refresh']) {
     let finish;
     let generation = 1;
-    const f = paginationController(async (endpoint, input) => {
+    const f = paginationController(async (_endpoint, input) => {
       if (input.cursor) return await new Promise(resolve => { finish = resolve; });
-      if (endpoint === 'list') return ok({ items: [paginationRow(90)], next_cursor: null });
       return ok({ columns: [{ key: input.status_key ?? 'todo', items: [paginationRow(generation, input.status_key ?? 'todo')], next_cursor: 'private-old' }] });
-    });
+    }, view);
     try {
       await f.controller.refresh();
       const old = f.controller.boardPage('todo', true);
       generation = 10;
       if (change === 'binding') { f.controller.patch({ binding: { ...f.binding, binding_id: randomUUID() }, page: null, board: null }); await f.controller.refresh(); }
       if (change === 'filter') await f.controller.filter({ assignment: 'all', status: 'done', priority: '' });
-      if (change === 'view') await f.controller.setView('list');
+      if (change === 'view') await f.controller.setView(view === 'list' ? 'board' : 'list');
       if (change === 'refresh') await f.controller.refresh();
       const state = { board: f.controller.state.board, page: f.controller.state.page };
       finish(change === 'filter' ? { ok: false, error: { code: 'PLATFORM_UNAVAILABLE' } } : ok({ columns: [{ key: 'todo', items: [paginationRow(99)], next_cursor: null }] }));
       await old;
-      assert.equal(f.controller.state.board, state.board, change);
-      assert.equal(f.controller.state.page, state.page, change);
-      assert.equal(f.controller.state.error, null, change);
+      assert.equal(f.controller.state.board, state.board, `${view}:${change}`);
+      assert.equal(f.controller.state.page, state.page, `${view}:${change}`);
+      assert.equal(f.controller.state.error, null, `${view}:${change}`);
     } finally { f.controller.dispose(); }
   }
 });
 
-test('list pages append and retain successful summaries through a failed next read', async () => {
-  let fail = true;
-  const f = paginationController(async (_endpoint, input) => !input.cursor ? ok({ items: [paginationRow(1, 'todo', 4)], next_cursor: 'private-list' }) : fail ? (fail = false, { ok: false, error: { code: 'PLATFORM_UNAVAILABLE' } }) : ok({ items: [paginationRow(1, 'todo', 3), paginationRow(2)], next_cursor: null }), 'list');
+test('list groups isolate identical opaque cursors and reject an unscoped next-page action', async () => {
+  const finishes = new Map();
+  const f = paginationController(async (_endpoint, input) => input.cursor ? await new Promise(resolve => { finishes.set(input.status_key, resolve); }) : ok({ columns: ['todo', 'done'].map((key, index) => ({ key, items: [paginationRow(index + 1, key)], next_cursor: 'private-shared' })) }), 'list');
+  const { WorkbenchAdapter } = await adapterExports();
+  const adapter = new WorkbenchAdapter(f.controller);
   try {
     await f.controller.refresh();
-    const original = f.controller.state.page;
-    await f.controller.refresh('private-list');
-    assert.equal(f.controller.state.page, original);
-    await f.controller.refresh('private-list');
-    assert.deepEqual(f.controller.state.page.items.map(row => [row.identifier, row.version]), [['CFK-1', 4], ['CFK-2', 1]]);
-    assert.equal(f.controller.state.page.next_cursor, null);
-    assert.equal(f.controller.state.page.items.some(row => Object.hasOwn(row, 'body')), false);
-  } finally { f.controller.dispose(); }
+    assert.equal(adapter.snapshotMessage().state.page, null);
+    assert.deepEqual(adapter.snapshotMessage().state.board.columns.map(column => column.has_more), [true, true]);
+    assert.equal((await adapter.receive(action('page', { next: true }))).error.code, 'PANEL_INVALID_INPUT');
+    assert.equal(f.calls.length, 1);
+    const todo = f.controller.boardPage('todo', true);
+    const done = f.controller.boardPage('done', true);
+    assert.deepEqual(f.calls.slice(1).map(call => [call.endpoint, call.input.status_key, call.input.cursor]), [['board', 'todo', 'private-shared'], ['board', 'done', 'private-shared']]);
+    finishes.get('todo')(ok({ columns: [{ key: 'todo', items: [paginationRow(3)], next_cursor: null }] }));
+    await todo;
+    assert.deepEqual(adapter.snapshotMessage().state.board.columns.map(column => column.has_more), [false, true]);
+    finishes.get('done')(ok({ columns: [{ key: 'done', items: [paginationRow(4, 'done')], next_cursor: null }] }));
+    await done;
+    assert.deepEqual(f.controller.state.board.columns.map(column => column.items.map(row => row.identifier)), [['CFK-1', 'CFK-3'], ['CFK-2', 'CFK-4']]);
+    assert.deepEqual(adapter.snapshotMessage().state.board.columns.map(column => column.has_more), [false, false]);
+    assert.doesNotMatch(JSON.stringify(adapter.snapshotMessage()), /private-shared|Never retain a collection body/);
+  } finally { adapter.dispose(); f.controller.dispose(); }
 });
 
-test('row and successful-page limits explicitly stop continuation without pretending the remote cursor ended', async () => {
+test('group row and successful-page limits retain the remote cursor and leave other groups available', async () => {
   for (const view of ['list', 'board']) {
     let page = 0;
-    const f = paginationController(async () => {
-      const rows = Array.from({ length: 25 }, (_value, index) => paginationRow(++page * 100 + index));
+    const f = paginationController(async (_endpoint, input) => {
+      if (input.status_key === 'done') return ok({ columns: [{ key: 'done', items: [paginationRow(90001, 'done')], next_cursor: null }] });
+      const generation = ++page;
+      const rows = Array.from({ length: 25 }, (_value, index) => paginationRow(generation * 100 + index));
       const data = { items: rows, next_cursor: `private-${page}` };
-      return ok(view === 'list' ? data : { columns: [{ key: 'todo', ...data }] });
+      return ok({ columns: [{ key: 'todo', ...data }, ...(!input.status_key ? [{ key: 'done', items: [paginationRow(90000, 'done')], next_cursor: 'private-done-first' }] : [])] });
     }, view);
     try {
       await f.controller.refresh();
-      for (let index = 1; index < ISSUE_COLLECTION_LIMIT / 25; index++) {
-        if (view === 'list') await f.controller.refresh(f.controller.state.page.next_cursor);
-        else await f.controller.boardPage('todo', true);
-      }
-      const collection = view === 'list' ? f.controller.state.page : f.controller.state.board.columns[0];
+      for (let index = 1; index < ISSUE_COLLECTION_LIMIT / 25; index++) await f.controller.boardPage('todo', true);
+      const collection = f.controller.state.board.columns[0];
       assert.equal(collection.items.length, ISSUE_COLLECTION_LIMIT);
       assert.equal(collection.capacity_reached, true);
       assert.ok(collection.next_cursor);
       const before = f.calls.length;
-      if (view === 'list') await f.controller.refresh(collection.next_cursor); else await f.controller.boardPage('todo', true);
+      await f.controller.boardPage('todo', true);
       assert.equal(f.calls.length, before);
+      assert.equal((await f.controller.boardPage('done', true)).ok, true);
+      assert.equal(f.calls.length, before + 1);
+      assert.equal(f.calls.at(-1).input.cursor, 'private-done-first');
+      assert.equal(f.controller.state.board.columns[0], collection);
+      assert.deepEqual(f.controller.state.board.columns[1].items.map(row => row.identifier), ['CFK-90000', 'CFK-90001']);
     } finally { f.controller.dispose(); }
   }
-  let page = 0;
-  const repeated = paginationController(async () => ok({ items: [paginationRow(1, 'todo', ++page)], next_cursor: `private-${page}` }), 'list');
-  try {
-    await repeated.controller.refresh();
-    for (let index = 1; index < ISSUE_COLLECTION_LIMIT / 25; index++) await repeated.controller.refresh(repeated.controller.state.page.next_cursor);
-    assert.equal(repeated.controller.state.page.items.length, 1);
-    assert.equal(repeated.controller.state.page.capacity_reached, true);
-    await repeated.controller.refresh(repeated.controller.state.page.next_cursor);
-    assert.equal(repeated.calls.length, ISSUE_COLLECTION_LIMIT / 25);
-  } finally { repeated.controller.dispose(); }
+  for (const view of ['list', 'board']) {
+    let page = 0;
+    const repeated = paginationController(async () => ok({ columns: [{ key: 'todo', items: [paginationRow(1, 'todo', ++page)], next_cursor: `private-${page}` }] }), view);
+    try {
+      await repeated.controller.refresh();
+      for (let index = 1; index < ISSUE_COLLECTION_LIMIT / 25; index++) await repeated.controller.boardPage('todo', true);
+      assert.equal(repeated.controller.state.board.columns[0].items.length, 1);
+      assert.equal(repeated.controller.state.board.columns[0].capacity_reached, true);
+      assert.ok(repeated.controller.state.board.columns[0].next_cursor);
+      await repeated.controller.boardPage('todo', true);
+      assert.equal(repeated.calls.length, ISSUE_COLLECTION_LIMIT / 25);
+    } finally { repeated.controller.dispose(); }
+  }
 });
 
-test('full projected snapshot budget rejects an append while preserving original rows and its private cursor', async () => {
-  const f = paginationController(async (_endpoint, input) => ok({ columns: [{ key: 'todo', items: Array.from({ length: 25 }, (_value, index) => ({ ...paginationRow((input.cursor ? 50 : 1) + index), title: input.cursor ? 'x'.repeat(8192) : `Issue ${index}` })), next_cursor: input.cursor ? 'private-after' : 'private-original' }] }));
-  const { WorkbenchAdapter } = await adapterExports();
-  const adapter = new WorkbenchAdapter(f.controller);
-  const messages = [];
-  adapter.attach({ start() {}, close() {}, postMessage(message) { messages.push(message); } });
-  try {
-    await f.controller.refresh();
-    f.controller.patch({ comments: Array.from({ length: 8 }, () => ({ id: randomUUID(), body: 'x'.repeat(240000) })) });
-    assert.equal(messages.at(-1).state.error, null);
-    const original = f.controller.state.board.columns[0];
-    const result = await f.controller.boardPage('todo', true);
-    assert.equal(result.error.code, 'PANEL_CAPACITY');
-    const column = f.controller.state.board.columns[0];
-    assert.deepEqual(column.items, original.items);
-    assert.equal(column.next_cursor, 'private-original');
-    assert.equal(column.capacity_reached, true);
-    assert.equal(messages.at(-1).state.board.columns[0].items.length, 25);
-    assert.equal(messages.at(-1).state.board.columns[0].has_more, true);
-    assert.equal(messages.at(-1).state.board.columns[0].capacity_reached, true);
-    assert.equal(messages.at(-1).state.error, null);
-    assert.doesNotMatch(JSON.stringify(messages.at(-1)), /private-original|Never retain a collection body/);
-  } finally { adapter.dispose(); f.controller.dispose(); }
+test('collection byte budget preserves the affected group and still accepts a small page for another group', async () => {
+  for (const view of ['list', 'board']) {
+    let page = 0;
+    const f = paginationController(async (_endpoint, input) => {
+      if (input.status_key === 'done') return ok({ columns: [{ key: 'done', items: [paginationRow(90000, 'done')], next_cursor: null }] });
+      const generation = ++page;
+      const column = { key: 'todo', items: Array.from({ length: 25 }, (_value, index) => ({ ...paginationRow(generation * 100 + index), title: 'x'.repeat(8192) })), next_cursor: `private-${page}` };
+      return ok({ columns: [column, ...(!input.status_key ? [{ key: 'done', items: [], next_cursor: 'private-small' }] : [])] });
+    }, view);
+    try {
+      await f.controller.refresh();
+      let original;
+      let result;
+      for (let index = 0; index < 8 && !f.controller.state.board.columns[0].capacity_reached; index++) {
+        original = f.controller.state.board.columns[0];
+        result = await f.controller.boardPage('todo', true);
+      }
+      const column = f.controller.state.board.columns[0];
+      assert.equal(result.error.code, 'PANEL_CAPACITY');
+      assert.deepEqual(column.items, original.items);
+      assert.equal(column.next_cursor, original.next_cursor);
+      assert.equal(column.capacity_reached, true);
+      assert.ok(column.items.length < ISSUE_COLLECTION_LIMIT);
+      assert.ok(f.calls.length < 40);
+      assert.equal((await f.controller.boardPage('done', true)).ok, true);
+      assert.equal(f.calls.at(-1).input.cursor, 'private-small');
+      assert.equal(f.controller.state.board.columns[0], column);
+      assert.deepEqual(f.controller.state.board.columns[1].items.map(row => row.identifier), ['CFK-90000']);
+      assert.ok(new TextEncoder().encode(JSON.stringify({ page: f.controller.state.page, board: f.controller.state.board })).length <= 1_048_576);
+    } finally { f.controller.dispose(); }
+  }
+});
+
+test('full projected snapshot budget rejects a group append while preserving original rows and its private cursor', async () => {
+  for (const view of ['list', 'board']) {
+    const f = paginationController(async (_endpoint, input) => ok({ columns: [{ key: 'todo', items: Array.from({ length: 25 }, (_value, index) => ({ ...paginationRow((input.cursor ? 50 : 1) + index), title: input.cursor ? 'x'.repeat(8192) : `Issue ${index}` })), next_cursor: input.cursor ? 'private-after' : 'private-original' }] }), view);
+    const { WorkbenchAdapter } = await adapterExports();
+    const adapter = new WorkbenchAdapter(f.controller);
+    const messages = [];
+    adapter.attach({ start() {}, close() {}, postMessage(message) { messages.push(message); } });
+    try {
+      await f.controller.refresh();
+      f.controller.patch({ comments: Array.from({ length: 8 }, () => ({ id: randomUUID(), body: 'x'.repeat(240000) })) });
+      assert.equal(messages.at(-1).state.error, null);
+      const original = f.controller.state.board.columns[0];
+      const result = await f.controller.boardPage('todo', true);
+      assert.equal(result.error.code, 'PANEL_CAPACITY');
+      const column = f.controller.state.board.columns[0];
+      assert.deepEqual(column.items, original.items);
+      assert.equal(column.next_cursor, 'private-original');
+      assert.equal(column.capacity_reached, true);
+      assert.equal(messages.at(-1).state.board.columns[0].items.length, 25);
+      assert.equal(messages.at(-1).state.board.columns[0].has_more, true);
+      assert.equal(messages.at(-1).state.board.columns[0].capacity_reached, true);
+      assert.equal(messages.at(-1).state.error, null);
+      assert.doesNotMatch(JSON.stringify(messages.at(-1)), /private-original|Never retain a collection body/);
+    } finally { adapter.dispose(); f.controller.dispose(); }
+  }
 });
 
 test('pagehide during permission pre-read retains a not-sent operation and restores the exact checkpoint', async () => {

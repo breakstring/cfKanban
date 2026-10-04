@@ -63,7 +63,7 @@ Open the online board for DemoProject.
 
 Once your Agent opens the online board, you can register a Passkey on the page. You do not need to state that purpose in the request or open a dedicated management entry. Both first and additional registrations require an Agent-opened online session. A session created by signing in with an existing Passkey cannot register another one; ask the Agent to reopen the online page when needed. You complete registration through the browser or operating system. The Agent cannot replace your biometric check, security key interaction, or system confirmation.
 
-**In the Web UI:** Account menu at the top right → **Personal settings** → **Register Passkey**. For later visits, open the same site's homepage, select Passkey sign-in, and follow the system prompt. Participants then choose an authorized project; the Owner enters the management overview.
+**In the Web UI:** Account menu at the top right → **Personal settings** → **Register Passkey**. For later visits, use **Use Passkey** at the top right of the same site's homepage and follow the system prompt. While your current session remains valid, this button reads **Open workbench** and returns to its authorized entry without another Passkey prompt. Participants then choose an authorized project; the Owner enters the management overview.
 
 A Passkey authenticates you to the Web UI. It grants no project access and does not replace the Agent's local credential. It is associated with the hostname where you registered it. If the site moves to another hostname, ask the Agent to open the new address and register there. See [Profile](./profile.md) for revocation.
 

@@ -1,4 +1,5 @@
 import { PANEL_PROTOCOL, uuid, scopeFailureCode, isSessionReference } from './shared.mjs';
+import { readIssueHierarchy } from '../../../../apps/web/src/lib/issue-hierarchy.ts';
 import { checkpointState, validateCheckpoint } from './checkpoint.mjs';
 
 export const items = value => Array.isArray(value) ? value : value?.items ?? value?.statuses ?? [];
@@ -9,13 +10,13 @@ export const ISSUE_COLLECTION_LIMIT = 1000;
 const COLLECTION_BYTES = 1_048_576;
 const MAX_COLLECTION_PAGES = 40;
 const fields = (value, names) => Object.fromEntries(names.filter(name => value?.[name] !== undefined).map(name => [name, structuredClone(value[name])]));
-const summary = value => ({ ...fields(value, ['id', 'identifier', 'title', 'version', 'priority', 'is_blocked']), status: fields(value.status, ['key', 'display_name']), assignee: value.assignee ? fields(value.assignee, ['id', 'principal_id', 'display_name', 'available']) : null, allowed_actions: Array.isArray(value.allowed_actions) ? [...value.allowed_actions] : [] });
+const summary = value => ({ ...fields(value, ['id', 'identifier', 'title', 'version', 'priority', 'is_blocked']), ...(readIssueHierarchy(value.hierarchy) ? { hierarchy: readIssueHierarchy(value.hierarchy) } : {}), status: fields(value.status, ['key', 'display_name']), assignee: value.assignee ? fields(value.assignee, ['id', 'principal_id', 'display_name', 'available']) : null, allowed_actions: Array.isArray(value.allowed_actions) ? [...value.allowed_actions] : [] });
 function mergeRows(previous, incoming) {
   const result = new Map();
   for (const value of [...previous, ...incoming]) {
     const row = summary(value);
     const existing = result.get(row.identifier);
-    if (!existing || row.version > existing.version) result.set(row.identifier, row);
+    if (!existing || row.version >= existing.version) result.set(row.identifier, row);
   }
   return [...result.values()];
 }
@@ -209,36 +210,13 @@ export class WorkbenchController {
     await this.loadCandidates();
     return true;
   }
-  async refresh(cursor, signal) {
-    if (signal?.aborted || !this.state.binding) return;
-    if (this.state.view === 'board') return this.refreshBoard(undefined, undefined, signal);
-    if (cursor && (cursor !== nextCursor(this.state.page) || this.state.page?.capacity_reached)) return;
-    if (!cursor) this.invalidateCollections();
-    const revision = this.collectionRevision;
-    const key = `${revision}:list:${cursor ?? ''}`;
-    if (cursor && this.collectionCursors.has(key)) { this.patch({ error: { code: 'PANEL_PAGINATION_STALLED' } }); return; }
-    return this.collectionRequest(key, async () => {
-      const { result, current } = await this.request('list', { binding_id: this.state.binding.binding_id, ...this.state.filters, ...(cursor ? { cursor } : {}) }, 'list', () => revision === this.collectionRevision && this.state.view === 'list', signal);
-      if (current && result.ok && !signal?.aborted) {
-        const merged = mergeRows(cursor ? items(this.state.page) : [], items(result.data));
-        const pages = (cursor ? this.collectionPages.get('list') ?? 0 : 0) + 1;
-        const page = { items: merged, next_cursor: nextCursor(result.data), capacity_reached: Boolean(nextCursor(result.data) && (merged.length >= ISSUE_COLLECTION_LIMIT || pages >= MAX_COLLECTION_PAGES)) };
-        if (merged.length > ISSUE_COLLECTION_LIMIT || !this.collectionFits({ page })) {
-          if (this.state.page) this.patch({ page: { ...this.state.page, capacity_reached: true } });
-          else this.patch({ error: { code: 'PANEL_CONTEXT_TOO_LARGE' } });
-          return { ok: false, error: { code: this.state.page ? 'PANEL_CAPACITY' : 'PANEL_CONTEXT_TOO_LARGE' } };
-        } else {
-          this.collectionPages.set('list', pages);
-          if (cursor) this.collectionCursors.add(key);
-          this.patch({ page, ...this.identityUpdate(result.data.identity) });
-        }
-      }
-      return result;
-    });
+  async refresh(_cursor, signal) {
+    return this.refreshBoard(undefined, undefined, signal);
   }
   async setView(view) { if (!['list', 'board'].includes(view) || !this.canChangeBinding()) return; this.patch({ view, page: null, board: null }); await this.refresh(); }
   async refreshBoard(status_key, cursor, signal) {
-    if (signal?.aborted || !this.state.binding || this.state.view !== 'board') return;
+    if (signal?.aborted || !this.state.binding || !['list', 'board'].includes(this.state.view)) return;
+    const view = this.state.view;
     const { assignment, priority, status } = this.state.filters;
     if (status_key && status && status_key !== status) return;
     const selectedStatus = status_key || status;
@@ -246,10 +224,10 @@ export class WorkbenchController {
     if (cursor && (cursor !== original?.next_cursor || original.capacity_reached)) return;
     if (!cursor) this.invalidateCollections();
     const revision = this.collectionRevision;
-    const key = `${revision}:board:${selectedStatus ?? 'all'}:${cursor ?? ''}`;
+    const key = `${revision}:${view}:${selectedStatus ?? 'all'}:${cursor ?? ''}`;
     if (cursor && this.collectionCursors.has(key)) { this.patch({ error: { code: 'PANEL_PAGINATION_STALLED' } }); return; }
     return this.collectionRequest(key, async () => {
-      const { result, current } = await this.request('board', { binding_id: this.state.binding.binding_id, assignment, priority, ...(selectedStatus ? { status_key: selectedStatus } : {}), ...(cursor ? { cursor } : {}) }, `board:${selectedStatus ?? 'all'}`, () => revision === this.collectionRevision && this.state.view === 'board', signal);
+      const { result, current } = await this.request('board', { binding_id: this.state.binding.binding_id, assignment, priority, ...(selectedStatus ? { status_key: selectedStatus } : {}), ...(cursor ? { cursor } : {}) }, `${view}:${selectedStatus ?? 'all'}`, () => revision === this.collectionRevision && this.state.view === view, signal);
       if (current && result.ok && !signal?.aborted) {
         const updated = result.data.columns.map(column => {
           const previous = this.state.board?.columns.find(row => row.key === column.key);

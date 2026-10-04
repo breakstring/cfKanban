@@ -87,6 +87,35 @@ interface LabelRow {
   name: string;
 }
 
+interface IssueParentSummary {
+  id: string;
+  identifier: string;
+  project_id: string;
+  status: { display_name: string; key: StatusKey };
+  title: string;
+  workspace_id: string;
+}
+
+interface IssueHierarchy {
+  children: { done: number; total: number };
+  parent_count: number;
+  parents: IssueParentSummary[];
+}
+
+interface IssueHierarchyRow {
+  children_done: number;
+  children_total: number;
+  issue_id: string;
+  parent_count: number;
+  parent_id: string | null;
+  parent_number: number | null;
+  parent_project_id: string | null;
+  parent_status_display_name: string | null;
+  parent_status_key: StatusKey | null;
+  parent_title: string | null;
+  parent_workspace_id: string | null;
+}
+
 interface CommentRow {
   author_display_name: string;
   author_principal_id: string;
@@ -487,6 +516,117 @@ async function labelsForIssues(db: D1Database, issueIds: readonly string[]): Pro
   }
 }
 
+async function hierarchyForIssues(
+  db: D1Database,
+  auth: AuthContext,
+  issueIds: readonly string[],
+  visibleProjectIds: readonly string[],
+  now: number,
+): Promise<Map<string, IssueHierarchy>> {
+  const byIssue = new Map<string, IssueHierarchy>();
+  if (issueIds.length === 0 || visibleProjectIds.length === 0) return byIssue;
+  const authGuard = buildCurrentAuthGuard(auth, now, 4);
+  try {
+    const result = await db.prepare(
+      `WITH hierarchy_visible_projects(id) AS MATERIALIZED (
+         SELECT p.id
+         FROM projects p
+         JOIN workspaces w ON w.id = p.workspace_id
+         JOIN instance_meta instance ON instance.singleton = 1
+         WHERE p.id IN (SELECT value FROM json_each(?2))
+           AND p.deleted_at IS NULL AND w.deleted_at IS NULL
+           AND ${authGuard.sql}
+           AND (instance.owner_principal_id = ?3 OR EXISTS (
+             SELECT 1 FROM effective_project_grants grant_row
+             WHERE grant_row.project_id = p.id AND grant_row.principal_id = ?3
+               AND grant_row.revoked_at IS NULL
+           ))
+       ), hierarchy_issues(id) AS MATERIALIZED (
+         SELECT i.id
+         FROM json_each(?1) selected_issue
+         CROSS JOIN issues i ON i.id = selected_issue.value
+         WHERE i.deleted_at IS NULL
+           AND i.project_id IN (SELECT id FROM hierarchy_visible_projects)
+       ), hierarchy_parents AS MATERIALIZED (
+         SELECT selected.id AS issue_id, parent.id AS parent_id,
+                parent.number AS parent_number, parent.title AS parent_title,
+                parent.project_id AS parent_project_id,
+                parent_project.workspace_id AS parent_workspace_id,
+                parent.status_key AS parent_status_key,
+                COALESCE(status_name.display_name,
+                  CASE parent.status_key
+                    WHEN 'backlog' THEN 'Backlog'
+                    WHEN 'todo' THEN 'Todo'
+                    WHEN 'in_progress' THEN 'In Progress'
+                    WHEN 'done' THEN 'Done'
+                    ELSE 'Canceled'
+                  END) AS parent_status_display_name,
+                COUNT(*) OVER (PARTITION BY selected.id) AS parent_count,
+                ROW_NUMBER() OVER (PARTITION BY selected.id ORDER BY parent.number) AS parent_position
+         FROM hierarchy_issues selected
+         CROSS JOIN issue_relations relation INDEXED BY idx_issue_relations_source
+           ON relation.source_issue_id = selected.id
+             AND relation.deleted_at IS NULL AND relation.kind = 'parent'
+         CROSS JOIN issues parent ON parent.id = relation.target_issue_id
+         JOIN projects parent_project ON parent_project.id = parent.project_id
+         LEFT JOIN project_status_names status_name
+           ON status_name.project_id = parent.project_id AND status_name.status_key = parent.status_key
+         WHERE parent.deleted_at IS NULL
+           AND parent.project_id IN (SELECT id FROM hierarchy_visible_projects)
+       ), hierarchy_children AS MATERIALIZED (
+         SELECT selected.id AS issue_id, COUNT(child.id) AS children_total,
+                SUM(CASE WHEN child.status_key = 'done' THEN 1 ELSE 0 END) AS children_done
+         FROM hierarchy_issues selected
+         CROSS JOIN issue_relations relation INDEXED BY idx_issue_relations_target
+           ON relation.target_issue_id = selected.id
+             AND relation.deleted_at IS NULL AND relation.kind = 'parent'
+         CROSS JOIN issues child ON child.id = relation.source_issue_id
+         WHERE child.deleted_at IS NULL
+           AND child.project_id IN (SELECT id FROM hierarchy_visible_projects)
+         GROUP BY selected.id
+       )
+       SELECT selected.id AS issue_id,
+              COALESCE(children.children_total, 0) AS children_total,
+              COALESCE(children.children_done, 0) AS children_done,
+              COALESCE(parent.parent_count, 0) AS parent_count,
+              parent.parent_id, parent.parent_number, parent.parent_title,
+              parent.parent_project_id, parent.parent_workspace_id,
+              parent.parent_status_key, parent.parent_status_display_name
+       FROM hierarchy_issues selected
+       LEFT JOIN hierarchy_children children ON children.issue_id = selected.id
+       LEFT JOIN hierarchy_parents parent ON parent.issue_id = selected.id AND parent.parent_position <= 10
+       ORDER BY selected.id, parent.parent_number`,
+    ).bind(JSON.stringify(issueIds), JSON.stringify(visibleProjectIds), auth.principalId, ...authGuard.values)
+      .all<IssueHierarchyRow>();
+    for (const row of result.results) {
+      let hierarchy = byIssue.get(row.issue_id);
+      if (hierarchy === undefined) {
+        hierarchy = {
+          children: { done: row.children_done, total: row.children_total },
+          parent_count: row.parent_count,
+          parents: [],
+        };
+        byIssue.set(row.issue_id, hierarchy);
+      }
+      if (row.parent_id !== null && row.parent_number !== null && row.parent_project_id !== null
+        && row.parent_workspace_id !== null && row.parent_title !== null && row.parent_status_key !== null
+        && row.parent_status_display_name !== null) {
+        hierarchy.parents.push({
+          id: row.parent_id,
+          identifier: `CFK-${row.parent_number}`,
+          project_id: row.parent_project_id,
+          status: { display_name: row.parent_status_display_name, key: row.parent_status_key },
+          title: row.parent_title,
+          workspace_id: row.parent_workspace_id,
+        });
+      }
+    }
+    return byIssue;
+  } catch (error) {
+    throw platformUnavailable("d1", error);
+  }
+}
+
 interface BlockedProjectionRow {
   blocked_reason: string | null;
   id: string;
@@ -695,6 +835,7 @@ function issueResource(
   labels: readonly LabelRow[],
   role: ProjectAccessRole,
   detail = false,
+  hierarchy?: IssueHierarchy,
 ): { [key: string]: JsonValue } {
   const status = statusDefinition(row.status_key);
   const resource: { [key: string]: JsonValue } = {
@@ -726,6 +867,11 @@ function issueResource(
     updated_at: timestamp(row.updated_at),
     version: row.version,
     workspace: { display_name: row.workspace_display_name, id: row.workspace_id },
+  };
+  if (hierarchy !== undefined) resource.hierarchy = {
+    children: hierarchy.children,
+    parent_count: hierarchy.parent_count,
+    parents: hierarchy.parents.map((parent) => ({ ...parent })),
   };
   if (detail) {
     resource.allowed_actions = allowedIssueActions(role, row.deleted_at !== null);
@@ -1292,6 +1438,15 @@ async function listIssuesInternal(
   const tombstoneQuotas = deletionView === "only"
     ? await tombstoneQuotaRows(db, page.rows.map((row) => row.id))
     : new Map<string, TombstoneQuotaRow>();
+  const hierarchies = deletionView === "only"
+    ? new Map<string, IssueHierarchy>()
+    : await hierarchyForIssues(
+        db,
+        auth,
+        page.rows.map((row) => row.id),
+        scope.relationProjects.map((project) => project.projectId),
+        now,
+      );
   if (deletionView !== "only") {
     await applyVisibleBlockedState(
       db,
@@ -1337,7 +1492,7 @@ async function listIssuesInternal(
           roles.get(row.project_id) ?? "reader",
           tombstoneQuotas.get(row.id) ?? null,
         )
-      : issueResource(row, labels.get(row.id) ?? [], roles.get(row.project_id) ?? "reader")),
+      : issueResource(row, labels.get(row.id) ?? [], roles.get(row.project_id) ?? "reader", false, hierarchies.get(row.id))),
     next_cursor: page.nextCursor,
     resolved_scope: resolvedScope(scope, search, candidate, issueFilter),
   };
@@ -1578,6 +1733,7 @@ export async function getIssue(
   auth: AuthContext,
   identifierValue: JsonValue,
   url: URL,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const deletionView = issueDeletionView(url);
   if (deletionView === "only") {
@@ -1587,14 +1743,16 @@ export async function getIssue(
   }
   const { project, row } = await requireIssueAccess(db, auth, identifierValue);
   const visibleProjects = await resolveVisibleProjects(db, auth);
-  const [labels, relations, comments] = await Promise.all([
+  const [labels, relations, comments, hierarchies] = await Promise.all([
     labelsForIssues(db, [row.id]),
     visibleRelations(db, row.id, new Set(visibleProjects.map((candidate) => candidate.projectId))),
     recentComments(db, row.id),
+    hierarchyForIssues(db, auth, [row.id], visibleProjects.map((candidate) => candidate.projectId), now),
     applyVisibleBlockedState(db, [row], visibleProjects.map((candidate) => candidate.projectId)),
   ]);
+  await verifyIssueProjectionScope(db, auth, row.project_id, visibleProjects, now);
   return {
-    ...issueResource(row, labels.get(row.id) ?? [], project.role, true),
+    ...issueResource(row, labels.get(row.id) ?? [], project.role, true, hierarchies.get(row.id)),
     comment_continuation: comments.totalCount > comments.items.length
       ? `/api/v1/issues/CFK-${row.number}/comments`
       : null,
@@ -1604,6 +1762,19 @@ export async function getIssue(
       : null,
     relations: relations.items,
   };
+}
+
+async function verifyIssueProjectionScope(
+  db: D1Database,
+  auth: AuthContext,
+  projectId: string,
+  visibleProjects: readonly VisibleProject[],
+  now: number,
+): Promise<void> {
+  await verifyCurrentAuth(db, auth, now);
+  const currentProjects = await resolveVisibleProjects(db, auth);
+  if (!currentProjects.some((project) => project.projectId === projectId)) throw notFound();
+  if (!sameProjectIds(visibleProjects, currentProjects)) throw cursorScopeMismatch();
 }
 
 function utf8Excerpt(value: string, maxBytes: number): { content: string; omittedBytes: number; truncated: boolean } {
@@ -1629,6 +1800,7 @@ export async function getIssueContext(
   db: D1Database,
   auth: AuthContext,
   identifierValue: JsonValue,
+  now = Date.now(),
 ): Promise<{ [key: string]: JsonValue }> {
   const { project, row } = await requireIssueAccess(db, auth, identifierValue);
   const [labels, comments, visibleProjects] = await Promise.all([
@@ -1643,6 +1815,14 @@ export async function getIssueContext(
     new Set(visibleProjects.map((item) => item.projectId)),
     50,
   );
+  const hierarchies = await hierarchyForIssues(
+    db,
+    auth,
+    [row.id],
+    visibleProjects.map((item) => item.projectId),
+    now,
+  );
+  await verifyIssueProjectionScope(db, auth, row.project_id, visibleProjects, now);
   let relations = relationSection.items;
   let commentItems = comments.items.map(commentResource);
   const bodyBytes = new TextEncoder().encode(row.body).byteLength;
@@ -1650,7 +1830,7 @@ export async function getIssueContext(
   const projectContextBytes = new TextEncoder().encode(projectContextValue).byteLength;
   let body = utf8Excerpt(row.body, bodyBytes);
   let projectContext = utf8Excerpt(projectContextValue, projectContextBytes);
-  const core = issueResource(row, labels.get(row.id) ?? [], project.role, true);
+  const core = issueResource(row, labels.get(row.id) ?? [], project.role, true, hierarchies.get(row.id));
   delete core.body;
   const build = (): { [key: string]: JsonValue } => ({
     issue: core,

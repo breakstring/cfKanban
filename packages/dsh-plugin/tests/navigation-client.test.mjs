@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { PanelNavigation, navigateWorkbench, navigationRequest } from '../src/client/navigation.mjs';
 import { PanelNavigation as HostNavigation } from '../src/host/navigation.mjs';
 import { WorkbenchController } from '../../local-runtime/src/workbench/controller.mjs';
+import { STATUSES } from '../../local-runtime/src/workbench/shared.mjs';
 
 const target = () => ({ instance_id: randomUUID(), workspace_id: randomUUID(), project_id: randomUUID(), identifier: 'CFK-551' });
 const request = () => ({ request_id: randomUUID(), session_id: 'session-fixture', target: target(), expected_principal_id: randomUUID(), expires_at: Date.now() + 3000 });
@@ -95,7 +96,7 @@ test('canceling a real Controller bind releases navigation immediately and ignor
       bindSignal = signal;
       return new Promise(resolve => { releaseBind = () => resolve(response); });
     }
-    if (endpoint === 'list') return wire({ items: [] });
+    if (endpoint === 'board') return wire({ columns: STATUSES.map(key => ({ key, items: [], next_cursor: null })) });
     if (endpoint === 'detail') return wire({ identifier: input.identifier, comments: [] });
     throw new Error(`Unexpected fixture endpoint: ${endpoint}`);
   } }, panelLife.signal, undefined, { initialView: 'list' });
@@ -123,6 +124,9 @@ test('canceling a real Controller bind releases navigation immediately and ignor
   assert.deepEqual(next, { ok: true, target: nextRequest.target });
   assert.equal(controller.state.binding.project.id, nextRequest.target.project_id);
   assert.equal(controller.state.issue.identifier, nextRequest.target.identifier);
+  assert.deepEqual(calls.slice(2), ['identity', 'bind', 'board', 'detail']);
+  assert.equal(controller.state.view, 'list');
+  assert.equal(controller.state.page, null);
   const current = controller.state;
   const finishedCalls = [...calls];
   releaseBind();

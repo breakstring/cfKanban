@@ -320,7 +320,7 @@ test("embedded Markdown uses the shared escaping and trusted relative-link rules
 test("narrow Workbench references only existing Web theme and typography tokens", async () => {
   const webSource = path.join(root, "apps/web/src");
   const [legacy, theme, embedded] = await Promise.all(["style.css", "ui.css", "embedded/embedded.css"].map(file => readFile(path.join(webSource, file), "utf8")));
-  const defined = new Set([...`${legacy}\n${theme}`.matchAll(/(--[\w-]+)\s*:/g)].map(match => match[1]));
+  const defined = new Set([...`${legacy}\n${theme}\n${embedded}`.matchAll(/(--[\w-]+)\s*:/g)].map(match => match[1]));
   const references = new Set([...embedded.matchAll(/var\((--[\w-]+)/g)].map(match => match[1]));
   assert.ok(references.size > 0);
   assert.deepEqual([...references].filter(token => !defined.has(token)), []);
@@ -371,7 +371,7 @@ test("list and column scrolling retain an accessible explicit fallback inside th
   const attribute = (node, name) => node.props.find(prop => prop.type === 6 && prop.name === name)?.value?.content;
   const directive = (node, event) => node.props.find(prop => prop.type === 7 && prop.name === "on" && prop.arg?.content === event)?.exp?.content;
   const containsClass = (node, value) => attribute(node, "class")?.split(" ").includes(value);
-  for (const [handler, ownerClass, scrollHandler] of [["loadMoreColumn(column.key)", "embedded-column-content", "onColumnScroll(column.key, $event)"], ["loadMoreList", "embedded-list-view", "onListScroll"]]) {
+  for (const [handler, ownerClass, scrollHandler] of [["loadMoreColumn(column.key)", "embedded-column-content", "onColumnScroll(column.key, $event)"], ["loadMoreColumn(group.key)", "embedded-group-content", "onColumnScroll(group.key, $event)"]]) {
     const fallback = nodes.find(({ node }) => node.tag === "UButton" && directive(node, "click") === handler);
     assert.ok(fallback, `${handler} must remain available for keyboard and non-overflowing pages`);
     const owner = fallback.ancestors.find(node => containsClass(node, ownerClass));

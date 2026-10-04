@@ -275,6 +275,8 @@ Issue PATCH 可修改 `title`、`body`、`status_key`（除进入 `done`）、`p
 
 Relation 的方向固定：`blocks` 表示 source blocks target；`parent` 表示 source child has parent target；`duplicate` 表示 source duplicates target；`related` 为无向关系，服务端按两个 Issue immutable ID 排序后保存。blocker 只有在 source status 为 `done` 时自动解除；`canceled` 不等于完成，调用方应删除 Relation 或显式调整目标。
 
+2026-10-04 用户确认新增及恢复 `parent` Relation 必须拒绝闭环。防环递归与关系写入、两端 Issue CAS、Event 和幂等快照处于同一原子 D1 事务；从 target 父沿同 Workspace 的未软删除 `parent` 边查询祖先，使用稳定 Issue ID 去重。图拓扑包括无权中间项目、软删除端点和暂停容器的未软删除边，不向响应或错误输出这些路径；只读关系仍执行当前可见性过滤。多父继续允许，历史循环不批量改写，删除既有环边仍可正常执行。验证预算包含 target 父，最多 1,000 个不同祖先；探测到第 1,001 个时 fail-closed，不能依据截断结果通过。已确认闭环返回 `409 RELATION_CYCLE` / `choose_different_parent`；超过预算返回 `400 RELATION_GRAPH_TOO_LARGE` / `simplify_parent_graph`，仅公开固定 `max_ancestors=1000`，均不可自动重试。
+
 ### 5.4 Invitation、Principal、Credential、Grant 与 Audit
 
 | Method | Path | 权限 | 语义 |
@@ -398,6 +400,12 @@ Policy disabled 期间不为普通写入维护 `project_usage` counter。重新�
 
 detail 在此基础上增加 `body`、人工 blocked reason、可见 Relation 摘要、Comment continuation 和 `allowed_actions`。任何无权 relation endpoint 都不进入数组或计数。
 
+2026-10-04 用户授权的 Issue 分组和层级展示增加可选读取投影 `hierarchy`：普通列表、候选、详情及 context 的核心 Issue 返回 `{parents, parent_count, children: {total, done}}`；写入响应与旧 Service 可以省略。`parents` 是按稳定 Issue number 升序排列的最多 10 个当前可见、未删除的直接父摘要，包含 `id / identifier / title / workspace_id / project_id / status: {key, display_name}`；`parent_count` 保留全部可见直接父数量，超出摘要上限时通过既有 Issue relations 入口继续查看。
+
+`parent` 的 source 为子 Issue、target 为父 Issue。`children.total` 只统计两端及容器当前有效且调用者和 Session 都可见的直接子 Issue；只有 `done` 计入 `children.done`，`canceled` 不等于完成。这些计数不继承列表的状态、搜索或其他筛选，也不包含孙级 Issue。多父和历史循环保留，投影不推断单父或无环不变量；新增和恢复闭环边按 §5.3 拒绝。无权或 effective-deleted 关系、端点和容器都不进入父摘要或计数；恢复视图不返回该投影。
+
+层级读取以当前结果页的 Issue ID 驱动一条集合 SQL，复用关系 source/target 的 `deleted_at / kind` 索引；不按每个 Issue 另发 HTTP 请求，不聚合全项目历史，不增加持久化计数器或 schema migration。SQL 中核验当前来源、Session、授权和容器，返回前复核可读 scope；权限范围漂移时拒绝旧投影。成本与当前页面及其直接关系规模相关，父摘要上限和列表 `limit` 都不代表高扇出 Issue 的固定读取上界，本地 D1 计量不代表线上计费结果。
+
 ### 6.3 写请求
 
 ```json
@@ -495,6 +503,8 @@ Cloudflare 在 Worker 执行前生成的 Error 1027、平台 429 或 HTML 5xx �
 - `RESOURCE_DELETED`（只在调用者有权使用 tombstone 视图时）；
 - `LABEL_LIMIT_EXCEEDED`；
 - `RELATION_SCOPE_MISMATCH`；
+- `RELATION_CYCLE`（409 / conflict / choose_different_parent；不返回路径）；
+- `RELATION_GRAPH_TOO_LARGE`（400 / validation / simplify_parent_graph；只公开固定 max_ancestors=1000）；
 - `INVITATION_MODE_MISMATCH`；
 - `QUERY_SCOPE_TOO_BROAD`（仅保护无法在应用预算内安全执行的查询，不替代正常分页）；
 - `PASSKEY_CHALLENGE_INVALID`；

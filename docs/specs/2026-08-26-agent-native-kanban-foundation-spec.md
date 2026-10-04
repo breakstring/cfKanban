@@ -180,7 +180,7 @@ Owner bootstrap、轮换和恢复不创建新身份：明文 Credential 只在�
 v0 支持四类稳定关系语义：
 
 - `blocks`：有方向，A blocks B；`blocked_by` 是反向读取投影，不保存第二条镜像关系。
-- `parent`：有方向，A parent of B；`child` 是反向读取投影，适合 Agent 拆分任务。
+- `parent`：API 保存 source 子事项指向 target 父事项，`child` 是反向读取投影，适合 Agent 拆分任务。新增和恢复父子边须遵循[防环增量](2026-10-04-issue-hierarchy-navigation-spec.md)，不自动改写历史关系。
 - `related`：无方向，内部按两个 Issue immutable ID 的规范顺序保存，避免重复边。
 - `duplicate`：有方向，A duplicates B，B 是保留的 canonical Issue；关系本身不自动取消 A。
 

@@ -44,6 +44,8 @@ A [directory association](../usage/profile.md) can open the board for your curre
 
 The local workbench includes a language button and uses your saved account theme. In an Issue’s properties, choose **Add label** to search the project’s existing labels, then select one; use its remove button to detach one label. These actions require edit access. Create or manage labels in the full app.
 
+An open browser workbench keeps the same local session after idle or sleep while its service runs, up to eight hours from service startup. Returning to it still checks your current identity and project access. After that limit or service shutdown, ask the Agent to reopen it. An unresolved write keeps its original request and key for verification; reopening does not automatically submit it again.
+
 ## Open the full online app
 
 ```text
@@ -53,6 +55,8 @@ Open the online board for DemoProject.
 The local workbench and DSH sidebar also have an **Open full online board** icon at the top right; hover to see its description. It opens the matching project or task with your current identity, usually without another sign-in. For management features, ask the Agent to open the management page you need.
 
 On an online page opened by your Agent, you can also register a Passkey through the account menu at the top right → **Personal settings** → **Register Passkey**, then sign in directly from the site's homepage. **You do not need to mention Passkey registration when asking to open the page**; follow the browser or system prompts when registering. First and additional registrations both require an Agent-opened online session. See [Joining and signing in](../usage/access.md) for the steps.
+
+The homepage's top-right button shows **Open workbench** when your online session is still valid, so selecting the logo and returning home does not require another Passkey sign-in.
 
 Workspace and project administrators can use the [management entry points](../administration/index.md); instance-wide Owner features are under [Deploy and manage](../deployment/index.md).
 

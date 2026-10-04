@@ -24,6 +24,10 @@ Select the translation icon at the top right to switch between English and Simpl
 
 For several projects, open the account menu at the top right → **Work list**, choose projects, a view, and filters, then select **Show work** again after each change. Its status selector offers one status or all statuses. Ask your Agent to combine several specific statuses into one result.
 
+The local workbench **List** groups issues by status, with independent pagination and collapsible groups. Done and Canceled start collapsed. Group counts show loaded issues; **+** means another page is available. Parent context does not count toward the child’s group. Additional parents are indicated, and historical cycles are marked without changing the relations.
+
+The ring and **5/6** on lists and boards mean that 5 of 6 visible, undeleted direct sub-issues are done. Canceled children are not done, and list filters do not narrow this progress. Older services omit the badge.
+
 ## Filter by priority, assignee, and labels
 
 ```text

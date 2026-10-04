@@ -229,6 +229,7 @@ const issueSummaryProperties = {
   },
   created_at: ref("Timestamp"),
   deleted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+  hierarchy: ref("IssueHierarchy"),
   id: ref("Uuid"),
   identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }),
   is_blocked: { type: "boolean" },
@@ -263,7 +264,7 @@ const issueSummaryProperties = {
     additionalProperties: false,
   },
 };
-const issueSummaryRequired = Object.keys(issueSummaryProperties);
+const issueSummaryRequired = Object.keys(issueSummaryProperties).filter(name => name !== "hierarchy");
 const issueDetailProperties = {
   ...issueSummaryProperties,
   allowed_actions: { type: "array", items: string() },
@@ -1022,6 +1023,48 @@ const schemas = {
     type: "object",
     required: ["color", "id", "name"],
     properties: { color: nullableString({ pattern: "^#[0-9A-Fa-f]{6}$" }), id: ref("Uuid"), name: string() },
+    additionalProperties: false,
+  },
+  IssueParentSummary: {
+    type: "object",
+    required: ["id", "identifier", "project_id", "status", "title", "workspace_id"],
+    properties: {
+      id: ref("Uuid"),
+      identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }),
+      project_id: ref("Uuid"),
+      status: {
+        type: "object",
+        required: ["display_name", "key"],
+        properties: { display_name: string(), key: ref("StatusKey") },
+        additionalProperties: false,
+      },
+      title: string(),
+      workspace_id: ref("Uuid"),
+    },
+    additionalProperties: false,
+  },
+  IssueHierarchy: {
+    type: "object",
+    description: "Optional read projection of visible, active direct parent relations. The relation direction is source child to target parent; multiple parents and historical cycles are preserved. New or restored cycle-closing parent relations are rejected atomically. Counts do not inherit the Issue list filters.",
+    required: ["children", "parent_count", "parents"],
+    properties: {
+      children: {
+        type: "object",
+        required: ["done", "total"],
+        properties: {
+          done: integer({ minimum: 0, description: "Visible direct children whose status is done; canceled is not done." }),
+          total: integer({ minimum: 0, description: "All visible, active direct children." }),
+        },
+        additionalProperties: false,
+      },
+      parent_count: integer({ minimum: 0, description: "Total visible, active direct parents, including summaries omitted by the ten-parent bound." }),
+      parents: {
+        type: "array",
+        maxItems: 10,
+        description: "First ten visible direct parents ordered by their stable Issue number. Further parents can be read through the existing Issue relations endpoint.",
+        items: ref("IssueParentSummary"),
+      },
+    },
     additionalProperties: false,
   },
   IssueSummary: {
@@ -2514,6 +2557,18 @@ for (const operation of operations) {
 
 const requestIdHeader = { "X-Request-ID": { $ref: "#/components/headers/RequestId" } };
 const noStoreHeader = { ...requestIdHeader, "Cache-Control": { required: true, schema: { type: "string", const: "no-store" } } };
+for (const [path, description] of [
+  ["/api/v1/issues/{identifier}/relations", "Create one relation with both endpoint Issue versions, current writer access and idempotency. Parent means source child to target parent; multiple parents remain allowed. Parent insertion atomically rejects a cycle and fails closed beyond 1000 distinct ancestors, including the target. Validation follows all undeleted parent edges in the Workspace, including inaccessible or suspended intermediate endpoints; no path or hidden endpoint is disclosed. Historical cycles are preserved."],
+  ["/api/v1/relations/{relation_id}/commands/restore", "Restore one deleted relation with relation and both endpoint CAS, current writer access and idempotency. Parent restoration performs the same atomic cycle and 1000-ancestor budget checks as creation. A cycle returns 409 RELATION_CYCLE with choose_different_parent; excessive scope returns 400 RELATION_GRAPH_TOO_LARGE with simplify_parent_graph and only the fixed max_ancestors=1000. Both are non-retryable."],
+]) {
+  paths[path].post.description = `${permissionDescriptions[paths[path].post["x-cfkanban-permission"]]} ${description}`;
+  paths[path].post["x-cfkanban-parent-validation"] = {
+    ancestor_limit: 1000,
+    includes_target: true,
+    cycle_error: { code: "RELATION_CYCLE", status: 409, recovery: "choose_different_parent", retryable: false },
+    budget_error: { code: "RELATION_GRAPH_TOO_LARGE", status: 400, recovery: "simplify_parent_graph", retryable: false },
+  };
+}
 paths["/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts"].get.description = "Read exact counts for all five fixed workflow statuses and their total within one active Project, using the same normalized filters and current authorization as the ordinary Issue list. Deleted Issues are excluded; deleted, cursor and limit parameters are rejected. Counts are aggregated by one SQL statement, do not load all Issue pages, and are independent of list request snapshots. Filtered counts may scan all matching candidates; no fixed rows-read cost is promised.";
 paths["/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts"].get.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/owner-credentials/add-device"].post.description = "Owner Bearer or Owner admin Web Session only; Cookie requests require same-origin CSRF. Explicitly approve an Agent-generated non-secret pairing request for the same instance and Owner. Requires at least one active Owner API Credential and enforces the 100 active Credential limit atomically. Principal CAS, idempotency and security audit commit together. The new Agent must still verify its pending Credential locally; this is not an all-credentials-lost recovery endpoint.";

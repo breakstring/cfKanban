@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { matchesBoardFilters, sortBoardIssues } from "../../apps/web/src/lib/board-projection.ts";
+import { matchesBoardFilters, refreshBoardIssueProgress, sortBoardIssues } from "../../apps/web/src/lib/board-projection.ts";
 import { loadedStatusLabel, moveStatusNavigationFocus, scrollToStatusColumn } from "../../apps/web/src/lib/kanban-status-navigation.ts";
 
 const issue = (overrides = {}) => ({ id: "issue", number: 123, title: "Ｆｉｘ Login CFK-456", deleted_at: null,
@@ -25,6 +25,67 @@ test("local card updates preserve the public updated_at/number descending order"
     issue({ id: "tie-low", number: 1 }), issue({ id: "tie-high", number: 2 }),
     issue({ id: "saved", number: 3, updated_at: "2026-10-01T10:01:00.000Z" })];
   assert.deepEqual(sortBoardIssues(rows).map(item => item.id), ["saved", "tie-high", "tie-low", "old"]);
+});
+
+test("a parent write confirmed during child-progress readback retries without losing its newer fields", async () => {
+  let current = { version: 1, priority: "medium", hierarchy: { children: { total: 3, done: 0 } } };
+  let resolveFirst;
+  const first = new Promise(resolve => { resolveFirst = resolve; });
+  let reads = 0;
+  const applied = [];
+  const refreshing = refreshBoardIssueProgress({
+    read: () => ++reads === 1 ? first : Promise.resolve({ ...current, hierarchy: { children: { total: 3, done: 1 } } }),
+    knownVersion: () => current.version,
+    isCurrent: () => true,
+    apply: async value => { applied.push(value.version); current = value; },
+  });
+  current = { ...current, version: 2, priority: "high" };
+  resolveFirst({ version: 1, priority: "medium", hierarchy: { children: { total: 3, done: 1 } } });
+  assert.equal(await refreshing, true);
+  assert.equal(reads, 2);
+  assert.deepEqual(applied, [2]);
+  assert.equal(current.version, 2);
+  assert.equal(current.priority, "high");
+  assert.deepEqual(current.hierarchy.children, { total: 3, done: 1 });
+});
+
+test("continuous parent updates stop readback after one retry and leave stale data unapplied", async () => {
+  let version = 1;
+  let reads = 0;
+  assert.equal(await refreshBoardIssueProgress({
+    read: async () => { reads += 1; return { version: version++ }; },
+    knownVersion: () => version,
+    isCurrent: () => true,
+    apply: async () => assert.fail("stale progress must remain unverified"),
+  }), false);
+  assert.equal(reads, 2);
+});
+
+test("superseded progress reads cannot apply data or start another read", async () => {
+  let active = true;
+  let finish;
+  let reads = 0;
+  const refreshing = refreshBoardIssueProgress({
+    read: () => { reads += 1; return new Promise(resolve => { finish = resolve; }); },
+    knownVersion: () => 2,
+    isCurrent: () => active,
+    apply: async () => assert.fail("superseded projection must not apply"),
+  });
+  active = false;
+  finish({ version: 1 });
+  assert.equal(await refreshing, false);
+  assert.equal(reads, 1);
+});
+
+test("a legacy read without hierarchy cannot confirm or preserve old progress", async () => {
+  let reads = 0;
+  assert.equal(await refreshBoardIssueProgress({
+    read: async () => { reads += 1; return { version: 2 }; },
+    knownVersion: () => 2,
+    isCurrent: () => true,
+    apply: async () => assert.fail("a missing progress projection must remain unverified"),
+  }), false);
+  assert.equal(reads, 1);
 });
 
 test("status navigation moves only its board's horizontal scroll and ignores columns outside its current view", () => {

@@ -141,22 +141,28 @@ test('EOF force-stop aborts the service and reports unresolved operations withou
   } finally { await f.cleanup(); }
 });
 
-test('normal views expire at thirty minutes while only the original pending view survives until the service deadline', async () => {
+test('idle views retain their original Bridge and pending operation until the fixed service deadline', async () => {
   let clock = 0;
   const f = await fixture({ now: () => clock });
   try {
     const ordinary = await f.view();
     const pending = await f.view();
+    const project = randomUUID();
+    await ordinary.call('bind', { project_id: project });
     assert.match(pending.cookie, /Max-Age=28800/);
     const input = { binding_id: randomUUID(), identifier: 'CFK-548', expected_version: 2, operation: 'comment', change: { body: 'Fixture' }, idempotency_key: randomUUID() };
     await pending.call('mutate', input);
     clock = 30 * 60_000 + 1;
-    assert.equal((await ordinary.call('list')).status, 401);
+    assert.equal((await (await ordinary.call('list')).json()).value.data.project, project);
+    assert.equal(f.bridges[0].disposed, false);
     assert.equal((await pending.call('list', {}, { cookie: ordinary.cookie.split(';')[0] })).status, 401);
     const recovered = await pending.call('recover', input);
     assert.equal((await recovered.json()).value.panel.original_settled, true);
     assert.match(recovered.headers.get('set-cookie'), /Max-Age=27000/);
     assert.equal(f.bridges[1].writes.length, 1);
+    clock = 7 * 60 * 60_000;
+    assert.equal((await (await ordinary.call('list')).json()).value.data.project, project);
+    assert.equal(f.bridges.length, 2);
     await pending.call('mutate', input);
     clock = 8 * 60 * 60_000;
     const expired = await pending.call('recover', input);
@@ -164,6 +170,113 @@ test('normal views expire at thirty minutes while only the original pending view
     assert.deepEqual(await expired.json(), { ok: false, outcome_unknown: true, error: { code: 'LOCAL_SERVICE_EXPIRED' } });
     assert.deepEqual(await f.closed, { closed: true, outcome_unknown: true, recovery: 'verify_original_operations_before_retry' });
     assert.equal(f.bridges[1].writes.length, 2);
+  } finally { await f.cleanup(); }
+});
+
+test('an idle process closes only without an exchanged view; explicit view close releases its Bridge', { timeout: 5000 }, async () => {
+  let clock = 0;
+  const empty = await fixture({ idleTtlMs: 50, now: () => clock });
+  try {
+    clock = 15 * 60_000;
+    assert.deepEqual(await empty.closed, { closed: true, outcome_unknown: false, recovery: 'none' });
+  } finally { await empty.cleanup(); }
+  clock = 0;
+  const active = await fixture({ idleTtlMs: 50, now: () => clock });
+  try {
+    const view = await active.view();
+    clock = 2 * 60 * 60_000;
+    await new Promise(resolve => setTimeout(resolve, 75));
+    assert.equal(active.bridges[0].disposed, false);
+    assert.equal((await view.call('list')).status, 200);
+    assert.equal((await view.call('view-close')).status, 200);
+    assert.equal(active.bridges[0].disposed, true);
+    assert.equal((await view.call('list')).status, 401);
+    clock += 15 * 60_000;
+    assert.equal((await active.closed).closed, true);
+  } finally { await active.cleanup(); }
+});
+
+test('page release keeps a refresh grace period, ignores late old-page receipts, and cannot discard pending writes', { timeout: 5000 }, async () => {
+  let clock = 0;
+  const f = await fixture({ idleTtlMs: 50, viewReleaseGraceMs: 100, now: () => clock });
+  try {
+    const original = await f.view();
+    const retained = await f.view();
+    assert.equal((await original.call('view-release', {})).status, 400);
+    assert.equal((await original.call('view-release', { page_id: original.config.page_id }, { 'x-cfkanban-csrf': '' })).status, 403);
+    assert.equal((await original.call('view-release', { page_id: original.config.page_id }, { cookie: retained.cookie.split(';')[0] })).status, 401);
+    assert.equal((await original.call('view-release', { page_id: original.config.page_id })).status, 200);
+    clock = 50;
+    const reloaded = await fetch(`${f.address}${original.pathname}`, { headers: { cookie: original.cookie.split(';')[0] } });
+    const config = JSON.parse(/<script type="application\/json" id="configuration">(.*?)<\/script>/.exec(await reloaded.text())[1]);
+    assert.notEqual(config.page_id, original.config.page_id);
+    assert.equal((await original.call('view-release', { page_id: original.config.page_id })).status, 200);
+    clock = 200;
+    await new Promise(resolve => setTimeout(resolve, 75));
+    assert.equal(f.bridges[0].disposed, false, 'a late pagehide must not release the refreshed page');
+    assert.equal((await original.call('list')).status, 200);
+    const pending = { idempotency_key: randomUUID() };
+    await original.call('mutate', pending);
+    assert.equal((await original.call('view-release', { page_id: config.page_id })).status, 409);
+    clock += 200;
+    await new Promise(resolve => setTimeout(resolve, 75));
+    assert.equal(f.bridges[0].disposed, false);
+    await original.call('recover', pending);
+    assert.equal((await original.call('view-release', { page_id: config.page_id })).status, 200);
+    clock += 200;
+    await new Promise(resolve => setTimeout(resolve, 75));
+    assert.equal(f.bridges[0].disposed, true);
+    assert.equal(f.bridges[1].disposed, false);
+    assert.equal((await original.call('list')).status, 401);
+    assert.equal((await retained.call('list')).status, 200);
+    assert.equal(f.bridges[0].writes.length, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('an idle retained view still uses its original Principal/Project binding and respects current identity or grant rejection', async () => {
+  const instance = randomUUID();
+  const principal = randomUUID();
+  const workspace = randomUUID();
+  const project = randomUUID();
+  let activePrincipal = principal;
+  let revoked = false;
+  let detailReads = 0;
+  let clock = 0;
+  const issue = { identifier: 'CFK-123', project: { id: project }, version: 1, allowed_actions: ['read'] };
+  const createFacade = options => ({ callTool: async name => {
+    if (options.binding) {
+      assert.deepEqual(options.binding, { instance_id: instance, expected_principal_id: principal, project_ids: [project] });
+      if (activePrincipal !== principal) return { ok: false, status: 409, error: { code: 'MCP_PRINCIPAL_BINDING_MISMATCH' } };
+    }
+    if (name === 'cfkanban_connection_inspect') return { ok: true, data: { instance: { instance_id: instance }, principal: { principal_id: activePrincipal } } };
+    if (name === 'cfkanban_projects_get') return { ok: true, data: { id: project } };
+    if (name === 'cfkanban_statuses_list') return { ok: true, data: [{ key: 'todo', display_name: 'Todo' }] };
+    if (name === 'cfkanban_issues_get') {
+      if (revoked) return { ok: false, status: 403, error: { code: 'FORBIDDEN' } };
+      detailReads++;
+      return { ok: true, data: issue };
+    }
+    throw new Error('Unexpected synthetic facade operation');
+  } });
+  const retainedBridges = [];
+  const f = await fixture({ now: () => clock, createFacade, createBridge: options => { const bridge = new WorkbenchBridge(options); retainedBridges.push(bridge); return bridge; } });
+  try {
+    const view = await f.view();
+    const binding = (await (await view.call('bind', { instance_id: instance, expected_principal_id: principal, workspace_id: workspace, project_id: project })).json()).value.data;
+    const input = { binding_id: binding.binding_id, identifier: issue.identifier };
+    clock = 2 * 60 * 60_000;
+    assert.equal((await (await view.call('detail', input)).json()).value.data.identifier, issue.identifier);
+    activePrincipal = randomUUID();
+    const switched = (await (await view.call('detail', input)).json()).value;
+    assert.equal(switched.ok, false);
+    assert.equal(switched.error.code, 'MCP_PRINCIPAL_BINDING_MISMATCH');
+    assert.equal(detailReads, 1);
+    activePrincipal = principal; revoked = true;
+    const denied = (await (await view.call('detail', input)).json()).value;
+    assert.equal(denied.ok, false);
+    assert.equal(denied.error.code, 'FORBIDDEN');
+    assert.equal(detailReads, 1);
+    assert.equal(retainedBridges.length, 1);
   } finally { await f.cleanup(); }
 });
 

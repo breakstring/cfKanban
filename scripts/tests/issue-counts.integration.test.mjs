@@ -122,7 +122,8 @@ test("Project counts include all active Issues beyond 20 and 100 without loading
   const pageMeasured = instrument(db);
   const page = await listProjectIssues(pageMeasured.db, auth, workspace, projects[0], url({ limit: 20 }));
   assert.equal(page.items.length, 20); assert.equal(page.has_more, true);
-  assert.ok(pageMeasured.queries.every(query => !aggregate(query) && !query.sql.includes("COUNT(*)")));
+  assert.ok(pageMeasured.queries.every(query => !aggregate(query)));
+  assert.equal(Object.hasOwn(page, "total_count"), false);
   const empty = await count({}, auth, projects[1]);
   assert.deepEqual(empty.counts, Object.fromEntries(statuses.map(key => [key, 0])));
   assert.equal(empty.total_count, 0);

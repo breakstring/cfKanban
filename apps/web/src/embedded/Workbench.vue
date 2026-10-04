@@ -29,6 +29,8 @@ import { labelNameKey } from "../lib/label-input";
 import { applyTheme } from "../lib/theme";
 import logo from "../assets/cfkanban-mark.png";
 import IssueCard from "./IssueCard.vue";
+import IssueChildrenProgress from "../components/IssueChildrenProgress.vue";
+import { issueTree } from "./issue-tree";
 import { createEmbedClient } from "./client";
 import { reconcileCompletedDraft, resetCompletionDraft } from "./drafts";
 import { e } from "./i18n";
@@ -64,8 +66,6 @@ const verifiedOrigin = computed(() => {
   try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password ? url.origin : undefined; } catch { return undefined; }
 });
 const markdownProps = computed<{ baseUrl?: string; linkTarget: "_blank" }>(() => verifiedOrigin.value ? { baseUrl: verifiedOrigin.value, linkTarget: "_blank" } : { linkTarget: "_blank" });
-const rows = computed(() => state.value.page?.items ?? state.value.page?.issues ?? []);
-const nextPage = computed(() => Boolean(state.value.page?.next_cursor ?? state.value.page?.continuation?.next_cursor));
 const filters = reactive({ assignment: "all" as "all" | "mine" | "unassigned", status: "" as Status | "", priority: "" as Priority | "" });
 watch(() => state.value.filters, value => Object.assign(filters, value), { deep: true });
 const comment = ref("");
@@ -143,10 +143,42 @@ async function selectInstance(instanceId: string) {
 }
 const boardMode = computed(() => state.value.view === "board");
 const columns = computed(() => state.value.board?.columns ?? []);
+const listOrder: Status[] = ["in_progress", "todo", "backlog", "done", "canceled"];
+const listGroups = computed(() => listOrder.flatMap(key => {
+  const column = columns.value.find(value => value.key === key);
+  return column ? [{ ...column, rows: issueTree(column.items, columns.value.flatMap(value => value.items)) }] : [];
+}));
+const collapsedGroups = ref(new Set<Status>(["done", "canceled"]));
+const collapsedIssues = ref(new Set<string>());
+function toggleGroup(key: Status) {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  collapsedGroups.value = next;
+}
+function toggleIssue(key: string) {
+  const next = new Set(collapsedIssues.value);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  collapsedIssues.value = next;
+}
+function visibleTree(rows: ReturnType<typeof issueTree>, key: Status) {
+  const visible: typeof rows = [];
+  let hiddenDepth: number | null = null;
+  for (const row of rows) {
+    if (hiddenDepth !== null && row.depth > hiddenDepth) continue;
+    hiddenDepth = null;
+    visible.push(row);
+    if (collapsedIssues.value.has(`${key}:${row.identifier}`)) hiddenDepth = row.depth;
+  }
+  return visible;
+}
+function hasTreeChildren(rows: ReturnType<typeof issueTree>, identifier: string) {
+  const index = rows.findIndex(row => row.identifier === identifier);
+  return index >= 0 && (rows[index + 1]?.depth ?? 0) > rows[index]!.depth;
+}
+watch(() => state.value.binding?.project.id, () => { collapsedIssues.value = new Set(); });
 const boardRegion = ref<HTMLElement | null>(null);
 const statusNavigation = computed(() => columns.value.map(column => ({ key: column.key, display_name: column.display_name || column.key, loaded: column.items.length, has_more: column.has_more, target_id: `embedded-column-${column.key}` })));
 const loadingColumn = ref<Status | null>(null);
-const loadingList = ref(false);
 async function loadMoreColumn(key: Status) {
   const column = columns.value.find(value => value.key === key);
   if (busy.value || pending.value || !column?.has_more || column.capacity_reached) return;
@@ -157,15 +189,6 @@ async function loadMoreColumn(key: Status) {
 function onColumnScroll(key: Status, event: Event) {
   const column = columns.value.find(value => value.key === key);
   if (column && canAutoAppend(event.currentTarget as HTMLElement, { busy: busy.value, pending: pending.value, error: Boolean(errorCode.value), hasMore: column.has_more, capacityReached: Boolean(column.capacity_reached) })) void loadMoreColumn(key);
-}
-async function loadMoreList() {
-  if (busy.value || pending.value || !nextPage.value || state.value.page?.capacity_reached) return;
-  loadingList.value = true;
-  try { return await send("page", { next: true }); }
-  finally { loadingList.value = false; }
-}
-function onListScroll(event: Event) {
-  if (canAutoAppend(event.currentTarget as HTMLElement, { busy: busy.value, pending: pending.value, error: Boolean(errorCode.value), hasMore: nextPage.value, capacityReached: Boolean(state.value.page?.capacity_reached) })) void loadMoreList();
 }
 const candidates = computed(() => state.value.assignees ?? []);
 const detailAssignee = computed(() => state.value.issue?.assignee?.principal_id ? { principal_id: state.value.issue.assignee.principal_id, display_name: state.value.issue.assignee.display_name ?? "", available: state.value.issue.assignee.available !== false } : null);
@@ -338,15 +361,31 @@ async function complete() {
                 </section>
               </div>
             </template>
-            <div v-else class="embedded-issue-list embedded-list-view" role="region" tabindex="0" :aria-label="e('list')" :aria-busy="loadingList" @scroll="onListScroll">
-              <IssueCard v-for="issue in rows" :key="issue.identifier" :issue="issue" :statuses="statusItems" :assignees="candidates" :assignees-has-more="!!state.assignees_has_more" :loading="peopleLoading" :disabled="busy || pending" @open="identifier => send('open_issue', { identifier })" @update="quickUpdate" @complete="quickComplete" @people="loadPeople" />
-              <p v-if="!rows.length && !busy && !errorCode" class="embedded-empty">{{ e('empty') }}</p>
-              <div class="embedded-load-more">
-                <p v-if="loadingList" role="status">{{ e('loadingMore') }}</p>
-                <p v-else-if="state.page?.capacity_reached">{{ e('viewCapacity') }}</p>
-                <p v-else-if="!nextPage && rows.length && !busy && !errorCode">{{ e('allLoaded') }}</p>
-                <UButton v-if="nextPage" color="neutral" variant="ghost" size="sm" :disabled="busy || pending || state.page?.capacity_reached" @click="loadMoreList">{{ e('loadMore') }}</UButton>
-              </div>
+            <div v-else class="embedded-list-view" role="region" tabindex="0" :aria-label="e('list')">
+              <section v-for="group in listGroups" :key="group.key" class="embedded-status-group" :data-status="group.key">
+                <button class="embedded-group-heading" type="button" :aria-expanded="!collapsedGroups.has(group.key)" :aria-controls="`embedded-group-${group.key}`" @click="toggleGroup(group.key)">
+                  <span class="embedded-group-disclosure" :class="{ expanded: !collapsedGroups.has(group.key) }" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" /></svg></span>
+                  <span class="embedded-status-dot" :data-status="group.key" aria-hidden="true" />
+                  <strong>{{ group.display_name || group.key }}</strong>
+                  <span class="embedded-group-count" :title="locale === 'zh-CN' ? '已加载事项数；+ 表示还有下一页' : 'Loaded issues; + means more pages'">{{ group.items.length }}{{ group.has_more ? '+' : '' }}</span>
+                </button>
+                <div v-if="!collapsedGroups.has(group.key)" :id="`embedded-group-${group.key}`" class="embedded-group-content" tabindex="0" :aria-label="`${group.display_name || group.key} · ${e('list')}`" :aria-busy="loadingColumn === group.key" @scroll="onColumnScroll(group.key, $event)">
+                  <div v-for="row in visibleTree(group.rows, group.key)" :key="row.identifier" class="embedded-tree-row" :class="{ 'embedded-tree-context': row.context }" :style="{ '--tree-depth': Math.min(row.depth, 8) }">
+                    <button v-if="hasTreeChildren(group.rows, row.identifier)" class="embedded-tree-toggle" type="button" :aria-label="`${collapsedIssues.has(`${group.key}:${row.identifier}`) ? (locale === 'zh-CN' ? '展开子事项' : 'Expand sub-issues') : (locale === 'zh-CN' ? '折叠子事项' : 'Collapse sub-issues')} · ${row.identifier}`" :aria-expanded="!collapsedIssues.has(`${group.key}:${row.identifier}`)" @click="toggleIssue(`${group.key}:${row.identifier}`)"><span class="embedded-child-disclosure" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M4 8h8" /><path v-if="collapsedIssues.has(`${group.key}:${row.identifier}`)" d="M8 4v8" /></svg></span></button>
+                    <span v-else class="embedded-tree-toggle-placeholder" />
+                    <IssueCard v-if="row.issue" :issue="row.issue" :show-parent="false" :statuses="statusItems" :assignees="candidates" :assignees-has-more="!!state.assignees_has_more" :loading="peopleLoading" :disabled="busy || pending" @open="identifier => send('open_issue', { identifier })" @update="quickUpdate" @complete="quickComplete" @people="loadPeople" />
+                    <div v-else-if="row.context" class="embedded-parent-context"><span class="embedded-identifier">{{ row.identifier }}</span><button v-if="row.context.project_id === state.binding.project.id" type="button" :disabled="busy || pending" @click="send('open_issue', { identifier: row.identifier })">{{ row.context.title }}</button><span v-else class="embedded-context-title">{{ row.context.title }}</span><IssueChildrenProgress :progress="row.contextProgress" /><span class="embedded-context-status">{{ row.context.status.display_name || row.context.status.key }} · {{ locale === 'zh-CN' ? '父事项' : 'Parent' }}</span></div>
+                    <span v-if="row.cycle" class="embedded-tree-warning" role="status">{{ locale === 'zh-CN' ? '父子关系存在循环，已停止展开' : 'Cyclic parent relation; expansion stopped' }}</span>
+                  </div>
+                  <p v-if="!group.items.length && !busy && !errorCode" class="embedded-empty">{{ e('emptyColumn') }}</p>
+                  <div class="embedded-load-more">
+                    <p v-if="loadingColumn === group.key" role="status">{{ e('loadingMore') }}</p>
+                    <p v-else-if="group.capacity_reached">{{ e('viewCapacity') }}</p>
+                    <p v-else-if="!group.has_more && group.items.length && !busy && !errorCode">{{ e('allLoaded') }}</p>
+                    <UButton v-if="group.has_more" color="neutral" variant="ghost" size="xs" :disabled="busy || pending || group.capacity_reached" @click="loadMoreColumn(group.key)">{{ e('loadMore') }}</UButton>
+                  </div>
+                </div>
+              </section>
             </div>
           </section>
 

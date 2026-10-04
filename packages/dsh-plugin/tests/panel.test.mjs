@@ -429,9 +429,12 @@ function fixture(options = {}) {
     calls.push({ name, args, config });
     if (name === 'cfkanban_connection_inspect') return result({ instance: { instance_id: ids.instance_id, trusted_api_origin: 'https://isolated.fixture.invalid' }, principal: { id: ids.expected_principal_id, principal_id: ids.expected_principal_id, display_name: 'Fixture', grants: [{ workspace_id: ids.workspace_id, project_id: ids.project_id, role: options.reader ? 'reader' : 'writer' }] } });
     if (name === 'cfkanban_projects_get') return result({ id: ids.project_id, display_name: 'Project' });
-    if (name === 'cfkanban_statuses_list') return result({ items: [{ key: 'todo', display_name: 'Todo' }] });
+    if (name === 'cfkanban_statuses_list') return result({ items: STATUSES.map(key => ({ key, display_name: key === 'todo' ? 'Todo' : key })) });
     if (name === 'cfkanban_issues_get') return result(structuredClone(issue));
-    if (name === 'cfkanban_issues_list') return result({ items: [structuredClone(issue)], next_cursor: 'next-fixture', resolved_scope: { projects: [ids.project_id] } });
+    if (name === 'cfkanban_issues_list') {
+      const matches = !args.status || args.status.includes(issue.status.key);
+      return result({ items: matches ? [structuredClone(issue)] : [], next_cursor: matches ? 'next-fixture' : null, resolved_scope: { projects: [ids.project_id] } });
+    }
     if (name === 'cfkanban_issues_update') {
       if (pending) { pending = false; return { ok: false, status: 0, outcome_unknown: true, error: { code: 'NETWORK_ERROR' } }; }
       issue = { ...issue, version: issue.version + 1, priority: args.changes.priority_key ?? issue.priority };
@@ -745,13 +748,18 @@ test('a single Workspace recommendation verifies its explicit identity and Proje
   f.bridge.scopeReader = async () => ({ status: 'configured', code: 'SCOPE_CONFIGURED', targets: [scopeTarget(f)] });
   const controller = controllerFor(f, endpoints);
   await controller.bootstrap(f.workspaces[0].sessionIds[0]);
-  assert.deepEqual(endpoints.map(call => call.endpoint), ['session_scope', 'bind_scope', 'list']);
+  assert.deepEqual(endpoints.map(call => call.endpoint), ['session_scope', 'bind_scope', 'board']);
   assert.deepEqual(endpoints[1].input.target, scopeTarget(f));
   assert.equal(controller.state.binding.project.display_name, 'Project');
   assert.equal(controller.state.scope_mode, 'suggested');
   assert.equal(controller.state.workspace_scope.source, 'workspace');
   assert.ok(f.calls.filter(call => call.name === 'cfkanban_connection_inspect').every(call => call.args.instance_id === f.ids.instance_id));
-  assert.deepEqual(f.calls.find(call => call.name === 'cfkanban_issues_list').args.project_ids, [f.ids.project_id]);
+  const pages = f.calls.filter(call => call.name === 'cfkanban_issues_list');
+  assert.equal(controller.state.view, 'list');
+  assert.equal(controller.state.page, null);
+  assert.deepEqual(pages.map(call => call.args.status[0]), STATUSES);
+  assert.ok(pages.every(call => call.args.limit === 25 && call.args.project_ids.length === 1 && call.args.project_ids[0] === f.ids.project_id));
+  assert.deepEqual(controller.state.board.columns.map(column => [column.key, column.items.map(row => row.identifier)]), STATUSES.map(key => [key, key === 'todo' ? ['CFK-1'] : []]));
   assert.equal(f.calls.some(call => ['cfkanban_projects_list', 'cfkanban_workspaces_list'].includes(call.name)), false);
   assert.equal(f.creates.length + f.prompts.length, 0);
   controller.dispose();
@@ -771,7 +779,7 @@ test('multiple recommendations require a choice and missing or invalid scopes fa
   assert.equal(f.calls.some(call => call.name === 'cfkanban_issues_list'), false);
   await controller.bindScope(controller.state.scope_targets[0]);
   assert.equal(controller.state.binding.project.id, f.ids.project_id);
-  assert.deepEqual(endpoints.slice(-2).map(call => call.endpoint), ['bind_scope', 'list']);
+  assert.deepEqual(endpoints.slice(-2).map(call => call.endpoint), ['bind_scope', 'board']);
   controller.dispose();
   for (const status of ['missing', 'invalid', 'empty', 'unavailable']) {
     const fallback = fixture();
@@ -988,6 +996,7 @@ test('Client retains uncertain key, excludes duplicate writes and disposes witho
   const controller = new PanelController({ call: async (_channel, endpoint, input) => {
     calls.push({ endpoint, input });
     if (unknown) { unknown = false; return { ok: true, value: { ok: false, outcome_unknown: true, error: { code: 'NETWORK_ERROR' } } }; }
+    if (endpoint === `${PANEL_NAMESPACE}/board`) return { ok: true, value: result({ columns: STATUSES.map(key => ({ key, items: [], next_cursor: null })) }) };
     return { ok: true, value: result({ items: [] }) };
   } }, new AbortController().signal, () => 'fixed-key');
   controller.patch({ binding: { binding_id: randomUUID() }, issue: { identifier: 'CFK-1', version: 1 } });
@@ -997,6 +1006,10 @@ test('Client retains uncertain key, excludes duplicate writes and disposes witho
   assert.equal(calls.length, 1);
   await controller.mutate(null, null, true);
   assert.deepEqual(calls[0].input, calls[1].input);
+  assert.equal(calls[1].input.input.expected_version, 1);
+  assert.equal(calls[1].input.input.idempotency_key, 'fixed-key');
+  assert.deepEqual(calls.map(call => call.endpoint), ['mutate', 'recover', 'board'].map(endpoint => `${PANEL_NAMESPACE}/${endpoint}`));
+  assert.equal(controller.state.pending, null);
   controller.subscribe(() => {});
   controller.dispose();
   assert.equal(controller.listeners.size, 0);

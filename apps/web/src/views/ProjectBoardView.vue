@@ -13,6 +13,7 @@ import ErrorNotice from "../components/ErrorNotice.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
+import IssueChildrenProgress from "../components/IssueChildrenProgress.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
 import IssueQueryFilters from "../components/IssueQueryFilters.vue";
 import KanbanStatusNavigation from "../components/KanbanStatusNavigation.vue";
@@ -27,7 +28,7 @@ import { projectInventoryBoundary, sessionCanWriteProject } from "../lib/session
 import { locale, t } from "../lib/i18n";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { boardFilters, boardPath } from "../lib/board-navigation";
-import { matchesBoardFilters, sortBoardIssues } from "../lib/board-projection";
+import { matchesBoardFilters, refreshBoardIssueProgress, sortBoardIssues } from "../lib/board-projection";
 import { ColumnPagination } from "../lib/column-pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
 import { protectNavigationDraft } from "../lib/navigation-draft";
@@ -568,11 +569,47 @@ function issuesFor(status: StatusKey): IssueSummary[] {
   return sortBoardIssues([...columns[status].items]);
 }
 
-async function reconcileIssue(issue: IssueSummary): Promise<void> {
+const hierarchyRequests = new Map<string, number>();
+function knownIssueVersion(id: string): number {
+  return Math.max(confirmedVersions.get(id) ?? 0,
+    ...statusOrder.flatMap(key => columns[key].items.filter(item => item.id === id).map(item => item.version)));
+}
+
+async function refreshParentProgress(child: IssueSummary, generation: number): Promise<void> {
+  const parents = child.hierarchy?.parents.filter(parent => parent.project_id === props.projectId
+    && statusOrder.some(key => columns[key].items.some(item => item.identifier === parent.identifier))) ?? [];
+  await Promise.all(parents.map(async parent => {
+    const request = (hierarchyRequests.get(parent.identifier) ?? 0) + 1;
+    hierarchyRequests.set(parent.identifier, request);
+    const isCurrent = () => hierarchyRequests.get(parent.identifier) === request && projectionIsCurrent(generation);
+    try {
+      const refreshed = await refreshBoardIssueProgress({
+        read: () => apiRequest<IssueSummary>(`/api/v1/issues/${parent.identifier}`, { authorizationCurrent: isCurrent }),
+        knownVersion: () => knownIssueVersion(parent.id),
+        isCurrent,
+        apply: issue => reconcileIssue(issue, false),
+      });
+      if (refreshed || !isCurrent()) return;
+    } catch {
+      if (!isCurrent()) return;
+    }
+    for (const column of Object.values(columns)) {
+      if (!column.items.some(item => item.identifier === parent.identifier)) continue;
+      column.reconcile(items => items.map(item => {
+        if (item.identifier !== parent.identifier) return item;
+        const { hierarchy, ...remaining } = item;
+        return remaining;
+      }));
+    }
+  }));
+}
+
+async function reconcileIssue(issue: IssueSummary, refreshAncestors = true): Promise<void> {
   const generation = projectionGeneration.capture();
-  const knownVersion = Math.max(confirmedVersions.get(issue.id) ?? 0,
-    ...statusOrder.flatMap(key => columns[key].items.filter(item => item.id === issue.id).map(item => item.version)));
-  if (issue.version < knownVersion) return;
+  if (issue.version < knownIssueVersion(issue.id)) return;
+  const previous = statusOrder.flatMap(key => columns[key].items).find(item => item.id === issue.id);
+  if (issue.hierarchy === undefined && previous?.hierarchy) issue = { ...issue, hierarchy: previous.hierarchy };
+  const statusChanged = previous && previous.status.key !== issue.status.key;
   confirmedVersions.set(issue.id, issue.version);
   const matches = matchesBoardFilters(issue, { search: appliedSearch.value, priorities: appliedPriorities.value, labels: appliedLabelIds.value });
   const positions: Array<{ element: HTMLElement; top: number }> = [];
@@ -591,6 +628,7 @@ async function reconcileIssue(issue: IssueSummary): Promise<void> {
   for (const { element, top } of positions) if (element.isConnected) element.scrollTop = top;
   // 目标列首屏若尚未读完，失效旧读取后补一页，保留刚确认的卡片。
   for (const key of initialColumns) void loadColumn(key);
+  if (statusChanged && refreshAncestors) await refreshParentProgress(issue, generation);
 }
 
 async function readbackIssue(identifier: string): Promise<void> {
@@ -761,11 +799,12 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
                 <span class="card-heading">
                   <strong :title="issue.title">{{ issue.title }}</strong>
                 </span>
-                <span v-if="issue.labels.length || issue.needs_reassignment" class="card-summary">
+                <span v-if="issue.labels.length || issue.needs_reassignment || issue.hierarchy?.children.total" class="card-summary">
                   <span v-if="issue.labels.length" class="label-line" :title="issue.labels.map(label => label.name).join(' · ')">
                     <UBadge v-for="label in issue.labels.slice(0, 3)" :key="label.id" class="label-chip" color="neutral" variant="soft" size="md" :title="label.name">{{ label.name }}</UBadge>
                     <span v-if="issue.labels.length > 3" class="card-label-count" :aria-label="`${locale === 'zh-CN' ? '更多标签' : 'More labels'}: ${issue.labels.slice(3).map(label => label.name).join(' · ')}`">+{{ issue.labels.length - 3 }}</span>
                   </span>
+                  <IssueChildrenProgress :progress="issue.hierarchy?.children" />
                   <span v-if="issue.needs_reassignment" class="warning-chip">{{ locale === "zh-CN" ? "需重新指派" : "reassign" }}</span>
                 </span>
               </button>

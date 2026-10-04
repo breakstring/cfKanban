@@ -47,7 +47,7 @@ function readCookie(request, name) {
 }
 function shell(view, { html, browserScript, initialContext }) {
   const online = view.onlineBroker?.snapshot();
-  const config = safeJson({ csrf: view.csrf, initialContext, embeddedHtml: html, locale: 'zh-CN', checkpoint: view.checkpoint, online_pending: online?.pending_target ?? null, online_receipt_id: online?.receipt_id ?? null });
+  const config = safeJson({ csrf: view.csrf, page_id: view.pageId, initialContext, embeddedHtml: html, locale: 'zh-CN', checkpoint: view.checkpoint, online_pending: online?.pending_target ?? null, online_receipt_id: online?.receipt_id ?? null });
   const script = browserScript.replaceAll('</script', '<\\/script');
   const hash = value => `'sha256-${createHash('sha256').update(value).digest('base64')}'`;
   const childScripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(match => hash(match[1]));
@@ -65,10 +65,10 @@ export async function validateDirectory(directory) {
 
 // 此入口仅供可信 launcher 和隔离 fixture；浏览器不能提供目录、factory 或工件。
 export async function startLocalWorkbenchServer({ directory, html, browserScript, initialContext = null, createBridge = options => new WorkbenchBridge(options), createFacade = createMcpFacade, openOnline = null,
-  launchTtlMs = 60_000, viewTtlMs = 30 * 60_000, idleTtlMs = 15 * 60_000, maxLifetimeMs = 8 * 60 * 60_000, requestTimeoutMs = 45_000, maxViews = 16, maxLaunches = 8, now = Date.now } = {}) {
+  launchTtlMs = 60_000, viewReleaseGraceMs = 60_000, idleTtlMs = 15 * 60_000, maxLifetimeMs = 8 * 60 * 60_000, requestTimeoutMs = 45_000, maxViews = 16, maxLaunches = 8, now = Date.now } = {}) {
   directory = await validateDirectory(directory);
   if (typeof html !== 'string' || typeof browserScript !== 'string' || html.length > 2_097_152 || browserScript.length > 4_194_304) throw new LocalRuntimeError('LOCAL_ARTIFACT_INVALID');
-  for (const [value, max] of [[launchTtlMs, 60_000], [viewTtlMs, 2 * 60 * 60_000], [idleTtlMs, 60 * 60_000], [maxLifetimeMs, 8 * 60 * 60_000], [requestTimeoutMs, 120_000], [maxViews, 16], [maxLaunches, 8]]) if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new LocalRuntimeError('LOCAL_INVALID_OPTIONS');
+  for (const [value, max] of [[launchTtlMs, 60_000], [viewReleaseGraceMs, 60_000], [idleTtlMs, 60 * 60_000], [maxLifetimeMs, 8 * 60 * 60_000], [requestTimeoutMs, 120_000], [maxViews, 16], [maxLaunches, 8]]) if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new LocalRuntimeError('LOCAL_INVALID_OPTIONS');
   const views = new Map();
   const launches = new Map();
   const requests = new Set();
@@ -80,7 +80,7 @@ export async function startLocalWorkbenchServer({ directory, html, browserScript
   let resolveClosed;
   const closed = new Promise(resolve => { resolveClosed = resolve; });
   const endpoints = new Set(WORKBENCH_ENDPOINTS);
-  const extraEndpoints = new Set(['open-online', 'ack-online', 'view-close', 'shutdown', 'checkpoint']);
+  const extraEndpoints = new Set(['open-online', 'ack-online', 'view-close', 'view-release', 'shutdown', 'checkpoint']);
   const viewPending = view => Boolean(view.checkpoint?.state.pending || view.bridge.hasPending?.() || view.activeWrites.size || view.activeBusiness || view.onlineBroker?.hasPending());
   const hasPending = () => [...views.values()].some(viewPending);
   const server = createServer(async (request, response) => {
@@ -97,7 +97,7 @@ export async function startLocalWorkbenchServer({ directory, html, browserScript
         const operator = Object.freeze({});
         const bridge = createBridge({ directory, createFacade, host: { singleUserLocal: true, hasWebServer: true, webHost: '127.0.0.1', operator } });
         const onlineBroker = openOnline ? new OnlineBroker({ bridge, openOnline, requestTimeoutMs }) : null;
-        const view = { id, operator, bridge, onlineBroker, secret: randomBytes(32).toString('base64url'), csrf: randomBytes(32).toString('base64url'), cookieName: `cfkanban_local_${id.replaceAll('-', '')}`, touched: now(), running: 0, activeWrites: new Map(), activeBusiness: 0, checkpoint: null, attempts: [] };
+        const view = { id, operator, bridge, onlineBroker, secret: randomBytes(32).toString('base64url'), csrf: randomBytes(32).toString('base64url'), cookieName: `cfkanban_local_${id.replaceAll('-', '')}`, pageId: null, releasedAt: null, running: 0, activeWrites: new Map(), activeBusiness: 0, checkpoint: null, attempts: [] };
         views.set(id, view);
         lastActivity = now();
         response.writeHead(303, { location: `/view/${id}/`, 'set-cookie': cookie(view, cookieLifetime()), 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
@@ -111,14 +111,14 @@ export async function startLocalWorkbenchServer({ directory, html, browserScript
         response.once('finish', () => { void close({ force: true }); });
         return send(response, 410, failure('LOCAL_SERVICE_EXPIRED', hasPending()));
       }
-      if (now() - view.touched >= viewTtlMs && !viewPending(view)) { view.bridge.dispose(); views.delete(view.id); return send(response, 401, failure('LOCAL_VIEW_EXPIRED')); }
-      view.touched = now();
       lastActivity = now();
-      // 普通视图仍由 touched 到期；原 cookie 可在服务寿命内恢复未确定操作。
+      // 已兑换视图保留同一 Bridge/原操作；闲置不撤销 Cookie，绝对服务期限仍独立核验。
       response.setHeader('set-cookie', cookie(view, cookieLifetime()));
       const endpoint = route[2];
       if (!endpoint) {
         if (request.method !== 'GET') return send(response, 405, failure('LOCAL_METHOD_REJECTED'));
+        view.releasedAt = null;
+        view.pageId = randomUUID();
         const document = shell(view, { html, browserScript, initialContext });
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': document.csp, 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY' });
         response.end(document.html);
@@ -128,6 +128,7 @@ export async function startLocalWorkbenchServer({ directory, html, browserScript
       if (request.method !== 'POST') return send(response, 405, failure('LOCAL_METHOD_REJECTED'));
       if (request.headers.origin !== origin || !equalSecret(request.headers['x-cfkanban-csrf'], view.csrf)) return send(response, 403, failure('LOCAL_CSRF_REJECTED'));
       if (request.headers['content-type']?.split(';')[0].trim() !== 'application/json') return send(response, 415, failure('LOCAL_CONTENT_TYPE_REJECTED'));
+      if (endpoint !== 'view-release') view.releasedAt = null;
       view.attempts = view.attempts.filter(at => now() - at < 10_000);
       if (view.attempts.length >= 60 || view.running >= 4) return send(response, 429, failure('LOCAL_CAPACITY'));
       view.attempts.push(now());
@@ -139,9 +140,18 @@ export async function startLocalWorkbenchServer({ directory, html, browserScript
       view.running++;
       try {
         const input = await readBody(request, endpoint === 'checkpoint' ? CHECKPOINT_LIMIT : BODY_LIMIT);
-        if (endpoint === 'view-close' || endpoint === 'shutdown') {
-          if (!exact(input, ['protocol', 'input']) || input.protocol !== 1 || !exact(input.input, [])) return send(response, 400, failure('LOCAL_INVALID_INPUT'));
+        if (endpoint === 'view-close' || endpoint === 'view-release' || endpoint === 'shutdown') {
+          if (!exact(input, ['protocol', 'input']) || input.protocol !== 1 || !exact(input.input, endpoint === 'view-release' ? ['page_id'] : [])) return send(response, 400, failure('LOCAL_INVALID_INPUT'));
+          if (endpoint === 'view-release') {
+            if (typeof input.input.page_id !== 'string' || !new RegExp(`^${ROUTE_UUID}$`).test(input.input.page_id)) return send(response, 400, failure('LOCAL_INVALID_INPUT'));
+            if (input.input.page_id !== view.pageId) return send(response, 200, { ok: true, value: { ok: true } });
+          }
           if (endpoint === 'shutdown' ? hasPending() : viewPending(view)) return send(response, 409, failure('LOCAL_PENDING_OPERATION', true));
+          if (endpoint === 'view-release') {
+            // pagehide 也用于刷新；给同 Cookie 页面恢复留出宽限，不转移绑定或原操作。
+            view.releasedAt = now();
+            return send(response, 200, { ok: true, value: { ok: true } });
+          }
           if (endpoint === 'shutdown') void close({}, response);
           send(response, 200, { ok: true, value: { ok: true } });
           if (endpoint === 'shutdown') return;
@@ -206,8 +216,10 @@ export async function startLocalWorkbenchServer({ directory, html, browserScript
   origin = `http://127.0.0.1:${server.address().port}`;
   const timer = setInterval(() => {
     if (now() >= expiresAt) { void close({ force: true }); return; }
-    for (const view of views.values()) if (view.running === 0 && now() - view.touched >= viewTtlMs && !viewPending(view)) { view.bridge.dispose(); views.delete(view.id); }
-    if (now() - lastActivity >= idleTtlMs && !hasPending() && requests.size === 0) void close();
+    for (const view of views.values()) if (view.releasedAt !== null && now() - view.releasedAt >= viewReleaseGraceMs && view.running === 0 && !viewPending(view)) {
+      view.onlineBroker?.dispose(); view.bridge.dispose(); views.delete(view.id);
+    }
+    if (views.size === 0 && now() - lastActivity >= idleTtlMs && !hasPending() && requests.size === 0) void close();
   }, Math.min(1000, idleTtlMs));
   timer.unref();
   const lifetime = setTimeout(() => { void close({ force: true }); }, maxLifetimeMs);

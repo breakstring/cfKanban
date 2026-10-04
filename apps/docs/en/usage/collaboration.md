@@ -75,7 +75,9 @@ Record that CFK-123 duplicates CFK-124, keeping CFK-124 as the canonical issue.
 
 The four relation types are blocks, parent, related, and duplicate. Both issues must belong to the same workspace, and you need write access to both projects. Write access on only one side, with read access on the other, is insufficient to change the relation. Relations do not automatically change assignees, status, or permissions. Marking an issue as a duplicate does not cancel it.
 
-**In the Web UI:** Issue details → **Relations** → **Add** → choose the kind and enter the target `CFK-` identifier → leave the field and verify the target project and title → **Save**. Directed relations start from the current issue: it blocks the target, is its parent, or duplicates it. Delete a relation beside its row; restore it through **Restore deleted collaboration items**. Relations are visible only when you can read both endpoints.
+**In the Web UI:** Issue details → **Relations** → **Add** → choose the kind and enter the target `CFK-` identifier → leave the field and verify the target project and title → **Save**. Directed relations start from the current issue: it blocks the target, has the target as its parent, or duplicates it. Delete a relation beside its row; restore it through **Restore deleted collaboration items**. Relations are visible only when you can read both endpoints.
+
+Creating or restoring a parent relation that would form a cycle is refused; choose another parent. The service also refuses a graph too large to safely check; simplify the parent structure before retrying. Historical relations remain readable. Related links can form cycles because they do not represent task hierarchy.
 
 ## Read project information and copy Issue content
 

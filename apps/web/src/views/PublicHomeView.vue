@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
+import ErrorNotice from "../components/ErrorNotice.vue";
 import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";
 import ProductHighlights from "../components/ProductHighlights.vue";
@@ -13,6 +14,7 @@ import { useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart } from "../lib/pagination";
 import { deployAgentInstruction, publicJoinInstruction } from "../lib/public-guide";
 import { navigate } from "../lib/router";
+import { isWebSessionView, shouldClearAfterSessionRevalidation } from "../lib/session-boundary";
 import { safeWebEntryPath } from "../lib/session-capabilities";
 import { WriteFence } from "../lib/write-fence";
 import {
@@ -30,9 +32,15 @@ const projects = ref<PublicProject[]>([]);
 const projectsNextCursor = ref<string | null>(null);
 const projectsLoadingMore = ref(false);
 const meta = ref<InstanceDiscovery | null>(null);
-const { clearError, error, setError, setErrorKey, setLocalizedError } = useLocalizedError();
+const { clearError, error, setError, setLocalizedError } = useLocalizedError();
+const { clearError: clearEntryError, error: entryError, setError: setEntryError, setErrorKey: setEntryErrorKey } = useLocalizedError();
 const loading = ref(true);
 const passkeyBusy = ref(false);
+const sessionChecking = ref(true);
+const sessionEntryPath = ref<string | null>(null);
+const entryLabel = computed(() => sessionEntryPath.value
+  ? (locale.value === "zh-CN" ? "进入工作台" : "Open workbench")
+  : t("action.usePasskey"));
 const joinBusy = ref(false);
 const copied = ref("");
 const copyFallback = ref<{ key: string; value: string } | null>(null);
@@ -44,6 +52,9 @@ const instanceNotice = computed(() => homepageNotice(
   t(isPublicDemo ? "home.publicDemo" : "home.independent"),
 ));
 const writeFence = new WriteFence();
+let sessionReadGeneration = 0;
+let sessionRead: AbortController | null = null;
+let mounted = false;
 
 const preferredOrigin = computed(() => {
   if (meta.value === null || meta.value.preferred_api_origin === window.location.origin) return null;
@@ -131,12 +142,60 @@ async function chooseRole(project: PublicProject, role: "reader" | "writer"): Pr
   }
 }
 
-async function signInWithPasskey(): Promise<void> {
+async function readSessionEntry(): Promise<string | null> {
+  const generation = ++sessionReadGeneration;
+  sessionRead?.abort();
+  const request = new AbortController();
+  sessionRead = request;
+  sessionChecking.value = true;
+  const current = () => mounted && generation === sessionReadGeneration;
+  try {
+    const session = await apiRequest<WebSessionView>("/api/v1/web-session", {
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(5_000)]),
+      validateResponse: isWebSessionView,
+      authorizationCurrent: current,
+    });
+    const entryPath = safeWebEntryPath(session.target.entry_path);
+    if (entryPath === null || Date.parse(session.expires_at) <= Date.now()) throw new Error("invalid_session_entry_path");
+    if (!current()) throw new Error("session_entry_stale");
+    sessionEntryPath.value = entryPath;
+    return entryPath;
+  } catch (caught) {
+    if (current() && caught instanceof ApiProblem && caught.status === 401 && shouldClearAfterSessionRevalidation(caught)) {
+      sessionEntryPath.value = null;
+      return null;
+    }
+    throw caught;
+  } finally {
+    if (current()) sessionChecking.value = false;
+  }
+}
+
+function refreshSessionEntry(): void {
+  if (!mounted || passkeyBusy.value || document.visibilityState === "hidden") return;
+  const generation = sessionReadGeneration + 1;
+  clearEntryError();
+  void readSessionEntry().catch(caught => {
+    if (mounted && generation === sessionReadGeneration && !sessionRead?.signal.aborted) setEntryError(caught);
+  });
+}
+
+function sessionInvalid(): void {
+  sessionEntryPath.value = null;
+}
+
+async function enterWorkbench(): Promise<void> {
   const fenceKey = "passkey-sign-in";
   if (!writeFence.enter(fenceKey)) return;
   passkeyBusy.value = true;
-  clearError();
+  clearEntryError();
   try {
+    const existingEntry = await readSessionEntry();
+    if (existingEntry !== null) {
+      navigate(existingEntry);
+      return;
+    }
+    if (!canUsePasskeys) return;
     const options = await apiRequest<CeremonyEnvelope>("/api/v1/web-authentication/options", {
       body: {},
       method: "POST",
@@ -155,9 +214,9 @@ async function signInWithPasskey(): Promise<void> {
     navigate(entryPath);
   } catch (caught) {
     if (caught instanceof DOMException || (caught instanceof ApiProblem && caught.status === 401)) {
-      setErrorKey("passkey.failed");
+      setEntryErrorKey("passkey.failed");
     } else {
-      setError(caught);
+      setEntryError(caught);
     }
   } finally {
     writeFence.leave(fenceKey);
@@ -165,7 +224,26 @@ async function signInWithPasskey(): Promise<void> {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  mounted = true;
+  void load();
+  refreshSessionEntry();
+  window.addEventListener("focus", refreshSessionEntry);
+  window.addEventListener("pageshow", refreshSessionEntry);
+  window.addEventListener("cfkanban:session-exchanged", refreshSessionEntry);
+  window.addEventListener("cfkanban:session-invalid", sessionInvalid);
+  document.addEventListener("visibilitychange", refreshSessionEntry);
+});
+onUnmounted(() => {
+  mounted = false;
+  sessionReadGeneration += 1;
+  sessionRead?.abort();
+  window.removeEventListener("focus", refreshSessionEntry);
+  window.removeEventListener("pageshow", refreshSessionEntry);
+  window.removeEventListener("cfkanban:session-exchanged", refreshSessionEntry);
+  window.removeEventListener("cfkanban:session-invalid", sessionInvalid);
+  document.removeEventListener("visibilitychange", refreshSessionEntry);
+});
 </script>
 
 <template>
@@ -178,8 +256,20 @@ onMounted(load);
       <nav class="public-nav-links" :aria-label="locale === 'zh-CN' ? '站点导航' : 'Site navigation'">
         <a :href="docsUrl">{{ t("home.docsShort") }}</a>
         <LocaleSwitch />
+        <button
+          v-if="canUsePasskeys || sessionEntryPath"
+          class="primary-button home-workbench-entry"
+          type="button"
+          :aria-label="entryLabel"
+          :aria-busy="passkeyBusy || sessionChecking"
+          :disabled="passkeyBusy"
+          @click="enterWorkbench"
+        >
+          {{ entryLabel }}
+        </button>
       </nav>
     </header>
+    <ErrorNotice v-if="entryError" :error="entryError" />
 
     <div class="home-stage home-stage--intro">
 
@@ -237,15 +327,6 @@ onMounted(load);
             <h2>{{ t("home.projects") }}</h2>
             <p>{{ t("home.projectsDescription") }}</p>
           </div>
-          <button
-            v-if="canUsePasskeys"
-            class="secondary-button"
-            type="button"
-            :disabled="passkeyBusy"
-            @click="signInWithPasskey"
-          >
-            {{ passkeyBusy ? "…" : t("action.usePasskey") }}
-          </button>
         </header>
 
         <div v-if="projects.length" class="public-project-list">
@@ -294,6 +375,14 @@ onMounted(load);
 
 <style scoped>
 .instance-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.home-workbench-entry { white-space: nowrap; }
+
+@media (max-width: 520px) {
+  .public-nav { flex-wrap: wrap; }
+  .public-nav-links { margin-left: auto; gap: 8px; }
+  .home-workbench-entry { padding-inline: 12px; }
+}
 
 .home-stage {
   display: flex;

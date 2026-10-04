@@ -1,3 +1,5 @@
+import { readIssueHierarchy } from "../lib/issue-hierarchy";
+import type { IssueHierarchy } from "../lib/issue-hierarchy";
 import { isSessionReference } from "./session-reference.mjs";
 export { isSessionReference } from "./session-reference.mjs";
 
@@ -52,6 +54,7 @@ export type PublicIdentity = { instance: PublicResource; principal: PublicResour
 export type PublicStatus = { key: Status; display_name?: string; name?: string };
 export type PublicLabel = { id: string; name: string };
 export type PublicIssue = {
+  hierarchy?: IssueHierarchy;
   id?: string;
   identifier: string;
   title: string;
@@ -213,6 +216,7 @@ export function parseSnapshotMessage(value: unknown): { type: "snapshot"; state:
   const issue = (value: unknown) => ordinary(value) && issueIdentifier(value.identifier) && text(value.title, 8192) && optionalString(value.body, 262_144)
     && Number.isSafeInteger(value.version) && Number(value.version) > 0 && status(value.status) && typeof value.priority === "string" && priorities.has(value.priority)
     && (value.assignee === undefined || value.assignee === null || resource(value.assignee)) && (value.is_blocked === undefined || typeof value.is_blocked === "boolean")
+    && (value.hierarchy === undefined || readIssueHierarchy(value.hierarchy) !== undefined)
     && (value.labels === undefined || labels(value.labels))
     && (value.allowed_actions === undefined || (Array.isArray(value.allowed_actions) && value.allowed_actions.length <= 50 && value.allowed_actions.every(item => text(item, 100))));
   const nullableIssue = (value: unknown) => value === null || issue(value);
@@ -220,7 +224,7 @@ export function parseSnapshotMessage(value: unknown): { type: "snapshot"; state:
     if (!Array.isArray(value) || value.length > ISSUE_COLLECTION_LIMIT) return false;
     const seen = new Set();
     return value.every(row => {
-      if (!record(row, ["id", "identifier", "title", "version", "priority", "status", "assignee", "labels", "allowed_actions", "is_blocked"], ["identifier", "title", "version", "priority", "status"]) || !issue(row) || seen.has(row.identifier)) return false;
+      if (!record(row, ["id", "identifier", "title", "version", "priority", "status", "assignee", "labels", "allowed_actions", "is_blocked", "hierarchy"], ["identifier", "title", "version", "priority", "status"]) || !issue(row) || seen.has(row.identifier)) return false;
       seen.add(row.identifier); return true;
     });
   };

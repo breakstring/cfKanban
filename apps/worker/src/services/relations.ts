@@ -554,6 +554,66 @@ function validateRelationEndpoints(source: CollaborationIssue, target: Collabora
   if (source.workspaceId !== target.workspaceId) throw validationError("relation_cross_workspace");
 }
 
+const MAX_PARENT_ANCESTORS = 1_000;
+
+function parentGraphCte(scopeSql: string): string {
+  // 图拓扑保留暂停容器及软删除端点的边；恢复端点不能绕过防环。
+  // UNION 按稳定 Issue ID 去重，使既有环终止；额外一个节点证明预算已超出。
+  return `WITH RECURSIVE parent_graph_scope(workspace_id, source_issue_id, target_issue_id) AS MATERIALIZED (
+    ${scopeSql}
+  ), parent_ancestors(id) AS MATERIALIZED (
+    SELECT target_issue_id FROM parent_graph_scope
+    UNION
+    SELECT relation.target_issue_id
+    FROM parent_ancestors ancestor
+    CROSS JOIN issue_relations relation INDEXED BY idx_issue_relations_source
+      ON relation.source_issue_id = ancestor.id
+        AND relation.deleted_at IS NULL AND relation.kind = 'parent'
+    CROSS JOIN parent_graph_scope scope ON scope.workspace_id = relation.workspace_id
+    LIMIT ${MAX_PARENT_ANCESTORS + 1}
+  ), parent_graph_check AS MATERIALIZED (
+    SELECT COUNT(*) AS ancestor_count,
+           COALESCE(MAX(CASE WHEN ancestor.id = scope.source_issue_id THEN 1 ELSE 0 END), 0) AS forms_cycle
+    FROM parent_ancestors ancestor CROSS JOIN parent_graph_scope scope
+  )`;
+}
+
+const PARENT_GRAPH_GUARD = `AND (SELECT ancestor_count <= ${MAX_PARENT_ANCESTORS} AND forms_cycle = 0 FROM parent_graph_check)`;
+
+async function requireParentGraphAllowsRelation(
+  db: D1Database,
+  workspaceId: string,
+  sourceId: string,
+  targetId: string,
+): Promise<void> {
+  try {
+    const result = await db.prepare(`${parentGraphCte("SELECT ?1, ?2, ?3")}
+      SELECT ancestor_count, forms_cycle FROM parent_graph_check`)
+      .bind(workspaceId, sourceId, targetId).first<{ ancestor_count: number; forms_cycle: number }>();
+    if (result === null) throw platformUnavailable("d1");
+    if (result.ancestor_count > MAX_PARENT_ANCESTORS) throw new ApiError({
+      category: "validation",
+      code: "RELATION_GRAPH_TOO_LARGE",
+      details: { max_ancestors: MAX_PARENT_ANCESTORS },
+      message: "The parent relation graph exceeds the safe validation budget.",
+      recovery: "simplify_parent_graph",
+      retryable: false,
+      status: 400,
+    });
+    if (result.forms_cycle === 1) throw new ApiError({
+      category: "conflict",
+      code: "RELATION_CYCLE",
+      message: "The parent relation would create a cycle.",
+      recovery: "choose_different_parent",
+      retryable: false,
+      status: 409,
+    });
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw platformUnavailable("d1", error);
+  }
+}
+
 function canonicalRelation(
   kind: RelationKind,
   source: CollaborationIssue,
@@ -777,6 +837,7 @@ async function diagnoseRelationCreate(
       existing.deleted_at === null ? "none" : "restore_relation",
     );
   }
+  if (kind === "parent") await requireParentGraphAllowsRelation(db, source.workspaceId, source.id, target.id);
   throw platformUnavailable("d1");
 }
 
@@ -852,7 +913,10 @@ export async function createIssueRelation(
         await executeAtomicBatch(db, {
           businessStatements: [
             db.prepare(
-              `INSERT INTO issue_relations
+              `${kind === "parent" ? parentGraphCte(`SELECT source_project.workspace_id, source.id, ?4
+                 FROM issues source JOIN projects source_project ON source_project.id = source.project_id
+                 WHERE source.id = ?3`) : ""}
+               INSERT INTO issue_relations
                 (id, workspace_id, kind, source_issue_id, target_issue_id,
                  source_project_id, target_project_id,
                  version, created_at, created_by_principal_id,
@@ -872,6 +936,7 @@ export async function createIssueRelation(
                  AND source_project.deleted_at IS NULL AND target_project.deleted_at IS NULL
                  AND source_workspace.deleted_at IS NULL AND target_workspace.deleted_at IS NULL
                  AND source_workspace.id = target_workspace.id
+                 ${kind === "parent" ? PARENT_GRAPH_GUARD : ""}
                  AND ${guard.sql}`,
             ).bind(
               relationId,
@@ -1008,6 +1073,9 @@ async function diagnoseRelationCas(
   if (row.version !== expectedVersion) throw versionConflict(row.version);
   if (row.source_version !== sourceExpectedVersion) throw versionConflict(row.source_version);
   if (row.target_version !== targetExpectedVersion) throw versionConflict(row.target_version);
+  if (expectedDeleted && row.kind === "parent") {
+    await requireParentGraphAllowsRelation(db, row.workspace_id, row.source_id, row.target_id);
+  }
   throw platformUnavailable("d1");
 }
 
@@ -1045,11 +1113,13 @@ async function setRelationDeleted(
     const { commit } = await executeAtomicBatch(db, {
       businessStatements: [
         db.prepare(
-          `UPDATE issue_relations AS relation
+          `${!deleted && row.kind === "parent" ? parentGraphCte("SELECT workspace_id, source_issue_id, target_issue_id FROM issue_relations WHERE id = ?4") : ""}
+           UPDATE issue_relations AS relation
            SET deleted_at = ?1, deleted_by_principal_id = ?2,
                version = version + 1, last_operation_id = ?3
            WHERE relation.id = ?4 AND relation.version = ?5
              AND ${deleted ? "relation.deleted_at IS NULL" : "relation.deleted_at IS NOT NULL"}
+             ${!deleted && row.kind === "parent" ? PARENT_GRAPH_GUARD : ""}
              AND EXISTS (
                SELECT 1 FROM issues source
                JOIN projects source_project ON source_project.id = source.project_id
