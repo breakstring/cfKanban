@@ -418,6 +418,8 @@ Owner Credential 的本地文件风险提示必须额外说明它拥有整个部
 
 ### 7.6 Repo 工作 scope 与服务端 external reference
 
+公共 CLI 作为上层调用方的上下文解析、显式保存当前目标与终端/非交互选择规则由[公共 CLI 合同](2026-10-04-public-cli-spec.md)覆盖；下述共享 scope schema 与安全原子脚本仍保持原语义。
+
 - Skill 在已确认 Git 工作上下文缺少 scope 时建议一次保存关联，用明确的 instance、Workspace 与一个或多个 Project 标识帮助日常读取过滤；明确单次 Project 目标不取消提醒。已配置或用户拒绝后不重复提醒，不阻塞原操作。非 Git 目录仅用户主动要求时提供关联；同一 Repo 可以映射多个 Project。
 - scope 只提供候选读取范围，不能隐含身份、Grant 或唯一写入目标。单项写操作的 wire request 必须携带一个明确的 workspace-qualified Project；上层调用方负责解析目标和处理歧义。
 - Agent 可以只读检查当前 Repo 的 Git metadata，但用户说“用 Project 跟踪这个 Repo”不授权上传本地绝对路径、remote URL、branch 或 worktree 信息。

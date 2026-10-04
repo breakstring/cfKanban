@@ -82,6 +82,23 @@ For a new participant's common first-use request:
 
 Invite redemption never writes `.cfkanban-scope.json`, creates an Issue, registers a Passkey, or opens the browser implicitly. Those are separate user choices.
 
+## Public CLI directory context
+
+The complete verified bundle also provides the public `cfkanban` CLI, following the same active release without an independent upgrade channel. Install, update or remove it through the Skills lifecycle. Use its installed help for the current command schema; do not execute a CLI from an unverified plugin projection or compile the cache. With this path, run from the user's actual working directory and prefer `--json --no-interactive` for Agent calls:
+
+```text
+cfkanban context show --json --no-interactive
+cfkanban instance info --json --no-interactive
+cfkanban project list --json --no-interactive
+cfkanban issue list --json --no-interactive
+```
+
+The CLI detects the current worktree root from subdirectories; linked worktrees have independent directory choices and nested repositories use their nearest own root. Explicit UUIDs override recommendations, and a unique registered instance requires no flag. Resolve only the level needed: two Repo Projects in one instance/Workspace do not make instance information or Project listing ambiguous; Issue listing aggregates those Repo Projects, while a single-Project write needs one selected Project. Check returned `result.resolved_context` with Service `resolved_scope`; fully explicit existing calls need not add a context field. JSON, non-TTY, `--no-interactive`, or stdin occupied by body/secure input never prompt. Use structured candidate IDs to make a temporary choice from the user's intent, and ask only if that intent leaves a real ambiguity. Invalid or stale scope/defaults do not silently broaden a read.
+
+`context show` is diagnostic and may leave the Project null. `context use` explicitly saves a private directory preference, `context clear` removes it, and `--directory` is optional for all three. The default key is the detected `scope_directory`, so subdirectories share one worktree choice. Only run `context use` when the user asks to remember a choice; validate the Project's Workspace and repository candidate relationship. Explicit Workspace-only input can save that level; instance-only input saves the instance level even with Repo Project candidates; automatically resolved narrower candidates are not saved as a Project preference. `--global true` explicitly saves/shows/clears a global default without cwd Git/scope dependencies, even when Git is missing or repository scope is damaged, whose explicit target may be outside the current Repo; repository recommendations still override it elsewhere. Saving this private preference never edits `.cfkanban-scope.json` or creates a Grant.
+
+Fixed automation can retain `--instance` / `--instance-id` and stable Workspace/Project flags. Target resolution finishes before an ordinary write journal is frozen; recovery keeps the original identity, target and applicable key regardless of later cwd/default changes. Purge, Owner security and deployment retain their necessary explicit targets and confirmations. These CLI rules do not change the explicit parameters required by discovered MCP or the internal safe scripts below.
+
 ## Local identity and scope
 
 MCP connection inspection supplies non-secret candidates or live identity for an explicit instance. Use the script entries below when their particular local-state, migration or directory behavior is needed; do not run the whole table before an MCP read. `capabilities` is for environment preparation/diagnosis.

@@ -1475,6 +1475,30 @@
         "kind": "workflow",
         "workflow": "operation-recover"
       }
+    },
+    {
+      "command": "context show",
+      "effect": "read",
+      "route": {
+        "kind": "workflow",
+        "workflow": "context-show"
+      }
+    },
+    {
+      "command": "context use",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "context-use"
+      }
+    },
+    {
+      "command": "context clear",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "context-clear"
+      }
     }
   ],
   "operations": [

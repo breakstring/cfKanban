@@ -2,12 +2,16 @@
 
 已知权限拒绝或 CAS 冲突需要重新核对身份、目标和版本，不静默改账户或覆盖较新数据。
 
+上下文有歧义时查看 `context show`，依据稳定 ID 选择候选。保存范围过期或冲突时不回退到另一个项目或无过滤查询；修正或明确清除该选择，详见[上下文错误](./reference.md)。修改上下文不能绕过未核实的写入。
+
 ```text
 cfkanban operation show --instance <instance-uuid> --operation-id <operation-uuid> --json
 cfkanban operation recover --instance <instance-uuid> --operation-id <operation-uuid> --json
 ```
 
 未知写结果将原调用身份、目标、请求、写合同、CAS 与适用时的 key 保存在受保护的非秘密状态中，支持后续 CLI 进程恢复。恢复原连接、检查记录并使用其恢复命令；重放被拒绝或冲突不能证明原请求未提交。CAS-only 的原结果可能需要准确审计及人工核验；未知缓存刷新只读恢复。当前数据相等不能证明原结果；服务端幂等重放窗口过期后查远端审计证据，不提交替代写入。
+
+Journal 中的原目标已经固化；恢复不从当前目录、仓库推荐、保存上下文或新的菜单选择重新解析目标。
 
 提交后读回失败与服务端拒绝分别报告。部分部署沿准确获批计划和 journal 续跑，计划变化需新授权。本地安装失败保留原 active，已修改启动器不覆盖。
 

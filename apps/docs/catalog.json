@@ -47,13 +47,13 @@
   {
     "slug": "cli", "en": "Command line", "zh-CN": "命令行",
     "pages": [
-      {"path":"cli/index","en":"CLI overview","zh-CN":"CLI 概览"},
-      {"path":"cli/installation","en":"Install, update & remove","zh-CN":"安装、更新与卸载"},
+      {"path":"cli/index","en":"Use cfKanban in a terminal","zh-CN":"在终端使用 cfKanban"},
+      {"path":"cli/installation","en":"CLI entry & Skills updates","zh-CN":"CLI 入口与 Skills 更新"},
       {"path":"cli/reference","en":"Commands, parameters & results","zh-CN":"命令、参数与结果"},
-      {"path":"cli/daily","en":"Everyday CLI work","zh-CN":"CLI 日常协作"},
+      {"path":"cli/daily","en":"Work on tasks","zh-CN":"终端任务流程"},
       {"path":"cli/administration","en":"Administration from the CLI","zh-CN":"CLI 范围管理"},
       {"path":"cli/deployment","en":"Deployment plans & recovery","zh-CN":"CLI 部署计划与恢复"},
-      {"path":"cli/automation","en":"Agents & scripts","zh-CN":"Agent 与脚本自动化"},
+      {"path":"cli/automation","en":"Scripts & Agents","zh-CN":"脚本与 Agent 使用"},
       {"path":"cli/recovery","en":"Errors & original-operation recovery","zh-CN":"错误与原操作恢复"}
     ]
   }

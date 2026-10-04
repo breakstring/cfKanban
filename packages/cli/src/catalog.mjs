@@ -35,7 +35,7 @@ const helpers = [
   ['attachment upload', 'attachment upload', ['instanceId','identifier','filePath','idempotencyKey','attachmentId','firstAttemptAt']], ['attachment download', 'attachment download', ['instanceId','attachmentId','outputPath']],
   ['invite create', 'invite create', ['instanceId','body','idempotencyKey','delivery','sensitiveOutputAcknowledgement']],
   ['owner device prepare', 'owner-device prepare', ['instanceId','apiOrigin','ownerPrincipalId','deviceName','operationId','idempotencyKey','expiresInSeconds','persistenceConfirmed','replaceCurrent','expectedCurrentPrincipalId','expectedCurrentCredentialId']], ['owner device request', 'owner-device request', ['instanceId']], ['owner device approve', 'owner-device approve', ['instanceId','request']], ['owner device verify', 'owner-device verify', ['instanceId']], ['owner device list', 'owner-device list', ['instanceId','cursor']], ['owner device revoke', 'owner-device revoke', ['instanceId','credentialId','idempotencyKey']], ['owner device restore-previous', 'owner-device restore-previous', ['instanceId','expectedCurrentPrincipalId','expectedCurrentCredentialId']],
-  ['web preflight', 'web preflight', ['delivery']], ['web open', 'web open', ['instanceId','mode','directory','target','delivery','idempotencyKey','sensitiveOutputAcknowledgement']],
+  ['web preflight', 'web preflight', ['delivery']], ['web open', 'web open', ['instanceId','mode','directory','workspace_id','project_id','target','delivery','idempotencyKey','sensitiveOutputAcknowledgement']],
   ['deploy capabilities', 'capabilities', []], ['deploy release discover', 'release discover', ['version','selectionMode']], ['deploy release verify', 'release verify', ['releasePointerPath','manifestPath','artifactFiles']], ['deploy release continuity', 'release continuity', ['currentReceipt','targetManifest']],
   ['deploy runtime resolve', 'runtime resolve-wrangler', ['explicitPath','requiredRange']], ['deploy runtime plan', 'runtime plan-install', ['taskId','npmExecutable','wranglerVersion']], ['deploy runtime install', 'runtime install', ['plan','authorizedTaskId','authorizedPlanDigest']],
   ['deploy auth resolve', 'runtime resolve-cloudflare-auth', ['wranglerExecutable','contextDirectory','selectedProfile']], ['deploy auth inspect', 'runtime inspect-cloudflare-auth', ['wranglerExecutable','profileName','attachmentStorage']], ['deploy auth plan', 'runtime plan-cloudflare-auth', ['taskId','mode','preflight','allowExistingProfile','attachmentStorage']],
@@ -53,6 +53,7 @@ const helpers = [
 ];
 export const HELPER_COMMANDS = helpers.map(([name, helper, fields]) => ({ name, helper, fields, effect: /(?:show|list|inspect|resolve|discover|verify|continuity|snapshot|capabilities)$/.test(name) ? 'read' : /plan$/.test(name) ? 'plan' : 'write', description: name }));
 export const WORKFLOW_COMMANDS = [
+  ...['show','use','clear'].map(action=>({name:`context ${action}`,workflow:`context-${action}`,fields:['instanceId','workspace_id','project_id','directory','global'],required:[],effect:action==='show'?'read':'write'})),
   {name:'connection discover',workflow:'connection-discover',fields:['origin'],required:['origin'],effect:'read'},
   {name:'connection origin-check',helper:'origin rebind-check',fields:['instanceId'],effect:'read'},
   {name:'instance health',workflow:'instance-health',fields:['instanceId'],effect:'read'},
@@ -73,7 +74,7 @@ export const WORKFLOW_COMMANDS = [
 ];
 const required = {
  'connection resolve':[], 'deploy plan compare':['before','after'],
- 'connection add':['instanceId','trustedApiOrigin'], 'scope inspect':['directory'], 'scope show':['repoRoot'], 'scope associate':['repoRoot','targets'], 'scope resolve':['validTargets'],
+ 'connection add':['instanceId','trustedApiOrigin'], 'scope inspect':[], 'scope show':[], 'scope associate':['repoRoot','targets'], 'scope resolve':['validTargets'],
  'attachment upload':['instanceId','identifier','filePath'], 'attachment download':['instanceId','attachmentId','outputPath'], 'invite create':['instanceId','body'],
  'owner device prepare':['instanceId','apiOrigin','ownerPrincipalId','deviceName'], 'owner device approve':['instanceId','request'], 'owner device revoke':['instanceId','credentialId'], 'owner device restore-previous':['instanceId','expectedCurrentPrincipalId','expectedCurrentCredentialId'],
  'web open':['instanceId','target'], 'deploy release verify':['releasePointerPath','manifestPath','artifactFiles'], 'deploy release continuity':['currentReceipt','targetManifest'], 'deploy runtime resolve':['requiredRange'], 'deploy runtime plan':['taskId','npmExecutable','wranglerVersion'], 'deploy runtime install':['plan','authorizedTaskId','authorizedPlanDigest'],

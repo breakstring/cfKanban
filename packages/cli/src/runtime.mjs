@@ -12,7 +12,9 @@ import { resolveStateRoot } from '../../skill-runtime/src/paths.mjs';
 import { toolError, serializeError } from '../../skill-runtime/src/errors.mjs';
 import { dispatch } from '../../skill-runtime/src/cli.mjs';
 import { API_COMMANDS } from './catalog.mjs';
-import { assertNoSecrets, matches, supportsServiceIdempotency } from './parser.mjs';
+import { assertNoSecrets, matches, supportsServiceIdempotency, validateCommandInput } from './parser.mjs';
+import { createContextResolver } from './context.mjs';
+import { inspectScopeDirectory } from '../../skill-runtime/src/scope.mjs';
 import { runWorkflow } from './workflows.mjs';
 import { loadCanonicalLauncher, openWeb } from '../../skill-runtime/src/web-open.mjs';
 import { createBrowserLaunchAndDeliver } from '../../skill-runtime/src/capability-delivery.mjs';
@@ -59,7 +61,7 @@ function targetMatches(command,input,result,readback) {
   return false;
 }
 export const redactOutput=value=>typeof value==='string'?value.replace(/cfk_v1_[a-f0-9]{16}_[A-Za-z0-9_-]{43}|cf[il]_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}/g,'[REDACTED]'):Array.isArray(value)?value.map(redactOutput):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,entry])=>[key,redactOutput(entry)])):value;
-export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({home}),fetchImpl:baseFetch=globalThis.fetch,requestImpl=apiRequest,dispatchImpl=dispatch,now=()=>Date.now(),signal=new AbortController().signal,openAuthTerminal}={}) {
+export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({home}),directory=process.cwd(),scopeInspector=inspectScopeDirectory,fetchImpl:baseFetch=globalThis.fetch,requestImpl=apiRequest,dispatchImpl=dispatch,now=()=>Date.now(),signal=new AbortController().signal,openAuthTerminal}={}) {
   const operationContext=new AsyncLocalStorage();
   const markWriteStarted=()=>{const context=operationContext.getStore();if(context)context.writeStarted=true;};
   const fetchImpl=(url,options={})=>{if(!['GET','HEAD'].includes((options.method??'GET').toUpperCase()))markWriteStarted();return baseFetch(url,{...options,signal:options.signal?AbortSignal.any([options.signal,signal]):signal});};
@@ -74,7 +76,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     if(name==='owner rotate-credential'&&context?.record.command.workflow==='owner-rotate')input={...input,expectedPrincipalId:context.record.identity.principal_id,expectedCredentialId:context.record.identity.credential_id,expectedApiOrigin:context.record.identity.origin,expectedOperationId:context.record.operation_id,expectedIdempotencyKey:context.record.idempotency_key,expectedPendingFingerprint:context.record.rotation_pending?.fingerprint,expectedPendingTokenDigest:context.record.rotation_pending?.token_digest};
     if(name==='web open') {
       const publicInput=pick(input,['mode','directory','instanceId','target','delivery','sensitiveOutputAcknowledgement','onRelayReady',...(input.mode==='online'?['idempotencyKey']:[])]);
-      if(publicInput.mode!=='online'&&!publicInput.directory)publicInput.directory=process.cwd();
+      if(publicInput.mode!=='online'&&!publicInput.directory)publicInput.directory=directory;
       return openWeb(publicInput,{onlineLauncher:input=>createBrowserLaunchAndDeliver({...input,stateRoot,fetchImpl,signal,expectedPrincipalId:context?.record.identity?.principal_id}),localLauncher:async()=> {
         const paths=[fileURLToPath(new URL('../../../',import.meta.url)),fileURLToPath(new URL('../',import.meta.url))];
         let root=null;
@@ -198,8 +200,8 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     if(command.method==='GET') {
       if(command.operation==='listIssues'||command.operation==='listIssueCandidates') {
         if(!input.project) {
-          const directory=await helper('scope inspect-directory',{directory:input.directory??process.cwd()});
-          const targets=directory.scope?.targets?.filter(target=>target.instance_id===input.instanceId)??[];
+          const detected=await scopeInspector({directory:input.directory??directory});
+          const targets=detected.scope?.targets?.filter(target=>target.instance_id===input.instanceId)??[];
           if(targets.length)input={...input,project:targets.map(target=>target.project_id)};
           else if(input.allowUnfiltered!==true)throw toolError('CLI_EXPLICIT_SCOPE_REQUIRED','Supply --project, associate this directory, or explicitly use --allow-unfiltered true');
         }
@@ -264,7 +266,8 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
       if(error.details?.committed===true) {record.phase='committed_delivery_failed';record.result={ok:false,status:503,committed:true,error:{code:error.code,category:'platform_failure',source:'client_runtime',recovery:error.details.recovery},data:pick(error.details,['invitation_id','launch_id','expires_at']),one_time_capability_hidden:true};await atomicWriteJson(file,record);return record.result;}
       const beforeWrite=!recovering&&!context.writeStarted&&error.code!=='CLI_OPERATION_CANCELLED'&&(/^(?:INVALID_|CLI_|STATE_|LOCAL_|NON_PERSISTENT_HOME_UNCONFIRMED|BROWSER_DELIVERY_UNAVAILABLE|CLIPBOARD_DELIVERY_UNAVAILABLE|PLAN_|ARTIFACT_|COMMAND_)/.test(error.code??'')||/BINDING_MISMATCH$/.test(error.code??''));
       const category=beforeWrite?/CONFLICT|DRIFT|CHANGED|LOCKED|BINDING_MISMATCH/.test(error.code??'')?'conflict':/^(?:INVALID_|CLI_(?:INVALID|UNKNOWN|MISSING|INPUT|SECRET|CAPABILITY)|ABSOLUTE_)/.test(error.code??'')?'validation':'platform_failure':'platform_failure';
-      result={ok:false,status:beforeWrite?category==='conflict'?409:400:0,error:{code:serializeError(error).error.code,category,source:'client_runtime',recovery:beforeWrite?'review_input_before_retry':'recover_original_operation'}};
+      const code=beforeWrite&&typeof error.code==='string'&&/^[A-Z][A-Z0-9_]{0,80}$/.test(error.code)?error.code:serializeError(error).error.code;
+      result={ok:false,status:beforeWrite?category==='conflict'?409:400:0,error:{code,category,source:'client_runtime',recovery:beforeWrite?'review_input_before_retry':'recover_original_operation'}};
       if(beforeWrite) {record.phase='rejected';record.result=result;await atomicWriteJson(file,record);return result;}
     }
     if(result?.operation?.ok===true&&result?.verification?.ok===false)result={...result,committed_unverified:true};
@@ -316,7 +319,8 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     if(command.workflow) return runWorkflow(command.workflow,input,{helper,api,connection,execute,home,stateRoot,fetchImpl,signal,acquireLock,openAuthTerminal,tokenRunner:operationRunner({maxBytes:64*1024,timeoutMs:30000}),authAction:async(input,runner)=>{markWriteStarted();return dispatchImpl('runtime cloudflare-auth-action',{...input,home,stateRoot,fetchImpl,runner:runner??operationRunner()});}});
     return helper(command.helper,input);
   };
-  const execute=async(command,input)=> {
+  const contextResolver=createContextResolver({home,stateRoot,directory,scopeInspector,read:async(instanceId,apiPath)=>request(await connection(instanceId),{method:'GET',apiPath})});
+  const executeResolved=async(command,input)=> {
     if(command.apiPath||command.workflow==='issue-reopen'||command.workflow==='operation-recover'||command.workflow==='operation-show'||command.effect==='read'||command.effect==='plan'||!input.instanceId||command.workflow==='deploy-apply')return executeBare(command,input);
     const operationId=input.operationId??randomUUID();input={...input,operationId,idempotencyKey:input.idempotencyKey??`cli-${operationId}`};
     if(['connection add','owner device prepare'].includes(command.name)&&await pathType(getInstancePaths({stateRoot,instanceId:input.instanceId}).instanceRoot)==='missing') {await initializeStateRoot({home,stateRoot,persistenceConfirmed:input.persistenceConfirmed});await ensurePrivateDirectory(getInstancePaths({stateRoot,instanceId:input.instanceId}).instanceRoot);}
@@ -328,6 +332,21 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
       const {onRelayReady,capabilityInput,...ordinary}=input; const record={schema_version:1,kind:'helper',operation_id:operationId,instance_id:input.instanceId,identity,command,input:ordinary,idempotency_key:input.idempotencyKey,created_at_ms:now(),phase:'prepared',...(capabilityInput?{capability_digest:canonicalDigest(capabilityInput)}:{})};
       await atomicWriteJson(file,record);await markPending(input.instanceId,operationId);return helperFinish(file,record,()=>executeBare(command,input));
     }));
+  };
+  const execute=async(command,input,{select=null}={})=> {
+    checkCancelled();
+    validateCommandInput(command,input,{allowContext:true});
+    if(command.workflow?.startsWith('context-'))return contextResolver.run(command.workflow.slice('context-'.length),input,{select});
+    if(command.name==='scope inspect'&&!input.directory)input={...input,directory};
+    if(command.name==='scope show'&&!input.repoRoot)input={...input,repoRoot:(await scopeInspector({directory})).scope_directory};
+    const resolved=await contextResolver.resolve(command,input,{select});
+    validateCommandInput(command,resolved.input);
+    const result=await executeResolved(command,resolved.input);
+    if(!resolved.resolved_context||!Object.values(resolved.resolved_context.sources).some(source=>source!=='explicit'))return result;
+    // Local Web results carry non-enumerable lifecycle handles; preserve them when adding diagnostics.
+    const decorated=Object.defineProperties({},Object.getOwnPropertyDescriptors(result));
+    decorated.resolved_context=resolved.resolved_context;
+    return decorated;
   };
   return {execute,api,helper,connection};
 }

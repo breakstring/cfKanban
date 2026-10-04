@@ -38,7 +38,7 @@ async function hasCurrentCredential(stateRoot, candidate) {
   return true;
 }
 
-export async function resolveWebInstance({ home = os.homedir(), stateRoot = resolveStateRoot({ home }), instanceId = null, origin = null, repoRoot = null } = {}) {
+export async function resolveWebInstance({ home = os.homedir(), stateRoot = resolveStateRoot({ home }), instanceId = null, origin = null, repoRoot = null, requireCurrentCredential = true } = {}) {
   const explicitId = instanceId === null ? null : requireUuid(instanceId, "instance_id");
   const explicitOrigin = origin === null ? null : requireHttpsOrigin(origin);
   const absoluteRoot = path.resolve(stateRoot);
@@ -55,7 +55,7 @@ export async function resolveWebInstance({ home = os.homedir(), stateRoot = reso
   const result = (status, source, candidates) => ({ status, source, candidates, ...(status === "resolved" ? { instance: candidates[0] } : {}), secret_values_exposed: false });
   const choose = async (source, candidates) => {
     if (candidates.length > 1) return result("selection_required", source, candidates);
-    if (candidates.length === 0 || candidates[0].trusted_api_origin === null || !await hasCurrentCredential(absoluteRoot, candidates[0])) return result("credential_required", source, candidates);
+    if (candidates.length === 0 || candidates[0].trusted_api_origin === null || requireCurrentCredential && !await hasCurrentCredential(absoluteRoot, candidates[0])) return result("credential_required", source, candidates);
     return result("resolved", source, candidates);
   };
   if (explicitId !== null) {
@@ -85,6 +85,7 @@ export async function resolveWebInstance({ home = os.homedir(), stateRoot = reso
     }
   }
   const candidates = [];
-  for (const candidate of await list()) if (await hasCurrentCredential(absoluteRoot, candidate)) candidates.push(candidate);
+  // CLI context selection counts registered connections; a missing identity must not silently select a different instance.
+  for (const candidate of await list()) if (!requireCurrentCredential || await hasCurrentCredential(absoluteRoot, candidate)) candidates.push(candidate);
   return choose("local_credentials", candidates);
 }

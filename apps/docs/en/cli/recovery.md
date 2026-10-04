@@ -2,12 +2,16 @@
 
 A known permission refusal or CAS conflict requires current identity/target/version review. Do not silently pick another account or overwrite newer data.
 
+For context ambiguity, inspect `context show` and select a candidate by stable ID. Stale or conflicting saved scope does not fall back to another Project or an unfiltered query; correct or explicitly clear that choice. See [context errors](./reference.md). Changing context cannot bypass a pending write.
+
 ```text
 cfkanban operation show --instance <instance-uuid> --operation-id <operation-uuid> --json
 cfkanban operation recover --instance <instance-uuid> --operation-id <operation-uuid> --json
 ```
 
 Unknown write results retain the original caller identity, target, request, write contract, CAS and applicable key in protected non-secret state across CLI processes. Restore the same connection, inspect the retained operation, and use its recovery command. A refusal or conflict during replay does not prove the original request was rejected. CAS-only outcomes may require exact audit evidence and manual verification; uncertain cache refreshes use read-only recovery. Matching current data alone is not proof of the original result. After a server idempotency replay window expires, inspect remote audit evidence; do not submit a replacement write.
+
+The journal's original target is already fixed. Recovery does not resolve it again from the current directory, repository recommendations, saved context or a new menu choice.
 
 Readback failure after commitment is reported separately from rejection. Partial deployment resumes its exact authorized plan and journal; a changed plan requires new authorization. Local installation failures preserve the previous active version, and modified launchers are not overwritten.
 

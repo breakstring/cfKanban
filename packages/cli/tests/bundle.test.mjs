@@ -37,7 +37,8 @@ test('clean canonical bundle runs public help/version and opens its verified loc
   const child=spawn(process.execPath,[script],{env:environment,stdio:['ignore','pipe','pipe']});t.after(()=>child.kill('SIGKILL'));
   const events=[];let stderr='';child.stderr.on('data',chunk=>stderr+=chunk);let pending='';let resolveEvent;const eventPromise=new Promise(resolve=>resolveEvent=resolve);
   child.stdout.on('data',chunk=>{pending+=chunk.toString();for(;;){const index=pending.indexOf('\n');if(index<0)break;const line=pending.slice(0,index);pending=pending.slice(index+1);const event=JSON.parse(line);events.push(event);if(event.event==='browser_relay_ready')resolveEvent(event);}});
-  const deadline=setTimeout(()=>resolveEvent(null),15000);const relay=await eventPromise;clearTimeout(deadline);assert.ok(relay,`Public CLI failed before local delivery: ${stderr}`);
+  child.once('exit',()=>resolveEvent(null));
+  const deadline=setTimeout(()=>resolveEvent(null),15000);const relay=await eventPromise;clearTimeout(deadline);assert.ok(relay,`Public CLI failed before local delivery: ${stderr} ${JSON.stringify(events)}`);
   // This is an isolated HTTP navigation fixture; it does not claim visual browser verification.
   const delivered=await fetch(relay.local_url,{redirect:'manual',headers:{'sec-fetch-site':'none','sec-fetch-mode':'navigate','sec-fetch-dest':'document'}});assert.equal(delivered.status,303);
   const cookie=delivered.headers.get('set-cookie').split(';')[0];const page=await fetch(new URL(delivered.headers.get('location'),relay.local_url),{headers:{cookie}});assert.equal(page.status,200);assert.match(await page.text(),/<html/i);

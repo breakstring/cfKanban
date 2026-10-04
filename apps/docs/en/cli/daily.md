@@ -1,22 +1,63 @@
-# Everyday CLI work
+# Work on tasks from the terminal
 
-Discover connections, verify your identity and choose exact targets before work. Directory scope recommends Projects and never grants access.
+Run these commands from your actual working directory. The CLI resolves stable targets from repository recommendations, saved context or a unique connection, then checks live Service permissions. You can use explicit UUIDs whenever you need a fixed target.
 
-```text
-cfkanban connection list --json
-cfkanban profile show --instance <instance-uuid>
-cfkanban issue list --instance <instance-uuid> --project <project-uuid>
-cfkanban issue show --instance <instance-uuid> --identifier CFK-123
-cfkanban issue complete --help
-```
+## Choose or switch your Project
 
-`join`, `identity`, and `scope` cover first access and pending identity recovery. Invitation input uses the dedicated secure transport; never copy a long-term token. Passkey enrollment and authentication require browser interaction.
-
-`issue` supports filtered lists, candidates, counts, creation, changes, assignment, blocking, completion and reopening. `comment`, `label`, `relation`, `attachment`, `profile`, and `notification` cover collaboration, single-file transfer, personal preferences and acknowledgments. Each write follows its Service permission and write contract. Help distinguishes CAS-only operations from operations with server idempotency; stable keys apply to the latter.
+Use `context use` when you want to remember a Project for this worktree. In a terminal, it offers a choice when needed; `context show` shows the resulting scope. This saves private local state and does not join a Project or grant access.
 
 ```text
-cfkanban comment create --instance <instance-uuid> --identifier CFK-123 --body-file ./note.md --idempotency-key <stable-key>
-cfkanban web open --help
+cfkanban context use
+cfkanban context show
 ```
 
-`web open` retains explicit local/online mode, target and actual working directory. A local browser workbench is separate from a host sidebar. Search results and pagination stay bounded. A completion note can be empty but must never invent verification.
+Subdirectories share the worktree's choice; separate worktrees and nested repositories keep their own directory context. Ordinary command selections are temporary unless you explicitly save them. `context clear` removes that saved choice without changing repository recommendations.
+
+## Find work
+
+Search by title or Issue identifier, or list work by status:
+
+```text
+cfkanban issue list --q "login"
+cfkanban issue list --status todo --status in_progress
+```
+
+If this repository recommends two Projects in one instance, Issue lists cover both unless you select a narrower Project. A single-Project write needs one choice. Invalid or inaccessible scope stops the command instead of silently selecting another Project. Search and pagination remain bounded.
+
+## Read or create an Issue
+
+Use the identifier returned by the list. To create an Issue, provide its actual title and put its description in a text file:
+
+```text
+cfkanban issue show --identifier CFK-123
+cfkanban issue create --title "Fix login" --body-file ./issue.md
+```
+
+## Move work forward and comment
+
+Change the status or add a progress Comment. The CLI checks the current permissions and version; a concurrent change requires review rather than overwriting newer work.
+
+```text
+cfkanban issue update --identifier CFK-123 --status-key in_progress
+cfkanban comment create --identifier CFK-123 --body-file ./note.md
+```
+
+## Record completion
+
+Write what you actually delivered in the completion note. Include only verification and artifacts that exist; completing an Issue does not perform its underlying work.
+
+```text
+cfkanban issue complete --identifier CFK-123 --body-file ./completion.md
+```
+
+Completion preserves an immutable record. Reopening and uncertain-write recovery are described by the installed help and [recovery guide](./recovery.md).
+
+## Open the board
+
+Open the current verified Project in a local browser workbench. If a Project is still ambiguous, the CLI uses the same terminal selection or structured noninteractive choices:
+
+```text
+cfkanban web open
+```
+
+Local mode is the default and needs its CLI process to keep running. Explicit online mode uses the existing safe Browser Launch flow; inspect installed help for the options. A host sidebar uses that host's exposed view tool. For first access, use the [join and sign-in guide](../usage/access.md); for extra parameters or context defaults, use the [reference](./reference.md). Administration and deployment are separate tasks.

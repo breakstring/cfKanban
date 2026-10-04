@@ -17,6 +17,8 @@ Preparation checks compatible Node/Wrangler, exact Cloudflare account, trustwort
 
 Resume keeps the same plan, operation and journal. Unknown resources, identity changes, partial migrations or schema/readback mismatches stop new writes. Same-plan recovery does not require new approval when the existing authorization covers it. Success requires actual Worker/D1/Owner/version readback and receipt, not a subprocess exit code.
 
+Deployment keeps the required explicit instance, Cloudflare account and resource targets. Apply/resume use the frozen authorized plan; moving directories or changing saved CLI context never retargets that plan or replaces its confirmation.
+
 Cloudflare login, GUI/UAC and browser steps may require the user. WebUI does not hold Cloudflare credentials. Updating local Skills/CLI never upgrades an Instance implicitly. Worker rollback never rolls back D1, and Time Travel restore is not automatic. Actual external verification requires a separately approved isolated environment.
 
 Device authentication delivers its verification URL and code only to a real dedicated terminal. A headless process fails before starting login; complete the authorized official Wrangler login manually and inspect the exact profile/account. An interrupted authentication action is never automatically repeated. Resuming after manual login requires evidence bound to the original plan, explicit profile/account and a fresh readback; it records the external resolution while retaining that the original action's commitment is unproven.

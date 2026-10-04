@@ -1,14 +1,17 @@
-# CLI overview
+# Use cfKanban from the terminal
 
-The public `cfkanban` command is delivered with the verified complete Skills bundle. It uses the same protected identity and Service rules as Skills and MCP. You need Node.js >=22.12.0 in the current environment. The CLI is being prepared in source; these pages do not mean it has been released to the stable channel.
+Use the public `cfkanban` command to find tasks, read or create Issues, add progress Comments, record completion and open a board. Run it from your working directory: verified repository context or a unique connection supplies ordinary targets, and a terminal can offer a temporary choice. `context use` explicitly remembers a Project for this worktree.
 
 ```text
 cfkanban
-cfkanban --locale zh-CN
-cfkanban issue --help
-cfkanban --version --json
+cfkanban context show
+cfkanban issue list
 ```
 
-Start with [installation](./installation.md), then [daily work](./daily.md), [administration](./administration.md), or [deployment](./deployment.md). [Reference](./reference.md) describes input/output, [automation](./automation.md) covers agents, and [recovery](./recovery.md) explains uncertain results.
+Follow [the everyday task flow](./daily.md): choose or switch a Project → find work → read or create → move forward and comment → record completion → open the board. You do not need to learn every command to work on an Issue.
 
-The Web UI remains a browser interface to the same Service. The CLI cannot control a host sidebar; use that host's exposed view tool or `web open` for a browser. Commands never infer authority from a local name or directory.
+The CLI comes from the same verified complete Skills bundle and follows its active version; there is no separate CLI upgrade channel. See [installation and updates](./installation.md). The current environment needs Node.js >=22.12.0. These source documentation pages do not mean the CLI has been released to the stable channel.
+
+For repeated tasks, use [scripts and Agents](./automation.md); explicit UUIDs and machine output remain available. Consult [reference](./reference.md) and [recovery](./recovery.md) as needed. [Administration](./administration.md) and [deployment](./deployment.md) serve their own authorized tasks.
+
+The Web UI uses the same Service permissions and task semantics. The CLI opens a browser through its safe workflow; a host sidebar needs that host's exposed view tool. Local names and directory defaults never grant authority.

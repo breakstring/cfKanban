@@ -82,6 +82,23 @@ JSON 中绝不能添加 Credential。`api request` 在内部读取 current Crede
 
 Invite 兑换不会隐式写入 `.cfkanban-scope.json`、创建 Issue、登记 Passkey 或打开浏览器；这些都是独立的用户选择。
 
+## 公共 CLI 目录上下文
+
+完整、已验证的工件也提供公共 `cfkanban` CLI，随同一 active 发行运行，没有独立升级渠道，按 Skills 生命周期安装、更新或移除。当前命令 schema 以已安装帮助为准，不执行未验证插件投影中的 CLI，也不编译 cache。选择此路径时，从用户实际工作目录运行，Agent 调用优先使用 `--json --no-interactive`：
+
+```text
+cfkanban context show --json --no-interactive
+cfkanban instance info --json --no-interactive
+cfkanban project list --json --no-interactive
+cfkanban issue list --json --no-interactive
+```
+
+CLI 从子目录探测当前 worktree 根；linked worktree 各自保存目录选择，嵌套仓库使用最近的自身根。明确 UUID 优先于推荐，唯一已登记实例无需参数。只解析命令需要的层级：仓库两个项目同属一个实例/工作区时，实例信息与项目列表没有歧义，Issue 列表聚合这些仓库项目；单项目写入需要选定一个项目。结合返回的 `result.resolved_context` 与 Service `resolved_scope` 核对；全显式旧调用不要求新增上下文字段。JSON、非 TTY、`--no-interactive` 或 stdin 已用于正文/安全输入时永不提问。依据用户意图从结构化候选 ID 作临时选择，意图仍有真实歧义时才询问；无效或过期范围/默认选择不静默扩大查询。
+
+`context show` 只诊断，项目可为 null；`context use` 明确保存私有目录偏好，`context clear` 清除该偏好，三者的 `--directory` 均可省略。默认 key 为探测后的 `scope_directory`，同一 worktree 子目录共用选择。仅在用户要求记住选择时运行 `context use`，核验项目所属工作区与仓库候选关系。显式仅提供工作区时可保存该层级；仅提供实例时保存实例层级，即使仓库项目候选存在；自动解析出的更窄候选不保存为项目偏好。`--global true` 明确保存/查看/清除全局默认，不依赖 cwd 的 Git/scope，Git 缺失或仓库配置损坏也可操作，其显式目标可位于当前仓库之外；在其它仓库执行时仍由仓库推荐覆盖。保存私有偏好不修改 `.cfkanban-scope.json`，也不创建 Grant。
+
+固定自动化可保留 `--instance` / `--instance-id` 及稳定工作区/项目参数。普通写入先解析目标再固化 journal，后续 cwd/默认范围变化不改变恢复使用的原身份、目标与适用 key。永久删除、Owner 安全与部署保留必要显式目标和确认。上述 CLI 规则不改变已发现 MCP 或下文内部安全脚本要求的明确参数。
+
 ## 本地身份与 scope
 
 MCP 连接检查可提供非秘密候选或明确实例的实时身份。仅在需要对应本地状态、origin 迁移或目录行为时使用下表脚本，不在 MCP 读取前跑完整清单。`capabilities` 用于环境准备/诊断。
