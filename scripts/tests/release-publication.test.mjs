@@ -202,6 +202,9 @@ test("gh adapter binds IDs, uploads one file without clobber, and sanitizes time
   assert.equal(calls[0].args.includes("draft=true"), true);
   assert.equal(calls[1].args[1], "https://uploads.github.com/repos/breakstring/cfKanban/releases/123/assets?name=test.zip");
   assert.equal(calls[1].args.includes("--input"), true);
+  assert.equal(calls[1].options.timeout, 300_000, "Bundle uploads allow bounded transfer time beyond control-plane requests");
+  assert.equal(calls[0].options.timeout, 60_000);
+  assert.equal(calls[2].options.timeout, 60_000);
   assert.equal(calls[2].args.includes("draft=false"), true);
   assert.equal(calls[2].args.includes("make_latest=false"), true);
   await client.publish({ ...plan, version: "1.0.0", prerelease: false }, 456);

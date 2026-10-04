@@ -200,7 +200,3 @@ export async function main(argv = process.argv.slice(2), { surface = "all" } = {
     return 1;
   }
 }
-
-if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  process.exitCode = await main();
-}

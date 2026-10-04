@@ -9,7 +9,7 @@ import { digest } from "./release-publication.mjs";
 
 const exec = promisify(execFile);
 
-export function githubClient({ executable = "gh", timeout = 60_000, run = exec } = {}) {
+export function githubClient({ executable = "gh", timeout = 60_000, uploadTimeout = 300_000, run = exec } = {}) {
   const environment = { ...process.env, GH_PROMPT_DISABLED: "1", GH_HOST: "github.com" };
   // gh owns GitHub authentication; unrelated Cloudflare/Alibaba credentials are not needed.
   for (const name of ["ALIBABA_CLOUD_ACCESS_KEY_ID", "ALIBABA_CLOUD_ACCESS_KEY_SECRET", "CLOUDFLARE_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_EMAIL", "GH_DEBUG"]) delete environment[name];
@@ -19,7 +19,7 @@ export function githubClient({ executable = "gh", timeout = 60_000, run = exec }
     if (file) args.push("-H", "Content-Type: application/octet-stream", "--input", file);
     let response;
     try {
-      response = await run(executable, args, { env: environment, timeout, maxBuffer: 16 * 1024 * 1024, encoding: "utf8", windowsHide: true });
+      response = await run(executable, args, { env: environment, timeout: file ? uploadTimeout : timeout, maxBuffer: 16 * 1024 * 1024, encoding: "utf8", windowsHide: true });
     } catch {
       // gh stderr may contain supplier bodies or credentials. Never forward it.
       throw new Error(`GitHub ${method} failed or timed out; re-inspect the same plan before retrying any write`);
