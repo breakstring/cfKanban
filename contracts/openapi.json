@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.9.1-rc.1",
+    "version": "1.9.1-rc.2",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
