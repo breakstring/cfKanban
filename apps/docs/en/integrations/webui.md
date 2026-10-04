@@ -16,6 +16,8 @@ Both interfaces access the same instance's tasks under the same business permiss
 | How to open | Ask the Agent; in DSH, ask for the sidebar or select the logo | Explicitly ask the Agent for online mode, or sign in to the site with a registered Passkey |
 | Local requirements | Matching local components installed; included in the DSH plugin | A normal browser; Agent sign-in requires a usable local identity |
 
+In the full app’s project page, choose **Board** or **List**. List groups Issues by status and lets you expand nested children. Switching views keeps loaded pages; opening an Issue or project settings preserves the list and filters when you return.
+
 ## Open the local workbench
 
 ```text

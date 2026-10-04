@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from "vue";
-import { en, zh_cn } from "@nuxt/ui/locale";
 
 import AppFooter from "./components/AppFooter.vue";
 import ErrorNotice from "./components/ErrorNotice.vue";
@@ -23,7 +22,7 @@ import { applyTheme, latestPrincipalTheme } from "./lib/theme";
 import type { InstanceDiscovery, Locale, PrincipalResource, WriteResult } from "./types";
 import type { WebSessionView } from "./types";
 
-const UApp = lazyPage(() => import("@nuxt/ui/components/App.vue"));
+const UApp = lazyPage(() => import("./components/LocalizedApp.vue"));
 const SessionDraftsPanel = defineAsyncComponent(() => import("./components/SessionDraftsPanel.vue"));
 const AppHeader = lazyPage(() => import("./components/AppHeader.vue"));
 const IssueDetailView = lazyPage(() => import("./views/IssueDetailView.vue"));
@@ -400,7 +399,7 @@ watch(currentPath, () => {
   <SessionDraftsPanel v-if="retainedSessionTextDrafts.length" :session="session" />
   <PublicHomeView v-if="route.kind === 'home'" />
 
-  <UApp v-else :locale="locale === 'zh-CN' ? zh_cn : en" :toaster="null">
+  <UApp v-else>
   <div class="application-shell" :class="{ 'application-shell--board': route.kind === 'project' && session }">
     <AppHeader
       v-if="session"

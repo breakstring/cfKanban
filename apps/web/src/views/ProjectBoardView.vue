@@ -26,6 +26,7 @@ import {
 } from "../lib/cas-recovery";
 import { projectInventoryBoundary, sessionCanWriteProject } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
+import { lazyPage } from "../lib/lazy-page";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { boardFilters, boardPath } from "../lib/board-navigation";
 import { matchesBoardFilters, refreshBoardIssueProgress, sortBoardIssues } from "../lib/board-projection";
@@ -68,6 +69,8 @@ const countsLoading = ref(false);
 const countsError = ref<unknown>(null);
 let countsRequestId = 0;
 const initialFilters = boardFilters(window.location.search);
+const ProjectIssueList = lazyPage(() => import("../components/ProjectIssueList.vue"));
+const viewMode = ref<"board" | "list">(initialFilters.view ?? "board");
 const appliedSearch = ref(initialFilters.search);
 const priorities = ref<PriorityKey[]>(initialFilters.priorities);
 const labelIds = ref<string[]>(initialFilters.labels);
@@ -97,7 +100,15 @@ const projectionGeneration = new ProjectionGeneration();
 const writeFence = new WriteFence();
 let loadRequestId = 0;
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
-const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, priorities: priorities.value, labels: labelIds.value }));
+const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, priorities: priorities.value, labels: labelIds.value, ...(viewMode.value === "list" ? { view: "list" as const } : {}) }));
+function setView(mode: "board" | "list"): void {
+  viewMode.value = mode;
+  // 布局切换只改当前 URL，避免以完整路由为 key 的页面重新挂载、重取分页。
+  window.history.replaceState(window.history.state, "", returnPath.value);
+}
+function openListIssue(identifier: string): void {
+  navigate(`/app/issues/${identifier}?from=${encodeURIComponent(returnPath.value)}`, false, returnPath.value);
+}
 function openProjectSettings(): void {
   const section = hasManagementActions(project.value) ? "management" : "activity";
   navigate(projectSettingsPath(props.workspaceId, props.projectId, section, returnPath.value), false, returnPath.value);
@@ -725,8 +736,9 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
         <UBadge v-if="!canWrite" color="neutral" variant="soft">{{ t("board.readOnly") }}</UBadge>
         <UButton v-if="canWrite" color="primary" type="button" @click="showNewIssue = true"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ t("action.newIssue") }}</UButton>
       </div>
-      <div class="board-view-bar">
-        <span class="board-view-label"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ locale === 'zh-CN' ? '看板' : 'Board' }}</span>
+      <div class="board-view-bar" role="group" :aria-label="locale === 'zh-CN' ? '项目视图' : 'Project view'">
+        <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'board' }" :aria-pressed="viewMode === 'board'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('board')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ locale === 'zh-CN' ? '看板' : 'Board' }}</button>
+        <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'list' }" :aria-pressed="viewMode === 'list'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('list')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ locale === 'zh-CN' ? '列表' : 'List' }}</button>
 
       </div>
       <div class="board-utility-bar">
@@ -751,14 +763,14 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
     <CasConflictNotice v-if="casConflict" :busy="formBusy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
 
-    <KanbanStatusNavigation v-if="!loading" :columns="statusNavigation" :region="boardRegion" />
-    <p v-if="!loading" id="board-scroll-hint" class="board-scroll-hint">
+    <KanbanStatusNavigation v-if="!loading && viewMode === 'board'" :columns="statusNavigation" :region="boardRegion" />
+    <p v-if="!loading && viewMode === 'board'" id="board-scroll-hint" class="board-scroll-hint">
       {{ locale === "zh-CN"
         ? "左右滑动查看全部 5 列；不方便拖拽时，可用卡片下方的状态菜单。"
         : "Swipe sideways to see all 5 columns. Use the status menu on each card when dragging is awkward." }}
     </p>
     <div
-      v-if="!loading"
+      v-if="!loading && viewMode === 'board'"
       ref="boardRegion"
       class="kanban-scroll"
       role="region"
@@ -860,6 +872,8 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
 
 
 
+    <ProjectIssueList v-if="!loading && viewMode === 'list'" :columns="columns" :statuses="statuses" :can-write="canWrite" :saving="saving" :pending-ids="[...Object.keys(pendingPriorities), ...Object.keys(pendingStatuses), ...Object.keys(pendingAssignees)]" :assignees="assignees" :assignees-loading="assigneesLoading" :assignees-has-more="assigneesCursor !== null" :assignees-error="assigneesError" @open="openListIssue" @priority="savePriority" @status="onStatusSelection" @assignee="onAssigneeSelection" @people="ensureAssigneesLoaded" @people-more="loadAssignees(false)" @people-retry="loadAssignees()" @more="loadColumn" @scroll="onColumnScroll" />
+
     <ModalDialog v-if="showNewIssue" :busy="formBusy" :title="t('action.newIssue')" @close="showNewIssue = false">
       <form class="form-stack" @submit.prevent="createIssue">
         <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="newIssue.title" required maxlength="256" autofocus /></label>
@@ -885,8 +899,9 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
 .board-description :deep(.markdown > :first-child) { margin-top: 0; }
 .board-description :deep(.markdown > :last-child) { margin-bottom: 0; }
 .ui-action-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.board-view-bar { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid var(--color-border); padding-top: 6px; }
-.board-view-label { display: inline-flex; align-items: center; gap: 8px; align-self: stretch; padding: 10px 0; border-bottom: 2px solid var(--color-primary); color: var(--color-primary); font-size: 14px; font-weight: 600; }
+.board-view-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 24px; border-bottom: 1px solid var(--color-border); padding-top: 6px; }
+.board-view-label { display: inline-flex; align-items: center; gap: 8px; align-self: stretch; padding: 10px 0; border: 0; border-bottom: 2px solid var(--color-primary); background: transparent; color: var(--color-primary); font-size: 14px; font-weight: 600; cursor: pointer; }
+.board-view-inactive { border-bottom-color: transparent; color: var(--color-text-muted); font-weight: 400; }
 .board-utility-bar { justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .board-search { flex: 0 1 380px; gap: 8px; }
 .board-search-field { flex: 1; min-width: 0; }

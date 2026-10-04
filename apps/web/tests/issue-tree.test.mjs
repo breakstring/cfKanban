@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { issueTree } from '../src/embedded/issue-tree.ts';
+import { issueTree } from '../src/lib/issue-tree.ts';
 import { readIssueHierarchy } from '../src/lib/issue-hierarchy.ts';
 
 const workspace = randomUUID(), project = randomUUID();

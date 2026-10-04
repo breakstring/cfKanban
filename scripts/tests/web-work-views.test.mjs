@@ -574,6 +574,11 @@ test('returning to the board preserves verified query values and rejects foreign
   assert.deepEqual(filter, { search: 'hello', priorities: ['high', 'urgent'], labels: [label] });
   const path = boardPath(workspace, p1, filter);
   assert.equal(boardReturnPath(workspace, p1, new URLSearchParams({from:path}).toString()), path);
+  const listFilter = boardFilters(`view=list&priority=high&label=${label}&q=hello`);
+  const listPath = boardPath(workspace, p1, listFilter);
+  assert.equal(new URL(listPath, 'https://local.test').searchParams.get('view'), 'list');
+  assert.equal(boardReturnPath(workspace, p1, new URLSearchParams({ from: listPath }).toString()), listPath);
+  assert.deepEqual(boardFilters('view=foreign'), { search: '', priorities: [], labels: [] });
   for (const from of ['https://evil.invalid/', '//evil.invalid', boardPath(workspace, p2), `${boardPath(workspace,p1)}/deleted`]) {
     assert.equal(boardReturnPath(workspace,p1,new URLSearchParams({from}).toString()), boardPath(workspace,p1));
   }

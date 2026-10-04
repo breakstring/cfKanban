@@ -1,9 +1,10 @@
 import { priorityOrder } from "./priority";
 import type { PriorityKey } from "../types";
 
-export function boardFilters(query: string): { search: string; priorities: PriorityKey[]; labels: string[] } {
+export function boardFilters(query: string): { search: string; priorities: PriorityKey[]; labels: string[]; view?: "list" } {
   const params = new URLSearchParams(query);
   return {
+    ...(params.get("view") === "list" ? { view: "list" as const } : {}),
     search: params.get("q") ?? "",
     priorities: [...new Set(params.getAll("priority"))].filter((value): value is PriorityKey => priorityOrder.includes(value as PriorityKey)),
     labels: [...new Set(params.getAll("label"))].filter(value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)).slice(0, 20),
@@ -16,6 +17,7 @@ export function boardPath(workspaceId: string, projectId: string, filter?: Retur
   if (filter?.search.trim()) params.set("q", filter.search.trim());
   for (const priority of filter?.priorities ?? []) params.append("priority", priority);
   for (const label of filter?.labels ?? []) params.append("label", label);
+  if (filter?.view === "list") params.set("view", "list");
   return `${base}${params.size ? `?${params}` : ""}`;
 }
 
