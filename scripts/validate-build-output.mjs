@@ -5,6 +5,7 @@ import { verifyDocsBuild } from "./lib/docs-build.mjs";
 import { verifyWebAssetManifest } from "./lib/web-asset-manifest.mjs";
 import { verifyEmbeddedBuild } from "./lib/embedded-build.mjs";
 import { verifyLocalRuntimeBuild } from "../packages/local-runtime/scripts/build.mjs";
+import { verifyCliBuild } from "./lib/cli-build.mjs";
 
 async function filesUnder(root) {
   const entries = await readdir(root, { withFileTypes: true, recursive: true });
@@ -14,6 +15,7 @@ async function filesUnder(root) {
 const webRoot = new URL("../apps/web/dist/", import.meta.url);
 const workerRoot = new URL("../apps/worker/dist/", import.meta.url);
 const release = JSON.parse(await readFile(new URL("../release/version.json", import.meta.url), "utf8"));
+await verifyCliBuild({ outputDirectory: fileURLToPath(new URL("../packages/cli/dist/", import.meta.url)), version: release.version });
 await verifyEmbeddedBuild({ outputDirectory: fileURLToPath(new URL("../apps/web/dist-embedded/", import.meta.url)), version: release.version });
 await verifyLocalRuntimeBuild({ outputDirectory: fileURLToPath(new URL("../packages/local-runtime/dist/", import.meta.url)), version: release.version });
 const webBudget = JSON.parse(await readFile(new URL("./web-performance-budget.json", import.meta.url), "utf8"));

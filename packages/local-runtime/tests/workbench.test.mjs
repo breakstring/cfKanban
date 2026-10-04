@@ -25,7 +25,7 @@ function paginationController(reply, view = 'board') {
     return { ok: true, value: await reply(endpoint, payload.input, signal) };
   } }, new AbortController().signal, () => randomUUID(), { initialView: view });
   const binding = { binding_id: randomUUID(), project: { id: randomUUID() }, identity: { instance: { instance_id: randomUUID() }, principal: { principal_id: randomUUID() } }, statuses: STATUSES.map(key => ({ key })) };
-  controller.patch({ binding });
+  controller.patch({ binding, expanded_groups: ["todo"] });
   return { controller, calls, binding };
 }
 function fixture({ reader = false, uncertain = false, locale = null, theme = 'orange', uncertainPreference = false, uncertainLabel = false } = {}) {
@@ -118,8 +118,9 @@ test('list and board read explicit bounded status groups and paginate one group 
       const pages = f.calls.filter(row => row.name === 'cfkanban_issues_list');
       assert.equal(f.controller.state.view, view);
       assert.equal(f.controller.state.page, null);
-      assert.equal(pages.length, 5);
-      assert.deepEqual(pages.map(row => row.args.status[0]), STATUSES);
+      assert.equal(pages.length, view === 'list' ? 1 : 5);
+      assert.deepEqual(pages.map(row => row.args.status[0]), view === 'list' ? ['backlog'] : STATUSES);
+      if (view === 'list') await f.controller.toggleGroup('todo', true);
       assert.ok(pages.every(row => row.args.limit === 25 && row.args.project_ids.length === 1 && row.args.project_ids[0] === f.ids.project_id));
       const { WorkbenchAdapter } = await adapterExports();
       const adapter = new WorkbenchAdapter(f.controller);
@@ -333,9 +334,9 @@ test('list and board status filters query one matching group and clearing them r
       before = f.calls.length;
       await f.controller.filter({ assignment: 'all', status: '', priority: '' });
       const cleared = f.calls.slice(before).filter(row => row.name === 'cfkanban_issues_list');
-      assert.equal(cleared.length, 5);
-      assert.deepEqual(cleared.map(row => row.args.status[0]), STATUSES);
-      assert.deepEqual(f.controller.state.board.columns.map(row => row.key), STATUSES);
+      assert.equal(cleared.length, view === 'list' ? 1 : 5);
+      assert.deepEqual(cleared.map(row => row.args.status[0]), view === 'list' ? ['todo'] : STATUSES);
+      assert.deepEqual(f.controller.state.board.columns.map(row => row.key), view === 'list' ? ['todo'] : STATUSES);
       assert.equal(f.controller.state.page, null);
       assert.ok(cleared.every(row => row.args.limit === 25 && row.args.cursor === undefined));
     } finally { f.controller.dispose(); f.bridge.dispose(); }
@@ -504,8 +505,8 @@ test('different status groups remain current concurrently and a failed page reta
   }
 });
 
-test('collection epochs discard pages and errors after binding, filter, view or refresh changes', async () => {
-  for (const view of ['list', 'board']) for (const change of ['binding', 'filter', 'view', 'refresh']) {
+test('collection epochs discard pages and errors after binding, filter or refresh changes', async () => {
+  for (const view of ['list', 'board']) for (const change of ['binding', 'filter', 'refresh']) {
     let finish;
     let generation = 1;
     const f = paginationController(async (_endpoint, input) => {
@@ -518,7 +519,6 @@ test('collection epochs discard pages and errors after binding, filter, view or 
       generation = 10;
       if (change === 'binding') { f.controller.patch({ binding: { ...f.binding, binding_id: randomUUID() }, page: null, board: null }); await f.controller.refresh(); }
       if (change === 'filter') await f.controller.filter({ assignment: 'all', status: 'done', priority: '' });
-      if (change === 'view') await f.controller.setView(view === 'list' ? 'board' : 'list');
       if (change === 'refresh') await f.controller.refresh();
       const state = { board: f.controller.state.board, page: f.controller.state.page };
       finish(change === 'filter' ? { ok: false, error: { code: 'PLATFORM_UNAVAILABLE' } } : ok({ columns: [{ key: 'todo', items: [paginationRow(99)], next_cursor: null }] }));
@@ -538,7 +538,7 @@ test('list groups isolate identical opaque cursors and reject an unscoped next-p
   try {
     await f.controller.refresh();
     assert.equal(adapter.snapshotMessage().state.page, null);
-    assert.deepEqual(adapter.snapshotMessage().state.board.columns.map(column => column.has_more), [true, true]);
+    assert.deepEqual(adapter.snapshotMessage().state.board.columns.filter(column => column.loaded).map(column => column.has_more), [true, true]);
     assert.equal((await adapter.receive(action('page', { next: true }))).error.code, 'PANEL_INVALID_INPUT');
     assert.equal(f.calls.length, 1);
     const todo = f.controller.boardPage('todo', true);
@@ -546,11 +546,11 @@ test('list groups isolate identical opaque cursors and reject an unscoped next-p
     assert.deepEqual(f.calls.slice(1).map(call => [call.endpoint, call.input.status_key, call.input.cursor]), [['board', 'todo', 'private-shared'], ['board', 'done', 'private-shared']]);
     finishes.get('todo')(ok({ columns: [{ key: 'todo', items: [paginationRow(3)], next_cursor: null }] }));
     await todo;
-    assert.deepEqual(adapter.snapshotMessage().state.board.columns.map(column => column.has_more), [false, true]);
+    assert.deepEqual(adapter.snapshotMessage().state.board.columns.filter(column => column.loaded).map(column => column.has_more), [false, true]);
     finishes.get('done')(ok({ columns: [{ key: 'done', items: [paginationRow(4, 'done')], next_cursor: null }] }));
     await done;
     assert.deepEqual(f.controller.state.board.columns.map(column => column.items.map(row => row.identifier)), [['CFK-1', 'CFK-3'], ['CFK-2', 'CFK-4']]);
-    assert.deepEqual(adapter.snapshotMessage().state.board.columns.map(column => column.has_more), [false, false]);
+    assert.deepEqual(adapter.snapshotMessage().state.board.columns.filter(column => column.loaded).map(column => column.has_more), [false, false]);
     assert.doesNotMatch(JSON.stringify(adapter.snapshotMessage()), /private-shared|Never retain a collection body/);
   } finally { adapter.dispose(); f.controller.dispose(); }
 });
@@ -563,7 +563,7 @@ test('group row and successful-page limits retain the remote cursor and leave ot
       const generation = ++page;
       const rows = Array.from({ length: 25 }, (_value, index) => paginationRow(generation * 100 + index));
       const data = { items: rows, next_cursor: `private-${page}` };
-      return ok({ columns: [{ key: 'todo', ...data }, ...(!input.status_key ? [{ key: 'done', items: [paginationRow(90000, 'done')], next_cursor: 'private-done-first' }] : [])] });
+      return ok({ columns: [{ key: 'todo', ...data }, ...(!input.cursor ? [{ key: 'done', items: [paginationRow(90000, 'done')], next_cursor: 'private-done-first' }] : [])] });
     }, view);
     try {
       await f.controller.refresh();
@@ -604,7 +604,7 @@ test('collection byte budget preserves the affected group and still accepts a sm
       if (input.status_key === 'done') return ok({ columns: [{ key: 'done', items: [paginationRow(90000, 'done')], next_cursor: null }] });
       const generation = ++page;
       const column = { key: 'todo', items: Array.from({ length: 25 }, (_value, index) => ({ ...paginationRow(generation * 100 + index), title: 'x'.repeat(8192) })), next_cursor: `private-${page}` };
-      return ok({ columns: [column, ...(!input.status_key ? [{ key: 'done', items: [], next_cursor: 'private-small' }] : [])] });
+      return ok({ columns: [column, ...(!input.cursor ? [{ key: 'done', items: [], next_cursor: 'private-small' }] : [])] });
     }, view);
     try {
       await f.controller.refresh();
@@ -648,9 +648,9 @@ test('full projected snapshot budget rejects a group append while preserving ori
       assert.deepEqual(column.items, original.items);
       assert.equal(column.next_cursor, 'private-original');
       assert.equal(column.capacity_reached, true);
-      assert.equal(messages.at(-1).state.board.columns[0].items.length, 25);
-      assert.equal(messages.at(-1).state.board.columns[0].has_more, true);
-      assert.equal(messages.at(-1).state.board.columns[0].capacity_reached, true);
+      assert.equal(messages.at(-1).state.board.columns.find(column => column.key === 'todo').items.length, 25);
+      assert.equal(messages.at(-1).state.board.columns.find(column => column.key === 'todo').has_more, true);
+      assert.equal(messages.at(-1).state.board.columns.find(column => column.key === 'todo').capacity_reached, true);
       assert.equal(messages.at(-1).state.error, null);
       assert.doesNotMatch(JSON.stringify(messages.at(-1)), /private-original|Never retain a collection body/);
     } finally { adapter.dispose(); f.controller.dispose(); }
@@ -1146,4 +1146,179 @@ test('older Service locale validation refusals are definite failures without ret
       assert.equal(f.principal.locale, null); assert.equal(f.controller.canChangeBinding(), true);
     } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
   }
+});
+
+test('list lazily reads backlog, caches expanded groups and keeps per-group failed continuation recovery', async () => {
+  const f = fixture();
+  const { WorkbenchAdapter } = await adapterExports();
+  const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    await f.controller.bootstrap(null, { view: 'list' });
+    const pageCalls = () => f.calls.filter(row => row.name === 'cfkanban_issues_list');
+    assert.deepEqual(pageCalls().map(row => row.args.status[0]), ['backlog']);
+    let projected = adapter.snapshotMessage().state;
+    assert.deepEqual(projected.board.columns.map(column => column.key), STATUSES);
+    assert.deepEqual(projected.board.columns.map(column => column.loaded), [true, false, false, false, false]);
+    assert.deepEqual(projected.expanded_groups, ['backlog']);
+    await adapter.receive(action('board_group', { status_key: 'todo', expanded: true }));
+    const original = f.controller.state.board.columns.find(column => column.key === 'todo');
+    await adapter.receive(action('board_group', { status_key: 'todo', expanded: false }));
+    await adapter.receive(action('board_group', { status_key: 'todo', expanded: true }));
+    assert.equal(pageCalls().length, 2);
+    assert.equal(f.controller.state.board.columns.find(column => column.key === 'todo'), original);
+    let fail = true;
+    interceptFacade(f, (facade, name, args) => name === 'cfkanban_issues_list' && args.cursor && fail ? { ok: false, status: 503, error: { code: 'PLATFORM_UNAVAILABLE' } } : facade.callTool(name, args));
+    await adapter.receive(action('board_page', { status_key: 'todo', next: true }));
+    projected = adapter.snapshotMessage().state;
+    assert.equal(projected.board.columns.find(column => column.key === 'todo').error.code, 'PLATFORM_UNAVAILABLE');
+    assert.equal(f.controller.state.board.columns.find(column => column.key === 'todo').next_cursor, 'private-column-cursor');
+    fail = false;
+    await adapter.receive(action('board_page', { status_key: 'todo', next: true }));
+    assert.equal(pageCalls().at(-1).args.cursor, 'private-column-cursor');
+    assert.equal(adapter.snapshotMessage().state.board.columns.find(column => column.key === 'todo').error, null);
+    assert.doesNotMatch(JSON.stringify(adapter.snapshotMessage()), /private-column-cursor/);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('list first-page loading and failure stay distinct from loaded empty and explicit retries remain group scoped', async () => {
+  const f = fixture();
+  const { WorkbenchAdapter } = await adapterExports();
+  const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    await f.controller.bootstrap(null, { view: 'list' });
+    let finish;
+    interceptFacade(f, (facade, name, args) => name === 'cfkanban_issues_list' && args.status[0] === 'done' ? new Promise(resolve => { finish = resolve; }) : facade.callTool(name, args));
+    const opening = adapter.receive(action('board_group', { status_key: 'done', expanded: true }));
+    for (let i = 0; i < 20 && !finish; i++) await Promise.resolve();
+    let column = adapter.snapshotMessage().state.board.columns.find(column => column.key === 'done');
+    assert.equal(column.loaded, false); assert.equal(column.loading, true); assert.equal(column.error, null);
+    finish({ ok: false, status: 503, error: { code: 'PLATFORM_UNAVAILABLE' } }); await opening;
+    column = adapter.snapshotMessage().state.board.columns.find(column => column.key === 'done');
+    assert.equal(column.loaded, false); assert.equal(column.loading, false); assert.equal(column.error.code, 'PLATFORM_UNAVAILABLE');
+    const retrying = adapter.receive(action('board_page', { status_key: 'done', next: false }));
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    finish(ok({ items: [], next_cursor: null })); await retrying;
+    column = adapter.snapshotMessage().state.board.columns.find(column => column.key === 'done');
+    assert.equal(column.loaded, true); assert.equal(column.items.length, 0); assert.equal(column.error, null);
+    assert.deepEqual(f.calls.filter(row => row.name === 'cfkanban_issues_list').map(row => row.args.status[0]), ['backlog']);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('layouts share cached groups and in-flight pages, explicit refresh preserves chosen expansion and status filtering overrides backlog', async () => {
+  const f = fixture();
+  try {
+    await f.controller.bootstrap(null, { view: 'list' });
+    await f.controller.toggleGroup('todo', true);
+    const reads = () => f.calls.filter(row => row.name === 'cfkanban_issues_list');
+    const backlog = f.controller.state.board.columns.find(column => column.key === 'backlog');
+    await f.controller.setView('board');
+    assert.deepEqual(reads().map(row => row.args.status[0]), ['backlog', 'todo', 'in_progress', 'done', 'canceled']);
+    assert.equal(f.controller.state.board.columns.find(column => column.key === 'backlog'), backlog);
+    await f.controller.setView('list');
+    assert.equal(reads().length, 5);
+    assert.deepEqual(f.controller.state.expanded_groups, ['backlog', 'todo']);
+    await f.controller.toggleGroup('backlog', false);
+    const refreshStart = reads().length;
+    await f.controller.refresh();
+    assert.deepEqual(reads().slice(refreshStart).map(row => row.args.status[0]), STATUSES);
+    assert.deepEqual(f.controller.state.expanded_groups, ['todo']);
+    const before = reads().length;
+    await f.controller.filter({ assignment: 'all', status: 'done', priority: '' });
+    assert.deepEqual(reads().slice(before).map(row => row.args.status[0]), ['done']);
+    assert.deepEqual(f.controller.state.expanded_groups, ['done']);
+    await f.controller.filter({ assignment: 'all', status: '', priority: 'high' });
+    assert.equal(reads().at(-1).args.status[0], 'done');
+    assert.deepEqual(f.controller.state.expanded_groups, ['done']);
+  } finally { f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('manual list refresh invalidates folded cursors and retries a failed first page without prefetching unloaded states', async () => {
+  const f = fixture();
+  const { WorkbenchAdapter } = await adapterExports();
+  const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    await f.controller.bootstrap(null, { view: 'list' });
+    await adapter.receive(action('board_group', { status_key: 'todo', expanded: true }));
+    await adapter.receive(action('board_group', { status_key: 'todo', expanded: false }));
+    assert.equal(f.controller.state.board.columns.find(column => column.key === 'todo').next_cursor, 'private-column-cursor');
+    const reads = [];
+    let fail = true;
+    interceptFacade(f, (facade, name, args) => {
+      if (name !== 'cfkanban_issues_list') return facade.callTool(name, args);
+      reads.push(structuredClone(args));
+      if (args.status[0] !== 'todo') return facade.callTool(name, args);
+      if (fail) return { ok: false, status: 503, error: { code: 'PLATFORM_UNAVAILABLE' } };
+      return ok({ items: [{ ...f.issue, identifier: args.cursor ? 'CFK-2' : 'CFK-1', title: 'Current first page', version: 4 }], next_cursor: args.cursor ? null : 'new-private-column-cursor' });
+    });
+    await adapter.receive(action('page', { next: false }));
+    assert.deepEqual(reads.map(row => row.status[0]), ['backlog', 'todo']);
+    assert.ok(reads.every(row => row.cursor === undefined));
+    assert.deepEqual(f.controller.state.expanded_groups, ['backlog']);
+    const failed = adapter.snapshotMessage().state.board.columns.find(column => column.key === 'todo');
+    assert.equal(failed.loaded, true);
+    assert.equal(failed.items[0].version, 3);
+    assert.equal(failed.has_more, false);
+    assert.equal(failed.error.code, 'PLATFORM_UNAVAILABLE');
+    fail = false;
+    await adapter.receive(action('board_page', { status_key: 'todo', next: failed.loaded && failed.has_more }));
+    assert.equal(reads.length, 3);
+    assert.equal(reads.at(-1).cursor, undefined);
+    const refreshed = f.controller.state.board.columns.find(column => column.key === 'todo');
+    assert.equal(refreshed.items[0].version, 4);
+    assert.equal(refreshed.next_cursor, 'new-private-column-cursor');
+    await adapter.receive(action('board_group', { status_key: 'todo', expanded: true }));
+    assert.equal(reads.length, 3);
+    await adapter.receive(action('board_page', { status_key: 'todo', next: true }));
+    assert.equal(reads.at(-1).cursor, 'new-private-column-cursor');
+    assert.doesNotMatch(JSON.stringify(adapter.snapshotMessage()), /private-column-cursor/);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('memory checkpoint restores bounded expansion while a different binding resets to backlog and rejects late pages', async () => {
+  const f = fixture();
+  try {
+    await f.controller.bootstrap(null, { view: 'list' });
+    await f.controller.toggleGroup('todo', true);
+    await f.controller.toggleGroup('backlog', false);
+    const checkpoint = f.controller.getCheckpoint();
+    assert.deepEqual(checkpoint.state.expanded_groups, ['todo']);
+    const { expanded_groups, ...legacy } = checkpoint.state;
+    assert.ok(validateCheckpoint({ ...checkpoint, state: legacy }), 'legacy checkpoints keep the backlog default');
+    for (const value of [['unknown'], ['todo', 'todo'], Array(6).fill('todo')]) assert.equal(validateCheckpoint({ ...checkpoint, state: { ...checkpoint.state, expanded_groups: value } }), null);
+    const resumed = new WorkbenchController(f.controller.rpc, new AbortController().signal);
+    try {
+      const before = f.calls.length;
+      await resumed.restoreCheckpoint(checkpoint);
+      assert.deepEqual(resumed.state.expanded_groups, ['todo']);
+      assert.deepEqual(f.calls.slice(before).filter(row => row.name === 'cfkanban_issues_list').map(row => row.args.status[0]), ['todo']);
+    } finally { resumed.dispose(); }
+    let finish;
+    interceptFacade(f, (facade, name, args) => name === 'cfkanban_issues_list' && args.cursor ? new Promise(resolve => { finish = resolve; }) : facade.callTool(name, args));
+    const old = f.controller.boardPage('todo', true);
+    for (let i = 0; i < 20 && !finish; i++) await Promise.resolve();
+    f.controller.patch({ binding: { ...f.controller.state.binding, binding_id: randomUUID() }, board: null });
+    assert.deepEqual(f.controller.state.expanded_groups, ['backlog']);
+    finish(ok({ items: [paginationRow(99)], next_cursor: null })); await old;
+    assert.equal(f.controller.state.board, null);
+  } finally { f.controller.dispose(); f.bridge.dispose(); }
+});
+
+
+test('a confirmed list write refreshes previously cached collapsed groups without reading unloaded states', async () => {
+  const f = fixture();
+  try {
+    await f.controller.bootstrap(null, { view: 'list' });
+    await f.controller.toggleGroup('todo', true);
+    await f.controller.toggleGroup('done', true);
+    await f.controller.toggleGroup('done', false);
+    const before = f.calls.length;
+    const result = await f.controller.quickUpdate('CFK-1', { status_key: 'in_progress' });
+    assert.equal(result.ok, true);
+    assert.deepEqual(f.calls.slice(before).filter(row => row.name === 'cfkanban_issues_list').map(row => row.args.status[0]), ['backlog', 'todo', 'done']);
+    assert.deepEqual(f.controller.state.expanded_groups, ['backlog', 'todo']);
+    assert.equal(f.controller.state.board.columns.find(column => column.key === 'todo').items.length, 0);
+    assert.equal(f.controller.state.board.columns.some(column => column.key === 'in_progress'), false);
+    await f.controller.toggleGroup('in_progress', true);
+    assert.equal(f.controller.state.board.columns.find(column => column.key === 'in_progress').items[0].identifier, 'CFK-1');
+  } finally { f.controller.dispose(); f.bridge.dispose(); }
 });

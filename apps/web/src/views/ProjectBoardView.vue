@@ -71,6 +71,10 @@ let countsRequestId = 0;
 const initialFilters = boardFilters(window.location.search);
 const ProjectIssueList = lazyPage(() => import("../components/ProjectIssueList.vue"));
 const viewMode = ref<"board" | "list">(initialFilters.view ?? "board");
+const selectedStatus = ref<StatusKey | undefined>(initialFilters.status);
+const expandedGroups = ref(new Set<StatusKey>(initialFilters.status ? [initialFilters.status] : initialFilters.expanded ?? ["backlog"]));
+const eligibleStatuses = computed(() => selectedStatus.value ? [selectedStatus.value] : statusOrder);
+const requestedStatuses = () => viewMode.value === "board" ? eligibleStatuses.value : eligibleStatuses.value.filter(key => expandedGroups.value.has(key));
 const appliedSearch = ref(initialFilters.search);
 const priorities = ref<PriorityKey[]>(initialFilters.priorities);
 const labelIds = ref<string[]>(initialFilters.labels);
@@ -100,10 +104,25 @@ const projectionGeneration = new ProjectionGeneration();
 const writeFence = new WriteFence();
 let loadRequestId = 0;
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
-const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, priorities: priorities.value, labels: labelIds.value, ...(viewMode.value === "list" ? { view: "list" as const } : {}) }));
+const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, priorities: priorities.value, labels: labelIds.value, ...(selectedStatus.value ? { status: selectedStatus.value } : {}), expanded: [...expandedGroups.value], ...(viewMode.value === "list" ? { view: "list" as const } : {}) }));
 function setView(mode: "board" | "list"): void {
+  if (viewMode.value === mode) return;
   viewMode.value = mode;
+  if (mode === "board") for (const key of eligibleStatuses.value) if (!columns[key].loaded && !columns[key].loading && !columns[key].error) void loadColumn(key);
   // 布局切换只改当前 URL，避免以完整路由为 key 的页面重新挂载、重取分页。
+  window.history.replaceState(window.history.state, "", returnPath.value);
+}
+function changeStatusFilter(value: string): void {
+  selectedStatus.value = statusOrder.includes(value as StatusKey) ? value as StatusKey : undefined;
+  if (selectedStatus.value) expandedGroups.value = new Set([selectedStatus.value]);
+}
+function toggleListGroup(key: StatusKey): void {
+  const next = new Set(expandedGroups.value);
+  if (next.has(key)) next.delete(key); else {
+    next.add(key);
+    if (!columns[key].loaded && !columns[key].loading && !columns[key].error) void loadColumn(key);
+  }
+  expandedGroups.value = next;
   window.history.replaceState(window.history.state, "", returnPath.value);
 }
 function openListIssue(identifier: string): void {
@@ -147,7 +166,8 @@ useSessionTextDraft({
 });
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 const boardRegion = ref<HTMLElement | null>(null);
-const statusNavigation = computed(() => statusOrder.map(key => ({ key, display_name: statusMap.value.get(key)?.display_name ?? key, loaded: columns[key].items.length, has_more: Boolean(columns[key].cursor), target_id: `board-status-${key}` })));
+const statusFilterItems = computed(() => [{ value: "all", label: locale.value === "zh-CN" ? "全部状态" : "All statuses" }, ...statusOrder.map(key => ({ value: key, label: statusMap.value.get(key)?.display_name ?? key }))]);
+const statusNavigation = computed(() => eligibleStatuses.value.map(key => ({ key, display_name: statusMap.value.get(key)?.display_name ?? key, loaded: columns[key].items.length, has_more: Boolean(columns[key].cursor), target_id: `board-status-${key}` })));
 
 function projectIsActive(): boolean {
   const scope = props.session.allowed_scope.projects;
@@ -354,7 +374,7 @@ async function load(_reset = true, throwOnFailure = false): Promise<void> {
     const [projectResult, statusResult] = await Promise.all([
       apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}`),
       apiRequest<ListResult<ProjectStatusResource>>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/statuses`),
-      ...statusOrder.map(status => loadColumn(status, false, throwOnFailure)),
+      ...requestedStatuses().map(status => loadColumn(status, false, throwOnFailure)),
     ]);
     if (requestId !== loadRequestId || !projectionIsCurrent(generation)) return;
     project.value = projectResult;
@@ -622,7 +642,7 @@ async function reconcileIssue(issue: IssueSummary, refreshAncestors = true): Pro
   if (issue.hierarchy === undefined && previous?.hierarchy) issue = { ...issue, hierarchy: previous.hierarchy };
   const statusChanged = previous && previous.status.key !== issue.status.key;
   confirmedVersions.set(issue.id, issue.version);
-  const matches = matchesBoardFilters(issue, { search: appliedSearch.value, priorities: appliedPriorities.value, labels: appliedLabelIds.value });
+  const matches = (!selectedStatus.value || selectedStatus.value === issue.status.key) && matchesBoardFilters(issue, { search: appliedSearch.value, priorities: appliedPriorities.value, labels: appliedLabelIds.value });
   const positions: Array<{ element: HTMLElement; top: number }> = [];
   const initialColumns: StatusKey[] = [];
   for (const key of statusOrder) {
@@ -631,7 +651,7 @@ async function reconcileIssue(issue: IssueSummary, refreshAncestors = true): Pro
     if (!include && !column.items.some(item => item.id === issue.id)) continue;
     const element = document.getElementById(`board-column-${key}`);
     if (element) positions.push({ element, top: element.scrollTop });
-    if (!column.loaded && column.error === null) initialColumns.push(key);
+    if (!column.loaded && column.error === null && requestedStatuses().includes(key)) initialColumns.push(key);
     column.reconcile(items => sortBoardIssues([...items.filter(item => item.id !== issue.id), ...(include ? [issue] : [])]));
   }
   await nextTick();
@@ -700,7 +720,7 @@ watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refr
 watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
 watch(() => props.session.session_id, resetAssignees);
 watch(canWrite, writable => { if (!writable) resetAssignees(); });
-watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
+watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.value]), () => {
   clearTimeout(filterTimer);
   projectionGeneration.invalidate();
   loadRequestId += 1;
@@ -718,7 +738,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
     appliedLabelIds.value = [...labelIds.value];
     filtersPending.value = false;
     void loadCounts();
-    await Promise.all(statusOrder.map(status => loadColumn(status)));
+    await Promise.all(requestedStatuses().map(status => loadColumn(status)));
   }, 180);
 }, { flush: "sync" });
 </script>
@@ -748,6 +768,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
           </UInput>
           <UButton color="neutral" variant="outline" type="submit" :disabled="loading || saving.size > 0 || hasPendingWrites">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</UButton>
         </form>
+        <USelect :model-value="selectedStatus ?? 'all'" :items="statusFilterItems" :aria-label="t('issue.status')" :disabled="loading || saving.size > 0 || hasPendingWrites" @update:model-value="changeStatusFilter" />
         <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || hasPendingWrites" />
       </div>
     </header>
@@ -780,7 +801,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
     >
       <section class="kanban-board" :aria-label="locale === 'zh-CN' ? '项目看板' : 'Project Kanban board'">
         <article
-          v-for="statusKey in statusOrder"
+          v-for="statusKey in eligibleStatuses"
           :key="statusKey"
           :id="`board-status-${statusKey}`"
           class="kanban-column"
@@ -807,7 +828,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
                 <PrioritySelect v-if="canWrite" compact :value="issue.priority" :disabled="saving.has(issue.id) || !!pendingPriorities[issue.id] || !!pendingStatuses[issue.id] || !!pendingAssignees[issue.id]" :label="`${issue.identifier} · ${t('issue.priority')}`" @change="savePriority(issue, $event)" />
                 <span v-else class="priority-mark" :data-priority="issue.priority">{{ priorityLabel(issue.priority) }}</span>
               </div>
-              <button class="issue-card-open" type="button" @click="navigate(`/app/issues/${issue.identifier}`)">
+              <button class="issue-card-open" type="button" @click="openListIssue(issue.identifier)">
                 <span class="card-heading">
                   <strong :title="issue.title">{{ issue.title }}</strong>
                 </span>
@@ -872,7 +893,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value]), () => {
 
 
 
-    <ProjectIssueList v-if="!loading && viewMode === 'list'" :columns="columns" :statuses="statuses" :can-write="canWrite" :saving="saving" :pending-ids="[...Object.keys(pendingPriorities), ...Object.keys(pendingStatuses), ...Object.keys(pendingAssignees)]" :assignees="assignees" :assignees-loading="assigneesLoading" :assignees-has-more="assigneesCursor !== null" :assignees-error="assigneesError" @open="openListIssue" @priority="savePriority" @status="onStatusSelection" @assignee="onAssigneeSelection" @people="ensureAssigneesLoaded" @people-more="loadAssignees(false)" @people-retry="loadAssignees()" @more="loadColumn" @scroll="onColumnScroll" />
+    <ProjectIssueList v-if="!loading && viewMode === 'list'" :columns="columns" :statuses="statuses" :eligible-statuses="eligibleStatuses" :expanded-groups="expandedGroups" :matching-counts="appliedSearch || appliedPriorities.length || appliedLabelIds.length ? counts?.counts : undefined" @toggle="toggleListGroup" :can-write="canWrite" :saving="saving" :pending-ids="[...Object.keys(pendingPriorities), ...Object.keys(pendingStatuses), ...Object.keys(pendingAssignees)]" :assignees="assignees" :assignees-loading="assigneesLoading" :assignees-has-more="assigneesCursor !== null" :assignees-error="assigneesError" @open="openListIssue" @priority="savePriority" @status="onStatusSelection" @assignee="onAssigneeSelection" @people="ensureAssigneesLoaded" @people-more="loadAssignees(false)" @people-retry="loadAssignees()" @more="loadColumn" @scroll="onColumnScroll" />
 
     <ModalDialog v-if="showNewIssue" :busy="formBusy" :title="t('action.newIssue')" @close="showNewIssue = false">
       <form class="form-stack" @submit.prevent="createIssue">

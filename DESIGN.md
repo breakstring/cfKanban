@@ -1,9 +1,9 @@
 ---
 name: cfKanban
 status: frozen
-revision: 9
+revision: 10
 frozen_on: 2026-08-29
-revised_on: 2026-10-01
+revised_on: 2026-10-04
 selected_direction: nuxt-ui-kanban-workbench
 applies_to:
   - first-party-web-ui
@@ -30,6 +30,11 @@ tokens:
     warning-soft: "#FFF1D6"
     success: "#287A4B"
     success-soft: "#E5F3EA"
+    status-backlog: "#596B83"
+    status-todo: "#1D4ED8"
+    status-in-progress: "#C2410C"
+    status-done: "#287A4B"
+    status-canceled: "#B42318"
   spacing:
     1: "4px"
     2: "8px"
@@ -112,6 +117,10 @@ The YAML tokens above define the authenticated application palette. Implement se
 - `primary` is reserved for the screen's primary action, active focus/selection, and links that need clear affordance.
 - Semantic colors must always include text, an icon, or another non-color signal.
 - Status columns do not receive five competing brand colors. Fixed status names and position carry the main status meaning.
+
+Existing status marks use the same semantic palette in the full Web app and local workbench, across Board navigation, grouped lists, Issue detail summaries, and existing column marks. They remain independent of the saved accent theme: `backlog` is slate, `todo` blue, `in_progress` orange, `done` green, and `canceled` red. The shared compact mark uses a dashed ring, empty ring, half-filled ring, filled circle with a check, and ring with a cross respectively. Existing full Web column-heading pseudo-elements retain their ring or filled-dot geometry while using the same colors; do not add icons to headings that lack a mark. Keep the visible status name alongside every mark; status meaning must remain available without distinguishing colors. Apply these colors to compact marks rather than coloring entire columns or Issue cards.
+
+The authenticated application currently supports light surfaces in both accent themes (`color-scheme: light`); a dark host or operating-system preference does not select a separate app palette. Status marks retain their contrast on these same light surfaces in either host preference.
 
 Offer `orange` (Warm orange / 暖橙) as the default and `blue` (Calm blue / 静蓝) as the second theme. Only accent colors, related muted tints, and color states vary; spacing, typography, geometry, navigation, control placement, and interaction remain identical. Semantic danger, warning, and success retain their meaning in both themes. Labels may use accessible muted tints without turning a card into a rainbow.
 

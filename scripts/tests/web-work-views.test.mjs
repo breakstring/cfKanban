@@ -1061,9 +1061,10 @@ for (const [actions, destination] of [[['read'], 'activity'], [['read', 'update'
       for (const label of ['Manage project', 'Manage labels', 'Activity', 'Deleted issues']) assert.equal(button(host, label), undefined);
       all(host).find(item => item.tag === 'input' && item.props.type === 'search').props['onUpdate:modelValue']('not submitted');
       button(host, 'Project settings').props.onClick();
+      const currentReturn = boardPath(workspace, p1, { search: 'saved search', priorities: ['high'], labels: [], expanded: ['backlog'] });
       assert.deepEqual(history.navigations, [
-        ['replace', filtered],
-        ['push', projectSettingsPath(workspace, p1, destination, filtered)],
+        ['replace', currentReturn],
+        ['push', projectSettingsPath(workspace, p1, destination, currentReturn)],
       ]);
     } finally { app.unmount(); history.restore(); }
   });

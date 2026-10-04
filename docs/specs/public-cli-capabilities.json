@@ -1,0 +1,5128 @@
+{
+  "schema_version": 1,
+  "scope": "CFK-585 三Skill完整能力与OpenAPI逐operation的公共CLI映射",
+  "contract": "docs/specs/2026-10-04-public-cli-spec.md",
+  "sources": {
+    "openapi": "contracts/openapi.json",
+    "public_catalog": "packages/cli/src/catalog.mjs",
+    "skill_catalog": "packages/skill-runtime/src/cli.mjs"
+  },
+  "limits": [
+    "本矩阵与检查器证明离线目录/路由/示例一致性，不证明业务端到端、工件发行、实际Cloudflare写入或跨平台验收。",
+    "浏览器例外只描述真实Cookie/WebAuthn/一次性browser transport和宿主配置边界，缺失实现必须记gap并使检查失败。",
+    "组合覆盖提供真实公共命令及源码调用证据；部署多步流程仍逐原子操作、plan/journal/授权与读回。"
+  ],
+  "skills": [
+    {
+      "name": "cfkanban",
+      "surface": "daily",
+      "entry": "skills/cfkanban/SKILL.md",
+      "reference": "skills/cfkanban/references/workflows.md"
+    },
+    {
+      "name": "cfkanban-admin",
+      "surface": "admin",
+      "entry": "skills/cfkanban-admin/SKILL.md",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md"
+    },
+    {
+      "name": "cfkanban-deploy",
+      "surface": "deploy",
+      "entry": "skills/cfkanban-deploy/SKILL.md",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md"
+    }
+  ],
+  "public_commands": [
+    {
+      "command": "instance info",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getMeta"
+      }
+    },
+    {
+      "command": "profile show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getMe"
+      }
+    },
+    {
+      "command": "profile update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateMe"
+      }
+    },
+    {
+      "command": "notification preferences",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getNotificationPreferences"
+      }
+    },
+    {
+      "command": "notification configure",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateNotificationPreferences"
+      }
+    },
+    {
+      "command": "notification list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listMyNotifications"
+      }
+    },
+    {
+      "command": "notification acknowledge",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "acknowledgeNotification"
+      }
+    },
+    {
+      "command": "admin notification list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listInstanceNotifications"
+      }
+    },
+    {
+      "command": "admin notification publish",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "publishNotification"
+      }
+    },
+    {
+      "command": "admin notification withdraw",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "withdrawNotification"
+      }
+    },
+    {
+      "command": "event list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listEvents"
+      }
+    },
+    {
+      "command": "workspace list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listWorkspaces"
+      }
+    },
+    {
+      "command": "workspace create",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createWorkspace"
+      }
+    },
+    {
+      "command": "workspace show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getWorkspace"
+      }
+    },
+    {
+      "command": "workspace update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateWorkspace"
+      }
+    },
+    {
+      "command": "workspace archive",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "deleteWorkspace"
+      }
+    },
+    {
+      "command": "workspace purge-preview",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "previewWorkspacePurge"
+      }
+    },
+    {
+      "command": "workspace purge",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "purgeWorkspace"
+      }
+    },
+    {
+      "command": "workspace restore",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "restoreWorkspace"
+      }
+    },
+    {
+      "command": "project list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listProjects"
+      }
+    },
+    {
+      "command": "project create",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createProject"
+      }
+    },
+    {
+      "command": "project show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getProject"
+      }
+    },
+    {
+      "command": "project update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateProject"
+      }
+    },
+    {
+      "command": "project archive",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "deleteProject"
+      }
+    },
+    {
+      "command": "project purge-preview",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "previewProjectPurge"
+      }
+    },
+    {
+      "command": "project purge",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "purgeProject"
+      }
+    },
+    {
+      "command": "project restore",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "restoreProject"
+      }
+    },
+    {
+      "command": "project assignee list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "findProjectAssignee"
+      }
+    },
+    {
+      "command": "project status list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listProjectStatuses"
+      }
+    },
+    {
+      "command": "project status rename",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateProjectStatusName"
+      }
+    },
+    {
+      "command": "workspace administrator candidates",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listWorkspaceAdministratorCandidates"
+      }
+    },
+    {
+      "command": "workspace administrator list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listWorkspaceAdministrators"
+      }
+    },
+    {
+      "command": "workspace administrator add",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createWorkspaceAdministrator"
+      }
+    },
+    {
+      "command": "workspace administrator remove",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "revokeWorkspaceAdministrator"
+      }
+    },
+    {
+      "command": "project administrator candidates",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listProjectAdministratorCandidates"
+      }
+    },
+    {
+      "command": "project administrator list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listProjectAdministrators"
+      }
+    },
+    {
+      "command": "project administrator add",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createProjectAdministrator"
+      }
+    },
+    {
+      "command": "project administrator remove",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "revokeProjectAdministrator"
+      }
+    },
+    {
+      "command": "project member list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listProjectMembers"
+      }
+    },
+    {
+      "command": "project member candidates",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listProjectMemberCandidates"
+      }
+    },
+    {
+      "command": "issue list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listIssues"
+      }
+    },
+    {
+      "command": "issue candidates",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listIssueCandidates"
+      }
+    },
+    {
+      "command": "project issue list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listProjectIssues"
+      }
+    },
+    {
+      "command": "issue create",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createIssue"
+      }
+    },
+    {
+      "command": "issue counts",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "countProjectIssues"
+      }
+    },
+    {
+      "command": "issue show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getIssue"
+      }
+    },
+    {
+      "command": "issue update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateIssue"
+      }
+    },
+    {
+      "command": "issue delete",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "deleteIssue"
+      }
+    },
+    {
+      "command": "issue restore",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "restoreIssue"
+      }
+    },
+    {
+      "command": "issue context",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getIssueContext"
+      }
+    },
+    {
+      "command": "issue assign-me",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "assignIssueToMe"
+      }
+    },
+    {
+      "command": "issue block",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "reportIssueBlocked"
+      }
+    },
+    {
+      "command": "issue unblock",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "clearIssueBlocked"
+      }
+    },
+    {
+      "command": "issue complete",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "completeIssue"
+      }
+    },
+    {
+      "command": "issue label add",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "addIssueLabel"
+      }
+    },
+    {
+      "command": "issue label remove",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "removeIssueLabel"
+      }
+    },
+    {
+      "command": "attachment list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listAttachments"
+      }
+    },
+    {
+      "command": "attachment show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getAttachment"
+      }
+    },
+    {
+      "command": "attachment delete",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "deleteAttachment"
+      }
+    },
+    {
+      "command": "attachment restore",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "restoreAttachment"
+      }
+    },
+    {
+      "command": "comment list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listComments"
+      }
+    },
+    {
+      "command": "comment create",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createComment"
+      }
+    },
+    {
+      "command": "comment show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getComment"
+      }
+    },
+    {
+      "command": "comment delete",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "deleteComment"
+      }
+    },
+    {
+      "command": "comment restore",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "restoreComment"
+      }
+    },
+    {
+      "command": "label list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listLabels"
+      }
+    },
+    {
+      "command": "label create",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createLabel"
+      }
+    },
+    {
+      "command": "label show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getLabel"
+      }
+    },
+    {
+      "command": "label update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateLabel"
+      }
+    },
+    {
+      "command": "label delete",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "deleteLabel"
+      }
+    },
+    {
+      "command": "label restore",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "restoreLabel"
+      }
+    },
+    {
+      "command": "relation list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listIssueRelations"
+      }
+    },
+    {
+      "command": "relation create",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createIssueRelation"
+      }
+    },
+    {
+      "command": "relation show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getRelation"
+      }
+    },
+    {
+      "command": "relation delete",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "deleteRelation"
+      }
+    },
+    {
+      "command": "relation restore",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "restoreRelation"
+      }
+    },
+    {
+      "command": "invite list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listInvitations"
+      }
+    },
+    {
+      "command": "invite show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getInvitation"
+      }
+    },
+    {
+      "command": "invite revoke",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "revokeInvitation"
+      }
+    },
+    {
+      "command": "admin principal list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listPrincipals"
+      }
+    },
+    {
+      "command": "admin principal show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getPrincipal"
+      }
+    },
+    {
+      "command": "admin credential list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listPrincipalCredentials"
+      }
+    },
+    {
+      "command": "admin credential revoke",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "revokeCredential"
+      }
+    },
+    {
+      "command": "owner device rename",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "renameOwnerDeviceCredential"
+      }
+    },
+    {
+      "command": "admin origin show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getInstanceOrigin"
+      }
+    },
+    {
+      "command": "admin origin update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateInstanceOrigin"
+      }
+    },
+    {
+      "command": "grant list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listProjectGrants"
+      }
+    },
+    {
+      "command": "grant create",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "createProjectGrant"
+      }
+    },
+    {
+      "command": "grant show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getProjectGrant"
+      }
+    },
+    {
+      "command": "grant update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateProjectGrant"
+      }
+    },
+    {
+      "command": "grant revoke",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "revokeProjectGrant"
+      }
+    },
+    {
+      "command": "admin audit list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listAuditEvents"
+      }
+    },
+    {
+      "command": "passkey list",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listMyPasskeys"
+      }
+    },
+    {
+      "command": "passkey revoke",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "revokeMyPasskey"
+      }
+    },
+    {
+      "command": "admin passkey revoke",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "revokePrincipalPasskey"
+      }
+    },
+    {
+      "command": "join projects",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listPublicProjects"
+      }
+    },
+    {
+      "command": "admin public-join show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getPublicJoinPolicy"
+      }
+    },
+    {
+      "command": "admin public-join enable",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "enablePublicJoin"
+      }
+    },
+    {
+      "command": "admin public-join disable",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "disablePublicJoin"
+      }
+    },
+    {
+      "command": "admin limits show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getProjectResourceLimits"
+      }
+    },
+    {
+      "command": "admin limits update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateProjectResourceLimits"
+      }
+    },
+    {
+      "command": "admin homepage show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getHomepageSettings"
+      }
+    },
+    {
+      "command": "admin homepage update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateHomepageSettings"
+      }
+    },
+    {
+      "command": "admin attachment-capacity show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getAttachmentSettings"
+      }
+    },
+    {
+      "command": "admin attachment-capacity update",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateAttachmentSettings"
+      }
+    },
+    {
+      "command": "admin usage snapshot",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getUsage"
+      }
+    },
+    {
+      "command": "admin usage show",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "refreshUsage"
+      }
+    },
+    {
+      "command": "admin rate-limits show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getRateLimitSettings"
+      }
+    },
+    {
+      "command": "connection list",
+      "effect": "read",
+      "route": {
+        "kind": "mcp",
+        "tool": "cfkanban_connection_inspect"
+      },
+      "note": "runtime显式覆盖catalog的state inspect占位，实际仅列非秘密实例候选；完整current/pending本地slot使用identity pending。",
+      "evidence": [
+        {
+          "file": "packages/cli/src/runtime.mjs",
+          "contains": "if(command.name==='connection list') return createMcpFacade"
+        },
+        {
+          "file": "packages/cli/src/runtime.mjs",
+          "contains": "callTool('cfkanban_connection_inspect',{})"
+        }
+      ]
+    },
+    {
+      "command": "connection add",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "state put-instance"
+      }
+    },
+    {
+      "command": "connection resolve",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "web resolve"
+      }
+    },
+    {
+      "command": "scope inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "scope inspect-directory"
+      }
+    },
+    {
+      "command": "scope show",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "scope read"
+      }
+    },
+    {
+      "command": "scope associate",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "scope merge"
+      }
+    },
+    {
+      "command": "scope resolve",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "scope resolve"
+      }
+    },
+    {
+      "command": "attachment upload",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "attachment upload"
+      }
+    },
+    {
+      "command": "attachment download",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "attachment download"
+      }
+    },
+    {
+      "command": "invite create",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "invite create"
+      }
+    },
+    {
+      "command": "owner device prepare",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "owner-device prepare"
+      }
+    },
+    {
+      "command": "owner device request",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "owner-device request"
+      }
+    },
+    {
+      "command": "owner device approve",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "owner-device approve"
+      }
+    },
+    {
+      "command": "owner device verify",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "owner-device verify"
+      }
+    },
+    {
+      "command": "owner device list",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "owner-device list"
+      }
+    },
+    {
+      "command": "owner device revoke",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "owner-device revoke"
+      }
+    },
+    {
+      "command": "owner device restore-previous",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "owner-device restore-previous"
+      }
+    },
+    {
+      "command": "web preflight",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "web preflight"
+      }
+    },
+    {
+      "command": "web open",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "web open"
+      }
+    },
+    {
+      "command": "deploy capabilities",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "capabilities"
+      }
+    },
+    {
+      "command": "deploy release discover",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "release discover"
+      }
+    },
+    {
+      "command": "deploy release verify",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "release verify"
+      }
+    },
+    {
+      "command": "deploy release continuity",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "release continuity"
+      }
+    },
+    {
+      "command": "deploy runtime resolve",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime resolve-wrangler"
+      }
+    },
+    {
+      "command": "deploy runtime plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "runtime plan-install"
+      }
+    },
+    {
+      "command": "deploy runtime install",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "runtime install"
+      }
+    },
+    {
+      "command": "deploy auth resolve",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime resolve-cloudflare-auth"
+      }
+    },
+    {
+      "command": "deploy auth inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime inspect-cloudflare-auth"
+      }
+    },
+    {
+      "command": "deploy auth plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "runtime plan-cloudflare-auth"
+      }
+    },
+    {
+      "command": "deploy account verify",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime wrangler-account-readback"
+      }
+    },
+    {
+      "command": "deploy database inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime d1-resource-readback"
+      }
+    },
+    {
+      "command": "deploy database restore-point",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime d1-restore-point-readback"
+      }
+    },
+    {
+      "command": "deploy worker inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime worker-resource-readback"
+      }
+    },
+    {
+      "command": "deploy worker version",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime worker-version-readback"
+      }
+    },
+    {
+      "command": "deploy storage inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime r2-storage-readback"
+      }
+    },
+    {
+      "command": "deploy skill plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "plan skill-update"
+      }
+    },
+    {
+      "command": "deploy skill install",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "release install-skill-bundle"
+      }
+    },
+    {
+      "command": "deploy service cache",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "release install-service-bundle"
+      }
+    },
+    {
+      "command": "deploy plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "plan strict-zero"
+      }
+    },
+    {
+      "command": "deploy upgrade plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "plan instance-upgrade"
+      }
+    },
+    {
+      "command": "deploy plan compare",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "plan compare"
+      }
+    },
+    {
+      "command": "deploy attach inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "deployment inspect-existing"
+      }
+    },
+    {
+      "command": "deploy attach plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "plan deployment-attachment"
+      }
+    },
+    {
+      "command": "deploy recovery discover",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "owner-recovery discover"
+      }
+    },
+    {
+      "command": "deploy recovery inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "owner-recovery inspect"
+      }
+    },
+    {
+      "command": "deploy recovery plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "plan owner-recovery"
+      }
+    },
+    {
+      "command": "connection discover",
+      "effect": "read",
+      "route": {
+        "kind": "workflow",
+        "workflow": "connection-discover"
+      }
+    },
+    {
+      "command": "connection origin-check",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "origin rebind-check"
+      }
+    },
+    {
+      "command": "instance health",
+      "effect": "read",
+      "route": {
+        "kind": "workflow",
+        "workflow": "instance-health"
+      }
+    },
+    {
+      "command": "instance contract",
+      "effect": "read",
+      "route": {
+        "kind": "workflow",
+        "workflow": "instance-contract"
+      }
+    },
+    {
+      "command": "cli status",
+      "effect": "read",
+      "route": {
+        "kind": "workflow",
+        "workflow": "cli-status"
+      }
+    },
+    {
+      "command": "cli install",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "cli-install"
+      }
+    },
+    {
+      "command": "cli rollback",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "cli-rollback"
+      }
+    },
+    {
+      "command": "cli uninstall",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "cli-uninstall"
+      }
+    },
+    {
+      "command": "join invite",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "join-invite"
+      }
+    },
+    {
+      "command": "join public",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "join-public"
+      }
+    },
+    {
+      "command": "identity pending",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "state inspect"
+      }
+    },
+    {
+      "command": "identity verify",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "credential verify-and-promote"
+      }
+    },
+    {
+      "command": "identity discard-pending",
+      "effect": "write",
+      "route": {
+        "kind": "helper",
+        "command": "credential clear"
+      }
+    },
+    {
+      "command": "owner rotate",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "owner-rotate"
+      }
+    },
+    {
+      "command": "board create",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "board-create"
+      }
+    },
+    {
+      "command": "issue reopen",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "issue-reopen"
+      }
+    },
+    {
+      "command": "deploy auth apply",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "auth-apply"
+      }
+    },
+    {
+      "command": "deploy apply",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "deploy-apply"
+      }
+    },
+    {
+      "command": "deploy resume",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "deploy-apply"
+      }
+    },
+    {
+      "command": "deploy upgrade apply",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "deploy-apply"
+      }
+    },
+    {
+      "command": "deploy upgrade resume",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "deploy-apply"
+      }
+    },
+    {
+      "command": "deploy attach apply",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "deploy-apply"
+      }
+    },
+    {
+      "command": "deploy recovery apply",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "deploy-apply"
+      }
+    },
+    {
+      "command": "operation show",
+      "effect": "read",
+      "route": {
+        "kind": "workflow",
+        "workflow": "operation-show"
+      }
+    },
+    {
+      "command": "operation recover",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "operation-recover"
+      }
+    }
+  ],
+  "operations": [
+    {
+      "operation": "getHealth",
+      "method": "GET",
+      "path": "/healthz",
+      "summary": "Get Health",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "instance health"
+        ],
+        "note": "核验已选 trusted instance 的健康端点。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/runtime.mjs",
+            "contains": "command.workflow==='instance-health'"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "getOpenApi",
+      "method": "GET",
+      "path": "/openapi.json",
+      "summary": "Get Open Api",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "instance contract"
+        ],
+        "note": "读取已选 trusted instance 的公开合同。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/runtime.mjs",
+            "contains": "'/openapi.json'"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "discoverInstance",
+      "method": "GET",
+      "path": "/.well-known/cfkanban-instance.json",
+      "summary": "Discover Instance",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "connection discover",
+          "connection add"
+        ],
+        "note": "credential-free discovery 核对稳定实例与 preferred origin，再显式登记。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/runtime.mjs",
+            "contains": "'/.well-known/cfkanban-instance.json'"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "getInvitationBootstrap",
+      "method": "GET",
+      "path": "/invite",
+      "summary": "Get Invitation Bootstrap",
+      "coverage": {
+        "kind": "browser",
+        "transport": "one_time_browser_transport",
+        "commands": [
+          "join invite"
+        ],
+        "reason": "GET /invite是携带一次性邀请code的HTML安全落地页；普通CLI argv/JSON禁止该code。",
+        "alternative": "在用户明确交付的原邀请浏览器页面只读检查Project/role/expiry；批准后用join invite的capability stdin兑换。",
+        "evidence": [
+          {
+            "file": "apps/worker/src/routes/wp04.ts",
+            "contains": ".get(\"/invite\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "getWebLaunchPage",
+      "method": "GET",
+      "path": "/app/launch",
+      "summary": "Get Web Launch Page",
+      "coverage": {
+        "kind": "browser",
+        "transport": "one_time_browser_transport",
+        "commands": [
+          "web open"
+        ],
+        "reason": "HTML页在浏览器同源环境承接短期launch code，CLI不读取或输出页面中的票据。",
+        "alternative": "web open --mode online使用专用memory relay导航至落地页，由浏览器建立Session。",
+        "evidence": [
+          {
+            "file": "apps/worker/src/services/web-auth.ts",
+            "contains": "WEB_LAUNCH_PAGE_SCRIPT"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "getMeta",
+      "method": "GET",
+      "path": "/api/v1/meta",
+      "summary": "Get Meta",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "instance info"
+        ]
+      }
+    },
+    {
+      "operation": "getMe",
+      "method": "GET",
+      "path": "/api/v1/me",
+      "summary": "Get Me",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "profile show"
+        ]
+      }
+    },
+    {
+      "operation": "updateMe",
+      "method": "PATCH",
+      "path": "/api/v1/me",
+      "summary": "Update Me",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "profile update"
+        ]
+      }
+    },
+    {
+      "operation": "getNotificationPreferences",
+      "method": "GET",
+      "path": "/api/v1/me/notification-preferences",
+      "summary": "Get Notification Preferences",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "notification preferences"
+        ]
+      }
+    },
+    {
+      "operation": "updateNotificationPreferences",
+      "method": "PATCH",
+      "path": "/api/v1/me/notification-preferences",
+      "summary": "Update Notification Preferences",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "notification configure"
+        ]
+      }
+    },
+    {
+      "operation": "listMyNotifications",
+      "method": "GET",
+      "path": "/api/v1/me/notifications",
+      "summary": "List My Notifications",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "notification list"
+        ]
+      }
+    },
+    {
+      "operation": "acknowledgeNotification",
+      "method": "POST",
+      "path": "/api/v1/me/notifications/{notification_id}/commands/acknowledge",
+      "summary": "Acknowledge Notification",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "notification acknowledge"
+        ]
+      }
+    },
+    {
+      "operation": "listInstanceNotifications",
+      "method": "GET",
+      "path": "/api/v1/admin/notifications",
+      "summary": "List Instance Notifications",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin notification list"
+        ]
+      }
+    },
+    {
+      "operation": "publishNotification",
+      "method": "POST",
+      "path": "/api/v1/admin/notifications",
+      "summary": "Publish Notification",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin notification publish"
+        ]
+      }
+    },
+    {
+      "operation": "withdrawNotification",
+      "method": "POST",
+      "path": "/api/v1/admin/notifications/{notification_id}/commands/withdraw",
+      "summary": "Withdraw Notification",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin notification withdraw"
+        ]
+      }
+    },
+    {
+      "operation": "listEvents",
+      "method": "GET",
+      "path": "/api/v1/events",
+      "summary": "List Events",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "event list"
+        ]
+      }
+    },
+    {
+      "operation": "listWorkspaces",
+      "method": "GET",
+      "path": "/api/v1/workspaces",
+      "summary": "List Workspaces",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace list"
+        ]
+      }
+    },
+    {
+      "operation": "createWorkspace",
+      "method": "POST",
+      "path": "/api/v1/workspaces",
+      "summary": "Create Workspace",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace create"
+        ]
+      }
+    },
+    {
+      "operation": "getWorkspace",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}",
+      "summary": "Get Workspace",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace show"
+        ]
+      }
+    },
+    {
+      "operation": "updateWorkspace",
+      "method": "PATCH",
+      "path": "/api/v1/workspaces/{workspace_id}",
+      "summary": "Update Workspace",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace update"
+        ]
+      }
+    },
+    {
+      "operation": "deleteWorkspace",
+      "method": "DELETE",
+      "path": "/api/v1/workspaces/{workspace_id}",
+      "summary": "Delete Workspace",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace archive"
+        ]
+      }
+    },
+    {
+      "operation": "previewWorkspacePurge",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/purge-preview",
+      "summary": "Preview Workspace Purge",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace purge-preview"
+        ]
+      }
+    },
+    {
+      "operation": "purgeWorkspace",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/commands/purge",
+      "summary": "Purge Workspace",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace purge"
+        ]
+      }
+    },
+    {
+      "operation": "restoreWorkspace",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/commands/restore",
+      "summary": "Restore Workspace",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace restore"
+        ]
+      }
+    },
+    {
+      "operation": "listProjects",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects",
+      "summary": "List Projects",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project list"
+        ]
+      }
+    },
+    {
+      "operation": "createProject",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/projects",
+      "summary": "Create Project",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project create"
+        ]
+      }
+    },
+    {
+      "operation": "getProject",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}",
+      "summary": "Get Project",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project show"
+        ]
+      }
+    },
+    {
+      "operation": "updateProject",
+      "method": "PATCH",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}",
+      "summary": "Update Project",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project update"
+        ]
+      }
+    },
+    {
+      "operation": "deleteProject",
+      "method": "DELETE",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}",
+      "summary": "Delete Project",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project archive"
+        ]
+      }
+    },
+    {
+      "operation": "previewProjectPurge",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/purge-preview",
+      "summary": "Preview Project Purge",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project purge-preview"
+        ]
+      }
+    },
+    {
+      "operation": "purgeProject",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/purge",
+      "summary": "Purge Project",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project purge"
+        ]
+      }
+    },
+    {
+      "operation": "restoreProject",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/commands/restore",
+      "summary": "Restore Project",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project restore"
+        ]
+      }
+    },
+    {
+      "operation": "findProjectAssignee",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees",
+      "summary": "Find Project Assignee",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project assignee list"
+        ]
+      }
+    },
+    {
+      "operation": "listProjectStatuses",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses",
+      "summary": "List Project Statuses",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project status list"
+        ]
+      }
+    },
+    {
+      "operation": "updateProjectStatusName",
+      "method": "PATCH",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_key}",
+      "summary": "Update Project Status Name",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project status rename"
+        ]
+      }
+    },
+    {
+      "operation": "listWorkspaceAdministratorCandidates",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/administrator-candidates",
+      "summary": "List Workspace Administrator Candidates",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace administrator candidates"
+        ]
+      }
+    },
+    {
+      "operation": "listWorkspaceAdministrators",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/administrators",
+      "summary": "List Workspace Administrators",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace administrator list"
+        ]
+      }
+    },
+    {
+      "operation": "createWorkspaceAdministrator",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/administrators",
+      "summary": "Create Workspace Administrator",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace administrator add"
+        ]
+      }
+    },
+    {
+      "operation": "revokeWorkspaceAdministrator",
+      "method": "DELETE",
+      "path": "/api/v1/workspaces/{workspace_id}/administrators/{administrator_id}",
+      "summary": "Revoke Workspace Administrator",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "workspace administrator remove"
+        ]
+      }
+    },
+    {
+      "operation": "listProjectAdministratorCandidates",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrator-candidates",
+      "summary": "List Project Administrator Candidates",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project administrator candidates"
+        ]
+      }
+    },
+    {
+      "operation": "listProjectAdministrators",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators",
+      "summary": "List Project Administrators",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project administrator list"
+        ]
+      }
+    },
+    {
+      "operation": "createProjectAdministrator",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators",
+      "summary": "Create Project Administrator",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project administrator add"
+        ]
+      }
+    },
+    {
+      "operation": "revokeProjectAdministrator",
+      "method": "DELETE",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/administrators/{administrator_id}",
+      "summary": "Revoke Project Administrator",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project administrator remove"
+        ]
+      }
+    },
+    {
+      "operation": "listProjectMembers",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/members",
+      "summary": "List Project Members",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project member list"
+        ]
+      }
+    },
+    {
+      "operation": "listProjectMemberCandidates",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/member-candidates",
+      "summary": "List Project Member Candidates",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project member candidates"
+        ]
+      }
+    },
+    {
+      "operation": "listIssues",
+      "method": "GET",
+      "path": "/api/v1/issues",
+      "summary": "List Issues",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue list"
+        ]
+      }
+    },
+    {
+      "operation": "listIssueCandidates",
+      "method": "GET",
+      "path": "/api/v1/issues/candidates",
+      "summary": "List Issue Candidates",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue candidates"
+        ]
+      }
+    },
+    {
+      "operation": "listProjectIssues",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues",
+      "summary": "List Project Issues",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "project issue list"
+        ]
+      }
+    },
+    {
+      "operation": "createIssue",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues",
+      "summary": "Create Issue",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue create"
+        ]
+      }
+    },
+    {
+      "operation": "countProjectIssues",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts",
+      "summary": "Count Project Issues",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue counts"
+        ]
+      }
+    },
+    {
+      "operation": "getIssue",
+      "method": "GET",
+      "path": "/api/v1/issues/{identifier}",
+      "summary": "Get Issue",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue show"
+        ]
+      }
+    },
+    {
+      "operation": "updateIssue",
+      "method": "PATCH",
+      "path": "/api/v1/issues/{identifier}",
+      "summary": "Update Issue",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue update"
+        ]
+      }
+    },
+    {
+      "operation": "deleteIssue",
+      "method": "DELETE",
+      "path": "/api/v1/issues/{identifier}",
+      "summary": "Delete Issue",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue delete"
+        ]
+      }
+    },
+    {
+      "operation": "restoreIssue",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/commands/restore",
+      "summary": "Restore Issue",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue restore"
+        ]
+      }
+    },
+    {
+      "operation": "getIssueContext",
+      "method": "GET",
+      "path": "/api/v1/issues/{identifier}/context",
+      "summary": "Get Issue Context",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue context"
+        ]
+      }
+    },
+    {
+      "operation": "assignIssueToMe",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/commands/assign-to-me",
+      "summary": "Assign Issue To Me",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue assign-me"
+        ]
+      }
+    },
+    {
+      "operation": "reportIssueBlocked",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/commands/report-blocked",
+      "summary": "Report Issue Blocked",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue block"
+        ]
+      }
+    },
+    {
+      "operation": "clearIssueBlocked",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/commands/clear-blocked",
+      "summary": "Clear Issue Blocked",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue unblock"
+        ]
+      }
+    },
+    {
+      "operation": "completeIssue",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/commands/complete",
+      "summary": "Complete Issue",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue complete"
+        ]
+      }
+    },
+    {
+      "operation": "addIssueLabel",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/commands/add-label",
+      "summary": "Add Issue Label",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue label add"
+        ]
+      }
+    },
+    {
+      "operation": "removeIssueLabel",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/commands/remove-label",
+      "summary": "Remove Issue Label",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue label remove"
+        ]
+      }
+    },
+    {
+      "operation": "listAttachments",
+      "method": "GET",
+      "path": "/api/v1/issues/{identifier}/attachments",
+      "summary": "List Attachments",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "attachment list"
+        ]
+      }
+    },
+    {
+      "operation": "reserveAttachment",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/attachments",
+      "summary": "Reserve Attachment",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "attachment upload"
+        ],
+        "note": "上传流程先保留单文件容量和固定 attachment ID。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/attachments.mjs",
+            "contains": "apiPath: `/api/v1/issues/${identifier}/attachments`"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "getAttachment",
+      "method": "GET",
+      "path": "/api/v1/attachments/{id}",
+      "summary": "Get Attachment",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "attachment show"
+        ]
+      }
+    },
+    {
+      "operation": "deleteAttachment",
+      "method": "DELETE",
+      "path": "/api/v1/attachments/{id}",
+      "summary": "Delete Attachment",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "attachment delete"
+        ]
+      }
+    },
+    {
+      "operation": "uploadAttachment",
+      "method": "PUT",
+      "path": "/api/v1/attachments/{id}/content",
+      "summary": "Upload Attachment",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "attachment upload"
+        ],
+        "note": "专用二进制传输复用 reserve/upload 幂等键，拒绝跨 origin redirect。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/attachments.mjs",
+            "contains": "binaryRequest({"
+          },
+          {
+            "file": "packages/skill-runtime/src/attachments.mjs",
+            "contains": "method: \"PUT\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "downloadAttachment",
+      "method": "GET",
+      "path": "/api/v1/attachments/{id}/content",
+      "summary": "Download Attachment",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "attachment download"
+        ],
+        "note": "专用二进制传输写新的本地文件，不公开存储地址或内容。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/attachments.mjs",
+            "contains": "method: \"GET\""
+          },
+          {
+            "file": "packages/skill-runtime/src/attachments.mjs",
+            "contains": "/content"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "restoreAttachment",
+      "method": "POST",
+      "path": "/api/v1/attachments/{id}/commands/restore",
+      "summary": "Restore Attachment",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "attachment restore"
+        ]
+      }
+    },
+    {
+      "operation": "listComments",
+      "method": "GET",
+      "path": "/api/v1/issues/{identifier}/comments",
+      "summary": "List Comments",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "comment list"
+        ]
+      }
+    },
+    {
+      "operation": "createComment",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/comments",
+      "summary": "Create Comment",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "comment create"
+        ]
+      }
+    },
+    {
+      "operation": "getComment",
+      "method": "GET",
+      "path": "/api/v1/comments/{comment_id}",
+      "summary": "Get Comment",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "comment show"
+        ]
+      }
+    },
+    {
+      "operation": "deleteComment",
+      "method": "DELETE",
+      "path": "/api/v1/comments/{comment_id}",
+      "summary": "Delete Comment",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "comment delete"
+        ]
+      }
+    },
+    {
+      "operation": "restoreComment",
+      "method": "POST",
+      "path": "/api/v1/comments/{comment_id}/commands/restore",
+      "summary": "Restore Comment",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "comment restore"
+        ]
+      }
+    },
+    {
+      "operation": "listLabels",
+      "method": "GET",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels",
+      "summary": "List Labels",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "label list"
+        ]
+      }
+    },
+    {
+      "operation": "createLabel",
+      "method": "POST",
+      "path": "/api/v1/workspaces/{workspace_id}/projects/{project_id}/labels",
+      "summary": "Create Label",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "label create"
+        ]
+      }
+    },
+    {
+      "operation": "getLabel",
+      "method": "GET",
+      "path": "/api/v1/labels/{label_id}",
+      "summary": "Get Label",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "label show"
+        ]
+      }
+    },
+    {
+      "operation": "updateLabel",
+      "method": "PATCH",
+      "path": "/api/v1/labels/{label_id}",
+      "summary": "Update Label",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "label update"
+        ]
+      }
+    },
+    {
+      "operation": "deleteLabel",
+      "method": "DELETE",
+      "path": "/api/v1/labels/{label_id}",
+      "summary": "Delete Label",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "label delete"
+        ]
+      }
+    },
+    {
+      "operation": "restoreLabel",
+      "method": "POST",
+      "path": "/api/v1/labels/{label_id}/commands/restore",
+      "summary": "Restore Label",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "label restore"
+        ]
+      }
+    },
+    {
+      "operation": "listIssueRelations",
+      "method": "GET",
+      "path": "/api/v1/issues/{identifier}/relations",
+      "summary": "List Issue Relations",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "relation list"
+        ]
+      }
+    },
+    {
+      "operation": "createIssueRelation",
+      "method": "POST",
+      "path": "/api/v1/issues/{identifier}/relations",
+      "summary": "Create Issue Relation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "relation create"
+        ]
+      }
+    },
+    {
+      "operation": "getRelation",
+      "method": "GET",
+      "path": "/api/v1/relations/{relation_id}",
+      "summary": "Get Relation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "relation show"
+        ]
+      }
+    },
+    {
+      "operation": "deleteRelation",
+      "method": "DELETE",
+      "path": "/api/v1/relations/{relation_id}",
+      "summary": "Delete Relation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "relation delete"
+        ]
+      }
+    },
+    {
+      "operation": "restoreRelation",
+      "method": "POST",
+      "path": "/api/v1/relations/{relation_id}/commands/restore",
+      "summary": "Restore Relation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "relation restore"
+        ]
+      }
+    },
+    {
+      "operation": "redeemInvitation",
+      "method": "POST",
+      "path": "/api/v1/invitations/redeem",
+      "summary": "Redeem Invitation",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "join invite"
+        ],
+        "note": "邀请URL只从capability stdin进入专用兑换；验证原身份与pending后提升。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('invite redeem'"
+          },
+          {
+            "file": "packages/skill-runtime/src/credential-operations.mjs",
+            "contains": "/api/v1/invitations/redeem"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "listInvitations",
+      "method": "GET",
+      "path": "/api/v1/admin/invitations",
+      "summary": "List Invitations",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "invite list"
+        ]
+      }
+    },
+    {
+      "operation": "createInvitation",
+      "method": "POST",
+      "path": "/api/v1/admin/invitations",
+      "summary": "Create Invitation",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "invite create"
+        ],
+        "note": "专用剪贴板/浏览器交付，长期秘密与一次性code不进入普通输出。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/capability-delivery.mjs",
+            "contains": "apiPath: \"/api/v1/admin/invitations\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "getInvitation",
+      "method": "GET",
+      "path": "/api/v1/admin/invitations/{invitation_id}",
+      "summary": "Get Invitation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "invite show"
+        ]
+      }
+    },
+    {
+      "operation": "revokeInvitation",
+      "method": "DELETE",
+      "path": "/api/v1/admin/invitations/{invitation_id}",
+      "summary": "Revoke Invitation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "invite revoke"
+        ]
+      }
+    },
+    {
+      "operation": "listPrincipals",
+      "method": "GET",
+      "path": "/api/v1/admin/principals",
+      "summary": "List Principals",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin principal list"
+        ]
+      }
+    },
+    {
+      "operation": "getPrincipal",
+      "method": "GET",
+      "path": "/api/v1/admin/principals/{principal_id}",
+      "summary": "Get Principal",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin principal show"
+        ]
+      }
+    },
+    {
+      "operation": "listPrincipalCredentials",
+      "method": "GET",
+      "path": "/api/v1/admin/principals/{principal_id}/credentials",
+      "summary": "List Principal Credentials",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin credential list"
+        ]
+      }
+    },
+    {
+      "operation": "revokeCredential",
+      "method": "DELETE",
+      "path": "/api/v1/admin/credentials/{credential_id}",
+      "summary": "Revoke Credential",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin credential revoke"
+        ]
+      }
+    },
+    {
+      "operation": "rotateOwnerCredential",
+      "method": "POST",
+      "path": "/api/v1/admin/owner-credentials/rotate",
+      "summary": "Rotate Owner Credential",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "owner rotate"
+        ],
+        "note": "在私有pending生成替换Credential，原身份轮换并核验后提升。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('owner rotate-credential'"
+          },
+          {
+            "file": "packages/skill-runtime/src/credential-operations.mjs",
+            "contains": "/api/v1/admin/owner-credentials/rotate"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "addOwnerDeviceCredential",
+      "method": "POST",
+      "path": "/api/v1/admin/owner-credentials/add-device",
+      "summary": "Add Owner Device Credential",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "owner device approve"
+        ],
+        "note": "现有Owner核对非秘密配对请求，在专用安全模块批准。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/owner-devices.mjs",
+            "contains": "/api/v1/admin/owner-credentials/add-device"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "revokeOwnerDeviceCredential",
+      "method": "POST",
+      "path": "/api/v1/admin/owner-credentials/{credential_id}/revoke",
+      "summary": "Revoke Owner Device Credential",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "owner device revoke"
+        ],
+        "note": "专用Owner设备撤销保护当前Credential并保留原操作读回。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/owner-devices.mjs",
+            "contains": "apiPath = `/api/v1/admin/owner-credentials/${credentialId}/revoke`"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "renameOwnerDeviceCredential",
+      "method": "POST",
+      "path": "/api/v1/admin/owner-credentials/{credential_id}/rename",
+      "summary": "Rename Owner Device Credential",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "owner device rename"
+        ]
+      }
+    },
+    {
+      "operation": "getInstanceOrigin",
+      "method": "GET",
+      "path": "/api/v1/admin/instance-origin",
+      "summary": "Get Instance Origin",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin origin show"
+        ]
+      }
+    },
+    {
+      "operation": "updateInstanceOrigin",
+      "method": "PUT",
+      "path": "/api/v1/admin/instance-origin",
+      "summary": "Update Instance Origin",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin origin update"
+        ]
+      }
+    },
+    {
+      "operation": "listProjectGrants",
+      "method": "GET",
+      "path": "/api/v1/admin/projects/{project_id}/grants",
+      "summary": "List Project Grants",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "grant list"
+        ]
+      }
+    },
+    {
+      "operation": "createProjectGrant",
+      "method": "POST",
+      "path": "/api/v1/admin/projects/{project_id}/grants",
+      "summary": "Create Project Grant",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "grant create"
+        ]
+      }
+    },
+    {
+      "operation": "getProjectGrant",
+      "method": "GET",
+      "path": "/api/v1/admin/grants/{grant_id}",
+      "summary": "Get Project Grant",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "grant show"
+        ]
+      }
+    },
+    {
+      "operation": "updateProjectGrant",
+      "method": "PATCH",
+      "path": "/api/v1/admin/grants/{grant_id}",
+      "summary": "Update Project Grant",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "grant update"
+        ]
+      }
+    },
+    {
+      "operation": "revokeProjectGrant",
+      "method": "DELETE",
+      "path": "/api/v1/admin/grants/{grant_id}",
+      "summary": "Revoke Project Grant",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "grant revoke"
+        ]
+      }
+    },
+    {
+      "operation": "listAuditEvents",
+      "method": "GET",
+      "path": "/api/v1/admin/audit-events",
+      "summary": "List Audit Events",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin audit list"
+        ]
+      }
+    },
+    {
+      "operation": "createWebLaunch",
+      "method": "POST",
+      "path": "/api/v1/web-launches",
+      "summary": "Create Web Launch",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "web open"
+        ],
+        "note": "mode=online进入专用Browser Launch交付，浏览器承接一次性票据。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/web-open.mjs",
+            "contains": "onlineLauncher = createBrowserLaunchAndDeliver"
+          },
+          {
+            "file": "packages/skill-runtime/src/capability-delivery.mjs",
+            "contains": "apiPath: \"/api/v1/web-launches\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "redeemWebLaunch",
+      "method": "POST",
+      "path": "/api/v1/web-sessions/redeem",
+      "summary": "Redeem Web Launch",
+      "coverage": {
+        "kind": "browser",
+        "transport": "one_time_browser_transport",
+        "commands": [
+          "web open"
+        ],
+        "reason": "兑换设置HttpOnly Cookie，必须由实际同源浏览器执行；Bearer CLI不能代替。",
+        "alternative": "web open --mode online交付一次性Browser Launch，落地页POST兑换并进入准确target。",
+        "evidence": [
+          {
+            "file": "apps/worker/src/services/web-auth.ts",
+            "contains": "fetch(\"/api/v1/web-sessions/redeem\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "getWebSession",
+      "method": "GET",
+      "path": "/api/v1/web-session",
+      "summary": "Get Web Session",
+      "coverage": {
+        "kind": "browser",
+        "transport": "cookie_session",
+        "commands": [
+          "web open",
+          "profile show"
+        ],
+        "reason": "读取的是当前浏览器Cookie Session；CLI私有Credential身份与它独立。",
+        "alternative": "在已打开的Web页面核对Session、Principal与target；CLI身份使用profile show核验。",
+        "evidence": [
+          {
+            "file": "apps/web/src/App.vue",
+            "contains": "\"/api/v1/web-session\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "revokeWebSession",
+      "method": "DELETE",
+      "path": "/api/v1/web-session",
+      "summary": "Revoke Web Session",
+      "coverage": {
+        "kind": "browser",
+        "transport": "cookie_session",
+        "commands": [
+          "web open",
+          "admin credential revoke",
+          "owner device revoke"
+        ],
+        "reason": "退出仅撤销当前Cookie Session，需要同源/CSRF；CLI不能猜测浏览器Session。",
+        "alternative": "使用当前Web页面的Sign out；需要撤销Credential时使用admin credential revoke或owner device revoke。",
+        "evidence": [
+          {
+            "file": "apps/web/src/App.vue",
+            "contains": "\"/api/v1/web-session\", { method: \"DELETE\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "renewWebSession",
+      "method": "POST",
+      "path": "/api/v1/web-session/renew",
+      "summary": "Renew Web Session",
+      "coverage": {
+        "kind": "browser",
+        "transport": "cookie_session",
+        "commands": [
+          "web open"
+        ],
+        "reason": "续期只由Web前台真实鼠标/键盘/触屏活动驱动，Cookie-only；CLI/Bearer/background不能代替。",
+        "alternative": "继续在原Web Session前台操作；过期后重新Passkey登录或新建专用Browser Launch。",
+        "evidence": [
+          {
+            "file": "apps/web/src/App.vue",
+            "contains": "\"/api/v1/web-session/renew\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "createPasskeyRegistrationOptions",
+      "method": "POST",
+      "path": "/api/v1/me/passkeys/registration-options",
+      "summary": "Create Passkey Registration Options",
+      "coverage": {
+        "kind": "browser",
+        "transport": "webauthn",
+        "commands": [
+          "web open",
+          "passkey list",
+          "passkey revoke"
+        ],
+        "reason": "需要真实浏览器的WebAuthn ceremony、origin/rp验证和用户验证。",
+        "alternative": "web open --mode online进入本人Profile，用Register Passkey；CLI可list/revoke已有Passkey。",
+        "evidence": [
+          {
+            "file": "apps/web/src/views/ProfileView.vue",
+            "contains": "\"/api/v1/me/passkeys/registration-options\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "listMyPasskeys",
+      "method": "GET",
+      "path": "/api/v1/me/passkeys",
+      "summary": "List My Passkeys",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "passkey list"
+        ]
+      }
+    },
+    {
+      "operation": "registerPasskey",
+      "method": "POST",
+      "path": "/api/v1/me/passkeys",
+      "summary": "Register Passkey",
+      "coverage": {
+        "kind": "browser",
+        "transport": "webauthn",
+        "commands": [
+          "web open",
+          "passkey list"
+        ],
+        "reason": "navigator.credentials.create生成的attestation来自真实浏览器/Authenticator，CLI不伪造。",
+        "alternative": "在本人Profile完成浏览器Register Passkey并读回列表。",
+        "evidence": [
+          {
+            "file": "apps/web/src/views/ProfileView.vue",
+            "contains": "\"/api/v1/me/passkeys\", {"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "revokeMyPasskey",
+      "method": "DELETE",
+      "path": "/api/v1/me/passkeys/{passkey_id}",
+      "summary": "Revoke My Passkey",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "passkey revoke"
+        ]
+      }
+    },
+    {
+      "operation": "revokePrincipalPasskey",
+      "method": "DELETE",
+      "path": "/api/v1/admin/passkeys/{passkey_id}",
+      "summary": "Revoke Principal Passkey",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin passkey revoke"
+        ]
+      }
+    },
+    {
+      "operation": "createWebAuthenticationOptions",
+      "method": "POST",
+      "path": "/api/v1/web-authentication/options",
+      "summary": "Create Web Authentication Options",
+      "coverage": {
+        "kind": "browser",
+        "transport": "webauthn",
+        "commands": [
+          "web open"
+        ],
+        "reason": "浏览器登录ceremony与Cookie Session不同于CLI当前私有Credential。",
+        "alternative": "在实例公共首页使用Sign in；已持私有Credential可由web open --mode online安全打开页面。",
+        "evidence": [
+          {
+            "file": "apps/web/src/views/PublicHomeView.vue",
+            "contains": "\"/api/v1/web-authentication/options\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "verifyWebAuthentication",
+      "method": "POST",
+      "path": "/api/v1/web-authentication/verify",
+      "summary": "Verify Web Authentication",
+      "coverage": {
+        "kind": "browser",
+        "transport": "webauthn",
+        "commands": [
+          "web open"
+        ],
+        "reason": "navigator.credentials.get assertion及同源Cookie签发必须在真实浏览器完成。",
+        "alternative": "在实例首页完成Passkey Sign in并核对最终认证页面，不把CLI profile读回当成浏览器登录。",
+        "evidence": [
+          {
+            "file": "apps/web/src/views/PublicHomeView.vue",
+            "contains": "\"/api/v1/web-authentication/verify\""
+          }
+        ]
+      }
+    },
+    {
+      "operation": "listPublicProjects",
+      "method": "GET",
+      "path": "/api/v1/public-projects",
+      "summary": "List Public Projects",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "join projects"
+        ]
+      }
+    },
+    {
+      "operation": "getPublicJoinPolicy",
+      "method": "GET",
+      "path": "/api/v1/admin/projects/{project_id}/public-join",
+      "summary": "Get Public Join Policy",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin public-join show"
+        ]
+      }
+    },
+    {
+      "operation": "enablePublicJoin",
+      "method": "PUT",
+      "path": "/api/v1/admin/projects/{project_id}/public-join",
+      "summary": "Enable Public Join",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin public-join enable"
+        ]
+      }
+    },
+    {
+      "operation": "disablePublicJoin",
+      "method": "DELETE",
+      "path": "/api/v1/admin/projects/{project_id}/public-join",
+      "summary": "Disable Public Join",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin public-join disable"
+        ]
+      }
+    },
+    {
+      "operation": "getProjectResourceLimits",
+      "method": "GET",
+      "path": "/api/v1/admin/projects/{project_id}/resource-limits",
+      "summary": "Get Project Resource Limits",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin limits show"
+        ]
+      }
+    },
+    {
+      "operation": "updateProjectResourceLimits",
+      "method": "PATCH",
+      "path": "/api/v1/admin/projects/{project_id}/resource-limits",
+      "summary": "Update Project Resource Limits",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin limits update"
+        ]
+      }
+    },
+    {
+      "operation": "getHomepageSettings",
+      "method": "GET",
+      "path": "/api/v1/admin/homepage-settings",
+      "summary": "Get Homepage Settings",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin homepage show"
+        ]
+      }
+    },
+    {
+      "operation": "updateHomepageSettings",
+      "method": "PATCH",
+      "path": "/api/v1/admin/homepage-settings",
+      "summary": "Update Homepage Settings",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin homepage update"
+        ]
+      }
+    },
+    {
+      "operation": "getAttachmentSettings",
+      "method": "GET",
+      "path": "/api/v1/admin/attachment-settings",
+      "summary": "Get Attachment Settings",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin attachment-capacity show"
+        ]
+      }
+    },
+    {
+      "operation": "updateAttachmentSettings",
+      "method": "PATCH",
+      "path": "/api/v1/admin/attachment-settings",
+      "summary": "Update Attachment Settings",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin attachment-capacity update"
+        ]
+      }
+    },
+    {
+      "operation": "getUsage",
+      "method": "GET",
+      "path": "/api/v1/admin/usage",
+      "summary": "Get Usage",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin usage snapshot"
+        ]
+      }
+    },
+    {
+      "operation": "refreshUsage",
+      "method": "POST",
+      "path": "/api/v1/admin/usage/refresh",
+      "summary": "Refresh Usage",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin usage show"
+        ]
+      }
+    },
+    {
+      "operation": "getRateLimitSettings",
+      "method": "GET",
+      "path": "/api/v1/admin/rate-limit-settings",
+      "summary": "Get Rate Limit Settings",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin rate-limits show"
+        ]
+      }
+    },
+    {
+      "operation": "redeemPublicJoin",
+      "method": "POST",
+      "path": "/api/v1/public-joins/{public_id}/redeem",
+      "summary": "Redeem Public Join",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "join public"
+        ],
+        "note": "核对明确Public Join目标与身份模式，专用私有pending/兑换/验证流程。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('public-join redeem'"
+          },
+          {
+            "file": "packages/skill-runtime/src/credential-operations.mjs",
+            "contains": "/api/v1/public-joins/${requireUuid(publicId, \"public_id\")}/redeem"
+          }
+        ]
+      }
+    }
+  ],
+  "skill_commands": [
+    {
+      "command": "web open",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin"
+      ],
+      "effect": "local_web_service_or_authenticated_browser_delivery",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "web open"
+        ]
+      }
+    },
+    {
+      "command": "capabilities",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy capabilities"
+        ]
+      }
+    },
+    {
+      "command": "state init",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "local_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "connection add",
+          "join invite",
+          "join public",
+          "owner device prepare"
+        ],
+        "note": "登记/首次身份准备在同一执行环境初始化并校验私有状态，非独立业务操作。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/runtime.mjs",
+            "contains": "await initializeStateRoot({home,stateRoot,persistenceConfirmed:input.persistenceConfirmed})"
+          },
+          {
+            "file": "packages/skill-runtime/src/state.mjs",
+            "contains": "await initializeStateRoot(input)"
+          }
+        ]
+      }
+    },
+    {
+      "command": "state put-instance",
+      "skills": [
+        "cfkanban",
+        "cfkanban-deploy"
+      ],
+      "effect": "local_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "connection add"
+        ]
+      }
+    },
+    {
+      "command": "state inspect",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "local_state_check",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "identity pending"
+        ]
+      }
+    },
+    {
+      "command": "credential prepare",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "local_secret_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "join invite",
+          "join public",
+          "owner rotate"
+        ],
+        "note": "每个公开身份流程自行生成私有pending，绑定用途与稳定key。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('credential prepare'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "credential verify-and-promote",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "authenticated_read_and_local_secret_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "identity verify"
+        ]
+      }
+    },
+    {
+      "command": "credential clear",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "local_secret_delete",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "identity discard-pending"
+        ]
+      }
+    },
+    {
+      "command": "invite redeem",
+      "skills": [
+        "cfkanban"
+      ],
+      "effect": "single_remote_write_and_local_credential_promotion",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "join invite"
+        ],
+        "note": "邀请URL只从capability stdin进入专用兑换；验证原身份与pending后提升。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('invite redeem'"
+          },
+          {
+            "file": "packages/skill-runtime/src/credential-operations.mjs",
+            "contains": "/api/v1/invitations/redeem"
+          }
+        ]
+      }
+    },
+    {
+      "command": "public-join redeem",
+      "skills": [
+        "cfkanban"
+      ],
+      "effect": "single_remote_write_and_local_credential_promotion",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "join public"
+        ],
+        "note": "核对明确Public Join目标与身份模式，专用私有pending/兑换/验证流程。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('public-join redeem'"
+          },
+          {
+            "file": "packages/skill-runtime/src/credential-operations.mjs",
+            "contains": "/api/v1/public-joins/${requireUuid(publicId, \"public_id\")}/redeem"
+          }
+        ]
+      }
+    },
+    {
+      "command": "attachment upload",
+      "skills": [
+        "cfkanban"
+      ],
+      "effect": "authenticated_remote_writes_and_local_file_read",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "attachment upload"
+        ]
+      }
+    },
+    {
+      "command": "attachment download",
+      "skills": [
+        "cfkanban"
+      ],
+      "effect": "authenticated_remote_read_and_local_file_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "attachment download"
+        ]
+      }
+    },
+    {
+      "command": "owner-recovery discover",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_public_http",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy recovery discover"
+        ]
+      }
+    },
+    {
+      "command": "owner-recovery inspect",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_public_http",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy recovery inspect"
+        ]
+      }
+    },
+    {
+      "command": "plan owner-recovery",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_plan",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy recovery plan"
+        ]
+      }
+    },
+    {
+      "command": "owner-recovery execute",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_cloudflare_credential_recovery_and_local_secret_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy recovery apply",
+          "deploy resume"
+        ],
+        "note": "准确owner_credential_recovery plan的journal授权后执行原恢复流程。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "plan.kind==='owner_credential_recovery'"
+          },
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('owner-recovery execute'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "owner-device prepare",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "credential_free_read_and_local_secret_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "owner device prepare"
+        ]
+      }
+    },
+    {
+      "command": "owner-device request",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "local_state_check",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "owner device request"
+        ]
+      }
+    },
+    {
+      "command": "owner-device approve",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "authenticated_remote_write_and_local_retry_record",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "owner device approve"
+        ]
+      }
+    },
+    {
+      "command": "owner-device verify",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "authenticated_read_and_local_secret_promotion",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "owner device verify"
+        ]
+      }
+    },
+    {
+      "command": "owner-device restore-previous",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "authenticated_read_and_local_identity_switch",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "owner device restore-previous"
+        ]
+      }
+    },
+    {
+      "command": "owner-device list",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "authenticated_read",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "owner device list"
+        ]
+      }
+    },
+    {
+      "command": "owner-device revoke",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "authenticated_remote_write_and_local_retry_record",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "owner device revoke"
+        ]
+      }
+    },
+    {
+      "command": "deployment inspect-existing",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_http",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy attach inspect"
+        ]
+      }
+    },
+    {
+      "command": "plan deployment-attachment",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_plan",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy attach plan"
+        ]
+      }
+    },
+    {
+      "command": "deployment attach",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_local_receipt_write_and_remote_readback",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy attach apply",
+          "deploy resume"
+        ],
+        "note": "准确deployment_attachment plan的journal授权后接入同一实例。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "plan.kind==='deployment_attachment'"
+          },
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('deployment attach'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "owner rotate-credential",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "authenticated_remote_secret_rotation_and_local_promotion",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "owner rotate"
+        ],
+        "note": "在私有pending生成替换Credential，原身份轮换并核验后提升。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('owner rotate-credential'"
+          },
+          {
+            "file": "packages/skill-runtime/src/credential-operations.mjs",
+            "contains": "/api/v1/admin/owner-credentials/rotate"
+          }
+        ]
+      }
+    },
+    {
+      "command": "deployment prepare-owner-credential",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_local_secret_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy resume"
+        ],
+        "note": "strict_zero_deploy内准备plan绑定Owner pending。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('deployment prepare-owner-credential'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "bootstrap write-owner-sql",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_local_secret_derived_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy resume"
+        ],
+        "note": "strict_zero_deploy生成私有hash-only SQL；不提供任意SQL入口。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('bootstrap write-owner-sql'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "deployment finalize-owner",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "credential_free_and_authenticated_readback_then_local_secret_promotion",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy resume"
+        ],
+        "note": "strict_zero_deploy完整健康/Instance/Owner/版本读回后提升原pending并写receipt。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('deployment finalize-owner'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "deployment finalize-upgrade",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "credential_free_and_authenticated_readback_then_local_receipt_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy upgrade apply",
+          "deploy upgrade resume"
+        ],
+        "note": "现有实例升级的最终schema/版本/Owner与receipt核验。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('deployment finalize-upgrade'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "scope inspect-directory",
+      "skills": [
+        "cfkanban"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "scope inspect"
+        ]
+      }
+    },
+    {
+      "command": "scope read",
+      "skills": [
+        "cfkanban"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "scope show"
+        ]
+      }
+    },
+    {
+      "command": "scope merge",
+      "skills": [
+        "cfkanban"
+      ],
+      "effect": "local_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "scope associate"
+        ]
+      }
+    },
+    {
+      "command": "scope resolve",
+      "skills": [
+        "cfkanban"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "scope resolve"
+        ]
+      }
+    },
+    {
+      "command": "origin rebind-check",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "credential_free_network_and_local_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "connection origin-check"
+        ]
+      }
+    },
+    {
+      "command": "web resolve",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin"
+      ],
+      "effect": "read_only_local",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "connection resolve"
+        ]
+      }
+    },
+    {
+      "command": "web preflight",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "local_browser_probe",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "web preflight"
+        ]
+      }
+    },
+    {
+      "command": "web launch",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin"
+      ],
+      "effect": "authenticated_remote_write_and_browser_delivery",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "web open"
+        ],
+        "note": "mode=online进入专用Browser Launch交付，浏览器承接一次性票据。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/web-open.mjs",
+            "contains": "onlineLauncher = createBrowserLaunchAndDeliver"
+          },
+          {
+            "file": "packages/skill-runtime/src/capability-delivery.mjs",
+            "contains": "apiPath: \"/api/v1/web-launches\""
+          }
+        ]
+      }
+    },
+    {
+      "command": "invite create",
+      "skills": [
+        "cfkanban-admin"
+      ],
+      "effect": "authenticated_remote_write_and_invite_delivery",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "invite create"
+        ]
+      }
+    },
+    {
+      "command": "api request",
+      "skills": [
+        "cfkanban",
+        "cfkanban-admin",
+        "cfkanban-deploy"
+      ],
+      "effect": "authenticated_remote_request",
+      "coverage": {
+        "kind": "operation_catalog",
+        "commands": [
+          "instance info",
+          "profile show",
+          "profile update",
+          "notification preferences",
+          "notification configure",
+          "notification list",
+          "notification acknowledge",
+          "admin notification list",
+          "admin notification publish",
+          "admin notification withdraw",
+          "event list",
+          "workspace list",
+          "workspace create",
+          "workspace show",
+          "workspace update",
+          "workspace archive",
+          "workspace purge-preview",
+          "workspace purge",
+          "workspace restore",
+          "project list",
+          "project create",
+          "project show",
+          "project update",
+          "project archive",
+          "project purge-preview",
+          "project purge",
+          "project restore",
+          "project assignee list",
+          "project status list",
+          "project status rename",
+          "workspace administrator candidates",
+          "workspace administrator list",
+          "workspace administrator add",
+          "workspace administrator remove",
+          "project administrator candidates",
+          "project administrator list",
+          "project administrator add",
+          "project administrator remove",
+          "project member list",
+          "project member candidates",
+          "issue list",
+          "issue candidates",
+          "project issue list",
+          "issue create",
+          "issue counts",
+          "issue show",
+          "issue update",
+          "issue delete",
+          "issue restore",
+          "issue context",
+          "issue assign-me",
+          "issue block",
+          "issue unblock",
+          "issue complete",
+          "issue label add",
+          "issue label remove",
+          "attachment list",
+          "attachment show",
+          "attachment delete",
+          "attachment restore",
+          "comment list",
+          "comment create",
+          "comment show",
+          "comment delete",
+          "comment restore",
+          "label list",
+          "label create",
+          "label show",
+          "label update",
+          "label delete",
+          "label restore",
+          "relation list",
+          "relation create",
+          "relation show",
+          "relation delete",
+          "relation restore",
+          "invite list",
+          "invite show",
+          "invite revoke",
+          "admin principal list",
+          "admin principal show",
+          "admin credential list",
+          "admin credential revoke",
+          "owner device rename",
+          "admin origin show",
+          "admin origin update",
+          "grant list",
+          "grant create",
+          "grant show",
+          "grant update",
+          "grant revoke",
+          "admin audit list",
+          "passkey list",
+          "passkey revoke",
+          "admin passkey revoke",
+          "join projects",
+          "admin public-join show",
+          "admin public-join enable",
+          "admin public-join disable",
+          "admin limits show",
+          "admin limits update",
+          "admin homepage show",
+          "admin homepage update",
+          "admin attachment-capacity show",
+          "admin attachment-capacity update",
+          "admin usage snapshot",
+          "admin usage show",
+          "admin rate-limits show"
+        ],
+        "note": "普通业务API按OpenAPI逐operation映射到固定公共noun/action；不公开任意路径透传。专用传输与真实浏览器例外见operations。"
+      }
+    },
+    {
+      "command": "release discover",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "credential_free_read_only_network",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy release discover"
+        ]
+      }
+    },
+    {
+      "command": "release verify",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy release verify"
+        ]
+      }
+    },
+    {
+      "command": "release continuity",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy release continuity"
+        ]
+      }
+    },
+    {
+      "command": "release install-skill-bundle",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "local_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy skill install"
+        ]
+      }
+    },
+    {
+      "command": "release install-service-bundle",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "local_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy service cache"
+        ]
+      }
+    },
+    {
+      "command": "runtime resolve-wrangler",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy runtime resolve"
+        ]
+      }
+    },
+    {
+      "command": "runtime resolve-cloudflare-auth",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_local_auth_and_cloudflare_accounts",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy auth resolve"
+        ]
+      }
+    },
+    {
+      "command": "runtime inspect-cloudflare-auth",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_local_auth",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy auth inspect"
+        ]
+      }
+    },
+    {
+      "command": "runtime plan-cloudflare-auth",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "plan_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy auth plan"
+        ]
+      }
+    },
+    {
+      "command": "runtime cloudflare-auth-action",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_local_auth_and_oauth",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy auth apply"
+        ],
+        "note": "严格按已获批auth plan顺序执行allowlisted action，随后inspect/resolve/exact account readback。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/auth.mjs",
+            "contains": "await authAction({plan,actionId:action.id"
+          },
+          {
+            "file": "packages/cli/src/runtime.mjs",
+            "contains": "authAction:async(input,runner)=>{markWriteStarted();return dispatchImpl('runtime cloudflare-auth-action'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "runtime wrangler-account-readback",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_cloudflare_account",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy account verify"
+        ]
+      }
+    },
+    {
+      "command": "runtime d1-resource-readback",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_cloudflare_resource",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy database inspect"
+        ]
+      }
+    },
+    {
+      "command": "runtime r2-storage-readback",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_cloudflare_resource",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy storage inspect"
+        ]
+      }
+    },
+    {
+      "command": "deployment provision-r2-storage",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_cloudflare_write_and_readback",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy upgrade apply",
+          "deploy resume",
+          "deploy upgrade resume"
+        ],
+        "note": "仅plan.resources.r2明确存在时创建/读回原有授权bucket与marker。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "if(plan.resources.r2) await helper('deployment provision-r2-storage'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "runtime d1-restore-point-readback",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_cloudflare_resource",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy database restore-point"
+        ]
+      }
+    },
+    {
+      "command": "runtime worker-resource-readback",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_cloudflare_resource",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy worker inspect"
+        ]
+      }
+    },
+    {
+      "command": "runtime worker-version-readback",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_cloudflare_resource",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy worker version"
+        ]
+      }
+    },
+    {
+      "command": "runtime plan-install",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "plan_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy runtime plan"
+        ]
+      }
+    },
+    {
+      "command": "runtime install",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "local_tool_write",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy runtime install"
+        ]
+      }
+    },
+    {
+      "command": "plan strict-zero",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "plan_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy plan"
+        ]
+      }
+    },
+    {
+      "command": "plan skill-update",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "plan_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy skill plan"
+        ]
+      }
+    },
+    {
+      "command": "plan instance-upgrade",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "plan_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy upgrade plan"
+        ]
+      }
+    },
+    {
+      "command": "plan compare",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy plan compare"
+        ]
+      }
+    },
+    {
+      "command": "journal create",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "local_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy resume",
+          "deploy upgrade apply",
+          "deploy upgrade resume",
+          "deploy attach apply",
+          "deploy recovery apply"
+        ],
+        "note": "各deploy-apply plan在同一operation创建或恢复journal。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('journal create'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "journal authorize",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "local_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy resume",
+          "deploy upgrade apply",
+          "deploy upgrade resume",
+          "deploy attach apply",
+          "deploy recovery apply"
+        ],
+        "note": "完整plan授权核验后记录准确task/operation/digest。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('journal authorize'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "deployment write-wrangler-config",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_local_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy resume",
+          "deploy upgrade apply",
+          "deploy upgrade resume"
+        ],
+        "note": "从已验证Service bundle及准确D1 UUID写固定私有config。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('deployment write-wrangler-config'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "deploy wrangler-action",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_cloudflare_write_or_readback",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy resume",
+          "deploy upgrade apply",
+          "deploy upgrade resume"
+        ],
+        "note": "仅执行该plan种类allowlist中的准确动作，保留journal与原请求恢复。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('deploy wrangler-action'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "migrations reconcile",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy apply",
+          "deploy resume",
+          "deploy upgrade apply",
+          "deploy upgrade resume"
+        ],
+        "note": "组合流程直接调用同一reconcileMigrationState实现，校验bounded ledger/schema。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "import { reconcileMigrationState }"
+          },
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "reconcileMigrationState({manifest,ledger:"
+          }
+        ]
+      }
+    },
+    {
+      "command": "migrations assess-ledger-recovery",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_local_recovery_assessment",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy upgrade apply",
+          "deploy upgrade resume"
+        ],
+        "note": "同journal成功apply后只评估一个缺失checksum的可恢复性。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('migrations assess-ledger-recovery'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "migrations write-ledger-record-sql",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_local_write",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy upgrade apply",
+          "deploy upgrade resume"
+        ],
+        "note": "仅安全评估通过后写单条insert-only私有checksum SQL。",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('migrations write-ledger-record-sql'"
+          }
+        ]
+      }
+    }
+  ],
+  "skill_workflows": [
+    {
+      "id": "daily-identity-scope",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Local identity and scope",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "connection list",
+          "connection add",
+          "connection origin-check",
+          "identity pending",
+          "profile show",
+          "scope inspect",
+          "scope show",
+          "scope associate",
+          "scope resolve"
+        ],
+        "note": "准确实例/身份与目录推荐过滤；推荐不构成授权。"
+      }
+    },
+    {
+      "id": "daily-join-invite",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Invite redemption",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "connection discover",
+          "connection add",
+          "join invite",
+          "identity pending",
+          "identity verify",
+          "identity discard-pending"
+        ],
+        "note": "原邀请浏览器只读检查属于browser transport；新身份/恢复需要私有pending与原兑换读回。"
+      }
+    },
+    {
+      "id": "daily-public-join",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Public Join",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "join projects",
+          "join public",
+          "identity pending",
+          "identity verify"
+        ],
+        "note": "明确public_id与身份模式，保留配额和权限拒绝。"
+      }
+    },
+    {
+      "id": "daily-issues",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Identity and Issue operations",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "issue list",
+          "issue candidates",
+          "project issue list",
+          "issue create",
+          "issue counts",
+          "issue show",
+          "issue update",
+          "issue delete",
+          "issue restore",
+          "issue context",
+          "issue assign-me",
+          "issue block",
+          "issue unblock",
+          "issue complete",
+          "issue label add",
+          "issue label remove",
+          "comment list",
+          "comment create",
+          "comment show",
+          "comment delete",
+          "comment restore",
+          "label list",
+          "label create",
+          "label show",
+          "label update",
+          "label delete",
+          "label restore",
+          "relation list",
+          "relation create",
+          "relation show",
+          "relation delete",
+          "relation restore",
+          "issue reopen"
+        ],
+        "note": "单笔Issue/Comment/Label/Relation语义；完成与重开保留实际记录。"
+      }
+    },
+    {
+      "id": "daily-query",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Efficient Issue queries",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "issue list",
+          "issue candidates",
+          "issue counts",
+          "project issue list",
+          "label list"
+        ],
+        "note": "服务端筛选分页与独立cursor，不抓全历史过滤。"
+      }
+    },
+    {
+      "id": "daily-attachment",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Private Issue attachments",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "attachment list",
+          "attachment show",
+          "attachment delete",
+          "attachment restore",
+          "attachment upload",
+          "attachment download"
+        ],
+        "note": "单文件传输与恢复使用专用安全模块。"
+      }
+    },
+    {
+      "id": "daily-web",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Local workbench and online mode",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "connection resolve",
+          "web open",
+          "web preflight"
+        ],
+        "note": "明确local/online目标及已核验浏览器交付；不声称CLI能控制宿主侧栏。"
+      }
+    },
+    {
+      "id": "daily-preferences",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Personal color theme",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "profile show",
+          "profile update",
+          "notification preferences",
+          "notification configure",
+          "notification list",
+          "notification acknowledge",
+          "passkey list",
+          "passkey revoke",
+          "web open"
+        ],
+        "note": "本人偏好/通知与Passkey管理；注册与登录ceremony仅在真实浏览器完成。"
+      }
+    },
+    {
+      "id": "admin-containers",
+      "skill": "cfkanban-admin",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md",
+      "heading": "Administration endpoint map",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "workspace list",
+          "workspace create",
+          "workspace show",
+          "workspace update",
+          "workspace archive",
+          "workspace purge-preview",
+          "workspace purge",
+          "workspace restore",
+          "project list",
+          "project create",
+          "project show",
+          "project update",
+          "project archive",
+          "project purge-preview",
+          "project purge",
+          "project restore",
+          "project assignee list",
+          "project status list",
+          "project status rename",
+          "workspace administrator candidates",
+          "workspace administrator list",
+          "workspace administrator add",
+          "workspace administrator remove",
+          "project administrator candidates",
+          "project administrator list",
+          "project administrator add",
+          "project administrator remove",
+          "project member list",
+          "project member candidates",
+          "project issue list",
+          "admin principal list",
+          "admin principal show",
+          "admin credential list",
+          "admin credential revoke",
+          "grant list",
+          "grant create",
+          "grant show",
+          "grant update",
+          "grant revoke",
+          "admin passkey revoke"
+        ],
+        "note": "Owner/scoped管理员能力由实时Service核验；archive/restore/purge保持独立原子语义。"
+      }
+    },
+    {
+      "id": "admin-first-board",
+      "skill": "cfkanban-admin",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md",
+      "heading": "First usable board after deployment",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "profile show",
+          "workspace create",
+          "project create",
+          "board create",
+          "workspace show",
+          "project show",
+          "web open"
+        ],
+        "note": "创建Workspace和Project是两筆操作，部分结果不能伪报事务。"
+      }
+    },
+    {
+      "id": "admin-invitations",
+      "skill": "cfkanban-admin",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md",
+      "heading": "Invitations and recovery",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "invite create",
+          "invite list",
+          "invite show",
+          "invite revoke",
+          "grant list"
+        ],
+        "note": "单范围/身份恢复邀请，秘密只经专用交付。"
+      }
+    },
+    {
+      "id": "admin-devices",
+      "skill": "cfkanban-admin",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md",
+      "heading": "Owner devices (schema 12+)",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "owner device rename",
+          "owner device prepare",
+          "owner device request",
+          "owner device approve",
+          "owner device verify",
+          "owner device list",
+          "owner device revoke",
+          "owner device restore-previous"
+        ],
+        "note": "非秘密请求在原Owner批准，精确身份验证与恢复previous slot。"
+      }
+    },
+    {
+      "id": "admin-rotation",
+      "skill": "cfkanban-admin",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md",
+      "heading": "Owner Credential rotation",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "owner rotate",
+          "identity pending",
+          "identity verify",
+          "identity discard-pending"
+        ],
+        "note": "同一Owner私有pending→轮换→核验→提升，未知结果保留原key。"
+      }
+    },
+    {
+      "id": "admin-policy",
+      "skill": "cfkanban-admin",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md",
+      "heading": "Public Join and quotas",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "admin notification list",
+          "admin notification publish",
+          "admin notification withdraw",
+          "admin origin show",
+          "admin origin update",
+          "admin audit list",
+          "admin public-join show",
+          "admin public-join enable",
+          "admin public-join disable",
+          "admin limits show",
+          "admin limits update",
+          "admin homepage show",
+          "admin homepage update",
+          "admin attachment-capacity show",
+          "admin attachment-capacity update",
+          "admin usage snapshot",
+          "admin usage show",
+          "admin rate-limits show"
+        ],
+        "note": "配额/公开设置/usage/audit使用相同Service权限与CAS；未知指标不作零。"
+      }
+    },
+    {
+      "id": "deploy-auth",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Cloudflare authentication",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy capabilities",
+          "deploy runtime resolve",
+          "deploy runtime plan",
+          "deploy runtime install",
+          "deploy auth resolve",
+          "deploy auth inspect",
+          "deploy auth plan",
+          "deploy account verify",
+          "deploy auth apply"
+        ],
+        "note": "鉴权与本地工具准备计划绑定；OAuth用户交互/OS权限不可由静态测试代替。"
+      }
+    },
+    {
+      "id": "deploy-skill-update",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Skill update",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy release discover",
+          "deploy release verify",
+          "deploy release continuity",
+          "deploy skill plan",
+          "deploy skill install",
+          "cli status",
+          "cli install",
+          "cli rollback",
+          "cli uninstall"
+        ],
+        "note": "验证完整canonical bundle并独立更新CLI注册；不声明已更新宿主正在运行MCP。"
+      }
+    },
+    {
+      "id": "deploy-first",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "First deployment",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy service cache",
+          "deploy plan",
+          "deploy apply",
+          "deploy resume",
+          "deploy database inspect",
+          "deploy worker inspect"
+        ],
+        "note": "严格新资源absence→授权journal→migration→Worker→Owner读回，不隐含应用建板。"
+      }
+    },
+    {
+      "id": "deploy-attach",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Existing deployment attachment",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy attach inspect",
+          "deploy attach plan",
+          "deploy attach apply",
+          "deploy resume"
+        ],
+        "note": "核验原实例/Owner/资源后写私有维护receipt，接入不写云资源。"
+      }
+    },
+    {
+      "id": "deploy-recovery",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Owner recovery",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy recovery discover",
+          "deploy recovery inspect",
+          "deploy recovery plan",
+          "deploy recovery apply",
+          "deploy resume"
+        ],
+        "note": "丢失全部Owner API Credential时保持同一Owner与数据，撤销旧API Credential。"
+      }
+    },
+    {
+      "id": "deploy-upgrade",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Instance upgrade",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy service cache",
+          "deploy upgrade plan",
+          "deploy upgrade apply",
+          "deploy upgrade resume",
+          "deploy database restore-point",
+          "deploy worker version"
+        ],
+        "note": "准确现有资源/Owner/版本、bounded迁移与checksum/schema读回；Time Travel restore不自动执行。"
+      }
+    },
+    {
+      "id": "deploy-resume",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Interruption and resume",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy plan compare",
+          "deploy resume",
+          "deploy upgrade resume",
+          "operation show",
+          "operation recover"
+        ],
+        "note": "同plan/journal和原Caller/key核实未知结果；服务原子写入operation和Cloudflare journal分开。"
+      }
+    },
+    {
+      "id": "deploy-r2",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Optional attachment storage",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy storage inspect",
+          "deploy upgrade plan",
+          "deploy upgrade apply",
+          "deploy apply"
+        ],
+        "note": "R2仅来自明确获批计划，bucket marker与实际readback共同核验。"
+      }
+    },
+    {
+      "id": "host-mcp-configuration",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Local MCP connection",
+      "coverage": {
+        "kind": "browser",
+        "transport": "host_configuration",
+        "commands": [
+          "deploy skill install",
+          "cli status",
+          "connection list"
+        ],
+        "reason": "Agent宿主配置/侧栏接口是宿主拥有的不同机制，公共CLI不能猜测或改写任意宿主配置。",
+        "alternative": "外层Agent在原安装授权内使用实际宿主支持的配置接口，启动/重连并核验工具与连接；CLI提供canonical bundle准备与业务替代。",
+        "evidence": []
+      }
+    },
+    {
+      "id": "daily-passkeys",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "My registered Passkeys",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "passkey list",
+          "passkey revoke",
+          "web open"
+        ],
+        "note": "本人Passkey读取与撤销共享服务端身份/version合同；登记和登录由真实浏览器Authenticator完成，见逐operation例外。"
+      }
+    },
+    {
+      "id": "daily-notifications",
+      "skill": "cfkanban",
+      "reference": "skills/cfkanban/references/workflows.md",
+      "heading": "Instance notifications",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "notification preferences",
+          "notification configure",
+          "notification list",
+          "notification acknowledge"
+        ],
+        "note": "本人偏好、逐条确认、只读pending通知与主业务结果保持独立；CLI不把缺少attention判为业务失败。"
+      }
+    },
+    {
+      "id": "admin-web",
+      "skill": "cfkanban-admin",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md",
+      "heading": "Local workbench and online mode",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "connection resolve",
+          "web preflight",
+          "web open",
+          "profile show"
+        ],
+        "note": "准确Owner/scoped管理target用online Browser Launch；普通Project/Issue本地打开沿相同身份和scope，不把owner target替代scoped target。"
+      }
+    },
+    {
+      "id": "admin-purge",
+      "skill": "cfkanban-admin",
+      "reference": "skills/cfkanban-admin/references/owner-workflows.md",
+      "heading": "Archived container purge",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "workspace purge-preview",
+          "workspace purge",
+          "project purge-preview",
+          "project purge"
+        ],
+        "note": "Owner先读取已归档准确容器预览，确认name/version/digest再逐笔永久删除，漂移和未知写入保留原请求核实。"
+      }
+    },
+    {
+      "id": "deploy-usage-configuration",
+      "skill": "cfkanban-deploy",
+      "reference": "skills/cfkanban-deploy/references/deployment-workflows.md",
+      "heading": "Optional Cloudflare usage configuration",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy upgrade plan",
+          "deploy upgrade apply",
+          "deploy upgrade resume",
+          "admin usage show"
+        ],
+        "note": "optional usageAnalytics配置必须进入已授权upgrade plan和固定私有config，Token沿Cloudflare安全来源留在模块内；业务usage读回不能代替外部配置验证。"
+      }
+    }
+  ],
+  "transport_constraints": [
+    {
+      "transport": "stdout_once",
+      "skill_commands": [
+        "web launch",
+        "invite create"
+      ],
+      "commands": [
+        "web open",
+        "invite create"
+      ],
+      "reason": "安全Skill在明确确认后提供一次性headless capability输出；公共CLI冻结合同禁止一次性capability进入普通stdout/JSON，实际parser拒绝delivery=stdout_once。此处只记录传输差异，不表示邀请或Browser Launch业务缺失。",
+      "alternative": "使用已有clipboard/system_browser/host_browser专用交付；没有可用安全交付时明确报告headless delivery不可用，不输出或保留一次性code。",
+      "evidence": [
+        {
+          "file": "packages/cli/src/parser.mjs",
+          "contains": "if(input.delivery==='stdout_once')throw toolError('CLI_SECRET_DELIVERY_REJECTED'"
+        }
+      ]
+    }
+  ]
+}

@@ -757,9 +757,14 @@ test('a single Workspace recommendation verifies its explicit identity and Proje
   const pages = f.calls.filter(call => call.name === 'cfkanban_issues_list');
   assert.equal(controller.state.view, 'list');
   assert.equal(controller.state.page, null);
-  assert.deepEqual(pages.map(call => call.args.status[0]), STATUSES);
+  assert.deepEqual(pages.map(call => call.args.status[0]), ['backlog']);
   assert.ok(pages.every(call => call.args.limit === 25 && call.args.project_ids.length === 1 && call.args.project_ids[0] === f.ids.project_id));
-  assert.deepEqual(controller.state.board.columns.map(column => [column.key, column.items.map(row => row.identifier)]), STATUSES.map(key => [key, key === 'todo' ? ['CFK-1'] : []]));
+  assert.deepEqual(controller.state.board.columns.map(column => [column.key, column.items.map(row => row.identifier)]), [['backlog', []]]);
+  await controller.toggleGroup('todo', true);
+  const expandedPages = f.calls.filter(call => call.name === 'cfkanban_issues_list');
+  assert.deepEqual(expandedPages.map(call => call.args.status[0]), ['backlog', 'todo']);
+  assert.ok(expandedPages.every(call => call.args.project_ids.length === 1 && call.args.project_ids[0] === f.ids.project_id));
+  assert.deepEqual(controller.state.board.columns.map(column => [column.key, column.items.map(row => row.identifier)]), [['backlog', []], ['todo', ['CFK-1']]]);
   assert.equal(f.calls.some(call => ['cfkanban_projects_list', 'cfkanban_workspaces_list'].includes(call.name)), false);
   assert.equal(f.creates.length + f.prompts.length, 0);
   controller.dispose();

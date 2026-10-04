@@ -1,6 +1,6 @@
 import { record, uuid, identifier, boundedText, STATUSES, PRIORITIES, isSessionReference } from './shared.mjs';
 
-const STATE_FIELDS = ['binding', 'identity', 'workspace_id', 'pending', 'issue', 'view', 'filters', 'scope_mode', 'workspace_scope', 'scope_instance_id', 'source_session_id', 'session_context_changed'];
+const STATE_FIELDS = ['binding', 'identity', 'workspace_id', 'pending', 'issue', 'view', 'expanded_groups', 'filters', 'scope_mode', 'workspace_scope', 'scope_instance_id', 'source_session_id', 'session_context_changed'];
 const RESOURCE_FIELDS = ['id', 'instance_id', 'principal_id', 'display_name', 'title', 'name', 'trusted_api_origin', 'available'];
 const pick = (value, fields) => Object.fromEntries(fields.filter(key => value?.[key] !== undefined).map(key => [key, value[key]]));
 const resource = value => pick(value, RESOURCE_FIELDS);
@@ -10,7 +10,7 @@ const summary = value => value ? { ...pick(value, ['id', 'identifier', 'title', 
 
 export function checkpointState(state) {
   return { schema_version: 1, state: {
-    ...pick(state, ['workspace_id', 'view', 'scope_mode', 'scope_instance_id', 'source_session_id', 'session_context_changed']), identity: identity(state.identity),
+    ...pick(state, ['workspace_id', 'view', 'expanded_groups', 'scope_mode', 'scope_instance_id', 'source_session_id', 'session_context_changed']), identity: identity(state.identity),
     binding: state.binding ? { binding_id: state.binding.binding_id, identity: identity(state.binding.identity), project: resource(state.binding.project), statuses: (Array.isArray(state.binding.statuses) ? state.binding.statuses : state.binding.statuses?.items ?? state.binding.statuses?.statuses ?? []).map(status) } : null,
     pending: state.pending ? structuredClone(state.pending) : null, issue: summary(state.issue), filters: pick(state.filters, ['assignment', 'status', 'priority']), workspace_scope: state.workspace_scope ? pick(state.workspace_scope, ['status']) : null,
   } };
@@ -36,6 +36,7 @@ export function validateCheckpoint(value) {
     if (state.source_session_id != null && !isSessionReference(state.source_session_id)) return null;
     if (state.session_context_changed !== undefined && typeof state.session_context_changed !== 'boolean') return null;
     if (!['list', 'board'].includes(state.view) || (state.scope_mode !== undefined && !['manual', 'suggested'].includes(state.scope_mode))) return null;
+    if (state.expanded_groups !== undefined && (!Array.isArray(state.expanded_groups) || state.expanded_groups.length > 5 || new Set(state.expanded_groups).size !== state.expanded_groups.length || state.expanded_groups.some(key => !STATUSES.includes(key)))) return null;
     record(state.filters, ['assignment', 'status', 'priority'], ['assignment', 'status', 'priority']);
     if (!['all', 'mine'].includes(state.filters.assignment) || !['', ...STATUSES].includes(state.filters.status) || !['', ...PRIORITIES].includes(state.filters.priority)) return null;
     if (state.workspace_scope != null) { record(state.workspace_scope, ['status'], ['status']); if (!['configured', 'empty', 'missing', 'invalid', 'unavailable'].includes(state.workspace_scope.status)) return null; }

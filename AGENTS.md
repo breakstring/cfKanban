@@ -14,9 +14,9 @@
 
 ## 核心开发底线
 
-- 同一 Worker 托管 REST API 与 Web assets，D1 是业务事实源，核心 Kanban 不依赖可选服务。Web 与 Skills 复用服务端权限、并发、幂等和审计合同。
-- 面向用户的能力在 Web 与 Agent（Skills/API）两端提供等价业务语义，并共同验收；具体限制导致差异时，在相关 SPEC 说明原因和替代路径，不放宽安全边界。
-- Service / 安全脚本落实强制 MUST，Skills 提供可覆盖 SHOULD，上层用户或 Agent 决定操作组合与时机。Skills 不成为领域角色或工作流执行器，不提供独立 cfKanban CLI。
+- 同一 Worker 托管 REST API 与 Web assets，D1 是业务事实源，核心 Kanban 不依赖可选服务。Web、Skills 与 CLI 复用服务端权限、并发、幂等和审计合同。
+- 面向用户的能力在 Web、Agent（Skills/API）与公共 CLI 提供等价业务语义，并共同验收；具体限制导致差异时，在相关 SPEC 说明原因和替代路径，不放宽安全边界。
+- Service / 安全脚本落实强制 MUST，Skills 提供可覆盖 SHOULD，上层用户或 Agent 决定操作组合与时机。Skills 不成为领域角色或工作流执行器；公共 CLI 与 MCP 并列复用安全 runtime，服务端继续作为领域规则唯一权威。
 - 身份和授权使用稳定 ID，不从名称、OS、Git 或宿主信息猜测身份。管理权、普通数据授权与 Session scope 分别核验；UI 显示不能代替服务端权限，权限变化与清理不能随意丢弃历史。
 - 状态写入核对实时权限、CAS、幂等、原子审计和结构化错误；响应不确定时保留原请求与幂等键核实。公开 API 每次只表达一个原子操作，不提供 batch/bulk 写入。
 - D1 查询同时考虑读取行数与索引写放大，用代表性规模数据验证空结果、深分页和稀疏匹配；`LIMIT` 或命中索引不证明读量有界，不用全历史扫描支撑后台轮询。优先记录 `meta.rows_read` / `meta.rows_written`，本地查询计划不能证明线上计费读量；不为性能放宽权限、并发或历史语义。
@@ -35,6 +35,7 @@
 | 领域、身份、权限与原子操作 | [Foundation SPEC](docs/specs/2026-08-26-agent-native-kanban-foundation-spec.md) |
 | HTTP、错误、OpenAPI 与 D1 | [API / Schema SPEC](docs/specs/2026-08-28-api-schema-spec.md)、`contracts/` |
 | Skills、宿主、凭据、部署与恢复 | [Bootstrap SPEC](docs/specs/2026-08-28-agent-skills-bootstrap-spec.md)；对外操作遵循对应 `skills/` 指引 |
+| 公共 CLI、能力同步与命令生命周期 | [公共 CLI SPEC](docs/specs/2026-10-04-public-cli-spec.md) |
 | Web、认证、公开加入、双语与无障碍 | [Web UI SPEC](docs/specs/2026-08-29-web-ui-spec.md)、[DESIGN.md](DESIGN.md) |
 | 发行、更新目标、宿主来源与开发验收 | [发行生命周期](docs/specs/2026-09-20-stable-release-lifecycle-spec.md)；维护者发版使用项目级 [project-release](.agents/skills/project-release/SKILL.md)，它不对外分发 |
 | 方向、实施步骤与执行证据 | [Roadmap](docs/project/roadmap.md)、`docs/plans/`、[cfKanban 协作约定](docs/project/cfkanban.md)；易漂移平台事实查 `docs/research/` 并按需核验 |

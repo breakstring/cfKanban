@@ -49,6 +49,15 @@ function currentCredentialResult(operation, current) {
   };
 }
 
+function assertCurrentCaller(current, expectedPrincipalId, expectedCredentialId) {
+  if (expectedPrincipalId !== undefined && current.metadata.principal_id !== requireUuid(expectedPrincipalId, "expected_principal_id")) {
+    throw toolError("PRINCIPAL_BINDING_MISMATCH", "Restore the original Principal before retrying the join operation");
+  }
+  if (expectedCredentialId !== undefined && current.metadata.credential_id !== requireUuid(expectedCredentialId, "expected_credential_id")) {
+    throw toolError("CREDENTIAL_BINDING_MISMATCH", "Restore the original Credential before retrying the join operation");
+  }
+}
+
 async function loadOptionalCurrentCredentialSecret({ stateRoot, instanceId }) {
   try {
     return await loadCurrentCredentialSecret({ stateRoot, instanceId });
@@ -66,12 +75,13 @@ async function loadOptionalCurrentCredentialSecret({ stateRoot, instanceId }) {
   }
 }
 
-async function verifyAndPromote({ stateRoot, instanceId, token, operation, fetchImpl, requireOwner = false }) {
+async function verifyAndPromote({ stateRoot, instanceId, token, operation, fetchImpl, requireOwner = false, expectedApiOrigin }) {
   const verification = await trustedApiRequest({
     stateRoot,
     instanceId,
     apiPath: "/api/v1/me",
     authorizationToken: token,
+    expectedApiOrigin,
     fetchImpl,
   });
   if (!verification.ok) {
@@ -134,12 +144,16 @@ export async function redeemInvitation({
   redeemAs,
   displayName = null,
   idempotencyKey = null,
+  expectedPrincipalId,
+  expectedCredentialId,
+  expectedApiOrigin,
   fetchImpl = globalThis.fetch,
 }) {
   const mode = oneOf(redeemAs, "redeem_as", ["new_principal", "current_principal", "recovery"]);
   const body = { invite_code: requireString(inviteCode, "invite_code", { max: 1024 }), redeem_as: mode };
   if (mode === "current_principal") {
     const current = await loadCurrentCredentialSecret({ stateRoot, instanceId });
+    assertCurrentCaller(current, expectedPrincipalId, expectedCredentialId);
     const operation = await trustedApiRequest({
       stateRoot,
       instanceId,
@@ -148,6 +162,7 @@ export async function redeemInvitation({
       body,
       idempotencyKey: requireString(idempotencyKey, "idempotency_key", { max: 128 }),
       authorizationToken: current.token,
+      expectedApiOrigin,
       fetchImpl,
     });
     return currentCredentialResult(
@@ -196,6 +211,9 @@ export async function redeemPublicJoin({
   redeemAs,
   displayName = null,
   idempotencyKey = null,
+  expectedPrincipalId,
+  expectedCredentialId,
+  expectedApiOrigin,
   fetchImpl = globalThis.fetch,
 }) {
   const mode = oneOf(redeemAs, "redeem_as", ["new_principal", "current_principal"]);
@@ -204,6 +222,7 @@ export async function redeemPublicJoin({
   const apiPath = `/api/v1/public-joins/${requireUuid(publicId, "public_id")}/redeem`;
   if (mode === "current_principal") {
     const current = await loadCurrentCredentialSecret({ stateRoot, instanceId });
+    assertCurrentCaller(current, expectedPrincipalId, expectedCredentialId);
     const operation = await trustedApiRequest({
       stateRoot,
       instanceId,
@@ -212,6 +231,7 @@ export async function redeemPublicJoin({
       body,
       idempotencyKey: requireString(idempotencyKey, "idempotency_key", { max: 128 }),
       authorizationToken: current.token,
+      expectedApiOrigin,
       fetchImpl,
     });
     return currentCredentialResult(redactSecretValues(operation, [current.token]), current);
@@ -240,13 +260,27 @@ export async function rotateOwnerCredential({
   stateRoot = resolveStateRoot(),
   instanceId,
   fetchImpl = globalThis.fetch,
+  expectedPrincipalId,
+  expectedCredentialId,
+  expectedApiOrigin,
+  expectedOperationId,
+  expectedIdempotencyKey,
+  expectedPendingFingerprint,
+  expectedPendingTokenDigest,
 }) {
   const [current, pending] = await Promise.all([
     loadCurrentCredentialSecret({ stateRoot, instanceId }),
     loadPendingCredentialSecret({ stateRoot, instanceId }),
   ]);
+  assertCurrentCaller(current, expectedPrincipalId, expectedCredentialId);
   if (pending.metadata.owner_device_replacement !== undefined || pending.metadata.purpose !== "owner_rotation") {
     throw toolError("STATE_PENDING_CONFLICT", "Owner rotation requires its own pending Credential; preserve an Owner-device replacement for the dedicated verification workflow");
+  }
+  if (expectedOperationId !== undefined && (pending.metadata.operation_id !== expectedOperationId
+    || pending.metadata.idempotency_key !== expectedIdempotencyKey || pending.metadata.fingerprint !== expectedPendingFingerprint
+    || pending.metadata.token_digest !== expectedPendingTokenDigest
+    || pending.metadata.principal_id !== expectedPrincipalId)) {
+    throw toolError("STATE_PENDING_CONFLICT", "Preserve the pending Credential bound to the original Owner rotation");
   }
   const operation = await trustedApiRequest({
     stateRoot,
@@ -256,9 +290,10 @@ export async function rotateOwnerCredential({
     body: { new_credential_token: pending.token },
     idempotencyKey: pending.metadata.idempotency_key,
     authorizationToken: current.token,
+    expectedApiOrigin,
     fetchImpl,
   });
   const safeOperation = redactSecretValues(operation, [current.token, pending.token]);
   if (!operation.ok) return { operation: safeOperation, credential: { state: "pending", secret_values_exposed: false } };
-  return verifyAndPromote({ stateRoot, instanceId, token: pending.token, operation: safeOperation, fetchImpl, requireOwner: true });
+  return verifyAndPromote({ stateRoot, instanceId, token: pending.token, operation: safeOperation, fetchImpl, requireOwner: true, expectedApiOrigin });
 }

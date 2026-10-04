@@ -5,6 +5,7 @@ const targets = [
   new URL("../apps/web/dist-embedded/", import.meta.url),
   new URL("../apps/worker/dist/", import.meta.url),
   new URL("../packages/mcp/dist/", import.meta.url),
+  new URL("../packages/cli/dist/", import.meta.url),
   new URL("../packages/local-runtime/dist/", import.meta.url),
   new URL("../build/dsh/", import.meta.url),
 ];

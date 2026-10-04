@@ -41,6 +41,11 @@ html[data-app-ui] {
   --color-text-muted: #596b83;
   --color-border: #dce3ec;
   --color-border-strong: #a5b3c5;
+  --color-status-backlog: #596b83;
+  --color-status-todo: #1d4ed8;
+  --color-status-in-progress: #c2410c;
+  --color-status-done: #287a4b;
+  --color-status-canceled: #b42318;
   --color-primary: #c2410c;
   --color-primary-hover: #9a3412;
   --color-primary-pressed: #7c2d12;

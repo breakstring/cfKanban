@@ -31,3 +31,5 @@ See [Prepare for deployment](./setup.md) for local, account, and persistent stor
 **In the Web UI:** The full online app's management center provides application settings within your permissions. The Agent handles creating cloud resources and upgrading or recovering deployments; the Web UI is not a deployment console.
 
 Your Owner identity lets you manage cfKanban; Cloudflare account permissions let you maintain its cloud resources. They are checked separately. Moving to another computer only to manage the application does not require taking over cloud deployment too. To update only Agent Skills or the DSH plugin, see [Installation and connections](../integrations/index.md); this does not upgrade the online instance.
+
+[Public CLI task guides](../cli/index.md) cover the same Service semantics from a terminal.

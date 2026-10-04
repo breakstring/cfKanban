@@ -1032,22 +1032,28 @@ h3 {
   width: 9px;
   height: 9px;
   margin-right: 8px;
-  border: 2px solid var(--color-border-strong);
+  border: 2px solid var(--color-status-backlog);
   border-radius: 50%;
   content: "";
 }
 
 [data-status="in_progress"] .column-header h2::before,
 .status-summary[data-status="in_progress"]::before {
-  border-color: var(--color-primary);
-  background: var(--color-primary);
+  border-color: var(--color-status-in-progress);
+  background: var(--color-status-in-progress);
 }
 
 [data-status="done"] .column-header h2::before,
 .status-summary[data-status="done"]::before {
-  border-color: var(--color-success);
-  background: var(--color-success);
+  border-color: var(--color-status-done);
+  background: var(--color-status-done);
 }
+
+[data-status="todo"] .column-header h2::before,
+.status-summary[data-status="todo"]::before { border-color: var(--color-status-todo); }
+
+[data-status="canceled"] .column-header h2::before,
+.status-summary[data-status="canceled"]::before { border-color: var(--color-status-canceled); }
 
 .column-header {
   display: flex;

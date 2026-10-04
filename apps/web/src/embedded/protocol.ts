@@ -28,6 +28,7 @@ export type ActionPayloads = {
   page: { next: boolean };
   view: { mode: "list" | "board" };
   board_page: { status_key: Status; next: boolean };
+  board_group: { status_key: Status; expanded: boolean };
   assignees: { next: boolean };
   labels: { next: boolean };
   set_locale: { locale: EmbedLocale };
@@ -81,7 +82,8 @@ export type EmbedSnapshot = {
   project_has_more?: boolean;
   binding: { project: PublicResource; identity?: PublicIdentity | null; principal?: PublicResource; instance?: PublicResource; statuses: PublicStatus[] } | null;
   view?: "list" | "board";
-  board?: { columns: { key: Status; display_name?: string; items: PublicIssue[]; has_more: boolean; capacity_reached?: boolean }[] } | null;
+  board?: { columns: { key: Status; display_name?: string; items: PublicIssue[]; has_more: boolean; capacity_reached?: boolean; loaded?: boolean; loading?: boolean; error?: PublicError | null }[] } | null;
+  expanded_groups?: Status[];
   assignees?: { principal_id: string; display_name: string }[];
   assignees_has_more?: boolean;
   labels?: PublicLabel[];
@@ -109,8 +111,8 @@ export type EmbedSnapshot = {
 
 const priorities = new Set(["none", "low", "medium", "high", "urgent"]);
 const statuses = new Set(["backlog", "todo", "in_progress", "done", "canceled"]);
-const actions = new Set<string>(["scope_retry", "scope_page", "scope_bind", "manual", "select_instance", "workspaces", "select_workspace", "bind", "unbind", "filters", "page", "open_issue", "issue_back", "comments", "mutate", "recover", "view", "board_page", "assignees", "quick_update", "labels", "set_locale"]);
-const snapshotFields = new Set(["candidates", "identity", "workspaces", "projects", "workspace_id", "workspace_has_more", "project_has_more", "binding", "page", "issue", "comments", "comments_has_more", "filters", "busy", "error", "pending", "view", "board", "assignees", "assignees_has_more", "source_session_id", "session_context_changed", "workspace_scope", "scope_mode", "scope_targets", "scope_next_offset", "scope_fallback", "capabilities", "notice", "locale", "theme", "labels", "labels_has_more"]);
+const actions = new Set<string>(["scope_retry", "scope_page", "scope_bind", "manual", "select_instance", "workspaces", "select_workspace", "bind", "unbind", "filters", "page", "open_issue", "issue_back", "comments", "mutate", "recover", "view", "board_page", "board_group", "assignees", "quick_update", "labels", "set_locale"]);
+const snapshotFields = new Set(["candidates", "identity", "workspaces", "projects", "workspace_id", "workspace_has_more", "project_has_more", "binding", "page", "issue", "comments", "comments_has_more", "filters", "busy", "error", "pending", "view", "board", "expanded_groups", "assignees", "assignees_has_more", "source_session_id", "session_context_changed", "workspace_scope", "scope_mode", "scope_targets", "scope_next_offset", "scope_fallback", "capabilities", "notice", "locale", "theme", "labels", "labels_has_more"]);
 const privateFields = /^(?:__proto__|prototype|constructor|token|access_token|refresh_token|credential|credentials|secret|csrf_token|cookie|cookies|authorization|binding_id|preview_id|dsh_workspace_id|stateRoot|state_root)$/i;
 
 function record(value: unknown, fields: readonly string[], required: readonly string[] = fields): value is Record<string, unknown> {
@@ -187,6 +189,7 @@ export function parseActionMessage(value: unknown): ActionMessage | null {
     case "open_issue": valid = record(p, ["identifier"]) && issueIdentifier(p.identifier); break;
     case "view": valid = record(p, ["mode"]) && member(p.mode, ["list", "board"]); break;
     case "board_page": valid = record(p, ["status_key", "next"]) && member(p.status_key, statuses) && typeof p.next === "boolean"; break;
+    case "board_group": valid = record(p, ["status_key", "expanded"]) && member(p.status_key, statuses) && typeof p.expanded === "boolean"; break;
     case "quick_update": valid = record(p, ["identifier", "change"]) && issueIdentifier(p.identifier) && validChange(p.change); break;
     case "mutate": {
       if (!record(p, ["operation", "change"])) break;
@@ -264,11 +267,13 @@ export function parseSnapshotMessage(value: unknown): { type: "snapshot"; state:
     || (state.page.continuation !== undefined && (!record(state.page.continuation, ["next_cursor"], []) || (state.page.continuation.next_cursor !== undefined && state.page.continuation.next_cursor !== null && state.page.continuation.next_cursor !== "available"))))) return null;
   if (state.view !== undefined && !member(state.view, ["list", "board"])) return null;
   if (state.assignees !== undefined && (!Array.isArray(state.assignees) || state.assignees.length > 1000 || !state.assignees.every(value => record(value, ["id", "principal_id", "display_name"], ["principal_id", "display_name"]) && uuid(value.principal_id) && text(value.display_name, 128) && (value.id === undefined || uuid(value.id))))) return null;
+  if (state.expanded_groups !== undefined && (!Array.isArray(state.expanded_groups) || state.expanded_groups.length > 5 || new Set(state.expanded_groups).size !== state.expanded_groups.length || state.expanded_groups.some(key => !member(key, statuses)))) return null;
   if (state.board !== undefined && state.board !== null) {
     if (!record(state.board, ["columns"]) || !Array.isArray(state.board.columns) || state.board.columns.length > 5) return null;
     const seen = new Set();
     for (const column of state.board.columns) {
-      if (!record(column, ["key", "display_name", "items", "has_more", "capacity_reached"], ["key", "items", "has_more"]) || !member(column.key, statuses) || seen.has(column.key)
+      if (!record(column, ["key", "display_name", "items", "has_more", "capacity_reached", "loaded", "loading", "error"], ["key", "items", "has_more"]) || !member(column.key, statuses) || seen.has(column.key)
+        || (column.loaded !== undefined && typeof column.loaded !== "boolean") || (column.loading !== undefined && typeof column.loading !== "boolean") || (column.error != null && (!record(column.error, ["code"]) || !text(column.error.code, 128)))
         || !optionalString(column.display_name, 128) || typeof column.has_more !== "boolean" || (column.capacity_reached !== undefined && typeof column.capacity_reached !== "boolean") || !summaryRows(column.items)) return null;
       seen.add(column.key);
     }

@@ -231,7 +231,7 @@ Queue 是至少一次投递通道，消费者必须按 event ID 幂等。Queue �
 - 为明确 Project/Issue/Owner 管理 target 创建一次性 Browser Launch；专用 Skill 命令默认通过内存 loopback 直接打开系统浏览器且不输出远端 code，只有宿主提供等价安全通道时打开 IAB。headless 返回 URL 必须是用户接受留存风险后的显式、标记单次输出。
 - 低频读取当前 trusted origin 的实例发现文档；只有更高版本指示与无 Credential 目标探测完全一致时自动更新本地 trusted origin，否则保留旧记录并请求显式 rebind。
 
-Skill 是客户端分发包，不是云端状态或人类页面。v0 不发布独立 cfKanban CLI；Node scripts 只是 Skill 内部执行资源。人类直接表面由同一 Worker 托管的极简 Web UI 提供，并复用同一 REST 业务合同。
+Skill 是客户端分发包，不是云端状态或人类页面。公共 CLI 按[公共 CLI 增量](../specs/2026-10-04-public-cli-spec.md)与 Skills 同工件交付，复用共享 Node 安全模块。人类使用终端和同 Worker 托管的 Web UI，两者沿同一 REST 业务合同。
 
 ### MCP
 

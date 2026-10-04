@@ -77,9 +77,7 @@ body { overflow-x: hidden; }
 .embedded-load-more { padding: 12px 4px 4px; color: var(--ui-text-muted); font-size: 12px; }
 .embedded-load-more p { margin: 0 0 8px; }
 .embedded-load-more button { min-height: 32px; }
-.embedded-status-dot { display: inline-block; flex: none; width: 8px; height: 8px; border: 2px solid var(--color-border-strong); border-radius: 50%; margin-right: 6px; box-sizing: border-box; }
-.embedded-status-dot[data-status="in_progress"] { border-color: var(--ui-primary); background: var(--ui-primary); }
-.embedded-status-dot[data-status="done"] { border-color: var(--color-success); background: var(--color-success); }
+.embedded-status-dot { margin-right: 6px; vertical-align: middle; }
 .embedded-column-content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; padding-bottom: 4px; }
 .embedded-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 8px; border-radius: 12px; background: var(--ui-bg-muted); scroll-snap-align: start; }
 .embedded-column-heading, .embedded-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }

@@ -43,3 +43,5 @@ Browser Session scope also limits access. An Owner Session opened for a single P
 - [Owner getting started](../deployment/index.md): instance settings, Public Join, device recovery, and permanent cleanup.
 
 You can ask the Agent to handle management directly. If you want to use the Web UI, [open the full online app](../integrations/webui.md); the local workbench focuses on daily tasks. If saving fails or its result is uncertain, ask the Agent to verify the original operation before repeating an invitation, deletion, or permission change.
+
+[Public CLI task guides](../cli/index.md) cover the same Service semantics from a terminal.

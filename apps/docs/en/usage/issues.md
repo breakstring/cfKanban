@@ -24,7 +24,9 @@ Select the translation icon at the top right to switch between English and Simpl
 
 For several projects, open the account menu at the top right → **Work list**, choose projects, a view, and filters, then select **Show work** again after each change. Its status selector offers one status or all statuses. Ask your Agent to combine several specific statuses into one result.
 
-The project **List** in both the full online app and local workbench groups issues by status, with independent pagination and collapsible groups. Done and Canceled start collapsed. Group counts show loaded issues; **+** means another page is available. Parent context does not count toward the child’s group. Additional parents are indicated, and historical cycles are marked without changing the relations.
+The project **List** and Kanban in both the full online app and local workbench use Backlog → Todo → In Progress → Done → Canceled. A fresh list with no explicit status filter opens and loads only Backlog; expand another group to load its first page. Each group has an independent cursor and cached loaded pages. Repeated collapse/expand reuses those pages; switching to Kanban loads its missing columns. Refresh and same-project return preserve your expanded groups, while switching projects starts with Backlog. Changed filters reset pages, and an explicit status filter opens that group without fetching Backlog.
+
+**Not loaded**, loading, a retryable error, and an empty loaded group are distinct. Collapsed groups remain discoverable when searching. Group counts show loaded issues; **+** means another page is available. Parent context does not count toward the child’s group. Additional parents are indicated, and historical cycles are marked without changing the relations. Status text and shapes accompany the consistent gray Backlog, blue Todo, orange In Progress, green Done, and red Canceled markers in both themes.
 
 The ring and **5/6** on lists and boards mean that 5 of 6 visible, undeleted direct sub-issues are done. Canceled children are not done, and list filters do not narrow this progress. Older services omit the badge.
 

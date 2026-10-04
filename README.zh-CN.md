@@ -4,7 +4,7 @@
 
 cfKanban 是一套面向 Agent 协作方式的轻量自托管 Kanban。你让 Agent 部署和操作它；同一个 Cloudflare Worker 也会提供可供人类直接使用的中英双语 Web 看板。
 
-核心只需要一个 Cloudflare Worker 和一个 D1 数据库；Issue 附件可选用私有 R2 存储。不需要独立服务器、Pages project、KV namespace，也不发布独立的 cfKanban CLI。
+核心只需要一个 Cloudflare Worker 和一个 D1 数据库；Issue 附件可选用私有 R2 存储。不需要独立服务器、Pages project 或 KV namespace。公共 CLI 复用 Skills runtime 和 Service 规则。
 
 ## 看看它如何工作
 
@@ -16,7 +16,9 @@ https://github.com/user-attachments/assets/94b3d30b-a1a7-4ad2-9924-838a8317d3bb
 
 本地技能更新与云端实例升级是独立动作。测试版、历史版和源码开发仅在明确选择时使用；稳定发行不可用或校验失败时，Agent 会说明原因，不会改用开发快照。
 
-发行压缩包不包含 Node.js 可执行程序。Skill bundle 包含四个 Skills 和共享 JavaScript helper modules，由用户已有的兼容 Node.js 运行；Service bundle 包含构建后的 Worker、Web assets、migrations、contracts 和 Wrangler 配置骨架。Agent 会根据获准计划生成私有配置，普通用户无需手动解压或修改工件。
+发行压缩包不包含 Node.js 可执行程序。Skill bundle 包含四个 Skills 和共享 JavaScript helper modules，由用户已有的兼容 Node.js 运行；支持公共 CLI 的发行还包含其预构建入口。Service bundle 包含构建后的 Worker、Web assets、migrations、contracts 和 Wrangler 配置骨架。Agent 会根据获准计划生成私有配置，普通用户无需手动解压或修改工件。
+
+[CLI 任务指南](apps/docs/zh-CN/cli/index.md)介绍终端使用、安装、日常、管理与部署。CLI 正在本源码分支准备，命令是否可用需核对实际安装的已验证发行；本地 CLI 更新和 Instance 升级分别执行。
 
 ## 你需要准备什么
 

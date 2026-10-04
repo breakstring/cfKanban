@@ -485,7 +485,7 @@ cfKanban Issue 协作层提供上述能力，不承担上层 Agent 的最终执�
 
 - 权威合同：REST + JSON。
 - 机器描述：OpenAPI，公开在 `/openapi.json`。
-- Agent 分发：canonical immutable release manifest 分别固定 portable Skill bundle 与 Service deployment bundle；前者按需携带 Node.js/TypeScript scripts，后者承载可重现的 Worker/migration 部署材料；不发布独立 cfKanban CLI，也不把 repo clone 或已安装副本作为普通 stable 部署真相。v0 首次信任官方 canonical HTTPS，不可覆盖的版本清单逐工件限制允许来源并记录 SHA-256 文件指纹，后续安装/更新/降级校验 receipt 中的来源连续性且都需明确授权；独立签名体系后置。
+- Agent 分发：canonical immutable release manifest 分别固定 portable Skill bundle 与 Service deployment bundle；前者按需携带 Node.js/TypeScript scripts，后者承载可重现的 Worker/migration 部署材料；公共 CLI 随完整 Skills bundle 分发并复用安全 runtime，也不把 repo clone 或已安装副本作为普通 stable 部署真相。v0 首次信任官方 canonical HTTPS，不可覆盖的版本清单逐工件限制允许来源并记录 SHA-256 文件指纹，后续安装/更新/降级校验 receipt 中的来源连续性且都需明确授权；独立签名体系后置。
 - 可选适配：后续远程 MCP；它包装 REST 业务合同，不成为第二个事实实现。
 
 OpenAPI 并不保证所有 Coding Agents 自动生成可用工具；Agent Skills 仍承担能力说明、可靠调用与宿主兼容层，而不是日常工作流教学。MCP 也不必依赖本地 stdio，当前标准存在远程 Streamable HTTP，因此不把“永不支持 MCP”写成架构约束。
@@ -539,7 +539,7 @@ Workspace/Project 容器、列表和 Issue 创建继续使用 workspace/project-
 - `POST /api/v1/issues/{identifier}/commands/complete`
 - 创建一次性 Browser Launch、兑换 Web Session 和退出当前 Session 的原子能力；具体 path/schema 由 API/Schema SPEC 冻结
 
-v0 不提供 `assign-next` 端点。v0 必须提供同一实例托管的极简第一方 Web UI；它和 Agent Skills 都使用同一管理/业务 API 与权限合同，不形成第二套领域实现。Codex、Claude Code、小龙虾、Workbuddy 等都是同一种用户 Agent，部署、协调和 Coding 只是任务模式。portable Skills 可以直接调用 HTTP，也可以为凭据、重试、Browser Launch 或部署等确定性操作调用 bundle 内 Node scripts；不发布独立 cfKanban CLI，也不复制服务端领域规则。远程 MCP adapter 后置。
+v0 不提供 `assign-next` 端点。v0 必须提供同一实例托管的极简第一方 Web UI；它和 Agent Skills 都使用同一管理/业务 API 与权限合同，不形成第二套领域实现。Codex、Claude Code、小龙虾、Workbuddy 等都是同一种用户 Agent，部署、协调和 Coding 只是任务模式。portable Skills 可以直接调用 HTTP，也可以为凭据、重试、Browser Launch 或部署等确定性操作调用 bundle 内 Node scripts；公共 CLI 随完整 Skills bundle 分发并复用安全 runtime，也不复制服务端领域规则。远程 MCP adapter 后置。
 
 动作端点只用于真正的跨实体业务命令。普通字段编辑仍使用资源更新，避免把 API 全部变成不可组合的 RPC。
 

@@ -43,5 +43,18 @@
       { "path": "deployment/recovery", "en": "Resume & recover", "zh-CN": "中断与身份恢复" },
       { "path": "deployment/optional", "en": "Optional capabilities", "zh-CN": "域名与可选能力" }
     ]
+  },
+  {
+    "slug": "cli", "en": "Command line", "zh-CN": "命令行",
+    "pages": [
+      {"path":"cli/index","en":"CLI overview","zh-CN":"CLI 概览"},
+      {"path":"cli/installation","en":"Install, update & remove","zh-CN":"安装、更新与卸载"},
+      {"path":"cli/reference","en":"Commands, parameters & results","zh-CN":"命令、参数与结果"},
+      {"path":"cli/daily","en":"Everyday CLI work","zh-CN":"CLI 日常协作"},
+      {"path":"cli/administration","en":"Administration from the CLI","zh-CN":"CLI 范围管理"},
+      {"path":"cli/deployment","en":"Deployment plans & recovery","zh-CN":"CLI 部署计划与恢复"},
+      {"path":"cli/automation","en":"Agents & scripts","zh-CN":"Agent 与脚本自动化"},
+      {"path":"cli/recovery","en":"Errors & original-operation recovery","zh-CN":"错误与原操作恢复"}
+    ]
   }
 ]

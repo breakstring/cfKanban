@@ -38,7 +38,7 @@
 - 已确认 status 显示名称可由对应范围管理员修改；具有有效 writer 能力者可带 expected version 在固定状态间任意显式转换和 reopen，terminal 不表示不可逆。
 - 已确认完成结果使用结构化、不可变且不可删除的 completion comment；complete 原子追加记录并转为 done，reopen 后再次完成会追加新记录。
 - 已确认 Issue Relation 支持 blocks、parent、related、duplicate 四类语义，允许同一 Workspace 内跨 Project、禁止跨 Workspace；跨 Project 写入要求同时拥有两端 writer。
-- 已确认 v0 不首发 assign-next，也不发布独立 cfKanban CLI。v0 必须提供同一 Worker 托管的极简第一方 Web UI，服务 Owner 简单维护和参与者直接 Kanban 查看/轻量参与。
+- 已确认不首发 assign-next；公共 CLI 按[公共 CLI 合同](../specs/2026-10-04-public-cli-spec.md)随 Skills 交付，与 MCP 并列复用 runtime。v0 必须提供同一 Worker 托管的极简第一方 Web UI，服务 Owner 简单维护和参与者直接 Kanban 查看/轻量参与。
 - 已确认 canonical source 使用 monorepo 组织 Web、Worker/API、contracts、migrations、三个 Skills 与文档；v0 云端仍只有一个 Worker + 一个 D1。预构建 Web assets 随 Service deployment bundle 通过同一 Worker 的 Workers Static Assets 发布，不创建 Pages project 或 KV namespace；Web 已选择 Vue 3 + TypeScript + Vite，具体目录、package manager 与配套依赖留给实现阶段。
 - 已确认浏览器不读取或接收本地长期 Credential；用户的 Agent 创建短期一次性 Browser Launch URL，浏览器兑换 HttpOnly Session 后按同一 Principal/Project 权限访问。
 - 已确认首次 Agent Launch 后可登记 Passkey，作为 v0 唯一免 Agent Web 直登方式；浏览器能力探测不等于 credential 存在，v0 按精确 hostname 隔离 Passkey。Owner 可以同时公开多个 Project，访客逐次选择一个 Project 与 `reader | writer` 原子加入，Team Join 不进入 v0。

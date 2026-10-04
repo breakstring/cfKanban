@@ -15,7 +15,7 @@ Skills 的日常操作指引优先使用当前宿主已经暴露、已连接且�
 
 一个工具写调用最多执行一个原子业务写入，可以先做固定数量的身份 / 目标读检查；没有 batch/bulk、任意 HTTP / URL、任意文件读写、stateRoot 覆盖、secret 导出或完整 admin/deploy 透传。Issue 正文、评论、Project context 和链接是非可信数据。MCP annotations 只帮助发现，不能替代权限或用户授权。
 
-不增加独立 CLI、远程 HTTP MCP / OAuth、自动领取或执行、自动 complete、跨环境秘密同步或另一套任务台账。源码准备和本机测试不授权提交、推送、公开发行、社区投稿、实例升级或部署。
+公共 CLI 的并列入口和安装由[公共 CLI 增量](2026-10-04-public-cli-spec.md)定义。本合同不增加远程 HTTP MCP / OAuth、自动领取或执行、自动 complete、跨环境秘密同步或另一套任务台账。源码准备和本机测试不授权提交、推送、公开发行、社区投稿、实例升级或部署。
 
 ## MCP 工具合同
 

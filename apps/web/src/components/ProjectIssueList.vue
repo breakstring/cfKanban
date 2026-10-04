@@ -4,6 +4,7 @@ import UButton from "@nuxt/ui/components/Button.vue";
 import AssigneeMenu from "./AssigneeMenu.vue";
 import ListPropertySelect from "./ListPropertySelect.vue";
 import IssueChildrenProgress from "./IssueChildrenProgress.vue";
+import IssueStatusMark from "./IssueStatusMark.vue";
 import { errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
 import { issueTree, type IssueTreeRow } from "../lib/issue-tree";
@@ -13,8 +14,11 @@ import type { ColumnPagination } from "../lib/column-pagination";
 import type { IssueSummary, PriorityKey, ProjectStatusResource, StatusKey } from "../types";
 
 const props = defineProps<{
-  columns: Record<StatusKey, Pick<ColumnPagination<IssueSummary>, "items" | "cursor" | "loading" | "error">>;
+  columns: Record<StatusKey, Pick<ColumnPagination<IssueSummary>, "items" | "cursor" | "loading" | "loaded" | "error">>;
   statuses: ProjectStatusResource[];
+  eligibleStatuses: StatusKey[];
+  expandedGroups: Set<StatusKey>;
+  matchingCounts?: Record<StatusKey, number> | undefined;
   canWrite: boolean;
   saving: Set<string>;
   pendingIds: string[];
@@ -24,6 +28,7 @@ const props = defineProps<{
   assigneesError: unknown;
 }>();
 const emit = defineEmits<{
+  toggle: [status: StatusKey];
   open: [identifier: string];
   priority: [issue: IssueSummary, value: PriorityKey];
   assignee: [issue: IssueSummary, principalId: string | null];
@@ -34,11 +39,10 @@ const emit = defineEmits<{
   more: [status: StatusKey];
   scroll: [status: StatusKey, event: Event];
 }>();
-const order: StatusKey[] = ["in_progress", "todo", "backlog", "done", "canceled"];
-const collapsedGroups = ref(new Set<StatusKey>(["done", "canceled"]));
+const order: StatusKey[] = ["backlog", "todo", "in_progress", "done", "canceled"];
 const collapsedIssues = ref(new Set<string>());
 const contextIssues = computed(() => order.flatMap(key => props.columns[key].items));
-const groups = computed(() => order.map(key => {
+const groups = computed(() => order.filter(key => props.eligibleStatuses.includes(key)).map(key => {
   const column = props.columns[key];
   return { key, column, name: props.statuses.find(status => status.key === key)?.display_name ?? key,
     rows: issueTree(sortBoardIssues([...column.items]), contextIssues.value) };
@@ -72,12 +76,12 @@ function hasChildren(rows: IssueTreeRow<IssueSummary>[], identifier: string): bo
 <template>
   <section class="project-issue-list" :aria-label="locale === 'zh-CN' ? '项目事项列表' : 'Project Issue list'">
     <section v-for="group in groups" :key="group.key" class="issue-list-group" :data-status="group.key">
-      <button type="button" class="issue-list-heading" :aria-expanded="!collapsedGroups.has(group.key)" :aria-controls="`board-column-${group.key}`" @click="collapsedGroups = toggle(collapsedGroups, group.key)">
-        <span class="list-group-disclosure" :class="{ expanded: !collapsedGroups.has(group.key) }" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" /></svg></span>
-        <span class="list-status-dot" aria-hidden="true" />
-        <strong>{{ group.name }}</strong><span :title="locale === 'zh-CN' ? '已加载事项数；+ 表示还有下一页' : 'Loaded Issues; + means more pages'">{{ group.column.items.length }}{{ group.column.cursor ? '+' : '' }}</span>
+      <button type="button" class="issue-list-heading" :aria-expanded="expandedGroups.has(group.key)" :aria-controls="`board-column-${group.key}`" @click="emit('toggle', group.key)">
+        <span class="list-group-disclosure" :class="{ expanded: expandedGroups.has(group.key) }" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m6 4 4 4-4 4" /></svg></span>
+        <IssueStatusMark class="list-status-dot" :status-key="group.key" />
+        <strong>{{ group.name }}</strong><span :title="locale === 'zh-CN' ? '已加载事项数；+ 表示还有下一页' : 'Loaded Issues; + means more pages'">{{ group.column.loaded ? `${group.column.items.length}${group.column.cursor ? '+' : ''}` : (group.column.loading ? (locale === 'zh-CN' ? '加载中…' : 'Loading…') : group.column.error ? (locale === 'zh-CN' ? '加载失败' : 'Load failed') : (locale === 'zh-CN' ? '待加载' : 'Not loaded')) }}</span><span v-if="matchingCounts && !group.column.loaded">{{ matchingCounts[group.key] }} {{ locale === 'zh-CN' ? '项匹配，展开查看' : 'matches; expand to view' }}</span>
       </button>
-      <div v-if="!collapsedGroups.has(group.key)" :id="`board-column-${group.key}`" class="issue-list-content" tabindex="0" :aria-label="group.name" :aria-busy="group.column.loading" @scroll="emit('scroll', group.key, $event)">
+      <div v-if="expandedGroups.has(group.key)" :id="`board-column-${group.key}`" class="issue-list-content" tabindex="0" :aria-label="group.name" :aria-busy="group.column.loading" @scroll="emit('scroll', group.key, $event)">
         <div v-for="row in visibleRows(group.rows, group.key)" :key="row.identifier" class="issue-list-row" :class="{ 'issue-list-context': !!row.context }" :style="{ '--tree-depth': Math.min(row.depth, 8) }" :data-identifier="row.identifier" :data-depth="row.depth">
           <button v-if="hasChildren(group.rows, row.identifier)" type="button" class="list-child-toggle" :aria-expanded="!collapsedIssues.has(`${group.key}:${row.identifier}`)" :aria-label="`${collapsedIssues.has(`${group.key}:${row.identifier}`) ? (locale === 'zh-CN' ? '展开子事项' : 'Expand sub-issues') : (locale === 'zh-CN' ? '折叠子事项' : 'Collapse sub-issues')} · ${row.identifier}`" @click="collapsedIssues = toggle(collapsedIssues, `${group.key}:${row.identifier}`)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 8h8" /><path v-if="collapsedIssues.has(`${group.key}:${row.identifier}`)" d="M8 4v8" /></svg></button>
           <span v-else class="list-child-placeholder" />
@@ -94,11 +98,11 @@ function hasChildren(rows: IssueTreeRow<IssueSummary>[], identifier: string): bo
           <template v-else-if="row.context"><div class="list-context-title"><button type="button" class="list-issue-title" @click="emit('open', row.identifier)">{{ row.context.title }}</button><IssueChildrenProgress :progress="row.contextProgress" /></div><span class="list-context-status">{{ row.context.status.display_name }} · {{ locale === 'zh-CN' ? '父事项' : 'Parent' }}</span></template>
           <span v-if="row.cycle" class="list-cycle-warning" role="status">{{ locale === 'zh-CN' ? '父子关系存在循环，已停止展开' : 'Cyclic parent relation; expansion stopped' }}</span>
         </div>
-        <p v-if="!group.column.items.length && !group.column.loading && !group.column.error" class="list-page-state">{{ locale === 'zh-CN' ? '此状态暂无事项。' : 'No Issues in this status.' }}</p>
+        <p v-if="group.column.loaded && !group.column.items.length && !group.column.loading && !group.column.error" class="list-page-state">{{ locale === 'zh-CN' ? '此状态暂无事项。' : 'No Issues in this status.' }}</p>
         <div class="list-page-state">
           <p v-if="group.column.loading" role="status">{{ locale === 'zh-CN' ? '正在加载事项…' : 'Loading Issues…' }}</p>
           <p v-else-if="group.column.error" role="alert">{{ errorText(group.column.error) }}</p>
-          <p v-else-if="!group.column.cursor && group.column.items.length">{{ locale === 'zh-CN' ? '符合筛选条件的事项已加载完毕。' : 'All matching Issues are loaded.' }}</p>
+          <p v-else-if="group.column.loaded && !group.column.cursor && group.column.items.length">{{ locale === 'zh-CN' ? '符合筛选条件的事项已加载完毕。' : 'All matching Issues are loaded.' }}</p>
           <UButton v-if="group.column.cursor || group.column.error" color="neutral" variant="ghost" size="sm" :disabled="group.column.loading" @click="emit('more', group.key)">{{ group.column.error ? (locale === 'zh-CN' ? '重试' : 'Retry') : (locale === 'zh-CN' ? '加载更多' : 'Load more') }}</UButton>
         </div>
       </div>
@@ -113,9 +117,6 @@ function hasChildren(rows: IssueTreeRow<IssueSummary>[], identifier: string): bo
 .list-group-disclosure { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--color-surface); }
 .list-group-disclosure svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .list-group-disclosure.expanded svg { transform: rotate(90deg); }
-.list-status-dot { width: 7px; height: 7px; border: 2px solid var(--color-text-muted); border-radius: 50%; }
-[data-status="in_progress"] > .issue-list-heading .list-status-dot { background: var(--color-warning); border-color: var(--color-warning); }
-[data-status="done"] > .issue-list-heading .list-status-dot { background: var(--color-success); border-color: var(--color-success); }
 .issue-list-content { max-height: 540px; overflow: auto; overscroll-behavior: contain; padding: 8px 2px 0; }
 .issue-list-row { position: relative; display: grid; grid-template-columns: 24px 80px 64px minmax(180px, 1fr) 154px 130px; gap: 8px; align-items: center; min-height: 52px; margin-left: calc(var(--tree-depth) * 22px); border-bottom: 1px solid var(--color-border); font-size: 13px; }
 .issue-list-row[data-depth]:not([data-depth="0"])::before { content: ''; position: absolute; left: -12px; top: 0; width: 9px; height: 25px; border-left: 1px solid var(--color-border-strong); border-bottom: 1px solid var(--color-border-strong); border-radius: 0 0 0 4px; }

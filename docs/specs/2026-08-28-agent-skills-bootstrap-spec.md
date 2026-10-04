@@ -97,7 +97,7 @@ Principal 也不区分 `human | agent` kind。服务端 immutable principal ID �
 
 Owner 创建 Project Invite 时，API 请求必须为每个目标 Project 显式提交 `reader | writer`，不能省略字段让服务端猜测权限。`cfkanban-admin` 的产品指导是：上层未给出 role 时推荐解析为 `writer`，明确只读时使用 `reader`；调用 API 前始终把最终 role 写入结构化请求。该推荐值可以被明确用户意图、宿主策略或上层编排覆盖；preview 与确认方式也由上层决定。Skill 另行负责说明两种 role 的影响和 Bearer URL 安全处理。
 
-不存在独立安装、面向人类直接使用或拥有稳定公共命令合同的 `cfKanban CLI`。Node scripts 随 Skill bundle 分发，只由 Agent 按 Skill 调用；领域规则只在 Service/API 合同中有一个权威实现，Skill 和 scripts 不复制第二套业务判断。
+公共 `cfkanban` CLI 与 Skills 随同一完整、已验证工件交付，供人类与 Agent 使用；命令及安装合同见[公共 CLI 增量](2026-10-04-public-cli-spec.md)。Node scripts 继续承载共享安全能力；领域规则只在 Service/API 合同中有一个权威实现，Skill 和 scripts 不复制第二套业务判断。
 
 ### 2.4 强制合同、Agent Guidance 与上层决策
 
@@ -181,7 +181,7 @@ v0 固定拆成三个按工作场景发现的能力，而不是一个塞满所�
 | `cfkanban` | 查看/修改自己的显示名称；查找、创建、推进、阻塞、交接和完成 Issue；打开明确 Project/Issue | 默认日常入口；身份与 scope 读取、自助 profile 更新、调用 API/内置 scripts、context pack、Browser Launch 与错误恢复 |
 | `cfkanban-admin` | Workspace/Project、邀请、Grant、Credential 恢复、业务 tombstone 恢复和打开 Owner 管理页 | Owner-only 应用管理能力；对 Credential 恢复等安全敏感能力提供明确目标/影响摘要、一次授权协议与审计读回；不直接读取 D1 control plane |
 
-三个名称表达工作场景，不是 Agent 类型、Principal kind 或权限角色；同一个用户的 Agent 可以按当前任务和真实 Credential 权限调用其中任意 Skill。共享的 API/schema、平台差异和恢复细节放在一层 references 中；可重复且需要确定性的行为进入 bundle 内共享 Node modules/scripts，而不是三个 Skill 各自复制一份，也不另行发布全局 CLI。
+三个名称表达工作场景，不是 Agent 类型、Principal kind 或权限角色；同一个用户的 Agent 可以按当前任务和真实 Credential 权限调用其中任意 Skill。共享的 API/schema、平台差异和恢复细节放在一层 references 中；可重复且需要确定性的行为进入 bundle 内共享 Node modules/scripts，而不是三个 Skill 各自复制一份，公共 CLI 与 MCP 并列复用该共享层，详见[公共 CLI 增量](2026-10-04-public-cli-spec.md)。
 
 ### 4.1 Guidance 在 Skill 包中的落点
 

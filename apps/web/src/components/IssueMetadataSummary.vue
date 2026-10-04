@@ -2,6 +2,7 @@
 import { locale, t } from "../lib/i18n-core";
 import { priorityText } from "../lib/priority";
 import type { PriorityKey, StatusKey } from "../types";
+import IssueStatusMark from "./IssueStatusMark.vue";
 
 defineProps<{ statusKey: StatusKey; statusLabel: string; priority: PriorityKey; assigneeName?: string | undefined }>();
 </script>
@@ -9,7 +10,7 @@ defineProps<{ statusKey: StatusKey; statusLabel: string; priority: PriorityKey; 
 <template>
   <div class="issue-metadata-summary">
     <span class="issue-metadata-item" :data-status="statusKey">
-      <span class="issue-metadata-status" aria-hidden="true"><svg v-if="statusKey === 'done'" viewBox="0 0 16 16"><path d="m4 8 3 3 5-6" /></svg><svg v-else-if="statusKey === 'canceled'" viewBox="0 0 16 16"><path d="m5 5 6 6m0-6-6 6" /></svg></span>
+      <IssueStatusMark class="issue-metadata-status" :status-key="statusKey" />
       <span class="issue-metadata-label">{{ t('issue.status') }}</span><span class="issue-metadata-value">{{ statusLabel }}</span>
     </span>
     <span class="issue-metadata-item" :data-priority="priority">
@@ -28,12 +29,7 @@ defineProps<{ statusKey: StatusKey; statusLabel: string; priority: PriorityKey; 
 .issue-metadata-item { display: inline-flex; align-items: center; gap: 7px; box-sizing: border-box; min-height: 32px; max-width: 100%; padding: 5px 10px; border: 1px solid var(--ui-border); border-radius: 8px; background: var(--ui-bg); color: var(--ui-text); font-size: 12px; line-height: 20px; }
 .issue-metadata-label { flex: none; color: var(--ui-text-muted); }
 .issue-metadata-value { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
-.issue-metadata-status { display: inline-flex; align-items: center; justify-content: center; flex: none; box-sizing: border-box; width: 14px; height: 14px; border: 1.5px solid var(--ui-text-dimmed); border-radius: 50%; }
-.issue-metadata-status svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-[data-status="todo"] .issue-metadata-status { border-color: var(--ui-text-muted); }
-[data-status="in_progress"] .issue-metadata-status { border-color: var(--ui-primary); background: linear-gradient(90deg, var(--ui-primary) 50%, transparent 50%); }
-[data-status="done"] .issue-metadata-status { border-color: var(--ui-success); background: var(--ui-success); color: white; }
-[data-status="canceled"] .issue-metadata-status { color: var(--ui-text-muted); }
+.issue-metadata-status { --status-mark-size: 14px; }
 .issue-metadata-priority, .issue-metadata-person { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--ui-text-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 [data-priority="high"] .issue-metadata-priority { stroke: var(--ui-warning); }
 [data-priority="urgent"] .issue-metadata-priority { stroke: var(--ui-error); }

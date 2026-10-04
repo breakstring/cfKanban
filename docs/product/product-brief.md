@@ -141,7 +141,7 @@ MVP 优先 Workers + D1。只有真实需求和验证证据证明收益时，才
 - 实例请求门控必须对 Owner 可见，首次部署自动提供单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒的默认档位。修改由 deploy Skill 发布 Worker 配置而非 D1 migration；它只做近似抗滥用，不能替代 D1 精确业务 quota。
 - Web 与 Agent 共享稳定机器错误分类和恢复动作；Project quota、应用 rate limit、D1 platform quota 与 platform failure 分别表达。Cloudflare 在 Worker 外生成的 1027/429/HTML 由客户端显式归一化并保留来源，不伪装成服务端 JSON。
 - 实例公开一个动态、非秘密、`no-store` 的 well-known discovery document，并保存唯一 `preferred_api_origin` 与递增版本。Owner 只能使用 Bearer Credential 修改推荐入口；服务不创建域名、不在认证 API 上跨域 redirect，也不自动迁移 Web Session/Passkey。Agent 只在当前 trusted origin 发布更高版本且无 Credential 目标探测完全一致时自动 rebind。
-- portable Skill bundle 按需携带共享 Node.js/TypeScript scripts；宿主安装、发现和刷新差异属于 bundle 的兼容逻辑，不形成独立 Host Adapter 角色或 cfKanban CLI。远程 MCP adapter 后置。
+- portable Skill bundle 按需携带共享 Node.js/TypeScript scripts；宿主安装、发现和刷新差异属于 bundle 的兼容逻辑，不形成独立 Host Adapter 角色；公共 CLI 按[公共 CLI 增量](../specs/2026-10-04-public-cli-spec.md)随完整工件分发。远程 MCP adapter 后置。
 
 ## 明确非目标
 
@@ -165,7 +165,7 @@ Skill 可携带调用约定、references 和经过验证的 helper，但不能�
 
 已确认的分工：
 
-- Agent Skills：公开日常 Issue、Owner 管理、context pack 渲染、Browser Launch 与错误恢复等能力；确定性操作由 bundle 内 Node scripts 承担，不发布独立 cfKanban CLI，也不替上层 Agent 制定日常工作流。
+- Agent Skills：公开日常 Issue、Owner 管理、context pack 渲染、Browser Launch 与错误恢复等能力；确定性操作由 bundle 内 Node scripts 承担，公共 CLI 与 MCP 并列复用安全 runtime，不替上层 Agent 制定日常工作流。
 - Web UI：通过 Agent 创建的一次性 Browser Launch URL 建立短期浏览器 Session；按当前 Principal 权限提供 Project 看板、Issue 轻量参与和 Owner 简单维护，不直接访问 D1。
 - Agent Skills bootstrap：从 canonical URL 的 stable pointer 发现 immutable release manifest，由 manifest 分别固定 portable Skill bundle 与 Service deployment bundle、宿主安装规则和兼容关系；任何本地写入前先展示来源、版本、digest、scope 和回滚边界。已安装副本/缓存不是版本真相，repo clone 只用于明确的源码试验。
 - 发行信任：首次安装信任官方 canonical HTTPS；不可覆盖的版本清单逐工件固定允许来源与 SHA-256 文件指纹，本地 receipt 用于后续来源连续性校验。marketplace/plugin 不能改写官方来源，安装、更新和降级不得自动执行。v0 明确不解决官方发布系统整体失陷，独立数字签名按公共分发或自动更新需求后置。

@@ -23,19 +23,16 @@ async function fixedJson(root, relative) {
   return JSON.parse(await readFile(file, "utf8"));
 }
 
-async function loadCanonicalLauncher() {
+export async function loadCanonicalLauncher({ projectionRoot = fileURLToPath(new URL('../../../', import.meta.url)), home = os.homedir(), stateRoot = resolveStateRoot({home}), releaseRoot = resolveSkillReleaseRoot({home}) } = {}) {
   try {
     // Git 宿主投影没有预构建；只复用同版本、完整校验且来源连续的 canonical 安装。
-    const projectionRoot = fileURLToPath(new URL("../../../", import.meta.url));
     const declaration = await fixedJson(projectionRoot, "release/version.json");
     const plugin = await fixedJson(projectionRoot, ".codex-plugin/plugin.json");
     const version = declaration.version;
     if (typeof version !== "string" || !VERSION.test(version) || plugin.version !== version) throw refuse("LOCAL_RUNTIME_VERSION_MISMATCH");
     if (plugin.name !== "cfkanban-agent-skills" || plugin.repository !== REPOSITORY) throw refuse("LOCAL_RUNTIME_SOURCE_MISMATCH");
-    const stateRoot = resolveStateRoot();
-    const releaseRoot = resolveSkillReleaseRoot();
     if (await pathType(stateRoot) === "missing" || await pathType(path.join(releaseRoot, "active.json")) === "missing") throw refuse("LOCAL_RUNTIME_NOT_INSTALLED");
-    await assertNoSymlinkPath(stateRoot, os.homedir());
+    await assertNoSymlinkPath(stateRoot, home);
     for (const directory of [stateRoot, releaseRoot, path.join(releaseRoot, "versions")]) {
       await assertNoSymlinkPath(directory, stateRoot);
       await validatePrivatePath(directory, "directory");

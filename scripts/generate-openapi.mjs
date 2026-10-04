@@ -55,7 +55,7 @@ const operations = [
   ["get", "/app/launch", "getWebLaunchPage", "web", publicAccess, "read", "LaunchCodeQuery"],
   ["get", "/api/v1/meta", "getMeta", "meta", authenticated, "read"],
   ["get", "/api/v1/me", "getMe", "identity", authenticated, "read"],
-  ["patch", "/api/v1/me", "updateMe", "identity", authenticated, "cas", "UpdatePrincipalDisplayNameRequest"],
+  ["patch", "/api/v1/me", "updateMe", "identity", authenticated, "idempotent-cas", "UpdatePrincipalDisplayNameRequest"],
   ["get", "/api/v1/me/notification-preferences", "getNotificationPreferences", "identity", authenticated, "read"],
   ["patch", "/api/v1/me/notification-preferences", "updateNotificationPreferences", "identity", authenticated, "idempotent-cas", "UpdateNotificationPreferencesRequest"],
   ["get", "/api/v1/me/notifications", "listMyNotifications", "identity", authenticated, "read", "PersonalNotificationQuery"],
@@ -172,7 +172,7 @@ const operations = [
   ["post", "/api/v1/me/passkeys/registration-options", "createPasskeyRegistrationOptions", "web", cookie, "csrf", "EmptyRequest"],
   ["get", "/api/v1/me/passkeys", "listMyPasskeys", "web", authenticated, "read"],
   ["post", "/api/v1/me/passkeys", "registerPasskey", "web", cookie, "csrf-idempotent", "RegisterPasskeyRequest"],
-  ["delete", "/api/v1/me/passkeys/{passkey_id}", "revokeMyPasskey", "web", authenticated, "csrf-cas-delete"],
+  ["delete", "/api/v1/me/passkeys/{passkey_id}", "revokeMyPasskey", "web", authenticated, "csrf-idempotent-cas-delete"],
   ["delete", "/api/v1/admin/passkeys/{passkey_id}", "revokePrincipalPasskey", "admin", authenticated, "csrf-cas-delete"],
   ["post", "/api/v1/web-authentication/options", "createWebAuthenticationOptions", "web", publicAccess, "write", "EmptyRequest"],
   ["post", "/api/v1/web-authentication/verify", "verifyWebAuthentication", "web", publicAccess, "idempotent", "VerifyWebAuthenticationRequest"],
@@ -183,9 +183,9 @@ const operations = [
   ["get", "/api/v1/admin/projects/{project_id}/resource-limits", "getProjectResourceLimits", "public-join", authenticated, "read"],
   ["patch", "/api/v1/admin/projects/{project_id}/resource-limits", "updateProjectResourceLimits", "public-join", authenticated, "cas", "UpdateResourceLimitsRequest"],
   ["get", "/api/v1/admin/homepage-settings", "getHomepageSettings", "admin", authenticated, "read"],
-  ["patch", "/api/v1/admin/homepage-settings", "updateHomepageSettings", "admin", authenticated, "cas", "UpdateHomepageSettingsRequest"],
+  ["patch", "/api/v1/admin/homepage-settings", "updateHomepageSettings", "admin", authenticated, "idempotent-cas", "UpdateHomepageSettingsRequest"],
   ["get", "/api/v1/admin/attachment-settings", "getAttachmentSettings", "admin", authenticated, "read"],
-  ["patch", "/api/v1/admin/attachment-settings", "updateAttachmentSettings", "admin", authenticated, "cas", "UpdateAttachmentSettingsRequest"],
+  ["patch", "/api/v1/admin/attachment-settings", "updateAttachmentSettings", "admin", authenticated, "idempotent-cas", "UpdateAttachmentSettingsRequest"],
   ["get", "/api/v1/admin/usage", "getUsage", "admin", authenticated, "read"],
   ["post", "/api/v1/admin/usage/refresh", "refreshUsage", "admin", authenticated, "cache-refresh", "RefreshUsageRequest"],
   ["get", "/api/v1/admin/rate-limit-settings", "getRateLimitSettings", "admin", authenticated, "read"],
@@ -2481,7 +2481,8 @@ function buildOperation([method, path, operationId, tag, security, mode, request
   if (!permission) throw new Error(`Missing permission contract for ${operationId}`);
   const parameters = [...path.matchAll(/\{([^}]+)\}/g)].map((match) => pathParameter(match[1]));
   if (method === "get" && requestOrQuery && querySets[requestOrQuery]) parameters.push(...querySets[requestOrQuery]);
-  if (mode.includes("idempotent")) parameters.push({ $ref: "#/components/parameters/IdempotencyKey" });
+  // 个人资料更新和 Cookie Passkey 撤销保留原有的可选 header 兼容行为。
+  if (mode.includes("idempotent") && !["updateMe", "revokeMyPasskey"].includes(operationId)) parameters.push({ $ref: "#/components/parameters/IdempotencyKey" });
   if (operationId === "updateMe") parameters.push({
     name: "Idempotency-Key", in: "header", required: false,
     description: "Optional safe retry key. Reuse the original key and request within 24 hours to recover a committed profile update; the current Principal must remain authenticated.",

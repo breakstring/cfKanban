@@ -1,9 +1,13 @@
 import { priorityOrder } from "./priority";
-import type { PriorityKey } from "../types";
+import type { PriorityKey, StatusKey } from "../types";
 
-export function boardFilters(query: string): { search: string; priorities: PriorityKey[]; labels: string[]; view?: "list" } {
+export function boardFilters(query: string): { search: string; priorities: PriorityKey[]; labels: string[]; view?: "list"; status?: StatusKey; expanded?: StatusKey[] } {
   const params = new URLSearchParams(query);
+  const knownStatuses: StatusKey[] = ["backlog", "todo", "in_progress", "done", "canceled"];
+  const status = params.get("status") as StatusKey;
   return {
+    ...(knownStatuses.includes(status) ? { status } : {}),
+    ...(params.has("expanded") ? { expanded: [...new Set(params.getAll("expanded"))].filter((key): key is StatusKey => knownStatuses.includes(key as StatusKey)) } : {}),
     ...(params.get("view") === "list" ? { view: "list" as const } : {}),
     search: params.get("q") ?? "",
     priorities: [...new Set(params.getAll("priority"))].filter((value): value is PriorityKey => priorityOrder.includes(value as PriorityKey)),
@@ -18,6 +22,11 @@ export function boardPath(workspaceId: string, projectId: string, filter?: Retur
   for (const priority of filter?.priorities ?? []) params.append("priority", priority);
   for (const label of filter?.labels ?? []) params.append("label", label);
   if (filter?.view === "list") params.set("view", "list");
+  if (filter?.status) params.set("status", filter.status);
+  if (filter?.expanded) {
+    for (const key of filter.expanded) params.append("expanded", key);
+    if (!filter.expanded.length) params.set("expanded", "");
+  }
   return `${base}${params.size ? `?${params}` : ""}`;
 }
 

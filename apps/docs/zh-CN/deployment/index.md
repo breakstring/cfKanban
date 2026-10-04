@@ -31,3 +31,5 @@ https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.m
 **在网页中：** 线上完整版的管理中心提供权限内的应用设置；创建云资源、升级和恢复部署由 Agent 完成，网页不提供部署控制台。
 
 Owner 身份用于管理 cfKanban，Cloudflare 账户权限用于维护云资源，两者分别核验。换电脑只管理应用时，不必同时接管云端部署。只更新 Agent 技能或 DSH 插件，请看[安装与接入](../integrations/index.md)，不会因此升级线上实例。
+
+[公共 CLI 任务指南](../cli/index.md)提供同一 Service 语义的终端入口。

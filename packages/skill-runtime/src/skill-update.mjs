@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { resolveSkillReleaseRoot } from "./paths.mjs";
@@ -8,7 +8,7 @@ import { toolError } from "./errors.mjs";
 
 const execFileAsync = promisify(execFile);
 
-async function verifyDiscoverySmoke(bundleRoot) {
+async function verifyDiscoverySmoke(bundleRoot, version) {
   const checked = [];
   // No inherited secrets or NODE_OPTIONS hooks. This checks trusted release
   // health, not a security sandbox for code from an untrusted publisher.
@@ -35,7 +35,21 @@ async function verifyDiscoverySmoke(bundleRoot) {
       throw toolError("SKILL_DISCOVERY_SMOKE_FAILED", "Skill discovery/help failed; the active release was not changed", { skill, surface });
     }
   }
-  return { passed: true, checked };
+  const cliEntry = path.join(bundleRoot, "cli", "cfkanban.mjs");
+  const cliInfo = await lstat(cliEntry).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
+  let cli = null;
+  if (cliInfo) {
+    try {
+      if (!cliInfo.isFile() || cliInfo.isSymbolicLink()) throw new Error();
+      const metadata = JSON.parse(await readFile(path.join(bundleRoot, "cli", "build-metadata.json"), "utf8"));
+      if (metadata.schema_version !== 1 || metadata.name !== "cfkanban-cli" || metadata.release_version !== version || metadata.node_range !== ">=22.12.0") throw new Error();
+      const { stdout } = await execFileAsync(process.execPath, [cliEntry, "--version", "--json"], { cwd: bundleRoot, env, timeout: 5000, killSignal: "SIGKILL", maxBuffer: 4096, encoding: "utf8", windowsHide: true });
+      const result = JSON.parse(stdout);
+      if (result.ok !== true || result.result?.version !== version) throw new Error();
+      cli = { passed: true, version };
+    } catch { throw toolError("CLI_DISCOVERY_SMOKE_FAILED", "Public CLI version smoke failed; the active release was not changed"); }
+  }
+  return { passed: true, checked, cli };
 }
 
 function safeArchiveName(name) {
@@ -105,7 +119,21 @@ function normalizeHttpsSource(value) {
   return source;
 }
 
-export async function installVerifiedSkillBundle({
+export async function withSkillReleaseLock(releaseRoot, callback) {
+  await ensurePrivateDirectory(releaseRoot);
+  const lockPath = path.join(releaseRoot, "release-update.lock");
+  let handle;
+  try { handle = await open(lockPath, "wx", 0o600); }
+  catch { throw toolError("SKILL_RELEASE_LOCKED", "Another local release operation may be running; verify it stopped before removing its private lock"); }
+  try { return await callback(); }
+  finally { await handle.close(); await rm(lockPath); }
+}
+
+export async function installVerifiedSkillBundle(input) {
+  return withSkillReleaseLock(input.releaseRoot ?? resolveSkillReleaseRoot(), () => installSkillBundle(input));
+}
+
+async function installSkillBundle({
   bundlePath,
   version,
   expectedSha256,
@@ -139,7 +167,7 @@ export async function installVerifiedSkillBundle({
     const digest = await treeDigest(temporaryPath);
     const existing = await readJson(path.join(targetPath, ".cfkanban-release.json"), { allowMissing: true }).catch(() => null);
     if (existing !== null) throw toolError("RELEASE_ALREADY_EXISTS", "Target Skill release directory already exists", { targetPath });
-    const discoverySmoke = await verifyDiscoverySmoke(singleRoot === null ? temporaryPath : path.join(temporaryPath, singleRoot));
+    const discoverySmoke = await verifyDiscoverySmoke(singleRoot === null ? temporaryPath : path.join(temporaryPath, singleRoot), safeVersion);
     if (await treeDigest(temporaryPath) !== digest) {
       throw toolError("SKILL_DISCOVERY_SMOKE_FAILED", "Skill discovery/help modified the staged bundle; the active release was not changed");
     }

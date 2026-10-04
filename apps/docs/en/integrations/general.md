@@ -66,3 +66,5 @@ Tell me which sessions or local services need to restart afterward.
 ```
 
 Local updates and [instance upgrades](../deployment/updates.md) are separate. A new computer, WSL, container, or remote environment has its own installation and identity; do not copy credentials directly. Removing a host connection does not delete online tasks.
+
+[Public CLI task guides](../cli/index.md) cover the same Service semantics from a terminal.

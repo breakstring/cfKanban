@@ -1,4 +1,4 @@
-import { PANEL_PROTOCOL, uuid, scopeFailureCode, isSessionReference } from './shared.mjs';
+import { PANEL_PROTOCOL, uuid, scopeFailureCode, isSessionReference, STATUSES } from './shared.mjs';
 import { readIssueHierarchy } from '../../../../apps/web/src/lib/issue-hierarchy.ts';
 import { checkpointState, validateCheckpoint } from './checkpoint.mjs';
 
@@ -38,7 +38,7 @@ export class WorkbenchController {
     this.labelRevision = 0;
     this.labelFlights = new Map();
     this.labelCursors = new Set();
-    this.state = { candidates: [], identity: null, workspaces: [], projects: [], binding: null, view: initialView === 'list' ? 'list' : 'board', board: null, page: null, issue: null, comments: [], comment_cursor: null, labels: [], label_cursor: null, labels_has_more: false, filters: { assignment: 'all', status: '', priority: '' }, busy: 0, error: null, pending: null, source_session_id: null, session_context_changed: false, workspace_scope: null, scope_instance_id: null, scope_mode: 'manual', scope_targets: [], scope_next_offset: null };
+    this.state = { candidates: [], identity: null, workspaces: [], projects: [], binding: null, view: initialView === 'list' ? 'list' : 'board', board: null, group_states: {}, expanded_groups: ['backlog'], page: null, issue: null, comments: [], comment_cursor: null, labels: [], label_cursor: null, labels_has_more: false, filters: { assignment: 'all', status: '', priority: '' }, busy: 0, error: null, pending: null, source_session_id: null, session_context_changed: false, workspace_scope: null, scope_instance_id: null, scope_mode: 'manual', scope_targets: [], scope_next_offset: null };
   }
   getSnapshot = () => this.state;
   getCheckpoint() { return validateCheckpoint(checkpointState(this.state)); }
@@ -46,16 +46,17 @@ export class WorkbenchController {
     const checkpoint = validateCheckpoint(value);
     if (!checkpoint) { this.patch({ error: { code: 'PANEL_INVALID_INPUT' } }); return false; }
     this.patch({ ...checkpoint.state, page: null, board: null, comments: [], busy: 0, error: null });
+    if (checkpoint.state.expanded_groups) this.patch({ expanded_groups: checkpoint.state.expanded_groups });
     if (this.state.binding) { await this.refresh(); if (this.state.issue) await this.openIssue(this.state.issue.identifier); }
     return true;
   }
   subscribe = listener => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
   patch(update) {
     if (this.signal.aborted) return;
-    if (Object.hasOwn(update, 'binding') && this.state.binding?.binding_id !== update.binding?.binding_id || Object.hasOwn(update, 'filters') || Object.hasOwn(update, 'view') || update.page === null || update.board === null) this.invalidateCollections();
+    if (Object.hasOwn(update, 'binding') && this.state.binding?.binding_id !== update.binding?.binding_id || Object.hasOwn(update, 'filters') || update.page === null || update.board === null) this.invalidateCollections();
     if (Object.hasOwn(update, 'binding') && this.state.binding?.binding_id !== update.binding?.binding_id) {
       this.labelRevision++; this.labelFlights.clear(); this.labelCursors.clear();
-      update = { assignees: [], assignee_cursor: null, assignees_has_more: false, labels: [], label_cursor: null, labels_has_more: false, ...update };
+      update = { expanded_groups: ['backlog'], group_states: {}, assignees: [], assignee_cursor: null, assignees_has_more: false, labels: [], label_cursor: null, labels_has_more: false, ...update };
     }
     this.state = { ...this.state, ...update }; this.listeners.forEach(listener => listener());
   }
@@ -210,55 +211,85 @@ export class WorkbenchController {
     await this.loadCandidates();
     return true;
   }
-  async refresh(_cursor, signal) {
-    return this.refreshBoard(undefined, undefined, signal);
+  eligibleStatuses() { return this.state.filters.status ? [this.state.filters.status] : STATUSES; }
+  async refresh(_cursor, signal, includeLoaded = true) {
+    this.invalidateCollections();
+    this.patch({ group_states: {} });
+    if (this.state.view === 'board') return this.refreshBoard(undefined, undefined, signal);
+    const keys = this.eligibleStatuses().filter(key => this.state.expanded_groups.includes(key) || includeLoaded && this.state.board?.columns.some(column => column.key === key));
+    return Promise.all(keys.map(key => this.refreshBoard(key, undefined, signal)));
   }
-  async setView(view) { if (!['list', 'board'].includes(view) || !this.canChangeBinding()) return; this.patch({ view, page: null, board: null }); await this.refresh(); }
+  async setView(view) {
+    if (!['list', 'board'].includes(view) || !this.canChangeBinding()) return;
+    if (view === this.state.view) return { ok: true };
+    this.patch({ view });
+    const missing = this.eligibleStatuses().filter(key => !this.state.board?.columns.some(column => column.key === key));
+    if (view === 'board') return Promise.all(missing.map(key => this.refreshBoard(key)));
+    return Promise.all(missing.filter(key => this.state.expanded_groups.includes(key)).map(key => this.refreshBoard(key)));
+  }
+  async toggleGroup(status_key, expanded) {
+    if (!this.eligibleStatuses().includes(status_key)) return;
+    const groups = new Set(this.state.expanded_groups);
+    if (expanded) groups.add(status_key); else groups.delete(status_key);
+    this.patch({ expanded_groups: STATUSES.filter(key => groups.has(key)) });
+    if (expanded && !this.state.board?.columns.some(column => column.key === status_key) && !this.state.group_states[status_key]?.error) return this.refreshBoard(status_key);
+  }
   async refreshBoard(status_key, cursor, signal) {
     if (signal?.aborted || !this.state.binding || !['list', 'board'].includes(this.state.view)) return;
-    const view = this.state.view;
     const { assignment, priority, status } = this.state.filters;
     if (status_key && status && status_key !== status) return;
     const selectedStatus = status_key || status;
     const original = this.state.board?.columns.find(row => row.key === status_key);
     if (cursor && (cursor !== original?.next_cursor || original.capacity_reached)) return;
-    if (!cursor) this.invalidateCollections();
     const revision = this.collectionRevision;
-    const key = `${revision}:${view}:${selectedStatus ?? 'all'}:${cursor ?? ''}`;
+    const key = `${revision}:${selectedStatus || 'all'}:${cursor ?? ''}`;
     if (cursor && this.collectionCursors.has(key)) { this.patch({ error: { code: 'PANEL_PAGINATION_STALLED' } }); return; }
     return this.collectionRequest(key, async () => {
-      const { result, current } = await this.request('board', { binding_id: this.state.binding.binding_id, assignment, priority, ...(selectedStatus ? { status_key: selectedStatus } : {}), ...(cursor ? { cursor } : {}) }, `${view}:${selectedStatus ?? 'all'}`, () => revision === this.collectionRevision && this.state.view === view, signal);
-      if (current && result.ok && !signal?.aborted) {
+      const keys = selectedStatus ? [selectedStatus] : this.eligibleStatuses();
+      // 首次页刷新保留旧行供失败时查看，但旧游标不能用于当前分页或重试。
+      this.patch({
+        ...(!cursor && this.state.board ? { board: { columns: this.state.board.columns.map(column => keys.includes(column.key) ? { ...column, next_cursor: null, capacity_reached: false } : column) } } : {}),
+        group_states: { ...this.state.group_states, ...Object.fromEntries(keys.map(key => [key, { loading: true, error: null }])) },
+      });
+      const { result, current } = await this.request('board', { binding_id: this.state.binding.binding_id, assignment, priority, ...(selectedStatus ? { status_key: selectedStatus } : {}), ...(cursor ? { cursor } : {}) }, `board:${selectedStatus || 'all'}`, () => revision === this.collectionRevision, signal);
+      if (revision !== this.collectionRevision || signal?.aborted) return result;
+      this.patch({ group_states: { ...this.state.group_states, ...Object.fromEntries(keys.map(key => [key, { loading: false, error: result.ok ? null : result.error }])) } });
+      if (current && result.ok) {
         const updated = result.data.columns.map(column => {
           const previous = this.state.board?.columns.find(row => row.key === column.key);
           const merged = mergeRows(cursor ? previous?.items ?? [] : [], column.items);
           const pages = (cursor ? this.collectionPages.get(column.key) ?? 0 : 0) + 1;
           return { key: column.key, display_name: column.display_name, items: merged, next_cursor: nextCursor(column), capacity_reached: Boolean(nextCursor(column) && (merged.length >= ISSUE_COLLECTION_LIMIT || pages >= MAX_COLLECTION_PAGES)), pages };
         });
-        const columns = status_key ? this.state.board.columns.map(column => updated.find(row => row.key === column.key) ?? column) : updated;
+        const previous = selectedStatus ? this.state.board?.columns ?? [] : [];
+        const columns = [...previous.map(column => updated.find(row => row.key === column.key) ?? column), ...updated.filter(column => !previous.some(row => row.key === column.key))];
         const board = { columns: columns.map(column => {
           if (!Object.hasOwn(column, 'pages')) return column;
           const { pages, ...value } = column; return value;
         }) };
         if (updated.some(column => column.items.length > ISSUE_COLLECTION_LIMIT) || !this.collectionFits({ board })) {
-          if (this.state.board) this.patch({ board: { columns: this.state.board.columns.map(column => !status_key || column.key === status_key ? { ...column, capacity_reached: true } : column) } });
-          else this.patch({ error: { code: 'PANEL_CONTEXT_TOO_LARGE' } });
+          if (this.state.board) this.patch({ board: { columns: this.state.board.columns.map(column => !selectedStatus || column.key === selectedStatus ? { ...column, capacity_reached: true } : column) }, group_states: { ...this.state.group_states, ...Object.fromEntries(keys.filter(key => !this.state.board.columns.some(column => column.key === key)).map(key => [key, { loading: false, error: { code: 'PANEL_CONTEXT_TOO_LARGE' } }])) } });
+          else this.patch({ error: { code: 'PANEL_CONTEXT_TOO_LARGE' }, group_states: { ...this.state.group_states, ...Object.fromEntries(keys.map(key => [key, { loading: false, error: { code: 'PANEL_CONTEXT_TOO_LARGE' } }])) } });
           return { ok: false, error: { code: this.state.board ? 'PANEL_CAPACITY' : 'PANEL_CONTEXT_TOO_LARGE' } };
-        } else {
-          updated.forEach(column => this.collectionPages.set(column.key, column.pages));
-          if (cursor) this.collectionCursors.add(key);
-          this.patch({ board, ...this.identityUpdate(result.data.identity) });
         }
+        updated.forEach(column => this.collectionPages.set(column.key, column.pages));
+        if (cursor) this.collectionCursors.add(key);
+        this.patch({ board, ...this.identityUpdate(result.data.identity) });
       }
       return result;
     });
   }
   async boardPage(status_key, next) {
+    if (!this.eligibleStatuses().includes(status_key)) return;
     const column = this.state.board?.columns.find(row => row.key === status_key);
-    if (!column || (next && (!column.next_cursor || column.capacity_reached))) return;
+    if (next && (!column?.next_cursor || column.capacity_reached)) return;
+    if (!next && column && !this.state.group_states[status_key]?.error) return { ok: true };
     return this.refreshBoard(status_key, next ? column.next_cursor : undefined);
   }
-  async filter(filters) { this.patch({ filters, page: null, board: null }); await this.refresh(); }
+  async filter(filters) {
+    this.patch({ filters, page: null, board: null, group_states: {}, ...(filters.status ? { expanded_groups: [filters.status] } : {}) });
+    await this.refresh();
+  }
   async loadAssignees(next = false) {
     if (!this.state.binding || (next && !this.state.assignee_cursor)) return;
     const { result, current } = await this.request('assignees', { binding_id: this.state.binding.binding_id, ...(next ? { cursor: this.state.assignee_cursor } : {}) });
@@ -329,7 +360,7 @@ export class WorkbenchController {
     const { result } = await this.request(recover ? 'recover' : 'mutate', pending, 'write');
     const recovery = result.outcome_unknown || result.panel?.recovery_required || ['PANEL_REQUEST_UNCERTAIN', 'PANEL_OPERATION_PENDING'].includes(result.error?.code) || (recover && !result.ok && result.panel?.original_settled !== true);
     this.patch({ pending: recovery ? pending : null, ...(result.panel?.readback && pending.operation === 'set_locale' ? this.identityUpdate(result.panel.readback) : result.panel?.readback && this.state.issue?.identifier === pending.identifier ? { issue: result.panel.readback, comments: result.panel.readback.comments ?? [], comment_cursor: null, comments_has_more: Boolean(result.panel.readback.comment_continuation) } : {}) });
-    if (result.ok && !recovery) await this.refresh();
+    if (result.ok && !recovery) await this.refresh(undefined, undefined, true);
     return result;
   }
 }

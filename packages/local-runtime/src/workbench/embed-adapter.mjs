@@ -1,6 +1,6 @@
 import { EMBED_PROTOCOL, emptySnapshot, parseActionMessage, parseRenderedMessage, parseRenderTarget, parseSnapshotMessage, sameRenderTarget, snapshotRenderTarget } from '../../../../apps/web/src/embedded/protocol.ts';
 import { readIssueHierarchy } from '../../../../apps/web/src/lib/issue-hierarchy.ts';
-import { canonical } from './shared.mjs';
+import { canonical, STATUSES } from './shared.mjs';
 import { items, nextCursor, recoveryId, sessionReference } from './controller.mjs';
 
 export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
@@ -31,7 +31,11 @@ export function projectSnapshot(state, sourceSessionId, fallbackLocale = 'en') {
     ...(workspaceId ? { workspace_id: workspaceId } : {}), workspace_has_more: Boolean(state.workspace_cursor), project_has_more: Boolean(state.project_cursor),
     binding: state.binding ? { project: resource(state.binding.project), identity: identity(state.binding.identity), statuses: rows(items(state.binding.statuses)).map(value => pick(value, ['key', 'display_name'])) } : null,
     page: state.page ? { items: rows(items(state.page)).map(value => { const { body, ...row } = issue(value); return row; }), next_cursor: nextCursor(state.page) ? 'available' : null, capacity_reached: Boolean(state.page.capacity_reached) } : null,
-    view: state.view, board: state.board ? { columns: rows(state.board.columns).map(column => ({ ...pick(column, ['key', 'display_name']), items: rows(column.items).map(value => { const { body, ...row } = issue(value); return row; }), has_more: Boolean(column.next_cursor), capacity_reached: Boolean(column.capacity_reached) })) } : null,
+    view: state.view, expanded_groups: state.expanded_groups ?? ['backlog'], board: state.binding ? { columns: STATUSES.filter(key => !state.filters.status || key === state.filters.status).map(key => {
+      const column = state.board?.columns.find(column => column.key === key);
+      const loading = state.group_states?.[key]?.loading ?? false;
+      return { key, display_name: column?.display_name ?? items(state.binding.statuses).find(status => status.key === key)?.display_name ?? key, items: rows(column?.items).map(value => { const { body, ...row } = issue(value); return row; }), has_more: Boolean(column?.next_cursor), capacity_reached: Boolean(column?.capacity_reached), loaded: Boolean(column), loading, error: publicError(state.group_states?.[key]?.error) };
+    }) } : null,
     assignees: rows(state.assignees).map(row => pick(row, ['id', 'principal_id', 'display_name'])), assignees_has_more: Boolean(state.assignees_has_more),
     labels: labels(state.labels), labels_has_more: Boolean(state.labels_has_more),
     issue: issue(state.issue), comments: rows(state.comments).map(comment), comments_has_more: Boolean(state.comments_has_more),
@@ -230,12 +234,13 @@ export class WorkbenchAdapter {
       case 'unbind': this.require(changeable); return c.unbind();
       case 'filters': this.require(bound && clean && ['all', 'mine'].includes(p.assignment)); return c.filter(p);
       case 'view': this.require(bound && clean && ['list', 'board'].includes(p.mode)); return c.setView(p.mode);
-      case 'board_page': this.require(bound && rows(s.board?.columns).some(column => column.key === p.status_key && (!p.next || column.next_cursor && !column.capacity_reached))); return c.boardPage(p.status_key, p.next);
+      case 'board_group': this.require(bound && clean && c.eligibleStatuses().includes(p.status_key)); return c.toggleGroup(p.status_key, p.expanded);
+      case 'board_page': this.require(bound && c.eligibleStatuses().includes(p.status_key) && (!p.next || rows(s.board?.columns).some(column => column.key === p.status_key && column.next_cursor && !column.capacity_reached))); return c.boardPage(p.status_key, p.next);
       case 'assignees': this.require(bound && (!p.next || s.assignee_cursor)); return c.loadAssignees(p.next);
       case 'labels': this.require(bound && (!p.next || s.label_cursor)); return c.loadLabels(p.next);
       case 'set_locale': this.require(bound && clean); return c.setLocale(p.locale);
       case 'quick_update': { const subject = c.loadedIssue(p.identifier); this.require(bound && clean && subject && strings(subject.allowed_actions).includes('update') && p.change.status_key !== 'done' && (p.change.assignee_principal_id == null || rows(s.assignees).some(row => row.principal_id === p.change.assignee_principal_id))); return c.quickUpdate(p.identifier, p.change); }
-      case 'page': this.require(bound && s.view === 'list' && !p.next); return c.refresh();
+      case 'page': this.require(bound && !p.next); return c.refresh();
       case 'open_issue': this.require(bound && (s.issue?.identifier === p.identifier || (clean && [...items(s.page), ...rows(s.board?.columns).flatMap(column => rows(column.items))].some(row => row.identifier === p.identifier || row.hierarchy?.parents?.some(parent => parent.identifier === p.identifier && parent.project_id === s.binding.project.id))))); return c.openIssue(p.identifier);
       case 'issue_back': this.require(currentIssue && clean); return c.patch({ issue: null });
       case 'comments': this.require(currentIssue && s.comments_has_more); return c.comments();

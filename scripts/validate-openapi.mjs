@@ -8,7 +8,9 @@ let operationCount = 0;
 
 const hasParameter = (operation, name) =>
   (operation.parameters ?? []).some((parameter) =>
-    parameter.$ref?.endsWith(`/${name}`) || parameter.name === name,
+    parameter.$ref?.endsWith(`/${name}`)
+      || (parameter.name === document.components.parameters[name]?.name
+        && parameter.in === document.components.parameters[name]?.in),
   );
 
 for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
@@ -24,6 +26,13 @@ for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
     if (!permission) failures.push(`${method.toUpperCase()} ${path}: missing permission contract`);
     if (method !== "get" && !mode) failures.push(`${method.toUpperCase()} ${path}: missing write contract`);
     if (mode?.includes("idempotent") && !hasParameter(operation, "IdempotencyKey")) failures.push(`${method.toUpperCase()} ${path}: missing Idempotency-Key`);
+    if (!mode?.includes("idempotent") && hasParameter(operation, "IdempotencyKey")) failures.push(`${method.toUpperCase()} ${path}: Idempotency-Key lacks an idempotent write contract`);
+    if (["updateMe", "revokeMyPasskey"].includes(operation.operationId)) {
+      const keys = (operation.parameters ?? []).map(parameter => parameter.$ref
+        ? document.components.parameters[parameter.$ref.split("/").at(-1)] : parameter)
+        .filter(parameter => parameter?.in === "header" && parameter.name === "Idempotency-Key");
+      if (keys.length !== 1 || keys[0].required !== false) failures.push(`${method.toUpperCase()} ${path}: optional Idempotency-Key compatibility changed`);
+    }
     if (mode?.includes("cas-delete") && !hasParameter(operation, "ExpectedVersion")) failures.push(`${method.toUpperCase()} ${path}: missing DELETE expected_version`);
     const allowsCookie = (operation.security ?? []).some((requirement) => Object.hasOwn(requirement, "WebSession"));
     const allowsBearer = (operation.security ?? []).some((requirement) => Object.hasOwn(requirement, "BearerCredential"));

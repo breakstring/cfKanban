@@ -36,7 +36,7 @@
 | D-101 | 一个自托管部署实例对应一个 workspace，实例内多个 Project | Superseded | 被 D-006 的多 Workspace 层级替代 |
 | D-102 | Workers + D1 是 v0 唯一必要运行组件 | Confirmed | 依据用户的 Cloudflare 免费优先与简单原则收敛；核心不依赖付费或可选服务 |
 | D-103 | D1 是核心事实唯一来源，v0 不使用 KV | Confirmed | 依据简单与一致性收敛；KV 最终一致，不适合权限、幂等和需要 CAS 的 Issue 状态，未来只可承载可重建派生缓存 |
-| D-104 | REST/JSON 是权威合同，OpenAPI 描述，Skill/CLI 首要适配，MCP 可选 | Superseded | REST/OpenAPI 与 MCP 方向保留，但独立 CLI 被取消；由 D-164、D-165 替代 |
+| D-104 | REST/JSON 是权威合同，OpenAPI 描述，Skill/CLI 首要适配，MCP 可选 | Superseded | REST/OpenAPI 与 MCP 方向保留，但早期独立 CLI 取舍已由[公共 CLI 增量](../specs/2026-10-04-public-cli-spec.md)覆盖；D-164、D-165 的服务端权威边界继续有效 |
 | D-105 | Credential 直接承载 Workspace/Project scope 与 role | Superseded | 被 D-007 的认证/授权分离替代 |
 | D-106 | claim 是会过期并带 fencing 的 lease | Rejected | 用户于 2026-08-27 认为独占执行权过重；由 D-127 的非独占 assignment + version/CAS 替代 |
 | D-107 | blocked 与 status 正交，并提供统一 `is_blocked` 投影和便捷命令 | Confirmed | 用户于 2026-08-27 明确同意；依赖完成可自动解除对应阻塞，人工 reason 需显式清除，均不自动改变 status |
@@ -94,10 +94,10 @@
 | D-159 | 共享 CLI 与确定性 helper 优先采用 Node.js/TypeScript，并锁定经验证的本地 Wrangler 版本 | Superseded | Node.js/TypeScript 选择保留，但载体改为 Skill 内置 scripts；由 D-162 替代 |
 | D-160 | 部署入口采用 canonical HTTPS bootstrap document，解析 immutable、可校验版本工件，不执行远程 pipe-to-shell | Confirmed | 用户于 2026-08-28 确认 SB-01；官网 bootstrap 是信任入口，marketplace/plugin 只作便捷分发，不能成为唯一真相源。具体 release manifest 与 Skill/Service bundles 分层由 D-209 完善 |
 | D-161 | 产品只建模“用户的 Agent”这一种操作主体，部署、Owner 管理、Coding 与协调只是任务模式 | Confirmed | 用户于 2026-08-28 明确指出林的 Agent、陈的 Agent才是真实使用关系；任务模式不得成为 Principal kind、权限、审计身份或独立 Agent 角色 |
-| D-162 | v0 不发布独立 cfKanban CLI；确定性逻辑放入 Skill bundle 内少量 Node.js/TypeScript scripts | Confirmed | 用户于 2026-08-28 明确要求简化；scripts 只由 Agent 按 Skill 调用，不形成独立用户界面或公共命令合同，Wrangler 固定为 bundle 验证版本 |
+| D-162 | v0 将确定性逻辑放入 Skill bundle 内少量 Node.js/TypeScript scripts | Superseded | 早期不提供公共 CLI 的阶段性取舍由[公共 CLI 增量](../specs/2026-10-04-public-cli-spec.md)覆盖；CLI 与 MCP 并列复用安全 runtime，Service 保持唯一领域权威 |
 | D-163 | Host Adapter 不作为独立角色或产品层，宿主差异由 bootstrap 安装规则与 Skill 内置 scripts 吸收 | Confirmed | Codex、Claude Code、小龙虾、Workbuddy 等仍是同类用户 Agent；安装路径、刷新和 metadata 属于实现细节，不能扩展权限或复制领域逻辑 |
 | D-164 | v0 权威维护入口为管理 API + Agent Skills，不要求部署端维护网页 | Superseded | 原轻 UI 判断低估了人类直接查看 Kanban 和低频参与的价值；由 D-215 替代 |
-| D-165 | REST/JSON 与 OpenAPI 是权威服务合同，Agent Skills 是首要适配，远程 MCP 可选且后置 | Confirmed | Skills 可以直接调用 HTTP 或使用内置 scripts，但不复制服务端领域规则；不以独立 CLI 作为中间公共合同 |
+| D-165 | REST/JSON 与 OpenAPI 是权威服务合同，Agent Skills 是首要适配，远程 MCP 可选且后置 | Confirmed | Skills、公共 CLI 与 MCP 可以直接调用安全 runtime，但不复制服务端领域规则；公共命令合同见[公共 CLI 增量](../specs/2026-10-04-public-cli-spec.md) |
 | D-166 | Node 是用户拥有的通用开发环境；Skill 可以探测和引导，但不能静默决定安装器、版本管理器、路径或全局默认版本 | Confirmed | 用户于 2026-08-28 明确担心跨 OS 安装方式、Node 版本与用户习惯冲突；已有兼容 Node 优先复用，任何安装或环境修改都先由用户选择并授权 |
 | D-167 | stable Skill release 用机器可读 semver range 声明已验证 Node 范围，稳定 SPEC 不写死具体 Node 版本 | Confirmed | Node LTS/Current 状态会变化；兼容合同随 release 验证，Agent 不为追逐最新版改变用户环境 |
 | D-168 | Wrangler 是 deploy source 中由 lockfile 锁定的项目本地依赖，不要求或修改全局 Wrangler | Superseded | `deploy source` 与“项目本地”在 cfKanban 场景含义不清，容易误解为每个用户 Repo 安装一份；由 D-170 替代 |

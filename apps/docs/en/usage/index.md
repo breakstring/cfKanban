@@ -31,3 +31,5 @@ Readers can browse; writers and authorized administrators can write within the r
 If collaborators encounter a save conflict, read the latest content first. If a save times out, verify its result before creating another task or comment.
 
 To connect your current Agent, see [Installation and connections](../integrations/index.md). To choose the local or online interface, see [Open a board](../integrations/webui.md). For inviting members or maintaining projects, continue with [Manage workspaces and projects](../administration/index.md); you do not need to deploy a site.
+
+[Public CLI task guides](../cli/index.md) cover the same Service semantics from a terminal.

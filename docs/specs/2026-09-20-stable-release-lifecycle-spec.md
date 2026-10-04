@@ -25,7 +25,7 @@ RC 或历史版投影可以在已授权安装内通过同一宿主入口临时�
 
 ## 安装、兼容与宿主
 
-安装完整 Skill bundle，保留共享 `packages/skill-runtime` 和相对目录；不能仅复制一个 Skill 目录。宿主投影只是已验证 bundle 的副本。更新报告分别说明 canonical active receipt、宿主安装投影、当前任务加载状态；无法验证新任务加载时保留未验证说明。
+安装完整 Skill bundle，保留共享 `packages/skill-runtime`、预构建 `cli/` 和相对目录；CLI 入口注册、完整性读回、回退和卸载遵循[公共 CLI 增量](2026-10-04-public-cli-spec.md)。不能仅复制一个 Skill 目录。宿主投影只是已验证 bundle 的副本。更新报告分别说明 canonical active receipt、宿主安装投影、当前任务加载状态；无法验证新任务加载时保留未验证说明。
 
 首次安装、已安装兼容技能、固定旧 RC 检查更新、显式升级、历史版回退、旧实例兼容和源码开发均有明确路径。Skill update 与 Instance upgrade 独立；同一套兼容 Skill 可访问多个实例。来源连续性、秘密保存、digest 校验与所有已有授权边界不变。
 

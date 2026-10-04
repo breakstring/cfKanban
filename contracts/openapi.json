@@ -523,7 +523,7 @@
           "identity"
         ],
         "summary": "Update Me",
-        "description": "The currently authenticated Principal acting only on its own identity or Web authentication state. Atomic cfKanban cas operation. Authorization and current resource state are revalidated when the operation executes.",
+        "description": "The currently authenticated Principal acting only on its own identity or Web authentication state. Atomic cfKanban idempotent-cas operation. Authorization and current resource state are revalidated when the operation executes.",
         "security": [
           {
             "BearerCredential": []
@@ -590,7 +590,7 @@
             "$ref": "#/components/responses/PlatformUnavailable"
           }
         },
-        "x-cfkanban-write-contract": "cas",
+        "x-cfkanban-write-contract": "idempotent-cas",
         "x-cfkanban-permission": "current_principal",
         "requestBody": {
           "required": true,
@@ -10219,7 +10219,7 @@
             "$ref": "#/components/responses/PlatformUnavailable"
           }
         },
-        "x-cfkanban-write-contract": "csrf-cas-delete",
+        "x-cfkanban-write-contract": "csrf-idempotent-cas-delete",
         "x-cfkanban-permission": "current_principal"
       }
     },
@@ -10989,6 +10989,9 @@
         ],
         "parameters": [
           {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
             "$ref": "#/components/parameters/ConditionalCsrfToken"
           }
         ],
@@ -11040,7 +11043,7 @@
             "$ref": "#/components/responses/PlatformUnavailable"
           }
         },
-        "x-cfkanban-write-contract": "cas",
+        "x-cfkanban-write-contract": "idempotent-cas",
         "x-cfkanban-permission": "deployment_owner",
         "requestBody": {
           "required": true,
@@ -11136,6 +11139,9 @@
         ],
         "parameters": [
           {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
             "$ref": "#/components/parameters/ConditionalCsrfToken"
           }
         ],
@@ -11187,7 +11193,7 @@
             "$ref": "#/components/responses/PlatformUnavailable"
           }
         },
-        "x-cfkanban-write-contract": "cas",
+        "x-cfkanban-write-contract": "idempotent-cas",
         "x-cfkanban-permission": "deployment_owner",
         "requestBody": {
           "required": true,

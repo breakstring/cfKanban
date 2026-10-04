@@ -11,6 +11,10 @@ Present cfKanban as Agent first: most daily collaboration can happen directly th
 
 This is a read-only teaching and routing Skill, with no command helper. Explaining a workflow does not authorize joining a Project, opening a session, creating an invitation, installing software, or changing cloud resources. If the user requests an action, use the relevant operational Skill and the user's existing authorization. If that Skill is unavailable, explain the missing capability; do not invent a command or silently install it. Do not ask the user to paste a long-lived Credential. Use placeholders for invitation links, never reproduce real secret values in examples.
 
+## Public CLI
+
+The public `cfkanban` terminal command is delivered with the verified complete Skills bundle. It shares the protected identity and Service rules with Skills/MCP. Use `cfkanban` for offline howto, `cfkanban <group> --help` for task commands, and `cfkanban --version` for the running version. Local registration and bundle updates do not upgrade an Instance or hot-update an existing MCP process. Guide: [English](https://cfkanban.dev/docs/en/cli/index.html) / [简体中文](https://cfkanban.dev/docs/zh-CN/cli/index.html). The guide describes the CLI source capability; availability depends on the installed verified release.
+
 ## Use the instance documentation / 按需查阅实例文档
 
 For a usage question about a known instance, consult its public documentation before relying on the capability summaries below. Use the host's read-only web/HTTP reader; no login, Project membership, API Credential, authenticated browser launch, or new helper is needed. Do not read credential files or attach Authorization headers/cookies to documentation requests.

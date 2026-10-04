@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 cfKanban is a small, self-hosted Kanban for people who work through Agents. You ask your Agent to deploy and operate it; the same Cloudflare Worker also serves a bilingual Web board for direct human use.
 
-It runs as one Cloudflare Worker plus one D1 database, with optional private R2 storage for Issue attachments. There is no separate server, Pages project, KV namespace, or standalone cfKanban CLI.
+It runs as one Cloudflare Worker plus one D1 database, with optional private R2 storage for Issue attachments. There is no separate server, Pages project, or KV namespace. The public CLI shares the Skills runtime and Service rules.
 
 ## See it in action
 
@@ -16,7 +16,9 @@ First installations and new deployments use the latest stable release by default
 
 Local Skill updates and cloud Instance upgrades are separate actions. Prereleases, historical versions, and source development require an explicit choice. If stable is unavailable or verification fails, the Agent reports the problem instead of substituting a development snapshot.
 
-Release archives do not contain a Node.js executable. The Skill bundle includes four Skills and shared JavaScript helpers that run with your compatible Node.js; the Service bundle includes the built Worker, Web assets, migrations, contracts, and a Wrangler configuration skeleton. The Agent generates private configuration from the approved plan; users do not need to unpack or edit the artifacts manually.
+Release archives do not contain a Node.js executable. The Skill bundle includes four Skills and shared JavaScript helpers that run with your compatible Node.js; releases supporting the public CLI also include its prebuilt entry. The Service bundle includes the built Worker, Web assets, migrations, contracts, and a Wrangler configuration skeleton. The Agent generates private configuration from the approved plan; users do not need to unpack or edit the artifacts manually.
+
+The [CLI task guide](apps/docs/en/cli/index.md) covers terminal use, installation, daily work, administration and deployment. The CLI is being prepared in this source branch; check the installed verified release before assuming its commands are available. Local CLI updates and Instance upgrades are separate.
 
 ## What you need
 

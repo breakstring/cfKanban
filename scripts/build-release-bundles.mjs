@@ -8,6 +8,7 @@ import { verifyWebAssetManifest } from "./lib/web-asset-manifest.mjs";
 import { verifyEmbeddedBuild } from "./lib/embedded-build.mjs";
 import { buildDshPlugin } from "../packages/dsh-plugin/scripts/build.mjs";
 import { verifyLocalRuntimeBuild } from "../packages/local-runtime/scripts/build.mjs";
+import { verifyCliBuild } from "./lib/cli-build.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -23,6 +24,7 @@ async function copyEntries(entries, targetRoot) {
 export async function buildReleaseBundles({ outputDirectory, version }) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error("version must be strict semver without build metadata");
   await verifyReleaseBuild({ repositoryRoot: repoRoot, version });
+  await verifyCliBuild({ outputDirectory: path.join(repoRoot, "packages/cli/dist"), version });
   await verifyEmbeddedBuild({ outputDirectory: path.join(repoRoot, "apps/web/dist-embedded"), version });
   await verifyLocalRuntimeBuild({ outputDirectory: path.join(repoRoot, "packages/local-runtime/dist"), version });
   const webBudget = JSON.parse(await readFile(path.join(repoRoot, "scripts/web-performance-budget.json"), "utf8"));
@@ -46,6 +48,8 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
       "docs/skills/README.zh-CN.md",
     ], skillRoot);
     await cp(path.join(repoRoot, "packages/mcp/dist"), path.join(skillRoot, "mcp"), { recursive: true });
+    await cp(path.join(repoRoot, "packages/cli/dist"), path.join(skillRoot, "cli"), { recursive: true });
+    await verifyCliBuild({ outputDirectory: path.join(skillRoot, "cli"), version });
     await cp(path.join(repoRoot, "packages/local-runtime/dist"), path.join(skillRoot, "local-runtime"), { recursive: true });
     await verifyLocalRuntimeBuild({ outputDirectory: path.join(skillRoot, "local-runtime"), version });
     await mkdir(path.join(skillRoot, "web-embedded"), { recursive: true });

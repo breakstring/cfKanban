@@ -31,3 +31,5 @@
 多人协作遇到保存冲突时，先查看最新内容；保存超时时先核实结果，避免重复创建任务或评论。
 
 还没接入当前 Agent，见共同入口[安装与接入](../integrations/index.md)；本地与线上界面的选择见[打开看板](../integrations/webui.md)。需要邀请成员或维护项目时，继续[管理工作区与项目](../administration/index.md)，不必因此部署站点。
+
+[公共 CLI 任务指南](../cli/index.md)提供同一 Service 语义的终端入口。

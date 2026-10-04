@@ -183,6 +183,7 @@ export async function trustedApiRequest({
   body = undefined,
   idempotencyKey = null,
   authorizationToken = null,
+  expectedApiOrigin,
   fetchImpl = globalThis.fetch,
   signal = AbortSignal.timeout(15_000),
 }) {
@@ -193,6 +194,9 @@ export async function trustedApiRequest({
   const paths = getInstancePaths({ stateRoot, instanceId });
   const instance = await readJson(paths.instanceMetadata);
   const trustedOrigin = requireHttpsOrigin(instance.trusted_api_origin, "trusted_api_origin");
+  if (expectedApiOrigin !== undefined && trustedOrigin !== requireHttpsOrigin(expectedApiOrigin, "expected_api_origin")) {
+    throw toolError("TRUSTED_ORIGIN_BINDING_MISMATCH", "The trusted origin changed; restore the original connection before retrying");
+  }
   const requestUrl = new URL(apiPath, trustedOrigin);
   // URL 解析会规范化反斜杠与控制字符，发送凭据前核对最终目标。
   if (requestUrl.origin !== trustedOrigin || requestUrl.username || requestUrl.password) {
@@ -237,6 +241,10 @@ export async function apiRequest(options) {
   if (options.expectedPrincipalId !== undefined
     && metadata.principal_id !== requireUuid(options.expectedPrincipalId, "expected_principal_id")) {
     throw toolError("PRINCIPAL_BINDING_MISMATCH", "The current identity changed; verify the connection again");
+  }
+  if (options.expectedCredentialId !== undefined
+    && metadata.credential_id !== requireUuid(options.expectedCredentialId, "expected_credential_id")) {
+    throw toolError("CREDENTIAL_BINDING_MISMATCH", "The current Credential changed; restore the original caller before retrying");
   }
   return trustedApiRequest({ ...options, authorizationToken: token });
 }

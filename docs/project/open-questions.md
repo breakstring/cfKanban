@@ -27,7 +27,7 @@
 - Q-102 已于 2026-08-28 确认：v0 支持 `blocks / parent / related / duplicate`，并允许同一 Workspace 内跨 Project 建立全部四类关系，但禁止跨 Workspace。跨 Project 创建、软删除或恢复要求调用者同时对两端 Project 有 `writer`；读取只返回调用者同时可读两端的关系，不泄露无权 Project 或 Issue 的存在。
 - Q-103 已依据 2026-08-28 的常规规则授权确认：v0 不首发原子 assign-next；候选列表、一般 assign 与 assign-to-me 是独立能力。上层调用方可以自行组合，cfKanban 不规定选择或重试策略。
 - Q-104 的“v0 不要求部署端人类维护网页”已于 2026-08-29 被 D-215 替代：v0 必须提供同实例极简第一方 Web UI，服务 Owner 简单维护和参与者直接查看/轻量参与；本地只读查看器不再是首发要求。
-- Q-105 的独立 CLI 方案已于 2026-08-28 被替代：v0 仍以 REST/OpenAPI 为权威合同，但不发布独立 cfKanban CLI；Agent Skills 直接调用 API，重复且需要确定性的逻辑进入 Skill 内置 Node.js/TypeScript scripts，远程 MCP 后置。
+- Q-105 的公共 CLI 方向已按[公共 CLI 增量](../specs/2026-10-04-public-cli-spec.md)收敛：与 Skills 同工件交付，CLI/MCP 并列复用安全 runtime，REST/OpenAPI 继续作为权威业务合同。
 - Q-106 已于 2026-08-28 确认并按 D-190/D-195 修订：v0 提供部署级、按当前 Principal 授权过滤的跨 Workspace/Project Issue 聚合读取；只读聚合不提供跨范围批量写入或 assign-next。Project filter 在 API 上可省略；Skill 在已知工作上下文时强烈推荐一个或多个 `workspace + project` scope，并呈现 resolved scope 与范围警告，但不规定上层何时省略过滤。
 - Project Grant expiry 的前一方案已于 2026-08-28 被替代：Project Grant 不设置失效日期；每个 `(principal_id, project_id)` 只有一条当前记录，通过 Owner 显式变更角色、撤销或重新授予。普通 Project Invite 不改写已有有效 Grant；已撤销 Grant 可按新邀请重新授予。Invitation 自身仍保持短期、一次性和可撤销。
 - Event cursor 已依据 2026-08-28 的常规技术规则授权确认：内部使用部署级单调 sequence；公开 opaque cursor 绑定 Principal、过滤条件和实际可读 Project 集合。Credential 轮换不影响同 Principal cursor；scope 或授权集合变化返回 `CURSOR_SCOPE_MISMATCH` 和重新快照指引。是否持久化或执行恢复由上层调用方决定。
@@ -46,7 +46,7 @@
 - Q-225 已于 2026-08-29 确认：v0 移除 Principal disable/enable/delete。Credential revoke 停止认证，Project Grant revoke 停止具体 Project 权限，Principal Recovery Invite 恢复同一身份；Principal、assignment 与历史稳定保留，不引入重新启用旧 Credential 的安全歧义。
 - Q-226 已于 2026-08-29 确认：Web 只撤销参与者 Credential，不提供 Owner Credential revoke/rotation。Owner 正常轮换由 `cfkanban-admin` 先把替代 secret 安全写入本地，再执行 Bearer-only 原子 rotation；全部 Owner Credential 丢失仍只走 `cfkanban-deploy` 的部署外恢复，避免 Web 撤销当前或最后一个 Owner Credential。
 - Q-227 已于 2026-08-29 确认：Owner `admin` Session 默认进入 Overview 且不自动查询全部 Issue，但可在显式选择后进入实例内任意 Workspace/Project 数据面；普通 Project/Issue Session 继续限制单 Project。未认证实例首页提供产品介绍与指向 canonical bootstrap document 的可复制 Agent 部署话术，不接受长期 Credential。
-- Agent 主体与执行载体已于 2026-08-28 确认：只建模“林的 Agent”“陈的 Agent”这类用户直接使用的 Agent；部署、Owner 管理、Coding 和协调只是任务模式。v0 不发布独立 cfKanban CLI，确定性逻辑使用 Skill bundle 内少量 Node.js/TypeScript scripts；Host Adapter 不作为独立角色。
+- Agent 主体与执行载体已于 2026-08-28 确认：只建模“林的 Agent”“陈的 Agent”这类用户直接使用的 Agent；部署、Owner 管理、Coding 和协调只是任务模式。公共 CLI、MCP 和 Skills 复用 Skill bundle 内共享 Node.js/TypeScript scripts；Host Adapter 不作为独立角色。
 - SB-02 的 Node 环境所有权已于 2026-08-28 确认：Skill 可以探测和引导，但 Node 的 version manager、安装方法、路径和全局默认版本由用户决定；已有兼容版本优先复用，stable Skill release 只声明经验证的 semver range。
 - Q-206 已于 2026-08-28 确认：用户选定 Node 安装方式后，Agent 先展示精确计划；获得授权后可以执行并在新 shell/session 中读回验证。授权不隐含新增 package source/version manager、提权、修改 PATH/shell profile、改变全局默认 Node 或卸载旧版本；这些变化必须另行确认。
 - Q-203 已于 2026-08-28 确认并由 D-234 校正：v0 同时支持 Windows 原生和 WSL2，但将其视为互不混用的独立执行环境。Agent 只解析当前环境内的工具与本地状态，不跨边界自动发现、调用或搬运；这不禁止用户手工复制同一 Credential。

@@ -129,6 +129,6 @@ cfKanban 自己拥有的所有持久文件统一放在当前执行环境用户�
 
 ## 共享 helper modules
 
-三个操作技能路由到 `packages/skill-runtime` 中同一套无第三方依赖 JavaScript modules。这些是由用户已有兼容 Node.js 执行的源码文件，不是打包进来的 Node.js runtime。共享这些模块可以让路径校验、trusted-origin 处理、secret 注入、错误归一化、release 验证、plan digest 与 migration readback 保持一致，同时不发布独立 cfKanban CLI，也不把 Service 的业务规则复制到本地。
+三个操作技能路由到 `packages/skill-runtime` 中同一套无第三方依赖 JavaScript modules。这些是由用户已有兼容 Node.js 执行的源码文件，不是打包进来的 Node.js runtime。共享这些模块可以让路径校验、trusted-origin 处理、secret 注入、错误归一化、release 验证、plan digest 与 migration readback 保持一致。公共 CLI 和 MCP 与 Skills 并列复用这些模块，业务规则仍由 Service 执行；公共命令流程见 [CLI 指南](https://cfkanban.dev/docs/zh-CN/cli/index.html)。
 
 独立的 Service 压缩包包含构建后的 Worker、Web assets、migrations、contracts、固定的 Wrangler 配置 schema，以及 `wrangler.template.json`。这个 JSON 文件只是带占位资源身份的不可直接部署配置骨架。准确部署计划获批且 D1 已创建后，`deployment write-wrangler-config` 才会在 immutable archive 外写入私有的实际配置；模板绝不能原样部署。

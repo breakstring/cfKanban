@@ -62,6 +62,7 @@
 | Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](specs/2026-09-20-homepage-settings-spec.md) |
 | 公开文档、双语手册、Agent 示例与静态打包 | [站内双语文档中心](specs/2026-09-29-documentation-center-spec.md) |
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](specs/2026-09-20-stable-release-lifecycle-spec.md) |
+| 公共 CLI、完整能力矩阵、命令与安装恢复 | [公共 CLI](specs/2026-10-04-public-cli-spec.md) |
 | 本地 stdio MCP、DSH Skills / Host / 原生任务面板 | [本地 MCP 与 DSH 接入](specs/2026-10-02-local-mcp-dsh-spec.md) |
 
 ## Skills 与发行维护
