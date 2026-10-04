@@ -1,6 +1,6 @@
 export const PANEL_PROTOCOL = 1;
 export const WORKBENCH_PROTOCOL = PANEL_PROTOCOL;
-export const WORKBENCH_ENDPOINTS = Object.freeze(['workspace_scope', 'session_scope', 'scope_targets', 'bind_scope', 'connections', 'identity', 'workspaces', 'projects', 'bind', 'unbind', 'list', 'board', 'assignees', 'detail', 'comments', 'mutate', 'recover']);
+export const WORKBENCH_ENDPOINTS = Object.freeze(['workspace_scope', 'session_scope', 'scope_targets', 'bind_scope', 'connections', 'identity', 'workspaces', 'projects', 'bind', 'unbind', 'list', 'board', 'assignees', 'labels', 'detail', 'comments', 'mutate', 'recover']);
 export const PRIORITIES = ['none', 'low', 'medium', 'high', 'urgent'];
 export const STATUSES = ['backlog', 'todo', 'in_progress', 'done', 'canceled'];
 export { validateCheckpoint } from './checkpoint.mjs';

@@ -333,7 +333,7 @@ for (const failure of ['response', 'exception']) test(`Cloudflare ${failure} 回
 });
 
 
-for (const schemaVersion of [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
+for (const schemaVersion of [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) test(`schema ${schemaVersion} 恢复保留唯一 Owner、两级管理员授权和全部已有 Principal 身份`, async t => {
   const f = await fixture(t);
   for (const name of ['0002_container_purge', '0003_container_uuid', '0004_issue_attachments', '0005_attachment_schema_version', '0006_usage_statistics', '0007_attachment_settings', '0008_principal_names', '0009_scoped_administrators']) {
     f.db.exec(await readFile(new URL(`../../migrations/${name}.sql`, import.meta.url), 'utf8'));
@@ -360,12 +360,17 @@ for (const schemaVersion of [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) test(`schem
   if (schemaVersion >= 16) f.db.exec(await readFile(new URL('../../migrations/0016_event_history_indexes.sql', import.meta.url), 'utf8'));
   if (schemaVersion >= 17) f.db.exec(await readFile(new URL('../../migrations/0017_web_session_renewal.sql', import.meta.url), 'utf8'));
   if (schemaVersion >= 18) f.db.exec(await readFile(new URL('../../migrations/0018_read_query_indexes.sql', import.meta.url), 'utf8'));
+  if (schemaVersion >= 19) {
+    f.db.exec(await readFile(new URL('../../migrations/0019_principal_locale.sql', import.meta.url), 'utf8'));
+    f.db.prepare("UPDATE principals SET locale = 'zh-CN' WHERE id = ?").run(f.owner);
+  }
   const beforeNotifications = schemaVersion >= 15 ? ['instance_notifications', 'notification_preferences', 'notification_acknowledgements'].map(table => [table, f.db.prepare(`SELECT * FROM ${table}`).all()]) : [];
   const beforeDeviceNames = schemaVersion >= 12 ? f.db.prepare('SELECT id,device_name FROM credentials ORDER BY id').all() : null;
   const beforeHomepage = schemaVersion >= 11 ? f.db.prepare('SELECT * FROM homepage_settings').all() : null;
   const workspace = f.db.prepare('SELECT id FROM workspaces').get().id;
   const project = randomUUID(), manager = randomUUID();
   f.db.prepare('INSERT INTO principals(id,display_name,display_name_key,created_at,updated_at) VALUES (?, ?, ?, 1, 1)').run(manager, 'Scoped_Manager', 'scoped_manager');
+  if (schemaVersion >= 19) f.db.prepare("UPDATE principals SET locale = 'en' WHERE id = ?").run(manager);
   f.db.prepare('INSERT INTO projects(id,workspace_id,display_name,created_at,updated_at,created_by_principal_id,updated_by_principal_id,created_operation_id) VALUES (?, ?, ?, 1, 1, ?, ?, ?)').run(project, workspace, 'Managed Project', f.owner, f.owner, randomUUID());
   for (const projectId of [null, project]) {
     f.db.prepare('INSERT INTO scoped_administrator_grants(id,principal_id,workspace_id,project_id,version,generation,created_at,updated_at,created_operation_id,last_operation_id) VALUES (?, ?, ?, ?, 1, ?, 1, 1, ?, ?)').run(randomUUID(), manager, workspace, projectId, randomUUID(), randomUUID(), randomUUID());
@@ -387,6 +392,10 @@ for (const schemaVersion of [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) test(`schem
   assert.equal(output.owner_principal_id, f.owner);
   assert.equal(f.db.prepare('SELECT owner_principal_id FROM instance_meta').get().owner_principal_id, f.owner);
   assert.deepEqual(f.db.prepare('SELECT * FROM principals ORDER BY id').all(), beforePrincipals);
+  if (schemaVersion >= 19) {
+    assert.deepEqual({ ...f.db.prepare('SELECT locale,theme FROM principals WHERE id = ?').get(f.owner) }, { locale: 'zh-CN', theme: 'blue' });
+    assert.deepEqual({ ...f.db.prepare('SELECT locale,theme FROM principals WHERE id = ?').get(manager) }, { locale: 'en', theme: 'orange' });
+  }
   assert.deepEqual(f.db.prepare('SELECT * FROM scoped_administrator_grants ORDER BY id').all(), beforeGrants);
   assert.deepEqual(f.db.prepare('SELECT * FROM effective_project_grants ORDER BY principal_id,project_id').all(), beforeAccess);
   assert.equal(f.db.prepare('SELECT count(*) AS n FROM credentials WHERE principal_id = ? AND revoked_at IS NULL').get(f.owner).n, 1);
@@ -404,9 +413,9 @@ for (const schemaVersion of [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]) test(`schem
   }
 });
 
-test('schema 19 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
+test('未来 schema 20 在恢复检查和计划阶段拒绝，不生成凭据或改动身份', async t => {
   const f = await fixture(t);
-  f.db.prepare('UPDATE instance_meta SET schema_version = 19').run();
+  f.db.prepare('UPDATE instance_meta SET schema_version = 20').run();
   await assert.rejects(inspectOwnerRecovery(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   await assert.rejects(createOwnerRecoveryPlan(f.input), { code: 'OWNER_RECOVERY_SCHEMA_UNSUPPORTED' });
   assert.equal(f.writes, 0);

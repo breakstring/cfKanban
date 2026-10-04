@@ -11,7 +11,7 @@ Both interfaces access the same instance's tasks under the same business permiss
 | | Local workbench / DSH sidebar | Full online app |
 | --- | --- | --- |
 | Best for | Viewing and moving tasks forward beside your Agent | Browsing the full application and managing your account and team |
-| Daily tasks | Project switching, boards and lists, quick priority/status/assignee edits, details, comments, and completion | These daily actions plus all application entry points |
+| Daily tasks | Project switching, boards and lists, quick priority/status/assignee edits, details, single-Issue labels, comments, and completion | These daily actions plus all application entry points |
 | Workspaces, members, access, and custom settings | Ask the Agent to open the appropriate management entry | Manage within your permissions and current session scope |
 | How to open | Ask the Agent; in DSH, ask for the sidebar or select the logo | Explicitly ask the Agent for online mode, or sign in to the site with a registered Passkey |
 | Local requirements | Matching local components installed; included in the DSH plugin | A normal browser; Agent sign-in requires a usable local identity |
@@ -41,6 +41,8 @@ The Agent locates the requested project or task and confirms the page has opened
 When opening in a browser, a brief connectivity check may appear first. If the host can control browser tabs, the Agent reuses that tab for the workbench. A system browser opener without tab control may leave a separate check tab.
 
 A [directory association](../usage/profile.md) can open the board for your current code project automatically; multiple matches still require a choice. Scroll the board horizontally to see all status columns and toward the bottom to load more tasks. Use the small buttons beside descriptions and comments to copy Markdown. The **Copy** menu at the top right of an Issue offers its ID or full online URL. The local workbench also copies the online Issue URL, ready to share or give to the Agent.
+
+The local workbench includes a language button and uses your saved account theme. In an Issue’s properties, choose **Add label** to search the project’s existing labels, then select one; use its remove button to detach one label. These actions require edit access. Create or manage labels in the full app.
 
 ## Open the full online app
 

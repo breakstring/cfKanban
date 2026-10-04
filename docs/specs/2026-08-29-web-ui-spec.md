@@ -33,7 +33,7 @@
 - 关联 Agent Skills：[Agent Skills & Bootstrap SPEC](2026-08-28-agent-skills-bootstrap-spec.md)
 - 关联 API/Schema：[API & D1 Schema SPEC](2026-08-28-api-schema-spec.md)
 - 事实快照：[Web 认证与公开加入能力快照](../research/web-auth-public-enrollment-snapshot-2026-08-29.md)
-- 最近更新：2026-10-01（CFK-528 Nuxt UI 与个人主题；CFK-531～535 语言、状态总数、局部更新、首页隔离与页面懒加载）
+- 最近更新：2026-10-04（CFK-567 服务端语言偏好与本地工作台展示对齐）
 
 ## 1. 目的与边界
 
@@ -135,7 +135,8 @@ Web 不提供 Owner transfer、第二管理员、直接 D1 浏览、完整导出
 ### 3.4 语言与内容边界
 
 - 公开首页、登录/Launch、Project 看板、Issue 详情、Owner 管理、错误与恢复页等第一方 Web UI 公共文案至少提供 `en` 与 `zh-CN`。
-- 首次访问根据浏览器首选语言选择 `zh-CN` 或 `en`，不能归入简体中文时默认 `en`。全局显式切换器保存一个非秘密 locale 偏好，不与 Principal、Credential、Grant 或 Session 生命周期绑定。
+- 未登录或本人尚未设置服务端语言偏好时，沿用浏览器本地非秘密 locale 偏好；首次访问根据浏览器首选语言选择 `zh-CN` 或 `en`，不能归入简体中文时默认 `en`。登录后优先应用当前 Principal 的服务端 `locale`，不存在偏好（`null`）时使用上述回退。
+- 登录后的页头语言切换通过 `PATCH /api/v1/me` 显式保存本人 `locale` 与当前 Principal `expected_version`，不新增设置页；服务端确认后更新公共文案与 HTML `lang`。保存失败显示可本地化提示，CAS 冲突先读回且不自动重放；结果未确定时保留原请求与幂等键，只能显式恢复原修改。语言偏好与主题共用 Principal version，旧 Session/profile 响应不能覆盖已确认的新偏好，不能继承另一身份的偏好。
 - 切换入口统一位于全局页头，使用通用翻译图标按钮，可访问名称和提示同时明确当前语言与点击效果；业务弹窗不重复提供语言入口，跟随当前全局语言。切换只更新公共文案，不导航、不重建表单或丢失草稿。看板列头、卡片和状态选择使用相同的服务端显示名称；优先级、未分配、筛选及加载/错误提示随 locale 更新。
 - 稳定 API/workflow key 永远保持英文。Project 未配置 status display-name override 时，五列默认显示名也保持 `Backlog / Todo / In Progress / Done / Canceled`，不随 Web locale 改变。
 - Workspace/Project 显示名、Issue 标题/Markdown、Comment、Label、Project context、status override 和其他业务内容始终按原文展示，不做自动翻译。

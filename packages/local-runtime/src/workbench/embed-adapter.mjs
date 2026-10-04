@@ -3,7 +3,7 @@ import { canonical } from './shared.mjs';
 import { items, nextCursor, recoveryId, sessionReference } from './controller.mjs';
 
 export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
-const errorCodes = new Set(['PANEL_ONLINE_PENDING', 'PANEL_FRAME_RELOADED', 'PANEL_BINDING_EXPIRED', 'PANEL_CAPACITY', 'PANEL_CONTEXT_TOO_LARGE', 'PANEL_FOUNDATION_UNAVAILABLE', 'PANEL_EXECUTION_UNAVAILABLE', 'PANEL_HANDOFF_UNCERTAIN', 'PANEL_IDENTITY_CHANGED', 'PANEL_INVALID_INPUT', 'PANEL_KEY_REUSED', 'PANEL_LOCAL_HOST_REQUIRED', 'PANEL_OPERATION_PENDING', 'PANEL_PERMISSION_DENIED', 'PANEL_PREVIEW_EXPIRED', 'PANEL_RECOVERY_UNAVAILABLE', 'PANEL_REQUEST_UNCERTAIN', 'PANEL_SCOPE_DENIED', 'PANEL_SCOPE_TARGET_UNAVAILABLE', 'PANEL_SCOPE_UNAVAILABLE', 'PANEL_SESSION_UNAVAILABLE', 'PANEL_SESSION_CONTEXT_CHANGED', 'PANEL_VERSION_CONFLICT', 'PANEL_VERSION_MISMATCH', 'PANEL_WORKSPACE_CHANGED', 'MCP_LOCAL_STATE_UNAVAILABLE', 'MCP_PRINCIPAL_BINDING_MISMATCH', 'UNAUTHORIZED', 'FORBIDDEN', 'CAPABILITY_DENIED', 'NOT_FOUND', 'RATE_LIMITED', 'PLATFORM_UNAVAILABLE', 'IDEMPOTENCY_CONFLICT', 'VERSION_CONFLICT']);
+const errorCodes = new Set(['PANEL_ONLINE_PENDING', 'PANEL_FRAME_RELOADED', 'PANEL_BINDING_EXPIRED', 'PANEL_CAPACITY', 'PANEL_CONTEXT_TOO_LARGE', 'PANEL_FOUNDATION_UNAVAILABLE', 'PANEL_EXECUTION_UNAVAILABLE', 'PANEL_HANDOFF_UNCERTAIN', 'PANEL_IDENTITY_CHANGED', 'PANEL_INVALID_INPUT', 'PANEL_KEY_REUSED', 'PANEL_LOCAL_HOST_REQUIRED', 'PANEL_OPERATION_PENDING', 'PANEL_PERMISSION_DENIED', 'PANEL_PREVIEW_EXPIRED', 'PANEL_RECOVERY_UNAVAILABLE', 'PANEL_REQUEST_UNCERTAIN', 'PANEL_SCOPE_DENIED', 'PANEL_SCOPE_TARGET_UNAVAILABLE', 'PANEL_SCOPE_UNAVAILABLE', 'PANEL_SESSION_UNAVAILABLE', 'PANEL_SESSION_CONTEXT_CHANGED', 'PANEL_VERSION_CONFLICT', 'PANEL_VERSION_MISMATCH', 'PANEL_WORKSPACE_CHANGED', 'MCP_LOCAL_STATE_UNAVAILABLE', 'MCP_PRINCIPAL_BINDING_MISMATCH', 'UNAUTHORIZED', 'FORBIDDEN', 'CAPABILITY_DENIED', 'NOT_FOUND', 'RATE_LIMITED', 'PLATFORM_UNAVAILABLE', 'IDEMPOTENCY_CONFLICT', 'VERSION_CONFLICT', 'LABEL_ALREADY_ATTACHED', 'LABEL_NOT_ATTACHED', 'ISSUE_LABEL_LIMIT_REACHED', 'VALIDATION_ERROR', 'INPUT_VALIDATION_FAILED']);
 const scopeCodes = new Set(['PANEL_SCOPE_PERMISSION_DENIED', 'PANEL_SCOPE_IDENTITY_CHANGED', 'PANEL_SCOPE_CREDENTIAL_UNAVAILABLE', 'PANEL_SCOPE_STALE', 'PANEL_SCOPE_TARGET_UNAVAILABLE', 'PANEL_SCOPE_HOST_UNAVAILABLE']);
 const pick = (value, fields) => Object.fromEntries(fields.filter(key => ['string', 'number', 'boolean'].includes(typeof value?.[key])).map(key => [key, value[key]]));
 const resource = value => pick(value, ['id', 'instance_id', 'principal_id', 'display_name', 'title', 'name', 'trusted_api_origin', 'available']);
@@ -11,23 +11,28 @@ const identity = value => value ? { instance: resource(value.instance), principa
 const strings = value => Array.isArray(value) ? value.filter(item => typeof item === 'string') : [];
 const rows = value => Array.isArray(value) ? value : [];
 const completion = value => value && typeof value === 'object' ? { ...pick(value, ['summary']), verification: strings(value.verification), artifacts: rows(value.artifacts).map(row => pick(row, ['kind', 'value'])), follow_ups: strings(value.follow_ups) } : undefined;
-const issue = value => value ? { ...pick(value, ['id', 'identifier', 'title', 'body', 'version', 'priority', 'is_blocked']), status: pick(value.status, ['key', 'display_name']), assignee: value.assignee ? resource(value.assignee) : null, allowed_actions: strings(value.allowed_actions) } : null;
+const labels = value => rows(value).map(row => pick(row, ['id', 'name']));
+const issue = value => value ? { ...pick(value, ['id', 'identifier', 'title', 'body', 'version', 'priority', 'is_blocked']), status: pick(value.status, ['key', 'display_name']), assignee: value.assignee ? resource(value.assignee) : null, labels: labels(value.labels), allowed_actions: strings(value.allowed_actions) } : null;
 const comment = value => ({ ...pick(value, ['id', 'body', 'created_at', 'kind']), author: resource(value.author), ...(value.completion ? { completion: completion(value.completion) } : {}) });
 const publicError = value => value ? { code: value.code === 'PANEL_PAGINATION_STALLED' || errorCodes.has(value.code) ? value.code : 'PANEL_REQUEST_UNCERTAIN' } : null;
 export const scopeTargetId = value => `${value.instance_id}/${value.workspace_id}/${value.project_id}`;
 const unavailable = (code = 'PANEL_INVALID_INPUT', outcome_unknown = false) => ({ ok: false, error: { code }, ...(outcome_unknown ? { outcome_unknown: true } : {}) });
+const principal = state => state.binding?.identity?.principal ?? state.identity?.principal;
+const preferredLocale = (state, fallback) => ['en', 'zh-CN'].includes(principal(state)?.locale) ? principal(state).locale : fallback === 'zh-CN' ? 'zh-CN' : 'en';
 
-export function projectSnapshot(state, sourceSessionId) {
+export function projectSnapshot(state, sourceSessionId, fallbackLocale = 'en') {
   const writer = Boolean(state.binding && state.issue && strings(state.issue.allowed_actions).includes('update'));
   const pending = state.pending ? pick(state.pending, ['identifier', 'expected_version', 'operation']) : null;
   const workspaceId = state.binding?.project?.workspace_id ?? state.workspace_id;
   return {
+    locale: preferredLocale(state, fallbackLocale), theme: principal(state)?.theme === 'blue' ? 'blue' : 'orange',
     candidates: rows(state.candidates).map(resource), identity: identity(state.identity), workspaces: rows(state.workspaces).map(resource), projects: rows(state.projects).map(resource),
     ...(workspaceId ? { workspace_id: workspaceId } : {}), workspace_has_more: Boolean(state.workspace_cursor), project_has_more: Boolean(state.project_cursor),
     binding: state.binding ? { project: resource(state.binding.project), identity: identity(state.binding.identity), statuses: rows(items(state.binding.statuses)).map(value => pick(value, ['key', 'display_name'])) } : null,
     page: state.page ? { items: rows(items(state.page)).map(value => { const { body, ...row } = issue(value); return row; }), next_cursor: nextCursor(state.page) ? 'available' : null, capacity_reached: Boolean(state.page.capacity_reached) } : null,
     view: state.view, board: state.board ? { columns: rows(state.board.columns).map(column => ({ ...pick(column, ['key', 'display_name']), items: rows(column.items).map(value => { const { body, ...row } = issue(value); return row; }), has_more: Boolean(column.next_cursor), capacity_reached: Boolean(column.capacity_reached) })) } : null,
     assignees: rows(state.assignees).map(row => pick(row, ['id', 'principal_id', 'display_name'])), assignees_has_more: Boolean(state.assignees_has_more),
+    labels: labels(state.labels), labels_has_more: Boolean(state.labels_has_more),
     issue: issue(state.issue), comments: rows(state.comments).map(comment), comments_has_more: Boolean(state.comments_has_more),
     filters: { assignment: state.filters.assignment, status: state.filters.status, priority: state.filters.priority }, busy: state.busy, error: publicError(state.error), pending,
     source_session_id: sessionReference(sourceSessionId), session_context_changed: Boolean(state.session_context_changed),
@@ -62,7 +67,7 @@ export class WorkbenchAdapter {
     this.frameBlocked = false;
     this.locale = 'en';
     this.unsubscribe = controller.subscribe(() => this.publish());
-    this.removeCollectionValidator = controller.addCollectionValidator?.(state => Boolean(parseSnapshotMessage({ type: 'snapshot', state: { ...projectSnapshot(state, this.sourceSessionId), locale: this.locale } })));
+    this.removeCollectionValidator = controller.addCollectionValidator?.(state => Boolean(parseSnapshotMessage({ type: 'snapshot', state: projectSnapshot(state, this.sourceSessionId, this.locale) })));
     this.onAbort = () => this.dispose();
     controller.signal.addEventListener('abort', this.onAbort, { once: true });
   }
@@ -77,7 +82,7 @@ export class WorkbenchAdapter {
       return false;
     }
     this.locale = locale;
-    const port = connectOwnedFrame(frame, locale, channelFactory);
+    const port = connectOwnedFrame(frame, preferredLocale(this.controller.state, locale), channelFactory);
     if (!port) return false;
     this.frameConnected = true;
     this.attach(port);
@@ -95,7 +100,7 @@ export class WorkbenchAdapter {
   }
   snapshotMessage() {
     let message;
-    try { message = { type: 'snapshot', state: { ...projectSnapshot(this.controller.state, this.sourceSessionId), locale: this.locale } }; }
+    try { message = { type: 'snapshot', state: projectSnapshot(this.controller.state, this.sourceSessionId, this.locale) }; }
     catch { message = null; }
     return message && parseSnapshotMessage(message) ? message : { type: 'snapshot', state: { ...emptySnapshot(), locale: this.locale, error: { code: 'PANEL_CONTEXT_TOO_LARGE' } } };
   }
@@ -188,7 +193,7 @@ export class WorkbenchAdapter {
       if (evictable) this.receipts.delete(evictable[0]);
       else return send(unavailable('PANEL_CAPACITY'));
     }
-    const receipt = { fingerprint, result: null, retain: ['mutate', 'quick_update', 'recover'].includes(message.action) };
+    const receipt = { fingerprint, result: null, retain: ['mutate', 'quick_update', 'set_locale', 'recover'].includes(message.action) };
     this.receipts.set(message.id, receipt);
     this.running = true;
     try {
@@ -226,12 +231,17 @@ export class WorkbenchAdapter {
       case 'view': this.require(bound && clean && ['list', 'board'].includes(p.mode)); return c.setView(p.mode);
       case 'board_page': this.require(bound && s.view === 'board' && rows(s.board?.columns).some(column => column.key === p.status_key && (!p.next || column.next_cursor && !column.capacity_reached))); return c.boardPage(p.status_key, p.next);
       case 'assignees': this.require(bound && (!p.next || s.assignee_cursor)); return c.loadAssignees(p.next);
+      case 'labels': this.require(bound && (!p.next || s.label_cursor)); return c.loadLabels(p.next);
+      case 'set_locale': this.require(bound && clean); return c.setLocale(p.locale);
       case 'quick_update': { const subject = c.loadedIssue(p.identifier); this.require(bound && clean && subject && strings(subject.allowed_actions).includes('update') && p.change.status_key !== 'done' && (p.change.assignee_principal_id == null || rows(s.assignees).some(row => row.principal_id === p.change.assignee_principal_id))); return c.quickUpdate(p.identifier, p.change); }
       case 'page': this.require(bound && s.view === 'list' && (!p.next || nextCursor(s.page) && !s.page?.capacity_reached)); return c.refresh(p.next ? nextCursor(s.page) : undefined);
       case 'open_issue': this.require(bound && (s.issue?.identifier === p.identifier || (clean && [...items(s.page), ...rows(s.board?.columns).flatMap(column => rows(column.items))].some(row => row.identifier === p.identifier)))); return c.openIssue(p.identifier);
       case 'issue_back': this.require(currentIssue && clean); return c.patch({ issue: null });
       case 'comments': this.require(currentIssue && s.comments_has_more); return c.comments();
-      case 'mutate': this.require(writer && (p.operation !== 'complete' || s.issue.status.key !== 'done') && p.change.status_key !== 'done'); return c.mutate(p.operation, p.change);
+      case 'mutate': this.require(writer && (p.operation !== 'complete' || s.issue.status.key !== 'done') && p.change.status_key !== 'done');
+        if (p.operation === 'label_add') this.require(rows(s.labels).some(row => row.id === p.change.label_id) && !rows(s.issue.labels).some(row => row.id === p.change.label_id));
+        if (p.operation === 'label_remove') this.require(rows(s.issue.labels).some(row => row.id === p.change.label_id));
+        return c.mutate(p.operation, p.change);
       case 'recover': this.require(s.pending); return c.mutate(null, null, true);
       default: throw new Error('Unknown embedded action');
     }

@@ -24,9 +24,15 @@ Change my theme to Calm blue.
 
 Choose **Warm orange** (the default) or **Calm blue**. Both themes use the same layout, controls, and interactions; only their colors change.
 
-**In the Web UI:** Open the account menu → **Personal settings** → choose a theme → **Save theme**. The saved theme applies across signed-in pages, including management pages. It belongs to your identity in this site, so it is available when you sign in again or use another browser. Other people's themes are unchanged.
+**In the Web UI:** Open the account menu → **Personal settings** → choose a theme → **Save theme**. The saved theme applies across signed-in pages, including management pages, and the local workbench. Reopen or refresh the workbench to load a theme changed in the full app. It belongs to your identity in this site, so it is available when you sign in again or use another browser. Other people's themes are unchanged.
 
 Any signed-in identity can save its own theme, including readers. If another profile change causes a version conflict, refresh the profile and review your selection before saving again.
+
+## Save your language
+
+Use the language button at the top right of the signed-in Web UI or a connected local workbench to switch between English and Simplified Chinese. Each switch saves your preference to your identity in this site, so the full app and local workbench use it the next time you open them. No extra settings page is needed.
+
+If you have not saved a language yet, the full app uses its existing browser preference and the workbench follows the host language. If saving fails, review the message; an uncertain result requires recovering the original change before making a new one.
 
 ## Owner notifications
 

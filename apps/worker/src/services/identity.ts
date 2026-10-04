@@ -37,6 +37,7 @@ interface PrincipalRow {
   created_at: number;
   display_name: string;
   id: string;
+  locale: "en" | "zh-CN" | null;
   theme: "orange" | "blue";
   updated_at: number;
   version: number;
@@ -66,7 +67,7 @@ async function readInstance(db: D1Database): Promise<InstanceRow> {
 async function readPrincipal(db: D1Database, principalId: string): Promise<PrincipalRow | null> {
   try {
     return await db.prepare(
-      `SELECT id, display_name, theme, version, created_at, updated_at
+      `SELECT id, display_name, locale, theme, version, created_at, updated_at
        FROM principals WHERE id = ?1 LIMIT 1`,
     ).bind(principalId).first<PrincipalRow>();
   } catch (error) {
@@ -94,6 +95,7 @@ function principalResource(row: PrincipalRow, extras: Record<string, JsonValue> 
     deleted_at: null,
     display_name: row.display_name,
     id: row.id,
+    locale: row.locale,
     theme: row.theme,
     updated_at: timestamp(row.updated_at),
     version: row.version,
@@ -209,9 +211,13 @@ export async function updateMe(
   expectedVersion: number,
   now: number,
 ): Promise<{ [key: string]: JsonValue }> {
-  if (!("display_name" in input) && !("theme" in input)) throw validationError("profile_change_required");
-  const changes: { display_name?: string; theme?: "orange" | "blue" } = {};
+  if (!("display_name" in input) && !("theme" in input) && !("locale" in input)) throw validationError("profile_change_required");
+  const changes: { display_name?: string; locale?: "en" | "zh-CN" | null; theme?: "orange" | "blue" } = {};
   if ("display_name" in input) changes.display_name = requirePrincipalDisplayName(input.display_name as JsonValue);
+  if ("locale" in input) {
+    if (input.locale !== null && input.locale !== "en" && input.locale !== "zh-CN") throw validationError("invalid_locale", { field: "locale" });
+    changes.locale = input.locale;
+  }
   if ("theme" in input) {
     if (input.theme !== "orange" && input.theme !== "blue") throw validationError("invalid_theme", { field: "theme" });
     changes.theme = input.theme;
@@ -222,15 +228,15 @@ export async function updateMe(
     if (current === null) throw notFound();
     const updated: PrincipalRow = { ...current, ...changes, updated_at: now, version: current.version + 1 };
     const resource = principalResource(updated, { principal_id: updated.id });
-    const guard = buildCurrentAuthGuard(auth, now, 8);
+    const guard = buildCurrentAuthGuard(auth, now, 9);
     const statements = [
       db.prepare(
         `UPDATE principals
-         SET display_name = ?1, display_name_key = ?6, theme = ?7,
+         SET display_name = ?1, display_name_key = ?6, theme = ?7, locale = ?8,
              version = version + 1, updated_at = ?2, last_operation_id = ?3
          WHERE id = ?4 AND version = ?5 AND ${guard.sql}`,
       ).bind(updated.display_name, now, operationId, auth.principalId, expectedVersion,
-        principalDisplayNameKey(updated.display_name), updated.theme, ...guard.values),
+        principalDisplayNameKey(updated.display_name), updated.theme, updated.locale, ...guard.values),
       db.prepare(
         `INSERT INTO events
           (id, stream, type, operation_id, event_index, actor_principal_id,
@@ -241,7 +247,7 @@ export async function updateMe(
          FROM principals WHERE id = ?3 AND last_operation_id = ?2`,
       ).bind(crypto.randomUUID(), operationId, auth.principalId, actorCredentialId(auth),
         authorizedVia(auth), JSON.stringify(changes), now,
-        changes.theme === undefined ? "principal.display-name-updated" : "principal.profile-updated"),
+        changes.theme === undefined && changes.locale === undefined ? "principal.display-name-updated" : "principal.profile-updated"),
     ];
     if (idempotencyKey !== null) statements.push(operationSnapshotStatement(db, operationId, resource));
 

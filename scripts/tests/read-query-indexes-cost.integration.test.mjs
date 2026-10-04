@@ -15,6 +15,7 @@ const id = (family, n) => `600000${family}-0000-4000-8000-${n.toString(16).padSt
 const sqlId = (family, expression = "n") => `printf('600000${family}-0000-4000-8000-%012x',${expression})`;
 const workspaceId = id("02", 1), projectId = id("03", 1), sourceIssueId = id("04", 1);
 const migration = await readFile(new URL("../../migrations/0018_read_query_indexes.sql", import.meta.url), "utf8");
+const manifest = JSON.parse(await readFile(new URL("../../migrations/manifest.json", import.meta.url), "utf8"));
 const definitions = [...migration.matchAll(/CREATE INDEX\s+(\w+)\s+ON\s+(\w+)\s*[^;]+;/gu)]
   .map(match => ({ name: match[1], table: match[2], sql: match[0] }));
 let db;
@@ -150,7 +151,7 @@ test("0018 的 11 个索引一次构建成本及同形业务写入放大可复�
     const after = indexed.get(operation), delta = after.written - before.written;
     return { operation, baseline_rows_written: before.written, indexed_rows_written: after.written, added_rows_written: delta };
   });
-  assert.equal((await db.prepare("SELECT schema_version FROM instance_meta WHERE singleton=1").first()).schema_version, 18);
+  assert.equal((await db.prepare("SELECT schema_version FROM instance_meta WHERE singleton=1").first()).schema_version, manifest.schema_version);
   assert.deepEqual((await db.prepare("PRAGMA foreign_key_check").all()).results, []);
   t.diagnostic(JSON.stringify({ scenario: "local-d1-index-build", fixture_rows_per_family: fixtureSize, indexes: creationCosts }));
   t.diagnostic(JSON.stringify({ scenario: "local-d1-index-write-amplification", operations: writes }));

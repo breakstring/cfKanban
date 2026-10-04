@@ -24,7 +24,7 @@ import { WriteFence } from "../lib/write-fence";
 import { normalizeTheme, type Theme } from "../lib/theme";
 import type { Passkey, PrincipalResource, WebSessionView, WriteResult } from "../types";
 
-const props = defineProps<{ session: WebSessionView }>();
+const props = defineProps<{ session: WebSessionView; profileLocked?: boolean }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }]; updated: [value: PrincipalResource] }>();
 
 interface PasskeyList {
@@ -53,6 +53,10 @@ const writeFence = new WriteFence();
 let casRecoveryGeneration = 0;
 let casReadback: (() => Promise<void>) | null = null;
 let casReadbackInFlight = false;
+
+watch([locale, () => props.session.principal.is_owner], () => {
+  emit("context", { label: t("profile.title"), role: props.session.principal.is_owner ? "owner" : "member" });
+}, { immediate: true });
 
 function acceptPrincipal(principal: PrincipalResource): PrincipalResource {
   const current = me.value?.id === principal.id ? me.value : null;
@@ -89,7 +93,6 @@ async function load(preserveDisplayName = false, throwOnFailure = false): Promis
       selectedTheme.value = normalizeTheme(current.theme);
     }
     passkeys.value = credentials.items;
-    emit("context", { label: t("profile.title"), role: props.session.principal.is_owner ? "owner" : "member" });
   } catch (caught) {
     setError(caught);
     if (throwOnFailure) throw caught;
@@ -141,7 +144,7 @@ async function refreshCasFacts(): Promise<void> {
 }
 
 async function saveProfile(): Promise<void> {
-  if (me.value === null || nameProblem.value !== null) return;
+  if (me.value === null || nameProblem.value !== null || props.profileLocked) return;
   const fenceKey = "profile-update";
   if (!writeFence.enter(fenceKey)) return;
   busy.value = true;
@@ -166,7 +169,7 @@ async function saveProfile(): Promise<void> {
 }
 
 async function saveTheme(): Promise<void> {
-  if (me.value === null || busy.value || selectedTheme.value === normalizeTheme(me.value.theme)) return;
+  if (me.value === null || busy.value || props.profileLocked || selectedTheme.value === normalizeTheme(me.value.theme)) return;
   if (!writeFence.enter("profile-update")) return;
   busy.value = true;
   themeSaved.value = false;
@@ -258,7 +261,7 @@ onMounted(load);
         <h2 id="theme-heading">{{ locale === "zh-CN" ? "外观主题" : "Appearance" }}</h2>
         <p class="muted-copy">{{ locale === "zh-CN" ? "选择适合你的配色。保存后应用到所有已登录页面，并随账号保留；布局与操作保持一致。" : "Choose your colors. Save to apply them across signed-in pages and devices. Layout and controls stay the same." }}</p>
         <form @submit.prevent="saveTheme">
-          <fieldset class="theme-options" :disabled="busy" aria-labelledby="theme-heading">
+          <fieldset class="theme-options" :disabled="busy || profileLocked" aria-labelledby="theme-heading">
             <label v-for="theme in (['orange', 'blue'] as const)" :key="theme" class="theme-option">
               <input v-model="selectedTheme" type="radio" name="theme" :value="theme" @change="themeSaved = false" />
               <span class="theme-swatch" :class="`theme-swatch--${theme}`" aria-hidden="true" />
@@ -266,7 +269,7 @@ onMounted(load);
             </label>
           </fieldset>
           <div class="form-actions">
-            <UButton type="submit" :loading="busy" :disabled="busy || selectedTheme === normalizeTheme(me.theme)">{{ locale === "zh-CN" ? "保存主题" : "Save theme" }}</UButton>
+            <UButton type="submit" :loading="busy" :disabled="busy || profileLocked || selectedTheme === normalizeTheme(me.theme)">{{ locale === "zh-CN" ? "保存主题" : "Save theme" }}</UButton>
             <span role="status" class="muted-copy">{{ themeSaved ? (locale === "zh-CN" ? "主题偏好已保存" : "Theme preference saved") : "" }}</span>
           </div>
         </form>
@@ -274,8 +277,8 @@ onMounted(load);
       <section class="profile-section">
         <div class="section-heading-row"><div><h2>{{ locale === "zh-CN" ? "身份资料" : "Identity profile" }}</h2><p>{{ locale === "zh-CN" ? "显示名称在此实例内唯一，英文大小写及全角等兼容形式视为相同名称。身份和权限仍绑定固定 ID。" : "Display names are unique within this instance, ignoring case and equivalent forms such as full-width letters. Identity and permissions remain linked to your fixed ID." }}</p></div></div>
         <form class="profile-form" @submit.prevent="saveProfile">
-          <label>{{ locale === "zh-CN" ? "显示名称" : "Display name" }}<UInput class="w-full" v-model="displayName" required aria-describedby="profile-name-rules profile-name-error" :aria-invalid="nameProblem !== null" /></label>
-          <UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy || nameProblem !== null || normalizePrincipalDisplayName(displayName) === me.display_name">{{ t("action.save") }}</UButton>
+          <label>{{ locale === "zh-CN" ? "显示名称" : "Display name" }}<UInput class="w-full" v-model="displayName" :disabled="busy || profileLocked" required aria-describedby="profile-name-rules profile-name-error" :aria-invalid="nameProblem !== null" /></label>
+          <UButton color="primary" variant="solid" class="primary-button" type="submit" :disabled="busy || profileLocked || nameProblem !== null || normalizePrincipalDisplayName(displayName) === me.display_name">{{ t("action.save") }}</UButton>
         </form>
         <p id="profile-name-rules" class="muted-copy">{{ locale === "zh-CN" ? "1–128 个字符；允许文字、数字、组合标记及 _ - ·；禁止空格、不可见字符、Emoji 和其他符号。首尾空白自动去除，兼容字符统一规范化。admin、administrator、owner、system、管理员、所有者、系统为保留名称。" : "1–128 characters: letters, numbers, combining marks, and _ - ·. No spaces, invisible characters, emoji, or other symbols. Surrounding whitespace is trimmed and compatible characters are normalized. Reserved names: admin, administrator, owner, system, 管理员, 所有者, 系统." }}</p>
         <p id="profile-name-error" role="status" class="muted-copy">{{ nameProblem === null ? "" : principalDisplayNameProblemText(nameProblem, locale) }}</p>

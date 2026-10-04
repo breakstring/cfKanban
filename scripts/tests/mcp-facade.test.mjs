@@ -27,8 +27,8 @@ function fixtureFetch(fixture, handler) {
 const digest = options => createHash("sha256").update(new Headers(options.headers).get("authorization").slice(7)).digest("hex");
 
 test("catalog exposes only bounded strict daily tools and rejects API/state/file passthrough", async () => {
-  assert.equal(MCP_TOOLS.length, 16);
-  assert.equal(new Set(MCP_TOOLS.map(tool => tool.name)).size, 16);
+  assert.equal(MCP_TOOLS.length, 20);
+  assert.equal(new Set(MCP_TOOLS.map(tool => tool.name)).size, 20);
   assert.ok(MCP_TOOLS.every(tool => /^cfkanban_[a-z_]+$/.test(tool.name) && tool.inputSchema.additionalProperties === false));
   assert.ok(MCP_TOOLS.every(tool => !tool.inputSchema.properties.apiPath && !tool.inputSchema.properties.stateRoot));
   const facade = createMcpFacade({ fetchImpl: () => { throw new Error("Should not reach network"); } });
@@ -75,15 +75,84 @@ test("assignee pages use an explicit bound Project and strict bounded public arg
   assert.equal(calls.filter(row => row.path.endsWith("/assignees")).length, 1);
 });
 
+test("locale saves authenticate only the current Principal and expose no profile or identity passthrough", async t => {
+  const f = await createMcpStateFixture(t);
+  const calls = [];
+  let wrongPrincipal = false;
+  const facade = createMcpFacade({ ...f, binding: { instance_id: f.instanceId, expected_principal_id: f.principalId, project_ids: [] }, fetchImpl: fixtureFetch(f, (url, options) => {
+    calls.push({ path: url.pathname, method: options.method, body: options.body, key: new Headers(options.headers).get("idempotency-key") });
+    if (options.method === "GET") return Response.json({ ...f.me(f.credential), ...(wrongPrincipal ? { id: randomUUID() } : {}), locale: "zh-CN", theme: "blue" });
+    return Response.json({ resource: { id: f.principalId, locale: "en", theme: "blue", version: 2 } });
+  }) });
+  const args = { instance_id: f.instanceId, locale: "en", expected_version: 1, idempotency_key: "same-locale-key" };
+  const inspected = await facade.callTool("cfkanban_connection_inspect", { instance_id: f.instanceId });
+  assert.equal(inspected.data.principal.locale, "zh-CN"); assert.equal(inspected.data.principal.theme, "blue");
+  assert.equal(Object.hasOwn(inspected.data.principal, "credential"), false);
+  assert.equal((await facade.callTool("cfkanban_profile_locale_set", args)).ok, true);
+  assert.deepEqual(calls.at(-1), { path: "/api/v1/me", method: "PATCH", body: JSON.stringify({ locale: "en", expected_version: 1 }), key: args.idempotency_key });
+  assert.equal(calls.filter(row => row.method !== "GET").length, 1);
+  const before = calls.length;
+  for (const extra of [{ locale: "fr" }, { principal_id: randomUUID() }, { theme: "orange" }, { changes: { locale: "en" } }, { display_name: "Another name" }, { apiPath: "/api/v1/admin" }, { expected_version: 0 }]) assert.equal((await facade.callTool("cfkanban_profile_locale_set", { ...args, ...extra })).error.code, "MCP_INVALID_ARGUMENTS");
+  assert.equal(calls.length, before);
+  wrongPrincipal = true;
+  assert.equal((await facade.callTool("cfkanban_profile_locale_set", args)).error.code, "MCP_PRINCIPAL_BINDING_MISMATCH");
+  assert.equal(calls.filter(row => row.method !== "GET").length, 1);
+});
+
+test("label lists stay in the explicit active Project and label associations cannot cross an Issue binding", async t => {
+  const f = await createMcpStateFixture(t);
+  const labelId = randomUUID(); const calls = [];
+  let issueProject = f.projectId;
+  const facade = createMcpFacade({ ...f, binding: { instance_id: f.instanceId, expected_principal_id: f.principalId, project_ids: [f.projectId] }, fetchImpl: fixtureFetch(f, (url, options) => {
+    calls.push({ path: url.pathname, query: url.search, method: options.method });
+    if (url.pathname === "/api/v1/me") return Response.json(f.me(f.credential));
+    if (url.pathname === "/api/v1/issues/CFK-1") return Response.json({ identifier: "CFK-1", project: { id: issueProject }, version: 1 });
+    if (url.pathname.endsWith("/labels")) return Response.json({ items: [{ id: labelId, name: "Existing label" }], next_cursor: "bounded-page" });
+    return Response.json({ resource: { version: 2 } });
+  }) });
+  const list = { instance_id: f.instanceId, workspace_id: f.workspaceId, project_id: f.projectId, limit: 20, cursor: "current-page" };
+  assert.equal((await facade.callTool("cfkanban_labels_list", list)).ok, true);
+  assert.deepEqual(calls.at(-1), { path: `/api/v1/workspaces/${f.workspaceId}/projects/${f.projectId}/labels`, query: "?cursor=current-page&limit=20", method: "GET" });
+  const before = calls.length;
+  for (const extra of [{ deleted: "only" }, { limit: 101 }, { name: "Create me" }, { color: "red" }, { filePath: "/arbitrary" }]) assert.equal((await facade.callTool("cfkanban_labels_list", { ...list, ...extra })).error.code, "MCP_INVALID_ARGUMENTS");
+  assert.equal(calls.length, before);
+  assert.equal((await facade.callTool("cfkanban_labels_list", { ...list, project_id: randomUUID() })).error.code, "MCP_PROJECT_BINDING_MISMATCH");
+  issueProject = randomUUID();
+  for (const name of ["cfkanban_issues_labels_add", "cfkanban_issues_labels_remove"]) assert.equal((await facade.callTool(name, { instance_id: f.instanceId, identifier: "CFK-1", label_id: labelId, expected_version: 1, idempotency_key: "same-label-key" })).error.code, "MCP_PROJECT_BINDING_MISMATCH");
+  assert.equal(calls.filter(row => row.method !== "GET").length, 0);
+});
+
+test("lost locale and label responses keep the exact tool, payload, CAS and key for explicit recovery", async t => {
+  const f = await createMcpStateFixture(t);
+  const labelId = randomUUID();
+  const facade = createMcpFacade({ ...f, binding: { instance_id: f.instanceId, expected_principal_id: f.principalId, project_ids: [f.projectId] }, fetchImpl: fixtureFetch(f, (url, options) => {
+    if (options.method !== "GET") throw new Error("Untrusted network exception");
+    return Response.json(url.pathname === "/api/v1/me" ? f.me(f.credential) : { identifier: "CFK-1", project: { id: f.projectId }, version: 1 });
+  }) });
+  for (const [name, args] of [
+    ["cfkanban_profile_locale_set", { instance_id: f.instanceId, locale: "zh-CN", expected_version: 1, idempotency_key: "lost-locale-key" }],
+    ...["cfkanban_issues_labels_add", "cfkanban_issues_labels_remove"].map(name => [name, { instance_id: f.instanceId, identifier: "CFK-1", label_id: labelId, expected_version: 1, idempotency_key: "lost-label-key" }]),
+  ]) {
+    const result = await facade.callTool(name, args);
+    assert.equal(result.outcome_unknown, true);
+    assert.equal(result.recovery_request.tool, name); assert.deepEqual(result.recovery_request.arguments, args);
+    assert.equal(result.recovery_request.idempotency_key, args.idempotency_key);
+    assert.doesNotMatch(JSON.stringify(result), /Untrusted network exception/);
+  }
+});
+
 test("all representative writes map to exactly one atomic API operation with stable keys and CAS", async t => {
   const f = await createMcpStateFixture(t);
   const calls = [];
   const facade = createMcpFacade({ ...f, fetchImpl: fixtureFetch(f, (url, options) => { calls.push({ url, options }); return Response.json({ resource: { version: 3 }, idempotent_replay: false, event_cursor: "event" }); }) });
   const common = { instance_id: f.instanceId, identifier: "CFK-1", idempotency_key: "stable-operation-key" };
   const relationId = randomUUID();
+  const labelId = randomUUID();
   const cases = [
     ["issues_create", { instance_id: f.instanceId, workspace_id: f.workspaceId, project_id: f.projectId, title: "MCP", idempotency_key: common.idempotency_key }, "POST", `/api/v1/workspaces/${f.workspaceId}/projects/${f.projectId}/issues`, { title: "MCP" }],
     ["issues_update", { ...common, expected_version: 2, changes: { priority_key: "high" } }, "PATCH", "/api/v1/issues/CFK-1", { expected_version: 2, priority_key: "high" }],
+    ["issues_labels_add", { ...common, expected_version: 2, label_id: labelId }, "POST", "/api/v1/issues/CFK-1/commands/add-label", { expected_version: 2, label_id: labelId }],
+    ["issues_labels_remove", { ...common, expected_version: 2, label_id: labelId }, "POST", "/api/v1/issues/CFK-1/commands/remove-label", { expected_version: 2, label_id: labelId }],
     ["comments_create", { ...common, body: "Evidence" }, "POST", "/api/v1/issues/CFK-1/comments", { body: "Evidence" }],
     ["relations_create", { ...common, kind: "blocks", target_identifier: "CFK-2", source_expected_version: 2, target_expected_version: 7 }, "POST", "/api/v1/issues/CFK-1/relations", { kind: "blocks", target_identifier: "CFK-2", source_expected_version: 2, target_expected_version: 7 }],
     ["relations_delete", { instance_id: f.instanceId, relation_id: relationId, expected_version: 1, source_expected_version: 2, target_expected_version: 7, idempotency_key: common.idempotency_key }, "DELETE", `/api/v1/relations/${relationId}`, undefined],
@@ -259,7 +328,7 @@ test("connection inspect exposes explicit identity and only non-secret candidate
   assert.equal((await echoFacade.callTool("cfkanban_issues_get", { instance_id: f.instanceId, identifier: "CFK-1" })).data.body, "[REDACTED]");
 });
 
-test("identity-only discovery binding permits only three reads and checks current Principal", async t => {
+test("identity-only binding permits discovery reads and refuses Issue scope expansion", async t => {
   const f = await createMcpStateFixture(t);
   const facade = createMcpFacade({ ...f, binding: { instance_id: f.instanceId, expected_principal_id: f.principalId, project_ids: [] }, fetchImpl: fixtureFetch(f, url => Response.json(url.pathname === "/api/v1/me" ? f.me(f.credential) : { items: [], next_cursor: null })) });
   for (const [name, args] of [["connection_inspect", { instance_id: f.instanceId }], ["workspaces_list", { instance_id: f.instanceId }], ["projects_list", { instance_id: f.instanceId, workspace_id: f.workspaceId }]]) assert.equal((await facade.callTool(`cfkanban_${name}`, args)).ok, true);

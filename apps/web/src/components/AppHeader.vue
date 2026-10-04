@@ -12,7 +12,7 @@ import { locale, t } from "../lib/i18n";
 import { navigate } from "../lib/router";
 import { projectDisplayRole, projectRoleLabel } from "../lib/scoped-management";
 import { canAccessOwnerControlPlane } from "../lib/session-capabilities";
-import type { WebSessionView } from "../types";
+import type { Locale, WebSessionView } from "../types";
 
 const props = defineProps<{
   context?: string | undefined;
@@ -20,9 +20,11 @@ const props = defineProps<{
   projectId?: string | undefined;
   workspaceId?: string | undefined;
   session: WebSessionView;
+  localeBusy?: boolean;
+  localeRetry?: boolean;
 }>();
 
-const emit = defineEmits<{ logout: []; verified: [session: WebSessionView] }>();
+const emit = defineEmits<{ logout: []; verified: [session: WebSessionView]; locale: [value: Locale] }>();
 
 function roleLabel(value: string): string {
   if (locale.value !== "zh-CN") return value;
@@ -64,7 +66,7 @@ const accountItems = computed<DropdownMenuItem[][]>(() => [
       <ProjectSwitcher :session="session" :context="context" :project-id="projectId" :workspace-id="workspaceId" @verified="emit('verified', $event)" />
     </div>
     <nav class="header-actions" :aria-label="locale === 'zh-CN' ? '账户与语言' : 'Account and language'">
-      <LocaleSwitch />
+      <LocaleSwitch managed :disabled="localeBusy" :retry="localeRetry" @change="emit('locale', $event)" />
       <NotificationBell :session="session" />
       <UDropdownMenu :items="accountItems" :content="{ align: 'end' }" :ui="{ content: 'account-menu' }">
         <UButton color="neutral" variant="ghost" class="account-trigger" type="button" :aria-label="locale === 'zh-CN' ? '账户菜单' : 'Account menu'">

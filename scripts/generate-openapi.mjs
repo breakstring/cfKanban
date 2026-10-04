@@ -572,7 +572,8 @@ const schemas = {
   ExpectedVersionRequest: { type: "object", required: ["expected_version"], properties: { expected_version: ref("Version") }, additionalProperties: false },
   PrincipalDisplayNameInput: string({ description: "Trim and NFKC normalize before validation; 1–128 Unicode code points in both display and locale-independent lowercase key. Letters, marks, numbers, underscore, hyphen and middle dot only; reject Default_Ignorable_Code_Point. Exact reserved keys: admin, administrator, owner, system, 管理员, 所有者, 系统. Instance-wide unique key; conflict returns PRINCIPAL_DISPLAY_NAME_CONFLICT without owner identity." }),
   PrincipalTheme: string({ enum: ["orange", "blue"], default: "orange", description: "Personal color palette; layout and interactions remain the same." }),
-  UpdatePrincipalDisplayNameRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), display_name: ref("PrincipalDisplayNameInput"), theme: ref("PrincipalTheme") }, additionalProperties: false },
+  PrincipalLocale: { type: ["string", "null"], enum: ["en", "zh-CN", null], default: null, description: "Personal language preference; null clears the preference and lets the client use its language fallback." },
+  UpdatePrincipalDisplayNameRequest: { type: "object", required: ["expected_version"], minProperties: 2, properties: { expected_version: ref("Version"), display_name: ref("PrincipalDisplayNameInput"), locale: ref("PrincipalLocale"), theme: ref("PrincipalTheme") }, additionalProperties: false },
   ProjectAssigneeResult: {
     type: "object", required: ["items", "has_more", "next_cursor"], additionalProperties: false,
     properties: {
@@ -711,9 +712,9 @@ const schemas = {
     }, additionalProperties: false,
   },
   CurrentPrincipal: {
-    type: "object", required: ["id", "principal_id", "display_name", "theme", "is_owner", "version", "management_grants"],
+    type: "object", required: ["id", "principal_id", "display_name", "locale", "theme", "is_owner", "version", "management_grants"],
     properties: {
-      id: ref("Uuid"), principal_id: ref("Uuid"), display_name: string(), theme: ref("PrincipalTheme"), is_owner: { type: "boolean" }, version: ref("Version"),
+      id: ref("Uuid"), principal_id: ref("Uuid"), display_name: string(), locale: ref("PrincipalLocale"), theme: ref("PrincipalTheme"), is_owner: { type: "boolean" }, version: ref("Version"),
       management_grants: { type: "array", items: ref("Administrator") },
       grants: { type: "array", items: ref("WebSessionProjectScopeItem") }, allowed_actions: { type: "array", items: string() },
       created_at: ref("Timestamp"), updated_at: ref("Timestamp"), deleted_at: { type: "null" },
@@ -1918,6 +1919,7 @@ const schemas = {
       id: ref("Uuid"),
       is_owner: { type: "boolean" },
       version: ref("Version"),
+      locale: ref("PrincipalLocale"),
       theme: ref("PrincipalTheme"),
     },
     additionalProperties: false,
@@ -1974,7 +1976,7 @@ const schemas = {
       principal: {
         allOf: [
           ref("WebSessionPrincipal"),
-          { type: "object", required: ["theme", "version"], properties: { theme: ref("PrincipalTheme"), version: ref("Version") } },
+          { type: "object", required: ["locale", "theme", "version"], properties: { locale: ref("PrincipalLocale"), theme: ref("PrincipalTheme"), version: ref("Version") } },
         ],
       },
       session_id: ref("Uuid"),

@@ -1080,8 +1080,6 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
 .editor-panel > label, .label-input { display: grid; gap: 8px; }
 .editor-panel :deep(.relative), .label-input :deep(.relative) { width: 100%; }
 .editor-panel { padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; }
-.label-picker .label-chip { color: var(--color-text-muted); background: var(--color-surface-muted); border-radius: 5px; }
-.label-picker .label-chip :deep(button) { min-height: 24px; padding: 0 4px; }
 .relation-row { min-width: 0; justify-content: flex-start; }
 @media (max-width: 940px) {
   .issue-page--nuxt :deep(button), .issue-page--nuxt :deep(input), .issue-page--nuxt :deep(select) { min-height: 44px; }

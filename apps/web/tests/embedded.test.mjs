@@ -58,14 +58,14 @@ async function mountedDetail() {
   const surface = fakeWindow();
   const channel = new MessageChannel();
   globalThis.window = surface;
-  globalThis.document = { documentElement: { lang: "en" }, getElementById() { return null; } };
+  globalThis.document = { documentElement: { lang: "en", dataset: {}, toggleAttribute() {} }, getElementById() { return null; } };
   const app = renderer.createApp({ render: () => h({ ...Workbench, render: () => null }) });
   app.mount(node());
   const vm = app._instance.subTree.component.setupState;
   surface.emit({ source: surface.parent, data: { type: "cfkanban.embed.connect", protocol: 1, locale: "en" }, ports: [channel.port1] });
   vm.state = { ...emptySnapshot(), issue: { identifier: "CFK-548", title: "Fixture", body: "", version: 2, status: { key: "todo" }, priority: "high" }, binding: { project: { id: randomUUID() }, statuses: ["backlog", "todo", "in_progress", "done", "canceled"].map(key => ({ key })) }, capabilities: { update: true, comment: true, complete: true } };
   await nextTick();
-  const fixture = { vm, calls: [], result: { ok: true }, respond: null, close() { app.unmount(); channel.port2.close(); Object.assign(globalThis, saved); } };
+  const fixture = { vm, channel, calls: [], result: { ok: true }, respond: null, close() { app.unmount(); channel.port2.close(); Object.assign(globalThis, saved); } };
   channel.port2.on("message", message => {
     fixture.calls.push(message);
     fixture.respond?.(message);
@@ -73,6 +73,64 @@ async function mountedDetail() {
   });
   return fixture;
 }
+
+test("detail label actions use one existing label and wait for confirmed snapshots", async () => {
+  const f = await mountedDetail();
+  try {
+    const attached = { id: randomUUID(), name: "Bug" }, available = { id: randomUUID(), name: "Feature" };
+    f.vm.state.issue.labels = [attached];
+    f.vm.state.labels = [attached, available];
+    await f.vm.toggleLabel(attached.id, true);
+    await f.vm.toggleLabel(randomUUID(), true);
+    await f.vm.toggleLabel(available.id, false);
+    assert.equal(f.calls.length, 0);
+    await f.vm.toggleLabel(available.id, true);
+    assert.deepEqual(f.calls[0].payload, { operation: "label_add", change: { label_id: available.id } });
+    assert.deepEqual(f.vm.state.issue.labels, [attached]);
+    await f.vm.toggleLabel(attached.id, false);
+    assert.deepEqual(f.calls[1].payload, { operation: "label_remove", change: { label_id: attached.id } });
+    await f.vm.loadLabels(false);
+    await f.vm.loadLabels(true);
+    assert.deepEqual(f.calls.slice(2).map(call => call.payload), [{ next: false }, { next: true }]);
+    f.vm.state.capabilities.update = false;
+    await f.vm.toggleLabel(attached.id, false);
+    await f.vm.loadLabels(false);
+    f.vm.state.capabilities.update = true;
+    f.vm.state.pending = { operation: "label_add" };
+    await f.vm.toggleLabel(available.id, true);
+    assert.equal(f.calls.length, 4);
+  } finally { f.close(); }
+});
+
+test("the workbench applies confirmed account language and theme without sending profile fields", async () => {
+  const f = await mountedDetail();
+  try {
+    await f.vm.changeLocale("zh-CN");
+    assert.deepEqual(f.calls[0], { type: "action", id: f.calls[0].id, action: "set_locale", payload: { locale: "zh-CN" } });
+    assert.equal(document.documentElement.lang, "en");
+    f.channel.port2.postMessage({ type: "snapshot", state: JSON.parse(JSON.stringify({ ...f.vm.state, locale: "zh-CN", theme: "blue" })) });
+    await tick(); await nextTick();
+    assert.equal(document.documentElement.lang, "zh-CN");
+    assert.equal(document.documentElement.dataset.theme, "blue");
+    f.vm.state.pending = { operation: "set_locale" };
+    await f.vm.changeLocale("en");
+    assert.equal(f.calls.length, 1);
+  } finally { f.close(); }
+});
+
+test("preference and label messages reject injected scopes, malformed enums and duplicate labels", () => {
+  assert.ok(parseActionMessage(action("set_locale", { locale: "en" })));
+  for (const payload of [{ locale: "fr" }, { locale: null }, { locale: "en", expected_version: 1 }, { locale: "en", principal_id: randomUUID() }]) {
+    assert.equal(parseActionMessage(action("set_locale", payload)), null);
+  }
+  const label = { id: randomUUID(), name: "Existing" };
+  assert.ok(parseActionMessage(action("mutate", { operation: "label_add", change: { label_id: label.id } })));
+  assert.equal(parseActionMessage(action("mutate", { operation: "label_add", change: { label_id: label.id, project_id: randomUUID() } })), null);
+  assert.ok(parseSnapshotMessage({ type: "snapshot", state: { ...emptySnapshot(), theme: "blue", labels: [label] } }));
+  for (const patch of [{ theme: "dark" }, { labels: [label, label] }, { labels: [{ ...label, name: "" }] }, { labels_has_more: "yes" }]) {
+    assert.equal(parseSnapshotMessage({ type: "snapshot", state: { ...emptySnapshot(), ...patch } }), null);
+  }
+});
 
 test("detail properties save one choice, done opens confirmation, and blocked or unchanged choices do not write", async () => {
   const f = await mountedDetail();
@@ -110,25 +168,6 @@ test("detail properties save one choice, done opens confirmation, and blocked or
     const principalId = randomUUID();
     await f.vm.updateDetail({ assignee_principal_id: principalId });
     assert.deepEqual(f.calls[2].payload, { operation: "update", change: { assignee_principal_id: principalId } });
-  } finally { f.close(); }
-});
-
-test("view properties scrolls and focuses within the embedded document without a navigation action", async () => {
-  const f = await mountedDetail();
-  try {
-    const events = [];
-    document.getElementById = id => {
-      assert.equal(id, "embedded-properties");
-      return { scrollIntoView: options => events.push(["scroll", options]), focus: options => events.push(["focus", options]) };
-    };
-    f.vm.showProperties();
-    assert.deepEqual(events, [["scroll", { block: "start" }], ["focus", { preventScroll: true }]]);
-    assert.deepEqual(f.calls, []);
-    document.getElementById = () => null;
-    assert.doesNotThrow(() => f.vm.showProperties());
-    const source = await readFile(path.join(root, "apps/web/src/embedded/Workbench.vue"), "utf8");
-    assert.match(source, /<button type="button" class="embedded-properties-link" @click="showProperties">/);
-    assert.doesNotMatch(source, /href="#embedded-properties"/);
   } finally { f.close(); }
 });
 
@@ -260,11 +299,13 @@ test("only writes become uncertain on timeout; recovery is explicit and never re
     assert.equal(read.outcome_unknown, undefined);
     const write = await f.client.action("mutate", { operation: "comment", change: { body: "X" } });
     assert.equal(write.outcome_unknown, true);
+    const preference = await f.client.action("set_locale", { locale: "zh-CN" });
+    assert.equal(preference.outcome_unknown, true);
     await new Promise(resolve => setTimeout(resolve, 20));
-    assert.deepEqual(messages.map(message => message.action), ["page", "mutate"]);
+    assert.deepEqual(messages.map(message => message.action), ["page", "mutate", "set_locale"]);
     await f.client.action("recover", {});
-    assert.deepEqual(messages.map(message => message.action), ["page", "mutate", "recover"]);
-    assert.deepEqual(messages[2].payload, {});
+    assert.deepEqual(messages.map(message => message.action), ["page", "mutate", "set_locale", "recover"]);
+    assert.deepEqual(messages[3].payload, {});
   } finally { f.close(); }
 });
 

@@ -9,7 +9,7 @@ import PageState from "./components/PageState.vue";
 import { ApiProblem, apiRequest } from "./lib/api";
 import { clearAttachmentUploadDrafts } from "./lib/attachment-upload-drafts";
 import { boardReturnPath } from "./lib/board-navigation";
-import { locale, t } from "./lib/i18n";
+import { applyAccountLocalePreference, locale, t } from "./lib/i18n";
 import { lazyPage } from "./lib/lazy-page";
 import { setNotificationSession } from "./lib/notifications";
 import { useLocalizedError } from "./lib/localized-error";
@@ -20,7 +20,7 @@ import { isWebSessionView, sameSessionBoundary, shouldClearAfterSessionRevalidat
 import { isSessionRenewalResult, mergeSessionFacts, SESSION_ACTIVITY_EVENTS, SessionRenewalController } from "./lib/session-renewal";
 import { captureSessionTextDrafts, clearRetainedSessionTextDrafts, retainedSessionTextDrafts, setSessionDraftPrincipal } from "./lib/session-drafts";
 import { applyTheme, latestPrincipalTheme } from "./lib/theme";
-import type { InstanceDiscovery, PrincipalResource } from "./types";
+import type { InstanceDiscovery, Locale, PrincipalResource, WriteResult } from "./types";
 import type { WebSessionView } from "./types";
 
 const UApp = lazyPage(() => import("@nuxt/ui/components/App.vue"));
@@ -57,6 +57,9 @@ const preferredOrigin = computed(() => {
   return value && value !== window.location.origin ? value : null;
 });
 const loadingSession = ref(false);
+const localeBusy = ref(false);
+const pendingLocaleSave = ref<{ principalId: string; locale: Locale; version: number; key: string } | null>(null);
+const { clearError: clearLocaleError, error: localeError, appendError: appendLocaleError, setErrorKey: setLocaleErrorKey } = useLocalizedError();
 const {
   clearError: clearSessionError,
   error: sessionError,
@@ -167,6 +170,47 @@ watch([authenticatedRoute, () => session.value?.principal.theme], ([authenticate
   applyTheme(theme, authenticated);
 }, { immediate: true });
 
+watch([authenticatedRoute, () => session.value?.principal.id, () => session.value?.principal.locale], ([authenticated, principalId, saved]) => {
+  applyAccountLocalePreference(saved, authenticated && principalId !== undefined);
+});
+
+async function changeLocale(value: Locale): Promise<void> {
+  if (!session.value || localeBusy.value) return;
+  const principalId = session.value.principal.id;
+  if (pendingLocaleSave.value && pendingLocaleSave.value.principalId !== principalId) {
+    setLocaleErrorKey("locale.originalAccount");
+    return;
+  }
+  const operation = pendingLocaleSave.value ?? { principalId, locale: value, version: session.value.principal.version, key: crypto.randomUUID() };
+  pendingLocaleSave.value = operation;
+  localeBusy.value = true;
+  clearLocaleError();
+  const current = () => session.value?.principal.id === principalId;
+  try {
+    const result = await apiRequest<WriteResult<PrincipalResource>>("/api/v1/me", {
+      method: "PATCH", body: { locale: operation.locale, expected_version: operation.version },
+      idempotencyKey: operation.key, idempotencyScope: principalId, authorizationCurrent: current,
+      validateResponse: value => {
+        const resource = (value as WriteResult<PrincipalResource> | null)?.resource;
+        return resource?.id === principalId && resource.locale === operation.locale
+          && typeof resource.display_name === "string"
+          && Number.isSafeInteger(resource.version) && resource.version > operation.version;
+      },
+    });
+    pendingLocaleSave.value = null;
+    if (current()) updateProfile(result.resource);
+  } catch (caught) {
+    const rejected = caught instanceof ApiProblem && caught.body.source === "service" && caught.status >= 400 && caught.status < 500;
+    if (rejected) pendingLocaleSave.value = null;
+    setLocaleErrorKey(rejected ? "locale.saveFailed" : "locale.uncertain");
+    appendLocaleError(caught);
+    if (rejected && caught.body.code === "VERSION_CONFLICT" && current()) {
+      try { updateProfile(await apiRequest<PrincipalResource>("/api/v1/me", { authorizationCurrent: current })); }
+      catch (readbackError) { appendLocaleError(readbackError); }
+    }
+  } finally { localeBusy.value = false; }
+}
+
 function updateProfile(principal: PrincipalResource): void {
   if (session.value?.principal.id !== principal.id) return;
   if (principal.version < session.value.principal.version) return;
@@ -174,6 +218,7 @@ function updateProfile(principal: PrincipalResource): void {
     ...session.value.principal,
     display_name: principal.display_name,
     theme: principal.theme ?? "orange",
+    ...(principal.locale === undefined ? {} : { locale: principal.locale }),
     version: principal.version,
   };
 }
@@ -362,11 +407,15 @@ watch(currentPath, () => {
       :context="context?.label"
       :role="context?.role"
       :session="session"
+      :locale-busy="localeBusy"
+      :locale-retry="!!pendingLocaleSave"
       :project-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' ? route.projectId : context?.projectId"
       :workspace-id="route.kind === 'project' || route.kind === 'labels' || route.kind === 'activity' || route.kind === 'deleted' ? route.workspaceId : context?.workspaceId"
       @verified="acceptVerifiedSession"
       @logout="logout"
+      @locale="changeLocale"
     />
+    <ErrorNotice v-if="localeError" :error="localeError" />
 
     <div v-if="loadingSession && !session" class="session-gate">
       <PageState loading />
@@ -412,6 +461,7 @@ watch(currentPath, () => {
         v-else-if="route.kind === 'profile'"
         :key="`${sessionViewGeneration}:${currentPath}`"
         :session="session"
+        :profile-locked="localeBusy || pendingLocaleSave?.principalId === session.principal.id"
         @context="context = $event"
         @updated="updateProfile"
       />

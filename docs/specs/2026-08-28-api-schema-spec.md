@@ -34,7 +34,7 @@
 - Web 合同：[极简 Web UI SPEC](2026-08-29-web-ui-spec.md)（Frozen）
 - 架构基线：[Cloudflare 架构基线](../architecture/cloudflare-baseline.md)
 - 平台快照：[2026-08-28 Cloudflare 平台快照](../research/cloudflare-platform-snapshot-2026-08-28.md)
-- 最近更新：2026-10-01（CFK-528 Principal 主题与 schema 14；CFK-532 独立项目状态计数）
+- 最近更新：2026-10-04（Principal 语言偏好与 schema 19；CFK-528 主题与 CFK-532 独立项目状态计数保持兼容）
 - 冻结日期：2026-08-29
 
 ## 1. 目的与边界
@@ -217,17 +217,17 @@ cursor 不包含 secret，也不以保密性作为安全边界。服务端每次
 | GET | `/.well-known/cfkanban-instance.json` | Public | 动态返回非秘密实例 ID、当前请求 origin、Owner 推荐 origin 与递增版本；`no-store` |
 | GET | `/invite?code=...` | Public bearer URL | 无副作用 bootstrap 文档/摘要，`no-store`、`no-referrer` |
 | GET | `/api/v1/meta` | Authenticated | instance、service/schema version、capabilities、preferred/observed origin、origin version 与当前可见 scope 摘要 |
-| GET | `/api/v1/me` | Authenticated | 当前 Principal（含 `theme`）、Credential fingerprint、Grants 摘要和 allowed actions |
-| PATCH | `/api/v1/me` | Authenticated | 修改自己的 `display_name` 和/或 `theme`，至少一项，带 `expected_version` |
+| GET | `/api/v1/me` | Authenticated | 当前 Principal（含 `locale`、`theme`）、Credential fingerprint、Grants 摘要和 allowed actions |
+| PATCH | `/api/v1/me` | Authenticated | 修改自己的 `display_name`、`locale`、`theme` 中至少一项，带 `expected_version` |
 | GET | `/api/v1/events` | Authenticated | 按当前可读 Project 过滤的 domain Event 增量读取 |
 
-#### 本人主题与资料更新（CFK-528）
+#### 本人语言、主题与资料更新
 
-`Principal.theme` 为 `orange | blue`，新建及迁移后的既有 Principal 默认 `orange`。`GET /api/v1/me` 的顶层 `theme` 及 `GET /api/v1/web-session` 的 `principal.theme` 均返回该值。主题是非秘密的个人偏好，不改变 Principal ID、授权、Session scope 或任何业务操作语义。
+`Principal.theme` 为 `orange | blue`，新建及迁移后的既有 Principal 默认 `orange`。`Principal.locale` 为 `en | zh-CN | null`，`null` 表示尚未保存语言偏好，由客户端使用既有语言回退；新建及 schema 19 迁移后的既有 Principal 默认 `null`。`GET /api/v1/me` 的顶层 `locale`、`theme` 及 `GET /api/v1/web-session` 的 `principal.locale`、`principal.theme` 均返回当前值。语言与主题是非秘密的个人偏好，不改变 Principal ID、授权、Session scope、API 机器字段或任何业务操作语义。
 
-`PATCH /api/v1/me` 接受至少一个显式可编辑字段 `display_name` 或 `theme`，以及必填 `expected_version`；两个字段也可在同一 Principal 资源更新中提交。省略字段保持原值；拒绝未知 theme、`null` 和非字符串。名称单独更新请求保持兼容，名称仍按[唯一显示名称合同](2026-09-20-principal-names-spec.md)规范化与判重；主题单独更新不执行改名。所有已认证角色均可更新本人，Cookie 请求继续使用既有同源与 CSRF 防护。
+`PATCH /api/v1/me` 接受至少一个显式可编辑字段 `display_name`、`locale` 或 `theme`，以及必填 `expected_version`；这些字段也可在同一 Principal 资源更新中提交。省略字段保持原值；`locale: null` 清除已保存语言偏好，拒绝未知 locale 和非字符串的非空值；theme 继续拒绝未知值、`null` 和非字符串。名称单独更新请求保持兼容，名称仍按[唯一显示名称合同](2026-09-20-principal-names-spec.md)规范化与判重；语言或主题单独更新不执行改名。所有已认证角色均可更新本人，Cookie 请求继续使用既有同源与 CSRF 防护。
 
-更新使用 Principal CAS，原子保存显式字段、递增 version 并写入安全审计。含 `theme` 的更新使用 `principal.profile-updated`，payload 只包含本次显式更新字段；仅名称更新继续使用 `principal.display-name-updated`。为兼容已有调用，`Idempotency-Key` 保持可选；提供时遵循已有 24 小时幂等原响应重放合同。冲突不部分更新，不自动重放到新 version。客户端收到服务端确认的更新资源或读回 `/me` 后才将结果视为保存完成；选择控件的本地值不能作为保存成功证据。
+更新使用 Principal CAS，原子保存显式字段、递增 version 并写入安全审计。含 `locale` 或 `theme` 的更新使用 `principal.profile-updated`，payload 只包含本次显式更新字段；仅名称更新继续使用 `principal.display-name-updated`。为兼容已有调用，`Idempotency-Key` 保持可选；提供时遵循已有 24 小时幂等原响应重放合同。冲突不部分更新，不自动重放到新 version。客户端收到服务端确认的更新资源或读回 `/me` 后才将结果视为保存完成；选择控件的本地值不能作为保存成功证据。schema 19 仅追加可空 `principals.locale` 列与允许值约束，不改写已发行 migration、不重置既有主题或凭据。
 
 ### 5.2 Workspace、Project 与状态显示
 

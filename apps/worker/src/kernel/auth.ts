@@ -16,6 +16,7 @@ interface BearerRow {
 
 interface SessionRow {
   display_name: string;
+  locale: "en" | "zh-CN" | null;
   theme: "orange" | "blue";
   owner_principal_id: string;
   principal_id: string;
@@ -132,7 +133,7 @@ export async function authenticateCookieSession(
               ws.target_kind, ws.target_json, ws.expires_at AS session_expires_at,
               ws.created_at AS session_created_at, ws.last_seen_at AS session_last_renewed_at,
               ws.version AS session_version,
-              p.display_name, p.theme,
+              p.display_name, p.locale, p.theme,
               p.version AS principal_version, im.owner_principal_id
        FROM web_sessions AS ws
        JOIN principals AS p ON p.id = ws.principal_id
@@ -176,6 +177,7 @@ export async function authenticateCookieSession(
     displayName: row.display_name,
     isOwner: row.principal_id === row.owner_principal_id,
     kind: "cookie",
+    locale: row.locale,
     theme: row.theme,
     principalId: row.principal_id,
     principalVersion: row.principal_version,

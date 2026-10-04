@@ -95,7 +95,7 @@ export class WorkbenchBridge {
   async rowPermissions(binding, signal) {
     const identity = dataOf(await this.tool(binding, 'cfkanban_connection_inspect', {}, signal));
     const principal = identity.principal;
-    return principal?.is_owner === true || principal?.grants?.some(grant => grant.workspace_id === binding.workspace_id && grant.project_id === binding.project_id && ['owner', 'writer'].includes(grant.role));
+    return { identity, writer: principal?.is_owner === true || principal?.grants?.some(grant => grant.workspace_id === binding.workspace_id && grant.project_id === binding.project_id && ['owner', 'writer'].includes(grant.role)) };
   }
 
   rowActions(rows, writer) {
@@ -189,10 +189,10 @@ export class WorkbenchBridge {
       if (input.assignment === 'mine') args.assignee = [binding.principal_id];
       else if (input.assignment !== undefined && input.assignment !== 'all') throw new PanelError('PANEL_INVALID_INPUT', 'Invalid assignment.');
       if (input.cursor) args.cursor = boundedText(input.cursor, 4096, 'cursor');
-      const writer = await this.rowPermissions(binding, signal);
+      const { identity, writer } = await this.rowPermissions(binding, signal);
       const page = await this.tool(binding, 'cfkanban_issues_list', args, signal);
       if (!page.ok) return page;
-      return { ...page, data: { ...page.data, items: this.rowActions(page.data.items ?? [], writer) } };
+      return { ...page, data: { ...page.data, items: this.rowActions(page.data.items ?? [], writer), identity } };
     }
     if (endpoint === 'board') {
       record(input, ['binding_id', 'status_key', 'priority', 'assignment', 'cursor'], ['binding_id']);
@@ -206,24 +206,27 @@ export class WorkbenchBridge {
       else if (input.assignment !== undefined && input.assignment !== 'all') throw new PanelError('PANEL_INVALID_INPUT', 'Invalid assignment.');
       if (input.cursor !== undefined) args.cursor = boundedText(input.cursor, 4096, 'cursor');
       const result = [];
-      const writer = await this.rowPermissions(binding, signal);
+      const { identity, writer } = await this.rowPermissions(binding, signal);
       for (const column of selected) {
         const page = dataOf(await this.tool(binding, 'cfkanban_issues_list', { ...args, status: [column.key] }, signal));
         result.push({ key: column.key, display_name: column.display_name, items: this.rowActions(Array.isArray(page) ? page : page.items ?? [], writer), next_cursor: page.next_cursor ?? page.continuation?.next_cursor ?? null });
       }
-      return ok({ columns: result });
+      return ok({ columns: result, identity });
     }
-    if (endpoint === 'assignees') {
+    if (endpoint === 'assignees' || endpoint === 'labels') {
       record(input, ['binding_id', 'cursor'], ['binding_id']);
       const binding = this.binding(input);
-      return this.tool(binding, 'cfkanban_assignees_list', { workspace_id: binding.workspace_id, project_id: binding.project_id, limit: 20, ...(input.cursor === undefined ? {} : { cursor: boundedText(input.cursor, 4096, 'cursor') }) }, signal);
+      return this.tool(binding, endpoint === 'labels' ? 'cfkanban_labels_list' : 'cfkanban_assignees_list', { workspace_id: binding.workspace_id, project_id: binding.project_id, limit: 20, ...(input.cursor === undefined ? {} : { cursor: boundedText(input.cursor, 4096, 'cursor') }) }, signal);
     }
     if (endpoint === 'detail' || endpoint === 'comments') {
       record(input, ['binding_id', 'identifier', 'cursor'], ['binding_id', 'identifier']);
       const binding = this.binding(input);
       const args = { identifier: identifier(input.identifier) };
       if (endpoint === 'comments') { args.limit = 25; if (input.cursor) args.cursor = boundedText(input.cursor, 4096, 'cursor'); }
-      return this.tool(binding, endpoint === 'detail' ? 'cfkanban_issues_get' : 'cfkanban_comments_list', args, signal);
+      if (endpoint === 'comments') return this.tool(binding, 'cfkanban_comments_list', args, signal);
+      const identity = dataOf(await this.tool(binding, 'cfkanban_connection_inspect', {}, signal));
+      const detail = await this.tool(binding, 'cfkanban_issues_get', args, signal);
+      return detail.ok ? { ...detail, data: { ...detail.data, identity } } : detail;
     }
     if (endpoint === 'mutate' || endpoint === 'recover') return this.mutate(endpoint, input, signal);
     throw new PanelError('PANEL_UNKNOWN_OPERATION', 'This panel operation is unavailable.');
@@ -253,18 +256,28 @@ export class WorkbenchBridge {
   }
 
   async mutate(endpoint, input, signal) {
-    record(input, ['binding_id', 'identifier', 'operation', 'expected_version', 'idempotency_key', 'change'], ['binding_id', 'identifier', 'operation', 'expected_version', 'idempotency_key', 'change']);
+    record(input, ['binding_id', 'identifier', 'operation', 'expected_version', 'idempotency_key', 'change'], ['binding_id', 'operation', 'expected_version', 'idempotency_key', 'change']);
     const binding = this.binding(input);
-    identifier(input.identifier);
+    const profile = input.operation === 'set_locale';
+    if (profile) { if (Object.hasOwn(input, 'identifier')) throw new PanelError('PANEL_INVALID_INPUT', 'A language preference belongs only to the bound Principal.'); }
+    else identifier(input.identifier);
     uuid(input.idempotency_key, 'idempotency_key');
     if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 1) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid version.');
     const change = input.change;
     let name;
-    if (input.operation === 'update') {
+    if (profile) {
+      record(change, ['locale'], ['locale']);
+      if (!['en', 'zh-CN'].includes(change.locale)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid language preference.');
+      name = 'cfkanban_profile_locale_set';
+    } else if (input.operation === 'update') {
       record(change, ['status_key', 'priority_key', 'assignee_principal_id']);
       if (!Object.keys(change).length || (change.status_key !== undefined && (!STATUSES.includes(change.status_key) || change.status_key === 'done')) || (change.priority_key !== undefined && !PRIORITIES.includes(change.priority_key))) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid Issue change.');
       if (change.assignee_principal_id !== undefined && change.assignee_principal_id !== null) uuid(change.assignee_principal_id, 'assignee');
       name = 'cfkanban_issues_update';
+    } else if (['label_add', 'label_remove'].includes(input.operation)) {
+      record(change, ['label_id'], ['label_id']);
+      uuid(change.label_id, 'label');
+      name = input.operation === 'label_add' ? 'cfkanban_issues_labels_add' : 'cfkanban_issues_labels_remove';
     } else if (input.operation === 'comment') {
       record(change, ['body'], ['body']);
       boundedText(change.body, 32768, 'comment');
@@ -277,7 +290,8 @@ export class WorkbenchBridge {
       for (const artifact of change.artifacts ?? []) { record(artifact, ['kind', 'value'], ['kind', 'value']); if (!['url', 'commit', 'path', 'other'].includes(artifact.kind)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid artifact kind.'); boundedText(artifact.value, 2048, 'artifact'); }
       name = 'cfkanban_issues_complete';
     } else throw new PanelError('PANEL_INVALID_INPUT', 'Invalid operation.');
-    const args = { identifier: input.identifier, idempotency_key: input.idempotency_key, ...(input.operation === 'update' ? { expected_version: input.expected_version, changes: change } : input.operation === 'complete' ? { expected_version: input.expected_version, ...change } : change) };
+    const args = { ...(profile ? {} : { identifier: input.identifier }), idempotency_key: input.idempotency_key, ...(input.operation === 'update' ? { expected_version: input.expected_version, changes: change } : input.operation === 'comment' ? change : { expected_version: input.expected_version, ...change }) };
+    const readCurrent = () => this.tool(binding, profile ? 'cfkanban_connection_inspect' : 'cfkanban_issues_get', profile ? {} : { identifier: input.identifier }, signal);
     const fingerprint = canonical({ name, args });
     let operation = binding.operations.get(input.idempotency_key);
     if (operation && (operation.fingerprint !== fingerprint || canonical(operation.original) !== canonical(input))) throw new PanelError('PANEL_KEY_REUSED', 'The original key belongs to a different operation.');
@@ -294,7 +308,7 @@ export class WorkbenchBridge {
     }
     if (operation.running) throw new PanelError('PANEL_OPERATION_PENDING', 'This operation is already running.');
     if (operation.settled && operation.result) {
-      const current = await this.tool(binding, 'cfkanban_issues_get', { identifier: input.identifier }, signal);
+      const current = await readCurrent();
       if (!current.ok) return operation.stage === 'not_sent' ? operationResult(operation, current, null) : current;
       operation.readback = current.data;
       operation.result = operationResult(operation, operation.result);
@@ -306,23 +320,24 @@ export class WorkbenchBridge {
       if (operation.stage === 'not_sent') {
         try {
           signal.throwIfAborted();
-          const preflight = await this.tool(binding, 'cfkanban_issues_get', { identifier: original.identifier }, signal);
+          const preflight = await readCurrent();
           signal.throwIfAborted();
           if (!preflight.ok) {
             operation.settled = preflight.status >= 400 && preflight.status < 500 && !preflight.outcome_unknown;
             operation.result = operationResult(operation, { ...preflight, outcome_unknown: false });
             return operation.result;
           }
-          const issue = preflight.data;
-          if (!issue.allowed_actions?.includes('update')) throw new PanelError('PANEL_PERMISSION_DENIED', 'Refresh the Issue and verify writer permission.');
-          if (original.operation !== 'comment' && issue.version !== original.expected_version) throw new PanelError('PANEL_VERSION_CONFLICT', 'The Issue changed. Refresh and review it before starting another operation.', { current_version: issue.version });
+          const resource = profile ? preflight.data.principal : preflight.data;
+          if (profile && (resource?.principal_id ?? resource?.id) !== binding.principal_id) throw new PanelError('PANEL_IDENTITY_CHANGED', 'The Host identity changed. Select it again.');
+          if (!profile && !resource.allowed_actions?.includes('update')) throw new PanelError('PANEL_PERMISSION_DENIED', 'Refresh the Issue and verify writer permission.');
+          if (original.operation !== 'comment' && resource?.version !== original.expected_version) throw new PanelError('PANEL_VERSION_CONFLICT', 'The resource changed. Refresh and review it before starting another operation.', { current_version: resource?.version });
         } catch (error) {
           operation.settled = error instanceof PanelError && ['PANEL_PERMISSION_DENIED', 'PANEL_VERSION_CONFLICT', 'PANEL_SCOPE_DENIED'].includes(error.code);
           operation.result = operationResult(operation, operation.settled ? fail(error.code, error.message, error.details) : fail('PANEL_REQUEST_UNCERTAIN', 'Permission pre-read interrupted or unavailable. No write was sent; recover the original request explicitly.'));
           return operation.result;
         }
       } else if (endpoint === 'recover') {
-        const current = await this.tool(binding, 'cfkanban_issues_get', { identifier: original.identifier }, signal);
+        const current = await readCurrent();
         if (!current.ok) return current;
       }
       signal.throwIfAborted();
@@ -332,7 +347,7 @@ export class WorkbenchBridge {
       const result = await this.tool(binding, operation.name, operation.args, signal);
       operation.result = result;
       operation.settled = result.ok || (endpoint === 'mutate' && result.status >= 400 && result.status < 500 && !result.outcome_unknown);
-      const readback = await this.tool(binding, 'cfkanban_issues_get', { identifier: original.identifier }, signal);
+      const readback = await readCurrent();
       if (readback.ok) operation.readback = readback.data;
       operation.result = operationResult(operation, result, readback.ok ? readback.data : null);
       return operation.result;

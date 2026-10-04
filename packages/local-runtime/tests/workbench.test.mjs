@@ -28,10 +28,15 @@ function paginationController(reply, view = 'board') {
   controller.patch({ binding });
   return { controller, calls, binding };
 }
-function fixture({ reader = false, uncertain = false } = {}) {
+function fixture({ reader = false, uncertain = false, locale = null, theme = 'orange', uncertainPreference = false, uncertainLabel = false } = {}) {
   const ids = { instance_id: randomUUID(), workspace_id: randomUUID(), project_id: randomUUID(), principal_id: randomUUID() };
   const person = { principal_id: randomUUID(), display_name: 'Public writer' };
-  let issue = { id: randomUUID(), identifier: 'CFK-1', title: 'Work', version: 3, priority: 'none', status: { key: 'todo', display_name: 'Todo' }, project: { id: ids.project_id }, workspace: { id: ids.workspace_id }, allowed_actions: reader ? ['read'] : ['read', 'update'], comments: [] };
+  const label = { id: randomUUID(), name: 'Existing project label' };
+  const nextLabel = { id: randomUUID(), name: 'Next page label' };
+  let principal = { id: ids.principal_id, principal_id: ids.principal_id, display_name: 'Fixture', version: 1, locale, theme, grants: [{ workspace_id: ids.workspace_id, project_id: ids.project_id, role: reader ? 'reader' : 'writer' }] };
+  let issue = { id: randomUUID(), identifier: 'CFK-1', title: 'Work', version: 3, priority: 'none', status: { key: 'todo', display_name: 'Todo' }, project: { id: ids.project_id }, workspace: { id: ids.workspace_id }, allowed_actions: reader ? ['read'] : ['read', 'update'], comments: [], labels: [] };
+  const preferenceReceipts = new Map();
+  const labelReceipts = new Map();
   let unknown = uncertain;
   let denied = false;
   let scopeReads = 0;
@@ -41,12 +46,33 @@ function fixture({ reader = false, uncertain = false } = {}) {
   const bridge = new WorkbenchBridge({ directory: '/trusted-launcher-only', host: { singleUserLocal: true, hasWebServer: true, webHost: '127.0.0.1', operator }, directoryReader: async ({ signal }) => { scopeReads++; assert.ok(signal instanceof AbortSignal); return { status: 'configured', targets: [target] }; }, createFacade: config => ({ callTool: async (name, args) => {
     calls.push({ name, args, config });
     if (denied) return { ok: false, status: 403, error: { code: 'CAPABILITY_DENIED' } };
-    if (name === 'cfkanban_connection_inspect') return ok({ instance: { instance_id: ids.instance_id, trusted_api_origin: 'https://isolated.fixture.invalid' }, principal: { id: ids.principal_id, principal_id: ids.principal_id, display_name: 'Fixture', grants: [{ workspace_id: ids.workspace_id, project_id: ids.project_id, role: reader ? 'reader' : 'writer' }] } });
+    if (name === 'cfkanban_connection_inspect') return ok({ instance: { instance_id: ids.instance_id, trusted_api_origin: 'https://isolated.fixture.invalid' }, principal: structuredClone(principal) });
     if (name === 'cfkanban_projects_get') return ok({ id: ids.project_id, display_name: 'Project' });
     if (name === 'cfkanban_statuses_list') return ok({ items: STATUSES.map(key => ({ key, display_name: key })) });
     if (name === 'cfkanban_issues_list') return ok({ items: !args.status || args.status.includes(issue.status.key) ? [structuredClone(issue)] : [], next_cursor: args.status?.includes('todo') && !args.cursor ? 'private-column-cursor' : null });
     if (name === 'cfkanban_issues_get') return ok(structuredClone(issue));
     if (name === 'cfkanban_assignees_list') return ok({ items: [person], next_cursor: args.cursor ? null : 'private-assignee-cursor' });
+    if (name === 'cfkanban_labels_list') return ok({ items: args.cursor ? [nextLabel] : [label], next_cursor: args.cursor ? null : 'private-label-cursor' });
+    if (name === 'cfkanban_profile_locale_set') {
+      if (preferenceReceipts.has(args.idempotency_key)) return preferenceReceipts.get(args.idempotency_key);
+      if (args.expected_version !== principal.version) return { ok: false, status: 409, error: { code: 'VERSION_CONFLICT' } };
+      principal = { ...principal, locale: args.locale, version: principal.version + 1 };
+      const result = ok({ resource: structuredClone(principal) });
+      preferenceReceipts.set(args.idempotency_key, result);
+      if (uncertainPreference) { uncertainPreference = false; return { ok: false, status: 0, outcome_unknown: true, error: { code: 'NETWORK_ERROR' } }; }
+      return result;
+    }
+    if (['cfkanban_issues_labels_add', 'cfkanban_issues_labels_remove'].includes(name)) {
+      if (labelReceipts.has(args.idempotency_key)) return labelReceipts.get(args.idempotency_key);
+      if (args.expected_version !== issue.version) return { ok: false, status: 409, error: { code: 'VERSION_CONFLICT' } };
+      const selected = [label, nextLabel].find(row => row.id === args.label_id);
+      if (!selected) return { ok: false, status: 404, error: { code: 'NOT_FOUND' } };
+      issue = { ...issue, version: issue.version + 1, labels: name === 'cfkanban_issues_labels_add' ? [...issue.labels, selected] : issue.labels.filter(row => row.id !== selected.id) };
+      const result = ok({ resource: structuredClone(issue) });
+      labelReceipts.set(args.idempotency_key, result);
+      if (uncertainLabel) { uncertainLabel = false; return { ok: false, status: 0, outcome_unknown: true, error: { code: 'NETWORK_ERROR' } }; }
+      return result;
+    }
     if (name === 'cfkanban_issues_update') {
       if (unknown) { unknown = false; return { ok: false, status: 0, outcome_unknown: true, error: { code: 'NETWORK_ERROR' } }; }
       issue = { ...issue, version: issue.version + 1, priority: args.changes.priority_key ?? issue.priority, status: args.changes.status_key ? { key: args.changes.status_key, display_name: args.changes.status_key } : issue.status, assignee: args.changes.assignee_principal_id === null ? null : args.changes.assignee_principal_id ? person : issue.assignee };
@@ -56,7 +82,7 @@ function fixture({ reader = false, uncertain = false } = {}) {
   } }) });
   const call = (endpoint, input = {}) => bridge.call(endpoint, { protocol: 1, input }, new AbortController().signal, operator);
   const controller = new WorkbenchController({ call: async (endpoint, payload, signal) => ({ ok: true, value: await bridge.call(endpoint, payload, signal, operator) }) }, new AbortController().signal);
-  return { bridge, controller, ids, target, person, calls, call, get scopeReads() { return scopeReads; }, get issue() { return issue; }, deny() { denied = true; } };
+  return { bridge, controller, ids, target, person, label, nextLabel, calls, call, get scopeReads() { return scopeReads; }, get issue() { return issue; }, get principal() { return principal; }, deny() { denied = true; } };
 }
 
 function interceptFacade(f, intercept) {
@@ -766,4 +792,278 @@ test('cancellation after send keeps uncertainty and permission loss cannot resen
     assert.equal(resumed.state.pending, null);
     assert.equal(f.bridge.hasPending(), false);
   } finally { resumed?.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('workbench projects only the verified Principal locale and theme, and refresh picks up full Web preferences', async () => {
+  const { WorkbenchAdapter } = await adapterExports();
+  const f = fixture({ locale: 'zh-CN', theme: 'blue' }); await f.controller.bootstrap();
+  const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    adapter.setLocale('en');
+    const snapshot = adapter.snapshotMessage().state;
+    assert.equal(snapshot.locale, 'zh-CN'); assert.equal(snapshot.theme, 'blue');
+    assert.equal(Object.hasOwn(snapshot.binding.identity.principal, 'locale'), false);
+    assert.equal(Object.hasOwn(snapshot.binding.identity.principal, 'theme'), false);
+    assert.equal(Object.hasOwn(snapshot.binding.identity.principal, 'version'), false);
+    f.principal.locale = 'en'; f.principal.theme = 'orange';
+    await f.controller.refresh();
+    assert.equal(adapter.snapshotMessage().state.locale, 'en');
+    assert.equal(adapter.snapshotMessage().state.theme, 'orange');
+    f.principal.locale = null;
+    await f.controller.refresh(); adapter.setLocale('zh-CN');
+    assert.equal(adapter.snapshotMessage().state.locale, 'zh-CN');
+    const checkpoint = f.controller.getCheckpoint();
+    assert.equal(Object.hasOwn(checkpoint.state.binding.identity.principal, 'locale'), false);
+    assert.equal(Object.hasOwn(checkpoint.state.binding.identity.principal, 'theme'), false);
+    assert.equal(Object.hasOwn(checkpoint.state.binding.identity.principal, 'version'), false);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('readers can save only their own language preference with profile CAS and cannot change Issue labels', async () => {
+  const f = fixture({ reader: true, theme: 'blue' }); await f.controller.bootstrap(); await f.controller.openIssue('CFK-1');
+  const { WorkbenchAdapter } = await adapterExports(); const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    assert.equal((await adapter.receive(action('set_locale', { locale: 'zh-CN' }))).ok, true);
+    assert.equal(f.principal.locale, 'zh-CN'); assert.equal(f.principal.theme, 'blue');
+    const writes = f.calls.filter(row => row.name === 'cfkanban_profile_locale_set');
+    assert.equal(writes.length, 1); assert.equal(writes[0].args.expected_version, 1);
+    assert.deepEqual(Object.keys(writes[0].args).sort(), ['expected_version', 'idempotency_key', 'instance_id', 'locale']);
+    assert.equal(writes[0].config.binding.expected_principal_id, f.ids.principal_id);
+    assert.equal(adapter.snapshotMessage().state.locale, 'zh-CN');
+    assert.equal((await adapter.receive(action('set_locale', { locale: 'zh-CN' }))).ok, true);
+    assert.equal(f.calls.filter(row => row.name === 'cfkanban_profile_locale_set').length, 1);
+    await adapter.receive(action('labels', { next: false }));
+    assert.equal((await adapter.receive(action('mutate', { operation: 'label_add', change: { label_id: f.label.id } }))).error.code, 'PANEL_INVALID_INPUT');
+    const refusedLabel = await f.call('mutate', { binding_id: f.controller.state.binding.binding_id, identifier: 'CFK-1', operation: 'label_add', expected_version: f.issue.version, idempotency_key: randomUUID(), change: { label_id: f.label.id } });
+    assert.equal(refusedLabel.error.code, 'PANEL_PERMISSION_DENIED');
+    assert.equal(f.calls.filter(row => row.name === 'cfkanban_issues_labels_add').length, 0);
+    const original = { binding_id: f.controller.state.binding.binding_id, operation: 'set_locale', expected_version: f.principal.version, idempotency_key: randomUUID(), change: { locale: 'en' } };
+    const before = f.calls.length;
+    for (const altered of [{ ...original, identifier: 'CFK-1' }, { ...original, principal_id: randomUUID() }, { ...original, change: { locale: 'en', theme: 'orange' } }, { ...original, change: { locale: 'fr' } }]) assert.equal((await f.call('mutate', altered)).error.code, 'PANEL_INVALID_INPUT');
+    assert.equal(f.calls.length, before);
+    f.principal.version++;
+    const stale = await f.call('mutate', original);
+    assert.equal(stale.error.code, 'PANEL_VERSION_CONFLICT'); assert.equal(stale.panel.write_stage, 'not_sent');
+    assert.equal(f.calls.filter(row => row.name === 'cfkanban_profile_locale_set').length, 1);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('unknown language saves retain the exact profile request across refresh and permission loss before same-key recovery', async () => {
+  const f = fixture({ uncertainPreference: true }); await f.controller.bootstrap();
+  let denied = false;
+  interceptFacade(f, async (facade, name, args, options) => denied && name === 'cfkanban_connection_inspect' ? { ok: false, status: 403, error: { code: 'CAPABILITY_DENIED' } } : facade.callTool(name, args, options));
+  let resumed;
+  try {
+    assert.equal((await f.controller.setLocale('zh-CN')).outcome_unknown, true);
+    const checkpoint = f.controller.getCheckpoint(); const original = structuredClone(checkpoint.state.pending);
+    assert.equal(original.operation, 'set_locale'); assert.equal(Object.hasOwn(original, 'identifier'), false);
+    assert.equal(original.expected_version, 1); assert.equal(f.principal.version, 2); assert.equal(f.principal.locale, 'zh-CN');
+    assert.equal(f.bridge.acceptsCheckpoint(checkpoint), true);
+    const altered = structuredClone(checkpoint); altered.state.pending.change.theme = 'blue';
+    assert.equal(validateCheckpoint(altered), null);
+    altered.state.pending = { ...original, identifier: 'CFK-1' };
+    assert.equal(validateCheckpoint(altered), null);
+    assert.equal((await f.call('unbind', { binding_id: original.binding_id })).error.code, 'PANEL_OPERATION_PENDING');
+    assert.equal((await f.call('recover', { ...original, change: { locale: 'en' } })).error.code, 'PANEL_KEY_REUSED');
+    resumed = new WorkbenchController(f.controller.rpc, new AbortController().signal);
+    assert.equal(await resumed.restoreCheckpoint(checkpoint), true);
+    assert.deepEqual(resumed.state.pending, original);
+    denied = true;
+    assert.equal((await resumed.mutate(null, null, true)).error.code, 'CAPABILITY_DENIED');
+    assert.deepEqual(resumed.state.pending, original);
+    assert.equal(f.calls.filter(row => row.name === 'cfkanban_profile_locale_set').length, 1);
+    denied = false;
+    assert.equal((await resumed.mutate(null, null, true)).ok, true);
+    const writes = f.calls.filter(row => row.name === 'cfkanban_profile_locale_set');
+    assert.equal(writes.length, 2); assert.deepEqual(writes[1].args, writes[0].args);
+    assert.equal(f.principal.version, 2); assert.equal(resumed.state.pending, null); assert.equal(f.bridge.hasPending(), false);
+    assert.equal(resumed.state.binding.identity.principal.locale, 'zh-CN');
+  } finally { resumed?.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('cancelled language pre-read is checkpointed before await and resumes without creating another key', async () => {
+  const f = fixture(); await f.controller.bootstrap();
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; }); let pause = true;
+  interceptFacade(f, async (facade, name, args, options) => {
+    if (name === 'cfkanban_connection_inspect' && pause) { pause = false; entered(); await new Promise((_, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true })); }
+    return facade.callTool(name, args, options);
+  });
+  let resumed;
+  try {
+    const writing = f.controller.setLocale('zh-CN'); await started;
+    const checkpoint = f.controller.getCheckpoint(); const original = checkpoint.state.pending;
+    const ledger = f.bridge.bindings.get(original.binding_id).operations.get(original.idempotency_key);
+    assert.equal(ledger.stage, 'not_sent'); assert.equal(f.bridge.acceptsCheckpoint(checkpoint), true);
+    f.controller.dispose(); await writing;
+    assert.equal(ledger.running, false); assert.equal(f.calls.filter(row => row.name === 'cfkanban_profile_locale_set').length, 0);
+    resumed = new WorkbenchController(f.controller.rpc, new AbortController().signal);
+    assert.equal(await resumed.restoreCheckpoint(checkpoint), true);
+    assert.equal((await resumed.mutate(null, null, true)).ok, true);
+    const writes = f.calls.filter(row => row.name === 'cfkanban_profile_locale_set');
+    assert.equal(writes.length, 1); assert.equal(writes[0].args.idempotency_key, original.idempotency_key);
+    assert.equal(writes[0].args.expected_version, original.expected_version); assert.equal(f.bridge.hasPending(), false);
+  } finally { resumed?.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('Issue label add/remove uses only loaded project candidates, real permissions, CAS and private pagination', async () => {
+  const f = fixture(); await f.controller.bootstrap(); await f.controller.openIssue('CFK-1');
+  const { WorkbenchAdapter } = await adapterExports(); const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    assert.equal((await adapter.receive(action('mutate', { operation: 'label_add', change: { label_id: f.label.id } }))).error.code, 'PANEL_INVALID_INPUT');
+    await adapter.receive(action('labels', { next: false })); await adapter.receive(action('labels', { next: true }));
+    const reads = f.calls.filter(row => row.name === 'cfkanban_labels_list');
+    assert.equal(reads.length, 2); assert.ok(reads.every(row => row.args.limit === 20 && row.args.project_id === f.ids.project_id && row.args.workspace_id === f.ids.workspace_id));
+    assert.equal(reads[1].args.cursor, 'private-label-cursor');
+    assert.doesNotMatch(JSON.stringify(adapter.snapshotMessage()), /private-label-cursor/);
+    assert.deepEqual(adapter.snapshotMessage().state.labels, [f.label, f.nextLabel]);
+    assert.equal((await adapter.receive(action('mutate', { operation: 'label_add', change: { label_id: randomUUID() } }))).error.code, 'PANEL_INVALID_INPUT');
+    assert.equal((await adapter.receive(action('mutate', { operation: 'label_add', change: { label_id: f.label.id } }))).ok, true);
+    assert.deepEqual(adapter.snapshotMessage().state.issue.labels, [f.label]);
+    assert.equal((await adapter.receive(action('mutate', { operation: 'label_add', change: { label_id: f.label.id } }))).error.code, 'PANEL_INVALID_INPUT');
+    assert.equal((await adapter.receive(action('mutate', { operation: 'label_remove', change: { label_id: f.nextLabel.id } }))).error.code, 'PANEL_INVALID_INPUT');
+    assert.equal((await adapter.receive(action('mutate', { operation: 'label_remove', change: { label_id: f.label.id } }))).ok, true);
+    assert.deepEqual(adapter.snapshotMessage().state.issue.labels, []);
+    const writes = f.calls.filter(row => ['cfkanban_issues_labels_add', 'cfkanban_issues_labels_remove'].includes(row.name));
+    assert.deepEqual(writes.map(row => row.args.expected_version), [3, 4]);
+    assert.ok(writes.every(row => row.config.binding.project_ids[0] === f.ids.project_id));
+    const input = { binding_id: f.controller.state.binding.binding_id, identifier: 'CFK-1', operation: 'label_add', expected_version: 3, idempotency_key: randomUUID(), change: { label_id: f.label.id } };
+    assert.equal((await f.call('mutate', input)).error.code, 'PANEL_VERSION_CONFLICT');
+    assert.equal((await f.call('mutate', { ...input, change: { label_id: f.label.id, name: 'Create another label' } })).error.code, 'PANEL_INVALID_INPUT');
+    assert.equal(f.calls.filter(row => ['cfkanban_issues_labels_add', 'cfkanban_issues_labels_remove'].includes(row.name)).length, 2);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('unknown label outcomes keep their Issue CAS and original key across a checkpoint and identical replay', async () => {
+  for (const operation of ['label_add', 'label_remove']) {
+    const f = fixture({ uncertainLabel: true }); await f.controller.bootstrap(); await f.controller.openIssue('CFK-1'); await f.controller.loadLabels();
+    if (operation === 'label_remove') f.issue.labels = [f.label];
+    let resumed;
+    try {
+      assert.equal((await f.controller.mutate(operation, { label_id: f.label.id })).outcome_unknown, true);
+      const checkpoint = f.controller.getCheckpoint(); const original = checkpoint.state.pending;
+      assert.equal(original.operation, operation); assert.equal(original.expected_version, 3); assert.equal(f.issue.version, 4);
+      assert.equal(f.bridge.acceptsCheckpoint(checkpoint), true);
+      const altered = structuredClone(checkpoint); altered.state.pending.change.label_id = randomUUID();
+      assert.ok(validateCheckpoint(altered)); assert.equal(f.bridge.acceptsCheckpoint(altered), false);
+      resumed = new WorkbenchController(f.controller.rpc, new AbortController().signal);
+      assert.equal(await resumed.restoreCheckpoint(checkpoint), true);
+      assert.deepEqual(resumed.state.pending, original);
+      assert.equal((await resumed.mutate(null, null, true)).ok, true);
+      const writes = f.calls.filter(row => row.name === (operation === 'label_add' ? 'cfkanban_issues_labels_add' : 'cfkanban_issues_labels_remove'));
+      assert.equal(writes.length, 2); assert.deepEqual(writes[1].args, writes[0].args);
+      assert.equal(f.issue.version, 4); assert.deepEqual(resumed.state.issue.labels, operation === 'label_add' ? [f.label] : []); assert.equal(resumed.state.pending, null);
+    } finally { resumed?.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+  }
+});
+
+test('a current collection response with an older Principal version cannot replace confirmed preferences', async () => {
+  const f = fixture({ locale: 'en' }); await f.controller.bootstrap();
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }); let pause = true;
+  interceptFacade(f, async (facade, name, args, options) => {
+    const result = await facade.callTool(name, args, options);
+    if (name === 'cfkanban_connection_inspect' && pause) { pause = false; entered(); await new Promise(resolve => { release = () => resolve(); }); }
+    return result;
+  });
+  try {
+    const refreshing = f.controller.refresh(); await started;
+    const confirmed = { ...f.controller.state.binding.identity, principal: { ...f.principal, version: 2, locale: 'zh-CN', theme: 'blue' } };
+    f.controller.patch(f.controller.identityUpdate(confirmed));
+    release(); await refreshing;
+    assert.equal(f.controller.state.binding.identity.principal.version, 2);
+    assert.equal(f.controller.state.binding.identity.principal.locale, 'zh-CN');
+    assert.equal(f.controller.state.binding.identity.principal.theme, 'blue');
+    const { locale, theme, ...oldService } = confirmed.principal;
+    f.controller.patch(f.controller.identityUpdate({ ...confirmed, principal: { ...oldService, version: 3 } }));
+    assert.equal(f.controller.state.binding.identity.principal.locale, 'zh-CN');
+    assert.equal(f.controller.state.binding.identity.principal.theme, 'blue');
+    assert.deepEqual(f.controller.identityUpdate({ ...confirmed, principal: { ...oldService, principal_id: randomUUID(), id: randomUUID(), version: 100 } }), {});
+  } finally { release?.(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('a late locale readback cannot publish older preferences after a newer full Web profile was observed', async () => {
+  const f = fixture({ locale: 'en' }); await f.controller.bootstrap();
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }); let committed = false; let paused = false;
+  interceptFacade(f, async (facade, name, args, options) => {
+    const result = await facade.callTool(name, args, options);
+    if (name === 'cfkanban_profile_locale_set') committed = true;
+    if (name === 'cfkanban_connection_inspect' && committed && !paused) { paused = true; entered(); await new Promise(resolve => { release = () => resolve(); }); }
+    return result;
+  });
+  const observed = [];
+  const unsubscribe = f.controller.subscribe(() => observed.push(structuredClone(f.controller.state.binding.identity.principal)));
+  try {
+    const saving = f.controller.setLocale('zh-CN'); await started;
+    f.principal.version = 3; f.principal.locale = 'en'; f.principal.theme = 'blue';
+    await f.controller.refresh(); observed.length = 0;
+    release(); await saving;
+    assert.ok(observed.every(principal => principal.version >= 3 && principal.locale === 'en' && principal.theme === 'blue'));
+    assert.equal(f.controller.state.pending, null);
+  } finally { release?.(); unsubscribe(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('label pages are singleflight and a first-page refresh invalidates old continuations and their errors', async () => {
+  const f = fixture(); await f.controller.bootstrap();
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; }); let pause = true; let initialPaused = false;
+  interceptFacade(f, async (facade, name, args, options) => {
+    const result = await facade.callTool(name, args, options);
+    if (name === 'cfkanban_labels_list' && pause) { pause = false; entered(); await new Promise(resolve => { release = () => resolve(); }); }
+    return result;
+  });
+  try {
+    const first = f.controller.loadLabels(); await started;
+    const duplicate = f.controller.loadLabels();
+    assert.equal(f.calls.filter(row => row.name === 'cfkanban_labels_list').length, 1);
+    release(); await Promise.all([first, duplicate]);
+    let finish;
+    interceptFacade(f, async (facade, name, args, options) => {
+      if (name === 'cfkanban_labels_list' && args.cursor) return new Promise(resolve => { finish = resolve; });
+      if (name === 'cfkanban_labels_list' && initialPaused) return new Promise(resolve => { release = () => resolve(ok({ items: [f.label], next_cursor: 'new-label-cursor' })); });
+      return facade.callTool(name, args, options);
+    });
+    const next = f.controller.loadLabels(true); const sameNext = f.controller.loadLabels(true);
+    const pending = f.controller.state.busy;
+    assert.equal(pending, 1);
+    initialPaused = true;
+    const fresh = f.controller.loadLabels(); const nextDuringFresh = f.controller.loadLabels(true);
+    assert.equal(f.controller.state.busy, 2);
+    release(); await Promise.all([fresh, nextDuringFresh]);
+    assert.equal(f.controller.state.label_cursor, 'new-label-cursor');
+    finish({ ok: false, status: 503, error: { code: 'PLATFORM_UNAVAILABLE' } }); await Promise.all([next, sameNext]);
+    assert.deepEqual(f.controller.state.labels, [f.label]);
+    assert.equal(f.controller.state.label_cursor, 'new-label-cursor'); assert.equal(f.controller.state.error, null);
+  } finally { release?.(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('Issue detail refresh reads current profile preferences and the next locale save uses that Principal version', async () => {
+  const f = fixture({ locale: 'en' }); await f.controller.bootstrap(); await f.controller.openIssue('CFK-1');
+  const { WorkbenchAdapter } = await adapterExports(); const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    f.principal.theme = 'blue'; f.principal.locale = 'zh-CN'; f.principal.version = 5;
+    const before = f.calls.length;
+    await f.controller.openIssue('CFK-1');
+    assert.deepEqual(f.calls.slice(before).map(row => row.name), ['cfkanban_connection_inspect', 'cfkanban_issues_get']);
+    assert.equal(adapter.snapshotMessage().state.theme, 'blue'); assert.equal(adapter.snapshotMessage().state.locale, 'zh-CN');
+    assert.equal(Object.hasOwn(f.controller.state.issue, 'identity'), false);
+    assert.equal((await f.controller.setLocale('en')).ok, true);
+    assert.equal(f.calls.filter(row => row.name === 'cfkanban_profile_locale_set').at(-1).args.expected_version, 5);
+    assert.equal(f.principal.theme, 'blue'); assert.equal(f.principal.version, 6);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('older Service locale validation refusals are definite failures without retaining an uncertain profile write', async () => {
+  for (const code of ['VALIDATION_ERROR', 'INPUT_VALIDATION_FAILED']) {
+    const f = fixture(); await f.controller.bootstrap();
+    interceptFacade(f, (facade, name, args, options) => name === 'cfkanban_profile_locale_set' ? { ok: false, status: 400, error: { code } } : facade.callTool(name, args, options));
+    const { WorkbenchAdapter } = await adapterExports(); const adapter = new WorkbenchAdapter(f.controller);
+    try {
+      const result = await adapter.receive(action('set_locale', { locale: 'zh-CN' }));
+      assert.equal(result.ok, false); assert.equal(result.error.code, code); assert.equal(result.outcome_unknown, undefined);
+      assert.equal(f.controller.state.pending, null); assert.equal(f.bridge.hasPending(), false);
+      assert.equal(f.principal.locale, null); assert.equal(f.controller.canChangeBinding(), true);
+    } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+  }
 });

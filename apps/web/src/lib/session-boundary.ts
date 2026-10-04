@@ -4,6 +4,7 @@ export function isWebSessionView(value: unknown): value is WebSessionView {
   if (typeof value !== "object" || value === null) return false;
   const session = value as WebSessionView;
   return typeof session.session_id === "string" && typeof session.principal?.id === "string"
+    && (session.principal.locale === undefined || session.principal.locale === null || session.principal.locale === "en" || session.principal.locale === "zh-CN")
     && typeof session.source?.id === "string" && typeof session.source?.kind === "string"
     && typeof session.target?.kind === "string" && typeof session.allowed_scope?.kind === "string"
     && typeof session.expires_at === "string" && Number.isFinite(Date.parse(session.expires_at));

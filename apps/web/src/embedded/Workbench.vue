@@ -5,9 +5,11 @@ import UBadge from "@nuxt/ui/components/Badge.vue";
 import UButton from "@nuxt/ui/components/Button.vue";
 import UModal from "@nuxt/ui/components/Modal.vue";
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
+import UPopover from "@nuxt/ui/components/Popover.vue";
 import { en, zh_cn } from "@nuxt/ui/locale";
 
 import CopyButton from "../components/CopyButton.vue";
+import LocaleSwitch from "../components/LocaleSwitch.vue";
 import IssueShare from "../components/IssueShare.vue";
 import IssueMetadataSummary from "../components/IssueMetadataSummary.vue";
 import IssueDetailHeader from "../components/IssueDetailHeader.vue";
@@ -23,6 +25,8 @@ import CompletionRecord from "../components/CompletionRecord.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import { locale, setLocale, t } from "../lib/i18n-core";
 import { priorityOrder, priorityText } from "../lib/priority";
+import { labelNameKey } from "../lib/label-input";
+import { applyTheme } from "../lib/theme";
 import logo from "../assets/cfkanban-mark.png";
 import IssueCard from "./IssueCard.vue";
 import { createEmbedClient } from "./client";
@@ -39,7 +43,11 @@ const inFlight = ref(0);
 const client = createEmbedClient({
   window,
   onConnect(value) { setLocale(value); document.documentElement.lang = value; connected.value = true; },
-  onSnapshot(value) { if (value.locale) { setLocale(value.locale); document.documentElement.lang = value.locale; } state.value = value; },
+  onSnapshot(value) {
+    if (value.locale) { setLocale(value.locale); document.documentElement.lang = value.locale; }
+    if (value.theme) applyTheme(value.theme);
+    state.value = value;
+  },
   async afterRender() { await nextTick(); },
   onError(code) { localError.value = code; },
 });
@@ -65,6 +73,14 @@ const completion = reactive({ summary: "", verification: "", artifacts: "", arti
 const showCompletion = ref(false);
 const showIdentity = ref(false);
 const showFilters = ref(false);
+const showLabelPicker = ref(false);
+const labelSearch = ref("");
+const labelsLoading = ref(false);
+const availableLabels = computed(() => (state.value.labels ?? []).filter(label =>
+  !state.value.issue?.labels?.some(added => added.id === label.id)
+  && labelNameKey(label.name).includes(labelNameKey(labelSearch.value))));
+watch(showLabelPicker, opened => { if (opened) void loadLabels(false); });
+watch(() => state.value.issue?.identifier, () => { showLabelPicker.value = false; labelSearch.value = ""; });
 const projectMenuOpen = ref(false);
 const projectSearch = ref("");
 const projectGroups = computed(() => {
@@ -95,6 +111,9 @@ const statusItems = computed(() => state.value.binding?.statuses ?? []);
 const errorCode = computed(() => localError.value ?? state.value.error?.code);
 const errorText = computed(() => {
   const code = errorCode.value;
+  if (code === "VALIDATION_ERROR" || code === "INPUT_VALIDATION_FAILED") return t("error.validation");
+  if (code === "LABEL_ALREADY_ATTACHED" || code === "LABEL_NOT_ATTACHED") return e("labelConflict");
+  if (code === "ISSUE_LABEL_LIMIT_REACHED") return e("labelLimit");
   if (code === "VERSION_CONFLICT" || code === "PANEL_VERSION_CONFLICT" || code === "CAS_CONFLICT") return e("conflict");
   if (code?.includes("UNCERTAIN") || code === "PANEL_OPERATION_PENDING") return e("uncertain");
   if (code === "PANEL_SESSION_CONTEXT_CHANGED") return e("contextChanged");
@@ -178,10 +197,23 @@ function openCompletion() {
   showCompletion.value = true;
 }
 function focusCompletion() { document.getElementById("embedded-summary")?.focus(); }
-function showProperties() {
-  const properties = document.getElementById("embedded-properties");
-  properties?.scrollIntoView({ block: "start" });
-  properties?.focus({ preventScroll: true });
+async function loadLabels(next: boolean): Promise<void> {
+  if (!state.value.issue || !state.value.capabilities.update || pending.value || labelsLoading.value) return;
+  labelsLoading.value = true;
+  try { await send("labels", { next }); }
+  finally { labelsLoading.value = false; }
+}
+async function toggleLabel(labelId: string, add: boolean): Promise<void> {
+  const issue = state.value.issue;
+  if (!issue || busy.value || pending.value || !state.value.capabilities.update) return;
+  if (add === Boolean(issue.labels?.some(label => label.id === labelId))) return;
+  if (add && !state.value.labels?.some(label => label.id === labelId)) return;
+  const result = await send("mutate", { operation: add ? "label_add" : "label_remove", change: { label_id: labelId } });
+  if (result.ok && !result.outcome_unknown && add) { showLabelPicker.value = false; labelSearch.value = ""; }
+}
+function changeLocale(value: "en" | "zh-CN") {
+  if (!state.value.binding || busy.value || pending.value) return;
+  return send("set_locale", { locale: value });
 }
 function quickUpdate(identifier: string, change: IssueChange) { void send("quick_update", { identifier, change }); }
 function updateDetail(change: IssueChange) {
@@ -226,7 +258,7 @@ async function complete() {
     <main class="embedded-workbench">
       <header class="embedded-header">
         <div class="embedded-brand"><img :src="logo" alt="" width="28" height="28"><strong>cfKanban</strong><ProjectSwitcherMenu v-if="state.binding" :title="name(state.binding.project)" :opened="projectMenuOpen" :search="projectSearch" :groups="projectGroups" :busy="busy" :disabled="busy || pending" @open="openProjectMenu" @close="projectMenuOpen = false" @search="projectSearch = $event" @select="chooseProject" @retry="openProjectMenu"><template #footer><div class="embedded-actions"><UButton v-if="state.scope_mode === 'suggested' && state.scope_next_offset !== null" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="send('scope_page', { next: true })">{{ e('more') }}</UButton><UButton color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="projectMenuOpen = false; send('unbind', {})">{{ e('manual') }}</UButton></div></template></ProjectSwitcherMenu><UBadge v-else color="neutral" variant="subtle" size="xs">{{ e('setup') }}</UBadge></div>
-        <div v-if="state.binding" class="embedded-actions"><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="`${e('identity')} · ${principal?.display_name || ''}`" :aria-label="e('identity')" :aria-expanded="showIdentity" aria-controls="embedded-identity" @click="showIdentity = !showIdentity"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></svg></UButton><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="e('refresh')" :aria-label="e('refresh')" :disabled="busy" @click="refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7" /></svg></UButton></div>
+        <div v-if="state.binding" class="embedded-actions"><LocaleSwitch managed :disabled="busy || pending" @change="changeLocale" /><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="`${e('identity')} · ${principal?.display_name || ''}`" :aria-label="e('identity')" :aria-expanded="showIdentity" aria-controls="embedded-identity" @click="showIdentity = !showIdentity"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></svg></UButton><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="e('refresh')" :aria-label="e('refresh')" :disabled="busy" @click="refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7" /></svg></UButton></div>
       </header>
 
       <p v-if="!connected" class="embedded-empty" role="status">{{ e('waiting') }}</p>
@@ -322,7 +354,6 @@ async function complete() {
             <UButton type="button" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="send('issue_back', {})">← {{ e('back') }}</UButton>
             <IssueDetailHeader :identifier="state.issue.identifier" :title="state.issue.title">
                   <IssueMetadataSummary :status-key="state.issue.status.key" :status-label="state.issue.status.display_name || state.issue.status.key" :priority="state.issue.priority" :assignee-name="state.issue.assignee?.display_name" />
-                  <button type="button" class="embedded-properties-link" @click="showProperties">{{ e('viewProperties') }}</button>
               <template #actions><IssueShare :identifier="state.issue.identifier" :origin="verifiedOrigin" /></template>
             </IssueDetailHeader>
 
@@ -353,6 +384,22 @@ async function complete() {
                   <div><dt>{{ e('status') }}</dt><dd><select v-if="state.capabilities.update" :aria-label="e('status')" :value="state.issue.status.key" :disabled="busy || pending" @change="statusChanged"><option v-for="status in statusItems" :key="status.key" :value="status.key" :disabled="status.key === 'done' && !state.capabilities.complete">{{ status.display_name || status.name || status.key }}</option></select><span v-else>{{ state.issue.status.display_name || state.issue.status.key }}</span></dd></div>
                   <div><dt>{{ e('priority') }}</dt><dd><PrioritySelect v-if="state.capabilities.update" :value="state.issue.priority" :label="e('priority')" :disabled="busy || pending" @change="updateDetail({ priority_key: $event })" /><span v-else>{{ priorityText(state.issue.priority, locale === 'zh-CN') }}</span></dd></div>
                   <div><dt>{{ t('issue.assignee') }}</dt><dd><AssigneeMenu v-if="state.capabilities.update" :assignee="detailAssignee" :candidates="candidates" :has-more="!!state.assignees_has_more" :loading="peopleLoading" :disabled="(busy && !peopleLoading) || pending" @open="loadPeople(false)" @load-more="loadPeople(true)" @select="updateDetail({ assignee_principal_id: $event })" /><span v-else>{{ state.issue.assignee?.display_name || e('unassigned') }}</span></dd></div>
+                  <div class="embedded-labels"><dt>{{ t('issue.labels') }}</dt><dd>
+                    <div class="embedded-label-chips">
+                      <span v-for="label in state.issue.labels" :key="label.id" class="label-chip">{{ label.name }}<button v-if="state.capabilities.update" type="button" :disabled="busy || pending" :aria-label="`${e('removeLabel')} ${label.name}`" @click="toggleLabel(label.id, false)">×</button></span>
+                      <span v-if="!state.issue.labels?.length" class="embedded-muted">—</span>
+                    </div>
+                    <UPopover v-if="state.capabilities.update" v-model:open="showLabelPicker" :content="{ align: 'start' }">
+                      <UButton type="button" color="neutral" variant="ghost" size="sm" :disabled="(busy && !labelsLoading) || pending">+ {{ e('addLabel') }}</UButton>
+                      <template #content><div class="embedded-label-picker">
+                        <label>{{ e('findLabel') }}<input v-model="labelSearch" type="search" :placeholder="e('findLabel')" /></label>
+                        <p v-if="labelsLoading" role="status">{{ e('loading') }}</p>
+                        <div class="embedded-label-options"><UButton v-for="label in availableLabels" :key="label.id" type="button" color="neutral" variant="ghost" :disabled="busy || pending" @click="toggleLabel(label.id, true)">{{ label.name }}</UButton></div>
+                        <p v-if="!availableLabels.length && !labelsLoading">{{ e('noLabels') }}</p>
+                        <UButton v-if="state.labels_has_more" type="button" color="neutral" variant="ghost" :disabled="busy || pending" @click="loadLabels(true)">{{ e('loadMore') }}</UButton>
+                      </div></template>
+                    </UPopover>
+                  </dd></div>
                 </dl>
                 <div v-if="state.capabilities.complete && state.issue.status.key !== 'done'" class="sidebar-actions"><UButton type="button" color="primary" variant="solid" :disabled="busy || pending" @click="openCompletion">{{ t('complete.title') }}</UButton></div>
               </template>

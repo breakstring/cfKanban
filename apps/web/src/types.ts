@@ -50,6 +50,7 @@ export interface WebSessionView {
   principal: {
     display_name: string;
     theme?: "orange" | "blue";
+    locale?: Locale | null;
     id: string;
     is_owner: boolean;
     version: number;
@@ -307,6 +308,7 @@ export interface ContainerResource {
 
 export interface PrincipalResource {
   theme?: "orange" | "blue";
+  locale?: Locale | null;
   active_credential_count?: number;
   active_grant_count?: number;
   assignee_count?: number;

@@ -1,7 +1,7 @@
 import { watch } from "vue";
 
 import type { Locale } from "../types";
-import { locale } from "./i18n-core";
+import { locale, setLocale } from "./i18n-core";
 import { readStoredLocale, resolveLocalePreference, writeStoredLocale } from "./locale-preference";
 
 export { htmlLanguage, locale, setLocale, t } from "./i18n-core";
@@ -17,9 +17,20 @@ function initialLocale(): Locale {
   );
 }
 
-locale.value = initialLocale();
+let browserLocale = initialLocale();
+let accountLocaleActive = false;
+
+export function applyAccountLocalePreference(saved: Locale | null | undefined, authenticated: boolean): void {
+  accountLocaleActive = authenticated;
+  setLocale(authenticated && (saved === "en" || saved === "zh-CN") ? saved : browserLocale);
+}
+
+locale.value = browserLocale;
 watch(locale, (value) => {
   if (typeof document === "undefined" || typeof window === "undefined") return;
   document.documentElement.lang = value;
-  writeStoredLocale(() => window.localStorage, STORAGE_KEY, value);
-}, { immediate: true });
+  if (!accountLocaleActive) {
+    browserLocale = value;
+    writeStoredLocale(() => window.localStorage, STORAGE_KEY, value);
+  }
+}, { immediate: true, flush: "sync" });

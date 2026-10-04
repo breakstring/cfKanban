@@ -8,18 +8,20 @@
 
 日常工作优先使用当前宿主已暴露、已连接且覆盖所需语义的 cfKanban MCP。调用前发现实际工具名称并核对严格 schema；宿主命名空间可能与下表的 adapter 名称不同。已发现的 `cfkanban_connection_inspect` 不传实例时只列出非秘密候选，传明确 `instance_id` 时核验该实例和实时 Principal，不替用户选择或绑定身份。复用本任务中未变化的可信身份/scope 证据，遵守 Host 绑定，仅对尚未解决的目标选择提问。不要自行另起 MCP 服务绕过宿主或沙箱限制。
 
-当前 adapter 提供以下 16 个工具；实际安装版本以发现的 schema 为准：
+当前 adapter 提供以下 20 个工具；实际安装版本以发现的 schema 为准：
 
 | 覆盖能力 | Adapter 工具名称 | 输入与限制 |
 | --- | --- | --- |
 | 连接与工作区/项目发现 | `cfkanban_connection_inspect`、`cfkanban_workspaces_list`、`cfkanban_projects_list`、`cfkanban_projects_get` | 明确实例；项目操作按 schema 提供工作区/项目 ID。检查只返回非秘密身份/runtime 事实。 |
+| 本人语言偏好 | `cfkanban_profile_locale_set` | 只接受 `en` / `zh-CN`、当前本人 Principal 的 `expected_version` 与一个 `idempotency_key`；不能指定其它身份或 profile 字段，通过连接检查读回。 |
 | 项目状态与有效负责人列表 | `cfkanban_statuses_list`、`cfkanban_assignees_list` | 明确 `instance_id`、`workspace_id`、`project_id`。负责人列表支持有界分页，不支持准确 `display_name` 筛选。 |
 | Issue 列表与详情 | `cfkanban_issues_list`、`cfkanban_issues_get` | 列表必须带 `project_ids`，或明确接受获授权的 `allow_unfiltered:true`；详情用 `identifier`。翻页保留全部筛选。 |
 | Issue 创建、编辑与完成 | `cfkanban_issues_create`、`cfkanban_issues_update`、`cfkanban_issues_complete` | 一个 `idempotency_key` 及适用的当前版本。更新的 `changes` 只支持标题、描述、非 done 状态、优先级与负责人 ID。完成及不可变记录由 complete 负责。 |
+| 项目既有标签与 Issue 关联 | `cfkanban_labels_list`、`cfkanban_issues_labels_add`、`cfkanban_issues_labels_remove` | 标签列表携带准确工作区/项目 ID，按需有界分页；单次以一个既有 `label_id`、Issue 当前 `expected_version` 和一个 `idempotency_key` 添加或移除关联，不提供标签创建或管理。 |
 | 评论 | `cfkanban_comments_list`、`cfkanban_comments_create` | 明确 Issue 编号；创建追加一条正文，可回复 Comment。 |
 | 关系 | `cfkanban_relations_list`、`cfkanban_relations_create`、`cfkanban_relations_delete` | 创建/删除按操作携带关系及两端的版本。Service 核验工作区与项目权限。 |
 
-计数、确定性候选、有界 Issue context、自领任务、阻塞、Issue 删除/恢复、Comment 删除/恢复、关系恢复、标签操作/名称解析、准确负责人名称查询、附件、profile 修改、通知、加入、身份生命周期、目录关联和浏览器交付使用脚本。通用负责人更新不替代专用自领命令。管理/部署交给对应 Skill。没有 MCP 的宿主保留脚本路径。在发送前选择适当路径，不用相似工具近似未覆盖语义。普通用户无需了解这些内部选择，除非能力限制影响请求结果。
+计数、确定性候选、有界 Issue context、自领任务、阻塞、Issue 删除/恢复、Comment 删除/恢复、关系恢复、标签创建/管理/名称解析、准确负责人名称查询、附件、除语言偏好外的 profile 修改、通知、加入、身份生命周期、目录关联和浏览器交付使用脚本。通用负责人更新不替代专用自领命令。管理/部署交给对应 Skill。没有 MCP 的宿主保留脚本路径。在发送前选择适当路径，不用相似工具近似未覆盖语义。普通用户无需了解这些内部选择，除非能力限制影响请求结果。
 
 权限拒绝、CAS 冲突或写入结果不明时，保留原工具/命令、参数、caller 身份、request ID 和 Idempotency Key，以及返回的 `recovery_request`。不因调用失败切到脚本、更换身份或另写一次。先读回，任何经判断允许的原样重放仍使用原 caller。超时或无响应可能已提交。可以恢复原连接以核实或按原合同恢复操作，但重连不证明远端未提交。只有明确证据证明请求尚未发送时，才能重新选择执行路径；不能把失败当成未提交证据。
 

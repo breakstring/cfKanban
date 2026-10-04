@@ -88,7 +88,7 @@ export function registerWp03Routes(router: Router): Router {
     .patch("/api/v1/me", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
       enforceCookieWriteProtection(request, auth);
-      const value = await body(request, ["display_name", "theme", "expected_version"], ["expected_version"]);
+      const value = await body(request, ["display_name", "locale", "theme", "expected_version"], ["expected_version"]);
       return jsonResponse(await updateMe(
         env.DB,
         request,

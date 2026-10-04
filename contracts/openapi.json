@@ -12301,6 +12301,19 @@
         "default": "orange",
         "description": "Personal color palette; layout and interactions remain the same."
       },
+      "PrincipalLocale": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "en",
+          "zh-CN",
+          null
+        ],
+        "default": null,
+        "description": "Personal language preference; null clears the preference and lets the client use its language fallback."
+      },
       "UpdatePrincipalDisplayNameRequest": {
         "type": "object",
         "required": [
@@ -12313,6 +12326,9 @@
           },
           "display_name": {
             "$ref": "#/components/schemas/PrincipalDisplayNameInput"
+          },
+          "locale": {
+            "$ref": "#/components/schemas/PrincipalLocale"
           },
           "theme": {
             "$ref": "#/components/schemas/PrincipalTheme"
@@ -13574,6 +13590,7 @@
           "id",
           "principal_id",
           "display_name",
+          "locale",
           "theme",
           "is_owner",
           "version",
@@ -13588,6 +13605,9 @@
           },
           "display_name": {
             "type": "string"
+          },
+          "locale": {
+            "$ref": "#/components/schemas/PrincipalLocale"
           },
           "theme": {
             "$ref": "#/components/schemas/PrincipalTheme"
@@ -19822,6 +19842,9 @@
           "version": {
             "$ref": "#/components/schemas/Version"
           },
+          "locale": {
+            "$ref": "#/components/schemas/PrincipalLocale"
+          },
           "theme": {
             "$ref": "#/components/schemas/PrincipalTheme"
           }
@@ -19966,10 +19989,14 @@
               {
                 "type": "object",
                 "required": [
+                  "locale",
                   "theme",
                   "version"
                 ],
                 "properties": {
+                  "locale": {
+                    "$ref": "#/components/schemas/PrincipalLocale"
+                  },
                   "theme": {
                     "$ref": "#/components/schemas/PrincipalTheme"
                   },

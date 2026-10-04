@@ -9,7 +9,9 @@ import { createRenderer, h, nextTick, ref } from "vue";
 import { nuxtUiTestPlugin } from "./nuxt-ui-test-plugin.mjs";
 
 const original = { window: globalThis.window, document: globalThis.document, fetch: globalThis.fetch };
+const localeStorage = new Map([["cfkanban_locale", "en"]]);
 globalThis.window = {
+  localStorage: { getItem: key => localeStorage.get(key) ?? null, setItem: (key, value) => localeStorage.set(key, value) },
   navigator: { languages: ["en"] }, location: { pathname: "/app/profile", search: "" },
   addEventListener() {}, removeEventListener() {}, dispatchEvent() {}, setTimeout, clearTimeout,
 };
@@ -377,3 +379,126 @@ for (const updateKind of ["theme", "name"]) {
     } finally { app.unmount(); }
   });
 }
+
+async function mountLocaleApp(current, handle) {
+  globalThis.fetch = async (path, init) => {
+    if (path === '/.well-known/cfkanban-instance.json') return Response.json({ preferred_api_origin: 'https://example.test' });
+    if (path === '/api/v1/web-session' && init?.method !== 'POST') return Response.json(current);
+    return handle(path, init);
+  };
+  const app = renderer.createApp({ ...AppSession, render: () => null });
+  app.mount(node('root'));
+  const state = app._instance.setupState;
+  await until(() => state.session?.session_id === current.session_id);
+  return { app, state };
+}
+const localeSession = (overrides = {}) => ({
+  ...session, session_id: 'locale-session', expires_at: new Date(Date.now() + 60_000).toISOString(),
+  target: { kind: 'project_selection' }, principal: principal({ locale: 'en', ...overrides }),
+});
+
+test('saved language overrides the browser and an older session read cannot undo a confirmed switch', async () => {
+  const initial = localeSession({ locale: 'zh-CN' });
+  const writes = [];
+  const { app, state } = await mountLocaleApp(initial, async (_path, init) => {
+    writes.push(JSON.parse(init.body));
+    return Response.json({ resource: principal({ locale: 'en', version: 4 }) });
+  });
+  try {
+    await nextTick();
+    assert.equal(state.locale, 'zh-CN');
+    await state.changeLocale('en'); await nextTick();
+    assert.deepEqual(writes, [{ locale: 'en', expected_version: 3 }]);
+    assert.equal(state.locale, 'en');
+    assert.equal(localeStorage.get('cfkanban_locale'), 'en', 'account preference cannot replace the explicit browser fallback');
+    await state.loadSession(false); await nextTick();
+    assert.equal(state.session.principal.version, 4);
+    assert.equal(state.session.principal.locale, 'en');
+    assert.equal(state.locale, 'en');
+  } finally { app.unmount(); }
+});
+
+test('an account without a language preference and logout restore the browser fallback', async () => {
+  const initial = localeSession({ locale: 'zh-CN' });
+  const { app, state } = await mountLocaleApp(initial, async () => Response.json({}));
+  try {
+    await nextTick();
+    assert.equal(state.locale, 'zh-CN');
+    assert.equal(localeStorage.get('cfkanban_locale'), 'en');
+    state.acceptVerifiedSession({ ...initial, session_id: 'null-locale-session', principal: principal({ id: '00000000-0000-4000-8000-000000000002', locale: null }) });
+    await nextTick();
+    assert.equal(state.locale, 'en');
+    state.acceptVerifiedSession(initial); await nextTick();
+    assert.equal(state.locale, 'zh-CN');
+    state.clearSession(false); await nextTick();
+    assert.equal(state.locale, 'en');
+    assert.equal(localeStorage.get('cfkanban_locale'), 'en');
+  } finally { app.unmount(); }
+});
+
+test('public language changes retain a browser fallback without overwriting saved account preferences', async () => {
+  const initial = localeSession({ locale: 'zh-CN' });
+  const { app, state } = await mountLocaleApp(initial, async () => Response.json({}));
+  try {
+    await nextTick();
+    state.currentPath = '/'; await nextTick();
+    assert.equal(state.locale, 'en');
+    state.locale = 'zh-CN'; await nextTick();
+    assert.equal(localeStorage.get('cfkanban_locale'), 'zh-CN');
+    state.currentPath = '/app/profile'; await nextTick();
+    await until(() => state.session?.session_id === initial.session_id);
+    assert.equal(state.session.principal.locale, 'zh-CN');
+    state.acceptVerifiedSession({ ...initial, session_id: 'null-language', principal: principal({ id: '00000000-0000-4000-8000-000000000002', locale: null }) });
+    await nextTick();
+    assert.equal(state.locale, 'zh-CN');
+    state.currentPath = '/'; await nextTick();
+    state.locale = 'en'; await nextTick();
+    assert.equal(localeStorage.get('cfkanban_locale'), 'en');
+  } finally { app.unmount(); state.currentPath = '/app/profile'; }
+});
+
+test('language CAS conflict reads current facts and waits for another explicit switch', async () => {
+  const writes = [];
+  const remote = principal({ locale: 'en', theme: 'blue', version: 5 });
+  const { app, state } = await mountLocaleApp(localeSession(), async (_path, init) => {
+    if (init?.method !== 'PATCH') return Response.json(remote);
+    writes.push(JSON.parse(init.body));
+    if (writes.length === 1) return problem(409, 'VERSION_CONFLICT', 'conflict', { current_version: 5 });
+    return Response.json({ resource: { ...remote, locale: 'zh-CN', version: 6 } });
+  });
+  try {
+    await state.changeLocale('zh-CN'); await nextTick();
+    assert.equal(writes.length, 1);
+    assert.equal(state.session.principal.version, 5);
+    assert.equal(state.locale, 'en');
+    assert.match(state.localeError, /could not be saved/);
+    assert.equal(state.pendingLocaleSave, null);
+    await state.changeLocale('zh-CN'); await nextTick();
+    assert.deepEqual(writes, [{ locale: 'zh-CN', expected_version: 3 }, { locale: 'zh-CN', expected_version: 5 }]);
+    assert.equal(state.locale, 'zh-CN');
+    assert.equal(state.localeError, '');
+  } finally { app.unmount(); }
+});
+
+test('an uncertain language save retains its exact body and key, and refuses another identity', async () => {
+  const writes = [];
+  const { app, state } = await mountLocaleApp(localeSession(), async (_path, init) => {
+    writes.push({ body: JSON.parse(init.body), key: init.headers.get('idempotency-key') });
+    if (writes.length === 1) throw new Error('Isolated transport interruption');
+    return Response.json({ resource: principal({ locale: 'zh-CN', version: 4 }), idempotent_replay: true });
+  });
+  try {
+    await state.changeLocale('zh-CN'); await nextTick();
+    assert.equal(state.locale, 'en');
+    assert.equal(state.pendingLocaleSave.locale, 'zh-CN');
+    const originalSession = state.session;
+    state.acceptVerifiedSession({ ...originalSession, session_id: 'other-session', principal: principal({ id: '00000000-0000-4000-8000-000000000002', locale: 'en' }) });
+    await state.changeLocale('en');
+    assert.equal(writes.length, 1);
+    state.acceptVerifiedSession(originalSession);
+    await state.changeLocale('en'); await nextTick();
+    assert.deepEqual(writes[1], writes[0], 'the attempted new choice must recover the original operation');
+    assert.equal(state.locale, 'zh-CN');
+    assert.equal(state.pendingLocaleSave, null);
+  } finally { app.unmount(); }
+});

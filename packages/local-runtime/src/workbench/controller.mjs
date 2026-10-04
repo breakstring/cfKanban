@@ -34,7 +34,10 @@ export class WorkbenchController {
     this.collectionCursors = new Set();
     this.collectionPages = new Map();
     this.collectionValidators = new Set();
-    this.state = { candidates: [], identity: null, workspaces: [], projects: [], binding: null, view: initialView === 'list' ? 'list' : 'board', board: null, page: null, issue: null, comments: [], comment_cursor: null, filters: { assignment: 'all', status: '', priority: '' }, busy: 0, error: null, pending: null, source_session_id: null, session_context_changed: false, workspace_scope: null, scope_instance_id: null, scope_mode: 'manual', scope_targets: [], scope_next_offset: null };
+    this.labelRevision = 0;
+    this.labelFlights = new Map();
+    this.labelCursors = new Set();
+    this.state = { candidates: [], identity: null, workspaces: [], projects: [], binding: null, view: initialView === 'list' ? 'list' : 'board', board: null, page: null, issue: null, comments: [], comment_cursor: null, labels: [], label_cursor: null, labels_has_more: false, filters: { assignment: 'all', status: '', priority: '' }, busy: 0, error: null, pending: null, source_session_id: null, session_context_changed: false, workspace_scope: null, scope_instance_id: null, scope_mode: 'manual', scope_targets: [], scope_next_offset: null };
   }
   getSnapshot = () => this.state;
   getCheckpoint() { return validateCheckpoint(checkpointState(this.state)); }
@@ -49,7 +52,10 @@ export class WorkbenchController {
   patch(update) {
     if (this.signal.aborted) return;
     if (Object.hasOwn(update, 'binding') && this.state.binding?.binding_id !== update.binding?.binding_id || Object.hasOwn(update, 'filters') || Object.hasOwn(update, 'view') || update.page === null || update.board === null) this.invalidateCollections();
-    if (Object.hasOwn(update, 'binding') && this.state.binding?.binding_id !== update.binding?.binding_id) update = { assignees: [], assignee_cursor: null, assignees_has_more: false, ...update };
+    if (Object.hasOwn(update, 'binding') && this.state.binding?.binding_id !== update.binding?.binding_id) {
+      this.labelRevision++; this.labelFlights.clear(); this.labelCursors.clear();
+      update = { assignees: [], assignee_cursor: null, assignees_has_more: false, labels: [], label_cursor: null, labels_has_more: false, ...update };
+    }
     this.state = { ...this.state, ...update }; this.listeners.forEach(listener => listener());
   }
   dispose() { this.lifetime.abort(); this.listeners.clear(); }
@@ -60,10 +66,10 @@ export class WorkbenchController {
     try { return new TextEncoder().encode(JSON.stringify({ page: state.page, board: state.board })).length <= COLLECTION_BYTES && [...this.collectionValidators].every(validate => validate(state)); }
     catch { return false; }
   }
-  collectionRequest(key, operation) {
-    if (this.collectionFlights.has(key)) return this.collectionFlights.get(key);
-    const request = operation().finally(() => { if (this.collectionFlights.get(key) === request) this.collectionFlights.delete(key); });
-    this.collectionFlights.set(key, request);
+  collectionRequest(key, operation, flights = this.collectionFlights) {
+    if (flights.has(key)) return flights.get(key);
+    const request = operation().finally(() => { if (flights.get(key) === request) flights.delete(key); });
+    flights.set(key, request);
     return request;
   }
   async request(endpoint, input, channel = endpoint, matches = () => true, signal) {
@@ -91,6 +97,18 @@ export class WorkbenchController {
     } finally { removeAbort(); this.patch({ busy: Math.max(0, this.state.busy - 1) }); }
   }
   canChangeBinding() { return !this.state.pending && !this.state.session_context_changed; }
+  identityUpdate(identity) {
+    if (!identity?.principal || !this.state.binding) return {};
+    const current = this.state.binding.identity?.principal;
+    const incoming = identity.principal;
+    const principalId = value => value?.principal_id ?? value?.id;
+    if (principalId(incoming) !== principalId(current)) return {};
+    if (Number.isSafeInteger(current.version) && (!Number.isSafeInteger(incoming.version) || incoming.version < current.version)) return {};
+    const principal = { ...incoming };
+    for (const preference of ['theme', 'locale']) if (!Object.hasOwn(incoming, preference) && Object.hasOwn(current, preference)) principal[preference] = current[preference];
+    const merged = { ...identity, principal };
+    return { binding: { ...this.state.binding, identity: merged }, ...(this.state.identity ? { identity: merged } : {}) };
+  }
   sessionContext(session_id) {
     if (this.state.source_session_id && this.state.source_session_id !== session_id) {
       this.patch({ session_context_changed: true, error: { code: 'PANEL_SESSION_CONTEXT_CHANGED', message: 'Open the original Session tab to retain and resolve its operations before changing context.' } });
@@ -212,7 +230,7 @@ export class WorkbenchController {
         } else {
           this.collectionPages.set('list', pages);
           if (cursor) this.collectionCursors.add(key);
-          this.patch({ page });
+          this.patch({ page, ...this.identityUpdate(result.data.identity) });
         }
       }
       return result;
@@ -251,7 +269,7 @@ export class WorkbenchController {
         } else {
           updated.forEach(column => this.collectionPages.set(column.key, column.pages));
           if (cursor) this.collectionCursors.add(key);
-          this.patch({ board });
+          this.patch({ board, ...this.identityUpdate(result.data.identity) });
         }
       }
       return result;
@@ -269,6 +287,35 @@ export class WorkbenchController {
     if (current && result.ok) this.patch({ assignees: [...new Map([...(next ? this.state.assignees ?? [] : []), ...items(result.data)].map(row => [row.principal_id, row])).values()], assignee_cursor: nextCursor(result.data), assignees_has_more: Boolean(nextCursor(result.data)) });
     return result;
   }
+  async loadLabels(next = false) {
+    if (!this.state.binding || (next && !this.state.label_cursor)) return;
+    const binding_id = this.state.binding.binding_id;
+    const initialKey = `${binding_id}:labels:first`;
+    if (this.labelFlights.has(initialKey)) return this.labelFlights.get(initialKey);
+    if (next && this.state.labels.length >= ISSUE_COLLECTION_LIMIT) { const error = { code: 'PANEL_CAPACITY' }; this.patch({ error }); return { ok: false, error }; }
+    if (!next) { this.labelRevision++; this.labelCursors.clear(); }
+    const revision = this.labelRevision;
+    const cursor = next ? this.state.label_cursor : undefined;
+    const key = next ? `${binding_id}:${revision}:labels:${cursor}` : initialKey;
+    if (next && this.labelCursors.has(key)) { const error = { code: 'PANEL_PAGINATION_STALLED' }; this.patch({ error }); return { ok: false, error }; }
+    return this.collectionRequest(key, async () => {
+      const { result, current } = await this.request('labels', { binding_id, ...(cursor ? { cursor } : {}) }, 'labels', () => this.state.binding?.binding_id === binding_id && this.labelRevision === revision);
+      if (current && result.ok) {
+        const labels = [...new Map([...(next ? this.state.labels : []), ...items(result.data)].map(row => [row.id, fields(row, ['id', 'name'])])).values()];
+        const next_cursor = nextCursor(result.data);
+        if (cursor && cursor === next_cursor) { const error = { code: 'PANEL_PAGINATION_STALLED' }; this.patch({ error }); return { ok: false, error }; }
+        if (labels.length > ISSUE_COLLECTION_LIMIT || !this.collectionFits({ labels })) { const error = { code: 'PANEL_CAPACITY' }; this.patch({ error }); return { ok: false, error }; }
+        if (next) this.labelCursors.add(key);
+        this.patch({ labels, label_cursor: next_cursor, labels_has_more: Boolean(next_cursor) });
+      }
+      return result;
+    }, this.labelFlights);
+  }
+  async setLocale(locale) {
+    if (!this.state.binding || !this.canChangeBinding() || !['en', 'zh-CN'].includes(locale)) return;
+    if (this.state.binding.identity.principal.locale === locale) return { ok: true, status: 200, data: { unchanged: true } };
+    return this.mutate('set_locale', { locale });
+  }
   loadedIssue(identifier) { return [...items(this.state.page), ...(this.state.board?.columns ?? []).flatMap(column => column.items)].find(row => row.identifier === identifier); }
   async quickUpdate(identifier, change) {
     if (!this.canChangeBinding() || this.state.pending) return;
@@ -283,8 +330,8 @@ export class WorkbenchController {
     this.patch({ ...(sameIssue ? {} : { issue: null, comments: [] }) });
     const { result, current } = await this.request('detail', { binding_id: this.state.binding.binding_id, identifier }, undefined, undefined, signal);
     if (current && result.ok && !signal?.aborted) {
-      this.patch({ issue: result.data, comments: result.data.comments ?? [], comment_cursor: null, comments_has_more: Boolean(result.data.comment_continuation) });
-
+      const { identity, ...issue } = result.data;
+      this.patch({ issue, comments: issue.comments ?? [], comment_cursor: null, comments_has_more: Boolean(issue.comment_continuation), ...this.identityUpdate(identity) });
     }
   }
   async comments(signal) {
@@ -298,12 +345,12 @@ export class WorkbenchController {
   }
   async mutate(operation, change, recover = false, subject = this.state.issue) {
     if (!recover && (this.state.pending || this.state.session_context_changed)) return;
-    const pending = recover ? this.state.pending : { binding_id: this.state.binding.binding_id, identifier: subject.identifier, expected_version: subject.version, operation, change, idempotency_key: this.makeKey() };
+    const pending = recover ? this.state.pending : { binding_id: this.state.binding.binding_id, ...(operation === 'set_locale' ? { expected_version: this.state.binding.identity.principal.version } : { identifier: subject.identifier, expected_version: subject.version }), operation, change, idempotency_key: this.makeKey() };
     if (!pending) return;
     this.patch({ pending });
     const { result } = await this.request(recover ? 'recover' : 'mutate', pending, 'write');
     const recovery = result.outcome_unknown || result.panel?.recovery_required || ['PANEL_REQUEST_UNCERTAIN', 'PANEL_OPERATION_PENDING'].includes(result.error?.code) || (recover && !result.ok && result.panel?.original_settled !== true);
-    this.patch({ pending: recovery ? pending : null, ...(result.panel?.readback && this.state.issue?.identifier === pending.identifier ? { issue: result.panel.readback, comments: result.panel.readback.comments ?? [], comment_cursor: null, comments_has_more: Boolean(result.panel.readback.comment_continuation) } : {}) });
+    this.patch({ pending: recovery ? pending : null, ...(result.panel?.readback && pending.operation === 'set_locale' ? this.identityUpdate(result.panel.readback) : result.panel?.readback && this.state.issue?.identifier === pending.identifier ? { issue: result.panel.readback, comments: result.panel.readback.comments ?? [], comment_cursor: null, comments_has_more: Boolean(result.panel.readback.comment_continuation) } : {}) });
     if (result.ok && !recovery) await this.refresh();
     return result;
   }

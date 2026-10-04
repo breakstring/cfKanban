@@ -14,6 +14,7 @@ body { overflow-x: hidden; }
 .embedded-brand > :last-child { min-width: 0; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .embedded-icon-button { flex: none; width: 32px; height: 32px; min-height: 32px !important; padding: 6px !important; justify-content: center; }
 .embedded-header > .embedded-actions { flex: none; gap: 2px; }
+.embedded-header .locale-switch:hover:not(:disabled) { background: var(--color-primary-soft); }
 .embedded-section { padding: 18px 0; border-bottom: 1px solid var(--ui-border); }
 .embedded-section:last-child { border-bottom: 0; }
 .embedded-muted, .embedded-identifier { color: var(--ui-text-muted); }
@@ -49,8 +50,6 @@ body { overflow-x: hidden; }
 .embedded-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; color: var(--ui-text-muted); font-size: 12px; }
 .embedded-card-assignee { flex: 1 1 44px; min-width: 0; }
 .embedded-assignee-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.embedded-properties-link { display: none; padding: 0; border: 0; background: transparent; color: var(--ui-primary); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.embedded-properties-link:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 3px; }
 .embedded-form { display: grid; gap: 8px; margin-top: 12px; }
 .embedded-form > button { justify-self: start; }
 .embedded-field { width: 100%; min-width: 0; }
@@ -111,7 +110,6 @@ body { overflow-x: hidden; }
 @media (min-width: 720px) { .embedded-filters { grid-template-columns: repeat(3, minmax(0, 180px)) auto; } }
 @media (min-width: 941px) { .embedded-detail { padding-inline: 36px; } }
 @media (max-width: 940px) { .embedded-completion-modal button, .embedded-completion-modal select { min-height: 44px; } }
-@media (width < 780px) { .embedded-properties-link { display: inline-flex; align-items: center; min-height: 44px; } }
 @media (max-width: 640px) { .embedded-modal-header, .embedded-modal-body { padding: 16px; } .embedded-modal-footer { padding: 12px 16px; } }
 @media (max-width: 420px) { .embedded-workbench { padding: 12px; } .embedded-brand > strong { display: none; } .embedded-brand > :last-child { max-width: 170px; } }
 @media (pointer: coarse) { .embedded-card-priority .card-priority-select, .embedded-workbench .assignee-menu-trigger, .embedded-workbench .embedded-card-status, .embedded-icon-button { min-height: 44px; } }
@@ -122,3 +120,15 @@ body { overflow-x: hidden; }
   .embedded-board::-webkit-scrollbar-thumb { border-radius: 4px; background: var(--ui-border-accented); }
   .embedded-board::-webkit-scrollbar-thumb:hover { background: var(--ui-text-muted); }
 }
+
+.embedded-label-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.embedded-label-chips .label-chip { max-width: 100%; overflow-wrap: anywhere; }
+.embedded-label-chips button { border: 0; background: transparent; color: inherit; cursor: pointer; }
+.embedded-label-chips button:disabled { opacity: .6; cursor: default; }
+.embedded-label-chips button:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
+.embedded-label-picker { display: grid; gap: 8px; width: min(280px, calc(100vw - 40px)); padding: 12px; font-size: 13px; }
+.embedded-label-picker label { display: grid; gap: 6px; }
+.embedded-label-picker input { min-width: 0; padding: 8px; border: 1px solid var(--ui-border); border-radius: var(--radius-control); background: var(--ui-bg); color: var(--ui-text); }
+.embedded-label-picker input:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
+.embedded-label-options { display: grid; max-height: 240px; overflow: auto; }
+.embedded-label-options button { justify-content: flex-start; white-space: normal; overflow-wrap: anywhere; }

@@ -67,7 +67,10 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     const initialized = await initialize(peer);
     assert.equal(initialized.result.serverInfo.version, metadata.release_version);
     const list = await peer.request("tools/list");
-    assert.equal(list.result.tools.length, 16);
+    assert.equal(list.result.tools.length, 20);
+    for (const name of ["cfkanban_profile_locale_set", "cfkanban_labels_list", "cfkanban_issues_labels_add", "cfkanban_issues_labels_remove"]) {
+      assert.ok(list.result.tools.some(tool => tool.name === name));
+    }
     assert.ok(list.result.tools.every(tool => tool.inputSchema.additionalProperties === false));
     assert.deepEqual((await peer.request("ping")).result, {});
     const inspect = await peer.request("tools/call", { name: "cfkanban_connection_inspect", arguments: {} });
