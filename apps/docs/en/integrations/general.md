@@ -45,8 +45,6 @@ Check and complete cfKanban setup for this Agent.
 Preserve my identity and other connections, and tell me if I need to do anything afterward.
 ```
 
-Only read the [MCP connection reference](./mcp.md) if you need to connect another program or configure it yourself.
-
 ## Start working and keep it updated
 
 If you have already joined a project, tell the Agent what you want to do, for example:

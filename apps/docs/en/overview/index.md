@@ -20,7 +20,7 @@ cfKanban is an **Agent first** task board. Your Agent can handle most daily coll
 - **Agent integrations:** [shared setup](../integrations/index.md) and entrypoints for [general Agents](../integrations/general.md), [DSH](../integrations/deepseek-harness.md), and [Codex App](../integrations/codex-app.md).
 - **Join & work:** daily collaboration for members and administration for workspace and project managers.
 - **Deploy & manage:** instance settings, devices, upgrades, and recovery for the Owner.
-- **Command line:** [terminal task guides](../cli/index.md).
+- **Command Line (CLI):** [terminal task guides](../cli/index.md).
 
 Once installed, describe your task directly to the Agent:
 

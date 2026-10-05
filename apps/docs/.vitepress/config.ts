@@ -19,6 +19,7 @@ function theme(locale: Locale): DefaultTheme.Config {
   const zh = locale === "zh-CN";
   return {
     sidebar: sidebar(locale),
+    socialLinks: [{ icon: "github", link: "https://github.com/breakstring/cfKanban", ariaLabel: zh ? "cfKanban GitHub 仓库" : "cfKanban on GitHub" }],
     outline: { level: [2, 3], label: zh ? "本页内容" : "On this page" },
     docFooter: { prev: zh ? "上一页" : "Previous page", next: zh ? "下一页" : "Next page" },
     sidebarMenuLabel: zh ? "目录" : "Menu",

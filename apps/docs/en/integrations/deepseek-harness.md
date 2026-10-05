@@ -1,63 +1,56 @@
 # DeepSeek Harness
 
-The DSH plugin puts cfKanban beside your chat: ask the Agent to open an Issue, then read its details or work on the board without leaving the conversation. It adds Skills, MCP, and the task sidebar in one installation. **Once installed, you do not need to install the Skills or configure MCP separately.** This page covers DSH desktop and Web running on your own computer. The current compatibility baseline is DSH `0.2.0-rc.2`.
+In DeepSeek Harness, **cfKanban Skills are the main way to collaborate with your Agent**: find tasks, update progress, add comments, and record completion. The integrated plugin also adds a sidebar beside the conversation, so you can browse and work on the board while chatting.
 
-## Ask your current Agent to install
+This page covers DSH desktop and Web running on your own computer. The current compatibility baseline is DSH `0.2.0-rc.2`.
+
+## Install and connect
 
 ```text
 Read the official cfKanban installation guide:
 https://github.com/breakstring/cfKanban/releases/latest/download/install.md
-Install the cfKanban plugin for DeepSeek Harness desktop on this computer.
+Install cfKanban for DeepSeek Harness desktop on this computer.
 Use a compatible release containing the DSH plugin, preserve my identity and other plugins, and verify it is available.
 Do not deploy or upgrade an online instance.
 ```
 
 For the Web version, replace “desktop” with “Web.” Their plugin locations are separate; installing in one does not install in the other. Include the exact version when requesting a prerelease.
 
-The Agent prepares the plugin package from the official release and installs it in the DSH version you choose. It gives specific instructions if you need to enable it in Plugins or reopen DSH. If you do not yet have a cfKanban identity, continue with [Joining and signing in](../usage/access.md). Installing the plugin does not join a project.
+The Agent installs the official plugin, which includes the cfKanban Skills and sidebar. You do not need separate installations or manual connection settings. It gives specific instructions if you need to enable it in Plugins or reopen DSH. For your first use, continue with [Joining and signing in](../usage/access.md). You can start collaborating once you have project access.
 
-## Can I install by entering the repository URL in DSH?
+For manual installation, ask the Agent to prepare a verified local `.tgz` plugin file. Enter its path in **Plugins → Add plugin**, select **Install → Enable now**, and restart if prompted. The cfKanban source repository and Skills ZIP URLs are not currently direct installation sources for this entry point.
 
-**DSH supports online installation sources, but the cfKanban source repository URL is not currently a direct installation source.** DSH accepts Git, npm, or archive URLs. The complete cfKanban plugin currently comes inside the Skills release package, with no separate online plugin package entry point. Neither the repository root nor the Skills ZIP URL is a directly installable DSH plugin.
+## Collaborate through Skills
 
-Use the local file method below or let the Agent handle installation.
-
-If you prefer the desktop UI, first ask the Agent to prepare the verified plugin file:
+Once installed, tell the Agent what you want to do, just as you would in another Agent:
 
 ```text
-Prepare the official cfKanban plugin package compatible with my DSH, verify it, and give me its local file path.
-I will install it manually in DSH's Plugins page.
+Show my unfinished tasks in the current project, ordered by priority.
 ```
 
-Open **Plugins → Add plugin**, enter the local `.tgz` path provided by the Agent, select **Install**, then **Enable now**. Restart if DSH asks. You do not need to unpack source code or calculate digests yourself. See the [official DSH plugin UI guide](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.0-rc.2/packages/client/ui-plugin-manager/README.md) for supported entry points.
+You can also ask the Agent to create tasks, change priorities or assignees, add comments, and record completion. See [Issues and boards](../usage/issues.md) for everyday work. The daily guidance in [General Agents](./general.md) also applies. If you often work in the same directory, [associate it with a project](../usage/profile.md) to reduce repeated selection.
 
-## Open the project sidebar
+## Use the sidebar alongside your conversation
 
-With a compatible plugin enabled, ask your Agent:
+When you want to view tasks while chatting, ask the Agent to open the sidebar:
 
 ```text
 Open CFK-123 in the sidebar.
 ```
 
-You can also name a project. The Agent checks access, opens the sidebar and confirms it has reached the requested page. If the sidebar capability is unavailable, it explains the limitation without opening a browser instead. Asking to open a view does not install or enable a plugin.
+You can also name a project. With a compatible plugin enabled, the Agent opens the requested board or Issue details. If the sidebar is unavailable, it explains the current limitation.
 
 [![DeepSeek Harness shows the conversation on the left and CFK-600 details in the cfKanban sidebar on the right](../../assets/integrations/dsh-sidebar.png)](../../assets/integrations/dsh-sidebar.png)
 
-*The cfKanban sidebar stays beside the conversation; click the image to open the original. This screenshot illustrates the desktop layout; example tasks, language and available controls can differ in your installation.*
+*The sidebar lets you view tasks and boards beside the conversation. This screenshot shows the desktop layout; click it to open the original.*
 
-To open it manually:
+To open it manually, open your working directory in DSH and select the **cfKanban logo** beside the chat panel. A project association opens the matching project; follow the selection prompt if there are several targets or no association.
 
-1. Open your working project directory in DSH.
-2. Select the **cfKanban logo** beside the chat panel.
-3. If the directory has a project association, the sidebar checks your identity and access, then opens the sole matching project. Choose a target when there are several.
+Switch projects in the sidebar, browse tasks in **Kanban** or **List**, and select a task to read its details. With the appropriate access, you can also edit tasks, add comments, and record completion. **Open full online board** opens the online page. See [Open a board](./webui.md) for account and management features.
 
-Without an association, select a project manually or ask the Agent to [save a project association](../usage/profile.md) for the directory. An association only helps selection; it does not grant access. The plugin uses the identity on the computer running DSH. Remote or shared multi-user DSH services are outside the sidebar's current support scope.
+The DSH Web version also supports the sidebar. The plugin uses the identity on the computer running DSH. The sidebar currently supports local single-user use; remote or shared multi-user DSH services are not yet supported.
 
-In the sidebar, select the current project to switch projects, use **Kanban** or **List** to browse tasks, and click a task to read its details. Authorized users can edit priority, status and assignee, add comments, and record completion. **Open full online board** opens the current project or task online. For workspace, member, or Owner management, ask the Agent to open the [management page you need](../administration/index.md). See [Open a board](./webui.md) for the two interfaces.
-
-The DSH Web version also embeds the sidebar through the plugin; you do not need to open a separate local workbench page in your browser.
-
-If a write has an uncertain result, use **Recover** in the original view before closing the sidebar or restarting DSH. Reopening a view does not retry the earlier operation automatically.
+If a write has an uncertain result, use **Recover** in the original view before closing the sidebar or restarting DSH.
 
 ## Update or troubleshoot
 
@@ -66,4 +59,4 @@ Update the cfKanban plugin in my current DSH to the latest compatible stable rel
 Preserve my identity and other plugins, check that it works, and tell me what needs to restart.
 ```
 
-If the plugin is missing, check whether you installed it in the desktop or Web version you are using, whether it is enabled, and whether a restart is needed. If the sidebar opens but shows no projects, check [membership and access](../usage/access.md). Reinstalling the plugin does not resolve missing permissions.
+Local updates and [online instance upgrades](../deployment/updates.md) are separate. If Skills or the sidebar are missing, check whether you installed in the desktop or Web version you are using, whether the plugin is enabled, and whether a restart is needed. If projects are missing, check [membership and access](../usage/access.md).

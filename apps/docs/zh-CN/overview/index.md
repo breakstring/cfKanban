@@ -20,7 +20,7 @@ cfKanban 是一个 **Agent first** 的任务看板系统。大多数日常协作
 - **Agent 接入**：[共同安装](../integrations/index.md)及[通用 Agent](../integrations/general.md)、[DSH](../integrations/deepseek-harness.md)、[Codex App](../integrations/codex-app.md)入口。
 - **加入与使用**：普通成员的日常协作，以及工作区、项目管理员的操作。
 - **部署与管理**：Owner 的实例设置、设备、升级和恢复。
-- **命令行**：[终端任务指南](../cli/index.md)。
+- **命令行（CLI）**：[终端任务指南](../cli/index.md)。
 
 安装完成后，可以直接向 Agent 描述任务，例如：
 

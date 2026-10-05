@@ -111,10 +111,10 @@ test("all catalog deep links render public documentation without API, auth or D1
 
 test("navigation grouping preserves content URLs and hidden compatibility entries", async () => {
   assert.deepEqual(catalog.map(group => group.slug), ["overview", "integrations", "usage", "deployment", "cli"]);
-  assert.deepEqual(catalog.find(group => group.slug === "integrations").pages.map(page => page.path), ["integrations/index", "integrations/general", "integrations/deepseek-harness", "integrations/codex-app", "integrations/mcp"]);
+  assert.deepEqual(catalog.find(group => group.slug === "integrations").pages.map(page => page.path), ["integrations/index", "integrations/general", "integrations/deepseek-harness", "integrations/codex-app"]);
   const { request } = fixture();
   for (const locale of ["en", "zh-CN"]) {
-    for (const path of ["integrations/general", "integrations/deepseek-harness", "integrations/codex-app", "integrations/mcp", "integrations/webui", "administration/projects", "administration/settings", "overview/quick-start", "usage/agents"]) {
+    for (const path of ["integrations/general", "integrations/deepseek-harness", "integrations/codex-app", "integrations/webui", "administration/projects", "administration/settings", "overview/quick-start", "usage/agents"]) {
       const response = await request(`/docs/${locale}/${path}`);
       assert.equal(response.status, 200, path);
       assert.match(await response.text(), /name="cfkanban-docs"/, path);
@@ -124,11 +124,15 @@ test("navigation grouping preserves content URLs and hidden compatibility entrie
       assert.equal(markdown.headers.get("content-type"), "text/plain; charset=utf-8", path);
       assertDocumentHeaders(markdown);
     }
-    for (const path of ["overview/general", "overview/deepseek-harness", "usage/projects", "deployment/settings"]) {
+    for (const path of ["overview/general", "overview/deepseek-harness", "usage/projects", "deployment/settings", "integrations/mcp", "integrations/mcp.html"]) {
       const response = await request(`/docs/${locale}/${path}`);
       assert.equal(response.status, 404, path);
       assert.match(await response.text(), /Documentation not found/, path);
     }
+    const retiredMarkdown = await request(`/docs/${locale}/integrations/mcp.md`);
+    assert.equal(retiredMarkdown.status, 404);
+    assert.equal(await retiredMarkdown.text(), "Not Found");
+    assertDocumentHeaders(retiredMarkdown);
   }
 });
 

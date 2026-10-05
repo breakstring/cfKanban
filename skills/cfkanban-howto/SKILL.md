@@ -30,9 +30,8 @@ Use the index titles to select pages; these are topic hints, not a reason to fet
 | --- | --- |
 | Priority/Label queries, assignment, pagination / 优先级、标签、分配与分页 | Join & work → Find & create issues (`usage/issues`); collaboration only when Label maintenance is also asked |
 | Projects, members, scoped permissions / 项目、成员与权限 | Join & work → Workspaces & projects / Members & invitations; Concepts & roles for a role distinction |
-| Install or update an Agent integration / 安装或更新代理接入 | Start here → Install & connect / General agents / DeepSeek Harness / Open a board; MCP reference only for other clients or explicit configuration questions; follow the actual index when an older instance uses Agent integrations or Deployment → Prepare & install Skills |
+| Install or update an Agent integration / 安装或更新代理接入 | Agent integrations → Overview / General agents / DeepSeek Harness / Codex App; Skills are the primary workflow, with host extensions enhancing visual use; follow the actual index when an older instance groups setup under Start here or Deployment → Prepare & install Skills |
 | Local or online board, browser access / 本地或线上看板、浏览器入口 | Start here → Open a board (`integrations/webui`); Join & work → Join & sign in for online identity/Passkeys, Manage your workspace for a matching management entry |
-| Connect another MCP client / 连接其他 MCP 客户端 | Start here → MCP reference (`integrations/mcp`); ordinary Agent setup stays with Install & connect rather than requiring users to configure MCP |
 | Deploy or upgrade an Instance / 部署或升级实例 | Deploy & manage → Your first deployment / Instance upgrades; first deployment only for a new instance |
 | Owner reminders, reception and history / Owner 提醒、接收与历史 | Deploy & manage → Owner notifications (`usage/notifications`) / Settings & usage for Owner publication/withdrawal |
 

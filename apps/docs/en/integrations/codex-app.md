@@ -1,128 +1,79 @@
 # Codex App
 
-Use cfKanban in Codex App to browse a full-size board, open Issue details beside your conversation, or find an Issue from the `@` menu and discuss it with the Agent. The native workbench requires a desktop client that supports [Plugin Extensions](https://developers.openai.com/plugins/build/extensions). It uses this computer's cfKanban identity, with the same tasks and permissions as the online Web app.
-
-[![The cfKanban board fills the Codex App workbench, with Project selection and Kanban columns](../../assets/integrations/codex-app-full.png)](../../assets/integrations/codex-app-full.png)
-
-*Full-size board in Codex App; click the image to open the original. The screenshots on this page illustrate layouts; their example tasks and language do not determine your Project or settings.*
-
-::: info Check the installed version
-The workbench needs the complete local components, and identifier/title search also needs a Service that supports search-index synchronization. Check the components actually running on the computer you use. Updating the local plugin does not upgrade the online instance; screenshots and source checks do not replace installation and update checks. Include an exact version when requesting a prerelease.
-:::
+In Codex App, **Skills are the main way to use cfKanban**: tell the Agent what you want to do. The extension adds boards, Issue details and `@` search so you can also browse beside your conversation.
 
 ## Installation and checks
 
-For a first installation, follow the shared path in the [integration overview](./index.md). An invitation or first deployment can prepare the components as part of its own guide. If you already installed the Codex Git plugin or marketplace entry, ask:
+For a first installation, give Codex the prompt from the [general installation guide](./general.md). If cfKanban is already installed, ask the Agent to check it:
 
 ```text
-I installed the cfKanban plugin in Codex App. Check and complete this version's local integration,
-preserving my identity, Project associations, and other connections. Verify whether the native
-workbench is available and tell me which conversations or apps need reopening.
-Do not deploy or upgrade the online instance.
+I installed cfKanban in Codex App. Check that the Skills and local setup are ready,
+preserve my identity and Project associations, and tell me whether to reopen Codex.
 ```
 
-The Git plugin's Skills and the complete release bundle's local components are checked separately. Loading Skills does not prove the native workbench is ready. The Agent checks the actual components, connection, and entrypoints, then reports any remaining steps. You do not enter cfKanban credentials in configuration. Installation grants no Project access; new members continue to [join and sign in](../usage/access.md).
+New members also need to [join a Project](../usage/access.md).
 
-## Choose a workbench entrypoint
+## Work with the Agent through Skills
 
-| Entry | How to open it | How it chooses a Project |
-| --- | --- | --- |
-| Global workbench | Open cfKanban from the client's global navigation | Recheck the last global Project; otherwise open an accessible default under the current identity |
-| Conversation workbench | Select cfKanban in the conversation panel, or ask the Agent | Use an explicitly requested Project or Issue first; with trusted repository context, otherwise use that repository's last Project or verified recommendations |
-
-Ask the Agent to open the current conversation's workbench:
+After installation, give the Agent natural-language requests, for example:
 
 ```text
-Open the cfKanban workbench beside this conversation and verify the current identity and Project.
+Show my unfinished tasks in the current Project, ordered by priority.
+Read CFK-123 and explain its goal and current progress.
+Set CFK-123 to high priority and add a Comment explaining why.
 ```
 
-To open a specific Issue, name its complete identifier:
+The four Skills cover usage guidance, task collaboration, administration, and installation or deployment; see the [general Agent guide](./general.md). You can ask the Agent to create or edit Issues, add Comments, and record completion. See [Working on tasks](../usage/index.md) for everyday examples.
+
+## Browse and mention Issues with the extension
+
+The extension adds UI features alongside Skills. When your client supports them, open the workbench to browse or make changes yourself, or select an Issue reference in the composer.
+
+### Open a board or Issue details
+
+Open the workbench from the client's cfKanban entry, or ask the Agent:
 
 ```text
-Open the details of CFK-123 in the Codex workbench and verify the displayed identifier and Project.
+Open the cfKanban board.
+Open the details of CFK-123.
 ```
+
+[![The cfKanban board fills the Codex App workbench, with Project selection and Kanban columns](../../assets/integrations/codex-app-full.png)](../../assets/integrations/codex-app-full.png)
+
+*Full-size board; click the image to open the original.*
 
 [![CFK-600 details appear beside the conversation in the Codex App side panel](../../assets/integrations/codex-app-sidebar.png)](../../assets/integrations/codex-app-sidebar.png)
 
-*Issue details beside a conversation; click the image to open the original. Check the identifier and Project shown in the workbench.*
+*Issue details beside a conversation; click the image to open the original.*
 
-The Agent resolves the exact instance and Project, then opens the requested Issue after checking identity and access. Missing access or a mismatched target produces an error instead of another Issue or the board. You can also name a Project. Opening a view does not edit tasks, and a successful tool call alone does not prove the requested page is visible: check its identifier and Project.
+Click the Project name at the top to switch Projects, switch between board and list, and click an Issue to open its details. The client controls where the workbench appears; use **Expand workbench** when available. For a browser page, ask: “Open the cfKanban board in a browser.”
 
-The board and list prefer fullscreen when the client supports it. The client controls the final layout and may show the workbench inline. When available, **Expand workbench** opens the larger view; leaving it preserves the current Project and page. A conversation side panel is a client layout, not a separate display mode. Manual opening does not prove that repository context was detected, and requesting an Issue does not force a particular layout.
+### Mention an Issue in a conversation
 
-For an ordinary browser or the full online app, request that surface explicitly and see [Open a board](./webui.md). Asking to open the native workbench does not install a plugin.
-
-## Switch Projects and reopen
-
-Open the current Project selector to browse accessible Projects grouped by Workspace in the verified instance. Continue through pages when more Projects are available. The board switches only after successful verification; a failed selection keeps the current Project. Repository recommendations guide the initial selection and do not restrict later access to other authorized Projects.
-
-- The **global entry** independently remembers the last successfully selected local Project, separate from conversations and repositories.
-- A **conversation entry opened by the Agent with trusted repository context** remembers that repository's last successful Project, including another accessible Project selected in the UI. Subdirectories of one worktree share this choice; different worktrees remain separate.
-- A **conversation entry without repository context** does not read the global preference. A single verified local connection opens an accessible default; several unresolved connections require selection.
-
-Every reopening checks identity, the Project's Workspace, and current access. Project preferences save only the Project. To reopen details, request the Issue explicitly again. They do not change [directory associations](../usage/profile.md) or CLI defaults, grant access, or restore filters, drafts, or previous writes. An invalid explicit Project or saved directory default produces an error instead of silently selecting another Project.
-
-## Mention an Issue in a conversation
-
-Both the local components and target instance must support Issue reference reads. When the client actually exposes the cfKanban mention entry:
-
-1. Type `@` in the composer and **select `cfkanban-search`**. Its description says it searches cfKanban Issues by number or title. Some client menus may group it under the plugin's display name.
-2. Confirm that the composer shows the entry's name token, then enter `CFK-123`, a number prefix such as `CFK-12` / `12`, a title fragment such as `plugin search`, or a canonical Issue link from a trusted connected instance.
-3. Click the returned Issue candidate, add a request such as “Summarize this Issue,” and send.
+1. Type `@` in the composer and **click `cfkanban-search` to select it**.
+2. After its name token appears, enter `CFK-123`, a number prefix such as `CFK-12` / `12`, or title keywords such as `plugin search`.
+3. Click a matching Issue, add a request such as “Summarize this Issue,” and send.
 
 [![The selected cfkanban-search entry returns Issue candidates for the title fragment 看板, showing identifiers, titles, and Project context](../../assets/integrations/codex-search.png)](../../assets/integrations/codex-search.png)
 
-*After selecting the entry, type a title fragment and choose a matching Issue to add its reference. Click the image to open the original.*
+*Select the search entry before typing a number or title; click the image to open the original.*
 
-Typing the entire string `@cfkanban-search CFK-123` does not select the entry automatically and can remain in global search. The search entry is distinct from the `cfkanban-mcp` connection name you may see in **Sources** or settings.
+Number prefixes need at least two digits and title keywords at least two characters. Bodies and Comments are not searched. Candidates show the identifier, title and Project; after selecting one, ask the Agent to read its contents.
 
-Exact identifiers rank first. Number prefixes need at least two digits and title fragments at least two characters. Up to ten candidates show the identifier, title, Workspace and Project. Title matching is case-insensitive; bodies and Comments are not searched.
+Select the entry first: typing the entire string `@cfkanban-search CFK-123` may leave you in global search. You can also send “Read CFK-123 and summarize it” directly, without using search or the workbench.
 
-Candidates come from a persistent local cache, so each input does not wait for a network refresh or permission check. On a new computer, background preparation starts when MCP initializes with a single local connection. Until ready, the client may show no candidates; enter the query again after preparation finishes. An already open list does not refresh automatically, and reopening reuses the existing index.
+## Updates and common questions
 
-While search is active, background synchronization checks changes every 30 seconds. It stops after five minutes without search and resumes when you search again. Local changes to titles or other indexed fields request a background refresh. With multiple connections, choose the instance using a trusted Issue link.
-
-Each synchronization checks accessible Projects. Newly granted Projects receive their existing Issues before incremental updates; search temporarily returns no candidates while this preparation runs. Revoked Projects are removed after synchronization confirms the change. A recently renamed, deleted or revoked Issue can briefly remain in the list; reading a selected reference checks live access and rejects inaccessible or deleted content. Instances and users have separate caches; keep active cache files out of cloud-drive synchronization.
-
-Selecting a mention lets the Agent read the Issue's main fields and body under current permissions; oversized content is marked as truncated. Comments, relations, and further details are read separately when needed. The reference does not create an Issue, change its status, start work, or grant authorization. An ambiguous identifier across multiple instances needs an exact trusted Issue link; the integration does not search every instance.
-
-If the client has no mention entry, give the identifier directly to the Agent:
+To update, ask the Agent:
 
 ```text
-Read CFK-123 and explain its current status, goal, and anything that needs my decision.
+Update this computer's cfKanban Skills and plugin to the latest stable release,
+preserve my identity and Project associations, and tell me whether to reopen Codex.
 ```
 
-You can also copy an identifier, online URL, or original Markdown from the workbench. It does not automatically send chat messages. Business Issue deep links in Codex are not provided.
+Local updates and [online instance upgrades](../deployment/updates.md) are separate. Updating the plugin does not upgrade the online Service.
 
-## Everyday work and recovery
+- **No search results?** Check the input length. On first use, the Issue list needs preparation; try entering the query again later. If it still returns nothing, ask the Agent to check the connection and Project access.
+- **No workbench entry, or the old UI remains after updating?** Ask the Agent to check the local installation and client support. Skills remain the collaboration entry; reconnect or reopen Codex for the UI as instructed.
 
-The workbench provides Kanban and list views, details, authorized Issue creation and editing, priority/status/assignee/Label changes, Comments, and completion records. Account, member, and Owner administration uses the [online management pages](../administration/index.md). Language and theme prefer saved account settings. Without a language preference, the host or browser language is used, with Simplified Chinese for Chinese locales.
-
-For an uncertain write, use **Recover** in the original page first. Keep that page and its MCP process until recovery finishes. A new entry, reopening, or remembered Project does not prove the original write failed, restore it, or replay it automatically.
-
-## Installation and update FAQ
-
-**Skills load, but there is no workbench entry.** Ask the Agent to check the client's Extensions support, the complete local components, and the MCP connection. Clients without native UI can still use discovered business tools or Skills; choose the browser workbench when needed. A client name alone does not establish support.
-
-**The mention entry is selected, but there are no Issue candidates.** Check the identifier or title length and whether the initial index is still being prepared. Ask the Agent to check the running MCP version, connection, background synchronization errors and Project access. A Skills or plugin version does not prove that MCP loaded the same version. After an update, verify the new artifact path and reconnect.
-
-**The view opens, but there is no Project.** Check identity, connection, and [Project access](../usage/access.md) first. Multiple connections need selection; installing components does not join a Project.
-
-**Issue mentions report unsupported capability.** `MCP_ISSUE_REFERENCE_UNSUPPORTED` means the target instance does not provide reference reads, rather than “no matching Issue.” A local update does not automatically upgrade the instance. Ask the Agent to check both versions; instance changes follow the separate [upgrade workflow](../deployment/updates.md).
-
-**Search indexing reports unsupported capability.** `MCP_SEARCH_INDEX_UNSUPPORTED` means the Service does not provide index synchronization. An older instance cannot support the new local title search. Check both the local components and instance version; updating a plugin does not automatically update the online Service.
-
-**Why did reopening not restore the Issue or draft?** A Project preference selects the Project again. Request a complete Issue identifier to open its current details explicitly. Each fresh entry creates an independent view; filters, drafts, and uncertain writes do not transfer. Verify any earlier uncertain operation first.
-
-**The UI still looks old after an update.** Resolve uncertain writes in the original view, ask the Agent to update the local installation, close the old workbench, restart its MCP, and reopen from the entrypoint. Refreshing an old view alone does not prove new components loaded.
-
-```text
-Update the local cfKanban installation in Codex App to the latest compatible stable release,
-preserving my identity and Project associations. First check for uncertain workbench operations;
-after updating, verify the running version and explain which connections need restarting.
-Do not upgrade the online instance.
-```
-
-**Initialization failed or the connection expired.** Share the displayed error code with the Agent to check the running version, connection, and client. An initialization error does not mean you have not joined. Reopen after earlier writes have a known result; verify uncertain results first. Codes, stdio configuration, and the workbench protocol are in the [MCP reference](./mcp.md#workbench-protocol-reference).
-
-Disabling or removing the host integration does not delete online tasks. Local updates and [instance upgrades](../deployment/updates.md) are separate.
+If a workbench change has an uncertain result, use **Recover** in the original page and confirm the outcome before closing the page or restarting.

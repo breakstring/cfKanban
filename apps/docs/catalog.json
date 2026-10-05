@@ -14,8 +14,7 @@
       { "path": "integrations/index", "en": "Integration overview", "zh-CN": "接入概览" },
       { "path": "integrations/general", "en": "General agents", "zh-CN": "通用 Agent" },
       { "path": "integrations/deepseek-harness", "en": "DeepSeek Harness", "zh-CN": "DeepSeek Harness" },
-      { "path": "integrations/codex-app", "en": "Codex App", "zh-CN": "Codex App" },
-      { "path": "integrations/mcp", "en": "MCP reference", "zh-CN": "MCP 接入参考" }
+      { "path": "integrations/codex-app", "en": "Codex App", "zh-CN": "Codex App" }
     ]
   },
   {
@@ -51,7 +50,7 @@
     ]
   },
   {
-    "slug": "cli", "en": "Command line", "zh-CN": "命令行",
+    "slug": "cli", "en": "Command Line (CLI)", "zh-CN": "命令行（CLI）",
     "pages": [
       {"path":"cli/index","en":"Use cfKanban in a terminal","zh-CN":"在终端使用 cfKanban"},
       {"path":"cli/installation","en":"CLI entry & Skills updates","zh-CN":"CLI 入口与 Skills 更新"},
