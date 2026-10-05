@@ -11,7 +11,7 @@
 
 专用 `cfkanban_mentions_search` 仅接受严格 `{query:string}`。MCP initialize 响应通过 `capabilities.experimental["openai/mentions"] = {searchTool:"cfkanban_mentions_search"}` 声明搜索工具，工具保留 `_meta["openai/extensions"]["mentions/search"]` 和 app-only visibility。现代 capability 决定宿主按 query-only 协议调用；仅有旧工具 metadata 时，已核对的宿主会走附带 `path:[]` 的 legacy 分支，不能替代 initialize 声明。不扩展输入以接受 legacy 控制字段。
 
-搜索工具用宿主支持的顶层 `_meta.connector_name: "cfkanban-search"`、title 和 description 说明用途；保留工具名、MCP server identity、query-only 协议和业务工具。插件合并菜单可能使用宿主自己的 displayName，真实客户端显示另验。客户端先从 `@` 菜单选择 provider，再在名称标签后输入纯查询；手打包含服务名称的整串文字不构成 provider 选择。
+MCP initialize 通过标准 `serverInfo.title: "cfkanban-search"` 提供用户显示名，保留稳定 `serverInfo.name: "cfkanban-mcp"`；搜索工具的 title 和 description 说明用途。普通本地 MCP 的 `_meta.connector_name` 会被 Codex App Server 过滤，不能用该保留字段改名；已核对桌面菜单按保留的 connector metadata、serverInfo.title、serverInfo.name、宿主注册名顺序取显示名。工具名、query-only 协议和业务工具保持不变。插件合并菜单可能使用插件 displayName，真实客户端显示另验。客户端先从 `@` 菜单选择 provider，再在名称标签后输入纯查询；手打包含服务名称的整串文字不构成 provider 选择。
 
 完整、大小写准确且数字为正安全整数的 `CFK-N` 精确匹配优先；至少两位的 `CFK-60` / `60` 也匹配编号前缀。标题或标题片段至少两个 Unicode 字符，采用 NFKC 和大小写无关片段匹配，不匹配正文或评论。空输入、只有 `CFK-` 或过短输入返回空候选。可信 HTTPS `/app/issues/CFK-N` 链接可定位实例，禁止用户信息、查询参数和片段；无效链接不能回退为标题查询，也不请求输入 URL。
 

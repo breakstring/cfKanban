@@ -63,7 +63,7 @@ function composerProvider(capabilities, tools) {
 }
 
 test("mentions metadata follows the strict app-only official query schema", () => {
-  assert.deepEqual(MENTIONS_TOOL._meta, { connector_name: "cfkanban-search", "openai/extensions": { "mentions/search": {} }, ui: { visibility: ["app"] } });
+  assert.deepEqual(MENTIONS_TOOL._meta, { "openai/extensions": { "mentions/search": {} }, ui: { visibility: ["app"] } });
   assert.match(MENTIONS_TOOL.description, /CFK-60 or 60/);
   assert.deepEqual(Object.keys(MENTIONS_TOOL.inputSchema.properties), ["query"]);
   assert.equal(MENTIONS_TOOL.annotations.readOnlyHint, true);
@@ -86,6 +86,8 @@ test("Composer capability negotiation selects query-only search and reads the ex
   t.after(async () => { f.mentions.dispose(); await client.close(); await server.close(); });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport); await client.connect(clientTransport);
+  assert.equal(client.getServerVersion().title, "cfkanban-search");
+  assert.equal(client.getServerVersion().name, "cfkanban-mcp");
   const tools = (await client.listTools()).tools;
   const provider = composerProvider(client.getServerCapabilities(), tools);
   const result = await client.callTool({ name: provider.name, arguments: provider.arguments("CFK-601") });

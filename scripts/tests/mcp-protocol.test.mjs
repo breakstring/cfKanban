@@ -67,6 +67,7 @@ async function initialize(peer) {
   const response = await peer.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "isolated-test-client", version: "1.0.0" } });
   assert.equal(response.error, undefined);
   assert.equal(response.result.serverInfo.name, "cfkanban-mcp");
+  assert.equal(response.result.serverInfo.title, "cfkanban-search");
   assert.deepEqual(response.result.capabilities.experimental?.["openai/mentions"], { searchTool: "cfkanban_mentions_search" });
   peer.notify("notifications/initialized");
   return response;
@@ -92,7 +93,7 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     const mentions = list.result.tools.find(tool => tool.name === "cfkanban_mentions_search");
     assert.deepEqual(mentions._meta["openai/extensions"], { "mentions/search": {} });
     assert.deepEqual(mentions._meta.ui.visibility, ["app"]);
-    assert.equal(mentions._meta.connector_name, "cfkanban-search");
+    assert.equal(Object.hasOwn(mentions._meta, "connector_name"), false);
     const emptyMention = await peer.request("tools/call", { name: mentions.name, arguments: { query: "CFK-" } });
     assert.deepEqual(emptyMention.result.structuredContent, { items: [] });
     const legacyMention = await peer.request("tools/call", { name: mentions.name, arguments: { query: "CFK-1", path: [] } });
