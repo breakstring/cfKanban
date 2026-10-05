@@ -8,12 +8,12 @@ When you want to see progress, browse details, or make changes yourself, choose 
 
 Both interfaces access the same instance's tasks under the same business permissions. The local workbench is convenient for viewing and handling tasks beside your Agent; the full online app includes account and management features. The local workbench also needs a connection to the online instance; it is not an offline copy.
 
-| | Local workbench / DSH sidebar | Full online app |
+| | Local / host workbench | Full online app |
 | --- | --- | --- |
 | Best for | Viewing and moving tasks forward beside your Agent | Browsing the full application and managing your account and team |
 | Daily tasks | Project switching, boards and lists, quick priority/status/assignee edits, details, single-Issue labels, comments, and completion | These daily actions plus all application entry points |
 | Workspaces, members, access, and custom settings | Ask the Agent to open the appropriate management entry | Manage within your permissions and current session scope |
-| How to open | Ask the Agent; in DSH, ask for the sidebar or select the logo | Explicitly ask the Agent for online mode, or sign in to the site with a registered Passkey |
+| How to open | Ask the Agent or use an available host entry; see [Codex App](./codex-app.md) and [DSH](./deepseek-harness.md) | Explicitly ask the Agent for online mode, or sign in to the site with a registered Passkey |
 | Local requirements | Matching local components installed; included in the DSH plugin | A normal browser; Agent sign-in requires a usable local identity |
 
 In the full app’s project page, choose **Board** or **List**. List groups Issues by status and lets you expand nested children. Switching views keeps loaded pages; opening an Issue or project settings preserves the list and filters when you return.
@@ -30,13 +30,7 @@ You can also name a task:
 Open CFK-123 in the local workbench.
 ```
 
-The Agent first uses an available workbench in your host, such as the DSH sidebar. Otherwise it opens the local workbench in a browser, starting the service when needed. In Codex App, it prefers the in-app browser when available. You can request a specific browser or the full online app.
-
-In DSH with a compatible plugin enabled, you can say:
-
-```text
-Open CFK-123 in the sidebar.
-```
+The Agent first uses an available workbench in your host. See [Codex App](./codex-app.md) or [DSH](./deepseek-harness.md) for host entrypoints and Project selection. Otherwise it opens the local workbench in a browser, starting the service when needed. You can request a specific browser or the full online app.
 
 The Agent locates the requested project or task and confirms the page has opened. If you specifically request the sidebar and the current host cannot open it, the Agent explains the limitation without opening a browser instead. If opening fails or its result is uncertain, the Agent explains the state without automatically opening another page.
 

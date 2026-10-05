@@ -13,6 +13,8 @@ cfkanban issue show --instance <instance-uuid> --identifier CFK-123 --json
 
 使用长选项和稳定 ID。`--instance` 与 `--instance-id` 等价；单值工作区/项目参数也支持 `--workspace` / `--workspace-id`、`--project` / `--project-id` 等价写法。重复列表筛选保留原数组语义与 cursor，不抓全历史再本地筛选。`--locale en|zh-CN` 选择说明语言，`--json` 选择版本化机器 envelope。结果写 stdout，诊断写 stderr，业务失败返回非零。
 
+`issue reference --identifier CFK-123 --projection mention|resource` 提供受权限约束的简短读取，可选有界正文。实际执行时选一个 projection 值，不输入 `|` 分隔符；它与完整的 `issue show` 响应分开，截断及后续评论/关系读取见[查看任务](./daily.md#查看或创建-issue)。可用性以实际安装的 CLI 和 Service 版本为准。
+
 ## 上下文选择与保存默认范围
 
 明确 ID 优先；否则 CLI 仅解析命令需要的目标层级，使用仓库推荐、兼容的目录保存选择、全局默认或唯一已登记连接/Service 候选。仓库推荐优先于全局默认；目录选择只能收窄仓库候选，不能扩大范围。仓库 scope 保持非秘密实例/工作区/项目 UUID 元组的扁平列表，没有优先项目或最近使用项目。

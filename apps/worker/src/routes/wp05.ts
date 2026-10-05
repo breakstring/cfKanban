@@ -14,6 +14,7 @@ import {
   deleteIssue,
   getIssue,
   getIssueContext,
+  getIssueReference,
   listIssueCandidates,
   listIssues,
   listProjectIssues,
@@ -116,6 +117,12 @@ export function registerWp05Routes(router: Router): Router {
         auth,
         path(context, "identifier"),
         context.url,
+      ), context.requestId);
+    })
+    .get("/api/v1/issues/{identifier}/reference", async (request, env, context) => {
+      const auth = await authenticated(request, env, context);
+      return jsonResponse(await getIssueReference(
+        env.DB, auth, path(context, "identifier"), context.url, context.startedAt,
       ), context.requestId);
     })
     .patch("/api/v1/issues/{identifier}", async (request, env, context) => {

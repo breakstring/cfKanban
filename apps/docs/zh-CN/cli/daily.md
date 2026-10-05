@@ -33,6 +33,15 @@ cfkanban issue show --identifier CFK-123
 cfkanban issue create --title "Fix login" --body-file ./issue.md
 ```
 
+实例版本支持引用读取端点时，可以选定投影获取简短的只读结果：
+
+```text
+cfkanban issue reference --identifier CFK-123 --projection mention
+cfkanban issue reference --identifier CFK-123 --projection resource
+```
+
+`mention` 只返回编号、标题及项目/工作区上下文，不读取正文；`resource` 增加当前状态、优先级、版本、更新时间和有界正文。先检查 `body_truncated` 与 `body_bytes`，不能将截断内容当作完整描述。需要完整 Issue 响应时继续使用普通 `issue show`，其语义不变；引用结果不包含评论或关系，按需要另用 `comment list` 和 `relation list` 读取。这条只读命令不会创建输入区引用，也不授权修改。
+
 ## 推进并评论
 
 修改状态或追加进展评论。CLI 核验当前权限和版本；遇到并发变更时重新判断，不覆盖较新工作。

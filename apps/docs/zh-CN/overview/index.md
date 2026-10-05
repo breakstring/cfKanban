@@ -10,15 +10,17 @@ cfKanban 是一个 **Agent first** 的任务看板系统。大多数日常协作
 | 已经加入，开始处理任务 | [日常协作](../usage/index.md)或[打开看板](../integrations/webui.md) |
 | 负责工作区、项目或成员 | [管理工作区与项目](../administration/index.md)：在获授权的范围内管理，无需部署站点 |
 | 想拥有自己的 cfKanban 站点 | [Owner 入门](../deployment/index.md)：准备、部署和维护自己的实例 |
-| 只想先接入当前 Agent | [安装与接入](../integrations/index.md)：通用 Skills 或 DSH 插件 |
+| 只想先接入当前 Agent | [Agent 接入](../integrations/index.md)：选择通用 Agent、DSH 或 Codex App |
 
 **首次加入和首次部署都可以按需安装技能。** 直接走对应引导即可，不必先完成一套独立安装教程。已有兼容安装会被复用；安装技能本身不会加入项目，也不会创建云端资源。
 
 ## 这份文档怎么读
 
-- **开始使用**：共同需要的安装、打开看板和基本概念。
+- **开始使用**：选择使用场景、看板和基本概念。
+- **Agent 接入**：[共同安装](../integrations/index.md)及[通用 Agent](../integrations/general.md)、[DSH](../integrations/deepseek-harness.md)、[Codex App](../integrations/codex-app.md)入口。
 - **加入与使用**：普通成员的日常协作，以及工作区、项目管理员的操作。
 - **部署与管理**：Owner 的实例设置、设备、升级和恢复。
+- **命令行**：[终端任务指南](../cli/index.md)。
 
 安装完成后，可以直接向 Agent 描述任务，例如：
 

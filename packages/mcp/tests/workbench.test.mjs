@@ -86,6 +86,9 @@ test('entrypoints strictly validate inputs, expose UI state only in metadata and
   assert.deepEqual(tools[1]._meta['openai/ui'].entrypoints, [{ type: 'global' }]);
   assert.equal(tools[0].inputSchema.additionalProperties, false);
   assert.deepEqual(Object.keys(tools[0].inputSchema.properties), ['target', 'recommended_targets', 'repository_key']);
+  assert.deepEqual(tools[0].inputSchema.properties.target.required, ['instance_id', 'workspace_id', 'project_id']);
+  assert.match(tools[0].inputSchema.properties.target.properties.identifier.pattern, /CFK/);
+  assert.equal(Object.hasOwn(tools[0].inputSchema.properties.recommended_targets.items.properties, 'identifier'), false);
   assert.deepEqual(tools[1].inputSchema, { type: 'object', properties: {}, required: [], additionalProperties: false });
   assert.ok(tools.slice(2).every(tool => JSON.stringify(tool._meta.ui.visibility) === '["app"]'));
   assert.equal((await workbench.callTool('cfkanban_workbench_open', { project_id: f.ids.project_id })).structuredContent.error.code, 'MCP_INVALID_ARGUMENTS');
@@ -165,6 +168,122 @@ test('thread opens an explicit or first accessible repository Project and never 
     assert.equal(f.calls.some(row => /_(create|update|complete|delete)$/.test(row.name)), false);
     assert.equal(snapshotOf(result).error, null);
   }
+});
+
+test('an explicit Issue target loads detail before the initial snapshot and remembers only its verified Project', async t => {
+  const { McpWorkbench } = await workbenchExports();
+  for (const reader of [false, true]) {
+    const f = fixture({ reader }), saved = [], key = 'e'.repeat(64);
+    const workbench = new McpWorkbench({ createFacade: f.createFacade, preferences: { async save(target, repositoryKey) { saved.push({ target, repositoryKey }); return true; } } });
+    t.after(() => workbench.dispose());
+    const target = { instance_id: f.ids.instance_id.toUpperCase(), workspace_id: f.ids.workspace_id.toUpperCase(), project_id: f.ids.project_id.toUpperCase(), identifier: 'CFK-1' };
+    const opened = await workbench.callTool('cfkanban_workbench_open', { target, repository_key: key });
+    const state = snapshotOf(opened);
+    assert.equal(opened.structuredContent.ok, true);
+    assert.equal(state.issue.identifier, target.identifier);
+    assert.equal(state.issue.body, f.issue.body);
+    assert.deepEqual(state.issue.allowed_actions, reader ? ['read'] : ['read', 'update']);
+    assert.equal(state.binding.project.id, f.ids.project_id);
+    assert.deepEqual(saved, [{ target: f.ids, repositoryKey: key }]);
+    const detail = f.calls.filter(row => row.name === 'cfkanban_issues_get');
+    assert.equal(detail.length, 1);
+    assert.deepEqual(detail[0].args, { instance_id: f.ids.instance_id, identifier: target.identifier });
+    assert.deepEqual(detail[0].config.binding, { instance_id: f.ids.instance_id, expected_principal_id: f.ids.principal_id, project_ids: [f.ids.project_id] });
+    assert.ok(f.calls.every(row => !/_(create|update|complete|delete)$/.test(row.name)));
+    assert.doesNotMatch(JSON.stringify(opened), /PRIVATE_FIXTURE_MARKER|binding_id|idempotency_key/);
+    assert.doesNotMatch(JSON.stringify(opened.structuredContent), /Fixture|CFK-1|body|principal/);
+    const back = await call(workbench, viewIdOf(opened), action('issue_back'));
+    assert.equal(snapshotOf(back).issue, null);
+    const count = f.calls.length;
+    const refreshed = await workbench.callTool('cfkanban_workbench_snapshot', { view_id: viewIdOf(opened) });
+    assert.equal(snapshotOf(refreshed).issue, null);
+    assert.equal(f.calls.length, count, 'snapshot refresh must not replay the initial Issue navigation');
+  }
+});
+
+test('explicit Issue failures retain structured diagnostics and cannot display a different or inaccessible Issue', async t => {
+  const { McpWorkbench } = await workbenchExports();
+  for (const mode of ['forbidden', 'deleted', 'project', 'workspace', 'identifier', 'identity']) {
+    const f = fixture(), workbench = new McpWorkbench({ createFacade: f.createFacade });
+    t.after(() => workbench.dispose());
+    const target = { instance_id: f.ids.instance_id, workspace_id: f.ids.workspace_id, project_id: f.ids.project_id, identifier: 'CFK-1' };
+    f.intercept(name => {
+      if (name !== 'cfkanban_issues_get') return;
+      if (mode === 'forbidden') return fail('FORBIDDEN');
+      if (mode === 'deleted') return fail('NOT_FOUND', 404);
+      if (mode === 'identity') { f.drift(); return; }
+      return ok({ ...f.issue, title: 'UNRELATED_PRIVATE_DETAIL', body: 'UNRELATED_PRIVATE_DETAIL',
+        ...(mode === 'project' ? { project: { id: randomUUID() } } : {}),
+        ...(mode === 'workspace' ? { workspace: { id: randomUUID() } } : {}),
+        ...(mode === 'identifier' ? { identifier: 'CFK-2' } : {}),
+      });
+    });
+    const result = await workbench.callTool('cfkanban_workbench_open', { target });
+    const expected = mode === 'forbidden' ? 'FORBIDDEN' : mode === 'deleted' ? 'NOT_FOUND' : mode === 'identity' ? 'MCP_PRINCIPAL_BINDING_MISMATCH' : 'PANEL_SCOPE_DENIED';
+    assert.equal(result.structuredContent.ok, false);
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.error.code, expected);
+    assert.equal(snapshotOf(result).error.code, expected);
+    assert.equal(snapshotOf(result).issue, null);
+    assert.deepEqual(snapshotOf(result).comments, []);
+    assert.equal(snapshotOf(result).binding.project.id, target.project_id);
+    assert.ok(workbench.views.has(viewIdOf(result)), 'failed detail navigation retains its verified view');
+    assert.doesNotMatch(JSON.stringify(result), /UNRELATED_PRIVATE_DETAIL/);
+    assert.equal(f.calls.filter(row => row.name === 'cfkanban_projects_get').length, 1);
+    assert.equal(f.calls.some(row => row.name === 'cfkanban_projects_list'), false);
+  }
+});
+
+test('an explicit Issue target does not read detail when its Project binding fails', async t => {
+  const { McpWorkbench } = await workbenchExports();
+  const f = fixture(), workbench = new McpWorkbench({ createFacade: f.createFacade });
+  t.after(() => workbench.dispose());
+  f.intercept(name => name === 'cfkanban_projects_get' ? fail('FORBIDDEN') : undefined);
+  const result = await workbench.callTool('cfkanban_workbench_open', { target: { instance_id: f.ids.instance_id, workspace_id: f.ids.workspace_id, project_id: f.ids.project_id, identifier: 'CFK-1' } });
+  assert.equal(result.structuredContent.error.code, 'FORBIDDEN');
+  assert.equal(snapshotOf(result).binding, null);
+  assert.equal(snapshotOf(result).issue, null);
+  assert.equal(f.calls.some(row => row.name === 'cfkanban_issues_get' || row.name === 'cfkanban_projects_list'), false);
+});
+
+test('Issue target arguments require an explicit Project and reject malformed identifiers before reads', async t => {
+  const { McpWorkbench } = await workbenchExports();
+  const f = fixture(), workbench = new McpWorkbench({ createFacade: f.createFacade });
+  t.after(() => workbench.dispose());
+  const project = { instance_id: f.ids.instance_id, workspace_id: f.ids.workspace_id, project_id: f.ids.project_id };
+  const malformed = ['', 'CFK-', 'CFK-0', 'CFK-01', 'cfk-1', 'ABC-1', 'CFK-1\n', 'CFK-9007199254740992', 'CFK-1000000000000000', 'https://isolated.fixture.invalid/app/issues/CFK-1', null, 1, undefined];
+  for (const value of malformed) assert.equal((await workbench.callTool('cfkanban_workbench_open', { target: { ...project, identifier: value } })).structuredContent.error.code, 'MCP_INVALID_ARGUMENTS');
+  for (const args of [{ identifier: 'CFK-1' }, { target: { identifier: 'CFK-1' } }, { recommended_targets: [{ ...project, identifier: 'CFK-1' }] }, { repository_key: 'a'.repeat(64), identifier: 'CFK-1' }]) {
+    assert.equal((await workbench.callTool('cfkanban_workbench_open', args)).structuredContent.error.code, 'MCP_INVALID_ARGUMENTS');
+  }
+  assert.equal((await workbench.callTool('cfkanban_workbench_global_open', { target: { ...project, identifier: 'CFK-1' } })).structuredContent.error.code, 'MCP_INVALID_ARGUMENTS');
+  assert.equal(f.calls.length, 0);
+  assert.equal(workbench.views.size, 0);
+});
+
+test('cancelling an initial Issue read aborts its actual I/O and releases only that unfinished view', async t => {
+  const { McpWorkbench } = await workbenchExports();
+  const f = fixture(), workbench = new McpWorkbench({ createFacade: f.createFacade });
+  t.after(() => workbench.dispose());
+  const other = viewIdOf(await workbench.callTool('cfkanban_workbench_open', {}));
+  let reached, readSignal;
+  const started = new Promise(resolve => { reached = resolve; });
+  f.intercept((name, _args, signal) => {
+    if (name !== 'cfkanban_issues_get') return;
+    readSignal = signal; reached();
+    return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  });
+  const cancel = new AbortController(), request = workbench.callTool('cfkanban_workbench_open', { target: { instance_id: f.ids.instance_id, workspace_id: f.ids.workspace_id, project_id: f.ids.project_id, identifier: 'CFK-1' } }, { signal: cancel.signal });
+  await started;
+  const unfinished = [...workbench.views.keys()].find(id => id !== other);
+  assert.equal((await workbench.callTool('cfkanban_workbench_release', { view_id: unfinished })).structuredContent.error.code, 'PANEL_OPERATION_PENDING');
+  cancel.abort();
+  const result = await request;
+  assert.equal(readSignal.aborted, true);
+  assert.equal(result.structuredContent.error.code, 'PANEL_REQUEST_UNCERTAIN');
+  assert.equal(result._meta, undefined);
+  assert.equal(workbench.views.size, 1);
+  assert.equal(workbench.views.has(other), true);
 });
 
 test('explicit and repository failures retain their diagnostic and do not choose an unrelated default', async t => {
@@ -718,7 +837,7 @@ test('official MCP resources and tools preserve metadata, restrict the resource 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport); await client.connect(clientTransport);
   const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 5);
+  assert.equal(tools.length, 6);
   const uri = tools[0]._meta.ui.resourceUri;
   assert.equal(uri, `ui://cfkanban/workbench/source/${createHash('sha256').update('<!doctype html><title>Fixture UI</title>').digest('hex')}/index.html`);
   assert.deepEqual(tools[0]._meta['openai/ui'].entrypoints, [{ type: 'thread' }]);
@@ -728,6 +847,7 @@ test('official MCP resources and tools preserve metadata, restrict the resource 
   assert.equal(resource.text, '<!doctype html><title>Fixture UI</title>');
   assert.deepEqual(resource._meta.ui.csp, { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] });
   assert.deepEqual(resource._meta.ui.permissions, { clipboardWrite: {} });
+  assert.deepEqual(resource._meta['openai/ui'], { availableDisplayModes: ['inline', 'fullscreen'], preferredDisplayMode: 'fullscreen' });
   for (const invalid of ['file:///etc/passwd', 'ui://cfkanban/workbench/other/index.html', uri + '?path=/arbitrary']) await assert.rejects(client.readResource({ uri: invalid }), /Unknown cfKanban resource/);
   const opened = await client.callTool({ name: 'cfkanban_workbench_open', arguments: {} });
   assert.match(viewIdOf(opened), /^[0-9a-f-]{36}$/);

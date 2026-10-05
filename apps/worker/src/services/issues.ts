@@ -1764,6 +1764,151 @@ export async function getIssue(
   };
 }
 
+interface IssueReferenceRow {
+  body_bytes?: number;
+  body_hex?: string;
+  id: string;
+  number: number;
+  priority_key?: PriorityKey;
+  project_display_name: string;
+  project_id: string;
+  status_display_name?: string;
+  status_key?: StatusKey;
+  title: string;
+  updated_at?: number;
+  version?: number;
+  workspace_display_name: string;
+  workspace_id: string;
+}
+
+function decodeBodyPrefix(hex: string): string {
+  const bytes = Uint8Array.from(hex.match(/.{2}/g) ?? [], (pair) => Number.parseInt(pair, 16));
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  // SQLite limits the BLOB before returning it; its boundary may split one UTF-8 code point.
+  for (let omitted = 0; omitted <= 3 && omitted <= bytes.length; omitted += 1) {
+    try {
+      return decoder.decode(bytes.subarray(0, bytes.length - omitted));
+    } catch {
+      if (omitted === 3) throw platformUnavailable();
+    }
+  }
+  throw platformUnavailable();
+}
+
+function boundedReferenceBody(resource: { [key: string]: JsonValue }, body: string, totalBytes: number): void {
+  const encoder = new TextEncoder();
+  const characters = Array.from(body);
+  let low = 0;
+  let high = characters.length;
+  const assign = (length: number) => {
+    resource.body = characters.slice(0, length).join("");
+    resource.body_truncated = encoder.encode(resource.body as string).byteLength < totalBytes;
+  };
+  // JSON escaping can exceed the raw UTF-8 budget, so the whole projection also has a byte ceiling.
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    assign(middle);
+    if (encoder.encode(JSON.stringify(resource)).byteLength <= 16_384) low = middle;
+    else high = middle - 1;
+  }
+  assign(low);
+}
+
+export async function getIssueReference(
+  db: D1Database,
+  auth: AuthContext,
+  identifierValue: JsonValue,
+  url: URL,
+  now = Date.now(),
+): Promise<{ [key: string]: JsonValue }> {
+  const identifier = requireIssueIdentifier(identifierValue);
+  const projections = url.searchParams.getAll("projection");
+  const projection = projections[0] ?? "mention";
+  if (projections.length > 1 || (projection !== "mention" && projection !== "resource")) {
+    throw validationError("schema_validation_failed", { field: "projection" });
+  }
+  let target: { project_id: string; workspace_id: string } | null;
+  try {
+    target = await db.prepare(
+      `SELECT i.project_id, p.workspace_id
+       FROM issues i JOIN projects p ON p.id = i.project_id
+       JOIN workspaces w ON w.id = p.workspace_id
+       WHERE i.number = ?1 AND i.deleted_at IS NULL
+         AND p.deleted_at IS NULL AND w.deleted_at IS NULL`,
+    ).bind(issueNumber(identifier)).first<{ project_id: string; workspace_id: string }>();
+  } catch (error) {
+    throw platformUnavailable("d1", error);
+  }
+  if (target === null || !cookieTargetAllowsProject(auth, target.workspace_id, target.project_id)) {
+    await verifyCurrentAuth(db, auth, now);
+    throw notFound();
+  }
+  await requireVisibleProject(db, auth, target.workspace_id, target.project_id);
+  const guard = buildCurrentAuthGuard(auth, now, 3);
+  const values: (string | number | null)[] = [issueNumber(identifier), target.project_id, ...guard.values];
+  const principalParameter = `?${values.length + 1}`;
+  if (!auth.isOwner) values.push(auth.principalId);
+  const anchorIdentifier = issueTarget(auth);
+  const anchorParameter = `?${values.length + 1}`;
+  if (anchorIdentifier !== null) values.push(issueNumber(anchorIdentifier));
+  let row: IssueReferenceRow | undefined;
+  try {
+    const result = await db.prepare(
+      `SELECT i.id, i.number, i.title, i.project_id,
+              p.display_name AS project_display_name,
+              w.id AS workspace_id, w.display_name AS workspace_display_name
+              ${projection === "resource" ? `,
+              hex(substr(CAST(i.body AS BLOB), 1, 8192)) AS body_hex,
+              length(CAST(i.body AS BLOB)) AS body_bytes,
+              i.status_key, i.priority_key, i.version, i.updated_at,
+              COALESCE(status_name.display_name,
+                CASE i.status_key WHEN 'backlog' THEN 'Backlog' WHEN 'todo' THEN 'Todo'
+                  WHEN 'in_progress' THEN 'In Progress' WHEN 'done' THEN 'Done' ELSE 'Canceled' END
+              ) AS status_display_name` : ""}
+       FROM issues i JOIN projects p ON p.id = i.project_id
+       JOIN workspaces w ON w.id = p.workspace_id
+       ${projection === "resource" ? "LEFT JOIN project_status_names status_name ON status_name.project_id = i.project_id AND status_name.status_key = i.status_key" : ""}
+       WHERE i.number = ?1 AND i.project_id = ?2 AND i.deleted_at IS NULL
+         AND p.deleted_at IS NULL AND w.deleted_at IS NULL AND ${guard.sql}
+         ${auth.isOwner ? "" : `AND EXISTS (
+           SELECT 1 FROM effective_project_grants reference_grant
+           WHERE reference_grant.project_id = i.project_id
+             AND reference_grant.principal_id = ${principalParameter}
+             AND reference_grant.revoked_at IS NULL
+         )`}
+         ${anchorIdentifier === null ? "" : `AND EXISTS (
+           SELECT 1 FROM issues reference_anchor
+           WHERE reference_anchor.number = ${anchorParameter}
+             AND reference_anchor.deleted_at IS NULL
+             AND reference_anchor.project_id = i.project_id
+         )`}`,
+    ).bind(...values).all<IssueReferenceRow>();
+    row = result.results[0];
+  } catch (error) {
+    throw platformUnavailable("d1", error);
+  }
+  if (row === undefined) {
+    await verifyCurrentAuth(db, auth, now);
+    throw notFound();
+  }
+  const resource: { [key: string]: JsonValue } = {
+    id: row.id,
+    identifier: `CFK-${row.number}`,
+    title: row.title,
+    project: { id: row.project_id, display_name: row.project_display_name },
+    workspace: { id: row.workspace_id, display_name: row.workspace_display_name },
+  };
+  if (projection === "resource") {
+    resource.body_bytes = row.body_bytes ?? 0;
+    resource.status = { key: row.status_key ?? "backlog", display_name: row.status_display_name ?? "Backlog" };
+    resource.priority = row.priority_key ?? "none";
+    resource.version = row.version ?? 1;
+    resource.updated_at = timestamp(row.updated_at ?? 0);
+    boundedReferenceBody(resource, decodeBodyPrefix(row.body_hex ?? ""), row.body_bytes ?? 0);
+  }
+  return resource;
+}
+
 async function verifyIssueProjectionScope(
   db: D1Database,
   auth: AuthContext,

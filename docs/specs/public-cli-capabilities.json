@@ -402,6 +402,14 @@
       }
     },
     {
+      "command": "issue reference",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getIssueReference"
+      }
+    },
+    {
       "command": "issue update",
       "effect": "write",
       "route": {
@@ -2151,6 +2159,18 @@
         "kind": "api",
         "commands": [
           "issue show"
+        ]
+      }
+    },
+    {
+      "operation": "getIssueReference",
+      "method": "GET",
+      "path": "/api/v1/issues/{identifier}/reference",
+      "summary": "Get Issue Reference",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "issue reference"
         ]
       }
     },
@@ -4008,6 +4028,7 @@
           "issue create",
           "issue counts",
           "issue show",
+          "issue reference",
           "issue update",
           "issue delete",
           "issue restore",
@@ -4630,6 +4651,7 @@
           "issue create",
           "issue counts",
           "issue show",
+          "issue reference",
           "issue update",
           "issue delete",
           "issue restore",

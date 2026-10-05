@@ -41,7 +41,7 @@ const version = "1.9.1";
 const viewId = () => randomUUID();
 const tool = (state = emptySnapshot(), meta = {}, result = {}) => ({ content: [], structuredContent: { ok: true, protocol: 1, version, ...result }, _meta: { "cfkanban/snapshot": { type: "snapshot", state }, ...meta } });
 function fixture(options = {}) {
-  const sent = [], errors = [], snapshots = [], locales = [];
+  const sent = [], errors = [], snapshots = [], locales = [], displays = [];
   const listeners = new Map();
   const parent = { postMessage(message, origin) { assert.equal(origin, "*"); sent.push(message); } };
   const window = {
@@ -50,11 +50,11 @@ function fixture(options = {}) {
     emit(message, source = parent) { for (const listener of listeners.get("message") ?? []) listener({ data: message, source }); },
     hide() { for (const listener of listeners.get("pagehide") ?? []) listener(); },
   };
-  const client = createMcpAppClient({ window, version, timeoutMs: 100, onConnect: value => locales.push(value), onSnapshot: value => snapshots.push(value), onError: value => errors.push(value), ...options });
+  const client = createMcpAppClient({ window, version, timeoutMs: 100, onConnect: value => locales.push(value), onSnapshot: value => snapshots.push(value), onError: value => errors.push(value), onDisplayMode: value => displays.push(value), ...options });
   const response = (request, result) => window.emit({ jsonrpc: "2.0", id: request.id, result });
   const notify = (method, params) => window.emit({ jsonrpc: "2.0", method, params });
-  const initialize = () => response(sent[0], { protocolVersion: MCP_APP_PROTOCOL, hostInfo: { name: "test-host", version: "1" }, hostCapabilities: {}, hostContext: { locale: "zh-CN", theme: "dark", displayMode: "inline" } });
-  return { client, window, listeners, sent, errors, snapshots, locales, response, notify, initialize, close: () => client.dispose() };
+  const initialize = (hostContext = { locale: "zh-CN", theme: "dark", displayMode: "inline" }) => response(sent[0], { protocolVersion: MCP_APP_PROTOCOL, hostInfo: { name: "test-host", version: "1" }, hostCapabilities: {}, hostContext });
+  return { client, window, listeners, sent, errors, snapshots, locales, displays, response, notify, initialize, close: () => client.dispose() };
 }
 async function connected(options = {}) {
   const f = fixture(options);
@@ -70,20 +70,20 @@ async function mountedWorkbench({ render = false, ready = true } = {}) {
   const saved = { window: globalThis.window, document: globalThis.document };
   globalThis.window = {};
   globalThis.document = { documentElement: { lang: "en", dataset: {}, toggleAttribute() {} }, getElementById() { return null; } };
-  const calls = [], resolvers = [];
+  const calls = [], resolvers = [], expansions = [];
   let callbacks;
   const root = node("root");
   const app = renderer.createApp({ render: () => h(render ? Workbench : { ...Workbench, render: () => null }) });
   app.provide(workbenchClientFactory, options => {
     callbacks = options;
     if (ready) options.onConnect("en");
-    return { connected: true, action: (action, payload) => { calls.push({ action, payload }); return new Promise(resolve => resolvers.push(resolve)); }, dispose() {} };
+    return { connected: true, action: (action, payload) => { calls.push({ action, payload }); return new Promise(resolve => resolvers.push(resolve)); }, requestFullscreen: async () => { expansions.push("fullscreen"); return false; }, dispose() {} };
   });
   app.mount(root);
   const vm = app._instance.subTree.component.setupState;
   if (!render) vm.state = { ...emptySnapshot(), binding: { project: { id: randomUUID() }, statuses: ["backlog", "todo", "in_progress", "done", "canceled"].map(key => ({ key })) }, capabilities: { create: true, update: true, comment: true, complete: true } };
   await nextTick();
-  return { vm, calls, root, connect: () => callbacks.onConnect("en"), error: code => callbacks.onError(code), snapshot: state => callbacks.onSnapshot(state), respond: result => resolvers.shift()(result), close() { app.unmount(); Object.assign(globalThis, saved); } };
+  return { vm, calls, expansions, root, connect: () => callbacks.onConnect("en"), error: code => callbacks.onError(code), snapshot: state => callbacks.onSnapshot(state), display: state => callbacks.onDisplayMode(state), respond: result => resolvers.shift()(result), close() { app.unmount(); Object.assign(globalThis, saved); } };
 }
 
 test("a failed host handshake renders its diagnostic without a false no-connections empty state", async () => {
@@ -490,6 +490,148 @@ test("resource-teardown acknowledges once and pagehide disposes without releasin
       assert.ok(!f.sent.some(value => value.params?.name === "cfkanban_workbench_release"));
     } finally { f.close(); }
   }
+});
+
+test("first connected workbench requests supported fullscreen once and accepts the host's actual result", async () => {
+  for (const mode of ["fullscreen", "inline"]) {
+    const f = fixture();
+    try {
+      assert.deepEqual(f.sent[0].params.appCapabilities.availableDisplayModes, ["inline", "fullscreen"]);
+      f.initialize({ displayMode: "inline", availableDisplayModes: ["inline", "fullscreen"] }); await tick();
+      assert.equal(f.sent.filter(row => row.method === "ui/request-display-mode").length, 0);
+      f.notify("ui/notifications/tool-result", tool(emptySnapshot(), { "cfkanban/viewId": viewId() }));
+      const request = f.sent.at(-1);
+      assert.equal(request.method, "ui/request-display-mode");
+      assert.deepEqual(request.params, { mode: "fullscreen" });
+      assert.equal(f.displays.at(-1).mode, "inline", "request is not an optimistic mode change");
+      assert.equal(f.displays.at(-1).requesting, true);
+      f.response(request, { mode }); await tick();
+      assert.deepEqual(f.displays.at(-1), { mode, canExpand: true, requesting: false });
+      assert.equal(f.client.connected, true);
+      assert.deepEqual(f.errors, []);
+      assert.equal(f.sent.filter(row => row.method === "tools/call").length, 0, "mode negotiation does not invoke business tools");
+    } finally { f.close(); }
+  }
+});
+
+test("missing, unavailable or malformed host modes keep the workbench usable without automatic requests", async () => {
+  for (const availableDisplayModes of [undefined, [], ["inline"], ["fullscreen", "unknown"], "fullscreen"]) {
+    const f = fixture();
+    try {
+      f.initialize({ displayMode: "inline", ...(availableDisplayModes === undefined ? {} : { availableDisplayModes }) }); await tick();
+      f.notify("ui/notifications/tool-result", tool(emptySnapshot(), { "cfkanban/viewId": viewId() }));
+      assert.equal(f.client.connected, true);
+      assert.equal(await f.client.requestFullscreen(), false);
+      assert.equal(f.sent.filter(row => row.method === "ui/request-display-mode").length, 0);
+      f.notify("ui/notifications/host-context-changed", { availableDisplayModes: ["inline", "fullscreen"] });
+      assert.equal(f.displays.at(-1).canExpand, true);
+      assert.equal(f.sent.filter(row => row.method === "ui/request-display-mode").length, 0);
+      const manual = f.client.requestFullscreen();
+      f.response(f.sent.at(-1), { mode: "fullscreen" });
+      assert.equal(await manual, true);
+      assert.deepEqual(f.errors, []);
+    } finally { f.close(); }
+  }
+});
+
+test("mode denial, invalid response and timeout preserve usable inline state and allow a later explicit retry", async () => {
+  for (const failure of ["denied", "invalid", "timeout"]) {
+    const f = fixture({ timeoutMs: 20 });
+    try {
+      f.initialize({ displayMode: "inline", availableDisplayModes: ["inline", "fullscreen"] }); await tick();
+      f.notify("ui/notifications/tool-result", tool(emptySnapshot(), { "cfkanban/viewId": viewId() }));
+      const request = f.sent.at(-1);
+      const operation = f.client.requestFullscreen();
+      assert.equal(f.sent.at(-1), request, "concurrent expand clicks share the current request");
+      if (failure === "denied") f.window.emit({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method unavailable" } });
+      if (failure === "invalid") f.response(request, { mode: "unknown" });
+      assert.equal(await operation, false);
+      assert.deepEqual(f.displays.at(-1), { mode: "inline", canExpand: true, requesting: false });
+      assert.equal(f.client.connected, true);
+      assert.deepEqual(f.errors, []);
+      const business = f.client.action("page", { next: false });
+      f.response(f.sent.at(-1), tool());
+      assert.deepEqual(await business, { ok: true });
+      const retry = f.client.requestFullscreen();
+      f.response(f.sent.at(-1), { mode: "fullscreen" });
+      assert.equal(await retry, true);
+      assert.equal(f.sent.filter(row => row.method === "tools/call").length, 1);
+    } finally { f.close(); }
+  }
+});
+
+test("host notifications are authoritative and refresh, filters, switching and replay do not re-expand after exit", async () => {
+  const f = fixture();
+  try {
+    f.initialize({ displayMode: "fullscreen", availableDisplayModes: ["inline", "fullscreen"] }); await tick();
+    const initial = tool(emptySnapshot(), { "cfkanban/viewId": viewId() });
+    f.notify("ui/notifications/tool-result", initial);
+    assert.equal(f.sent.filter(row => row.method === "ui/request-display-mode").length, 0);
+    f.notify("ui/notifications/host-context-changed", { displayMode: "inline" });
+    for (const [action, payload] of [["page", { next: false }], ["filters", { assignment: "mine", status: "todo", priority: "high" }], ["project_switch", { workspace_id: randomUUID(), project_id: randomUUID() }]]) {
+      const operation = f.client.action(action, payload);
+      f.response(f.sent.at(-1), tool());
+      assert.equal((await operation).ok, true);
+    }
+    f.notify("ui/notifications/tool-result", initial);
+    f.response(f.sent.at(-1), tool()); await tick();
+    assert.equal(f.sent.filter(row => row.method === "ui/request-display-mode").length, 0);
+    const count = f.sent.filter(row => row.method === "tools/call").length;
+    const explicit = f.client.requestFullscreen();
+    const request = f.sent.at(-1);
+    f.notify("ui/notifications/host-context-changed", { displayMode: "fullscreen" });
+    f.notify("ui/notifications/host-context-changed", { displayMode: "inline" });
+    f.response(request, { mode: "fullscreen" });
+    assert.equal(await explicit, false, "a late result cannot undo the user's newer exit notification");
+    assert.equal(f.displays.at(-1).mode, "inline");
+    assert.equal(f.displays.at(-1).canExpand, true, "partial notifications preserve available modes");
+    assert.equal(f.sent.filter(row => row.method === "tools/call").length, count);
+  } finally { f.close(); }
+});
+
+test("leaving the initial host fullscreen before the tool result arrives suppresses a later automatic request", async () => {
+  const f = fixture();
+  try {
+    f.initialize({ displayMode: "fullscreen", availableDisplayModes: ["inline", "fullscreen"] }); await tick();
+    f.notify("ui/notifications/host-context-changed", { displayMode: "inline" });
+    f.notify("ui/notifications/tool-result", tool(emptySnapshot(), { "cfkanban/viewId": viewId() }));
+    assert.equal(f.client.connected, true);
+    assert.equal(f.displays.at(-1).mode, "inline");
+    assert.equal(f.sent.filter(row => row.method === "ui/request-display-mode").length, 0);
+  } finally { f.close(); }
+});
+
+test("workbench expand controls preserve drafts, filters, detail, locale and pending operations", async () => {
+  const f = await mountedWorkbench({ render: true });
+  const text = target => [target.type === "#comment" ? "" : target.text, ...target.children.map(text)].join(" ");
+  try {
+    const initial = { ...emptySnapshot(), locale: "zh-CN", view: "issue", binding: { project: { id: randomUUID() }, statuses: [] }, capabilities: { create: true }, issue: { identifier: "CFK-602", title: "Mode fixture", body: "Original", version: 1, status: { key: "todo" } }, filters: { assignment: "mine", status: "todo", priority: "high" } };
+    f.snapshot(initial); await nextTick();
+    f.vm.openEditor("create");
+    f.vm.editorDraft.title = "Unsaved title";
+    f.vm.editorDraft.body = "Unsaved body";
+    f.vm.comment = "Unsaved comment";
+    f.vm.completion.summary = "Unsaved completion";
+    const pending = { operation: "create", identifier: null };
+    f.snapshot({ ...initial, pending }); await nextTick();
+    f.display({ mode: "inline", canExpand: true, requesting: false }); await nextTick();
+    assert.match(text(f.root), /展开工作台/);
+    f.vm.expandWorkbench(); await nextTick();
+    assert.deepEqual(f.expansions, ["fullscreen"]);
+    for (const mode of ["fullscreen", "inline"]) { f.display({ mode, canExpand: true, requesting: false }); await nextTick(); }
+    assert.equal(f.vm.showEditor, true);
+    assert.equal(f.vm.editorDraft.title, "Unsaved title");
+    assert.equal(f.vm.editorDraft.body, "Unsaved body");
+    assert.equal(f.vm.comment, "Unsaved comment");
+    assert.equal(f.vm.completion.summary, "Unsaved completion");
+    assert.deepEqual(f.vm.state.issue, initial.issue);
+    assert.deepEqual(f.vm.state.filters, initial.filters);
+    assert.deepEqual(f.vm.state.pending, pending);
+    assert.equal(f.vm.state.locale, "zh-CN");
+    assert.deepEqual(f.calls, []);
+    f.display({ mode: "inline", canExpand: false, requesting: false }); await nextTick();
+    assert.doesNotMatch(text(f.root), /展开工作台/);
+  } finally { f.close(); }
 });
 
 test("host theme/display/style updates preserve brand colors and reject network CSS", async () => {

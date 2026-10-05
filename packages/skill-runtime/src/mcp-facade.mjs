@@ -47,6 +47,28 @@ define("relations_delete", "Soft-delete one Relation with Relation and both endp
 define("issues_complete", "Complete one Issue and create its immutable completion record using CAS and a stable key. Do not invent validation evidence.", { ...issueTarget, expected_version: version, summary: text(8192, 0), verification: array(text(1024), 50), artifacts: array(object({ kind: enumeration(["url", "path", "commit", "other"]), value: text(2048) }, ["kind", "value"]), 50), follow_ups: array(text(2048), 50), ...key }, [...Object.keys(issueTarget), "expected_version", ...Object.keys(key)], true);
 function freeze(value) { if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }
 export const MCP_TOOLS = freeze(tools);
+const referenceTool = { inputSchema: object({ ...issueTarget, projection: enumeration(["mention", "resource"]) }, [...Object.keys(issueTarget), "projection"]) };
+
+async function boundedResponse(response, signal, maximum = 65_536) {
+  const reader = response.body?.getReader();
+  if (!reader) return response;
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const part = await deadline(reader.read(), signal);
+      if (part.done) break;
+      size += part.value.byteLength;
+      if (size > maximum) throw toolError("MCP_REFERENCE_RESPONSE_TOO_LARGE", "Reference response exceeds its byte budget");
+      chunks.push(part.value);
+    }
+    return new Response(Buffer.concat(chunks), { status: response.status, headers: response.headers });
+  } finally {
+    void reader.cancel().catch(() => {});
+    try { reader.releaseLock(); } catch { /* Cancellation cleanup must not extend the I/O deadline. */ }
+  }
+}
 
 function validate(schema, value) {
   if (schema.anyOf) return schema.anyOf.some(item => validate(item, value));
@@ -95,8 +117,8 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
   if (bound && bound.project_ids.length > 20) throw toolError("INVALID_MCP_BINDING", "Binding requires explicit Projects");
   const runtimeView = () => ({ ...runtime, node_version: process.versions.node, execution_environment: classifyExecutionEnvironment() });
   const listTools = () => structuredClone(MCP_TOOLS);
-  const callTool = async (name, args = {}, { signal: callerSignal } = {}) => {
-    const tool = MCP_TOOLS.find(item => item.name === name);
+  const execute = async (name, args = {}, { signal: callerSignal } = {}, reference = false) => {
+    const tool = reference ? referenceTool : MCP_TOOLS.find(item => item.name === name);
     if (!tool) return localFailure("MCP_TOOL_NOT_FOUND");
     if (!validate(tool.inputSchema, args)) return localFailure("MCP_INVALID_ARGUMENTS");
     const input = structuredClone(args);
@@ -166,16 +188,22 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         try {
           const response = await deadline(fetchImpl(new URL(apiPath, origin), { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual", signal }), signal);
           if (response.status >= 300 && response.status < 400) return localFailure("CROSS_ORIGIN_REDIRECT_REJECTED");
-          return await deadline(normalizeResponse(response), signal);
-        } catch { return normalizeNetworkFailure(); }
+          const bounded = reference ? await boundedResponse(response, signal) : response;
+          return await deadline(normalizeResponse(bounded), signal);
+        } catch (error) {
+          if (reference && error?.code) { controller.abort(error); throw error; }
+          return normalizeNetworkFailure();
+        }
       };
       signal.throwIfAborted();
       const discoveryResponse = await deadline(fetchImpl(new URL("/.well-known/cfkanban-instance.json", origin), { method: "GET", headers: { accept: "application/json" }, redirect: "manual", signal }), signal);
       if (!discoveryResponse.ok || !(discoveryResponse.headers.get("content-type") ?? "").includes("application/json")) throw toolError("DISCOVERY_REJECTED", "Discovery refused");
-      const discovery = validateDiscovery(await deadline(discoveryResponse.json(), signal), origin);
+      const discoveryBody = reference ? await boundedResponse(discoveryResponse, signal, 16_384) : discoveryResponse;
+      const discovery = validateDiscovery(await deadline(discoveryBody.json(), signal), origin);
       if (discovery.instance_id !== instanceId) throw toolError("DISCOVERY_INSTANCE_MISMATCH", "Discovery identity mismatch");
       if (discovery.preferred_api_origin !== origin || discovery.origin_version !== instance.origin_version) throw toolError("DISCOVERY_ORIGIN_MISMATCH", "Verify origin migration through the dedicated Skill");
-      if (bound || ["cfkanban_connection_inspect", "cfkanban_profile_locale_set"].includes(name)) {
+      if (reference && discovery.capabilities?.issue_reference !== true) throw toolError("MCP_ISSUE_REFERENCE_UNSUPPORTED", "This instance does not advertise lightweight Issue references");
+      if (reference || bound || ["cfkanban_connection_inspect", "cfkanban_profile_locale_set"].includes(name)) {
         const me = await request("/api/v1/me");
         if (!me.ok) return redact(me, snapshot.token);
         if (me.data?.principal_id !== credential.metadata.principal_id || me.data.id !== credential.metadata.principal_id || me.data.credential?.id !== credential.metadata.credential_id || me.data.credential?.fingerprint !== credential.metadata.fingerprint) throw toolError("MCP_PRINCIPAL_BINDING_MISMATCH", "Authenticated identity differs from snapshot");
@@ -189,7 +217,7 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         return result;
       };
       if (bound && input.project_id !== undefined) scopeCheck(input.project_id);
-      if (bound && input.identifier !== undefined) await checkedIssue(input.identifier);
+      if (bound && input.identifier !== undefined && !reference) await checkedIssue(input.identifier);
       if (bound && input.target_identifier !== undefined) await checkedIssue(input.target_identifier);
       if (bound && name === "cfkanban_relations_delete") {
         const relation = await request(`/api/v1/relations/${input.relation_id}`);
@@ -203,6 +231,14 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       const projectPath = `/api/v1/workspaces/${input.workspace_id}/projects/${input.project_id}`;
       const write = body => ({ method: "POST", body, idempotencyKey: input.idempotency_key });
       switch (name) {
+        case "cfkanban_reference_get": {
+          result = await request(query(`${issuePath}/reference`, { projection: input.projection }));
+          if (result.ok) {
+            scopeCheck(result.data?.project?.id);
+            result = { ...result, reference_identity: { instance_id: instanceId, principal_id: credential.metadata.principal_id, trusted_api_origin: origin } };
+          }
+          break;
+        }
         case "cfkanban_profile_locale_set": result = await request("/api/v1/me", { ...write(pick(input, ["locale", "expected_version"])), method: "PATCH" }); break;
         case "cfkanban_workspaces_list": result = await request(query("/api/v1/workspaces", page)); break;
         case "cfkanban_projects_list": result = await request(query(`/api/v1/workspaces/${input.workspace_id}/projects`, page)); break;
@@ -233,7 +269,8 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       if (mutationSent && !result.ok && (result.status === 0 || result.status >= 500)) result = { ...result, outcome_unknown: true, recovery_request: { tool: name, arguments: input, idempotency_key: input.idempotency_key, next_action: "read_back_then_replay_same_request" } };
       return { ...redact(result, snapshot.token), content_trust: "untrusted" };
     } catch (error) {
-      const safeCode = signal.aborted ? "MCP_OPERATION_CANCELLED"
+      if (reference && error?.code === "MCP_REFERENCE_RESPONSE_TOO_LARGE") controller.abort(error);
+      const safeCode = error?.code === "MCP_REFERENCE_RESPONSE_TOO_LARGE" ? error.code : signal.aborted ? "MCP_OPERATION_CANCELLED"
         : /^(?:MCP_|STATE_|OWNER_DEVICE_LOCKED$|IDENTITY_SWITCH_INCOMPLETE$|DISCOVERY_|INVALID_ORIGIN$)/.test(error?.code ?? "") ? error.code : "MCP_LOCAL_STATE_UNAVAILABLE";
       const result = error?.result ?? localFailure(safeCode);
       return redact(mutationSent ? { ...result, outcome_unknown: true, recovery_request: { tool: name, arguments: input, idempotency_key: input.idempotency_key, next_action: "read_back_then_replay_same_request" } } : result, snapshot?.token);
@@ -243,5 +280,9 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       snapshot = null;
     }
   };
-  return Object.freeze({ listTools, callTool });
+  return Object.freeze({
+    listTools,
+    callTool: (name, args, options) => execute(name, args, options),
+    readIssueReference: (args, options) => execute("cfkanban_reference_get", args, options, true),
+  });
 }

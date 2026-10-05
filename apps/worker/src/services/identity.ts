@@ -122,6 +122,7 @@ export async function getInstanceDiscovery(
 ): Promise<{ [key: string]: JsonValue }> {
   const [instance, homepage] = await Promise.all([readInstance(db), readHomepageSettings(db)]);
   return {
+    capabilities: { issue_reference: true },
     homepage_notice: { en: homepage.notice_en, "zh-CN": homepage.notice_zh_cn },
     discovery_version: 1,
     instance_id: instance.instance_id,
@@ -150,6 +151,7 @@ export async function getMeta(
       attachments: attachmentsEnabled,
       browser_launch: true,
       fixed_workflow: true,
+      issue_reference: true,
       passkey: true,
       public_join: true,
     },

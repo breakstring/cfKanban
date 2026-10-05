@@ -33,6 +33,15 @@ cfkanban issue show --identifier CFK-123
 cfkanban issue create --title "Fix login" --body-file ./issue.md
 ```
 
+For a compact read-only reference on an instance that supports this endpoint, choose a projection:
+
+```text
+cfkanban issue reference --identifier CFK-123 --projection mention
+cfkanban issue reference --identifier CFK-123 --projection resource
+```
+
+`mention` returns the identifier, title, and Project/Workspace context without loading the body. `resource` adds current status, priority, version, update time, and a bounded body. Check `body_truncated` and `body_bytes` before treating it as the complete description. Use ordinary `issue show` when you need the full Issue response; its behavior is unchanged. References do not include Comments or relations: read those separately with `comment list` and `relation list` as needed. This read does not create a composer mention or authorize any change.
+
 ## Move work forward and comment
 
 Change the status or add a progress Comment. The CLI checks the current permissions and version; a concurrent change requires review rather than overwriting newer work.

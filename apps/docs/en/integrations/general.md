@@ -1,6 +1,6 @@
 # General Agents
 
-For Codex, Claude Code, and other Agents that can load local Skills. If you use [DeepSeek Harness](./deepseek-harness.md), prefer its dedicated plugin.
+For Agents that load local Skills. The Agent checks the actual host’s installation directories, MCP support, and reload behavior. For [Codex App](./codex-app.md) or [DeepSeek Harness](./deepseek-harness.md), continue to its dedicated page for host entrypoints.
 
 If you are accepting an invitation or deploying for the first time, continue that guide. **You do not need this separate installation first.**
 
@@ -19,16 +19,16 @@ The Agent chooses an installation method supported by its host, reuses compatibl
 
 After installation, four Skills should be available: `cfkanban-howto` explains usage, `cfkanban` handles tasks, `cfkanban-admin` manages the application, and `cfkanban-deploy` handles installation, updates, and deployment. They do not grant business permissions. New members should continue with [Joining and signing in](../usage/access.md).
 
-### Already installed from the Codex marketplace?
+### Skills already installed?
 
-The Codex Git plugin provides Skill guidance, but does not include the prebuilt local workbench. If the local components are missing, tell the Agent:
+If Skills already load but local components or connections are missing, tell the Agent:
 
 ```text
-I have installed the cfKanban plugin. Check and complete setup for the current version,
+I have installed the cfKanban Skills. Check and complete setup for the current version,
 preserve my identity and project associations, and tell me if anything still needs my attention.
 ```
 
-You do not need local page components if you only use the full online Web app. Native plugin support in other hosts depends on that host; do not use Codex installation commands for them.
+You do not need local page components if you only use the full online Web app. Native workbenches and plugin installation depend on the actual host; do not copy another client’s buttons or commands.
 
 ## What should be ready after installation?
 

@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { build } from "esbuild";
 import { createTestHarness } from "wrangler";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { createMcpFacade } from "../../packages/skill-runtime/src/mcp-facade.mjs";
 import { loadCurrentCredentialSecret } from "../../packages/skill-runtime/src/state.mjs";
 import { createMcpStateFixture } from "./mcp-fixture.mjs";
+import { IssueMentions } from "../../packages/mcp/src/mentions.mjs";
 
 test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay and uncertain writes", async t => {
   const fixture = await createMcpStateFixture(t);
@@ -18,8 +20,11 @@ test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay an
   const { DB: db } = await worker.getEnv();
   const current = await loadCurrentCredentialSecret(fixture);
   await bootstrapInstance(db, { instanceId: fixture.instanceId, operationId: randomUUID(), ownerCredentialId: current.metadata.credential_id, ownerCredentialToken: current.token, ownerDisplayName: "MCP_Owner", ownerPrincipalId: fixture.principalId, preferredApiOrigin: fixture.origin });
+  const requestPaths = [], requestMethods = [];
   const fetchImpl = (url, init) => {
     assert.equal(new URL(url).origin, fixture.origin, "fixture must never reach an external network");
+    requestPaths.push(new URL(url).pathname);
+    requestMethods.push(init?.method ?? "GET");
     return worker.fetch(url.toString(), init);
   };
   const rawWrite = async (pathname, body) => {
@@ -78,7 +83,43 @@ test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay an
   assert.equal(done.ok, true);
   assert.equal((await call("issues_get", { identifier: a.identifier })).data.status.key, "done");
 
+  const mentions = new IssueMentions({ facade, createFacade: options => createMcpFacade({ ...fixture, fetchImpl, ...options }) });
+  t.after(() => mentions.dispose());
+  const beforeMentions = requestPaths.length;
+  const mention = await mentions.search({ query: a.identifier });
+  assert.equal(mention.isError, false);
+  assert.equal(mention.structuredContent.items.length, 1);
+  assert.equal(Object.hasOwn(mention.structuredContent.items[0], "body"), false);
+  const reference = await mentions.read(mention.structuredContent.items[0].uri);
+  const resource = JSON.parse(reference.contents[0].text);
+  assert.equal(resource.id, a.id); assert.equal(resource.status.key, "done");
+  assert.equal(resource.body, ""); assert.equal(resource.body_truncated, false);
+  assert.equal(Object.hasOwn(resource, "comments"), false); assert.equal(Object.hasOwn(resource, "relations"), false);
+  assert.deepEqual(requestPaths.slice(beforeMentions), [
+    "/.well-known/cfkanban-instance.json", "/api/v1/me", `/api/v1/issues/${a.identifier}/reference`,
+    "/.well-known/cfkanban-instance.json", "/api/v1/me", `/api/v1/issues/${a.identifier}/reference`,
+  ]);
+  assert.equal(JSON.stringify({ mention, reference }).includes(current.token), false);
+
   const outside = await call("issues_create", { ...target, project_id: other.id, title: "Other project", idempotency_key: randomUUID() });
+  const workbenchSource = await build({ entryPoints: [fileURLToPath(new URL("../../packages/mcp/src/workbench.mjs", import.meta.url))], bundle: true, write: false, format: "esm", platform: "node", loader: { ".svg": "text" } });
+  const { McpWorkbench } = await import(`data:text/javascript;base64,${Buffer.from(workbenchSource.outputFiles[0].text).toString("base64")}`);
+  const workbench = new McpWorkbench({ createFacade: options => createMcpFacade({ ...fixture, fetchImpl, ...options }) });
+  t.after(() => workbench.dispose());
+  const beforeOpen = requestPaths.length;
+  const opened = await workbench.callTool("cfkanban_workbench_open", { target: { ...target, identifier: a.identifier } });
+  assert.equal(opened.structuredContent.ok, true);
+  assert.equal(opened._meta["cfkanban/snapshot"].state.issue.id, a.id);
+  assert.equal(opened._meta["cfkanban/snapshot"].state.issue.identifier, a.identifier);
+  assert.equal(opened._meta["cfkanban/snapshot"].state.issue.status.key, "done");
+  assert.equal(opened._meta["cfkanban/snapshot"].state.comments[0].body, "Verified fixture comment");
+  assert.equal(requestPaths.slice(beforeOpen).filter(path => path === `/api/v1/issues/${a.identifier}`).length, 2, "bound facade verifies Issue scope before reading detail");
+  const outsideOpen = await workbench.callTool("cfkanban_workbench_open", { target: { ...target, identifier: outside.data.resource.identifier } });
+  assert.equal(outsideOpen.structuredContent.error.code, "MCP_PROJECT_BINDING_MISMATCH");
+  assert.equal(outsideOpen._meta["cfkanban/snapshot"].state.issue, null);
+  assert.equal(outsideOpen._meta["cfkanban/snapshot"].state.binding.project.id, project.id);
+  assert.ok(requestMethods.slice(beforeOpen).every(method => method === "GET"), "opening detail must not write business data");
+  assert.equal(JSON.stringify({ opened, outsideOpen }).includes(current.token), false);
   const bound = createMcpFacade({ ...fixture, fetchImpl, binding: { instance_id: fixture.instanceId, expected_principal_id: fixture.principalId, project_ids: [project.id] } });
   const denied = await bound.callTool("cfkanban_comments_create", { ...instance, identifier: outside.data.resource.identifier, body: "must be refused", idempotency_key: randomUUID() });
   assert.equal(denied.error.code, "MCP_PROJECT_BINDING_MISMATCH");
@@ -108,4 +149,10 @@ test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay an
   assert.equal((await readerFacade.callTool("cfkanban_issues_get", { ...instance, identifier: outside.data.resource.identifier })).status, 404);
   await db.prepare("UPDATE credentials SET revoked_at=?1,revoked_by_principal_id=?2 WHERE id=?3").bind(Date.now(), fixture.principalId, readerCurrent.metadata.credential_id).run();
   assert.equal((await readerFacade.callTool("cfkanban_connection_inspect", instance)).status, 401);
+  const revokedWorkbench = new McpWorkbench({ createFacade: options => createMcpFacade({ ...reader, fetchImpl, ...options }) });
+  t.after(() => revokedWorkbench.dispose());
+  const revokedOpen = await revokedWorkbench.callTool("cfkanban_workbench_open", { target: { ...target, identifier: a.identifier } });
+  assert.equal(revokedOpen.structuredContent.ok, false);
+  assert.equal(revokedOpen.structuredContent.error.code, "UNAUTHORIZED");
+  assert.equal(revokedOpen._meta["cfkanban/snapshot"].state.issue, null);
 });

@@ -1,4 +1,4 @@
-# Installation and connections
+# Agent integration overview
 
 The same cfKanban Skills work whether you are joining a team or deploying your own site. Usually, you can let the Agent prepare what your current goal needs without learning about packages, MCP configuration, or plugin internals first.
 
@@ -16,7 +16,8 @@ The Agent handles installation when needed and explains local changes. Merely op
 
 ## Choose your Agent
 
-- **Codex, Claude Code, and other Agents that support Skills** → [General Agents](./general.md).
+- **Codex App desktop client** → [Codex App](./codex-app.md) for global and conversation workbenches and Project preferences.
+- **Other Agents that load local Skills** → [General Agents](./general.md); the Agent checks this host’s installation and connection support.
 - **DeepSeek Harness desktop or Web** → [DSH plugin](./deepseek-harness.md), which installs Skills, MCP, and the sidebar together.
 
 ## Does MCP need a separate installation?
@@ -27,11 +28,11 @@ The Agent handles installation when needed and explains local changes. Merely op
 | --- | --- | --- |
 | Skills | Guide the Agent through tasks, joining, administration, and deployment | The Agent installs them in the current host |
 | Local MCP | Provides task queries, edits, comments, and other tools to MCP clients | The complete package includes the server; the Agent configures and verifies the host connection by default, or the DSH plugin connects it |
-| Local workbench | Lets you view and use a board beside your Agent | Included in the complete package and started when needed; DSH uses its sidebar |
+| Local workbench | Lets you view and use a board beside your Agent | Included in the complete package and started when needed; supported Codex clients provide native workbenches and DSH uses its sidebar |
 
 Let the Agent handle installation, connection, and availability checks. Hosts without MCP support can still use cfKanban through Skills, and the Agent explains any limitations. You can also explicitly request Skills only. Connecting MCP does not join a project.
 
-If you have an older installation or only the Git plugin, ask the Agent to [complete local setup](./general.md). The local workbench, MCP, and DSH plugin require a release containing those capabilities. Installation defaults to a stable release; specify the exact version when testing a prerelease.
+If you have an older installation or only Skills, ask the Agent to [complete local setup](./general.md); see [Codex App](./codex-app.md) for its plugin checks. The local workbench, MCP, and DSH plugin require a release containing those capabilities. Installation defaults to a stable release; specify the exact version when testing a prerelease.
 
 For another MCP client or your own program, see the [MCP connection reference](./mcp.md). Ordinary users do not need this technical reference.
 

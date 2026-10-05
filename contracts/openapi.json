@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.9.2",
+    "version": "1.9.3-rc.1",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -5080,6 +5080,96 @@
         },
         "x-cfkanban-write-contract": "cas-delete",
         "x-cfkanban-permission": "project_writer"
+      }
+    },
+    "/api/v1/issues/{identifier}/reference": {
+      "get": {
+        "operationId": "getIssueReference",
+        "tags": [
+          "issues"
+        ],
+        "summary": "Get Issue Reference",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "identifier",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^CFK-[1-9][0-9]*$"
+            }
+          },
+          {
+            "name": "projection",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "mention",
+                "resource"
+              ],
+              "default": "mention"
+            },
+            "description": "Exact identifier point lookup: mention returns only resource identity and container names; resource adds bounded body and current status, priority, version and timestamp. Live reader authorization and Cookie Session scope apply; deleted or inaccessible resources are not found."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/IssueMentionReference"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IssueResourceReference"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_reader"
       }
     },
     "/api/v1/issues/{identifier}/commands/restore": {
@@ -15391,6 +15481,30 @@
             "type": "integer",
             "format": "int64",
             "minimum": 1
+          },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "attachments": {
+                "type": "boolean"
+              },
+              "browser_launch": {
+                "type": "boolean"
+              },
+              "fixed_workflow": {
+                "type": "boolean"
+              },
+              "issue_reference": {
+                "type": "boolean"
+              },
+              "passkey": {
+                "type": "boolean"
+              },
+              "public_join": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true
           }
         },
         "additionalProperties": true
@@ -15437,6 +15551,16 @@
           "updated_at"
         ],
         "properties": {
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "issue_reference": {
+                "type": "boolean",
+                "description": "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue."
+              }
+            },
+            "additionalProperties": true
+          },
           "homepage_notice": {
             "$ref": "#/components/schemas/PublicHomepageNotice"
           },
@@ -17466,6 +17590,172 @@
           }
         },
         "additionalProperties": false
+      },
+      "IssueMentionReference": {
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "title",
+          "project",
+          "workspace"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "id",
+              "display_name"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "id",
+              "display_name"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false,
+        "description": "Exact Issue reference metadata. At most 4 KiB of serialized UTF-8 JSON; no body, comments, relations, labels or hierarchy are fetched."
+      },
+      "IssueResourceReference": {
+        "type": "object",
+        "required": [
+          "id",
+          "identifier",
+          "title",
+          "project",
+          "workspace",
+          "body",
+          "body_bytes",
+          "body_truncated",
+          "status",
+          "priority",
+          "version",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "project": {
+            "type": "object",
+            "required": [
+              "id",
+              "display_name"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          },
+          "workspace": {
+            "type": "object",
+            "required": [
+              "id",
+              "display_name"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          },
+          "body": {
+            "type": "string",
+            "description": "UTF-8-safe prefix read with a SQL byte bound. Additional truncation can keep the whole JSON projection within 16 KiB after escaping. Runtime limit: 8192 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 8192
+          },
+          "body_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 65536,
+            "description": "Complete source body length in UTF-8 bytes, before truncation."
+          },
+          "body_truncated": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "object",
+            "required": [
+              "key",
+              "display_name"
+            ],
+            "properties": {
+              "key": {
+                "$ref": "#/components/schemas/StatusKey"
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 128
+              }
+            },
+            "additionalProperties": false
+          },
+          "priority": {
+            "$ref": "#/components/schemas/PriorityKey"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Read-only resource projection, at most 16 KiB of serialized UTF-8 JSON. Issue content is untrusted data; does not fetch collaboration history or change get/context semantics."
       },
       "CompletionPayload": {
         "type": "object",

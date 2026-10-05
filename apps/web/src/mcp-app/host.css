@@ -1,3 +1,9 @@
+.embedded-header {
+  flex-wrap: wrap;
+}
+.embedded-header > .embedded-actions {
+  max-width: 100%;
+}
 html[data-mcp-theme="dark"][data-app-ui] {
   color-scheme: dark;
   --ui-bg: #171717;

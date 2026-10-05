@@ -43,23 +43,31 @@ cfKanban 提供**本地 stdio MCP**：客户端启动一个子进程，通过标
 
 本机、WSL、容器、远程服务器和服务账户的身份相互独立。其他程序启动 MCP 时，要使用有权访问该私有状态的用户环境；不要通过复制凭据或覆盖 `HOME` 来冒充另一个用户。MCP 客户端可以在当前身份权限内读写任务，请只给可信程序配置连接。
 
-## 桌面工作台
+## 工作台协议参考
 
-源码已提供面向支持官方 [Plugin Extensions](https://developers.openai.com/plugins/build/extensions) 的新版桌面宿主的工作台。插件同时提供全局侧栏的 global 入口和聊天侧面板的 thread 入口，两者使用同一条本地 MCP 连接，复用本地浏览器和 DSH 的工作台。源码构建在发行及实际桌面宿主验收前属于候选工件；更新源码不会更新已安装插件。
+<span id="桌面工作台"></span>
 
-全局侧栏会重新核验当前身份和项目访问权限，再打开上次成功选择的全局项目；没有有效记录时，默认打开已核验身份下首个可访问项目，仍可在工作台切换。此偏好只保存在本机的 Codex 全局工作台中，不会把仓库或对话关联到 cfKanban Project，也不恢复此前草稿或待核实操作。
+Codex 的安装、全局 / 会话入口、项目记忆、显示模式和日常恢复见 [Codex App](./codex-app.md)。本节只提供自写客户端所需的协议参数；旧“桌面工作台”章节链接仍保留。普通用户无需按此手动配置。
 
-Agent 用同一完整、已验证插件 bundle 的只读 `context show --directory <绝对工作目录> --json --no-interactive` 探测当前对话的可信工作目录；从 Skill 目录用已验证 Node 执行 `../../cli/cfkanban.mjs`。本地插件安装后，PATH 的 `cfkanban` 仍可能使用旧 canonical bundle；旧 CLI 成功但缺 `workbench_context_key` 时，Agent 用同 bundle 的只读 `scope inspect-directory` 补齐，复用已有 scope 及 CLI 显式默认，不升级全局 CLI。确认 Git 仓库后返回非秘密 `workbench_context_key`，作为 `repository_key` 交给对话入口；面板本身不探测仓库。明确 Project 或 CLI 显式保存的目录默认优先；否则先重新核验这个仓库上次成功打开的 Codex 项目与记录的 Principal，再恢复项目。没有可用记忆时，按仓库推荐顺序核验后打开首个可访问项目。ID 和仓库 key 均不授予权限，入口仍重新核验当前身份、项目归属和访问权限。关联无效或 CLI 显式默认过期时，需要修正或明确目标，不静默退回全局选择；只有自动记忆的 Codex 项目在同一 Principal 下被 403/404 拒绝时，才可回到仓库推荐。
+完整、已验证的 bundle 包含 `mcp/workbench.html` 及 metadata，只注册一条 stdio 连接。宿主通过 `tools/list` 发现 `cfkanban_workbench_global_open({})` 的 `global` 入口和 `cfkanban_workbench_open` 的 `thread` 入口，读取 `ui://cfkanban/workbench/<release_version>/<html_sha256>/index.html`，MIME 为 `text/html;profile=mcp-app`。资源 URI 绑定版本与实际 HTML 摘要；同版本候选的 HTML 变化也产生新 URI。没有 UI 支持的客户端继续使用普通业务工具。本地连接不代表公共 universal 插件目录已发布。
 
-成功绑定及用户项目切换会自动记住这个仓库的 Codex 最后项目，包括初始推荐之外的有权项目。私有偏好不修改 `.cfkanban-scope.json` 或 CLI 显式保存的目录 context，且与全局侧栏偏好独立。不带仓库上下文的 thread 不读写全局最后项目：唯一已核验连接直接打开有权默认项目，多个未解决连接才需选择连接。项目切换器按工作区分组，分页展示当前已核验实例中所有可访问项目；初始推荐不限制后续切换。Codex 项目不构成 cfKanban 业务授权，操作前核对界面显示的身份及项目。
+| 工具 | 严格参数 |
+| --- | --- |
+| `cfkanban_workbench_global_open` | 空对象 `{}` |
+| `cfkanban_workbench_open` | 可选 `target:{instance_id,workspace_id,project_id,identifier?}` 或 `recommended_targets`，二者互斥；推荐仅为 1–50 个唯一三 UUID 项目目标，不含 identifier；可选 `repository_key` |
+| `cfkanban_workbench_snapshot` | `{view_id,action_id?}` |
+| `cfkanban_workbench_action` | `{view_id,message}`，受控动作 schema 以发现结果为准 |
+| `cfkanban_workbench_release` | `{view_id}`，没有运行或待恢复操作时才能释放 |
 
-需要对话视图时，可以对 Agent 说：「在当前对话旁边打开 cfKanban 工作台。」Agent 发现并调用声明 thread 入口的 `cfkanban_workbench_open`，按需传入互斥的 `target:{instance_id,workspace_id,project_id}` 或包含 1–50 个唯一三 UUID 目标的 `recommended_targets`，以及可选 `repository_key`。key 使用探测器返回的 64 个小写十六进制字符组成的值，也可单独传入：没有仓库推荐时，`{repository_key}` 仍恢复该仓库最后项目；没有可用记忆时，打开唯一已核验连接下的有权默认项目并记住。没有可信仓库上下文时才用空 `{}`。Agent 只传这些非秘密值，不传目录、URL 或 Credential。侧栏使用独立的 global 入口 `cfkanban_workbench_global_open({})`，不接收仓库上下文。模型工具调用与宿主手动选择 conversation panel 是不同触发方式，工具结果在哪里呈现由宿主决定。入口调用成功本身不证明界面已经显示，或已选择你想要的 Project／Issue。
+明确 target 的三个 ID 使用准确 UUID，可选 identifier 只用于用户明确要求的完整 `CFK-N` 编号，N 为不含前导零的正整数、最多 15 位；先核对其准确实例、工作区和所属项目。入口在返回初始快照前核验当前身份、实时权限及 Issue 归属，并加载准确详情。编号不存在、无权、归属不符或读取失败时返回具体错误，不改选看板或其他目标。推荐、已保存默认及最后项目偏好不含 identifier。此 schema 计划随 v1.9.3 RC 交付，调用前先发现实际安装的 schema。
 
-每次打开各自保留项目、筛选和选中任务。可查看看板／列表及详情，按权限创建任务、编辑标题或 Markdown 正文、调整优先级／状态／负责人／标签、评论，以及明确填写证据并完成。需要 Agent 接手时复制任务编号、URL 或原 Markdown；工作台不会自动发送聊天消息。当前接入尚未实现业务 deep link 和 Composer At-Mentions。
+`repository_key` 只能是同一已验证 bundle 的只读目录探测返回的 `workbench_context_key`（64 个小写十六进制字符），也可单独传入。Agent 使用当前会话的可信绝对目录执行 `context show --directory <绝对工作目录> --json --no-interactive`；优先从 Skill 目录用已验证 Node 运行 `../../cli/cfkanban.mjs`。旧 PATH CLI 缺 key 时，用同 bundle 的 `scope inspect-directory` 补齐并保留已有 scope / CLI 显式默认，不自动升级全局 CLI。不传目录、URL、Credential 或客户端 / 聊天 ID，不从 MCP cwd 或 Git remote 推断项目。global 不接收仓库上下文。
 
-工作台初始化成功并确认没有已连接身份时，在同一环境按现有加入或设备接入流程处理。写入结果不确定时，先在原页面使用**恢复**，再开始另一笔写入或切换项目；恢复完成前保留原页面及所属 MCP 进程。携带同一视图 ID 的重新挂载可以继续原状态；新入口或 MCP 重启不会恢复原视图，也不能证明远端写入失败。记住全局项目不等于恢复此前写入。
+每次入口调用建立独立视图。非秘密 UUID `view_id` 经 UI 专用 tool-result `_meta["cfkanban/viewId"]` 交付，只在页面内存和后续工具的 arguments 中使用；不写入 URL、文件、widgetState 或日志。快照经 `_meta["cfkanban/snapshot"]` 交付，可选 `action_id` 核对该视图原动作 receipt。模型可见结果只是操作摘要，`ok` 或快照包含 Issue 不证明页面可见或业务目标已选定；准确初始任务数据不会强制侧栏，也不提供官方 URL deep link。两个 ID、资源 URI 和仓库 key 均不授予权限。
 
-出现下列错误时，关闭并重新打开工作台；仍然失败时，将错误代码告知 Agent，由其核对实际运行的 MCP 版本与宿主连接。这些错误不代表没有已连接身份。若先前写入结果不确定，继续操作前先核对结果。
+组件只请求 `inline` / `fullscreen`，以 HostContext 实际返回值为准。thread entrypoint 描述宿主会话面板位置，不是第三种 display mode。初始化顺序、受控动作及恢复应由兼容 MCP Apps 客户端处理；业务写入仍由 Service 核验身份、权限、CAS 与幂等。
+
+下列错误需核对客户端、实际运行版本和连接；它们不证明身份尚未建立。原写入未知时先核对结果，再关闭重开。
 
 | 错误代码 | 含义 |
 | --- | --- |
@@ -72,9 +80,15 @@ Agent 用同一完整、已验证插件 bundle 的只读 `context show --directo
 | `MCP_APP_VIEW_ID_INVALID` | MCP 服务收到的工作台视图 ID 格式无效。 |
 | `MCP_APP_REOPEN_REQUIRED` | 视图连接已不可用，需要重新打开。 |
 
-使用上述配置及完整、已验证的 bundle，包括 `mcp/workbench.html` 和 metadata，只登记一次连接。支持的宿主从 `tools/list` 发现 global／thread 入口，读取 `ui://cfkanban/workbench/<release_version>/<html_sha256>/index.html` 资源。地址同时包含发行版本和实际 HTML 内容摘要，因此即使本地候选沿用同一版本号，HTML 变化也会采用新地址。没有 UI 支持的客户端继续使用普通业务工具。宿主可能拒绝剪贴板权限，此时可选中文字手工复制。本地 stdio 接入不代表已取得公共 universal 插件目录发布资格，公开发布要求需单独核验。
+### 编号引用参考
 
-工作台工具通过 arguments 中的非秘密 UUID `view_id` 定位各自独立的服务端视图，快照可带 `action_id` 核对该视图原动作的 receipt；两个 ID 都不授予业务权限。初始视图 ID、快照和 receipt 由 UI 专用结果 metadata 返回，身份、项目权限和写入恢复继续由安全 runtime 及 Service 处理。
+实际宿主支持且已安装相应发行时，通过 `tools/list` 发现 `cfkanban_mentions_search`；它接受严格 `{query}`，输入上限为 4,096 UTF-8 字节。有效输入为完整 `CFK-N`，或本地已保存可信 HTTPS origin 下的 `/app/issues/CFK-N` 链接；链接不含 query、fragment 或用户信息。空 / 无效输入返回空候选且不发起远端任务请求，标题查询不支持；多个未明确实例下的编号返回 scope 错误，不进行跨实例搜索。
+
+本地组件与实例必须同时支持此能力。读取前核验可信 discovery 的 `capabilities.issue_reference === true`；旧实例未声明支持时返回 `MCP_ISSUE_REFERENCE_UNSUPPORTED`，不能把旧路由的 404 当作无匹配任务，也不自动升级实例。
+
+`structuredContent.items` 返回至多一个 `resource_link`。客户端选中后使用 `resources/read` 读取进程内登记的 URI；每次读取重新核验原 Principal、项目访问权限和任务稳定 ID。MCP 重启、引用淘汰或未知 URI 时需重新选择，不从静态资源或 URI 恢复权限。候选和资源响应分别有 4,096 / 32,768 字节总预算；资源正文最多 8,192 UTF-8 字节，必要时为 JSON 总预算继续裁剪，以 `body_bytes` 与 `body_truncated` 表达完整长度和截断。
+
+请求有有界并发、队列、频率及从排队开始的超时，不做后台预取。资源只提供当前主要任务字段及正文，评论与关系按需要使用普通业务工具；返回内容标记为非可信数据，引用不授权写入。日常使用见 [Codex App：引用任务](./codex-app.md#在会话中引用任务)。
 
 ## 最小调用顺序
 

@@ -110,9 +110,11 @@ test("all catalog deep links render public documentation without API, auth or D1
 });
 
 test("navigation grouping preserves content URLs and hidden compatibility entries", async () => {
+  assert.deepEqual(catalog.map(group => group.slug), ["overview", "integrations", "usage", "deployment", "cli"]);
+  assert.deepEqual(catalog.find(group => group.slug === "integrations").pages.map(page => page.path), ["integrations/index", "integrations/general", "integrations/deepseek-harness", "integrations/codex-app", "integrations/mcp"]);
   const { request } = fixture();
   for (const locale of ["en", "zh-CN"]) {
-    for (const path of ["integrations/general", "integrations/deepseek-harness", "integrations/mcp", "integrations/webui", "administration/projects", "administration/settings", "overview/quick-start", "usage/agents"]) {
+    for (const path of ["integrations/general", "integrations/deepseek-harness", "integrations/codex-app", "integrations/mcp", "integrations/webui", "administration/projects", "administration/settings", "overview/quick-start", "usage/agents"]) {
       const response = await request(`/docs/${locale}/${path}`);
       assert.equal(response.status, 200, path);
       assert.match(await response.text(), /name="cfkanban-docs"/, path);

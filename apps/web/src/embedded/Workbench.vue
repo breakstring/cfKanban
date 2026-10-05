@@ -37,6 +37,7 @@ import IssueChildrenProgress from "../components/IssueChildrenProgress.vue";
 import { issueTree } from "./issue-tree";
 import { createEmbedClient } from "./client";
 import { workbenchClientFactory } from "../mcp-app/provider";
+import type { WorkbenchClient, WorkbenchDisplayState } from "../mcp-app/provider";
 import { reconcileCompletedDraft, resetCompletionDraft } from "./drafts";
 import { e } from "./i18n";
 import { canAutoAppend } from "./pagination";
@@ -55,8 +56,9 @@ const connected = ref(false);
 const localError = ref<string | null>(null);
 const mcpConnectionErrors = new Set(["MCP_APP_REOPEN_REQUIRED", "MCP_APP_HOST_INIT_TIMEOUT", "MCP_APP_HOST_INIT_INVALID", "MCP_APP_INITIAL_RESULT_TIMEOUT", "MCP_APP_INITIAL_RESULT_INVALID", "MCP_APP_INITIAL_SNAPSHOT_INVALID", "MCP_APP_VIEW_ID_MISSING", "MCP_APP_VIEW_ID_INVALID"]);
 const inFlight = ref(0);
+const displayState = ref<WorkbenchDisplayState>({ mode: null, canExpand: false, requesting: false });
 const clientFactory = inject(workbenchClientFactory, createEmbedClient);
-const client = clientFactory({
+const client: WorkbenchClient = clientFactory({
   window,
   onConnect(value) { hostLocale.value = value; applyLocale(); connected.value = true; },
   onSnapshot(value) {
@@ -64,6 +66,7 @@ const client = clientFactory({
     state.value = value;
     applyLocale();
   },
+  onDisplayMode(value) { displayState.value = value; },
   async afterRender() { await nextTick(); },
   onError(code) { localError.value = code; if (mcpConnectionErrors.has(code)) connected.value = false; },
   onActionSettled(message, result) {
@@ -77,6 +80,7 @@ const client = clientFactory({
   },
 });
 onUnmounted(() => client.dispose());
+function expandWorkbench() { void client.requestFullscreen?.(); }
 
 const busy = computed(() => state.value.busy > 0 || inFlight.value > 0);
 const pending = computed(() => Boolean(state.value.pending || state.value.session_context_changed || mcpConnectionErrors.has(localError.value ?? "") || clientFactory !== createEmbedClient && localError.value === "EMBED_REQUEST_UNCERTAIN"));
@@ -377,7 +381,12 @@ async function complete() {
           <template #group-action="{ group }"><div v-if="projectMenuGroup(group.id)" class="embedded-actions"><UButton v-if="projectMenuGroup(group.id)?.error" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" :title="projectMenuGroup(group.id)?.error?.code" @click="loadProjectMenu(group.id, Boolean(projectMenuGroup(group.id)?.has_more))">{{ e('retry') }}</UButton><UButton v-else-if="projectMenuGroup(group.id)?.has_more" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="loadProjectMenu(group.id, true)">{{ locale === 'zh-CN' ? '下一页项目' : 'Next projects' }}</UButton></div></template>
           <template #footer><div class="embedded-actions"><UButton v-if="state.project_menu_has_more" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="loadProjectMenu(undefined, true)">{{ locale === 'zh-CN' ? '下一页工作区' : 'Next workspaces' }}</UButton><UButton v-if="projectMenuAdvanced" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="openProjectMenu">{{ locale === 'zh-CN' ? '返回首页' : 'First page' }}</UButton><UButton color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="projectMenuOpen = false; send('unbind', {})">{{ e('manual') }}</UButton></div></template>
         </ProjectSwitcherMenu><UBadge v-else color="neutral" variant="subtle" size="xs">{{ e('setup') }}</UBadge></div>
-        <div v-if="state.binding" class="embedded-actions"><UButton v-if="state.capabilities.create" type="button" size="sm" :disabled="busy || pending" @click="openEditor('create')">{{ locale === 'zh-CN' ? '新建事项' : 'New Issue' }}</UButton><LocaleSwitch managed :disabled="busy || pending" @change="changeLocale" /><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="`${e('identity')} · ${principal?.display_name || ''}`" :aria-label="e('identity')" :aria-expanded="showIdentity" aria-controls="embedded-identity" @click="showIdentity = !showIdentity"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></svg></UButton><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="e('refresh')" :aria-label="e('refresh')" :disabled="busy" @click="refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7" /></svg></UButton></div>
+        <div v-if="state.binding || displayState.canExpand" class="embedded-actions">
+          <UButton v-if="connected && displayState.canExpand && displayState.mode !== 'fullscreen'" type="button" color="neutral" variant="ghost" size="sm" :disabled="displayState.requesting" @click="expandWorkbench">{{ locale === 'zh-CN' ? '展开工作台' : 'Expand workbench' }}</UButton>
+          <template v-if="state.binding">
+            <UButton v-if="state.capabilities.create" type="button" size="sm" :disabled="busy || pending" @click="openEditor('create')">{{ locale === 'zh-CN' ? '新建事项' : 'New Issue' }}</UButton><LocaleSwitch managed :disabled="busy || pending" @change="changeLocale" /><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="`${e('identity')} · ${principal?.display_name || ''}`" :aria-label="e('identity')" :aria-expanded="showIdentity" aria-controls="embedded-identity" @click="showIdentity = !showIdentity"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></svg></UButton><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="e('refresh')" :aria-label="e('refresh')" :disabled="busy" @click="refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7" /></svg></UButton>
+          </template>
+        </div>
       </header>
 
       <div v-if="errorCode" class="embedded-alert" role="alert"><p>{{ errorText }}</p><code>{{ errorCode }}</code></div>

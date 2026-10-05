@@ -7,7 +7,7 @@ const root = fileURLToPath(new URL("../apps/docs/", import.meta.url));
 
 export async function validateDocs() {
   const catalog = JSON.parse(await readFile(path.join(root, "catalog.json"), "utf8"));
-  assert.deepEqual(catalog.map(group => group.slug), ["overview", "usage", "deployment", "cli"]);
+  assert.deepEqual(catalog.map(group => group.slug), ["overview", "integrations", "usage", "deployment", "cli"]);
   const paths = new Set();
   for (const group of catalog) {
     for (const page of group.pages) {

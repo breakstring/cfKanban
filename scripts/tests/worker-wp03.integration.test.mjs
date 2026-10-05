@@ -176,11 +176,13 @@ test("WP-03 serves discovery, identity, containers, statuses, tombstones, and or
   assert.equal(discovery.response.status, 200);
   assert.equal(discovery.response.headers.get("cache-control"), "no-store");
   assert.equal(discovery.body.instance_id, ids.instance);
+  assert.equal(discovery.body.capabilities.issue_reference, true);
   assert.notEqual(discovery.body.observed_origin, "https://evil.example");
 
   const meta = await jsonRequest("/api/v1/meta", { headers: ownerHeaders() });
   assert.equal(meta.response.status, 200);
   assert.equal(meta.body.principal.is_owner, true);
+  assert.equal(meta.body.capabilities.issue_reference, true);
   assert.equal(meta.body.visible_scope.project_count, 0);
   const health = await jsonRequest("/healthz");
   const release = JSON.parse(await readFile(new URL("../../release/version.json", import.meta.url), "utf8"));

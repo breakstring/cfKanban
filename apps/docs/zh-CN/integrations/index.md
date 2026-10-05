@@ -1,4 +1,4 @@
-# 安装与接入
+# Agent 接入概览
 
 无论加入团队还是部署自己的站点，都使用同一套 cfKanban 技能。通常让 Agent 按当前目标准备即可，不需要先弄懂安装包、MCP 配置或插件内部结构。
 
@@ -16,7 +16,8 @@
 
 ## 选择当前 Agent
 
-- **Codex、Claude Code 等支持 Skills 的 Agent** → [通用 Agent](./general.md)。
+- **Codex App 桌面客户端** → [Codex App](./codex-app.md)，了解全局工作台、会话面板及项目记忆。
+- **其他支持本地 Skills 的 Agent** → [通用 Agent](./general.md)，由 Agent 核验当前宿主的安装与连接能力。
 - **DeepSeek Harness 桌面版或 Web 版** → [DSH 插件](./deepseek-harness.md)，一次安装接入技能、MCP 和侧栏。
 
 ## MCP 还要另外装吗？
@@ -27,11 +28,11 @@
 | --- | --- | --- |
 | Skills（技能） | 指导 Agent 完成任务、加入、管理和部署流程 | Agent 安装到当前宿主 |
 | 本地 MCP | 向支持 MCP 的程序提供任务查询、修改、评论等工具 | 完整安装包已包含程序；Agent 默认配置宿主连接并验证，DSH 由插件接好 |
-| 本地工作台 | 在 Agent 旁浏览和操作看板 | 完整安装包已包含；打开时按需启动，DSH 使用侧栏 |
+| 本地工作台 | 在 Agent 旁浏览和操作看板 | 完整安装包已包含；打开时按需启动；支持的 Codex 客户端提供原生工作台，DSH 使用侧栏 |
 
 安装、连接和可用性检查都交给 Agent。没有 MCP 支持的宿主仍能通过技能使用 cfKanban，Agent 会说明限制；你也可以明确要求只安装技能。MCP 连接成功不等于已经加入项目。
 
-已安装旧版或只有 Git 插件时，可以让 Agent [补齐本地接入](./general.md)。本地工作台、MCP 和 DSH 插件需要包含这些能力的发行版本；默认选择正式版，验收测试版时请明确版本。
+已安装旧版或只有技能时，可以让 Agent [补齐本地接入](./general.md)；Codex 插件的具体检查见 [Codex App](./codex-app.md)。本地工作台、MCP 和 DSH 插件需要包含这些能力的发行版本；默认选择正式版，验收测试版时请明确版本。
 
 其他 MCP 客户端或自写程序的启动配置见 [MCP 接入参考](./mcp.md)。普通用户不需要阅读这份技术参考。
 

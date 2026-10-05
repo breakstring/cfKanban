@@ -15,10 +15,12 @@ const emptyObject = { type: 'object', properties: {}, required: [], additionalPr
 const object = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required, additionalProperties: false });
 const text = (maxLength, minLength = 1) => ({ type: 'string', minLength, maxLength });
 const uuid = { ...text(36), pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$' };
-const targetSchema = object({ instance_id: uuid, workspace_id: uuid, project_id: uuid });
-const repositoryKeySchema = { type: 'string', pattern: '^[0-9a-f]{64}$', minLength: 64, maxLength: 64 };
-const threadOpenSchema = { ...object({ target: targetSchema, recommended_targets: { type: 'array', items: targetSchema, minItems: 1, maxItems: 50, uniqueItems: true }, repository_key: repositoryKeySchema }, []), not: { required: ['target', 'recommended_targets'] } };
 const identifier = { ...text(64), pattern: '^[A-Z][A-Z0-9]{1,11}-[1-9][0-9]{0,14}$' };
+const targetSchema = object({ instance_id: uuid, workspace_id: uuid, project_id: uuid });
+const initialIdentifier = { ...text(19), pattern: '^CFK-[1-9][0-9]{0,14}$' };
+const explicitTargetSchema = object({ ...targetSchema.properties, identifier: initialIdentifier }, targetSchema.required);
+const repositoryKeySchema = { type: 'string', pattern: '^[0-9a-f]{64}$', minLength: 64, maxLength: 64 };
+const threadOpenSchema = { ...object({ target: explicitTargetSchema, recommended_targets: { type: 'array', items: targetSchema, minItems: 1, maxItems: 50, uniqueItems: true }, repository_key: repositoryKeySchema }, []), not: { required: ['target', 'recommended_targets'] } };
 const enumeration = values => ({ type: 'string', enum: values });
 const statuses = ['backlog', 'todo', 'in_progress', 'done', 'canceled'];
 const priorities = ['none', 'low', 'medium', 'high', 'urgent'];
@@ -48,11 +50,14 @@ const plain = value => value !== null && typeof value === 'object' && !Array.isA
 const exactEmpty = value => plain(value) && Object.keys(value).length === 0;
 const validUuid = value => typeof value === 'string' && value.length === 36 && new RegExp(uuid.pattern).test(value);
 const validTarget = value => plain(value) && Object.keys(value).length === 3 && ['instance_id', 'workspace_id', 'project_id'].every(key => Object.hasOwn(value, key) && validUuid(value[key]));
+const validExplicitTarget = value => plain(value) && Object.keys(value).every(key => ['instance_id', 'workspace_id', 'project_id', 'identifier'].includes(key))
+  && validTarget(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'identifier')))
+  && (!Object.hasOwn(value, 'identifier') || typeof value.identifier === 'string' && value.identifier.length <= initialIdentifier.maxLength && new RegExp(initialIdentifier.pattern).test(value.identifier) && Number.isSafeInteger(Number(value.identifier.slice(4))));
 const canonicalTarget = value => Object.fromEntries(['instance_id', 'workspace_id', 'project_id'].map(key => [key, value[key].toLowerCase()]));
 function validThreadOpen(value) {
   if (!plain(value) || Object.keys(value).some(key => !['target', 'recommended_targets', 'repository_key'].includes(key))) return false;
   if (Object.hasOwn(value, 'repository_key') && (typeof value.repository_key !== 'string' || value.repository_key.length !== 64 || !/^[0-9a-f]{64}$/.test(value.repository_key))) return false;
-  if (Object.hasOwn(value, 'target')) return !Object.hasOwn(value, 'recommended_targets') && validTarget(value.target);
+  if (Object.hasOwn(value, 'target')) return !Object.hasOwn(value, 'recommended_targets') && validExplicitTarget(value.target);
   if (!Object.hasOwn(value, 'recommended_targets')) return true;
   const targets = value.recommended_targets;
   return Array.isArray(targets) && targets.length > 0 && targets.length <= 50 && targets.every(validTarget)
@@ -65,7 +70,7 @@ export const workbenchResourceUri = (version, revision = 'source') => `ui://cfka
 export function workbenchTools(version, revision) {
   const resourceUri = workbenchResourceUri(version, revision);
   return [
-    ...WORKBENCH_TOOL_NAMES.slice(0, 2).map((name, index) => ({ name, title: 'cfKanban', description: index ? 'Open a global cfKanban workbench. Reverify the remembered identity and Project or select an accessible default; opening does not write business data.' : 'Open an isolated cfKanban conversation workbench. Supply an explicit or saved directory target, or recommended_targets resolved by the Agent from the current repository. Optional repository_key from scope inspection restores and remembers this repository\'s last Project. Otherwise open an accessible default. Identities and access are reverified; opening does not write business data.', icons: [{ src: cfKanbanNavIcon, mimeType: 'image/svg+xml', sizes: ['20x20'] }], inputSchema: index ? emptyObject : threadOpenSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }, _meta: { ui: { resourceUri }, 'openai/ui': { entrypoints: [{ type: index ? 'global' : 'thread' }] } } })),
+    ...WORKBENCH_TOOL_NAMES.slice(0, 2).map((name, index) => ({ name, title: 'cfKanban', description: index ? 'Open a global cfKanban workbench. Reverify the remembered identity and Project or select an accessible default; opening does not write business data.' : 'Open an isolated cfKanban conversation workbench. Supply an explicit or saved directory target, or recommended_targets resolved by the Agent from the current repository. To open an exact Issue detail, supply target with verified instance_id, workspace_id, project_id and identifier; an Issue never selects a default or recommended Project. Optional repository_key from scope inspection restores and remembers only this repository\'s last Project. Otherwise open an accessible default. Identities and access are reverified; opening does not write business data.', icons: [{ src: cfKanbanNavIcon, mimeType: 'image/svg+xml', sizes: ['20x20'] }], inputSchema: index ? emptyObject : threadOpenSchema, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }, _meta: { ui: { resourceUri }, 'openai/ui': { entrypoints: [{ type: index ? 'global' : 'thread' }] } } })),
     ...WORKBENCH_TOOL_NAMES.slice(2).map((name, index) => ({ name, description: ['Read a view snapshot and optional action receipt.', 'Perform one validated workbench UI action; uncertain writes retain their original request for explicit recovery.', 'Release a view only when no request or uncertain operation remains.'][index], inputSchema: index === 1 ? object({ view_id: uuid, message: actionSchema }) : index === 0 ? object({ view_id: uuid, action_id: uuid }, ['view_id']) : object({ view_id: uuid }), annotations: { readOnlyHint: index === 0, destructiveHint: false, idempotentHint: true, openWorldHint: index === 1 }, _meta: { ui: { visibility: ['app'] } } })),
   ];
 }
@@ -149,6 +154,13 @@ export class McpWorkbench {
     }
     controller.patch({ workspace_id: target.workspace_id });
     await controller.bind(target.project_id, signal);
+    if (!target.identifier || !controller.state.binding || controller.state.error || signal?.aborted) return;
+    await controller.openIssue(target.identifier, signal);
+    if (controller.state.error || signal?.aborted) return;
+    const issue = controller.state.issue;
+    if (issue?.identifier !== target.identifier || issue?.project?.id !== target.project_id || issue?.workspace?.id !== target.workspace_id) {
+      controller.patch({ issue: null, comments: [], error: { code: 'PANEL_SCOPE_DENIED' } });
+    }
   }
   async selectThreadProject(view, initial, signal) {
     const controller = view.controller;
@@ -270,14 +282,14 @@ export class McpWorkbench {
       this.disposeView(viewId, view);
       return this.result(failure('PANEL_REQUEST_UNCERTAIN'));
     }
-    return this.result({ ok: true }, view, viewId);
+    return this.result(initial.target?.identifier && controller.state.error ? failure(controller.state.error.code) : { ok: true }, view, viewId);
   }
   async callTool(name, args = {}, { signal } = {}) {
     if (!WORKBENCH_TOOL_NAMES.includes(name)) return null;
     if (this.disposed) return this.result(failure('PANEL_BINDING_EXPIRED'));
     if (name === WORKBENCH_TOOL_NAMES[0]) {
       if (!validThreadOpen(args)) return this.result(failure('MCP_INVALID_ARGUMENTS'));
-      const initial = { ...args, ...(args.target ? { target: canonicalTarget(args.target) } : {}), ...(args.recommended_targets ? { recommended_targets: args.recommended_targets.map(canonicalTarget) } : {}) };
+      const initial = { ...args, ...(args.target ? { target: { ...canonicalTarget(args.target), ...(args.target.identifier ? { identifier: args.target.identifier } : {}) } } : {}), ...(args.recommended_targets ? { recommended_targets: args.recommended_targets.map(canonicalTarget) } : {}) };
       return this.open(signal, false, initial);
     }
     if (name === WORKBENCH_TOOL_NAMES[1]) return exactEmpty(args) ? this.open(signal, true) : this.result(failure('MCP_INVALID_ARGUMENTS'));

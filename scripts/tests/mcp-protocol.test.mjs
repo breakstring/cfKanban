@@ -25,6 +25,8 @@ function startPeer(t, entry, home) {
   let buffer = "", stderr = "", id = 0;
   const pending = new Map(), frames = [];
   child.stderr.on("data", chunk => { stderr += chunk; });
+  // stdout 的 chunk 可能截断多字节字符；流解码器保留未完成的 UTF-8 字节。
+  child.stdout.setEncoding("utf8");
   child.stdout.on("data", chunk => {
     buffer += chunk;
     while (buffer.includes("\n")) {
@@ -45,6 +47,22 @@ function startPeer(t, entry, home) {
   const notify = (method, params = {}) => child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
   return { child, request, notify, frames, stderr: () => stderr, close: async () => { const closed = once(child, "close"); child.stdin.end(); return closed; } };
 }
+
+test("stdio peer preserves UTF-8 resource bytes split across stdout chunks", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cfkanban-mcp-utf8-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const entry = path.join(directory, "fixture.mjs");
+  await writeFile(entry, `process.stdin.once("data", () => {
+    const bytes = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { text: "工作台中文资源" } }) + "\\n");
+    const split = bytes.indexOf(Buffer.from("工")) + 1;
+    process.stdout.write(bytes.subarray(0, split));
+    setTimeout(() => process.stdout.write(bytes.subarray(split)), 30);
+  });`);
+  const peer = startPeer(t, entry, directory);
+  const response = await peer.request("resources/read");
+  assert.equal(response.result.text, "工作台中文资源");
+  assert.equal(response.result.text.includes("\uFFFD"), false);
+});
 async function initialize(peer) {
   const response = await peer.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "isolated-test-client", version: "1.0.0" } });
   assert.equal(response.error, undefined);
@@ -69,7 +87,14 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     const initialized = await initialize(peer);
     assert.equal(initialized.result.serverInfo.version, metadata.release_version);
     const list = await peer.request("tools/list");
-    assert.equal(list.result.tools.length, 25);
+    assert.equal(list.result.tools.length, 26);
+    const mentions = list.result.tools.find(tool => tool.name === "cfkanban_mentions_search");
+    assert.deepEqual(mentions._meta["openai/extensions"], { "mentions/search": {} });
+    assert.deepEqual(mentions._meta.ui.visibility, ["app"]);
+    const emptyMention = await peer.request("tools/call", { name: mentions.name, arguments: { query: "CFK-" } });
+    assert.deepEqual(emptyMention.result.structuredContent, { items: [] });
+    const unknownReference = await peer.request("resources/read", { uri: "cfkanban://issue/unknown" });
+    assert.equal(unknownReference.error.data.code, "MCP_MENTION_REFERENCE_UNKNOWN");
     for (const name of ["cfkanban_profile_locale_set", "cfkanban_labels_list", "cfkanban_issues_labels_add", "cfkanban_issues_labels_remove"]) {
       assert.ok(list.result.tools.some(tool => tool.name === name));
     }
@@ -90,6 +115,7 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     assert.equal(resources.result.resources.length, 1);
     const resource = await peer.request("resources/read", { uri: opener._meta.ui.resourceUri });
     assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
+    assert.deepEqual(resource.result.contents[0]._meta["openai/ui"], { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "fullscreen" });
     assert.equal(resource.result.contents[0].text, await readFile(path.join(bundle.root, "workbench.html"), "utf8"));
     await writeFile(path.join(bundle.root, "workbench.html"), `${resource.result.contents[0].text}\n<!-- changed -->`);
     assert.ok((await peer.request("resources/read", { uri: opener._meta.ui.resourceUri })).error);

@@ -10,15 +10,17 @@ cfKanban is an **Agent first** task board. Your Agent can handle most daily coll
 | You have joined and want to work on tasks | [Daily collaboration](../usage/index.md) or [Open a board](../integrations/webui.md) |
 | You manage a workspace, project, or its members | [Manage workspaces and projects](../administration/index.md): work within your management scope without deploying a site |
 | You want your own cfKanban site | [Owner getting started](../deployment/index.md): prepare, deploy, and maintain your instance |
-| You only want to set up your current Agent | [Installation and connections](../integrations/index.md): general Skills or the DSH plugin |
+| You only want to set up your current Agent | [Agent integrations](../integrations/index.md): choose a general Agent, DSH, or Codex App |
 
 **Joining for the first time and deploying for the first time both include Skill setup when needed.** Start with the relevant guide; you do not need a separate installation tutorial first. A compatible installation is reused. Installing Skills alone does not join a project or create cloud resources.
 
 ## How these docs are organized
 
-- **Start here:** shared setup, opening boards, and basic concepts.
+- **Start here:** choose your path, a board, and basic concepts.
+- **Agent integrations:** [shared setup](../integrations/index.md) and entrypoints for [general Agents](../integrations/general.md), [DSH](../integrations/deepseek-harness.md), and [Codex App](../integrations/codex-app.md).
 - **Join & work:** daily collaboration for members and administration for workspace and project managers.
 - **Deploy & manage:** instance settings, devices, upgrades, and recovery for the Owner.
+- **Command line:** [terminal task guides](../cli/index.md).
 
 Once installed, describe your task directly to the Agent:
 

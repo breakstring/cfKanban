@@ -2,6 +2,7 @@ import type { EmbedClientOptions } from "../embedded/client";
 import { emptySnapshot, parseActionMessage, parseSnapshotMessage } from "../embedded/protocol";
 import type { ActionMessage, ActionPayloads, EmbedAction, EmbedLocale, EmbedSnapshot, PublicResult } from "../embedded/protocol";
 import { detectedBrowserLocale, resolveLocalePreference } from "../lib/locale-preference";
+import type { WorkbenchClientOptions, WorkbenchDisplayMode } from "./provider";
 
 export const MCP_APP_PROTOCOL = "2026-01-26";
 const VIEW_META = "cfkanban/viewId";
@@ -13,7 +14,7 @@ const uncertainActions = new Set(["mutate", "quick_update", "create_issue", "set
 type RecordValue = Record<string, unknown>;
 type RpcResponse = { result?: unknown; error?: unknown };
 type AppDocument = Pick<Document, "documentElement">;
-export interface McpAppClientOptions extends EmbedClientOptions {
+export interface McpAppClientOptions extends WorkbenchClientOptions {
   version: string;
   document?: AppDocument;
   window: EmbedClientOptions["window"] & Partial<Pick<Window, "navigator">>;
@@ -24,6 +25,9 @@ function record(value: unknown): value is RecordValue {
 }
 function fields(value: unknown, allowed: string[], required: string[] = allowed): value is RecordValue {
   return record(value) && Object.keys(value).every(key => allowed.includes(key)) && required.every(key => Object.hasOwn(value, key));
+}
+function displayMode(value: unknown): value is WorkbenchDisplayMode {
+  return value === "inline" || value === "fullscreen" || value === "pip";
 }
 function bounded(value: unknown): boolean {
   let count = 0;
@@ -107,11 +111,16 @@ export function createMcpAppClient(options: McpAppClientOptions) {
   let syncTimer: ReturnType<typeof setTimeout> | null = null;
   let syncAttempt = 0;
   let syncing = false;
+  let currentDisplayMode: WorkbenchDisplayMode | null = null;
+  let availableDisplayModes: WorkbenchDisplayMode[] = [];
+  let displayRevision = 0;
+  let initialDisplayHandled = false;
+  let displayRequest: Promise<boolean> | null = null;
   const timeoutMs = options.timeoutMs ?? 60_000;
   const pending = new Map<string, { resolve: (value: RpcResponse | null) => void; timer: ReturnType<typeof setTimeout> }>();
   const failed = (code: string, uncertain = false): PublicResult => ({ ok: false, error: { code }, ...(uncertain ? { outcome_unknown: true } : {}) });
   const post = (message: unknown) => options.window.parent.postMessage(message, "*");
-  const announce = () => { if (!announced) { announced = true; options.onConnect(locale); } };
+  const announce = () => { if (!announced) { announced = true; options.onConnect(locale); preferFullscreen(); } };
   const connectionTimer = setTimeout(() => failClosed(initialized ? "MCP_APP_INITIAL_RESULT_TIMEOUT" : "MCP_APP_HOST_INIT_TIMEOUT"), timeoutMs);
   function finish(id: string, result: RpcResponse | null) {
     const waiter = pending.get(id);
@@ -143,6 +152,43 @@ export function createMcpAppClient(options: McpAppClientOptions) {
       pending.set(id, { resolve, timer });
       try { post({ jsonrpc: "2.0", id, method, params }); } catch { finish(id, null); }
     });
+  }
+  function publishDisplayMode() {
+    options.onDisplayMode?.({ mode: currentDisplayMode, canExpand: availableDisplayModes.includes("fullscreen"), requesting: displayRequest !== null });
+  }
+  function consumeHostContext(value: unknown): EmbedLocale | undefined {
+    if (!record(value)) return;
+    if (Object.hasOwn(value, "availableDisplayModes")) availableDisplayModes = Array.isArray(value.availableDisplayModes) && value.availableDisplayModes.every(displayMode) ? [...new Set(value.availableDisplayModes)] : [];
+    if (displayMode(value.displayMode)) {
+      currentDisplayMode = value.displayMode;
+      displayRevision++;
+      if (currentDisplayMode === "fullscreen") initialDisplayHandled = true;
+    }
+    publishDisplayMode();
+    return applyHostContext(options.document, value);
+  }
+  function preferFullscreen() {
+    if (initialDisplayHandled) return;
+    initialDisplayHandled = true;
+    if (currentDisplayMode !== "fullscreen") void requestFullscreen();
+  }
+  function requestFullscreen(): Promise<boolean> {
+    if (!initialized || !announced || !viewId || disposed || reopened || !availableDisplayModes.includes("fullscreen")) return Promise.resolve(false);
+    if (currentDisplayMode === "fullscreen") return Promise.resolve(true);
+    if (displayRequest) return displayRequest;
+    const revision = displayRevision;
+    displayRequest = request("ui/request-display-mode", { mode: "fullscreen" }).then(response => {
+      if (disposed || reopened) return false;
+      const value = response?.result;
+      // 后续宿主通知可以表示用户已退出；过时响应不能覆盖它。
+      if (!response?.error && record(value) && displayMode(value.mode) && revision === displayRevision) consumeHostContext({ displayMode: value.mode });
+      return currentDisplayMode === "fullscreen";
+    }).finally(() => {
+      displayRequest = null;
+      if (!disposed && !reopened) publishDisplayMode();
+    });
+    publishDisplayMode();
+    return displayRequest;
   }
   function consumeSnapshot(meta: RecordValue): boolean {
     const parsed = parseSnapshotMessage(meta[SNAPSHOT_META]);
@@ -263,7 +309,7 @@ export function createMcpAppClient(options: McpAppClientOptions) {
       else if (initial === null) initial = message.params;
       else if (JSON.stringify(initial) !== JSON.stringify(message.params)) failClosed();
     } else if (message.method === "ui/notifications/host-context-changed" && initialized) {
-      const changedLocale = applyHostContext(options.document, message.params);
+      const changedLocale = consumeHostContext(message.params);
       if (changedLocale && changedLocale !== locale) {
         locale = changedLocale;
         if (announced) options.onConnect(locale);
@@ -299,12 +345,13 @@ export function createMcpAppClient(options: McpAppClientOptions) {
       || typeof value.hostInfo.name !== "string" || typeof value.hostInfo.version !== "string" || !record(value.hostCapabilities)
       || (value.hostContext !== undefined && !record(value.hostContext))) { failClosed("MCP_APP_HOST_INIT_INVALID"); return; }
     initialized = true;
-    locale = applyHostContext(options.document, value.hostContext) ?? locale;
+    locale = consumeHostContext(value.hostContext) ?? locale;
     try { post({ jsonrpc: "2.0", method: "ui/notifications/initialized" }); } catch { failClosed("MCP_APP_HOST_INIT_INVALID"); return; }
     if (initial !== null) { acceptInitial(initial); initial = null; }
   });
   return {
     get connected() { return announced && initialized && viewId !== null && !disposed && !reopened; },
+    requestFullscreen,
     async action<K extends EmbedAction>(action: K, payload: ActionPayloads[K]): Promise<PublicResult> {
       if (!announced || !initialized || !viewId || disposed || reopened) return failed(REOPEN);
       const id = (options.makeId ?? (() => crypto.randomUUID()))();

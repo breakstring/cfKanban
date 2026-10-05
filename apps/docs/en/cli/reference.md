@@ -13,6 +13,8 @@ cfkanban issue show --instance <instance-uuid> --identifier CFK-123 --json
 
 Use long options and stable IDs. `--instance` and `--instance-id` are aliases; single-value Workspace/Project options also accept `--workspace` / `--workspace-id` and `--project` / `--project-id`. Repeated list filters retain their existing array semantics and cursors; never collect all history to filter locally. `--locale en|zh-CN` selects help language; `--json` selects the versioned machine envelope. Results go to stdout, diagnostics to stderr, and business failures return nonzero.
 
+`issue reference --identifier CFK-123 --projection mention|resource` provides a compact authorized read with an optional bounded body. Choose one projection value, rather than typing the `|` separator. It is separate from the full `issue show` response; see [task reads](./daily.md#read-or-create-an-issue) for truncation and follow-up Comment/relation reads. Availability depends on the installed CLI and Service version.
+
 ## Context selection and saved defaults
 
 Explicit IDs take precedence. Otherwise, the CLI resolves only the level the command needs from repository recommendations, a compatible saved directory choice, a global default or a unique registered connection/Service candidate. Repository recommendations override the global default. A directory choice may narrow repository candidates but cannot expand them. Repository scope remains a flat list of non-secret instance/Workspace/Project UUID tuples, with no preferred or last-used Project.

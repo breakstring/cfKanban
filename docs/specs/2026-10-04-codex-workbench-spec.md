@@ -1,6 +1,6 @@
 # 官方桌面插件工作台增量 SPEC
 
-- 状态：Draft，CFK-600 授权实现及隔离验收的基线；当前桌面宿主实际安装和生命周期验收后再决定冻结
+- 状态：Draft，CFK-600 授权实现及隔离验收的基线，包含 2026-10-05 用户授权的精确 Issue 打开修复；当前桌面宿主实际安装和生命周期验收后再决定冻结
 - 日期：2026-10-04
 - 关联：[CFK-600](https://cfkanban.dev/app/issues/CFK-600)
 - 基础：[本地 MCP / DSH](2026-10-02-local-mcp-dsh-spec.md)、[Foundation](2026-08-26-agent-native-kanban-foundation-spec.md)、[导航与层级](2026-10-04-issue-hierarchy-navigation-spec.md)
@@ -9,13 +9,23 @@
 
 在现有本地 stdio MCP 上增加官方 Plugin Extensions 的 global 和 thread 入口，直接挂载共享 Vue 工作台。继续使用同一安全 facade、Controller、Bridge 和受控动作协议。现有 DSH 和独立本地工作台保留自己的连接适配，不嵌套 iframe，不建立第二个业务客户端或任务事实源。
 
-适用当前支持 Extensions 的桌面客户端，不提供旧版兼容、远程 HTTP MCP、OAuth、公共目录发布、自动发送对话、mentions、Model-App Context、deep links 或执行会话关联。Service 继续核验身份、权限、CAS、幂等、审计和领域规则。只有一个已校验本地实例候选时自动核验其当前 Principal，并打开可访问的默认项目；多个候选且没有明确目标或可重新核验的偏好时保留连接选择，核验失败不切换其他身份。thread 入口由 Agent 在可信对话目录解析仓库推荐与默认，global 使用独立偏好；用户可在工作台切换所有有权限的工作区及项目。MCP 不以长期进程 cwd、聊天 ID 或客户端目录猜测仓库。
+适用当前支持 Extensions 的桌面客户端，不提供旧版兼容、远程 HTTP MCP、OAuth、公共目录发布、自动发送对话、Model-App Context、官方 URL deep links 或执行会话关联。编号优先的 mentions 由[独立引用增量](2026-10-05-codex-issue-mentions-spec.md)覆盖，不复用工作台视图作为授权范围。Service 继续核验身份、权限、CAS、幂等、审计和领域规则。只有一个已校验本地实例候选时自动核验其当前 Principal，并打开可访问的默认项目；多个候选且没有明确目标或可重新核验的偏好时保留连接选择，核验失败不切换其他身份。thread 入口由 Agent 在可信对话目录解析仓库推荐与默认，global 使用独立偏好；用户可在工作台切换所有有权限的工作区及项目。MCP 不以长期进程 cwd、聊天 ID 或客户端目录猜测仓库。
 
 ## 官方协议与可信边界
 
 依据 [Extensions](https://developers.openai.com/plugins/build/extensions)、[入口协议](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#mcp-app-entrypoints)、[MCP Apps 2026-01-26](https://github.com/modelcontextprotocol/ext-apps/blob/v1.7.5/specification/2026-01-26/apps.mdx) 和 [结果 metadata](https://developers.openai.com/plugins/reference#tool-results)。官方协议允许自行实现有界 JSON-RPC bridge；本增量不引入浮动 SDK 或启动期依赖安装。
 
-global 入口接受严格空对象 `{}`；thread 入口接受严格可选 `target` 或 `recommended_targets`，以及可选 `repository_key`，声明相同的 `_meta.ui.resourceUri`。`cfkanban_workbench_open` 只声明 `_meta["openai/ui"].entrypoints = [{type:"thread"}]`，`cfkanban_workbench_global_open` 只声明 `[{type:"global"}]`；服务端以实际工具名区分入口，不以页面 displayMode 或客户端字段推断。调用只初始化视图、核验身份并按入口读取范围，不执行业务写入。发行工件的资源 URI 为 `ui://cfkanban/workbench/<release_version>/<html_sha256>/index.html`，其中 `html_sha256` 是实际 HTML 字节的 SHA-256；MIME 为 `text/html;profile=mcp-app`。`resources/list` / `resources/read` 仅交付固定静态工件，不承载身份、视图 ID、请求、快照或凭据；资源可以被宿主预取或缓存。
+global 入口接受严格空对象 `{}`；thread 入口接受严格可选 `target` 或 `recommended_targets`，以及可选 `repository_key`，声明相同的 `_meta.ui.resourceUri`。`cfkanban_workbench_open` 只声明 `_meta["openai/ui"].entrypoints = [{type:"thread"}]`，`cfkanban_workbench_global_open` 只声明 `[{type:"global"}]`；服务端以实际工具名区分入口，不以页面 displayMode 或客户端字段推断。调用只初始化视图、核验身份并按入口读取范围，不执行业务写入。发行工件的资源 URI 为 `ui://cfkanban/workbench/<release_version>/<html_sha256>/index.html`，其中 `html_sha256` 是实际 HTML 字节的 SHA-256；MIME 为 `text/html;profile=mcp-app`。工作台的 `resources/list` / `resources/read` 交付固定静态工件，不承载身份、视图 ID、请求、快照或凭据；资源可以被宿主预取或缓存。Issue 引用资源另按独立增量进行动态、实时授权读取，仍不通过 resources/list 枚举。
+
+### 显示模式增量
+
+CFK-602 根据 2026-10-05 用户授权实施以下 Draft 增量。工作台 HTML 内容 `_meta["openai/ui"]` 声明 `availableDisplayModes:["inline","fullscreen"]` 与 `preferredDisplayMode:"fullscreen"`，页面初始化保留相同模式的 appCapabilities。preferredDisplayMode 是宿主可忽略的提示，不保证调用位置或实际布局。
+
+完整工作台的看板、列表首次连接时，如宿主 `HostContext.availableDisplayModes` 包含 fullscreen 且当前非 fullscreen，最多自动申请一次 `ui/request-display-mode {mode:"fullscreen"}`。以实际 `result.mode` 与后续 host-context-changed 为状态依据；较新的宿主通知优先于在途请求响应。初始已处于 fullscreen、或用户在初始化期间退出时，同样视为已处理初始偏好。
+
+用户退出后刷新、筛选、切换项目及通知重放不再次自动展开；提供「展开工作台 / Expand workbench」显式入口。Issue 详情与编辑沿用当前宿主模式，不自动缩回。拒绝、返回 inline、超时或缺少能力时工作台继续可用；这些操作只处理页面呈现，不重新调用 opener、绑定项目或重放业务写入，保留原 view ID、筛选、草稿、选中任务与 pending 操作。当前没有新增独立摘要组件或 Issue deep link。
+
+手动 global / thread 仍由宿主决定布局；会话面板不是页面可以申请的第三种 display mode。该偏好只用于 Codex MCP Apps，DSH、普通浏览器和完整 Web 保持自己的载体。协议 / UI fixture 覆盖协商及回退，真实桌面验收分别核对模型调用、手动 thread 和 global，不以 tool ok 或 mock 代替可见布局证明。
 
 每次入口调用由服务端生成新的非秘密 UUID `view_id`，经 tool-result `_meta["cfkanban/viewId"]` 交付。它只用于定位当前 MCP 进程内独立的服务端视图对象，不是 Credential、授权能力或聊天身份。页面只存内存，在后续 tools/call 的 `arguments.view_id` 返回；不使用请求 `_meta` 传递视图或动作 ID，因为当前原生 Extensions 适配器会丢弃自定义请求 metadata。旧版 32 字节秘密句柄不改名、不转入 arguments，新协议生成全新的 UUID。视图 ID 不进入 content、structuredContent、URL、日志、widgetState、浏览器存储或文件；静态资源读取不创建视图。
 
@@ -25,7 +35,7 @@ global 入口接受严格空对象 `{}`；thread 入口接受严格可选 `targe
 
 | 工具 | 业务输入 | 用途 |
 | --- | --- | --- |
-| `cfkanban_workbench_open` | `{target? 或 recommended_targets?, repository_key?}` | 创建独立 thread 视图并实时核验初始项目 |
+| `cfkanban_workbench_open` | `{target? 或 recommended_targets?, repository_key?}` | 创建独立 thread 视图，实时核验初始项目及明确指定的 Issue |
 | `cfkanban_workbench_global_open` | `{}` | 创建独立 global 视图 |
 | `cfkanban_workbench_snapshot` | `{view_id, action_id?}` | 获取当前对象的白名单快照及可选原动作 receipt |
 | `cfkanban_workbench_action` | `{view_id, message: ActionMessage}` | 执行现有受控导航或单笔写入 |
@@ -49,9 +59,15 @@ thread 入口不读取或更新全局偏好文件。没有仓库推荐时，单�
 
 本增量同时依据 2026-10-04 用户授权完善仓库自动打开、最后项目记忆及跨工作区切换。Agent 使用当前对话可信的绝对工作目录，只读完整 bundle 的 `context show --directory ... --json --no-interactive`；没有 CLI 时使用 `scope inspect-directory`。后者确认 Git 仓库时返回 `workbench_context_key = canonicalDigest({directory:scope_directory})`，CLI 透传此字段；子目录归一到工作树根，不同 worktree 独立。非仓库、未知或不可用时为 null，不从目录名、Git remote、Skill 目录或 MCP 进程 cwd 推断业务目标。
 
-`target` 严格只含 instance / workspace / project 三 UUID；`recommended_targets` 为 1..50 个唯一的同形 target，二者互斥。`repository_key` 只接受 64 位小写 hex，也可单独提供以恢复未配置推荐的仓库上次项目；它只定位本机偏好桶，不认证仓库、聊天或业务权限。入口拒绝目录、URL、角色、凭据和额外字段。明确项目或兼容的 CLI `saved_directory` 默认以 target 打开；这类目标失效保留具体诊断，不默默换项目。否则将完整仓库推荐集合交付服务端，先恢复该仓库上次项目；没有有效记忆时按推荐顺序验证并打开首个可访问项目。只可跳过已明确无权或不存在的项目，网络、认证和身份漂移不能触发跨身份回退；不会从推荐集合扩大到任意全局项目。
+`target` 必须含 instance / workspace / project 三 UUID，可额外含完整 `CFK-N` 格式的 `identifier`，仅用于用户明确指定的 Issue。N 为不含前导零的正整数，最多 15 位，沿用共享工作台编号约束。`recommended_targets` 为 1..50 个唯一的三 UUID 项目目标，不接受 identifier，二者互斥。`repository_key` 只接受 64 位小写 hex，也可单独提供以恢复未配置推荐的仓库上次项目；它只定位本机偏好桶，不认证仓库、聊天或业务权限。入口拒绝目录、URL、角色、凭据和额外字段。明确项目或兼容的 CLI `saved_directory` 默认以 target 打开；明确 Issue 先解析准确实例、工作区和所属项目，再在该 target 传入 identifier。目录推荐、CLI 默认和最后项目记忆不附加 Issue。这类目标失效保留具体诊断，不默默换项目。否则将完整仓库推荐集合交付服务端，先恢复该仓库上次项目；没有有效记忆时按推荐顺序验证并打开首个可访问项目。只可跳过已明确无权或不存在的项目，网络、认证和身份漂移不能触发跨身份回退；不会从推荐集合扩大到任意全局项目。
 
-仓库偏好在私有 `.cfkanban/workbench/codex/repositories/<repository_key>.json` 保存与全局同形的四 UUID，复用全部安全路径、权限、文件及原子写校验。成功初始绑定或用户主动切换后更新；用户选择的项目可在仓库初始推荐之外，下次仍须实时核验准确 Principal、Project 与 Workspace。记忆中项目 403/404 时，仅在同一准确 Principal 下回到仓库推荐；身份改变保留诊断。无效 key 或不存在的仓库桶不读取全局偏好。此记忆不修改 `.cfkanban-scope.json`、CLI 显式 context 或服务端事实，不保存目录、请求、pending 或业务 key。
+仓库偏好在私有 `.cfkanban/workbench/codex/repositories/<repository_key>.json` 保存与全局同形的四 UUID，复用全部安全路径、权限、文件及原子写校验。成功初始绑定或用户主动切换后更新；用户选择的项目可在仓库初始推荐之外，下次仍须实时核验准确 Principal、Project 与 Workspace。记忆中项目 403/404 时，仅在同一准确 Principal 下回到仓库推荐；身份改变保留诊断。无效 key 或不存在的仓库桶不读取全局偏好。此记忆不修改 `.cfkanban-scope.json`、CLI 显式 context 或服务端事实，不保存 identifier、选中 Issue、目录、请求、pending 或业务 key。
+
+## 精确 Issue 初始页面
+
+2026-10-05 用户授权在 v1.9.3 RC 修复模型请求「打开 CFK-N 详情」时只能进入项目看板的问题。明确 `target.identifier` 在初始快照交付前，沿共享 Controller / Bridge 加载指定 Issue 的详情；复用当前身份、实时访问权限和精确项目约束，不增加业务写入或独立读取客户端。返回的 Issue 必须属于 target 的项目与工作区，且编号准确；编号不存在、无权、归属不符、身份漂移或读取失败时保留当前视图及明确错误，不回退项目看板、其他 Issue、推荐项目或浏览器。入口失败时不把项目写成新的成功偏好。非法输入在任何读取前返回 `MCP_INVALID_ARGUMENTS`；归属或返回编号不符返回 `PANEL_SCOPE_DENIED`，其余错误沿用 Service / runtime 既有码。
+
+仅在明确 target 中接受 identifier，不从推荐、默认、上次选择或 Issue 内容推断。项目记忆仍只有四 UUID，下次不带 identifier 打开时采用项目页面；用户明确带 identifier 时每次重新读取。此能力不依赖 mentions 选择，也不处理 `openai/deepLink` 或生成官方 `codex://` 业务链接。精确详情和宿主布局分别验收：模型调用可由宿主内联或全屏呈现，不承诺强制切到会话侧栏。`ok` 和含 Issue 的初始 snapshot 只证明服务端入口及数据准备，不能冒充宿主 `opened` / rendered 确认。v1.9.3 RC 安装后仍需在真实客户端核对目标编号与详情。
 
 ## 跨工作区项目切换
 
@@ -87,6 +103,6 @@ thread 入口不读取或更新全局偏好文件。没有仓库推荐时，单�
 
 ## 验收边界
 
-协议 fixture 覆盖空输入、资源预取、两个对象及同动作 ID receipts 隔离、额外字段拒绝、只读身份、writer / reader、身份漂移、CAS、取消、未知结果同 key 恢复、pending 保留、资源损坏与 spaced path / empty PATH 离线启动。另模拟宿主丢弃全部请求 `_meta`，验证仅 arguments 即可完成快照、动作和 receipt 核对，以及无效 / 过期 / 重启前视图 ID 不回退。前端 fixture 覆盖握手次序、parent source、通知重放、视图 ID 替换拒绝、超时、teardown 与 HostContext。偏好 fixture 覆盖私有路径、严格字段、损坏 / 不可信文件、身份或权限失效、global 默认与 thread 独立、不恢复 pending / key。共享工作台及 D1 的既有安全测试继续执行。
+协议 fixture 覆盖空输入、明确 identifier 直达初始详情、推荐不含 identifier、编号格式与额外字段拒绝、Issue 归属或权限失败不回退且不更新偏好、项目记忆不保存 Issue、资源预取、两个对象及同动作 ID receipts 隔离、只读身份、writer / reader、身份漂移、CAS、取消、未知结果同 key 恢复、pending 保留、资源损坏与 spaced path / empty PATH 离线启动。另模拟宿主丢弃全部请求 `_meta`，验证仅 arguments 即可完成快照、动作和 receipt 核对，以及无效 / 过期 / 重启前视图 ID 不回退。前端 fixture 覆盖握手次序、parent source、通知重放、视图 ID 替换拒绝、超时、teardown 与 HostContext。偏好 fixture 覆盖私有路径、严格字段、损坏 / 不可信文件、身份或权限失效、global 默认与 thread 独立、不恢复 pending / key。共享工作台及 D1 的既有安全测试继续执行。
 
 渲染检查使用隔离业务 fixture，验证窄 / 宽布局、键盘、双语、主题和实际点击；普通浏览器 fixture 不替代官方桌面发现、安装、挂载、重开、更新、停用和卸载验收。当前桌面实际验收受工具或环境限制时，CFK-600 保持进行中并记录缺口，不把源码测试或 DSH smoke 宣称为官方宿主通过。

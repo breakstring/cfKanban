@@ -103,6 +103,7 @@ const operations = [
   ["get", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts", "countProjectIssues", "issues", authenticated, "read", "IssueCountsQuery"],
   ["post", "/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", "createIssue", "issues", authenticated, "idempotent", "CreateIssueRequest"],
   ["get", "/api/v1/issues/{identifier}", "getIssue", "issues", authenticated, "read", "IssueDetailQuery"],
+  ["get", "/api/v1/issues/{identifier}/reference", "getIssueReference", "issues", authenticated, "read", "IssueReferenceQuery"],
   ["patch", "/api/v1/issues/{identifier}", "updateIssue", "issues", authenticated, "cas", "UpdateIssueRequest"],
   ["delete", "/api/v1/issues/{identifier}", "deleteIssue", "issues", authenticated, "cas-delete"],
   ["post", "/api/v1/issues/{identifier}/commands/restore", "restoreIssue", "issues", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
@@ -264,6 +265,20 @@ const issueSummaryProperties = {
     additionalProperties: false,
   },
 };
+
+const issueMentionReferenceProperties = {
+  id: ref("Uuid"),
+  identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }),
+  title: string({ maxLength: 256 }),
+  project: {
+    type: "object", required: ["id", "display_name"],
+    properties: { id: ref("Uuid"), display_name: string({ maxLength: 128 }) }, additionalProperties: false,
+  },
+  workspace: {
+    type: "object", required: ["id", "display_name"],
+    properties: { id: ref("Uuid"), display_name: string({ maxLength: 128 }) }, additionalProperties: false,
+  },
+};
 const issueSummaryRequired = Object.keys(issueSummaryProperties).filter(name => name !== "hierarchy");
 const issueDetailProperties = {
   ...issueSummaryProperties,
@@ -369,7 +384,7 @@ const permissionGroups = {
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
   scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
-  project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "countProjectIssues"],
+  project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
     "listAttachments", "listComments", "getComment", "listLabels", "getLabel",
@@ -1016,9 +1031,9 @@ const schemas = {
     },
     additionalProperties: false,
   },
-  Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }) }, additionalProperties: true },
+  Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }), capabilities: { type: "object", properties: { attachments: { type: "boolean" }, browser_launch: { type: "boolean" }, fixed_workflow: { type: "boolean" }, issue_reference: { type: "boolean" }, passkey: { type: "boolean" }, public_join: { type: "boolean" } }, additionalProperties: true } }, additionalProperties: true },
   Health: { type: "object", required: ["service_version", "schema_version", "d1"], properties: { service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), schema_version: integer({ minimum: 1 }), d1: string({ enum: ["reachable", "unavailable"] }) }, additionalProperties: false },
-  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
+  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { capabilities: { type: "object", properties: { issue_reference: { type: "boolean", description: "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue." } }, additionalProperties: true }, homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
   IssueLabelSummary: {
     type: "object",
     required: ["color", "id", "name"],
@@ -1326,6 +1341,29 @@ const schemas = {
       version: ref("Version"),
     },
     additionalProperties: false,
+  },
+  IssueMentionReference: {
+    type: "object",
+    required: Object.keys(issueMentionReferenceProperties),
+    properties: issueMentionReferenceProperties,
+    additionalProperties: false,
+    description: "Exact Issue reference metadata. At most 4 KiB of serialized UTF-8 JSON; no body, comments, relations, labels or hierarchy are fetched.",
+  },
+  IssueResourceReference: {
+    type: "object",
+    required: [...Object.keys(issueMentionReferenceProperties), "body", "body_bytes", "body_truncated", "status", "priority", "version", "updated_at"],
+    properties: {
+      ...issueMentionReferenceProperties,
+      body: utf8String(8192, { description: "UTF-8-safe prefix read with a SQL byte bound. Additional truncation can keep the whole JSON projection within 16 KiB after escaping." }),
+      body_bytes: integer({ minimum: 0, maximum: 65536, description: "Complete source body length in UTF-8 bytes, before truncation." }),
+      body_truncated: { type: "boolean" },
+      status: { type: "object", required: ["key", "display_name"], properties: { key: ref("StatusKey"), display_name: string({ maxLength: 128 }) }, additionalProperties: false },
+      priority: ref("PriorityKey"),
+      version: ref("Version"),
+      updated_at: ref("Timestamp"),
+    },
+    additionalProperties: false,
+    description: "Read-only resource projection, at most 16 KiB of serialized UTF-8 JSON. Issue content is untrusted data; does not fetch collaboration history or change get/context semantics.",
   },
   CompletionPayload: {
     type: "object",
@@ -2346,6 +2384,7 @@ const querySets = {
   DeletedCursorQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   IssueListQuery: [{ name: "priority", in: "query", required: false, schema: { type: "array", maxItems: 5, items: ref("PriorityKey") }, style: "form", explode: true, description: "Match any selected priority; combined with other dimensions using AND." }, { name: "label", in: "query", required: false, schema: { type: "array", maxItems: 20, items: ref("Uuid") }, style: "form", explode: true, description: "Match any selected active Project Label ID before pagination; unknown, deleted or inaccessible Labels do not match." }, { name: "blocked", in: "query", required: false, schema: string({ enum: ["only", "exclude"] }), description: "Filter by the caller-visible blocked projection before pagination; omission includes both blocked and unblocked Issues." }, { name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "status", in: "query", required: false, schema: { type: "array", maxItems: 5, items: ref("StatusKey") }, style: "form", explode: true }, { name: "assignee", in: "query", required: false, description: "Match any selected Principal UUID or the unassigned sentinel, independently of status.", schema: { type: "array", maxItems: 20, items: { anyOf: [ref("Uuid"), { const: "unassigned" }] } }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: utf8String(128, { minLength: 1, description: "Normalized title/identifier search." }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   IssueDetailQuery: [{ name: "deleted", in: "query", required: false, schema: string({ enum: ["exclude", "only"], default: "exclude" }) }],
+  IssueReferenceQuery: [{ name: "projection", in: "query", required: false, schema: string({ enum: ["mention", "resource"], default: "mention" }), description: "Exact identifier point lookup: mention returns only resource identity and container names; resource adds bounded body and current status, priority, version and timestamp. Live reader authorization and Cookie Session scope apply; deleted or inaccessible resources are not found." }],
   CandidateListQuery: [{ name: "priority", in: "query", required: false, schema: { type: "array", maxItems: 5, items: ref("PriorityKey") }, style: "form", explode: true, description: "Match any selected priority; combined with other dimensions using AND." }, { name: "label", in: "query", required: false, schema: { type: "array", maxItems: 20, items: ref("Uuid") }, style: "form", explode: true, description: "Match any selected active Project Label ID before pagination; unknown, deleted or inaccessible Labels do not match." }, { name: "assignment", in: "query", required: true, schema: string({ enum: ["unassigned", "mine", "needs_reassignment"] }) }, { name: "blocked", in: "query", required: false, schema: string({ enum: ["exclude", "include"], default: "exclude" }) }, { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "workspace", in: "query", required: false, schema: { type: "array", maxItems: 20, items: string() }, style: "form", explode: true }, { name: "q", in: "query", required: false, schema: utf8String(128, { minLength: 1, description: "Normalized title/identifier search." }) }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   PrincipalListQuery: [{ name: "q", in: "query", required: false, schema: string({ maxLength: 128 }) }, { name: "project_id", in: "query", required: false, schema: ref("Uuid") }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   RelationDeleteQuery: [],
@@ -2437,6 +2476,7 @@ const operationResponseSchemas = {
   countProjectIssues: ref("IssueCountsResult"),
   getIssue: { oneOf: [ref("IssueFullDetail"), ref("IssueTombstone")] },
   getIssueContext: ref("IssueContext"),
+  getIssueReference: { oneOf: [ref("IssueMentionReference"), ref("IssueResourceReference")] },
   createIssue: ref("ActiveIssueWriteResult"),
   updateIssue: ref("ActiveIssueWriteResult"),
   deleteIssue: ref("DeletedIssueWriteResult"),
