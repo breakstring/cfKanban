@@ -3,6 +3,7 @@ import { computed } from "vue";
 
 import release from "../../../../release/version.json";
 import cfKanbanMarkUrl from "../assets/cfkanban-mark-orange.svg";
+import FooterLinkIcon from "./FooterLinkIcon.vue";
 import { locale, t } from "../lib/i18n";
 
 defineProps<{ preferredOrigin?: string | null }>();
@@ -18,9 +19,11 @@ const docsUrl = computed(() => `/docs/${locale.value}/overview/`);
     </div>
     <nav class="app-footer-links" :aria-label="t('footer.navigation')">
       <a :href="docsUrl" target="_blank" rel="noopener noreferrer" :aria-label="`${t('home.documentation')} (${t('footer.newTab')})`" :title="t('footer.newTab')">
+        <FooterLinkIcon name="documentation" />
         {{ t("home.documentation") }} <span aria-hidden="true">↗</span>
       </a>
       <a href="https://github.com/breakstring/cfKanban" target="_blank" rel="noopener noreferrer" :aria-label="`${t('home.github')} (${t('footer.newTab')})`" :title="t('footer.newTab')">
+        <FooterLinkIcon name="github" />
         {{ t("home.github") }} <span aria-hidden="true">↗</span>
       </a>
     </nav>

@@ -2,6 +2,7 @@
 import { computed, onMounted } from "vue";
 import { onContentUpdated, useData, withBase } from "vitepress";
 import DefaultTheme from "vitepress/theme-without-fonts";
+import DocsNavLinks from "./DocsNavLinks.vue";
 import version from "../../../../release/version.json";
 import mark from "../../../web/src/assets/cfkanban-mark-orange.svg";
 import { writeStoredLocale } from "../../../web/src/lib/locale-preference";
@@ -36,7 +37,10 @@ onContentUpdated(updatePage);
       <span class="docs-label">{{ zh ? "文档" : "Documentation" }}</span>
     </template>
     <template #nav-bar-content-after>
-      <a class="docs-home" href="/" target="_self">{{ zh ? "返回站点" : "Back to site" }}</a>
+      <DocsNavLinks class="docs-nav-links-header" :zh="zh" />
+    </template>
+    <template #nav-screen-content-after>
+      <DocsNavLinks class="docs-nav-links-screen" :zh="zh" />
     </template>
     <template #doc-before>
       <div class="docs-page-meta">

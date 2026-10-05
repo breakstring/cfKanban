@@ -23,7 +23,12 @@
 .docs-brand { display: inline-flex; align-items: center; gap: 9px; color: var(--vp-c-text-1); font-size: 20px; font-weight: 600; white-space: nowrap; }
 .docs-brand img { width: 28px; height: 28px; }
 .docs-label { color: var(--vp-c-text-2); font-size: 14px; white-space: nowrap; margin: 0 auto 0 16px; padding-left: 16px; border-left: 1px solid var(--vp-c-divider); }
-.docs-home { font-size: 14px; white-space: nowrap; padding: 12px; }
+.docs-nav-links { display: flex; align-items: center; gap: 24px; font-size: 14px; white-space: nowrap; }
+.docs-nav-links a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
+.docs-nav-links a:hover { color: var(--vp-c-brand-1); }
+.docs-nav-links .docs-link-icon { width: 20px; height: 20px; flex-shrink: 0; background-color: currentColor; mask: var(--docs-link-icon) center / contain no-repeat; -webkit-mask: var(--docs-link-icon) center / contain no-repeat; }
+.docs-nav-links-header { margin-left: 24px; }
+.docs-nav-links-screen { align-items: flex-start; flex-direction: column; gap: 8px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--vp-c-divider); }
 .docs-page-meta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-bottom: 20px; color: var(--vp-c-text-2); font-size: 13px; }
 .docs-page-meta a { color: var(--vp-c-brand-1); text-decoration: underline; text-underline-offset: 3px; }
 .vp-doc h1 { font-size: 30px; line-height: 1.35; }
@@ -42,14 +47,13 @@
 :focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 3px; }
 @media (max-width: 767px) {
   .docs-label { display: none; }
-  .docs-home { padding: 12px 8px; }
+  .docs-nav-links-header { display: none; }
   .vp-doc h1 { font-size: 26px; }
   .VPNavBar .content-body { gap: 4px; }
 }
+@media (min-width: 768px) and (max-width: 959px) {
+  .docs-label { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0s !important; }
-}
-
-@media (max-width: 480px) {
-  .docs-home { display: none; }
 }

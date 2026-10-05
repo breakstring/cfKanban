@@ -184,7 +184,7 @@ h3 {
 .app-footer-links a {
   display: inline-flex;
   min-height: 36px;
-  gap: 4px;
+  gap: 6px;
   align-items: center;
   text-decoration: none;
 }
@@ -848,6 +848,9 @@ h3 {
 }
 
 .footer-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--color-text);
   text-decoration-color: var(--color-border-strong);
   text-underline-offset: 3px;

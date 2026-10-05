@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import cfKanbanMarkUrl from "../assets/cfkanban-mark-orange.svg";
 import ErrorNotice from "../components/ErrorNotice.vue";
+import FooterLinkIcon from "../components/FooterLinkIcon.vue";
 import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";
 import ProductHighlights from "../components/ProductHighlights.vue";
@@ -360,9 +361,8 @@ onUnmounted(() => {
           </div>
         </div>
         <nav class="footer-links" :aria-label="locale === 'zh-CN' ? '页脚导航' : 'Footer navigation'">
-          <a :href="docsUrl">{{ t("home.documentation") }}</a>
-          <a :href="`${guideOrigin}/openapi.json`">{{ t("home.openapi") }}</a>
-          <a href="https://github.com/breakstring/cfKanban" rel="noreferrer noopener">{{ t("home.github") }}</a>
+          <a :href="docsUrl"><FooterLinkIcon name="documentation" />{{ t("home.documentation") }}</a>
+          <a href="https://github.com/breakstring/cfKanban" rel="noreferrer noopener"><FooterLinkIcon name="github" />{{ t("home.github") }}</a>
         </nav>
         <div class="footer-meta">
           <span>cfKanban {{ meta?.release_version ?? "—" }}</span>

@@ -76,7 +76,7 @@
 
 若当前请求 origin 与实例发布的 preferred origin 不同，未认证首页可以显示一个清楚标注的“推荐地址”链接；页面仍可在当前有效 alias 上工作，不把这个差异显示成实例错误。它不得自动携带 URL 中的 capability、长期 Credential 或已有 cookie 跳转到新 origin。
 
-首页标题按 English/简体中文分别固定两条有意换行的短句，并通过 locale-specific 响应式字号保证每一条在 320px 窄屏内不再次断行或造成横向溢出。页面以一条克制分隔线和简短页脚收尾；页脚提供品牌短句、文档、OpenAPI、源码、Service 版本与缩短的 Instance ID。公开文档的四栏目导航、双语内容、旧指南兼容和静态打包遵循[站内双语文档中心](2026-09-29-documentation-center-spec.md)，首页不扩张为站点地图或营销面板。
+首页标题按 English/简体中文分别固定两条有意换行的短句，并通过 locale-specific 响应式字号保证每一条在 320px 窄屏内不再次断行或造成横向溢出。页面以一条克制分隔线和简短页脚收尾；页脚提供品牌短句、文档、源码、Service 版本与缩短的 Instance ID。2026-10-05 用户授权 CFK-618：文档与 GitHub 文字链接前增加本地装饰图标，移除公开页脚的 API 合同入口，保留 API 和 OpenAPI 端点；图标不重复读出链接名称，窄屏继续保持换行与 44px 点击高度。公开文档的四栏目导航、双语内容、旧指南兼容和静态打包遵循[站内双语文档中心](2026-09-29-documentation-center-spec.md)，首页不扩张为站点地图或营销面板。
 
 ### 3.1 Project Kanban
 
