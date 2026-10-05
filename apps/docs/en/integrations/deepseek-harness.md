@@ -1,6 +1,6 @@
 # DeepSeek Harness
 
-The DSH plugin adds cfKanban Skills, MCP, and a task sidebar beside your chat in one installation. **Once installed, you do not need to install the Skills or configure MCP separately.** This page covers DSH desktop and Web running on your own computer. The current compatibility baseline is DSH `0.2.0-rc.2`.
+The DSH plugin puts cfKanban beside your chat: ask the Agent to open an Issue, then read its details or work on the board without leaving the conversation. It adds Skills, MCP, and the task sidebar in one installation. **Once installed, you do not need to install the Skills or configure MCP separately.** This page covers DSH desktop and Web running on your own computer. The current compatibility baseline is DSH `0.2.0-rc.2`.
 
 ## Ask your current Agent to install
 
@@ -41,6 +41,10 @@ Open CFK-123 in the sidebar.
 
 You can also name a project. The Agent checks access, opens the sidebar and confirms it has reached the requested page. If the sidebar capability is unavailable, it explains the limitation without opening a browser instead. Asking to open a view does not install or enable a plugin.
 
+[![DeepSeek Harness shows the conversation on the left and CFK-600 details in the cfKanban sidebar on the right](../../assets/integrations/dsh-sidebar.png)](../../assets/integrations/dsh-sidebar.png)
+
+*The cfKanban sidebar stays beside the conversation; click the image to open the original. This screenshot illustrates the desktop layout; example tasks, language and available controls can differ in your installation.*
+
 To open it manually:
 
 1. Open your working project directory in DSH.
@@ -49,9 +53,11 @@ To open it manually:
 
 Without an association, select a project manually or ask the Agent to [save a project association](../usage/profile.md) for the directory. An association only helps selection; it does not grant access. The plugin uses the identity on the computer running DSH. Remote or shared multi-user DSH services are outside the sidebar's current support scope.
 
-The sidebar supports project switching, boards and lists, quick changes to priority, status, and assignee, and task details, comments, and completion. **Open full online board** opens the current project or task online. For workspace, member, or Owner management, ask the Agent to open the [management page you need](../administration/index.md). See [Open a board](./webui.md) for the two interfaces.
+In the sidebar, select the current project to switch projects, use **Kanban** or **List** to browse tasks, and click a task to read its details. Authorized users can edit priority, status and assignee, add comments, and record completion. **Open full online board** opens the current project or task online. For workspace, member, or Owner management, ask the Agent to open the [management page you need](../administration/index.md). See [Open a board](./webui.md) for the two interfaces.
 
 The DSH Web version also embeds the sidebar through the plugin; you do not need to open a separate local workbench page in your browser.
+
+If a write has an uncertain result, use **Recover** in the original view before closing the sidebar or restarting DSH. Reopening a view does not retry the earlier operation automatically.
 
 ## Update or troubleshoot
 

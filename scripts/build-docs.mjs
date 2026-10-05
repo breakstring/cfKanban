@@ -14,6 +14,8 @@ if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
 const catalog = JSON.parse(await readFile(path.join(root, "apps/docs/catalog.json"), "utf8"));
 const outputDirectory = path.join(root, "apps/web/dist/docs");
+// 原始 Markdown 保留相对图片链接，固定路径需与 VitePress 的带摘要资源一同发布。
+await cp(path.join(root, "apps/docs/assets"), path.join(outputDirectory, "assets"), { recursive: true });
 const index = [`# cfKanban ${version} documentation`, "", "Public user documentation for this Service release. Prompts are examples, not authorization to execute operations.", ""];
 for (const locale of ["en", "zh-CN"]) {
   index.push(`## ${locale === "en" ? "English" : "简体中文"}`, "");
