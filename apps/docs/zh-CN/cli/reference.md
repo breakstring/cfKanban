@@ -15,6 +15,16 @@ cfkanban issue show --instance <instance-uuid> --identifier CFK-123 --json
 
 `issue reference --identifier CFK-123 --projection mention|resource` 提供受权限约束的简短读取，可选有界正文。实际执行时选一个 projection 值，不输入 `|` 分隔符；它与完整的 `issue show` 响应分开，截断及后续评论/关系读取见[查看任务](./daily.md#查看或创建-issue)。可用性以实际安装的 CLI 和 Service 版本为准。
 
+`search-index status`、`search-index snapshot` 和 `search-index changes` 提供与 Codex 搜索缓存相同的只读 Issue 编号／标题同步能力，返回元数据和不透明游标，不返回本地搜索候选或 Issue 正文。Status 使用明确的重复 `--project` 过滤或当前目录关联的项目；两者都没有时，必须明确提供 `--allow-unfiltered true` 才能选择当前全部授权项目，此参数不授予权限。Snapshot 和 changes 必须明确提供一个项目及其返回的游标，每页最多 100 条。
+
+```text
+cfkanban search-index status --instance <instance-uuid> --project <project-uuid> --json
+cfkanban search-index snapshot --instance <instance-uuid> --project <project-uuid> --cursor STATUS_CURSOR --limit 100 --json
+cfkanban search-index changes --instance <instance-uuid> --project <project-uuid> --after NEXT_CURSOR --limit 100 --json
+```
+
+将 `STATUS_CURSOR` 替换为 status 返回的对应项目游标。沿 snapshot 的 `next_cursor` 读取到 `has_more` 为 false，再将该游标作为 changes 的 `--after`。增量页即使 `items` 为空也要继续使用返回的游标；游标重置或过期时，重新完整读取该项目的快照。
+
 ## 上下文选择与保存默认范围
 
 明确 ID 优先；否则 CLI 仅解析命令需要的目标层级，使用仓库推荐、兼容的目录保存选择、全局默认或唯一已登记连接/Service 候选。仓库推荐优先于全局默认；目录选择只能收窄仓库候选，不能扩大范围。仓库 scope 保持非秘密实例/工作区/项目 UUID 元组的扁平列表，没有优先项目或最近使用项目。

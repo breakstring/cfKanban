@@ -7,6 +7,7 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 import { COMMANDS } from '../src/catalog.mjs';
 import { createContextResolver } from '../src/context.mjs';
+import { parseArguments } from '../src/parser.mjs';
 import { createWorkbenchPreferences } from '../../mcp/src/workbench-preferences.mjs';
 import { createCliRuntime } from '../src/runtime.mjs';
 import { inspectScopeDirectory, SCOPE_FILE_NAME } from '../../skill-runtime/src/scope.mjs';
@@ -190,6 +191,25 @@ test('issue aggregation spans repository workspaces while workspace-scoped comma
   assert.equal(listed.resolved_context.workspace_id, null);
   assert.equal(listed.resolved_context.project_id, null);
   await assert.rejects(runtime.execute(command('project list'), {}), error => assertSelection(error, 'workspace', f.state.targets));
+});
+
+test('search index status uses repository project filters and never broadens an unassociated directory implicitly', async t => {
+  const f = await repositoryFixture(t, { targets: f => [target(f), anotherProject(f, randomUUID())] });
+  f.state.response = options => new URL(options.apiPath, f.origin).pathname === '/api/v1/search-index/status' ? { ok: true, status: 200, data: { projects: [] } } : null;
+  const listed = await f.runtime().execute(command('search-index status'), {});
+  const request = f.state.calls.findLast(call => new URL(call.apiPath, f.origin).pathname === '/api/v1/search-index/status');
+  assert.deepEqual(new Set(new URL(request.apiPath, f.origin).searchParams.getAll('project')), new Set(f.state.targets.map(entry => entry.project_id)));
+  assert.deepEqual(new Set(listed.resolved_context.project_ids), new Set(f.state.targets.map(entry => entry.project_id)));
+  await f.saveScope([]);
+  f.state.calls.length = 0;
+  await assert.rejects(f.runtime().execute(command('search-index status'), { instanceId: f.instanceId }), { code: 'CLI_EXPLICIT_SCOPE_REQUIRED' });
+  assert.equal(f.state.calls.length, 0);
+  const parsed = await parseArguments(['search-index','status','--instance',f.instanceId,'--allow-unfiltered','true']);
+  assert.equal(parsed.input.allowUnfiltered, true);
+  await f.runtime().execute(parsed.command, parsed.input);
+  const broad = new URL(f.state.calls.at(-1).apiPath, f.origin);
+  assert.equal(broad.searchParams.get('allow_unfiltered'), 'true');
+  assert.deepEqual(broad.searchParams.getAll('project'), []);
 });
 
 test('ambiguous project creation gives stable candidates and explicit next commands before writing', async t => {

@@ -33,6 +33,28 @@ test('strict flags, required fields and bounded input fail before any execution'
   const rawCapability=`cfi_v1_abcdefgh_${'A'.repeat(43)}`;await assert.rejects(parseArguments(['comment','create','--instance',id,'--identifier','CFK-1','--body',rawCapability]),{code:'CLI_SECRET_INPUT_REJECTED'});assert.equal(redactOutput({body:rawCapability}).body,'[REDACTED]');
   await assert.rejects(parseArguments(['issue','update','--instance',id,'--identifier','CFK-1','--title','Changed','--idempotency-key','unsupported']),{code:'CLI_UNKNOWN_OPTION'});
 });
+test('search index commands route bounded read-only metadata with explicit project cursors',async t=> {
+  const f=await createMcpStateFixture(t);const calls=[];
+  const runtime=createCliRuntime({...f,scopeInspector:()=>assert.fail('Explicit search targets inspected repository'),fetchImpl:fakeFetch(f),requestImpl:async options=>{calls.push(options);return {ok:true,status:200,data:{items:[],next_cursor:'next'}};}});
+  const cases=[
+    ['status','--project',f.projectId,'--project',f.workspaceId],
+    ['snapshot','--project',f.projectId,'--cursor','opaque-snapshot','--limit','100'],
+    ['changes','--project',f.projectId,'--after','opaque-delta','--limit','10'],
+  ];
+  for(const [action,...flags] of cases) {
+    const parsed=await parseArguments(['search-index',action,'--instance',f.instanceId,...flags]);
+    assert.equal(parsed.command.effect,'read');
+    await runtime.execute(parsed.command,parsed.input);
+    const call=calls.at(-1);const url=new URL(call.apiPath,f.origin);
+    assert.equal(call.method,'GET');assert.equal(url.pathname,`/api/v1/search-index/${action}`);
+    assert.deepEqual(url.searchParams.getAll('project'),action==='status'?[f.projectId,f.workspaceId]:[f.projectId]);
+    if(action==='snapshot')assert.equal(url.searchParams.get('cursor'),'opaque-snapshot');
+    if(action==='changes')assert.equal(url.searchParams.get('after'),'opaque-delta');
+  }
+  await assert.rejects(parseArguments(['search-index','snapshot','--instance',f.instanceId,'--cursor','cursor']),{code:'CLI_MISSING_ARGUMENT'});
+  await assert.rejects(parseArguments(['search-index','changes','--instance',f.instanceId,'--project',f.projectId,'--after','cursor','--limit','101']),{code:'CLI_INVALID_ARGUMENT'});
+  let output='';await main(['search-index','status','--help'],{stdout:{write:value=>output+=value},stderr:{write:()=>assert.fail('Unexpected help error')}});assert.match(output,/--allow-unfiltered/);
+});
 test('create reads the exact new resource; CAS writes freeze version and verify readback',async t=> {
   const f=await createMcpStateFixture(t);const calls=[];
   let version=4;const runtime=createCliRuntime({...f,fetchImpl:fakeFetch(f),requestImpl:async options=> {calls.push(options);if(options.method==='POST')return {ok:true,status:201,data:{resource:{identifier:'CFK-12',version:1}}};if(options.method==='PATCH'){version=5;return {ok:true,status:200,data:{resource:{identifier:'CFK-12',version:5}}};}return {ok:true,status:200,data:{identifier:'CFK-12',version}};}});

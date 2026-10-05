@@ -14,8 +14,8 @@ async function fixture(t) {
   const scriptHash = createHash('sha256').update(code).digest('base64');
   const html = `<html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'sha256-${scriptHash}'"><style>body{margin:0}</style></head><body><script>${code}</script></body></html>`;
   const version = '1.9.1';
-  const files = { 'server.mjs': 'export const server = true;', 'facade.mjs': 'export const facade = true;', 'workbench.html': html, 'mcp-app-build.json': JSON.stringify({ schema_version: 1, protocol: 1, entry: 'workbench.html', release_version: version, size_bytes: Buffer.byteLength(html), sha256: hash(html) }), 'THIRD_PARTY_NOTICES.txt': 'Fixture licenses' };
-  const metadata = { schema_version: 1, name: 'cfkanban-mcp', release_version: version, node_range: '>=22.12.0', transport: 'stdio', entries: ['server.mjs', 'facade.mjs', 'workbench.html', 'mcp-app-build.json'].map(name => ({ path: name, size_bytes: Buffer.byteLength(files[name]), sha256: hash(files[name]) })), dependencies: [] };
+  const files = { 'server.mjs': 'export const server = true;', 'facade.mjs': 'export const facade = true;', 'search-cache-worker.mjs': 'export const worker = true;', 'workbench.html': html, 'mcp-app-build.json': JSON.stringify({ schema_version: 1, protocol: 1, entry: 'workbench.html', release_version: version, size_bytes: Buffer.byteLength(html), sha256: hash(html) }), 'THIRD_PARTY_NOTICES.txt': 'Fixture licenses' };
+  const metadata = { schema_version: 1, name: 'cfkanban-mcp', release_version: version, node_range: '>=22.12.0', transport: 'stdio', entries: ['server.mjs', 'facade.mjs', 'search-cache-worker.mjs', 'workbench.html', 'mcp-app-build.json'].map(name => ({ path: name, size_bytes: Buffer.byteLength(files[name]), sha256: hash(files[name]) })), dependencies: [] };
   files['build-metadata.json'] = JSON.stringify(metadata);
   for (const [name, value] of Object.entries(files)) await writeFile(path.join(root, name), value);
   return { root, version };
@@ -27,7 +27,7 @@ test('MCP UI artifact requires matching complete release, exact files and UI dig
   await assert.rejects(verifyMcpBuild({ outputDirectory: f.root, version: '1.9.2' }));
   await writeFile(path.join(f.root, 'workbench.html'), 'tampered');
   await assert.rejects(verifyMcpBuild({ outputDirectory: f.root, version: f.version }));
-  assert.equal(MCP_BUILD_FILES.length, 6);
+  assert.equal(MCP_BUILD_FILES.length, 7);
 });
 
 test('MCP UI artifact rejects extra files and symlinked resources before packaging', async t => {

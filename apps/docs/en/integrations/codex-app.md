@@ -3,7 +3,7 @@
 In a Codex desktop client that supports [Plugin Extensions](https://developers.openai.com/plugins/build/extensions), cfKanban provides a global workbench and a workbench beside a conversation. Both use the same local MCP connection and this computer's cfKanban identity, with the same tasks and permissions as the online Web app.
 
 ::: info Check the installed version
-The native workbench needs a complete verified local bundle and a client that supports its entrypoints. Exact Issue opening, Issue mentions, and display-mode behavior in this source branch are planned for the v1.9.3 RC bundle; install the verified RC and test them in the actual client. This page does not establish that the RC has been published or that an older installed plugin includes these capabilities. Source checks do not replace desktop installation, mounting, or update acceptance. Unverified client versions have no support guarantee.
+The native workbench needs a complete verified local bundle and a client that supports its entrypoints. Identifier and title search also requires new components with a persistent search index and a Service supporting index synchronization. This page describes source behavior and does not prove a new release has been published or the instance upgraded. Older installed RCs do not gain these capabilities automatically. Source checks do not replace desktop installation and update acceptance.
 :::
 
 ## Installation and checks
@@ -60,11 +60,15 @@ Every reopening rechecks the recorded identity, Project's Workspace, and current
 
 Both the local components and target instance must support Issue reference reads. When the client actually exposes the cfKanban mention entry:
 
-1. Type `@` in the composer and click the cfKanban entry in the menu. Its name may appear as `cfkanban-mcp`.
-2. Confirm that the composer shows the entry's name as a chip, then enter a complete identifier such as `CFK-123`, or paste a canonical Issue link from a connected trusted instance.
+1. Type `@` in the composer and select the cfKanban search entry. New components supply the `cfkanban-search` name and a search description; some client menus may use the plugin's display name.
+2. Confirm that the composer shows the entry's name token, then enter `CFK-123`, a number prefix such as `CFK-12` / `12`, a title fragment such as `plugin search`, or a canonical Issue link from a trusted connected instance.
 3. Click the returned Issue candidate, add a request such as “Summarize this Issue,” and send.
 
-Typing the entire string `@cfkanban-mcp CFK-123` does not select the entry automatically and may leave the composer in global search. The first version resolves complete identifiers and does not search titles. Empty or invalid input does not query remote Issues.
+Typing the entire string `@cfkanban-search CFK-123` does not select the entry automatically and can remain in global search. Exact identifiers rank first. Number prefixes need at least two digits and title fragments at least two characters. Up to ten candidates show the identifier, title, Workspace and Project. Title matching is case-insensitive; bodies and Comments are not searched.
+
+Candidates come only from the persistent local cache, without waiting for a network permission check or refresh on each input. A new computer first prepares its index in the background. Until ready, the search returns a preparation state that the client may show as no candidates. Enter the query again after completion; an already open candidate list is not refreshed automatically. Reopening reuses the existing index. Background synchronization starts after MCP initialization when there is a single local connection; with multiple connections, select an instance using a trusted Issue link. It checks changes every 30 seconds while search is active, and stops after five minutes without search. Using search again resumes background synchronization. Local changes to indexed fields also request a background refresh.
+
+Each synchronization checks the currently accessible Projects. A newly authorized Project receives a complete snapshot of its existing Issues before incremental updates; while that snapshot is being prepared, the entire search index temporarily returns no candidates. Revoked Projects are removed after synchronization confirms the change. A recently renamed, deleted or revoked Issue can temporarily remain in the candidate list; selecting it reads details under live authorization and rejects inaccessible or deleted content. Instances and users have separate caches; do not synchronize an active cache file through a cloud drive.
 
 Selecting a mention lets the Agent read the Issue's main fields and body under current permissions. An oversized body is marked as truncated. The Agent reads Comments, relations, and current changes separately when needed. A mention does not create an Issue, change its status, start work automatically, or supply repository, conversation, or Project authorization. With multiple instances and an ambiguous identifier, choose the instance using an exact trusted Issue link; the integration does not search every instance.
 
@@ -86,11 +90,13 @@ For an uncertain write, use **Recover** in the original page first. Keep that pa
 
 **Skills load, but there is no workbench entry.** Ask the Agent to check the client's Extensions support, the complete local components, and the MCP connection. Clients without native UI can still use discovered business tools or Skills; choose the browser workbench when needed. A client name alone does not establish support.
 
-**The mention entry is selected, but there are no Issue candidates.** Confirm that the query is a complete identifier or trusted canonical link, then ask the Agent to check the running MCP version, connection, and Project access. The version shown for Skills or a plugin does not prove that MCP loaded the same version. After an update, verify that the host's MCP entry points to the new artifact path and reconnect it.
+**The mention entry is selected, but there are no Issue candidates.** Check the identifier or title length and whether the initial index is still being prepared. Ask the Agent to check the running MCP version, connection, background synchronization errors and Project access. A Skills or plugin version does not prove that MCP loaded the same version. After an update, verify the new artifact path and reconnect.
 
 **The view opens, but there is no Project.** Check identity, connection, and [Project access](../usage/access.md) first. Multiple connections need selection; installing components does not join a Project.
 
 **Issue mentions report unsupported capability.** `MCP_ISSUE_REFERENCE_UNSUPPORTED` means the target instance does not provide reference reads, rather than “no matching Issue.” A local update does not automatically upgrade the instance. Ask the Agent to check both versions; instance changes follow the separate [upgrade workflow](../deployment/updates.md).
+
+**Search indexing reports unsupported capability.** `MCP_SEARCH_INDEX_UNSUPPORTED` means the Service does not provide index synchronization. An older instance cannot support the new local title search. Check both the local components and instance version; updating a plugin does not automatically update the online Service.
 
 **Why did reopening not restore the Issue or draft?** A Project preference selects the Project again. Request a complete Issue identifier to open its current details explicitly. Each fresh entry creates an independent view; filters, drafts, and uncertain writes do not transfer. Verify any earlier uncertain operation first.
 

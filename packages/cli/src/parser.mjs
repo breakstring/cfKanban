@@ -24,7 +24,7 @@ export function commandFields(command) {
     ['directory', { name: 'directory', schema: {type:'string'} }],
     ['allow-unfiltered', { name: 'allowUnfiltered', schema: {type:'boolean'} }],
     ...(['revokeCredential','revokePrincipalPasskey'].includes(command.operation)?[['principal-id',{name:'principal_id',schema:{type:'string',format:'uuid'},required:true}]]:[]),
-    ...command.parameters.filter(parameter => parameter.in !== 'header').map(parameter => [flagName(parameter.name), { name: parameter.name, schema: parameter.schema, required: parameter.required && !parameter.name.endsWith('expected_version'),...contextual(parameter.name) }]),
+    ...command.parameters.filter(parameter => parameter.in !== 'header').map(parameter => [flagName(parameter.name), { name: parameter.name === 'allow_unfiltered' ? 'allowUnfiltered' : parameter.name, schema: parameter.schema, required: parameter.required && !parameter.name.endsWith('expected_version'),...contextual(parameter.name) }]),
     ...Object.entries(command.body?.properties ?? {}).map(([name,schema]) => [name==='locale'?'preference-locale':flagName(name), { name, schema, body: true, required: command.body.required?.includes(name) && !name.endsWith('expected_version'),...contextual(name) }]),
   ]);
 }

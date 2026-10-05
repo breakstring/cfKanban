@@ -65,7 +65,8 @@
 | 公共 CLI、完整能力矩阵、命令与安装恢复 | [公共 CLI](specs/2026-10-04-public-cli-spec.md) |
 | 本地 stdio MCP、DSH Skills / Host / 原生任务面板 | [本地 MCP 与 DSH 接入](specs/2026-10-02-local-mcp-dsh-spec.md) |
 | 官方桌面插件 global / thread 工作台、MCP Apps bridge | [官方插件工作台（Draft）](specs/2026-10-04-codex-workbench-spec.md)、[验证计划](plans/2026-10-04-codex-workbench-plan.md) |
-| 编号优先 Composer mentions、轻量 Issue reference 与读取预算 | [Issue 引用（Draft）](specs/2026-10-05-codex-issue-mentions-spec.md) |
+| Composer 编号/标题候选、轻量 Issue reference 与读取预算 | [Issue 引用（Draft）](specs/2026-10-05-codex-issue-mentions-spec.md) |
+| 私有 SQLite、后台同步、授权范围增减与搜索游标 | [持久搜索索引（Draft）](specs/2026-10-05-persistent-search-index-spec.md)、[实施计划](plans/2026-10-05-persistent-search-index-plan.md) |
 
 ## Skills 与发行维护
 

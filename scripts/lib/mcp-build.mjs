@@ -4,8 +4,8 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { assertEmbeddedHtml } from "../../apps/web/scripts/build-embedded.mjs";
 
-export const MCP_BUILD_FILES = ["server.mjs", "facade.mjs", "workbench.html", "mcp-app-build.json", "THIRD_PARTY_NOTICES.txt", "build-metadata.json"];
-const hashedFiles = ["server.mjs", "facade.mjs", "workbench.html", "mcp-app-build.json"];
+export const MCP_BUILD_FILES = ["server.mjs", "facade.mjs", "search-cache-worker.mjs", "workbench.html", "mcp-app-build.json", "THIRD_PARTY_NOTICES.txt", "build-metadata.json"];
+const hashedFiles = ["server.mjs", "facade.mjs", "search-cache-worker.mjs", "workbench.html", "mcp-app-build.json"];
 const sha256 = value => createHash("sha256").update(value).digest("hex");
 
 export async function verifyMcpBuild({ outputDirectory, version }) {

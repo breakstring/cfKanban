@@ -370,6 +370,30 @@
       }
     },
     {
+      "command": "search-index status",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getSearchIndexStatus"
+      }
+    },
+    {
+      "command": "search-index snapshot",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listSearchIndexSnapshot"
+      }
+    },
+    {
+      "command": "search-index changes",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "listSearchIndexChanges"
+      }
+    },
+    {
       "command": "project issue list",
       "effect": "read",
       "route": {
@@ -2111,6 +2135,42 @@
         "kind": "api",
         "commands": [
           "issue candidates"
+        ]
+      }
+    },
+    {
+      "operation": "getSearchIndexStatus",
+      "method": "GET",
+      "path": "/api/v1/search-index/status",
+      "summary": "Get Search Index Status",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "search-index status"
+        ]
+      }
+    },
+    {
+      "operation": "listSearchIndexSnapshot",
+      "method": "GET",
+      "path": "/api/v1/search-index/snapshot",
+      "summary": "List Search Index Snapshot",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "search-index snapshot"
+        ]
+      }
+    },
+    {
+      "operation": "listSearchIndexChanges",
+      "method": "GET",
+      "path": "/api/v1/search-index/changes",
+      "summary": "List Search Index Changes",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "search-index changes"
         ]
       }
     },
@@ -4024,6 +4084,9 @@
           "project member candidates",
           "issue list",
           "issue candidates",
+          "search-index status",
+          "search-index snapshot",
+          "search-index changes",
           "project issue list",
           "issue create",
           "issue counts",

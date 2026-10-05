@@ -27,6 +27,7 @@ import { registerHomepageSettingsRoutes } from "./routes/homepage-settings.ts";
 import { registerNotificationRoutes } from "./routes/notifications.ts";
 import { registerUsageRoutes } from "./routes/usage.ts";
 import { registerScopedAdministratorRoutes } from "./routes/scoped-administrators.ts";
+import { registerSearchIndexRoutes } from "./routes/search-index.ts";
 import { collectAttachmentGarbage } from "./services/attachments.ts";
 import { registerWp03Routes } from "./routes/wp03.ts";
 import { registerWp04Routes } from "./routes/wp04.ts";
@@ -64,6 +65,7 @@ const router = registerUsageRoutes(registerAttachmentRoutes(registerWp08Routes(r
 registerScopedAdministratorRoutes(router);
 registerHomepageSettingsRoutes(router);
 registerNotificationRoutes(router);
+registerSearchIndexRoutes(router);
 
 function mayHaveJsonBody(request: Request): boolean {
   return request.method !== "GET" && request.method !== "HEAD" && request.body !== null;

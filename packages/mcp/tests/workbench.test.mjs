@@ -831,7 +831,9 @@ test('official MCP resources and tools preserve metadata, restrict the resource 
   await build({ entryPoints: [fileURLToPath(new URL('../src/server.mjs', import.meta.url))], outfile: entry, bundle: true, format: 'esm', platform: 'node', loader: { '.svg': 'text' }, banner: { js: "import { createRequire } from 'node:module';const require = createRequire(import.meta.url);" } });
   const { createCfKanbanMcpServer } = await import(pathToFileURL(entry).href);
   const f = fixture();
-  const server = createCfKanbanMcpServer({ facade: { listTools: () => [], callTool: async () => fail('MCP_TOOL_NOT_FOUND', 0) }, createFacade: f.createFacade, uiHtml: '<!doctype html><title>Fixture UI</title>' });
+  const hints = [];
+  const searchIndex = { start() {}, hint(value) { hints.push(value); }, dispose() {} };
+  const server = createCfKanbanMcpServer({ facade: { listTools: () => [], callTool: async () => fail('MCP_TOOL_NOT_FOUND', 0) }, createFacade: f.createFacade, searchIndex, uiHtml: '<!doctype html><title>Fixture UI</title>' });
   const client = new Client({ name: 'isolated-ui-fixture', version: '1.0.0' }, { capabilities: {} });
   t.after(async () => { await client.close(); await server.close(); });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -852,6 +854,15 @@ test('official MCP resources and tools preserve metadata, restrict the resource 
   const opened = await client.callTool({ name: 'cfkanban_workbench_open', arguments: {} });
   assert.match(viewIdOf(opened), /^[0-9a-f-]{36}$/);
   assert.equal((await client.callTool({ name: 'cfkanban_workbench_snapshot', arguments: { view_id: viewIdOf(opened) } })).structuredContent.ok, true);
+  const perform = message => client.callTool({ name: 'cfkanban_workbench_action', arguments: { view_id: viewIdOf(opened), message } });
+  assert.equal((await perform(action('create_issue', { change: { title: 'New workbench Issue' } }))).structuredContent.ok, true);
+  assert.equal((await perform(action('quick_update', { identifier: f.issue.identifier, change: { title: 'Updated workbench title' } }))).structuredContent.ok, true);
+  assert.equal((await perform(action('quick_update', { identifier: f.issue.identifier, change: { body: 'Updated body' } }))).structuredContent.ok, true);
+  assert.equal((await perform(action('open_issue', { identifier: f.issue.identifier }))).structuredContent.ok, true);
+  assert.equal((await perform(action('mutate', { operation: 'comment', change: { body: 'Added comment' } }))).structuredContent.ok, true);
+  f.revoke();
+  assert.equal((await perform(action('quick_update', { identifier: f.issue.identifier, change: { title: 'Refused title' } }))).structuredContent.ok, false);
+  assert.deepEqual(hints, [{ instance_id: f.ids.instance_id }, { instance_id: f.ids.instance_id }], 'workbench writes must reach the same search hint hook as ordinary MCP tools');
   await client.close();
   await server.close();
 });

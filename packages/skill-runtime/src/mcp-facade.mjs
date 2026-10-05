@@ -48,6 +48,12 @@ define("issues_complete", "Complete one Issue and create its immutable completio
 function freeze(value) { if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }
 export const MCP_TOOLS = freeze(tools);
 const referenceTool = { inputSchema: object({ ...issueTarget, projection: enumeration(["mention", "resource"]) }, [...Object.keys(issueTarget), "projection"]) };
+const searchIndexTools = {
+  cfkanban_search_identity: { inputSchema: object({ instance_id: uuid }, ["instance_id"]) },
+  cfkanban_search_status: { inputSchema: object({ instance_id: uuid }, ["instance_id"]) },
+  cfkanban_search_snapshot: { inputSchema: object({ instance_id: uuid, project_id: uuid, cursor: text(8192), limit: pagination.limit }, ["instance_id", "project_id"]) },
+  cfkanban_search_changes: { inputSchema: object({ instance_id: uuid, project_id: uuid, after: text(8192), limit: pagination.limit }, ["instance_id", "project_id", "after"]) },
+};
 
 async function boundedResponse(response, signal, maximum = 65_536) {
   const reader = response.body?.getReader();
@@ -117,13 +123,17 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
   if (bound && bound.project_ids.length > 20) throw toolError("INVALID_MCP_BINDING", "Binding requires explicit Projects");
   const runtimeView = () => ({ ...runtime, node_version: process.versions.node, execution_environment: classifyExecutionEnvironment() });
   const listTools = () => structuredClone(MCP_TOOLS);
-  const execute = async (name, args = {}, { signal: callerSignal } = {}, reference = false) => {
-    const tool = reference ? referenceTool : MCP_TOOLS.find(item => item.name === name);
+  const execute = async (name, args = {}, { signal: callerSignal } = {}, internal = null) => {
+    const reference = internal === "reference";
+    const searchIndex = internal === "search";
+    const localIdentity = searchIndex && name === "cfkanban_search_identity";
+    const boundedRead = reference || searchIndex;
+    const tool = reference ? referenceTool : searchIndex ? searchIndexTools[name] : MCP_TOOLS.find(item => item.name === name);
     if (!tool) return localFailure("MCP_TOOL_NOT_FOUND");
     if (!validate(tool.inputSchema, args)) return localFailure("MCP_INVALID_ARGUMENTS");
     const input = structuredClone(args);
     if (name === "cfkanban_issues_complete" && Buffer.byteLength(JSON.stringify(pick(input, ["expected_version", "summary", "verification", "artifacts", "follow_ups"]))) > 32768) return localFailure("MCP_INVALID_ARGUMENTS");
-    if (bound?.project_ids.length === 0 && !["cfkanban_connection_inspect", "cfkanban_profile_locale_set", "cfkanban_workspaces_list", "cfkanban_projects_list"].includes(name)) return localFailure("MCP_EXPLICIT_SCOPE_REQUIRED");
+    if (bound?.project_ids.length === 0 && !localIdentity && !["cfkanban_connection_inspect", "cfkanban_profile_locale_set", "cfkanban_workspaces_list", "cfkanban_projects_list"].includes(name)) return localFailure("MCP_EXPLICIT_SCOPE_REQUIRED");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const abort = () => controller.abort();
@@ -179,6 +189,12 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       requireUuid(credential.metadata.principal_id, "principal_id");
       if (bound && bound.expected_principal_id !== credential.metadata.principal_id) throw toolError("MCP_PRINCIPAL_BINDING_MISMATCH", "Identity changed; explicitly rebind");
       snapshot = { instance, origin, ...credential };
+      const referenceIdentity = { instance_id: instanceId, principal_id: credential.metadata.principal_id, trusted_api_origin: origin, origin_version: instance.origin_version };
+      if (localIdentity) {
+        if (!Number.isSafeInteger(instance.origin_version) || instance.origin_version < 1) throw toolError("STATE_INSTANCE_CONFLICT", "Invalid instance origin version");
+        signal.throwIfAborted();
+        return { ok: true, status: 200, data: referenceIdentity };
+      }
       const request = async (apiPath, { method = "GET", body, idempotencyKey } = {}) => {
         signal.throwIfAborted();
         const headers = new Headers({ accept: "application/json", authorization: `Bearer ${snapshot.token}` });
@@ -188,22 +204,23 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         try {
           const response = await deadline(fetchImpl(new URL(apiPath, origin), { method, headers, body: body === undefined ? undefined : JSON.stringify(body), redirect: "manual", signal }), signal);
           if (response.status >= 300 && response.status < 400) return localFailure("CROSS_ORIGIN_REDIRECT_REJECTED");
-          const bounded = reference ? await boundedResponse(response, signal) : response;
+          const bounded = boundedRead ? await boundedResponse(response, signal, searchIndex ? 1_048_576 : 65_536) : response;
           return await deadline(normalizeResponse(bounded), signal);
         } catch (error) {
-          if (reference && error?.code) { controller.abort(error); throw error; }
+          if (boundedRead && error?.code) { controller.abort(error); throw error; }
           return normalizeNetworkFailure();
         }
       };
       signal.throwIfAborted();
       const discoveryResponse = await deadline(fetchImpl(new URL("/.well-known/cfkanban-instance.json", origin), { method: "GET", headers: { accept: "application/json" }, redirect: "manual", signal }), signal);
       if (!discoveryResponse.ok || !(discoveryResponse.headers.get("content-type") ?? "").includes("application/json")) throw toolError("DISCOVERY_REJECTED", "Discovery refused");
-      const discoveryBody = reference ? await boundedResponse(discoveryResponse, signal, 16_384) : discoveryResponse;
+      const discoveryBody = boundedRead ? await boundedResponse(discoveryResponse, signal, 16_384) : discoveryResponse;
       const discovery = validateDiscovery(await deadline(discoveryBody.json(), signal), origin);
       if (discovery.instance_id !== instanceId) throw toolError("DISCOVERY_INSTANCE_MISMATCH", "Discovery identity mismatch");
       if (discovery.preferred_api_origin !== origin || discovery.origin_version !== instance.origin_version) throw toolError("DISCOVERY_ORIGIN_MISMATCH", "Verify origin migration through the dedicated Skill");
       if (reference && discovery.capabilities?.issue_reference !== true) throw toolError("MCP_ISSUE_REFERENCE_UNSUPPORTED", "This instance does not advertise lightweight Issue references");
-      if (reference || bound || ["cfkanban_connection_inspect", "cfkanban_profile_locale_set"].includes(name)) {
+      if (searchIndex && discovery.capabilities?.issue_search_index !== true) throw toolError("MCP_SEARCH_INDEX_UNSUPPORTED", "This instance does not advertise Issue search synchronization");
+      if (reference || searchIndex || bound || ["cfkanban_connection_inspect", "cfkanban_profile_locale_set"].includes(name)) {
         const me = await request("/api/v1/me");
         if (!me.ok) return redact(me, snapshot.token);
         if (me.data?.principal_id !== credential.metadata.principal_id || me.data.id !== credential.metadata.principal_id || me.data.credential?.id !== credential.metadata.credential_id || me.data.credential?.fingerprint !== credential.metadata.fingerprint) throw toolError("MCP_PRINCIPAL_BINDING_MISMATCH", "Authenticated identity differs from snapshot");
@@ -217,6 +234,7 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         return result;
       };
       if (bound && input.project_id !== undefined) scopeCheck(input.project_id);
+      if (bound && name === "cfkanban_search_status") throw toolError("MCP_PROJECT_BINDING_MISMATCH", "Search synchronization cannot expand a bound panel's scope");
       if (bound && input.identifier !== undefined && !reference) await checkedIssue(input.identifier);
       if (bound && input.target_identifier !== undefined) await checkedIssue(input.target_identifier);
       if (bound && name === "cfkanban_relations_delete") {
@@ -231,6 +249,9 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       const projectPath = `/api/v1/workspaces/${input.workspace_id}/projects/${input.project_id}`;
       const write = body => ({ method: "POST", body, idempotencyKey: input.idempotency_key });
       switch (name) {
+        case "cfkanban_search_status": result = await request(query("/api/v1/search-index/status", { allow_unfiltered: true })); break;
+        case "cfkanban_search_snapshot": result = await request(query("/api/v1/search-index/snapshot", { project: input.project_id, ...pick(input, ["cursor", "limit"]) })); break;
+        case "cfkanban_search_changes": result = await request(query("/api/v1/search-index/changes", { project: input.project_id, ...pick(input, ["after", "limit"]) })); break;
         case "cfkanban_reference_get": {
           result = await request(query(`${issuePath}/reference`, { projection: input.projection }));
           if (result.ok) {
@@ -266,10 +287,11 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
         case "cfkanban_relations_delete": result = await request(query(`/api/v1/relations/${input.relation_id}`, pick(input, ["expected_version", "source_expected_version", "target_expected_version"])), { method: "DELETE", idempotencyKey: input.idempotency_key }); break;
         case "cfkanban_issues_complete": result = await request(`${issuePath}/commands/complete`, write(pick(input, ["expected_version", "summary", "verification", "artifacts", "follow_ups"]))); break;
       }
+      if (searchIndex && result.ok) result = { ...result, reference_identity: referenceIdentity };
       if (mutationSent && !result.ok && (result.status === 0 || result.status >= 500)) result = { ...result, outcome_unknown: true, recovery_request: { tool: name, arguments: input, idempotency_key: input.idempotency_key, next_action: "read_back_then_replay_same_request" } };
       return { ...redact(result, snapshot.token), content_trust: "untrusted" };
     } catch (error) {
-      if (reference && error?.code === "MCP_REFERENCE_RESPONSE_TOO_LARGE") controller.abort(error);
+      if (boundedRead && error?.code === "MCP_REFERENCE_RESPONSE_TOO_LARGE") controller.abort(error);
       const safeCode = error?.code === "MCP_REFERENCE_RESPONSE_TOO_LARGE" ? error.code : signal.aborted ? "MCP_OPERATION_CANCELLED"
         : /^(?:MCP_|STATE_|OWNER_DEVICE_LOCKED$|IDENTITY_SWITCH_INCOMPLETE$|DISCOVERY_|INVALID_ORIGIN$)/.test(error?.code ?? "") ? error.code : "MCP_LOCAL_STATE_UNAVAILABLE";
       const result = error?.result ?? localFailure(safeCode);
@@ -283,6 +305,10 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
   return Object.freeze({
     listTools,
     callTool: (name, args, options) => execute(name, args, options),
-    readIssueReference: (args, options) => execute("cfkanban_reference_get", args, options, true),
+    readIssueReference: (args, options) => execute("cfkanban_reference_get", args, options, "reference"),
+    inspectSearchIdentity: (args, options) => execute("cfkanban_search_identity", args, options, "search"),
+    readSearchStatus: (args, options) => execute("cfkanban_search_status", args, options, "search"),
+    readSearchSnapshot: (args, options) => execute("cfkanban_search_snapshot", args, options, "search"),
+    readSearchChanges: (args, options) => execute("cfkanban_search_changes", args, options, "search"),
   });
 }

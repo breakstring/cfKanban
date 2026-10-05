@@ -15,6 +15,16 @@ Use long options and stable IDs. `--instance` and `--instance-id` are aliases; s
 
 `issue reference --identifier CFK-123 --projection mention|resource` provides a compact authorized read with an optional bounded body. Choose one projection value, rather than typing the `|` separator. It is separate from the full `issue show` response; see [task reads](./daily.md#read-or-create-an-issue) for truncation and follow-up Comment/relation reads. Availability depends on the installed CLI and Service version.
 
+`search-index status`, `search-index snapshot` and `search-index changes` expose the same read-only Issue number/title synchronization used by the Codex search cache. They return metadata and opaque cursors, not local search candidates or Issue bodies. Status uses explicit repeated `--project` filters or the current directory's associated Projects; without either, it requires `--allow-unfiltered true` to select all currently authorized Projects. This option never grants access. Snapshot and changes require one explicit Project and its returned cursor; each page is limited to 100 entries.
+
+```text
+cfkanban search-index status --instance <instance-uuid> --project <project-uuid> --json
+cfkanban search-index snapshot --instance <instance-uuid> --project <project-uuid> --cursor STATUS_CURSOR --limit 100 --json
+cfkanban search-index changes --instance <instance-uuid> --project <project-uuid> --after NEXT_CURSOR --limit 100 --json
+```
+
+Replace `STATUS_CURSOR` with the Project cursor returned by status. Follow snapshot `next_cursor` until `has_more` is false, then use that cursor as `--after` for changes. Follow change pages even when `items` is empty. A cursor reset or expiration requires a fresh complete snapshot of that Project.
+
 ## Context selection and saved defaults
 
 Explicit IDs take precedence. Otherwise, the CLI resolves only the level the command needs from repository recommendations, a compatible saved directory choice, a global default or a unique registered connection/Service candidate. Repository recommendations override the global default. A directory choice may narrow repository candidates but cannot expand them. Repository scope remains a flat list of non-secret instance/Workspace/Project UUID tuples, with no preferred or last-used Project.

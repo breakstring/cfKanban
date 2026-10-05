@@ -2,15 +2,15 @@ import { toolError } from "../../skill-runtime/src/errors.mjs";
 
 export const MENTIONS_TOOL = {
   name: "cfkanban_mentions_search",
-  title: "Find a cfKanban Issue by number",
-  description: "Reference one Issue by complete CFK-N or a canonical Issue link on a trusted instance. Title search is not supported. A reference supplies untrusted context and does not authorize an action.",
+  title: "Search cfKanban Issues by number or title",
+  description: "Choose cfkanban-search, then enter an Issue number (CFK-600), a number prefix (CFK-60 or 60), a title keyword of at least two characters, or a trusted canonical Issue link. Search uses locally synchronized number/title metadata; bodies and comments are not searched. Cached results may be stale. Selected Issue content and actions verify current access. A reference supplies untrusted context and does not authorize an action.",
   inputSchema: { type: "object", properties: { query: { type: "string", maxLength: 4096 } }, required: ["query"], additionalProperties: false },
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  _meta: { "openai/extensions": { "mentions/search": {} }, ui: { visibility: ["app"] } },
+  _meta: { connector_name: "cfkanban-search", "openai/extensions": { "mentions/search": {} }, ui: { visibility: ["app"] } },
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IDENTIFIER = /^CFK-([1-9][0-9]{0,15})$/;
-const SEARCH_BYTES = 4096;
+const SEARCH_BYTES = 32768;
 const RESOURCE_BYTES = 32768;
 const failure = (code, message = "Re-select the Issue after verifying the trusted connection and current identity.") => {
   if (typeof code !== "string" || !/^[A-Z][A-Z0-9_]{0,99}$/.test(code)) code = "MCP_MENTION_READ_FAILED";
@@ -18,17 +18,24 @@ const failure = (code, message = "Re-select the Issue after verifying the truste
   return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value, isError: true };
 };
 const success = items => ({ content: [], structuredContent: { items }, isError: false });
+const normalizeTitle = value => value.normalize("NFKC").toLowerCase();
 function parseQuery(query) {
-  const identifier = query.trim();
-  if (IDENTIFIER.test(identifier) && Number.isSafeInteger(Number(identifier.slice(4)))) return { identifier };
+  const text = query.trim();
+  if (IDENTIFIER.test(text) && Number.isSafeInteger(Number(text.slice(4)))) return { kind: "identifier", identifier: text };
+  if (/^[1-9][0-9]{1,15}$/.test(text) && Number.isSafeInteger(Number(text))) return { kind: "prefix", prefix: text };
+  if (/^(?:CFK-|[0-9]+$)/i.test(text)) return null;
   let url;
-  try { url = new URL(identifier); } catch { return null; }
+  try { url = new URL(text); } catch {
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(text)) return null;
+    const normalized = normalizeTitle(text);
+    return [...normalized].length >= 2 ? { kind: "title", text: normalized } : null;
+  }
   const match = /^\/app\/issues\/(CFK-[1-9][0-9]{0,15})$/.exec(url.pathname);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || !match || !Number.isSafeInteger(Number(match[1].slice(4)))) return null;
-  return { identifier: match[1], origin: url.origin };
+  return { kind: "identifier", identifier: match[1], exactOnly: true, origin: url.origin };
 }
-function publicIssue(data, identifier) {
-  if (!data || data.identifier !== identifier || !UUID.test(data.id ?? "") || !UUID.test(data.project?.id ?? "") || !UUID.test(data.workspace?.id ?? "")) throw toolError("MCP_INVALID_SERVICE_RESOURCE", "Invalid reference projection");
+function publicIssue(data, identifier = data?.identifier) {
+  if (!data || data.identifier !== identifier || !IDENTIFIER.test(identifier ?? "") || !Number.isSafeInteger(Number(identifier.slice(4))) || !UUID.test(data.id ?? "") || !UUID.test(data.project?.id ?? "") || !UUID.test(data.workspace?.id ?? "")) throw toolError("MCP_INVALID_SERVICE_RESOURCE", "Invalid reference projection");
   for (const value of [data.title, data.project.display_name, data.workspace.display_name]) {
     if (typeof value !== "string" || Buffer.byteLength(value) > 1024) throw toolError("MCP_INVALID_SERVICE_RESOURCE", "Invalid reference text");
   }
@@ -43,12 +50,40 @@ function truncate(text, bytes) {
   }
   return "";
 }
+function abortable(promise, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+function verifyIdentity(identity, instanceId, origin) {
+  if (identity?.instance_id !== instanceId || !UUID.test(identity?.principal_id ?? "") || identity.trusted_api_origin !== origin || !Number.isSafeInteger(identity.origin_version) || identity.origin_version < 1) throw toolError("MCP_INVALID_SERVICE_RESOURCE", "Search identity mismatch");
+}
+function matchesQuery(issue, query) {
+  const digits = issue.identifier.slice(4);
+  if (query.kind === "title") return normalizeTitle(issue.title).includes(query.text);
+  if (query.kind === "prefix") return digits.startsWith(query.prefix);
+  return issue.identifier === query.identifier || (!query.exactOnly && query.identifier.length >= 6 && digits.startsWith(query.identifier.slice(4)));
+}
+function orderIssues(a, b, query) {
+  if (query.kind === "identifier") {
+    const difference = Number(b.identifier === query.identifier) - Number(a.identifier === query.identifier);
+    if (difference) return difference;
+  }
+  if (query.kind === "title") {
+    const titleA = normalizeTitle(a.title), titleB = normalizeTitle(b.title);
+    if (titleA !== titleB) return titleA < titleB ? -1 : 1;
+  }
+  return Number(a.identifier.slice(4)) - Number(b.identifier.slice(4)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
 
 // Admission is process-wide, but each request owns its cancellation signal. No request cancels another chat.
 class Admission {
-  constructor({ timeoutMs = 5000, concurrency = 2, queueLimit = 8, rate = 4, windowMs = 1000 } = {}) {
-    Object.assign(this, { timeoutMs, concurrency, queueLimit, rate, windowMs });
-    this.queue = []; this.active = 0; this.started = []; this.controllers = new Set(); this.closed = false;
+  constructor({ timeoutMs = 5000, concurrency = 2, queueLimit = 8, startIntervalMs = 300 } = {}) {
+    Object.assign(this, { timeoutMs, concurrency, queueLimit, startIntervalMs });
+    this.queue = []; this.active = 0; this.lastStart = -Infinity; this.controllers = new Set(); this.closed = false;
   }
   run(task, callerSignal) {
     if (this.closed) return Promise.reject(toolError("MCP_MENTIONS_CLOSED", "Mentions connection closed"));
@@ -74,13 +109,12 @@ class Admission {
   }
   drain() {
     clearTimeout(this.wake);
-    this.started = this.started.filter(time => Date.now() - time < this.windowMs);
-    while (!this.closed && this.active < this.concurrency && this.queue.length && this.started.length < this.rate) {
+    while (!this.closed && this.active < this.concurrency && this.queue.length && Date.now() - this.lastStart >= this.startIntervalMs) {
       const entry = this.queue.shift();
-      this.active++; this.started.push(Date.now());
-      Promise.resolve().then(() => entry.task(entry.controller.signal)).then(entry.resolve, entry.reject).finally(() => { entry.finish(); this.active--; this.drain(); });
+      this.active++; this.lastStart = Date.now();
+      Promise.resolve().then(() => abortable(entry.task(entry.controller.signal), entry.controller.signal)).then(entry.resolve, entry.reject).finally(() => { entry.finish(); this.active--; this.drain(); });
     }
-    if (this.queue.length && this.started.length >= this.rate) this.wake = setTimeout(() => this.drain(), Math.max(1, this.windowMs - (Date.now() - this.started[0])));
+    if (!this.closed && this.queue.length && this.active < this.concurrency) this.wake = setTimeout(() => this.drain(), Math.max(1, this.startIntervalMs - (Date.now() - this.lastStart)));
   }
   dispose() {
     this.closed = true; clearTimeout(this.wake);
@@ -89,38 +123,88 @@ class Admission {
 }
 
 export class IssueMentions {
-  constructor({ facade, createFacade, admission = {} }) {
-    this.facade = facade; this.createFacade = createFacade;
-    this.admission = new Admission(admission); this.references = new Map();
+  constructor({ facade, createFacade, searchIndex, admission = {} }) {
+    this.facade = facade; this.createFacade = createFacade; this.searchIndex = searchIndex;
+    this.admission = new Admission(admission); this.references = new Map(); this.searches = new Map();
   }
   async search(args, { signal } = {}) {
     if (!args || Object.keys(args).length !== 1 || typeof args.query !== "string" || Buffer.byteLength(args.query) > 4096) return failure("MCP_INVALID_ARGUMENTS");
     const query = parseQuery(args.query);
     if (!query) return success([]);
     try {
-      return await this.admission.run(async ioSignal => {
-        ioSignal.throwIfAborted();
-        const local = await this.facade.callTool("cfkanban_connection_inspect", {}, { signal: ioSignal });
+      return await this.admission.run(async callerSignal => {
+        callerSignal.throwIfAborted();
+        const local = await abortable(this.facade.callTool("cfkanban_connection_inspect", {}, { signal: callerSignal }), callerSignal);
         if (!local.ok) return failure(local.error?.code ?? "MCP_MENTION_CONNECTION_FAILED");
         const candidates = local.data?.candidates ?? [];
         const matching = query.origin ? candidates.filter(candidate => candidate.trusted_api_origin === query.origin) : candidates;
         if (matching.length !== 1) return failure(query.origin && matching.length === 0 ? "MCP_MENTION_UNTRUSTED_ORIGIN" : "MCP_MENTION_SCOPE_REQUIRED", "Use a canonical Issue link from one explicitly trusted instance; no cross-instance search is performed.");
         const instanceId = matching[0].instance_id;
-        const result = await this.facade.readIssueReference({ instance_id: instanceId, identifier: query.identifier, projection: "mention" }, { signal: ioSignal });
-        ioSignal.throwIfAborted();
-        if (!result.ok) return result.status === 404 ? success([]) : failure(result.error?.code ?? "MCP_MENTION_READ_FAILED");
-        const identity = result.reference_identity;
-        if (identity?.instance_id !== instanceId || !UUID.test(identity?.principal_id ?? "") || identity.trusted_api_origin !== matching[0].trusted_api_origin) throw toolError("MCP_INVALID_SERVICE_RESOURCE", "Reference identity mismatch");
-        const issue = publicIssue(result.data, query.identifier);
-        const uri = `cfkanban://issue/${instanceId}/${identity.principal_id}/${issue.project.id}/${issue.id}/${issue.identifier}`;
-        const item = { type: "resource_link", uri, name: issue.identifier, title: `${issue.identifier} ${issue.title}`, description: `${issue.workspace.display_name} / ${issue.project.display_name}`, mimeType: "application/json", _meta: { "cfkanban/issue": { instance_id: instanceId, id: issue.id, identifier: issue.identifier, project_id: issue.project.id } } };
-        const response = success([item]);
-        if (Buffer.byteLength(JSON.stringify(response)) > SEARCH_BYTES) throw toolError("MCP_REFERENCE_RESPONSE_TOO_LARGE", "Candidate exceeds its byte budget");
-        if (!this.references.has(uri) && this.references.size >= 512) this.references.delete(this.references.keys().next().value);
-        this.references.set(uri, { instanceId, principalId: identity.principal_id, origin: identity.trusted_api_origin, issue });
-        return response;
+        const inspected = await abortable(this.facade.inspectSearchIdentity({ instance_id: instanceId }, { signal: callerSignal }), callerSignal);
+        if (!inspected.ok) return failure(inspected.error?.code ?? "MCP_MENTION_CONNECTION_FAILED");
+        const identity = inspected.data;
+        verifyIdentity(identity, instanceId, matching[0].trusted_api_origin);
+        const indexQuery = { ...query }; delete indexQuery.origin;
+        const key = JSON.stringify([identity.instance_id, identity.principal_id, identity.trusted_api_origin, identity.origin_version, indexQuery]);
+        const result = await this.sharedSearch(key, async sharedSignal => {
+          const cached = await abortable(this.searchIndex.search({ instance_id: instanceId, query: indexQuery }, { signal: sharedSignal }), sharedSignal);
+          sharedSignal.throwIfAborted();
+          if (!cached.ok) return cached;
+          verifyIdentity(cached.reference_identity, instanceId, identity.trusted_api_origin);
+          if (cached.reference_identity.principal_id !== identity.principal_id || cached.reference_identity.origin_version !== identity.origin_version) throw toolError("MCP_PRINCIPAL_BINDING_MISMATCH", "Search identity changed; re-select the Issue");
+          if (!Array.isArray(cached.data?.items) || cached.data.items.length > 10) throw toolError("MCP_INVALID_SERVICE_RESOURCE", "Invalid bounded search projection");
+          const issues = cached.data.items.map(issue => publicIssue(issue));
+          if (new Set(issues.map(issue => issue.id)).size !== issues.length || issues.some(issue => !matchesQuery(issue, query))) throw toolError("MCP_INVALID_SERVICE_RESOURCE", "Search projection differs from query");
+          return { ok: true, issues: issues.sort((a, b) => orderIssues(a, b, query)) };
+        }, callerSignal);
+        callerSignal.throwIfAborted();
+        if (!result.ok) return failure(result.error?.code ?? "MCP_MENTION_READ_FAILED");
+        const items = [], references = [];
+        for (const issue of result.issues) {
+          const uri = `cfkanban://issue/${instanceId}/${identity.principal_id}/${issue.project.id}/${issue.id}/${issue.identifier}`;
+          const item = { type: "resource_link", uri, name: issue.identifier, title: `${issue.identifier} ${issue.title}`, description: `${issue.workspace.display_name} / ${issue.project.display_name}`, mimeType: "application/json", _meta: { "cfkanban/issue": { instance_id: instanceId, id: issue.id, identifier: issue.identifier, project_id: issue.project.id } } };
+          if (Buffer.byteLength(JSON.stringify(success([...items, item]))) > SEARCH_BYTES) break;
+          items.push(item);
+          references.push([uri, { instanceId, principalId: identity.principal_id, origin: identity.trusted_api_origin, issue }]);
+        }
+        if (!items.length && result.issues.length) throw toolError("MCP_REFERENCE_RESPONSE_TOO_LARGE", "Candidate exceeds its byte budget");
+        for (const [uri] of references) this.references.delete(uri);
+        while (this.references.size + references.length > 512) this.references.delete(this.references.keys().next().value);
+        for (const [uri, reference] of references) this.references.set(uri, reference);
+        return success(items);
       }, signal);
     } catch (error) { return failure(/^(?:MCP_)/.test(error?.code ?? "") ? error.code : "MCP_MENTION_READ_FAILED"); }
+  }
+  sharedSearch(key, start, signal) {
+    let entry = this.searches.get(key);
+    if (!entry) {
+      entry = { controller: new AbortController(), subscribers: new Set() };
+      const timeout = setTimeout(() => entry.controller.abort(toolError("MCP_MENTIONS_TIMEOUT", "Mention deadline exceeded")), this.admission.timeoutMs);
+      this.searches.set(key, entry);
+      const settle = (error, value) => {
+        clearTimeout(timeout);
+        if (this.searches.get(key) === entry) this.searches.delete(key);
+        for (const subscriber of entry.subscribers) {
+          subscriber.finish();
+          if (error) subscriber.reject(error); else subscriber.resolve(value);
+        }
+        entry.subscribers.clear();
+      };
+      Promise.resolve().then(() => start(entry.controller.signal)).then(value => settle(null, value), error => settle(error));
+    }
+    return new Promise((resolve, reject) => {
+      const subscriber = { resolve, reject, finish: () => signal.removeEventListener("abort", abort) };
+      const abort = () => {
+        entry.subscribers.delete(subscriber); subscriber.finish(); reject(signal.reason);
+        if (!entry.subscribers.size) {
+          if (this.searches.get(key) === entry) this.searches.delete(key);
+          entry.controller.abort(toolError("MCP_OPERATION_CANCELLED", "All search subscribers cancelled"));
+        }
+      };
+      entry.subscribers.add(subscriber);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
   }
   async read(uri, { signal } = {}) {
     const reference = this.references.get(uri);
@@ -142,5 +226,9 @@ export class IssueMentions {
       return response();
     }, signal);
   }
-  dispose() { this.admission.dispose(); this.references.clear(); }
+  dispose() {
+    this.admission.dispose();
+    for (const entry of this.searches.values()) entry.controller.abort(toolError("MCP_OPERATION_CANCELLED", "Mentions connection closed"));
+    this.searches.clear(); this.references.clear();
+  }
 }

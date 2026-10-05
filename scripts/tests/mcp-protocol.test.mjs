@@ -92,6 +92,7 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     const mentions = list.result.tools.find(tool => tool.name === "cfkanban_mentions_search");
     assert.deepEqual(mentions._meta["openai/extensions"], { "mentions/search": {} });
     assert.deepEqual(mentions._meta.ui.visibility, ["app"]);
+    assert.equal(mentions._meta.connector_name, "cfkanban-search");
     const emptyMention = await peer.request("tools/call", { name: mentions.name, arguments: { query: "CFK-" } });
     assert.deepEqual(emptyMention.result.structuredContent, { items: [] });
     const legacyMention = await peer.request("tools/call", { name: mentions.name, arguments: { query: "CFK-1", path: [] } });

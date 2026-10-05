@@ -64,6 +64,9 @@ const operations = [
   ["post", "/api/v1/admin/notifications", "publishNotification", "admin", authenticated, "idempotent", "PublishNotificationRequest"],
   ["post", "/api/v1/admin/notifications/{notification_id}/commands/withdraw", "withdrawNotification", "admin", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
   ["get", "/api/v1/events", "listEvents", "events", authenticated, "read", "EventQuery"],
+  ["get", "/api/v1/search-index/status", "getSearchIndexStatus", "issues", authenticated, "read", "SearchIndexStatusQuery"],
+  ["get", "/api/v1/search-index/snapshot", "listSearchIndexSnapshot", "issues", authenticated, "read", "SearchIndexSnapshotQuery"],
+  ["get", "/api/v1/search-index/changes", "listSearchIndexChanges", "issues", authenticated, "read", "SearchIndexChangesQuery"],
 
   ["get", "/api/v1/workspaces", "listWorkspaces", "workspaces", authenticated, "read", "DeletedCursorQuery"],
   ["post", "/api/v1/workspaces", "createWorkspace", "workspaces", bearer, "idempotent", "CreateWorkspaceRequest"],
@@ -368,7 +371,7 @@ const permissionDescriptions = {
 
 const permissionGroups = {
   public: ["getHealth", "getOpenApi", "discoverInstance", "getInvitationBootstrap", "getWebLaunchPage", "listPublicProjects"],
-  authenticated_principal: ["getMeta", "listEvents"],
+  authenticated_principal: ["getMeta", "listEvents", "getSearchIndexStatus"],
   visible_scope_active_owner_tombstone: ["listWorkspaces", "getWorkspace", "listProjects", "getProject"],
   current_principal: ["getMe", "updateMe", "getWebSession", "renewWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey", "getNotificationPreferences", "updateNotificationPreferences", "listMyNotifications", "acknowledgeNotification"],
   deployment_owner: [
@@ -384,7 +387,7 @@ const permissionGroups = {
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
   scoped_invitation_manager: ["listInvitations", "createInvitation", "getInvitation", "revokeInvitation"],
-  project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues"],
+  project_reader: ["findProjectAssignee", "downloadAttachment", "getAttachment", "listProjectStatuses", "listIssueCandidates", "getIssueContext", "getIssueReference", "countProjectIssues", "listSearchIndexSnapshot", "listSearchIndexChanges"],
   project_reader_active_writer_tombstone: [
     "listIssues", "listProjectIssues", "getIssue",
     "listAttachments", "listComments", "getComment", "listLabels", "getLabel",
@@ -1031,9 +1034,9 @@ const schemas = {
     },
     additionalProperties: false,
   },
-  Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }), capabilities: { type: "object", properties: { attachments: { type: "boolean" }, browser_launch: { type: "boolean" }, fixed_workflow: { type: "boolean" }, issue_reference: { type: "boolean" }, passkey: { type: "boolean" }, public_join: { type: "boolean" } }, additionalProperties: true } }, additionalProperties: true },
+  Meta: { type: "object", required: ["service_version", "schema_version"], properties: { release_version: string(), service_version: string(), schema_version: integer({ minimum: 1 }), capabilities: { type: "object", properties: { attachments: { type: "boolean" }, browser_launch: { type: "boolean" }, fixed_workflow: { type: "boolean" }, issue_reference: { type: "boolean" }, issue_search_index: { type: "boolean" }, passkey: { type: "boolean" }, public_join: { type: "boolean" } }, additionalProperties: true } }, additionalProperties: true },
   Health: { type: "object", required: ["service_version", "schema_version", "d1"], properties: { service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), schema_version: integer({ minimum: 1 }), d1: string({ enum: ["reachable", "unavailable"] }) }, additionalProperties: false },
-  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { capabilities: { type: "object", properties: { issue_reference: { type: "boolean", description: "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue." } }, additionalProperties: true }, homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
+  InstanceDiscovery: { type: "object", required: ["discovery_version", "instance_id", "service_version", "observed_origin", "preferred_api_origin", "origin_version", "updated_at"], properties: { capabilities: { type: "object", properties: { issue_reference: { type: "boolean", description: "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue." }, issue_search_index: { type: "boolean", description: "True when metadata search status, snapshot and changes endpoints are available; clients must not use ordinary full Issue lists as a fallback." } }, additionalProperties: true }, homepage_notice: ref("PublicHomepageNotice"), discovery_version: integer({ const: 1 }), instance_id: string({ minLength: 1 }), service_version: string(), release_version: string({ description: "Product release of the executing Worker build; independent of service/API compatibility version." }), observed_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), preferred_api_origin: string({ format: "uri", pattern: "^https://[^/?#]+$" }), origin_version: ref("Version"), updated_at: ref("Timestamp") }, additionalProperties: false },
   IssueLabelSummary: {
     type: "object",
     required: ["color", "id", "name"],
@@ -1348,6 +1351,42 @@ const schemas = {
     properties: issueMentionReferenceProperties,
     additionalProperties: false,
     description: "Exact Issue reference metadata. At most 4 KiB of serialized UTF-8 JSON; no body, comments, relations, labels or hierarchy are fetched.",
+  },
+  SearchIndexDocument: {
+    type: "object", required: ["id", "number", "identifier", "title", "project_id", "revision"],
+    properties: { id: ref("Uuid"), number: integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+      identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }), title: utf8String(1024), project_id: ref("Uuid"),
+      revision: integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: "Independent per-Issue search revision; body and Comment changes do not increment it." }) },
+    additionalProperties: false,
+  },
+  SearchIndexChange: {
+    type: "object", required: ["kind", "id", "number", "identifier", "title", "project_id", "revision"],
+    properties: { kind: string({ enum: ["upsert", "remove"] }), id: ref("Uuid"), number: integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+      identifier: string({ pattern: "^CFK-[1-9][0-9]*$" }), title: utf8String(1024), project_id: ref("Uuid"),
+      revision: integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }, additionalProperties: false,
+    description: "Metadata update or tombstone. A remove carries an empty title. Revision prevents a late update from overwriting a newer snapshot.",
+  },
+  SearchIndexStatus: {
+    type: "object", required: ["instance_id", "projection_version", "epoch", "scope_key", "projects"],
+    properties: { instance_id: ref("Uuid"), projection_version: integer({ const: 1 }), epoch: string(), scope_key: string(),
+      projects: { type: "array", items: { type: "object", required: ["id", "display_name", "workspace", "revision", "cursor"],
+        properties: { id: ref("Uuid"), display_name: string(), workspace: { type: "object", required: ["id", "display_name"],
+          properties: { id: ref("Uuid"), display_name: string() }, additionalProperties: false },
+          revision: integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), cursor: string({ maxLength: 4096 }) }, additionalProperties: false } } },
+    additionalProperties: false,
+    description: "Live authorized Project catalog and lightweight search heads. Newly authorized Projects require a full metadata snapshot before incremental updates. Project-scoped cursors remain valid when unrelated Projects change authorization.",
+  },
+  SearchIndexSnapshot: {
+    type: "object", required: ["items", "has_more", "next_cursor"], properties: {
+      items: { type: "array", maxItems: 100, items: ref("SearchIndexDocument") }, has_more: { type: "boolean" }, next_cursor: string({ maxLength: 4096 }) },
+    additionalProperties: false,
+    description: "Stable-number scan after a starting watermark; not a cross-request point-in-time snapshot. Apply subsequent changes before publishing the local generation.",
+  },
+  SearchIndexChanges: {
+    type: "object", required: ["items", "has_more", "next_cursor", "revision"], properties: {
+      items: { type: "array", maxItems: 100, items: ref("SearchIndexChange") }, has_more: { type: "boolean" }, next_cursor: string({ maxLength: 4096 }),
+      revision: integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) }, additionalProperties: false,
+    description: "Relevant changes ordered by the existing internal Event sequence. Empty items do not require refetching Issues. CURSOR_EXPIRED or SEARCH_INDEX_RESET requires a new snapshot. No body or Comments are transferred.",
   },
   IssueResourceReference: {
     type: "object",
@@ -2366,6 +2405,20 @@ const querySets = {
     { name: "after", in: "query", required: false, schema: string(), description: "Opaque cursor for the same order and scope. Write cursors are accepted only in the default ascending feed." },
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) },
   ],
+  SearchIndexStatusQuery: [
+    { name: "project", in: "query", required: false, schema: { type: "array", maxItems: 20, items: ref("Uuid") }, style: "form", explode: true },
+    { name: "allow_unfiltered", in: "query", required: false, schema: { type: "boolean", default: false }, description: "Explicitly select the currently authorized scope when project filters are absent. Does not grant access or expand Cookie Session targets." },
+  ],
+  SearchIndexSnapshotQuery: [
+    { name: "project", in: "query", required: true, schema: ref("Uuid") },
+    { name: "cursor", in: "query", required: true, schema: string({ minLength: 1, maxLength: 4096 }), description: "Initial cursor from status or next_cursor from the preceding snapshot page. Complete the scan then use the cursor with changes." },
+    { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 100 }) },
+  ],
+  SearchIndexChangesQuery: [
+    { name: "project", in: "query", required: true, schema: ref("Uuid") },
+    { name: "after", in: "query", required: true, schema: string({ minLength: 1, maxLength: 4096 }), description: "Opaque project cursor; independent of unrelated Project authorization changes. Expired cursors require a complete metadata snapshot." },
+    { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 100 }) },
+  ],
   AuditEventQuery: [
     { name: "project_id", in: "query", required: false, schema: ref("Uuid"), description: "Restrict the Owner audit feed to events bound to one immutable Project ID." },
     { name: "stream", in: "query", required: false, schema: string({ enum: ["domain", "security"] }), description: "Restrict the Owner audit feed to one event stream; omission reads both streams." },
@@ -2469,6 +2522,9 @@ const operationResponseSchemas = {
   getInvitation: ref("Invitation"),
   revokeInvitation: ref("InvitationWriteResult"),
   listEvents: ref("EventListResult"),
+  getSearchIndexStatus: ref("SearchIndexStatus"),
+  listSearchIndexSnapshot: ref("SearchIndexSnapshot"),
+  listSearchIndexChanges: ref("SearchIndexChanges"),
   listAuditEvents: ref("AuditEventListResult"),
   listIssues: ref("IssueListResult"),
   listIssueCandidates: ref("ActiveIssueListResult"),

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.9.3-rc.2",
+    "version": "1.9.3-rc.3",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -1334,6 +1334,272 @@
         },
         "x-cfkanban-write-contract": "read",
         "x-cfkanban-permission": "authenticated_principal"
+      }
+    },
+    "/api/v1/search-index/status": {
+      "get": {
+        "operationId": "getSearchIndexStatus",
+        "tags": [
+          "issues"
+        ],
+        "summary": "Get Search Index Status",
+        "description": "Any authenticated Principal; returned data is filtered to current effective authorization. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "allow_unfiltered",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Explicitly select the currently authorized scope when project filters are absent. Does not grant access or expand Cookie Session targets."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchIndexStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "authenticated_principal"
+      }
+    },
+    "/api/v1/search-index/snapshot": {
+      "get": {
+        "operationId": "listSearchIndexSnapshot",
+        "tags": [
+          "issues"
+        ],
+        "summary": "List Search Index Snapshot",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "description": "Initial cursor from status or next_cursor from the preceding snapshot page. Complete the scan then use the cursor with changes."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchIndexSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_reader"
+      }
+    },
+    "/api/v1/search-index/changes": {
+      "get": {
+        "operationId": "listSearchIndexChanges",
+        "tags": [
+          "issues"
+        ],
+        "summary": "List Search Index Changes",
+        "description": "Deployment Owner or effective Project reader/writer access, including current scoped administrator inheritance. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "project",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "description": "Opaque project cursor; independent of unrelated Project authorization changes. Expired cursors require a complete metadata snapshot."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchIndexChanges"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "project_reader"
       }
     },
     "/api/v1/workspaces": {
@@ -15497,6 +15763,9 @@
               "issue_reference": {
                 "type": "boolean"
               },
+              "issue_search_index": {
+                "type": "boolean"
+              },
               "passkey": {
                 "type": "boolean"
               },
@@ -15557,6 +15826,10 @@
               "issue_reference": {
                 "type": "boolean",
                 "description": "True only when this Worker supports the bounded Issue reference endpoint. Absence or false is unsupported; a route 404 alone cannot prove a missing Issue."
+              },
+              "issue_search_index": {
+                "type": "boolean",
+                "description": "True when metadata search status, snapshot and changes endpoints are available; clients must not use ordinary full Issue lists as a fallback."
               }
             },
             "additionalProperties": true
@@ -17649,6 +17922,233 @@
         },
         "additionalProperties": false,
         "description": "Exact Issue reference metadata. At most 4 KiB of serialized UTF-8 JSON; no body, comments, relations, labels or hierarchy are fetched."
+      },
+      "SearchIndexDocument": {
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "identifier",
+          "title",
+          "project_id",
+          "revision"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "title": {
+            "type": "string",
+            "description": "Text value. Runtime limit: 1024 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 1024
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Independent per-Issue search revision; body and Comment changes do not increment it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SearchIndexChange": {
+        "type": "object",
+        "required": [
+          "kind",
+          "id",
+          "number",
+          "identifier",
+          "title",
+          "project_id",
+          "revision"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "upsert",
+              "remove"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "identifier": {
+            "type": "string",
+            "pattern": "^CFK-[1-9][0-9]*$"
+          },
+          "title": {
+            "type": "string",
+            "description": "Text value. Runtime limit: 1024 UTF-8 bytes.",
+            "x-cfkanban-max-utf8-bytes": 1024
+          },
+          "project_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false,
+        "description": "Metadata update or tombstone. A remove carries an empty title. Revision prevents a late update from overwriting a newer snapshot."
+      },
+      "SearchIndexStatus": {
+        "type": "object",
+        "required": [
+          "instance_id",
+          "projection_version",
+          "epoch",
+          "scope_key",
+          "projects"
+        ],
+        "properties": {
+          "instance_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "projection_version": {
+            "type": "integer",
+            "format": "int64",
+            "const": 1
+          },
+          "epoch": {
+            "type": "string"
+          },
+          "scope_key": {
+            "type": "string"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "display_name",
+                "workspace",
+                "revision",
+                "cursor"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/Uuid"
+                },
+                "display_name": {
+                  "type": "string"
+                },
+                "workspace": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "display_name"
+                  ],
+                  "properties": {
+                    "id": {
+                      "$ref": "#/components/schemas/Uuid"
+                    },
+                    "display_name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "revision": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "cursor": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false,
+        "description": "Live authorized Project catalog and lightweight search heads. Newly authorized Projects require a full metadata snapshot before incremental updates. Project-scoped cursors remain valid when unrelated Projects change authorization."
+      },
+      "SearchIndexSnapshot": {
+        "type": "object",
+        "required": [
+          "items",
+          "has_more",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/SearchIndexDocument"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "additionalProperties": false,
+        "description": "Stable-number scan after a starting watermark; not a cross-request point-in-time snapshot. Apply subsequent changes before publishing the local generation."
+      },
+      "SearchIndexChanges": {
+        "type": "object",
+        "required": [
+          "items",
+          "has_more",
+          "next_cursor",
+          "revision"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/SearchIndexChange"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false,
+        "description": "Relevant changes ordered by the existing internal Event sequence. Empty items do not require refetching Issues. CURSOR_EXPIRED or SEARCH_INDEX_RESET requires a new snapshot. No body or Comments are transferred."
       },
       "IssueResourceReference": {
         "type": "object",

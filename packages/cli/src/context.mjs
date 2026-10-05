@@ -7,7 +7,7 @@ import { assertNoSymlinkPath, atomicWriteJson, canonicalDigest, pathType, readJs
 import { toolError } from '../../skill-runtime/src/errors.mjs';
 import { commandFields } from './parser.mjs';
 
-const issueQueries = new Set(['listIssues', 'listIssueCandidates']);
+const issueQueries = new Set(['listIssues', 'listIssueCandidates', 'getSearchIndexStatus']);
 const unique = (items, field) => [...new Map(items.filter(item => item[field]).map(item => [item[field], item])).values()];
 const compatible = (target, input) => (!input.instanceId || target.instance_id === input.instanceId)
   && (!input.workspace_id || target.workspace_id === input.workspace_id)

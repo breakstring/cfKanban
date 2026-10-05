@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 19,
+  "schema_version": 20,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -479,6 +479,36 @@
       },
       "expected_data": {
         "instance_meta_schema_version_at_least": 19,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 20,
+      "name": "0020_issue_search_index.sql",
+      "sha256": "a3e98d58ee63360c852053465364144d96d1123d517febf65a8a06110ef9f881",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "tables": [
+          "search_index_meta",
+          "search_index_projects",
+          "search_index_documents",
+          "search_index_changes"
+        ],
+        "indexes": [
+          "idx_search_index_documents_project_number",
+          "idx_search_index_changes_issue_sequence",
+          "idx_search_index_changes_retention"
+        ],
+        "triggers": [
+          "search_index_project_created",
+          "search_index_issue_event",
+          "search_index_issue_purged"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 20,
         "allow_uninitialized": true
       }
     }

@@ -40,7 +40,10 @@ function readbackPath(command,input,result) {
 function bodyFor(command,input) { return command.body?pick(input,Object.keys(command.body.properties??{})):undefined; }
 function requestFor(command,input) {
   const query=new URLSearchParams();
-  for(const parameter of command.parameters.filter(entry=>entry.in==='query')) for(const value of (Array.isArray(input[parameter.name])?input[parameter.name]:[input[parameter.name]])) if(value!==undefined) query.append(parameter.name,String(value));
+  for(const parameter of command.parameters.filter(entry=>entry.in==='query')) {
+    const inputValue=input[parameter.name === 'allow_unfiltered' ? 'allowUnfiltered' : parameter.name];
+    for(const value of (Array.isArray(inputValue)?inputValue:[inputValue])) if(value!==undefined) query.append(parameter.name,String(value));
+  }
   return {method:command.method,apiPath:`${encodePath(command.apiPath,input)}${query.size?`?${query}`:''}`,body:bodyFor(command,input)};
 }
 function versionOf(result) { return result?.data?.resource?.version??result?.data?.version??result?.data?.project?.version??result?.data?.issue?.version; }
@@ -198,7 +201,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
   const api=async(command,input)=> {
     const identity=await connection(input.instanceId);
     if(command.method==='GET') {
-      if(command.operation==='listIssues'||command.operation==='listIssueCandidates') {
+      if(['listIssues','listIssueCandidates','getSearchIndexStatus'].includes(command.operation)) {
         if(!input.project) {
           const detected=await scopeInspector({directory:input.directory??directory});
           const targets=detected.scope?.targets?.filter(target=>target.instance_id===input.instanceId)??[];

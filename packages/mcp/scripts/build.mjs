@@ -22,7 +22,7 @@ for (const name of ["workbench.html", "mcp-app-build.json"]) {
   const bytes = await readFile(path.join(outputRoot, name));
   entries.push({ path: name, size_bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
 }
-for (const name of ["server", "facade"]) {
+for (const name of ["server", "facade", "search-cache-worker"]) {
   const output = path.join(outputRoot, `${name}.mjs`);
   const result = await build({ absWorkingDir: repoRoot, entryPoints: [path.join(packageRoot, "src", `${name}.mjs`)], outfile: output, bundle: true, platform: "node", target: "node22.12", format: "esm", minify: true, legalComments: "inline", metafile: true, logLevel: "silent", loader: { ".svg": "text" }, define: { __CFKANBAN_MCP_VERSION__: JSON.stringify(version), __CFKANBAN_MCP_BUNDLED__: "true", __CFKANBAN_MCP_UI_SHA256__: JSON.stringify(ui.sha256) }, banner: { js: 'import { createRequire as __cfkanbanCreateRequire } from "node:module"; const require = __cfkanbanCreateRequire(import.meta.url);' } });
   Object.keys(result.metafile.inputs).forEach(entry => inputs.add(entry));

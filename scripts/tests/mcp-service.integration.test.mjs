@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { build } from "esbuild";
@@ -9,8 +10,11 @@ import { createMcpFacade } from "../../packages/skill-runtime/src/mcp-facade.mjs
 import { loadCurrentCredentialSecret } from "../../packages/skill-runtime/src/state.mjs";
 import { createMcpStateFixture } from "./mcp-fixture.mjs";
 import { IssueMentions } from "../../packages/mcp/src/mentions.mjs";
+import { PersistentSearchIndex } from "../../packages/mcp/src/search-cache.mjs";
 
 test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay and uncertain writes", async t => {
+  const indexes = [];
+  t.after(async () => { await Promise.all(indexes.map(index => index.dispose())); });
   const fixture = await createMcpStateFixture(t);
   const server = createTestHarness({ root: fileURLToPath(new URL("../../", import.meta.url)), workers: [{ configPath: "wrangler.wp02-test.jsonc" }] });
   t.after(() => server.close());
@@ -83,13 +87,31 @@ test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay an
   assert.equal(done.ok, true);
   assert.equal((await call("issues_get", { identifier: a.identifier })).data.status.key, "done");
 
-  const mentions = new IssueMentions({ facade, createFacade: options => createMcpFacade({ ...fixture, fetchImpl, ...options }) });
+  // 只调整隔离 D1 的编号分配位置，经真实创建接口生成可验收的部分编号。
+  await db.prepare("UPDATE sqlite_sequence SET seq=59 WHERE name='issues'").run();
+  const prefixFirst = await call("issues_create", { ...target, title: "Prefix sixty", idempotency_key: randomUUID() });
+  await db.prepare("UPDATE sqlite_sequence SET seq=599 WHERE name='issues'").run();
+  const prefixSecond = await call("issues_create", { ...target, title: "Prefix six hundred", idempotency_key: randomUUID() });
+  assert.equal(prefixFirst.data.resource.identifier, "CFK-60");
+  assert.equal(prefixSecond.data.resource.identifier, "CFK-600");
+  const makeIndex = async (localFixture, safeFacade) => {
+    const index = new PersistentSearchIndex({ facade: safeFacade, homeDirectory: await realpath(localFixture.home), stateRoot: await realpath(localFixture.stateRoot), syncIntervalMs: 3_600_000, idleTimeoutMs: 3_600_000 });
+    indexes.push(index);
+    index.start(instance);
+    assert.equal(await index.synchronize(instance), true, "isolated index must complete its first snapshot");
+    const activity = index.activity.get(fixture.instanceId);
+    clearTimeout(activity.timer); activity.timer = null;
+    return index;
+  };
+  const searchIndex = await makeIndex(fixture, facade);
+  const mentions = new IssueMentions({ facade, searchIndex, createFacade: options => createMcpFacade({ ...fixture, fetchImpl, ...options }), admission: { startIntervalMs: 0 } });
   t.after(() => mentions.dispose());
   const beforeMentions = requestPaths.length;
   const mention = await mentions.search({ query: a.identifier });
   assert.equal(mention.isError, false);
   assert.equal(mention.structuredContent.items.length, 1);
   assert.equal(Object.hasOwn(mention.structuredContent.items[0], "body"), false);
+  assert.equal(requestPaths.length, beforeMentions, "cached candidates must perform no HTTP request");
   const reference = await mentions.read(mention.structuredContent.items[0].uri);
   const resource = JSON.parse(reference.contents[0].text);
   assert.equal(resource.id, a.id); assert.equal(resource.status.key, "done");
@@ -97,9 +119,36 @@ test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay an
   assert.equal(Object.hasOwn(resource, "comments"), false); assert.equal(Object.hasOwn(resource, "relations"), false);
   assert.deepEqual(requestPaths.slice(beforeMentions), [
     "/.well-known/cfkanban-instance.json", "/api/v1/me", `/api/v1/issues/${a.identifier}/reference`,
-    "/.well-known/cfkanban-instance.json", "/api/v1/me", `/api/v1/issues/${a.identifier}/reference`,
   ]);
   assert.equal(JSON.stringify({ mention, reference }).includes(current.token), false);
+  const beforeLocalSearch = requestPaths.length;
+  for (const query of ["CFK-60", "60"]) {
+    assert.deepEqual((await mentions.search({ query })).structuredContent.items.map(item => item.name), ["CFK-60", "CFK-600"]);
+  }
+  assert.deepEqual((await mentions.search({ query: "mcp first" })).structuredContent.items.map(item => item.name), [a.identifier]);
+  assert.equal(requestPaths.length, beforeLocalSearch, "prefix/title candidates must remain entirely local");
+  const indexedBefore = await db.prepare("SELECT title,revision FROM search_index_documents WHERE id=?1").bind(b.id).first();
+  const eventBefore = await db.prepare("SELECT max(sequence) AS sequence FROM events").first();
+  const bodyVersion = (await call("issues_get", { identifier: b.identifier })).data.version;
+  assert.equal((await call("issues_update", { identifier: b.identifier, expected_version: bodyVersion, changes: { body: "Changed only in body" }, idempotency_key: randomUUID() })).ok, true);
+  assert.equal((await call("comments_create", { identifier: b.identifier, body: "Changed only in comment", idempotency_key: randomUUID() })).ok, true);
+  assert.deepEqual(await db.prepare("SELECT title,revision FROM search_index_documents WHERE id=?1").bind(b.id).first(), indexedBefore);
+  assert.ok((await db.prepare("SELECT max(sequence) AS sequence FROM events").first()).sequence > eventBefore.sequence);
+  const synchronizedPages = [];
+  const trackedFacade = { ...facade, readSearchChanges: async (...args) => {
+    const result = await facade.readSearchChanges(...args);
+    if (result.ok) synchronizedPages.push(result.data);
+    return result;
+  } };
+  searchIndex.facade = trackedFacade;
+  const beforeBodySync = requestPaths.length;
+  assert.equal(await searchIndex.synchronize(instance), true);
+  assert.ok(synchronizedPages.every(page => page.items.length === 0), "body/comment writes must not retransmit Issue title metadata");
+  assert.deepEqual(requestPaths.slice(beforeBodySync), ["/.well-known/cfkanban-instance.json", "/api/v1/me", "/api/v1/search-index/status"], "unchanged search revisions need no snapshot or delta page");
+  const beforeBodyQuery = requestPaths.length;
+  assert.deepEqual((await mentions.search({ query: "Changed only" })).structuredContent.items, []);
+  assert.deepEqual((await mentions.search({ query: "mcp second" })).structuredContent.items.map(item => item.name), [b.identifier]);
+  assert.equal(requestPaths.length, beforeBodyQuery);
 
   const outside = await call("issues_create", { ...target, project_id: other.id, title: "Other project", idempotency_key: randomUUID() });
   const workbenchSource = await build({ entryPoints: [fileURLToPath(new URL("../../packages/mcp/src/workbench.mjs", import.meta.url))], bundle: true, write: false, format: "esm", platform: "node", loader: { ".svg": "text" } });
@@ -147,7 +196,20 @@ test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay an
   assert.equal((await readerFacade.callTool("cfkanban_issues_get", { ...instance, identifier: a.identifier })).ok, true);
   assert.equal((await readerFacade.callTool("cfkanban_comments_create", { ...instance, identifier: a.identifier, body: "reader refused", idempotency_key: randomUUID() })).status, 403);
   assert.equal((await readerFacade.callTool("cfkanban_issues_get", { ...instance, identifier: outside.data.resource.identifier })).status, 404);
+  const readerIndex = await makeIndex(reader, readerFacade);
+  const readerMentions = new IssueMentions({ facade: readerFacade, searchIndex: readerIndex, createFacade: options => createMcpFacade({ ...reader, fetchImpl, ...options }), admission: { startIntervalMs: 0 } });
+  t.after(() => readerMentions.dispose());
+  const readerCandidate = await readerMentions.search({ query: a.identifier });
+  assert.equal(readerCandidate.isError, false);
+  assert.equal(readerCandidate.structuredContent.items.length, 1);
   await db.prepare("UPDATE credentials SET revoked_at=?1,revoked_by_principal_id=?2 WHERE id=?3").bind(Date.now(), fixture.principalId, readerCurrent.metadata.credential_id).run();
+  const beforeStaleCandidate = requestPaths.length;
+  const staleCandidate = await readerMentions.search({ query: a.identifier });
+  assert.equal(staleCandidate.isError, false);
+  assert.equal(staleCandidate.structuredContent.items[0].uri, readerCandidate.structuredContent.items[0].uri);
+  assert.equal(requestPaths.length, beforeStaleCandidate, "cached metadata may remain visible until asynchronous revocation discovery");
+  await assert.rejects(readerMentions.read(staleCandidate.structuredContent.items[0].uri), { code: "UNAUTHORIZED" });
+  assert.deepEqual(requestPaths.slice(beforeStaleCandidate), ["/.well-known/cfkanban-instance.json", "/api/v1/me"]);
   assert.equal((await readerFacade.callTool("cfkanban_connection_inspect", instance)).status, 401);
   const revokedWorkbench = new McpWorkbench({ createFacade: options => createMcpFacade({ ...reader, fetchImpl, ...options }) });
   t.after(() => revokedWorkbench.dispose());
@@ -155,4 +217,10 @@ test("MCP uses the real isolated Worker for scoped collaboration, CAS, replay an
   assert.equal(revokedOpen.structuredContent.ok, false);
   assert.equal(revokedOpen.structuredContent.error.code, "UNAUTHORIZED");
   assert.equal(revokedOpen._meta["cfkanban/snapshot"].state.issue, null);
+  assert.equal(await readerIndex.synchronize(instance), false);
+  const afterRevocationSync = requestPaths.length;
+  const cleaned = await readerMentions.search({ query: a.identifier });
+  assert.deepEqual(cleaned.structuredContent.items, []);
+  assert.equal(cleaned.structuredContent.error.code, "UNAUTHORIZED");
+  assert.equal(requestPaths.length, afterRevocationSync, "cleared candidates still do not perform HTTP");
 });
