@@ -2,7 +2,7 @@
 import { computed } from "vue";
 
 import release from "../../../../release/version.json";
-import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
+import cfKanbanMarkUrl from "../assets/cfkanban-mark-orange.svg";
 import { locale, t } from "../lib/i18n";
 
 defineProps<{ preferredOrigin?: string | null }>();

@@ -319,7 +319,7 @@ onUnmounted(() => { disposed = true; controller.abort(); removeGuard(); window.r
       <p>{{ dialog === 'approve' ? ui('This computer will have full Owner access to this instance. Confirm it is your device.', '这台电脑将拥有本实例的完整 Owner 权限，请确认它是你的设备。') : dialog === 'rename' ? ui('Choose a name to help you recognize this device.', '为这台设备填写一个便于识别的名称。') : ui('This stops the selected credential and its browser sessions. Other devices and independent passkeys remain available.', '这将停用所选凭据及其派生浏览器会话，其他设备和独立通行密钥不受影响。') }}</p>
       <dl class="device-review">
         <dt>{{ ui('Instance', '实例') }}</dt><dd>{{ identity?.origin }}<br /><code>{{ identity?.instanceId }}</code></dd>
-        <dt>Owner</dt><dd>{{ identity?.displayName }}<br /><code>{{ identity?.principalId }}</code></dd>
+        <dt>{{ ui("Owner", "所有者") }}</dt><dd>{{ identity?.displayName }}<br /><code>{{ identity?.principalId }}</code></dd>
         <dt>{{ ui('Device', '设备') }}</dt><dd>{{ pairing?.device_name ?? target?.device_name ?? ui('Unnamed device', '未命名设备') }}</dd>
         <dt>{{ ui('Fingerprint', '指纹') }}</dt><dd><code>{{ pairing ? `cfk_v1_${pairing.token_prefix}_…` : target?.fingerprint }}</code></dd>
         <template v-if="pairing"><dt>{{ ui('Request expires', '请求有效期至') }}</dt><dd>{{ date(pairing.expires_at) }}</dd></template>

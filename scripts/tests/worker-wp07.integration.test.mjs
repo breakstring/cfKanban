@@ -1123,7 +1123,11 @@ test("WP-07 enforces one-shot Browser Launch, current participant Grants, fixed 
   assert.equal(consumedLaunchPage.response.headers.get("referrer-policy"), "no-referrer");
   assert.doesNotMatch(consumedLaunchPage.body, new RegExp(projectLaunch.code));
   assert.match(consumedLaunchPage.body, /Ask your Agent for a new link/u);
-  assert.match(consumedLaunchPage.body, /此浏览器启动链接已失效/u);
+  assert.doesNotMatch(consumedLaunchPage.body, /此浏览器启动链接已失效/u);
+  const chineseUnavailablePage = await request(projectLaunch.body.resource.launch_url, { headers: { "accept-language": "zh-TW,en;q=0.5" } });
+  assert.equal(chineseUnavailablePage.response.status, 410);
+  assert.match(chineseUnavailablePage.body, /<html lang="zh-CN">[\s\S]*此浏览器启动链接已失效/u);
+  assert.doesNotMatch(chineseUnavailablePage.body, /Ask your Agent for a new link/u);
 
   const replayedRedemption = await request("/api/v1/web-sessions/redeem", {
     body: { launch_code: projectLaunch.code },

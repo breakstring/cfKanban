@@ -35,10 +35,12 @@ import {
   isInvitationCreateWriteResult,
 } from "../../apps/web/src/lib/invitation-recovery.ts";
 import {
+  detectedBrowserLocale,
   readStoredLocale,
   resolveLocalePreference,
   writeStoredLocale,
 } from "../../apps/web/src/lib/locale-preference.ts";
+import { statusDisplayName } from "../../apps/web/src/lib/status-display.ts";
 import { renderMarkdown } from "../../apps/web/src/lib/markdown.ts";
 import { deployAgentInstruction, publicGuideUrl, publicJoinInstruction } from "../../apps/web/src/lib/public-guide.ts";
 import { publicJoinRiskNotice } from "../../apps/web/src/lib/public-join-risk.ts";
@@ -217,8 +219,96 @@ test("locale preference uses the saved choice or the browser's first language", 
   assert.equal(resolveLocalePreference(null, ["zh-CN", "en-US"]), "zh-CN");
   assert.equal(resolveLocalePreference(null, ["zh-Hans-SG"]), "zh-CN");
   assert.equal(resolveLocalePreference(null, ["en-US", "zh-CN"]), "en");
-  assert.equal(resolveLocalePreference(null, ["zh-TW"]), "en");
+  for (const language of ["zh", "zh-TW", "zh-Hant-HK", "zh_SG", " ZH-cn "]) {
+    assert.equal(resolveLocalePreference(null, [language]), "zh-CN");
+  }
   assert.equal(resolveLocalePreference("invalid", ["fr-FR", "zh-CN"]), "en");
+  assert.equal(resolveLocalePreference(null, ["zho"]), "en");
+  assert.equal(detectedBrowserLocale({ languages: [], language: "zh-TW" }), "zh-CN");
+  assert.equal(detectedBrowserLocale({ language: "zh_CN" }), "zh-CN");
+  assert.equal(detectedBrowserLocale({ languages: ["fr-FR", "zh-CN"], language: "zh-CN" }), "en");
+  assert.equal(detectedBrowserLocale(), "en");
+});
+
+test("default status names follow the interface language while custom names remain original", () => {
+  const defaults = [
+    ["backlog", "Backlog", "待规划"], ["todo", "Todo", "待办"],
+    ["in_progress", "In Progress", "进行中"], ["done", "Done", "已完成"], ["canceled", "Canceled", "已取消"],
+  ];
+  for (const [key, english, chinese] of defaults) {
+    assert.equal(statusDisplayName({ key, display_name: english }, "en"), english);
+    assert.equal(statusDisplayName({ key, display_name: english }, "zh-CN"), chinese);
+    assert.equal(statusDisplayName({ key }, "zh-CN"), chinese);
+    for (const custom of ["Team review", "团队复核", `${english} custom`]) {
+      assert.equal(statusDisplayName({ key, display_name: custom }, "zh-CN"), custom);
+      assert.equal(statusDisplayName({ key, display_name: custom }, "en"), custom);
+    }
+  }
+  assert.equal(statusDisplayName({ key: "todo", name: "Todo" }, "zh-CN"), "待办");
+  assert.equal(statusDisplayName({ key: "future", display_name: "Custom future" }, "zh-CN"), "Custom future");
+  assert.equal(statusDisplayName({ key: "__proto__" }, "zh-CN"), "__proto__");
+});
+
+test("language detection does not persist a preference and account fallback rechecks the current browser", async () => {
+  const original = { window: globalThis.window, document: globalThis.document };
+  const stored = new Map(), writes = [];
+  globalThis.window = {
+    navigator: { languages: ["zh-TW"], language: "en" },
+    localStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => { writes.push([key, value]); stored.set(key, value); } },
+  };
+  globalThis.document = { documentElement: {}, createElement: () => ({}) };
+  try {
+    const { applyAccountLocalePreference, locale, setLocale } = await importBundledWebModule("../../apps/web/src/lib/i18n.ts");
+    assert.equal(locale.value, "zh-CN");
+    assert.equal(document.documentElement.lang, "zh-CN");
+    assert.deepEqual(writes, []);
+    applyAccountLocalePreference("en", true);
+    assert.equal(locale.value, "en");
+    applyAccountLocalePreference(null, true);
+    assert.equal(locale.value, "zh-CN");
+    window.navigator.languages = ["fr-FR", "zh-CN"];
+    applyAccountLocalePreference(undefined, true);
+    assert.equal(locale.value, "en");
+    applyAccountLocalePreference(null, false);
+    assert.equal(locale.value, "en", "a detected initial language is not a lasting public preference");
+    assert.deepEqual(writes, []);
+    setLocale("zh-CN");
+    assert.deepEqual(writes, [["cfkanban_locale", "zh-CN"]]);
+    applyAccountLocalePreference(null, true);
+    assert.equal(locale.value, "en", "an account without a preference ignores public local storage");
+    applyAccountLocalePreference(null, false);
+    assert.equal(locale.value, "zh-CN", "the explicit public choice remains available on public pages");
+    assert.deepEqual(writes, [["cfkanban_locale", "zh-CN"]]);
+  } finally {
+    globalThis.window = original.window;
+    globalThis.document = original.document;
+  }
+});
+
+test("unverified account screens detect the system language but preserve an explicit anonymous switch", async () => {
+  const original = { window: globalThis.window, document: globalThis.document };
+  const stored = new Map([["cfkanban_locale", "zh-CN"]]), writes = [];
+  globalThis.window = {
+    navigator: { languages: ["en-US"] },
+    localStorage: { getItem: key => stored.get(key) ?? null, setItem: (key, value) => { writes.push([key, value]); stored.set(key, value); } },
+  };
+  globalThis.document = { documentElement: {}, createElement: () => ({}) };
+  try {
+    const { applyAccountLocalePreference, locale, setLocale } = await importBundledWebModule("../../apps/web/src/lib/i18n.ts");
+    applyAccountLocalePreference(undefined, false, true);
+    assert.equal(locale.value, "en");
+    assert.deepEqual(writes, []);
+    setLocale("zh-CN");
+    assert.deepEqual(writes, [["cfkanban_locale", "zh-CN"]]);
+    applyAccountLocalePreference(null, false);
+    assert.equal(locale.value, "zh-CN");
+    applyAccountLocalePreference(null, true, true);
+    assert.equal(locale.value, "en");
+    assert.deepEqual(writes, [["cfkanban_locale", "zh-CN"]]);
+  } finally {
+    globalThis.window = original.window;
+    globalThis.document = original.document;
+  }
 });
 
 test("locale persistence is best effort when storage access is unavailable", () => {
@@ -864,10 +954,10 @@ test("the self-hosted brand mark is wired to the favicon and both Web shells", a
   assert.equal(mark.readUInt32BE(16), 256);
   assert.equal(mark.readUInt32BE(20), 256);
   assert.equal(mark[25], 6, "brand PNG must retain an alpha channel");
-  assert.match(indexHtml, /rel="icon"[^>]+cfkanban-mark\.png/);
+  assert.match(indexHtml, /rel="icon"[^>]+cfkanban-mark-orange\.svg/);
   assert.match(indexHtml, /rel="apple-touch-icon"[^>]+cfkanban-mark\.png/);
   assert.match(indexHtml, /name="theme-color" content="#FAF8F4"/);
-  assert.match(publicHome, /import cfKanbanMarkUrl from "\.\.\/assets\/cfkanban-mark\.png"/);
+  assert.match(publicHome, /import cfKanbanMarkUrl from "\.\.\/assets\/cfkanban-mark-orange\.svg"/);
   assert.match(publicHome, /class="brand-logo"[^>]+alt=""/);
   assert.match(publicHome, /class="footer-logo"[^>]+alt=""/);
   assert.match(appHeader, /class="brand-mark"[^>]+alt=""/);
@@ -2108,7 +2198,7 @@ test("high-risk Session and Invitation recovery helpers remain wired into the Vu
   assert.match(issueDetailSource, /onUnmounted\(\(\) => \{\s*projectionGeneration\.invalidate\(\)/);
   assert.match(issueDetailSource, /comments\.value = commentResult\.items/);
   assert.match(issueDetailSource, /statuses\.value = statusResult\.items/);
-  assert.match(issueDetailSource, /:value="status\.key">\{\{ status\.display_name \}\}/);
+  assert.match(issueDetailSource, /:value="status\.key">\{\{ localizedStatusName\(status, locale\) \}\}/);
   assert.match(issueDetailSource, /showCollaborationRecovery\.value = false/);
   assert.match(issueDetailSource, /void load\(true\)/);
   assert.match(issueDetailSource, /canCreateIssueRelation\(current, target\)/);

@@ -9,6 +9,8 @@ import { verifyEmbeddedBuild } from "./lib/embedded-build.mjs";
 import { buildDshPlugin } from "../packages/dsh-plugin/scripts/build.mjs";
 import { verifyLocalRuntimeBuild } from "../packages/local-runtime/scripts/build.mjs";
 import { verifyCliBuild } from "./lib/cli-build.mjs";
+import { verifyMcpBuild } from "./lib/mcp-build.mjs";
+import { generateBrandAssets } from "./generate-brand-assets.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -22,9 +24,11 @@ async function copyEntries(entries, targetRoot) {
 }
 
 export async function buildReleaseBundles({ outputDirectory, version }) {
+  await generateBrandAssets({ check: true });
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error("version must be strict semver without build metadata");
   await verifyReleaseBuild({ repositoryRoot: repoRoot, version });
   await verifyCliBuild({ outputDirectory: path.join(repoRoot, "packages/cli/dist"), version });
+  await verifyMcpBuild({ outputDirectory: path.join(repoRoot, "packages/mcp/dist"), version });
   await verifyEmbeddedBuild({ outputDirectory: path.join(repoRoot, "apps/web/dist-embedded"), version });
   await verifyLocalRuntimeBuild({ outputDirectory: path.join(repoRoot, "packages/local-runtime/dist"), version });
   const webBudget = JSON.parse(await readFile(path.join(repoRoot, "scripts/web-performance-budget.json"), "utf8"));
@@ -42,12 +46,15 @@ export async function buildReleaseBundles({ outputDirectory, version }) {
       ".codex-plugin/plugin.json",
       ".agents/plugins/marketplace.json",
       "apps/web/src/assets/cfkanban-mark.png",
+      "apps/web/src/assets/cfkanban-mark.svg",
+      "apps/web/src/assets/cfkanban-mark-orange.svg",
       "skills",
       "packages/skill-runtime",
       "docs/skills/README.md",
       "docs/skills/README.zh-CN.md",
     ], skillRoot);
     await cp(path.join(repoRoot, "packages/mcp/dist"), path.join(skillRoot, "mcp"), { recursive: true });
+    await verifyMcpBuild({ outputDirectory: path.join(skillRoot, "mcp"), version });
     await cp(path.join(repoRoot, "packages/cli/dist"), path.join(skillRoot, "cli"), { recursive: true });
     await verifyCliBuild({ outputDirectory: path.join(skillRoot, "cli"), version });
     await cp(path.join(repoRoot, "packages/local-runtime/dist"), path.join(skillRoot, "local-runtime"), { recursive: true });

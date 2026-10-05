@@ -1070,7 +1070,41 @@ export async function revokeWebSession(
   );
 }
 
-export const WEB_LAUNCH_PAGE_SCRIPT = `(()=>{const status=document.querySelector("[data-launch-status]");const zh=(navigator.languages||[navigator.language||""]).some((value)=>String(value).toLowerCase().startsWith("zh"));const set=(message)=>{if(status)status.textContent=message};const params=new URLSearchParams(location.search);const code=params.get("code");history.replaceState({},document.title,"/app/launch");if(!code){set(zh?"打开链接无效，请让 Agent 重新生成。":"This launch link is invalid. Ask your Agent for a new one.");return}set(zh?"正在安全建立会话…":"Securely establishing your session…");fetch("/api/v1/web-sessions/redeem",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json","idempotency-key":crypto.randomUUID()},body:JSON.stringify({launch_code:code})}).then(async(response)=>{const body=await response.json().catch(()=>null);if(!response.ok||!body||typeof body!=="object")throw new Error();const entry=body.resource&&body.resource.entry_path;if(typeof entry!=="string")throw new Error();const target=new URL(entry,location.origin);if(target.origin!==location.origin||target.hash||(target.pathname!=="/app"&&!target.pathname.startsWith("/app/")))throw new Error();location.replace(target.pathname+target.search)}).catch(()=>set(zh?"会话未建立，请让 Agent 重新生成链接。":"The session was not established. Ask your Agent for a new link."))})()`;
+export function preferredPageLocale(acceptLanguage: string | null): "en" | "zh-CN" {
+  const preferences = (acceptLanguage ?? "").split(",").map((entry, index) => {
+    const [tagPart, ...parameters] = entry.trim().split(";");
+    const qParameter = parameters.find((parameter) => parameter.trim().toLowerCase().startsWith("q="));
+    const quality = qParameter === undefined ? 1 : Number(qParameter.trim().slice(2));
+    return { index, quality: Number.isFinite(quality) && quality > 0 && quality <= 1 ? quality : 0, tag: tagPart?.trim().toLowerCase() ?? "" };
+  }).filter((entry) => entry.quality > 0 && entry.tag)
+    .sort((left, right) => right.quality - left.quality || left.index - right.index);
+  return /^zh(?:[-_]|$)/u.test(preferences[0]?.tag ?? "") ? "zh-CN" : "en";
+}
+
+export const WEB_LAUNCH_PAGE_SCRIPT = String.raw`(() => {
+  const status = document.querySelector("[data-launch-status]");
+  const languages = typeof navigator === "undefined" ? [] : navigator.languages?.length ? navigator.languages : [navigator.language];
+  const preferred = languages[0];
+  const locale = typeof navigator === "undefined" ? (document.documentElement.lang === "zh-CN" ? "zh-CN" : "en") : (/^zh(?:[-_]|$)/i.test(typeof preferred === "string" ? preferred.trim() : "") ? "zh-CN" : "en");
+  document.documentElement.lang = locale;
+  const zh = locale === "zh-CN";
+  const set = (message) => { if (status) status.textContent = message; };
+  const params = new URLSearchParams(location.search);
+  const code = params.get("code");
+  history.replaceState({}, document.title, "/app/launch");
+  if (!code) { set(zh ? "打开链接无效，请让智能体重新生成。" : "This launch link is invalid. Ask your Agent for a new one."); return; }
+  set(zh ? "正在安全建立会话…" : "Securely establishing your session…");
+  fetch("/api/v1/web-sessions/redeem", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json", "idempotency-key": crypto.randomUUID() }, body: JSON.stringify({ launch_code: code }) })
+    .then(async (response) => {
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body || typeof body !== "object") throw new Error();
+      const entry = body.resource && body.resource.entry_path;
+      if (typeof entry !== "string") throw new Error();
+      const target = new URL(entry, location.origin);
+      if (target.origin !== location.origin || target.hash || (target.pathname !== "/app" && !target.pathname.startsWith("/app/"))) throw new Error();
+      location.replace(target.pathname + target.search);
+    }).catch(() => set(zh ? "会话未建立，请让智能体重新生成链接。" : "The session was not established. Ask your Agent for a new link."));
+})()`;
 
 let webLaunchPageScriptHash: Promise<string> | null = null;
 
@@ -1090,10 +1124,13 @@ export async function webLaunchPageContentSecurityPolicy(): Promise<string> {
   return `default-src 'none'; base-uri 'none'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; script-src '${await webLaunchScriptSource()}'`;
 }
 
-export function webLaunchBootstrapHtml(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban</title></head><body><main><h1>cfKanban</h1><p data-launch-status aria-live="polite">Securely establishing your session…</p><noscript>This page requires JavaScript. Ask your Agent for a new Browser Launch after enabling it.</noscript></main><script>${WEB_LAUNCH_PAGE_SCRIPT}</script></body></html>`;
+export function webLaunchBootstrapHtml(acceptLanguage: string | null = null): string {
+  const locale = preferredPageLocale(acceptLanguage);
+  const zh = locale === "zh-CN";
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban</title></head><body><main><h1>cfKanban</h1><p data-launch-status aria-live="polite">${zh ? "正在安全建立会话…" : "Securely establishing your session…"}</p><noscript>${zh ? "此页面需要 JavaScript。启用后请让智能体生成新的浏览器启动链接。" : "This page requires JavaScript. Ask your Agent for a new Browser Launch after enabling it."}</noscript></main><script>${WEB_LAUNCH_PAGE_SCRIPT}</script></body></html>`;
 }
 
-export function webLaunchUnavailableHtml(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban</title></head><body><main><h1>cfKanban</h1><p>This Browser Launch is no longer available. Ask your Agent for a new link.</p><p lang="zh-CN">此浏览器启动链接已失效，请让 Agent 重新生成。</p></main></body></html>`;
+export function webLaunchUnavailableHtml(acceptLanguage: string | null = null): string {
+  const locale = preferredPageLocale(acceptLanguage);
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban</title></head><body><main><h1>cfKanban</h1><p>${locale === "zh-CN" ? "此浏览器启动链接已失效，请让智能体重新生成。" : "This Browser Launch is no longer available. Ask your Agent for a new link."}</p></main></body></html>`;
 }

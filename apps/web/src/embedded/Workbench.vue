@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, inject, nextTick, onUnmounted, reactive, ref, watch } from "vue";
 import UApp from "@nuxt/ui/components/App.vue";
 import UBadge from "@nuxt/ui/components/Badge.vue";
 import UButton from "@nuxt/ui/components/Button.vue";
@@ -19,45 +19,67 @@ import IssueContentSection from "../components/IssueContentSection.vue";
 import IssueCommentItem from "../components/IssueComment.vue";
 import KanbanStatusNavigation from "../components/KanbanStatusNavigation.vue";
 import ProjectSwitcherMenu from "../components/ProjectSwitcherMenu.vue";
-import type { ProjectSwitcherItem } from "../components/ProjectSwitcherMenu.vue";
+import type { ProjectSwitcherGroup, ProjectSwitcherItem } from "../components/ProjectSwitcherMenu.vue";
 import AssigneeMenu from "../components/AssigneeMenu.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
 import CompletionRecord from "../components/CompletionRecord.vue";
 import MarkdownContent from "../components/MarkdownContent.vue";
 import { locale, setLocale, t } from "../lib/i18n-core";
+import { detectedBrowserLocale } from "../lib/locale-preference";
+import { statusDisplayName } from "../lib/status-display";
+import { artifactKindLabel } from "../lib/artifact-display";
 import { priorityOrder, priorityText } from "../lib/priority";
 import { labelNameKey } from "../lib/label-input";
 import { applyTheme } from "../lib/theme";
-import logo from "../assets/cfkanban-mark.png";
+import logo from "../assets/cfkanban-mark-orange.svg";
 import IssueCard from "./IssueCard.vue";
 import IssueChildrenProgress from "../components/IssueChildrenProgress.vue";
 import { issueTree } from "./issue-tree";
 import { createEmbedClient } from "./client";
+import { workbenchClientFactory } from "../mcp-app/provider";
 import { reconcileCompletedDraft, resetCompletionDraft } from "./drafts";
 import { e } from "./i18n";
 import { canAutoAppend } from "./pagination";
 import { emptySnapshot } from "./protocol";
-import type { ActionPayloads, Artifact, EmbedAction, EmbedSnapshot, IssueChange, Priority, PublicResource, Status } from "./protocol";
+import type { ActionPayloads, Artifact, EmbedAction, EmbedLocale, EmbedSnapshot, IssueChange, Priority, PublicResource, Status } from "./protocol";
 
 const state = ref<EmbedSnapshot>(emptySnapshot());
+const hostLocale = ref<EmbedLocale>(detectedBrowserLocale(window.navigator));
+function applyLocale() {
+  const value = state.value.locale ?? hostLocale.value;
+  setLocale(value);
+  document.documentElement.lang = value;
+}
+applyLocale();
 const connected = ref(false);
 const localError = ref<string | null>(null);
+const mcpConnectionErrors = new Set(["MCP_APP_REOPEN_REQUIRED", "MCP_APP_HOST_INIT_TIMEOUT", "MCP_APP_HOST_INIT_INVALID", "MCP_APP_INITIAL_RESULT_TIMEOUT", "MCP_APP_INITIAL_RESULT_INVALID", "MCP_APP_INITIAL_SNAPSHOT_INVALID", "MCP_APP_VIEW_ID_MISSING", "MCP_APP_VIEW_ID_INVALID"]);
 const inFlight = ref(0);
-const client = createEmbedClient({
+const clientFactory = inject(workbenchClientFactory, createEmbedClient);
+const client = clientFactory({
   window,
-  onConnect(value) { setLocale(value); document.documentElement.lang = value; connected.value = true; },
+  onConnect(value) { hostLocale.value = value; applyLocale(); connected.value = true; },
   onSnapshot(value) {
-    if (value.locale) { setLocale(value.locale); document.documentElement.lang = value.locale; }
     if (value.theme) applyTheme(value.theme);
     state.value = value;
+    applyLocale();
   },
   async afterRender() { await nextTick(); },
-  onError(code) { localError.value = code; },
+  onError(code) { localError.value = code; if (mcpConnectionErrors.has(code)) connected.value = false; },
+  onActionSettled(message, result) {
+    if (result.outcome_unknown || state.value.pending) return;
+    localError.value = result.ok ? null : result.error?.code ?? "EMBED_OPERATION_FAILED";
+    if (result.ok) {
+      if (message.action === "create_issue" || message.action === "mutate" && message.payload.operation === "update") confirmEditor();
+      if (message.action === "mutate" && message.payload.operation === "comment") comment.value = "";
+      if (message.action === "mutate" && message.payload.operation === "complete" && reconcileCompletedDraft(completion, state.value.issue, result)) showCompletion.value = false;
+    }
+  },
 });
 onUnmounted(() => client.dispose());
 
 const busy = computed(() => state.value.busy > 0 || inFlight.value > 0);
-const pending = computed(() => Boolean(state.value.pending || state.value.session_context_changed));
+const pending = computed(() => Boolean(state.value.pending || state.value.session_context_changed || mcpConnectionErrors.has(localError.value ?? "") || clientFactory !== createEmbedClient && localError.value === "EMBED_REQUEST_UNCERTAIN"));
 const identity = computed(() => state.value.binding?.identity ?? state.value.identity);
 const principal = computed(() => identity.value?.principal ?? state.value.binding?.principal);
 const instance = computed(() => identity.value?.instance ?? state.value.binding?.instance);
@@ -72,6 +94,47 @@ watch(() => state.value.filters, value => Object.assign(filters, value), { deep:
 const comment = ref("");
 const completion = reactive({ summary: "", verification: "", artifacts: "", artifactKind: "path" as Artifact["kind"], followUps: "" });
 const showCompletion = ref(false);
+type IssueEditorDraft = { mode: "create" | "edit"; identifier: string | null; title: string; body: string; status_key: Exclude<Status, "done">; priority_key: Priority };
+const editorDrafts = new Map<string, IssueEditorDraft>();
+const editorDraft = ref<IssueEditorDraft>({ mode: "create", identifier: null, title: "", body: "", status_key: "backlog", priority_key: "none" });
+const editorKey = ref("");
+const showEditor = ref(false);
+let editorSubmission: { key: string; mode: "create" | "edit"; identifier: string | null; title: string; body: string } | null = null;
+const editorTitle = computed(() => editorDraft.value.mode === "create" ? locale.value === "zh-CN" ? "新建事项" : "New Issue" : locale.value === "zh-CN" ? "编辑事项" : "Edit Issue");
+const editorBodyBytes = computed(() => new TextEncoder().encode(editorDraft.value.body).length);
+const editorValid = computed(() => Boolean(editorDraft.value.title.trim()) && editorDraft.value.title.length <= 256 && editorBodyBytes.value <= 65_536);
+function openEditor(mode: "create" | "edit") {
+  if (!state.value.binding || busy.value || pending.value || (mode === "create" ? !state.value.capabilities.create : !state.value.capabilities.update || !state.value.issue)) return;
+  const key = `${instance.value?.instance_id ?? instance.value?.id}:${principal.value?.principal_id ?? principal.value?.id}:${state.value.binding.project.id}:${mode === "create" ? "new" : state.value.issue!.identifier}`;
+  let draft = editorDrafts.get(key);
+  if (!draft) {
+    if (editorDrafts.size >= 16) { localError.value = "EMBED_BUSY"; return; }
+    draft = reactive<IssueEditorDraft>({ mode, identifier: mode === "edit" ? state.value.issue!.identifier : null, title: mode === "edit" ? state.value.issue!.title : "", body: mode === "edit" ? state.value.issue!.body ?? "" : "", status_key: "backlog", priority_key: "none" });
+    editorDrafts.set(key, draft);
+  }
+  editorKey.value = key;
+  editorDraft.value = draft;
+  showEditor.value = true;
+}
+function focusEditor() { document.getElementById("embedded-issue-title")?.focus(); }
+function confirmEditor() {
+  const submitted = editorSubmission;
+  const issue = state.value.issue;
+  if (!submitted || state.value.pending || !issue || issue.title !== submitted.title || (issue.body ?? "") !== submitted.body
+    || (submitted.mode === "edit" && issue.identifier !== submitted.identifier)) return;
+  editorDrafts.delete(submitted.key);
+  if (editorKey.value === submitted.key) showEditor.value = false;
+  editorSubmission = null;
+}
+async function saveEditor() {
+  const draft = editorDraft.value;
+  if (busy.value || pending.value || !editorValid.value || !state.value.binding || (draft.mode === "create" ? !state.value.capabilities.create : !state.value.capabilities.update || draft.identifier !== state.value.issue?.identifier)) return;
+  editorSubmission = { key: editorKey.value, mode: draft.mode, identifier: draft.identifier, title: draft.title.trim(), body: draft.body };
+  const change = { title: editorSubmission.title, body: editorSubmission.body };
+  const result = draft.mode === "create" ? await send("create_issue", { change: { ...change, status_key: draft.status_key, priority_key: draft.priority_key } }) : await send("mutate", { operation: "update", change });
+  if (result.ok && !result.outcome_unknown && !state.value.pending) confirmEditor();
+  else if (!result.outcome_unknown && !state.value.pending) editorSubmission = null;
+}
 const showIdentity = ref(false);
 const showFilters = ref(false);
 const showLabelPicker = ref(false);
@@ -84,23 +147,42 @@ watch(showLabelPicker, opened => { if (opened) void loadLabels(false); });
 watch(() => state.value.issue?.identifier, () => { showLabelPicker.value = false; labelSearch.value = ""; });
 const projectMenuOpen = ref(false);
 const projectSearch = ref("");
+const projectMenuAdvanced = ref(false);
 const projectGroups = computed(() => {
   const query = projectSearch.value.trim().toLocaleLowerCase();
-  const candidates: ProjectSwitcherItem[] = state.value.scope_mode === "suggested"
-    ? state.value.scope_targets.map(target => ({ id: target.id, label: target.display_name || target.project_id || e("project"), current: target.project_id === state.value.binding?.project.id, disabled: !target.available, description: target.available ? undefined : scopeProblem(typeof target.unavailability === "string" ? target.unavailability : target.unavailability?.code) }))
-    : state.value.projects.map(project => ({ id: project.id!, label: name(project), current: project.id === state.value.binding?.project.id }));
-  if (state.value.binding && !candidates.some(candidate => candidate.current)) candidates.unshift({ id: "current", label: name(state.value.binding.project), current: true, disabled: true });
-  return [{ id: "workspace", label: e("scope"), projects: candidates.filter(candidate => !query || candidate.label.toLocaleLowerCase().includes(query)) }];
+  const groups: ProjectSwitcherGroup[] = (state.value.project_menu_groups ?? []).map(group => {
+    const label = name(group.workspace), workspaceMatch = label.toLocaleLowerCase().includes(query);
+    const projects: ProjectSwitcherItem[] = group.projects.map(project => ({ id: `${group.workspace.id}/${project.id}`, label: name(project), current: project.id === state.value.binding?.project.id && group.workspace.id === state.value.workspace_id }));
+    return { id: group.workspace.id!, label, projects: projects.filter(project => !query || workspaceMatch || project.label.toLocaleLowerCase().includes(query)) };
+  }).filter(group => !query || group.label.toLocaleLowerCase().includes(query) || group.projects.length);
+  if (state.value.binding && !groups.some(group => group.projects.some(project => project.current))) {
+    const current = { id: "current", label: name(state.value.binding.project), current: true, disabled: true };
+    if (!query || current.label.toLocaleLowerCase().includes(query)) groups.unshift({ id: "current", label: locale.value === "zh-CN" ? "当前项目" : "Current Project", projects: [current] });
+  }
+  return groups;
 });
 async function openProjectMenu() {
+  if (busy.value || pending.value) return;
   projectMenuOpen.value = true;
   projectSearch.value = "";
-  if (state.value.scope_mode === "suggested") await send("scope_retry", {});
+  projectMenuAdvanced.value = false;
+  await send("project_menu", {});
 }
+async function loadProjectMenu(workspace_id?: string, next = false) {
+  if (busy.value || pending.value) return;
+  if (next) projectMenuAdvanced.value = true;
+  await send("project_menu", { ...(workspace_id ? { workspace_id } : {}), next });
+}
+async function retryProjectMenu() { await loadProjectMenu(undefined, projectMenuAdvanced.value && Boolean(state.value.project_menu_has_more)); }
 async function chooseProject(id: string) {
-  const result = state.value.scope_mode === "suggested" ? await send("scope_bind", { target_id: id }) : await send("bind", { project_id: id });
+  if (busy.value || pending.value) return;
+  const group = state.value.project_menu_groups?.find(group => group.projects.some(project => `${group.workspace.id}/${project.id}` === id));
+  const project = group?.projects.find(project => `${group.workspace.id}/${project.id}` === id);
+  if (!group?.workspace.id || !project?.id) return;
+  const result = await send("project_switch", { workspace_id: group.workspace.id, project_id: project.id });
   if (result.ok) projectMenuOpen.value = false;
 }
+function projectMenuGroup(id: string) { return state.value.project_menu_groups?.find(group => group.workspace.id === id); }
 const activeFilterCount = computed(() => Number(state.value.filters.assignment !== "all") + Number(Boolean(state.value.filters.status)) + Number(Boolean(state.value.filters.priority)));
 watch(() => state.value.issue, (issue, previous) => {
   if (issue?.identifier === previous?.identifier) return;
@@ -108,10 +190,17 @@ watch(() => state.value.issue, (issue, previous) => {
   resetCompletionDraft(completion);
   showCompletion.value = false;
 });
-const statusItems = computed(() => state.value.binding?.statuses ?? []);
+const statusItems = computed(() => (state.value.binding?.statuses ?? []).map(status => ({ ...status, display_name: statusDisplayName(status, locale.value) })));
 const errorCode = computed(() => localError.value ?? state.value.error?.code);
 const errorText = computed(() => {
   const code = errorCode.value;
+  if (code === "MCP_APP_VIEW_ID_MISSING") return locale.value === "zh-CN" ? "宿主未向 MCP 服务传递工作台视图标识，请将此错误代码告知 Agent。" : "The host did not pass the workbench view reference to the MCP server. Share this error code with your Agent.";
+  if (code === "MCP_APP_VIEW_ID_INVALID") return locale.value === "zh-CN" ? "MCP 服务收到的工作台视图标识无效，请将此错误代码告知 Agent。" : "The MCP server received an invalid workbench view reference. Share this error code with your Agent.";
+  if (code === "MCP_APP_HOST_INIT_TIMEOUT") return locale.value === "zh-CN" ? "未收到 Codex 宿主的初始化响应，请重新打开 cfKanban 工作台。" : "Codex did not respond to the workbench initialization request. Reopen the cfKanban workbench.";
+  if (code === "MCP_APP_HOST_INIT_INVALID") return locale.value === "zh-CN" ? "Codex 宿主的初始化响应不兼容，请重新打开工作台并将此错误代码告知 Agent。" : "The Codex host initialization response was incompatible. Reopen the workbench and share this error code with your Agent.";
+  if (code === "MCP_APP_INITIAL_RESULT_TIMEOUT") return locale.value === "zh-CN" ? "Codex 已完成初始化，但尚未提供工作台的初始数据，请重新打开工作台。" : "Codex initialized the view but did not provide the initial workbench data. Reopen the workbench.";
+  if (code === "MCP_APP_INITIAL_RESULT_INVALID" || code === "MCP_APP_INITIAL_SNAPSHOT_INVALID") return locale.value === "zh-CN" ? "工作台的初始数据未通过校验，请重新打开工作台并将此错误代码告知 Agent。" : "The initial workbench data could not be validated. Reopen the workbench and share this error code with your Agent.";
+  if (code === "MCP_APP_REOPEN_REQUIRED") return locale.value === "zh-CN" ? "连接已失效，请重新打开 cfKanban 工作台。若先前操作结果不确定，请先核对结果再继续。" : "The connection is unavailable. Reopen the cfKanban workbench. If an earlier operation was uncertain, verify its result before continuing.";
   if (code === "VALIDATION_ERROR" || code === "INPUT_VALIDATION_FAILED") return t("error.validation");
   if (code === "LABEL_ALREADY_ATTACHED" || code === "LABEL_NOT_ATTACHED") return e("labelConflict");
   if (code === "ISSUE_LABEL_LIMIT_REACHED") return e("labelLimit");
@@ -134,16 +223,16 @@ async function send<K extends EmbedAction>(action: K, payload: ActionPayloads[K]
   inFlight.value++;
   try {
     const result = await client.action(action, payload);
-    if (!result.ok) localError.value = result.error?.code ?? "EMBED_OPERATION_FAILED";
+    if (!result.ok && result.error?.code !== "MCP_APP_ACTION_SYNCED" && !(result.error?.code === "MCP_APP_REOPEN_REQUIRED" && mcpConnectionErrors.has(localError.value ?? ""))) localError.value = result.error?.code ?? "EMBED_OPERATION_FAILED";
     return result;
   } finally { inFlight.value--; }
 }
 async function selectInstance(instanceId: string) {
   const result = await send("select_instance", { instance_id: instanceId });
-  if (result.ok) await send("workspaces", {});
+  if (result.ok && !state.value.binding) await send("workspaces", {});
 }
 const boardMode = computed(() => state.value.view === "board");
-const columns = computed(() => state.value.board?.columns ?? []);
+const columns = computed(() => (state.value.board?.columns ?? []).map(column => ({ ...column, display_name: statusDisplayName(column, locale.value) })));
 const listOrder: Status[] = ["backlog", "todo", "in_progress", "done", "canceled"];
 const listGroups = computed(() => listOrder.flatMap(key => {
   const column = columns.value.find(value => value.key === key);
@@ -175,7 +264,10 @@ function hasTreeChildren(rows: ReturnType<typeof issueTree>, identifier: string)
   const index = rows.findIndex(row => row.identifier === identifier);
   return index >= 0 && (rows[index + 1]?.depth ?? 0) > rows[index]!.depth;
 }
-watch(() => state.value.binding?.project.id, () => { collapsedIssues.value = new Set(); });
+watch(() => state.value.binding?.project.id, (project, previous) => {
+  collapsedIssues.value = new Set();
+  if (previous && project !== previous) { editorDrafts.clear(); showEditor.value = false; editorSubmission = null; editorKey.value = ""; }
+});
 const boardRegion = ref<HTMLElement | null>(null);
 const statusNavigation = computed(() => columns.value.map(column => ({ key: column.key, display_name: column.display_name || column.key, loaded: column.items.length, has_more: column.has_more, target_id: `embedded-column-${column.key}` })));
 const loadingColumn = ref<Status | null>(null);
@@ -264,6 +356,7 @@ async function recover() {
   const operation = state.value.pending?.operation;
   const result = await send("recover", {});
   if (result.ok && !result.outcome_unknown) {
+    if (!state.value.pending && (operation === "create" || operation === "update")) confirmEditor();
     if (operation === "comment") comment.value = "";
     if (operation === "complete" && reconcileCompletedDraft(completion, state.value.issue, result)) showCompletion.value = false;
   }
@@ -280,13 +373,16 @@ async function complete() {
   <UApp :locale="locale === 'zh-CN' ? zh_cn : en" :toaster="null">
     <main class="embedded-workbench">
       <header class="embedded-header">
-        <div class="embedded-brand"><img :src="logo" alt="" width="28" height="28"><strong>cfKanban</strong><ProjectSwitcherMenu v-if="state.binding" :title="name(state.binding.project)" :opened="projectMenuOpen" :search="projectSearch" :groups="projectGroups" :busy="busy" :disabled="busy || pending" @open="openProjectMenu" @close="projectMenuOpen = false" @search="projectSearch = $event" @select="chooseProject" @retry="openProjectMenu"><template #footer><div class="embedded-actions"><UButton v-if="state.scope_mode === 'suggested' && state.scope_next_offset !== null" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="send('scope_page', { next: true })">{{ e('more') }}</UButton><UButton color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="projectMenuOpen = false; send('unbind', {})">{{ e('manual') }}</UButton></div></template></ProjectSwitcherMenu><UBadge v-else color="neutral" variant="subtle" size="xs">{{ e('setup') }}</UBadge></div>
-        <div v-if="state.binding" class="embedded-actions"><LocaleSwitch managed :disabled="busy || pending" @change="changeLocale" /><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="`${e('identity')} · ${principal?.display_name || ''}`" :aria-label="e('identity')" :aria-expanded="showIdentity" aria-controls="embedded-identity" @click="showIdentity = !showIdentity"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></svg></UButton><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="e('refresh')" :aria-label="e('refresh')" :disabled="busy" @click="refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7" /></svg></UButton></div>
+        <div class="embedded-brand"><img :src="logo" alt="" width="28" height="28"><strong>cfKanban</strong><ProjectSwitcherMenu v-if="state.binding" :title="name(state.binding.project)" :opened="projectMenuOpen" :search="projectSearch" :groups="projectGroups" :busy="busy" :error="state.project_menu_error ? `${e('failed')} (${state.project_menu_error.code})` : undefined" :disabled="busy || pending" @open="openProjectMenu" @close="projectMenuOpen = false" @search="projectSearch = $event" @select="chooseProject" @retry="retryProjectMenu">
+          <template #group-action="{ group }"><div v-if="projectMenuGroup(group.id)" class="embedded-actions"><UButton v-if="projectMenuGroup(group.id)?.error" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" :title="projectMenuGroup(group.id)?.error?.code" @click="loadProjectMenu(group.id, Boolean(projectMenuGroup(group.id)?.has_more))">{{ e('retry') }}</UButton><UButton v-else-if="projectMenuGroup(group.id)?.has_more" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="loadProjectMenu(group.id, true)">{{ locale === 'zh-CN' ? '下一页项目' : 'Next projects' }}</UButton></div></template>
+          <template #footer><div class="embedded-actions"><UButton v-if="state.project_menu_has_more" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="loadProjectMenu(undefined, true)">{{ locale === 'zh-CN' ? '下一页工作区' : 'Next workspaces' }}</UButton><UButton v-if="projectMenuAdvanced" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="openProjectMenu">{{ locale === 'zh-CN' ? '返回首页' : 'First page' }}</UButton><UButton color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="projectMenuOpen = false; send('unbind', {})">{{ e('manual') }}</UButton></div></template>
+        </ProjectSwitcherMenu><UBadge v-else color="neutral" variant="subtle" size="xs">{{ e('setup') }}</UBadge></div>
+        <div v-if="state.binding" class="embedded-actions"><UButton v-if="state.capabilities.create" type="button" size="sm" :disabled="busy || pending" @click="openEditor('create')">{{ locale === 'zh-CN' ? '新建事项' : 'New Issue' }}</UButton><LocaleSwitch managed :disabled="busy || pending" @change="changeLocale" /><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="`${e('identity')} · ${principal?.display_name || ''}`" :aria-label="e('identity')" :aria-expanded="showIdentity" aria-controls="embedded-identity" @click="showIdentity = !showIdentity"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v1" /></svg></UButton><UButton color="neutral" variant="ghost" size="sm" class="embedded-icon-button" :title="e('refresh')" :aria-label="e('refresh')" :disabled="busy" @click="refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7" /></svg></UButton></div>
       </header>
 
-      <p v-if="!connected" class="embedded-empty" role="status">{{ e('waiting') }}</p>
-      <template v-else>
-        <div v-if="errorCode" class="embedded-alert" role="alert"><p>{{ errorText }}</p><code>{{ errorCode }}</code></div>
+      <div v-if="errorCode" class="embedded-alert" role="alert"><p>{{ errorText }}</p><code>{{ errorCode }}</code></div>
+      <p v-if="!connected && !errorCode" class="embedded-empty" role="status">{{ e('waiting') }}</p>
+      <template v-if="connected">
         <div v-if="state.pending" class="embedded-recovery" role="status">
           <strong>{{ e(busy ? 'saving' : 'pending') }}</strong>
           <dl><template v-if="state.pending"><dt>{{ e('version') }}</dt><dd>{{ state.pending.expected_version ?? state.pending.version }} · {{ state.pending.identifier }}</dd></template></dl>
@@ -311,7 +407,7 @@ async function complete() {
             <p v-else-if="state.workspace_scope?.status === 'invalid'" class="embedded-muted">{{ e('scopeInvalid') }}</p>
             <p v-else-if="state.workspace_scope?.status === 'missing'" class="embedded-muted">{{ e('scopeMissing') }}</p>
             <h2>{{ e('connection') }}</h2>
-            <p v-if="!state.candidates.length && !state.identity" class="embedded-muted">{{ e('noConnections') }}</p>
+            <p v-if="!errorCode && !state.candidates.length && !state.identity" class="embedded-muted">{{ e('noConnections') }}</p>
             <div class="embedded-choice-list"><UButton v-for="candidate in state.candidates" :key="candidate.instance_id!" color="neutral" variant="outline" class="embedded-choice" :disabled="busy || pending" @click="selectInstance(candidate.instance_id!)">{{ name(candidate) }}</UButton></div>
             <template v-if="state.identity">
               <h2>{{ e('workspace') }}</h2>
@@ -375,7 +471,7 @@ async function complete() {
                     <button v-if="hasTreeChildren(group.rows, row.identifier)" class="embedded-tree-toggle" type="button" :aria-label="`${collapsedIssues.has(`${group.key}:${row.identifier}`) ? (locale === 'zh-CN' ? '展开子事项' : 'Expand sub-issues') : (locale === 'zh-CN' ? '折叠子事项' : 'Collapse sub-issues')} · ${row.identifier}`" :aria-expanded="!collapsedIssues.has(`${group.key}:${row.identifier}`)" @click="toggleIssue(`${group.key}:${row.identifier}`)"><span class="embedded-child-disclosure" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M4 8h8" /><path v-if="collapsedIssues.has(`${group.key}:${row.identifier}`)" d="M8 4v8" /></svg></span></button>
                     <span v-else class="embedded-tree-toggle-placeholder" />
                     <IssueCard v-if="row.issue" :issue="row.issue" :show-parent="false" :statuses="statusItems" :assignees="candidates" :assignees-has-more="!!state.assignees_has_more" :loading="peopleLoading" :disabled="busy || pending" @open="identifier => send('open_issue', { identifier })" @update="quickUpdate" @complete="quickComplete" @people="loadPeople" />
-                    <div v-else-if="row.context" class="embedded-parent-context"><span class="embedded-identifier">{{ row.identifier }}</span><button v-if="row.context.project_id === state.binding.project.id" type="button" :disabled="busy || pending" @click="send('open_issue', { identifier: row.identifier })">{{ row.context.title }}</button><span v-else class="embedded-context-title">{{ row.context.title }}</span><IssueChildrenProgress :progress="row.contextProgress" /><span class="embedded-context-status">{{ row.context.status.display_name || row.context.status.key }} · {{ locale === 'zh-CN' ? '父事项' : 'Parent' }}</span></div>
+                    <div v-else-if="row.context" class="embedded-parent-context"><span class="embedded-identifier">{{ row.identifier }}</span><button v-if="row.context.project_id === state.binding.project.id" type="button" :disabled="busy || pending" @click="send('open_issue', { identifier: row.identifier })">{{ row.context.title }}</button><span v-else class="embedded-context-title">{{ row.context.title }}</span><IssueChildrenProgress :progress="row.contextProgress" /><span class="embedded-context-status">{{ statusDisplayName(row.context.status, locale) }} · {{ locale === 'zh-CN' ? '父事项' : 'Parent' }}</span></div>
                     <span v-if="row.cycle" class="embedded-tree-warning" role="status">{{ locale === 'zh-CN' ? '父子关系存在循环，已停止展开' : 'Cyclic parent relation; expansion stopped' }}</span>
                   </div>
                   <p v-if="group.loaded !== false && !group.items.length && !group.loading && !group.error" class="embedded-empty">{{ e('emptyColumn') }}</p>
@@ -394,8 +490,8 @@ async function complete() {
           <article v-else class="embedded-detail">
             <UButton type="button" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="send('issue_back', {})">← {{ e('back') }}</UButton>
             <IssueDetailHeader :identifier="state.issue.identifier" :title="state.issue.title">
-                  <IssueMetadataSummary :status-key="state.issue.status.key" :status-label="state.issue.status.display_name || state.issue.status.key" :priority="state.issue.priority" :assignee-name="state.issue.assignee?.display_name" />
-              <template #actions><IssueShare :identifier="state.issue.identifier" :origin="verifiedOrigin" /></template>
+                  <IssueMetadataSummary :status-key="state.issue.status.key" :status-label="statusDisplayName(state.issue.status, locale)" :priority="state.issue.priority" :assignee-name="state.issue.assignee?.display_name" />
+              <template #actions><UButton v-if="state.capabilities.update" type="button" color="neutral" variant="ghost" size="sm" :disabled="busy || pending" @click="openEditor('edit')">{{ locale === 'zh-CN' ? '编辑事项' : 'Edit Issue' }}</UButton><IssueShare :identifier="state.issue.identifier" :origin="verifiedOrigin" /></template>
             </IssueDetailHeader>
 
             <IssueDetailLayout properties-id="embedded-properties" :properties-label="e('properties')">
@@ -422,7 +518,7 @@ async function complete() {
 
               <template #properties>
                 <dl class="issue-property-list">
-                  <div><dt>{{ e('status') }}</dt><dd><select v-if="state.capabilities.update" :aria-label="e('status')" :value="state.issue.status.key" :disabled="busy || pending" @change="statusChanged"><option v-for="status in statusItems" :key="status.key" :value="status.key" :disabled="status.key === 'done' && !state.capabilities.complete">{{ status.display_name || status.name || status.key }}</option></select><span v-else>{{ state.issue.status.display_name || state.issue.status.key }}</span></dd></div>
+                  <div><dt>{{ e('status') }}</dt><dd><select v-if="state.capabilities.update" :aria-label="e('status')" :value="state.issue.status.key" :disabled="busy || pending" @change="statusChanged"><option v-for="status in statusItems" :key="status.key" :value="status.key" :disabled="status.key === 'done' && !state.capabilities.complete">{{ status.display_name || status.name || status.key }}</option></select><span v-else>{{ statusDisplayName(state.issue.status, locale) }}</span></dd></div>
                   <div><dt>{{ e('priority') }}</dt><dd><PrioritySelect v-if="state.capabilities.update" :value="state.issue.priority" :label="e('priority')" :disabled="busy || pending" @change="updateDetail({ priority_key: $event })" /><span v-else>{{ priorityText(state.issue.priority, locale === 'zh-CN') }}</span></dd></div>
                   <div><dt>{{ t('issue.assignee') }}</dt><dd><AssigneeMenu v-if="state.capabilities.update" :assignee="detailAssignee" :candidates="candidates" :has-more="!!state.assignees_has_more" :loading="peopleLoading" :disabled="(busy && !peopleLoading) || pending" @open="loadPeople(false)" @load-more="loadPeople(true)" @select="updateDetail({ assignee_principal_id: $event })" /><span v-else>{{ state.issue.assignee?.display_name || e('unassigned') }}</span></dd></div>
                   <div class="embedded-labels"><dt>{{ t('issue.labels') }}</dt><dd>
@@ -456,7 +552,7 @@ async function complete() {
                     <summary>{{ e('completionEvidence') }}</summary>
                     <div class="embedded-form">
                       <label for="embedded-verification">{{ e('verification') }}</label><UTextarea id="embedded-verification" v-model="completion.verification" :rows="3" :disabled="busy || pending" class="embedded-field" />
-                      <label>{{ e('artifactKind') }}<select v-model="completion.artifactKind" :disabled="busy || pending"><option value="path">path</option><option value="url">url</option><option value="commit">commit</option><option value="other">other</option></select></label>
+                      <label>{{ e('artifactKind') }}<select v-model="completion.artifactKind" :disabled="busy || pending"><option value="path">{{ artifactKindLabel('path', locale) }}</option><option value="url">{{ artifactKindLabel('url', locale) }}</option><option value="commit">{{ artifactKindLabel('commit', locale) }}</option><option value="other">{{ artifactKindLabel('other', locale) }}</option></select></label>
                       <label for="embedded-artifacts">{{ e('artifacts') }}</label><UTextarea id="embedded-artifacts" v-model="completion.artifacts" :rows="2" :disabled="busy || pending" class="embedded-field" />
                       <label for="embedded-followups">{{ e('followUps') }}</label><UTextarea id="embedded-followups" v-model="completion.followUps" :rows="2" :disabled="busy || pending" class="embedded-field" />
                     </div>
@@ -467,6 +563,22 @@ async function complete() {
             </UModal>
           </article>
         </template>
+        <UModal v-if="showEditor" :open="true" :title="editorTitle" :description="locale === 'zh-CN' ? '正文支持 Markdown，保存到当前项目。' : 'The body supports Markdown and is saved to the current Project.'" :dismissible="!busy && !pending" :close="{ type: 'button', disabled: busy || pending, 'aria-label': t('action.cancel') }" :ui="{ content: 'embedded-completion-modal', header: 'embedded-modal-header', body: 'embedded-modal-body', footer: 'embedded-modal-footer' }" @update:open="!$event && !busy && !pending && (showEditor = false)" @after:enter="focusEditor">
+          <template #body>
+            <div v-if="errorCode" class="embedded-alert" role="alert"><p>{{ errorText }}</p><code>{{ errorCode }}</code></div>
+            <div v-if="state.pending" class="embedded-recovery" role="status"><p>{{ e(busy ? 'saving' : 'pending') }}</p><UButton type="button" size="sm" :disabled="busy || state.session_context_changed" @click="recover">{{ e('recover') }}</UButton></div>
+            <section class="embedded-form" role="form" :aria-label="editorTitle">
+              <label for="embedded-issue-title">{{ locale === 'zh-CN' ? '标题' : 'Title' }}</label><input id="embedded-issue-title" v-model="editorDraft.title" type="text" maxlength="256" required :disabled="busy || pending" class="embedded-field rounded-md border border-default bg-default px-3 py-2 text-sm" />
+              <label for="embedded-issue-body">{{ e('body') }} · Markdown</label><UTextarea id="embedded-issue-body" v-model="editorDraft.body" :rows="8" :maxlength="65536" :disabled="busy || pending" class="embedded-field" />
+              <p v-if="editorBodyBytes > 65536" class="embedded-muted" role="alert">{{ locale === 'zh-CN' ? '正文不能超过 65,536 UTF-8 字节。' : 'The body cannot exceed 65,536 UTF-8 bytes.' }}</p>
+              <template v-if="editorDraft.mode === 'create'">
+                <label for="embedded-new-status">{{ e('status') }}</label><select id="embedded-new-status" v-model="editorDraft.status_key" :disabled="busy || pending"><option v-for="status in statusItems.filter(value => value.key !== 'done')" :key="status.key" :value="status.key">{{ status.display_name || status.name || status.key }}</option></select>
+                <label for="embedded-new-priority">{{ e('priority') }}</label><select id="embedded-new-priority" v-model="editorDraft.priority_key" :disabled="busy || pending"><option v-for="priority in priorityOrder" :key="priority" :value="priority">{{ priorityText(priority, locale === 'zh-CN') }}</option></select>
+              </template>
+            </section>
+          </template>
+          <template #footer><UButton type="button" color="neutral" variant="outline" :disabled="busy || pending" @click="showEditor = false">{{ t('action.cancel') }}</UButton><UButton type="button" :disabled="busy || pending || !editorValid" @click="saveEditor">{{ editorDraft.mode === 'create' ? locale === 'zh-CN' ? '新建事项' : 'Create Issue' : e('save') }}</UButton></template>
+        </UModal>
         <p v-if="busy" class="embedded-loading" aria-live="polite">{{ e('loading') }}</p>
       </template>
     </main>

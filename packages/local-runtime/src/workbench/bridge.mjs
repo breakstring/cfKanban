@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { PANEL_PROTOCOL, PanelError, record, uuid, identifier, boundedText, canonical, STATUSES, PRIORITIES, scopeFailureCode } from './shared.mjs';
+import { PANEL_PROTOCOL, PanelError, record, uuid, identifier, boundedText, canonical, STATUSES, PRIORITIES, scopeFailureCode, canCreateIssue } from './shared.mjs';
 import { readWorkspaceScope } from './scope.mjs';
 import { validateCheckpoint } from './checkpoint.mjs';
 
 const ok = data => ({ ok: true, status: 200, data });
 const fail = (code, message, details = {}) => ({ ok: false, status: 400, error: { code, message, details } });
-const operationPending = operation => !operation.settled || (operation.result?.ok && !operation.readback);
+const operationPending = operation => operation.running || !operation.settled || (operation.result?.ok && !operation.readback);
 const operationResult = (operation, result, readback = operation.readback ?? null) => ({ ...result, panel: { readback, recovery_required: !operation.settled || (operation.stage === 'sent' && !readback), original_settled: operation.settled, write_stage: operation.stage, idempotency_key: operation.original.idempotency_key } });
 const dataOf = result => {
   if (!result?.ok) throw new PanelError(result?.error?.code ?? 'PANEL_FOUNDATION_UNAVAILABLE', result?.error?.message ?? 'cfKanban foundation is unavailable.', result?.error?.details ?? {});
@@ -29,12 +29,14 @@ export class WorkbenchBridge {
     this.now = now;
     this.timeoutMs = timeoutMs;
     this.bindings = new Map();
+    this.replacement = null;
     this.lifetime = new AbortController();
   }
 
   dispose() {
     this.lifetime.abort();
     this.bindings.clear();
+    this.replacement = null;
   }
 
   async call(endpoint, payload, signal, peer) {
@@ -61,7 +63,24 @@ export class WorkbenchBridge {
     uuid(input.binding_id, 'binding_id');
     const binding = this.bindings.get(input.binding_id);
     if (!binding || (this.now() - binding.created > 8 * 60 * 60 * 1000 && !this.hasPending(binding))) throw new PanelError('PANEL_BINDING_EXPIRED', 'Select and verify your Instance, Principal and Project again.');
+    if (this.replacement?.next === input.binding_id) {
+      this.requireCleanReplacement();
+      // 新引用的首次请求证明客户端已经收到绑定；旧引用请求不能确认交付。
+      this.bindings.delete(this.replacement.previous);
+      this.replacement = null;
+    }
     return binding;
+  }
+
+  requireCleanReplacement() {
+    if (this.replacement && [this.replacement.previous, this.replacement.next].some(id => { const binding = this.bindings.get(id); return binding && this.hasPending(binding); })) throw new PanelError('PANEL_OPERATION_PENDING', 'Resolve the retained operation before changing the binding.');
+  }
+
+  discardUnconfirmedReplacement() {
+    if (!this.replacement) return;
+    this.requireCleanReplacement();
+    this.bindings.delete(this.replacement.next);
+    this.replacement = null;
   }
 
   hasPending(binding) {
@@ -152,16 +171,22 @@ export class WorkbenchBridge {
       return this.facade().callTool('cfkanban_connection_inspect', input, { signal });
     }
     if (endpoint === 'workspaces' || endpoint === 'projects') {
-      record(input, ['instance_id', 'expected_principal_id', 'workspace_id', 'cursor'], ['instance_id', 'expected_principal_id', ...(endpoint === 'projects' ? ['workspace_id'] : [])]);
-      const args = { limit: 50 };
+      record(input, ['instance_id', 'expected_principal_id', 'workspace_id', 'cursor', 'limit'], ['instance_id', 'expected_principal_id', ...(endpoint === 'projects' ? ['workspace_id'] : [])]);
+      const limit = input.limit ?? 50;
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid discovery page size.');
+      const args = { limit };
       if (input.cursor !== undefined) args.cursor = boundedText(input.cursor, 4096, 'cursor');
       if (endpoint === 'projects') args.workspace_id = uuid(input.workspace_id, 'workspace_id');
       return this.discovery(input, endpoint === 'projects' ? 'cfkanban_projects_list' : 'cfkanban_workspaces_list', args, signal);
     }
     if (endpoint === 'bind') {
-      record(input, ['instance_id', 'expected_principal_id', 'workspace_id', 'project_id'], ['instance_id', 'expected_principal_id', 'workspace_id', 'project_id']);
+      record(input, ['instance_id', 'expected_principal_id', 'workspace_id', 'project_id', 'replace_binding_id'], ['instance_id', 'expected_principal_id', 'workspace_id', 'project_id']);
       Object.entries(input).forEach(([key, value]) => uuid(value, key));
-      if (this.bindings.size >= 128) throw new PanelError('PANEL_CAPACITY', 'Close and restart this panel Host before binding more Projects.');
+      const previous = input.replace_binding_id ? this.binding({ binding_id: input.replace_binding_id }) : null;
+      if (previous && (previous.instance_id !== input.instance_id || previous.principal_id !== input.expected_principal_id)) throw new PanelError('PANEL_SCOPE_DENIED', 'Project switching must retain the verified identity.');
+      if (previous && this.hasPending(previous)) throw new PanelError('PANEL_OPERATION_PENDING', 'Resolve the retained operation before changing the binding.');
+      this.requireCleanReplacement();
+      if (this.bindings.size - Number(Boolean(this.replacement)) >= 128) throw new PanelError('PANEL_CAPACITY', 'Close and restart this panel Host before binding more Projects.');
       const binding = { instance_id: input.instance_id, principal_id: input.expected_principal_id, project_id: input.project_id, workspace_id: input.workspace_id, created: this.now(), operations: new Map() };
       const identity = dataOf(await this.tool(binding, 'cfkanban_connection_inspect', {}, signal));
       if ((identity.principal?.principal_id ?? identity.principal?.id) !== binding.principal_id) throw new PanelError('PANEL_IDENTITY_CHANGED', 'The Host identity changed. Select it again.');
@@ -170,13 +195,21 @@ export class WorkbenchBridge {
       binding.statuses = [...new Map((Array.isArray(statuses) ? statuses : statuses.items ?? statuses.statuses ?? []).filter(row => STATUSES.includes(row.key)).map(row => [row.key, row])).values()].slice(0, STATUSES.length);
       binding.trusted_api_origin = identity.instance?.trusted_api_origin;
       const binding_id = randomUUID();
+      signal.throwIfAborted();
+      if (previous && this.bindings.get(input.replace_binding_id) !== previous) throw new PanelError('PANEL_BINDING_EXPIRED', 'The previous Project binding is no longer available.');
+      if (previous && this.hasPending(previous)) throw new PanelError('PANEL_OPERATION_PENDING', 'Resolve the retained operation before changing the binding.');
+      this.requireCleanReplacement();
+      if (this.bindings.size - Number(Boolean(this.replacement)) >= 128) throw new PanelError('PANEL_CAPACITY', 'Close and restart this panel Host before binding more Projects.');
+      this.discardUnconfirmedReplacement();
       this.bindings.set(binding_id, binding);
+      if (previous) this.replacement = { previous: input.replace_binding_id, next: binding_id };
       return ok({ binding_id, identity, project, statuses, local_only: true });
     }
     if (endpoint === 'unbind') {
       record(input, ['binding_id'], ['binding_id']);
       const binding = this.binding(input);
       if (this.hasPending(binding)) throw new PanelError('PANEL_OPERATION_PENDING', 'Resolve the retained operation before changing the binding.', { outcome_unknown: true });
+      if (this.replacement?.previous === input.binding_id) this.discardUnconfirmedReplacement();
       this.bindings.delete(input.binding_id);
       return ok({ unbound: true });
     }
@@ -256,24 +289,27 @@ export class WorkbenchBridge {
   }
 
   async mutate(endpoint, input, signal) {
-    record(input, ['binding_id', 'identifier', 'operation', 'expected_version', 'idempotency_key', 'change'], ['binding_id', 'operation', 'expected_version', 'idempotency_key', 'change']);
+    record(input, ['binding_id', 'identifier', 'operation', 'expected_version', 'idempotency_key', 'change'], ['binding_id', 'operation', 'idempotency_key', 'change']);
     const binding = this.binding(input);
     const profile = input.operation === 'set_locale';
-    if (profile) { if (Object.hasOwn(input, 'identifier')) throw new PanelError('PANEL_INVALID_INPUT', 'A language preference belongs only to the bound Principal.'); }
+    const create = input.operation === 'create';
+    if (profile || create) { if (Object.hasOwn(input, 'identifier') || create && Object.hasOwn(input, 'expected_version')) throw new PanelError('PANEL_INVALID_INPUT', 'This operation does not accept an Issue identifier or creation version.'); }
     else identifier(input.identifier);
     uuid(input.idempotency_key, 'idempotency_key');
-    if (!Number.isSafeInteger(input.expected_version) || input.expected_version < 1) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid version.');
+    if (!create && (!Number.isSafeInteger(input.expected_version) || input.expected_version < 1)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid version.');
     const change = input.change;
     let name;
     if (profile) {
       record(change, ['locale'], ['locale']);
       if (!['en', 'zh-CN'].includes(change.locale)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid language preference.');
       name = 'cfkanban_profile_locale_set';
-    } else if (input.operation === 'update') {
-      record(change, ['status_key', 'priority_key', 'assignee_principal_id']);
+    } else if (input.operation === 'update' || create) {
+      record(change, create ? ['title', 'body', 'status_key', 'priority_key'] : ['title', 'body', 'status_key', 'priority_key', 'assignee_principal_id'], create ? ['title'] : []);
       if (!Object.keys(change).length || (change.status_key !== undefined && (!STATUSES.includes(change.status_key) || change.status_key === 'done')) || (change.priority_key !== undefined && !PRIORITIES.includes(change.priority_key))) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid Issue change.');
       if (change.assignee_principal_id !== undefined && change.assignee_principal_id !== null) uuid(change.assignee_principal_id, 'assignee');
-      name = 'cfkanban_issues_update';
+      if (change.title !== undefined) boundedText(change.title, 256, 'title');
+      if (change.body !== undefined && (typeof change.body !== 'string' || new TextEncoder().encode(change.body).length > 65_536)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid Issue body.');
+      name = create ? 'cfkanban_issues_create' : 'cfkanban_issues_update';
     } else if (['label_add', 'label_remove'].includes(input.operation)) {
       record(change, ['label_id'], ['label_id']);
       uuid(change.label_id, 'label');
@@ -290,8 +326,17 @@ export class WorkbenchBridge {
       for (const artifact of change.artifacts ?? []) { record(artifact, ['kind', 'value'], ['kind', 'value']); if (!['url', 'commit', 'path', 'other'].includes(artifact.kind)) throw new PanelError('PANEL_INVALID_INPUT', 'Invalid artifact kind.'); boundedText(artifact.value, 2048, 'artifact'); }
       name = 'cfkanban_issues_complete';
     } else throw new PanelError('PANEL_INVALID_INPUT', 'Invalid operation.');
-    const args = { ...(profile ? {} : { identifier: input.identifier }), idempotency_key: input.idempotency_key, ...(input.operation === 'update' ? { expected_version: input.expected_version, changes: change } : input.operation === 'comment' ? change : { expected_version: input.expected_version, ...change }) };
-    const readCurrent = () => this.tool(binding, profile ? 'cfkanban_connection_inspect' : 'cfkanban_issues_get', profile ? {} : { identifier: input.identifier }, signal);
+    const args = { ...(profile ? {} : create ? { workspace_id: binding.workspace_id, project_id: binding.project_id } : { identifier: input.identifier }), idempotency_key: input.idempotency_key, ...(input.operation === 'update' ? { expected_version: input.expected_version, changes: change } : create || input.operation === 'comment' ? change : { expected_version: input.expected_version, ...change }) };
+    const readCurrent = async () => {
+      if (!create) return this.tool(binding, profile ? 'cfkanban_connection_inspect' : 'cfkanban_issues_get', profile ? {} : { identifier: input.identifier }, signal);
+      const identity = await this.tool(binding, 'cfkanban_connection_inspect', {}, signal);
+      if (!identity.ok) return identity;
+      const project = await this.tool(binding, 'cfkanban_projects_get', { workspace_id: binding.workspace_id, project_id: binding.project_id }, signal);
+      if (!project.ok) return project;
+      const createdIdentifier = operation?.result?.ok ? operation.result.data?.resource?.identifier : null;
+      if (createdIdentifier) return this.tool(binding, 'cfkanban_issues_get', { identifier: identifier(createdIdentifier) }, signal);
+      return { ...project, data: { ...project.data, allowed_actions: canCreateIssue(identity.data.principal, binding) ? ['create_issue'] : [] } };
+    };
     const fingerprint = canonical({ name, args });
     let operation = binding.operations.get(input.idempotency_key);
     if (operation && (operation.fingerprint !== fingerprint || canonical(operation.original) !== canonical(input))) throw new PanelError('PANEL_KEY_REUSED', 'The original key belongs to a different operation.');
@@ -329,8 +374,8 @@ export class WorkbenchBridge {
           }
           const resource = profile ? preflight.data.principal : preflight.data;
           if (profile && (resource?.principal_id ?? resource?.id) !== binding.principal_id) throw new PanelError('PANEL_IDENTITY_CHANGED', 'The Host identity changed. Select it again.');
-          if (!profile && !resource.allowed_actions?.includes('update')) throw new PanelError('PANEL_PERMISSION_DENIED', 'Refresh the Issue and verify writer permission.');
-          if (original.operation !== 'comment' && resource?.version !== original.expected_version) throw new PanelError('PANEL_VERSION_CONFLICT', 'The resource changed. Refresh and review it before starting another operation.', { current_version: resource?.version });
+          if (!profile && !resource.allowed_actions?.includes(create ? 'create_issue' : 'update')) throw new PanelError('PANEL_PERMISSION_DENIED', 'Refresh the resource and verify writer permission.');
+          if (!create && original.operation !== 'comment' && resource?.version !== original.expected_version) throw new PanelError('PANEL_VERSION_CONFLICT', 'The resource changed. Refresh and review it before starting another operation.', { current_version: resource?.version });
         } catch (error) {
           operation.settled = error instanceof PanelError && ['PANEL_PERMISSION_DENIED', 'PANEL_VERSION_CONFLICT', 'PANEL_SCOPE_DENIED'].includes(error.code);
           operation.result = operationResult(operation, operation.settled ? fail(error.code, error.message, error.details) : fail('PANEL_REQUEST_UNCERTAIN', 'Permission pre-read interrupted or unavailable. No write was sent; recover the original request explicitly.'));

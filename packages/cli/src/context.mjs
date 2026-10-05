@@ -216,6 +216,7 @@ export function createContextResolver({ home, stateRoot, directory = process.cwd
     }
     return { ok: true, status: 200, resolved_context: resolved.resolved_context, data: {
       resolved_context: resolved.resolved_context, status: resolved.status, git: resolved.detected.git,
+      workbench_context_key: resolved.detected.workbench_context_key ?? null,
       scope_file: resolved.detected.scope_file, repo_targets: resolved.detected.scope?.targets ?? [],
       saved_context: input.global ? resolved.global : resolved.local, global_context: resolved.global,
       ...(resolved.candidates ? { candidates: resolved.candidates } : {}), ...(action === 'use' ? { saved: true, global: input.global === true } : {}),

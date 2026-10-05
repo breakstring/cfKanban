@@ -28,7 +28,7 @@ function paginationController(reply, view = 'board') {
   controller.patch({ binding, expanded_groups: ["todo"] });
   return { controller, calls, binding };
 }
-function fixture({ reader = false, uncertain = false, locale = null, theme = 'orange', uncertainPreference = false, uncertainLabel = false } = {}) {
+function fixture({ reader = false, uncertain = false, locale = null, theme = 'orange', uncertainPreference = false, uncertainLabel = false, uncertainCreate = false } = {}) {
   const ids = { instance_id: randomUUID(), workspace_id: randomUUID(), project_id: randomUUID(), principal_id: randomUUID() };
   const person = { principal_id: randomUUID(), display_name: 'Public writer' };
   const label = { id: randomUUID(), name: 'Existing project label' };
@@ -37,6 +37,7 @@ function fixture({ reader = false, uncertain = false, locale = null, theme = 'or
   let issue = { id: randomUUID(), identifier: 'CFK-1', title: 'Work', version: 3, priority: 'none', status: { key: 'todo', display_name: 'Todo' }, project: { id: ids.project_id }, workspace: { id: ids.workspace_id }, allowed_actions: reader ? ['read'] : ['read', 'update'], comments: [], labels: [] };
   const preferenceReceipts = new Map();
   const labelReceipts = new Map();
+  const createReceipts = new Map();
   let unknown = uncertain;
   let denied = false;
   let scopeReads = 0;
@@ -47,7 +48,7 @@ function fixture({ reader = false, uncertain = false, locale = null, theme = 'or
     calls.push({ name, args, config });
     if (denied) return { ok: false, status: 403, error: { code: 'CAPABILITY_DENIED' } };
     if (name === 'cfkanban_connection_inspect') return ok({ instance: { instance_id: ids.instance_id, trusted_api_origin: 'https://isolated.fixture.invalid' }, principal: structuredClone(principal) });
-    if (name === 'cfkanban_projects_get') return ok({ id: ids.project_id, display_name: 'Project' });
+    if (name === 'cfkanban_projects_get') return ok({ id: ids.project_id, workspace_id: ids.workspace_id, display_name: 'Project' });
     if (name === 'cfkanban_statuses_list') return ok({ items: STATUSES.map(key => ({ key, display_name: key })) });
     if (name === 'cfkanban_issues_list') return ok({ items: !args.status || args.status.includes(issue.status.key) ? [structuredClone(issue)] : [], next_cursor: args.status?.includes('todo') && !args.cursor ? 'private-column-cursor' : null });
     if (name === 'cfkanban_issues_get') return ok(structuredClone(issue));
@@ -75,8 +76,16 @@ function fixture({ reader = false, uncertain = false, locale = null, theme = 'or
     }
     if (name === 'cfkanban_issues_update') {
       if (unknown) { unknown = false; return { ok: false, status: 0, outcome_unknown: true, error: { code: 'NETWORK_ERROR' } }; }
-      issue = { ...issue, version: issue.version + 1, priority: args.changes.priority_key ?? issue.priority, status: args.changes.status_key ? { key: args.changes.status_key, display_name: args.changes.status_key } : issue.status, assignee: args.changes.assignee_principal_id === null ? null : args.changes.assignee_principal_id ? person : issue.assignee };
+      issue = { ...issue, ...(args.changes.title === undefined ? {} : { title: args.changes.title }), ...(args.changes.body === undefined ? {} : { body: args.changes.body }), version: issue.version + 1, priority: args.changes.priority_key ?? issue.priority, status: args.changes.status_key ? { key: args.changes.status_key, display_name: args.changes.status_key } : issue.status, assignee: args.changes.assignee_principal_id === null ? null : args.changes.assignee_principal_id ? person : issue.assignee };
       return ok({ resource: structuredClone(issue) });
+    }
+    if (name === 'cfkanban_issues_create') {
+      if (createReceipts.has(args.idempotency_key)) return createReceipts.get(args.idempotency_key);
+      issue = { ...issue, id: randomUUID(), identifier: 'CFK-2', title: args.title, body: args.body ?? '', priority: args.priority_key ?? 'none', status: { key: args.status_key ?? 'backlog' }, version: 1 };
+      const result = ok({ resource: structuredClone(issue) });
+      createReceipts.set(args.idempotency_key, result);
+      if (uncertainCreate) { uncertainCreate = false; return { ok: false, status: 0, outcome_unknown: true, error: { code: 'NETWORK_ERROR' } }; }
+      return result;
     }
     return ok({ items: [] });
   } }) });
@@ -92,6 +101,264 @@ function interceptFacade(f, intercept) {
     return { callTool: (...args) => intercept(facade, ...args) };
   };
 }
+
+test('a repository-bound project menu discovers every workspace page under the same verified identity without changing the current Issue', async () => {
+  const f = fixture();
+  const otherWorkspace = randomUUID(), otherProject = randomUUID(), finalWorkspace = randomUUID(), finalProject = randomUUID();
+  const discovery = [];
+  interceptFacade(f, async (facade, name, args, options) => {
+    if (name === 'cfkanban_workspaces_list') { discovery.push({ name, args }); return ok({ items: args.cursor ? [{ id: finalWorkspace, display_name: 'Final workspace' }] : [{ id: f.ids.workspace_id, display_name: 'Repository workspace' }, { id: otherWorkspace, display_name: 'Another workspace' }], next_cursor: args.cursor ? null : 'private-workspaces-next' }); }
+    if (name === 'cfkanban_projects_list') { discovery.push({ name, args }); return ok({ items: [{ id: args.workspace_id === otherWorkspace ? otherProject : args.workspace_id === finalWorkspace ? finalProject : f.ids.project_id, display_name: 'Accessible project' }] }); }
+    return facade.callTool(name, args, options);
+  });
+  await f.controller.bootstrap();
+  await f.controller.openIssue('CFK-1');
+  assert.equal(f.controller.state.identity, null, 'scope binding keeps its identity on binding rather than manual setup state');
+  const binding = f.controller.state.binding, issue = f.controller.state.issue, board = f.controller.state.board;
+  await f.controller.projectMenu();
+  assert.equal(f.controller.state.binding, binding);
+  assert.equal(f.controller.state.issue, issue);
+  assert.equal(f.controller.state.board, board);
+  assert.equal(f.controller.state.scope_mode, 'suggested');
+  assert.deepEqual(f.controller.state.project_menu_groups.map(group => group.workspace.id), [f.ids.workspace_id, otherWorkspace]);
+  assert.equal(discovery[0].args.limit, 8);
+  assert.equal(discovery.filter(call => call.name === 'cfkanban_projects_list').length, 2);
+  await f.controller.projectMenu(undefined, true);
+  assert.deepEqual(f.controller.state.project_menu_groups.map(group => group.workspace.id), [finalWorkspace]);
+  const { projectSnapshot } = await adapterExports();
+  const snapshot = projectSnapshot(f.controller.state);
+  assert.equal(snapshot.project_menu_groups[0].projects[0].id, finalProject);
+  assert.equal(JSON.stringify(snapshot).includes('private-workspaces-next'), false);
+  assert.equal(snapshot.project_menu_has_more, false);
+  f.controller.dispose(); f.bridge.dispose();
+});
+
+test('cross-workspace switching rechecks access and atomically replaces only a clean binding, preserving failed targets and clearing previous project state', async () => {
+  const f = fixture();
+  const workspace_id = randomUUID(), project_id = randomUUID();
+  let denied = true;
+  const scoped = [];
+  const createFacade = f.bridge.createFacade;
+  f.bridge.createFacade = config => {
+    scoped.push(config?.binding);
+    const facade = createFacade(config);
+    return { callTool: async (name, args, options) => {
+      if (name === 'cfkanban_workspaces_list') return ok({ items: [{ id: workspace_id, display_name: 'Another workspace' }] });
+      if (name === 'cfkanban_projects_list') return ok({ items: [{ id: project_id, display_name: 'Accessible project' }] });
+      if (name === 'cfkanban_projects_get' && args.project_id === project_id) return denied ? { ok: false, status: 403, error: { code: 'CAPABILITY_DENIED' } } : ok({ id: project_id, workspace_id, display_name: 'New project' });
+      return facade.callTool(name, args, options);
+    } };
+  };
+  await f.controller.bootstrap(); await f.controller.openIssue('CFK-1');
+  const oldBinding = f.controller.state.binding, oldIssue = f.controller.state.issue;
+  await f.controller.projectMenu();
+  assert.equal((await f.controller.switchProject(workspace_id, project_id)).ok, false);
+  assert.equal(f.controller.state.binding, oldBinding);
+  assert.equal(f.controller.state.issue, oldIssue);
+  assert.equal(f.bridge.bindings.size, 1);
+  denied = false;
+  f.controller.patch({ comments: [{ id: randomUUID(), body: 'Old comment' }], filters: { assignment: 'mine', status: 'todo', priority: 'high' } });
+  assert.equal((await f.controller.switchProject(workspace_id, project_id)).ok, true);
+  assert.equal(f.controller.state.binding.project.id, project_id);
+  assert.equal(f.controller.state.workspace_id, workspace_id);
+  assert.equal(f.controller.state.issue, null);
+  assert.deepEqual(f.controller.state.comments, []);
+  assert.deepEqual(f.controller.state.filters, { assignment: 'all', status: '', priority: '' });
+  assert.equal(f.bridge.bindings.size, 1);
+  assert.equal(f.bridge.bindings.has(oldBinding.binding_id), false);
+  assert.ok(scoped.filter(Boolean).every(binding => binding.expected_principal_id === f.ids.principal_id));
+  f.controller.dispose(); f.bridge.dispose();
+});
+
+test('project-menu pages remain bounded, retry failed cursors and reject pagination loops without losing the bound project', async () => {
+  const workspace_id = randomUUID(), project_id = randomUUID();
+  let fail = true;
+  const f = paginationController(async (endpoint, input) => {
+    if (endpoint === 'workspaces') return ok({ items: [{ id: workspace_id, display_name: 'Workspace' }] });
+    if (endpoint === 'projects') {
+      if (input.cursor && fail) { fail = false; return { ok: false, error: { code: 'PLATFORM_UNAVAILABLE' } }; }
+      return ok({ items: [{ id: input.cursor ? project_id : randomUUID(), display_name: 'Project' }], next_cursor: 'same-private-project-cursor' });
+    }
+    return ok({});
+  });
+  await f.controller.projectMenu();
+  const oldProjects = f.controller.state.project_menu_groups[0].projects;
+  await f.controller.projectMenu(workspace_id, true);
+  assert.equal(f.controller.state.project_menu_groups[0].projects, oldProjects);
+  assert.equal(f.controller.state.project_menu_groups[0].project_cursor, 'same-private-project-cursor');
+  await f.controller.projectMenu(workspace_id, true);
+  const group = f.controller.state.project_menu_groups[0];
+  assert.deepEqual(group.projects.map(project => project.id), [project_id]);
+  assert.equal(group.error.code, 'PANEL_PAGINATION_STALLED');
+  assert.equal(group.project_cursor, null);
+  assert.equal(f.controller.state.binding, f.binding);
+  assert.equal(f.calls.filter(call => call.endpoint === 'projects' && call.input.cursor).length, 2);
+  f.controller.dispose();
+});
+
+test('retained writes lock the all-workspace menu and replacement binding, and menu candidates cannot inject another identity or unknown target', async () => {
+  const f = fixture({ uncertain: true });
+  await f.controller.bootstrap(); await f.controller.openIssue('CFK-1');
+  const { WorkbenchAdapter } = await adapterExports();
+  const adapter = new WorkbenchAdapter(f.controller);
+  const binding = f.controller.state.binding;
+  await assert.rejects(adapter.dispatch('project_switch', { workspace_id: randomUUID(), project_id: randomUUID() }));
+  await f.controller.mutate('update', { priority_key: 'high' });
+  assert.ok(f.controller.state.pending);
+  await assert.rejects(adapter.dispatch('project_menu', {}));
+  const result = await f.call('bind', { ...f.controller.identityInput(), workspace_id: f.ids.workspace_id, project_id: f.ids.project_id, replace_binding_id: binding.binding_id });
+  assert.equal(result.error.code, 'PANEL_OPERATION_PENDING');
+  assert.equal(f.controller.state.binding, binding);
+  assert.equal(f.bridge.bindings.size, 1);
+  assert.equal((await f.call('workspaces', { ...f.controller.identityInput(), limit: 1000 })).error.code, 'PANEL_INVALID_INPUT');
+  adapter.dispose(); f.controller.dispose(); f.bridge.dispose();
+});
+
+test('project-menu cache limits page through later authorized projects without accumulating or hiding them', async () => {
+  const workspaces = Array.from({ length: 8 }, (_, index) => ({ id: randomUUID(), display_name: `Workspace ${index}` }));
+  const projects = new Map(workspaces.map(workspace => [workspace.id, Array.from({ length: 150 }, (_, index) => ({ id: randomUUID(), display_name: `Project ${index}` }))]));
+  const f = paginationController(async (endpoint, input) => {
+    if (endpoint === 'workspaces') return ok({ items: workspaces });
+    if (endpoint === 'projects') {
+      const offset = Number(input.cursor ?? 0), all = projects.get(input.workspace_id);
+      return ok({ items: all.slice(offset, offset + input.limit), next_cursor: offset + input.limit < all.length ? String(offset + input.limit) : null });
+    }
+    return ok({});
+  });
+  await f.controller.projectMenu();
+  assert.equal(f.controller.state.project_menu_groups.length, 8);
+  assert.ok(f.controller.state.project_menu_groups.every(group => group.projects.length === 50));
+  const visited = [...f.controller.state.project_menu_groups[0].projects];
+  for (let page = 0; page < 2; page++) {
+    await f.controller.projectMenu(workspaces[0].id, true);
+    const group = f.controller.state.project_menu_groups[0];
+    assert.equal(group.projects.length, 50);
+    visited.push(...group.projects);
+  }
+  assert.deepEqual(visited, projects.get(workspaces[0].id));
+  assert.equal(f.controller.state.project_menu_groups[0].project_cursor, null);
+  assert.equal(f.controller.state.binding, f.binding);
+  f.controller.dispose();
+});
+
+test('late menu pages and cancelled target verification cannot replace a new view binding or discard the original binding', async () => {
+  const workspace_id = randomUUID();
+  let releasePage;
+  const f = paginationController(async endpoint => endpoint === 'workspaces' ? ok({ items: [{ id: workspace_id }] }) : new Promise(resolve => { releasePage = resolve; }));
+  const menu = f.controller.projectMenu();
+  while (!releasePage) await new Promise(resolve => setImmediate(resolve));
+  const newBinding = { ...f.binding, binding_id: randomUUID(), project: { id: randomUUID() } };
+  f.controller.patch({ binding: newBinding });
+  releasePage(ok({ items: [{ id: randomUUID(), display_name: 'Late project' }] }));
+  await menu;
+  assert.equal(f.controller.state.binding, newBinding);
+  assert.deepEqual(f.controller.state.project_menu_groups[0].projects, []);
+  f.controller.dispose();
+
+  const g = fixture();
+  await g.controller.bootstrap();
+  const previous = g.controller.state.binding;
+  let finishRead;
+  interceptFacade(g, async (facade, name, args, options) => name === 'cfkanban_projects_get' ? new Promise(resolve => { finishRead = () => resolve(ok({ id: args.project_id, workspace_id: args.workspace_id })); }) : facade.callTool(name, args, options));
+  const abort = new AbortController();
+  const replacing = g.bridge.call('bind', { protocol: 1, input: { ...g.controller.identityInput(), workspace_id: g.ids.workspace_id, project_id: randomUUID(), replace_binding_id: previous.binding_id } }, abort.signal, g.bridge.host.operator);
+  while (!finishRead) await new Promise(resolve => setImmediate(resolve));
+  abort.abort(); finishRead();
+  assert.equal((await replacing).ok, false);
+  assert.equal(g.bridge.bindings.size, 1);
+  assert.equal(g.bridge.bindings.has(previous.binding_id), true);
+  g.controller.dispose(); g.bridge.dispose();
+});
+
+test('a lost or late successful replacement response retains a working original binding and only one undelivered replacement', async t => {
+  for (const mode of ['lost', 'deadline']) {
+    const f = fixture();
+    t.after(() => { f.controller.dispose(); f.bridge.dispose(); });
+    await f.controller.bootstrap();
+    const previous = f.controller.state.binding, board = f.controller.state.board;
+    const workspace_id = randomUUID(), project_id = randomUUID();
+    interceptFacade(f, (facade, name, args, options) => name === 'cfkanban_projects_get'
+      ? ok({ id: args.project_id, workspace_id: args.workspace_id }) : facade.callTool(name, args, options));
+    f.controller.patch({ project_menu_groups: [{ workspace: { id: workspace_id }, projects: [{ id: project_id }], project_cursor: null, error: null }] });
+    const originalCall = f.controller.rpc.call;
+    const undelivered = [];
+    f.controller.rpc.call = async (endpoint, payload, signal) => {
+      const response = await originalCall(endpoint, payload, signal);
+      if (endpoint !== 'bind' || !payload.input.replace_binding_id || !response.value.ok) return response;
+      undelivered.push(response.value.data.binding_id);
+      if (mode === 'lost') throw new Error('Isolated lost transport reply');
+      return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    };
+    f.controller.requestTimeoutMs = 15;
+    const keepAlive = setTimeout(() => {}, 500);
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const result = await f.controller.switchProject(workspace_id, project_id);
+        assert.equal(result.ok, false);
+        assert.equal(result.error.code, 'PANEL_REQUEST_UNCERTAIN');
+        assert.equal(f.controller.state.binding, previous);
+        assert.equal(f.controller.state.board, board);
+        assert.equal(f.bridge.bindings.size, 2);
+        assert.equal(f.bridge.replacement.next, undelivered.at(-1));
+        assert.equal((await f.call('board', { binding_id: previous.binding_id })).ok, true);
+        assert.equal(f.bridge.bindings.size, 2, 'using the old reference cannot acknowledge delivery');
+      }
+    } finally { clearTimeout(keepAlive); }
+    assert.ok(undelivered.slice(0, -1).every(id => !f.bridge.bindings.has(id)));
+    f.controller.rpc.call = originalCall;
+    f.controller.requestTimeoutMs = 45_000;
+    assert.equal((await f.controller.switchProject(workspace_id, project_id)).ok, true);
+    assert.equal(f.controller.state.binding.project.id, project_id);
+    assert.equal(f.bridge.bindings.size, 1);
+    assert.equal(f.bridge.replacement, null);
+    assert.equal(f.bridge.bindings.has(previous.binding_id), false);
+    assert.ok(undelivered.every(id => !f.bridge.bindings.has(id)));
+  }
+});
+
+test('normal acknowledged project switches do not exhaust binding capacity', async t => {
+  const f = fixture();
+  t.after(() => { f.controller.dispose(); f.bridge.dispose(); });
+  await f.controller.bootstrap();
+  interceptFacade(f, (facade, name, args, options) => name === 'cfkanban_projects_get'
+    ? ok({ id: args.project_id, workspace_id: args.workspace_id }) : facade.callTool(name, args, options));
+  for (let index = 0; index < 140; index++) {
+    const workspace_id = randomUUID(), project_id = randomUUID();
+    f.controller.patch({ project_menu_groups: [{ workspace: { id: workspace_id }, projects: [{ id: project_id }], project_cursor: null, error: null }] });
+    assert.equal((await f.controller.switchProject(workspace_id, project_id)).ok, true);
+    assert.equal(f.bridge.bindings.size, 1);
+    assert.equal(f.bridge.replacement, null);
+  }
+});
+
+test('replacement delivery, eviction and abandonment never discard unknown or running writes on either reference', async t => {
+  for (const side of ['previous', 'next']) {
+    for (const running of [false, true]) {
+      const f = fixture();
+      t.after(() => { f.controller.dispose(); f.bridge.dispose(); });
+      await f.controller.bootstrap();
+      const previous = f.controller.state.binding;
+      const replacement = await f.call('bind', { ...f.controller.identityInput(), workspace_id: f.ids.workspace_id, project_id: f.ids.project_id, replace_binding_id: previous.binding_id });
+      assert.equal(replacement.ok, true);
+      const next = replacement.data.binding_id;
+      const protectedBinding = f.bridge.bindings.get(side === 'previous' ? previous.binding_id : next);
+      protectedBinding.operations.set(randomUUID(), { running, settled: running, result: { ok: false } });
+      for (const [endpoint, input] of [
+        ['board', { binding_id: next }],
+        ['bind', { ...f.controller.identityInput(), workspace_id: f.ids.workspace_id, project_id: f.ids.project_id, replace_binding_id: previous.binding_id }],
+        ['unbind', { binding_id: previous.binding_id }],
+      ]) {
+        assert.equal((await f.call(endpoint, input)).error.code, 'PANEL_OPERATION_PENDING');
+        assert.equal(f.bridge.bindings.size, 2);
+        assert.equal(f.bridge.replacement.next, next);
+      }
+      protectedBinding.operations.clear();
+      assert.equal((await f.call('unbind', { binding_id: previous.binding_id })).ok, true);
+      assert.equal(f.bridge.bindings.size, 0, 'abandonment also retires the never-acknowledged replacement');
+      assert.equal(f.bridge.replacement, null);
+    }
+  }
+});
 
 test('standalone directory scope binds without a fabricated Session and rejects Client paths and removed execution endpoints', async () => {
   const f = fixture();
@@ -178,7 +445,7 @@ test('protocol snapshot preserves unavailable current assignees and never expose
   assert.equal(projected.assignees_has_more, true);
   assert.equal(projected.board.columns.find(column => column.key === 'todo').has_more, true);
   assert.doesNotMatch(JSON.stringify(projected), /private-column-cursor|private-assignee-cursor|binding_id|idempotency_key/);
-  assert.deepEqual(Object.keys(projected.capabilities).sort(), ['comment', 'complete', 'update']);
+  assert.deepEqual(Object.keys(projected.capabilities).sort(), ['comment', 'complete', 'create', 'update']);
   adapter.dispose(); f.controller.dispose(); f.bridge.dispose();
 });
 
@@ -899,6 +1166,27 @@ test('workbench projects only the verified Principal locale and theme, and refre
   } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
 });
 
+test('snapshots without a saved Principal preference leave host detection to the view, and cleared preferences restore the current host locale', async () => {
+  const { WorkbenchAdapter, projectSnapshot } = await adapterExports();
+  const f = fixture(); await f.controller.bootstrap();
+  const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    assert.equal(Object.hasOwn(adapter.snapshotMessage().state, 'locale'), false);
+    assert.equal(Object.hasOwn(projectSnapshot(f.controller.state, null), 'locale'), false);
+    adapter.setLocale('zh-TW');
+    assert.equal(adapter.snapshotMessage().state.locale, 'zh-CN');
+    f.principal.locale = 'en';
+    await f.controller.refresh();
+    assert.equal(adapter.snapshotMessage().state.locale, 'en');
+    adapter.setLocale('zh_CN');
+    assert.equal(adapter.snapshotMessage().state.locale, 'en');
+    f.principal.locale = null;
+    await f.controller.refresh();
+    assert.equal(adapter.snapshotMessage().state.locale, 'zh-CN');
+    assert.equal(f.calls.some(row => row.name === 'cfkanban_profile_locale_set'), false);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+});
+
 test('readers can save only their own language preference with profile CAS and cannot change Issue labels', async () => {
   const f = fixture({ reader: true, theme: 'blue' }); await f.controller.bootstrap(); await f.controller.openIssue('CFK-1');
   const { WorkbenchAdapter } = await adapterExports(); const adapter = new WorkbenchAdapter(f.controller);
@@ -1321,4 +1609,54 @@ test('a confirmed list write refreshes previously cached collapsed groups withou
     await f.controller.toggleGroup('in_progress', true);
     assert.equal(f.controller.state.board.columns.find(column => column.key === 'in_progress').items[0].identifier, 'CFK-1');
   } finally { f.controller.dispose(); f.bridge.dispose(); }
+});
+
+test('create preserves the original key after commit uncertainty, verifies project writer and reads the created Issue', async () => {
+  const f = fixture({ uncertainCreate: true });
+  await f.controller.bootstrap(null);
+  const { WorkbenchAdapter } = await adapterExports();
+  const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    assert.equal(adapter.snapshotMessage().state.capabilities.create, true);
+    const message = action('create_issue', { change: { title: 'New issue', body: 'Original **Markdown**', status_key: 'backlog' } });
+    assert.equal((await adapter.receive(message)).outcome_unknown, true);
+    const original = structuredClone(f.controller.state.pending);
+    assert.equal(Object.hasOwn(original, 'expected_version'), false);
+    assert.equal(Object.hasOwn(original, 'identifier'), false);
+    assert.ok(validateCheckpoint(f.controller.getCheckpoint()));
+    assert.equal(f.bridge.acceptsCheckpoint(f.controller.getCheckpoint()), true);
+    assert.equal((await adapter.receive(message)).outcome_unknown, true);
+    assert.equal(f.calls.filter(row => row.name === 'cfkanban_issues_create').length, 1);
+    assert.equal((await adapter.receive(action('create_issue', { change: { title: 'Second issue' } }))).ok, false);
+    assert.equal((await adapter.receive(action('recover'))).ok, true);
+    const writes = f.calls.filter(row => row.name === 'cfkanban_issues_create');
+    assert.equal(writes.length, 2);
+    assert.ok(writes.every(row => row.args.idempotency_key === original.idempotency_key && row.args.project_id === f.ids.project_id && row.args.workspace_id === f.ids.workspace_id));
+    assert.equal(f.controller.state.issue.identifier, 'CFK-2');
+    assert.equal(f.controller.state.issue.body, 'Original **Markdown**');
+    assert.equal(f.controller.state.pending, null);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
+  const reader = fixture({ reader: true });
+  await reader.controller.bootstrap(null);
+  const denied = new WorkbenchAdapter(reader.controller);
+  try {
+    assert.equal(denied.snapshotMessage().state.capabilities.create, false);
+    assert.equal((await denied.receive(action('create_issue', { change: { title: 'Denied' } }))).ok, false);
+    assert.equal(reader.calls.some(row => row.name === 'cfkanban_issues_create'), false);
+  } finally { denied.dispose(); reader.controller.dispose(); reader.bridge.dispose(); }
+});
+
+test('title and Markdown body edits use the displayed CAS and reject oversized UTF-8 before writes', async () => {
+  const f = fixture(); await f.controller.bootstrap(null); await f.controller.openIssue('CFK-1');
+  const { WorkbenchAdapter } = await adapterExports(); const adapter = new WorkbenchAdapter(f.controller);
+  try {
+    assert.equal((await adapter.receive(action('mutate', { operation: 'update', change: { title: 'Edited title', body: '原始 **Markdown**' } }))).ok, true);
+    const write = f.calls.filter(row => row.name === 'cfkanban_issues_update').at(-1);
+    assert.equal(write.args.expected_version, 3);
+    assert.equal(write.args.changes.title, 'Edited title');
+    assert.equal(f.controller.state.issue.body, '原始 **Markdown**');
+    const before = f.calls.length;
+    assert.equal(await adapter.receive(action('mutate', { operation: 'update', change: { body: '中'.repeat(22_000) } })), undefined);
+    assert.equal(f.calls.length, before);
+  } finally { adapter.dispose(); f.controller.dispose(); f.bridge.dispose(); }
 });

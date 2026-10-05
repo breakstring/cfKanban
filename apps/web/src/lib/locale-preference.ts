@@ -35,10 +35,14 @@ export function resolveLocalePreference(
 ): SupportedLocale {
   if (saved === "en" || saved === "zh-CN") return saved;
 
-  const preferred = browserLanguages[0]?.toLowerCase() ?? "";
-  return preferred === "zh"
-    || preferred.startsWith("zh-cn")
-    || preferred.startsWith("zh-hans")
-    ? "zh-CN"
-    : "en";
+  const preferred = browserLanguages[0]?.trim().toLowerCase() ?? "";
+  return /^zh(?:[-_]|$)/u.test(preferred) ? "zh-CN" : "en";
+}
+
+export function detectedBrowserLocale(browser?: {
+  languages?: readonly string[];
+  language?: string;
+}): SupportedLocale {
+  const languages = browser?.languages?.length ? browser.languages : [browser?.language ?? ""];
+  return resolveLocalePreference(null, languages);
 }

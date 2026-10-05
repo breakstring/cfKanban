@@ -3,7 +3,7 @@ import { computed, onMounted } from "vue";
 import { onContentUpdated, useData, withBase } from "vitepress";
 import DefaultTheme from "vitepress/theme-without-fonts";
 import version from "../../../../release/version.json";
-import mark from "../../../web/src/assets/cfkanban-mark.png";
+import mark from "../../../web/src/assets/cfkanban-mark-orange.svg";
 import { writeStoredLocale } from "../../../web/src/lib/locale-preference";
 
 const { lang, page } = useData();

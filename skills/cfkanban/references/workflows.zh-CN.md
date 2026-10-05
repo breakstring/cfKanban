@@ -95,7 +95,7 @@ cfkanban issue list --json --no-interactive
 
 CLI 从子目录探测当前 worktree 根；linked worktree 各自保存目录选择，嵌套仓库使用最近的自身根。明确 UUID 优先于推荐，唯一已登记实例无需参数。只解析命令需要的层级：仓库两个项目同属一个实例/工作区时，实例信息与项目列表没有歧义，Issue 列表聚合这些仓库项目；单项目写入需要选定一个项目。结合返回的 `result.resolved_context` 与 Service `resolved_scope` 核对；全显式旧调用不要求新增上下文字段。JSON、非 TTY、`--no-interactive` 或 stdin 已用于正文/安全输入时永不提问。依据用户意图从结构化候选 ID 作临时选择，意图仍有真实歧义时才询问；无效或过期范围/默认选择不静默扩大查询。
 
-`context show` 只诊断，项目可为 null；`context use` 明确保存私有目录偏好，`context clear` 清除该偏好，三者的 `--directory` 均可省略。默认 key 为探测后的 `scope_directory`，同一 worktree 子目录共用选择。仅在用户要求记住选择时运行 `context use`，核验项目所属工作区与仓库候选关系。显式仅提供工作区时可保存该层级；仅提供实例时保存实例层级，即使仓库项目候选存在；自动解析出的更窄候选不保存为项目偏好。`--global true` 明确保存/查看/清除全局默认，不依赖 cwd 的 Git/scope，Git 缺失或仓库配置损坏也可操作，其显式目标可位于当前仓库之外；在其它仓库执行时仍由仓库推荐覆盖。保存私有偏好不修改 `.cfkanban-scope.json`，也不创建 Grant。
+`context show` 只诊断，项目可为 null；其 data 仅在确认 Git 仓库后附 `workbench_context_key`，供下文独立的 Codex 工作台偏好使用。`context use` 明确保存私有目录偏好，`context clear` 清除该偏好，三者的 `--directory` 均可省略。默认 key 为探测后的 `scope_directory`，同一 worktree 子目录共用选择。仅在用户要求记住选择时运行 `context use`，核验项目所属工作区与仓库候选关系。显式仅提供工作区时可保存该层级；仅提供实例时保存实例层级，即使仓库项目候选存在；自动解析出的更窄候选不保存为项目偏好。`--global true` 明确保存/查看/清除全局默认，不依赖 cwd 的 Git/scope，Git 缺失或仓库配置损坏也可操作，其显式目标可位于当前仓库之外；在其它仓库执行时仍由仓库推荐覆盖。保存私有偏好不修改 `.cfkanban-scope.json`，也不创建 Grant。
 
 固定自动化可保留 `--instance` / `--instance-id` 及稳定工作区/项目参数。普通写入先解析目标再固化 journal，后续 cwd/默认范围变化不改变恢复使用的原身份、目标与适用 key。永久删除、Owner 安全与部署保留必要显式目标和确认。上述 CLI 规则不改变已发现 MCP 或下文内部安全脚本要求的明确参数。
 
@@ -118,7 +118,7 @@ MCP 连接检查可提供非秘密候选或明确实例的实时身份。仅在�
 
 ## Working-directory association / 工作目录关联
 
-需要目录 scope 或关联时，本任务中对同一用户工作目录检测一次即可：用 `scope inspect-directory`，将绝对路径 `directory` 指向用户的工作目录，而不是 Skill 目录。明确且已验证的 MCP 项目/Issue 读取不需要先跑此探测。输出包含 `directory`、`git.status`（`repository | not_repository | unavailable | unknown`）、`git.root`、`scope_directory`、`scope_file`、`scope` 和 `association_recommended`。Git 子目录或 worktree 使用对应工作树根目录；确认非 Git 时使用指定目录。缺少 Git 或探测不确定时，不猜测根目录，也不当成已确认非 Git。命令不写文件、不修改 Git 配置，也不根据 Git remote 推断项目。
+需要目录 scope 或关联时，本任务中对同一用户工作目录检测一次即可：用 `scope inspect-directory`，将绝对路径 `directory` 指向用户的工作目录，而不是 Skill 目录。明确且已验证的 MCP 项目/Issue 读取不需要先跑此探测。输出包含 `directory`、`git.status`（`repository | not_repository | unavailable | unknown`）、`git.root`、`scope_directory`、`scope_file`、`scope` 和 `association_recommended`，确认 Git 仓库后另附 `workbench_context_key`。Git 子目录或 worktree 使用对应工作树根目录；确认非 Git 时使用指定目录。缺少 Git 或探测不确定时，不猜测根目录，也不当成已确认非 Git。命令不写文件、不修改 Git 配置，也不根据 Git remote 推断项目。
 
 用户问“当前目录关联了哪些项目”时，用返回的 `scope` 和已验证授权项目资料展示名称与保存的 ID，标出失效目标。缺少配置表示“没有保存目录推荐范围”，不表示“没有项目权限”。`scope read` 和 `scope merge` 仍要求显式 `repoRoot`，只处理准确指定目录，不向父目录搜索；后续复用检测结果和 `scope_directory`。`scope resolve` 则将返回的 `scope.targets`（`scope` 为 null 时使用 `[]`）作为 `repoTargets`。保存后读回 scope 即可，不重复 Git 检测。Git 探测不可用或不确定且用户要求保存时，先与用户明确绝对目标目录，不猜测。
 
@@ -324,11 +324,40 @@ Project Invite 可以授予一个或多个显式 Project roles。Recovery Invite
 
 ### 按请求选择界面
 
-各宿主使用同一套按能力选择的流程。先发现可用的视图打开工具并核对准确 schema；已安装 Skill、已有 MCP 或宿主名称本身都不证明可控制侧栏。普通「打开看板/事项」优先可用的宿主工作台，其次使用既有本地浏览器路径。明确要求侧栏时只打开侧栏；没有受支持工具就立即说明，不另开浏览器。明确要求浏览器或线上页面时遵守指定界面，不改为侧栏。打开请求不授权安装或修改配置；不翻 DSH 源码、调用内部路由或编造宿主 API 来补齐能力。
+各宿主使用同一套按能力选择的流程。先发现可用的视图打开工具并核对准确 schema，以及它能定位业务目标还是只启动工作台入口；已安装 Skill、已有 MCP 或宿主名称本身都不证明可控制侧栏。普通「打开看板/事项」优先可用的宿主工作台，其次使用既有本地浏览器路径。明确要求侧栏或对话面板时保留该界面；没有受支持工具就立即说明，不另开浏览器。明确要求浏览器或线上页面时遵守指定界面，不改为侧栏。打开请求不授权安装或修改配置；不翻宿主源码、调用内部路由或编造宿主 API 来补齐能力。
 
 DSH 插件暴露 `cfkanban_view_open`，调用名称、namespace 和输入以当前宿主发现的 schema 为准。目标字段为 `instance_id`、`workspace_id`、`project_id` 及可选事项 `identifier`，前三项使用准确 UUID。调用来源 Session 由宿主提供，不传 Session ID、路径、URL 或 Credential。优先使用已连接且可用的 MCP 连接检查、项目发现和事项详情等只读能力，结合当前任务未变化的已验证上下文解析准确目标。多个实例间重名项目或相同 CFK 编号不能直接作为选择依据；只澄清剩余歧义，不做无关全局搜索。
 
-用核验后的目标准确调用一次。成功必须由工具明确确认 `opened` 且回显同一目标；已接收或发出请求不证明页面可见且已定位。结果不确定时保留原目标和结果，按工具恢复指引处理，不换通道另建打开请求。权限拒绝、目标不符或不可访问须直接处理，不能改用浏览器重试。只有宿主能力缺失，或打开前明确返回不支持，才可为普通打开请求选择本地浏览器；明确侧栏请求仍不变更。打开视图不创建 Issue，也不启动 Agent 执行任务。
+DSH 用核验后的目标准确调用一次。成功必须由工具明确确认 `opened` 且回显同一目标；已接收或发出请求不证明页面可见且已定位。结果不确定时保留原目标和结果，按工具恢复指引处理，不换通道另建打开请求。权限拒绝、目标不符或不可访问须直接处理，不能改用浏览器重试。只有宿主能力缺失，或打开前明确返回不支持，才可为普通打开请求选择本地浏览器；明确侧栏请求仍不变更。打开视图不创建 Issue，也不启动 Agent 执行任务。
+
+### Codex 工作台入口
+
+请求对话视图时，先发现当前宿主实际暴露的 `cfkanban_workbench_open` 并核对 schema。它只声明 `thread` entrypoint，接受 `target:{instance_id,workspace_id,project_id}` 或 `recommended_targets:[{instance_id,workspace_id,project_id},…]`，两者互斥；每个目标严格只含三个准确 UUID，推荐列表为 1–50 个唯一目标。可选 `repository_key` 是由 64 个小写十六进制字符组成的非秘密偏好桶 key，也可单独提供。空 `{}` 在唯一已核验本地连接下打开有权限的默认项目；连接仍有歧义时保留选择。全局侧边栏图标使用独立的 `cfkanban_workbench_global_open({})`，只声明 `global`，不接受业务目标、仓库 key 或目录。不另起 MCP server 或调用内部路由。可以说「在当前对话旁边打开 cfKanban 工作台」来请求 Agent 使用已发现的入口；模型调用 MCP App 与手动选择 conversation panel 是不同触发方式，宿主决定工具结果的呈现位置，不为未知版本编造按钮路径。
+
+按用户意图及当前对话的可信工作目录解析 thread 推荐：
+
+1. 有可信工作目录时，用完整、已验证 bundle 的公共 CLI 只读检查一次当前对话的实际绝对工作目录，复用未变化的结果：
+
+   ```text
+   cfkanban context show --directory <绝对工作目录> --json --no-interactive
+   ```
+
+   优先从本 Skill 目录用已验证 Node 执行同一完整、已验证插件 bundle 的 `../../cli/cfkanban.mjs`：`<已验证Node> ../../cli/cfkanban.mjs context show --directory <绝对工作目录> --json --no-interactive`。本地候选安装后，PATH 上的 `cfkanban` 仍可能指向旧 canonical bundle；旧 CLI 成功但缺少 `workbench_context_key` 时，用同 bundle 的只读 `scope inspect-directory` 补 key，保留并复用已有 scope 和 CLI 显式默认。不为打开面板静默升级全局 CLI。
+
+   核对 `result.data.resolved_context`、逐层 `sources`、`repo_targets`、`saved_context`、`workbench_context_key` 及目录状态。确认 Git 仓库后返回的 `workbench_context_key` 原样作为 `repository_key`；不自行计算 key，不为普通目录或不确定/不可用目录附 key。不能将 `global_context`、`saved_global`、唯一连接或 Service 唯一项目视作仓库默认。这里的 ID 只是推荐，入口仍重新核验当前身份、项目归属与实时访问权限。
+2. 优先将明确且已验证的 Project 作为 `target`。入口不接受 Issue 定位参数；用户明确指定 Issue 时，先取得其准确 Project，事项定位另行核对。目录探测或 scope/默认错误不阻塞独立的明确目标；探测不能确定 key 时不附 key。否则，仅当三个 ID 完整、各层来源均为 `repository` 或 `saved_directory` 且 Project 来源为 `saved_directory` 时，将已保存目录项目作为 `target`。只收窄到实例或工作区的偏好不等于已保存项目默认。
+3. 没有明确目标或已保存目录 Project 时，将完整 `repo_targets` 作为 `recommended_targets`，单个目标也走推荐，并附可用仓库 key。入口先重新核验这个仓库上次成功打开的 Codex 项目与记录的 Principal；没有记忆，或旧项目在同一 Principal 下被 403/404 拒绝时，按推荐顺序核验并打开首个可访问项目。Principal 变化时不静默恢复成另一身份的偏好。保留完整候选集合及顺序；超过 50 个目标时需明确选择或不带仓库推荐打开，不静默截断。
+4. 没有可用且已验证的 CLI 时，以既有安全脚本 `scope inspect-directory` 和 `{directory:<绝对工作目录>}` 只读探测；将已校验 `scope.targets` 作为推荐，并使用确认仓库后返回的 `workbench_context_key`。这条替代路径不能读取 CLI 私有目录默认。确认仓库但没有推荐时传 `{repository_key}`：恢复已复验的 Codex 最后项目；没有可用记忆时，打开唯一已核验连接下的有权默认项目并记入该仓库偏好。没有可信仓库时才用 `{}`；移除仓库推荐不会清除独立的 Codex 最后项目。scope 无效、CLI 默认过期/冲突或目录探测失败时，先说明具体问题再处理独立的手动打开，不静默扩大到全局或另一项目。
+
+不从 Skill/cache 目录、MCP `process.cwd()`、仓库名称或 Git remote 猜测当前对话目录，不将路径、URL、Credential 或宿主/聊天 ID 传给入口。Agent 读取本地上下文后只交付非秘密 ID 及返回的仓库 key，面板本身不读取仓库，key 和关联均不授予权限。带仓库 key 的 Codex 视图自动在私有偏好中记住最后成功绑定及用户切换的项目，包括初始仓库推荐之外的有权项目；下次打开先复验项目及 Principal 再恢复。它不修改 CLI context 或 `.cfkanban-scope.json`。CLI `context use` 仍仅在用户明确要求保存 CLI 目录默认时使用：`context use --directory <绝对工作目录> --instance <实例UUID> --workspace-id <工作区UUID> --project-id <项目UUID> --json --no-interactive`。
+
+只有一个已校验本地实例候选时，两个入口自动核验当前身份；thread 准确目标选定对应实例后核验。明确或已保存目录目标失败时不静默换项目；不带仓库上下文的 thread 不读写全局最后项目。global 独立重新核验本机最后成功项目及当前权限，没有有效记录时，在准确核验的身份下打开首个可访问项目。Codex 最后项目偏好只保存 instance、Principal、workspace、project 四个准确 UUID，不恢复此前草稿、筛选或待核实写入。打开后的项目切换器按工作区分组，分页展示当前已核验实例中所有可访问项目；仓库推荐不限制后续切换范围。
+
+全局推荐只保存 instance、Principal、workspace、project 四个准确 UUID，不包含凭据、视图 ID、草稿、筛选或待核实操作。工具公开结果的 `ok` 仅确认入口调用成功；native view 是否显示、是否完成连接及是否定位准确 Project/Issue，须分别核对，包括自动选择项目时。无法观察时说明待用户确认的步骤，不能把入口调用成功报告成「已打开 DemoProject」。已启动入口但结果不确定或连接失败时，保留当前界面按错误恢复，不改开浏览器或另建服务；新入口和记住项目不能恢复此前不确定写入。
+
+[官方 deep-link 合同](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#deep-links) 的桌面格式为 `codex://plugins/{pluginId}@{marketplace}/app/{toolName}?path={encodedAppRelativePath}`，定位的是 **global sidebar app** 的应用内页面；它不是指定对话或 conversation panel 的链接。当前 cfKanban adapter 未处理 `openai/deepLink` 的业务路径，不能生成声称定位某个 Project/Issue 的链接。要支持此能力，需要另行实现路径解析、准确目标和实时权限核验；不要用深链绕过上述入口和授权边界。
+
+当前接入尚未提供 Composer At-Mentions；不要将输入区的 `@` 能力或 mentions 项选择描述为已实现的项目定位、对话关联或业务操作。
 
 ### 在本地浏览器打开
 

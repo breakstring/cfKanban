@@ -64,6 +64,7 @@
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](specs/2026-09-20-stable-release-lifecycle-spec.md) |
 | 公共 CLI、完整能力矩阵、命令与安装恢复 | [公共 CLI](specs/2026-10-04-public-cli-spec.md) |
 | 本地 stdio MCP、DSH Skills / Host / 原生任务面板 | [本地 MCP 与 DSH 接入](specs/2026-10-02-local-mcp-dsh-spec.md) |
+| 官方桌面插件 global / thread 工作台、MCP Apps bridge | [官方插件工作台（Draft）](specs/2026-10-04-codex-workbench-spec.md)、[验证计划](plans/2026-10-04-codex-workbench-plan.md) |
 
 ## Skills 与发行维护
 

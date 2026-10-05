@@ -31,6 +31,7 @@ import {
 } from "../lib/cas-recovery";
 import { isVerifiedServiceAccessFailure, projectInventoryBoundary } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
+import { statusDisplayName as localizedStatusName } from "../lib/status-display";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { continuationCursor, cursorRequiresRestart, mergePageById } from "../lib/pagination";
 import { ProjectionGeneration } from "../lib/projection-generation";
@@ -153,7 +154,7 @@ useSessionTextDraft({
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 
 function statusDisplayName(key: StatusKey): string {
-  return statusMap.value.get(key)?.display_name ?? key;
+  return localizedStatusName(statusMap.value.get(key) ?? { key }, locale.value);
 }
 
 function ui(english: string, chinese: string): string {
@@ -1011,7 +1012,7 @@ watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: t
 
         <template #properties>
           <dl class="issue-property-list">
-            <div><dt>{{ t("issue.status") }}</dt><dd><select v-if="canUpdate" :aria-label="t('issue.status')" :value="issue.status.key" :disabled="writeBusy" @change="onStatusSelection"><option v-for="status in statuses" :key="status.key" :value="status.key">{{ status.display_name }}</option></select><span v-else>{{ issue.status.display_name }}</span></dd></div>
+            <div><dt>{{ t("issue.status") }}</dt><dd><select v-if="canUpdate" :aria-label="t('issue.status')" :value="issue.status.key" :disabled="writeBusy" @change="onStatusSelection"><option v-for="status in statuses" :key="status.key" :value="status.key">{{ localizedStatusName(status, locale) }}</option></select><span v-else>{{ localizedStatusName(issue.status, locale) }}</span></dd></div>
             <div><dt>{{ t("issue.priority") }}</dt><dd><PrioritySelect v-if="canUpdate" :value="issue.priority" :disabled="writeBusy" :label="t('issue.priority')" @change="savePriority" /><span v-else>{{ priorityLabel(issue.priority) }}</span></dd></div>
             <div><dt>{{ t("issue.assignee") }}</dt><dd>
               <AssigneeSelect v-if="canUpdate" :key="`${session.session_id}:${issue.project.id}`" :workspace-id="issue.workspace.id" :project-id="issue.project.id" :assignee="issue.assignee" :disabled="writeBusy" @select="updateIssue({ assignee_principal_id: $event })" />

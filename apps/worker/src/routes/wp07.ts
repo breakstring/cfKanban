@@ -99,8 +99,8 @@ async function authenticated(request: Request, env: WorkerEnv, context: RequestC
 
 export function registerWp07Routes(router: Router): Router {
   router
-    .get("/app/launch", async (_request, env, context) => {
-      let responseBody = webLaunchBootstrapHtml();
+    .get("/app/launch", async (request, env, context) => {
+      let responseBody = webLaunchBootstrapHtml(request.headers.get("accept-language"));
       let status = 200;
       try {
         await assertWebLaunchPageAvailable(
@@ -110,7 +110,7 @@ export function registerWp07Routes(router: Router): Router {
         );
       } catch (error) {
         if (!(error instanceof ApiError) || error.code !== "BROWSER_LAUNCH_UNAVAILABLE") throw error;
-        responseBody = webLaunchUnavailableHtml();
+        responseBody = webLaunchUnavailableHtml(request.headers.get("accept-language"));
         status = 410;
       }
       return new Response(responseBody, {

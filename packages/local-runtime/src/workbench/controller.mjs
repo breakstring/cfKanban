@@ -7,6 +7,8 @@ export const nextCursor = value => value?.next_cursor ?? value?.continuation?.ne
 export const recoveryId = value => { try { return uuid(value, 'recovery identity'); } catch { return null; } };
 export const sessionReference = value => isSessionReference(value) ? value : null;
 export const ISSUE_COLLECTION_LIMIT = 1000;
+export const PROJECT_MENU_WORKSPACES = 8;
+export const PROJECT_MENU_PROJECTS = 50;
 const COLLECTION_BYTES = 1_048_576;
 const MAX_COLLECTION_PAGES = 40;
 const fields = (value, names) => Object.fromEntries(names.filter(name => value?.[name] !== undefined).map(name => [name, structuredClone(value[name])]));
@@ -38,14 +40,17 @@ export class WorkbenchController {
     this.labelRevision = 0;
     this.labelFlights = new Map();
     this.labelCursors = new Set();
-    this.state = { candidates: [], identity: null, workspaces: [], projects: [], binding: null, view: initialView === 'list' ? 'list' : 'board', board: null, group_states: {}, expanded_groups: ['backlog'], page: null, issue: null, comments: [], comment_cursor: null, labels: [], label_cursor: null, labels_has_more: false, filters: { assignment: 'all', status: '', priority: '' }, busy: 0, error: null, pending: null, source_session_id: null, session_context_changed: false, workspace_scope: null, scope_instance_id: null, scope_mode: 'manual', scope_targets: [], scope_next_offset: null };
+    this.projectMenuRevision = 0;
+    this.projectMenuCursors = new Map();
+    this.state = { candidates: [], identity: null, workspaces: [], projects: [], project_menu_groups: [], project_menu_cursor: null, project_menu_error: null, binding: null, view: initialView === 'list' ? 'list' : 'board', board: null, group_states: {}, expanded_groups: ['backlog'], page: null, issue: null, comments: [], comment_cursor: null, labels: [], label_cursor: null, labels_has_more: false, filters: { assignment: 'all', status: '', priority: '' }, busy: 0, error: null, pending: null, source_session_id: null, session_context_changed: false, workspace_scope: null, scope_instance_id: null, scope_mode: 'manual', scope_targets: [], scope_next_offset: null };
   }
   getSnapshot = () => this.state;
   getCheckpoint() { return validateCheckpoint(checkpointState(this.state)); }
   async restoreCheckpoint(value) {
     const checkpoint = validateCheckpoint(value);
     if (!checkpoint) { this.patch({ error: { code: 'PANEL_INVALID_INPUT' } }); return false; }
-    this.patch({ ...checkpoint.state, page: null, board: null, comments: [], busy: 0, error: null });
+    this.projectMenuRevision++; this.projectMenuCursors.clear();
+    this.patch({ ...checkpoint.state, project_menu_groups: [], project_menu_cursor: null, project_menu_error: null, page: null, board: null, comments: [], busy: 0, error: null });
     if (checkpoint.state.expanded_groups) this.patch({ expanded_groups: checkpoint.state.expanded_groups });
     if (this.state.binding) { await this.refresh(); if (this.state.issue) await this.openIssue(this.state.issue.identifier); }
     return true;
@@ -184,11 +189,103 @@ export class WorkbenchController {
   async selectInstance(instance_id, signal) {
     if (signal?.aborted || !this.canChangeBinding()) return;
     if (this.state.scope_instance_id && instance_id !== this.state.scope_instance_id) { this.patch({ error: { code: 'PANEL_SCOPE_DENIED' } }); return; }
-    this.patch({ identity: null, workspaces: [], projects: [], binding: null, page: null, board: null, issue: null, pending: null });
+    this.projectMenuRevision++; this.projectMenuCursors.clear();
+    this.patch({ identity: null, workspaces: [], projects: [], project_menu_groups: [], project_menu_cursor: null, project_menu_error: null, binding: null, page: null, board: null, issue: null, pending: null });
     const { result, current } = await this.request('identity', { instance_id }, undefined, undefined, signal);
     if (current && result.ok && !signal?.aborted) this.patch({ identity: result.data });
   }
-  identityInput() { return { instance_id: this.state.identity.instance.instance_id, expected_principal_id: this.state.identity.principal.principal_id ?? this.state.identity.principal.id }; }
+  identityInput() {
+    const identity = this.state.binding?.identity ?? this.state.identity;
+    return { instance_id: identity.instance.instance_id ?? identity.instance.id, expected_principal_id: identity.principal.principal_id ?? identity.principal.id };
+  }
+  menuIdentityKey() {
+    try { const identity = this.identityInput(); return `${identity.instance_id}/${identity.expected_principal_id}`; } catch { return null; }
+  }
+  menuFits(groups) {
+    const state = { ...this.state, project_menu_groups: groups };
+    try { return new TextEncoder().encode(JSON.stringify(groups)).length <= 262_144 && [...this.collectionValidators].every(validate => validate(state)); } catch { return false; }
+  }
+  menuCursor(channel, cursor) {
+    const cursors = this.projectMenuCursors.get(channel) ?? new Set();
+    if (cursor && cursors.has(cursor)) return false;
+    if (cursor) { cursors.add(cursor); if (cursors.size > 128) cursors.delete(cursors.values().next().value); }
+    this.projectMenuCursors.set(channel, cursors);
+    return true;
+  }
+  async projectMenu(workspace_id, next = false) {
+    if (!this.state.binding || !this.canChangeBinding() || this.state.busy) return;
+    if (workspace_id) return this.projectMenuProjects(workspace_id, next);
+    const cursor = next ? this.state.project_menu_cursor : null;
+    if (next && !cursor) return;
+    if (!next) { this.projectMenuRevision++; this.projectMenuCursors.clear(); }
+    const revision = this.projectMenuRevision, identityKey = this.menuIdentityKey(), binding_id = this.state.binding.binding_id;
+    const matches = () => revision === this.projectMenuRevision && identityKey === this.menuIdentityKey() && binding_id === this.state.binding?.binding_id;
+    const channel = 'project_menu:workspaces';
+    if (!this.menuCursor(channel, cursor)) { this.patch({ project_menu_error: { code: 'PANEL_PAGINATION_STALLED' }, project_menu_cursor: null }); return; }
+    const { result, current } = await this.request('workspaces', { ...this.identityInput(), limit: PROJECT_MENU_WORKSPACES, ...(cursor ? { cursor } : {}) }, channel, matches);
+    if (!current || !result.ok) {
+      if (matches()) { if (cursor) this.projectMenuCursors.get(channel)?.delete(cursor); this.patch({ project_menu_error: result.error }); }
+      return result;
+    }
+    const workspaces = [...new Map(items(result.data).map(row => [row.id, fields(row, ['id', 'display_name', 'title', 'name'])])).values()];
+    if (workspaces.length > PROJECT_MENU_WORKSPACES) { this.patch({ project_menu_error: { code: 'PANEL_CAPACITY' } }); return; }
+    const groups = workspaces.map(workspace => ({ workspace, projects: [], project_cursor: null, error: null }));
+    if (!this.menuFits(groups)) { this.patch({ project_menu_error: { code: 'PANEL_CONTEXT_TOO_LARGE' } }); return; }
+    const following = nextCursor(result.data);
+    const stalled = following && this.projectMenuCursors.get(channel)?.has(following);
+    for (const key of this.projectMenuCursors.keys()) if (key !== channel) this.projectMenuCursors.delete(key);
+    this.patch({ project_menu_groups: groups, project_menu_cursor: stalled ? null : following, project_menu_error: stalled ? { code: 'PANEL_PAGINATION_STALLED' } : null });
+    for (const group of groups) {
+      if (!matches()) return;
+      await this.projectMenuProjects(group.workspace.id, false, matches);
+    }
+    return result;
+  }
+  async projectMenuProjects(workspace_id, next = false, parentMatches = () => true) {
+    const group = this.state.project_menu_groups.find(row => row.workspace.id === workspace_id);
+    if (!group || !this.state.binding || !this.canChangeBinding()) return;
+    const cursor = next ? group.project_cursor : null;
+    if (next && !cursor) return;
+    const channel = `project_menu:projects:${workspace_id}`;
+    if (!next) this.projectMenuCursors.delete(channel);
+    if (!this.menuCursor(channel, cursor)) {
+      this.patch({ project_menu_groups: this.state.project_menu_groups.map(row => row === group ? { ...row, project_cursor: null, error: { code: 'PANEL_PAGINATION_STALLED' } } : row) }); return;
+    }
+    const revision = this.projectMenuRevision, identityKey = this.menuIdentityKey(), binding_id = this.state.binding.binding_id;
+    const matches = () => parentMatches() && revision === this.projectMenuRevision && identityKey === this.menuIdentityKey() && binding_id === this.state.binding?.binding_id && this.state.project_menu_groups.includes(group);
+    const { result, current } = await this.request('projects', { ...this.identityInput(), workspace_id, limit: PROJECT_MENU_PROJECTS, ...(cursor ? { cursor } : {}) }, channel, matches);
+    if (!current || !result.ok) {
+      if (matches()) {
+        if (cursor) this.projectMenuCursors.get(channel)?.delete(cursor);
+        this.patch({ project_menu_groups: this.state.project_menu_groups.map(row => row === group ? { ...row, error: result.error } : row) });
+      }
+      return result;
+    }
+    const projects = [...new Map(items(result.data).map(row => [row.id, fields(row, ['id', 'display_name', 'title', 'name'])])).values()];
+    const following = nextCursor(result.data);
+    const stalled = following && this.projectMenuCursors.get(channel)?.has(following);
+    const groups = this.state.project_menu_groups.map(row => row === group ? { ...row, projects, project_cursor: stalled ? null : following, error: stalled ? { code: 'PANEL_PAGINATION_STALLED' } : null } : row);
+    if (projects.length > PROJECT_MENU_PROJECTS || !this.menuFits(groups)) {
+      if (cursor) this.projectMenuCursors.get(channel)?.delete(cursor);
+      this.patch({ project_menu_groups: this.state.project_menu_groups.map(row => row === group ? { ...row, error: { code: 'PANEL_CONTEXT_TOO_LARGE' } } : row) }); return;
+    }
+    this.patch({ project_menu_groups: groups });
+    return result;
+  }
+  async switchProject(workspace_id, project_id) {
+    if (!this.state.binding || !this.canChangeBinding() || this.state.busy) return;
+    const group = this.state.project_menu_groups.find(row => row.workspace.id === workspace_id);
+    if (!group?.projects.some(project => project.id === project_id)) { this.patch({ error: { code: 'PANEL_SCOPE_DENIED' } }); return; }
+    if (this.state.workspace_id === workspace_id && this.state.binding.project.id === project_id) return { ok: true };
+    const binding_id = this.state.binding.binding_id, identityKey = this.menuIdentityKey();
+    const { result, current } = await this.request('bind', { ...this.identityInput(), workspace_id, project_id, replace_binding_id: binding_id }, 'project_switch', () => this.state.binding?.binding_id === binding_id && identityKey === this.menuIdentityKey());
+    if (current && result.ok) {
+      this.patch({ identity: result.data.identity, workspace_id, projects: group.projects, project_cursor: group.project_cursor, binding: result.data, issue: null, page: null, board: null, comments: [], comment_cursor: null, comments_has_more: false, filters: { assignment: 'all', status: '', priority: '' }, scope_mode: 'manual' });
+      // 先应用新引用，再由刷新确认交付；响应丢失时 Bridge 必须保留旧引用。
+      await this.refresh();
+    }
+    return result;
+  }
   async loadWorkspaces(cursor) {
     const { result, current } = await this.request('workspaces', { ...this.identityInput(), ...(cursor ? { cursor } : {}) });
     if (current && result.ok) this.patch({ workspaces: items(result.data), workspace_cursor: nextCursor(result.data) });
@@ -207,7 +304,8 @@ export class WorkbenchController {
   async unbind() {
     if (!this.canChangeBinding()) return false;
     if (this.state.binding) { const { result } = await this.request('unbind', { binding_id: this.state.binding.binding_id }); if (!result.ok) return false; }
-    this.patch({ binding: null, page: null, board: null, issue: null, scope_mode: 'manual' });
+    this.projectMenuRevision++; this.projectMenuCursors.clear();
+    this.patch({ binding: null, project_menu_groups: [], project_menu_cursor: null, project_menu_error: null, page: null, board: null, issue: null, scope_mode: 'manual' });
     await this.loadCandidates();
     return true;
   }
@@ -354,12 +452,12 @@ export class WorkbenchController {
   }
   async mutate(operation, change, recover = false, subject = this.state.issue) {
     if (!recover && (this.state.pending || this.state.session_context_changed)) return;
-    const pending = recover ? this.state.pending : { binding_id: this.state.binding.binding_id, ...(operation === 'set_locale' ? { expected_version: this.state.binding.identity.principal.version } : { identifier: subject.identifier, expected_version: subject.version }), operation, change, idempotency_key: this.makeKey() };
+    const pending = recover ? this.state.pending : { binding_id: this.state.binding.binding_id, ...(operation === 'create' ? {} : operation === 'set_locale' ? { expected_version: this.state.binding.identity.principal.version } : { identifier: subject.identifier, expected_version: subject.version }), operation, change, idempotency_key: this.makeKey() };
     if (!pending) return;
     this.patch({ pending });
     const { result } = await this.request(recover ? 'recover' : 'mutate', pending, 'write');
     const recovery = result.outcome_unknown || result.panel?.recovery_required || ['PANEL_REQUEST_UNCERTAIN', 'PANEL_OPERATION_PENDING'].includes(result.error?.code) || (recover && !result.ok && result.panel?.original_settled !== true);
-    this.patch({ pending: recovery ? pending : null, ...(result.panel?.readback && pending.operation === 'set_locale' ? this.identityUpdate(result.panel.readback) : result.panel?.readback && this.state.issue?.identifier === pending.identifier ? { issue: result.panel.readback, comments: result.panel.readback.comments ?? [], comment_cursor: null, comments_has_more: Boolean(result.panel.readback.comment_continuation) } : {}) });
+    this.patch({ pending: recovery ? pending : null, ...(result.panel?.readback && pending.operation === 'set_locale' ? this.identityUpdate(result.panel.readback) : result.panel?.readback?.identifier && (pending.operation === 'create' || this.state.issue?.identifier === pending.identifier) ? { issue: result.panel.readback, comments: result.panel.readback.comments ?? [], comment_cursor: null, comments_has_more: Boolean(result.panel.readback.comment_continuation) } : {}) });
     if (result.ok && !recovery) await this.refresh(undefined, undefined, true);
     return result;
   }

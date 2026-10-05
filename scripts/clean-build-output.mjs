@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 const targets = [
   new URL("../apps/web/dist/", import.meta.url),
   new URL("../apps/web/dist-embedded/", import.meta.url),
+  new URL("../apps/web/dist-mcp-app/", import.meta.url),
   new URL("../apps/worker/dist/", import.meta.url),
   new URL("../packages/mcp/dist/", import.meta.url),
   new URL("../packages/cli/dist/", import.meta.url),

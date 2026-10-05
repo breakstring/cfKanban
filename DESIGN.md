@@ -1,7 +1,7 @@
 ---
 name: cfKanban
 status: frozen
-revision: 10
+revision: 11
 frozen_on: 2026-08-29
 revised_on: 2026-10-04
 selected_direction: nuxt-ui-kanban-workbench
@@ -156,10 +156,10 @@ Use system fonts only so the Worker serves no third-party font dependency. Icons
 
 ### 2.4 Brand mark
 
-- The cfKanban mark is a warm-paper board with warm-ink task cards and one vivid-orange task card moving out of it: the board identifies the product, while the escaping card gives the Agent-first promise a small, playful motion cue. The rounded board has a transparent exterior. This light board replaces the black tile (CFK-415); a fully transparent board would lose the old white cards on light browser chrome. The mark uses a brighter orange than controls; interactive surfaces use the deeper accessible orange tokens above so white text and focus cues retain sufficient contrast.
+- The cfKanban mark is a simple three-column board drawn with rounded strokes on a transparent background. The same geometry identifies the product in compact host navigation and larger Web surfaces. Colored surfaces use the brand orange `#D86F45`; interactive controls retain the deeper accessible orange tokens above so white text and focus cues retain sufficient contrast.
 - Use the same self-hosted mark for the favicon, public wordmark, authenticated header, and compact footer lockup. Keep adjacent `cfKanban` text as live text rather than baking a wordmark into the image.
-- The source is `apps/web/src/assets/cfkanban-mark.png`. The plugin's `interface.composerIcon`, `logo`, and `logoDark` reference this same PNG, which is also included in the Skill bundle. Use the same artwork in both host themes; do not maintain a separate plugin copy.
-- The mark must remain legible at 16px and 32px, keep its colored details within one warm-orange family, load no third-party resource, and carry an empty alt value when adjacent text already names the product.
+- The shape source is `apps/web/src/assets/cfkanban-mark.svg`, a 20px monochrome SVG with `currentColor` and a 1.333px stroke. MCP navigation bundles this source directly so the host can apply its theme color. `npm run brand:generate` derives `cfkanban-mark-orange.svg` and the transparent 256px `cfkanban-mark.png` from the source and the plugin's `interface.brandColor`; `npm run brand:check` verifies they are current. Web, documentation and favicon use the orange SVG; the DSH chat-side entry bundles this same SVG as a self-contained data URL. The Codex plugin's `interface.composerIcon`, `logo`, and `logoDark`, plus the Apple touch icon, use the generated PNG. Both generated variants are included in the Skill bundle.
+- The mark must remain legible at 16px and 32px, load no third-party resource, and carry an empty alt value when adjacent text already names the product. Preserve the geometry and transparent background in both host themes; do not maintain a separate plugin shape.
 
 ## 3. Application shell
 

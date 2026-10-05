@@ -1,5 +1,5 @@
 import { isConnectMessage, parseActionMessage, parseRenderCancelMessage, parseRenderCheckMessage, parseResultMessage, parseSnapshotMessage, sameRenderTarget, snapshotRenderTarget } from "./protocol";
-import type { ActionPayloads, EmbedAction, EmbedLocale, EmbedSnapshot, PublicResult, RenderCheckMessage } from "./protocol";
+import type { ActionMessage, ActionPayloads, EmbedAction, EmbedLocale, EmbedSnapshot, PublicResult, RenderCheckMessage } from "./protocol";
 
 export interface EmbedClientOptions {
   window: Pick<Window, "parent" | "addEventListener" | "removeEventListener">;
@@ -7,6 +7,7 @@ export interface EmbedClientOptions {
   onSnapshot: (state: EmbedSnapshot) => void;
   afterRender?: () => Promise<void>;
   onError: (code: string) => void;
+  onActionSettled?: (message: ActionMessage, result: PublicResult) => void;
   makeId?: () => string;
   timeoutMs?: number;
 }
@@ -78,7 +79,7 @@ export function createEmbedClient(options: EmbedClientOptions) {
       const message = parseActionMessage({ type: "action", id, action, payload });
       if (!message || pending.has(id)) return Promise.resolve(failed("EMBED_INVALID_ACTION"));
       return new Promise(resolve => {
-        const uncertain = ["mutate", "quick_update", "set_locale", "recover"].includes(action);
+        const uncertain = ["mutate", "quick_update", "create_issue", "set_locale", "recover"].includes(action);
         const timer = setTimeout(() => {
           // 父层仍保留写操作；超时只能请求原操作恢复，不能重新生成业务键。
           const code = uncertain ? "EMBED_REQUEST_UNCERTAIN" : "EMBED_REQUEST_FAILED";

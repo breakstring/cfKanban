@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildDshPlugin, collectArtifactFiles, writeDeterministicTarball } from "../scripts/build.mjs";
 import { acceptsNode, resolveRuntime, verifyArtifact } from "../src/bundle.mjs";
 import { LOCAL_RUNTIME_FILES, verifyLocalRuntimeBuild } from "../../local-runtime/scripts/build.mjs";
+import { MCP_BUILD_FILES, verifyMcpBuild } from "../../../scripts/lib/mcp-build.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const version = JSON.parse(await readFile(path.join(root, "release/version.json"), "utf8")).version;
@@ -43,6 +44,12 @@ test("prebuilt DSH archive keeps complete Skills resources and works outside the
     execFileSync("tar", ["-xzf", artifact.outputPath, "-C", extracted]);
     const packageRoot = path.join(extracted, "package");
     const manifest = verifyArtifact(packageRoot);
+    const mcpMetadata = await verifyMcpBuild({ outputDirectory: path.join(packageRoot, "mcp"), version });
+    assert.deepEqual(manifest.components.mcp, mcpMetadata);
+    for (const entry of MCP_BUILD_FILES) {
+      assert.deepEqual(await readFile(path.join(packageRoot, "mcp", entry)), await readFile(path.join(root, "packages/mcp/dist", entry)));
+      assert.equal(manifest.files.some(file => file.path === `mcp/${entry}`), true);
+    }
     const embedded = await readFile(path.join(root, "apps", "web", "dist-embedded", "embedded.html"));
     assert.deepEqual(await readFile(path.join(packageRoot, "embedded", "embedded.html")), embedded);
     assert.equal(manifest.release_version, version);
@@ -123,17 +130,20 @@ test("prebuilt DSH archive keeps complete Skills resources and works outside the
     }
     const registrations = [];
     const client = await readFile(path.join(packageRoot, "lib", "client.js"), "utf8");
-    const logo = await readFile(path.join(root, "apps", "web", "src", "assets", "cfkanban-mark.png"));
-    assert.equal(client.includes(`data:image/png;base64,${logo.toString("base64")}`), true);
+    const logo = await readFile(path.join(root, "apps", "web", "src", "assets", "cfkanban-mark-orange.svg"));
     vm.runInNewContext(client, { window: { __ModuleLoader__: { load: (registration) => registrations.push(registration) } } });
     assert.equal(registrations.length, 1);
     assert.equal(registrations[0].id, "@cfkanban/dsh-plugin");
     const exports = registrations[0].factory((name) => {
       assert.equal(name, "react");
-      return { createElement() {} };
+      return { useEffect() {}, createElement: (type, props, ...children) => ({ type, props, children }) };
     });
     assert.equal(typeof exports.apply, "function");
     assert.equal(exports.inject.includes("sidebarRightTabs"), true);
+    const button = exports.PanelButton({ open() {}, t: key => key });
+    const logoUrl = button.children[0].props.src;
+    assert.match(logoUrl, /^data:image\/svg\+xml(?:;base64)?,/);
+    assert.deepEqual(Buffer.from(await (await fetch(logoUrl)).arrayBuffer()), logo);
     const manifestFile = path.join(packageRoot, "artifact-manifest.json");
     const originalManifest = await readFile(manifestFile, "utf8");
     const originalHost = await readFile(path.join(packageRoot, "src", "host", "bridge.mjs"));
@@ -153,6 +163,11 @@ test("prebuilt DSH archive keeps complete Skills resources and works outside the
     await mkdir(path.join(packageRoot, "node_modules"));
     await writeFile(path.join(packageRoot, "node_modules", "host-managed-peer.txt"), "host package-manager metadata");
     assert.equal(verifyArtifact(packageRoot).release_version, version);
+    const workbenchPath = path.join(packageRoot, "mcp", "workbench.html");
+    const originalWorkbench = await readFile(workbenchPath);
+    await writeFile(workbenchPath, "tampered");
+    assert.throws(() => verifyArtifact(packageRoot), /integrity check failed/);
+    await writeFile(workbenchPath, originalWorkbench);
     await writeFile(path.join(packageRoot, "mcp", "server.mjs"), "tampered");
     assert.throws(() => verifyArtifact(packageRoot), /integrity check failed/);
   });
@@ -184,8 +199,13 @@ test("DSH build rejects mismatched versions and modified MCP build entries", asy
     const mcpDirectory = path.join(directory, "mcp");
     await cp(path.join(root, "packages", "mcp", "dist"), mcpDirectory, { recursive: true });
     await assert.rejects(buildDshPlugin({ outputDirectory: directory, version: "1.0.0", mcpDirectory }), /versions must match/);
-    await writeFile(path.join(mcpDirectory, "server.mjs"), "tampered");
-    await assert.rejects(buildDshPlugin({ outputDirectory: directory, version, mcpDirectory }), /integrity check failed/);
+    for (const entry of ["server.mjs", "workbench.html", "mcp-app-build.json"]) {
+      const target = path.join(mcpDirectory, entry);
+      const original = await readFile(target);
+      await writeFile(target, "tampered");
+      await assert.rejects(buildDshPlugin({ outputDirectory: directory, version, mcpDirectory }), /integrity check failed/);
+      await writeFile(target, original);
+    }
   });
 });
 

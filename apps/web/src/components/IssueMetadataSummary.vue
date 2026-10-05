@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { locale, t } from "../lib/i18n-core";
+import { statusDisplayName } from "../lib/status-display";
 import { priorityText } from "../lib/priority";
 import type { PriorityKey, StatusKey } from "../types";
 import IssueStatusMark from "./IssueStatusMark.vue";
@@ -11,7 +12,7 @@ defineProps<{ statusKey: StatusKey; statusLabel: string; priority: PriorityKey; 
   <div class="issue-metadata-summary">
     <span class="issue-metadata-item" :data-status="statusKey">
       <IssueStatusMark class="issue-metadata-status" :status-key="statusKey" />
-      <span class="issue-metadata-label">{{ t('issue.status') }}</span><span class="issue-metadata-value">{{ statusLabel }}</span>
+      <span class="issue-metadata-label">{{ t('issue.status') }}</span><span class="issue-metadata-value">{{ statusDisplayName({ key: statusKey, display_name: statusLabel }, locale) }}</span>
     </span>
     <span class="issue-metadata-item" :data-priority="priority">
       <svg class="issue-metadata-priority" viewBox="0 0 16 16" aria-hidden="true"><path v-if="priority === 'none'" d="M3 8h10" /><template v-else><path d="M3 12V9m4 3V6m4 6V3" /><path v-if="priority === 'urgent'" d="M15 3v6m0 3v.1" /></template></svg>

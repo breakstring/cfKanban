@@ -7,6 +7,7 @@ import IssueChildrenProgress from "./IssueChildrenProgress.vue";
 import IssueStatusMark from "./IssueStatusMark.vue";
 import { errorText } from "../lib/api";
 import { locale, t } from "../lib/i18n";
+import { statusDisplayName } from "../lib/status-display";
 import { issueTree, type IssueTreeRow } from "../lib/issue-tree";
 import { sortBoardIssues } from "../lib/board-projection";
 import { priorityOrder, priorityText } from "../lib/priority";
@@ -44,11 +45,11 @@ const collapsedIssues = ref(new Set<string>());
 const contextIssues = computed(() => order.flatMap(key => props.columns[key].items));
 const groups = computed(() => order.filter(key => props.eligibleStatuses.includes(key)).map(key => {
   const column = props.columns[key];
-  return { key, column, name: props.statuses.find(status => status.key === key)?.display_name ?? key,
+  return { key, column, name: statusDisplayName(props.statuses.find(status => status.key === key) ?? { key }, locale.value),
     rows: issueTree(sortBoardIssues([...column.items]), contextIssues.value) };
 }));
 const priorityOptions = computed(() => priorityOrder.map(value => ({ value, label: priorityText(value, locale.value === "zh-CN") })));
-const statusOptions = computed(() => props.statuses.map(status => ({ value: status.key, label: status.display_name })));
+const statusOptions = computed(() => props.statuses.map(status => ({ value: status.key, label: statusDisplayName(status, locale.value) })));
 const disabled = (issue: IssueSummary) => props.saving.has(issue.id) || props.pendingIds.includes(issue.id);
 function priorityChanged(issue: IssueSummary, event: Event): void {
   const value = (event.target as HTMLSelectElement).value as PriorityKey;
@@ -93,9 +94,9 @@ function hasChildren(rows: IssueTreeRow<IssueSummary>[], identifier: string): bo
             <div v-if="canWrite" class="list-assignee"><AssigneeMenu :assignee="row.issue.assignee" :candidates="assignees" :disabled="disabled(row.issue)" :loading="assigneesLoading" :has-more="assigneesHasMore" :load-error="assigneesError ? errorText(assigneesError) : null" :label="`${row.identifier} · ${t('issue.assignee')}`" @open="emit('people')" @select="emit('assignee', row.issue, $event)" @load-more="emit('people-more')" @retry="emit('people-retry')" /></div>
             <span v-else class="list-assignee-readonly">{{ row.issue.assignee?.display_name ?? t('issue.unassigned') }}</span>
             <ListPropertySelect v-if="canWrite" class="list-status" :value="row.issue.status.key" :options="statusOptions" :disabled="disabled(row.issue)" :label="`${row.identifier} · ${t('issue.status')}`" @change="emit('status', row.issue, $event)" />
-            <span v-else class="list-status">{{ row.issue.status.display_name }}</span>
+            <span v-else class="list-status">{{ statusDisplayName(row.issue.status, locale) }}</span>
           </template>
-          <template v-else-if="row.context"><div class="list-context-title"><button type="button" class="list-issue-title" @click="emit('open', row.identifier)">{{ row.context.title }}</button><IssueChildrenProgress :progress="row.contextProgress" /></div><span class="list-context-status">{{ row.context.status.display_name }} · {{ locale === 'zh-CN' ? '父事项' : 'Parent' }}</span></template>
+          <template v-else-if="row.context"><div class="list-context-title"><button type="button" class="list-issue-title" @click="emit('open', row.identifier)">{{ row.context.title }}</button><IssueChildrenProgress :progress="row.contextProgress" /></div><span class="list-context-status">{{ statusDisplayName(row.context.status, locale) }} · {{ locale === 'zh-CN' ? '父事项' : 'Parent' }}</span></template>
           <span v-if="row.cycle" class="list-cycle-warning" role="status">{{ locale === 'zh-CN' ? '父子关系存在循环，已停止展开' : 'Cyclic parent relation; expansion stopped' }}</span>
         </div>
         <p v-if="group.column.loaded && !group.column.items.length && !group.column.loading && !group.column.error" class="list-page-state">{{ locale === 'zh-CN' ? '此状态暂无事项。' : 'No Issues in this status.' }}</p>

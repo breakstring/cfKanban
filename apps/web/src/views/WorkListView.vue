@@ -9,6 +9,7 @@ import { ApiProblem, apiRequest, errorText } from "../lib/api";
 import { ColumnPagination } from "../lib/column-pagination";
 import { containerChoiceLabels } from "../lib/container-choice";
 import { locale, t } from "../lib/i18n";
+import { statusDisplayName } from "../lib/status-display";
 import { cursorRequiresRestart } from "../lib/pagination";
 import { priorityText } from "../lib/priority";
 import { groupProjects } from "../lib/project-navigation";
@@ -30,7 +31,7 @@ const labels = computed(() => containerChoiceLabels(projects.value.map(project =
 const candidates = computed(() => filter.queue === "unassigned" || filter.queue === "needs_reassignment");
 const statuses: StatusKey[] = ["backlog", "todo", "in_progress", "done", "canceled"];
 function statusLabel(status: StatusKey): string {
-  return ({ backlog: ui("Backlog", "待规划"), todo: ui("Todo", "待办"), in_progress: ui("In progress", "进行中"), done: ui("Done", "已完成"), canceled: ui("Canceled", "已取消") })[status];
+  return statusDisplayName({ key: status }, locale.value);
 }
 const canLoad = computed(() => workListPath(filter, props.session) !== null);
 function clear(): void { generation++; page.reset(); resolved.value = null; applied.value = false; }
@@ -88,7 +89,7 @@ onUnmounted(clear);
       <p v-if="!page.loading && !page.error && !page.items.length" class="empty-copy">{{ ui('No issues match these filters.', '没有符合筛选条件的事项。') }}</p>
       <article v-for="issue in page.items" :key="issue.id" class="work-row">
         <div><p class="muted-copy">{{ issue.workspace.display_name }} / {{ issue.project.display_name }}</p><UButton color="neutral" variant="ghost" class="text-button work-issue" type="button" @click="navigate(`/app/issues/${issue.identifier}`)"><code>{{ issue.identifier }}</code><strong>{{ issue.title }}</strong></UButton></div>
-        <div class="work-row-facts"><span>{{ issue.status.display_name }}</span><span>{{ priorityText(issue.priority, locale === 'zh-CN') }}</span><span>{{ issue.assignee?.display_name ?? t('issue.unassigned') }}</span><span v-if="issue.needs_reassignment" class="warning-chip">{{ ui('Needs reassignment', '需重指派') }}</span></div>
+        <div class="work-row-facts"><span>{{ statusDisplayName(issue.status, locale) }}</span><span>{{ priorityText(issue.priority, locale === 'zh-CN') }}</span><span>{{ issue.assignee?.display_name ?? t('issue.unassigned') }}</span><span v-if="issue.needs_reassignment" class="warning-chip">{{ ui('Needs reassignment', '需重指派') }}</span></div>
       </article>
       <UButton color="neutral" variant="outline" v-if="page.cursor && !page.error" class="load-more" type="button" :disabled="page.loading" @click="load()">{{ page.loading ? ui('Loading…', '加载中…') : ui('Load more', '加载更多') }}</UButton>
     </section>

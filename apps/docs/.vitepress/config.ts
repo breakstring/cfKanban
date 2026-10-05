@@ -36,13 +36,18 @@ export default defineConfig({
   outDir: "../web/dist/docs",
   cleanUrls: true,
   appearance: false,
+  vite: {
+    build: {
+      assetsInlineLimit: file => /[\\/]cfkanban-mark-orange\.svg$/u.test(file) ? false : undefined,
+    },
+  },
   lastUpdated: false,
   head: [
     ["meta", { name: "cfkanban-docs", content: version }],
     ["meta", { name: "referrer", content: "no-referrer" }],
   ],
   transformHead({ assets }) {
-    const logo = assets.find(asset => /cfkanban-mark[^/]*\.png$/u.test(asset));
+    const logo = assets.find(asset => /cfkanban-mark-orange[^/]*\.svg$/u.test(asset));
     return logo ? [["link", { rel: "icon", href: logo }]] : [];
   },
   locales: {

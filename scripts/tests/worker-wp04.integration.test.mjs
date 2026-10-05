@@ -421,7 +421,7 @@ test("WP-04 implements hash-only Invitations, atomic identity bootstrap, Grants,
   const chineseInvitationPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
     headers: { "accept-language": "zh-CN,zh;q=0.9" },
   });
-  assert.match(await chineseInvitationPage.text(), /<html lang="zh-CN">[\s\S]*目标 Project/);
+  assert.match(await chineseInvitationPage.text(), /<html lang="zh-CN">[\s\S]*目标项目/);
   const weightedEnglishPage = await request(`/invite?code=${encodeURIComponent(projectInviteCode)}`, {
     headers: { "accept-language": "en-US,en;q=0.9,zh-CN;q=0.1" },
   });

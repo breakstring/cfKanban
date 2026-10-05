@@ -32,7 +32,7 @@ Any signed-in identity can save its own theme, including readers. If another pro
 
 Use the language button at the top right of the signed-in Web UI or a connected local workbench to switch between English and Simplified Chinese. Each switch saves your preference to your identity in this site, so the full app and local workbench use it the next time you open them. No extra settings page is needed.
 
-If you have not saved a language yet, the full app uses its existing browser preference and the workbench follows the host language. If saving fails, review the message; an uncertain result requires recovering the original change before making a new one.
+Your saved account language takes priority in the full app and every local workbench, including DSH and Codex. If it is unset or unavailable, use the current browser or host's preferred language: Chinese uses Simplified Chinese; other or unknown languages use English. A signed-in account without a preference does not inherit an old anonymous choice. Automatic detection does not save an account preference. If saving fails, review the message; an uncertain result requires recovering the original change before making a new one.
 
 ## Owner notifications
 

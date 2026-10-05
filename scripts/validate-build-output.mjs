@@ -6,6 +6,8 @@ import { verifyWebAssetManifest } from "./lib/web-asset-manifest.mjs";
 import { verifyEmbeddedBuild } from "./lib/embedded-build.mjs";
 import { verifyLocalRuntimeBuild } from "../packages/local-runtime/scripts/build.mjs";
 import { verifyCliBuild } from "./lib/cli-build.mjs";
+import { verifyMcpBuild } from "./lib/mcp-build.mjs";
+import { generateBrandAssets } from "./generate-brand-assets.mjs";
 
 async function filesUnder(root) {
   const entries = await readdir(root, { withFileTypes: true, recursive: true });
@@ -13,9 +15,11 @@ async function filesUnder(root) {
 }
 
 const webRoot = new URL("../apps/web/dist/", import.meta.url);
+await generateBrandAssets({ check: true });
 const workerRoot = new URL("../apps/worker/dist/", import.meta.url);
 const release = JSON.parse(await readFile(new URL("../release/version.json", import.meta.url), "utf8"));
 await verifyCliBuild({ outputDirectory: fileURLToPath(new URL("../packages/cli/dist/", import.meta.url)), version: release.version });
+await verifyMcpBuild({ outputDirectory: fileURLToPath(new URL("../packages/mcp/dist/", import.meta.url)), version: release.version });
 await verifyEmbeddedBuild({ outputDirectory: fileURLToPath(new URL("../apps/web/dist-embedded/", import.meta.url)), version: release.version });
 await verifyLocalRuntimeBuild({ outputDirectory: fileURLToPath(new URL("../packages/local-runtime/dist/", import.meta.url)), version: release.version });
 const webBudget = JSON.parse(await readFile(new URL("./web-performance-budget.json", import.meta.url), "utf8"));
@@ -30,7 +34,7 @@ for (const locale of ["en", "zh-CN"]) {
       const prefix = `${locale}/${page.path}`;
       const html = await readFile(new URL(`${prefix}.html`, docsRoot), "utf8");
       assert.match(html, /<meta name="cfkanban-docs"/u, `${prefix} must identify itself as documentation`);
-      assert.match(html, /<link rel="icon" href="\/docs\/assets\/cfkanban-mark\.[^"/]+\.png">/u, `${prefix} must load the local brand mark`);
+      assert.match(html, /<link rel="icon" href="\/docs\/assets\/cfkanban-mark-orange\.[^"/]+\.svg">/u, `${prefix} must load the local brand mark`);
       assert.ok(html.includes(`content="${release.version}"`), `${prefix} must match the release version`);
       assert.equal(await readFile(new URL(`${prefix}.md`, docsRoot), "utf8"), await readFile(new URL(`../apps/docs/${prefix}.md`, import.meta.url), "utf8"));
       assert.equal(docsIndex.includes(`](/docs/${prefix}.md)`), !page.hidden, `${prefix} must match its Agent discovery visibility`);
@@ -69,8 +73,8 @@ const webFiles = await filesUnder(webRoot);
 assert.ok(webFiles.some((name) => name.endsWith(".js")), "Web build must emit a JavaScript asset");
 assert.ok(webFiles.some((name) => name.endsWith(".png")), "Web build must emit the local brand mark");
 const indexHtml = await readFile(new URL("index.html", webRoot), "utf8");
-assert.match(indexHtml, /<link rel="icon"[^>]+\/assets\/cfkanban-mark-[^"/]+\.png/u, "Web build must fingerprint the favicon");
-assert.match(indexHtml, /<link rel="apple-touch-icon"[^>]+\/assets\/cfkanban-mark-[^"/]+\.png/u, "Web build must reuse the fingerprinted mark for touch icons");
+assert.match(indexHtml, /<link rel="icon"[^>]+\/assets\/cfkanban-mark-orange-[^"/]+\.svg/u, "Web build must fingerprint the vector favicon");
+assert.match(indexHtml, /<link rel="apple-touch-icon"[^>]+\/assets\/cfkanban-mark-[^"/]+\.png/u, "Web build must fingerprint the raster mark for touch icons");
 
 const workerFiles = await filesUnder(workerRoot);
 const workerEntry = new URL("index.js", workerRoot);

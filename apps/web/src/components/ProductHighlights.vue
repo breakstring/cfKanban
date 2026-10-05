@@ -8,7 +8,7 @@ const highlights = computed(() => locale.value === "zh-CN" ? {
   items: [
     {
       key: "agent",
-      label: "AGENT FIRST",
+      label: "智能体优先",
       title: "一句话，事情往前走。",
       description: "建任务、改状态、指派和评论，交给 Agent。常用操作不必打开 UI。",
       detail: "“把登录问题设为高优先级。”",

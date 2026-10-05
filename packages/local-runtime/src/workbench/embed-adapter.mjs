@@ -1,6 +1,7 @@
 import { EMBED_PROTOCOL, emptySnapshot, parseActionMessage, parseRenderedMessage, parseRenderTarget, parseSnapshotMessage, sameRenderTarget, snapshotRenderTarget } from '../../../../apps/web/src/embedded/protocol.ts';
 import { readIssueHierarchy } from '../../../../apps/web/src/lib/issue-hierarchy.ts';
-import { canonical, STATUSES } from './shared.mjs';
+import { resolveLocalePreference } from '../../../../apps/web/src/lib/locale-preference.ts';
+import { canonical, STATUSES, canCreateIssue } from './shared.mjs';
 import { items, nextCursor, recoveryId, sessionReference } from './controller.mjs';
 
 export const FRAME_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
@@ -19,16 +20,18 @@ const publicError = value => value ? { code: value.code === 'PANEL_PAGINATION_ST
 export const scopeTargetId = value => `${value.instance_id}/${value.workspace_id}/${value.project_id}`;
 const unavailable = (code = 'PANEL_INVALID_INPUT', outcome_unknown = false) => ({ ok: false, error: { code }, ...(outcome_unknown ? { outcome_unknown: true } : {}) });
 const principal = state => state.binding?.identity?.principal ?? state.identity?.principal;
-const preferredLocale = (state, fallback) => ['en', 'zh-CN'].includes(principal(state)?.locale) ? principal(state).locale : fallback === 'zh-CN' ? 'zh-CN' : 'en';
+const preferredLocale = (state, fallback) => ['en', 'zh-CN'].includes(principal(state)?.locale) ? principal(state).locale : typeof fallback === 'string' ? resolveLocalePreference(null, [fallback]) : undefined;
 
-export function projectSnapshot(state, sourceSessionId, fallbackLocale = 'en') {
+export function projectSnapshot(state, sourceSessionId, fallbackLocale) {
   const writer = Boolean(state.binding && state.issue && strings(state.issue.allowed_actions).includes('update'));
   const pending = state.pending ? pick(state.pending, ['identifier', 'expected_version', 'operation']) : null;
   const workspaceId = state.binding?.project?.workspace_id ?? state.workspace_id;
+  const locale = preferredLocale(state, fallbackLocale);
   return {
-    locale: preferredLocale(state, fallbackLocale), theme: principal(state)?.theme === 'blue' ? 'blue' : 'orange',
+    ...(locale ? { locale } : {}), theme: principal(state)?.theme === 'blue' ? 'blue' : 'orange',
     candidates: rows(state.candidates).map(resource), identity: identity(state.identity), workspaces: rows(state.workspaces).map(resource), projects: rows(state.projects).map(resource),
     ...(workspaceId ? { workspace_id: workspaceId } : {}), workspace_has_more: Boolean(state.workspace_cursor), project_has_more: Boolean(state.project_cursor),
+    project_menu_groups: rows(state.project_menu_groups).map(group => ({ workspace: resource(group.workspace), projects: rows(group.projects).map(resource), has_more: Boolean(group.project_cursor), error: publicError(group.error) })), project_menu_has_more: Boolean(state.project_menu_cursor), project_menu_error: publicError(state.project_menu_error),
     binding: state.binding ? { project: resource(state.binding.project), identity: identity(state.binding.identity), statuses: rows(items(state.binding.statuses)).map(value => pick(value, ['key', 'display_name'])) } : null,
     page: state.page ? { items: rows(items(state.page)).map(value => { const { body, ...row } = issue(value); return row; }), next_cursor: nextCursor(state.page) ? 'available' : null, capacity_reached: Boolean(state.page.capacity_reached) } : null,
     view: state.view, expanded_groups: state.expanded_groups ?? ['backlog'], board: state.binding ? { columns: STATUSES.filter(key => !state.filters.status || key === state.filters.status).map(key => {
@@ -44,7 +47,7 @@ export function projectSnapshot(state, sourceSessionId, fallbackLocale = 'en') {
     workspace_scope: state.workspace_scope ? { status: state.workspace_scope.status } : null, scope_mode: state.scope_mode,
     scope_targets: rows(state.scope_targets).map(row => ({ id: scopeTargetId(row), ...pick(row, ['display_name', 'project_id']), available: Boolean(row.available), ...(row.available ? {} : { unavailability: scopeCodes.has(row.unavailability) ? row.unavailability : 'PANEL_SCOPE_TARGET_UNAVAILABLE' }) })),
     scope_next_offset: state.scope_next_offset, ...(scopeCodes.has(state.scope_fallback) ? { scope_fallback: state.scope_fallback } : {}),
-    capabilities: { update: writer, comment: writer, complete: writer && state.issue?.status?.key !== 'done' },
+    capabilities: { update: writer, comment: writer, complete: writer && state.issue?.status?.key !== 'done', create: canCreateIssue(principal(state), { ...state.binding, workspace_id: workspaceId }) },
     notice: 'single_user_local_host',
   };
 }
@@ -70,7 +73,7 @@ export class WorkbenchAdapter {
     this.port = null;
     this.frameConnected = false;
     this.frameBlocked = false;
-    this.locale = 'en';
+    this.locale = undefined;
     this.unsubscribe = controller.subscribe(() => this.publish());
     this.removeCollectionValidator = controller.addCollectionValidator?.(state => Boolean(parseSnapshotMessage({ type: 'snapshot', state: projectSnapshot(state, this.sourceSessionId, this.locale) })));
     this.onAbort = () => this.dispose();
@@ -86,14 +89,14 @@ export class WorkbenchAdapter {
       this.controller.patch({ error: { code: 'PANEL_FRAME_RELOADED' } });
       return false;
     }
-    this.locale = locale;
-    const port = connectOwnedFrame(frame, preferredLocale(this.controller.state, locale), channelFactory);
+    this.locale = resolveLocalePreference(null, [locale]);
+    const port = connectOwnedFrame(frame, preferredLocale(this.controller.state, this.locale), channelFactory);
     if (!port) return false;
     this.frameConnected = true;
     this.attach(port);
     return true;
   }
-  setLocale(locale) { this.locale = locale; this.publish(); }
+  setLocale(locale) { this.locale = resolveLocalePreference(null, [locale]); this.publish(); }
   attach(port) {
     if (this.port) this.finishRendered(unavailable('PANEL_RENDER_UNAVAILABLE'));
     this.port?.close();
@@ -107,7 +110,8 @@ export class WorkbenchAdapter {
     let message;
     try { message = { type: 'snapshot', state: projectSnapshot(this.controller.state, this.sourceSessionId, this.locale) }; }
     catch { message = null; }
-    return message && parseSnapshotMessage(message) ? message : { type: 'snapshot', state: { ...emptySnapshot(), locale: this.locale, error: { code: 'PANEL_CONTEXT_TOO_LARGE' } } };
+    const locale = preferredLocale(this.controller.state, this.locale);
+    return message && parseSnapshotMessage(message) ? message : { type: 'snapshot', state: { ...emptySnapshot(), ...(locale ? { locale } : {}), error: { code: 'PANEL_CONTEXT_TOO_LARGE' } } };
   }
   publish() {
     if (this.disposed || this.controller.signal.aborted || (!this.port && !this.renderWaiter)) return;
@@ -198,7 +202,7 @@ export class WorkbenchAdapter {
       if (evictable) this.receipts.delete(evictable[0]);
       else return send(unavailable('PANEL_CAPACITY'));
     }
-    const receipt = { fingerprint, result: null, retain: ['mutate', 'quick_update', 'set_locale', 'recover'].includes(message.action) };
+    const receipt = { fingerprint, result: null, retain: ['mutate', 'quick_update', 'create_issue', 'set_locale', 'recover'].includes(message.action) };
     this.receipts.set(message.id, receipt);
     this.running = true;
     try {
@@ -231,6 +235,8 @@ export class WorkbenchAdapter {
       case 'workspaces': this.require(changeable && s.identity && (!p.next || s.workspace_cursor)); return c.loadWorkspaces(p.next ? s.workspace_cursor : undefined);
       case 'select_workspace': this.require(changeable && s.identity && (p.next ? s.workspace_id === p.workspace_id && s.project_cursor : s.workspaces.some(row => row.id === p.workspace_id))); return c.selectWorkspace(p.workspace_id, p.next ? s.project_cursor : undefined);
       case 'bind': this.require(changeable && s.identity && s.workspace_id && s.projects.some(row => row.id === p.project_id)); return c.bind(p.project_id);
+      case 'project_menu': this.require(changeable && bound && (p.workspace_id ? rows(s.project_menu_groups).some(group => group.workspace.id === p.workspace_id && (!p.next || group.project_cursor)) : !p.next || s.project_menu_cursor)); return c.projectMenu(p.workspace_id, p.next);
+      case 'project_switch': this.require(changeable && bound && rows(s.project_menu_groups).some(group => group.workspace.id === p.workspace_id && rows(group.projects).some(project => project.id === p.project_id))); return c.switchProject(p.workspace_id, p.project_id);
       case 'unbind': this.require(changeable); return c.unbind();
       case 'filters': this.require(bound && clean && ['all', 'mine'].includes(p.assignment)); return c.filter(p);
       case 'view': this.require(bound && clean && ['list', 'board'].includes(p.mode)); return c.setView(p.mode);
@@ -240,6 +246,7 @@ export class WorkbenchAdapter {
       case 'labels': this.require(bound && (!p.next || s.label_cursor)); return c.loadLabels(p.next);
       case 'set_locale': this.require(bound && clean); return c.setLocale(p.locale);
       case 'quick_update': { const subject = c.loadedIssue(p.identifier); this.require(bound && clean && subject && strings(subject.allowed_actions).includes('update') && p.change.status_key !== 'done' && (p.change.assignee_principal_id == null || rows(s.assignees).some(row => row.principal_id === p.change.assignee_principal_id))); return c.quickUpdate(p.identifier, p.change); }
+      case 'create_issue': this.require(bound && clean && canCreateIssue(s.binding.identity.principal, { ...s.binding, workspace_id: s.workspace_id })); return c.mutate('create', p.change);
       case 'page': this.require(bound && !p.next); return c.refresh();
       case 'open_issue': this.require(bound && (s.issue?.identifier === p.identifier || (clean && [...items(s.page), ...rows(s.board?.columns).flatMap(column => rows(column.items))].some(row => row.identifier === p.identifier || row.hierarchy?.parents?.some(parent => parent.identifier === p.identifier && parent.project_id === s.binding.project.id))))); return c.openIssue(p.identifier);
       case 'issue_back': this.require(currentIssue && clean); return c.patch({ issue: null });

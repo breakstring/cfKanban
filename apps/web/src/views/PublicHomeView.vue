@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
-import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
+import cfKanbanMarkUrl from "../assets/cfkanban-mark-orange.svg";
 import ErrorNotice from "../components/ErrorNotice.vue";
 import LocaleSwitch from "../components/LocaleSwitch.vue";
 import PageState from "../components/PageState.vue";

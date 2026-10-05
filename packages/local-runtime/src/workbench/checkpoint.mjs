@@ -55,15 +55,17 @@ export function validateCheckpoint(value) {
       if (!Array.isArray(state.issue.allowed_actions) || state.issue.allowed_actions.length > 20 || state.issue.allowed_actions.some(action => typeof action !== 'string' || action.length > 64)) return null;
     }
     if (state.pending !== null) {
-      const p = record(state.pending, ['binding_id', 'identifier', 'expected_version', 'operation', 'change', 'idempotency_key'], ['binding_id', 'expected_version', 'operation', 'change', 'idempotency_key']);
+      const p = record(state.pending, ['binding_id', 'identifier', 'expected_version', 'operation', 'change', 'idempotency_key'], ['binding_id', 'operation', 'change', 'idempotency_key']);
       uuid(p.binding_id, 'binding'); uuid(p.idempotency_key, 'original key');
-      if (p.operation === 'set_locale') { if (Object.hasOwn(p, 'identifier')) return null; } else identifier(p.identifier);
-      if (!state.binding || p.binding_id !== state.binding.binding_id || !Number.isSafeInteger(p.expected_version) || p.expected_version < 1) return null;
+      if (p.operation === 'set_locale' || p.operation === 'create') { if (Object.hasOwn(p, 'identifier') || p.operation === 'create' && Object.hasOwn(p, 'expected_version')) return null; } else identifier(p.identifier);
+      if (!state.binding || p.binding_id !== state.binding.binding_id || p.operation !== 'create' && (!Number.isSafeInteger(p.expected_version) || p.expected_version < 1)) return null;
       if (p.operation === 'set_locale') { record(p.change, ['locale'], ['locale']); if (!['en', 'zh-CN'].includes(p.change.locale)) return null; }
       else if (['label_add', 'label_remove'].includes(p.operation)) { record(p.change, ['label_id'], ['label_id']); uuid(p.change.label_id, 'label'); }
-      else if (p.operation === 'update') {
-        record(p.change, ['status_key', 'priority_key', 'assignee_principal_id']); if (!Object.keys(p.change).length || (p.change.status_key !== undefined && (!STATUSES.includes(p.change.status_key) || p.change.status_key === 'done')) || (p.change.priority_key !== undefined && !PRIORITIES.includes(p.change.priority_key))) return null;
+      else if (p.operation === 'update' || p.operation === 'create') {
+        record(p.change, p.operation === 'create' ? ['title', 'body', 'status_key', 'priority_key'] : ['title', 'body', 'status_key', 'priority_key', 'assignee_principal_id'], p.operation === 'create' ? ['title'] : []); if (!Object.keys(p.change).length || (p.change.status_key !== undefined && (!STATUSES.includes(p.change.status_key) || p.change.status_key === 'done')) || (p.change.priority_key !== undefined && !PRIORITIES.includes(p.change.priority_key))) return null;
         if (p.change.assignee_principal_id != null) uuid(p.change.assignee_principal_id, 'assignee');
+        if (p.change.title !== undefined) boundedText(p.change.title, 256, 'title');
+        if (p.change.body !== undefined && (typeof p.change.body !== 'string' || new TextEncoder().encode(p.change.body).length > 65_536)) return null;
       } else if (p.operation === 'comment') { record(p.change, ['body'], ['body']); boundedText(p.change.body, 32768, 'comment'); }
       else if (p.operation === 'complete') {
         record(p.change, ['summary', 'verification', 'artifacts', 'follow_ups'], ['summary']); boundedText(p.change.summary, 8192, 'summary', true);

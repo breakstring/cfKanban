@@ -7,6 +7,7 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 import { COMMANDS } from '../src/catalog.mjs';
 import { createContextResolver } from '../src/context.mjs';
+import { createWorkbenchPreferences } from '../../mcp/src/workbench-preferences.mjs';
 import { createCliRuntime } from '../src/runtime.mjs';
 import { inspectScopeDirectory, SCOPE_FILE_NAME } from '../../skill-runtime/src/scope.mjs';
 import { createPendingCredential, promotePendingCredential, putInstanceMetadata } from '../../skill-runtime/src/state.mjs';
@@ -255,7 +256,36 @@ test('context show describes all repository targets without forcing a project ch
   assert.equal(result.data.resolved_context.project_id, null);
   assert.deepEqual(result.data.repo_targets, f.state.targets);
   assert.equal(result.data.git.status, 'repository');
+  assert.equal(result.data.workbench_context_key, canonicalDigest({ directory: await realpath(f.repository) }));
   assert.deepEqual(await snapshot(f.repository), before);
+});
+
+test('Codex repository recommendation does not replace explicitly saved CLI context', async t => {
+  const f = await repositoryFixture(t, { targets: f => [target(f), anotherProject(f)] });
+  const key = canonicalDigest({ directory: await realpath(f.repository) });
+  const preferences = createWorkbenchPreferences({ homeDirectory: await realpath(f.home), stateRoot: await realpath(f.stateRoot) });
+  const recommended = { ...f.state.targets[1], principal_id: f.principalId };
+  assert.equal(await preferences.save(recommended, key), true);
+  const shown = await f.runtime().execute(command('context show'), {});
+  assert.equal(shown.data.workbench_context_key, key);
+  assert.equal(shown.data.resolved_context.project_id, null);
+  assert.equal(shown.data.saved_context, null);
+  await f.runtime().execute(command('context use'), { instanceId: f.instanceId, workspace_id: f.workspaceId, project_id: f.projectId });
+  const saved = await f.runtime().execute(command('context show'), {});
+  assert.equal(saved.data.resolved_context.project_id, f.projectId);
+  assert.deepEqual(await preferences.load(key), recommended);
+});
+
+test('context show passes through the inspector key and uses null outside a confirmed repository', async t => {
+  const f = await repositoryFixture(t), key = 'c'.repeat(64);
+  const scopeInspector = async input => ({ ...await f.scopeInspector(input), workbench_context_key: key });
+  const shown = await f.runtime({ scopeInspector }).execute(command('context show'), {});
+  assert.equal(shown.data.workbench_context_key, key);
+  const outside = path.join(f.home, 'outside-repository');
+  await mkdir(outside);
+  const unassociated = await f.runtime({ directory: outside }).execute(command('context show'), {});
+  assert.equal(unassociated.data.git.status, 'not_repository');
+  assert.equal(unassociated.data.workbench_context_key, null);
 });
 
 test('context use persists only private directory selection across runtimes and clear restores ambiguity', async t => {
@@ -442,6 +472,8 @@ test('unknown or unavailable directory inspection never falls back to the local 
     const scopeInspector = async () => ({ directory: f.repository, scope_directory: f.repository, scope_file: path.join(f.repository, SCOPE_FILE_NAME), scope: null, git: { status, root: null } });
     await assert.rejects(f.runtime({ scopeInspector }).execute(command('instance info'), {}), { code: 'CLI_CONTEXT_UNAVAILABLE' });
     await assert.rejects(resolver(f, { scopeInspector }).resolve(command('web open'), {}), { code: 'CLI_CONTEXT_UNAVAILABLE' });
+    const diagnostic = await f.runtime({ scopeInspector }).execute(command('context show'), {});
+    assert.equal(diagnostic.data.workbench_context_key, null);
   }
   assert.equal(f.state.calls.length, 0);
   assert.equal(f.state.fetchCalls.length, 0);
@@ -488,6 +520,7 @@ test('global show and clear operate on the global default while preserving the d
   const shown = await f.runtime().execute(command('context show'), { global: true });
   assert.equal(shown.data.resolved_context.project_id, f.projectId);
   assert.equal(shown.data.resolved_context.sources.project, 'saved_global');
+  assert.equal(shown.data.workbench_context_key, null);
   await f.runtime().execute(command('context clear'), { global: true });
   await assert.rejects(stat(path.join(f.stateRoot, 'cli-contexts', 'global.json')), { code: 'ENOENT' });
   const directory = await f.runtime().execute(command('context show'), {});

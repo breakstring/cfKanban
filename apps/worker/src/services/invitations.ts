@@ -1,6 +1,7 @@
 import { buildManagementGuard, managementAuthorization, requireManagementAuthorization } from "../kernel/scoped-authorization.ts";
 import { principalDisplayNameExists, principalDisplayNameConflict } from "./principal-names.ts";
 import { activeProjectPrincipalCountSql } from "./project-members.ts";
+import { preferredPageLocale } from "./web-auth.ts";
 import {
   principalDisplayNameKey,
   generateInvitationCode,
@@ -988,25 +989,6 @@ function assertInvitationUsable(row: InvitationRow, now: number): void {
   if (status === "expired") throw gone("INVITATION_EXPIRED");
 }
 
-function preferredInvitationLocale(acceptLanguage: string | null): "en" | "zh-CN" {
-  const preferences = (acceptLanguage ?? "").split(",").map((entry, index) => {
-    const [tagPart, ...parameters] = entry.trim().split(";");
-    const qParameter = parameters.find((parameter) => parameter.trim().toLowerCase().startsWith("q="));
-    const quality = qParameter === undefined ? 1 : Number(qParameter.trim().slice(2));
-    return {
-      index,
-      quality: Number.isFinite(quality) && quality >= 0 && quality <= 1 ? quality : 0,
-      tag: tagPart?.toLowerCase() ?? "",
-    };
-  }).filter((entry) => entry.quality > 0)
-    .sort((left, right) => right.quality - left.quality || left.index - right.index);
-  for (const preference of preferences) {
-    if (/^zh(?:-cn|-hans)?$/u.test(preference.tag)) return "zh-CN";
-    if (/^en(?:-[a-z0-9]+)*$/u.test(preference.tag)) return "en";
-  }
-  return "en";
-}
-
 export const INVITATION_PAGE_SCRIPT = String.raw`(() => {
   const inviteCode = new URL(location.href).searchParams.get("code");
   history.replaceState({}, document.title, "/invite");
@@ -1019,6 +1001,11 @@ export const INVITATION_PAGE_SCRIPT = String.raw`(() => {
   let state = "loading";
   let submitting = false;
   let attempt = null;
+  let signedIn = false;
+  let checkingIdentity = true;
+  const languages = typeof navigator === "undefined" ? [] : navigator.languages?.length ? navigator.languages : [navigator.language];
+  const preferred = languages[0];
+  const systemLocale = typeof navigator === "undefined" ? (document.documentElement.lang === "zh-CN" ? "zh-CN" : "en") : (/^zh(?:[-_]|$)/i.test(typeof preferred === "string" ? preferred.trim() : "") ? "zh-CN" : "en");
   const messages = {
     loading: ["Checking your signed-in identity…", "正在核对当前登录身份…"],
     agent: ["Use your trusted cfKanban Agent to join or recover an identity. No invitation has been accepted here.", "请使用可信 cfKanban Agent 加入或恢复身份。此页面尚未接受邀请。"],
@@ -1044,12 +1031,27 @@ export const INVITATION_PAGE_SCRIPT = String.raw`(() => {
   const apply = (locale) => {
     const selected = locale === "zh-CN" ? "zh-CN" : "en";
     document.documentElement.lang = selected;
+    document.title = selected === "zh-CN" ? "cfKanban 邀请" : "cfKanban Invitation";
+    document.querySelectorAll("[data-invitation-title]").forEach((element) => { element.textContent = document.title; });
+    document.querySelectorAll("[data-invitation-language]").forEach((element) => { element.setAttribute("aria-label", selected === "zh-CN" ? "语言" : "Language"); });
     document.querySelectorAll("[data-invitation-locale]").forEach((section) => { section.hidden = section.dataset.invitationLocale !== selected; });
-    try { localStorage.setItem("cfkanban_locale", selected); } catch {}
     render();
   };
-  document.querySelectorAll("[data-select-locale]").forEach((control) => control.addEventListener("click", () => apply(control.dataset.selectLocale)));
-  try { const saved = localStorage.getItem("cfkanban_locale"); if (saved) apply(saved); } catch {}
+  const applyGuestLocale = () => {
+    let saved = null;
+    try { saved = localStorage.getItem("cfkanban_locale"); } catch {}
+    apply(saved === "en" || saved === "zh-CN" ? saved : systemLocale);
+  };
+  const applyAccountLocale = (saved) => apply(saved === "en" || saved === "zh-CN" ? saved : systemLocale);
+  document.querySelectorAll("[data-select-locale]").forEach((control) => control.addEventListener("click", () => {
+    const selected = control.dataset.selectLocale;
+    if (selected !== "en" && selected !== "zh-CN") return;
+    apply(selected);
+    if (!signedIn && !checkingIdentity) {
+      try { localStorage.setItem("cfkanban_locale", selected); } catch {}
+    }
+  }));
+  apply(systemLocale);
   const confirmed = (result) => {
     const resource = result?.resource;
     if (!resource || resource.id !== metadata.invitation_id || resource.kind !== "project_grant"
@@ -1092,6 +1094,7 @@ export const INVITATION_PAGE_SCRIPT = String.raw`(() => {
         render();
         return;
       }
+      applyAccountLocale(current.principal.locale);
       const response = await fetch("/api/v1/invitations/redeem", {
         method: "POST", credentials: "same-origin", cache: "no-store",
         headers: { "content-type": "application/json", "x-csrf-token": csrf() ?? "", "idempotency-key": attempt.key },
@@ -1111,13 +1114,21 @@ export const INVITATION_PAGE_SCRIPT = String.raw`(() => {
   fetch("/api/v1/web-session", { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(15000) })
     .then(async (response) => {
       const session = response.ok ? await response.json() : null;
-      if (validSession(session) && !session.principal.is_owner) {
-        principal = session.principal;
-        sessionId = session.session_id;
-        state = "ready";
-      } else { state = "agent"; }
-      render();
-    }).catch(() => { state = "agent"; render(); });
+      if (validSession(session)) {
+        checkingIdentity = false;
+        signedIn = true;
+        if (!session.principal.is_owner) {
+          principal = session.principal;
+          sessionId = session.session_id;
+          state = "ready";
+        } else { state = "agent"; }
+        applyAccountLocale(session.principal.locale);
+      } else {
+        state = "agent";
+        if (response.status === 401) { checkingIdentity = false; applyGuestLocale(); }
+        else apply(systemLocale);
+      }
+    }).catch(() => { state = "agent"; apply(systemLocale); });
 })()`;
 
 let invitationPageScriptHash: Promise<string> | null = null;
@@ -1162,15 +1173,15 @@ export async function getInvitationBootstrapHtml(
   assertInvitationUsable(row, now);
   await requireInvitationIssuerActive(db, row);
   const grants = await readInvitationGrants(db, row.id);
-  const locale = preferredInvitationLocale(acceptLanguage);
+  const locale = preferredPageLocale(acceptLanguage);
   const renderDetails = (isChinese: boolean) => {
     const roleLabel = (role: ProjectRole) => isChinese
-      ? role === "writer" ? "可写 writer" : "只读 reader"
+      ? role === "writer" ? "协作者（可读写）" : "只读者"
       : role === "writer" ? "writer (read/write)" : "reader (read-only)";
     return row.kind === "project_grant"
-      ? `<h2>${isChinese ? "目标 Project" : "Target Projects"}</h2><ul>${grants.map((grant) => `<li><strong>${escapeHtml(grant.workspace_display_name)} / ${escapeHtml(grant.display_name)}</strong> — ${roleLabel(grant.role)}</li>`).join("")}</ul>`
+      ? `<h2>${isChinese ? "目标项目" : "Target Projects"}</h2><ul>${grants.map((grant) => `<li><strong>${escapeHtml(grant.workspace_display_name)} / ${escapeHtml(grant.display_name)}</strong> — ${roleLabel(grant.role)}</li>`).join("")}</ul>`
       : `<h2>${isChinese ? "身份恢复警告" : "Identity recovery warning"}</h2><p>${isChinese
-        ? `此邀请绑定 Principal ${escapeHtml(row.bound_principal_id ?? "")}（${escapeHtml(row.bound_display_name ?? "")}）。兑换者将继承该身份的全部现有 Grants、assignment 与历史。${row.recovery_mode === "rotation" ? "rotation 成功后只撤销本次用于认证的旧 Credential，其他 active Credential 保持有效。" : "full_recovery 成功后撤销该 Principal 的全部先前 active Credentials。"}`
+        ? `此邀请绑定身份 ${escapeHtml(row.bound_principal_id ?? "")}（${escapeHtml(row.bound_display_name ?? "")}）。兑换者将继承该身份的全部现有项目权限、任务指派与历史。${row.recovery_mode === "rotation" ? "凭据轮换成功后只撤销本次用于认证的旧凭据，其他有效凭据保持有效。" : "完整恢复成功后撤销该身份的全部先前有效凭据。"}`
         : `This Invitation is bound to Principal ${escapeHtml(row.bound_principal_id ?? "")} (${escapeHtml(row.bound_display_name ?? "")}). The redeemer inherits all existing Grants, assignments, and history. ${row.recovery_mode === "rotation" ? "A successful rotation revokes only the old Credential used to authenticate this redemption; other active Credentials remain valid." : "A successful full recovery revokes every previously active Credential for this Principal."}`}</p>`;
   };
   const metadata = JSON.stringify({
@@ -1190,11 +1201,12 @@ export async function getInvitationBootstrapHtml(
   const section = (sectionLocale: "en" | "zh-CN") => {
     const isChinese = sectionLocale === "zh-CN";
     const intro = isChinese
-      ? "打开页面不会消费邀请。已登录参与者可核对下方项目后，以当前身份接受普通项目邀请；其他加入或恢复请让 Agent 使用已从项目声明的 canonical publisher 验证过的 cfKanban Skill，核对发行来源、版本、完整性与下列目标后再执行兑换；不要运行页面中的远程脚本。"
+      ? "打开页面不会消费邀请。已登录参与者可核对下方项目后，以当前身份接受普通项目邀请；其他加入或恢复请让智能体使用已从项目声明的正式发布方验证过的 cfKanban 技能，核对发行来源、版本、完整性与下列目标后再执行兑换；不要运行页面中的远程脚本。"
       : "Opening this page does not consume the Invitation. Signed-in participants can review and accept ordinary project invitations as their current identity. For other joining or recovery, ask your Agent to use a cfKanban Skill already verified against the project-declared canonical publisher, then check its source, version, integrity, and the targets below before redeeming. Do not run remote scripts from this page.";
     return `<section data-invitation-locale="${sectionLocale}"${locale === sectionLocale ? "" : " hidden"}><p>${intro}</p>${renderDetails(isChinese)}<p>${isChinese ? "有效期至" : "Expires at"} ${escapeHtml(timestamp(row.expires_at) ?? "")}.</p></section>`;
   };
-  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>cfKanban Invitation</title></head><body><main><nav aria-label="Language"><button type="button" data-select-locale="en">English</button> <button type="button" data-select-locale="zh-CN">简体中文</button></nav><h1>cfKanban Invitation</h1>${section("en")}${section("zh-CN")}<p id="invitation-status" role="status" aria-live="polite"></p><button id="invitation-accept" type="button" hidden></button><p><a id="invitation-next" href="/app" hidden></a></p><script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>${INVITATION_PAGE_SCRIPT}</script></body></html>`;
+  const title = locale === "zh-CN" ? "cfKanban 邀请" : "cfKanban Invitation";
+  return `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body><main><nav data-invitation-language aria-label="${locale === "zh-CN" ? "语言" : "Language"}"><button type="button" data-select-locale="en">English</button> <button type="button" data-select-locale="zh-CN">简体中文</button></nav><h1 data-invitation-title>${title}</h1>${section("en")}${section("zh-CN")}<p id="invitation-status" role="status" aria-live="polite"></p><button id="invitation-accept" type="button" hidden></button><p><a id="invitation-next" href="/app" hidden></a></p><script id="cfkanban-invitation-metadata" type="application/json">${metadata}</script></main><script>${INVITATION_PAGE_SCRIPT}</script></body></html>`;
 }
 
 async function optionalRedeemAuth(

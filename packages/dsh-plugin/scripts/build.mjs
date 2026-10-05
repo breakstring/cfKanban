@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
 import { verifyLocalRuntimeBuild } from "../../local-runtime/scripts/build.mjs";
+import { MCP_BUILD_FILES, verifyMcpBuild } from "../../../scripts/lib/mcp-build.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SKILLS = ["cfkanban-howto", "cfkanban", "cfkanban-admin", "cfkanban-deploy"];
@@ -96,7 +97,7 @@ async function buildClient(root, target, embeddedSource, embeddedHtml) {
     entryPoints: [path.join(root, "packages", "dsh-plugin", "src", "client", "index.jsx")],
     absWorkingDir: root,
     bundle: true, write: false, platform: "browser", format: "cjs", target: "es2022", external: ["react"],
-    loader: { ".png": "dataurl", ".html": "text" }, metafile: true,
+    loader: { ".png": "dataurl", ".svg": "dataurl", ".html": "text" }, metafile: true,
     plugins: [{
       name: "fixed-embedded-document",
       setup(build) {
@@ -128,19 +129,16 @@ export async function buildDshPlugin({ outputDirectory, version, mcpDirectory = 
     await copyRegular(path.join(sourceRoot, "LICENSE"), path.join(packageDirectory, "LICENSE"));
     for (const skill of SKILLS) await copyRegular(path.join(sourceRoot, "skills", skill), path.join(packageDirectory, "skills", skill));
     await copyRegular(path.join(sourceRoot, "packages", "skill-runtime"), path.join(packageDirectory, "packages", "skill-runtime"));
-    for (const entry of ["server.mjs", "facade.mjs", "build-metadata.json", "THIRD_PARTY_NOTICES.txt"]) await copyRegular(path.join(mcpDirectory, entry), path.join(packageDirectory, "mcp", entry));
-    const mcpMetadata = JSON.parse(await readFile(path.join(mcpDirectory, "build-metadata.json"), "utf8"));
+    let mcpMetadata = JSON.parse(await readFile(path.join(mcpDirectory, "build-metadata.json"), "utf8"));
     if (mcpMetadata.release_version !== version) throw new Error("DSH and MCP artifact release versions must match");
     if (mcpMetadata.schema_version !== 1 || mcpMetadata.transport !== "stdio" || mcpMetadata.node_range !== ">=22.12.0" || !Array.isArray(mcpMetadata.entries)) {
       throw new Error("DSH artifact requires verified prebuilt MCP metadata");
     }
-    for (const name of ["server.mjs", "facade.mjs"]) {
-      const matches = mcpMetadata.entries.filter((entry) => entry.path === name);
-      const content = await readFile(path.join(packageDirectory, "mcp", name));
-      if (matches.length !== 1 || matches[0].size_bytes !== content.length || matches[0].sha256 !== createHash("sha256").update(content).digest("hex")) {
-        throw new Error("DSH artifact MCP entry integrity check failed");
-      }
-    }
+    try { await verifyMcpBuild({ outputDirectory: mcpDirectory, version }); }
+    catch (cause) { throw new Error("DSH artifact MCP entry integrity check failed", { cause }); }
+    for (const entry of MCP_BUILD_FILES) await copyRegular(path.join(mcpDirectory, entry), path.join(packageDirectory, "mcp", entry));
+    try { mcpMetadata = await verifyMcpBuild({ outputDirectory: path.join(packageDirectory, "mcp"), version }); }
+    catch (cause) { throw new Error("DSH artifact MCP entry integrity check failed", { cause }); }
     await verifyLocalRuntimeBuild({ outputDirectory: localRuntimeDirectory, version });
     await copyRegular(localRuntimeDirectory, path.join(packageDirectory, "local-runtime"));
     const localMetadata = await verifyLocalRuntimeBuild({ outputDirectory: path.join(packageDirectory, "local-runtime"), version });

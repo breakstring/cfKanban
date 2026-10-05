@@ -37,6 +37,7 @@ export default defineConfig({
     },
   }],
   build: {
+    assetsInlineLimit: file => /[\\/]cfkanban-mark(?:-orange)?\.(?:svg|png)$/u.test(file) ? false : undefined,
     emptyOutDir: true,
     manifest: true,
     outDir: "dist",

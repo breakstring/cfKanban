@@ -27,7 +27,7 @@ globalThis.document = { cookie: 'cfkanban_csrf=homepage-fixture', visibilityStat
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
   stdin: { contents: `export { default as PublicHome } from './apps/web/src/views/PublicHomeView.vue'; export { locale } from './apps/web/src/lib/i18n.ts'; export { currentPath } from './apps/web/src/lib/router.ts';`, resolveDir: root },
-  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
+  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent', loader: { '.svg': 'dataurl' },
   plugins: [{ name: 'homepage-entry-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
       const { descriptor } = parse(await readFile(path, 'utf8'), { filename: path });

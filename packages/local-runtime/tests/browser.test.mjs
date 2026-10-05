@@ -59,7 +59,7 @@ test('expired or closed local service reports how to reopen without automaticall
       let failure = false;
       const requests = [];
       const doc = parentDocument({ csrf: 'synthetic-csrf', page_id: randomUUID(), embeddedHtml: '<html></html>', locale: 'zh-CN' });
-      const mounted = await mountLocalWorkbench({ document: doc, window: { addEventListener() {} }, fetchImpl: async url => {
+      const mounted = await mountLocalWorkbench({ document: doc, window: { navigator: { language: 'zh-CN' }, addEventListener() {} }, fetchImpl: async url => {
         requests.push(url);
         if (failure) {
           if (code === 'disconnected') throw new TypeError('Synthetic closed socket');
@@ -84,8 +84,41 @@ test('expired or closed local service reports how to reopen without automaticall
 function parentDocument(config) {
   const elements = new Map(['workbench', 'status', 'online', 'close'].map(id => [id, element()]));
   elements.set('configuration', element(JSON.stringify(config)));
-  return { elements, getElementById: id => elements.get(id) };
+  return { elements, documentElement: { lang: 'en' }, getElementById: id => elements.get(id) };
 }
+
+test('local browser shell and shared view follow saved preferences, then the current browser language without saving automatically', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'cfkanban-parent-locale-'));
+  let mounted;
+  try {
+    const script = path.join(directory, 'browser.mjs');
+    await build({ entryPoints: [new URL('../src/browser.mjs', import.meta.url).pathname], outfile: script, bundle: true, platform: 'browser', format: 'esm', target: 'es2022', logLevel: 'silent' });
+    const { mountLocalWorkbench } = await import(pathToFileURL(script));
+    const doc = parentDocument({ csrf: 'synthetic-csrf', page_id: randomUUID(), embeddedHtml: '<html></html>', locale: 'zh-CN' });
+    const listeners = new Map(), requests = [];
+    const window = { navigator: { languages: ['fr', 'zh-CN'] }, addEventListener: (type, listener) => listeners.set(type, listener), removeEventListener: type => listeners.delete(type) };
+    mounted = await mountLocalWorkbench({ document: doc, window, fetchImpl: async url => {
+      requests.push(url);
+      return Response.json({ ok: true, value: { ok: true, data: url.endsWith('connections') ? { candidates: [] } : { status: 'missing', targets: [] } } });
+    } });
+    assert.equal(doc.documentElement.lang, 'en', 'the old fixed shell locale does not override the browser');
+    assert.equal(doc.elements.get('status').textContent, 'Local workbench');
+    assert.equal(doc.elements.get('close').title, 'Close local service');
+    mounted.controller.patch({ identity: { instance: { instance_id: randomUUID() }, principal: { principal_id: randomUUID(), locale: 'zh-CN' } } });
+    assert.equal(doc.documentElement.lang, 'zh-CN');
+    assert.equal(doc.elements.get('online').title, '打开完整线上看板');
+    window.navigator.languages = ['en']; listeners.get('languagechange')();
+    assert.equal(doc.documentElement.lang, 'zh-CN', 'saved preference wins over host changes');
+    mounted.controller.patch({ identity: { ...mounted.controller.state.identity, principal: { ...mounted.controller.state.identity.principal, locale: null } } });
+    assert.equal(doc.documentElement.lang, 'en');
+    window.navigator.languages = ['zh_TW']; listeners.get('languagechange')();
+    assert.equal(doc.documentElement.lang, 'zh-CN');
+    assert.equal(doc.elements.get('status').textContent, '本地工作台');
+    assert.equal(requests.some(url => /\/(mutate|recover)$/.test(url)), false);
+    mounted.dispose(); mounted = null;
+    assert.equal(listeners.has('languagechange'), false);
+  } finally { mounted?.dispose(); await rm(directory, { recursive: true, force: true }); }
+});
 
 for (const firstOutcome of ['unknown', 'known']) {
 test(`parent online recovery preserves the ${firstOutcome} original after a lost reply and same-cookie reload`, async () => {
@@ -127,7 +160,7 @@ test(`parent online recovery preserves the ${firstOutcome} original after a lost
       if (url === './api/open-online' && loseReply) { loseReply = false; await result.json(); throw new Error('Fixture dropped the response'); }
       return result;
     };
-    const window = { addEventListener() {} };
+    const window = { navigator: { language: 'zh-CN' }, addEventListener() {} };
     const doc = parentDocument(await loadConfig());
     first = await mountLocalWorkbench({ document: doc, window, fetchImpl: browserFetch });
     await first.controller.openIssue(issue.identifier);

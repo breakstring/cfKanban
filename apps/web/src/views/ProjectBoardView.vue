@@ -26,6 +26,7 @@ import {
 } from "../lib/cas-recovery";
 import { projectInventoryBoundary, sessionCanWriteProject } from "../lib/session-boundary";
 import { locale, t } from "../lib/i18n";
+import { statusDisplayName } from "../lib/status-display";
 import { lazyPage } from "../lib/lazy-page";
 import { localizedText, type LocalizedText, useLocalizedError } from "../lib/localized-error";
 import { boardFilters, boardPath } from "../lib/board-navigation";
@@ -166,8 +167,8 @@ useSessionTextDraft({
 });
 const statusMap = computed(() => new Map(statuses.value.map((status) => [status.key, status])));
 const boardRegion = ref<HTMLElement | null>(null);
-const statusFilterItems = computed(() => [{ value: "all", label: locale.value === "zh-CN" ? "全部状态" : "All statuses" }, ...statusOrder.map(key => ({ value: key, label: statusMap.value.get(key)?.display_name ?? key }))]);
-const statusNavigation = computed(() => eligibleStatuses.value.map(key => ({ key, display_name: statusMap.value.get(key)?.display_name ?? key, loaded: columns[key].items.length, has_more: Boolean(columns[key].cursor), target_id: `board-status-${key}` })));
+const statusFilterItems = computed(() => [{ value: "all", label: locale.value === "zh-CN" ? "全部状态" : "All statuses" }, ...statusOrder.map(key => ({ value: key, label: statusDisplayName(statusMap.value.get(key) ?? { key }, locale.value) }))]);
+const statusNavigation = computed(() => eligibleStatuses.value.map(key => ({ key, display_name: statusDisplayName(statusMap.value.get(key) ?? { key }, locale.value), loaded: columns[key].items.length, has_more: Boolean(columns[key].cursor), target_id: `board-status-${key}` })));
 
 function projectIsActive(): boolean {
   const scope = props.session.allowed_scope.projects;
@@ -325,7 +326,7 @@ async function loadCounts(): Promise<void> {
 }
 
 function countLabel(status: StatusKey): string {
-  const name = statusMap.value.get(status)?.display_name ?? status;
+  const name = statusDisplayName(statusMap.value.get(status) ?? { key: status }, locale.value);
   if (countsLoading.value) return `${name} · ${locale.value === "zh-CN" ? "正在读取总数" : "Loading total"}`;
   if (countsError.value || !counts.value) return `${name} · ${locale.value === "zh-CN" ? "总数不可用" : "Total unavailable"}`;
   return `${name} · ${locale.value === "zh-CN" ? "匹配事项总数" : "Matching issues total"}: ${counts.value.counts[status]}`;
@@ -810,10 +811,10 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
           @drop="onDrop(statusKey)"
         >
           <header class="column-header">
-            <h2>{{ statusMap.get(statusKey)?.display_name ?? statusKey }}</h2>
+            <h2>{{ statusDisplayName(statusMap.get(statusKey) ?? { key: statusKey }, locale) }}</h2>
             <UBadge color="neutral" variant="soft" size="md" :title="countLabel(statusKey)" :aria-label="countLabel(statusKey)" :aria-busy="countsLoading">{{ countsLoading ? '…' : counts ? counts.counts[statusKey] : '—' }}</UBadge>
           </header>
-          <div :id="`board-column-${statusKey}`" class="column-content" tabindex="0" :aria-label="`${statusMap.get(statusKey)?.display_name ?? statusKey} · ${locale === 'zh-CN' ? '事项列表' : 'Issues'}`" @scroll="onColumnScroll(statusKey, $event)">
+          <div :id="`board-column-${statusKey}`" class="column-content" tabindex="0" :aria-label="`${statusDisplayName(statusMap.get(statusKey) ?? { key: statusKey }, locale)} · ${locale === 'zh-CN' ? '事项列表' : 'Issues'}`" @scroll="onColumnScroll(statusKey, $event)">
             <article
               v-for="issue in issuesFor(statusKey)"
               :key="issue.id"
@@ -877,7 +878,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
                 @change.stop="onStatusSelection(issue, $event)"
               >
                 <option v-for="option in statusOrder" :key="option" :value="option">
-                  {{ statusMap.get(option)?.display_name ?? option }}
+                  {{ statusDisplayName(statusMap.get(option) ?? { key: option }, locale) }}
                 </option>
               </select>
               </div>
@@ -900,7 +901,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
         <label>{{ locale === "zh-CN" ? "标题" : "Title" }}<UInput v-model="newIssue.title" required maxlength="256" autofocus /></label>
         <label>{{ t("issue.body") }}<UTextarea v-model="newIssue.body" :rows="7" :placeholder="t('comment.placeholder')" /></label>
         <div class="form-grid">
-          <label>{{ t("issue.status") }}<USelect v-model="newIssue.status_key" :items="statusOrder.filter(key => key !== 'done').map(key => ({ value: key, label: statusMap.get(key)?.display_name ?? key }))" /></label>
+          <label>{{ t("issue.status") }}<USelect v-model="newIssue.status_key" :items="statusOrder.filter(key => key !== 'done').map(key => ({ value: key, label: statusDisplayName(statusMap.get(key) ?? { key }, locale) }))" /></label>
           <label>{{ t("issue.priority") }}<USelect v-model="newIssue.priority_key" :items="priorityOrder.map(key => ({ value: key, label: priorityLabel(key) }))" :aria-label="t('issue.priority')" /></label>
         </div>
         <div class="form-actions"><UButton color="neutral" variant="outline" type="button" :disabled="formBusy" @click="showNewIssue = false">{{ t("action.cancel") }}</UButton><UButton color="primary" type="submit" :loading="formBusy">{{ t("action.save") }}</UButton></div>

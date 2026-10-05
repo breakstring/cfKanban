@@ -436,7 +436,28 @@ test('an account without a language preference and logout restore the browser fa
   } finally { app.unmount(); }
 });
 
-test('public language changes retain a browser fallback without overwriting saved account preferences', async () => {
+test('null and missing account preferences use the current browser rather than an older public choice', async () => {
+  const originalLanguages = window.navigator.languages;
+  window.navigator.languages = ['zh-TW'];
+  const initial = localeSession({ locale: null });
+  const { app, state } = await mountLocaleApp(initial, async () => Response.json({}));
+  try {
+    await nextTick();
+    assert.equal(localeStorage.get('cfkanban_locale'), 'en');
+    assert.equal(state.locale, 'zh-CN');
+    state.acceptVerifiedSession({ ...initial, session_id: 'saved-english', principal: principal({ id: '00000000-0000-4000-8000-000000000002', locale: 'en' }) });
+    await nextTick();
+    assert.equal(state.locale, 'en');
+    state.acceptVerifiedSession({ ...initial, session_id: 'missing-language', principal: principal({ id: '00000000-0000-4000-8000-000000000003', locale: undefined }) });
+    await nextTick();
+    assert.equal(state.locale, 'zh-CN');
+    state.clearSession(false); await nextTick();
+    assert.equal(state.locale, 'zh-CN', 'a protected route awaiting account facts uses the detected language');
+    assert.equal(localeStorage.get('cfkanban_locale'), 'en');
+  } finally { app.unmount(); window.navigator.languages = originalLanguages; }
+});
+
+test('public language changes remain public and do not override an account without a saved preference', async () => {
   const initial = localeSession({ locale: 'zh-CN' });
   const { app, state } = await mountLocaleApp(initial, async () => Response.json({}));
   try {
@@ -450,7 +471,7 @@ test('public language changes retain a browser fallback without overwriting save
     assert.equal(state.session.principal.locale, 'zh-CN');
     state.acceptVerifiedSession({ ...initial, session_id: 'null-language', principal: principal({ id: '00000000-0000-4000-8000-000000000002', locale: null }) });
     await nextTick();
-    assert.equal(state.locale, 'zh-CN');
+    assert.equal(state.locale, 'en');
     state.currentPath = '/'; await nextTick();
     state.locale = 'en'; await nextTick();
     assert.equal(localeStorage.get('cfkanban_locale'), 'en');

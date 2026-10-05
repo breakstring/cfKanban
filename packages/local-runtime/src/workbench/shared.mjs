@@ -65,3 +65,6 @@ export function canonical(value) {
   if (value && typeof value === 'object') return JSON.stringify(Object.fromEntries(Object.keys(value).sort().filter(key => value[key] !== undefined).map(key => [key, JSON.parse(canonical(value[key]))])));
   return JSON.stringify(value);
 }
+export function canCreateIssue(principal, binding) {
+  return Boolean(binding && (binding.project_id ?? binding.project?.id) && (binding.workspace_id ?? binding.project?.workspace_id) && (principal?.is_owner === true || principal?.grants?.some(grant => grant.role === 'writer' && grant.workspace_id === (binding.workspace_id ?? binding.project?.workspace_id) && grant.project_id === (binding.project_id ?? binding.project?.id))));
+}

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createMcpStateFixture } from "./mcp-fixture.mjs";
+import { MCP_BUILD_FILES } from "../lib/mcp-build.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const sourceOutput = path.join(repositoryRoot, "packages/mcp/dist");
@@ -15,7 +16,7 @@ async function isolatedBundle(t) {
   t.after(() => rm(home, { recursive: true, force: true }));
   const root = path.join(home, "installed artifact");
   await mkdir(root);
-  for (const name of ["server.mjs", "facade.mjs", "build-metadata.json"]) await copyFile(path.join(sourceOutput, name), path.join(root, name));
+  for (const name of MCP_BUILD_FILES) await copyFile(path.join(sourceOutput, name), path.join(root, name));
   return { home, root, entry: path.join(root, "server.mjs") };
 }
 function startPeer(t, entry, home) {
@@ -60,6 +61,7 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     assert.equal(createHash("sha256").update(bytes).digest("hex"), entry.sha256);
     assert.equal(bytes.length, entry.size_bytes);
   }
+  let previousViewId;
   for (let iteration = 0; iteration < 2; iteration++) {
     const peer = startPeer(t, bundle.entry, bundle.home);
     const before = await peer.request("tools/list");
@@ -67,11 +69,42 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     const initialized = await initialize(peer);
     assert.equal(initialized.result.serverInfo.version, metadata.release_version);
     const list = await peer.request("tools/list");
-    assert.equal(list.result.tools.length, 20);
+    assert.equal(list.result.tools.length, 25);
     for (const name of ["cfkanban_profile_locale_set", "cfkanban_labels_list", "cfkanban_issues_labels_add", "cfkanban_issues_labels_remove"]) {
       assert.ok(list.result.tools.some(tool => tool.name === name));
     }
     assert.ok(list.result.tools.every(tool => tool.inputSchema.additionalProperties === false));
+    const opener = list.result.tools.find(tool => tool.name === "cfkanban_workbench_open");
+    assert.deepEqual(opener._meta["openai/ui"].entrypoints, [{ type: "thread" }]);
+    const globalOpener = list.result.tools.find(tool => tool.name === "cfkanban_workbench_global_open");
+    assert.deepEqual(globalOpener._meta["openai/ui"].entrypoints, [{ type: "global" }]);
+    assert.equal(globalOpener._meta.ui.resourceUri, opener._meta.ui.resourceUri);
+    const uiMetadata = JSON.parse(await readFile(path.join(bundle.root, "mcp-app-build.json"), "utf8"));
+    assert.equal(opener._meta.ui.resourceUri, `ui://cfkanban/workbench/${metadata.release_version}/${uiMetadata.sha256}/index.html`);
+    assert.equal(opener.icons.length, 1);
+    assert.equal(opener.icons[0].mimeType, "image/svg+xml");
+    assert.deepEqual(opener.icons[0].sizes, ["20x20"]);
+    assert.match(opener.icons[0].src, /^data:image\/svg\+xml;base64,/);
+    assert.deepEqual(Buffer.from(opener.icons[0].src.slice("data:image/svg+xml;base64,".length), "base64"), await readFile(path.join(repositoryRoot, "apps/web/src/assets/cfkanban-mark.svg")));
+    const resources = await peer.request("resources/list");
+    assert.equal(resources.result.resources.length, 1);
+    const resource = await peer.request("resources/read", { uri: opener._meta.ui.resourceUri });
+    assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
+    assert.equal(resource.result.contents[0].text, await readFile(path.join(bundle.root, "workbench.html"), "utf8"));
+    await writeFile(path.join(bundle.root, "workbench.html"), `${resource.result.contents[0].text}\n<!-- changed -->`);
+    assert.ok((await peer.request("resources/read", { uri: opener._meta.ui.resourceUri })).error);
+    await writeFile(path.join(bundle.root, "workbench.html"), resource.result.contents[0].text);
+    assert.ok((await peer.request("resources/read", { uri: "file:///arbitrary" })).error);
+    assert.ok((await peer.request("resources/read", { uri: `ui://cfkanban/workbench/${metadata.release_version}/index.html` })).error);
+    const opened = await peer.request("tools/call", { name: "cfkanban_workbench_open", arguments: {} });
+    assert.equal(opened.result.structuredContent.ok, true);
+    assert.ok(opened.result._meta["cfkanban/viewId"]);
+    if (previousViewId) {
+      const stale = await peer.request("tools/call", { name: "cfkanban_workbench_snapshot", arguments: { view_id: previousViewId } });
+      assert.equal(stale.result.structuredContent.error.code, "PANEL_BINDING_EXPIRED");
+    }
+    previousViewId = opened.result._meta["cfkanban/viewId"];
+    assert.equal(JSON.stringify(opened.result.content).includes(opened.result._meta["cfkanban/viewId"]), false);
     assert.deepEqual((await peer.request("ping")).result, {});
     const inspect = await peer.request("tools/call", { name: "cfkanban_connection_inspect", arguments: {} });
     assert.equal(inspect.result.isError, false);

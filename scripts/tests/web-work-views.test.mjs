@@ -22,7 +22,7 @@ import { createRenderer, h, nextTick, ref } from 'vue';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
   stdin: { contents: `export { default as WorkList } from './apps/web/src/views/WorkListView.vue'; export { default as Board } from './apps/web/src/views/ProjectBoardView.vue'; export { default as LabelsPage } from './apps/web/src/views/ProjectLabelsView.vue'; export { default as ManagementPage } from './apps/web/src/views/ScopedManagementView.vue'; export { default as SettingsHeader } from './apps/web/src/components/ProjectSettingsHeader.vue'; export { projectSettingsPath, projectSettingsSections } from './apps/web/src/lib/project-settings.ts'; export { default as Activity } from './apps/web/src/components/ProjectActivity.vue'; export { default as ActivityPage } from './apps/web/src/views/ProjectActivityView.vue'; export { default as DeletedPage } from './apps/web/src/views/ProjectDeletedIssuesView.vue'; export { default as Share } from './apps/web/src/components/IssueShare.vue'; export { default as Copy } from './apps/web/src/components/CopyButton.vue'; export { default as Footer } from './apps/web/src/components/AppFooter.vue'; export { navigate, registerNavigationGuard, currentPath } from './apps/web/src/lib/router.ts'; export { boardFilters, boardPath, boardReturnPath } from './apps/web/src/lib/board-navigation.ts'; export { workListPath, workProjects } from './apps/web/src/lib/work-list.ts'; export { activityTargets } from './apps/web/src/lib/project-activity.ts'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
-  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent', loader: { '.png': 'dataurl' },
+  bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent', loader: { '.png': 'dataurl', '.svg': 'dataurl' },
   plugins: [nuxtUiTestPlugin(), { name: 'vue-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
       const { descriptor } = parse(await readFile(path, 'utf8'), { filename: path });
@@ -242,6 +242,39 @@ test('board disables query choices until the first project load finishes', async
     await until(() => text(host).includes('Loaded project'));
     assert.match(text(host), /Issue initial/);
     assert.ok(fieldsets().every(item => !item.props.disabled));
+  } finally { app.unmount(); }
+});
+
+test('board columns and status choices follow locale without translating custom names or rereading data', async () => {
+  const calls = [];
+  const names = { backlog: 'Backlog', todo: 'Ready for team', in_progress: 'In Progress', done: 'Done', canceled: 'Canceled' };
+  globalThis.fetch = async path => {
+    calls.push(path);
+    const url = new URL(path, 'https://local.test');
+    if (url.pathname.endsWith('/issues/counts')) return Response.json(issueCounts({ todo: 1 }));
+    if (url.pathname.endsWith('/statuses')) return Response.json(page(workflowStatuses.map(key => ({ key, display_name: names[key] }))));
+    if (url.pathname.endsWith('/issues')) return Response.json(page(url.searchParams.get('status') === 'todo' ? [{ ...issue('English business title'), labels: [], status: { key: 'todo', display_name: names.todo } }] : []));
+    return Response.json({ display_name: 'English project name', workspace_display_name: 'English workspace name' });
+  };
+  const { app, host } = mount(Board, { session, projectId: p1, workspaceId: workspace });
+  try {
+    await until(() => text(host).includes('Issue English business title'));
+    const columnNames = () => all(host).filter(item => item.tag === 'h2').map(text);
+    const choices = () => all(host).filter(item => item.tag === 'select' && item.props['aria-label'] === (locale.value === 'zh-CN' ? '状态' : 'Status'))
+      .flatMap(item => item.children.filter(child => child.tag === 'option').map(text));
+    assert.deepEqual(columnNames(), ['Backlog', 'Ready for team', 'In Progress', 'Done', 'Canceled']);
+    const readCount = calls.length;
+    locale.value = 'zh-CN'; await nextTick();
+    assert.deepEqual(columnNames(), ['待规划', 'Ready for team', '进行中', '已完成', '已取消']);
+    assert.ok(choices().includes('Ready for team'));
+    assert.ok(choices().includes('已完成'));
+    assert.ok(!choices().includes('Done'));
+    assert.match(text(host), /English project name/);
+    assert.match(text(host), /Issue English business title/);
+    assert.equal(calls.length, readCount, 'changing display language does not fetch or write business data');
+    locale.value = 'en'; await nextTick();
+    assert.deepEqual(columnNames(), ['Backlog', 'Ready for team', 'In Progress', 'Done', 'Canceled']);
+    assert.equal(calls.length, readCount);
   } finally { app.unmount(); }
 });
 

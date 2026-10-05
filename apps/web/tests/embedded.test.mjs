@@ -8,7 +8,7 @@ import { MessageChannel } from "node:worker_threads";
 import test, { after } from "node:test";
 import { build } from "esbuild";
 import { compileScript, parse as parseVue } from "@vue/compiler-sfc";
-import { createRenderer, h, nextTick } from "vue";
+import { createRenderer, h, nextTick, watch } from "vue";
 import { assertEmbeddedHtml } from "../scripts/build-embedded.mjs";
 import { ISSUE_COLLECTION_LIMIT as CONTROLLER_COLLECTION_LIMIT } from "../../../packages/local-runtime/src/workbench/controller.mjs";
 
@@ -19,7 +19,7 @@ await build({ stdin: { contents: 'export * from "./src/embedded/protocol.ts"; ex
 const { ISSUE_COLLECTION_LIMIT, parseActionMessage, parseSnapshotMessage, parseResultMessage, isConnectMessage, isSessionReference, emptySnapshot, createEmbedClient, renderMarkdown, reconcileCompletedDraft, canAutoAppend } = await import(pathToFileURL(moduleFile));
 const detailModule = path.join(temporary, "workbench.mjs");
 await build({
-  entryPoints: [path.join(root, "apps/web/src/embedded/Workbench.vue")], outfile: detailModule, bundle: true, platform: "node", format: "esm", logLevel: "silent", loader: { ".png": "empty" },
+  entryPoints: [path.join(root, "apps/web/src/embedded/Workbench.vue")], outfile: detailModule, bundle: true, platform: "node", format: "esm", logLevel: "silent", loader: { ".png": "empty", ".svg": "dataurl" },
   plugins: [{ name: "embedded-detail-test", setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path: filename }) => {
       if (!filename.endsWith("/embedded/Workbench.vue")) return { contents: "export default {}", loader: "js" };
@@ -53,16 +53,17 @@ function connectedClient(options = {}) {
 
 function node() { return { children: [], parent: null }; }
 const renderer = createRenderer({ createElement: node, createText: node, createComment: node, setText() {}, setElementText() {}, patchProp() {}, insert(target, parent) { target.parent = parent; parent.children.push(target); }, remove(target) { if (target.parent) target.parent.children.splice(target.parent.children.indexOf(target), 1); }, parentNode: target => target.parent, nextSibling: () => null });
-async function mountedDetail() {
+async function mountedDetail({ hostLocale = "en", browserLanguages = [] } = {}) {
   const saved = { window: globalThis.window, document: globalThis.document };
   const surface = fakeWindow();
+  surface.navigator = { languages: browserLanguages };
   const channel = new MessageChannel();
   globalThis.window = surface;
   globalThis.document = { documentElement: { lang: "en", dataset: {}, toggleAttribute() {} }, getElementById() { return null; } };
   const app = renderer.createApp({ render: () => h({ ...Workbench, render: () => null }) });
   app.mount(node());
   const vm = app._instance.subTree.component.setupState;
-  surface.emit({ source: surface.parent, data: { type: "cfkanban.embed.connect", protocol: 1, locale: "en" }, ports: [channel.port1] });
+  surface.emit({ source: surface.parent, data: { type: "cfkanban.embed.connect", protocol: 1, locale: hostLocale }, ports: [channel.port1] });
   vm.state = { ...emptySnapshot(), issue: { identifier: "CFK-548", title: "Fixture", body: "", version: 2, status: { key: "todo" }, priority: "high" }, binding: { project: { id: randomUUID() }, statuses: ["backlog", "todo", "in_progress", "done", "canceled"].map(key => ({ key })) }, capabilities: { update: true, comment: true, complete: true } };
   await nextTick();
   const fixture = { vm, channel, calls: [], result: { ok: true }, respond: null, close() { app.unmount(); channel.port2.close(); Object.assign(globalThis, saved); } };
@@ -73,6 +74,38 @@ async function mountedDetail() {
   });
   return fixture;
 }
+
+test("saved locale wins over the host and absent preferences return to that host without translating business content", async () => {
+  const f = await mountedDetail({ hostLocale: "zh-CN", browserLanguages: ["en-US"] });
+  const statuses = [{ key: "todo", display_name: "Todo" }, { key: "in_progress", display_name: "Team Review" }];
+  const original = { ...emptySnapshot(), binding: { project: { id: randomUUID(), display_name: "Project 原文" }, statuses }, board: { columns: statuses.map(status => ({ ...status, items: [], has_more: false })) } };
+  const publish = async locale => {
+    const message = { type: "snapshot", state: { ...original, ...(locale ? { locale } : {}) } };
+    assert.ok(parseSnapshotMessage(message));
+    const received = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => { stop(); reject(new Error("Snapshot was not rendered")); }, 1000);
+      const stop = watch(() => f.vm.state, () => { clearTimeout(timeout); stop(); resolve(); });
+    });
+    f.channel.port2.postMessage(message);
+    await received; await nextTick();
+  };
+  try {
+    await publish("en");
+    assert.equal(document.documentElement.lang, "en");
+    assert.equal(f.vm.statusItems[0].display_name, "Todo");
+    await publish(undefined);
+    assert.equal(document.documentElement.lang, "zh-CN");
+    assert.equal(f.vm.statusItems[0].display_name, "待办");
+    assert.equal(f.vm.columns[0].display_name, "待办");
+    assert.equal(f.vm.statusItems[1].display_name, "Team Review");
+    assert.equal(f.vm.state.board.columns[0].display_name, "Todo");
+    assert.equal(f.vm.state.binding.project.display_name, "Project 原文");
+    await publish("en");
+    assert.equal(document.documentElement.lang, "en");
+    assert.equal(f.vm.columns[0].display_name, "Todo");
+    assert.equal(f.calls.length, 0);
+  } finally { f.close(); }
+});
 
 test("detail label actions use one existing label and wait for confirmed snapshots", async () => {
   const f = await mountedDetail();
@@ -130,6 +163,65 @@ test("preference and label messages reject injected scopes, malformed enums and 
   for (const patch of [{ theme: "dark" }, { labels: [label, label] }, { labels: [{ ...label, name: "" }] }, { labels_has_more: "yes" }]) {
     assert.equal(parseSnapshotMessage({ type: "snapshot", state: { ...emptySnapshot(), ...patch } }), null);
   }
+});
+
+test("the embedded project switcher groups all accessible workspaces, searches workspace names and sends exact cross-workspace targets", async () => {
+  const f = await mountedDetail();
+  try {
+    const currentWorkspace = randomUUID(), otherWorkspace = randomUUID(), otherProject = randomUUID();
+    f.vm.state.workspace_id = currentWorkspace;
+    f.vm.state.scope_mode = "suggested";
+    f.vm.state.project_menu_groups = [
+      { workspace: { id: currentWorkspace, display_name: "Repository workspace" }, projects: [{ id: f.vm.state.binding.project.id, display_name: "Current project" }], has_more: false, error: null },
+      { workspace: { id: otherWorkspace, display_name: "Another workspace" }, projects: [{ id: otherProject, display_name: "Another project" }], has_more: true, error: null },
+    ];
+    await f.vm.openProjectMenu();
+    assert.deepEqual(f.calls[0].payload, {});
+    assert.equal(f.calls[0].action, "project_menu");
+    assert.deepEqual(f.vm.projectGroups.map(group => group.label), ["Repository workspace", "Another workspace"]);
+    f.vm.projectSearch = "another workspace";
+    assert.equal(f.vm.projectGroups.length, 1);
+    assert.equal(f.vm.projectGroups[0].projects[0].label, "Another project");
+    await f.vm.chooseProject(`${otherWorkspace}/${otherProject}`);
+    assert.equal(f.calls[1].action, "project_switch");
+    assert.deepEqual(f.calls[1].payload, { workspace_id: otherWorkspace, project_id: otherProject });
+    assert.equal(f.vm.projectMenuOpen, false);
+    await f.vm.loadProjectMenu(otherWorkspace, true);
+    await f.vm.loadProjectMenu(undefined, true);
+    assert.deepEqual(f.calls.slice(2).map(call => call.payload), [{ workspace_id: otherWorkspace, next: true }, { next: true }]);
+    f.vm.state.pending = { operation: "update" };
+    await f.vm.openProjectMenu(); await f.vm.chooseProject(`${otherWorkspace}/${otherProject}`);
+    assert.equal(f.calls.length, 4);
+  } finally { f.close(); }
+});
+
+test("project switching does not carry an open editor or its drafts into the next project", async () => {
+  const f = await mountedDetail();
+  try {
+    f.vm.state.capabilities.create = true;
+    f.vm.openEditor("create");
+    assert.equal(f.vm.showEditor, true);
+    f.vm.editorDraft.title = "Old project draft";
+    assert.equal(f.vm.editorDrafts.size, 1);
+    f.vm.state = { ...f.vm.state, issue: null, binding: { ...f.vm.state.binding, project: { id: randomUUID() } } };
+    await nextTick();
+    assert.equal(f.vm.showEditor, false);
+    assert.equal(f.vm.editorDrafts.size, 0);
+    f.vm.openEditor("create");
+    assert.equal(f.vm.editorDraft.title, "");
+  } finally { f.close(); }
+});
+
+test("all-workspace switch messages reject injected identity and unknown fields and snapshots keep menu cursors private", () => {
+  const workspace_id = randomUUID(), project_id = randomUUID();
+  assert.ok(parseActionMessage(action("project_menu", {})));
+  assert.ok(parseActionMessage(action("project_menu", { workspace_id, next: true })));
+  assert.ok(parseActionMessage(action("project_switch", { workspace_id, project_id })));
+  for (const payload of [{ workspace_id, project_id, instance_id: randomUUID() }, { workspace_id, project_id, binding_id: randomUUID() }, { project_id }, { workspace_id, project_id: "invalid" }]) assert.equal(parseActionMessage(action("project_switch", payload)), null);
+  const group = { workspace: { id: workspace_id, display_name: "Workspace" }, projects: [{ id: project_id, display_name: "Project" }], has_more: true, error: null };
+  const state = { ...emptySnapshot(), project_menu_groups: [group], project_menu_has_more: true, project_menu_error: null };
+  assert.ok(parseSnapshotMessage({ type: "snapshot", state }));
+  for (const groups of [[group, group], [{ ...group, projects: [group.projects[0], group.projects[0]] }], [{ ...group, cursor: "private" }], Array.from({ length: 9 }, () => ({ ...group, workspace: { id: randomUUID() } }))]) assert.equal(parseSnapshotMessage({ type: "snapshot", state: { ...state, project_menu_groups: groups } }), null);
 });
 
 test("detail properties save one choice, done opens confirmation, and blocked or unchanged choices do not write", async () => {
@@ -417,7 +509,7 @@ test("prebuilt Document is offline, versioned, hashed and contains only the embe
   assert.equal(metadata.sha256, checked.sha256);
   assert.equal(metadata.sha256, createHash("sha256").update(html).digest("hex"));
   assert.match(html, /cfkanban\.embed\.connect/);
-  assert.match(html, /data:image\/png;base64,/);
+  assert.match(html, /data:image\/svg\+xml[;,]/);
   assert.doesNotMatch(html, /\/api\/v1\/web-session|document\.cookie|\blocalStorage\b|\bsessionStorage\b/);
   for (const bad of [html.replace('<div id="app">', '<img src=https://evil.invalid/x><div id="app">'), html.replace("</head>", '<link rel="stylesheet" href="https://evil.invalid/x"></head>'), html.replace("connect-src 'none'", "connect-src https:"), html.replace("connect-src 'none'", "connect-src https:; connect-src 'none'"), html.replace("<script type=\"module\">", '<script src="x.js" type="module">')]) assert.throws(() => assertEmbeddedHtml(bad));
 });

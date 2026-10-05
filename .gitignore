@@ -20,6 +20,7 @@
 node_modules/
 dist/
 apps/web/dist-embedded/
+apps/web/dist-mcp-app/
 /build/
 coverage/
 *.tsbuildinfo

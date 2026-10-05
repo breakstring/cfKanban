@@ -4,7 +4,7 @@ import UDropdownMenu from "@nuxt/ui/components/DropdownMenu.vue";
 import type { DropdownMenuItem } from "@nuxt/ui";
 import { computed } from "vue";
 
-import cfKanbanMarkUrl from "../assets/cfkanban-mark.png";
+import cfKanbanMarkUrl from "../assets/cfkanban-mark-orange.svg";
 import ProjectSwitcher from "./ProjectSwitcher.vue";
 import LocaleSwitch from "./LocaleSwitch.vue";
 import NotificationBell from "./NotificationBell.vue";
@@ -31,6 +31,7 @@ function roleLabel(value: string): string {
   if (value === "owner") return "所有者";
   if (value === "writer") return "协作者";
   if (value === "reader") return "只读者";
+  if (value === "member") return "成员";
   return value;
 }
 

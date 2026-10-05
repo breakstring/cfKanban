@@ -169,9 +169,9 @@ watch([authenticatedRoute, () => session.value?.principal.theme], ([authenticate
   applyTheme(theme, authenticated);
 }, { immediate: true });
 
-watch([authenticatedRoute, () => session.value?.principal.id, () => session.value?.principal.locale], ([authenticated, principalId, saved]) => {
-  applyAccountLocalePreference(saved, authenticated && principalId !== undefined);
-});
+watch([authenticatedRoute, () => Boolean(session.value), () => session.value?.principal.id, () => session.value?.principal.locale], ([authenticated, verified, _principalId, saved]) => {
+  applyAccountLocalePreference(saved, authenticated && verified, authenticated);
+}, { immediate: true });
 
 async function changeLocale(value: Locale): Promise<void> {
   if (!session.value || localeBusy.value) return;

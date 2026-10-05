@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { atomicWritePublicJson, readJson, requireString, requireUuid } from "./utils.mjs";
+import { atomicWritePublicJson, canonicalDigest, readJson, requireString, requireUuid } from "./utils.mjs";
 import { toolError } from "./errors.mjs";
 
 export const SCOPE_FILE_NAME = ".cfkanban-scope.json";
@@ -53,6 +53,7 @@ export async function inspectScopeDirectory({ directory = process.cwd() } = {}, 
   const scope = await readRepoScope({ repoRoot: scopeDirectory });
   return {
     directory: absoluteDirectory, git, scope_directory: scopeDirectory,
+    workbench_context_key: git.status === "repository" ? canonicalDigest({ directory: scopeDirectory }) : null,
     scope_file: path.join(scopeDirectory, SCOPE_FILE_NAME), scope,
     association_recommended: git.status === "repository" && scope === null,
   };

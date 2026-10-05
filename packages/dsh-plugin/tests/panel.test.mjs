@@ -102,8 +102,8 @@ async function boundAdapter(f, options) {
   return { controller, adapter, port, navigated };
 }
 
-test('thin native carrier keeps the original logo, owned opaque Document and official tab lifetime', async () => {
-  const client = await build({ entryPoints: [clientEntry], bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react'], loader: { '.png': 'dataurl', '.html': 'text' }, plugins: [{ name: 'isolated-document-fixture', setup(bundler) {
+test('thin native carrier keeps the shared orange vector logo, owned opaque Document and official tab lifetime', async () => {
+  const client = await build({ entryPoints: [clientEntry], bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react'], loader: { '.svg': 'dataurl', '.html': 'text' }, plugins: [{ name: 'isolated-document-fixture', setup(bundler) {
     bundler.onResolve({ filter: /dist-embedded\/embedded\.html$/ }, args => ({ path: args.path, namespace: 'fixture-document' }));
     bundler.onLoad({ filter: /.*/, namespace: 'fixture-document' }, () => ({ contents: '<!doctype html><title>Isolated Vue fixture</title>', loader: 'text' }));
   } }] });
@@ -118,14 +118,15 @@ test('thin native carrier keeps the original logo, owned opaque Document and off
   let nativeTab;
   module.exports.apply({ connection: { rpc: {} }, sidebarRight: {}, effect: factory => factory(), locale: { bind: () => key => key, register: (_ns, translations) => { locales = translations; return () => {}; } }, sidebarRightTabs: { register: tab => { nativeTab = tab; return () => {}; } }, slots: { inject: (_name, factory) => factory(), register: () => () => {} } });
   assert.equal(nativeTab.keepMounted, true);
-  const logo = `data:image/png;base64,${(await readFile(new URL('../../../apps/web/src/assets/cfkanban-mark.png', import.meta.url))).toString('base64')}`;
+  const logo = await readFile(new URL('../../../apps/web/src/assets/cfkanban-mark-orange.svg', import.meta.url));
   for (const language of ['en', 'zh']) {
     const t = key => locales[language][key];
     const button = module.exports.PanelButton({ open: () => {}, t });
     assert.equal(button.props['aria-label'], t('openTasks'));
     assert.equal(button.props.title, t('openTasks'));
     assert.equal(button.children[0].type, 'img');
-    assert.equal(button.children[0].props.src, logo);
+    assert.match(button.children[0].props.src, /^data:image\/svg\+xml(?:;base64)?,/);
+    assert.deepEqual(Buffer.from(await (await fetch(button.children[0].props.src)).arrayBuffer()), logo);
     assert.equal(button.children[0].props.alt, '');
   }
   const lifetime = new AbortController();
@@ -165,6 +166,19 @@ test('thin native carrier keeps the original logo, owned opaque Document and off
     assert.equal(view.children.find(child => child?.type === 'iframe').props.inert, snapshot.blocked ? '' : undefined);
   }
   assert.notEqual(iconPaths.get('openOnline'), iconPaths.get('recoverOnline'));
+  for (const host of ['en', 'zh']) for (const saved of ['en', 'zh-CN', null, 'unknown']) {
+    stateIndex = 0;
+    stateOverrides = new Map([[5, snapshots[1]], [6, true], [8, saved]]);
+    const view = module.exports.PanelBody({ rpc: {}, useTabInfo: () => ({ tab: { signal: lifetime.signal, actions: {} } }), sessionId: randomUUID(), t: key => locales[host][key] });
+    const language = saved === 'en' ? 'en' : saved === 'zh-CN' ? 'zh' : host;
+    const button = view.children[0].children[0];
+    assert.equal(button.props.title, locales[language].openOnline);
+    assert.equal(button.props['aria-label'], locales[language].openOnline);
+  }
+  stateIndex = 0;
+  stateOverrides = new Map([[5, snapshots[1]], [6, true]]);
+  const unknownHost = module.exports.PanelBody({ rpc: {}, useTabInfo: () => ({ tab: { signal: lifetime.signal, actions: {} } }), sessionId: randomUUID(), t: key => key });
+  assert.equal(unknownHost.children[0].children[0].props.title, locales.en.openOnline, 'unknown host language does not become Chinese');
   states.filter(value => value?.dispose).forEach(value => value.dispose());
 });
 

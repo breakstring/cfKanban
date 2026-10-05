@@ -2,7 +2,7 @@ html[data-app-ui], body, #app { min-width: 0; min-height: 100%; margin: 0; backg
 body { overflow-x: hidden; }
 .embedded-workbench { display: flex; flex-direction: column; box-sizing: border-box; height: 100dvh; overflow-y: auto; max-width: 1600px; min-width: 0; margin: 0 auto; padding: 14px; color: var(--ui-text); font-family: var(--font-ui); font-size: 13px; }
 .embedded-workbench > :not(.embedded-project-view) { flex: none; }
-.embedded-project-view { display: flex; flex: 1; flex-direction: column; min-height: 180px; }
+.embedded-project-view { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 180px; container-type: inline-size; }
 .embedded-project-view > :not(.embedded-board):not(.embedded-list-view) { flex: none; }
 .embedded-workbench h1:not(:where(.markdown *, .embedded-detail *)) { margin: 0 0 14px; font-family: var(--font-ui); font-size: 18px; line-height: 1.5; font-weight: 650; overflow-wrap: anywhere; }
 .embedded-workbench h2:not(:where(.markdown *, .embedded-detail *)) { margin: 0 0 10px; font-size: 14px; line-height: 1.5; font-weight: 600; }
@@ -38,8 +38,8 @@ body { overflow-x: hidden; }
 .embedded-filters select, .embedded-form select { width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid var(--ui-border-accented); border-radius: var(--radius-control); color: var(--ui-text); background: var(--ui-bg); font: inherit; }
 .embedded-workbench select:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 .embedded-workbench select:disabled { opacity: .6; }
-.embedded-issue-list { display: grid; gap: 10px; }
-.embedded-issue-card { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--ui-border); border-radius: var(--radius-card); background: var(--ui-bg); }
+.embedded-issue-list { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 10px; }
+.embedded-issue-card { display: flex; flex-direction: column; min-width: 0; gap: 4px; padding: 8px; border: 1px solid var(--ui-border); border-radius: var(--radius-card); background: var(--ui-bg); }
 .embedded-issue-card:has(.embedded-card-title:hover) { border-color: var(--ui-border-accented); }
 .embedded-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .embedded-identifier { font-size: 12px; }
@@ -69,7 +69,12 @@ body { overflow-x: hidden; }
 .embedded-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .embedded-view-switch { display: flex; gap: 2px; padding: 2px; background: var(--ui-bg-muted); border-radius: var(--radius-control); }
 .embedded-toolbar button { min-height: 32px; }
-.embedded-board { display: grid; flex: 1; min-height: 0; grid-auto-flow: column; grid-auto-columns: minmax(248px, 1fr); gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 12px; }
+.embedded-board { display: grid; flex: 1; min-width: 0; min-height: 0; grid-auto-flow: column; grid-auto-columns: minmax(248px, 1fr); gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 12px; }
+.embedded-board .embedded-card-top { flex-wrap: wrap; row-gap: 4px; }
+.embedded-board .embedded-card-priority { flex-wrap: wrap; max-width: 100%; margin-left: auto; }
+@container (min-width: 960px) {
+  .embedded-board { grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+}
 .embedded-board:focus-visible { outline: 2px solid var(--ui-primary); outline-offset: 2px; }
 .embedded-status-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; margin-bottom: 10px; }
 .embedded-status-navigation button { min-height: 30px; padding: 4px 6px; font-size: 12px; }

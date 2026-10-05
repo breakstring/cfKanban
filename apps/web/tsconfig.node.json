@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "paths": { "#build/ui": ["./node_modules/.nuxt-ui/ui"] },
     "lib": [
       "ES2023"
@@ -11,6 +12,7 @@
   },
   "include": [
     "vite.config.ts",
-    "vite.embedded.config.ts"
+    "vite.embedded.config.ts",
+    "vite.mcp-app.config.ts"
   ]
 }

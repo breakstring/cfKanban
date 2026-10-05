@@ -4,7 +4,7 @@ import { isSessionReference } from "./session-reference.mjs";
 export { isSessionReference } from "./session-reference.mjs";
 
 export const EMBED_PROTOCOL = 1;
-export const ACTION_LIMIT_BYTES = 65_536;
+export const ACTION_LIMIT_BYTES = 262_144;
 export const SNAPSHOT_LIMIT_BYTES = 2_097_152;
 export const ISSUE_COLLECTION_LIMIT = 1000;
 
@@ -12,7 +12,8 @@ export type EmbedLocale = "en" | "zh-CN";
 export type AssignmentFilter = "all" | "mine" | "unassigned";
 export type Priority = "none" | "low" | "medium" | "high" | "urgent";
 export type Status = "backlog" | "todo" | "in_progress" | "done" | "canceled";
-export type IssueChange = { status_key?: Exclude<Status, "done">; priority_key?: Priority; assignee_principal_id?: string | null };
+export type IssueChange = { title?: string; body?: string; status_key?: Exclude<Status, "done">; priority_key?: Priority; assignee_principal_id?: string | null };
+export type IssueCreate = { title: string; body?: string; status_key?: Exclude<Status, "done">; priority_key?: Priority };
 export type Artifact = { kind: "commit" | "other" | "path" | "url"; value: string };
 export type ActionPayloads = {
   scope_retry: Record<string, never>;
@@ -23,6 +24,8 @@ export type ActionPayloads = {
   workspaces: { next?: boolean };
   select_workspace: { workspace_id: string; next?: boolean };
   bind: { project_id: string };
+  project_menu: { workspace_id?: string; next?: boolean };
+  project_switch: { workspace_id: string; project_id: string };
   unbind: Record<string, never>;
   filters: { assignment: AssignmentFilter; status: Status | ""; priority: Priority | "" };
   page: { next: boolean };
@@ -33,6 +36,7 @@ export type ActionPayloads = {
   labels: { next: boolean };
   set_locale: { locale: EmbedLocale };
   quick_update: { identifier: string; change: IssueChange };
+  create_issue: { change: IssueCreate };
   open_issue: { identifier: string };
   issue_back: Record<string, never>;
   comments: Record<string, never>;
@@ -72,6 +76,7 @@ export type PublicIssue = {
 };
 export type PublicComment = { id: string; body?: string; created_at?: string; author?: PublicResource; principal?: PublicResource; completion_record?: unknown; kind?: string; completion?: unknown };
 export type ScopeTarget = { id: string; display_name?: string; project_id?: string; available: boolean; unavailability?: string | PublicError };
+export type ProjectMenuGroup = { workspace: PublicResource; projects: PublicResource[]; has_more: boolean; error: PublicError | null };
 export type EmbedSnapshot = {
   candidates: PublicResource[];
   identity: PublicIdentity | null;
@@ -80,6 +85,9 @@ export type EmbedSnapshot = {
   workspace_id?: string;
   workspace_has_more?: boolean;
   project_has_more?: boolean;
+  project_menu_groups?: ProjectMenuGroup[];
+  project_menu_has_more?: boolean;
+  project_menu_error?: PublicError | null;
   binding: { project: PublicResource; identity?: PublicIdentity | null; principal?: PublicResource; instance?: PublicResource; statuses: PublicStatus[] } | null;
   view?: "list" | "board";
   board?: { columns: { key: Status; display_name?: string; items: PublicIssue[]; has_more: boolean; capacity_reached?: boolean; loaded?: boolean; loading?: boolean; error?: PublicError | null }[] } | null;
@@ -103,7 +111,7 @@ export type EmbedSnapshot = {
   scope_targets: ScopeTarget[];
   scope_next_offset: number | null;
   scope_fallback?: string;
-  capabilities: { update: boolean; comment: boolean; complete: boolean };
+  capabilities: { update: boolean; comment: boolean; complete: boolean; create?: boolean };
   notice?: string;
   locale?: EmbedLocale;
   theme?: "orange" | "blue";
@@ -111,8 +119,8 @@ export type EmbedSnapshot = {
 
 const priorities = new Set(["none", "low", "medium", "high", "urgent"]);
 const statuses = new Set(["backlog", "todo", "in_progress", "done", "canceled"]);
-const actions = new Set<string>(["scope_retry", "scope_page", "scope_bind", "manual", "select_instance", "workspaces", "select_workspace", "bind", "unbind", "filters", "page", "open_issue", "issue_back", "comments", "mutate", "recover", "view", "board_page", "board_group", "assignees", "quick_update", "labels", "set_locale"]);
-const snapshotFields = new Set(["candidates", "identity", "workspaces", "projects", "workspace_id", "workspace_has_more", "project_has_more", "binding", "page", "issue", "comments", "comments_has_more", "filters", "busy", "error", "pending", "view", "board", "expanded_groups", "assignees", "assignees_has_more", "source_session_id", "session_context_changed", "workspace_scope", "scope_mode", "scope_targets", "scope_next_offset", "scope_fallback", "capabilities", "notice", "locale", "theme", "labels", "labels_has_more"]);
+const actions = new Set<string>(["scope_retry", "scope_page", "scope_bind", "manual", "select_instance", "workspaces", "select_workspace", "bind", "project_menu", "project_switch", "unbind", "filters", "page", "open_issue", "issue_back", "comments", "mutate", "recover", "view", "board_page", "board_group", "assignees", "quick_update", "labels", "set_locale", "create_issue"]);
+const snapshotFields = new Set(["candidates", "identity", "workspaces", "projects", "workspace_id", "workspace_has_more", "project_has_more", "project_menu_groups", "project_menu_has_more", "project_menu_error", "binding", "page", "issue", "comments", "comments_has_more", "filters", "busy", "error", "pending", "view", "board", "expanded_groups", "assignees", "assignees_has_more", "source_session_id", "session_context_changed", "workspace_scope", "scope_mode", "scope_targets", "scope_next_offset", "scope_fallback", "capabilities", "notice", "locale", "theme", "labels", "labels_has_more"]);
 const privateFields = /^(?:__proto__|prototype|constructor|token|access_token|refresh_token|credential|credentials|secret|csrf_token|cookie|cookies|authorization|binding_id|preview_id|dsh_workspace_id|stateRoot|state_root)$/i;
 
 function record(value: unknown, fields: readonly string[], required: readonly string[] = fields): value is Record<string, unknown> {
@@ -166,7 +174,9 @@ function boundedJson(value: unknown, limit: number, forbidPrivate = false): bool
 }
 
 function validChange(value: unknown): boolean {
-  return record(value, ["status_key", "priority_key", "assignee_principal_id"], []) && Object.keys(value).length > 0
+  return record(value, ["title", "body", "status_key", "priority_key", "assignee_principal_id"], []) && Object.keys(value).length > 0
+    && (value.title === undefined || text(value.title, 256))
+    && (value.body === undefined || typeof value.body === "string" && new TextEncoder().encode(value.body).length <= 65_536)
     && (value.status_key === undefined || value.status_key !== "done" && member(value.status_key, statuses))
     && (value.priority_key === undefined || member(value.priority_key, priorities))
     && (value.assignee_principal_id === undefined || value.assignee_principal_id === null || uuid(value.assignee_principal_id));
@@ -185,12 +195,15 @@ export function parseActionMessage(value: unknown): ActionMessage | null {
     case "workspaces": valid = record(p, ["next"], []) && (p.next === undefined || typeof p.next === "boolean"); break;
     case "select_workspace": valid = record(p, ["workspace_id", "next"], ["workspace_id"]) && uuid(p.workspace_id) && (p.next === undefined || typeof p.next === "boolean"); break;
     case "bind": valid = record(p, ["project_id"]) && uuid(p.project_id); break;
+    case "project_menu": valid = record(p, ["workspace_id", "next"], []) && (p.workspace_id === undefined || uuid(p.workspace_id)) && (p.next === undefined || typeof p.next === "boolean"); break;
+    case "project_switch": valid = record(p, ["workspace_id", "project_id"]) && uuid(p.workspace_id) && uuid(p.project_id); break;
     case "filters": valid = record(p, ["assignment", "status", "priority"]) && member(p.assignment, ["all", "mine", "unassigned"]) && (p.status === "" || member(p.status, statuses)) && (p.priority === "" || member(p.priority, priorities)); break;
     case "open_issue": valid = record(p, ["identifier"]) && issueIdentifier(p.identifier); break;
     case "view": valid = record(p, ["mode"]) && member(p.mode, ["list", "board"]); break;
     case "board_page": valid = record(p, ["status_key", "next"]) && member(p.status_key, statuses) && typeof p.next === "boolean"; break;
     case "board_group": valid = record(p, ["status_key", "expanded"]) && member(p.status_key, statuses) && typeof p.expanded === "boolean"; break;
     case "quick_update": valid = record(p, ["identifier", "change"]) && issueIdentifier(p.identifier) && validChange(p.change); break;
+    case "create_issue": valid = record(p, ["change"]) && record(p.change, ["title", "body", "status_key", "priority_key"], ["title"]) && validChange(p.change); break;
     case "mutate": {
       if (!record(p, ["operation", "change"])) break;
       if (p.operation === "update") valid = validChange(p.change);
@@ -241,7 +254,7 @@ export function parseSnapshotMessage(value: unknown): { type: "snapshot"; state:
   if (!["candidates", "workspaces", "projects", "comments", "scope_targets"].every(key => Array.isArray(state[key]))
     || !record(state.filters, ["assignment", "status", "priority"])
     || !member(state.filters.assignment, ["all", "mine", "unassigned"]) || (state.filters.status !== "" && !member(state.filters.status, statuses)) || (state.filters.priority !== "" && !member(state.filters.priority, priorities))
-    || !record(state.capabilities, ["update", "comment", "complete"])
+    || !record(state.capabilities, ["update", "comment", "complete", "create"], ["update", "comment", "complete"])
     || !Object.values(state.capabilities).every(value => typeof value === "boolean")
     || !member(state.scope_mode, ["manual", "suggested"]) || !Number.isSafeInteger(state.busy) || Number(state.busy) < 0
     || !identity(state.identity) || !nullableIssue(state.issue) || !error(state.error) || !pending(state.pending)
@@ -251,12 +264,18 @@ export function parseSnapshotMessage(value: unknown): { type: "snapshot"; state:
     || !(state.comments as unknown[]).every(value => ordinary(value) && uuid(value.id) && optionalString(value.body, 262_144) && optionalString(value.created_at, 100) && (value.author === undefined || resource(value.author)) && (value.principal === undefined || resource(value.principal)))
     || !(state.scope_targets as unknown[]).every(value => ordinary(value) && text(value.id, 160) && typeof value.available === "boolean" && optionalString(value.display_name) && (value.project_id === undefined || uuid(value.project_id)) && (value.unavailability === undefined || text(value.unavailability, 100) || error(value.unavailability)))
     || !nullableUuid(state.workspace_id) || !nullableSession(state.source_session_id)
-    || !["workspace_has_more", "project_has_more", "comments_has_more", "session_context_changed", "assignees_has_more", "labels_has_more"].every(key => state[key] === undefined || typeof state[key] === "boolean")
+    || !["workspace_has_more", "project_has_more", "project_menu_has_more", "comments_has_more", "session_context_changed", "assignees_has_more", "labels_has_more"].every(key => state[key] === undefined || typeof state[key] === "boolean")
     || !(state.scope_next_offset === null || (Number.isSafeInteger(state.scope_next_offset) && Number(state.scope_next_offset) >= 0))
     || !(state.workspace_scope === null || (record(state.workspace_scope, ["status"]) && text(state.workspace_scope.status, 100)))
     || !(state.locale === undefined || member(state.locale, ["en", "zh-CN"]))
     || !(state.theme === undefined || member(state.theme, ["orange", "blue"]))
     || !(state.labels === undefined || labels(state.labels))) return null;
+  if (state.project_menu_error !== undefined && !error(state.project_menu_error)) return null;
+  if (state.project_menu_groups !== undefined && (!Array.isArray(state.project_menu_groups) || state.project_menu_groups.length > 8
+    || new Set(state.project_menu_groups.map(group => ordinary(group) && ordinary(group.workspace) ? group.workspace.id : null)).size !== state.project_menu_groups.length
+    || !state.project_menu_groups.every(group => record(group, ["workspace", "projects", "has_more", "error"]) && ordinary(group.workspace) && resource(group.workspace) && uuid(group.workspace.id)
+      && Array.isArray(group.projects) && group.projects.length <= 50 && group.projects.every(project => resource(project) && uuid(project.id))
+      && new Set(group.projects.map(project => project.id)).size === group.projects.length && typeof group.has_more === "boolean" && error(group.error)))) return null;
   if (state.binding !== null && (!ordinary(state.binding) || !resource(state.binding.project) || !Array.isArray(state.binding.statuses) || !state.binding.statuses.every(status)
     || (state.binding.identity !== undefined && !identity(state.binding.identity)) || (state.binding.principal !== undefined && !resource(state.binding.principal)) || (state.binding.instance !== undefined && !resource(state.binding.instance)))) return null;
   if (state.page !== null && (!record(state.page, ["items", "issues", "next_cursor", "continuation", "capacity_reached"], []) || (!Array.isArray(state.page.items) && !Array.isArray(state.page.issues))

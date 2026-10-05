@@ -5,7 +5,8 @@ import { EmbedAdapter, FRAME_SANDBOX } from './embed-adapter.mjs';
 import { OnlinePanelController } from './online.mjs';
 import { PanelNavigation, navigateWorkbench } from './navigation.mjs';
 import embeddedDocument from '../../../../apps/web/dist-embedded/embedded.html';
-import logo from '../../../../apps/web/src/assets/cfkanban-mark.png';
+import logo from '../../../../apps/web/src/assets/cfkanban-mark-orange.svg';
+import { detectedBrowserLocale, resolveLocalePreference } from '../../../../apps/web/src/lib/locale-preference.ts';
 
 const NS = 'cfkanban.panel';
 const en = { title: 'cfKanban', description: 'Read and handle tasks alongside your conversation', openTasks: 'Open cfKanban tasks', embedLocale: 'en', frameReloaded: 'The embedded view navigated away. Close and reopen this tab to load the verified view.', openOnline: 'Open full board in system browser', recoverOnline: 'Recover original online launch', retryOnline: 'Retry Host connection', onlineUncertain: 'Online delivery is retained. Recover the original launch before changing tasks.', onlineDelivered: 'Delivered to the system browser. Verify the online page.', onlineFailed: 'The online page was not confirmed open. You can try again.', onlineUnavailable: 'The original online launch cannot be verified. Check the system browser and restart only after verifying the original action.' };
@@ -22,14 +23,19 @@ export function PanelBody({ rpc, navigation, useTabInfo, sessionId, t }) {
   const [onlineState, setOnlineState] = useState(online.getSnapshot);
   const [canOpenOnline, setCanOpenOnline] = useState(false);
   const [navigating, setNavigating] = useState(false);
+  const [savedLocale, setSavedLocale] = useState(null);
   const initialization = useRef(null);
   const currentTab = useRef(tab);
   currentTab.current = tab;
-  const locale = t('embedLocale') === 'en' ? 'en' : 'zh-CN';
+  const hostPreference = t('embedLocale');
+  const hostLocale = ['en', 'zh-CN'].includes(hostPreference) ? hostPreference : detectedBrowserLocale(globalThis.navigator);
+  const locale = resolveLocalePreference(savedLocale, [hostLocale]);
+  const text = key => (locale === 'zh-CN' ? zh : en)[key];
   useEffect(() => {
     const update = () => {
       setOnlineState(online.getSnapshot());
       setCanOpenOnline(Boolean(controller.state.binding && !controller.state.pending && !controller.state.busy));
+      setSavedLocale((controller.state.binding?.identity ?? controller.state.identity)?.principal?.locale ?? null);
     };
     const stopOnline = online.subscribe(update);
     const stopController = controller.subscribe(update);
@@ -60,11 +66,11 @@ export function PanelBody({ rpc, navigation, useTabInfo, sessionId, t }) {
     return () => lifetime.abort();
   }, [navigation, controller, adapter, online, sourceSessionId, tab.navigation?.revision, tab.visible, tab.signal]);
   useEffect(() => tab.actions.bindCommands({ refresh: () => navigating ? undefined : controller.state.issue ? controller.openIssue(controller.state.issue.identifier) : controller.refresh() }), [controller, tab.actions, navigating]);
-  useEffect(() => { adapter.setLocale(locale); }, [adapter, locale]);
-  if (frameFailed) return <p role="alert" style={{ padding: 12 }}>{t('frameReloaded')}</p>;
+  useEffect(() => { adapter.setLocale(hostLocale); }, [adapter, hostLocale]);
+  if (frameFailed) return <p role="alert" style={{ padding: 12 }}>{text('frameReloaded')}</p>;
   const blocked = navigating || !onlineState.ready || onlineState.active || onlineState.running || Boolean(onlineState.pending_target);
   const message = onlineState.error === 'PANEL_ONLINE_RECOVERY_UNAVAILABLE' ? 'onlineUnavailable' : onlineState.pending_target ? 'onlineUncertain' : onlineState.phase === 'delivered' ? 'onlineDelivered' : onlineState.phase === 'failed' ? 'onlineFailed' : null;
-  const onlineLabel = t(!onlineState.ready ? 'retryOnline' : onlineState.pending_target ? 'recoverOnline' : 'openOnline');
+  const onlineLabel = text(!onlineState.ready ? 'retryOnline' : onlineState.pending_target ? 'recoverOnline' : 'openOnline');
   const openOnline = async () => {
     await online.open();
     if (!online.blocked && !controller.state.binding) await controller.bootstrap(sourceSessionId);
@@ -76,18 +82,18 @@ export function PanelBody({ rpc, navigation, useTabInfo, sessionId, t }) {
           {!onlineState.ready || onlineState.pending_target ? <path d="M16 5v4h-4M16 9a6 6 0 1 0 .1 3M16 9l-3-3" /> : <path d="M11 3h6v6M17 3l-8 8M8 4H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-4" />}
         </svg>
       </button>
-      {message ? <p role="status" style={{ margin: '6px 0 0', lineHeight: 1.4, textAlign: 'left' }}>{t(message)}</p> : null}
+      {message ? <p role="status" style={{ margin: '6px 0 0', lineHeight: 1.4, textAlign: 'left' }}>{text(message)}</p> : null}
     </div>
     <iframe
     ref={frame}
-    title={t('title')}
+    title={text('title')}
     srcDoc={embeddedDocument}
     sandbox={FRAME_SANDBOX}
     inert={blocked ? '' : undefined}
     aria-busy={onlineState.active || onlineState.running}
     referrerPolicy="no-referrer"
     style={{ display: 'block', border: 0, width: '100%', flex: 1, minHeight: 0 }}
-    onLoad={() => { if (!adapter.frameLoaded(frame.current, locale)) setFrameFailed(true); }}
+    onLoad={() => { if (!adapter.frameLoaded(frame.current, hostLocale)) setFrameFailed(true); }}
   /></section>;
 }
 

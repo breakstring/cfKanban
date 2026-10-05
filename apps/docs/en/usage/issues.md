@@ -20,7 +20,7 @@ You need read access to the project. Search covers titles and issue numbers. Inc
 Count undeleted high-priority issues with “login” in their title in DemoProject, grouped by status.
 ```
 
-Select the translation icon at the top right to switch between English and Simplified Chinese. Its tooltip names the current language and the target. Priorities, buttons, and system messages follow that choice. Custom project status names keep their original text; default status names stay in English. Switching language preserves unsaved form content.
+Select the translation icon at the top right to switch between English and Simplified Chinese. Its tooltip names the current language and the target. Priorities, buttons, system messages, and the five default status labels follow that choice in the full app and local workbench. Custom project status names keep their original text. A status name equal to its canonical English default is treated as a default label; API keys remain unchanged. Switching language preserves unsaved form content.
 
 For several projects, open the account menu at the top right → **Work list**, choose projects, a view, and filters, then select **Show work** again after each change. Its status selector offers one status or all statuses. Ask your Agent to combine several specific statuses into one result.
 

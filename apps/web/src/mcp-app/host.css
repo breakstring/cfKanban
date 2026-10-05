@@ -1,0 +1,22 @@
+html[data-mcp-theme="dark"][data-app-ui] {
+  color-scheme: dark;
+  --ui-bg: #171717;
+  --ui-bg-muted: #222;
+  --ui-bg-elevated: #272727;
+  --ui-border: #3b3b3b;
+  --ui-border-accented: #555;
+  --ui-text: #ededed;
+  --ui-text-muted: #b6b6b6;
+  --color-text: #ededed;
+  --color-text-muted: #b6b6b6;
+}
+html[data-mcp-theme="dark"] .embedded-alert {
+  color: #fecaca;
+  border-color: #7f1d1d;
+  background: #321c1c;
+}
+html[data-mcp-theme="dark"] .embedded-recovery {
+  color: #fed7aa;
+  border-color: #7c4a18;
+  background: #30271c;
+}

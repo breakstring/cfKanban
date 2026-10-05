@@ -422,7 +422,7 @@ async function returnToProject(): Promise<void> {
           </PersonSelect>
         </form>
         <div v-for="grant in grants" :key="grant.id" class="management-row">
-          <div><strong>{{ grant.principal.display_name }}</strong><p>{{ grant.role }} · {{ grant.revoked_at ? ui('Revoked', '已撤销') : ui('Active', '有效') }}</p></div>
+          <div><strong>{{ grant.principal.display_name }}</strong><p>{{ grant.role === 'writer' ? ui('Writer', '协作者') : ui('Reader', '只读者') }} · {{ grant.revoked_at ? ui('Revoked', '已撤销') : ui('Active', '有效') }}</p></div>
           <UButton color="neutral" variant="ghost" v-if="grant.allowed_actions.includes('update')" class="text-button" type="button" :disabled="busy" @click="editGrant(grant, grant.role === 'reader' ? 'writer' : 'reader')">{{ grant.role === 'reader' ? ui('Change to writer', '改为协作者') : ui('Change to reader', '改为只读者') }}</UButton>
           <UButton color="neutral" variant="ghost" v-if="grant.allowed_actions.includes('revoke')" class="text-button" type="button" :disabled="busy" @click="revokeGrant(grant)">{{ ui('Remove direct membership', '移除直接授权') }}</UButton>
           <UButton color="neutral" variant="ghost" v-if="grant.revoked_at && grant.allowed_actions.includes('regrant')" class="text-button" type="button" :disabled="busy" @click="editGrant(grant, grant.role)">{{ ui('Grant again', '重新授予') }}</UButton>

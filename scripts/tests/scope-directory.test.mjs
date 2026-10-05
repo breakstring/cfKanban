@@ -8,6 +8,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { dispatch, getCommandCatalog } from "../../packages/skill-runtime/src/cli.mjs";
 import { inspectScopeDirectory, mergeRepoScope, readRepoScope, SCOPE_FILE_NAME } from "../../packages/skill-runtime/src/scope.mjs";
+import { canonicalDigest } from "../../packages/skill-runtime/src/utils.mjs";
 
 const execFileAsync = promisify(execFile);
 const target = {
@@ -26,6 +27,7 @@ test("daily command dispatch exposes read-only directory inspection", async (t) 
   const result = await dispatch("scope inspect-directory", { directory }, { surface: "daily" });
   assert.equal(result.git.status, "repository");
   assert.equal(result.scope_directory, await realpath(directory));
+  assert.equal(result.workbench_context_key, canonicalDigest({ directory: result.scope_directory }));
   assert.equal(result.association_recommended, true);
   assert.equal(await readRepoScope({ repoRoot: directory }), null);
 });
@@ -66,6 +68,7 @@ test("Git root detection is read-only and recommends association only when its s
   const root = await realpath(repository);
   assert.deepEqual(result, {
     directory: repository, git: { status: "repository", root }, scope_directory: root,
+    workbench_context_key: canonicalDigest({ directory: root }),
     scope_file: path.join(root, SCOPE_FILE_NAME), scope: null, association_recommended: true,
   });
   assert.deepEqual(await snapshot(directory), before);
@@ -82,6 +85,7 @@ test("Git subdirectories read the root association while explicit read and merge
   const before = await snapshot(directory);
   const result = await inspectScopeDirectory({ directory: child });
   assert.equal(result.git.root, await realpath(repository));
+  assert.equal(result.workbench_context_key, canonicalDigest({ directory: result.git.root }));
   assert.deepEqual(result.scope, scope);
   assert.equal(result.association_recommended, false);
   assert.deepEqual(await snapshot(directory), before);
@@ -105,6 +109,8 @@ test("linked worktrees use their own worktree root without walking into the main
   const before = await snapshot(directory);
   const result = await inspectScopeDirectory({ directory: child });
   assert.deepEqual(result.git, { status: "repository", root: await realpath(worktree) });
+  assert.equal(result.workbench_context_key, canonicalDigest({ directory: await realpath(worktree) }));
+  assert.notEqual(result.workbench_context_key, canonicalDigest({ directory: await realpath(repository) }));
   assert.equal(result.scope, null);
   assert.equal(result.association_recommended, true);
   assert.deepEqual(await snapshot(directory), before);
@@ -115,12 +121,14 @@ test("non-Git directories retain their own existing scope but never recommend cr
   const unassociated = await inspectScopeDirectory({ directory });
   assert.deepEqual(unassociated.git, { status: "not_repository", root: null });
   assert.equal(unassociated.scope_directory, directory);
+  assert.equal(unassociated.workbench_context_key, null);
   assert.equal(unassociated.association_recommended, false);
   assert.equal(unassociated.scope, null);
   await writeFile(path.join(directory, SCOPE_FILE_NAME), JSON.stringify(scope));
   const before = await snapshot(directory);
   const associated = await inspectScopeDirectory({ directory });
   assert.deepEqual(associated.scope, scope);
+  assert.equal(associated.workbench_context_key, null);
   assert.equal(associated.association_recommended, false);
   assert.deepEqual(await snapshot(directory), before);
 });
@@ -132,6 +140,7 @@ test("bare repositories are confirmed outside a Git worktree", async (t) => {
   await git(repository, ["-c", "init.defaultBranch=main", "init", "--bare"]);
   const result = await inspectScopeDirectory({ directory: repository });
   assert.deepEqual(result.git, { status: "not_repository", root: null });
+  assert.equal(result.workbench_context_key, null);
   assert.equal(result.association_recommended, false);
 });
 
@@ -149,6 +158,7 @@ test("unavailable Git and other failures preserve existing directory scope witho
     const result = await inspectScopeDirectory({ directory }, { gitRunner: async () => { throw error; } });
     assert.deepEqual(result.git, { status: expected, root: null });
     assert.equal(result.scope_directory, directory);
+    assert.equal(result.workbench_context_key, null);
     assert.deepEqual(result.scope, scope);
     assert.equal(result.association_recommended, false);
     assert.equal(JSON.stringify(result).includes("private-detail"), false);
@@ -163,11 +173,13 @@ test("invalid paths and malformed or inconsistent Git output remain unknown", as
   const missing = path.join(directory, "does-not-exist");
   const absent = await inspectScopeDirectory({ directory: missing }, { gitRunner: () => assert.fail("Missing cwd must not run Git") });
   assert.deepEqual(absent.git, { status: "unknown", root: null });
+  assert.equal(absent.workbench_context_key, null);
   assert.equal(absent.association_recommended, false);
   for (const outputs of [["unexpected\n"], ["true\n", "relative-root\n"], ["true\n", `${directory}\nextra\n`]]) {
     let call = 0;
     const result = await inspectScopeDirectory({ directory }, { gitRunner: async () => ({ stdout: outputs[call++] }) });
     assert.deepEqual(result.git, { status: "unknown", root: null });
+    assert.equal(result.workbench_context_key, null);
     assert.equal(result.association_recommended, false);
   }
   let call = 0;

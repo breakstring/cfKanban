@@ -248,7 +248,7 @@ test("Invitation page does not auto-consume or persist code and retries one in-m
   const handlers = {};
   const elements = Object.fromEntries(["invitation-status", "invitation-accept", "invitation-next"].map((id) => [id, { hidden: false, addEventListener: (name, handler) => { handlers[id + name] = handler; } }]));
   elements["cfkanban-invitation-metadata"] = { textContent: JSON.stringify({ kind: "project_grant", invitation_id: "page-invitation", grants: [{ project_id: ids.a, workspace_id: ids.workspace, role: "writer" }] }) };
-  const current = { principal: { id: ids.member, display_name: "Member", is_owner: false }, session_id: crypto.randomUUID() };
+  const current = { principal: { id: ids.member, display_name: "Member", is_owner: false, locale: "zh-CN" }, session_id: crypto.randomUUID() };
   let posts = 0;
   let cleaned;
   runInNewContext(INVITATION_PAGE_SCRIPT, {
@@ -281,12 +281,12 @@ test("Invitation page does not auto-consume or persist code and retries one in-m
   assert.equal(requests.length, 3);
   assert.equal(requests[0].options.body, requests[1].options.body);
   assert.equal(requests[0].options.headers["idempotency-key"], requests[1].options.headers["idempotency-key"]);
-  assert.deepEqual(stored, [["cfkanban_locale", "zh-CN"]]);
+  assert.deepEqual(stored, []);
   assert.equal(elements["invitation-next"].hidden, false);
 });
 
 async function invitationPageRecoveryFixture() {
-  const current = { principal: { id: ids.member, display_name: "Member", is_owner: false }, session_id: crypto.randomUUID() };
+  const current = { principal: { id: ids.member, display_name: "Member", is_owner: false, locale: "zh-CN" }, session_id: crypto.randomUUID() };
   const response = (status, value) => ({ status, ok: status >= 200 && status < 300, json: async () => value });
   let sessionResponse = response(200, current);
   const posts = [];
@@ -340,7 +340,7 @@ test("邀请原请求在会话 503、429 或畸形成功响应后仍可安全重
   assert.equal(page.posts[1].headers["idempotency-key"], original.key);
   assert.match(page.elements["invitation-status"].textContent, /已接受邀请/);
   assert.equal(page.elements["invitation-next"].hidden, false);
-  assert.deepEqual(page.stored, [["cfkanban_locale", "zh-CN"]]);
+  assert.deepEqual(page.stored, []);
 });
 
 test("邀请恢复在明确 401 或已核实身份与会话变化时停止", async () => {
@@ -360,7 +360,7 @@ test("邀请恢复在明确 401 或已核实身份与会话变化时停止", asy
     page.setSessionResponse(page.response(200, page.current));
     await page.click();
     assert.equal(page.posts.length, 1);
-    assert.deepEqual(page.stored, [["cfkanban_locale", "zh-CN"]]);
+    assert.deepEqual(page.stored, []);
   }
 });
 
