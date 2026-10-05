@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
+import { build } from "esbuild";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { IssueMentions, MENTIONS_TOOL } from "../src/mentions.mjs";
 
 function fixture(admission = {}) {
@@ -29,10 +36,64 @@ function fixture(admission = {}) {
 }
 const link = result => result.structuredContent.items[0].uri;
 
+// Codex 优先使用服务端 capability；只有工具 metadata 时会走带 path 的旧协议。
+function composerProvider(capabilities, tools) {
+  const capability = capabilities.extensions?.["openai/mentions"] ?? capabilities.experimental?.["openai/mentions"];
+  if (capability) {
+    assert.deepEqual(Object.keys(capability), ["searchTool"]);
+    assert.equal(typeof capability.searchTool, "string");
+    return { name: capability.searchTool, arguments: query => ({ query }) };
+  }
+  const legacy = tools.find(tool => tool._meta?.["openai/extensions"]?.["mentions/search"]);
+  assert.ok(legacy);
+  return { name: legacy.name, arguments: query => ({ query, path: [] }) };
+}
+
 test("mentions metadata follows the strict app-only official query schema", () => {
   assert.deepEqual(MENTIONS_TOOL._meta, { "openai/extensions": { "mentions/search": {} }, ui: { visibility: ["app"] } });
   assert.deepEqual(Object.keys(MENTIONS_TOOL.inputSchema.properties), ["query"]);
   assert.equal(MENTIONS_TOOL.annotations.readOnlyHint, true);
+});
+
+test("Composer capability negotiation selects query-only search and reads the exact selected Issue", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cfkanban-mcp-mentions-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const entry = path.join(directory, "server.mjs");
+  await build({ entryPoints: [fileURLToPath(new URL("../src/server.mjs", import.meta.url))], outfile: entry, bundle: true, format: "esm", platform: "node", loader: { ".svg": "text" }, banner: { js: "import { createRequire } from 'node:module';const require = createRequire(import.meta.url);" } });
+  const { createCfKanbanMcpServer } = await import(pathToFileURL(entry).href);
+  const f = fixture();
+  const server = createCfKanbanMcpServer({
+    facade: { ...f.createFacade(), listTools: () => [] }, createFacade: f.createFacade,
+    preferences: { load: async () => { throw new Error("Mentions must not read workbench preferences"); }, save: async () => { throw new Error("Mentions must not write workbench preferences"); } },
+    uiHtml: "<!doctype html><title>Isolated mentions fixture</title>",
+  });
+  const client = new Client({ name: "isolated-composer-fixture", version: "1.0.0" }, { capabilities: {} });
+  t.after(async () => { f.mentions.dispose(); await client.close(); await server.close(); });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  const tools = (await client.listTools()).tools;
+  const provider = composerProvider(client.getServerCapabilities(), tools);
+  const result = await client.callTool({ name: provider.name, arguments: provider.arguments("CFK-601") });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.items.length, 1);
+  const selected = result.structuredContent.items[0];
+  assert.equal(selected.type, "resource_link");
+  assert.equal(selected.name, "CFK-601");
+  assert.equal(selected.uri, `cfkanban://issue/${f.ids.instance}/${f.ids.principal}/${f.ids.project}/${f.ids.issue}/CFK-601`);
+  const resource = await client.readResource({ uri: selected.uri });
+  const context = JSON.parse(resource.contents[0].text);
+  assert.equal(resource.contents[0].uri, selected.uri);
+  assert.equal(context.id, f.ids.issue); assert.equal(context.identifier, "CFK-601");
+  assert.equal(context.project.id, f.ids.project); assert.equal(context.instance_id, f.ids.instance);
+  assert.equal(context.body, "Current body"); assert.equal(context.content_trust, "untrusted");
+  assert.deepEqual(f.calls.filter(call => call.name === "reference").map(call => call.args.projection), ["mention", "resource"]);
+  assert.deepEqual(f.calls.at(-1).binding, { instance_id: f.ids.instance, expected_principal_id: f.ids.principal, project_ids: [f.ids.project] });
+  const legacy = composerProvider({ tools: {}, resources: {} }, tools);
+  const count = f.calls.length;
+  const rejected = await client.callTool({ name: legacy.name, arguments: legacy.arguments("CFK-601") });
+  assert.equal(rejected.isError, true);
+  assert.equal(rejected.structuredContent.error.code, "MCP_INVALID_ARGUMENTS");
+  assert.equal(f.calls.length, count);
 });
 
 test("empty, prefix, invalid and malformed links make no remote or local connection reads", async t => {

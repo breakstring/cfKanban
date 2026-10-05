@@ -58,7 +58,13 @@ Every reopening rechecks the recorded identity, Project's Workspace, and current
 
 ## Mention an Issue in a conversation
 
-Both the local components and target instance must support Issue reference reads. When the client actually exposes the cfKanban mention entry, select it in the composer and enter a complete identifier such as `CFK-123`, or paste a canonical Issue link from a connected trusted instance. The first version resolves identifiers and does not search titles. Empty or invalid input does not query remote Issues.
+Both the local components and target instance must support Issue reference reads. When the client actually exposes the cfKanban mention entry:
+
+1. Type `@` in the composer and click the cfKanban entry in the menu. Its name may appear as `cfkanban-mcp`.
+2. Confirm that the composer shows the entry's name as a chip, then enter a complete identifier such as `CFK-123`, or paste a canonical Issue link from a connected trusted instance.
+3. Click the returned Issue candidate, add a request such as “Summarize this Issue,” and send.
+
+Typing the entire string `@cfkanban-mcp CFK-123` does not select the entry automatically and may leave the composer in global search. The first version resolves complete identifiers and does not search titles. Empty or invalid input does not query remote Issues.
 
 Selecting a mention lets the Agent read the Issue's main fields and body under current permissions. An oversized body is marked as truncated. The Agent reads Comments, relations, and current changes separately when needed. A mention does not create an Issue, change its status, start work automatically, or supply repository, conversation, or Project authorization. With multiple instances and an ambiguous identifier, choose the instance using an exact trusted Issue link; the integration does not search every instance.
 
@@ -79,6 +85,8 @@ For an uncertain write, use **Recover** in the original page first. Keep that pa
 ## Installation and update FAQ
 
 **Skills load, but there is no workbench entry.** Ask the Agent to check the client's Extensions support, the complete local components, and the MCP connection. Clients without native UI can still use discovered business tools or Skills; choose the browser workbench when needed. A client name alone does not establish support.
+
+**The mention entry is selected, but there are no Issue candidates.** Confirm that the query is a complete identifier or trusted canonical link, then ask the Agent to check the running MCP version, connection, and Project access. The version shown for Skills or a plugin does not prove that MCP loaded the same version. After an update, verify that the host's MCP entry points to the new artifact path and reconnect it.
 
 **The view opens, but there is no Project.** Check identity, connection, and [Project access](../usage/access.md) first. Multiple connections need selection; installing components does not join a Project.
 

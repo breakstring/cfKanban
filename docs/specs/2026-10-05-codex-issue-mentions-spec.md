@@ -9,7 +9,9 @@
 
 ## 输入与身份范围
 
-专用 `cfkanban_mentions_search` 仅接受严格 `{query:string}`，按 `_meta["openai/extensions"]["mentions/search"]` 和 app-only visibility 注册。仅支持完整、大小写准确且数字为正安全整数的 `CFK-N`，或已校验私有实例 metadata 中 trusted origin 的 HTTPS `/app/issues/CFK-N` 链接；链接不得有用户信息、查询参数或片段。解析输入仅用于匹配本地可信实例，不请求输入 URL。
+专用 `cfkanban_mentions_search` 仅接受严格 `{query:string}`。MCP initialize 响应通过 `capabilities.experimental["openai/mentions"] = {searchTool:"cfkanban_mentions_search"}` 声明搜索工具，工具保留 `_meta["openai/extensions"]["mentions/search"]` 和 app-only visibility。现代 capability 决定宿主按 query-only 协议调用；仅有旧工具 metadata 时，已核对的宿主会走附带 `path:[]` 的 legacy 分支，不能替代 initialize 声明。不扩展输入以接受 legacy 控制字段。
+
+仅支持完整、大小写准确且数字为正安全整数的 `CFK-N`，或已校验私有实例 metadata 中 trusted origin 的 HTTPS `/app/issues/CFK-N` 链接；链接不得有用户信息、查询参数或片段。解析输入仅用于匹配本地可信实例，不请求输入 URL。客户端先从 `@` 菜单选择 provider，再在名称标签后输入纯查询；手打包含服务名称的整串文字不构成 provider 选择。
 
 空输入、`CFK-` 前缀及不支持格式返回空候选，不读取远端。编号仅在一个明确本地实例时精确读取；多个实例必须以已信任的规范链接定位，歧义、未知 origin 和连接错误明确返回错误，不遍历远端实例。不得用 MCP 进程 cwd、最近工作台或未经验证的聊天 metadata 推断范围。标题搜索不属于本增量。
 
@@ -40,6 +42,8 @@ Discovery 与 Meta 静态声明 `capabilities.issue_reference: true`，不新增
 每个请求有独立取消信号，不能用“最后一次输入”取消其他聊天。取消不改变 Credential 或业务状态；队列满、超时和能力错误明确返回。`resources/list` 继续只列固定 UI，不枚举 Issue，也不建立后台轮询。引用登记只核验是否由本进程发出，不缓存正文或 ACL；可能的宿主资源预取同样受上述 admission、时间和字节边界限制。
 
 ## 验收边界
+
+协议 fixture 应通过 initialize 的实际 server capability 选择现代调用参数，再执行候选搜索与资源读取；缺失 capability 时构造 legacy 参数须能暴露拒绝，不能仅断言工具 metadata。预构建 stdio 工件同样核验 initialize 声明。已核对的桌面客户端版本为 26.930.51102；其公开 Composer 实现的静态核对不替代用户测试电脑的真实安装、调用与可见候选验收。
 
 隔离 fixture 覆盖零远端无效输入、单实例 / 多实例 / trusted link、未知资源和重启、身份切换、权限及 Credential 撤销、容器暂停、Cookie scope、目标漂移、正文边界、JSON 转义、队列、频率、并发、真实取消和错误区别。不同规模的 Issue / 评论 / 关系数据覆盖命中、零匹配和连续输入，记录 D1 `meta.rows_read`、请求 / 查询数量、响应大小与端到端延迟；只看 LIMIT、索引计划、防抖或缓存不构成成本验收。
 

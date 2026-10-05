@@ -67,6 +67,7 @@ async function initialize(peer) {
   const response = await peer.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "isolated-test-client", version: "1.0.0" } });
   assert.equal(response.error, undefined);
   assert.equal(response.result.serverInfo.name, "cfkanban-mcp");
+  assert.deepEqual(response.result.capabilities.experimental?.["openai/mentions"], { searchTool: "cfkanban_mentions_search" });
   peer.notify("notifications/initialized");
   return response;
 }
@@ -93,6 +94,9 @@ test("prebuilt artifact starts offline at a spaced absolute path with empty PATH
     assert.deepEqual(mentions._meta.ui.visibility, ["app"]);
     const emptyMention = await peer.request("tools/call", { name: mentions.name, arguments: { query: "CFK-" } });
     assert.deepEqual(emptyMention.result.structuredContent, { items: [] });
+    const legacyMention = await peer.request("tools/call", { name: mentions.name, arguments: { query: "CFK-1", path: [] } });
+    assert.equal(legacyMention.result.isError, true);
+    assert.equal(legacyMention.result.structuredContent.error.code, "MCP_INVALID_ARGUMENTS");
     const unknownReference = await peer.request("resources/read", { uri: "cfkanban://issue/unknown" });
     assert.equal(unknownReference.error.data.code, "MCP_MENTION_REFERENCE_UNKNOWN");
     for (const name of ["cfkanban_profile_locale_set", "cfkanban_labels_list", "cfkanban_issues_labels_add", "cfkanban_issues_labels_remove"]) {
