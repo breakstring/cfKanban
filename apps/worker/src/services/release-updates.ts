@@ -1,12 +1,11 @@
-import { compareReleaseVersions, parseReleaseVersion } from "../../../../packages/skill-runtime/src/release-versions.mjs";
+import { compareReleaseVersions } from "../../../../packages/skill-runtime/src/release-versions.mjs";
 import { requireOwnerControl, reauthenticateOwner } from "../kernel/authorization.ts";
 import type { AuthContext, WorkerEnv } from "../kernel/types.ts";
 import { RELEASE_VERSION } from "../release-version.ts";
+import { beforeDeadline, parseReleasePage, readReleaseHtml, RELEASES_URL, RELEASE_PAGE_LIMIT, trustedReleaseLink, type ReleasePageEntry } from "./release-page.ts";
 
-const API = "https://api.github.com/repos/breakstring/cfKanban/releases";
 const TTL = 15 * 60_000;
 const RETRY = 60_000;
-const MAX_BYTES = 512 * 1024;
 export type AvailableRelease = {
   version: string;
   url: string;
@@ -30,37 +29,9 @@ export type ReleaseUpdates = {
 type Fetcher = typeof fetch;
 const empty = (): ReleaseChannel => ({ status: "unavailable", checked_at: null, last_attempt_at: null, retry_at: null, error: null, releases: [] });
 
-async function readBoundedJson(response: Response): Promise<unknown> {
-  if (!response.body) throw new Error("missing_body");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_BYTES) throw new Error("response_too_large");
-      chunks.push(value);
-    }
-  } finally { await reader.cancel(); }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  return JSON.parse(new TextDecoder().decode(bytes));
-}
-
-function release(value: unknown, prerelease: boolean): AvailableRelease {
-  if (!value || typeof value !== "object") throw new Error("invalid_release");
-  const row = value as Record<string, unknown>;
-  const version = row.tag_name;
-  if (typeof version !== "string" || version.length > 128 || version.includes("+") || !parseReleaseVersion(version)
-    || row.draft !== false || row.prerelease !== prerelease || version.includes("-") !== prerelease
-    || typeof row.published_at !== "string" || !Number.isFinite(Date.parse(row.published_at))) throw new Error("invalid_release");
-  const expectedUrl = `https://github.com/breakstring/cfKanban/releases/tag/${version}`;
-  if (row.html_url !== expectedUrl) throw new Error("invalid_release_link");
-  const comparison = compareReleaseVersions(version, RELEASE_VERSION);
-  return { version, url: expectedUrl, published_at: row.published_at, newer_than_instance: comparison === null ? null : comparison > 0 };
+function release(value: ReleasePageEntry): AvailableRelease {
+  const comparison = compareReleaseVersions(value.version, RELEASE_VERSION);
+  return { version: value.version, url: value.url, published_at: value.published_at, newer_than_instance: comparison === null ? null : comparison > 0 };
 }
 
 // Public release metadata is shared within one isolate; no identity or Credential enters this cache.
@@ -72,22 +43,36 @@ export function createReleaseUpdatesReader(fetcher: Fetcher = fetch, now: () => 
     if (previous.retry_at && attempted < Date.parse(previous.retry_at)) return previous;
     let error: ReleaseChannel["error"] = "query_failed";
     try {
-      const response = await fetcher(isPrerelease ? `${API}?per_page=20&page=1` : `${API}/latest`, {
-        headers: { accept: "application/vnd.github+json", "user-agent": "cfKanban-release-discovery", "x-github-api-version": "2022-11-28" },
-        redirect: "manual", signal: AbortSignal.timeout(5_000),
-      });
-      if (response.status === 429 || response.status === 403) error = "rate_limited";
+      const signal = AbortSignal.timeout(5_000);
+      async function page(url: string): Promise<Response> {
+        const operation = fetcher(url, {
+          headers: { accept: "text/html", "user-agent": "cfKanban-release-discovery" },
+          redirect: "manual", signal,
+        });
+        void operation.then(response => { if (signal.aborted) void response.body?.cancel().catch(() => {}); }, () => {});
+        const response = await beforeDeadline(operation, signal);
+        if (response.status === 429 || response.status === 403) error = "rate_limited";
+        if (response.redirected) { void response.body?.cancel().catch(() => {}); throw new Error("unexpected_redirect"); }
+        return response;
+      }
+      let response = await page(isPrerelease ? RELEASES_URL : `${RELEASES_URL}/latest`);
+      let target: string | null = null;
+      if (!isPrerelease && [301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get("location");
+        void response.body?.cancel().catch(() => {});
+        if (!location) throw new Error("missing_release_redirect");
+        target = trustedReleaseLink(location).url;
+        response = await page(target);
+      }
       let releases: AvailableRelease[];
-      if (!isPrerelease && response.status === 404) releases = [];
+      if (!isPrerelease && !target && response.status === 404) { void response.body?.cancel().catch(() => {}); releases = []; }
       else {
-        if (!response.ok) throw new Error("github_unavailable");
-        const body = await readBoundedJson(response);
-        if (isPrerelease) {
-          if (!Array.isArray(body) || body.length > 20) throw new Error("invalid_release_list");
-          releases = body.filter(row => row?.prerelease === true && row?.draft === false).map(row => release(row, true));
-          releases.sort((a, b) => compareReleaseVersions(b.version, a.version) ?? 0);
-          releases = [...new Map(releases.map(item => [item.version, item])).values()].slice(0, 5);
-        } else releases = [release(body, false)];
+        if (response.status !== 200 || !isPrerelease && !target) { void response.body?.cancel().catch(() => {}); throw new Error("github_unavailable"); }
+        const html = await readReleaseHtml(response, signal);
+        const entries = await beforeDeadline(parseReleasePage(html, isPrerelease ? "list" : "stable", target), signal);
+        releases = isPrerelease ? entries.filter(row => row.prerelease)
+          .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))
+          .slice(0, 5).map(release) : entries.map(release);
       }
       return { status: "fresh", checked_at: new Date(attempted).toISOString(), last_attempt_at: new Date(attempted).toISOString(), retry_at: new Date(attempted + TTL).toISOString(), error: null, releases };
     } catch {
@@ -101,7 +86,7 @@ export function createReleaseUpdatesReader(fetcher: Fetcher = fetch, now: () => 
       })().finally(() => { pending = null; });
       await pending;
     }
-    return structuredClone({ current_version: RELEASE_VERSION, stable, prereleases, prerelease_window: 20 });
+    return structuredClone({ current_version: RELEASE_VERSION, stable, prereleases, prerelease_window: RELEASE_PAGE_LIMIT });
   };
 }
 const readUpdates = createReleaseUpdatesReader();

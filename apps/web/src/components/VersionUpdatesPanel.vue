@@ -135,7 +135,7 @@ onUnmounted(() => { generation++; removeGuard(); window.removeEventListener("bef
         </ul>
         <p v-else-if="entry.channel.status === 'fresh'">{{ ui("No release found in this channel.", "该范围内未发现发行版。") }}</p>
       </section>
-      <p class="muted version-discovery-note">{{ ui("Up to 5 prereleases from the 20 most recent GitHub releases. Prereleases require an explicit version choice. Compatibility is checked when preparing an upgrade plan.", "预发行版最多展示 GitHub 最近 20 份发行中的 5 份。预发行版须明确选择准确版本，兼容性在准备升级计划时核验。") }}</p>
+      <p class="muted version-discovery-note">{{ ui("Up to 5 prereleases from GitHub's first releases page, inspecting at most 20 entries and ordered by publication time. Choose an exact version; compatibility is checked in the upgrade plan.", "从 GitHub 发行列表第一页最多检查 20 项，按发布时间展示最多 5 份预发行版。须明确选择准确版本，兼容性在升级计划中核验。") }}</p>
     </template>
     <section class="version-channel agent-upgrade-section" aria-labelledby="agent-upgrade-title">
       <h3 id="agent-upgrade-title">{{ ui("Ask your Agent to upgrade", "交给 Agent 升级") }}</h3>
