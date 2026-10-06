@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import UButton from "@nuxt/ui/components/Button.vue";
+import USelect from "@nuxt/ui/components/Select.vue";
+import UTextarea from "@nuxt/ui/components/Textarea.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
+import CopyForAgentButton from "./CopyForAgentButton.vue";
 import ErrorNotice from "./ErrorNotice.vue";
+import { agentUpgradePrompt } from "../lib/agent-upgrade-prompt";
 import { ApiProblem, apiRequest, hasUncertainWrite } from "../lib/api";
 import { locale } from "../lib/i18n";
 import { useLocalizedError } from "../lib/localized-error";
@@ -20,6 +24,7 @@ const settingsPath = "/api/v1/admin/upgrade-notification-settings";
 const updates = ref<Updates | null>(null), settings = ref<Settings | null>(null);
 const enabled = ref(false), busy = ref(false), loading = ref(false), saved = ref(false);
 const uncertain = ref(false);
+const selectedVersion = ref("discover");
 let generation = 0;
 let attempt: { enabled: boolean; expected_version: number } | null = null;
 const removeGuard = registerNavigationGuard(() => !busy.value && !uncertain.value);
@@ -34,6 +39,19 @@ const channels = computed(() => updates.value ? [
   { key: "stable", title: ui("Latest stable release", "最新正式版"), channel: updates.value.stable },
   { key: "prereleases", title: ui("Recent prereleases", "近期预发行版"), channel: updates.value.prereleases },
 ] : []);
+const releaseOptions = computed(() => [
+  { value: "discover", label: ui("Check versions with my Agent first", "先让 Agent 检查版本并由我选择") },
+  ...channels.value.flatMap(entry => entry.channel.releases.map(release => ({
+    value: release.version,
+    label: `${release.version} · ${entry.key === "stable" ? ui("Stable", "正式版") : ui("Prerelease", "预发行版")}`,
+  }))),
+]);
+const selectedRelease = computed(() => releaseOptions.value.some(item => item.value === selectedVersion.value && item.value !== "discover")
+  ? selectedVersion.value : null);
+const upgradeInstruction = computed(() => agentUpgradePrompt(window.location.origin, selectedRelease.value, locale.value));
+watch(releaseOptions, options => {
+  if (!options.some(item => item.value === selectedVersion.value)) selectedVersion.value = "discover";
+});
 const time = (value: string) => new Intl.DateTimeFormat(locale.value, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 function validSettings(value: unknown): value is Settings {
   const item = value as Settings;
@@ -85,6 +103,7 @@ async function save(): Promise<void> {
 }
 watch(() => `${notificationSessionKey(props.session)}:${canManage.value}`, () => {
   generation++; updates.value = null; settings.value = null; enabled.value = false;
+  selectedVersion.value = "discover";
   busy.value = false; loading.value = false; uncertain.value = false; saved.value = false; attempt = null;
   void load();
 }, { immediate: true });
@@ -116,18 +135,22 @@ onUnmounted(() => { generation++; removeGuard(); window.removeEventListener("bef
         </ul>
         <p v-else-if="entry.channel.status === 'fresh'">{{ ui("No release found in this channel.", "该范围内未发现发行版。") }}</p>
       </section>
-      <p class="muted">{{ ui("Up to 5 prereleases from the 20 most recent GitHub releases. Prereleases require an explicit version choice. Compatibility is checked when preparing an upgrade plan.", "预发行版最多展示 GitHub 最近 20 份发行中的 5 份。预发行版须明确选择准确版本，兼容性在准备升级计划时核验。") }}</p>
+      <p class="muted version-discovery-note">{{ ui("Up to 5 prereleases from the 20 most recent GitHub releases. Prereleases require an explicit version choice. Compatibility is checked when preparing an upgrade plan.", "预发行版最多展示 GitHub 最近 20 份发行中的 5 份。预发行版须明确选择准确版本，兼容性在准备升级计划时核验。") }}</p>
     </template>
-    <section class="version-channel">
-      <h3>{{ ui("Update local Skills", "更新本地技能") }}</h3>
-      <p>{{ ui("This site cannot read your local Skills version. Check the installed version locally, then update the Skills bundle and host plugin separately.", "站点无法读取本地技能版本。请先在本地核对安装版本，再独立更新技能包和宿主插件。") }}</p>
-      <code>cfkanban --version</code>
-      <p><a :href="`/docs/${locale}/deployment/updates/`">{{ ui("Local Skills update guide", "本地技能更新指引") }}</a></p>
-    </section>
-    <section class="version-channel">
-      <h3>{{ ui("Upgrade this instance", "升级此实例") }}</h3>
-      <p>{{ ui("Use cfkanban-deploy or the public CLI to select a verified immutable release and prepare a plan. Review the target and authorize that plan before applying it.", "使用 cfkanban-deploy 或公共 CLI 选择已校验的不可变发行并准备计划，核对目标并授权该计划后执行。") }}</p>
-      <p><a :href="`/docs/${locale}/deployment/updates/`">{{ ui("Instance upgrade guide", "实例升级指引") }}</a></p>
+    <section class="version-channel agent-upgrade-section" aria-labelledby="agent-upgrade-title">
+      <h3 id="agent-upgrade-title">{{ ui("Ask your Agent to upgrade", "交给 Agent 升级") }}</h3>
+      <p>{{ ui("Copy this prompt to your Agent to update local Skills and the host plugin, then check and upgrade this existing instance. Each stage keeps its plan confirmation.", "复制这段话给 Agent，先更新本地技能和宿主插件，再检查并升级现有实例。每个阶段仍需确认计划。") }}</p>
+      <div class="agent-upgrade-version">
+        <label for="agent-upgrade-release">{{ ui("Target instance release", "实例目标版本") }}</label>
+        <USelect id="agent-upgrade-release" v-model="selectedVersion" :items="releaseOptions" :disabled="loading" aria-describedby="agent-upgrade-version-help" />
+        <p id="agent-upgrade-version-help" class="muted">{{ ui("Choose an exact release, or let your Agent check available versions and ask you to choose. This selection only changes the prompt.", "可选择准确发行版，或让 Agent 先核对可用版本并由你选择。此处选择仅更新提示文本。") }}</p>
+      </div>
+      <label for="agent-upgrade-prompt">{{ ui("Prompt for your Agent", "给 Agent 的提示") }}</label>
+      <UTextarea id="agent-upgrade-prompt" class="agent-upgrade-prompt" :model-value="upgradeInstruction" :rows="6" autoresize :maxrows="12" readonly />
+      <div class="agent-upgrade-actions">
+        <CopyForAgentButton :text="upgradeInstruction" />
+        <a :href="`/docs/${locale}/deployment/updates/`">{{ ui("Update and upgrade guide", "更新与升级指引") }}</a>
+      </div>
     </section>
     <section class="version-channel">
       <h3>{{ ui("Notify users after upgrades", "升级后通知用户") }}</h3>
@@ -140,3 +163,25 @@ onUnmounted(() => { generation++; removeGuard(); window.removeEventListener("bef
     </section>
   </section>
 </template>
+
+<style scoped>
+.version-updates-panel { margin-top: 28px; }
+.version-updates-panel .section-heading-row { margin-bottom: 14px; }
+.version-updates-panel .version-channel { padding: 28px 0; }
+.version-channel h3 { margin: 0 0 16px; }
+.version-channel p { margin: 0 0 12px; }
+.version-channel > :last-child { margin-bottom: 0; }
+.version-discovery-note { margin: 20px 0 4px; }
+.agent-upgrade-version { display: grid; gap: 8px; margin: 20px 0; }
+.agent-upgrade-version > :deep(button) { width: min(100%, 420px); }
+.agent-upgrade-section label { display: block; margin-bottom: 8px; font-weight: 600; }
+.agent-upgrade-prompt { display: block; width: 100%; margin: 10px 0 16px; }
+.agent-upgrade-prompt :deep(textarea) { font-family: var(--font-ui); line-height: 1.65; overflow-wrap: anywhere; }
+.agent-upgrade-actions { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 16px 24px; }
+.agent-upgrade-actions > a { display: inline-flex; align-items: center; min-height: 40px; }
+@media (max-width: 600px) {
+  .version-updates-panel { margin-top: 24px; }
+  .version-updates-panel .version-channel { padding: 24px 0; }
+  .agent-upgrade-actions > a { min-height: 44px; }
+}
+</style>

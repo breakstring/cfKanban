@@ -81,14 +81,12 @@ watch(() => props.disabled, disabled => { if (disabled) { activeId.value = null;
 <template>
   <div class="project-search">
     <form class="board-search" role="search" @submit.prevent="submit">
-      <UInput :model-value="modelValue" class="board-search-field" type="search" role="combobox" autocomplete="off" :disabled="disabled"
+      <UInput :model-value="modelValue" class="board-search-field" :ui="{ base: 'text-left' }" type="search" role="combobox" autocomplete="off" :disabled="disabled"
         :placeholder="chinese ? '按标题或编号查找；Enter 搜索项目' : 'Find by title or number; Enter searches Project'"
         :aria-label="chinese ? '搜索事项' : 'Search issues'" aria-autocomplete="list" aria-controls="project-search-candidates"
         :aria-expanded="expanded" :aria-activedescendant="activeId ? `project-search-${activeId}` : undefined" aria-describedby="project-search-scope project-search-feedback"
         @update:model-value="update(String($event))" @keydown="keydown" @focus="focused = true; dismissed = false" @blur="focused = false; activeId = null"
-        @compositionstart="composing = true" @compositionend="finishComposition">
-        <template #leading><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg></template>
-      </UInput>
+        @compositionstart="composing = true" @compositionend="finishComposition" />
       <UButton color="neutral" variant="outline" type="submit" :disabled="disabled || !valid">{{ chinese ? '搜索项目' : 'Search Project' }}</UButton>
     </form>
     <p id="project-search-scope" class="search-scope">{{ chinese ? '搜索当前项目，并保留已选筛选条件。' : 'Search this Project with the selected filters.' }}</p>

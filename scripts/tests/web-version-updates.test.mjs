@@ -8,13 +8,16 @@ import { compileScript, parse } from "@vue/compiler-sfc";
 import { createRenderer, h, nextTick, ref } from "vue";
 import { nuxtUiTestPlugin } from "./nuxt-ui-test-plugin.mjs";
 
-const original = { window: globalThis.window, document: globalThis.document, fetch: globalThis.fetch };
+const original = { window: globalThis.window, document: globalThis.document, fetch: globalThis.fetch, navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator") };
+const copied = [];
+let clipboardWrite = async value => { copied.push(value); };
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: value => clipboardWrite(value) } } });
 const events = new EventTarget();
 const invalidations = [];
 events.addEventListener("cfkanban:session-invalid", event => invalidations.push(event));
 events.addEventListener("cfkanban:authorization-stale", event => invalidations.push(event));
 globalThis.window = {
-  location: { pathname: "/app/admin/updates", search: "" }, navigator: { languages: ["en"] },
+  location: { pathname: "/app/admin/updates", search: "", origin: "https://kanban.example.test" }, navigator: { languages: ["en"] },
   history: { pushState() {}, replaceState() {} }, scrollTo() {},
   addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events),
   dispatchEvent: events.dispatchEvent.bind(events),
@@ -74,6 +77,9 @@ const all = target => [target, ...target.children.flatMap(all)];
 const text = target => target.text + target.children.map(text).join("");
 const button = (host, label) => all(host).find(item => item.tag === "button" && text(item) === label);
 const checkbox = host => all(host).find(item => item.tag === "input" && item.props.type === "checkbox");
+const prompt = host => all(host).find(item => item.tag === "textarea" && item.props.id === "agent-upgrade-prompt");
+const releaseSelect = host => all(host).find(item => item.tag === "select" && item.props.id === "agent-upgrade-release");
+const copyButton = host => all(host).find(item => item.tag === "button" && item.parent?.props.class === "copy-for-agent");
 const settingsPath = "/api/v1/admin/upgrade-notification-settings";
 const updatesPath = "/api/v1/admin/release-updates";
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -117,9 +123,14 @@ const loaded = host => checkbox(host) && !checkbox(host).props.disabled;
 afterEach(() => {
   for (const app of apps) app.unmount(); apps.clear();
   invalidations.length = 0; observedRequests.length = 0; locale.value = "en";
+  copied.length = 0; clipboardWrite = async value => { copied.push(value); };
+  window.location.search = "";
   currentPath.value = "/app/admin/updates"; globalThis.fetch = original.fetch;
 });
-after(() => { globalThis.window = original.window; globalThis.document = original.document; });
+after(() => {
+  globalThis.window = original.window; globalThis.document = original.document;
+  if (original.navigator) Object.defineProperty(globalThis, "navigator", original.navigator); else delete globalThis.navigator;
+});
 
 test("only instance Owner can load the panel; settings start off without a write", async () => {
   const calls = transport(call => json(call.path === updatesPath ? updates() : { enabled: false, version: 1 }));
@@ -236,4 +247,73 @@ test("a conflicting save reads current CAS facts and keeps the draft without rep
   assert.deepEqual(calls.filter(call => call.method === "PATCH").map(call => call.body.expected_version), [1, 2]);
   assert.equal(checkbox(view.host).checked, false); assert.doesNotMatch(text(view.host), /Setting saved and verified/);
   assert.match(text(view.host), /setting changed again/i);
+});
+
+function availableUpdates() {
+  const value = updates();
+  value.stable.releases = [{ version: "2.0.0", url: "https://github.com/breakstring/cfKanban/releases/tag/2.0.0", published_at: "2026-10-06T00:00:00Z", newer_than_instance: true }];
+  value.prereleases.releases = [{ version: "2.1.0-rc.10", url: "https://github.com/breakstring/cfKanban/releases/tag/2.1.0-rc.10", published_at: "2026-10-06T00:00:00Z", newer_than_instance: true }];
+  return value;
+}
+async function chooseRelease(host, version) { releaseSelect(host).props["onUpdate:modelValue"](version); await nextTick(); }
+
+test("Agent prompt targets the current origin, separates plan confirmations and leaves the release unselected", async () => {
+  window.location.search = "?fixture-marker=must-not-be-copied";
+  const calls = transport(call => json(call.path === updatesPath ? availableUpdates() : { enabled: false, version: 1 }));
+  const view = mount(); await until(() => loaded(view.host));
+  assert.match(prompt(view.host).value, /existing cfKanban instance at https:\/\/kanban\.example\.test/);
+  assert.match(prompt(view.host).value, /https:\/\/kanban\.example\.test\/docs\/en\/deployment\/updates\//);
+  assert.match(prompt(view.host).value, /First check the locally installed.*Skills bundle and host plugin/);
+  assert.match(prompt(view.host).value, /local update plan.*wait for my confirmation/);
+  assert.match(prompt(view.host).value, /immutable artifacts and compatibility.*instance upgrade plan.*impact.*wait for my explicit confirmation.*reading back the result/);
+  assert.match(prompt(view.host).value, /let me choose an exact target.*do not default to a prerelease/);
+  assert.match(prompt(view.host).value, /Preserve the existing Owner identity, credentials, binding, and resources/);
+  assert.equal(prompt(view.host).value.split("\n\n").length, 3);
+  assert.doesNotMatch(prompt(view.host).value, /2\.0\.0|2\.1\.0-rc\.10|must-not-be-copied/);
+  assert.equal(releaseSelect(view.host).value, "discover");
+  assert.ok(prompt(view.host).props.readonly === "" || prompt(view.host).props.readonly === true);
+  assert.equal(prompt(view.host).props.rows, 6);
+  assert.equal(prompt(view.host).props.maxrows, 12);
+  assert.equal(all(view.host).some(item => item.tag === "h3" && text(item) === "Update local Skills"), false);
+  assert.ok(all(view.host).some(item => item.tag === "h3" && text(item) === "Ask your Agent to upgrade"));
+  assert.deepEqual(calls.map(call => call.method), ["GET", "GET"]);
+});
+
+test("only explicit version choices enter the bilingual copied prompt; copy failure keeps manual text available", async () => {
+  const calls = transport(call => json(call.path === updatesPath ? availableUpdates() : { enabled: false, version: 1 }));
+  const view = mount(); await until(() => loaded(view.host));
+  await chooseRelease(view.host, "2.0.0");
+  assert.match(prompt(view.host).value, /My exact instance target is 2\.0\.0/);
+  assert.doesNotMatch(prompt(view.host).value, /2\.1\.0-rc\.10/);
+  await copyButton(view.host).props.onClick(); await nextTick();
+  assert.equal(copied.at(-1), prompt(view.host).value); assert.match(text(view.host), /Copied to clipboard/);
+  await chooseRelease(view.host, "2.1.0-rc.10"); locale.value = "zh-CN"; await nextTick();
+  assert.match(prompt(view.host).value, /我选择的准确实例目标是 2\.1\.0-rc\.10/);
+  assert.match(prompt(view.host).value, /先核对本机已有.*技能包和宿主插件/);
+  assert.match(prompt(view.host).value, /本地更新计划，等我确认后更新/);
+  assert.match(prompt(view.host).value, /不可变工件与兼容性.*实例升级计划及影响，等我明确确认后执行并读回结果/);
+  assert.match(prompt(view.host).value, /不转入首次安装、身份迁移或新实例部署/);
+  assert.equal(prompt(view.host).value.split("\n\n").length, 3);
+  await copyButton(view.host).props.onClick(); await nextTick();
+  assert.equal(copied.at(-1), prompt(view.host).value); assert.match(text(view.host), /已复制到剪贴板/);
+  clipboardWrite = async () => { throw new Error("fixture clipboard denied"); };
+  await copyButton(view.host).props.onClick(); await nextTick();
+  assert.match(text(view.host), /复制失败，请重试或手动选择文本复制/);
+  assert.ok(prompt(view.host).props.readonly === "" || prompt(view.host).props.readonly === true); assert.match(prompt(view.host).value, /2\.1\.0-rc\.10/);
+  assert.deepEqual(calls.map(call => call.method), ["GET", "GET"], "selection and copying must not execute an update");
+});
+
+test("refreshing away a selected release or changing identity clears it; late copying cannot confirm a changed prompt", async () => {
+  let available = availableUpdates();
+  transport(call => json(call.path === updatesPath ? available : { enabled: false, version: 1 }));
+  const view = mount(); await until(() => loaded(view.host)); await chooseRelease(view.host, "2.1.0-rc.10");
+  const pendingCopy = deferred(); clipboardWrite = () => pendingCopy.promise;
+  const copying = copyButton(view.host).props.onClick(); await nextTick();
+  await chooseRelease(view.host, "2.0.0"); pendingCopy.resolve(); await copying; await nextTick();
+  assert.doesNotMatch(text(view.host), /Copied to clipboard/);
+  available = updates(); await button(view.host, "Check again").props.onClick(); await nextTick();
+  assert.equal(releaseSelect(view.host).value, "discover"); assert.match(prompt(view.host).value, /let me choose an exact target/);
+  available = availableUpdates(); await button(view.host, "Check again").props.onClick(); await nextTick();
+  await chooseRelease(view.host, "2.0.0"); view.state.value = session("b"); await until(() => loaded(view.host));
+  assert.equal(releaseSelect(view.host).value, "discover"); assert.doesNotMatch(prompt(view.host).value, /My exact instance target is 2\.0\.0/);
 });
