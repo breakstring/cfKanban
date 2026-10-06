@@ -16,7 +16,7 @@ test("stable与最近预发行独立发现，限定可信链接并按SemVer排�
   assert.equal(result.prerelease_window, 20);
   for (const { url, init } of calls) {
     assert.ok(url.startsWith("https://api.github.com/repos/breakstring/cfKanban/releases"));
-    assert.equal(init.redirect, "error");
+    assert.equal(init.redirect, "manual");
     assert.equal(new Headers(init.headers).get("authorization"), null);
     assert.ok(init.signal instanceof AbortSignal);
   }
@@ -43,6 +43,22 @@ test("首次失败、稳定版不存在及独立通道失败不会冒充最新�
   const partial = await createReleaseUpdatesReader(async url => url.endsWith("/latest") ? new Response(null, { status: 404 }) : new Response(null, { status: 503 }))();
   assert.equal(partial.stable.status, "fresh"); assert.deepEqual(partial.stable.releases, []);
   assert.equal(partial.prereleases.status, "unavailable");
+});
+test("拒绝所有重定向响应，首次失败保持查询失败与短重试时间", async () => {
+  const now = 1_000_000;
+  for (const status of [301, 302, 303, 307, 308]) {
+    const result = await createReleaseUpdatesReader(async (_url, init) => {
+      assert.equal(init.redirect, "manual");
+      return new Response(null, { status, headers: { location: "https://attacker.test/release" } });
+    }, () => now)();
+    for (const channel of [result.stable, result.prereleases]) {
+      assert.equal(channel.status, "unavailable");
+      assert.equal(channel.error, "query_failed");
+      assert.equal(channel.checked_at, null);
+      assert.equal(channel.retry_at, new Date(now + 60_000).toISOString());
+      assert.deepEqual(channel.releases, []);
+    }
+  }
 });
 test("一个通道失败仅重试该通道，成功通道的15分钟TTL与显示时间一致", async () => {
   let now = 1_000_000, stableCalls = 0, prereleaseCalls = 0;

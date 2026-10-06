@@ -74,7 +74,7 @@ export function createReleaseUpdatesReader(fetcher: Fetcher = fetch, now: () => 
     try {
       const response = await fetcher(isPrerelease ? `${API}?per_page=20&page=1` : `${API}/latest`, {
         headers: { accept: "application/vnd.github+json", "user-agent": "cfKanban-release-discovery", "x-github-api-version": "2022-11-28" },
-        redirect: "error", signal: AbortSignal.timeout(5_000),
+        redirect: "manual", signal: AbortSignal.timeout(5_000),
       });
       if (response.status === 429 || response.status === 403) error = "rate_limited";
       let releases: AvailableRelease[];
