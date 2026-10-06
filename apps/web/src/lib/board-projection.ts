@@ -1,7 +1,9 @@
 import type { IssueSummary, PriorityKey } from "../types";
+import { matchesTypedIssueSearch, typedIssueSearch } from "../../../../packages/shared/issue-search";
 
 export interface AppliedBoardFilters {
   search: string;
+  searchMode?: "typed";
   priorities: PriorityKey[];
   labels: string[];
 }
@@ -12,6 +14,7 @@ export function matchesBoardFilters(issue: IssueSummary, filters: AppliedBoardFi
   if (filters.labels.length && !issue.labels.some(label => filters.labels.includes(label.id))) return false;
   const search = filters.search.normalize("NFKC").toLowerCase().trim();
   if (!search) return true;
+  if (filters.searchMode === "typed") return matchesTypedIssueSearch(issue, typedIssueSearch(search));
   const number = /^cfk-[1-9][0-9]*$/.test(search) ? Number(search.slice(4)) : null;
   return (number !== null && Number.isSafeInteger(number) && number === issue.number)
     || issue.title.normalize("NFKC").toLowerCase().includes(search);

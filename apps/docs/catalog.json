@@ -39,6 +39,7 @@
       { "path": "deployment/setup", "en": "Prepare for deployment", "zh-CN": "部署准备" },
       { "path": "deployment/first-deployment", "en": "Your first deployment", "zh-CN": "首次部署" },
       { "path": "administration/settings", "en": "Settings & usage", "zh-CN": "实例设置与用量" },
+      { "path": "administration/versions", "en": "Versions & updates", "zh-CN": "版本与更新" },
       { "path": "usage/notifications", "en": "Owner notifications", "zh-CN": "Owner 实例通知" },
       { "path": "administration/public-join", "en": "Public Join & quotas", "zh-CN": "公开加入与配额" },
       { "path": "administration/devices", "en": "Devices & identities", "zh-CN": "设备与身份恢复" },

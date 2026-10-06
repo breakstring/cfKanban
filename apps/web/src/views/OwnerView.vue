@@ -15,8 +15,10 @@ import InvitationRows from "../components/InvitationRows.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import OwnerDevices from "../components/OwnerDevices.vue";
 import PageState from "../components/PageState.vue";
+import VersionUpdatesPanel from "../components/VersionUpdatesPanel.vue";
 import UsagePanel from "../components/UsagePanel.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
+import PublicJoinStatusIcon from "../components/PublicJoinStatusIcon.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText, hasUncertainWrite } from "../lib/api";
 import {
   type CasConflictState,
@@ -64,7 +66,7 @@ import type {
   WriteResult,
 } from "../types";
 
-type OwnerSection = "overview" | "workspaces" | "access" | "invitations" | "audit" | "archive";
+type OwnerSection = "overview" | "workspaces" | "access" | "invitations" | "audit" | "archive" | "updates";
 
 const props = defineProps<{ section: OwnerSection; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
@@ -570,6 +572,7 @@ const tabs = computed(() => [
   { key: "access" as const, label: t("admin.access") },
   { key: "audit" as const, label: t("admin.audit") },
   { key: "archive" as const, label: t("admin.archive") },
+  { key: "updates" as const, label: ui("Versions & updates", "版本与更新") },
 ]);
 
 const sectionTitle = computed(() => props.section === "invitations"
@@ -1033,7 +1036,7 @@ async function load(): Promise<void> {
       await loadPrincipals(true);
     } else if (props.section === "invitations") {
       await loadInvitationHistory();
-    } else {
+    } else if (props.section === "audit") {
       await Promise.all([loadWorkspaceTree(false), loadAudit(true)]);
     }
     emit("context", { label: sectionTitle.value, role: "owner" });
@@ -1797,6 +1800,7 @@ onUnmounted(() => {
     <ErrorNotice v-if="error" :error="error" />
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
+    <VersionUpdatesPanel v-if="!loading && section === 'updates'" :session="session" />
     <ContainerTreePagination v-if="!loading && ['workspaces', 'archive', 'access', 'audit'].includes(section)" :tree="containerTree" :archived="section === 'archive'" @workspaces="moreWorkspaces" @projects="moreProjects" />
 
     <template v-if="!loading && section === 'overview'">
@@ -1850,7 +1854,7 @@ onUnmounted(() => {
       <p v-if="workspaces.length === 0" class="empty-copy">{{ ui("Create a workspace first, then add your first project.", "先创建一个工作区，再添加你的第一个项目。") }}</p>
       <section v-for="workspace in workspaces" :key="workspace.id" class="workspace-block">
         <header><h2><UButton color="neutral" variant="ghost" class="workspace-toggle" type="button" :aria-expanded="expandedWorkspaces.includes(workspace.id)" :aria-controls="`workspace-projects-${workspace.id}`" @click="toggleWorkspace(workspace.id)"><span class="workspace-chevron" aria-hidden="true">{{ expandedWorkspaces.includes(workspace.id) ? '▾' : '▸' }}</span><ContainerIcon kind="workspace" /><span>{{ workspace.display_name }}</span><span class="workspace-count">{{ projects.filter(project => project.workspaceId === workspace.id).length }} {{ ui('projects', '个项目') }}</span></UButton></h2><div><UButton color="neutral" variant="ghost" v-if="workspace.allowed_actions?.includes('manage_administrators')" class="text-button" type="button" @click="navigate(managementPath(workspace.id))">{{ ui("Administrators and settings", "管理员与设置") }}</UButton><UButton color="neutral" variant="outline" class="secondary-button" type="button" @click="openCreateProject(workspace.id)">{{ ui("New project", "新建项目") }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="openContainerEdit('workspace', workspace)">{{ ui("Rename", "改名") }}</UButton><UButton color="error" variant="ghost" class="danger-text-button" type="button" @click="deleteContainer('workspace', workspace)">{{ ui("Archive", "归档") }}</UButton></div></header>
-        <div v-show="expandedWorkspaces.includes(workspace.id)" :id="`workspace-projects-${workspace.id}`" class="workspace-projects"><div class="project-table"><div v-for="item in projects.filter((project) => project.workspaceId === workspace.id)" :key="item.id" class="project-table-row"><UButton color="neutral" variant="ghost" class="project-link" type="button" @click="navigate(`/app/w/${workspace.id}/p/${item.id}`)"><ContainerIcon kind="project" /><span class="project-name-and-state"><strong>{{ item.display_name }}</strong><span class="public-join-badge" :data-enabled="item.public_join_enabled">{{ item.public_join_enabled === true ? ui('Public Join enabled', '公开加入已开启') : item.public_join_enabled === false ? ui('Public Join disabled', '公开加入已关闭') : ui('Public Join status unknown', '公开加入状态未知') }}</span></span></UButton><span>{{ item.context ? `${item.context.slice(0, 60)}${item.context.length > 60 ? '…' : ''}` : '—' }}</span><div><UButton color="neutral" variant="ghost" v-if="item.allowed_actions?.includes('manage_administrators')" class="text-button" type="button" @click="navigate(managementPath(item.workspaceId, item.id))">{{ ui("Administrators and members", "管理员与成员") }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="openProjectSettings(item)">{{ ui("Settings", "设置") }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="openPolicy(item)">{{ ui("Public Join", "公开加入") }}</UButton><UButton color="error" variant="ghost" class="danger-text-button" type="button" @click="deleteContainer('project', item, workspace.id)">{{ ui("Archive", "归档") }}</UButton></div></div><p v-if="!projects.some((project) => project.workspaceId === workspace.id)" class="empty-copy">{{ ui("No projects yet", "暂无项目") }}</p></div></div>
+        <div v-show="expandedWorkspaces.includes(workspace.id)" :id="`workspace-projects-${workspace.id}`" class="workspace-projects"><div class="project-table"><div v-for="item in projects.filter((project) => project.workspaceId === workspace.id)" :key="item.id" class="project-table-row"><div class="project-name-and-state"><UButton color="neutral" variant="ghost" class="project-link" type="button" @click="navigate(`/app/w/${workspace.id}/p/${item.id}`)"><ContainerIcon kind="project" /><strong>{{ item.display_name }}</strong></UButton><PublicJoinStatusIcon :enabled="item.public_join_enabled" /></div><span>{{ item.context ? `${item.context.slice(0, 60)}${item.context.length > 60 ? '…' : ''}` : '—' }}</span><div><UButton color="neutral" variant="ghost" v-if="item.allowed_actions?.includes('manage_administrators')" class="text-button" type="button" @click="navigate(managementPath(item.workspaceId, item.id))">{{ ui("Administrators and members", "管理员与成员") }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="openProjectSettings(item)">{{ ui("Settings", "设置") }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" @click="openPolicy(item)">{{ ui("Public Join", "公开加入") }}</UButton><UButton color="error" variant="ghost" class="danger-text-button" type="button" @click="deleteContainer('project', item, workspace.id)">{{ ui("Archive", "归档") }}</UButton></div></div><p v-if="!projects.some((project) => project.workspaceId === workspace.id)" class="empty-copy">{{ ui("No projects yet", "暂无项目") }}</p></div></div>
       </section>
 
     </template>

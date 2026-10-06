@@ -1531,6 +1531,46 @@
         "kind": "workflow",
         "workflow": "context-clear"
       }
+    },
+    {
+      "command": "admin upgrade-notification show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getUpgradeNotificationSettings"
+      }
+    },
+    {
+      "command": "admin upgrade-notification configure",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateUpgradeNotificationSettings"
+      }
+    },
+    {
+      "command": "admin upgrade-notification publish",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "publishUpgradeNotification"
+      }
+    },
+    {
+      "command": "admin upgrade-notification release",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getUpgradeNotificationRelease"
+      }
+    },
+    {
+      "command": "admin updates show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getReleaseUpdates"
+      }
     }
   ],
   "operations": [
@@ -3365,6 +3405,66 @@
           }
         ]
       }
+    },
+    {
+      "operation": "getUpgradeNotificationSettings",
+      "method": "GET",
+      "path": "/api/v1/admin/upgrade-notification-settings",
+      "summary": "Get Upgrade Notification Settings",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin upgrade-notification show"
+        ]
+      }
+    },
+    {
+      "operation": "updateUpgradeNotificationSettings",
+      "method": "PATCH",
+      "path": "/api/v1/admin/upgrade-notification-settings",
+      "summary": "Update Upgrade Notification Settings",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin upgrade-notification configure"
+        ]
+      }
+    },
+    {
+      "operation": "publishUpgradeNotification",
+      "method": "POST",
+      "path": "/api/v1/admin/notifications/commands/publish-upgrade",
+      "summary": "Publish Upgrade Notification",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin upgrade-notification publish"
+        ]
+      }
+    },
+    {
+      "operation": "getUpgradeNotificationRelease",
+      "method": "GET",
+      "path": "/api/v1/admin/notifications/upgrade-releases/{release_version}",
+      "summary": "Get Upgrade Notification Release",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin upgrade-notification release"
+        ]
+      }
+    },
+    {
+      "operation": "getReleaseUpdates",
+      "method": "GET",
+      "path": "/api/v1/admin/release-updates",
+      "summary": "Get Release Updates",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin updates show"
+        ]
+      }
     }
   ],
   "skill_commands": [
@@ -4052,7 +4152,14 @@
           "admin notification list",
           "admin notification publish",
           "admin notification withdraw",
+          "admin upgrade-notification show",
+          "admin upgrade-notification configure",
+          "admin upgrade-notification publish",
+          "admin upgrade-notification release",
           "event list",
+          "search-index status",
+          "search-index snapshot",
+          "search-index changes",
           "workspace list",
           "workspace create",
           "workspace show",
@@ -4084,16 +4191,13 @@
           "project member candidates",
           "issue list",
           "issue candidates",
-          "search-index status",
-          "search-index snapshot",
-          "search-index changes",
           "project issue list",
           "issue create",
           "issue counts",
           "issue show",
-          "issue reference",
           "issue update",
           "issue delete",
+          "issue reference",
           "issue restore",
           "issue context",
           "issue assign-me",
@@ -4149,6 +4253,7 @@
           "admin limits update",
           "admin homepage show",
           "admin homepage update",
+          "admin updates show",
           "admin attachment-capacity show",
           "admin attachment-capacity update",
           "admin usage snapshot",

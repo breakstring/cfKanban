@@ -31,6 +31,23 @@
 
 标题最多 200 个 Unicode 字符，正文最多 4000 个。发布后不能编辑正文，更正需另发公告。过期或撤回仍在历史保留正文和明确状态。公告面向整个实例，不要包含凭据或私有项目内容。发布者不接收自身的自动提醒；Owner 不能绕过个人关闭设置，也不提供逐用户阅读统计。接收与确认方式见 [Owner 实例通知](../usage/notifications.md)。
 
+## 升级成功后自动发布公告
+
+**Web 入口：** **管理 → 概览 → 版本更新** 中可以设置 **自动公告已确认成功的升级**。默认关闭；保存后生效，需要 Owner 实例管理权限。
+
+```text
+使用 $cfkanban-admin 开启站点升级成功后的自动版本通知，核对并读回保存的设置。
+```
+
+```sh
+cfkanban admin upgrade-notification show --json --no-interactive
+cfkanban admin upgrade-notification configure --enabled true --expected-version <current-version> --json --no-interactive
+```
+
+获准升级成功且实际发行读回确认后，兼容的部署 runtime 发布一份中英双语公告，包含旧 / 新版本、准确 Release 链接和本地技能更新指引。正式版和 `rc.N` 版本前进均触发，alpha、beta 及其他预发行以 `unsupported_channel` 明确跳过；首次部署、失败、同版本重部署、回滚和仅本地技能更新不触发。每个发行最多一份自动公告，回滚后再升级到曾通知的发行也不会重复发布。个人接收偏好与历史规则继续适用；提醒不代表本地技能已更新。
+
+升级与通知分别报告。通知失败不会撤销成功升级；保留维护 journal，让 Agent 核实原请求与原幂等键恢复。不要为重试通知再次部署站点。
+
 ## 查询用量
 
 ```text

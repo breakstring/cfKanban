@@ -63,6 +63,10 @@ const operations = [
   ["get", "/api/v1/admin/notifications", "listInstanceNotifications", "admin", authenticated, "read", "NotificationCursorQuery"],
   ["post", "/api/v1/admin/notifications", "publishNotification", "admin", authenticated, "idempotent", "PublishNotificationRequest"],
   ["post", "/api/v1/admin/notifications/{notification_id}/commands/withdraw", "withdrawNotification", "admin", authenticated, "idempotent-cas", "ExpectedVersionRequest"],
+  ["get", "/api/v1/admin/upgrade-notification-settings", "getUpgradeNotificationSettings", "admin", authenticated, "read"],
+  ["patch", "/api/v1/admin/upgrade-notification-settings", "updateUpgradeNotificationSettings", "admin", authenticated, "idempotent-cas", "UpdateUpgradeNotificationSettingsRequest"],
+  ["post", "/api/v1/admin/notifications/commands/publish-upgrade", "publishUpgradeNotification", "admin", authenticated, "idempotent", "PublishUpgradeNotificationRequest"],
+  ["get", "/api/v1/admin/notifications/upgrade-releases/{release_version}", "getUpgradeNotificationRelease", "admin", authenticated, "read"],
   ["get", "/api/v1/events", "listEvents", "events", authenticated, "read", "EventQuery"],
   ["get", "/api/v1/search-index/status", "getSearchIndexStatus", "issues", authenticated, "read", "SearchIndexStatusQuery"],
   ["get", "/api/v1/search-index/snapshot", "listSearchIndexSnapshot", "issues", authenticated, "read", "SearchIndexSnapshotQuery"],
@@ -187,6 +191,7 @@ const operations = [
   ["get", "/api/v1/admin/projects/{project_id}/resource-limits", "getProjectResourceLimits", "public-join", authenticated, "read"],
   ["patch", "/api/v1/admin/projects/{project_id}/resource-limits", "updateProjectResourceLimits", "public-join", authenticated, "cas", "UpdateResourceLimitsRequest"],
   ["get", "/api/v1/admin/homepage-settings", "getHomepageSettings", "admin", authenticated, "read"],
+  ["get", "/api/v1/admin/release-updates", "getReleaseUpdates", "admin", authenticated, "read"],
   ["patch", "/api/v1/admin/homepage-settings", "updateHomepageSettings", "admin", authenticated, "idempotent-cas", "UpdateHomepageSettingsRequest"],
   ["get", "/api/v1/admin/attachment-settings", "getAttachmentSettings", "admin", authenticated, "read"],
   ["patch", "/api/v1/admin/attachment-settings", "updateAttachmentSettings", "admin", authenticated, "idempotent-cas", "UpdateAttachmentSettingsRequest"],
@@ -375,6 +380,7 @@ const permissionGroups = {
   visible_scope_active_owner_tombstone: ["listWorkspaces", "getWorkspace", "listProjects", "getProject"],
   current_principal: ["getMe", "updateMe", "getWebSession", "renewWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey", "getNotificationPreferences", "updateNotificationPreferences", "listMyNotifications", "acknowledgeNotification"],
   deployment_owner: [
+    "getReleaseUpdates",
     "previewWorkspacePurge", "purgeWorkspace", "previewProjectPurge", "purgeProject",
     "createWorkspace", "deleteWorkspace", "restoreWorkspace",
     "createWorkspaceAdministrator", "revokeWorkspaceAdministrator", "listWorkspaceAdministratorCandidates",
@@ -382,7 +388,7 @@ const permissionGroups = {
     "getInstanceOrigin", "updateInstanceOrigin", "listAuditEvents", "revokePrincipalPasskey",
     "getPublicJoinPolicy", "enablePublicJoin", "disablePublicJoin", "getProjectResourceLimits",
     "updateProjectResourceLimits", "getRateLimitSettings", "getUsage", "refreshUsage", "getAttachmentSettings", "updateAttachmentSettings", "getHomepageSettings", "updateHomepageSettings",
-    "listInstanceNotifications", "publishNotification", "withdrawNotification",
+    "listInstanceNotifications", "publishNotification", "withdrawNotification", "getUpgradeNotificationSettings", "updateUpgradeNotificationSettings", "publishUpgradeNotification", "getUpgradeNotificationRelease",
   ],
   workspace_administrator: ["listProjectAdministratorCandidates", "updateWorkspace", "createProject", "deleteProject", "restoreProject", "listWorkspaceAdministrators", "createProjectAdministrator", "revokeProjectAdministrator"],
   project_administrator: ["updateProject", "updateProjectStatusName", "listProjectAdministrators", "listProjectMembers", "listProjectMemberCandidates", "listProjectGrants", "createProjectGrant", "getProjectGrant", "updateProjectGrant", "revokeProjectGrant"],
@@ -913,6 +919,18 @@ const schemas = {
     type: "object", required: ["notice_en", "notice_zh_cn", "version"],
     properties: { notice_en: ref("HomepageNotice"), notice_zh_cn: ref("HomepageNotice"), version: ref("Version") }, additionalProperties: false,
   },
+  AvailableRelease: {
+    type: "object", required: ["version", "url", "published_at", "newer_than_instance"],
+    properties: { version: { type: "string", maxLength: 128 }, url: { type: "string", format: "uri" }, published_at: ref("Timestamp"), newer_than_instance: { type: ["boolean", "null"] } }, additionalProperties: false,
+  },
+  ReleaseUpdateChannel: {
+    type: "object", required: ["status", "checked_at", "last_attempt_at", "retry_at", "error", "releases"],
+    properties: { status: { type: "string", enum: ["fresh", "stale", "unavailable"] }, checked_at: { type: ["string", "null"], format: "date-time" }, last_attempt_at: { type: ["string", "null"], format: "date-time" }, retry_at: { type: ["string", "null"], format: "date-time" }, error: { type: ["string", "null"], enum: ["rate_limited", "query_failed", null] }, releases: { type: "array", maxItems: 5, items: ref("AvailableRelease") } }, additionalProperties: false,
+  },
+  ReleaseUpdates: {
+    type: "object", required: ["current_version", "stable", "prereleases", "prerelease_window"],
+    properties: { current_version: { type: "string" }, stable: ref("ReleaseUpdateChannel"), prereleases: ref("ReleaseUpdateChannel"), prerelease_window: { type: "integer", const: 20 } }, additionalProperties: false,
+  },
   UpdateHomepageSettingsRequest: {
     type: "object", required: ["expected_version", "notice_en", "notice_zh_cn"],
     properties: { expected_version: ref("Version"), notice_en: ref("HomepageNotice"), notice_zh_cn: ref("HomepageNotice") }, additionalProperties: false,
@@ -927,6 +945,35 @@ const schemas = {
     properties: { enabled: { type: "boolean" }, expected_version: ref("Version") }, additionalProperties: false,
   },
   NotificationPreferencesWriteResult: containerWriteResult("NotificationPreferences"),
+  UpgradeNotificationSettings: {
+    type: "object", required: ["enabled", "version"],
+    properties: { enabled: { type: "boolean" }, version: ref("Version") }, additionalProperties: false,
+  },
+  UpdateUpgradeNotificationSettingsRequest: {
+    type: "object", required: ["enabled", "expected_version"],
+    properties: { enabled: { type: "boolean" }, expected_version: ref("Version") }, additionalProperties: false,
+  },
+  UpgradeNotificationSettingsWriteResult: containerWriteResult("UpgradeNotificationSettings"),
+  PublishUpgradeNotificationRequest: {
+    type: "object", required: ["previous_release_version", "release_version", "deployment_id", "worker_version_id"],
+    properties: {
+      previous_release_version: string({ minLength: 1, maxLength: 128 }), release_version: string({ minLength: 1, maxLength: 128 }),
+      deployment_id: ref("Uuid"), worker_version_id: ref("Uuid"),
+    }, additionalProperties: false,
+  },
+  UpgradeNotificationResult: {
+    type: "object", required: ["status", "previous_release_version", "release_version", "deployment_id", "worker_version_id", "notification_id"],
+    properties: {
+      status: string({ enum: ["published", "already_published", "disabled", "not_forward", "unsupported_channel"] }),
+      previous_release_version: string(), release_version: string(), deployment_id: ref("Uuid"), worker_version_id: ref("Uuid"),
+      notification_id: { anyOf: [ref("Uuid"), { type: "null" }] },
+    }, additionalProperties: false,
+  },
+  UpgradeNotificationWriteResult: containerWriteResult("UpgradeNotificationResult"),
+  UpgradeNotificationRelease: {
+    type: "object", required: ["previous_release_version", "release_version", "deployment_id", "worker_version_id", "notification_id"],
+    properties: { previous_release_version: string(), release_version: string(), deployment_id: ref("Uuid"), worker_version_id: ref("Uuid"), notification_id: ref("Uuid") }, additionalProperties: false,
+  },
   InstanceNotification: {
     type: "object", required: ["id", "title", "body", "created_at", "expires_at", "withdrawn_at", "version", "status", "acknowledged_at"],
     properties: {
@@ -1199,6 +1246,8 @@ const schemas = {
         properties: {
           assignees: { type: "array", maxItems: 20, items: { anyOf: [ref("Uuid"), { const: "unassigned" }] } },
           blocked: string({ enum: ["only", "exclude"] }),
+          q_mode: string({ enum: ["typed"] }),
+          q: { anyOf: [utf8String(128, { minLength: 1 }), { type: "null" }], description: "Normalized typed query; null when q is omitted. Legacy calls omit q and q_mode here." },
           statuses: { type: "array", maxItems: 5, items: ref("StatusKey") },
           priorities: { type: "array", maxItems: 5, items: ref("PriorityKey") },
           labels: { type: "array", maxItems: 20, items: ref("Uuid") },
@@ -2442,6 +2491,7 @@ const querySets = {
   PrincipalListQuery: [{ name: "q", in: "query", required: false, schema: string({ maxLength: 128 }) }, { name: "project_id", in: "query", required: false, schema: ref("Uuid") }, { name: "cursor", in: "query", required: false, schema: string() }, { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 100, default: 20 }) }],
   RelationDeleteQuery: [],
 };
+for (const name of ["IssueListQuery", "CandidateListQuery"]) querySets[name].push({ name: "q_mode", in: "query", required: false, schema: string({ enum: ["typed"] }), description: "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics." });
 querySets.IssueCountsQuery = querySets.IssueListQuery.filter(({ name }) => !["deleted", "cursor", "limit"].includes(name));
 
 const operationResponseSchemas = {
@@ -2452,6 +2502,10 @@ const operationResponseSchemas = {
   publishNotification: ref("InstanceNotificationWriteResult"),
   withdrawNotification: ref("InstanceNotificationWriteResult"),
   acknowledgeNotification: ref("InstanceNotificationWriteResult"),
+  getUpgradeNotificationSettings: ref("UpgradeNotificationSettings"),
+  updateUpgradeNotificationSettings: ref("UpgradeNotificationSettingsWriteResult"),
+  publishUpgradeNotification: ref("UpgradeNotificationWriteResult"),
+  getUpgradeNotificationRelease: ref("UpgradeNotificationRelease"),
   getMe: ref("CurrentPrincipal"),
   listWorkspaceAdministratorCandidates: ref("AdministratorCandidateListResult"),
   listProjectAdministratorCandidates: ref("AdministratorCandidateListResult"),
@@ -2496,6 +2550,7 @@ const operationResponseSchemas = {
   getProjectResourceLimits: ref("PublicJoinPolicy"),
   updateProjectResourceLimits: ref("PublicJoinPolicyWriteResult"),
   getHomepageSettings: ref("HomepageSettings"),
+  getReleaseUpdates: ref("ReleaseUpdates"),
   updateHomepageSettings: ref("HomepageSettingsWriteResult"),
   getAttachmentSettings: ref("AttachmentSettings"),
   updateAttachmentSettings: ref("AttachmentSettingsWriteResult"),
@@ -2685,6 +2740,9 @@ for (const [path, method] of [
   ["/api/v1/me/notifications", "get"], ["/api/v1/me/notifications/{notification_id}/commands/acknowledge", "post"],
   ["/api/v1/admin/notifications", "get"], ["/api/v1/admin/notifications", "post"],
   ["/api/v1/admin/notifications/{notification_id}/commands/withdraw", "post"],
+  ["/api/v1/admin/upgrade-notification-settings", "get"], ["/api/v1/admin/upgrade-notification-settings", "patch"],
+  ["/api/v1/admin/notifications/commands/publish-upgrade", "post"],
+  ["/api/v1/admin/notifications/upgrade-releases/{release_version}", "get"],
 ]) paths[path][method].responses["200"].headers = noStoreHeader;
 paths["/api/v1/me/notifications"].get.description = "Current Principal with any valid Bearer Credential or Web Session, including no Project grants. History excludes the publisher's own notifications and includes retained expired/withdrawn text. pending=true returns only enabled, active, unacknowledged notifications created at or after the Principal's join/re-enable cutoff. Bounded descending created_at/id pagination binds the Principal, view and pending preference version; mutable pending membership may remove rows between pages.";
 paths["/api/v1/me/notification-preferences"].get.description = "Current Principal only; no Project grant required. Defaults to enabled=true, version=1, receive_after=Principal creation time without per-Principal fan-out writes.";
@@ -2693,6 +2751,9 @@ paths["/api/v1/me/notifications/{notification_id}/commands/acknowledge"].post.de
 paths["/api/v1/admin/notifications"].get.description = "Deployment Owner Bearer or Owner admin Web Session only. Bounded history includes the publisher's own notifications and retained expired/withdrawn plain text.";
 paths["/api/v1/admin/notifications"].post.description = "Deployment Owner Bearer or Owner admin Web Session only. Publish one immutable instance notification; title <=200 and body <=4000 Unicode code points, with optional future expiry. Cookie requires CSRF. Idempotency-Key, current Owner authorization, snapshot and security audit commit atomically; never fan out inbox rows.";
 paths["/api/v1/admin/notifications/{notification_id}/commands/withdraw"].post.description = "Deployment Owner Bearer or Owner admin Web Session only. Withdraw one notification with expected_version and Idempotency-Key; Cookie requires CSRF. Current Owner authorization, CAS, withdrawal, immutable snapshot and security audit commit together. Retain title/body and personal acknowledgements permanently; published text cannot be edited.";
+paths["/api/v1/admin/upgrade-notification-settings"].get.description = "Deployment Owner Bearer or Owner admin Web Session only. Persistent upgrade announcement setting defaults to disabled.";
+paths["/api/v1/admin/upgrade-notification-settings"].patch.description = "Owner instance control only; current authorization, CAS, Idempotency-Key, setting, frozen response and security audit commit together. Cookie requires CSRF.";
+paths["/api/v1/admin/notifications/commands/publish-upgrade"].post.description = "Owner instance control only. Deployment runtime invokes this atomic command after verified deployment, health, discovery, schema and authenticated identity readback. The new release must match the executing Worker. SemVer forward stable or rc.N changes only; other prerelease channels return unsupported_channel. The service setting is evaluated at commit. One bilingual immutable announcement per release across deployment IDs, concurrent callers and keys; returns published/already_published/disabled/not_forward/unsupported_channel separately from deployment success. Idempotency-Key, current Owner authorization, immutable result and security audit are atomic; same key recovers the original outcome.";
 paths["/api/v1/web-session/renew"].post.description = "Current Cookie Session only; Bearer authentication is rejected. Require same-origin CSRF, expected_version and Idempotency-Key. Foreground activity may extend a still-valid Session at most once per thirty minutes, to eight hours from renewal and no later than seven days from creation. CAS, unchanged live source/scope, idempotency snapshot and security audit commit atomically. Success, replay and error responses never set or clear cookies; new sign-ins issue cookies until the absolute deadline, with current expiry enforced independently by the server. Pre-upgrade cookies retain their original expiry and require a new sign-in to use the full renewal period.";
 paths["/api/v1/web-session/renew"].post.responses["200"].headers = noStoreHeader;
 paths["/api/v1/admin/attachment-settings"].get.responses["200"].headers = noStoreHeader;

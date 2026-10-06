@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 20,
+  "schema_version": 21,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -509,6 +509,28 @@
       },
       "expected_data": {
         "instance_meta_schema_version_at_least": 20,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 21,
+      "name": "0021_instance_upgrade_notifications.sql",
+      "sha256": "cf97ff12173fef6129a288ffaa8e9d2046d0d9dcf1ed55096e1eacd5f1d367fc",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "tables": [
+          "upgrade_notification_settings",
+          "upgrade_notification_releases"
+        ],
+        "triggers": [
+          "upgrade_notification_release_immutable",
+          "upgrade_notification_release_retained"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 21,
         "allow_uninitialized": true
       }
     }

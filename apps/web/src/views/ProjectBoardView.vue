@@ -14,6 +14,7 @@ import MarkdownContent from "../components/MarkdownContent.vue";
 import ModalDialog from "../components/ModalDialog.vue";
 import PageState from "../components/PageState.vue";
 import IssueChildrenProgress from "../components/IssueChildrenProgress.vue";
+import ProjectSearch from "../components/ProjectSearch.vue";
 import PrioritySelect from "../components/PrioritySelect.vue";
 import IssueQueryFilters from "../components/IssueQueryFilters.vue";
 import KanbanStatusNavigation from "../components/KanbanStatusNavigation.vue";
@@ -77,6 +78,8 @@ const expandedGroups = ref(new Set<StatusKey>(initialFilters.status ? [initialFi
 const eligibleStatuses = computed(() => selectedStatus.value ? [selectedStatus.value] : statusOrder);
 const requestedStatuses = () => viewMode.value === "board" ? eligibleStatuses.value : eligibleStatuses.value.filter(key => expandedGroups.value.has(key));
 const appliedSearch = ref(initialFilters.search);
+const appliedSearchMode = ref<"typed" | undefined>(initialFilters.searchMode);
+const searchIssues = computed(() => Object.values(columns).flatMap(column => column.items));
 const priorities = ref<PriorityKey[]>(initialFilters.priorities);
 const labelIds = ref<string[]>(initialFilters.labels);
 const appliedPriorities = ref<PriorityKey[]>([]);
@@ -105,7 +108,7 @@ const projectionGeneration = new ProjectionGeneration();
 const writeFence = new WriteFence();
 let loadRequestId = 0;
 let filterTimer: ReturnType<typeof setTimeout> | undefined;
-const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, priorities: priorities.value, labels: labelIds.value, ...(selectedStatus.value ? { status: selectedStatus.value } : {}), expanded: [...expandedGroups.value], ...(viewMode.value === "list" ? { view: "list" as const } : {}) }));
+const returnPath = computed(() => boardPath(props.workspaceId, props.projectId, { search: appliedSearch.value, ...(appliedSearchMode.value ? { searchMode: appliedSearchMode.value } : {}), priorities: priorities.value, labels: labelIds.value, ...(selectedStatus.value ? { status: selectedStatus.value } : {}), expanded: [...expandedGroups.value], ...(viewMode.value === "list" ? { view: "list" as const } : {}) }));
 function setView(mode: "board" | "list"): void {
   if (viewMode.value === mode) return;
   viewMode.value = mode;
@@ -279,6 +282,7 @@ function onAssigneeSelection(issue: IssueSummary, principalId: string | null): v
 function filterParams(): URLSearchParams {
   const params = new URLSearchParams();
   if (appliedSearch.value) params.set("q", appliedSearch.value);
+  if (appliedSearchMode.value === "typed") params.set("q_mode", "typed");
   for (const priority of appliedPriorities.value) params.append("priority", priority);
   for (const label of appliedLabelIds.value) params.append("label", label);
   return params;
@@ -353,6 +357,12 @@ function onColumnScroll(status: StatusKey, event: Event): void {
   const target = event.target as HTMLElement;
   const column = columns[status];
   if (!column.error && column.cursor && target.scrollTop > 0 && target.scrollHeight - target.clientHeight - target.scrollTop < 200) void loadColumn(status);
+}
+
+function submitProjectSearch(): void {
+  if (loading.value || saving.value.size > 0 || hasPendingWrites.value) return;
+  appliedSearchMode.value = "typed";
+  void load();
 }
 
 async function load(_reset = true, throwOnFailure = false): Promise<void> {
@@ -643,7 +653,7 @@ async function reconcileIssue(issue: IssueSummary, refreshAncestors = true): Pro
   if (issue.hierarchy === undefined && previous?.hierarchy) issue = { ...issue, hierarchy: previous.hierarchy };
   const statusChanged = previous && previous.status.key !== issue.status.key;
   confirmedVersions.set(issue.id, issue.version);
-  const matches = (!selectedStatus.value || selectedStatus.value === issue.status.key) && matchesBoardFilters(issue, { search: appliedSearch.value, priorities: appliedPriorities.value, labels: appliedLabelIds.value });
+  const matches = (!selectedStatus.value || selectedStatus.value === issue.status.key) && matchesBoardFilters(issue, { search: appliedSearch.value, ...(appliedSearchMode.value ? { searchMode: appliedSearchMode.value } : {}), priorities: appliedPriorities.value, labels: appliedLabelIds.value });
   const positions: Array<{ element: HTMLElement; top: number }> = [];
   const initialColumns: StatusKey[] = [];
   for (const key of statusOrder) {
@@ -719,7 +729,7 @@ onUnmounted(() => {
 });
 watch(() => projectInventoryBoundary(props.session.allowed_scope.projects), refreshProjectInventory);
 watch(() => props.session.allowed_scope.projects, refreshProjectNames, { deep: true });
-watch(() => props.session.session_id, resetAssignees);
+watch(() => `${props.session.principal.id}:${props.session.session_id}`, refreshProjectInventory);
 watch(canWrite, writable => { if (!writable) resetAssignees(); });
 watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.value]), () => {
   clearTimeout(filterTimer);
@@ -763,12 +773,7 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 
       </div>
       <div class="board-utility-bar">
-        <form class="board-search" role="search" @submit.prevent="load()">
-          <UInput v-model="search" class="board-search-field" type="search" :disabled="loading || saving.size > 0 || hasPendingWrites" :placeholder="t('board.search')" :aria-label="locale === 'zh-CN' ? '搜索事项' : 'Search issues'">
-            <template #leading><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg></template>
-          </UInput>
-          <UButton color="neutral" variant="outline" type="submit" :disabled="loading || saving.size > 0 || hasPendingWrites">{{ locale === 'zh-CN' ? '搜索' : 'Search' }}</UButton>
-        </form>
+        <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />
         <USelect :model-value="selectedStatus ?? 'all'" :items="statusFilterItems" :aria-label="t('issue.status')" :disabled="loading || saving.size > 0 || hasPendingWrites" @update:model-value="changeStatusFilter" />
         <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || hasPendingWrites" />
       </div>
@@ -925,9 +930,6 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 .board-view-label { display: inline-flex; align-items: center; gap: 8px; align-self: stretch; padding: 10px 0; border: 0; border-bottom: 2px solid var(--color-primary); background: transparent; color: var(--color-primary); font-size: 14px; font-weight: 600; cursor: pointer; }
 .board-view-inactive { border-bottom-color: transparent; color: var(--color-text-muted); font-weight: 400; }
 .board-utility-bar { justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.board-search { flex: 0 1 380px; gap: 8px; }
-.board-search-field { flex: 1; min-width: 0; }
-.board-search :deep(input) { min-height: 36px; padding-right: 12px; padding-left: 36px; font-size: 14px; }
 .kanban-board { grid-template-columns: repeat(5, minmax(248px, 1fr)); min-width: 1304px; border-top: 0; gap: 16px; }
 .kanban-column { border-radius: 12px; padding: 8px; background: var(--color-surface-muted); }
 .column-header { min-height: 44px; justify-content: flex-start; gap: 8px; padding: 0 8px 6px; }
@@ -953,14 +955,13 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 .form-stack :deep(.relative), .form-grid :deep(.relative) { width: 100%; }
 @media (max-width: 940px) {
   .board-page--nuxt { padding: 20px 16px 12px; }
-  .board-toolbar-actions :deep(button), .board-search :deep(input), .board-search :deep(button), .card-status-select, .issue-card-open { min-height: 44px; }
+  .board-toolbar-actions :deep(button), .card-status-select, .issue-card-open { min-height: 44px; }
 }
 @media (max-width: 640px) {
   .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .board-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }
   .board-title h1 { font-size: 22px; }
   .board-view-bar { padding-top: 0; }
-  .board-search { flex-basis: 100%; }
   .board-description { max-height: 96px; }
   .kanban-board { grid-template-columns: repeat(5, minmax(260px, 1fr)); min-width: 1364px; }
   .card-status-select { min-height: 44px; }

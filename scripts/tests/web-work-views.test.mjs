@@ -653,7 +653,10 @@ for (const status of [403, 404]) {
       return Response.json({ display_name: 'Project 0', workspace_display_name: 'Team' });
     };
     const { app, host } = mount(Board, { session, projectId: p1, workspaceId: workspace });
-    const applyFilters = () => submit(host);
+    const applyFilters = async () => {
+      submit(host);
+      await until(() => !all(host).find(item => item.tag === 'input' && item.props.type === 'search')?.props.disabled);
+    };
     try {
       await until(() => text(host).includes('Issue before-access-failure'));
       await button(host, 'Choose labels').props.onClick(); await nextTick();

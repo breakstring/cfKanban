@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 20,
+  schema_version: 21,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -271,6 +271,19 @@ const manifest = {
         triggers: ["search_index_project_created", "search_index_issue_event", "search_index_issue_purged"],
       },
       expected_data: { instance_meta_schema_version_at_least: 20, allow_uninitialized: true },
+    },
+    {
+      sequence: 21,
+      name: "0021_instance_upgrade_notifications.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0021_instance_upgrade_notifications.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible",
+      destructive: false,
+      reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {
+        tables: ["upgrade_notification_settings", "upgrade_notification_releases"],
+        triggers: ["upgrade_notification_release_immutable", "upgrade_notification_release_retained"],
+      },
+      expected_data: { instance_meta_schema_version_at_least: 21, allow_uninitialized: true },
     },
   ],
 };

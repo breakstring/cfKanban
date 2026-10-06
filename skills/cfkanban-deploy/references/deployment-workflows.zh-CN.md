@@ -264,6 +264,10 @@ Codex 示例：普通安装使用 `codex plugin marketplace add https://github.c
 
 ## Instance upgrade
 
+schema 21+ 中 Owner 持久化 `upgrade-notification-settings` 默认关闭。finalizer 核验新 Worker 部署、迁移 / schema、health、discovery 和认证 Owner 后，独立报告 `upgrade_notification`。正式版 / `rc.N` 向前升级可按发行发布一份双语实例公告，alpha、beta 及其他预发行以 `unsupported_channel` 明确跳过；首次部署、失败、同版本部署、回滚和仅本地技能更新不发布。公告只建议检查本地技能，不代为更新；个人接收偏好和历史仍由既有合同决定。
+
+finalizer 在通知请求前记录准确非秘密 body、caller IDs、可信 origin 和稳定 key。通知失败或响应不确定时保留原请求 / key，与已验证升级分开报告；沿同计划 resume 恢复，不为通知再次部署或换键。`admin upgrade-notification release --release-version <version>` 有界读取准确发行的发布记录。明确使用 `admin upgrade-notification publish` 恢复时，保留 journal 中旧 / 新版本、部署 / Worker version IDs 和 `--idempotency-key`；此命令不是普通公告，也不证明 Cloudflare 部署已发生。超过 23 小时先核对原审计 / 发布证据，不自动重放未知结果。
+
 Instance upgrade 是独立 Cloudflare plan：
 
 1. 验证目标 release 与 publisher continuity，只用 `release install-service-bundle` 安装它的 Service artifact；这个 immutable 私有 cache 与源码 checkout、active Skill 都彼此独立。

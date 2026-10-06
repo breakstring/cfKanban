@@ -262,6 +262,10 @@ Report Skill discovery, MCP registration, the running MCP version, and connectio
 
 ## Instance upgrade
 
+On schema 21+ the Owner's persistent `upgrade-notification-settings` defaults to off. After finalization has verified the new Worker deployment, migration/schema, health, discovery and authenticated Owner, it separately reports `upgrade_notification`. Forward stable/`rc.N` upgrades may publish one bilingual instance notice per release; alpha, beta and other prerelease channels are skipped with `unsupported_channel`; initial deployment, failed or same-version deployment, rollback and local Skill-only updates do not publish. A notice only suggests checking local Skills; it does not update them. Recipient reception preferences and history remain authoritative.
+
+The finalizer journals the original non-secret body, caller IDs, trusted origin and stable key before the announcement request. If notification publication fails or its response is uncertain, retain that request/key and report the already verified upgrade separately. Resume the same plan to recover; never redeploy or replace the key solely for an announcement. `admin upgrade-notification release --release-version <version>` reads the exact bounded publication record. An explicit `admin upgrade-notification publish` recovery must preserve the journal's old/new versions, deployment/version IDs and `--idempotency-key`; it is not a generic announcement or proof that Cloudflare deployment occurred. After 23 hours, inspect the original audit/publication evidence rather than automatically replaying an uncertain request.
+
 An Instance upgrade is a separate Cloudflare plan:
 
 1. Verify the target release and publisher continuity. Install only its Service artifact with `release install-service-bundle`; this immutable private cache is separate from both the source checkout and the active Skill.

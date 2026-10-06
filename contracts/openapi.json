@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.9.4",
+    "version": "1.10.0-rc.1",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -1211,6 +1211,318 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/admin/upgrade-notification-settings": {
+      "get": {
+        "operationId": "getUpgradeNotificationSettings",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Upgrade Notification Settings",
+        "description": "Deployment Owner Bearer or Owner admin Web Session only. Persistent upgrade announcement setting defaults to disabled.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeNotificationSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      },
+      "patch": {
+        "operationId": "updateUpgradeNotificationSettings",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Update Upgrade Notification Settings",
+        "description": "Owner instance control only; current authorization, CAS, Idempotency-Key, setting, frozen response and security audit commit together. Cookie requires CSRF.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeNotificationSettingsWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUpgradeNotificationSettingsRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/notifications/commands/publish-upgrade": {
+      "post": {
+        "operationId": "publishUpgradeNotification",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Publish Upgrade Notification",
+        "description": "Owner instance control only. Deployment runtime invokes this atomic command after verified deployment, health, discovery, schema and authenticated identity readback. The new release must match the executing Worker. SemVer forward stable or rc.N changes only; other prerelease channels return unsupported_channel. The service setting is evaluated at commit. One bilingual immutable announcement per release across deployment IDs, concurrent callers and keys; returns published/already_published/disabled/not_forward/unsupported_channel separately from deployment success. Idempotency-Key, current Owner authorization, immutable result and security audit are atomic; same key recovers the original outcome.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeNotificationWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishUpgradeNotificationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/notifications/upgrade-releases/{release_version}": {
+      "get": {
+        "operationId": "getUpgradeNotificationRelease",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Upgrade Notification Release",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "release_version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeNotificationRelease"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
       }
     },
     "/api/v1/events": {
@@ -4363,6 +4675,18 @@
               "maximum": 100,
               "default": 20
             }
+          },
+          {
+            "name": "q_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "typed"
+              ]
+            },
+            "description": "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics."
           }
         ],
         "responses": {
@@ -4538,6 +4862,18 @@
               "maximum": 100,
               "default": 20
             }
+          },
+          {
+            "name": "q_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "typed"
+              ]
+            },
+            "description": "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics."
           }
         ],
         "responses": {
@@ -4765,6 +5101,18 @@
               "maximum": 100,
               "default": 20
             }
+          },
+          {
+            "name": "q_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "typed"
+              ]
+            },
+            "description": "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics."
           }
         ],
         "responses": {
@@ -5052,6 +5400,18 @@
               "description": "Normalized title/identifier search. Runtime limit: 128 UTF-8 bytes.",
               "x-cfkanban-max-utf8-bytes": 128
             }
+          },
+          {
+            "name": "q_mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "typed"
+              ]
+            },
+            "description": "Opt in to typed title/number-prefix search. NFKC and case-insensitive; bare numbers need two digits, titles two Unicode characters, complete CFK-1 is accepted. Numeric input matches number prefixes only. Omission preserves legacy exact-identifier OR title-substring q semantics."
           }
         ],
         "responses": {
@@ -11413,6 +11773,65 @@
         }
       }
     },
+    "/api/v1/admin/release-updates": {
+      "get": {
+        "operationId": "getReleaseUpdates",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Release Updates",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Atomic cfKanban read operation. Authorization and current resource state are revalidated when the operation executes.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseUpdates"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
     "/api/v1/admin/attachment-settings": {
       "get": {
         "operationId": "getAttachmentSettings",
@@ -15026,6 +15445,121 @@
         },
         "additionalProperties": false
       },
+      "AvailableRelease": {
+        "type": "object",
+        "required": [
+          "version",
+          "url",
+          "published_at",
+          "newer_than_instance"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "published_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "newer_than_instance": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReleaseUpdateChannel": {
+        "type": "object",
+        "required": [
+          "status",
+          "checked_at",
+          "last_attempt_at",
+          "retry_at",
+          "error",
+          "releases"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "fresh",
+              "stale",
+              "unavailable"
+            ]
+          },
+          "checked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "retry_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "rate_limited",
+              "query_failed",
+              null
+            ]
+          },
+          "releases": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/AvailableRelease"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReleaseUpdates": {
+        "type": "object",
+        "required": [
+          "current_version",
+          "stable",
+          "prereleases",
+          "prerelease_window"
+        ],
+        "properties": {
+          "current_version": {
+            "type": "string"
+          },
+          "stable": {
+            "$ref": "#/components/schemas/ReleaseUpdateChannel"
+          },
+          "prereleases": {
+            "$ref": "#/components/schemas/ReleaseUpdateChannel"
+          },
+          "prerelease_window": {
+            "type": "integer",
+            "const": 20
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateHomepageSettingsRequest": {
         "type": "object",
         "required": [
@@ -15118,6 +15652,180 @@
           },
           "resource": {
             "$ref": "#/components/schemas/NotificationPreferences"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpgradeNotificationSettings": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "version"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateUpgradeNotificationSettingsRequest": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "expected_version"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpgradeNotificationSettingsWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/UpgradeNotificationSettings"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PublishUpgradeNotificationRequest": {
+        "type": "object",
+        "required": [
+          "previous_release_version",
+          "release_version",
+          "deployment_id",
+          "worker_version_id"
+        ],
+        "properties": {
+          "previous_release_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "release_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "deployment_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "worker_version_id": {
+            "$ref": "#/components/schemas/Uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpgradeNotificationResult": {
+        "type": "object",
+        "required": [
+          "status",
+          "previous_release_version",
+          "release_version",
+          "deployment_id",
+          "worker_version_id",
+          "notification_id"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "published",
+              "already_published",
+              "disabled",
+              "not_forward",
+              "unsupported_channel"
+            ]
+          },
+          "previous_release_version": {
+            "type": "string"
+          },
+          "release_version": {
+            "type": "string"
+          },
+          "deployment_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "worker_version_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "notification_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpgradeNotificationWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/UpgradeNotificationResult"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpgradeNotificationRelease": {
+        "type": "object",
+        "required": [
+          "previous_release_version",
+          "release_version",
+          "deployment_id",
+          "worker_version_id",
+          "notification_id"
+        ],
+        "properties": {
+          "previous_release_version": {
+            "type": "string"
+          },
+          "release_version": {
+            "type": "string"
+          },
+          "deployment_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "worker_version_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "notification_id": {
+            "$ref": "#/components/schemas/Uuid"
           }
         },
         "additionalProperties": false
@@ -16998,6 +17706,26 @@
                   "only",
                   "exclude"
                 ]
+              },
+              "q_mode": {
+                "type": "string",
+                "enum": [
+                  "typed"
+                ]
+              },
+              "q": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Text value. Runtime limit: 128 UTF-8 bytes.",
+                    "x-cfkanban-max-utf8-bytes": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Normalized typed query; null when q is omitted. Legacy calls omit q and q_mode here."
               },
               "statuses": {
                 "type": "array",

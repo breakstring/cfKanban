@@ -31,6 +31,24 @@ Verify the publication in Owner history.
 
 Title accepts up to 200 Unicode characters and body up to 4000. Published text cannot be edited: publish a new notice to correct it. Expired or withdrawn notices remain in history with their body and status. Do not include credentials or private project content in an instance-wide notice. The publisher does not receive its own automatic reminder. The Owner cannot override a person's choice to disable reception; there is no per-person reading report. See [Owner notifications](../usage/notifications.md) for recipient controls and confirmation.
 
+## Announce successful upgrades automatically
+
+**In the Web UI:** **Administration → Overview → Version updates** includes **Automatically announce verified upgrades**. It starts off. Save the setting to enable or disable it; Owner instance administration is required.
+
+```text
+Use $cfkanban-admin to turn on automatic announcements after verified site upgrades.
+Check and verify the saved setting.
+```
+
+```sh
+cfkanban admin upgrade-notification show --json --no-interactive
+cfkanban admin upgrade-notification configure --enabled true --expected-version <current-version> --json --no-interactive
+```
+
+After an approved upgrade succeeds and its actual release is verified, a compatible deployment runtime publishes one bilingual notice with the old/new versions, exact Release link, and local Skill update guidance. Forward stable and `rc.N` upgrades qualify; alpha, beta and other prerelease channels are skipped with `unsupported_channel`. Failed upgrades, first deployment, same-version redeployment, rollback, and local Skill-only updates do not publish. Each release gets at most one automatic notice, including when a site rolls back and later returns to that release. Recipient preferences and history still apply. This reminder does not mean local Skills have been updated.
+
+The upgrade and announcement results are reported separately. A failed announcement does not undo a successful upgrade; keep the original maintenance journal and ask the Agent to recover its original request and key. Do not deploy the site again just to retry an announcement.
+
 ## Inspect usage
 
 ```text

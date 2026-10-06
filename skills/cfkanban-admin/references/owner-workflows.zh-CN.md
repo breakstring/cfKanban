@@ -299,4 +299,6 @@ Owner 修改前先读取 `GET /api/v1/admin/attachment-settings`。`configured=f
 
 ## Owner 实例通知
 
+Owner 通过 `GET /api/v1/admin/upgrade-notification-settings` 读取开关，以 PATCH `{enabled,expected_version}` 和独立稳定 Idempotency-Key 保存，再读回 `{enabled,version}`。公开 CLI 为 `admin upgrade-notification show/configure`，使用 `--enabled true|false` 与准确 `--expected-version`。默认关闭，Owner 窄 Session 和局部管理员继续拒绝。开启后，既有升级 finalizer 只在向前正式版 / `rc.N` 的部署和发行已验证后发布，alpha、beta 及其他预发行以 `unsupported_channel` 明确跳过；本地技能更新、同版本部署、回滚和失败不触发。每个发行最多一份，回滚再返回也不重复；个人偏好和历史继续适用。通知恢复结果与成功部署分开报告，保留原 journal / key，不为重试通知再次部署。
+
 “向实例发布这份维护通知”：先核对 Owner 实例控制范围及用户给出的准确标题、正文、选填过期时间，向 `/api/v1/admin/notifications` POST 单份公告，再 GET 发布历史读回。“撤回通知 <ID>”：先在历史读取该条最新版本，向 `/api/v1/admin/notifications/{id}/commands/withdraw` POST `expected_version`。每个原子写入使用独立稳定幂等键。正文不可修改，更正需另发公告。本人偏好及转述确认纪律见 SKILL.md；发布不能绕过用户关闭接收。

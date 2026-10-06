@@ -19,6 +19,7 @@ cfkanban context show
 
 ```text
 cfkanban issue list --q "login"
+cfkanban issue list --q-mode typed --q "62"
 cfkanban issue list --status todo --status in_progress
 ```
 
@@ -70,3 +71,5 @@ cfkanban web open
 ```
 
 默认 local 模式，需要 CLI 进程持续运行；显式 online 模式使用既有安全 Browser Launch，参数按需查已安装帮助。宿主侧栏使用该宿主已暴露的视图工具。首次接入见[加入与登录](../usage/access.md)，更多参数与默认上下文见[命令参考](./reference.md)。管理和部署按独立任务处理。
+
+使用 `--q-mode typed` 查标题（至少两个字符）或编号前缀（`62`、`CFK-62` 或完整 `CFK-1`）。类型化数字输入只匹配编号；省略该模式沿用完整编号精确或标题子串搜索。继续下一页时保留模式及全部筛选；`issue counts` 在单个项目内接受相同模式。

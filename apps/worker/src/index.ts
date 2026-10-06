@@ -25,6 +25,7 @@ import type { WorkerEnv } from "./kernel/types.ts";
 import { registerAttachmentRoutes } from "./routes/attachments.ts";
 import { registerHomepageSettingsRoutes } from "./routes/homepage-settings.ts";
 import { registerNotificationRoutes } from "./routes/notifications.ts";
+import { registerReleaseUpdatesRoutes } from "./routes/release-updates.ts";
 import { registerUsageRoutes } from "./routes/usage.ts";
 import { registerScopedAdministratorRoutes } from "./routes/scoped-administrators.ts";
 import { registerSearchIndexRoutes } from "./routes/search-index.ts";
@@ -65,6 +66,7 @@ const router = registerUsageRoutes(registerAttachmentRoutes(registerWp08Routes(r
 registerScopedAdministratorRoutes(router);
 registerHomepageSettingsRoutes(router);
 registerNotificationRoutes(router);
+registerReleaseUpdatesRoutes(router);
 registerSearchIndexRoutes(router);
 
 function mayHaveJsonBody(request: Request): boolean {

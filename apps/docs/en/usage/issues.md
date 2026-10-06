@@ -14,7 +14,11 @@ Find issues with “login” in their title in DemoProject.
 
 You need read access to the project. Search covers titles and issue numbers. Include the workspace when projects have the same name. “Unfinished” includes Backlog, Todo, and In Progress.
 
-**In the Web UI:** On the board, enter a title or issue number and press Enter or select **Search**. Priority and label selections apply immediately; any unsubmitted text in the search box remains unapplied. Each column can load more issues. Its header shows the total matching undeleted issues in that status for the applied filters, regardless of loaded pages. An ellipsis means loading; a dash means the total is unavailable and can be retried separately while cards remain usable. Submit the search again or refresh to check concurrent updates.
+**In the Web UI:** Typing a title keyword or Issue number shows up to 10 quick matches from the currently loaded results. They are shortcuts, not the full Project search: prior searches, filters and unopened groups can limit the pool. Click a match, or select it with arrow keys and press Enter, to open it. With no selected match, Enter or **Search Project** searches the current Project using the selected filters and updates the board/list and totals. Typing alone sends no requests or changes to the applied results. Escape closes shortcuts; composition Enter does not submit.
+
+Titles need at least two characters; bare numbers need at least two digits. `CFK-1` also works. `CFK-62` or `62` matches Issue numbers 62, 620, 624 and so on; numeric input searches numbers rather than numeric titles. Matching ignores case and accepts full-width input. A shortcut missing from loaded results can still be found by **Search Project**. Expand a collapsed group with matching totals to see its results.
+
+Priority and label selections apply immediately; unsubmitted search text remains unapplied. Each column can load more Issues. Its header shows matching undeleted totals under the applied filters, regardless of loaded pages. An ellipsis means loading; a dash means totals are unavailable and can be retried separately. Submit again or refresh to check concurrent updates.
 
 ```text
 Count undeleted high-priority issues with “login” in their title in DemoProject, grouped by status.

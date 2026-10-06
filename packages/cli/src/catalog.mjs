@@ -3,8 +3,11 @@ import contract from '../../../contracts/openapi.json' with { type: 'json' };
 // Public nouns/actions stay independent from the internal Skill helper names.
 const names = {
   getMeta: 'instance info', getMe: 'profile show', updateMe: 'profile update',
+  getReleaseUpdates: 'admin updates show',
   getNotificationPreferences: 'notification preferences', updateNotificationPreferences: 'notification configure', listMyNotifications: 'notification list', acknowledgeNotification: 'notification acknowledge',
   listInstanceNotifications: 'admin notification list', publishNotification: 'admin notification publish', withdrawNotification: 'admin notification withdraw', listEvents: 'event list',
+  getUpgradeNotificationSettings: 'admin upgrade-notification show', updateUpgradeNotificationSettings: 'admin upgrade-notification configure', publishUpgradeNotification: 'admin upgrade-notification publish',
+  getUpgradeNotificationRelease: 'admin upgrade-notification release',
   listWorkspaces: 'workspace list', createWorkspace: 'workspace create', getWorkspace: 'workspace show', updateWorkspace: 'workspace update', deleteWorkspace: 'workspace archive', previewWorkspacePurge: 'workspace purge-preview', purgeWorkspace: 'workspace purge', restoreWorkspace: 'workspace restore',
   listProjects: 'project list', createProject: 'project create', getProject: 'project show', updateProject: 'project update', deleteProject: 'project archive', previewProjectPurge: 'project purge-preview', purgeProject: 'project purge', restoreProject: 'project restore',
   findProjectAssignee: 'project assignee list', listProjectStatuses: 'project status list', updateProjectStatusName: 'project status rename',

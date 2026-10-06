@@ -26,6 +26,12 @@ You need current Owner access, Cloudflare account authority, and local maintenan
 
 Use an Agent to upgrade; there is no Web upgrade button. If older Skills cannot handle the new release, update the local Skills first using the installation guide.
 
+## Optional upgrade announcements
+
+The Owner can enable [automatic upgrade announcements](../administration/settings.md#announce-successful-upgrades-automatically); they start disabled. A compatible runtime checks the setting only after the actual deployment and new release have been verified. It announces forward stable/`rc.N` changes once per release (alpha, beta and other prerelease channels are skipped with `unsupported_channel`) and includes a reminder to check local Skills, without updating them.
+
+Upgrade success and announcement status are separate. If the announcement fails or its result is uncertain, retain the exact request and key in the original journal. Ask the Agent to resume that verified plan or recover the original announcement; do not run another deployment or replace the key. After the safe replay window expires, inspect original audit and release-notification evidence before further writes.
+
 ## If an upgrade stops or fails
 
 Keep the maintenance records and ask the Agent to [check and resume the original plan](./recovery.md). Do not redeploy an empty instance or delete the records.

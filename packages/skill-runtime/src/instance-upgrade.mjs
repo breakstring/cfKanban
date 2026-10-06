@@ -25,6 +25,7 @@ import {
   validatePrivatePath,
 } from "./state.mjs";
 import { trustedApiRequest } from "./transport.mjs";
+import { notifyVerifiedUpgrade } from "./upgrade-notification.mjs";
 import {
   assertNoSymlinkPath,
   atomicWriteJson,
@@ -424,6 +425,10 @@ export async function finalizeInstanceUpgrade({
     receipt_path: receiptPath,
     active_skill_version: activeSkill.version,
     credential_unchanged: true,
+    upgrade_notification: await notifyVerifiedUpgrade({ stateRoot, instanceId: instance, operationId: operation, journal,
+      origin, owner: plan.owner, previousVersion: plan.current.service_bundle_version, releaseVersion,
+      schemaVersion: plan.target.schema_version, deploymentId: afterWorker.deployment_id, workerVersionId: afterWorker.version_id,
+      token: currentCredential.token, fetchImpl }),
     secret_values_exposed: false,
   };
 }

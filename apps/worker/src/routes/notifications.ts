@@ -6,6 +6,7 @@ import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { RequestContext, WorkerEnv } from "../kernel/types.ts";
 import { acknowledgeNotification, getNotificationPreferences, listNotifications, publishNotification, updateNotificationPreferences, withdrawNotification } from "../services/notifications.ts";
+import { getUpgradeNotificationRelease, getUpgradeNotificationSettings, publishUpgradeNotification, updateUpgradeNotificationSettings } from "../services/upgrade-notifications.ts";
 
 async function authenticated(request: Request, env: WorkerEnv, context: RequestContext) {
   const auth = await authenticateRequest(env.DB, request, context.startedAt);
@@ -14,7 +15,25 @@ async function authenticated(request: Request, env: WorkerEnv, context: RequestC
 }
 
 export function registerNotificationRoutes(router: Router): void {
-  router.get("/api/v1/me/notification-preferences", async (request, env, context) => {
+  router.get("/api/v1/admin/upgrade-notification-settings", async (request, env, context) => {
+    const auth = await authenticated(request, env, context);
+    return jsonResponse(await getUpgradeNotificationSettings(env.DB, auth), context.requestId);
+  }).patch("/api/v1/admin/upgrade-notification-settings", async (request, env, context) => {
+    const auth = await authenticated(request, env, context);
+    enforceCookieWriteProtection(request, auth);
+    const body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["enabled", "expected_version"], requiredKeys: ["enabled", "expected_version"] });
+    return jsonResponse(await updateUpgradeNotificationSettings(env.DB, request, auth, body.enabled ?? null, requireVersion(body.expected_version ?? null), context.startedAt), context.requestId);
+  }).get("/api/v1/admin/notifications/upgrade-releases/{release_version}", async (request, env, context) => {
+    const auth = await authenticated(request, env, context);
+    return jsonResponse(await getUpgradeNotificationRelease(env.DB, auth, context.params.release_version ?? ""), context.requestId);
+  }).post("/api/v1/admin/notifications/commands/publish-upgrade", async (request, env, context) => {
+    const auth = await authenticated(request, env, context);
+    enforceCookieWriteProtection(request, auth);
+    const body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["previous_release_version", "release_version", "deployment_id", "worker_version_id"], requiredKeys: ["previous_release_version", "release_version", "deployment_id", "worker_version_id"] });
+    body.deployment_id = requireUuid(body.deployment_id ?? null, "deployment_id");
+    body.worker_version_id = requireUuid(body.worker_version_id ?? null, "worker_version_id");
+    return jsonResponse(await publishUpgradeNotification(env.DB, request, auth, body, context.startedAt), context.requestId);
+  }).get("/api/v1/me/notification-preferences", async (request, env, context) => {
     const auth = await authenticated(request, env, context);
     return jsonResponse(await getNotificationPreferences(env.DB, auth), context.requestId);
   }).patch("/api/v1/me/notification-preferences", async (request, env, context) => {

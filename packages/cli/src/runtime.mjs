@@ -24,6 +24,8 @@ import { capturedRunner } from './process.mjs';
 const pick=(input,keys)=>Object.fromEntries(keys.filter(key=>input[key]!==undefined).map(key=>[key,input[key]]));
 const encodePath=(template,input)=>template.replace(/\{([^}]+)\}/g,(_,field)=>encodeURIComponent(input[field]));
 function readbackPath(command,input,result) {
+  if(command.operation==='publishUpgradeNotification'&&!result)return '/api/v1/admin/upgrade-notification-settings';
+  if(command.operation==='publishUpgradeNotification'&&result?.data?.resource?.notification_id)return `/api/v1/admin/notifications/upgrade-releases/${encodeURIComponent(input.release_version)}`;
   const base=encodePath(command.apiPath.replace(/\/commands\/[^/]+$/,''),input);
   const special={updateProjectStatusName:encodePath('/api/v1/workspaces/{workspace_id}/projects/{project_id}/statuses',input),acknowledgeNotification:'/api/v1/me/notifications?pending=false&limit=50',withdrawNotification:'/api/v1/admin/notifications?limit=50',revokeWorkspaceAdministrator:base.replace(/\/administrators\/[^/]+$/,'/administrators'),revokeProjectAdministrator:base.replace(/\/administrators\/[^/]+$/,'/administrators'),revokeMyPasskey:'/api/v1/me/passkeys',revokePrincipalPasskey:input.principal_id?`/api/v1/admin/principals/${encodeURIComponent(input.principal_id)}`:null,renameOwnerDeviceCredential:input.principal_id?`/api/v1/admin/principals/${encodeURIComponent(input.principal_id)}/credentials`:null,refreshUsage:'/api/v1/admin/usage'};
   if(Object.hasOwn(special,command.operation))return special[command.operation];
@@ -48,6 +50,7 @@ function requestFor(command,input) {
 }
 function versionOf(result) { return result?.data?.resource?.version??result?.data?.version??result?.data?.project?.version??result?.data?.issue?.version; }
 function targetMatches(command,input,result,readback) {
+  if(command.operation==='publishUpgradeNotification')return readback.data?.release_version===input.release_version&&readback.data?.notification_id===result?.data?.resource?.notification_id;
   if(command.operation==='updateProjectStatusName')return (readback.data?.items??readback.data?.statuses??[]).some(item=>(item.status_key??item.key)===input.status_key&&item.display_name===input.display_name);
   const resource=result?.data?.resource??result?.data;const expected=resource?.identifier??resource?.id??input.identifier??input.comment_id??input.label_id??input.relation_id??input.attachment_id??input.notification_id??input.administrator_id??input.credential_id??input.passkey_id;
   if(!expected)return true;
@@ -170,6 +173,12 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     if(unknown) { record.phase='unknown'; await atomicWriteJson(file,record); return {...result,outcome_unknown:true,recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id,...(record.idempotency_key?{idempotency_key:record.idempotency_key}:{}),write_contract:record.command.write_contract}}; }
     if(!result.ok) { record.phase='rejected'; record.result=result; await atomicWriteJson(file,record); return result; }
     record.phase='committed'; record.result=result;
+    if(record.command.operation==='publishUpgradeNotification'&&result.data?.resource?.notification_id===null) {
+      const replay=await request(record.identity,{...record.request,idempotencyKey:record.idempotency_key});
+      if(!replay.ok||replay.data?.idempotent_replay!==true||canonicalDigest(replay.data?.resource)!==canonicalDigest(result.data?.resource)) {await atomicWriteJson(file,record);return {...result,committed_unverified:true,recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id}};}
+      record.readback={...replay,verification_kind:'original_idempotent_snapshot'};record.phase='verified';await atomicWriteJson(file,record);
+      return {...result,readback:record.readback,operation:{operation_id:record.operation_id,idempotency_key:record.idempotency_key,write_contract:record.command.write_contract,phase:record.phase}};
+    }
     const target=readbackPath(record.command,record.input,result);
       if(target) {
         let readback;try {readback=await readbackFor(record,target,result);}catch {readback={ok:false,status:0,error:{code:'CLI_READBACK_INTERRUPTED',category:'platform_failure',source:'client_runtime',recovery:'recover_original_operation'}};}

@@ -2401,9 +2401,8 @@ textarea:disabled {
   border-left: 2px solid var(--color-border);
 }
 .workspace-projects .project-table-row { min-height: 58px; gap: 12px; }
-.project-name-and-state { display: grid; gap: 5px; min-width: 0; padding: 8px 0; overflow-wrap: anywhere; }
-.public-join-badge { justify-self: start; padding: 2px 7px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface-muted); color: var(--color-text-muted); font-size: 0.72rem; font-weight: 500; line-height: 1.5; }
-.public-join-badge[data-enabled="true"] { border-color: var(--color-success); background: var(--color-success-soft); color: var(--color-success); }
+.project-name-and-state { align-items: center; min-width: 0; padding: 8px 0; overflow-wrap: anywhere; }
+.project-name-and-state .project-link { min-width: 0; }
 .workspace-projects .empty-copy { margin: 12px 0; }
 @media (max-width: 700px) {
   .workspace-block { padding: 14px; }
@@ -2637,3 +2636,7 @@ textarea:disabled {
 @media (max-width: 940px) { .card-priority-select, .card-status-select, .issue-card-open { min-height: 44px; } }
 
 }
+:root .version-updates-panel { max-width: 960px; }
+.version-channel { padding: 20px 0; border-bottom: 1px solid var(--color-border); }
+.version-release-list { padding: 0; list-style: none; display: grid; gap: 12px; }
+.version-release-list li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; }

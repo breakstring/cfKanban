@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { matchesBoardFilters, refreshBoardIssueProgress, sortBoardIssues } from "../../apps/web/src/lib/board-projection.ts";
+import { build } from "esbuild";
+const bundledProjection = await build({ entryPoints: [new URL("../../apps/web/src/lib/board-projection.ts", import.meta.url).pathname], bundle: true, write: false, format: "esm", platform: "node" });
+const { matchesBoardFilters, refreshBoardIssueProgress, sortBoardIssues } = await import(`data:text/javascript;base64,${Buffer.from(bundledProjection.outputFiles[0].text).toString("base64")}`);
 import { loadedStatusLabel, moveStatusNavigationFocus, scrollToStatusColumn } from "../../apps/web/src/lib/kanban-status-navigation.ts";
 
 const issue = (overrides = {}) => ({ id: "issue", number: 123, title: "Ｆｉｘ Login CFK-456", deleted_at: null,

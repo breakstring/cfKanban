@@ -19,6 +19,7 @@ Search by title or Issue identifier, or list work by status:
 
 ```text
 cfkanban issue list --q "login"
+cfkanban issue list --q-mode typed --q "62"
 cfkanban issue list --status todo --status in_progress
 ```
 
@@ -70,3 +71,5 @@ cfkanban web open
 ```
 
 Local mode is the default and needs its CLI process to keep running. Explicit online mode uses the existing safe Browser Launch flow; inspect installed help for the options. A host sidebar uses that host's exposed view tool. For first access, use the [join and sign-in guide](../usage/access.md); for extra parameters or context defaults, use the [reference](./reference.md). Administration and deployment are separate tasks.
+
+Use `--q-mode typed` to match titles (at least two characters) or number prefixes (`62`, `CFK-62`, or a complete `CFK-1`). Typed numeric input searches numbers only. Omitting the mode keeps the existing exact-identifier or title-substring search. Preserve the mode and all filters when requesting the next page; `issue counts` accepts the same mode within one Project.

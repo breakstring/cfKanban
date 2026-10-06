@@ -1,7 +1,7 @@
 import { priorityOrder } from "./priority";
 import type { PriorityKey, StatusKey } from "../types";
 
-export function boardFilters(query: string): { search: string; priorities: PriorityKey[]; labels: string[]; view?: "list"; status?: StatusKey; expanded?: StatusKey[] } {
+export function boardFilters(query: string): { search: string; searchMode?: "typed"; priorities: PriorityKey[]; labels: string[]; view?: "list"; status?: StatusKey; expanded?: StatusKey[] } {
   const params = new URLSearchParams(query);
   const knownStatuses: StatusKey[] = ["backlog", "todo", "in_progress", "done", "canceled"];
   const status = params.get("status") as StatusKey;
@@ -10,6 +10,7 @@ export function boardFilters(query: string): { search: string; priorities: Prior
     ...(params.has("expanded") ? { expanded: [...new Set(params.getAll("expanded"))].filter((key): key is StatusKey => knownStatuses.includes(key as StatusKey)) } : {}),
     ...(params.get("view") === "list" ? { view: "list" as const } : {}),
     search: params.get("q") ?? "",
+    ...(params.get("q_mode") === "typed" ? { searchMode: "typed" as const } : {}),
     priorities: [...new Set(params.getAll("priority"))].filter((value): value is PriorityKey => priorityOrder.includes(value as PriorityKey)),
     labels: [...new Set(params.getAll("label"))].filter(value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)).slice(0, 20),
   };
@@ -19,6 +20,7 @@ export function boardPath(workspaceId: string, projectId: string, filter?: Retur
   const base = `/app/w/${encodeURIComponent(workspaceId)}/p/${encodeURIComponent(projectId)}`;
   const params = new URLSearchParams();
   if (filter?.search.trim()) params.set("q", filter.search.trim());
+  if (filter?.searchMode === "typed") params.set("q_mode", "typed");
   for (const priority of filter?.priorities ?? []) params.append("priority", priority);
   for (const label of filter?.labels ?? []) params.append("label", label);
   if (filter?.view === "list") params.set("view", "list");

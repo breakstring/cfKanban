@@ -62,10 +62,13 @@
 | Owner 可编辑的公开首页说明与缺省文案 | [首页实例说明设置](specs/2026-09-20-homepage-settings-spec.md) |
 | 公开文档、双语手册、Agent 示例与静态打包 | [站内双语文档中心](specs/2026-09-29-documentation-center-spec.md) |
 | stable 发现、发行版本、工件与更新 | [正式发行生命周期](specs/2026-09-20-stable-release-lifecycle-spec.md) |
+| Owner 站内版本发现与更新指引 | [版本与更新](specs/2026-10-06-owner-release-updates-spec.md) |
+| 成功升级后可配置自动公告 | [升级通知](specs/2026-10-06-instance-upgrade-notifications-spec.md) |
 | 公共 CLI、完整能力矩阵、命令与安装恢复 | [公共 CLI](specs/2026-10-04-public-cli-spec.md) |
 | 本地 stdio MCP、DSH Skills / Host / 原生任务面板 | [本地 MCP 与 DSH 接入](specs/2026-10-02-local-mcp-dsh-spec.md) |
 | 官方桌面插件 global / thread 工作台、MCP Apps bridge | [官方插件工作台（Draft）](specs/2026-10-04-codex-workbench-spec.md)、[验证计划](plans/2026-10-04-codex-workbench-plan.md) |
 | Composer 编号/标题候选、轻量 Issue reference 与读取预算 | [Issue 引用（Draft）](specs/2026-10-05-codex-issue-mentions-spec.md) |
+| 项目即时快捷候选、类型化标题/编号及兼容查询模式 | [项目搜索](specs/2026-10-06-project-search-spec.md) |
 | 私有 SQLite、后台同步、授权范围增减与搜索游标 | [持久搜索索引（Draft）](specs/2026-10-05-persistent-search-index-spec.md)、[实施计划](plans/2026-10-05-persistent-search-index-plan.md) |
 
 ## Skills 与发行维护

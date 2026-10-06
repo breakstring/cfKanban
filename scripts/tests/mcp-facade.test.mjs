@@ -44,13 +44,15 @@ test("bounded filters, cursor, allowed_actions and resolved_scope pass through w
   const calls = [];
   const data = { items: [{ identifier: "CFK-1", version: 4, allowed_actions: ["read", "update"] }], next_cursor: "opaque", has_more: true, resolved_scope: { projects: [f.projectId], warnings: ["invalid_target"] } };
   const facade = createMcpFacade({ ...f, fetchImpl: fixtureFetch(f, (url, options) => { calls.push({ url, options }); return Response.json(data); }) });
-  const args = { instance_id: f.instanceId, project_ids: [f.projectId], status: ["todo", "in_progress"], priority: ["high"], assignee: ["unassigned"], q: "Title", cursor: "same filter", limit: 8 };
+  const args = { instance_id: f.instanceId, project_ids: [f.projectId], status: ["todo", "in_progress"], priority: ["high"], assignee: ["unassigned"], q: "Title", q_mode: "typed", cursor: "same filter", limit: 8 };
   const result = await facade.callTool("cfkanban_issues_list", args);
   assert.deepEqual(result.data, data);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url.searchParams.get("project"), f.projectId);
   assert.deepEqual(calls[0].url.searchParams.getAll("status"), args.status);
   assert.equal(calls[0].url.searchParams.get("cursor"), args.cursor);
+  assert.equal(calls[0].url.searchParams.get("q_mode"), "typed");
+  assert.equal((await facade.callTool("cfkanban_issues_list", { ...args, q_mode: "legacy" })).error.code, "MCP_INVALID_ARGUMENTS");
   assert.equal((await facade.callTool("cfkanban_issues_list", { instance_id: f.instanceId })).error.code, "MCP_EXPLICIT_SCOPE_REQUIRED");
   assert.equal((await facade.callTool("cfkanban_issues_list", { instance_id: f.instanceId, limit: 101, project_ids: [f.projectId] })).error.code, "MCP_INVALID_ARGUMENTS");
   const aggregate = await facade.callTool("cfkanban_issues_list", { instance_id: f.instanceId, allow_unfiltered: true });

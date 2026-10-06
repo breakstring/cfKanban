@@ -1,3 +1,4 @@
+import { issueNumberRanges, typedIssueSearch } from "../../../../packages/shared/issue-search.ts";
 import {
   WORKFLOW_STATUSES,
   issueNumber,
@@ -177,6 +178,8 @@ interface TombstoneQuotaRow {
 interface SearchFilter {
   normalized: string | null;
   number: number | null;
+  mode: "legacy" | "typed";
+  prefix: string | null;
 }
 
 type CandidateAssignment = "mine" | "needs_reassignment" | "unassigned";
@@ -326,8 +329,17 @@ async function resolveIssueScope(
 }
 
 function searchFilter(url: URL): SearchFilter {
+  const modes = url.searchParams.getAll("q_mode");
+  if (modes.length > 1 || (modes.length === 1 && modes[0] !== "typed")) throw validationError("invalid_issue_query_mode");
+  const mode = modes.length === 0 ? "legacy" : "typed";
   const raw = url.searchParams.get("q");
-  if (raw === null) return { normalized: null, number: null };
+  if (raw === null) return { normalized: null, number: null, mode, prefix: null };
+  if (mode === "typed") {
+    if (url.searchParams.getAll("q").length !== 1) throw validationError("invalid_issue_query");
+    const query = typedIssueSearch(raw);
+    if (query.kind === "empty" || query.kind === "invalid") throw validationError("invalid_issue_query");
+    return { normalized: query.normalized, mode, number: query.kind === "number" ? query.number : null, prefix: query.kind === "number" ? query.prefix : null };
+  }
   const normalized = raw.normalize("NFKC").toLowerCase().trim();
   const bytes = new TextEncoder().encode(normalized).byteLength;
   if (bytes < 1 || bytes > 128) throw validationError("invalid_issue_query");
@@ -335,7 +347,35 @@ function searchFilter(url: URL): SearchFilter {
   return {
     normalized,
     number: identifier !== null && Number.isSafeInteger(identifier) ? identifier : null,
+    mode, prefix: null,
   };
+}
+
+function searchValue(search: SearchFilter): string | null {
+  return search.prefix === null ? search.normalized : JSON.stringify(issueNumberRanges(search.prefix));
+}
+
+function searchPredicate(search: SearchFilter): string {
+  if (search.normalized === null) return "";
+  if (search.prefix !== null) return `AND i.number IN (
+    SELECT prefix_issue.number FROM json_each(?3) prefix_range
+    CROSS JOIN issues prefix_issue NOT INDEXED
+      ON prefix_issue.number BETWEEN json_extract(prefix_range.value, '$[0]') AND json_extract(prefix_range.value, '$[1]')
+    WHERE prefix_issue.project_id IN (SELECT id FROM current_result_projects)
+  )`;
+  return search.mode === "typed" ? "AND instr(i.title_search, ?3) > 0" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)";
+}
+
+function numericLabelPredicate(filter: IssueListFilter, search: SearchFilter): string {
+  if (search.prefix === null || filter.labels.length === 0) return "";
+  return `AND EXISTS (
+    SELECT 1 FROM issue_labels numeric_label
+    JOIN labels selected_label ON selected_label.id = numeric_label.label_id
+    WHERE numeric_label.issue_id = i.id
+      AND selected_label.id IN (SELECT value FROM json_each(?12))
+      AND selected_label.deleted_at IS NULL
+      AND selected_label.project_id IN (SELECT id FROM current_result_projects)
+  )`;
 }
 
 function issueDeletionView(url: URL): "exclude" | "only" {
@@ -1069,6 +1109,7 @@ function resolvedScope(
       candidate_policy: { ...candidate, status_category: "unstarted" },
     } : {}),
     filters: {
+      ...(search.mode === "typed" ? { q_mode: "typed", q: search.normalized } : {}),
       assignees: issueFilter.assignees,
       ...(issueFilter.blocked === null ? {} : { blocked: issueFilter.blocked }),
       statuses: issueFilter.statuses,
@@ -1102,7 +1143,8 @@ function ordinaryIssuePredicates(
                ))
            )`}
            AND i.deleted_at IS ${deletionView === "only" ? "NOT NULL" : "NULL"}
-           ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
+           ${searchPredicate(search)}
+           ${numericLabelPredicate(issueFilter, search)}
            ${issueFilter.statuses.length === 0 ? "" : issueFilter.statuses.length === 1
              ? "AND i.status_key = json_extract(?6, '$[0]')"
              : "AND i.status_key IN (SELECT value FROM json_each(?6))"}
@@ -1127,11 +1169,20 @@ function issuePageSql(
   predicates: string,
   candidate: CandidateFilter | null,
   deletionView: "exclude" | "only",
+  search: SearchFilter,
 ): string {
   const order = candidate === null
     ? `i.${deletionView === "only" ? "deleted_at" : "updated_at"} DESC, i.number DESC`
     : "i.priority_rank ASC, i.created_at ASC, i.number ASC";
   const limit = candidate === null ? "?8" : "?9";
+  if (search.prefix !== null) {
+    // 编号前缀从 INTEGER PRIMARY KEY 的互不重叠区间读取，再保留领域列表顺序。
+    return `issue_page(number) AS MATERIALIZED (
+      SELECT i.number FROM issues i
+      WHERE i.project_id IN (SELECT id FROM current_result_projects) AND ${predicates}
+      ORDER BY ${order} LIMIT ${limit}
+    )`;
+  }
   if (filter.labels.length > 0) {
     // 从反向关联索引收敛到标签匹配集合，避免逐个 Issue 探测稀疏标签。
     return `matched_label_issues(id) AS MATERIALIZED (
@@ -1199,6 +1250,7 @@ async function listIssueRows(
     ...(issueFilter.blocked === null ? {} : { blocked: issueFilter.blocked }),
     project_targets: [...scope.projectTargets].sort(),
     q: search.normalized,
+    ...(search.mode === "typed" ? { q_mode: "typed" } : {}),
     statuses: issueFilter.statuses,
     ...(issueFilter.priorities.length === 0 ? {} : { priorities: issueFilter.priorities }),
     ...(issueFilter.labels.length === 0 ? {} : { labels: issueFilter.labels }),
@@ -1263,7 +1315,8 @@ async function listIssueRows(
                      AND candidate_grant.role = 'writer'
                      AND candidate_grant.revoked_at IS NULL
                  ))`}
-           ${search.normalized === null ? "" : "AND ((?2 IS NOT NULL AND i.number = ?2) OR instr(i.title_search, ?3) > 0)"}
+           ${searchPredicate(search)}
+           ${numericLabelPredicate(issueFilter, search)}
            ${cursor === null ? "" : "AND (i.priority_rank, i.created_at, i.number) > (?4, ?5, ?6)"}
            ${issueFilter.priorities.length === 0 ? "" : "AND i.priority_rank IN (SELECT value FROM json_each(?11))"}
 `;
@@ -1290,13 +1343,13 @@ async function listIssueRows(
            SELECT id FROM current_visible_projects
            WHERE id IN (SELECT value FROM json_each(?1))
          ),
-         ${issuePageSql(issueFilter, candidatePredicates, candidate, deletionView)}
+         ${issuePageSql(issueFilter, candidatePredicates, candidate, deletionView, search)}
          ${ISSUE_SELECT}
          JOIN issue_page ON issue_page.number = i.number
          ORDER BY i.priority_rank ASC, i.created_at ASC, i.number ASC`,
       );
       const candidateBindings = [
-        JSON.stringify(projectIds), search.number, search.normalized,
+        JSON.stringify(projectIds), search.number, searchValue(search),
         cursor?.[0] ?? null, cursor?.[1] ?? null, cursor?.[2] ?? null,
         candidate.assignment,
         auth.principalId,
@@ -1366,13 +1419,13 @@ async function listIssueRows(
                WHERE relation_grant.project_id = relation_project.id
                  AND relation_grant.principal_id = ?9 AND relation_grant.revoked_at IS NULL
              ))
-         ), ${issuePageSql(issueFilter, ordinaryPredicates, null, deletionView)}
+         ), ${issuePageSql(issueFilter, ordinaryPredicates, null, deletionView, search)}
          ${ISSUE_SELECT}
          JOIN issue_page ON issue_page.number = i.number
          ORDER BY ${deletionView === "only" ? "i.deleted_at" : "i.updated_at"} DESC, i.number DESC`,
       );
       const bindings = [
-        JSON.stringify(projectIds), search.number, search.normalized,
+        JSON.stringify(projectIds), search.number, searchValue(search),
         cursor?.[0] ?? null, cursor?.[1] ?? null,
         issueFilter.statuses.length === 0 ? null : JSON.stringify(issueFilter.statuses),
         issueFilter.assignees.length === 0 ? null : JSON.stringify(issueFilter.assignees),
@@ -1557,7 +1610,7 @@ export async function countProjectIssues(
   let index = "idx_issues_active_status_order";
   if (filter.assignees.length > 0 && !filter.assignees.includes("unassigned")) index = "idx_issues_active_assignee_order";
   else if (filter.priorities.length > 0) index = "idx_issues_active_priority_order";
-  const labelMatches = filter.labels.length === 0 ? "" : `, matched_label_issues(id) AS MATERIALIZED (
+  const labelMatches = filter.labels.length === 0 || search.prefix !== null ? "" : `, matched_label_issues(id) AS MATERIALIZED (
     SELECT DISTINCT association.issue_id
     FROM json_each(?12) requested_label
     CROSS JOIN labels selected_label ON selected_label.id = requested_label.value
@@ -1596,16 +1649,16 @@ export async function countProjectIssues(
            ))
        )${labelMatches}
        SELECT i.status_key, COUNT(*) AS count
-       ${filter.labels.length === 0
+       ${search.prefix !== null ? `FROM issues i WHERE i.project_id IN (SELECT id FROM current_result_projects) AND` : filter.labels.length === 0
          ? `FROM current_result_projects result_project
             CROSS JOIN issues i INDEXED BY ${index} ON i.project_id = result_project.id`
          : `FROM matched_label_issues matching
             CROSS JOIN issues i ON i.id = matching.id
             WHERE i.project_id IN (SELECT id FROM current_result_projects) AND`}
-       ${filter.labels.length === 0 ? "WHERE" : ""} ${ordinaryIssuePredicates(filter, search, "exclude", null)}
+       ${filter.labels.length === 0 && search.prefix === null ? "WHERE" : ""} ${ordinaryIssuePredicates(filter, search, "exclude", null)}
        GROUP BY i.status_key`,
     ).bind(
-      JSON.stringify(scope.projects.map((visible) => visible.projectId)), search.number, search.normalized,
+      JSON.stringify(scope.projects.map((visible) => visible.projectId)), search.number, searchValue(search),
       null, null, JSON.stringify(filter.statuses), JSON.stringify(filter.assignees), null, auth.principalId,
       JSON.stringify(scope.relationProjects.map((visible) => visible.projectId)), JSON.stringify(filter.priorities),
       JSON.stringify(filter.labels), ...guard.values,
