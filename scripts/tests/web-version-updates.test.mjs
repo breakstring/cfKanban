@@ -257,43 +257,33 @@ function availableUpdates() {
 }
 async function chooseRelease(host, version) { releaseSelect(host).props["onUpdate:modelValue"](version); await nextTick(); }
 
-test("Agent prompt targets the current origin, separates plan confirmations and leaves the release unselected", async () => {
+test("Agent prompt uses the skill at the current origin and defaults to the latest stable release", async () => {
   window.location.search = "?fixture-marker=must-not-be-copied";
   const calls = transport(call => json(call.path === updatesPath ? availableUpdates() : { enabled: false, version: 1 }));
   const view = mount(); await until(() => loaded(view.host));
-  assert.match(prompt(view.host).value, /existing cfKanban instance at https:\/\/kanban\.example\.test/);
-  assert.match(prompt(view.host).value, /https:\/\/kanban\.example\.test\/docs\/en\/deployment\/updates\//);
-  assert.match(prompt(view.host).value, /First check the locally installed.*Skills bundle and host plugin/);
-  assert.match(prompt(view.host).value, /local update plan.*wait for my confirmation/);
-  assert.match(prompt(view.host).value, /immutable artifacts and compatibility.*instance upgrade plan.*impact.*wait for my explicit confirmation.*reading back the result/);
-  assert.match(prompt(view.host).value, /let me choose an exact target.*do not default to a prerelease/);
-  assert.match(prompt(view.host).value, /Preserve the existing Owner identity, credentials, binding, and resources/);
-  assert.equal(prompt(view.host).value.split("\n\n").length, 3);
+  assert.match(prompt(view.host).value, /cfkanban-deploy skill.*update my local cfKanban plugin, then upgrade the deployment at https:\/\/kanban\.example\.test to the latest stable release/);
+  assert.doesNotMatch(prompt(view.host).value, /\/docs\/|\n|plan|credentials/);
   assert.doesNotMatch(prompt(view.host).value, /2\.0\.0|2\.1\.0-rc\.10|must-not-be-copied/);
-  assert.equal(releaseSelect(view.host).value, "discover");
+  assert.equal(releaseSelect(view.host).value, "stable");
+  assert.deepEqual(releaseSelect(view.host).children.map(option => option.props.value), ["stable", "2.1.0-rc.10"]);
   assert.ok(prompt(view.host).props.readonly === "" || prompt(view.host).props.readonly === true);
-  assert.equal(prompt(view.host).props.rows, 6);
-  assert.equal(prompt(view.host).props.maxrows, 12);
+  assert.equal(prompt(view.host).props.rows, 3);
+  assert.equal(prompt(view.host).props.maxrows, 6);
   assert.equal(all(view.host).some(item => item.tag === "h3" && text(item) === "Update local Skills"), false);
   assert.ok(all(view.host).some(item => item.tag === "h3" && text(item) === "Ask your Agent to upgrade"));
   assert.deepEqual(calls.map(call => call.method), ["GET", "GET"]);
 });
 
-test("only explicit version choices enter the bilingual copied prompt; copy failure keeps manual text available", async () => {
+test("only explicit prerelease choices enter the bilingual copied prompt; copy failure keeps manual text available", async () => {
   const calls = transport(call => json(call.path === updatesPath ? availableUpdates() : { enabled: false, version: 1 }));
   const view = mount(); await until(() => loaded(view.host));
-  await chooseRelease(view.host, "2.0.0");
-  assert.match(prompt(view.host).value, /My exact instance target is 2\.0\.0/);
+  assert.match(prompt(view.host).value, /the latest stable release/);
   assert.doesNotMatch(prompt(view.host).value, /2\.1\.0-rc\.10/);
   await copyButton(view.host).props.onClick(); await nextTick();
   assert.equal(copied.at(-1), prompt(view.host).value); assert.match(text(view.host), /Copied to clipboard/);
   await chooseRelease(view.host, "2.1.0-rc.10"); locale.value = "zh-CN"; await nextTick();
-  assert.match(prompt(view.host).value, /我选择的准确实例目标是 2\.1\.0-rc\.10/);
-  assert.match(prompt(view.host).value, /先核对本机已有.*技能包和宿主插件/);
-  assert.match(prompt(view.host).value, /本地更新计划，等我确认后更新/);
-  assert.match(prompt(view.host).value, /不可变工件与兼容性.*实例升级计划及影响，等我明确确认后执行并读回结果/);
-  assert.match(prompt(view.host).value, /不转入首次安装、身份迁移或新实例部署/);
-  assert.equal(prompt(view.host).value.split("\n\n").length, 3);
+  assert.match(prompt(view.host).value, /cfkanban-deploy 技能，先更新本地 cfKanban 插件，再将 https:\/\/kanban\.example\.test 的线上部署升级到2\.1\.0-rc\.10/);
+  assert.doesNotMatch(prompt(view.host).value, /\/docs\/|\n|计划|凭据/);
   await copyButton(view.host).props.onClick(); await nextTick();
   assert.equal(copied.at(-1), prompt(view.host).value); assert.match(text(view.host), /已复制到剪贴板/);
   clipboardWrite = async () => { throw new Error("fixture clipboard denied"); };
@@ -309,11 +299,13 @@ test("refreshing away a selected release or changing identity clears it; late co
   const view = mount(); await until(() => loaded(view.host)); await chooseRelease(view.host, "2.1.0-rc.10");
   const pendingCopy = deferred(); clipboardWrite = () => pendingCopy.promise;
   const copying = copyButton(view.host).props.onClick(); await nextTick();
-  await chooseRelease(view.host, "2.0.0"); pendingCopy.resolve(); await copying; await nextTick();
+  await chooseRelease(view.host, "stable"); pendingCopy.resolve(); await copying; await nextTick();
   assert.doesNotMatch(text(view.host), /Copied to clipboard/);
+  await chooseRelease(view.host, "2.1.0-rc.10");
   available = updates(); await button(view.host, "Check again").props.onClick(); await nextTick();
-  assert.equal(releaseSelect(view.host).value, "discover"); assert.match(prompt(view.host).value, /let me choose an exact target/);
+  assert.equal(releaseSelect(view.host).value, "stable"); assert.match(prompt(view.host).value, /the latest stable release/);
   available = availableUpdates(); await button(view.host, "Check again").props.onClick(); await nextTick();
-  await chooseRelease(view.host, "2.0.0"); view.state.value = session("b"); await until(() => loaded(view.host));
-  assert.equal(releaseSelect(view.host).value, "discover"); assert.doesNotMatch(prompt(view.host).value, /My exact instance target is 2\.0\.0/);
+  await chooseRelease(view.host, "2.1.0-rc.10"); view.state.value = session("b"); await until(() => loaded(view.host));
+  assert.equal(releaseSelect(view.host).value, "stable"); assert.match(prompt(view.host).value, /the latest stable release/);
+  assert.doesNotMatch(prompt(view.host).value, /2\.1\.0-rc\.10/);
 });

@@ -4,12 +4,12 @@
 
 Newer versions still require compatibility and immutable artifact verification. Publication order does not determine whether a release upgrades the current version. Prereleases require an explicit exact version; they never replace the default stable target. Discovery reads public GitHub pages without a token or REST API request. Successful information is cached for fifteen minutes within a Worker isolate. **Check again** may reuse it. Webpage access limits or parsing changes show unavailable or expired information and check times, without blocking other features.
 
-In **Ask your Agent to upgrade**, select an exact release and copy the prompt to your Agent. You can also keep **Check versions with my Agent first** to review available releases before selecting a target. The prompt includes this instance address and asks the Agent to review and confirm a local Skills/plugin update plan first, then review and confirm a separate instance upgrade plan.
+In **Ask your Agent to upgrade**, the default is **Latest stable release**. The other options are discovered prereleases with exact version numbers; none is selected automatically. Copy the one-sentence request to your Agent to use the `cfkanban-deploy` skill to update the local cfKanban plugin first, then this site's online deployment. The request includes your browser's current site origin and targets either the latest stable release or the selected exact prerelease version for the deployment upgrade. Refreshing away a selected prerelease or changing the Session resets the target to **Latest stable release**.
 
-The site cannot inspect local Skills, and copying does not apply either update. The Agent should verify `cfkanban --version`, the complete bundle and host installation locally, then read back the deployed version, health and original identity after an instance upgrade. See the [update workflows](../deployment/updates.md) for details.
+The site cannot inspect local Skills, and copying only produces text. Local plugin updates and Instance upgrades retain the skill's independent update and upgrade authorization requirements. See the [update workflows](../deployment/updates.md) for details.
 
 ```text
-Use $cfkanban-admin to check this instance's deployed version and available stable and prerelease versions. Explain local Skills update and instance upgrade choices without applying either.
+Use the cfkanban-deploy skill to update my local cfKanban plugin, then upgrade the deployment at <current-site-origin> to the latest stable release.
 ```
 
 ```sh

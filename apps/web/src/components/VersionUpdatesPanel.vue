@@ -24,7 +24,7 @@ const settingsPath = "/api/v1/admin/upgrade-notification-settings";
 const updates = ref<Updates | null>(null), settings = ref<Settings | null>(null);
 const enabled = ref(false), busy = ref(false), loading = ref(false), saved = ref(false);
 const uncertain = ref(false);
-const selectedVersion = ref("discover");
+const selectedVersion = ref("stable");
 let generation = 0;
 let attempt: { enabled: boolean; expected_version: number } | null = null;
 const removeGuard = registerNavigationGuard(() => !busy.value && !uncertain.value);
@@ -40,17 +40,17 @@ const channels = computed(() => updates.value ? [
   { key: "prereleases", title: ui("Recent prereleases", "近期预发行版"), channel: updates.value.prereleases },
 ] : []);
 const releaseOptions = computed(() => [
-  { value: "discover", label: ui("Check versions with my Agent first", "先让 Agent 检查版本并由我选择") },
-  ...channels.value.flatMap(entry => entry.channel.releases.map(release => ({
+  { value: "stable", label: ui("Latest stable release", "最新正式版") },
+  ...(updates.value?.prereleases.releases ?? []).map(release => ({
     value: release.version,
-    label: `${release.version} · ${entry.key === "stable" ? ui("Stable", "正式版") : ui("Prerelease", "预发行版")}`,
-  }))),
+    label: `${release.version} · ${ui("Prerelease", "预发行版")}`,
+  })),
 ]);
-const selectedRelease = computed(() => releaseOptions.value.some(item => item.value === selectedVersion.value && item.value !== "discover")
+const selectedRelease = computed(() => releaseOptions.value.some(item => item.value === selectedVersion.value && item.value !== "stable")
   ? selectedVersion.value : null);
 const upgradeInstruction = computed(() => agentUpgradePrompt(window.location.origin, selectedRelease.value, locale.value));
 watch(releaseOptions, options => {
-  if (!options.some(item => item.value === selectedVersion.value)) selectedVersion.value = "discover";
+  if (!options.some(item => item.value === selectedVersion.value)) selectedVersion.value = "stable";
 });
 const time = (value: string) => new Intl.DateTimeFormat(locale.value, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 function validSettings(value: unknown): value is Settings {
@@ -103,7 +103,7 @@ async function save(): Promise<void> {
 }
 watch(() => `${notificationSessionKey(props.session)}:${canManage.value}`, () => {
   generation++; updates.value = null; settings.value = null; enabled.value = false;
-  selectedVersion.value = "discover";
+  selectedVersion.value = "stable";
   busy.value = false; loading.value = false; uncertain.value = false; saved.value = false; attempt = null;
   void load();
 }, { immediate: true });
@@ -139,14 +139,14 @@ onUnmounted(() => { generation++; removeGuard(); window.removeEventListener("bef
     </template>
     <section class="version-channel agent-upgrade-section" aria-labelledby="agent-upgrade-title">
       <h3 id="agent-upgrade-title">{{ ui("Ask your Agent to upgrade", "交给 Agent 升级") }}</h3>
-      <p>{{ ui("Copy this prompt to your Agent to update local Skills and the host plugin, then check and upgrade this existing instance. Each stage keeps its plan confirmation.", "复制这段话给 Agent，先更新本地技能和宿主插件，再检查并升级现有实例。每个阶段仍需确认计划。") }}</p>
+      <p>{{ ui("Copy this prompt to your Agent to update your local plugin and online deployment.", "复制给 Agent，更新本地插件和线上部署。") }}</p>
       <div class="agent-upgrade-version">
         <label for="agent-upgrade-release">{{ ui("Target instance release", "实例目标版本") }}</label>
         <USelect id="agent-upgrade-release" v-model="selectedVersion" :items="releaseOptions" :disabled="loading" aria-describedby="agent-upgrade-version-help" />
-        <p id="agent-upgrade-version-help" class="muted">{{ ui("Choose an exact release, or let your Agent check available versions and ask you to choose. This selection only changes the prompt.", "可选择准确发行版，或让 Agent 先核对可用版本并由你选择。此处选择仅更新提示文本。") }}</p>
+        <p id="agent-upgrade-version-help" class="muted">{{ ui("Use the latest stable release, or choose an exact prerelease version.", "使用最新正式版，或选择准确的预发行版本。") }}</p>
       </div>
       <label for="agent-upgrade-prompt">{{ ui("Prompt for your Agent", "给 Agent 的提示") }}</label>
-      <UTextarea id="agent-upgrade-prompt" class="agent-upgrade-prompt" :model-value="upgradeInstruction" :rows="6" autoresize :maxrows="12" readonly />
+      <UTextarea id="agent-upgrade-prompt" class="agent-upgrade-prompt" :model-value="upgradeInstruction" :rows="3" autoresize :maxrows="6" readonly />
       <div class="agent-upgrade-actions">
         <CopyForAgentButton :text="upgradeInstruction" />
         <a :href="`/docs/${locale}/deployment/updates/`">{{ ui("Update and upgrade guide", "更新与升级指引") }}</a>
