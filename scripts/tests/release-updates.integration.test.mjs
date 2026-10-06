@@ -111,10 +111,10 @@ test("真实workerd使用原生HTMLRewriter发现网页发行并保持可信边�
     const query = async (scenario, options = {}) => (await runtime.dispatchFetch(`http://localhost/${scenario}`, { method: "POST", body: JSON.stringify(options), headers: { authorization: "fixture-only-owner", cookie: "fixture-only-session", referer: "https://fixture-only.test/private" } })).json();
     const unavailable = channel => { assert.equal(channel.status, "unavailable"); assert.equal(channel.error, "query_failed"); assert.equal(channel.checked_at, null); assert.deepEqual(channel.releases, []); };
 
-    await t.test("可信单跳到准确tag；原生徽标决定通道、发布时间决定顺序且最多5份", async () => {
+    await t.test("可信单跳到准确tag；原生徽标决定通道、发布时间决定顺序且最多3份", async () => {
       const { data, trace } = await query("success");
       assert.equal(data.stable.status, "fresh"); assert.equal(data.stable.releases[0].version, "2.0.0");
-      assert.deepEqual(data.prereleases.releases.map(row => row.version), ["2.1.0-rc.2", "2.1.0-rc.10", "2.3.0", "2.2.0-rc.1", "2.5.0-rc.1"]);
+      assert.deepEqual(data.prereleases.releases.map(row => row.version), ["2.1.0-rc.2", "2.1.0-rc.10", "2.3.0"]);
       assert.equal(data.prerelease_window, 20);
       assert.equal(trace.length, 3);
       assert.deepEqual(new Set(trace.map(row => row.url)), new Set([repo, `${repo}/latest`, `${repo}/tag/2.0.0`]));
@@ -135,7 +135,7 @@ test("真实workerd使用原生HTMLRewriter发现网页发行并保持可信边�
       assert.equal(data.stable.status, "fresh"); assert.deepEqual(data.stable.releases, []);
       assert.equal(data.prereleases.status, "fresh"); assert.deepEqual(data.prereleases.releases, []);
       for (const scenario of ["filtered-empty", "drift", "bad-date", "bad-tag", "bad-link", "bad-badge", "duplicate", "duplicate-tag-field"]) unavailable((await query(scenario)).data.prereleases);
-      assert.deepEqual((await query("missing-turbo-frame")).data.prereleases.releases.map(row => row.version), ["2.1.0-rc.2", "2.1.0-rc.10", "2.3.0", "2.2.0-rc.1", "2.5.0-rc.1"]);
+      assert.deepEqual((await query("missing-turbo-frame")).data.prereleases.releases.map(row => row.version), ["2.1.0-rc.2", "2.1.0-rc.10", "2.3.0"]);
     });
     await t.test("正文伪徽标/版本/时间与script不作为元数据，不执行远端内容；只检查前20张", async () => {
       const { data } = await query("body-fields");
@@ -143,7 +143,7 @@ test("真实workerd使用原生HTMLRewriter发现网页发行并保持可信边�
       assert.equal(data.prereleases.status, "fresh"); assert.deepEqual(data.prereleases.releases.map(row => row.version), ["2.1.0-rc.2"]);
       assert.equal(data.prereleases.releases[0].published_at, "2026-10-04T00:00:00Z");
       const budget = (await query("budget")).data;
-      assert.equal(budget.prereleases.status, "fresh"); assert.deepEqual(budget.prereleases.releases.map(row => row.version), ["2.1.0-rc.19", "2.1.0-rc.18", "2.1.0-rc.17", "2.1.0-rc.16", "2.1.0-rc.15"]);
+      assert.equal(budget.prereleases.status, "fresh"); assert.deepEqual(budget.prereleases.releases.map(row => row.version), ["2.1.0-rc.19", "2.1.0-rc.18", "2.1.0-rc.17"]);
       assert.equal(redirectedRequests, 0);
     });
     await t.test("并发合并、15分钟TTL、旧信息失败保留和60秒重试，调用方不能污染缓存", async () => {

@@ -2,14 +2,14 @@
 
 - 状态：Frozen
 - 日期：2026-10-06
-- 授权依据：用户要求在 `feat/v1.10` 完成 CFK-619；只读版本发现沿用不可变工件及独立升级授权合同。同日用户进一步要求合并页面升级指引、提供可复制提示，并明确采用 GitHub 公开网页发现替代 REST API，不维护额外静态索引分支；随后明确要求默认「最新正式版」，将升级提示简化为一句话，使用 cfkanban-deploy 技能先更新本地插件，再更新此站点线上部署。
-- 执行任务：[CFK-619](https://cfkanban.dev/app/issues/CFK-619)、[CFK-627](https://cfkanban.dev/app/issues/CFK-627)、[CFK-628](https://cfkanban.dev/app/issues/CFK-628)
+- 授权依据：用户要求在 `feat/v1.10` 完成 CFK-619；只读版本发现沿用不可变工件及独立升级授权合同。同日用户进一步要求合并页面升级指引、提供可复制提示，并明确采用 GitHub 公开网页发现替代 REST API，不维护额外静态索引分支；随后明确要求默认「最新正式版」，将升级提示简化为一句话，使用 cfkanban-deploy 技能先更新本地插件，再更新此站点线上部署，并将近期预发行展示上限改为三份。
+- 执行任务：[CFK-619](https://cfkanban.dev/app/issues/CFK-619)、[CFK-627](https://cfkanban.dev/app/issues/CFK-627)、[CFK-628](https://cfkanban.dev/app/issues/CFK-628)、[CFK-629](https://cfkanban.dev/app/issues/CFK-629)
 
 ## 入口与比较
 
 管理中心新增「版本与更新」。仅允许 Deployment Owner Bearer 或实例管理范围 Owner Session；窄 Owner Session、局部管理员及普通用户不可访问 `GET /api/v1/admin/release-updates`。公共 CLI `admin updates show` 与 Agent 安全 API 返回相同信息。
 
-当前版本来自执行中 Worker 的 `release_version`。GitHub 官方 `/releases/latest` 的准确 tag 重定向提供最新正式版；公开 `/releases` 列表第一页内最多检查 20 张发行卡片，按 GitHub 原生 Pre-release 标记识别预发行，按发行发布时间倒序最多展示 5 份。不翻页，不承诺第一页含完整 20 项，不以 tag 后缀推断通道或以版本名决定列表顺序。页面明确窗口范围，不将 RC 当默认升级目标；未知版本不能冒充已完成比较。
+当前版本来自执行中 Worker 的 `release_version`。GitHub 官方 `/releases/latest` 的准确 tag 重定向提供最新正式版；公开 `/releases` 列表第一页内最多检查 20 张发行卡片，按 GitHub 原生 Pre-release 标记识别预发行，按发行发布时间倒序最多展示 3 份。不翻页，不承诺第一页含完整 20 项，不以 tag 后缀推断通道或以版本名决定列表顺序。页面明确窗口范围，不将 RC 当默认升级目标；未知版本不能冒充已完成比较。
 
 每项返回准确版本、可信官方 Release 链接、发布时间及是否较新。准确 tag 保留严格 SemVer 格式校验；「较新」继续比较目标与当前实例版本，不能以晚发布时间推断升级方向。信息不证明兼容，不替代 manifest/digest 校验；升级仍经只读发现、不可变工件快照、显式目标与获批计划。
 

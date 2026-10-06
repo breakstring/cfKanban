@@ -1,6 +1,6 @@
 # Versions and updates
 
-**In the Web UI:** Open **Administration → Versions & updates** with Owner instance administration. The page shows the deployed product version and the stable release selected by GitHub's public `releases/latest` redirect. It also shows up to five prereleases from the first public releases page, inspecting at most twenty cards. GitHub's Pre-release badge identifies the channel, and publication time determines the list order. Each links to official notes.
+**In the Web UI:** Open **Administration → Versions & updates** with Owner instance administration. The page shows the deployed product version and the stable release selected by GitHub's public `releases/latest` redirect. It also shows up to three prereleases from the first public releases page, inspecting at most twenty cards. GitHub's Pre-release badge identifies the channel, and the list is ordered newest first by publication time. Each links to official notes.
 
 Newer versions still require compatibility and immutable artifact verification. Publication order does not determine whether a release upgrades the current version. Prereleases require an explicit exact version; they never replace the default stable target. Discovery reads public GitHub pages without a token or REST API request. Successful information is cached for fifteen minutes within a Worker isolate. **Check again** may reuse it. Webpage access limits or parsing changes show unavailable or expired information and check times, without blocking other features.
 

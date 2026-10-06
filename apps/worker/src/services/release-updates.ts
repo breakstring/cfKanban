@@ -72,7 +72,7 @@ export function createReleaseUpdatesReader(fetcher: Fetcher = fetch, now: () => 
         const entries = await beforeDeadline(parseReleasePage(html, isPrerelease ? "list" : "stable", target), signal);
         releases = isPrerelease ? entries.filter(row => row.prerelease)
           .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))
-          .slice(0, 5).map(release) : entries.map(release);
+          .slice(0, 3).map(release) : entries.map(release);
       }
       return { status: "fresh", checked_at: new Date(attempted).toISOString(), last_attempt_at: new Date(attempted).toISOString(), retry_at: new Date(attempted + TTL).toISOString(), error: null, releases };
     } catch {
