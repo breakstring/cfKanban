@@ -65,6 +65,7 @@ const tokenForm = host => all(host).find(item => item.tag === 'form' && item.pro
 const button = (host, label) => all(host).find(item => item.tag === 'button' && text(item) === label);
 const capabilityRows = host => all(host).filter(item => item.tag === 'details' && item.props.class === 'capability-item');
 const row = (host, label) => capabilityRows(host).find(item => text(item).startsWith(label));
+const capabilitySummary = entry => all(entry).find(item => item.tag === 'summary');
 const mounted = host => text(host).includes('worker-fixture');
 
 test('Overview folds a checked connection into a small card with one Token save action and five meaningful functions', async () => {
@@ -75,6 +76,8 @@ test('Overview folds a checked connection into a small card with one Token save 
     app.mount(host); await until(() => mounted(host));
     assert.match(text(host), /Connected/); assert.equal(management(host).props.open, false);
     assert.equal(section(host, 'connection-rate-heading'), undefined);
+    assert.equal(all(host).some(item => item.props.class === 'required-capability-summary'), false);
+    assert.equal(all(host).some(item => item.props.class === 'muted-copy connection-next-step'), false);
     assert.equal(capabilityRows(host).length, 5);
     assert.equal(all(host).filter(item => item.tag === 'input' && item.props.type === 'password').length, 1);
     assert.equal(all(tokenForm(host)).filter(item => item.tag === 'button').length, 1);
@@ -89,10 +92,24 @@ test('Overview folds a checked connection into a small card with one Token save 
     assert.match(text(tokens), /Manage Account → Account API Tokens → Create Token.*one account-owned Token/);
     assert.match(text(required), /Specified Workers → select this existing Worker: worker-fixture.*Developer Platform → Individual Workers → Editor.*code, deployment, Secret, and configuration modification authority/);
     assert.match(text(optional), /DNS & Zones → Zone → Read.*App Security → Zone WAF Rules → Read/);
-    assert.match(text(row(host, 'Change Worker settings')), /this instance’s active Worker configuration and D1 binding.*does not probe every write operation/);
-    assert.match(text(row(host, 'Read usage')), /specified D1 database passed.*Workers, R2 and other metrics depend on their actual queries/);
+    assert.match(text(row(host, 'Save, deploy and modify the Worker')), /this instance’s active Worker configuration and D1 binding.*does not probe every write operation/);
+    assert.match(text(row(host, 'Read usage analytics')), /specified D1 database passed.*Workers, R2 and other metrics depend on their actual queries/);
+    const labels = [
+      ['Save, deploy and modify the Worker', 'Worker 的保存、部署与修改', 'Developer Platform → Individual Workers → Editor'],
+      ['Read usage analytics', '分析读取用量', 'Analytics & Logs → Account Analytics → Read'],
+      ['Read billing', '账务读取', 'Account & Billing → Billing → Read'],
+      ['Read notifications', '通知读取', 'Account & Billing → Notifications → Read'],
+      ['Read domain protection', '域名防护读取', 'DNS & Zones → Zone → Read · App Security → Zone WAF Rules → Read'],
+    ];
+    for (const [en, , path] of labels) {
+      const summary = capabilitySummary(row(host, en));
+      assert.ok(text(summary).startsWith(`${en} (${path})`));
+      assert.doesNotMatch(text(summary), /Saved Token|Existing .* authorization|Optional/);
+      assert.equal(all(summary).some(item => item.props['data-icon'] === 'i-lucide-chevron-down'), false);
+    }
     locale.value = 'zh-CN'; await nextTick();
-    assert.match(text(host), /已连接.*修改 Worker 设置.*读取用量.*查看账务.*读取通知.*查看域名防护/);
+    assert.match(text(host), /已连接.*Worker 的保存、部署与修改.*分析读取用量.*账务读取.*通知读取.*域名防护读取/);
+    for (const [, zh, path] of labels) assert.ok(text(capabilitySummary(row(host, zh))).startsWith(`${zh}（${path}）`));
     assert.equal(text(button(tokenForm(host), '保存 Token')), '保存 Token');
   } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
 });
@@ -106,13 +123,18 @@ test('legacy analytics remains visibly separate from a new Token and missing per
   try {
     app.mount(host); await until(() => mounted(host));
     assert.equal(management(host).props.open, true); assert.equal(tokenInput(host).props.disabled, false);
-    assert.match(text(host), /Usage is available; settings cannot be changed yet.*create a Token with settings permissions/);
-    assert.equal(row(host, 'Change Worker settings').props['data-state'], 'neutral');
-    assert.equal(row(host, 'Read usage').props['data-state'], 'verified');
-    assert.match(text(row(host, 'Read usage')), /Existing analytics authorization/);
-    assert.equal(row(host, 'View domain protection').props['data-state'], 'neutral');
-    assert.match(text(row(host, 'View domain protection')), /Zone not selected/);
+    assert.doesNotMatch(text(host), /Usage is available; settings cannot be changed yet|create a Token with settings permissions|Existing authorization remains available/);
+    assert.equal(all(host).some(item => item.props.class === 'connection-summary'), false);
+    assert.equal(all(host).some(item => item.props.class === 'muted-copy connection-next-step'), false);
+    assert.equal(row(host, 'Save, deploy and modify the Worker').props['data-state'], 'neutral');
+    assert.equal(row(host, 'Read usage analytics').props['data-state'], 'verified');
+    assert.match(text(row(host, 'Read usage analytics')), /Existing analytics authorization/);
+    assert.doesNotMatch(text(capabilitySummary(row(host, 'Read usage analytics'))), /Existing analytics authorization/);
+    assert.equal(row(host, 'Read domain protection').props['data-state'], 'neutral');
+    assert.match(text(row(host, 'Read domain protection')), /Zone not selected/);
     locale.value = 'zh-CN'; await nextTick(); assert.match(text(host), /现有统计授权/);
+    assert.doesNotMatch(text(host), /统计可用，尚不能修改设置|要修改设置，请先|现有授权仍可使用/);
+    assert.doesNotMatch(text(capabilitySummary(row(host, '分析读取用量'))), /现有统计授权/);
   } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
 });
 
@@ -125,7 +147,7 @@ test('function icons distinguish actual success, explicit rejection and states t
       const app = renderer.createApp(Control); const host = node('root');
       try {
         app.mount(host); await until(() => mounted(host));
-        const entry = row(host, 'Change Worker settings');
+        const entry = row(host, 'Save, deploy and modify the Worker');
         const expected = state === 'verified' ? 'verified' : ['permission_denied', 'target_mismatch'].includes(state) ? 'denied' : 'neutral';
         assert.equal(entry.props['data-state'], expected);
         const icon = all(entry).find(item => item.props['data-icon']);
@@ -160,9 +182,9 @@ test('core checks collapse a resolved connection and optional reads require an e
     assert.equal(calls.some(call => call.path.endsWith('/notifications') || call.path.endsWith('/waf')), false);
     await button(host, 'Check other functions').props.onClick(); await nextTick();
     assert.deepEqual(JSON.parse(calls.filter(call => call.path.endsWith('/verify')).at(-1).init.body), { include_optional: true });
-    assert.equal(row(host, 'View billing').props['data-state'], 'verified');
+    assert.equal(row(host, 'Read billing').props['data-state'], 'verified');
     assert.equal(row(host, 'Read notifications').props['data-state'], 'verified');
-    assert.equal(row(host, 'View domain protection').props['data-state'], 'verified');
+    assert.equal(row(host, 'Read domain protection').props['data-state'], 'verified');
   } finally { app.unmount(); globalThis.fetch = originalFetch; }
 });
 
@@ -256,8 +278,8 @@ test('Token submission clears immediately, uses an explicit key, and recovers on
     assert.equal(request.init.headers.get('x-csrf-token'), 'fixture-csrf'); assert.equal(request.init.credentials, 'same-origin');
     rejectSave(); await pending; await nextTick();
     assert.equal(tokenInput(host).props.disabled, true); assert.doesNotMatch(text(host), /fixture-secret-must-not-render/);
-    assert.match(text(row(host, 'Change Worker settings')), /No authorization saved/);
-    assert.match(text(row(host, 'Read usage')), /Existing analytics authorization \(this save awaits confirmation\)/);
+    assert.match(text(row(host, 'Save, deploy and modify the Worker')), /No authorization saved/);
+    assert.match(text(row(host, 'Read usage analytics')), /Existing analytics authorization \(this save awaits confirmation\)/);
     assert.doesNotMatch(text(row(host, 'Read notifications')), /Previously confirmed authorization/);
     assert.equal(all(host).filter(item => item.props.role === 'alert').length, 1, 'unknown save has one feedback message');
     assert.equal(button(tokenForm(host), 'Check save result'), undefined, 'the form does not duplicate its parent feedback');
@@ -356,9 +378,9 @@ test('a verified save followed by failed status or function reads remains a save
         tokenInput(host).props['onUpdate:modelValue']('verified-save-secret'); await nextTick(); await submit(tokenForm(host)); await nextTick();
         assert.match(text(host), failureStage === 'readback' ? /Token saved.*latest status is temporarily unavailable/ : /Token saved.*Some functions could not be confirmed yet/);
         assert.doesNotMatch(text(host), /save result is unknown|Token save failed|verified-save-secret/); assert.equal(button(host, 'Check save result'), undefined);
-        assert.equal(row(host, 'Change Worker settings').props['data-state'], 'neutral');
+        assert.equal(row(host, 'Save, deploy and modify the Worker').props['data-state'], 'neutral');
         readFails = false; await button(host, 'Check again').props.onClick(); await nextTick();
-        assert.equal(row(host, 'Change Worker settings').props['data-state'], 'verified');
+        assert.equal(row(host, 'Save, deploy and modify the Worker').props['data-state'], 'verified');
         assert.equal(calls.filter(call => call.path.endsWith('/secrets')).length, 1);
       } finally { app.unmount(); }
     }
@@ -395,8 +417,8 @@ test('function details support hover, focus, persistent keyboard activation and 
   const app = renderer.createApp(Control); const host = node('root');
   try {
     app.mount(host); await until(() => mounted(host));
-    const entry = row(host, 'Change Worker settings'); const summary = all(entry).find(item => item.tag === 'summary');
-    assert.equal(entry.props.open, false); assert.match(text(summary), /Change Worker settings.*Available/);
+    const entry = row(host, 'Save, deploy and modify the Worker'); const summary = all(entry).find(item => item.tag === 'summary');
+    assert.equal(entry.props.open, false); assert.match(text(summary), /Save, deploy and modify the Worker \(Developer Platform → Individual Workers → Editor\).*Available/);
     entry.props.onPointerenter({ pointerType: 'mouse' }); await nextTick(); assert.equal(entry.props.open, true); assert.equal(entry.props['data-preview'], true);
     entry.props.onPointerleave(); await nextTick(); assert.equal(entry.props.open, false);
     entry.props.onFocusin(); await nextTick(); assert.equal(entry.props.open, true);
@@ -561,8 +583,8 @@ test('failure to check other functions keeps independently checked Worker settin
   const app = renderer.createApp(Control); const host = node('root');
   try {
     app.mount(host); await until(() => mounted(host)); await button(host, 'Check other functions').props.onClick(); await nextTick();
-    assert.equal(row(host, 'Change Worker settings').props['data-state'], 'verified');
-    assert.equal(row(host, 'View billing').props['data-state'], 'neutral'); assert.equal(row(host, 'Read notifications').props['data-state'], 'neutral');
+    assert.equal(row(host, 'Save, deploy and modify the Worker').props['data-state'], 'verified');
+    assert.equal(row(host, 'Read billing').props['data-state'], 'neutral'); assert.equal(row(host, 'Read notifications').props['data-state'], 'neutral');
     assert.equal(tokenInput(host).props.disabled, false);
   } finally { app.unmount(); globalThis.fetch = originalFetch; }
 });

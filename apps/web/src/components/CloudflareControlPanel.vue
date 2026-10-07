@@ -122,7 +122,6 @@ const fixedTargetReady = computed(() => Boolean(connection.value?.target.account
 const writable = computed(() => fixedTargetReady.value && !loading.value && !busy.value && !failed.value && !unresolved.value);
 const hasConfiguration = computed(() => connection.value?.capabilities.configuration === "verified");
 const hasConfigurationAuthorization = computed(() => Boolean(connection.value?.configured.connection || connection.value?.configured.configuration));
-const hasAnalyticsAuthorization = computed(() => Boolean(connection.value?.configured.connection || connection.value?.configured.analytics));
 const connectionAction = computed(() => {
   if (!connection.value || unresolved.value) return "verify";
   if (!hasConfigurationAuthorization.value || connection.value?.capabilities.configuration === "missing") return "connect";
@@ -130,9 +129,7 @@ const connectionAction = computed(() => {
 });
 const connectionSummary = computed(() => {
   if (unresolved.value) return ui("Save awaiting confirmation", "保存待确认");
-  if (connectionAction.value === "connect") return connection.value?.capabilities.analytics === "verified"
-    ? ui("Usage is available; settings cannot be changed yet", "统计可用，尚不能修改设置")
-    : hasAnalyticsAuthorization.value ? ui("Usage authorization is saved; settings are not connected", "已保存统计授权，尚不能修改设置") : ui("Not connected", "尚未连接");
+  if (connectionAction.value === "connect") return ui("Not connected", "尚未连接");
   const capability = connection.value?.capabilities.configuration;
   if (capability === "unverified") return ui("Connection not checked", "连接尚未检查");
   if (capability === "permission_denied") return ui("Check Token permissions", "请检查 Token 权限");
@@ -167,23 +164,23 @@ function leaveCapabilityFocus(event: FocusEvent): void {
   if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) previewCapability.value = null;
 }
 const capabilities = computed(() => [
-  { key: "configuration" as const, label: ui("Change Worker settings", "修改 Worker 设置"), required: true,
+  { key: "configuration" as const, label: ui("Save, deploy and modify the Worker", "Worker 的保存、部署与修改"), required: true,
     permissions: "Individual Workers · Editor", path: "Developer Platform → Individual Workers → Editor",
     scope: ui(`Current Worker: ${connection.value?.target.worker_name ?? "Unknown"}`, `当前 Worker：${connection.value?.target.worker_name ?? "未知"}`),
     explanation: ui("Checks this instance’s active Worker configuration and D1 binding. Editor also grants code, deployment, Secret and configuration changes; this check does not probe every write operation.", "核验当前实例的已生效 Worker 配置及 D1 绑定。Editor 同时包含代码、部署、Secret 与配置修改权；当前核验不会探测全部写操作。") },
-  { key: "analytics" as const, label: ui("Read usage", "读取用量"), required: true,
+  { key: "analytics" as const, label: ui("Read usage analytics", "分析读取用量"), required: true,
     permissions: "Account Analytics · Read", path: "Analytics & Logs → Account Analytics → Read",
     scope: ui(`Target account: ${connection.value?.target.account_id ?? "Unknown"}`, `目标账户：${connection.value?.target.account_id ?? "未知"}`),
     explanation: ui("Verified means a query for the specified D1 database passed. Workers, R2 and other metrics depend on their actual queries; this is not an invoice or a complete permission inventory.", "核验通过表示指定 D1 数据库的查询通过。Workers、R2 与其他指标以实际查询为准；这不是账单，也不是 Token 全部权限的清单。") },
-  { key: "billing" as const, label: ui("View billing", "查看账务"), required: false,
+  { key: "billing" as const, label: ui("Read billing", "账务读取"), required: false,
     permissions: "Billing · Read", path: "Account & Billing → Billing → Read",
     scope: ui(`Target account: ${connection.value?.target.account_id ?? "Unknown"}`, `目标账户：${connection.value?.target.account_id ?? "未知"}`),
     explanation: ui("Checks billing and plan information reads. It does not verify USD budget editing or cap charges.", "核验账务与方案信息读取；不表示已具备美元预算编辑能力，也不会封顶费用。") },
-  { key: "notifications" as const, label: ui("Read notifications", "读取通知"), required: false,
+  { key: "notifications" as const, label: ui("Read notifications", "通知读取"), required: false,
     permissions: "Notifications · Read", path: "Account & Billing → Notifications → Read",
     scope: ui(`Target account: ${connection.value?.target.account_id ?? "Unknown"}`, `目标账户：${connection.value?.target.account_id ?? "未知"}`),
     explanation: ui("Check on request to read existing notification policies. A denied read does not mean no budget emails are configured; account-owned Token compatibility depends on the actual read.", "主动检查时读取已有通知策略。读取被拒绝不表示未配置预算邮件；account-owned Token 兼容性以实际读取为准。") },
-  { key: "waf" as const, label: ui("View domain protection", "查看域名防护"), required: false,
+  { key: "waf" as const, label: ui("Read domain protection", "域名防护读取"), required: false,
     permissions: "Zone · Read + Zone WAF Rules · Read", path: "DNS & Zones → Zone → Read · App Security → Zone WAF Rules → Read",
     scope: ui(`Specified Zone: ${connection.value?.target.zone_id ?? "Not selected"} · ${connection.value?.target.hostname ?? "Hostname unknown"}`, `指定 Zone：${connection.value?.target.zone_id ?? "尚未选择"} · ${connection.value?.target.hostname ?? "域名未知"}`),
     explanation: ui("One check verifies the selected Zone’s account and domain, then reads its WAF rules. Permission does not prove protection is enabled; the tool’s ownership receipt is a separate requirement.", "一次检查先核验所选 Zone 的账户和域名，再读取 WAF 规则。具备读取权限不表示防护已启用；本工具归属回执是独立条件。") },
@@ -210,7 +207,6 @@ function capabilitySource(key: CapabilityKey): string {
   else return ui("No authorization saved", "尚未保存授权");
   return tokenWrite.value && unresolved.value ? `${source}${ui(" (this save awaits confirmation)", "（本次保存待确认）")}` : source;
 }
-const requiredCapabilitySummary = computed(() => capabilities.value.filter(entry => entry.required).map(entry => `${entry.label} · ${capabilityStatus(entry.key)}`).join(" · "));
 const visibleCapabilities = computed(() => props.mode === "overview" ? capabilities.value : capabilities.value.filter(entry => entry.required && capabilityState(entry.key) !== "verified"));
 const compactConnection = computed(() => props.mode === "overview" && hasConfigurationAuthorization.value && !connectionManagementOpen.value && !unresolved.value);
 function operationFailureExplanation(value: string | null | undefined): string {
@@ -648,10 +644,9 @@ onUnmounted(() => {
     </div>
     <p v-if="loading" role="status" class="muted-copy">{{ ui('Reading connection…', '正在读取连接…') }}</p>
     <template v-if="connection">
-      <p v-if="mode === 'overview'" class="connection-summary" role="status"><strong>{{ connectionSummary }}</strong><span v-if="connection.target.worker_name"> · {{ connection.target.worker_name }}</span></p>
-      <p v-if="mode === 'overview' && compactConnection" class="required-capability-summary">{{ requiredCapabilitySummary }}</p>
+      <p v-if="mode === 'overview' && (compactConnection || unresolved)" class="connection-summary" role="status"><strong>{{ connectionSummary }}</strong><span v-if="connection.target.worker_name"> · {{ connection.target.worker_name }}</span></p>
       <dl v-if="mode === 'usage' && visibleCapabilities.length" class="connection-capabilities"><div v-for="entry in visibleCapabilities" :key="entry.key"><dt>{{ entry.label }}</dt><dd>{{ capabilityStatus(entry.key) }}</dd></div></dl>
-      <p v-if="connectionNextStep" class="muted-copy connection-next-step">{{ connectionNextStep }}</p>
+      <p v-if="mode === 'usage' && connectionNextStep" class="muted-copy connection-next-step">{{ connectionNextStep }}</p>
       <p v-if="usageNextStep" class="muted-copy connection-next-step">{{ usageNextStep }}</p>
       <p v-if="!fixedTargetReady" class="warning-panel">{{ ui('The deployment target is incomplete. Ask the deployment Agent to verify this instance first.', '部署目标不完整，请先让部署 Agent 核对当前实例。') }}</p>
       <p v-if="mode === 'usage' && connectionAction === 'verify'" class="muted-copy"><a href="/app/admin">{{ ui('Manage Cloudflare connection in Overview', '在概览中管理 Cloudflare 连接') }}</a></p>
@@ -659,21 +654,19 @@ onUnmounted(() => {
         <summary>{{ compactConnection ? ui('Change Token or view details', '更换 Token 或查看详情') : ui('Token and function details', 'Token 与功能详情') }}</summary>
         <section aria-labelledby="connection-tokens-heading">
           <h3 id="connection-tokens-heading" class="sr-only">{{ ui('Token settings', 'Token 设置') }}</h3>
-          <p v-if="hasConfigurationAuthorization && !connection.configured.connection" class="muted-copy">{{ ui('Existing authorization remains available. Saving one connection Token replaces it for these settings and statistics.', '现有授权仍可使用；保存统一连接 Token 后，这些设置与统计将共用新连接。') }}</p>
           <CloudflareTokenForm :key="`connection:${readbackGeneration}`" kind="connection" :label="ui('Cloudflare API Token', 'Cloudflare API Token')" :description="ui('Saved securely in Cloudflare. Saving updates this instance and clears the input; the Token will not be shown again.', 'Token 安全保存在 Cloudflare。保存会更新此实例并清空输入，Token 不会再次显示。')" :disabled="!writable" :save="saveToken" />
-          <div class="capability-heading"><h3>{{ ui('Available functions', '可用功能') }}</h3><div class="capability-check-actions"><UButton v-if="!unresolved" color="neutral" variant="outline" size="sm" type="button" :disabled="loading || busy" @click="verify">{{ ui('Check again', '重新检查') }}</UButton><UButton v-if="!unresolved" color="neutral" variant="outline" size="sm" type="button" :disabled="loading || busy" @click="checkOptional">{{ ui('Check other functions', '检查其他功能') }}</UButton></div></div>
-          <p class="muted-copy capability-explanation">{{ ui('Checks apply to the functions below. Open a row for permissions and details; optional functions are checked only when requested.', '检查结果对应以下功能。展开可查看权限和详情，可选功能仅在主动检查时读取。') }}</p>
+          <div class="capability-heading"><h3>{{ ui('Functions and permissions', '功能与权限') }}</h3><div class="capability-check-actions"><UButton v-if="!unresolved" color="neutral" variant="outline" size="sm" type="button" :disabled="loading || busy" @click="verify">{{ ui('Check again', '重新检查') }}</UButton><UButton v-if="!unresolved" color="neutral" variant="outline" size="sm" type="button" :disabled="loading || busy" @click="checkOptional">{{ ui('Check other functions', '检查其他功能') }}</UButton></div></div>
           <div class="capability-list">
             <details v-for="entry in capabilities" :key="entry.key" class="capability-item" :data-state="capabilityTone(entry.key)" :open="expandedCapabilities.has(entry.key) || previewCapability === entry.key" :data-preview="!expandedCapabilities.has(entry.key) && previewCapability === entry.key" @pointerenter="enterCapability(entry.key, $event)" @pointerleave="previewCapability = null" @focusin="previewCapability = entry.key" @focusout="leaveCapabilityFocus">
               <summary class="capability-summary" @click.prevent="toggleCapabilityDetails(entry.key)">
                 <UIcon :name="capabilityTone(entry.key) === 'verified' ? 'i-lucide-circle-check' : capabilityTone(entry.key) === 'denied' ? 'i-lucide-circle-x' : 'i-lucide-circle-minus'" class="capability-icon" aria-hidden="true" />
-                <span class="capability-label">{{ entry.label }}<span v-if="!entry.required" class="capability-optional">{{ ui('Optional', '可选') }}</span></span>
-                <span class="capability-result">{{ capabilityStatus(entry.key) }}<small>{{ capabilitySource(entry.key) }}</small></span>
-                <UIcon name="i-lucide-chevron-down" class="capability-chevron" aria-hidden="true" />
+                <span class="capability-label">{{ entry.label }}<span class="capability-path">{{ ui(' (', '（') }}{{ entry.path }}{{ ui(')', '）') }}</span></span>
+                <span class="capability-result">{{ capabilityStatus(entry.key) }}</span>
               </summary>
               <div class="capability-info">
                 <dl><div><dt>{{ ui('Permissions', '所需权限') }}</dt><dd>{{ entry.permissions }}</dd></div><div><dt>{{ ui('Scope', '范围') }}</dt><dd>{{ entry.scope }}</dd></div><div><dt>{{ ui('Where to select', 'Cloudflare 选择路径') }}</dt><dd>{{ entry.path }}</dd></div></dl>
                 <p>{{ entry.explanation }}</p>
+                <p v-if="!entry.required" class="muted-copy">{{ ui('This function is optional and checked only when requested.', '此功能为可选项，仅在主动检查时读取。') }}</p>
                 <p class="muted-copy">{{ ui('Checked authorization', '检查的授权') }}：{{ capabilitySource(entry.key) }}</p>
                 <p v-if="entry.key === 'waf' && !connection.target.zone_id" class="muted-copy">{{ ui('Select this domain’s Zone in Usage & limits before checking.', '请先在“用量与限额”选择此域名的 Zone，再检查此功能。') }}</p>
               </div>
@@ -810,28 +803,23 @@ onUnmounted(() => {
 .connection-management, .connection-guide { margin: 16px 0; }
 .connection-compact .connection-summary { margin: 10px 0 4px; }
 .connection-compact .connection-management { margin: 8px 0 0; }
-.required-capability-summary { margin: 0; font-size: 13px; color: var(--color-text-muted); overflow-wrap: anywhere; }
 .token-feedback { margin: 12px 0; }
 .token-feedback > button { margin-top: 8px; }
 .token-feedback p { margin-bottom: 0; }
 .capability-heading { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-top: 16px; }
 .capability-heading h3 { margin: 0; }
 .capability-check-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.capability-explanation { margin: 8px 0 12px; font-size: 13px; }
-.capability-list { display: grid; gap: 4px; margin: 12px 0 20px; }
-.capability-item { position: relative; min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-control); }
-.capability-summary { display: flex; gap: 10px; align-items: center; padding: 10px 12px; list-style: none; font-weight: 500; }
+.capability-list { display: grid; margin: 12px 0 20px; }
+.capability-item { position: relative; min-width: 0; }
+.capability-summary { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 8px 0; list-style: none; font-weight: 500; }
 .capability-summary::-webkit-details-marker { display: none; }
 .capability-summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; border-radius: var(--radius-control); }
 .capability-icon { flex: 0 0 20px; width: 20px; height: 20px; color: var(--color-text-muted); }
 .capability-item[data-state="verified"] .capability-icon { color: var(--color-success); }
 .capability-item[data-state="denied"] .capability-icon { color: var(--color-danger); }
-.capability-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.capability-optional { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--color-text-muted); }
-.capability-result { flex: 0 1 40%; min-width: 0; font-size: 13px; text-align: right; overflow-wrap: anywhere; }
-.capability-chevron { flex: 0 0 14px; width: 14px; height: 14px; color: var(--color-text-muted); }
-.capability-item[open] .capability-chevron { transform: rotate(180deg); }
-.capability-result small { display: block; font-size: 12px; color: var(--color-text-muted); }
+.capability-label { min-width: 0; overflow-wrap: anywhere; }
+.capability-path { font-size: 13px; font-weight: 400; color: var(--color-text-muted); }
+.capability-result { min-width: 0; max-width: 10em; font-size: 13px; text-align: right; overflow-wrap: anywhere; }
 .capability-info { padding: 12px; background: var(--color-surface); border-top: 1px solid var(--color-border); font-size: 13px; overflow-wrap: anywhere; }
 .capability-info dl { display: grid; gap: 8px; margin: 0; }
 .capability-info dl > div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; }
@@ -840,9 +828,9 @@ onUnmounted(() => {
 .capability-info p { margin: 12px 0; }
 .capability-item[open] .capability-info { display: block; }
 @media (hover: hover) and (min-width: 601px) {
-  .capability-item[data-preview="true"] .capability-info { display: block; position: absolute; inset: 100% -1px auto; z-index: 20; border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
+  .capability-item[data-preview="true"] .capability-info { display: block; position: absolute; inset: 100% 0 auto; z-index: 20; border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-overlay); }
 }
-@media (max-width: 600px) { .capability-summary { align-items: start; padding: 10px; } .capability-result { flex-basis: 42%; } .capability-info dl > div { grid-template-columns: 1fr; gap: 3px; } }
+@media (max-width: 600px) { .capability-summary { grid-template-columns: 20px minmax(0, 1fr); gap: 4px 10px; } .capability-result { grid-column: 2; max-width: none; text-align: left; } .capability-info dl > div { grid-template-columns: 1fr; gap: 3px; } }
 summary { cursor: pointer; font-weight: 600; }
 .connection-guide pre { overflow-x: auto; padding: 12px; background: var(--color-surface-muted); font-size: 13px; }
 .plan-comparison { width: 100%; border-collapse: collapse; margin: 16px 0; }

@@ -98,7 +98,7 @@ Wrangler OAuth 登录不会创建 API Key，也不会为网页设置自动补齐
 
 选择「保存 Token」后，Token 一次写入 `CFKANBAN_API_TOKEN` 这一普通加密 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)，Free 支持，无需 Secrets Store。首次连接与更换均用新输入 Token 保存自身，旧 Token 缺少编辑权限或已过期不会阻止有效的新 Token 接入。提交后输入清空，失败时也不恢复草稿；确认生效后可跨设备使用，无需再次输入。
 
-Token 生效后，连接区域缩为小卡片；展开详情可逐项查看能力。绿色对勾表示实际检查通过，红色叉号表示权限不足或目标不匹配；未检查、未设置 Zone 或暂时不可用保持中性。悬停、聚焦或点击能力名称可查看权限和资源范围。默认只检查配置与用量，选择「检查其他功能」才检查通知、账务和域名防护。旧统计授权的检查结果单独标明，不代表新 Token 已生效；读取配置也不证明任意部署操作或所有统计数据集都可用。
+Token 生效后，连接区域缩为小卡片；展开详情可逐项同时查看能力名称与 Cloudflare 权限选择路径。绿色对勾表示实际检查通过，红色叉号表示权限不足或目标不匹配；未检查、未设置 Zone 或暂时不可用保持中性。悬停、聚焦或点击能力名称可查看授权来源、资源范围及核验边界。默认只检查配置与用量，选择「检查其他功能」才检查通知、账务和域名防护。旧统计授权的检查结果单独标明，不代表新 Token 已生效；读取配置也不证明任意部署操作或所有统计数据集都可用。
 
 统一授权优先使用；尚未统一的实例继续按原用途使用 `CFKANBAN_CONFIGURATION_TOKEN`、`CFKANBAN_CONTROL_TOKEN` 和 `USAGE_ANALYTICS_TOKEN`。保存统一授权不会删除旧 Secret，升级保留统一及旧授权的实时配置。原统计 Token 只有读取权限时不能用于写入 Worker 配置；必须创建或选择符合当前 Worker Editor 范围的替代授权。
 
