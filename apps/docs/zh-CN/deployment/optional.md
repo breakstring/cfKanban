@@ -64,38 +64,37 @@ WAF 可以单独选择启用或停用，域名不强制搭配 WAF。Free 配置�
 
 Cloudflare **Billing → Billable Usage → Budget alerts / 预算警报** 在账户累计按量使用费用超过 USD 预算阈值时通知指定收件邮件。公开 API 合同尚未确认 USD 字段或预算编辑操作，cfKanban 因此明确显示限制并提供官方控制台入口。Notifications 授权核验通过后，可向 Owner 只读显示策略名称、启用状态、告警类型与收件邮件；不会把 `limit` 等通用筛选字段当作 USD 金额。读取被拒绝不表示没有预算策略。USD 预算仍在 [Cloudflare Budget Alerts](https://developers.cloudflare.com/billing/manage/budget-alerts/) 查看和管理；它不停止用量或封顶费用，应用附件预算继续独立管理。
 
-### 可选控制面权限
+### Cloudflare 连接 Token 权限
 
 新部署只为已选择的可选能力准备最小权限，默认部署不要求所有账单或安全权限。普通升级保留已有授权与已支持的实时设置；旧实例须先获准升级，补齐固定控制账户、Worker 和数据库目标。新增能力前，应先明确目标与缺少的权限，再确认最小补充授权方案。工具不会创建 Token、自动扩大授权或生成 Global API Key。
-
-使用限定准确账户或 Zone 的 API Token，按请求操作选择权限：
-
-| 可选操作 | 限定范围与权限 |
-| --- | --- |
-| 读取账户账单数据 | Account **Billing Read** |
-| 读取通知策略 | Account **Notifications Read** |
-| 核验 Zone 归属 | 所选 Zone 的 **Zone Read** |
-| 核对 Zone WAF 规则 | Zone **Zone WAF Read** |
-| 读取统计 | Account **Account Analytics Read**，只授权当前账户 |
-
-Owner 的用量页面按需读取通知与 WAF 策略，不要求 Notifications Edit 或 Zone WAF Edit。域名 / WAF 写计划仍按独立流程核对 Worker 路由、Zone、DNS 和规则修改权限。须用真实供应商响应核验可用性；存在 Token 或勾选了某项权限，不等于已证实 endpoint 或预算策略类型可用。
 
 Wrangler OAuth 登录不会创建 API Key，也不会为网页设置自动补齐 Billing、Notifications 或 Zone WAF 权限。不要使用 Global API Key，不导出部署 OAuth 凭据。网页连接与 Wrangler 部署身份分开。
 
 在当前 HTTPS 实例中已认证的「管理中心 → 概览 → Cloudflare 连接」输入一份 API Token。该专用表单是受支持的秘密传输入口，普通 CLI / Agent JSON 操作不接受 Cloudflare Token。不要发到聊天、写入浏览器存储、仓库、命令参数、Shell 环境变量或 Worker 明文变量。账户、Worker 与数据库是只读部署目标；相关 Zone 在「用量与限额 → 域名与访问防护」中设置。
 
-打开 [Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens)，选择页面显示的准确账户，再进入 **Manage Account → Account API Tokens → Create Token**。创建 [account-owned Token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) 的人需要账户 Super Administrator 或 API Token Provisioning 授权；这是创建者的权限，不应给业务 Token 添加 Token 管理权。
+打开 [Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens)，选择页面显示的准确账户，再进入 **Manage Account（管理账户）→ Account API Tokens（账户 API Token）→ Create Token（创建 Token）**。创建 [account-owned Token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) 的人需要账户 Super Administrator 或 API Token Provisioning 授权；这是创建者的权限，连接 Token 无需 **API Tokens Write** 或其他 Token 管理权限。
 
-一份 Token 按所需能力组合权限：
+为同一个 Token 添加以下权限。页面的「创建 Token 与核对权限」指引在对应选择项旁显示当前 Worker 和目标账户。
 
-| 需要的能力 | 权限与资源范围 |
-| --- | --- |
-| 必需：保存连接、调整访问频率及用量设置 | **Specified Workers → 当前已存在的 Worker → Editor**；不选全部 Workers 或 Admin。Editor 也能修改该 Worker 的代码与部署。 |
-| 用量统计 | **Account → Account Analytics → Read**，Account Resources 只选页面目标账户；实际数据集由统计读取核验。 |
-| 可选通知与账务读取 | 目标账户的 **Notifications Read / Billing Read**；不需要 Edit。 |
-| 可选 WAF 读取 | 当前域名已核对 Zone 的 **Zone Read / Zone WAF Read**；不选全部 Zone，不需要 Edit。 |
+#### 必需权限
 
-当前 [Workers 权限](https://developers.cloudflare.com/workers/authorization/workers/)支持限定单个 Worker 的 Editor，[统计指引](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/)说明 Account Analytics Read。通知的 account-owned Token 兼容性仍须实际核验；若某项可选读取被拒绝，页面显示该项的权限状态，其他已核验能力仍可用。不要为消除状态提示扩大到全账户编辑权。域名和 WAF 写入继续使用独立的部署计划流程。
+| 范围 | Cloudflare 选择路径 | 用途 |
+| --- | --- | --- |
+| **Specified Workers（指定的 Workers）** → 选择页面显示的当前已存在 Worker | **Developer Platform（开发者平台）→ Individual Workers → Editor** | 保存连接、调整访问频率及用量设置。Editor 同时包含该 Worker 的代码修改、部署、Secret 与配置修改权。不要选择全账户的 **Workers Editor** 或 **Admin**。 |
+| 仅页面显示的目标账户 | **Analytics & Logs（分析和日志）→ Account Analytics（账户分析）→ Read** | 读取 Workers、D1 与 R2 用量，无需 D1 SQL 或 R2 对象编辑权；实际数据集由统计读取核验。 |
+
+#### 可选读取权限
+
+| 范围 | Cloudflare 选择路径 | 用途 |
+| --- | --- | --- |
+| 仅目标账户 | **Account & Billing（账户与账务）→ Billing → Read** | 读取账务与方案信息。 |
+| 仅目标账户 | **Account & Billing（账户与账务）→ Notifications → Read** | 读取已有通知策略；account-owned Token 兼容性须以实际读取核验。 |
+| 仅指定当前域名所属的 Zone | **DNS & Zones（DNS 和区域）→ Zone → Read** | 核验所选 Zone 属于目标账户与当前域名。 |
+| 当前域名的同一个指定 Zone | **App Security（应用安全）→ Zone WAF Rules → Read** | 读取该 Zone 已有的 WAF 规则；选择 **Zone WAF Rules**，不是 Account WAF。 |
+
+可选能力无需 Edit 权限。Owner 的用量页面按需读取通知与 WAF 数据。缺少可选权限或 Token 兼容性未确认，只影响对应能力，其他已核验能力仍可用。存在 Token 或勾选了某项权限，不等于已证实 endpoint 或预算策略类型可用。
+
+[Workers 权限](https://developers.cloudflare.com/workers/authorization/workers/)说明限定单个 Worker 的 Editor，[统计指引](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/)说明 Account Analytics Read。不要为消除状态提示扩大到全账户编辑权。域名和 WAF 写入继续使用独立的部署计划流程，分别核对 Worker 路由、Zone、DNS 和规则修改权限。
 
 选择「保存连接」后，Token 一次写入 `CFKANBAN_API_TOKEN` 这一普通加密 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)，Free 支持，无需 Secrets Store。首次连接与轮换均用输入 Token 保存其自身，旧授权过期不妨碍有效替代 Token 接入。提交后输入清空，失败时也不恢复草稿；读回与能力核验成功后可跨设备使用，无需再次输入。
 

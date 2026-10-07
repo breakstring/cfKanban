@@ -64,38 +64,37 @@ The panel derives usage reminders from fresh snapshots without sending emails or
 
 Cloudflare **Billing → Billable Usage → Budget alerts** separately notifies selected email recipients when cumulative usage-based account charges exceed a USD budget threshold. The public API contract has not confirmed the USD fields or budget editing operation, so cfKanban reports this limitation and links to the official dashboard. With verified Notifications authorization, it reads policy names, enabled states, alert types, and email recipients for the Owner; it does not interpret generic filters such as `limit` as a USD amount. A read denial does not mean no budget policy is configured. View and manage USD budgets in [Cloudflare Budget Alerts](https://developers.cloudflare.com/billing/manage/budget-alerts/); alerts do not stop usage or cap charges. The application attachment budget remains separate.
 
-### Optional control-plane permissions
+### Cloudflare connection Token permissions
 
 For a new deployment, prepare only the minimum permissions for optional capabilities you selected; default deployment does not request every billing or security permission. An ordinary upgrade preserves the existing authorization and supported live settings. Older instances need an approved upgrade to inject the fixed control account, Worker, and database targets. Before enabling an additional capability, identify its targets and missing permissions, then agree on the minimum additional authorization. Tools do not create Tokens, automatically grant permissions, or create a Global API Key.
-
-Use an API Token restricted to the exact account or Zone, with permissions selected for the requested operation:
-
-| Optional operation | Restricted permission |
-| --- | --- |
-| Read account billing data | Account **Billing Read** |
-| Read notification policies | Account **Notifications Read** |
-| Verify Zone ownership | Zone **Zone Read** for the selected Zone |
-| Inspect Zone WAF rules | Zone **Zone WAF Read** |
-| Read analytics | Account **Account Analytics Read**, restricted to the current Account |
-
-The Owner usage page reads notification and WAF policy data on demand; it does not require Notifications Edit or Zone WAF Edit. Domain/WAF write plans retain their separate Worker routing, Zone, DNS, and rule-edit requirements. Verify actual provider responses; a Token or a permission selection alone does not prove an endpoint or budget-policy type is available.
 
 Wrangler OAuth login does not create an API key or automatically add Billing, Notifications, or Zone WAF authorization to the Web controls. Do not use a Global API Key or export deployment OAuth credentials. The Web connection remains separate from the Wrangler deployment identity.
 
 Enter one API Token in the authenticated **Administration → Overview → Cloudflare connection** form on the current HTTPS instance. This dedicated form is the supported secret transport; generic CLI/Agent JSON operations do not accept Cloudflare Tokens. Never send them to chat or store them in browser storage, the repository, command arguments, shell environment variables, or plaintext Worker variables. Account, Worker, and database are fixed deployment targets. Set the relevant Zone under **Usage and limits → Domain and access protection**.
 
-Open [Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens), choose the exact Account shown on the page, and follow **Manage Account → Account API Tokens → Create Token**. Creating an [account-owned Token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) requires account Super Administrator or API Token Provisioning authority. This is the creator's authority, not a Token-management permission to add to the business Token.
+Open [Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens), choose the exact Account shown on the page, and follow **Manage Account → Account API Tokens → Create Token**. Creating an [account-owned Token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) requires account Super Administrator or API Token Provisioning authority. This is the creator's authority; the connection Token does not need **API Tokens Write** or other Token-management permissions.
 
-Combine permissions for the capabilities you need in one Token:
+Add the following permissions to the same Token. The page's **Create a Token and check permissions** guide shows the current Worker and target Account next to the corresponding selections.
 
-| Capability | Permissions and resource scope |
-| --- | --- |
-| Required: save the connection and change request-rate or usage settings | **Specified Workers → this existing Worker → Editor**; do not choose all Workers or Admin. Editor also grants code and deployment authority for this Worker. |
-| Analytics | **Account → Account Analytics → Read**, restricted to the displayed Account; actual datasets are checked through usage reads. |
-| Optional notification and billing reads | **Notifications Read / Billing Read** for the displayed Account; no Edit is required. |
-| Optional WAF reads | **Zone Read / Zone WAF Read** for this domain's verified Zone; do not choose all Zones or Edit. |
+#### Required permissions
 
-The current [Workers permission guide](https://developers.cloudflare.com/workers/authorization/workers/) supports Editor scoped to one Worker, and the [analytics guide](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/) documents Account Analytics Read. Account-owned Notifications compatibility still requires an actual check. If an optional read is denied, its capability status explains the limitation while other verified capabilities remain available. Do not broaden account-wide editing privileges to clear a status warning. Domain and WAF writes retain the separate deployment plan workflow.
+| Scope | Cloudflare selection | Use |
+| --- | --- | --- |
+| **Specified Workers** → select the current existing Worker shown on the page | **Developer Platform → Individual Workers → Editor** | Save the connection and change request-rate or usage settings. Editor also grants this Worker's code, deployment, Secret, and configuration modification authority. Do not select account-wide **Workers Editor** or **Admin**. |
+| Target Account shown on the page only | **Analytics & Logs → Account Analytics → Read** | Read Workers, D1, and R2 usage; no D1 SQL or R2 object editing permissions are required. Actual datasets are verified through usage reads. |
+
+#### Optional read permissions
+
+| Scope | Cloudflare selection | Use |
+| --- | --- | --- |
+| Target Account only | **Account & Billing → Billing → Read** | Read billing and plan information. |
+| Target Account only | **Account & Billing → Notifications → Read** | Read existing notification policies. Account-owned Token compatibility requires an actual read check. |
+| Specified Zone for the current domain only | **DNS & Zones → Zone → Read** | Verify the selected Zone belongs to the target Account and domain. |
+| The same specified Zone for the current domain | **App Security → Zone WAF Rules → Read** | Read existing Zone WAF rules. Select **Zone WAF Rules**, not Account WAF. |
+
+Optional capabilities require no Edit permissions. The Owner usage page reads notification and WAF data on demand. Missing optional permissions or unsupported Token compatibility affect only the corresponding capability; other verified capabilities remain available. A Token or a permission selection alone does not prove an endpoint or budget-policy type is available.
+
+The [Workers permission guide](https://developers.cloudflare.com/workers/authorization/workers/) explains Editor scoped to one Worker, and the [analytics guide](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/) documents Account Analytics Read. Do not broaden account-wide editing privileges to clear a status warning. Domain and WAF writes retain the separate deployment plan workflow, including its Worker routing, Zone, DNS, and rule-edit requirements.
 
 Choose **Save connection** to write the Token once to `CFKANBAN_API_TOKEN`, an ordinary encrypted [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/), supported on Free without Secrets Store. Initial setup and rotation both use the entered Token to save itself, so expired old authorization does not block a valid replacement. The input clears after submission, including failure, without a restored draft. Once readback and capabilities are verified, the Owner can use another device without entering it again.
 

@@ -64,8 +64,17 @@ test('Overview keeps one connection Token, separate capabilities and five API sc
     assert.match(text(host), /Change settingsVerified.*View usageNot configured/);
     assert.equal(all(host).filter(item => item.tag === 'input' && item.props.type === 'password').length, 1);
     const tokens = section(host, 'connection-tokens-heading');
-    assert.match(text(tokens), /account-owned Token.*Specified Workers.*Editor.*Account Analytics.*Read.*code, deployment, and Secret management/);
-    assert.match(text(tokens), /Notifications Read and Billing Read are optional.*Zone Read and Zone WAF Read.*verified Zone only/);
+    assert.match(text(tokens), /Manage Account → Account API Tokens → Create Token.*one account-owned Token/);
+    const required = section(tokens, 'token-required-permissions-heading');
+    const optional = section(tokens, 'token-optional-permissions-heading');
+    assert.equal(all(required).filter(item => item.tag === 'li').length, 2);
+    assert.equal(all(optional).filter(item => item.tag === 'li').length, 4);
+    assert.match(text(required), /Required permissions.*Specified Workers → select this existing Worker: worker-fixture.*Developer Platform → Individual Workers → Editor.*code, deployment, Secret, and configuration modification authority/);
+    assert.match(text(required), /Do not select account-wide Workers Editor or Admin.*Target account only: account-fixture.*Analytics & Logs → Account Analytics → Read.*Workers, D1, and R2 usage.*D1 SQL and R2 object editing permissions are not required/);
+    assert.match(text(optional), /Optional read permissions.*Target account only: account-fixture.*Account & Billing → Billing → Read.*Account & Billing → Notifications → Read.*Account-owned Token compatibility/);
+    assert.match(text(optional), /Specified Zone for this domain only: kanban.example.com · zone-fixture.*DNS & Zones → Zone → Read.*not Account WAF.*App Security → Zone WAF Rules → Read/);
+    assert.match(text(optional), /No optional Edit permissions are required.*affect only the corresponding capability/);
+    assert.match(text(tokens), /creator needs account Super Administrator or API Token Provisioning authority.*Do not add API Tokens Write/);
     assert.match(text(tokens), /account-fixture.*worker-fixture.*db-fixture/);
     assert.ok(all(tokens).some(item => item.tag === 'a' && item.props.href === 'https://dash.cloudflare.com/?to=/:account/api-tokens'));
     assert.equal(section(host, 'connection-configuration-heading'), undefined);
@@ -74,7 +83,10 @@ test('Overview keeps one connection Token, separate capabilities and five API sc
     assert.equal(all(section(host, 'connection-rate-heading')).find(item => item.tag === 'select').children.length, 5);
     locale.value = 'zh-CN'; await nextTick();
     assert.match(text(host), /正在使用现有授权.*修改设置核验通过.*查看用量未配置/);
-    assert.match(text(tokens), /当前已存在的 Worker.*Editor/);
+    assert.match(text(required), /必需权限.*Specified Workers（指定的 Workers）.*当前已存在的 Worker： worker-fixture.*Developer Platform（开发者平台）→ Individual Workers → Editor/);
+    assert.match(text(required), /仅目标账户： account-fixture.*Analytics & Logs（分析和日志）→ Account Analytics（账户分析）→ Read/);
+    assert.match(text(optional), /可选读取权限.*Account & Billing（账户与账务）→ Billing → Read.*Account & Billing（账户与账务）→ Notifications → Read/);
+    assert.match(text(optional), /DNS & Zones（DNS 和区域）→ Zone → Read.*App Security（应用安全）→ Zone WAF Rules → Read.*可选能力无需 Edit 权限/);
   } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
 });
 

@@ -356,9 +356,68 @@ onUnmounted(() => { disposed = true; readController.abort(); });
           <CloudflareTokenForm :key="`connection:${readbackGeneration}`" kind="connection" :label="ui('Connection Token', '连接 Token')" :description="ui('Encrypted and saved in Cloudflare, not in this browser. Saving updates the current instance configuration and clears the input; the Token is never shown again.', 'Token 将加密保存到 Cloudflare，不保存在浏览器。保存会更新当前实例配置并清空输入，Token 不会再次显示。')" :disabled="!writable" :save="saveToken" @verify="verify" />
           <details class="connection-guide">
             <summary>{{ ui('Create a Token and check permissions', '创建 Token 与核对权限') }}</summary>
-            <p>{{ ui('In Manage Account → Account API Tokens → Create Token, choose the target account shown below. Use an account-owned Token with Specified Workers → this existing Worker → Editor, plus Account → Account Analytics → Read for usage collection. Editor includes code, deployment, and Secret management. The Token is stored in a Worker Secret.', '在 Manage Account → Account API Tokens → Create Token 中选择下方目标账户。使用 account-owned Token，配置 Specified Workers → 当前已存在的 Worker → Editor，并为用量采集添加 Account → Account Analytics → Read。Editor 包含代码修改、部署与 Secret 管理权；Token 最终保存在 Worker Secret。') }}</p>
-            <p>{{ ui('Notifications Read and Billing Read are optional. For WAF reads, select Zone Read and Zone WAF Read for this domain’s verified Zone only. Cloudflare Token support and actual permissions vary; optional capabilities may remain unavailable without blocking settings and statistics.', 'Notifications Read 与 Billing Read 是可选读取权限；读取 WAF 时，仅为当前域名已核对的 Zone 添加 Zone Read 和 Zone WAF Read。Cloudflare Token 支持范围及实际权限可能不同，可选能力不可用不影响设置与统计。') }}</p>
-            <p class="muted-copy">{{ ui('The creator needs account Super Administrator or API Token Provisioning authority. Do not add Token-management permissions to the connection Token. Verify a replacement before revoking the old Token.', '创建者需要账户 Super Administrator 或 API Token Provisioning 授权；不要给连接 Token 添加 Token 管理权限。轮换时先核验新连接，再撤销旧 Token。') }}</p>
+            <p>{{ ui('In Manage Account → Account API Tokens → Create Token, select the target account shown below and create one account-owned Token with these permissions.', '在 Manage Account（管理账户）→ Account API Tokens（账户 API Token）→ Create Token（创建 Token）中，选择下方目标账户，为同一个 account-owned Token 添加以下权限。') }}</p>
+            <section class="token-permission-group" aria-labelledby="token-required-permissions-heading">
+              <h4 id="token-required-permissions-heading">{{ ui('Required permissions', '必需权限') }}</h4>
+              <ul class="token-permission-list">
+                <li>
+                  <strong>{{ ui('Current Worker · Editor', '当前 Worker · Editor') }}</strong>
+                  <dl>
+                    <div><dt>{{ ui('Scope', '范围') }}</dt><dd>{{ ui('Specified Workers → select this existing Worker:', 'Specified Workers（指定的 Workers）→ 选择当前已存在的 Worker：') }} <span>{{ connection.target.worker_name ?? ui('Unknown', '未知') }}</span></dd></div>
+                    <div><dt>{{ ui('Cloudflare selection', 'Cloudflare 选择路径') }}</dt><dd>{{ ui('Developer Platform → Individual Workers → Editor', 'Developer Platform（开发者平台）→ Individual Workers → Editor') }}</dd></div>
+                    <div><dt>{{ ui('Use', '用途') }}</dt><dd>{{ ui('Save the connection and change request-rate or usage settings. Editor also grants this Worker’s code, deployment, Secret, and configuration modification authority.', '保存连接、修改访问频率与用量设置。Editor 同时包含该 Worker 的代码修改、部署、Secret 与配置修改权。') }}</dd></div>
+                  </dl>
+                  <p class="muted-copy">{{ ui('Do not select account-wide Workers Editor or Admin.', '不要选择全账户的 Workers Editor 或 Admin。') }}</p>
+                </li>
+                <li>
+                  <strong>Account Analytics · Read</strong>
+                  <dl>
+                    <div><dt>{{ ui('Scope', '范围') }}</dt><dd>{{ ui('Target account only:', '仅目标账户：') }} {{ connection.target.account_id ?? ui('Unknown', '未知') }}</dd></div>
+                    <div><dt>{{ ui('Cloudflare selection', 'Cloudflare 选择路径') }}</dt><dd>{{ ui('Analytics & Logs → Account Analytics → Read', 'Analytics & Logs（分析和日志）→ Account Analytics（账户分析）→ Read') }}</dd></div>
+                    <div><dt>{{ ui('Use', '用途') }}</dt><dd>{{ ui('Read Workers, D1, and R2 usage. D1 SQL and R2 object editing permissions are not required.', '读取 Workers、D1 与 R2 用量，无需 D1 SQL 或 R2 对象编辑权。') }}</dd></div>
+                  </dl>
+                </li>
+              </ul>
+            </section>
+            <section class="token-permission-group" aria-labelledby="token-optional-permissions-heading">
+              <h4 id="token-optional-permissions-heading">{{ ui('Optional read permissions', '可选读取权限') }}</h4>
+              <ul class="token-permission-list">
+                <li>
+                  <strong>Billing · Read</strong>
+                  <dl>
+                    <div><dt>{{ ui('Scope', '范围') }}</dt><dd>{{ ui('Target account only:', '仅目标账户：') }} {{ connection.target.account_id ?? ui('Unknown', '未知') }}</dd></div>
+                    <div><dt>{{ ui('Cloudflare selection', 'Cloudflare 选择路径') }}</dt><dd>{{ ui('Account & Billing → Billing → Read', 'Account & Billing（账户与账务）→ Billing → Read') }}</dd></div>
+                    <div><dt>{{ ui('Use', '用途') }}</dt><dd>{{ ui('Read billing and plan information.', '读取账务与方案信息。') }}</dd></div>
+                  </dl>
+                </li>
+                <li>
+                  <strong>Notifications · Read</strong>
+                  <dl>
+                    <div><dt>{{ ui('Scope', '范围') }}</dt><dd>{{ ui('Target account only:', '仅目标账户：') }} {{ connection.target.account_id ?? ui('Unknown', '未知') }}</dd></div>
+                    <div><dt>{{ ui('Cloudflare selection', 'Cloudflare 选择路径') }}</dt><dd>{{ ui('Account & Billing → Notifications → Read', 'Account & Billing（账户与账务）→ Notifications → Read') }}</dd></div>
+                    <div><dt>{{ ui('Use', '用途') }}</dt><dd>{{ ui('Read existing notification policies. Account-owned Token compatibility is checked through actual reads.', '读取已有通知策略；account-owned Token 兼容性以实际读取核验为准。') }}</dd></div>
+                  </dl>
+                </li>
+                <li>
+                  <strong>Zone · Read</strong>
+                  <dl>
+                    <div><dt>{{ ui('Scope', '范围') }}</dt><dd>{{ ui('Specified Zone for this domain only:', '仅指定当前域名所属的 Zone：') }} {{ connection.target.hostname ?? ui('Hostname unknown', '域名未知') }} · {{ connection.target.zone_id ?? ui('Zone not selected', '尚未选择 Zone') }}</dd></div>
+                    <div><dt>{{ ui('Cloudflare selection', 'Cloudflare 选择路径') }}</dt><dd>{{ ui('DNS & Zones → Zone → Read', 'DNS & Zones（DNS 和区域）→ Zone → Read') }}</dd></div>
+                    <div><dt>{{ ui('Use', '用途') }}</dt><dd>{{ ui('Verify the selected Zone belongs to the target account and domain.', '核验所选 Zone 属于目标账户与当前域名。') }}</dd></div>
+                  </dl>
+                </li>
+                <li>
+                  <strong>Zone WAF Rules · Read</strong>
+                  <dl>
+                    <div><dt>{{ ui('Scope', '范围') }}</dt><dd>{{ ui('The same specified Zone for this domain; not Account WAF.', '当前域名的同一个指定 Zone；不是 Account WAF。') }}</dd></div>
+                    <div><dt>{{ ui('Cloudflare selection', 'Cloudflare 选择路径') }}</dt><dd>{{ ui('App Security → Zone WAF Rules → Read', 'App Security（应用安全）→ Zone WAF Rules → Read') }}</dd></div>
+                    <div><dt>{{ ui('Use', '用途') }}</dt><dd>{{ ui('Read existing WAF rules for this Zone.', '读取该 Zone 已有的 WAF 规则。') }}</dd></div>
+                  </dl>
+                </li>
+              </ul>
+              <p class="muted-copy">{{ ui('No optional Edit permissions are required. Missing permissions or unsupported Token compatibility affect only the corresponding capability; other verified capabilities remain available.', '可选能力无需 Edit 权限。缺少权限或 Token 兼容性未确认，只影响对应能力，其他已核验能力仍可用。') }}</p>
+            </section>
+            <p class="muted-copy">{{ ui('The creator needs account Super Administrator or API Token Provisioning authority. Do not add API Tokens Write or other Token-management permissions to the connection Token. Verify a replacement before revoking the old Token.', '创建者需要账户 Super Administrator 或 API Token Provisioning 授权；连接 Token 无需 API Tokens Write 或其他 Token 管理权限。轮换时先核验新连接，再撤销旧 Token。') }}</p>
             <p><a href="https://dash.cloudflare.com/?to=/:account/api-tokens" target="_blank" rel="noopener noreferrer">{{ ui('Open Account API Tokens', '打开 Account API Tokens') }}</a> · <a href="https://developers.cloudflare.com/workers/authorization/workers/" target="_blank" rel="noopener noreferrer">{{ ui('Official permissions guide', '官方权限说明') }}</a> · <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Permissions and recovery guide', '权限与恢复指南') }}</a></p>
             <dl class="connection-target"><div><dt>{{ ui('Target account', '目标账户') }}</dt><dd>{{ connection.target.account_id ?? ui('Unknown', '未知') }}</dd></div><div><dt>{{ ui('Target Worker', '目标 Worker') }}</dt><dd>{{ connection.target.worker_name ?? ui('Unknown', '未知') }}</dd></div><div><dt>{{ ui('Database', '数据库') }}</dt><dd>{{ connection.target.database_id ?? ui('Unknown', '未知') }}</dd></div></dl>
             <p class="muted-copy">{{ ui('These targets belong to this instance and cannot be changed on this page. A saved Secret alone does not confirm active deployment.', '这些目标属于当前实例，不能在此页面更改；仅保存 Secret 不表示部署已核验生效。') }}</p>
@@ -407,6 +466,16 @@ onUnmounted(() => { disposed = true; readController.abort(); });
 .control-form label { display: grid; gap: 8px; min-width: 180px; }
 .token-current { margin: 16px 0 0; }
 .token-creation-path { overflow-wrap: anywhere; }
+.token-permission-group { margin: 24px 0; }
+.token-permission-group h4 { margin: 0 0 12px; font-size: 15px; }
+.token-permission-list { margin: 0; padding-left: 20px; }
+.token-permission-list li { padding: 12px 0; }
+.token-permission-list li + li { border-top: 1px solid var(--color-border); }
+.token-permission-list dl { margin: 8px 0 0; }
+.token-permission-list dl > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; margin-top: 8px; }
+.token-permission-list dt { color: var(--color-text-muted); font-size: 13px; }
+.token-permission-list dd { margin: 0; overflow-wrap: anywhere; }
+.token-permission-list p { margin: 8px 0 0; }
 .connection-summary { margin: 16px 0 12px; }
 .connection-capabilities { display: flex; flex-wrap: wrap; gap: 12px 32px; margin: 12px 0 20px; }
 .connection-capabilities > div { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -422,5 +491,5 @@ summary { cursor: pointer; font-weight: 600; }
 .notification-policies { padding-left: 20px; }
 .notification-policies li { padding: 8px 0; }
 .notification-policies p { margin: 4px 0; overflow-wrap: anywhere; }
-@media (max-width: 600px) { .connection-target { grid-template-columns: 1fr; } .control-form label { width: 100%; } }
+@media (max-width: 600px) { .connection-target { grid-template-columns: 1fr; } .control-form label { width: 100%; } .token-permission-list dl > div { grid-template-columns: 1fr; gap: 4px; } }
 </style>
