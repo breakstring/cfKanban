@@ -96,11 +96,13 @@ Wrangler OAuth 登录不会创建 API Key，也不会为网页设置自动补齐
 
 [Workers 权限](https://developers.cloudflare.com/workers/authorization/workers/)说明限定单个 Worker 的 Editor，[统计指引](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/)说明 Account Analytics Read。不要为消除状态提示扩大到全账户编辑权。域名和 WAF 写入继续使用独立的部署计划流程，分别核对 Worker 路由、Zone、DNS 和规则修改权限。
 
-选择「保存连接」后，Token 一次写入 `CFKANBAN_API_TOKEN` 这一普通加密 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)，Free 支持，无需 Secrets Store。首次连接与轮换均用输入 Token 保存其自身，旧授权过期不妨碍有效替代 Token 接入。提交后输入清空，失败时也不恢复草稿；读回与能力核验成功后可跨设备使用，无需再次输入。
+选择「保存 Token」后，Token 一次写入 `CFKANBAN_API_TOKEN` 这一普通加密 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)，Free 支持，无需 Secrets Store。首次连接与更换均用新输入 Token 保存自身，旧 Token 缺少编辑权限或已过期不会阻止有效的新 Token 接入。提交后输入清空，失败时也不恢复草稿；确认生效后可跨设备使用，无需再次输入。
+
+Token 生效后，连接区域缩为小卡片；展开详情可逐项查看能力。绿色对勾表示实际检查通过，红色叉号表示权限不足或目标不匹配；未检查、未设置 Zone 或暂时不可用保持中性。悬停、聚焦或点击能力名称可查看权限和资源范围。默认只检查配置与用量，选择「检查其他功能」才检查通知、账务和域名防护。旧统计授权的检查结果单独标明，不代表新 Token 已生效；读取配置也不证明任意部署操作或所有统计数据集都可用。
 
 统一授权优先使用；尚未统一的实例继续按原用途使用 `CFKANBAN_CONFIGURATION_TOKEN`、`CFKANBAN_CONTROL_TOKEN` 和 `USAGE_ANALYTICS_TOKEN`。保存统一授权不会删除旧 Secret，升级保留统一及旧授权的实时配置。原统计 Token 只有读取权限时不能用于写入 Worker 配置；必须创建或选择符合当前 Worker Editor 范围的替代授权。
 
-已配置 Secret 不等于部署或能力核验成功。「处理中」和「结果未知」必须先「核验当前状态」，不要盲目重复保存或应用。轮换时先核验替代 Token，再撤销旧 Token；实例不可访问时使用部署恢复流程。API 核验所需能力与目标绑定，但不能证明 Token 没有其他权限。Cloudflare 官方 Worker Secret 输入仍是平台配置入口，保存并部署会应用 Worker 配置变更。
+页面分别说明保存失败、等待确认生效和能力检查失败。保存时若明确缺少权限，会给出对应原因；预检 HTTP 故障显示失败步骤、供应商状态和请求 ID，不暴露 Token 或供应商原始响应。Token 已生效后的能力检查失败不表示保存失败。保存结果未确认时，先选择「检查保存结果」，不要重复保存；暂未查到记录仍不等于保存未发生。更换时先确认新 Token 生效，再撤销旧 Token；实例不可访问时使用部署恢复流程。API 核验所需能力与目标绑定，但不能证明 Token 没有其他权限。Cloudflare 官方 Worker Secret 输入仍是平台配置入口，保存并部署会应用 Worker 配置变更。
 
 `USAGE_*` 变量、Secret、限流 binding 和 CPU 上限等 Worker 配置变更，需要部署 Worker 版本才生效。在供应商控制面修改 WAF 规则或 Budget Alerts 策略，本身不需要重新部署 Worker，但保存后须读回供应商状态。保存在 D1 的应用设置保存成功后无需重新部署 Worker；后续请求按相应读取与缓存规则使用新配置，页面仍可能需要刷新，见[实例设置](../administration/settings.md)。
 
@@ -111,11 +113,11 @@ Wrangler OAuth 登录不会创建 API Key，也不会为网页设置自动补齐
 结合 <发生时间和现象> 评估是否需要调整，先不要部署。
 ```
 
-Owner 可在网页「概览 → 访问频率限制」查看并调整已支持的限制；先在同页的 Cloudflare 连接中核验配置授权。访问频率限制与[公开项目人数及内容配额](../administration/public-join.md)不同，出现请求过多不一定是项目已满。
+Owner 可在网页「用量与限额 → 访问频率限制」查看并调整已支持的限制；先在「概览 → Cloudflare 连接」保存并检查 Token。输入不可用时，页面会说明缺少 Token、尚未检查或有未确认操作等原因，并给出下一步入口。访问频率限制与[公开项目人数及内容配额](../administration/public-join.md)不同，出现请求过多不一定是项目已满。
 
 **在哪里修改：** Worker 的 **Settings → Variables and Secrets** 可查看 `RATE_LIMIT_*_LIMIT` 和 `RATE_LIMIT_*_PERIOD_SECONDS`，但这些变量只用于显示和错误说明。真正限流由 `ratelimits` binding 中的 `simple.limit` / `simple.period` 执行；[Cloudflare Rate Limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) 不在 Dashboard 展示。部署工具应一起更新两者并读回核对，不能只改变量。每身份 / 每 isolate 查询并发上限由服务代码固定。
 
-Owner 页面分别处理实例 API、单一身份、未认证敏感操作、匿名登录以及计数 / 标题搜索。填写正整数与 10 或 60 秒窗口，预览计划、核对变更前后数值，再应用；服务端保留其他设置，同时更新对应 binding 与显示变量。遇到部署漂移或未完成操作时拒绝；结果未知需要核验，不自动重发。此表单不修改 CPU 上限或查询并发。
+Owner 页面分别处理实例 API、单一身份、未认证敏感操作、匿名登录以及计数 / 标题搜索。填写正整数与 10 或 60 秒窗口，选择「修改限制」，核对变更前后数值，再「确认保存」。这一步确认让你在实际修改前看到影响；服务端保留其他设置，同时更新对应 binding 与显示变量。遇到部署漂移或未完成操作时拒绝；结果未知需要检查，不自动重发。此表单不修改 CPU 上限或查询并发。
 
 新部署另有匿名登录与计数/标题搜索保护，并限制昂贵查询的并发。客户端遵守 Retry-After 与失败退避，重复操作不要通过换身份、不断重试或自动重放写入绕过限制。平台限流按 PoP 最佳努力执行，不是全局账单上限。Paid CPU 上限需在计划中明确配置并验证，不自动购买或升级方案。
 

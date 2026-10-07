@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.10.1-rc.4",
+    "version": "1.10.1-rc.5",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -12625,6 +12625,84 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
+    "/api/v1/admin/cloudflare/secret-operations/{request_key}": {
+      "get": {
+        "operationId": "getCloudflareSecretOperation",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Cloudflare Secret Operation",
+        "description": "Owner-only read of the original Secret-save intent identified by its non-secret Idempotency-Key, scoped to the current Principal and Secret-save route. Returns only operation metadata; no provider call or write is made. A 404 does not prove that an in-flight save cannot later commit and does not authorize another save.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[\\x20-\\x7E]+$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
     "/api/v1/admin/cloudflare/plans/{plan_id}": {
       "get": {
         "operationId": "getCloudflarePlan",
@@ -12707,7 +12785,7 @@
           "admin"
         ],
         "summary": "Verify Cloudflare Control",
-        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction. Empty requests check configuration and analytics only. include_optional=true additionally checks Notifications, Billing and configured Zone WAF. Core refreshes preserve cached optional results for the current connection; Secret or Zone changes invalidate them.",
         "security": [
           {
             "BearerCredential": []
@@ -12779,7 +12857,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EmptyRequest"
+                "$ref": "#/components/schemas/CloudflareVerifyRequest"
               }
             }
           }
@@ -17950,6 +18028,17 @@
             "$ref": "#/components/schemas/Timestamp"
           }
         }
+      },
+      "CloudflareVerifyRequest": {
+        "type": "object",
+        "properties": {
+          "include_optional": {
+            "type": "boolean",
+            "default": false,
+            "description": "Refresh configuration and analytics by default. Set true only for an explicit Notifications, Billing and configured Zone WAF capability check."
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateCloudflareSettingsRequest": {
         "type": "object",

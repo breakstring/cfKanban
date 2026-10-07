@@ -78,6 +78,8 @@ function isVerifiedErrorEnvelope(response: Response, value: unknown): value is A
       && hasBodyRetryAfter
       && parsedRetryAfter === value.retry_after_seconds;
   const sourceIsConsistent = value.source === "service"
+    || value.category === "authorization"
+    || value.category === "conflict"
     || value.category === "platform_failure"
     || value.category === "platform_quota";
   return responseRequestId !== null

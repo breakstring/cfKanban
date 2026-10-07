@@ -1661,6 +1661,14 @@
       }
     },
     {
+      "command": "admin cloudflare token-operation",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflareSecretOperation"
+      }
+    },
+    {
       "command": "admin cloudflare verify",
       "effect": "write",
       "route": {
@@ -3691,6 +3699,18 @@
       }
     },
     {
+      "operation": "getCloudflareSecretOperation",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare/secret-operations/{request_key}",
+      "summary": "Get Cloudflare Secret Operation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare token-operation"
+        ]
+      }
+    },
+    {
       "operation": "verifyCloudflareControl",
       "method": "POST",
       "path": "/api/v1/admin/cloudflare/verify",
@@ -4610,6 +4630,7 @@
           "admin cloudflare notifications",
           "admin cloudflare waf",
           "admin cloudflare operation",
+          "admin cloudflare token-operation",
           "admin cloudflare verify",
           "admin cloudflare zone",
           "admin cloudflare verify-operation",

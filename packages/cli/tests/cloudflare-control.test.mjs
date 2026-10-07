@@ -5,7 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { COMMANDS } from '../src/catalog.mjs';
 import { createCliRuntime } from '../src/runtime.mjs';
-import { exitCode } from '../src/main.mjs';
+import { exitCode, helpDocument, renderHelp } from '../src/main.mjs';
+import { parseArguments } from '../src/parser.mjs';
 import { createMcpStateFixture } from '../../../scripts/tests/mcp-fixture.mjs';
 
 const base='/api/v1/admin/cloudflare';
@@ -20,6 +21,49 @@ async function isolatedCliFixture(t,requestImpl) {
 const record=async(f,id)=>JSON.parse(await readFile(path.join(f.stateRoot,'instances',f.instanceId,'cli-operations',`${id}.json`),'utf8'));
 const plan=(id,version=5)=>({plan_id:id,kind:'rate_limit',version,baseline_version_id:randomUUID(),baseline_deployment_id:randomUUID(),target:{worker_name:'test-worker'},before:{limit:300},after:{limit:400},created_at:'2026-10-07T00:00:00.000Z'});
 const operation=(id,status='verified',version=6)=>({operation_id:id,kind:'rate_limit',status,version,result_version_id:null,deployment_id:null,failure_class:status==='failed'?'permission_denied':null});
+
+test('Token operation lookup parses the original key and sends one exact read-only request',async t=>{
+  const requestKey=randomUUID(),cloudId=randomUUID(),calls=[],result=operation(cloudId,'unknown');
+  const f=await isolatedCliFixture(t,async options=>{calls.push(options);return ok(result);});
+  const parsed=await parseArguments(['admin','cloudflare','token-operation','--instance',f.instanceId,'--request-key',requestKey]);
+  assert.equal(parsed.command.operation,'getCloudflareSecretOperation');assert.equal(parsed.command.effect,'read');assert.equal(parsed.input.request_key,requestKey);
+  assert.equal(parsed.command.parameters.find(parameter=>parameter.name==='request_key').required,true);
+  const observed=await f.runtime.execute(parsed.command,parsed.input);
+  assert.deepEqual(observed.data,result);assert.equal(calls.length,1);assert.equal(calls[0].method,'GET');assert.equal(calls[0].apiPath,`${base}/secret-operations/${requestKey}`);assert.equal(calls[0].body,undefined);assert.equal(calls[0].idempotencyKey,undefined);
+  await assert.rejects(parseArguments(['admin','cloudflare','token-operation','--instance',f.instanceId]),{code:'CLI_MISSING_ARGUMENT'});
+  await assert.rejects(parseArguments(['admin','cloudflare','token-operation','--instance',f.instanceId,'--request-key',requestKey,'--token','forbidden']),{code:'CLI_UNKNOWN_OPTION'});
+  for(const locale of ['en','zh-CN']){
+    const help=helpDocument('admin cloudflare token-operation',locale);const entry=help.commands[0];assert.equal(entry.effect,'read');assert.ok(entry.options.some(option=>option.flag==='--request-key'&&option.required));assert.ok(!entry.options.some(option=>['token','secret','idempotencyKey'].includes(option.field)));
+    const rendered=renderHelp(help);assert.match(rendered,/--request-key/);assert.match(rendered,locale==='zh-CN'?/404 不能证明原保存未提交/:/404 does not prove the original save was not committed/);
+  }
+});
+
+test('Token operation lookup keeps 404 as unavailable evidence without a write or retry',async t=>{
+  const requestKey=randomUUID(),calls=[],notFound={ok:false,status:404,error:{code:'NOT_FOUND',category:'not_found',source:'service'}};
+  const f=await isolatedCliFixture(t,async options=>{calls.push(options);return notFound;});
+  const parsed=await parseArguments(['admin','cloudflare','token-operation','--instance',f.instanceId,'--request-key',requestKey]);
+  const result=await f.runtime.execute(parsed.command,parsed.input);
+  assert.equal(result.status,404);assert.equal(result.ok,false);assert.equal(result.operation,undefined);assert.equal(result.recovery,undefined);assert.equal(calls.length,1);assert.equal(calls[0].method,'GET');assert.equal(calls[0].apiPath,`${base}/secret-operations/${requestKey}`);
+});
+
+for(const optional of [undefined,false,true])test(`Cloudflare verify transports include_optional=${String(optional)} only when explicit`,async t=>{
+  const calls=[];let changed=false;
+  const f=await isolatedCliFixture(t,async options=>{calls.push(options);if(options.method==='GET')return ok({version:changed?5:4});changed=true;return write({version:5});});
+  const parsed=await parseArguments(['admin','cloudflare','verify','--instance',f.instanceId,...(optional===undefined?[]:['--include-optional',String(optional)])]);
+  assert.equal(Object.hasOwn(parsed.input,'include_optional'),optional!==undefined);
+  const result=await f.runtime.execute(parsed.command,parsed.input);assert.equal(result.operation.phase,'verified');
+  assert.deepEqual(calls.map(call=>[call.method,call.apiPath]),[['GET',base],['POST',`${base}/verify`],['GET',base]]);assert.deepEqual(calls[1].body,optional===undefined?{}:{include_optional:optional});
+});
+
+test('Cloudflare verify help declares the optional checks and rejects non-boolean or Token input',async()=>{
+  const instanceId=randomUUID();
+  await assert.rejects(parseArguments(['admin','cloudflare','verify','--instance',instanceId,'--include-optional','yes']),{code:'CLI_INVALID_ARGUMENT'});
+  await assert.rejects(parseArguments(['admin','cloudflare','verify','--instance',instanceId,'--token','forbidden']),{code:'CLI_UNKNOWN_OPTION'});
+  for(const locale of ['en','zh-CN']){
+    const help=helpDocument('admin cloudflare verify',locale);const field=help.commands[0].options.find(option=>option.flag==='--include-optional');assert.ok(field);assert.equal(field.required,false);assert.equal(field.schema.type,'boolean');assert.equal(field.schema.default,false);
+    const rendered=renderHelp(help);assert.match(rendered,/--include-optional true/);assert.match(rendered,locale==='zh-CN'?/默认核验配置和用量能力/:/configuration and analytics by default/);assert.match(rendered,locale==='zh-CN'?/通知、账务及已配置 Zone 的 WAF/:/Notifications, Billing and configured Zone WAF/);
+  }
+});
 
 for(const name of ['admin cloudflare zone','admin cloudflare verify'])test(`${name} reads control before and after and freezes the initial CAS`,async t=>{
   const calls=[],zone=randomUUID();let changed=false;

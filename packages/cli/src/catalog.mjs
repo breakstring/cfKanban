@@ -4,6 +4,7 @@ import contract from '../../../contracts/openapi.json' with { type: 'json' };
 const names = {
   getUsageHistory: 'admin usage history', collectUsageHistory: 'admin usage collect',
   getCloudflareControl: 'admin cloudflare show', getCloudflareNotifications: 'admin cloudflare notifications', getCloudflareWaf: 'admin cloudflare waf', getCloudflareOperation: 'admin cloudflare operation', getCloudflarePlan: 'admin cloudflare plan',
+  getCloudflareSecretOperation: 'admin cloudflare token-operation',
   verifyCloudflareControl: 'admin cloudflare verify', updateCloudflareSettings: 'admin cloudflare zone', verifyCloudflareOperation: 'admin cloudflare verify-operation',
   planCloudflareRateLimits: 'admin rate-limits plan', applyCloudflareRateLimits: 'admin rate-limits apply', planCloudflareConfiguration: 'admin cloudflare configuration-plan', applyCloudflareConfiguration: 'admin cloudflare configuration-apply',
   getMeta: 'instance info', getMe: 'profile show', updateMe: 'profile update',

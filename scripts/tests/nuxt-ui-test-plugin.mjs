@@ -14,7 +14,7 @@ export function nuxtUiTestPlugin() {
 }
 
 function componentSource(name) {
-  if (!["App", "Avatar", "Badge", "Button", "Card", "Checkbox", "DropdownMenu", "Input", "Modal", "Select", "Textarea"].includes(name)) {
+  if (!["App", "Avatar", "Badge", "Button", "Card", "Checkbox", "DropdownMenu", "Input", "Modal", "Select", "Textarea", "Icon"].includes(name)) {
     throw new Error(`Add a native-semantic test adapter for Nuxt UI ${name}`);
   }
   return `
@@ -22,7 +22,7 @@ import { defineComponent, h } from "vue";
 export default defineComponent({
   name: "U${name}TestAdapter",
   inheritAttrs: false,
-  props: ["modelValue", "modelModifiers", "items", "open", "title", "close", "dismissible", "color", "variant", "size", "ui", "icon", "leadingIcon", "trailingIcon", "loading", "alt", "text", "label", "to", "href"],
+  props: [...(${JSON.stringify(name)} === "Icon" ? ["name"] : []), "modelValue", "modelModifiers", "items", "open", "title", "close", "dismissible", "color", "variant", "size", "ui", "icon", "leadingIcon", "trailingIcon", "loading", "alt", "text", "label", "to", "href"],
   emits: ["update:modelValue", "update:open"],
   setup(props, { attrs, slots, emit }) {
     const value = event => event?.target?.value ?? event;
@@ -73,6 +73,7 @@ export default defineComponent({
         }) : undefined;
         return h(tag, inputProps, options);
       }
+      if (name === "Icon") return h("span", { ...attrs, "data-icon": props.name, "aria-hidden": "true" });
       if (name === "Avatar") return h("span", { ...attrs, "aria-hidden": "true" }, props.text ?? (props.alt ?? "").slice(0, 1));
       const tag = name === "Button" ? (props.to || props.href ? "a" : "button") : name === "Badge" ? "span" : name === "Card" ? "article" : "div";
       return h(tag, {

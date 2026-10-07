@@ -1807,7 +1807,7 @@ onUnmounted(() => {
     <PageState :loading="loading" :error="loading ? '' : ''" />
     <VersionUpdatesPanel v-if="!loading && section === 'updates'" :session="session" />
     <UsagePanel v-if="activeSection === 'usage'" :refresh-generation="usageReadbackGeneration" :observed-origin="meta?.observed_origin ?? ''" @settings="selectUsageSetting" />
-    <CloudflareControlPanel v-if="activeSection === 'overview' || activeSection === 'usage'" :mode="activeSection === 'usage' ? 'usage' : 'overview'" :initial-setting="usageSetting" :setting-request="usageSettingRequest" @rates="rateSettings = $event" @applied="usageReadbackGeneration++" />
+    <CloudflareControlPanel :session="session" v-if="activeSection === 'overview' || activeSection === 'usage'" :mode="activeSection === 'usage' ? 'usage' : 'overview'" :initial-setting="usageSetting" :setting-request="usageSettingRequest" @rates="rateSettings = $event" @applied="usageReadbackGeneration++" />
     <ContainerTreePagination v-if="!loading && ['workspaces', 'archive', 'access', 'audit'].includes(section)" :tree="containerTree" :archived="section === 'archive'" @workspaces="moreWorkspaces" @projects="moreProjects" />
 
     <template v-if="!loading && activeSection === 'overview'">

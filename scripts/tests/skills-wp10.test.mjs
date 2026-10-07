@@ -2901,6 +2901,73 @@ test("Skill transport preserves only verified Service envelopes", async () => {
   assert.match(unverified.error.request_id, /^[0-9a-f-]{36}$/);
 });
 
+test("Skill transport preserves verified Cloudflare authorization and conflict decisions", async () => {
+  const requestId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  for (const entry of [
+    { category: "authorization", code: "FORBIDDEN", failureClass: "permission_denied", status: 403 },
+    { category: "conflict", code: "VERSION_CONFLICT", failureClass: "target_mismatch", status: 409 },
+  ]) {
+    const envelope = {
+      code: entry.code,
+      category: entry.category,
+      source: "cloudflare_platform",
+      message: "Cloudflare control request could not be verified.",
+      request_id: requestId,
+      retryable: false,
+      recovery: "request_owner",
+      details: { component: "cloudflare-control", failure_class: entry.failureClass },
+    };
+    const result = await normalizeResponse(Response.json(envelope, {
+      status: entry.status,
+      headers: { "x-request-id": requestId },
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, entry.status);
+    assert.deepEqual(result.error, envelope);
+    assert.equal(result.error.details.normalized_by, undefined);
+  }
+});
+
+test("Skill transport still normalizes unverified Cloudflare decisions", async () => {
+  const requestId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const envelope = {
+    code: "FORBIDDEN",
+    category: "authorization",
+    source: "cloudflare_platform",
+    message: "Cloudflare control request could not be verified.",
+    request_id: requestId,
+    retryable: false,
+    recovery: "request_owner",
+    details: { component: "cloudflare-control", failure_class: "permission_denied" },
+  };
+  const headers = { "content-type": "application/json", "x-request-id": requestId };
+  const incomplete = { ...envelope };
+  delete incomplete.details;
+  for (const entry of [
+    { body: envelope, status: 403, headers: { "content-type": "application/json" } },
+    { body: envelope, status: 403, headers: { ...headers, "x-request-id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd" } },
+    { body: envelope, status: 409, headers },
+    { body: incomplete, status: 403, headers },
+    { body: { ...envelope, details: { normalized_by: "client" } }, status: 403, headers },
+    { body: { ...envelope, retryable: true, retry_after_seconds: 20 }, status: 403, headers: { ...headers, "retry-after": "19" } },
+    { body: { ...envelope, retry_after_seconds: 20 }, status: 403, headers: { ...headers, "retry-after": "20" } },
+    { body: envelope, status: 403, headers: { ...headers, "content-type": "text/html" } },
+    { body: { ...envelope, category: "authentication", code: "UNAUTHORIZED" }, status: 401, headers },
+  ]) {
+    const result = await normalizeResponse(new Response(JSON.stringify(entry.body), {
+      status: entry.status,
+      headers: entry.headers,
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 503);
+    assert.equal(result.error.code, "PLATFORM_UNAVAILABLE");
+    assert.equal(result.error.category, "platform_failure");
+    assert.equal(result.error.source, "cloudflare_platform");
+    assert.equal(result.error.details.normalized_by, "client");
+    assert.notEqual(result.error.request_id, requestId);
+  }
+});
+
 test("Skill transport uses the Web-compatible outer failure matrix", async () => {
   const quota = await normalizeResponse(new Response("<html>Error code: 1027</html>", {
     status: 500,

@@ -2053,6 +2053,112 @@ test("a Worker error envelope is trusted only after its complete schema and HTTP
   }
 });
 
+test("verified Cloudflare control refusals resolve write uncertainty without changing the cfKanban Session", async () => {
+  const { ApiProblem, apiRequest, hasUncertainWrite } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+  const events = new EventTarget();
+  const sessionEvents = [];
+  for (const name of ["cfkanban:session-invalid", "cfkanban:authorization-stale"]) {
+    events.addEventListener(name, event => sessionEvents.push(event));
+  }
+  globalThis.window = events;
+  try {
+    for (const entry of [
+      { category: "authorization", code: "FORBIDDEN", failureClass: "permission_denied", status: 403 },
+      { category: "conflict", code: "VERSION_CONFLICT", failureClass: "target_mismatch", status: 409 },
+    ]) {
+      const requestId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+      const body = {
+        category: entry.category,
+        code: entry.code,
+        details: { component: "cloudflare-control", failure_class: entry.failureClass },
+        message: "Cloudflare control request could not be verified.",
+        recovery: "request_owner",
+        request_id: requestId,
+        retryable: false,
+        source: "cloudflare_platform",
+      };
+      const path = `/test/cloudflare-control-refusal/${entry.status}`;
+      globalThis.fetch = async () => new Response(JSON.stringify(body), {
+        headers: { "content-type": "application/json", "x-request-id": requestId },
+        status: entry.status,
+      });
+      await assert.rejects(apiRequest(path, { method: "POST", body: { expected_version: 7 } }), error => {
+        assert.ok(error instanceof ApiProblem);
+        assert.equal(error.status, entry.status);
+        assert.deepEqual(error.body, body);
+        assert.equal(error.retryAfter, null);
+        assert.equal(shouldClearAfterSessionRevalidation(error), false);
+        return true;
+      });
+      assert.equal(hasUncertainWrite(path), false);
+      assert.deepEqual(sessionEvents, []);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+  }
+});
+
+test("unverified Cloudflare refusals remain normalized and retain the original write key", async () => {
+  const { ApiProblem, apiRequest, hasUncertainWrite } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
+  const originalFetch = globalThis.fetch;
+  const requestId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const body = {
+    category: "authorization",
+    code: "FORBIDDEN",
+    details: { component: "cloudflare-control", failure_class: "permission_denied" },
+    message: "Cloudflare control request could not be verified.",
+    recovery: "request_owner",
+    request_id: requestId,
+    retryable: false,
+    source: "cloudflare_platform",
+  };
+  const headers = { "content-type": "application/json", "x-request-id": requestId };
+  const incomplete = { ...body };
+  delete incomplete.details;
+  const cases = [
+    { name: "missing-request-id", body, headers: { "content-type": "application/json" }, status: 403 },
+    { name: "mismatched-request-id", body, headers: { ...headers, "x-request-id": "ffffffff-ffff-4fff-8fff-ffffffffffff" }, status: 403 },
+    { name: "mismatched-status", body, headers, status: 409 },
+    { name: "incomplete", body: incomplete, headers, status: 403 },
+    { name: "client-normalized", body: { ...body, details: { ...body.details, normalized_by: "client" } }, headers, status: 403 },
+    { name: "mismatched-retry", body: { ...body, retryable: true, retry_after_seconds: 20 }, headers: { ...headers, "retry-after": "19" }, status: 403 },
+    { name: "mismatched-retryable", body: { ...body, retry_after_seconds: 20 }, headers: { ...headers, "retry-after": "20" }, status: 403 },
+    { name: "non-json", body, headers: { ...headers, "content-type": "text/html" }, status: 403 },
+    { name: "cloudflare-authentication", body: { ...body, category: "authentication", code: "UNAUTHORIZED" }, headers, status: 401 },
+  ];
+  try {
+    for (const entry of cases) {
+      const path = `/test/unverified-cloudflare-refusal/${entry.name}`;
+      const keys = [];
+      globalThis.fetch = async (_path, init) => {
+        keys.push(new Headers(init.headers).get("idempotency-key"));
+        return new Response(JSON.stringify(entry.body), { headers: entry.headers, status: entry.status });
+      };
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await assert.rejects(apiRequest(path, { method: "POST", body: { expected_version: 7 } }), error => {
+          assert.ok(error instanceof ApiProblem);
+          assert.equal(error.status, 503);
+          assert.equal(error.body.category, "platform_failure");
+          assert.equal(error.body.code, "PLATFORM_UNAVAILABLE");
+          assert.equal(error.body.details.normalized_by, "client");
+          assert.notEqual(error.body.request_id, requestId);
+          assert.equal(shouldClearAfterSessionRevalidation(error), false);
+          return true;
+        });
+        assert.equal(hasUncertainWrite(path), true);
+      }
+      assert.ok(keys[0]);
+      assert.equal(keys[0], keys[1]);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("verified Session and Grant failures carry the same ApiProblem into recovery events", async () => {
   const { ApiProblem, apiRequest } = await importBundledWebModule("../../apps/web/src/lib/api.ts");
   const originalFetch = globalThis.fetch;

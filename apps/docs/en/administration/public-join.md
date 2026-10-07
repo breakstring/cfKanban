@@ -43,4 +43,4 @@ Keep existing member access.
 
 **Will restoration make an archived Project public again?** It resumes any previously enabled policy. The restore preview explains affected Projects and effects; see [Archive and restore](./cleanup.md).
 
-**Why am I rate-limited when the quota is not full?** Active resource quotas and Worker request-rate limits are separate mechanisms. The Owner can inspect request limits in Overview; changes use [Deployment configuration](../deployment/optional.md). A rate-limit response does not mean a member or Issue quota is full.
+**Why am I rate-limited when the quota is not full?** Active resource quotas and Worker request-rate limits are separate mechanisms. The Owner can inspect and adjust request limits in **Usage & limits**; see [Request-rate limits](../deployment/optional.md). A rate-limit response does not mean a member or Issue quota is full.

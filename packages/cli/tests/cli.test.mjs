@@ -107,6 +107,45 @@ test('cross-process unknown write blocks new operation and recovers exact caller
   const attempts=calls.filter(call=>call.method==='POST');assert.equal(attempts.length,2);assert.deepEqual(attempts[0].body,attempts[1].body);assert.equal(attempts[0].idempotencyKey,attempts[1].idempotencyKey);
   const directory=path.join(f.stateRoot,'instances',f.instanceId,'cli-operations');for(const entry of await readdir(directory)){const raw=await readFile(path.join(directory,entry),'utf8');assert.doesNotMatch(raw,/cfk_v1_[a-f0-9]{16}_[A-Za-z0-9_-]{43}/);}
 });
+test('verified Cloudflare refusals remain terminal CLI decisions through the real transport',async t=> {
+  for(const entry of [
+    {category:'authorization',code:'FORBIDDEN',failureClass:'permission_denied',status:403},
+    {category:'conflict',code:'VERSION_CONFLICT',failureClass:'target_mismatch',status:409},
+  ])await t.test(String(entry.status),async t=> {
+    const f=await createMcpStateFixture(t);const operationId=randomUUID();let writes=0;
+    const fetchImpl=async(url,options)=> {
+      url=new URL(url);assert.equal(url.origin,f.origin);
+      if(url.pathname==='/.well-known/cfkanban-instance.json'||url.pathname==='/api/v1/me')return fakeFetch(f)(url,options);
+      if(url.pathname==='/api/v1/admin/cloudflare')return Response.json({version:7});
+      assert.equal(url.pathname,'/api/v1/admin/cloudflare/verify');assert.equal(options.method,'POST');writes++;
+      const requestId=randomUUID();
+      return Response.json({code:entry.code,category:entry.category,source:'cloudflare_platform',message:'Cloudflare control request could not be verified.',request_id:requestId,retryable:false,recovery:'request_owner',details:{component:'cloudflare-control',failure_class:entry.failureClass}},{status:entry.status,headers:{'x-request-id':requestId}});
+    };
+    const options={...f,fetchImpl};
+    const result=await createCliRuntime(options).execute(api('admin cloudflare verify'),{instanceId:f.instanceId,operationId,idempotencyKey:'verified-refusal'});
+    assert.equal(result.ok,false);assert.equal(result.status,entry.status);assert.equal(result.error.code,entry.code);assert.equal(result.error.category,entry.category);assert.equal(result.error.source,'cloudflare_platform');assert.equal(result.outcome_unknown,undefined);assert.equal(result.recovery,undefined);
+    const record=JSON.parse(await readFile(path.join(f.stateRoot,'instances',f.instanceId,'cli-operations',`${operationId}.json`),'utf8'));assert.equal(record.phase,'rejected');
+    const recovered=await createCliRuntime(options).execute(command('operation recover'),{instanceId:f.instanceId,operationId});assert.equal(recovered.status,entry.status);assert.equal(recovered.error.source,'cloudflare_platform');assert.equal(writes,1);
+  });
+});
+test('an unverified Cloudflare refusal retains the original CLI request CAS and key for recovery',async t=> {
+  const f=await createMcpStateFixture(t);const writes=[];const zoneId='fixture-zone';let committed=false;let first=true;
+  const fetchImpl=async(url,options)=> {
+    url=new URL(url);assert.equal(url.origin,f.origin);
+    if(url.pathname==='/.well-known/cfkanban-instance.json'||url.pathname==='/api/v1/me')return fakeFetch(f)(url,options);
+    if(options.method==='GET'){assert.equal(url.pathname,'/api/v1/admin/cloudflare');return Response.json({version:committed?8:7,target:{zone_id:committed?zoneId:null}});}
+    assert.equal(options.method,'PATCH');assert.equal(url.pathname,'/api/v1/admin/cloudflare/settings');
+    writes.push({path:url.pathname,body:JSON.parse(options.body),key:new Headers(options.headers).get('idempotency-key')});committed=true;
+    if(first){first=false;return Response.json({code:'FORBIDDEN',category:'authorization',source:'cloudflare_platform',message:'Unverified outer response',request_id:randomUUID(),retryable:false,recovery:'request_owner',details:{}},{status:403});}
+    return Response.json({resource:{version:8,target:{zone_id:zoneId}},idempotent_replay:true});
+  };
+  const options={...f,fetchImpl};const input={instanceId:f.instanceId,zone_id:zoneId,idempotencyKey:'original-cloudflare-key'};
+  const firstResult=await createCliRuntime(options).execute(api('admin cloudflare zone'),input);
+  assert.equal(firstResult.status,503);assert.equal(firstResult.error.details.normalized_by,'client');assert.equal(firstResult.outcome_unknown,true);
+  await assert.rejects(createCliRuntime(options).execute(api('admin cloudflare zone'),{instanceId:f.instanceId,zone_id:null}),{code:'CLI_PENDING_WRITE_RECOVERY_REQUIRED'});assert.equal(writes.length,1);
+  const recovered=await createCliRuntime(options).execute(command('operation recover'),{instanceId:f.instanceId,operationId:firstResult.recovery.operation_id});
+  assert.equal(recovered.operation.phase,'verified');assert.equal(recovered.operation.idempotency_key,input.idempotencyKey);assert.equal(writes.length,2);assert.deepEqual(writes[1],writes[0]);assert.deepEqual(writes[0].body,{zone_id:zoneId,expected_version:7});assert.equal(writes[0].key,input.idempotencyKey);
+});
 test('prepared crash evidence is retained and tombstone pre-read/after-read differs for restore and delete',async t=> {
   const f=await createMcpStateFixture(t);const calls=[];
   let version=2;const runtime=createCliRuntime({...f,fetchImpl:fakeFetch(f),requestImpl:async options=> {calls.push(options);if(options.method!=='GET')version++;return {ok:true,status:200,data:options.method==='GET'?{identifier:'CFK-3',version}:{resource:{identifier:'CFK-3',version}}};}});

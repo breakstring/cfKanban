@@ -125,19 +125,20 @@ onUnmounted(() => { disposed = true; controller.abort(); });
         <h2 id="homepage-settings-heading">{{ ui('Homepage instance notice', '首页实例说明') }}</h2>
         <p id="homepage-settings-help">{{ ui('Publicly visible plain text, up to 500 Unicode characters per language. Leave Chinese blank to use English; otherwise blank fields use the built-in notice.', '对所有访客公开，仅显示纯文本，每种语言最多 500 个 Unicode 字符。中文留空时先使用英文；仍无内容时使用内置说明。') }}</p>
       </div>
-      <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="load">{{ loading ? ui('Loading…', '正在读取…') : ui('Read latest settings', '读取最新设置') }}</UButton>
     </div>
+    <p v-if="loading" role="status" class="muted-copy">{{ ui('Loading saved content…', '正在加载已保存内容…') }}</p>
     <ErrorNotice v-if="error" :error="error" />
     <div v-if="draft.pending" class="warning-panel" role="alert">
-      <p>{{ ui('The last save has no confirmed result. New saves are paused. Retry the original request, or read the latest settings to resolve it. Your draft is retained.', '上次保存结果尚未确认，已暂停新的保存。请重试原请求，或读取最新设置进行核对，草稿会保留。') }}</p>
-      <p v-if="retryExpired">{{ ui('The safe retry window has expired. Read the latest settings; a new save stays blocked while the original version could still commit.', '安全重试期限已过，请读取最新设置。原请求仍可能提交时，不能发起新的保存。') }}</p>
+      <p>{{ ui('This save is not confirmed yet. Your edits are retained. Check the saved content or retry this same save before making another change.', '本次保存尚未确认，输入已保留。请先查看已保存内容，或重试本次保存，再进行其他修改。') }}</p>
+      <p v-if="retryExpired">{{ ui('This save can no longer be retried safely. Check the saved content before making another change.', '本次保存已超过安全重试期限，请先查看已保存内容，再决定后续修改。') }}</p>
       <div class="homepage-settings-actions">
-        <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy || retryExpired" @click="save(true)">{{ ui('Retry original save', '重试原保存') }}</UButton>
-        <UButton color="neutral" variant="outline" v-if="draft.canRetirePending" class="secondary-button" type="button" :disabled="busy" @click="resolvePending">{{ ui('Reviewed latest values; enable new save', '已核对最新内容，允许新的保存') }}</UButton>
+        <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy || retryExpired" @click="save(true)">{{ ui('Retry this save', '重试本次保存') }}</UButton>
+        <UButton color="neutral" variant="outline" v-if="draft.canRetirePending" class="secondary-button" type="button" :disabled="busy" @click="resolvePending">{{ ui('Content reviewed; continue editing', '已核对内容，继续编辑') }}</UButton>
       </div>
     </div>
-    <p v-if="!draft.current && !loading" class="warning-panel">{{ ui('Read settings successfully before editing or saving.', '成功读取设置后才能编辑或保存，请重试读取。') }}</p>
-    <p v-if="draft.requiresReadback" class="warning-panel" role="alert">{{ ui('Settings changed elsewhere. Read the latest settings, compare them with your retained draft, then decide whether to save.', '设置已被其他操作修改。请读取最新设置，与保留的草稿比较后，再决定是否保存。') }}</p>
+    <p v-if="!draft.current && !loading" class="warning-panel">{{ ui('Saved content could not be loaded. Try loading it again before editing.', '已保存内容未能加载，请重新加载后再编辑。') }}</p>
+    <p v-if="draft.requiresReadback" class="warning-panel" role="alert">{{ ui('Someone changed this content. Your edits are retained. Check the saved content before saving again.', '内容已被其他操作修改，你的输入已保留。请查看已保存内容后再决定是否保存。') }}</p>
+    <UButton v-if="!loading && (!draft.current || draft.requiresReadback || draft.pending)" color="neutral" variant="outline" class="secondary-button" type="button" :disabled="busy" @click="load">{{ draft.current ? ui('Check saved content', '查看已保存内容') : ui('Retry loading', '重新加载') }}</UButton>
     <div v-if="reviewing && draft.current" class="homepage-current" role="status">
       <p>{{ ui('Latest saved values are shown below. Your draft is retained; saving will replace these values.', '下方是最新保存的内容。你的草稿已保留；保存将替换这些内容。') }}</p>
       <dl>

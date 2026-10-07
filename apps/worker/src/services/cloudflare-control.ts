@@ -11,6 +11,8 @@ type Capability = "missing" | "unverified" | "verified" | "permission_denied" | 
 type Status = "pending" | "verified" | "failed" | "unknown";
 type SecretKind = "connection" | "configuration" | "control" | "analytics";
 type PlanKind = "configuration" | "rate_limit";
+type ProviderOperation = "deployments" | "versions" | "settings" | "version_details" | "secret_write" | "notifications" | "billing" | "waf" | "zone" | "graphql";
+interface ProviderDiagnostics { provider_operation?: ProviderOperation; provider_method?: "GET" | "PUT" | "POST" | "PATCH" | "DELETE"; provider_status?: number }
 export interface CloudflareControlDependencies { fetch?: typeof fetch }
 interface SettingsRow { version: number; zone_id: string | null; capabilities_json: string; verified_at: number | null; latest_operation_id: string | null; locked_operation_id: string | null; last_operation_id: string | null }
 interface OperationRow { id: string; principal_id: string; route: string; request_hash: string; kind: string; status: Status; baseline_json: string; desired_json: string; secret_value_hash: string | null; dispatched_at: number | null; result_version_id: string | null; deployment_id: string | null; failure_class: string | null; created_at: number; updated_at: number }
@@ -37,8 +39,8 @@ class ProviderFailure extends ApiError {
   readonly capability: Capability;
   readonly rejected: boolean;
   readonly missingResource: boolean;
-  constructor(capability: Capability, rejected = false, missingResource = false) {
-    super({ code: capability === "permission_denied" ? "FORBIDDEN" : capability === "target_mismatch" ? "VERSION_CONFLICT" : "PLATFORM_UNAVAILABLE", category: capability === "permission_denied" ? "authorization" : capability === "target_mismatch" ? "conflict" : "platform_failure", source: "cloudflare_platform", message: "Cloudflare control request could not be verified.", recovery: "request_owner", retryable: false, status: capability === "permission_denied" ? 403 : capability === "target_mismatch" ? 409 : 503, details: { component: "cloudflare-control", failure_class: capability } });
+  constructor(capability: Capability, rejected = false, missingResource = false, diagnostics: ProviderDiagnostics = {}) {
+    super({ code: capability === "permission_denied" ? "FORBIDDEN" : capability === "target_mismatch" ? "VERSION_CONFLICT" : "PLATFORM_UNAVAILABLE", category: capability === "permission_denied" ? "authorization" : capability === "target_mismatch" ? "conflict" : "platform_failure", source: "cloudflare_platform", message: "Cloudflare control request could not be verified.", recovery: "request_owner", retryable: false, status: capability === "permission_denied" ? 403 : capability === "target_mismatch" ? 409 : 503, details: { component: "cloudflare-control", failure_class: capability, ...diagnostics } });
     this.capability = capability; this.rejected = rejected; this.missingResource = missingResource;
   }
 }
@@ -68,15 +70,30 @@ function operationSecretName(row: OperationRow, desired: Resource): typeof SECRE
   return SECRET_NAMES[kind as SecretKind];
 }
 function scriptPath(target: Target): string { return `/accounts/${encodeURIComponent(target.account_id)}/workers/scripts/${encodeURIComponent(target.worker_name)}`; }
+function providerDiagnostics(path: string, method: string, status: number): ProviderDiagnostics {
+  const details: ProviderDiagnostics = {};
+  const worker = /^\/accounts\/[^/]+\/workers\/scripts\/[^/]+\/(deployments|versions|settings|secrets)$/.exec(path);
+  if (worker) details.provider_operation = worker[1] === "secrets" ? "secret_write" : worker[1] as "deployments" | "versions" | "settings";
+  else if (/^\/accounts\/[^/]+\/workers\/scripts\/[^/]+\/versions\/[^/]+$/.test(path)) details.provider_operation = "version_details";
+  else if (/^\/accounts\/[^/]+\/alerting\/v3\/(available_alerts|policies)$/.test(path)) details.provider_operation = "notifications";
+  else if (/^\/accounts\/[^/]+\/billable-usage\/info$/.test(path)) details.provider_operation = "billing";
+  else if (/^\/zones\/[^/]+\/rulesets\/phases\/http_request_firewall_custom\/entrypoint$/.test(path)) details.provider_operation = "waf";
+  else if (/^\/zones\/[^/]+$/.test(path)) details.provider_operation = "zone";
+  else if (path === "/graphql") details.provider_operation = "graphql";
+  if (method === "GET" || method === "PUT" || method === "POST" || method === "PATCH" || method === "DELETE") details.provider_method = method;
+  if (Number.isInteger(status) && status >= 100 && status <= 599) details.provider_status = status;
+  return details;
+}
 function api(token: string, dependencies: CloudflareControlDependencies) {
   return async (path: string, init: RequestInit = {}): Promise<JsonValue> => {
     if (!path.startsWith("/accounts/") && !path.startsWith("/zones/") && path !== "/graphql") throw new ProviderFailure("target_mismatch", true);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10_000);
     try {
       const response = await (dependencies.fetch ?? fetch)(`https://api.cloudflare.com/client/v4${path}`, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers as Record<string, string> | undefined) }, redirect: "manual", signal: controller.signal });
-      if (response.status === 401 || response.status === 403) { await response.body?.cancel(); throw new ProviderFailure("permission_denied", true); }
-      if (response.status === 404) { await response.body?.cancel(); throw new ProviderFailure("unavailable", true, true); }
-      if (!response.ok) { await response.body?.cancel(); throw new ProviderFailure("unavailable", response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429); }
+      const diagnostics = providerDiagnostics(path, init.method ?? "GET", response.status);
+      if (response.status === 401 || response.status === 403) { await response.body?.cancel(); throw new ProviderFailure("permission_denied", true, false, diagnostics); }
+      if (response.status === 404) { await response.body?.cancel(); throw new ProviderFailure("unavailable", true, true, diagnostics); }
+      if (!response.ok) { await response.body?.cancel(); throw new ProviderFailure("unavailable", response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429, false, diagnostics); }
       const reader = response.body?.getReader(); if (!reader) throw new ProviderFailure("unavailable");
       const chunks: Uint8Array[] = []; let length = 0;
       while (true) { const chunk = await reader.read(); if (chunk.done) break; length += chunk.value.byteLength; if (length > 65_536) { await reader.cancel(); throw new ProviderFailure("unavailable"); } chunks.push(chunk.value); }
@@ -148,18 +165,28 @@ async function probeAnalytics(env: WorkerEnv, token: string, now: number, depend
   const target = fixedTarget(env), result = object(await api(token, dependencies)("/graphql", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "query($account: string!, $database: string!, $date: Date!) { viewer { accounts(filter: {accountTag: $account}) { d1AnalyticsAdaptiveGroups(limit: 1, filter: {databaseId: $database, date_geq: $date, date_leq: $date}) { sum { rowsRead } } } } }", variables: { account: target.account_id, database: target.database_id, date: new Date(now).toISOString().slice(0, 10) } }) }));
   const accounts = list(object(result.viewer).accounts); if (accounts.length !== 1) throw new ProviderFailure("target_mismatch"); list(object(accounts[0]).d1AnalyticsAdaptiveGroups);
 }
-export async function verifyCloudflareControl(env: WorkerEnv, request: Request, auth: AuthContext, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
+export async function verifyCloudflareControl(env: WorkerEnv, request: Request, auth: AuthContext, now: number, dependencies: CloudflareControlDependencies = {}, includeOptional = false): Promise<Resource> {
   requireOwnerControl(auth); const target = fixedTarget(env), control = tokenFor(env, "control"), configuration = tokenFor(env, "configuration"), analytics = tokenFor(env, "analytics"), row = await settingsRow(env.DB);
-  const call = api(control ?? "", dependencies);
-  const [configurationStatus, notifications, waf, billing, analyticsStatus] = await Promise.all([
+  const [configurationStatus, analyticsStatus] = await Promise.all([
     capability(() => baseline(env, configuration ?? "", dependencies), Boolean(configuration)),
-    capability(() => call(`/accounts/${target.account_id}/alerting/v3/policies`), Boolean(control)),
-    capability(async () => { const result = await getCloudflareWaf(env, auth, dependencies); if (result.status !== "verified") throw new ProviderFailure(result.status as Capability); }, Boolean(control) && Boolean(row.zone_id)),
-    capability(() => call(`/accounts/${target.account_id}/billable-usage/info`), Boolean(control)),
     capability(() => probeAnalytics(env, analytics ?? "", now, dependencies), Boolean(analytics)),
   ]);
-  const statuses = { configuration: configurationStatus, notifications, waf, billing, analytics: analyticsStatus };
-  return localChange(env, request, auth, "/api/v1/admin/cloudflare/verify", {}, null, id => [env.DB.prepare("UPDATE cloudflare_control_settings SET capabilities_json=?2,verified_at=?3 WHERE singleton=1 AND last_operation_id=?1").bind(id, canonicalJson(statuses), now)], async version => ({ ...await getCloudflareControl(env, auth), version, capabilities: statuses, verified_at: new Date(now).toISOString() }), now);
+  const stored = object(JSON.parse(row.capabilities_json) as JsonValue), statuses: Resource = {
+    configuration: configurationStatus, analytics: analyticsStatus,
+    notifications: stored.notifications ?? (control ? "unverified" : "missing"),
+    waf: stored.waf ?? (control && row.zone_id ? "unverified" : "missing"),
+    billing: stored.billing ?? (control ? "unverified" : "missing"),
+  };
+  if (includeOptional) {
+    const call = api(control ?? "", dependencies), [notifications, waf, billing] = await Promise.all([
+      capability(() => call(`/accounts/${target.account_id}/alerting/v3/policies`), Boolean(control)),
+      capability(async () => { const result = await getCloudflareWaf(env, auth, dependencies); if (result.status !== "verified") throw new ProviderFailure(result.status as Capability); }, Boolean(control) && Boolean(row.zone_id)),
+      capability(() => call(`/accounts/${target.account_id}/billable-usage/info`), Boolean(control)),
+    ]);
+    Object.assign(statuses, { notifications, waf, billing });
+  }
+  // 并发设置或 Secret 变更会使这次能力快照失效。
+  return localChange(env, request, auth, "/api/v1/admin/cloudflare/verify", includeOptional ? { include_optional: true } : {}, row.version, id => [env.DB.prepare("UPDATE cloudflare_control_settings SET capabilities_json=?2,verified_at=?3 WHERE singleton=1 AND last_operation_id=?1").bind(id, canonicalJson(statuses), now)], async version => ({ ...await getCloudflareControl(env, auth), version, capabilities: statuses, verified_at: new Date(now).toISOString() }), now);
 }
 async function verifiedZone(env: WorkerEnv, zoneId: string | null, dependencies: CloudflareControlDependencies, token: string | undefined): Promise<Resource> {
   if (!zoneId || !token) throw new ProviderFailure("missing");
@@ -315,6 +342,12 @@ export async function applyCloudflarePlan(env: WorkerEnv, request: Request, auth
   return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false);
 }
 export async function getCloudflareOperation(env: WorkerEnv, auth: AuthContext, id: string): Promise<Resource> { requireOwnerControl(auth); return operationResource(await operationRow(env.DB, id), (await settingsRow(env.DB)).version); }
+export async function getCloudflareSecretOperation(env: WorkerEnv, auth: AuthContext, requestKey: string): Promise<Resource> {
+  requireOwnerControl(auth); validateIdempotencyKey(requestKey);
+  const row = await env.DB.prepare("SELECT * FROM cloudflare_control_operations WHERE principal_id=?1 AND route=?2 AND key_hash=?3").bind(auth.principalId, "/api/v1/admin/cloudflare/secrets", await sha256Hex(requestKey)).first<OperationRow>();
+  if (!row) throw notFound();
+  return operationResource(row, (await settingsRow(env.DB)).version);
+}
 export async function getCloudflarePlan(env: WorkerEnv, auth: AuthContext, id: string): Promise<Resource> { requireOwnerControl(auth); if (!isUuid(id)) throw notFound(); const row = await env.DB.prepare("SELECT * FROM cloudflare_control_plans WHERE id=?1").bind(id).first<PlanRow>(); if (!row) throw notFound(); return planResource(row); }
 type Assessment = [Status, string | null, string | null, string | null];
 async function completeCloudMutation(env: WorkerEnv, request: Request, auth: AuthContext, id: string, dependencies: CloudflareControlDependencies, token: string, mutate: () => Promise<JsonValue>): Promise<void> {
