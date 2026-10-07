@@ -27,9 +27,11 @@ import { registerHomepageSettingsRoutes } from "./routes/homepage-settings.ts";
 import { registerNotificationRoutes } from "./routes/notifications.ts";
 import { registerReleaseUpdatesRoutes } from "./routes/release-updates.ts";
 import { registerUsageRoutes } from "./routes/usage.ts";
+import { registerCloudflareControlRoutes } from "./routes/cloudflare-control.ts";
 import { registerScopedAdministratorRoutes } from "./routes/scoped-administrators.ts";
 import { registerSearchIndexRoutes } from "./routes/search-index.ts";
 import { collectAttachmentGarbage } from "./services/attachments.ts";
+import { collectUsageHistoryDaily } from "./services/usage-history.ts";
 import { registerWp03Routes } from "./routes/wp03.ts";
 import { registerWp04Routes } from "./routes/wp04.ts";
 import { registerWp05Routes } from "./routes/wp05.ts";
@@ -68,6 +70,7 @@ registerHomepageSettingsRoutes(router);
 registerNotificationRoutes(router);
 registerReleaseUpdatesRoutes(router);
 registerSearchIndexRoutes(router);
+registerCloudflareControlRoutes(router);
 
 function mayHaveJsonBody(request: Request): boolean {
   return request.method !== "GET" && request.method !== "HEAD" && request.body !== null;
@@ -141,6 +144,13 @@ export default {
       }
     } catch {
       console.warn({ operation: "attachment_garbage_collection", error: "collection_failed" });
+    }
+    if (env.USAGE_HISTORY_ENABLED === "true") {
+      try {
+        await collectUsageHistoryDaily(env);
+      } catch {
+        console.warn({ operation: "usage_history_collection", error: "collection_failed" });
+      }
     }
   },
   fetch(request, env): Promise<Response> {

@@ -1,4 +1,5 @@
 import { USAGE_VARS, targetWorkerBindings } from "./usage-config.mjs";
+import { OWNER_CONTROL_VARS, nativeRateLimitSimple } from "./owner-control-config.mjs";
 import { PUBLIC_ACCESS_NAMES } from "./public-access-config.mjs";
 import { verifyPlannedPublicAccess } from "./public-access.mjs";
 import { verifyPlannedWorkerCostSettings } from "./worker-cost-settings.mjs";
@@ -532,13 +533,15 @@ function parseWorkerVersion(value, expectedVersionId) {
       return { type, name, database_id: workerVersionUuid(binding.database_id, "binding database ID") };
     }
     if (type === "ratelimit") {
+      const simple = nativeRateLimitSimple(binding.simple, { errorCode: "WRANGLER_WORKER_VERSION_READBACK_INVALID" });
       return {
         type,
         name,
         namespace_id: workerVersionString(binding.namespace_id, "rate-limit namespace ID", { max: 64, pattern: /^[A-Za-z0-9_-]+$/u }),
+        ...(simple === undefined ? {} : { simple }),
       };
     }
-    if (type === "plain_text" && USAGE_VARS.has(name)) {
+    if (type === "plain_text" && (USAGE_VARS.has(name) || OWNER_CONTROL_VARS.has(name))) {
       return { type, name, text: workerVersionString(binding.text ?? binding.value, "usage configuration", { max: 128, pattern: /^[A-Za-z0-9_-]+$/u }) };
     }
     if (type === "plain_text" && PUBLIC_ACCESS_NAMES.has(name)) return { type, name, text: workerVersionString(binding.text ?? binding.value, "public-access snapshot", { max: 256, pattern: /^[A-Za-z0-9_.:-]+$/u }) };

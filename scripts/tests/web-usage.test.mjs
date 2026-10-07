@@ -11,7 +11,7 @@ globalThis.ShadowRoot = class {};
 after(() => { globalThis.Document = originalDocumentClass; globalThis.ShadowRoot = originalShadowRoot; });
 import { build } from 'esbuild';
 import { compileScript, parse } from '@vue/compiler-sfc';
-import { createRenderer, nextTick } from 'vue';
+import { createRenderer, h, nextTick, ref } from 'vue';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
@@ -65,13 +65,13 @@ test('shows real zero separately from unknown, disabled budget, UTC window, and 
     app.mount(host);
     await until(() => text(host).includes('Snapshot available'));
     assert.match(text(host), /0 B \/ 1 GiB · 0% · Attachments disabled/);
-    assert.match(text(host), /Budget read at: 2026-09-19 02:00:00 UTC/);
+    assert.match(text(host), /Application snapshot read at: 2026-09-19 02:00:00 UTC/);
     assert.doesNotMatch(text(host), /\.858Z/);
-    const details = all(host).find(item => item.tag === 'details');
+    const details = all(host).find(item => item.tag === 'details' && item.props.class === 'usage-details');
     assert.ok(details); assert.equal(details.props.open, undefined);
     assert.match(text(details), /Window:.*00:00:00 UTC/);
     function visibleText(item) { return item.tag === 'details' ? '' : item.text + item.children.map(visibleText).join(''); }
-    assert.doesNotMatch(visibleText(host), /Budget read at|Last attempt|Window:|Observed:/);
+    assert.doesNotMatch(visibleText(host), /Application snapshot read at|Last attempt|Window:|Observed:/);
     assert.match(visibleText(host), /Updated/);
     assert.doesNotMatch(visibleText(host), /\d{2}:\d{2}:\d{2}/);
     const metricRows = all(host).filter(item => item.tag === 'div' && item.children.some(child => child.tag === 'dt'));
@@ -297,10 +297,17 @@ test('extended usage separates instance and account values, retains unknown clas
     assert.match(text(host), /Account total · Workers requests.*100% · Shared allowance reached/);
     assert.match(text(host), /Instance figures show contribution, not remaining allowance/);
     assert.match(text(host), /Analytics may be sampled or delayed and are not an invoice/);
-    assert.match(text(all(host).find(item => item.tag === 'details')), /Billing period observation: 2026-09-15 00:00:00 UTC/);
+    assert.match(text(all(host).find(item => item.tag === 'details' && item.props.class === 'usage-details')), /Billing period observation: 2026-09-15 00:00:00 UTC/);
     const budgetsLink = all(host).find(item => item.tag === 'a' && item.props.href === 'https://developers.cloudflare.com/billing/manage/budget-alerts/');
     assert.ok(budgetsLink); assert.match(budgetsLink.props.rel, /noopener/);
     assert.match(text(host), /they do not stop usage or cap charges/);
+    const budgetSection = all(host).find(item => item.tag === 'section' && item.props['aria-labelledby'] === 'usage-budget-alerts-heading');
+    assert.match(text(budgetSection), /selected email recipients.*cumulative usage-based account charges.*USD budget threshold/);
+    assert.match(text(budgetSection), /separate from cfKanban’s percentage-based allowance reminders.*do not report remaining quota/);
+    assert.match(text(budgetSection), /Read notification policies and recipients in Cloudflare settings.*USD budget fields are shown as unknown/);
+    assert.match(text(budgetSection), /Budget policies are read-only here.*protected Cloudflare settings form.*never send them in chat/);
+    assert.ok(all(budgetSection).some(item => item.tag === 'a' && item.props.href === '/app/admin?section=cloudflare'));
+    assert.equal(all(budgetSection).some(item => ['button', 'input', 'textarea', 'form'].includes(item.tag)), false);
     assert.equal(calls.length, 1);
     locale.value = 'zh-CN'; await nextTick();
     assert.match(text(host), /本实例贡献 · Workers 请求量/);
@@ -308,6 +315,9 @@ test('extended usage separates instance and account values, retains unknown clas
     assert.match(text(host), /R2 未分类操作量/);
     assert.match(text(host), /累计微秒值/);
     assert.match(text(host), /不表示剩余额度/);
+    assert.match(text(budgetSection), /账户累计按量使用费用超过 USD 预算阈值.*指定收件邮件/);
+    assert.match(text(budgetSection), /读取通知策略和收件邮箱.*美元预算字段无法确认含义时显示未知/);
+    assert.match(text(budgetSection), /预算策略在这里只读.*受保护的 Cloudflare 设置表单.*不要发送到聊天/);
   } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
 });
 
@@ -324,10 +334,14 @@ test('missing billing cycle remains unknown and account totals require opt-in', 
   try {
     app.mount(host); await until(() => text(host).includes('Billing cycle is not configured'));
     assert.match(text(host), /Monthly usage and allowance comparisons remain unknown/);
-    assert.match(text(host), /Plan: Unknown/);
+    assert.match(text(host), /Cloudflare Workers\/D1 plan: Unknown/);
+    assert.match(text(host), /Cloudflare billing cycle, not a separate cfKanban cycle/);
+    assert.match(text(host), /Free daily figures do not require it/);
+    assert.match(text(host), /USAGE_BILLING_CYCLE_DAY.*Settings → Variables and Secrets/);
+    assert.match(text(host), /USD budget fields are shown as unknown/);
     assert.match(text(host), /Account totals are not enabled/);
     assert.equal(all(host).some(item => item.tag === 'section' && item.props['aria-label'] === 'Account totals'), false);
-    assert.match(text(all(host).find(item => item.tag === 'details')), /Billing period observation: Unknown — Unknown/);
+    assert.match(text(all(host).find(item => item.tag === 'details' && item.props.class === 'usage-details')), /Billing period observation: Unknown — Unknown/);
     assert.doesNotMatch(text(host), /Shared allowance reminders|Billing period starts on UTC day/);
     locale.value = 'zh-CN'; await nextTick();
     assert.match(text(host), /尚未配置账单周期/);
@@ -377,6 +391,8 @@ test('stale, refreshing and failed usage never present retained alerts as curren
           failing = true;
           await all(host).find(item => item.tag === 'button').props.onClick(); await nextTick();
           assert.match(text(host), /Refresh failed/);
+          assert.match(text(host), /Stale snapshot/);
+          assert.doesNotMatch(text(host), /Snapshot available/);
         }
         assert.doesNotMatch(text(host), /Shared allowance reminders/);
         assert.match(text(host), /Workers requests8,000,000/);
@@ -394,22 +410,174 @@ test('public access shows only deployment snapshot state and guides Owner to dep
       };
       const app = renderer.createApp(Component); const host = node('root');
       try {
-        app.mount(host); await until(() => text(host).includes('Public access configuration'));
+        app.mount(host); await until(() => text(host).includes('Domain & access protection'));
         const section = all(host).find(item => item.tag === 'section' && item.props['aria-labelledby'] === 'usage-public-access-heading');
         assert.match(text(section), /last deployment configuration, not a live protection check/);
         assert.match(text(section), /Owner can ask a deployment Agent to inspect/);
+        assert.match(text(section), /custom rule is not Cloudflare Managed Rules/);
+        assert.match(text(section), /existing domain without a tool ownership receipt needs an explicit connection plan.*rather than deleting and recreating it/);
+        assert.match(text(section), /Zone rules do not protect workers\.dev/);
         if (status === 'configured') {
+          assert.match(text(section), /Tool-managed custom security rule/);
           assert.match(text(section), /kanban\.example\.com/);
           assert.match(text(section), /Anonymous API filter/);
           assert.match(text(section), /2026-09-18 23:30:00 UTC/);
         } else {
           assert.doesNotMatch(text(section), /kanban\.example\.com/);
           assert.match(text(section), status === 'invalid' ? /saved public access configuration is invalid/ : /No custom-domain or WAF configuration snapshot/);
+          if (status === 'not_configured') assert.match(text(section), /existing custom domain or manually configured WAF can still be active/);
         }
         assert.equal(all(section).some(item => ['button', 'input'].includes(item.tag)), false);
         locale.value = 'zh-CN'; await nextTick();
         assert.match(text(section), /不代表实时防护状态/);
+        assert.match(text(section), /不要求删除或重建域名/);
       } finally { app.unmount(); locale.value = 'en'; }
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('overview summary and detailed usage share one snapshot without collecting on section changes', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    const value = extendedSnapshot();
+    value.generated_at = value.cloudflare.collected_at = new Date().toISOString();
+    return Response.json(value);
+  };
+  const summary = ref(true);
+  const app = renderer.createApp({ setup: () => () => h(Component, {
+    summary: summary.value, observedOrigin: 'https://legacy.example.com', onDetails: () => { summary.value = false; },
+  }) });
+  const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('Snapshot available'));
+    assert.match(text(host), /Attachment budget reserved/);
+    assert.equal(all(host).filter(item => item.tag === 'dt').length, 4);
+    assert.doesNotMatch(text(host), /Billing cycle|Data details|Domain & access protection|Cloudflare budget emails|Set limit|Refresh usage/);
+    assert.equal(calls.length, 1);
+    await all(host).find(item => item.tag === 'button' && text(item) === 'View usage details').props.onClick(); await nextTick();
+    assert.match(text(host), /Cloudflare Workers\/D1 plan: Paid/);
+    assert.match(text(host), /Current site address: https:\/\/legacy\.example\.com/);
+    assert.equal(calls.length, 1);
+    summary.value = true; await nextTick();
+    assert.doesNotMatch(text(host), /Data details|Set limit/);
+    assert.equal(calls.length, 1);
+    locale.value = 'zh-CN'; await nextTick();
+    assert.match(text(host), /查看用量详情|附件预留预算/);
+  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
+});
+
+test('entering details rechecks the clock at fifteen minutes, hides old reminders, and collects through the existing cache path', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  let now = Date.parse('2026-09-19T02:00:00.000Z');
+  Date.now = () => now;
+  const calls = [];
+  let finishRead;
+  let finishCollection;
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    if (calls.length === 1) return Response.json(extendedSnapshot());
+    if (init.method === 'GET') return new Promise(resolve => { finishRead = resolve; });
+    return new Promise(resolve => { finishCollection = resolve; });
+  };
+  const summary = ref(true);
+  const app = renderer.createApp({ setup: () => () => h(Component, { summary: summary.value }) });
+  const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('Snapshot available'));
+    now += 15 * 60 * 1000 - 1;
+    summary.value = false; await nextTick();
+    assert.equal(calls.length, 1);
+    assert.match(text(host), /Shared allowance reminders/);
+    summary.value = true; await nextTick();
+    now += 1;
+    await nextTick();
+    assert.equal(calls.length, 1, 'time passage alone must not trigger background polling');
+    summary.value = false; await until(() => finishRead);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].path, '/api/v1/admin/usage');
+    assert.match(text(host), /Stale snapshot/);
+    assert.doesNotMatch(text(host), /Shared allowance reminders|Snapshot available/);
+    const stale = extendedSnapshot('stale'); stale.generated_at = new Date(now).toISOString();
+    finishRead(Response.json(stale)); await until(() => finishCollection);
+    assert.equal(calls.length, 3);
+    assert.equal(calls[2].path, '/api/v1/admin/usage/refresh');
+    assert.equal(JSON.parse(calls[2].init.body).mode, 'stale');
+    assert.doesNotMatch(text(host), /Shared allowance reminders/);
+    const current = extendedSnapshot();
+    current.generated_at = current.cloudflare.collected_at = new Date(now).toISOString();
+    finishCollection(Response.json(current)); await until(() => text(host).includes('Snapshot available'));
+    assert.match(text(host), /Shared allowance reminders/);
+    assert.equal(calls.length, 3);
+  } finally { app.unmount(); globalThis.fetch = originalFetch; Date.now = originalNow; }
+});
+
+test('a failed foreground read retains a stale snapshot and entering details retries without reviving stale reminders', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  let now = Date.parse('2026-09-19T02:00:00.000Z');
+  Date.now = () => now;
+  const calls = [];
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    if (calls.length === 1) return Response.json(extendedSnapshot());
+    throw new Error('offline');
+  };
+  const summary = ref(true);
+  const app = renderer.createApp({ setup: () => () => h(Component, { summary: summary.value }) });
+  const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('Snapshot available'));
+    now += 15 * 60 * 1000;
+    summary.value = false; await until(() => text(host).includes('Refresh failed'));
+    assert.equal(calls.length, 2);
+    assert.match(text(host), /Stale snapshot/);
+    assert.doesNotMatch(text(host), /Shared allowance reminders|Snapshot available/);
+    assert.match(text(host), /Workers requests8,000,000/);
+    summary.value = true; await nextTick();
+    summary.value = false; await until(() => calls.length === 3 && text(host).includes('Refresh failed'));
+    assert.equal(calls[2].path, '/api/v1/admin/usage');
+    assert.doesNotMatch(text(host), /Shared allowance reminders|Snapshot available/);
+  } finally { app.unmount(); globalThis.fetch = originalFetch; Date.now = originalNow; }
+});
+
+test('snapshot bars compare only count metrics with the same known window and preserve unknowns', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const mode of ['matching', 'different_window', 'different_unit', 'r2_different_unit']) {
+      globalThis.fetch = async () => {
+        const value = extendedSnapshot();
+        const read = value.cloudflare.metrics.find(metric => metric.key === 'd1_rows_read');
+        read.value = 40_541;
+        value.cloudflare.metrics.push({ ...read, key: 'd1_rows_written', value: 994,
+          unit: mode === 'different_unit' ? 'microseconds' : 'count',
+          period_start: mode === 'different_window' ? '2026-09-18T00:00:00.000Z' : read.period_start });
+        if (mode === 'r2_different_unit') value.cloudflare.metrics.find(metric => metric.key === 'r2_unclassified_operations').unit = 'bytes';
+        return Response.json(value);
+      };
+      const app = renderer.createApp(Component); const host = node('root');
+      try {
+        app.mount(host); await until(() => text(host).includes('Data details & snapshot charts'));
+        const charts = all(host).filter(item => item.tag === 'figure');
+        const d1 = charts.find(item => text(item).startsWith('D1 read and write counts'));
+        assert.equal(Boolean(d1), mode === 'matching' || mode === 'r2_different_unit');
+        if (d1) {
+          assert.match(text(d1), /D1 rows read today40,541.*D1 rows written today994/);
+          const bars = all(d1).filter(item => item.tag === 'div' && item.props.class === 'usage-chart-track');
+          assert.equal(bars.length, 2);
+          assert.equal(bars[0].children[0].props.style.width, '100%');
+          assert.ok(Number.parseFloat(bars[1].children[0].props.style.width) < 3);
+        }
+        const r2 = charts.find(item => text(item).startsWith('R2 operation counts'));
+        assert.equal(Boolean(r2), mode !== 'r2_different_unit');
+        if (r2) {
+          assert.match(text(r2), /R2 Class A operationsUnknown.*R2 Class B operations0.*R2 unclassified operations2/);
+          assert.equal(all(r2).filter(item => item.tag === 'div' && item.props.class === 'usage-chart-track').length, 2);
+        }
+        assert.match(text(host), /separate usage history panel.*preserves missing dates/);
+      } finally { app.unmount(); }
     }
   } finally { globalThis.fetch = originalFetch; }
 });

@@ -62,9 +62,13 @@ export function createStrictZeroPlan({
   if (cloudflareProfile !== null && cloudflareAuthContextDirectory !== null) {
     throw toolError("AMBIGUOUS_WRANGLER_AUTH_CONTEXT", "Use either an explicit Wrangler profile or an effective context directory, not both");
   }
+  if (release.schema_version !== undefined && (!Number.isSafeInteger(release.schema_version) || release.schema_version < 1)) {
+    throw toolError("INVALID_DEPLOYMENT_RELEASE", "release.schema_version must be a positive integer");
+  }
   const plan = {
     schema_version: 1,
     kind: "strict_zero_deploy",
+    ...(release.schema_version >= 26 ? { cloudflare_control: { enabled: true, history_enabled: false } } : {}),
     cost_protection: { anonymous_login: ANONYMOUS_LOGIN_POLICY, expensive_reads: EXPENSIVE_READ_POLICY, worker_limits: null },
     task_id: requireString(taskId, "task_id", { max: 256 }),
     operation_id: requireUuid(operationId, "operation_id"),
@@ -82,6 +86,7 @@ export function createStrictZeroPlan({
       manifest_sha256: digest(release.manifest_sha256, "release.manifest_sha256"),
       service_bundle_version: requireString(release.service_bundle_version, "release.service_bundle_version", { max: 128 }),
       service_bundle_sha256: digest(release.service_bundle_sha256, "release.service_bundle_sha256"),
+      ...(release.schema_version === undefined ? {} : { schema_version: release.schema_version }),
     },
     resources: {
       worker: { name: frozenWorkerName, create: true },

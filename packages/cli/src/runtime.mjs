@@ -23,7 +23,19 @@ import { capturedRunner } from './process.mjs';
 
 const pick=(input,keys)=>Object.fromEntries(keys.filter(key=>input[key]!==undefined).map(key=>[key,input[key]]));
 const encodePath=(template,input)=>template.replace(/\{([^}]+)\}/g,(_,field)=>encodeURIComponent(input[field]));
+const cloudflarePlans=new Set(['planCloudflareRateLimits','planCloudflareConfiguration']);
+const cloudflareApplies=new Set(['applyCloudflareRateLimits','applyCloudflareConfiguration']);
+const cloudflareOperations=new Set([...cloudflareApplies,'verifyCloudflareOperation']);
+const cloudflareControl='/api/v1/admin/cloudflare';
 function readbackPath(command,input,result) {
+  if(cloudflarePlans.has(command.operation))return result?.data?.resource?.plan_id?`${cloudflareControl}/plans/${encodeURIComponent(result.data.resource.plan_id)}`:result?null:cloudflareControl;
+  if(cloudflareOperations.has(command.operation)) {
+    const id=result?.data?.resource?.operation_id??(command.operation==='verifyCloudflareOperation'?input.operation_id:null);
+    if(id)return `${cloudflareControl}/operations/${encodeURIComponent(id)}`;
+    return !result&&input.plan_id?`${cloudflareControl}/plans/${encodeURIComponent(input.plan_id)}`:null;
+  }
+  if(['updateCloudflareSettings','verifyCloudflareControl'].includes(command.operation))return cloudflareControl;
+  if(command.operation==='collectUsageHistory')return '/api/v1/admin/usage/history?days=7';
   if(command.operation==='publishUpgradeNotification'&&!result)return '/api/v1/admin/upgrade-notification-settings';
   if(command.operation==='publishUpgradeNotification'&&result?.data?.resource?.notification_id)return `/api/v1/admin/notifications/upgrade-releases/${encodeURIComponent(input.release_version)}`;
   const base=encodePath(command.apiPath.replace(/\/commands\/[^/]+$/,''),input);
@@ -50,6 +62,14 @@ function requestFor(command,input) {
 }
 function versionOf(result) { return result?.data?.resource?.version??result?.data?.version??result?.data?.project?.version??result?.data?.issue?.version; }
 function targetMatches(command,input,result,readback) {
+  const committed=result?.data?.resource, actual=readback.data?.resource??readback.data;
+  if(cloudflarePlans.has(command.operation))return typeof committed?.plan_id==='string'&&committed.version===input.expected_version+1&&canonicalDigest(actual)===canonicalDigest(committed);
+  if(cloudflareOperations.has(command.operation))return typeof committed?.operation_id==='string'&&(command.operation!=='verifyCloudflareOperation'||committed.operation_id===input.operation_id)&&actual?.operation_id===committed.operation_id&&Number.isSafeInteger(actual.version)&&actual.version>=committed.version&&['pending','unknown','failed','verified'].includes(actual.status);
+  if(['updateCloudflareSettings','verifyCloudflareControl'].includes(command.operation))return Number.isSafeInteger(committed?.version)&&Number.isSafeInteger(actual?.version)&&actual.version>=committed.version&&(command.operation!=='updateCloudflareSettings'||actual.target?.zone_id===input.zone_id);
+  if(command.operation==='collectUsageHistory') {
+    const captured=result?.data?.items?.find(item=>item.day===input.day), observed=readback.data?.items?.find(item=>item.day===input.day);
+    return Boolean(captured&&observed&&captured.complete_day===true&&observed.complete_day===true&&Number.isFinite(Date.parse(captured.collected_at))&&Date.parse(observed.collected_at)>=Date.parse(captured.collected_at)&&Array.isArray(observed.metrics)&&observed.metrics.length&&observed.metrics.every(metric=>metric.value===null||typeof metric.value==='number'&&Number.isFinite(metric.value)&&metric.value>=0));
+  }
   if(command.operation==='publishUpgradeNotification')return readback.data?.release_version===input.release_version&&readback.data?.notification_id===result?.data?.resource?.notification_id;
   if(command.operation==='updateProjectStatusName')return (readback.data?.items??readback.data?.statuses??[]).some(item=>(item.status_key??item.key)===input.status_key&&item.display_name===input.display_name);
   const resource=result?.data?.resource??result?.data;const expected=resource?.identifier??resource?.id??input.identifier??input.comment_id??input.label_id??input.relation_id??input.attachment_id??input.notification_id??input.administrator_id??input.credential_id??input.passkey_id;
@@ -129,7 +149,8 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
       const pending=await readJson(pendingFile,{allowMissing:true});
       if(pending&&pending.operation_id!==operationId)throw toolError('CLI_PENDING_WRITE_RECOVERY_REQUIRED','Recover the retained unknown write before starting another write or switching identity',{instance_id:instanceId,operation_id:pending.operation_id});
       const result=await gateContext.run(instanceId,callback);
-      if(result.outcome_unknown||result.committed_unverified)await atomicWriteJson(pendingFile,{schema_version:1,instance_id:instanceId,operation_id:result.recovery?.operation_id??operationId});
+      const failedCloudflare=result.cloudflare_status==='failed'&&result.operation?.phase==='failed'&&result.readback?.ok===true&&(result.readback.data?.resource??result.readback.data)?.operation_id===result.data?.resource?.operation_id;
+      if(!failedCloudflare&&(result.outcome_unknown||result.committed_unverified))await atomicWriteJson(pendingFile,{schema_version:1,instance_id:instanceId,operation_id:result.recovery?.retained_operation_id??result.recovery?.operation_id??operationId});
       else await rm(pendingFile,{force:true});
       return result;
     }finally {await lock.close();await rm(lockFile);}
@@ -173,6 +194,9 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     if(unknown) { record.phase='unknown'; await atomicWriteJson(file,record); return {...result,outcome_unknown:true,recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id,...(record.idempotency_key?{idempotency_key:record.idempotency_key}:{}),write_contract:record.command.write_contract}}; }
     if(!result.ok) { record.phase='rejected'; record.result=result; await atomicWriteJson(file,record); return result; }
     record.phase='committed'; record.result=result;
+    if(cloudflareOperations.has(record.command.operation)&&record.cloud_operation_id&&result.data?.resource?.operation_id!==record.cloud_operation_id) {
+      await atomicWriteJson(file,record);return {...result,committed_unverified:true,error:{code:'CLI_CLOUDFLARE_OPERATION_MISMATCH',category:'platform_failure',source:'client_runtime',recovery:'recover_original_operation'},recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id}};
+    }
     if(record.command.operation==='publishUpgradeNotification'&&result.data?.resource?.notification_id===null) {
       const replay=await request(record.identity,{...record.request,idempotencyKey:record.idempotency_key});
       if(!replay.ok||replay.data?.idempotent_replay!==true||canonicalDigest(replay.data?.resource)!==canonicalDigest(result.data?.resource)) {await atomicWriteJson(file,record);return {...result,committed_unverified:true,recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id}};}
@@ -185,15 +209,26 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
         const purged=record.command.operation.startsWith('purge')&&readback.status===404&&readback.error?.category==='not_found'&&readback.error?.source==='service';
         if(!purged&&(!readback.ok||!targetMatches(record.command,record.input,result,readback))) { await atomicWriteJson(file,record); return {...result,committed_unverified:true,readback,recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id}}; } record.readback=readback;
       } else {await atomicWriteJson(file,record);return {...result,committed_unverified:true,recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id},error:{code:'CLI_READBACK_PATH_UNAVAILABLE',category:'platform_failure',source:'client_runtime',recovery:'inspect_remote_operation_evidence'}};}
+    if(cloudflareOperations.has(record.command.operation)) {
+      const actual=record.readback.data?.resource??record.readback.data;
+      record.cloud_operation_id=actual.operation_id;record.cloudflare_status=actual.status;
+      if(actual.status!=='verified') {
+        if(actual.status==='failed')record.phase='failed';
+        const outcome={...result,readback:record.readback,cloudflare_status:actual.status,committed_unverified:true,...(actual.status==='unknown'?{outcome_unknown:true}:{}),...(actual.status==='failed'?{ok:false,error:{code:'CLI_CLOUDFLARE_OPERATION_FAILED',category:'platform_failure',source:'client_runtime',recovery:'inspect_cloudflare_operation_failure'}}:{}),operation:{operation_id:record.operation_id,idempotency_key:record.idempotency_key,write_contract:record.command.write_contract,phase:actual.status==='failed'?'failed':'committed_unverified'},recovery:{command:'admin cloudflare verify-operation',instance_id:record.identity.instance_id,operation_id:actual.operation_id,retained_operation_id:record.operation_id}};
+        if(actual.status==='failed')record.result=outcome;
+        await atomicWriteJson(file,record);
+        return outcome;
+      }
+    }
     record.phase='verified'; await atomicWriteJson(file,record);
-    return {...result,readback:record.readback??null,operation:{operation_id:record.operation_id,...(record.idempotency_key?{idempotency_key:record.idempotency_key}:{}),write_contract:record.command.write_contract,phase:record.phase}};
+    return {...result,readback:record.readback??null,...(record.cloudflare_status?{cloudflare_status:record.cloudflare_status}:{}),operation:{operation_id:record.operation_id,...(record.idempotency_key?{idempotency_key:record.idempotency_key}:{}),write_contract:record.command.write_contract,phase:record.phase}};
   };
   const recover=async input=>gate(input.instanceId,input.operationId,()=>withRecord(input.instanceId,input.operationId,async(file,record)=> {
     if(!record) throw toolError('CLI_OPERATION_NOT_FOUND','No retained operation exists');
     if(record.kind==='helper'&&record.command.workflow==='owner-rotate')return recoverOwnerRotation(file,record,input);
     const identity=record.identity?await connection(input.instanceId):null;
     if(record.identity&&canonicalDigest(identity)!==canonicalDigest(record.identity)) throw toolError('CLI_RECOVERY_IDENTITY_CHANGED','Restore the original connection and Credential before recovering this operation');
-    if(record.phase==='verified'||record.phase==='rejected'||record.phase==='committed_delivery_failed') return terminalResult(record);
+    if(record.phase==='verified'||record.phase==='rejected'||record.phase==='failed'||record.phase==='committed_delivery_failed') return terminalResult(record);
     if(record.kind==='helper') {
       if(now()-record.created_at_ms>=23*60*60*1000)throw toolError('CLI_RECOVERY_WINDOW_EXPIRED','The safe replay window expired; inspect retained and remote evidence');
       if(record.capability_digest&&canonicalDigest(input.capabilityInput)!==record.capability_digest)throw toolError('CLI_RECOVERY_CAPABILITY_REQUIRED','Reprovide the original invitation through --capability-stdin');
@@ -205,6 +240,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     const readback=target?await request(identity,{method:'GET',apiPath:target}):null;
     if(record.command.write_contract==='cache-refresh'){record.phase='unknown';await atomicWriteJson(file,record);return {ok:false,status:0,outcome_unknown:true,readback,error:{code:'CLI_CACHE_REFRESH_OUTCOME_UNKNOWN',category:'platform_failure',source:'client_runtime',recovery:'inspect_usage_readback_without_repeating_refresh'},recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id,write_contract:record.command.write_contract}};}
     if(now()-record.created_at_ms>=23*60*60*1000) throw toolError('CLI_RECOVERY_WINDOW_EXPIRED','The safe replay window expired; inspect the retained operation and remote audit evidence without creating a replacement write');
+    if(record.cloudflare_verification)return finish(file,record,await request(identity,{...record.cloudflare_verification.request,idempotencyKey:record.cloudflare_verification.idempotency_key}),{recovering:true});
     return finish(file,record,await request(identity,{...record.request,idempotencyKey:record.idempotency_key}),{recovering:true});
   }));
   const api=async(command,input)=> {
@@ -220,17 +256,32 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
       }
       return request(identity,requestFor(command,input));
     }
+    if(command.operation==='verifyCloudflareOperation') {
+      const paths=getInstancePaths({stateRoot,instanceId:input.instanceId}), pendingFile=path.join(paths.instanceRoot,'cli-operations/pending.json');
+      await assertNoSymlinkPath(pendingFile,stateRoot);
+      const pending=await readJson(pendingFile,{allowMissing:true});
+      if(pending)return gate(input.instanceId,pending.operation_id,()=>withRecord(input.instanceId,pending.operation_id,async(file,record)=> {
+        if(!record||!cloudflareOperations.has(record.command.operation)||record.cloud_operation_id!==input.operation_id||record.readback?.ok!==true||(record.readback.data?.resource??record.readback.data)?.operation_id!==input.operation_id)throw toolError('CLI_PENDING_WRITE_RECOVERY_REQUIRED','Verify only the exact Cloudflare operation already read back from the retained intent');
+        if(canonicalDigest(identity)!==canonicalDigest(record.identity))throw toolError('CLI_RECOVERY_IDENTITY_CHANGED','Restore the original connection and Credential before verifying this operation');
+        // 已完成核验仍可能返回 pending/unknown；仅 HTTP 结果未知时重用原轮次。
+        const verification=record.phase==='unknown'&&record.cloudflare_verification?record.cloudflare_verification:{request:requestFor(command,input),idempotency_key:input.idempotencyKey??`cli-${randomUUID()}-verify`};
+        record.cloudflare_verification=verification;record.phase='unknown';await atomicWriteJson(file,record);
+        return finish(file,record,await request(record.identity,{...verification.request,idempotencyKey:verification.idempotency_key}),{recovering:true});
+      }));
+    }
     const operationId=input.operationId??randomUUID(); const supportsIdempotency=supportsServiceIdempotency(command);
     if(input.idempotencyKey!==undefined&&!supportsIdempotency)throw toolError('CLI_INVALID_ARGUMENT','This Service operation uses CAS without a server Idempotency-Key contract');
     const key=supportsIdempotency?(input.idempotencyKey??`cli-${operationId}`):undefined;
     return gate(input.instanceId,operationId,()=>withRecord(input.instanceId,operationId,async(file,existing)=> {
       if(existing) {
         if(canonicalDigest(existing.original_input)!==canonicalDigest(input)||canonicalDigest(existing.identity)!==canonicalDigest(identity))throw toolError('CLI_OPERATION_EXISTS','Use operation recover with the retained operation; do not submit a fresh write');
-        if(existing.phase==='verified'||existing.phase==='rejected')return {...existing.result,readback:existing.readback,operation:{operation_id:operationId,phase:existing.phase}};
+        if(existing.phase==='failed')return terminalResult(existing);
+        if(existing.phase==='verified'||existing.phase==='rejected')return {...existing.result,readback:existing.readback,...(existing.cloudflare_status?{cloudflare_status:existing.cloudflare_status}:{}),operation:{operation_id:operationId,phase:existing.phase}};
         if(now()-existing.created_at_ms>=23*60*60*1000)throw toolError('CLI_RECOVERY_WINDOW_EXPIRED','Inspect the retained operation and remote evidence');
         if(existing.phase==='committed')return finish(file,existing,existing.result);
         const target=readbackPath(existing.command,existing.input,existing.result);const readback=target?await request(identity,{method:'GET',apiPath:target}):null;
         if(existing.command.write_contract==='cache-refresh'){existing.phase='unknown';await atomicWriteJson(file,existing);return {ok:false,status:0,outcome_unknown:true,readback,error:{code:'CLI_CACHE_REFRESH_OUTCOME_UNKNOWN',category:'platform_failure',source:'client_runtime',recovery:'inspect_usage_readback_without_repeating_refresh'},recovery:{command:'operation recover',instance_id:identity.instance_id,operation_id:operationId,write_contract:existing.command.write_contract}};}
+        if(existing.cloudflare_verification)return finish(file,existing,await request(identity,{...existing.cloudflare_verification.request,idempotencyKey:existing.cloudflare_verification.idempotency_key}),{recovering:true});
         return finish(file,existing,await request(identity,{...existing.request,idempotencyKey:existing.idempotency_key}),{recovering:true});
       }
       const frozen={...input,...(command.operation==='renameOwnerDeviceCredential'?{principal_id:identity.principal_id}:{})};
@@ -262,7 +313,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
   const terminalResult=record=> {
     const result=record.result??{ok:false,status:0,error:{code:'CLI_REJECTED_RESULT_UNAVAILABLE',category:'platform_failure',source:'client_runtime',recovery:'inspect_original_rejection'}};
     const rejection=failed(result)?{ok:false,error:result.error??result.operation?.error??result.verification?.error,status:result.status??result.operation?.status??result.verification?.status}:{};
-    return {...result,...rejection,readback:record.readback??null,operation:{operation_id:record.operation_id,phase:record.phase}};
+    return {...result,...rejection,readback:record.readback??null,...(record.cloudflare_status?{cloudflare_status:record.cloudflare_status}:{}),operation:{operation_id:record.operation_id,phase:record.phase}};
   };
   const rotationVerified=(record,result)=> {
     const resource=result?.operation?.data?.resource;const verification=result?.verification;

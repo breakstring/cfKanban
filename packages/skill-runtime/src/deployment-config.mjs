@@ -1,4 +1,5 @@
 import { deploymentCrons, usageVars } from "./usage-config.mjs";
+import { ownerControlVars } from "./owner-control-config.mjs";
 import { costProtectionBindings, plannedWorkerLimits } from "./cost-protection-config.mjs";
 import { publicAccessVars, normalizePublicAccess } from "./public-access-config.mjs";
 import path from "node:path";
@@ -118,6 +119,14 @@ export async function writeFrozenWranglerConfig({
   const mainPath = await requireBundleEntry(bundleRoot, path.join("dist", "index.js"), "file");
   const assetsPath = await requireBundleEntry(bundleRoot, path.join("apps", "web", "dist"), "directory");
   const migrationsPath = await requireBundleEntry(bundleRoot, "migrations", "directory");
+  if (plan.cloudflare_control?.enabled) {
+    const manifestPath = await requireBundleEntry(bundleRoot, "migrations/manifest.json", "file");
+    const manifest = await readJson(manifestPath);
+    const schemaVersion = plan.kind === "strict_zero_deploy" ? plan.release?.schema_version : plan.target?.schema_version;
+    if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 26 || manifest.schema_version !== schemaVersion) {
+      throw toolError("OWNER_CONTROL_RELEASE_UNSUPPORTED", "Owner control settings require the approved schema and installed bundle to match at version 26 or later");
+    }
+  }
   const template = await readJson(templatePath);
   if (typeof template.compatibility_date !== "string" || template.assets?.binding !== "ASSETS") {
     throw toolError("SERVICE_BUNDLE_CONFIG_INVALID", "Service bundle Wrangler template is missing its pinned compatibility date or ASSETS binding");
@@ -154,7 +163,7 @@ export async function writeFrozenWranglerConfig({
       r2_buckets: [{ binding: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }],
     } : {}),
     ...(deploymentCrons(plan).length ? { triggers: { crons: deploymentCrons(plan) } } : {}),
-    vars: { ...buildRateLimitVars(plan), ...usageVars(plan.usage_analytics?.configuration), ...publicAccessVars(publicAccess), ...Object.fromEntries(costProtectionBindings(plan.cost_protection).filter(item => item.type === "plain_text").map(item => [item.name, item.text])) },
+    vars: { ...buildRateLimitVars(plan), ...usageVars(plan.usage_analytics?.configuration), ...ownerControlVars(plan, databaseId), ...publicAccessVars(publicAccess), ...Object.fromEntries(costProtectionBindings(plan.cost_protection).filter(item => item.type === "plain_text").map(item => [item.name, item.text])) },
     ratelimits: [...buildRateLimitConfig(plan), ...[["anonymous_login", "ANONYMOUS_LOGIN_RATE_LIMITER", "1004"], ["expensive_reads", "EXPENSIVE_READ_RATE_LIMITER", "1005"]].filter(([key]) => plan.cost_protection?.[key]).map(([key, name, namespace_id]) => ({ name, namespace_id, simple: { limit: plan.cost_protection[key].limit, period: plan.cost_protection[key].period_seconds } }))],
     ...(plannedWorkerLimits(plan) ? { limits: plannedWorkerLimits(plan) } : {}),
   };

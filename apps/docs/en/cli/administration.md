@@ -18,3 +18,17 @@ Ordinary Workspace/Project commands resolve only their required level from the c
 Invite creation and recovery use dedicated safe delivery. Public Join settings explain role, independent quotas and closure effects. Owner device approval/revocation, identity switching and credential rotation retain the last-effective-credential protections. Never send capability URLs or tokens to logs or ordinary JSON output.
 
 Homepage, notifications, capacity/limits, usage, origin and audit commands use the same API as the Web maintenance pages. Cloudflare resources, migrations and Owner total-loss recovery belong to deployment plans. For failures, use [recovery](./recovery.md) and preserve the original operation.
+
+Owner Cloudflare settings use the same fixed-target Service API as the Web. Read connection capabilities, notification policies/recipients and WAF status; plan and apply one rate-limit group or the supported usage settings. USD budget policies are read-only: an unknown amount is not zero, and a generic policy limit is not a confirmed dollar threshold.
+
+```text
+cfkanban admin cloudflare --help
+cfkanban admin rate-limits plan --help
+cfkanban admin rate-limits apply --help
+cfkanban admin usage history --help
+cfkanban admin usage collect --help
+```
+
+Keep the plan's exact version for apply. A pending or unknown Cloudflare result requires the original operation and `admin cloudflare verify-operation`; verification only reads Cloudflare and never repeats a settings write. History reads 1–90 complete UTC days from local D1, preserving gaps; explicit collection accepts one of the last seven complete UTC dates and does not replace unknown values with zero.
+
+Cloudflare Tokens are a browser-only input exception. Use the existing `web open` flow for the Owner management page, then open **Cloudflare settings**. Enter credentials only in that protected transient form; they are stored as ordinary Worker Secrets. There is no Token argument, input-file or ordinary API command that writes these secrets to a CLI recovery journal. See [connection and permissions](../deployment/optional.md).

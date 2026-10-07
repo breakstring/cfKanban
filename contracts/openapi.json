@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.10.1-rc.1",
+    "version": "1.10.1-rc.2",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -12190,6 +12190,1213 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
+    "/api/v1/admin/usage/history": {
+      "get": {
+        "operationId": "getUsageHistory",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Usage History",
+        "description": "Owner-only bounded D1 history read for 1–90 complete UTC days. No Cloudflare request; missing dates and null metrics are preserved. Analytics observations are not invoices.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/admin/usage/history/collect": {
+      "post": {
+        "operationId": "collectUsageHistory",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Collect Usage History",
+        "description": "Owner-only opt-in derived history refresh for one of the last seven complete UTC days. Cookie requests require CSRF; no business domain event or Idempotency-Key is required. Shared claims and a 60-second retry cooldown bound provider calls. Paid daily metrics use this complete UTC day, not month-to-date totals.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "cache-refresh",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectUsageHistoryRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare": {
+      "get": {
+        "operationId": "getCloudflareControl",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Cloudflare Control",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareControl"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/admin/cloudflare/notifications": {
+      "get": {
+        "operationId": "getCloudflareNotifications",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Cloudflare Notifications",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareNotifications"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/admin/cloudflare/waf": {
+      "get": {
+        "operationId": "getCloudflareWaf",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Cloudflare Waf",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareWaf"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/admin/cloudflare/operations/{operation_id}": {
+      "get": {
+        "operationId": "getCloudflareOperation",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Cloudflare Operation",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/admin/cloudflare/plans/{plan_id}": {
+      "get": {
+        "operationId": "getCloudflarePlan",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Cloudflare Plan",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflarePlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/admin/cloudflare/verify": {
+      "post": {
+        "operationId": "verifyCloudflareControl",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Verify Cloudflare Control",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareControlWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare/settings": {
+      "patch": {
+        "operationId": "updateCloudflareSettings",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Update Cloudflare Settings",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareControlWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCloudflareSettingsRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare/secrets": {
+      "post": {
+        "operationId": "saveCloudflareSecret",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Save Cloudflare Secret",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction. Token input is transient and persisted only as an ordinary Worker Secret. The generic Skill/CLI API path rejects this operation; use the protected Owner Web form.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperationWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveCloudflareSecretRequest"
+              }
+            }
+          }
+        },
+        "x-cfkanban-sensitive-input": "browser_cloudflare_secret"
+      }
+    },
+    "/api/v1/admin/cloudflare/operations/{operation_id}/verify": {
+      "post": {
+        "operationId": "verifyCloudflareOperation",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Verify Cloudflare Operation",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "operation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperationWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare/rate-limits/plan": {
+      "post": {
+        "operationId": "planCloudflareRateLimits",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Plan Cloudflare Rate Limits",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflarePlanWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanCloudflareRateLimitsRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare/rate-limits/apply": {
+      "post": {
+        "operationId": "applyCloudflareRateLimits",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Apply Cloudflare Rate Limits",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperationWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyCloudflarePlanRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare/configuration/plan": {
+      "post": {
+        "operationId": "planCloudflareConfiguration",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Plan Cloudflare Configuration",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflarePlanWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanCloudflareConfigurationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare/configuration/apply": {
+      "post": {
+        "operationId": "applyCloudflareConfiguration",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Apply Cloudflare Configuration",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperationWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyCloudflarePlanRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/public-joins/{public_id}/redeem": {
       "post": {
         "operationId": "redeemPublicJoin",
@@ -16088,6 +17295,844 @@
         },
         "additionalProperties": false
       },
+      "CollectUsageHistoryRequest": {
+        "type": "object",
+        "required": [
+          "day"
+        ],
+        "properties": {
+          "day": {
+            "type": "string",
+            "format": "date",
+            "description": "One of the last seven complete UTC dates; today is rejected."
+          }
+        },
+        "additionalProperties": false
+      },
+      "UsageHistory": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "retention_days",
+          "generated_at",
+          "items",
+          "missing_days",
+          "source",
+          "history_kind",
+          "error"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "retention_days": {
+            "const": 90
+          },
+          "generated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "source": {
+            "const": "cloudflare_analytics"
+          },
+          "history_kind": {
+            "const": "utc_daily"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "missing_days": {
+            "type": "array",
+            "maxItems": 90,
+            "items": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 90,
+            "items": {
+              "type": "object",
+              "required": [
+                "day",
+                "collected_at",
+                "metrics",
+                "complete_day"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "day": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "collected_at": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "metrics": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "$ref": "#/components/schemas/UsageMetric"
+                  }
+                },
+                "complete_day": {
+                  "const": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "CloudflareCapability": {
+        "type": "string",
+        "enum": [
+          "missing",
+          "unverified",
+          "verified",
+          "permission_denied",
+          "unavailable",
+          "target_mismatch",
+          "unsupported_contract"
+        ]
+      },
+      "CloudflareBudget": {
+        "type": "object",
+        "required": [
+          "status",
+          "docs_url",
+          "dashboard_url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "unsupported_contract"
+          },
+          "docs_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "dashboard_url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "description": "The public USD Budget Alert field contract is not confirmed. Notification policy limit fields must not be interpreted as USD."
+      },
+      "CloudflareConfiguration": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "history_enabled": {
+            "type": "boolean"
+          },
+          "analytics_enabled": {
+            "type": "boolean"
+          },
+          "billing_plan": {
+            "enum": [
+              "free",
+              "paid",
+              null
+            ]
+          },
+          "billing_cycle_day": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 31
+          },
+          "account_totals": {
+            "type": "boolean"
+          },
+          "warning_percent": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "CloudflareOperation": {
+        "type": "object",
+        "required": [
+          "operation_id",
+          "kind",
+          "status",
+          "version",
+          "baseline_version_id",
+          "result_version_id",
+          "deployment_id",
+          "failure_class",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "operation_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "configuration_secret",
+              "control_secret",
+              "analytics_secret",
+              "configuration",
+              "rate_limit"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "verified",
+              "failed",
+              "unknown"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "baseline_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deployment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure_class": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "CloudflareControl": {
+        "type": "object",
+        "required": [
+          "version",
+          "target",
+          "configured",
+          "capabilities",
+          "verified_at",
+          "budget",
+          "latest_operation",
+          "configuration"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "target": {
+            "type": "object",
+            "required": [
+              "account_id",
+              "worker_name",
+              "database_id",
+              "zone_id",
+              "hostname"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "account_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "worker_name": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 63
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "database_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "zone_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "hostname": {
+                "type": "string",
+                "maxLength": 253
+              }
+            }
+          },
+          "configured": {
+            "type": "object",
+            "required": [
+              "configuration",
+              "control",
+              "analytics"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "configuration": {
+                "type": "boolean"
+              },
+              "control": {
+                "type": "boolean"
+              },
+              "analytics": {
+                "type": "boolean"
+              }
+            }
+          },
+          "capabilities": {
+            "type": "object",
+            "required": [
+              "configuration",
+              "notifications",
+              "waf",
+              "billing",
+              "analytics"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "configuration": {
+                "$ref": "#/components/schemas/CloudflareCapability"
+              },
+              "notifications": {
+                "$ref": "#/components/schemas/CloudflareCapability"
+              },
+              "waf": {
+                "$ref": "#/components/schemas/CloudflareCapability"
+              },
+              "billing": {
+                "$ref": "#/components/schemas/CloudflareCapability"
+              },
+              "analytics": {
+                "$ref": "#/components/schemas/CloudflareCapability"
+              }
+            }
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "budget": {
+            "$ref": "#/components/schemas/CloudflareBudget"
+          },
+          "latest_operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CloudflareOperation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/CloudflareConfiguration"
+          }
+        }
+      },
+      "CloudflareNotifications": {
+        "type": "object",
+        "required": [
+          "status",
+          "available_alerts",
+          "policies",
+          "budget"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/CloudflareCapability"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/CloudflareBudget"
+          },
+          "available_alerts": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "required": [
+                "type",
+                "display_name",
+                "description",
+                "filter_options"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "display_name": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 2000
+                },
+                "filter_options": {
+                  "type": "array",
+                  "maxItems": 500,
+                  "items": {}
+                }
+              }
+            }
+          },
+          "policies": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "alert_type",
+                "enabled",
+                "emails",
+                "filters"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "name": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "alert_type": {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "emails": {
+                  "type": "array",
+                  "maxItems": 500,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 320
+                  }
+                },
+                "filters": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "CloudflareWaf": {
+        "type": "object",
+        "required": [
+          "status",
+          "zone_id",
+          "hostname",
+          "owned_rule",
+          "other_rule_count",
+          "protected"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/CloudflareCapability"
+          },
+          "zone_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hostname": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "other_rule_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0,
+            "maximum": 500
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "owned_rule": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "id",
+                  "enabled",
+                  "action",
+                  "expression"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 256
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "action": {
+                    "type": "string",
+                    "maxLength": 256
+                  },
+                  "expression": {
+                    "type": "string",
+                    "maxLength": 16384
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "CloudflarePlan": {
+        "type": "object",
+        "required": [
+          "plan_id",
+          "kind",
+          "version",
+          "baseline_version_id",
+          "baseline_deployment_id",
+          "target",
+          "before",
+          "after",
+          "created_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "configuration",
+              "rate_limit"
+            ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "baseline_version_id": {
+            "type": "string"
+          },
+          "baseline_deployment_id": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "required": [
+              "account_id",
+              "worker_name",
+              "database_id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "account_id": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "worker_name": {
+                "type": "string",
+                "maxLength": 63
+              },
+              "database_id": {
+                "$ref": "#/components/schemas/Uuid"
+              }
+            }
+          },
+          "before": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "after": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "UpdateCloudflareSettingsRequest": {
+        "type": "object",
+        "required": [
+          "zone_id",
+          "expected_version"
+        ],
+        "properties": {
+          "zone_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9_-]+$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SaveCloudflareSecretRequest": {
+        "type": "object",
+        "required": [
+          "kind",
+          "token",
+          "expected_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "configuration",
+              "control",
+              "analytics"
+            ]
+          },
+          "token": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 4096,
+            "pattern": "^[!-~]+$",
+            "writeOnly": true,
+            "description": "Transient browser-only secret input. Never persist in ordinary CLI files, drafts or operation journals."
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        }
+      },
+      "PlanCloudflareRateLimitsRequest": {
+        "type": "object",
+        "required": [
+          "scope",
+          "limit",
+          "period_seconds",
+          "expected_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "instance",
+              "principal",
+              "unauthenticated_sensitive",
+              "anonymous_login",
+              "expensive_reads"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "period_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "enum": [
+              10,
+              60
+            ]
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        }
+      },
+      "PlanCloudflareConfigurationRequest": {
+        "type": "object",
+        "required": [
+          "settings",
+          "expected_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/CloudflareConfiguration"
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        }
+      },
+      "ApplyCloudflarePlanRequest": {
+        "type": "object",
+        "required": [
+          "plan_id",
+          "expected_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        }
+      },
+      "CloudflareControlWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/CloudflareControl"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudflarePlanWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/CloudflarePlan"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudflareOperationWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/CloudflareOperation"
+          }
+        },
+        "additionalProperties": false
+      },
       "UsageMetric": {
         "type": "object",
         "required": [
@@ -16501,7 +18546,8 @@
             "const": "worker_configuration"
           },
           "editable_via_api": {
-            "const": false
+            "type": "boolean",
+            "description": "Whether the fixed deployment target and configuration Secret are present. Actual apply still verifies current Owner and Cloudflare permissions."
           },
           "cost_protection": {
             "type": "object",

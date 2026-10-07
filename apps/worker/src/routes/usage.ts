@@ -7,9 +7,22 @@ import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.t
 import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import { readUsage, refreshUsage } from "../services/usage.ts";
+import { collectUsageHistory, readUsageHistory } from "../services/usage-history.ts";
 
 export function registerUsageRoutes(router: Router): Router {
-  return router.get("/api/v1/admin/usage", async (request, env, context) => {
+  return router.get("/api/v1/admin/usage/history", async (request, env, context) => {
+    const auth = await authenticateRequest(env.DB, request, context.startedAt);
+    await enforcePrincipalRateLimit(env, auth);
+    const values = context.url.searchParams.getAll("days"), raw = values[0] ?? "30";
+    if (values.length > 1 || !/^[1-9][0-9]*$/u.test(raw)) throw validationError("invalid_usage_history_days");
+    return jsonResponse(await readUsageHistory(env, auth, Number(raw), context.startedAt), context.requestId);
+  }).post("/api/v1/admin/usage/history/collect", async (request, env, context) => {
+    const auth = await authenticateRequest(env.DB, request, context.startedAt);
+    await enforcePrincipalRateLimit(env, auth);
+    enforceCookieWriteProtection(request, auth);
+    const body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["day"], requiredKeys: ["day"] });
+    return jsonResponse(await collectUsageHistory(env, auth, body.day, context.startedAt), context.requestId);
+  }).get("/api/v1/admin/usage", async (request, env, context) => {
     const auth = await authenticateRequest(env.DB, request, context.startedAt);
     await enforcePrincipalRateLimit(env, auth);
     return jsonResponse(await readUsage(env, auth, context.startedAt), context.requestId);

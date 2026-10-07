@@ -2,6 +2,7 @@ import { requireObservedPrincipalDisplayName } from "./principal-name.mjs";
 import { PUBLIC_ACCESS_NAMES, normalizePublicAccess } from "./public-access-config.mjs";
 import { ANONYMOUS_LOGIN_POLICY, EXPENSIVE_READ_POLICY, expensiveReadBindings, observedExpensiveReads, anonymousLoginBindings, observedAnonymousLogin, normalizeWorkerLimits, normalizeObservedWorkerLimits, plannedProtectionBindingDelta } from "./cost-protection-config.mjs";
 import { existingUsageConfig, normalizeUsageConfig, usageBindings, USAGE_SECRET, USAGE_VARS } from "./usage-config.mjs";
+import { OWNER_CONTROL_SECRETS, OWNER_CONTROL_VARS, existingOwnerControl, observedCoreRateLimits, nativeRateLimitSimple } from "./owner-control-config.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
@@ -141,33 +142,47 @@ export function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits
   if (!Array.isArray(value)) {
     throw toolError("UPGRADE_BINDING_READBACK_REQUIRED", "Instance upgrade requires the redacted binding inventory from the current Worker version");
   }
+  const ownerManaged = value.some(binding => binding?.name === "CFKANBAN_CONTROL_WORKER_NAME");
   const observed = sortedBindings(value.map((binding, index) => {
     if (binding === null || typeof binding !== "object" || Array.isArray(binding)) {
       throw toolError("INVALID_UPGRADE_BINDINGS", "Current Worker binding evidence contains an invalid entry", { index });
     }
     const type = requireString(binding.type, "worker_binding.type", { max: 64 });
     const name = requireString(binding.name, "worker_binding.name", { max: 128 });
-    if (type === "secret_text" && name === USAGE_SECRET && binding.value_redacted === true) return { type, name, value_redacted: true };
+    if (type === "secret_text" && (name === USAGE_SECRET || OWNER_CONTROL_SECRETS.has(name)) && binding.value_redacted === true) return { type, name, value_redacted: true };
     if (type === "assets") return { type, name, value_redacted: binding.value_redacted === true };
     if (type === "d1") return { type, name, database_id: requireUuid(binding.database_id, "worker_binding.database_id") };
     if (type === "r2_bucket") return { type, name, bucket_name: resourceName(binding.bucket_name, "worker_binding.bucket_name") };
     if (type === "ratelimit") {
+      const simple = nativeRateLimitSimple(binding.simple, { required: ownerManaged });
       return {
         type,
         name,
         namespace_id: requireString(binding.namespace_id, "worker_binding.namespace_id", { max: 64 }),
+        ...(simple === undefined ? {} : { simple }),
       };
     }
     if (type === "plain_text") {
-      return { type, name, text: requireString(binding.text, "worker_binding.text", { max: PUBLIC_ACCESS_NAMES.has(name) ? 256 : USAGE_VARS.has(name) ? 128 : 32 }) };
+      return { type, name, text: requireString(binding.text, "worker_binding.text", { max: PUBLIC_ACCESS_NAMES.has(name) ? 256 : USAGE_VARS.has(name) || OWNER_CONTROL_VARS.has(name) ? 128 : 32 }) };
     }
     throw toolError("UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN", "Current Worker has an unsupported binding that the normal upgrade would remove or replace", { type, name });
   }));
   const expected = expectedBindings({ d1DatabaseId, rateLimits: limits, attachments, usage: null, usageSecret });
-  expected.push(...anonymousLoginBindings(observedAnonymousLogin(observed)));
-  expected.push(...expensiveReadBindings(observedExpensiveReads(observed)));
+  const anonymousLogin = observedAnonymousLogin(observed);
+  const expensiveReads = observedExpensiveReads(observed);
+  const nativePolicies = { INSTANCE_RATE_LIMITER: limits.instance, PRINCIPAL_RATE_LIMITER: limits.principal, UNAUTHENTICATED_RATE_LIMITER: limits.unauthenticated_sensitive, ANONYMOUS_LOGIN_RATE_LIMITER: anonymousLogin, EXPENSIVE_READ_RATE_LIMITER: expensiveReads };
+  if (ownerManaged && Object.values(nativePolicies).some(policy => !policy)) throw toolError("OWNER_CONTROL_READBACK_INVALID", "Owner-managed upgrades require all five current native rate limits");
+  expected.push(...anonymousLoginBindings(anonymousLogin));
+  expected.push(...expensiveReadBindings(expensiveReads));
+  for (const binding of expected.filter(item => item.type === "ratelimit")) {
+    if (ownerManaged || observed.some(item => item.name === binding.name && item.simple !== undefined)) {
+      const policy = nativePolicies[binding.name];
+      binding.simple = { limit: policy.limit, period: policy.period_seconds };
+    }
+  }
   expected.push(...observed.filter((item) => item.type === "plain_text" && USAGE_VARS.has(item.name)));
   expected.push(...observed.filter((item) => item.type === "plain_text" && PUBLIC_ACCESS_NAMES.has(item.name)));
+  expected.push(...observed.filter((item) => (item.type === "plain_text" && OWNER_CONTROL_VARS.has(item.name)) || (item.type === "secret_text" && OWNER_CONTROL_SECRETS.has(item.name))));
   expected.sort((a, b) => (a.type + ":" + a.name).localeCompare(b.type + ":" + b.name));
   if (JSON.stringify(observed) !== JSON.stringify(expected)) {
     throw toolError("UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN", "Current Worker bindings do not exactly match the frozen normal-upgrade target", {
@@ -347,6 +362,8 @@ export function createInstanceUpgradePlan({
   const usageSecret = resources.worker?.bindings?.some((item) => item.name === USAGE_SECRET && item.type === "secret_text" && item.value_redacted === true) === true;
   const normalizedCurrent = serviceRelease(current, "current");
   const normalizedTarget = serviceRelease(target, "target", { isTarget: true });
+  const ownerControl = existingOwnerControl(resources.worker?.bindings, { accountId: cloudflare.account_id, workerName, databaseId: d1DatabaseId });
+  if (normalizedTarget.schema_version < 26 && resources.worker?.bindings?.some(item => OWNER_CONTROL_VARS.has(item.name) || OWNER_CONTROL_SECRETS.has(item.name))) throw toolError("OWNER_CONTROL_RELEASE_UNSUPPORTED", "Owner Cloudflare control settings require schema version 26 or later");
   if (usage && normalizedTarget.schema_version < 6) throw toolError("USAGE_RELEASE_UNSUPPORTED", "Usage analytics requires schema version 6 or later");
   if (storage && normalizedTarget.schema_version < 4) throw toolError("R2_RELEASE_UNSUPPORTED", "Attachment storage requires a Service release with schema version 4 or later");
   const observedCurrent = normalizedCurrent.provenance === "remote_observed";
@@ -398,7 +415,7 @@ export function createInstanceUpgradePlan({
     credential_id: requireUuid(owner.credential_id, "owner.credential_id"),
     credential_fingerprint: requireString(owner.credential_fingerprint, "owner.credential_fingerprint", { max: 128 }),
   };
-  const normalizedRateLimits = rateLimits(bindings.rate_limits);
+  const normalizedRateLimits = rateLimits(observedCoreRateLimits(resources.worker?.bindings, bindings.rate_limits));
   const observedBindings = currentBindingReadback(resources.worker?.bindings, {
     d1DatabaseId,
     rateLimits: normalizedRateLimits,
@@ -423,6 +440,7 @@ export function createInstanceUpgradePlan({
   return {
     schema_version: 1,
     kind: "deployed_instance_upgrade",
+    ...(normalizedTarget.schema_version >= 26 ? { cloudflare_control: { enabled: true, ...ownerControl } } : {}),
     ...(publicAccess ? { public_access: publicAccess } : {}),
     cost_protection: costProtection,
     task_id: requireString(taskId, "task_id", { max: 256 }),

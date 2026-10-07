@@ -1611,6 +1611,118 @@
         "kind": "workflow",
         "workflow": "public-access-apply"
       }
+    },
+    {
+      "command": "admin usage history",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getUsageHistory"
+      }
+    },
+    {
+      "command": "admin usage collect",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "collectUsageHistory"
+      }
+    },
+    {
+      "command": "admin cloudflare show",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflareControl"
+      }
+    },
+    {
+      "command": "admin cloudflare notifications",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflareNotifications"
+      }
+    },
+    {
+      "command": "admin cloudflare waf",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflareWaf"
+      }
+    },
+    {
+      "command": "admin cloudflare operation",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflareOperation"
+      }
+    },
+    {
+      "command": "admin cloudflare verify",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "verifyCloudflareControl"
+      }
+    },
+    {
+      "command": "admin cloudflare zone",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "updateCloudflareSettings"
+      }
+    },
+    {
+      "command": "admin cloudflare verify-operation",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "verifyCloudflareOperation"
+      }
+    },
+    {
+      "command": "admin rate-limits plan",
+      "effect": "plan",
+      "route": {
+        "kind": "api",
+        "operation": "planCloudflareRateLimits"
+      }
+    },
+    {
+      "command": "admin rate-limits apply",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "applyCloudflareRateLimits"
+      }
+    },
+    {
+      "command": "admin cloudflare configuration-plan",
+      "effect": "plan",
+      "route": {
+        "kind": "api",
+        "operation": "planCloudflareConfiguration"
+      }
+    },
+    {
+      "command": "admin cloudflare configuration-apply",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "applyCloudflareConfiguration"
+      }
+    },
+    {
+      "command": "admin cloudflare plan",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflarePlan"
+      }
     }
   ],
   "operations": [
@@ -3505,6 +3617,199 @@
           "admin updates show"
         ]
       }
+    },
+    {
+      "operation": "getUsageHistory",
+      "method": "GET",
+      "path": "/api/v1/admin/usage/history",
+      "summary": "Get Usage History",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin usage history"
+        ]
+      }
+    },
+    {
+      "operation": "collectUsageHistory",
+      "method": "POST",
+      "path": "/api/v1/admin/usage/history/collect",
+      "summary": "Collect Usage History",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin usage collect"
+        ]
+      }
+    },
+    {
+      "operation": "getCloudflareControl",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare",
+      "summary": "Get Cloudflare Control",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare show"
+        ]
+      }
+    },
+    {
+      "operation": "getCloudflareNotifications",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare/notifications",
+      "summary": "Get Cloudflare Notifications",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare notifications"
+        ]
+      }
+    },
+    {
+      "operation": "getCloudflareWaf",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare/waf",
+      "summary": "Get Cloudflare Waf",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare waf"
+        ]
+      }
+    },
+    {
+      "operation": "getCloudflareOperation",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare/operations/{operation_id}",
+      "summary": "Get Cloudflare Operation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare operation"
+        ]
+      }
+    },
+    {
+      "operation": "verifyCloudflareControl",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/verify",
+      "summary": "Verify Cloudflare Control",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare verify"
+        ]
+      }
+    },
+    {
+      "operation": "updateCloudflareSettings",
+      "method": "PATCH",
+      "path": "/api/v1/admin/cloudflare/settings",
+      "summary": "Update Cloudflare Settings",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare zone"
+        ]
+      }
+    },
+    {
+      "operation": "verifyCloudflareOperation",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/operations/{operation_id}/verify",
+      "summary": "Verify Cloudflare Operation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare verify-operation"
+        ]
+      }
+    },
+    {
+      "operation": "planCloudflareRateLimits",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/rate-limits/plan",
+      "summary": "Plan Cloudflare Rate Limits",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin rate-limits plan"
+        ]
+      }
+    },
+    {
+      "operation": "applyCloudflareRateLimits",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/rate-limits/apply",
+      "summary": "Apply Cloudflare Rate Limits",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin rate-limits apply"
+        ]
+      }
+    },
+    {
+      "operation": "planCloudflareConfiguration",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/configuration/plan",
+      "summary": "Plan Cloudflare Configuration",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare configuration-plan"
+        ]
+      }
+    },
+    {
+      "operation": "applyCloudflareConfiguration",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/configuration/apply",
+      "summary": "Apply Cloudflare Configuration",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare configuration-apply"
+        ]
+      }
+    },
+    {
+      "operation": "saveCloudflareSecret",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/secrets",
+      "summary": "Save Cloudflare Secret",
+      "coverage": {
+        "kind": "browser",
+        "transport": "cloudflare_secret",
+        "commands": [
+          "web open"
+        ],
+        "reason": "Cloudflare管理Token不得进入普通CLI参数、输入文件或恢复日志，使用Owner网页瞬时输入并仅持久化Worker Secret。",
+        "alternative": "用web open打开Owner管理页，再进入Cloudflare设置；输入框不恢复草稿，结果不确定时只核实原操作。",
+        "evidence": [
+          {
+            "file": "packages/skill-runtime/src/capability-delivery.mjs",
+            "contains": "Cloudflare tokens must use the protected Owner Web form"
+          },
+          {
+            "file": "apps/web/src/components/CloudflareControlPanel.vue",
+            "contains": "/api/v1/admin/cloudflare"
+          }
+        ]
+      }
+    },
+    {
+      "operation": "getCloudflarePlan",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare/plans/{plan_id}",
+      "summary": "Get Cloudflare Plan",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare plan"
+        ]
+      }
     }
   ],
   "skill_commands": [
@@ -4298,7 +4603,21 @@
           "admin attachment-capacity update",
           "admin usage snapshot",
           "admin usage show",
-          "admin rate-limits show"
+          "admin rate-limits show",
+          "admin usage history",
+          "admin usage collect",
+          "admin cloudflare show",
+          "admin cloudflare notifications",
+          "admin cloudflare waf",
+          "admin cloudflare operation",
+          "admin cloudflare verify",
+          "admin cloudflare zone",
+          "admin cloudflare verify-operation",
+          "admin rate-limits plan",
+          "admin rate-limits apply",
+          "admin cloudflare configuration-plan",
+          "admin cloudflare configuration-apply",
+          "admin cloudflare plan"
         ],
         "note": "普通业务API按OpenAPI逐operation映射到固定公共noun/action；不公开任意路径透传。专用传输与真实浏览器例外见operations。"
       }

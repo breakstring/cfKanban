@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import UButton from "@nuxt/ui/components/Button.vue";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ApiProblem, apiRequest } from "../lib/api";
 import { locale } from "../lib/i18n";
 import type { WriteResult } from "../types";
+
+const props = withDefaults(defineProps<{ summary?: boolean; observedOrigin?: string }>(), { summary: false });
+const emit = defineEmits<{ details: [] }>();
 
 interface UsageMetric {
   key: string;
@@ -137,10 +140,26 @@ const metricGroups = computed(() => {
   return (["instance", "account"] as const).map(scope => {
     const scoped = values.filter(metric => (metric.scope ?? "instance") === scope);
     const keys = [...new Set([...(scope === "instance" ? baseMetricKeys : []), ...scoped.map(metric => metric.key)])];
-    return { scope, label: scope === "instance" ? ui("Instance usage", "本实例用量") : ui("Account totals", "账户总量"),
+    const charts = [
+      { key: "d1", title: ui("D1 read and write counts", "D1 读取与写入行数"), keys: ["d1_rows_read", "d1_rows_written"] },
+      { key: "r2", title: ui("R2 operation counts", "R2 操作分类数量"), keys: ["r2_class_a_operations", "r2_class_b_operations", "r2_unclassified_operations"] },
+    ].flatMap(chart => {
+      const entries = chart.keys.map(key => ({ key, label: metricNames.value[key] ?? key, metric: scoped.find(metric => metric.key === key) }));
+      const known = entries.flatMap(entry => entry.metric?.value == null ? [] : [entry.metric]);
+      const first = known[0];
+      if (known.length < 2 || !first?.period_start || !first.period_end
+        || known.some(metric => metric.unit !== "count" || metric.period_start !== first.period_start || metric.period_end !== first.period_end)) return [];
+      return [{ ...chart, entries, maximum: Math.max(...known.map(metric => metric.value ?? 0)) }];
+    });
+    return { scope, label: scope === "instance" ? ui("Instance usage", "本实例用量") : ui("Account totals", "账户总量"), charts,
       metrics: keys.map(key => ({ key, label: metricNames.value[key] ?? key, metric: scoped.find(metric => metric.key === key) })) };
   }).filter(group => group.scope === "instance" || group.metrics.length > 0 || usage.value?.cloudflare.billing?.account_totals_enabled);
 });
+const summaryMetrics = computed(() => ["d1_storage_bytes", "d1_rows_read", "r2_storage_bytes"].map(key => ({
+  key, label: metricNames.value[key] ?? key,
+  metric: usage.value?.cloudflare.status === "not_configured" ? undefined : usage.value?.cloudflare.metrics.find(metric => metric.key === key && (metric.scope ?? "instance") === "instance"),
+})));
+const observedOrigin = computed(() => props.observedOrigin || globalThis.location?.origin || null);
 const visibleAlerts = computed(() => !failed.value && usage.value?.cloudflare.status === "fresh" && !usage.value.cloudflare.refreshing
   ? (usage.value.cloudflare.alerts ?? []).slice(0, 16) : []);
 function metricValue(metric: UsageMetric | undefined): string {
@@ -188,6 +207,10 @@ function needsCollection(value: Usage): boolean {
   return cloud.collected_at === null || cloud.error !== null || cloud.status === "stale" || cloud.status === "error" || cloud.status === "pending"
     || Date.parse(value.generated_at) - Date.parse(cloud.collected_at) >= 15 * 60 * 1000;
 }
+function snapshotExpired(value: Usage): boolean {
+  const collectedAt = value.cloudflare.collected_at ? Date.parse(value.cloudflare.collected_at) : NaN;
+  return !Number.isFinite(collectedAt) || Date.now() - collectedAt >= 15 * 60 * 1000;
+}
 async function refresh(mode: "open" | "manual" = "manual"): Promise<void> {
   const request = ++generation;
   controller?.abort();
@@ -208,12 +231,20 @@ async function refresh(mode: "open" | "manual" = "manual"): Promise<void> {
   } catch (error) {
     if (!disposed && request === generation) {
       failed.value = true;
+      if (usage.value?.cloudflare.status === "fresh") usage.value.cloudflare.status = "stale";
       if (error instanceof ApiProblem && (error.status === 401 || error.status === 403)) usage.value = null;
     }
   } finally {
     if (!disposed && request === generation) loading.value = false;
   }
 }
+watch(() => props.summary, (summary, previousSummary) => {
+  if (summary || !previousSummary || loading.value) return;
+  const current = usage.value;
+  // API 状态对应读取时刻；概览可能已经停留很久。
+  if (current?.cloudflare.status === "fresh" && (failed.value || snapshotExpired(current))) current.cloudflare.status = "stale";
+  if (failed.value || current === null || needsCollection(current)) void refresh("open");
+});
 onMounted(() => refresh("open"));
 onUnmounted(() => { disposed = true; generation++; controller?.abort(); settingsController.abort(); });
 </script>
@@ -221,11 +252,20 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
 <template>
   <section class="owner-section usage-panel" aria-labelledby="usage-heading" :aria-busy="loading">
     <div class="section-heading-row">
-      <div><h2 id="usage-heading">{{ ui('Usage & limits', '用量与限额') }}</h2><p>{{ ui('Application budget and Cloudflare statistics for this instance.', '本实例的应用预算与 Cloudflare 统计。') }}</p></div>
-      <UButton color="neutral" variant="outline" class="secondary-button" type="button" :disabled="loading || saving" @click="refresh()">{{ loading ? ui('Loading…', '正在读取…') : ui('Refresh usage', '刷新用量') }}</UButton>
+      <div><h2 id="usage-heading">{{ ui('Usage & limits', '用量与限额') }}</h2><p>{{ summary ? ui('Key figures from the latest snapshot.', '最近快照中的关键数据。') : ui('Application budget and Cloudflare statistics for this instance.', '本实例的应用预算与 Cloudflare 统计。') }}</p></div>
+      <UButton v-if="summary" color="neutral" variant="outline" class="secondary-button" type="button" @click="emit('details')">{{ ui('View usage details', '查看用量详情') }}</UButton>
+      <UButton v-else color="neutral" variant="outline" class="secondary-button" type="button" :disabled="loading || saving" @click="refresh()">{{ loading ? ui('Loading…', '正在读取…') : ui('Refresh usage', '刷新用量') }}</UButton>
     </div>
     <p v-if="failed" class="warning-panel" role="alert">{{ usage ? ui('Refresh failed. Displayed values are from the previous snapshot and may be out of date.', '刷新失败。下方保留上次快照，数据可能已过期。') : ui('Usage is unavailable. Try refreshing usage.', '暂时无法读取用量，请刷新用量重试。') }}</p>
-    <template v-if="usage">
+    <template v-if="summary && usage">
+      <dl class="usage-metrics usage-summary-metrics">
+        <div><dt>{{ ui('Attachment budget reserved', '附件预留预算') }}</dt><dd><strong>{{ bytes(usage.attachments.reserved_bytes) }}</strong></dd><p class="muted-copy">{{ !usage.attachments.limit_configured ? ui('Limit not set', '尚未设置上限') : usage.attachments.limit_bytes === null ? ui('Unlimited application budget', '应用预算不限制') : `${ui('Limit', '上限')}: ${bytes(usage.attachments.limit_bytes)}` }}</p></div>
+        <div v-for="entry in summaryMetrics" :key="entry.key"><dt>{{ entry.label }}</dt><dd><strong>{{ metricValue(entry.metric) }}</strong></dd></div>
+      </dl>
+      <p class="muted-copy usage-summary-status" role="status">{{ statusText }}<template v-if="usage.cloudflare.collected_at && usage.cloudflare.status !== 'not_configured'"> · {{ ui('Updated', '更新于') }} {{ shortTime(usage.cloudflare.collected_at) }}</template><template v-if="visibleAlerts.length"> · {{ visibleAlerts.length }} {{ ui('allowance reminders', '项额度提醒') }}</template></p>
+    </template>
+    <p v-else-if="summary && loading" class="muted-copy" role="status">{{ ui('Loading usage…', '正在读取用量…') }}</p>
+    <template v-if="!summary && usage">
       <div class="usage-cloud-heading"><h3>{{ ui('Attachment application budget', '附件应用预算') }}</h3><UButton color="neutral" variant="ghost" v-if="!editing" class="text-button" type="button" :disabled="loading" @click="editSettings">{{ ui('Set limit', '设置上限') }}</UButton></div>
       <p>{{ bytes(usage.attachments.reserved_bytes) }} / {{ !usage.attachments.limit_configured ? ui('Not set', '未设置') : usage.attachments.limit_bytes === null ? ui('Unlimited', '不限制') : bytes(usage.attachments.limit_bytes) }}<template v-if="usage.attachments.limit_configured && usage.attachments.limit_bytes !== null"> · {{ number(percent) }}%</template> · {{ usage.attachments.enabled ? ui('Attachments enabled', '附件已启用') : ui('Attachments disabled', '附件未启用') }}</p>
       <meter v-if="usage.attachments.limit_configured && usage.attachments.limit_bytes !== null && usage.attachments.limit_bytes > 0" :class="{ 'capacity-reached': capacityReached }" min="0" :high="usage.attachments.limit_bytes * 0.9" :optimum="0" :max="usage.attachments.limit_bytes" :value="usage.attachments.reserved_bytes" :aria-label="ui('Reserved attachment budget', '附件预留预算')" />
@@ -245,20 +285,27 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
         <p v-if="usage.cloudflare.refreshing" class="muted-copy" role="status">{{ ui('Collection is in progress. Refresh usage later to read the result.', '正在采集中，请稍后手动刷新用量查看结果。') }}</p>
         <p v-if="!usage.cloudflare.refreshing && (usage.cloudflare.status === 'stale' || usage.cloudflare.error)" class="warning-panel">{{ ui('Collection failed or the snapshot is older than fifteen minutes. Available values are retained; unknown values are not zero.', '采集失败或快照已超过十五分钟。保留已有数据；未知值不代表零。') }}</p>
         <div v-if="usage.cloudflare.billing" class="usage-billing">
-          <p>{{ ui('Plan', '方案') }}: {{ usage.cloudflare.billing.plan === 'free' ? 'Free' : usage.cloudflare.billing.plan === 'paid' ? 'Paid' : ui('Unknown', '未知') }} · {{ ui('Warning threshold', '提醒阈值') }}: {{ number(usage.cloudflare.billing.warning_percent) }}%</p>
+          <p>{{ ui('Cloudflare Workers/D1 plan', 'Cloudflare Workers/D1 方案') }}: {{ usage.cloudflare.billing.plan === 'free' ? 'Free' : usage.cloudflare.billing.plan === 'paid' ? 'Paid' : ui('Unknown', '未知') }} · {{ ui('cfKanban usage reminder threshold', 'cfKanban 用量提醒阈值') }}: {{ number(usage.cloudflare.billing.warning_percent) }}%</p>
           <p v-if="usage.cloudflare.billing.plan === 'free'" class="muted-copy">{{ ui('Workers and D1 allowances use the current UTC day. R2 operation allowances use the configured billing period.', 'Workers 与 D1 额度按 UTC 当日比较；R2 操作额度按配置的账单周期比较。') }}</p>
-          <p v-if="usage.cloudflare.billing.cycle_day === null" class="warning-panel">{{ ui('Billing cycle is not configured. Monthly usage and allowance comparisons remain unknown; ask your deployment Agent to prepare the configuration.', '尚未配置账单周期，月累计量与月额度比较保持未知。请部署 Agent 准备配置方案。') }}</p>
+          <p v-if="usage.cloudflare.billing.cycle_day === null" class="muted-copy">{{ ui('Billing cycle is not configured. Monthly usage and allowance comparisons remain unknown. This is the Cloudflare billing cycle, not a separate cfKanban cycle; Free daily figures do not require it.', '尚未配置账单周期，月累计量与月额度比较保持未知。这里指 Cloudflare 的账单周期，不是 cfKanban 自己维护的周期；Free 的日用量不依赖月周期。') }}</p>
           <p v-else class="muted-copy">{{ ui('Billing period starts on UTC day', '账单周期起始日（UTC）') }} {{ usage.cloudflare.billing.cycle_day }}{{ ui(' of each month, adjusted to the last day of shorter months.', ' 号，短月按月末调整。') }}</p>
-          <p v-if="usage.cloudflare.billing.plan === 'unknown'" class="muted-copy">{{ ui('Confirm the plan with your deployment Agent before comparing Workers or D1 allowances.', '请部署 Agent 核对方案后，再比较 Workers 或 D1 额度。') }}</p>
+          <p v-if="usage.cloudflare.billing.plan === 'unknown'" class="muted-copy">{{ ui('Free/Paid is not declared in this deployment. cfKanban does not read your subscription, so Unknown does not mean your Cloudflare plan is missing.', '本次部署尚未声明 Free/Paid。cfKanban 不读取订阅状态，因此“未知”不表示你的 Cloudflare 没有服务方案。') }}</p>
           <p v-if="!usage.cloudflare.billing.r2_standard_only_scope || usage.cloudflare.billing.r2_standard_only_scope === 'unknown'" class="muted-copy">{{ ui('R2 free allowances apply only to Standard storage. Its usage scope is unconfirmed, so R2 allowance reminders are unavailable.', 'R2 免费额度仅适用于 Standard 存储；尚未确认其用量范围，因此暂不提供 R2 额度提醒。') }}</p>
           <p v-else-if="usage.cloudflare.billing.r2_standard_only_scope === 'instance'" class="muted-copy">{{ ui('Standard-only R2 usage is confirmed for this instance. This does not confirm the account totals; R2 free allowances are compared only for this instance.', '仅已确认本实例的 R2 用量全部属于 Standard，不代表账户总量也满足此条件；R2 免费额度仅比较本实例用量。') }}</p>
         </div>
+        <details class="usage-configuration">
+          <summary>{{ ui('How to configure plan and billing cycle', '如何配置服务方案与账单周期') }}</summary>
+          <p class="muted-copy">{{ ui('Check your actual Free/Paid plan and billing-period start date in the Cloudflare account dashboard → Billing. Then set USAGE_BILLING_PLAN (free or paid) and USAGE_BILLING_CYCLE_DAY (verified UTC start day, 1–31) in Workers & Pages → this Worker → Settings → Variables and Secrets.', '先在 Cloudflare 账户控制台 → 账单中核对实际 Free/Paid 方案与账单周期开始日期，再到 Workers 和 Pages → 本实例 Worker → 设置 → 变量和机密，设置 USAGE_BILLING_PLAN（free 或 paid）和 USAGE_BILLING_CYCLE_DAY（核实后的 UTC 起始日，1–31）。') }}</p>
+          <p class="muted-copy">{{ ui('A deployment Agent can prepare and preserve these non-secret settings with the cfkanban-deploy skill. You can configure an existing instance without reinstalling it or upgrading your Cloudflare plan.', '也可让部署 Agent 使用 cfkanban-deploy 技能准备并保留这些非秘密配置。可为现有实例补充配置，无需重新安装或升级 Cloudflare 方案。') }} <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Deployment configuration guide', '部署配置指引') }}</a></p>
+        </details>
         <section v-if="visibleAlerts.length" class="usage-alerts" aria-labelledby="usage-alerts-heading">
           <h4 id="usage-alerts-heading">{{ ui('Shared allowance reminders', '共享额度提醒') }}</h4>
+          <p class="muted-copy">{{ ui('Calculated from this fresh usage snapshot. These are separate from Cloudflare billing Budget Alerts.', '根据本次新鲜用量快照计算，与 Cloudflare 账单预算警报是两套提醒。') }}</p>
           <ul>
             <li v-for="alert in visibleAlerts" :key="`${alert.scope}:${alert.metric_key}`" class="warning-panel">
               <strong>{{ alert.scope === 'instance' ? ui('Instance contribution', '本实例贡献') : ui('Account total', '账户总量') }} · {{ metricNames[alert.metric_key] ?? alert.metric_key }}</strong><br />
               {{ alertValue(alert, alert.value) }} / {{ alertValue(alert, alert.allowance) }} · {{ number(alert.percent) }}% · {{ alert.level === 'reached' ? ui('Shared allowance reached', '已达到共享额度') : ui('Warning threshold reached', '已达到提醒阈值') }}
+              <meter class="usage-allowance-meter" min="0" :max="alert.allowance" :value="Math.min(alert.value, alert.allowance)" :aria-label="`${metricNames[alert.metric_key] ?? alert.metric_key}: ${number(alert.percent)}%`" />
             </li>
           </ul>
         </section>
@@ -273,17 +320,33 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
         <p v-if="usage.cloudflare.billing && !usage.cloudflare.billing.account_totals_enabled" class="muted-copy">{{ ui('Account totals are not enabled. Ask your deployment Agent to prepare an opt-in configuration if needed.', '未启用账户总量；如需查看，请部署 Agent 准备可选配置方案。') }}</p>
       </template>
       <p class="muted-copy usage-note">{{ ui('Allowances are shared across the account. Instance figures show contribution, not remaining allowance. Analytics may be sampled or delayed and are not an invoice.', '额度由账户内资源共享，实例数据只表示贡献，不表示剩余额度。统计可能采样或延迟，不代表账单。') }}</p>
-      <p class="muted-copy usage-note"><a href="https://developers.cloudflare.com/billing/manage/budget-alerts/" target="_blank" rel="noopener noreferrer">{{ ui('Set up Cloudflare Budget Alerts', '配置 Cloudflare Budget Alerts') }}</a>{{ ui(' in Cloudflare for supported Pay-as-you-go accounts. Alerts notify you; they do not stop usage or cap charges.', '（适用于 Cloudflare 支持的按量付费账户）。告警仅作提醒，不会停止用量或封顶费用。') }}</p>
+      <section class="usage-budget-alerts" aria-labelledby="usage-budget-alerts-heading">
+        <h3 id="usage-budget-alerts-heading">{{ ui('Cloudflare budget emails', 'Cloudflare 预算邮件提醒') }}</h3>
+        <p class="muted-copy">{{ ui('Cloudflare Budget Alerts notify selected email recipients when cumulative usage-based account charges exceed a USD budget threshold. They are separate from cfKanban’s percentage-based allowance reminders and do not report remaining quota.', 'Cloudflare Budget Alerts 在账户累计按量使用费用超过 USD 预算阈值时通知指定收件邮件，与 cfKanban 按百分比计算的额度提醒不同，也不表示剩余配额。') }}</p>
+        <p class="muted-copy"><a href="/app/admin?section=cloudflare">{{ ui('Read notification policies and recipients in Cloudflare settings', '在 Cloudflare 设置中读取通知策略和收件邮箱') }}</a>{{ ui('. USD budget fields are shown as unknown when their API meaning cannot be verified.', '。API 中的美元预算字段无法确认含义时显示未知。') }}</p>
+        <p class="muted-copy"><a href="https://developers.cloudflare.com/billing/manage/budget-alerts/" target="_blank" rel="noopener noreferrer">{{ ui('View or manage budget alerts in Cloudflare', '在 Cloudflare 查看或管理预算警报') }}</a>{{ ui(' for supported Pay-as-you-go accounts. Alerts notify you; they do not stop usage or cap charges.', '（适用于 Cloudflare 支持的按量付费账户）。告警仅作提醒，不会停止用量或封顶费用。') }}</p>
+        <p class="muted-copy">{{ ui('Budget policies are read-only here. Enter Cloudflare credentials only in the protected Cloudflare settings form; never send them in chat.', '预算策略在这里只读。Cloudflare 凭据仅在受保护的 Cloudflare 设置表单输入，不要发送到聊天。') }} <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Permissions and setup guide', '权限与接入指南') }}</a></p>
+      </section>
       <p class="muted-copy usage-note">{{ ui('Daily totals use UTC; storage uses the latest available observation and may be delayed.', '今日按 UTC 统计；容量为最近可用观测，可能延迟。') }}</p>
       <p class="muted-copy usage-note">{{ ui('Web and Skill share a 15-minute cache · 60-second cooldown · No background polling', '页面与技能共用 15 分钟缓存 · 冷却 60 秒 · 无后台轮询') }}</p>
       <details class="usage-details">
-        <summary>{{ ui('Data details', '数据详情') }}</summary>
-        <p class="muted-copy">{{ ui('Budget read at', '预算读取于') }}: {{ time(usage.generated_at) }}</p>
+        <summary>{{ ui('Data details & snapshot charts', '数据详情与快照图表') }}</summary>
+        <p class="muted-copy">{{ ui('These bars compare counts from the latest snapshot in the same window, not allowance percentages. The separate usage history panel shows collected complete UTC days and preserves missing dates.', '这里的横条比较最新快照同一窗口内的数量，不是额度百分比。独立的用量历史面板展示已采集的完整 UTC 日，并保留缺日。') }}</p>
+        <p class="muted-copy">{{ ui('Application snapshot read at', '应用快照读取于') }}: {{ time(usage.generated_at) }}</p>
         <template v-if="usage.cloudflare.status !== 'not_configured'">
           <p class="muted-copy">{{ ui('Last successful collection', '上次成功采集') }}: {{ time(usage.cloudflare.collected_at) }}<br />{{ ui('Last attempt', '上次尝试') }}: {{ time(usage.cloudflare.attempted_at) }}</p>
           <p v-if="usage.cloudflare.billing" class="muted-copy">{{ ui('Billing period observation', '账单周期观测范围') }}: {{ time(usage.cloudflare.billing.period_start) }} — {{ time(usage.cloudflare.billing.period_end) }}</p>
           <template v-for="group in metricGroups" :key="group.scope">
             <h4>{{ group.label }}</h4>
+            <figure v-for="chart in group.charts" :key="chart.key" class="usage-chart">
+              <figcaption>{{ chart.title }}</figcaption>
+              <ul>
+                <li v-for="entry in chart.entries" :key="entry.key">
+                  <div class="usage-chart-label"><span>{{ entry.label }}</span><strong>{{ metricValue(entry.metric) }}</strong></div>
+                  <div v-if="entry.metric?.value != null" class="usage-chart-track" aria-hidden="true"><span :style="{ width: `${chart.maximum > 0 ? entry.metric.value / chart.maximum * 100 : 0}%` }" /></div>
+                </li>
+              </ul>
+            </figure>
             <dl class="usage-windows">
               <div v-for="entry in group.metrics" :key="entry.key">
                 <dt>{{ entry.label }}</dt>
@@ -300,15 +363,18 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
         <p class="muted-copy">{{ ui('CPU is cumulative microseconds, not a percentile-based estimate. R2 Class A/B follows operation classification; unclassified requests remain separate. Observed storage is not GB-month billing.', 'CPU 为累计微秒值，不按分位数估算。R2 按操作分类展示 Class A/B，未分类请求单独保留。观测容量不等于 GB-month 计费用量。') }}</p>
       </details>
       <section v-if="usage.public_access" class="usage-public-access" aria-labelledby="usage-public-access-heading">
-        <h3 id="usage-public-access-heading">{{ ui('Public access configuration', '公开访问配置') }}</h3>
-        <p v-if="usage.public_access.status === 'not_configured'" class="muted-copy">{{ ui('No custom-domain or WAF configuration snapshot is available.', '暂无自定义域名或 WAF 配置快照。') }}</p>
+        <h3 id="usage-public-access-heading">{{ ui('Domain & access protection', '域名与访问防护') }}</h3>
+        <p v-if="observedOrigin" class="muted-copy">{{ ui('Current site address', '当前网站地址') }}: {{ observedOrigin }}</p>
+        <p v-if="usage.public_access.status === 'not_configured'" class="muted-copy">{{ ui('No custom-domain or WAF configuration snapshot is recorded by the deployment tool. An existing custom domain or manually configured WAF can still be active; older installations may have no managed record.', '部署工具尚未记录自定义域名或 WAF 配置快照。这不表示没有自定义域名或手动配置的 WAF；旧版安装可能未保存托管记录。') }}</p>
         <p v-else-if="usage.public_access.status === 'invalid'" class="warning-panel">{{ ui('The saved public access configuration is invalid. Ask your deployment Agent to inspect and repair it.', '保存的公开访问配置无效，请部署 Agent 核对并修复。') }}</p>
         <dl v-else class="usage-windows">
           <div><dt>{{ ui('Custom domain', '自定义域名') }}</dt><dd>{{ usage.public_access.hostname }}</dd></div>
-          <div><dt>{{ ui('WAF profile', 'WAF 配置') }}</dt><dd>{{ usage.public_access.waf_profile === 'anonymous-api-filter' ? ui('Anonymous API filter', '匿名 API 过滤') : ui('Disabled', '未启用') }}</dd></div>
+          <div><dt>{{ ui('Tool-managed custom security rule', '本工具管理的自定义防护规则') }}</dt><dd>{{ usage.public_access.waf_profile === 'anonymous-api-filter' ? ui('Anonymous API filter', '匿名 API 过滤') : ui('Not enabled by the deployment tool', '部署工具未启用') }}</dd></div>
           <div><dt>{{ ui('Deployment verification recorded at', '部署核对记录时间') }}</dt><dd>{{ time(usage.public_access.verified_at) }}</dd></div>
         </dl>
         <p class="muted-copy">{{ ui('This is the last deployment configuration, not a live protection check. The Owner can ask a deployment Agent to inspect the current state or prepare a change plan.', '此处仅显示最后部署配置，不代表实时防护状态。Owner 可请部署 Agent 核对当前状态或准备变更方案。') }}</p>
+        <p class="muted-copy">{{ ui('cfkanban-deploy and the public CLI support automated inspect, plan, and apply workflows. For a new custom domain, Cloudflare manages DNS and certificates; a separate optional WAF plan creates a rule scoped to the exact hostname. This custom rule is not Cloudflare Managed Rules.', 'cfkanban-deploy 与公共 CLI 已支持自动化 inspect、plan、apply 流程。新自定义域名的 DNS 和证书由 Cloudflare 管理；单独的可选 WAF 计划创建限定准确 hostname 的规则。这是自定义规则，不是 Cloudflare Managed Rules。') }}</p>
+        <p class="muted-copy">{{ ui('An existing domain without a tool ownership receipt needs an explicit connection plan first; keep the domain in place rather than deleting and recreating it. Zone rules do not protect workers.dev; closing alternate entry points belongs to the specific plan. A custom domain does not require this optional rule.', '既有域名缺少本工具的归属回执时，需先明确接入方案，不要求删除或重建域名。Zone 规则不保护 workers.dev；关闭备用入口属于具体计划。使用自定义域名不强制启用此可选规则。') }} <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Domain and protection guide', '域名与防护指引') }}</a></p>
       </section>
     </template>
   </section>
@@ -325,6 +391,7 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
 .usage-panel meter.capacity-reached::-webkit-meter-optimum-value { background: var(--color-warning); }
 .usage-panel meter.capacity-reached::-webkit-meter-suboptimum-value { background: var(--color-warning); }
 .usage-panel meter.capacity-reached::-moz-meter-bar { background: var(--color-warning); }
+.usage-allowance-meter { display: block; margin-top: 8px; }
 .usage-cloud-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
 .usage-cloud-heading span { color: var(--color-text-muted); font-size: 13px; }
 .usage-metric-group h4, .usage-alerts h4 { margin: 16px 0 8px; }
@@ -340,6 +407,18 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
 .usage-note { margin: 4px 0; }
 .usage-details { margin-top: 16px; }
 .usage-details summary { cursor: pointer; color: var(--color-text-muted); }
+.usage-configuration { margin: 12px 0; }
+.usage-configuration summary { cursor: pointer; }
+.usage-summary-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.usage-summary-metrics p { margin: 4px 0 0; font-size: 12px; }
+.usage-summary-status { margin-bottom: 0; }
+.usage-chart { margin: 16px 0 24px; max-width: 720px; }
+.usage-chart figcaption { font-weight: 600; }
+.usage-chart ul { display: grid; gap: 12px; margin: 12px 0 0; padding: 0; list-style: none; }
+.usage-chart-label { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; margin-bottom: 4px; font-size: 13px; }
+.usage-chart-label strong { font-variant-numeric: tabular-nums; }
+.usage-chart-track { height: 12px; border-radius: 3px; background: var(--color-surface-muted); overflow: hidden; }
+.usage-chart-track span { display: block; height: 100%; background: var(--color-primary); }
 .usage-windows > div { padding: 8px 0; border-bottom: 1px solid var(--color-border); }
 .usage-windows dd { margin: 4px 0 0; color: var(--color-text-muted); font-size: 13px; overflow-wrap: anywhere; }
 @media (max-width: 600px) { .usage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; } }

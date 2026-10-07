@@ -2,6 +2,10 @@ import contract from '../../../contracts/openapi.json' with { type: 'json' };
 
 // Public nouns/actions stay independent from the internal Skill helper names.
 const names = {
+  getUsageHistory: 'admin usage history', collectUsageHistory: 'admin usage collect',
+  getCloudflareControl: 'admin cloudflare show', getCloudflareNotifications: 'admin cloudflare notifications', getCloudflareWaf: 'admin cloudflare waf', getCloudflareOperation: 'admin cloudflare operation', getCloudflarePlan: 'admin cloudflare plan',
+  verifyCloudflareControl: 'admin cloudflare verify', updateCloudflareSettings: 'admin cloudflare zone', verifyCloudflareOperation: 'admin cloudflare verify-operation',
+  planCloudflareRateLimits: 'admin rate-limits plan', applyCloudflareRateLimits: 'admin rate-limits apply', planCloudflareConfiguration: 'admin cloudflare configuration-plan', applyCloudflareConfiguration: 'admin cloudflare configuration-apply',
   getMeta: 'instance info', getMe: 'profile show', updateMe: 'profile update',
   getReleaseUpdates: 'admin updates show',
   getNotificationPreferences: 'notification preferences', updateNotificationPreferences: 'notification configure', listMyNotifications: 'notification list', acknowledgeNotification: 'notification acknowledge',
@@ -29,7 +33,7 @@ function resolve(value) {
 }
 export const API_COMMANDS = Object.entries(contract.paths).flatMap(([apiPath, methods]) => Object.entries(methods).flatMap(([method, operation]) => {
   if (!names[operation.operationId]) return [];
-  return [{ name: names[operation.operationId], operation: operation.operationId, write_contract:operation['x-cfkanban-write-contract'], method: method.toUpperCase(), apiPath, parameters: resolve(operation.parameters ?? []), body: resolve(operation.requestBody?.content?.['application/json']?.schema ?? null), description: operation.summary ?? names[operation.operationId], effect: method === 'get' ? 'read' : 'write' }];
+  return [{ name: names[operation.operationId], operation: operation.operationId, write_contract:operation['x-cfkanban-write-contract'], method: method.toUpperCase(), apiPath, parameters: resolve(operation.parameters ?? []), body: resolve(operation.requestBody?.content?.['application/json']?.schema ?? null), description: operation.summary ?? names[operation.operationId], effect: method === 'get' ? 'read' : operation.operationId.startsWith('planCloudflare') ? 'plan' : 'write' }];
 }));
 
 const helpers = [

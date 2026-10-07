@@ -57,7 +57,7 @@ const expectConstraint = (label, action) => {
 
 assert.equal(get("PRAGMA foreign_keys").foreign_keys, 1, "foreign keys must be enabled");
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
-assert.equal(tables.length, 44, "expected 43 application tables and the deployment migration ledger");
+assert.equal(tables.length, 48, "expected 47 application tables and the deployment migration ledger");
 assert.deepEqual(
   tables.map((row) => row.name).sort(),
   [...new Set(manifest.migrations.flatMap((entry) => entry.expected_artifacts.tables ?? []))].sort(),

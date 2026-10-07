@@ -46,6 +46,7 @@ async function evidence(rows, label, required = true) {
   }
 }
 const browserOperations = {
+  cloudflare_secret: ['saveCloudflareSecret'],
   one_time_browser_transport: ['getInvitationBootstrap', 'getWebLaunchPage', 'redeemWebLaunch'],
   cookie_session: ['getWebSession', 'revokeWebSession', 'renewWebSession'],
   webauthn: ['createPasskeyRegistrationOptions', 'registerPasskey', 'createWebAuthenticationOptions', 'verifyWebAuthentication'],

@@ -3,6 +3,7 @@ import { requireUuid } from "./utils.mjs";
 import { ATTACHMENT_CLEANUP_CRON, attachmentBucketName } from "./r2-storage.mjs";
 import { COST_PROTECTION_NAMES, costProtectionBindings } from "./cost-protection-config.mjs";
 import { PUBLIC_ACCESS_NAMES, publicAccessBindings } from "./public-access-config.mjs";
+import { OWNER_CONTROL_VARS, ownerControlVars } from "./owner-control-config.mjs";
 
 export const USAGE_SECRET = "USAGE_ANALYTICS_TOKEN";
 export const USAGE_VARS = new Set(["USAGE_ANALYTICS_ENABLED", "USAGE_ACCOUNT_ID", "USAGE_D1_DATABASE_ID", "USAGE_R2_BUCKET_NAME", "USAGE_WORKER_NAME", "USAGE_BILLING_CYCLE_DAY", "USAGE_BILLING_PLAN", "USAGE_ACCOUNT_TOTALS_ENABLED", "USAGE_WARNING_PERCENT", "USAGE_R2_STANDARD_ONLY_SCOPE"]);
@@ -109,10 +110,18 @@ export function deploymentCrons(plan) {
 }
 
 export function targetWorkerBindings(plan) {
-  const bindings = plan.resources.worker.current_bindings.filter((item) => item.type !== "r2_bucket" && !USAGE_VARS.has(item.name) && !COST_PROTECTION_NAMES.has(item.name) && !PUBLIC_ACCESS_NAMES.has(item.name));
+  const bindings = plan.resources.worker.current_bindings.filter((item) => item.type !== "r2_bucket" && !USAGE_VARS.has(item.name) && !COST_PROTECTION_NAMES.has(item.name) && !PUBLIC_ACCESS_NAMES.has(item.name) && !OWNER_CONTROL_VARS.has(item.name));
   if (plan.resources.r2) bindings.push({ type: "r2_bucket", name: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name });
   bindings.push(...usageBindings(plan.usage_analytics?.configuration, false));
   bindings.push(...costProtectionBindings(plan.cost_protection));
   bindings.push(...publicAccessBindings(plan.public_access));
-  return bindings.sort((a, b) => (a.type + ":" + a.name).localeCompare(b.type + ":" + b.name));
+  bindings.push(...Object.entries(ownerControlVars(plan)).map(([name, text]) => ({ type: "plain_text", name, text })));
+  const policies = { INSTANCE_RATE_LIMITER: plan.bindings.rate_limits.instance, PRINCIPAL_RATE_LIMITER: plan.bindings.rate_limits.principal, UNAUTHENTICATED_RATE_LIMITER: plan.bindings.rate_limits.unauthenticated_sensitive, ANONYMOUS_LOGIN_RATE_LIMITER: plan.cost_protection?.anonymous_login, EXPENSIVE_READ_RATE_LIMITER: plan.cost_protection?.expensive_reads };
+  return bindings.map(binding => {
+    if (binding.type !== "ratelimit") return binding;
+    const current = plan.resources.worker.current_bindings.find(item => item.name === binding.name);
+    if (!plan.cloudflare_control?.enabled && current && current.simple === undefined) return binding;
+    const policy = policies[binding.name];
+    return { ...binding, simple: { limit: policy.limit, period: policy.period_seconds } };
+  }).sort((a, b) => (a.type + ":" + a.name).localeCompare(b.type + ":" + b.name));
 }

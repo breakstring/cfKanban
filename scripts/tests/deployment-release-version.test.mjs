@@ -6,6 +6,17 @@ import test from "node:test";
 import { assertReadback } from "../../packages/skill-runtime/src/deployment-finalize.mjs";
 import { readServiceReleaseVersion } from "../../packages/skill-runtime/src/service-release-version.mjs";
 import { readServiceApiVersion } from "../../packages/skill-runtime/src/service-api-version.mjs";
+import { createStrictZeroPlan } from "../../packages/skill-runtime/src/plan.mjs";
+
+test("first deployment enables Owner control only for an explicitly frozen supported schema", () => {
+  const input = { taskId: "owner-control-schema", accountId: "account-fixture", ownerDisplayName: "Fixture_Owner", release: { manifest_version: "1.10.1", manifest_sha256: "a".repeat(64), service_bundle_version: "1.10.1", service_bundle_sha256: "b".repeat(64) } };
+  assert.equal(createStrictZeroPlan(input).plan.cloudflare_control, undefined);
+  assert.equal(createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: 24 } }).plan.cloudflare_control, undefined);
+  const supported = createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: 26 } }).plan;
+  assert.deepEqual(supported.cloudflare_control, { enabled: true, history_enabled: false });
+  assert.equal(supported.release.schema_version, 26);
+  assert.throws(() => createStrictZeroPlan({ ...input, release: { ...input.release, schema_version: "26" } }), { code: "INVALID_DEPLOYMENT_RELEASE" });
+});
 
 async function bundle(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "cfkanban-product-version-"));

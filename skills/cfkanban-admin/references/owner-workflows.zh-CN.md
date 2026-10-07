@@ -255,7 +255,7 @@ Web 根据自身 `GET /api/v1/web-session` 响应中的 `version` 与 `renewal: 
 
 ## Owner 用量与限额
 
-通过 `api request` 调用 `POST /api/v1/admin/usage/refresh`，与 Web 刷新使用同一 Owner-only 投影和服务端缓存。附件 `reserved_bytes` 包含上传中、就绪、软删除和未确认回收对象，是应用预留预算，不是 R2 计费容量。Cloudflare 数据可选，保留每项 instance/account 范围；账户聚合需要部署时明确开启。明确展示 `not_configured`、`pending`、`error`、`stale` 和 null，不把未知改写为零，不从实例推算账户剩余额度。日操作量采用 UTC；月周期指标需要已核对账期，否则保持未知。容量是最近 24 小时最后观测，不是 GB-month。Workers 请求/CPU、D1 行数和 R2 类别分别报告。`billing.allowances_shared` 与 `analytics_not_invoice` 始终为 true；alerts 是新鲜分析值对共享额度的贡献提醒，不是账单封顶。R2 免费比较需要核对 `r2_standard_only_scope`。`public_access` 是最后部署声明，`live_verified=false`；实时状态由部署 inspect 检查。默认只展示一次简短更新时间，需要时再报告准确窗口。统计 Token/资源、域名/WAF 和供应商预算提醒配置交由 cfkanban-deploy；附件容量仍由下节应用设置管理，凭据不得进入 API 请求体或 Issue。
+通过 `api request` 调用 `POST /api/v1/admin/usage/refresh`，与 Web 刷新使用同一 Owner-only 投影和服务端缓存。附件 `reserved_bytes` 包含上传中、就绪、软删除和未确认回收对象，是应用预留预算，不是 R2 计费容量。Cloudflare 数据可选，保留每项 instance/account 范围；账户聚合需要明确开启。明确展示 `not_configured`、`pending`、`error`、`stale` 和 null，不把未知改写为零，不从实例推算账户剩余额度。日操作量采用 UTC；月周期指标需要已核对账期，否则保持未知。容量是最近 24 小时最后观测，不是 GB-month。Workers 请求/CPU、D1 行数和 R2 类别分别报告。`billing.allowances_shared` 与 `analytics_not_invoice` 始终为 true；alerts 是新鲜分析值对共享额度的贡献提醒，不是账单封顶。R2 免费比较需要核对 `r2_standard_only_scope`。`public_access` 是最后部署声明，`live_verified=false`；受支持的实时状态由独立 Owner Cloudflare API 检查，域名/WAF 变更仍使用部署计划。默认只展示一次简短更新时间，需要时再报告准确窗口。Token 使用下节受保护 Owner 表单，不能进入普通 API 请求体或 Issue。
 
 每次技能查询都调用与页面“刷新用量”相同的刷新入口。`{ "mode": "stale" }` 和 `{ "mode": "manual" }` 统一复用不足 15 分钟的成功快照，manual 不绕过缓存。缺少、过期、失败或中断的采集可重试，但共用实例级 60 秒尝试冷却。并发请求返回当前投影并以 `refreshing` 标记；不轮询。每次响应仍实时读取附件预留与设置。该派生缓存刷新不要求 Idempotency-Key，不写领域 Event/Audit。
 
@@ -267,9 +267,21 @@ Web 根据自身 `GET /api/v1/web-session` 响应中的 `version` 与 `renewal: 
 
 无需先 GET。只有用户明确要求仅查看已存快照时才用 `GET /api/v1/admin/usage`。刷新请求可能命中有效缓存，应报告实际采集时间，不把本次查询时间当作采集时间。
 
-汇报附件 `reserved_bytes`、`limit_configured` 和 `limit_bytes`。仅已配置有限上限时计算剩余应用容量 `max(0, limit_bytes - reserved_bytes)`；不限制没有剩余容量数值，未设置则暂停新上传。云端有数据时概括 D1 容量/当日读写行数、R2 容量/对象数/当日操作量。本 API 不提供账户账单、账户剩余免费额度或 Worker 请求量。
+汇报附件 `reserved_bytes`、`limit_configured` 和 `limit_bytes`。仅已配置有限上限时计算剩余应用容量 `max(0, limit_bytes - reserved_bytes)`；不限制没有剩余容量数值，未设置则暂停新上传。按准确单位和范围概括已配置的 D1/R2/Workers 指标。本 API 不提供账户账单或账户剩余免费额度。
 
 `not_configured` 仍可返回有效的附件数据；说明统计配置缺失或禁用，不因此创建 Token 或启用采集。`refreshing=true` 或冷却期间返回旧快照时如实说明，不能宣称刚刚采集成功。旧服务不支持接口时说明能力未上线（用量需要 schema 6；容量设置需要 schema 7），将另行授权的升级交由 cfkanban-deploy；不回退直接查询 Cloudflare，也不自动升级。
+
+## Owner Cloudflare 设置
+
+核对可信实例与 Owner。`GET /api/v1/admin/cloudflare` 返回固定账户/Worker/DB、已选 Zone、Secret 已配置标志、上次能力核验和控制 `version`，不会返回 Token。旧部署缺少固定目标设置时，需另行授权升级，不能猜目标或创建 Token。该路径下 `GET /notifications` 与 `GET /waf` 是主动、有界的实时读取；权限失败不等于没有警报或防护。实际策略名、启用状态和收件邮箱仅向 Owner 展示；未确认的美元字段保持未知，策略只读。
+
+`POST /verify` 以 `{}` 和稳定键核验已配置能力。`PATCH /settings` 只接受 `{zone_id, expected_version}` 并使用稳定键。配置或限流计划使用 `POST /configuration/plan` 或 `/rate-limits/plan`、当前控制版本和稳定键。用 `GET /plans/{plan_id}` 读回准确计划并核对 before/after。对应 `/apply` 使用 `{plan_id, expected_version: <plan.version>}` 和新的稳定键。说明此次更新并部署 Worker 配置，不是重启或费用封顶。
+
+用 `GET /operations/{operation_id}` 读回返回的操作。只有 `verified` 证明配置已观测生效，`pending`、`unknown` 和 `failed` 不可说成已应用。`POST /operations/{operation_id}/verify` 以 `{}` 和稳定键读取 Cloudflare，可更新非秘密操作状态，不发送第二次 Cloudflare 写入。响应不确定时保留原请求/键，不制造替代计划或重复输入 Secret。
+
+Token 接入/轮换使用 `web open` 打开 Owner 管理页，由用户在受保护的 **Cloudflare 设置** 表单输入。普通 `api request` 拒绝 `/secrets`，不能在聊天、JSON 输入文件或 CLI 参数索取 Token。配置 Token 是单 Worker 的 account-owned Editor，本身也保存 Worker Secret，并能修改该 Worker 的代码/部署；独立功能与统计 Token 同样只保存 Worker Secret。存在不证明权限有效，先核验替代授权，再撤销旧 Token。
+
+`GET /api/v1/admin/usage/history?days=30` 从本实例 D1 读取 1–90 个完整 UTC 日，保留缺日和 null。显式 opt-in 采集使用 `POST /api/v1/admin/usage/history/collect` 与 `{day:"YYYY-MM-DD"}`，一次最近七个完整 UTC 日中的一个，不要求 Idempotency-Key。这是有界派生缓存行为，响应不确定时不自动重复，不因读取而启用历史。90 天缓存是 Analytics 历史，不是 Cloudflare 账单保留保证。
 
 ## 首页实例说明设置
 

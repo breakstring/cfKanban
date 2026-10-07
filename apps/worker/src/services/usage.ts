@@ -242,3 +242,5 @@ export async function refreshUsage(env: WorkerEnv, auth: AuthContext, mode: "sta
   await collectUsageStatistics(env, now, fetcher, mode);
   return readUsage(env, auth, Date.now());
 }
+
+export { AnalyticsError as UsageAnalyticsError, config as usageAnalyticsConfig, query as queryUsageAnalytics, metrics as parseUsageMetrics, operationMetrics as parseUsageOperationMetrics, object as usageObject, first as usageFirst, number as usageNumber };

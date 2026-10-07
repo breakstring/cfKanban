@@ -37,6 +37,18 @@ export function anonymousApiRule(host, instanceId) {
 function ruleBody(rule) { return Object.fromEntries(["ref", "description", "enabled", "action", "expression"].map(key => [key, rule[key]])); }
 function foreignRulesDigest(inventory, ref) { return canonicalDigest(inventory.flatMap(set => (set.rules ?? []).filter(rule => rule.ref !== ref).map(rule => ({ ruleset: set.id, ...rule }))).map(({ version, last_updated, ...entry }) => entry)); }
 function routingDigest(routing) { return canonicalDigest(routing); }
+function routeMayMatchHostname(pattern, host) {
+  if (typeof pattern !== "string" || !pattern || pattern.length > 2048 || /[\s?#\\]/u.test(pattern)) fail("PUBLIC_ACCESS_ROUTE_PATTERN_UNVERIFIED", "An unrecognized zone route pattern requires a separate routing plan");
+  const parts = /^(?:(https?):\/\/)?([^/]+)(\/.*)?$/iu.exec(pattern);
+  if (!parts) fail("PUBLIC_ACCESS_ROUTE_PATTERN_UNVERIFIED", "An unrecognized zone route pattern requires a separate routing plan");
+  const routeHost = parts[2].toLowerCase(), suffix = routeHost.startsWith("*") ? routeHost.slice(1) : routeHost;
+  const domain = routeHost.startsWith("*.") ? suffix.slice(1) : suffix;
+  if ((routeHost !== "*" && (!domain.includes(".") || !domain.split(".").every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label))))
+    || !/^\/[^*]*\*?$/u.test(parts[3] ?? "/")) fail("PUBLIC_ACCESS_ROUTE_PATTERN_UNVERIFIED", "An unrecognized zone route pattern requires a separate routing plan");
+  if (parts[1]?.toLowerCase() === "http") return false;
+  // Cloudflare 的前导 * 匹配任意前缀，*example.test 包含 apex；*.example.test 不包含。
+  return routeHost.startsWith("*") ? host.endsWith(suffix) : host === routeHost;
+}
 async function loadLocal(input) {
   const stateRoot = path.resolve(input.stateRoot ?? resolveStateRoot());
   const instanceId = requireUuid(input.instanceId, "instance_id");
@@ -65,10 +77,15 @@ async function clients(input, target) {
   const connection = { ...input, accountId: target.account_id, zoneId: target.zone_id, wranglerExecutable: target.wrangler_executable, cloudflareProfile: target.cloudflare_profile, contextDirectory: target.context_directory };
   return { worker: await createCloudflareControlClient(connection, "/workers", OPTIONS), zone: await createCloudflareControlClient(connection, "", { ...OPTIONS, scope: "zone" }) };
 }
-async function readRouting(worker, target) {
-  const [account, subdomain, domains, routes, settings] = await Promise.all([worker("/subdomain"), worker(`/scripts/${target.worker_name}/subdomain`), worker("/domains", { raw: true }), worker(`/services/${target.worker_name}/environments/production/routes`, { raw: true }), worker(`/scripts/${target.worker_name}/settings`)]);
+async function readRouting(worker, zone, target, { checkZoneRoutes = true } = {}) {
+  const [account, subdomain, domains, routes, settings, zoneRoutes] = await Promise.all([worker("/subdomain"), worker(`/scripts/${target.worker_name}/subdomain`), worker("/domains", { raw: true }), worker(`/services/${target.worker_name}/environments/production/routes`, { raw: true }), worker(`/scripts/${target.worker_name}/settings`), checkZoneRoutes ? zone("/workers/routes", { raw: true }) : null]);
   if (!/^[a-z0-9-]+$/u.test(account?.subdomain ?? "") || typeof subdomain?.enabled !== "boolean" || typeof subdomain?.previews_enabled !== "boolean") fail("PUBLIC_ACCESS_ROUTING_UNVERIFIED", "Both workers.dev and preview URL status require explicit readback");
   if (boundedList(routes).length) fail("PUBLIC_ACCESS_ROUTES_UNSUPPORTED", "Resolve Worker routes in a separate plan before changing public access");
+  if (checkZoneRoutes) for (const route of boundedList(zoneRoutes)) {
+    if (route === null || typeof route !== "object" || Array.isArray(route)) fail("PUBLIC_ACCESS_ROUTE_PATTERN_UNVERIFIED", "An unrecognized zone route requires a separate routing plan");
+    // script=null 是排除路由，也会改变匹配行为；不能据此认定 hostname 未被占用。
+    if (routeMayMatchHostname(route.pattern, target.hostname)) fail("PUBLIC_ACCESS_ZONE_ROUTES_UNSUPPORTED", "A zone Worker route may cover the selected HTTPS hostname; resolve it in a separate plan without deleting routes implicitly");
+  }
   if (!Array.isArray(settings?.bindings) || !settings.bindings.some(binding => binding.type === "d1" && binding.name === "DB" && binding.id === target.database_id || binding.type === "d1" && binding.name === "DB" && binding.database_id === target.database_id)) fail("PUBLIC_ACCESS_WORKER_UNPROVEN", "The selected Worker does not bind the receipt's D1 database");
   const allDomains = boundedList(domains).map(domain => ({ id: exactId(domain.id, "domain_id"), hostname: hostname(domain.hostname), service: exactId(domain.service, "worker_name"), zone_id: exactId(domain.zone_id, "zone_id") })).sort((a, b) => a.hostname.localeCompare(b.hostname));
   return { workers_dev: subdomain.enabled, previews_enabled: subdomain.previews_enabled, workers_dev_origin: `https://${target.worker_name}.${account.subdomain}.workers.dev`, domains: allDomains.filter(domain => domain.service === target.worker_name || domain.hostname === target.hostname) };
@@ -98,7 +115,7 @@ function assertManaged(local, routing) {
 }
 export async function inspectPublicAccess(input) {
   const local = await loadLocal(input), control = await clients(input, local.target);
-  const [zone, routing, owner] = await Promise.all([readZone(control.zone, local.target), readRouting(control.worker, local.target), ownerRead(input, local)]);
+  const [zone, routing, owner] = await Promise.all([readZone(control.zone, local.target), readRouting(control.worker, control.zone, local.target), ownerRead(input, local)]);
   const waf = input.includeWaf === false ? [] : await readWaf(control.zone);
   const ref = ownedRef(local.target.instance_id), rules = waf.flatMap(set => set.rules.map(rule => ({ ruleset_id: set.id, ...rule })));
   return { target: local.target, zone, owner, routing, managed: local.managed, waf: { rule_count: rules.length, free_profile_rule_limit: 5, rulesets: waf, foreign_rules_digest: foreignRulesDigest(waf, ref), owned_rules: rules.filter(rule => rule.ref === ref) }, credential_values_exposed: false };
@@ -204,7 +221,7 @@ export async function applyPublicAccess(input) {
     await readZone(control.zone, plan.target);
     // 恢复日志不延续旧的应用授权；每次继续控制面变更前重新验证现任 Owner。
     const currentOwner = await ownerRead(input, local);
-    let routing = await readRouting(control.worker, plan.target);
+    let routing = await readRouting(control.worker, control.zone, plan.target);
     const started = journal.events.some(entry => entry.type.startsWith("public_access_"));
     if (!started) {
       if (routingDigest(routing) !== routingDigest(plan.before.routing) || canonicalDigest(local.managed) !== plan.before.managed_digest) fail("PUBLIC_ACCESS_ROUTING_DRIFT", "Public routing changed after the plan was created");
@@ -220,7 +237,7 @@ export async function applyPublicAccess(input) {
         if (boundedList(await control.zone("/dns_records", { raw: true, query: { name: plan.target.hostname, per_page: "100" } })).length) fail("PUBLIC_ACCESS_DNS_ALREADY_IN_USE", "DNS appeared after planning; no record is overwritten");
         await event("domain_create_intent");
         await control.worker("/domains", { method: "PUT", body: { hostname: plan.target.hostname, service: plan.target.worker_name, zone_id: plan.target.zone_id } });
-        routing = await readRouting(control.worker, plan.target); domain = ownedDomain(routing, plan.target);
+        routing = await readRouting(control.worker, control.zone, plan.target); domain = ownedDomain(routing, plan.target);
       }
       if (!domain || domain.service !== plan.target.worker_name || domain.zone_id !== plan.target.zone_id) fail("PUBLIC_ACCESS_DOMAIN_UNVERIFIED", "The exact new domain mapping is not confirmed");
       await moveOrigin(input, local, plan, `https://${plan.target.hostname}`, event);
@@ -240,7 +257,7 @@ export async function applyPublicAccess(input) {
       assertManaged(local, routing);
       wafResult = await applyWaf(input, local, plan, control, journal, event, plan.mode === "waf-enable");
     }
-    routing = await readRouting(control.worker, plan.target);
+    routing = await readRouting(control.worker, control.zone, plan.target);
     const enabled = plan.mode !== "domain-rollback";
     domain = ownedDomain(routing, plan.target);
     if (routing.workers_dev !== !enabled || routing.previews_enabled !== false || (enabled ? !domain || domain.service !== plan.target.worker_name || domain.zone_id !== plan.target.zone_id : Boolean(domain))) fail("PUBLIC_ACCESS_ROUTING_UNVERIFIED", "Final domain, workers.dev and preview URL readback did not match the plan");
@@ -271,7 +288,8 @@ export async function verifyPublicAccessConfiguration(input) {
   if (!access || target.zone_id !== access.zone_id || target.hostname !== access.hostname) fail("PUBLIC_ACCESS_RECEIPT_REQUIRED", "Use the exact selected public-access receipt");
   const control = await clients(input, target);
   if (access.domain_enabled) await readZone(control.zone, target);
-  const routing = await readRouting(control.worker, target), domain = ownedDomain(routing, target);
+  // 已回退的 hostname 可被其他服务重用；inactive 升级只核对原映射消失和 Worker 入口。
+  const routing = await readRouting(control.worker, control.zone, target, { checkZoneRoutes: access.domain_enabled }), domain = ownedDomain(routing, target);
   if (routing.workers_dev !== !access.domain_enabled || routing.previews_enabled || routing.workers_dev_origin !== access.workers_dev_origin || (access.domain_enabled ? domain?.id !== access.domain_id || domain?.service !== access.worker_name || domain?.zone_id !== access.zone_id || routing.domains.filter(value => value.service === access.worker_name).length !== 1 : Boolean(domain) || routing.domains.some(value => value.service === access.worker_name))) fail("PUBLIC_ACCESS_ROUTING_DRIFT", "Managed domain or bypass exposure differs from the frozen upgrade target");
   if (access.waf_profile === PROFILE) {
     const inventory = await readWaf(control.zone);

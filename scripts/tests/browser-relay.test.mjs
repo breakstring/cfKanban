@@ -1,11 +1,31 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createBrowserLaunchAndDeliver, relayToBrowser } from '../../packages/skill-runtime/src/capability-delivery.mjs';
+import { assertGenericApiPathIsNonSensitive, createBrowserLaunchAndDeliver, guardedApiRequest, relayToBrowser } from '../../packages/skill-runtime/src/capability-delivery.mjs';
 import { apiRequest } from '../../packages/skill-runtime/src/transport.mjs';
 import { getInstancePaths } from '../../packages/skill-runtime/src/state.mjs';
 import { atomicWriteJson, readJson } from '../../packages/skill-runtime/src/utils.mjs';
 import { randomUUID } from 'node:crypto';
 import { createMcpStateFixture } from './mcp-fixture.mjs';
+
+test('Cloudflare secret input cannot enter generic API requests, including normalized paths', async () => {
+  let sent = 0;
+  for (const apiPath of [
+    '/api/v1/admin/cloudflare/secrets',
+    '/api/v1/admin/cloudflare/secrets/',
+    '/api/v1/admin/cloudflare/secrets?source=owner',
+    '/api/v1/admin/cloudflare/%73ecrets',
+    '/api/v1/admin/cloudflare/ignored/../secrets',
+  ]) {
+    await assert.rejects(guardedApiRequest({ method: 'post', apiPath, fetchImpl: async () => { sent++; } }), error => {
+      assert.equal(error.code, 'SENSITIVE_DELIVERY_REQUIRED');
+      assert.equal(error.details.settings_path, '/app/admin?section=cloudflare');
+      return true;
+    });
+  }
+  assert.equal(sent, 0);
+  assert.doesNotThrow(() => assertGenericApiPathIsNonSensitive({ method: 'GET', apiPath: '/api/v1/admin/cloudflare' }));
+  assert.doesNotThrow(() => assertGenericApiPathIsNonSensitive({ method: 'POST', apiPath: '/api/v1/admin/cloudflare/rate-limits/plan' }));
+});
 
 test('relay expires even when the host callback never resolves and closes its listener', async () => {
   let localUrl;

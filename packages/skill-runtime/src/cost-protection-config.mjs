@@ -1,5 +1,6 @@
 import { toolError } from "./errors.mjs";
 import { PUBLIC_ACCESS_NAMES, publicAccessBindings } from "./public-access-config.mjs";
+import { nativeRateLimitSimple } from "./owner-control-config.mjs";
 
 export const ANONYMOUS_LOGIN_POLICY = Object.freeze({ limit: 10, period_seconds: 60 });
 export const ANONYMOUS_LOGIN_NAMES = new Set(["ANONYMOUS_LOGIN_RATE_LIMITER", "RATE_LIMIT_ANONYMOUS_LOGIN_LIMIT", "RATE_LIMIT_ANONYMOUS_LOGIN_PERIOD_SECONDS"]);
@@ -24,8 +25,11 @@ export function observedAnonymousLogin(bindings = []) {
   const period = found.find(item => item.name === "RATE_LIMIT_ANONYMOUS_LOGIN_PERIOD_SECONDS")?.text;
   if (!/^[1-9][0-9]*$/u.test(limit ?? "") || !/^(10|60)$/u.test(period ?? "")) throw toolError("INVALID_COST_PROTECTION", "Existing anonymous login protection must have an exact readback");
   const policy = { limit: Number(limit), period_seconds: Number(period) };
+  const simple = nativeRateLimitSimple(found.find(item => item.type === "ratelimit" && item.name === "ANONYMOUS_LOGIN_RATE_LIMITER")?.simple);
+  if (simple && (simple.limit !== policy.limit || simple.period !== policy.period_seconds)) throw toolError("INVALID_COST_PROTECTION", "Native rate limits must match their policy variables");
   const sorted = value => [...value].sort((a, b) => a.name.localeCompare(b.name));
-  if (JSON.stringify(sorted(found)) !== JSON.stringify(sorted(anonymousLoginBindings(policy)))) throw toolError("INVALID_COST_PROTECTION", "Existing anonymous login bindings do not match the supported profile");
+  const inventory = found.map(item => { const { simple: _simple, ...binding } = item; return item.type === "ratelimit" ? binding : item; });
+  if (JSON.stringify(sorted(inventory)) !== JSON.stringify(sorted(anonymousLoginBindings(policy)))) throw toolError("INVALID_COST_PROTECTION", "Existing anonymous login bindings do not match the supported profile");
   return policy;
 }
 
@@ -43,7 +47,7 @@ export function costProtectionBindings(config) {
 }
 
 export function plannedProtectionBindingDelta(plan) {
-  const observed = (plan.resources?.worker?.current_bindings ?? []).filter(item => COST_PROTECTION_NAMES.has(item.name) || PUBLIC_ACCESS_NAMES.has(item.name));
+  const observed = (plan.resources?.worker?.current_bindings ?? []).filter(item => COST_PROTECTION_NAMES.has(item.name) || PUBLIC_ACCESS_NAMES.has(item.name)).map(item => { const { simple: _simple, ...binding } = item; return item.type === "ratelimit" ? binding : item; });
   const expected = [...costProtectionBindings(plan.cost_protection), ...publicAccessBindings(plan.public_access)];
   const sorted = value => [...value].sort((left, right) => left.name.localeCompare(right.name));
   return JSON.stringify(sorted(observed)) !== JSON.stringify(sorted(expected));

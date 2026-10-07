@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
-import { anonymousApiRule, applyPublicAccess, createPublicAccessPlan, verifyPlannedPublicAccess } from "../../packages/skill-runtime/src/public-access.mjs";
+import { anonymousApiRule, applyPublicAccess, createPublicAccessPlan, inspectPublicAccess, verifyPlannedPublicAccess } from "../../packages/skill-runtime/src/public-access.mjs";
 import { normalizePublicAccess, publicAccessBindings } from "../../packages/skill-runtime/src/public-access-config.mjs";
 import { acquirePublicAccessLock } from "../../packages/skill-runtime/src/public-access-lock.mjs";
 import { createInstanceUpgradePlan } from "../../packages/skill-runtime/src/upgrade-plan.mjs";
@@ -25,8 +25,8 @@ async function fixture(t) {
   t.after(() => rm(home, { recursive: true, force: true }));
   const instanceId = randomUUID(), principalId = randomUUID(), credentialId = randomUUID(), databaseId = randomUUID();
   const origin = "https://board.isolated.workers.dev", host = "board.example.test";
-  const f = { calls: [], domains: [], rulesets: [], dns: [], workers: true, previews: true, preferred: origin, version: 1, owner: true, failAfterDomain: false, failAfterWaf: false, wrongDiscovery: false, partial: false };
-  const json = value => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
+  const f = { calls: [], domains: [], rulesets: [], dns: [], workerRoutes: [], zoneRoutes: [], workers: true, previews: true, preferred: origin, version: 1, owner: true, failAfterDomain: false, failAfterWaf: false, wrongDiscovery: false, partial: false };
+  const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
   const input = { home, stateRoot: path.join(home, ".cfkanban"), persistenceConfirmed: true, passkeyRecoveryReady: true, instanceId, taskId: "public-access-test", zoneId: "zone-test", hostname: host, cloudflareProfile: "isolated", wranglerExecutable: "/mock/wrangler", environment: {}, tokenRunner: async () => ({ stdout: JSON.stringify({ type: "oauth", token: "mock-control-secret" }) }),
     fetchImpl: async (url, options = {}) => {
       const u = new URL(url), method = options.method ?? "GET", body = options.body ? JSON.parse(options.body) : null;
@@ -40,7 +40,7 @@ async function fixture(t) {
           if (method === "POST") { f.workers = body.enabled; f.previews = body.previews_enabled; }
           value = { enabled: f.workers, previews_enabled: f.previews };
         } else if (p === "/workers/scripts/board/settings") value = { bindings: [{ type: "d1", name: "DB", id: databaseId }] };
-        else if (p === "/workers/services/board/environments/production/routes") value = [];
+        else if (p === "/workers/services/board/environments/production/routes") value = f.workerRoutes;
         else if (p === "/workers/services/board/environments/production") value = { script: { limits: f.limits ?? null } };
         else if (p === "/workers/domains") {
           if (method === "PUT") { assert.equal(f.domains.length, 0); f.domains.push({ id: "domain-test", ...body }); if (f.failAfterDomain) { f.failAfterDomain = false; throw new Error("uncertain after commit"); } }
@@ -49,6 +49,11 @@ async function fixture(t) {
         } else if (p === "/workers/domains/domain-test" && method === "DELETE") { f.domains = []; value = null; }
         else if (p === "/zone") value = { id: "zone-test", name: "example.test", status: "active", account: { id: "account-test" } };
         else if (p === "/zone/dns_records") { assert.equal(u.searchParams.get("name"), host); value = f.dns; }
+        else if (p === "/zone/workers/routes") {
+          assert.equal(method, "GET", "zone routes must never be changed");
+          if (f.zoneRoutesDenied) return json({ success: false, errors: [{ code: 10000 }] }, 403);
+          return json({ success: true, result: f.zoneRoutes, ...(f.zoneRoutesInfo ? { result_info: f.zoneRoutesInfo } : {}) });
+        }
         else if (p === "/zone/rulesets") {
           if (method === "POST") {
             assert.equal(body.kind, "zone"); assert.equal(body.phase, "http_request_firewall_custom");
@@ -245,6 +250,99 @@ test("capacity, external resource drift, incomplete inventories and mismatched d
   const full = await fixture(t); await full.prepare("domain-enable"); await full.apply();
   full.rulesets = [{ id: "foreign", kind: "zone", phase: "http_request_firewall_custom", rules: Array.from({ length: 5 }, (_, i) => ({ id: `foreign-${i}`, ref: `foreign-${i}`, expression: "false", action: "block" })) }];
   await assert.rejects(full.prepare("waf-enable"), { code: "PUBLIC_ACCESS_FREE_CAPACITY_UNAVAILABLE" });
+});
+
+test("zone routes covering any HTTPS path are rejected even when owned by another Worker or excluding a script", async t => {
+  const patterns = [
+    "board.example.test/*", "https://board.example.test/private/path", "board.example.test", "https://BOARD.EXAMPLE.TEST/*",
+    "*.example.test/*", "*example.test/*", "*board.example.test/*", "*oard.example.test/*", "*/*", "https://*/*",
+  ];
+  for (const pattern of patterns) await t.test(pattern, async t => {
+    const f = await fixture(t); f.zoneRoutes = [{ pattern, script: "other-worker" }];
+    await assert.rejects(f.prepare("domain-enable"), { code: "PUBLIC_ACCESS_ZONE_ROUTES_UNSUPPORTED" });
+    assert.equal(f.calls.filter(call => call.method !== "GET").length, 0);
+  });
+  await t.test("null script still reserves routing behavior", async t => {
+    const f = await fixture(t); f.zoneRoutes = [{ pattern: "board.example.test/private", script: null }];
+    await assert.rejects(inspectPublicAccess({ ...f.input, includeWaf: false }), { code: "PUBLIC_ACCESS_ZONE_ROUTES_UNSUPPORTED" });
+    assert.equal(f.calls.filter(call => call.method !== "GET").length, 0);
+  });
+});
+
+test("unrelated host routes and HTTP-only routes remain unchanged and do not prevent HTTPS domain setup", async t => {
+  const f = await fixture(t);
+  f.zoneRoutes = [
+    { pattern: "other.example.test/*", script: "other-worker" },
+    { pattern: "*.board.example.test/*", script: "subdomain-worker" },
+    { pattern: "*other.example.test/*", script: null },
+    { pattern: "http://board.example.test/*", script: "http-worker" },
+  ];
+  await f.prepare("domain-enable");
+  assert.ok(f.calls.some(call => call.path === "/client/v4/zones/zone-test/workers/routes" && call.method === "GET"));
+  f.zoneRoutes.push({ pattern: "new.example.test/*", script: "another-worker" });
+  const routes = structuredClone(f.zoneRoutes);
+  assert.equal((await f.apply()).receipt.domain_enabled, true);
+  assert.deepEqual(f.zoneRoutes, routes);
+});
+
+test("uncertain route syntax and the original target-Worker route prohibition fail closed", async t => {
+  for (const pattern of ["board.*.example.test/*", "board.example.test/*.jpg", "board.example.test/?query=*", "https://board.example.test:443/*", ".example.test/*", null]) await t.test(String(pattern), async t => {
+    const f = await fixture(t); f.zoneRoutes = [{ pattern, script: "other-worker" }];
+    await assert.rejects(f.prepare("domain-enable"), { code: "PUBLIC_ACCESS_ROUTE_PATTERN_UNVERIFIED" });
+    assert.equal(f.calls.filter(call => call.method !== "GET").length, 0);
+  });
+  const f = await fixture(t); f.workerRoutes = [{ pattern: "other.example.test/*", script: "board" }];
+  await assert.rejects(f.prepare("domain-enable"), { code: "PUBLIC_ACCESS_ROUTES_UNSUPPORTED" });
+  assert.equal(f.calls.filter(call => call.method !== "GET").length, 0);
+});
+
+test("zone-route permission failures and incomplete or oversized inventories cannot be treated as empty", async t => {
+  for (const info of [{ total_pages: 2 }, { total_count: 1 }]) await t.test(JSON.stringify(info), async t => {
+    const f = await fixture(t); f.zoneRoutesInfo = info;
+    await assert.rejects(f.prepare("domain-enable"), { code: "PUBLIC_ACCESS_INVENTORY_INCOMPLETE" });
+    assert.equal(f.calls.filter(call => call.method !== "GET").length, 0);
+  });
+  await t.test("bounded inventory", async t => {
+    const f = await fixture(t); f.zoneRoutes = Array.from({ length: 1001 }, () => ({ pattern: "other.example.test" }));
+    await assert.rejects(f.prepare("domain-enable"), { code: "PUBLIC_ACCESS_INVENTORY_INCOMPLETE" });
+    assert.equal(f.calls.filter(call => call.method !== "GET").length, 0);
+  });
+  await t.test("permission denied", async t => {
+    const f = await fixture(t); f.zoneRoutesDenied = true;
+    await assert.rejects(f.prepare("domain-enable"), error => error.code === "PUBLIC_ACCESS_CONTROL_FAILED" && error.details.status === 403);
+    assert.equal(f.calls.filter(call => call.method !== "GET").length, 0);
+  });
+});
+
+test("apply and uncertain-operation resume recheck target-host zone routes before more writes", async t => {
+  const planned = await fixture(t); await planned.prepare("domain-enable");
+  planned.zoneRoutes = [{ pattern: "https://board.example.test/api/*", script: "other-worker" }];
+  await assert.rejects(planned.apply(), { code: "PUBLIC_ACCESS_ZONE_ROUTES_UNSUPPORTED" });
+  assert.equal(planned.calls.filter(call => call.method !== "GET").length, 0);
+  const resumed = await fixture(t); await resumed.prepare("domain-enable"); resumed.failAfterDomain = true;
+  await assert.rejects(resumed.apply(), { code: "PUBLIC_ACCESS_CONTROL_UNAVAILABLE" });
+  const writes = resumed.calls.filter(call => call.method !== "GET").length;
+  resumed.zoneRoutes = [{ pattern: "board.example.test/private", script: null }];
+  await assert.rejects(resumed.apply(), { code: "PUBLIC_ACCESS_ZONE_ROUTES_UNSUPPORTED" });
+  assert.equal(resumed.calls.filter(call => call.method !== "GET").length, writes);
+  assert.equal(resumed.workers, true);
+});
+
+test("WAF changes and active upgrades check zone routes while inactive upgrades allow the old host to be reused", async t => {
+  const f = await fixture(t); await f.prepare("domain-enable"); const active = (await f.apply()).receipt;
+  const activePlan = createInstanceUpgradePlan(upgradeInput(f, active));
+  await f.prepare("waf-enable");
+  f.zoneRoutes = [{ pattern: "board.example.test/api/*", script: "other-worker" }];
+  const writes = f.calls.filter(call => call.method !== "GET").length;
+  await assert.rejects(f.apply(), { code: "PUBLIC_ACCESS_ZONE_ROUTES_UNSUPPORTED" });
+  await assert.rejects(verifyPlannedPublicAccess({ ...f.input, plan: activePlan }), { code: "PUBLIC_ACCESS_ZONE_ROUTES_UNSUPPORTED" });
+  assert.equal(f.calls.filter(call => call.method !== "GET").length, writes);
+  f.zoneRoutes = []; await f.prepare("domain-rollback"); const inactive = (await f.apply()).receipt;
+  const inactivePlan = createInstanceUpgradePlan(upgradeInput(f, inactive));
+  f.zoneRoutes = [{ pattern: "board.example.test/*", script: "replacement-worker" }]; f.zoneRoutesDenied = true;
+  const calls = f.calls.length;
+  assert.equal((await verifyPlannedPublicAccess({ ...f.input, plan: inactivePlan })).verified, true);
+  assert.ok(!f.calls.slice(calls).some(call => call.path.startsWith("/client/v4/zones/")));
 });
 
 test("owned Free profile is narrowly hostname scoped and public CLI discovers all lifecycle operations", () => {

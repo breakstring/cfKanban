@@ -1,0 +1,50 @@
+import { requireVersion } from "../domain/model.ts";
+import { authenticateRequest } from "../kernel/auth.ts";
+import { requireOwnerControl } from "../kernel/authorization.ts";
+import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
+import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
+import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
+import type { Router } from "../kernel/router.ts";
+import type { WorkerEnv } from "../kernel/types.ts";
+import { applyCloudflarePlan, getCloudflareControl, getCloudflareNotifications, getCloudflareOperation, getCloudflarePlan, getCloudflareWaf, planCloudflareConfiguration, planCloudflareRateLimits, saveCloudflareSecret, updateCloudflareSettings, verifyCloudflareControl, verifyCloudflareOperation, type CloudflareControlDependencies } from "../services/cloudflare-control.ts";
+
+export function registerCloudflareControlRoutes(router: Router, dependencies: CloudflareControlDependencies = {}): void {
+  const base = "/api/v1/admin/cloudflare";
+  const authenticate = async (request: Request, env: WorkerEnv, now: number, write = false) => {
+    const auth = await authenticateRequest(env.DB, request, now); requireOwnerControl(auth);
+    await enforcePrincipalRateLimit(env, auth); if (write) enforceCookieWriteProtection(request, auth); return auth;
+  };
+  router.get(base, async (request, env, context) => jsonResponse(await getCloudflareControl(env, await authenticate(request, env, context.startedAt)), context.requestId));
+  router.get(`${base}/notifications`, async (request, env, context) => jsonResponse(await getCloudflareNotifications(env, await authenticate(request, env, context.startedAt), dependencies), context.requestId));
+  router.get(`${base}/waf`, async (request, env, context) => jsonResponse(await getCloudflareWaf(env, await authenticate(request, env, context.startedAt), dependencies), context.requestId));
+  router.get(`${base}/operations/{operation_id}`, async (request, env, context) => jsonResponse(await getCloudflareOperation(env, await authenticate(request, env, context.startedAt), context.params.operation_id ?? ""), context.requestId));
+  router.get(`${base}/plans/{plan_id}`, async (request, env, context) => jsonResponse(await getCloudflarePlan(env, await authenticate(request, env, context.startedAt), context.params.plan_id ?? ""), context.requestId));
+  router.post(`${base}/verify`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true); validateJsonObject(await readJsonBody(request), { allowedKeys: [] });
+    return jsonResponse(await verifyCloudflareControl(env, request, auth, context.startedAt, dependencies), context.requestId);
+  });
+  router.patch(`${base}/settings`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["zone_id", "expected_version"], requiredKeys: ["zone_id", "expected_version"] });
+    return jsonResponse(await updateCloudflareSettings(env, request, auth, body.zone_id ?? null, requireVersion(body.expected_version ?? null), context.startedAt), context.requestId);
+  });
+  router.post(`${base}/secrets`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["kind", "token", "expected_version"], requiredKeys: ["kind", "token", "expected_version"] });
+    return jsonResponse(await saveCloudflareSecret(env, request, auth, body.kind ?? null, body.token ?? null, requireVersion(body.expected_version ?? null), context.startedAt, dependencies), context.requestId);
+  });
+  router.post(`${base}/operations/{operation_id}/verify`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true); validateJsonObject(await readJsonBody(request), { allowedKeys: [] });
+    return jsonResponse(await verifyCloudflareOperation(env, request, auth, context.params.operation_id ?? "", context.startedAt, dependencies), context.requestId);
+  });
+  router.post(`${base}/rate-limits/plan`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["scope", "limit", "period_seconds", "expected_version"], requiredKeys: ["scope", "limit", "period_seconds", "expected_version"] });
+    return jsonResponse(await planCloudflareRateLimits(env, request, auth, body.scope ?? null, body.limit ?? null, body.period_seconds ?? null, requireVersion(body.expected_version ?? null), context.startedAt, dependencies), context.requestId);
+  });
+  router.post(`${base}/configuration/plan`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["settings", "expected_version"], requiredKeys: ["settings", "expected_version"] });
+    return jsonResponse(await planCloudflareConfiguration(env, request, auth, body.settings ?? null, requireVersion(body.expected_version ?? null), context.startedAt, dependencies), context.requestId);
+  });
+  for (const [path, kind] of [["rate-limits", "rate_limit"], ["configuration", "configuration"]] as const) router.post(`${base}/${path}/apply`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["plan_id", "expected_version"], requiredKeys: ["plan_id", "expected_version"] });
+    return jsonResponse(await applyCloudflarePlan(env, request, auth, kind, body.plan_id ?? null, requireVersion(body.expected_version ?? null), context.startedAt, dependencies), context.requestId);
+  });
+}

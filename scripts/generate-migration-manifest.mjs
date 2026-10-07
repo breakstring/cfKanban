@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 24,
+  schema_version: 26,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -308,6 +308,20 @@ const manifest = {
       classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
       expected_artifacts: { tables: ["webauthn_cleanup_state"] },
       expected_data: { instance_meta_schema_version_at_least: 24, allow_uninitialized: true },
+    },
+    {
+      sequence: 25, name: "0025_usage-history.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0025_usage-history.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { tables: ["usage_history"], indexes: ["idx_usage_history_day"] },
+      expected_data: { instance_meta_schema_version_at_least: 25, allow_uninitialized: true },
+    },
+    {
+      sequence: 26, name: "0026_cloudflare-control.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0026_cloudflare-control.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { tables: ["cloudflare_control_settings", "cloudflare_control_operations", "cloudflare_control_plans"] },
+      expected_data: { instance_meta_schema_version_at_least: 26, allow_uninitialized: true },
     },
   ],
 };

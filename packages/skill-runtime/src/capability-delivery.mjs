@@ -499,6 +499,13 @@ export function assertGenericApiPathIsNonSensitive({ method = "GET", apiPath }) 
   } catch (error) {
     throw toolError("INVALID_API_PATH", "API path must be a same-origin absolute path", {}, error);
   }
+  if (normalizedMethod === "POST" && pathname === "/api/v1/admin/cloudflare/secrets") {
+    throw toolError("SENSITIVE_DELIVERY_REQUIRED", "Cloudflare tokens must use the protected Owner Web form and cannot enter ordinary API input or operation journals", {
+      command: "web open",
+      target: { kind: "admin", section: "overview" },
+      settings_path: "/app/admin?section=cloudflare",
+    });
+  }
   if (/^\/api\/v1\/attachments\/[^/]+\/content$/u.test(pathname)) {
     throw toolError("ATTACHMENT_COMMAND_REQUIRED", "Attachment bytes must use a dedicated file command and cannot enter generic API output", {
       command: normalizedMethod === "PUT" ? "attachment upload" : "attachment download",

@@ -17,6 +17,8 @@ import OwnerDevices from "../components/OwnerDevices.vue";
 import PageState from "../components/PageState.vue";
 import VersionUpdatesPanel from "../components/VersionUpdatesPanel.vue";
 import UsagePanel from "../components/UsagePanel.vue";
+import UsageHistoryPanel from "../components/UsageHistoryPanel.vue";
+import CloudflareControlPanel from "../components/CloudflareControlPanel.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
 import PublicJoinStatusIcon from "../components/PublicJoinStatusIcon.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText, hasUncertainWrite } from "../lib/api";
@@ -66,7 +68,7 @@ import type {
   WriteResult,
 } from "../types";
 
-type OwnerSection = "overview" | "workspaces" | "access" | "invitations" | "audit" | "archive" | "updates";
+type OwnerSection = "overview" | "usage" | "cloudflare" | "workspaces" | "access" | "invitations" | "audit" | "archive" | "updates";
 
 const props = defineProps<{ section: OwnerSection; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
@@ -568,6 +570,8 @@ function closePolicy(): void {
 
 const tabs = computed(() => [
   { key: "overview" as const, label: t("admin.overview") },
+  { key: "usage" as const, label: ui("Usage & limits", "用量与限额") },
+  { key: "cloudflare" as const, label: ui("Cloudflare connection", "Cloudflare 连接") },
   { key: "workspaces" as const, label: t("admin.workspaces") },
   { key: "access" as const, label: t("admin.access") },
   { key: "audit" as const, label: t("admin.audit") },
@@ -1801,6 +1805,7 @@ onUnmounted(() => {
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
     <VersionUpdatesPanel v-if="!loading && section === 'updates'" :session="session" />
+    <CloudflareControlPanel v-if="!loading && section === 'cloudflare'" />
     <ContainerTreePagination v-if="!loading && ['workspaces', 'archive', 'access', 'audit'].includes(section)" :tree="containerTree" :archived="section === 'archive'" @workspaces="moreWorkspaces" @projects="moreProjects" />
 
     <template v-if="!loading && section === 'overview'">
@@ -1827,7 +1832,10 @@ onUnmounted(() => {
           <UButton color="neutral" variant="ghost" class="owner-shortcut" type="button" @click="navigate(sectionPath('audit'))"><span><strong>{{ ui("View activity", "查看操作记录") }}</strong><small>{{ ui("Follow changes across your instance.", "追踪实例中的业务与安全变更。") }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg></UButton>
         </nav>
       </section>
-      <UsagePanel />
+    </template>
+    <UsagePanel v-if="section === 'overview' || section === 'usage'" :summary="section === 'overview'" :observed-origin="meta?.observed_origin ?? ''" @details="navigate(sectionPath('usage'))" />
+    <UsageHistoryPanel v-if="section === 'usage'" />
+    <template v-if="!loading && section === 'overview'">
       <HomepageSettingsPanel />
       <details class="owner-section owner-disclosure">
         <summary>{{ ui("Service information & access limits", "服务信息与访问限制") }}</summary>
@@ -1843,7 +1851,8 @@ onUnmounted(() => {
         <dl class="settings-list"><div><dt>{{ ui("Observed", "本次访问") }}</dt><dd>{{ meta?.observed_origin }}</dd></div><div><dt>{{ ui("Preferred", "首选地址") }}</dt><dd>{{ meta?.preferred_api_origin }}</dd></div><div><dt>{{ ui("Origin version", "地址版本") }}</dt><dd>{{ meta?.origin_version }}</dd></div></dl>
       </section>
       <section class="owner-section">
-        <div class="section-heading-row"><div><h2>{{ ui("Request limits", "访问频率限制") }}</h2><p>{{ locale === "zh-CN" ? "由部署配置发布；此处只读。" : "Published through Worker configuration; read-only here." }}</p></div><span class="role-badge">{{ rateSettings?.configuration_source }}</span></div>
+        <div class="section-heading-row"><div><h2>{{ ui("Request limits", "访问频率限制") }}</h2><p>{{ ui("Published through deployment configuration; read-only here.", "由部署配置发布；此处只读。") }}</p></div><a :href="`/docs/${locale}/deployment/optional/`">{{ ui("How to change limits", "如何修改限制") }}</a></div>
+        <p class="muted-copy">{{ ui('View the non-secret RATE_LIMIT_* variables in Cloudflare → Workers & Pages → this Worker → Settings → Variables and Secrets. Effective rate limits also require matching Rate Limiting bindings in Wrangler; those bindings are not shown in the dashboard. Ask a deployment Agent using cfkanban-deploy to prepare, publish, and verify the complete configuration.', '可在 Cloudflare → Workers 和 Pages → 本实例 Worker → 设置 → 变量和机密，查看非秘密 RATE_LIMIT_* 变量。实际限流还需同步 Wrangler 中对应的 Rate Limiting binding，控制台不显示这些 binding。建议让部署 Agent 使用 cfkanban-deploy 准备、发布并核对完整配置。') }}</p>
         <div class="rate-grid"><article v-for="(value, key) in rateSettings?.policies" :key="key"><span>{{ rateScopeLabel(key) }}</span><strong>{{ value.limit }} / {{ value.period_seconds }}{{ ui("s", "秒") }}</strong><small>{{ rateSettings?.recent_429_summary.by_scope[key] ?? 0 }} {{ ui("recent", "次近期记录") }}</small></article></div>
         <template v-if="rateSettings?.cost_protection">
           <div class="rate-grid">

@@ -198,6 +198,21 @@ const operations = [
   ["get", "/api/v1/admin/usage", "getUsage", "admin", authenticated, "read"],
   ["post", "/api/v1/admin/usage/refresh", "refreshUsage", "admin", authenticated, "cache-refresh", "RefreshUsageRequest"],
   ["get", "/api/v1/admin/rate-limit-settings", "getRateLimitSettings", "admin", authenticated, "read"],
+  ["get", "/api/v1/admin/usage/history", "getUsageHistory", "admin", authenticated, "read", "UsageHistoryQuery"],
+  ["post", "/api/v1/admin/usage/history/collect", "collectUsageHistory", "admin", authenticated, "cache-refresh", "CollectUsageHistoryRequest"],
+  ["get", "/api/v1/admin/cloudflare", "getCloudflareControl", "admin", authenticated, "read"],
+  ["get", "/api/v1/admin/cloudflare/notifications", "getCloudflareNotifications", "admin", authenticated, "read"],
+  ["get", "/api/v1/admin/cloudflare/waf", "getCloudflareWaf", "admin", authenticated, "read"],
+  ["get", "/api/v1/admin/cloudflare/operations/{operation_id}", "getCloudflareOperation", "admin", authenticated, "read"],
+  ["get", "/api/v1/admin/cloudflare/plans/{plan_id}", "getCloudflarePlan", "admin", authenticated, "read"],
+  ["post", "/api/v1/admin/cloudflare/verify", "verifyCloudflareControl", "admin", authenticated, "idempotent", "EmptyRequest"],
+  ["patch", "/api/v1/admin/cloudflare/settings", "updateCloudflareSettings", "admin", authenticated, "idempotent-cas", "UpdateCloudflareSettingsRequest"],
+  ["post", "/api/v1/admin/cloudflare/secrets", "saveCloudflareSecret", "admin", authenticated, "idempotent-cas", "SaveCloudflareSecretRequest"],
+  ["post", "/api/v1/admin/cloudflare/operations/{operation_id}/verify", "verifyCloudflareOperation", "admin", authenticated, "idempotent", "EmptyRequest"],
+  ["post", "/api/v1/admin/cloudflare/rate-limits/plan", "planCloudflareRateLimits", "admin", authenticated, "idempotent-cas", "PlanCloudflareRateLimitsRequest"],
+  ["post", "/api/v1/admin/cloudflare/rate-limits/apply", "applyCloudflareRateLimits", "admin", authenticated, "idempotent-cas", "ApplyCloudflarePlanRequest"],
+  ["post", "/api/v1/admin/cloudflare/configuration/plan", "planCloudflareConfiguration", "admin", authenticated, "idempotent-cas", "PlanCloudflareConfigurationRequest"],
+  ["post", "/api/v1/admin/cloudflare/configuration/apply", "applyCloudflareConfiguration", "admin", authenticated, "idempotent-cas", "ApplyCloudflarePlanRequest"],
   ["post", "/api/v1/public-joins/{public_id}/redeem", "redeemPublicJoin", "public-join", optionalAuthenticated, "idempotent", "RedeemPublicJoinRequest"],
 ];
 
@@ -380,6 +395,7 @@ const permissionGroups = {
   visible_scope_active_owner_tombstone: ["listWorkspaces", "getWorkspace", "listProjects", "getProject"],
   current_principal: ["getMe", "updateMe", "getWebSession", "renewWebSession", "revokeWebSession", "listMyPasskeys", "revokeMyPasskey", "getNotificationPreferences", "updateNotificationPreferences", "listMyNotifications", "acknowledgeNotification"],
   deployment_owner: [
+    "getUsageHistory", "collectUsageHistory", "getCloudflareControl", "getCloudflareNotifications", "getCloudflareWaf", "getCloudflareOperation", "getCloudflarePlan", "verifyCloudflareControl", "updateCloudflareSettings", "saveCloudflareSecret", "verifyCloudflareOperation", "planCloudflareRateLimits", "applyCloudflareRateLimits", "planCloudflareConfiguration", "applyCloudflareConfiguration",
     "getReleaseUpdates",
     "previewWorkspacePurge", "purgeWorkspace", "previewProjectPurge", "purgeProject",
     "createWorkspace", "deleteWorkspace", "restoreWorkspace",
@@ -1009,6 +1025,30 @@ const schemas = {
   },
   AttachmentSettingsWriteResult: containerWriteResult("AttachmentSettings"),
   RefreshUsageRequest: { type: "object", required: ["mode"], properties: { mode: string({ enum: ["stale", "manual"] }) }, additionalProperties: false },
+  CollectUsageHistoryRequest: { type: "object", required: ["day"], properties: { day: string({ format: "date", description: "One of the last seven complete UTC dates; today is rejected." }) }, additionalProperties: false },
+  UsageHistory: {
+    type: "object", required: ["enabled", "retention_days", "generated_at", "items", "missing_days", "source", "history_kind", "error"], additionalProperties: false,
+    properties: { enabled: { type: "boolean" }, retention_days: { const: 90 }, generated_at: ref("Timestamp"), source: { const: "cloudflare_analytics" }, history_kind: { const: "utc_daily" }, error: nullableString({ maxLength: 64 }), missing_days: { type: "array", maxItems: 90, items: string({ format: "date" }) }, items: { type: "array", maxItems: 90, items: { type: "object", required: ["day", "collected_at", "metrics", "complete_day"], additionalProperties: false, properties: { day: string({ format: "date" }), collected_at: ref("Timestamp"), metrics: { type: "array", maxItems: 32, items: ref("UsageMetric") }, complete_day: { const: true } } } } },
+  },
+  CloudflareCapability: string({ enum: ["missing", "unverified", "verified", "permission_denied", "unavailable", "target_mismatch", "unsupported_contract"] }),
+  CloudflareBudget: { type: "object", required: ["status", "docs_url", "dashboard_url"], additionalProperties: false, properties: { status: { const: "unsupported_contract" }, docs_url: string({ format: "uri" }), dashboard_url: string({ format: "uri" }) }, description: "The public USD Budget Alert field contract is not confirmed. Notification policy limit fields must not be interpreted as USD." },
+  CloudflareConfiguration: { type: "object", additionalProperties: false, properties: { history_enabled: { type: "boolean" }, analytics_enabled: { type: "boolean" }, billing_plan: { enum: ["free", "paid", null] }, billing_cycle_day: { type: ["integer", "null"], minimum: 1, maximum: 31 }, account_totals: { type: "boolean" }, warning_percent: integer({ minimum: 1, maximum: 100 }) } },
+  CloudflareOperation: { type: "object", required: ["operation_id", "kind", "status", "version", "baseline_version_id", "result_version_id", "deployment_id", "failure_class", "created_at", "updated_at"], additionalProperties: false, properties: { operation_id: ref("Uuid"), kind: string({ enum: ["configuration_secret", "control_secret", "analytics_secret", "configuration", "rate_limit"] }), status: string({ enum: ["pending", "verified", "failed", "unknown"] }), version: ref("Version"), baseline_version_id: nullableString(), result_version_id: nullableString(), deployment_id: nullableString(), failure_class: nullableString({ maxLength: 128 }), created_at: ref("Timestamp"), updated_at: ref("Timestamp") } },
+  CloudflareControl: {
+    type: "object", required: ["version", "target", "configured", "capabilities", "verified_at", "budget", "latest_operation", "configuration"], additionalProperties: false,
+    properties: { version: ref("Version"), target: { type: "object", required: ["account_id", "worker_name", "database_id", "zone_id", "hostname"], additionalProperties: false, properties: { account_id: nullableString({ maxLength: 128 }), worker_name: nullableString({ maxLength: 63 }), database_id: { anyOf: [ref("Uuid"), { type: "null" }] }, zone_id: nullableString({ maxLength: 128 }), hostname: string({ maxLength: 253 }) } }, configured: { type: "object", required: ["configuration", "control", "analytics"], additionalProperties: false, properties: { configuration: { type: "boolean" }, control: { type: "boolean" }, analytics: { type: "boolean" } } }, capabilities: { type: "object", required: ["configuration", "notifications", "waf", "billing", "analytics"], additionalProperties: false, properties: Object.fromEntries(["configuration", "notifications", "waf", "billing", "analytics"].map(key => [key, ref("CloudflareCapability")])) }, verified_at: { anyOf: [ref("Timestamp"), { type: "null" }] }, budget: ref("CloudflareBudget"), latest_operation: { anyOf: [ref("CloudflareOperation"), { type: "null" }] }, configuration: ref("CloudflareConfiguration") },
+  },
+  CloudflareNotifications: { type: "object", required: ["status", "available_alerts", "policies", "budget"], additionalProperties: false, properties: { status: ref("CloudflareCapability"), budget: ref("CloudflareBudget"), available_alerts: { type: "array", maxItems: 500, items: { type: "object", required: ["type", "display_name", "description", "filter_options"], additionalProperties: false, properties: { type: string({ maxLength: 256 }), display_name: string({ maxLength: 500 }), description: string({ maxLength: 2000 }), filter_options: { type: "array", maxItems: 500, items: {} } } } }, policies: { type: "array", maxItems: 500, items: { type: "object", required: ["id", "name", "alert_type", "enabled", "emails", "filters"], additionalProperties: false, properties: { id: string({ maxLength: 256 }), name: string({ maxLength: 500 }), alert_type: string({ maxLength: 256 }), enabled: { type: "boolean" }, emails: { type: "array", maxItems: 500, items: string({ maxLength: 320 }) }, filters: { type: "object", additionalProperties: true } } } } } },
+  CloudflareWaf: { type: "object", required: ["status", "zone_id", "hostname", "owned_rule", "other_rule_count", "protected"], additionalProperties: false, properties: { status: ref("CloudflareCapability"), zone_id: nullableString({ maxLength: 128 }), hostname: string({ maxLength: 253 }), other_rule_count: integer({ minimum: 0, maximum: 500 }), protected: { type: "boolean" }, owned_rule: { anyOf: [{ type: "null" }, { type: "object", required: ["id", "enabled", "action", "expression"], additionalProperties: false, properties: { id: string({ maxLength: 256 }), enabled: { type: "boolean" }, action: string({ maxLength: 256 }), expression: string({ maxLength: 16384 }) } }] } } },
+  CloudflarePlan: { type: "object", required: ["plan_id", "kind", "version", "baseline_version_id", "baseline_deployment_id", "target", "before", "after", "created_at"], additionalProperties: false, properties: { plan_id: ref("Uuid"), kind: string({ enum: ["configuration", "rate_limit"] }), version: ref("Version"), baseline_version_id: string(), baseline_deployment_id: string(), target: { type: "object", required: ["account_id", "worker_name", "database_id"], additionalProperties: false, properties: { account_id: string({ maxLength: 128 }), worker_name: string({ maxLength: 63 }), database_id: ref("Uuid") } }, before: { type: "object", additionalProperties: true }, after: { type: "object", additionalProperties: true }, created_at: ref("Timestamp") } },
+  UpdateCloudflareSettingsRequest: { type: "object", required: ["zone_id", "expected_version"], properties: { zone_id: nullableString({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_-]+$" }), expected_version: ref("Version") }, additionalProperties: false },
+  SaveCloudflareSecretRequest: { type: "object", required: ["kind", "token", "expected_version"], additionalProperties: false, properties: { kind: string({ enum: ["configuration", "control", "analytics"] }), token: string({ minLength: 32, maxLength: 4096, pattern: "^[!-~]+$", writeOnly: true, description: "Transient browser-only secret input. Never persist in ordinary CLI files, drafts or operation journals." }), expected_version: ref("Version") } },
+  PlanCloudflareRateLimitsRequest: { type: "object", required: ["scope", "limit", "period_seconds", "expected_version"], additionalProperties: false, properties: { scope: string({ enum: ["instance", "principal", "unauthenticated_sensitive", "anonymous_login", "expensive_reads"] }), limit: integer({ minimum: 1, maximum: 1000000 }), period_seconds: integer({ enum: [10, 60] }), expected_version: ref("Version") } },
+  PlanCloudflareConfigurationRequest: { type: "object", required: ["settings", "expected_version"], additionalProperties: false, properties: { settings: ref("CloudflareConfiguration"), expected_version: ref("Version") } },
+  ApplyCloudflarePlanRequest: { type: "object", required: ["plan_id", "expected_version"], additionalProperties: false, properties: { plan_id: ref("Uuid"), expected_version: ref("Version") } },
+  CloudflareControlWriteResult: containerWriteResult("CloudflareControl"),
+  CloudflarePlanWriteResult: containerWriteResult("CloudflarePlan"),
+  CloudflareOperationWriteResult: containerWriteResult("CloudflareOperation"),
   UsageMetric: {
     type: "object",
     required: ["key", "value", "unit", "source", "scope", "period_start", "period_end", "observed_at"],
@@ -1082,7 +1122,7 @@ const schemas = {
     properties: {
       allowed_actions: { type: "array", minItems: 1, maxItems: 1, items: { const: "read" } },
       configuration_source: { const: "worker_configuration" },
-      editable_via_api: { const: false },
+      editable_via_api: { type: "boolean", description: "Whether the fixed deployment target and configuration Secret are present. Actual apply still verifies current Owner and Cloudflare permissions." },
       cost_protection: {
         type: "object", required: ["anonymous_login", "expensive_reads", "concurrency", "observation_scope", "billing_cap"], additionalProperties: false,
         properties: {
@@ -2470,6 +2510,7 @@ const schemas = {
 };
 
 const querySets = {
+  UsageHistoryQuery: [{ name: "days", in: "query", required: false, schema: integer({ minimum: 1, maximum: 90, default: 30 }) }],
   NotificationCursorQuery: [
     { name: "cursor", in: "query", required: false, schema: string() },
     { name: "limit", in: "query", required: false, schema: integer({ minimum: 1, maximum: 50, default: 20 }) },
@@ -2592,6 +2633,15 @@ const operationResponseSchemas = {
   getUsage: ref("Usage"),
   refreshUsage: ref("Usage"),
   getRateLimitSettings: ref("RateLimitSettings"),
+  getUsageHistory: ref("UsageHistory"), collectUsageHistory: ref("UsageHistory"),
+  getCloudflareControl: ref("CloudflareControl"),
+  getCloudflareNotifications: ref("CloudflareNotifications"), getCloudflareWaf: ref("CloudflareWaf"),
+  getCloudflareOperation: ref("CloudflareOperation"),
+  getCloudflarePlan: ref("CloudflarePlan"),
+  verifyCloudflareControl: ref("CloudflareControlWriteResult"), updateCloudflareSettings: ref("CloudflareControlWriteResult"),
+  saveCloudflareSecret: ref("CloudflareOperationWriteResult"), verifyCloudflareOperation: ref("CloudflareOperationWriteResult"),
+  planCloudflareRateLimits: ref("CloudflarePlanWriteResult"), planCloudflareConfiguration: ref("CloudflarePlanWriteResult"),
+  applyCloudflareRateLimits: ref("CloudflareOperationWriteResult"), applyCloudflareConfiguration: ref("CloudflareOperationWriteResult"),
   redeemPublicJoin: ref("PublicJoinRedemptionWriteResult"),
   createWebLaunch: ref("BrowserLaunchWriteResult"),
   redeemWebLaunch: ref("WebSessionExchangeWriteResult"),
@@ -2744,6 +2794,18 @@ for (const operation of operations) {
 
 const requestIdHeader = { "X-Request-ID": { $ref: "#/components/headers/RequestId" } };
 const noStoreHeader = { ...requestIdHeader, "Cache-Control": { required: true, schema: { type: "string", const: "no-store" } } };
+for (const [path, methods] of Object.entries(paths)) {
+  if (path.startsWith("/api/v1/admin/cloudflare") || path.startsWith("/api/v1/admin/usage/history")) {
+    for (const operation of Object.values(methods)) {
+      operation.responses["200"].headers = noStoreHeader;
+      operation.description = `${permissionDescriptions.deployment_owner} Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.`;
+    }
+  }
+}
+paths["/api/v1/admin/cloudflare/secrets"].post["x-cfkanban-sensitive-input"] = "browser_cloudflare_secret";
+paths["/api/v1/admin/cloudflare/secrets"].post.description += " Token input is transient and persisted only as an ordinary Worker Secret. The generic Skill/CLI API path rejects this operation; use the protected Owner Web form.";
+paths["/api/v1/admin/usage/history"].get.description = "Owner-only bounded D1 history read for 1–90 complete UTC days. No Cloudflare request; missing dates and null metrics are preserved. Analytics observations are not invoices.";
+paths["/api/v1/admin/usage/history/collect"].post.description = "Owner-only opt-in derived history refresh for one of the last seven complete UTC days. Cookie requests require CSRF; no business domain event or Idempotency-Key is required. Shared claims and a 60-second retry cooldown bound provider calls. Paid daily metrics use this complete UTC day, not month-to-date totals.";
 for (const [path, description] of [
   ["/api/v1/issues/{identifier}/relations", "Create one relation with both endpoint Issue versions, current writer access and idempotency. Parent means source child to target parent; multiple parents remain allowed. Parent insertion atomically rejects a cycle and fails closed beyond 1000 distinct ancestors, including the target. Validation follows all undeleted parent edges in the Workspace, including inaccessible or suspended intermediate endpoints; no path or hidden endpoint is disclosed. Historical cycles are preserved."],
   ["/api/v1/relations/{relation_id}/commands/restore", "Restore one deleted relation with relation and both endpoint CAS, current writer access and idempotency. Parent restoration performs the same atomic cycle and 1000-ancestor budget checks as creation. A cycle returns 409 RELATION_CYCLE with choose_different_parent; excessive scope returns 400 RELATION_GRAPH_TOO_LARGE with simplify_parent_graph and only the fixed max_ancestors=1000. Both are non-retryable."],
