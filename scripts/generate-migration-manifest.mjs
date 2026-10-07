@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 21,
+  schema_version: 24,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -31,7 +31,7 @@ const manifest = {
       expected_artifacts: {
         tables,
         // 读回核对当前 schema；0003 已移除这两个旧 key 索引，初始 SQL 指纹保持不变。
-        indexes: indexes.filter((name) => !["idx_workspaces_key", "idx_projects_workspace_key"].includes(name)),
+        indexes: indexes.filter((name) => !["idx_workspaces_key", "idx_projects_workspace_key", "idx_credentials_token_digest", "idx_browser_launches_code_digest", "idx_web_sessions_token_digest"].includes(name)),
       },
     },
     {
@@ -284,6 +284,30 @@ const manifest = {
         triggers: ["upgrade_notification_release_immutable", "upgrade_notification_release_retained"],
       },
       expected_data: { instance_meta_schema_version_at_least: 21, allow_uninitialized: true },
+    },
+    {
+      sequence: 22,
+      name: "0022_cost_unique_indexes.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0022_cost_unique_indexes.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: {},
+      expected_data: { instance_meta_schema_version_at_least: 22, allow_uninitialized: true },
+    },
+    {
+      sequence: 23,
+      name: "0023_notification_scan_cache.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0023_notification_scan_cache.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { tables: ["notification_pending_windows"] },
+      expected_data: { instance_meta_schema_version_at_least: 23, allow_uninitialized: true },
+    },
+    {
+      sequence: 24,
+      name: "0024_webauthn_cleanup_lease.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0024_webauthn_cleanup_lease.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { tables: ["webauthn_cleanup_state"] },
+      expected_data: { instance_meta_schema_version_at_least: 24, allow_uninitialized: true },
     },
   ],
 };

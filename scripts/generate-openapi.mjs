@@ -1013,11 +1013,11 @@ const schemas = {
     type: "object",
     required: ["key", "value", "unit", "source", "scope", "period_start", "period_end", "observed_at"],
     properties: {
-      key: string({ enum: ["d1_storage_bytes", "d1_rows_read", "d1_rows_written", "r2_storage_bytes", "r2_objects", "r2_operations"] }),
+      key: string({ enum: ["d1_storage_bytes", "d1_rows_read", "d1_rows_written", "r2_storage_bytes", "r2_objects", "r2_operations", "d1_billing_rows_read", "d1_billing_rows_written", "workers_requests", "workers_cpu_microseconds", "r2_class_a_operations", "r2_class_b_operations", "r2_unclassified_operations"] }),
       value: { type: ["number", "null"], minimum: 0 },
-      unit: string({ enum: ["bytes", "count"] }),
+      unit: string({ enum: ["bytes", "count", "microseconds"] }),
       source: { const: "cloudflare" },
-      scope: { const: "instance" },
+      scope: string({ enum: ["instance", "account"] }),
       period_start: { anyOf: [ref("Timestamp"), { type: "null" }] },
       period_end: { anyOf: [ref("Timestamp"), { type: "null" }] },
       observed_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
@@ -1026,7 +1026,7 @@ const schemas = {
   },
   Usage: {
     type: "object",
-    required: ["generated_at", "attachments", "cloudflare"],
+    required: ["generated_at", "attachments", "cloudflare", "public_access"],
     properties: {
       generated_at: ref("Timestamp"),
       attachments: {
@@ -1034,15 +1034,42 @@ const schemas = {
         properties: { enabled: { type: "boolean" }, reserved_bytes: integer({ minimum: 0 }), limit_bytes: { type: ["integer", "null"], minimum: 1, maximum: 9007199254740991 }, limit_configured: { type: "boolean" }, settings_version: ref("Version") },
         additionalProperties: false,
       },
+      public_access: {
+        type: "object", required: ["status", "hostname", "mode", "waf_profile", "verified_at", "live_verified"], additionalProperties: false,
+        description: "Non-secret last-deployment declaration, never a live Cloudflare control-plane health check.",
+        properties: {
+          status: string({ enum: ["not_configured", "configured", "invalid"] }),
+          hostname: { type: ["string", "null"], maxLength: 253 },
+          mode: { enum: ["custom_domain", null] },
+          waf_profile: { enum: ["disabled", "anonymous-api-filter", null] },
+          verified_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
+          live_verified: { const: false },
+        },
+      },
       cloudflare: {
-        type: "object", required: ["status", "refreshing", "collected_at", "attempted_at", "error", "metrics"],
+        type: "object", required: ["status", "refreshing", "collected_at", "attempted_at", "error", "metrics", "billing", "alerts"],
         properties: {
           refreshing: { type: "boolean" },
           status: string({ enum: ["not_configured", "pending", "fresh", "stale", "error"] }),
           collected_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
           attempted_at: { anyOf: [ref("Timestamp"), { type: "null" }] },
           error: { type: ["string", "null"], maxLength: 64 },
-          metrics: { type: "array", maxItems: 6, items: ref("UsageMetric") },
+          metrics: { type: "array", maxItems: 32, items: ref("UsageMetric") },
+          billing: {
+            type: "object", required: ["plan", "cycle_day", "period_start", "period_end", "account_totals_enabled", "warning_percent", "r2_standard_only_scope", "allowances_shared", "analytics_not_invoice"], additionalProperties: false,
+            properties: {
+              plan: string({ enum: ["free", "paid", "unknown"] }), cycle_day: { type: ["integer", "null"], minimum: 1, maximum: 31 },
+              period_start: { anyOf: [ref("Timestamp"), { type: "null" }] }, period_end: { anyOf: [ref("Timestamp"), { type: "null" }] },
+              account_totals_enabled: { type: "boolean" }, warning_percent: integer({ minimum: 1, maximum: 100 }),
+              r2_standard_only_scope: string({ enum: ["unknown", "instance", "account"] }),
+              allowances_shared: { const: true }, analytics_not_invoice: { const: true },
+            },
+          },
+          alerts: { type: "array", maxItems: 16, items: {
+            type: "object", required: ["metric_key", "scope", "level", "value", "allowance", "percent", "period_start", "period_end"], additionalProperties: false,
+            description: "Fresh analytic contribution to a shared account allowance; not a remaining balance or billing cap.",
+            properties: { metric_key: string({ maxLength: 64 }), scope: string({ enum: ["instance", "account"] }), level: string({ enum: ["warning", "reached"] }), value: { type: "number", minimum: 0 }, allowance: { type: "number", exclusiveMinimum: 0 }, percent: { type: "number", minimum: 0 }, period_start: ref("Timestamp"), period_end: ref("Timestamp") },
+          } },
         },
         additionalProperties: false,
       },
@@ -1056,6 +1083,14 @@ const schemas = {
       allowed_actions: { type: "array", minItems: 1, maxItems: 1, items: { const: "read" } },
       configuration_source: { const: "worker_configuration" },
       editable_via_api: { const: false },
+      cost_protection: {
+        type: "object", required: ["anonymous_login", "expensive_reads", "concurrency", "observation_scope", "billing_cap"], additionalProperties: false,
+        properties: {
+          ...Object.fromEntries(["anonymous_login", "expensive_reads"].map(key => [key, { type: "object", required: ["enabled", "policy"], additionalProperties: false, properties: { enabled: { type: "boolean" }, policy: { anyOf: [{ type: "null" }, { type: "object", required: ["limit", "period_seconds"], additionalProperties: false, properties: { limit: integer({ minimum: 1 }), period_seconds: integer({ enum: [10, 60] }) } }] } } }])),
+          concurrency: { type: "object", required: ["enabled", "per_principal", "per_isolate"], additionalProperties: false, properties: { enabled: { type: "boolean" }, per_principal: { const: 2 }, per_isolate: { const: 32 } } },
+          observation_scope: { const: "worker_isolate_best_effort" }, billing_cap: { const: false },
+        },
+      },
       policies: {
         type: "object",
         required: ["instance", "principal", "unauthenticated_sensitive"],

@@ -22,6 +22,12 @@ function assertAuthorization(input) {
 }
 export async function runWorkflow(name,input,context) {
   const {helper,api}=context;
+  if(name==='public-access-apply') {
+    assertAuthorization(input);
+    await helper('journal create',input);
+    await helper('journal authorize',{...input,planDigest:canonicalDigest(input.plan)});
+    return helper('public-access apply',input);
+  }
   if(name.startsWith('cli-')) {
     const functions={'cli-status':inspectCliInstallation,'cli-install':installCliLauncher,'cli-rollback':rollbackCliRelease,'cli-uninstall':uninstallCliLauncher};
     return functions[name]({...input,releaseRoot:path.join(context.stateRoot,'skill-releases')});

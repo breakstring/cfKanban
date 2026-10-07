@@ -2,7 +2,7 @@ import { readWorkerVersionById } from "../../packages/skill-runtime/src/deploy.m
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createInstanceUpgradePlan } from "../../packages/skill-runtime/src/upgrade-plan.mjs";
-import { deploymentCrons, existingUsageConfig, targetWorkerBindings, usageBindings, usageVars } from "../../packages/skill-runtime/src/usage-config.mjs";
+import { deploymentCrons, existingUsageConfig, normalizeUsageConfig, targetWorkerBindings, usageBindings, usageVars } from "../../packages/skill-runtime/src/usage-config.mjs";
 const INSTANCE_ID="11111111-1111-4111-8111-111111111111";
 const PRINCIPAL_ID="22222222-2222-4222-8222-222222222222";
 const CREDENTIAL_ID="44444444-4444-4444-8444-444444444444";
@@ -41,6 +41,7 @@ function upgradePlanInput(overrides = {}) {
         deployment_id: "66666666-6666-4666-8666-666666666666",
         version_id: "77777777-7777-4777-8777-777777777777",
         bindings: upgradeBindingReadback(),
+        worker_limits: null,
       },
       d1: {
         name: "cfkanban-d1",
@@ -191,5 +192,22 @@ test("partial existing resource identifiers are individually checked against the
   const target = { accountId: config.account_id, databaseId: config.d1_database_id, bucketName: null };
   for (const [name, text] of [["USAGE_ACCOUNT_ID", "other"], ["USAGE_D1_DATABASE_ID", INSTANCE_ID], ["USAGE_R2_BUCKET_NAME", "foreign-bucket"]]) {
     assert.throws(() => existingUsageConfig([{ type: "plain_text", name, text }], target), { code: "USAGE_RESOURCE_MISMATCH" });
+  }
+});
+test("extended usage settings retain exact target and explicit billing/scope on upgrade", () => {
+  const input = enabledInput(true);
+  const extended = { ...config, worker_name: input.resources.worker.name, billing_plan: "paid", billing_cycle_day: 31, account_totals: true, warning_percent: 90, r2_standard_only_scope: "instance" };
+  input.resources.worker.bindings = input.resources.worker.bindings.filter(binding => !binding.name.startsWith("USAGE_"));
+  input.resources.worker.bindings.push(...usageBindings(extended, true));
+  const plan = createInstanceUpgradePlan(input);
+  assert.deepEqual(plan.usage_analytics.configuration, extended);
+  assert.deepEqual(usageVars(plan.usage_analytics.configuration), usageVars(extended));
+  assert.equal(plan.binding_changes_allowed, false);
+  const target = { accountId: config.account_id, databaseId: config.d1_database_id, workerName: "cfkanban-worker" };
+  for (const changes of [{ worker_name: "foreign-worker" }, { billing_cycle_day: 0 }, { warning_percent: 101 }, { account_totals: "true" }, { r2_standard_only_scope: "assumed" }]) {
+    assert.throws(() => normalizeUsageConfig({ ...extended, ...changes }, target), error => ["USAGE_RESOURCE_MISMATCH", "INVALID_USAGE_CONFIG"].includes(error.code));
+  }
+  for (const [name, text] of [["USAGE_BILLING_CYCLE_DAY", "031"], ["USAGE_WARNING_PERCENT", "080"], ["USAGE_ACCOUNT_TOTALS_ENABLED", "1"], ["USAGE_R2_STANDARD_ONLY_SCOPE", "assumed"]]) {
+    assert.throws(() => existingUsageConfig([{ type: "plain_text", name, text }], target), { code: "INVALID_USAGE_CONFIG" });
   }
 });

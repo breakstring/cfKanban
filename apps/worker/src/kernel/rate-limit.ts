@@ -5,6 +5,7 @@ import {
   type RateLimitPolicy,
 } from "./rate-limit-policy.ts";
 import type { AuthContext, WorkerEnv } from "./types.ts";
+import { sha256Hex } from "./crypto.ts";
 
 export type { RateLimitPolicies, RateLimitPolicy } from "./rate-limit-policy.ts";
 
@@ -107,6 +108,17 @@ export async function enforceUnauthenticatedSensitiveRateLimit(env: WorkerEnv): 
     "unauthenticated_sensitive",
     rateLimitPolicies(env).unauthenticated_sensitive,
   );
+}
+
+export async function enforceAnonymousLoginRateLimit(env: WorkerEnv, request: Request): Promise<void> {
+  // 旧部署仍保留实例级敏感操作门控；新版计划显式增加此独立 binding。
+  if (env.ANONYMOUS_LOGIN_RATE_LIMITER === undefined) return;
+  const limits = policy(env.RATE_LIMIT_ANONYMOUS_LOGIN_LIMIT ?? "", env.RATE_LIMIT_ANONYMOUS_LOGIN_PERIOD_SECONDS ?? "");
+  const address = request.headers.get("cf-connecting-ip");
+  // 只接受 Cloudflare 提供的地址，不从可伪造的 X-Forwarded-For 推断。
+  const key = address !== null && address.length <= 64 && /^[0-9a-f:.]+$/iu.test(address)
+    ? await sha256Hex(address.toLowerCase()) : "unknown-client";
+  await enforce(env.ANONYMOUS_LOGIN_RATE_LIMITER, `anonymous-login:${key}`, "unauthenticated_sensitive", limits);
 }
 
 export function isRateLimitedDynamicPath(pathname: string): boolean {

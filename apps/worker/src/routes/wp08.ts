@@ -3,6 +3,7 @@ import { authenticateRequest, SESSION_COOKIE_NAME } from "../kernel/auth.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
 import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
 import { enforcePrincipalRateLimit, rateLimitPolicies } from "../kernel/rate-limit.ts";
+import { readCostProtection } from "../kernel/query-cost-protection.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
 import {
@@ -131,12 +132,13 @@ export function registerWp08Routes(router: Router): Router {
     })
     .get("/api/v1/admin/rate-limit-settings", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await getRateLimitSettings(
+      const settings = await getRateLimitSettings(
         env.DB,
         auth,
         context.startedAt,
         rateLimitPolicies(env),
-      ), context.requestId, { headers: { "cache-control": "no-store" } });
+      );
+      return jsonResponse({ ...settings, cost_protection: readCostProtection(env) }, context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .post("/api/v1/public-joins/{public_id}/redeem", async (request, env, context) => {
       const value = await body(

@@ -1608,7 +1608,9 @@ export async function countProjectIssues(
   const filter = requireIssueListFilter(url);
   const guard = buildCurrentAuthGuard(auth, now, 13);
   let index = "idx_issues_active_status_order";
-  if (filter.assignees.length > 0 && !filter.assignees.includes("unassigned")) index = "idx_issues_active_assignee_order";
+  const driveAssignees = filter.assignees.length > 0 && (!filter.assignees.includes("unassigned")
+    || (filter.priorities.length === 0 && filter.statuses.length === 0));
+  if (driveAssignees) index = "idx_issues_active_assignee_order";
   else if (filter.priorities.length > 0) index = "idx_issues_active_priority_order";
   const labelMatches = filter.labels.length === 0 || search.prefix !== null ? "" : `, matched_label_issues(id) AS MATERIALIZED (
     SELECT DISTINCT association.issue_id
@@ -1651,7 +1653,9 @@ export async function countProjectIssues(
        SELECT i.status_key, COUNT(*) AS count
        ${search.prefix !== null ? `FROM issues i WHERE i.project_id IN (SELECT id FROM current_result_projects) AND` : filter.labels.length === 0
          ? `FROM current_result_projects result_project
-            CROSS JOIN issues i INDEXED BY ${index} ON i.project_id = result_project.id`
+            ${driveAssignees ? "CROSS JOIN json_each(?7) selected_assignee" : ""}
+            CROSS JOIN issues i INDEXED BY ${index} ON i.project_id = result_project.id
+              ${driveAssignees ? "AND i.assignee_principal_id IS NULLIF(selected_assignee.value, 'unassigned')" : ""}`
          : `FROM matched_label_issues matching
             CROSS JOIN issues i ON i.id = matching.id
             WHERE i.project_id IN (SELECT id FROM current_result_projects) AND`}

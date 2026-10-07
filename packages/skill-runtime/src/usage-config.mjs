@@ -1,19 +1,50 @@
 import { toolError } from "./errors.mjs";
 import { requireUuid } from "./utils.mjs";
 import { ATTACHMENT_CLEANUP_CRON, attachmentBucketName } from "./r2-storage.mjs";
+import { COST_PROTECTION_NAMES, costProtectionBindings } from "./cost-protection-config.mjs";
+import { PUBLIC_ACCESS_NAMES, publicAccessBindings } from "./public-access-config.mjs";
 
 export const USAGE_SECRET = "USAGE_ANALYTICS_TOKEN";
-export const USAGE_VARS = new Set(["USAGE_ANALYTICS_ENABLED", "USAGE_ACCOUNT_ID", "USAGE_D1_DATABASE_ID", "USAGE_R2_BUCKET_NAME"]);
+export const USAGE_VARS = new Set(["USAGE_ANALYTICS_ENABLED", "USAGE_ACCOUNT_ID", "USAGE_D1_DATABASE_ID", "USAGE_R2_BUCKET_NAME", "USAGE_WORKER_NAME", "USAGE_BILLING_CYCLE_DAY", "USAGE_BILLING_PLAN", "USAGE_ACCOUNT_TOTALS_ENABLED", "USAGE_WARNING_PERCENT", "USAGE_R2_STANDARD_ONLY_SCOPE"]);
 
-export function normalizeUsageConfig(value, { accountId, databaseId, bucketName = null }) {
+function extraUsageConfig(value, { workerName }) {
+  const result = {};
+  if (Object.hasOwn(value, "worker_name")) {
+    if (typeof value.worker_name !== "string" || !/^[A-Za-z0-9_-]{1,63}$/u.test(value.worker_name) || value.worker_name !== workerName) throw toolError("USAGE_RESOURCE_MISMATCH", "Usage analytics must target this deployment Worker");
+    result.worker_name = value.worker_name;
+  }
+  if (Object.hasOwn(value, "billing_cycle_day")) {
+    if (!Number.isSafeInteger(value.billing_cycle_day) || value.billing_cycle_day < 1 || value.billing_cycle_day > 31) throw toolError("INVALID_USAGE_CONFIG", "Billing cycle day must be an explicit UTC day from 1 to 31");
+    result.billing_cycle_day = value.billing_cycle_day;
+  }
+  if (Object.hasOwn(value, "billing_plan")) {
+    if (!["free", "paid"].includes(value.billing_plan)) throw toolError("INVALID_USAGE_CONFIG", "Billing plan must be free or paid");
+    result.billing_plan = value.billing_plan;
+  }
+  if (Object.hasOwn(value, "account_totals")) {
+    if (typeof value.account_totals !== "boolean") throw toolError("INVALID_USAGE_CONFIG", "Account totals must be explicitly enabled or disabled");
+    result.account_totals = value.account_totals;
+  }
+  if (Object.hasOwn(value, "warning_percent")) {
+    if (!Number.isSafeInteger(value.warning_percent) || value.warning_percent < 1 || value.warning_percent > 100) throw toolError("INVALID_USAGE_CONFIG", "Usage warning percent must be between 1 and 100");
+    result.warning_percent = value.warning_percent;
+  }
+  if (Object.hasOwn(value, "r2_standard_only_scope")) {
+    if (!["unknown", "instance", "account"].includes(value.r2_standard_only_scope)) throw toolError("INVALID_USAGE_CONFIG", "R2 Standard-only scope must be explicitly verified instance, account, or unknown");
+    result.r2_standard_only_scope = value.r2_standard_only_scope;
+  }
+  return result;
+}
+
+export function normalizeUsageConfig(value, { accountId, databaseId, bucketName = null, workerName }) {
   if (value === null || value === undefined) return null;
-  if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !["enabled", "account_id", "d1_database_id", "r2_bucket_name"].includes(key))) throw toolError("INVALID_USAGE_CONFIG", "Usage configuration accepts only non-secret resource identifiers");
+  if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !["enabled", "account_id", "d1_database_id", "r2_bucket_name", "worker_name", "billing_cycle_day", "billing_plan", "account_totals", "warning_percent", "r2_standard_only_scope"].includes(key))) throw toolError("INVALID_USAGE_CONFIG", "Usage configuration accepts only non-secret resource identifiers and billing settings");
   if (value.enabled !== undefined && typeof value.enabled !== "boolean") throw toolError("INVALID_USAGE_CONFIG", "Usage enabled must be boolean");
   value = { account_id: accountId, d1_database_id: databaseId, ...value };
   if (value.account_id !== accountId || !/^[a-zA-Z0-9_-]{1,128}$/u.test(value.account_id) || requireUuid(value.d1_database_id, "usage_database_id") !== databaseId) throw toolError("USAGE_RESOURCE_MISMATCH", "Usage analytics must target this deployment account and database");
   const bucket = value.r2_bucket_name == null ? null : attachmentBucketName(value.r2_bucket_name);
   if (bucket !== null && bucket !== bucketName) throw toolError("USAGE_RESOURCE_MISMATCH", "Usage analytics must target this deployment attachment bucket");
-  return { enabled: value.enabled !== false, account_id: accountId, d1_database_id: databaseId, ...(bucket === null ? {} : { r2_bucket_name: bucket }) };
+  return { enabled: value.enabled !== false, account_id: accountId, d1_database_id: databaseId, ...(bucket === null ? {} : { r2_bucket_name: bucket }), ...extraUsageConfig(value, { workerName }) };
 }
 
 export function usageVars(config) {
@@ -23,6 +54,12 @@ export function usageVars(config) {
     ...(Object.hasOwn(config, "account_id") ? { USAGE_ACCOUNT_ID: config.account_id } : {}),
     ...(Object.hasOwn(config, "d1_database_id") ? { USAGE_D1_DATABASE_ID: config.d1_database_id } : {}),
     ...(Object.hasOwn(config, "r2_bucket_name") ? { USAGE_R2_BUCKET_NAME: config.r2_bucket_name } : {}),
+    ...(Object.hasOwn(config, "worker_name") ? { USAGE_WORKER_NAME: config.worker_name } : {}),
+    ...(Object.hasOwn(config, "billing_cycle_day") ? { USAGE_BILLING_CYCLE_DAY: String(config.billing_cycle_day) } : {}),
+    ...(Object.hasOwn(config, "billing_plan") ? { USAGE_BILLING_PLAN: config.billing_plan } : {}),
+    ...(Object.hasOwn(config, "account_totals") ? { USAGE_ACCOUNT_TOTALS_ENABLED: String(config.account_totals) } : {}),
+    ...(Object.hasOwn(config, "warning_percent") ? { USAGE_WARNING_PERCENT: String(config.warning_percent) } : {}),
+    ...(Object.hasOwn(config, "r2_standard_only_scope") ? { USAGE_R2_STANDARD_ONLY_SCOPE: config.r2_standard_only_scope } : {}),
   };
 }
 
@@ -45,7 +82,22 @@ export function existingUsageConfig(bindings, target) {
     if (attachmentBucketName(vars.USAGE_R2_BUCKET_NAME) !== target.bucketName) throw toolError("USAGE_RESOURCE_MISMATCH", "Existing usage bucket must match this deployment");
     config.r2_bucket_name = vars.USAGE_R2_BUCKET_NAME;
   }
-  return config;
+  if (Object.hasOwn(vars, "USAGE_WORKER_NAME")) config.worker_name = vars.USAGE_WORKER_NAME;
+  if (Object.hasOwn(vars, "USAGE_BILLING_CYCLE_DAY")) {
+    if (!/^(?:[1-9]|[12][0-9]|3[01])$/u.test(vars.USAGE_BILLING_CYCLE_DAY)) throw toolError("INVALID_USAGE_CONFIG", "Existing billing cycle day is invalid");
+    config.billing_cycle_day = Number(vars.USAGE_BILLING_CYCLE_DAY);
+  }
+  if (Object.hasOwn(vars, "USAGE_BILLING_PLAN")) config.billing_plan = vars.USAGE_BILLING_PLAN;
+  if (Object.hasOwn(vars, "USAGE_ACCOUNT_TOTALS_ENABLED")) {
+    if (!["true", "false"].includes(vars.USAGE_ACCOUNT_TOTALS_ENABLED)) throw toolError("INVALID_USAGE_CONFIG", "Existing account totals flag is invalid");
+    config.account_totals = vars.USAGE_ACCOUNT_TOTALS_ENABLED === "true";
+  }
+  if (Object.hasOwn(vars, "USAGE_WARNING_PERCENT")) {
+    if (!/^(?:[1-9]|[1-9][0-9]|100)$/u.test(vars.USAGE_WARNING_PERCENT)) throw toolError("INVALID_USAGE_CONFIG", "Existing usage warning percent is invalid");
+    config.warning_percent = Number(vars.USAGE_WARNING_PERCENT);
+  }
+  if (Object.hasOwn(vars, "USAGE_R2_STANDARD_ONLY_SCOPE")) config.r2_standard_only_scope = vars.USAGE_R2_STANDARD_ONLY_SCOPE;
+  return { ...config, ...extraUsageConfig(config, target) };
 }
 
 export function usageBindings(config, secretPresent) {
@@ -57,8 +109,10 @@ export function deploymentCrons(plan) {
 }
 
 export function targetWorkerBindings(plan) {
-  const bindings = plan.resources.worker.current_bindings.filter((item) => item.type !== "r2_bucket" && !USAGE_VARS.has(item.name));
+  const bindings = plan.resources.worker.current_bindings.filter((item) => item.type !== "r2_bucket" && !USAGE_VARS.has(item.name) && !COST_PROTECTION_NAMES.has(item.name) && !PUBLIC_ACCESS_NAMES.has(item.name));
   if (plan.resources.r2) bindings.push({ type: "r2_bucket", name: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name });
   bindings.push(...usageBindings(plan.usage_analytics?.configuration, false));
+  bindings.push(...costProtectionBindings(plan.cost_protection));
+  bindings.push(...publicAccessBindings(plan.public_access));
   return bindings.sort((a, b) => (a.type + ":" + a.name).localeCompare(b.type + ":" + b.name));
 }

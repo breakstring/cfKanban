@@ -56,6 +56,13 @@ cfkanban admin upgrade-notification configure --enabled true --expected-version 
 
 用量区分附件容量和可选 Cloudflare 指标。数据可能延迟；「未知」不代表零，站点用量也不等于整个账户的用量或剩余免费额度。
 
+可选指标分开显示 Workers 请求和 CPU、D1 读取/写入，以及 R2 月周期 Class A/B；明确启用账户统计时单列账户总量。提醒仅比较新鲜且口径明确的数据；实例贡献对应共享账户额度，不代表剩余额度。没有核对账单周期时月指标为未知；未核对 Standard-only 范围时不比较 R2 免费额度。展开「数据详情」查看准确窗口及范围。[配置和账单邮件提醒](../deployment/optional.md)属于 Owner 的部署与 Cloudflare 管理操作。
+
+```sh
+cfkanban admin usage show --json --no-interactive
+cfkanban admin rate-limits show --json --no-interactive
+```
+
 **在网页中：**「管理中心 → 概览 → 用量与限额」→「刷新用量」。更新时间见「数据详情」；短时间内重复刷新可能仍显示同一份数据。
 
 附件容量包括正在上传、已上传及尚未清理的已删除文件。Cloudflare 指标显示「未配置」时，见[可选部署配置](../deployment/optional.md)。

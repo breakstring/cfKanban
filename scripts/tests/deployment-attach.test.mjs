@@ -42,7 +42,7 @@ async function fixture(t, { credential = true, r2 = false, customDomain = false,
     ...[['INSTANCE_LIMIT', '300'], ['INSTANCE_PERIOD_SECONDS', '60'], ['PRINCIPAL_LIMIT', '120'], ['PRINCIPAL_PERIOD_SECONDS', '60'], ['UNAUTHENTICATED_SENSITIVE_LIMIT', '30'], ['UNAUTHENTICATED_SENSITIVE_PERIOD_SECONDS', '60']].map(([name, text]) => ({ type: 'plain_text', name: `RATE_LIMIT_${name}`, text })),
     ...(r2 ? [{ type: 'r2_bucket', name: 'ATTACHMENTS', bucket_name: 'test-attachments' }, { type: 'secret_text', name: 'USAGE_ANALYTICS_TOKEN', text: 'never-export-this' }, { type: 'plain_text', name: 'USAGE_ACCOUNT_ID', text: 'isolated-account' }] : []),
   ];
-  const f = { db, bindings, owner, versionId, deploymentId, network: [], queryResults: [], runnerCalls: [], routes: [], domains: customDomain ? [{ service: 'isolated-worker', environment: 'production', hostname: 'board.invalid' }] : [], domainInfo: null, release: version, ownerValid: true, r2MarkerInstance: instanceId };
+  const f = { db, bindings, owner, versionId, deploymentId, network: [], queryResults: [], runnerCalls: [], routes: [], domains: customDomain ? [{ service: 'isolated-worker', environment: 'production', hostname: 'board.invalid' }] : [], subdomain: { enabled: true }, domainInfo: null, release: version, ownerValid: true, r2MarkerInstance: instanceId };
   const input = { home, stateRoot: path.join(home, '.cfkanban'), persistenceConfirmed: true, instanceId, accountId: 'isolated-account', workerName: 'isolated-worker', d1Name: 'isolated-db', databaseId, apiOrigin: origin, cloudflareProfile: 'isolated', wranglerExecutable: '/mock/wrangler', environment: {}, taskId: 'attach-test', publisher,
     baselineBundle: { bundleRoot, version, sha256: 'b'.repeat(64), publisher, source },
     runner: async (executable, args) => {
@@ -69,7 +69,7 @@ async function fixture(t, { credential = true, r2 = false, customDomain = false,
         }
         assert.equal(options.method, 'GET');
         const values = {
-          '/workers/subdomain': { subdomain: 'isolated' }, '/workers/scripts/isolated-worker/subdomain': { enabled: true },
+          '/workers/subdomain': { subdomain: 'isolated' }, '/workers/scripts/isolated-worker/subdomain': f.subdomain,
           '/workers/domains': f.domains, '/workers/services/isolated-worker/environments/production/routes': f.routes,
           '/workers/scripts/isolated-worker/schedules': { schedules: r2 ? [{ cron: '17 * * * *' }] : [] },
           '/r2/buckets/test-attachments': { name: 'test-attachments', storage_class: 'Standard' },
@@ -198,7 +198,7 @@ test('状态文件权限不安全时不读取凭据也不继续网络请求', as
 function upgradeInput(evidence) {
   return { taskId: 'upgrade-attached', instanceId: evidence.target.instanceId,
     cloudflare: { account_id: evidence.target.accountId, profile: evidence.target.cloudflareProfile, api_origin: evidence.target.apiOrigin },
-    resources: { ...evidence.resources, workers_dev: true, custom_domain: null, routes: [], pages: false }, bindings: evidence.bindings, owner: evidence.owner,
+    resources: { ...evidence.resources, worker: { ...evidence.resources.worker, worker_limits: null }, workers_dev: true, custom_domain: null, routes: [], pages: false }, bindings: evidence.bindings, owner: evidence.owner,
     current: evidence.service_release,
     target: { publisher: evidence.publisher, manifest_version: '1.1.0', manifest_sha256: 'c'.repeat(64), service_bundle_version: '1.1.0', service_bundle_sha256: 'd'.repeat(64), service_bundle_source: `${evidence.publisher}/releases/1.1.0/service.zip`, service_api_version: '0.1.0', schema_version: 1, migration_manifest_sha256: evidence.migrations.manifest_sha256, compatibility: { node: '>=22', wrangler: '>=4', service_api: '>=0.1.0 <0.2.0', schema_version: 1 } },
     restorePoint: { required: false, verified: false, reason: 'No schema change' } };
@@ -239,4 +239,31 @@ test('自定义origin必须有控制面精确映射，分页不完整不能伪�
   await assert.rejects(inspectDeploymentAttachment(f.input), { code: 'DEPLOYMENT_ATTACH_ROUTING_INCOMPLETE' });
   f.domainInfo = null; f.domains[0].service = 'another-worker';
   await assert.rejects(inspectDeploymentAttachment(f.input), { code: 'DEPLOYMENT_ATTACH_ORIGIN_UNPROVEN' });
+});
+
+test('第二台设备接入已关闭workers.dev的托管域名需显式回执并重新核对准确资源，不自动接管', async t => {
+  const f = await fixture(t, { customDomain: true });
+  f.subdomain = { enabled: false, previews_enabled: false };
+  f.domains = [{ id: 'domain-test', zone_id: 'zone-test', service: 'isolated-worker', environment: 'production', hostname: 'board.invalid' }];
+  const receipt = { schema_version: 1, kind: 'cfkanban_public_access_receipt', instance_id: f.input.instanceId, account_id: f.input.accountId, worker_name: f.input.workerName, zone_id: 'zone-test', hostname: 'board.invalid', domain_enabled: true, domain_id: 'domain-test', workers_dev_origin: 'https://isolated-worker.isolated.workers.dev', workers_dev: false, previews_enabled: false, preferred_api_origin: 'https://board.invalid', rule_id: null, ruleset_id: null, rule_ref: `cfkanban_${f.input.instanceId.replaceAll('-', '')}_anonymous_api`, waf_profile: 'disabled', operation_id: randomUUID(), plan_digest: 'a'.repeat(64), verified_at: '2026-10-07T01:00:00.000Z', snapshot_not_realtime: true };
+  const priorFetch = f.input.fetchImpl;
+  f.input.fetchImpl = async (url, options) => {
+    const pathname = new URL(url).pathname;
+    if (pathname === '/client/v4/zones/zone-test') return json({ success: true, result: { id: 'zone-test', name: 'invalid', account: { id: f.input.accountId }, status: 'active' } });
+    if (pathname.endsWith('/scripts/isolated-worker/settings')) return json({ success: true, result: { bindings: f.bindings } });
+    return priorFetch(url, options);
+  };
+  await assert.rejects(inspectDeploymentAttachment(f.input), { code: 'DEPLOYMENT_ATTACH_ORIGIN_UNPROVEN' });
+  f.input.publicAccessReceipt = receipt;
+  await f.prepare();
+  const result = await attachDeployment(f.execution);
+  assert.equal(result.cloudflare.routing.workers_dev, false);
+  assert.deepEqual(result.cloudflare.public_access, receipt);
+  const saved = JSON.parse(await readFile(path.join(getInstancePaths(f.input).receiptsRoot, 'public-access.json'), 'utf8'));
+  assert.deepEqual(saved, receipt);
+  assert.ok(f.network.every(call => call.method === 'GET' || call.url.includes('/d1/database/')));
+  f.input.publicAccessReceipt = { ...receipt, domain_id: 'foreign-domain' };
+  await assert.rejects(inspectDeploymentAttachment(f.input), { code: 'PUBLIC_ACCESS_ROUTING_DRIFT' });
+  f.input.publicAccessReceipt = { ...receipt, token: 'must-not-pass-through' };
+  await assert.rejects(inspectDeploymentAttachment(f.input), { code: 'INVALID_PUBLIC_ACCESS_RECEIPT' });
 });

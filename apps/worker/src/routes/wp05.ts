@@ -4,6 +4,7 @@ import { authenticateRequest } from "../kernel/auth.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
 import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
 import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
+import { withIssueReadProtection } from "../kernel/query-cost-protection.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
 import {
@@ -53,16 +54,17 @@ export function registerWp05Routes(router: Router): Router {
   router
     .get("/api/v1/issues", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await listIssues(env.DB, auth, context.url, context.startedAt), context.requestId);
+      return jsonResponse(await withIssueReadProtection(env, auth, context.url,
+        () => listIssues(env.DB, auth, context.url, context.startedAt)), context.requestId);
     })
     .get("/api/v1/issues/candidates", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await listIssueCandidates(
+      return jsonResponse(await withIssueReadProtection(env, auth, context.url, () => listIssueCandidates(
         env.DB,
         auth,
         context.url,
         context.startedAt,
-      ), context.requestId);
+      )), context.requestId);
     })
     .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/assignees", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
@@ -73,25 +75,25 @@ export function registerWp05Routes(router: Router): Router {
     })
     .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await listProjectIssues(
+      return jsonResponse(await withIssueReadProtection(env, auth, context.url, () => listProjectIssues(
         env.DB,
         auth,
         path(context, "workspace_id"),
         path(context, "project_id"),
         context.url,
         context.startedAt,
-      ), context.requestId);
+      )), context.requestId);
     })
     .get("/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues/counts", async (request, env, context) => {
       const auth = await authenticated(request, env, context);
-      return jsonResponse(await countProjectIssues(
+      return jsonResponse(await withIssueReadProtection(env, auth, context.url, () => countProjectIssues(
         env.DB,
         auth,
         path(context, "workspace_id"),
         path(context, "project_id"),
         context.url,
         context.startedAt,
-      ), context.requestId);
+      )), context.requestId);
     })
     .post("/api/v1/workspaces/{workspace_id}/projects/{project_id}/issues", async (request, env, context) => {
       const auth = await writeAuth(request, env, context);

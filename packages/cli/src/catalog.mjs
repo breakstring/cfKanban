@@ -33,6 +33,9 @@ export const API_COMMANDS = Object.entries(contract.paths).flatMap(([apiPath, me
 }));
 
 const helpers = [
+  ['deploy worker cost-settings', 'runtime worker-cost-settings', ['accountId','workerName','wranglerExecutable','cloudflareProfile','contextDirectory']],
+  ['deploy public-access inspect', 'public-access inspect', ['instanceId','receiptPath','zoneId','hostname','wranglerExecutable','cloudflareProfile','contextDirectory','includeWaf']],
+  ['deploy public-access plan', 'plan public-access', ['instanceId','taskId','operationId','receiptPath','zoneId','hostname','wranglerExecutable','cloudflareProfile','contextDirectory','mode','passkeyRecoveryReady']],
   ['connection list', 'state inspect', []], ['connection add', 'state put-instance', ['instanceId','trustedApiOrigin','originVersion','persistenceConfirmed']],
   ['connection resolve','web resolve',['instanceId','origin','repoRoot']],
   ['scope inspect', 'scope inspect-directory', ['directory']], ['scope show', 'scope read', ['repoRoot']], ['scope associate', 'scope merge', ['repoRoot','targets']], ['scope resolve', 'scope resolve', ['explicitTargets','repoTargets','validTargets','allowUnfiltered']],
@@ -50,13 +53,14 @@ const helpers = [
   ['deploy worker version','runtime worker-version-readback',['wranglerExecutable','accountId','cloudflareProfile','contextDirectory','workerName','versionId']],
   ['deploy storage inspect','runtime r2-storage-readback',['wranglerExecutable','accountId','cloudflareProfile','contextDirectory','bucketName','instanceId']],
   ['deploy skill plan', 'plan skill-update', ['taskId','current','target','installRoot']], ['deploy skill install', 'release install-skill-bundle', ['bundlePath','version','expectedSha256','publisher','source']], ['deploy service cache', 'release install-service-bundle', ['bundlePath','version','expectedSha256','publisher','source']],
-  ['deploy plan', 'plan strict-zero', ['taskId','accountId','accountLabel','cloudflareProfile','cloudflareAuthContextDirectory','ownerDisplayName','release','resourcePrefix','workerName','d1Name','instanceId','ownerPrincipalId','ownerCredentialId','operationId','preferredApiOrigin']], ['deploy upgrade plan', 'plan instance-upgrade', ['taskId','instanceId','operationId','cloudflare','resources','bindings','owner','current','target','migrations','restorePoint','allow_breaking_change','allow_unverified_current_source','attachments','usageAnalytics']],
+  ['deploy plan', 'plan strict-zero', ['taskId','accountId','accountLabel','cloudflareProfile','cloudflareAuthContextDirectory','ownerDisplayName','release','resourcePrefix','workerName','d1Name','instanceId','ownerPrincipalId','ownerCredentialId','operationId','preferredApiOrigin']], ['deploy upgrade plan', 'plan instance-upgrade', ['taskId','instanceId','operationId','cloudflare','resources','bindings','owner','current','target','migrations','restorePoint','allow_breaking_change','allow_unverified_current_source','attachments','usageAnalytics','workerLimits']],
   ['deploy plan compare','plan compare',['before','after']],
-  ['deploy attach inspect', 'deployment inspect-existing', ['instanceId','accountId','workerName','d1Name','databaseId','apiOrigin','wranglerExecutable','cloudflareProfile','contextDirectory','baselineBundle','publisher']], ['deploy attach plan', 'plan deployment-attachment', ['taskId','instanceId','accountId','workerName','d1Name','databaseId','apiOrigin','wranglerExecutable','cloudflareProfile','contextDirectory','baselineBundle','publisher']],
+  ['deploy attach inspect', 'deployment inspect-existing', ['instanceId','accountId','workerName','d1Name','databaseId','apiOrigin','wranglerExecutable','cloudflareProfile','contextDirectory','baselineBundle','publisher','publicAccessReceipt']], ['deploy attach plan', 'plan deployment-attachment', ['taskId','instanceId','accountId','workerName','d1Name','databaseId','apiOrigin','wranglerExecutable','cloudflareProfile','contextDirectory','baselineBundle','publisher','publicAccessReceipt']],
   ['deploy recovery discover', 'owner-recovery discover', ['accountId','wranglerExecutable','cloudflareProfile','contextDirectory','workerNames']], ['deploy recovery inspect', 'owner-recovery inspect', ['instanceId','accountId','workerName','d1Name','databaseId','apiOrigin','wranglerExecutable','cloudflareProfile','contextDirectory']], ['deploy recovery plan', 'plan owner-recovery', ['taskId','instanceId','accountId','workerName','d1Name','databaseId','apiOrigin','wranglerExecutable','cloudflareProfile','contextDirectory']],
 ];
 export const HELPER_COMMANDS = helpers.map(([name, helper, fields]) => ({ name, helper, fields, effect: /(?:show|list|inspect|resolve|discover|verify|continuity|snapshot|capabilities)$/.test(name) ? 'read' : /plan$/.test(name) ? 'plan' : 'write', description: name }));
 export const WORKFLOW_COMMANDS = [
+  ...['apply','resume'].map(action=>({name:`deploy public-access ${action}`,workflow:'public-access-apply',fields:['instanceId','operationId','taskId','plan','authorization'],required:['instanceId','operationId','taskId','plan','authorization'],effect:'write'})),
   ...['show','use','clear'].map(action=>({name:`context ${action}`,workflow:`context-${action}`,fields:['instanceId','workspace_id','project_id','directory','global'],required:[],effect:action==='show'?'read':'write'})),
   {name:'connection discover',workflow:'connection-discover',fields:['origin'],required:['origin'],effect:'read'},
   {name:'connection origin-check',helper:'origin rebind-check',fields:['instanceId'],effect:'read'},
@@ -77,6 +81,9 @@ export const WORKFLOW_COMMANDS = [
   { name: 'operation recover', workflow: 'operation-recover', fields: ['instanceId','operationId'], effect: 'write' },
 ];
 const required = {
+ 'deploy worker cost-settings':['accountId','workerName','wranglerExecutable'],
+ 'deploy public-access inspect':['instanceId','receiptPath','zoneId','hostname','wranglerExecutable'],
+ 'deploy public-access plan':['instanceId','taskId','receiptPath','zoneId','hostname','wranglerExecutable','mode'],
  'connection resolve':[], 'deploy plan compare':['before','after'],
  'connection add':['instanceId','trustedApiOrigin'], 'scope inspect':[], 'scope show':[], 'scope associate':['repoRoot','targets'], 'scope resolve':['validTargets'],
  'attachment upload':['instanceId','identifier','filePath'], 'attachment download':['instanceId','attachmentId','outputPath'], 'invite create':['instanceId','body'],
@@ -87,4 +94,4 @@ const required = {
  'deploy skill plan':['taskId','current','target','installRoot'], 'deploy skill install':['bundlePath','version','expectedSha256','publisher','source'], 'deploy service cache':['bundlePath','version','expectedSha256','publisher','source'], 'deploy plan':['taskId','accountId','ownerDisplayName','release'], 'deploy upgrade plan':['taskId','instanceId','cloudflare','resources','bindings','owner','current','target','migrations','restorePoint'],
  'join invite':['instanceId','redeemAs'], 'join public':['instanceId','publicId','role','redeemAs'], 'identity discard-pending':['instanceId','committedStateKnownFalse'], 'board create':['instanceId','workspaceName','projectName'], 'issue reopen':['instanceId','identifier'], 'operation show':['instanceId','operationId'], 'operation recover':['instanceId','operationId'],
 };
-export const COMMANDS = Object.freeze([...API_COMMANDS, ...HELPER_COMMANDS, ...WORKFLOW_COMMANDS].map(command => Object.freeze({...command,effect:['owner device verify','connection origin-check'].includes(command.name)?'write':['owner device request','deploy database restore-point','deploy worker version'].includes(command.name)?'read':command.effect,required:command.required??required[command.name]??(command.workflow==='deploy-apply'?['plan','authorization']:command.fields?.includes('instanceId')?['instanceId']:[])})));
+export const COMMANDS = Object.freeze([...API_COMMANDS, ...HELPER_COMMANDS, ...WORKFLOW_COMMANDS].map(command => Object.freeze({...command,effect:['owner device verify','connection origin-check'].includes(command.name)?'write':['owner device request','deploy database restore-point','deploy worker version','deploy worker cost-settings'].includes(command.name)?'read':command.effect,required:command.required??required[command.name]??(command.workflow==='deploy-apply'?['plan','authorization']:command.fields?.includes('instanceId')?['instanceId']:[])})));

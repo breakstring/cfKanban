@@ -1,23 +1,30 @@
 import { apiRequest } from "./transport.mjs";
+import { claimNotificationAttention } from "./notification-cooldown.mjs";
 
 const MAX_ITEMS = 3;
 const MAX_BODY_CHARACTERS = 12_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
-export async function withNotificationAttention(input, result, { request = apiRequest, timeoutMs = 2_000 } = {}) {
+export async function withNotificationAttention(input, result, { request = apiRequest, timeoutMs = 2_000, claim = claimNotificationAttention } = {}) {
+  if (!result.ok) return result;
   const pathname = new URL(input.apiPath, "https://cfkanban.invalid").pathname;
   if (/\/notifications(?:\/|$)|\/notification-preferences$/u.test(pathname)) return result;
   const controller = new AbortController();
   let timer;
   try {
     const response = await Promise.race([
-      request({
-        stateRoot: input.stateRoot,
-        instanceId: input.instanceId,
-        method: "GET",
-        apiPath: `/api/v1/me/notifications?pending=true&limit=${MAX_ITEMS}`,
-        fetchImpl: (url, options) => (input.fetchImpl ?? globalThis.fetch)(url, { ...options, signal: controller.signal }),
-      }),
+      (async () => {
+        const identity = await claim(input, { signal: controller.signal });
+        if (identity === null || controller.signal.aborted) return null;
+        return request({
+          stateRoot: input.stateRoot,
+          instanceId: input.instanceId,
+          ...identity,
+          method: "GET",
+          apiPath: `/api/v1/me/notifications?pending=true&limit=${MAX_ITEMS}`,
+          fetchImpl: (url, options) => (input.fetchImpl ?? globalThis.fetch)(url, { ...options, signal: controller.signal }),
+        });
+      })(),
       new Promise(resolve => {
         timer = setTimeout(() => { controller.abort(); resolve(null); }, timeoutMs);
       }),

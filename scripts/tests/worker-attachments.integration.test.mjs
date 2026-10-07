@@ -6,7 +6,7 @@ import { createTestHarness } from "wrangler";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { fetchWorker } from "../../apps/worker/src/index.ts";
-import { collectAttachmentGarbage, uploadAttachment, readAttachmentBytes } from "../../apps/worker/src/services/attachments.ts";
+import { ATTACHMENT_CLEANUP_BATCH, collectAttachmentGarbage, uploadAttachment, readAttachmentBytes } from "../../apps/worker/src/services/attachments.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const server = createTestHarness({ root, workers: [{ configPath: "wrangler.attachments-test.jsonc" }] });
@@ -250,11 +250,11 @@ test("garbage cleanup revisits late PUT tombstones despite a full batch of new g
   for (let round = 1; round <= 3; round += 1) {
     const scheduledAt = now + round * 3600000;
     await db.batch([
-      ...Array.from({ length: 64 }, () => insertGarbage(randomUUID(), scheduledAt - 1, null, null, 1)),
-      db.prepare("UPDATE attachment_storage SET reserved_bytes=reserved_bytes+64 WHERE singleton=1"),
+      ...Array.from({ length: ATTACHMENT_CLEANUP_BATCH }, () => insertGarbage(randomUUID(), scheduledAt - 1, null, null, 1)),
+      db.prepare("UPDATE attachment_storage SET reserved_bytes=reserved_bytes+?1 WHERE singleton=1").bind(ATTACHMENT_CLEANUP_BATCH),
     ]);
     const result = await collectAttachmentGarbage(env, scheduledAt);
-    assert.equal(result.checked, 64);
+    assert.equal(result.checked, ATTACHMENT_CLEANUP_BATCH);
     assert.equal(await env.ATTACHMENTS.head(objectKey), null, `round ${round}: new garbage must not starve tombstone rechecks`);
     const tombstone = await db.prepare("SELECT last_checked_at,budget_released_at FROM attachment_objects WHERE id=?1").bind(lateId).first();
     assert.ok(tombstone.last_checked_at >= now + 3600000);

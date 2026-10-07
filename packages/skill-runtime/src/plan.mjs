@@ -1,4 +1,5 @@
 import { normalizePrincipalDisplayName } from "./principal-name.mjs";
+import { ANONYMOUS_LOGIN_POLICY, EXPENSIVE_READ_POLICY } from "./cost-protection-config.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
@@ -64,6 +65,7 @@ export function createStrictZeroPlan({
   const plan = {
     schema_version: 1,
     kind: "strict_zero_deploy",
+    cost_protection: { anonymous_login: ANONYMOUS_LOGIN_POLICY, expensive_reads: EXPENSIVE_READ_POLICY, worker_limits: null },
     task_id: requireString(taskId, "task_id", { max: 256 }),
     operation_id: requireUuid(operationId, "operation_id"),
     target: {

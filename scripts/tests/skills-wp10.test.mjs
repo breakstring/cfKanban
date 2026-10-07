@@ -242,6 +242,7 @@ function upgradePlanInput(overrides = {}) {
         deployment_id: "66666666-6666-4666-8666-666666666666",
         version_id: "77777777-7777-4777-8777-777777777777",
         bindings: upgradeBindingReadback(),
+        worker_limits: null,
       },
       d1: {
         name: "cfkanban-d1",
@@ -2177,6 +2178,9 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
   const originVersion = deploymentOutcome === "success" ? 2 : 1;
   const observedCurrent = deploymentOutcome !== "success";
   const recoverDeployment = ["response_lost", "error_after_deploy"].includes(deploymentOutcome);
+  const previousLimits = deploymentOutcome === "success" ? { cpu_ms: 10, subrequests: 50 } : { cpu_ms: 200, subrequests: 1000 };
+  const requestedCpu = recoverDeployment ? { workers_plan: "paid", cpu_ms: 100 } : undefined;
+  const targetLimits = requestedCpu ? { ...previousLimits, cpu_ms: requestedCpu.cpu_ms } : previousLimits;
   const { home, stateRoot } = await fixtureState();
   t.after(() => rm(home, { recursive: true, force: true }));
   const serviceRoot = path.join(home, "upgrade-service");
@@ -2332,6 +2336,8 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
   };
   const plan = createInstanceUpgradePlan({
     ...base,
+    resources: { ...base.resources, worker: { ...base.resources.worker, worker_limits: previousLimits } },
+    workerLimits: requestedCpu,
     current,
     target,
     ...(observedCurrent ? { allow_unverified_current_source: true } : {}),
@@ -2397,6 +2403,8 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
     serviceBundleRoot: installedService.path,
     d1DatabaseId: base.resources.d1.database_id,
   });
+  assert.deepEqual(JSON.parse(await readFile(config.wrangler_config_path, "utf8")).limits, targetLimits);
+  assert.deepEqual(plan.cost_protection.cpu_limit_request, requestedCpu ?? null);
   const readbackOutput = JSON.stringify([
     {
       success: true,
@@ -2547,6 +2555,7 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
   let marker = null;
   let readbackMode = "valid";
   let statusReads = 0;
+  let limitsOverride;
   const runner = async (_executable, args) => {
     if (args[0] === "deploy") {
       assert.equal(args.includes("--dry-run"), false);
@@ -2584,6 +2593,12 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
     stateRoot, instanceId: INSTANCE_ID, operationId: OPERATION_ID, taskId: plan.task_id, plan,
     wranglerExecutable: "/opt/cfkanban/wrangler", configPath: config.wrangler_config_path,
     environment: {}, runner,
+    tokenRunner: async () => ({ stdout: JSON.stringify({ type: "oauth", token: "fixture-control-secret" }) }),
+    fetchImpl: async (url, options) => {
+      assert.equal(new URL(url).pathname, "/client/v4/accounts/account-one/workers/services/cfkanban-worker/environments/production");
+      assert.equal(options.method, "GET");
+      return Response.json({ success: true, result: { script: { limits: limitsOverride ?? (deployed ? targetLimits : previousLimits) } } });
+    },
   };
   const readback = () => executeWranglerAction({ ...actionInput, action: "worker_deployment_readback" });
   if (recoverDeployment) {
@@ -2591,6 +2606,10 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
     assert.equal(statusReads, 0);
   }
   const deploy = () => executeWranglerAction({ ...actionInput, action: "deploy_worker_and_static_assets" });
+  limitsOverride = { ...previousLimits, subrequests: previousLimits.subrequests - 1 };
+  await assert.rejects(deploy(), { code: "WORKER_CPU_LIMIT_DRIFT" });
+  assert.equal(deployCalls, 0);
+  limitsOverride = undefined;
   if (deploymentOutcome === "response_lost") {
     const entryPath = path.join(installedService.path, "dist", "index.js");
     const entryBytes = await readFile(entryPath);
@@ -2636,6 +2655,10 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
     }
   }
   statusReads = 0;
+  limitsOverride = { ...targetLimits, subrequests: targetLimits.subrequests - 1 };
+  await assert.rejects(readback(), { code: "WORKER_CPU_LIMIT_DRIFT" });
+  assert.equal((await readJson(journalPath)).events.some(event => event.type === "command_finished" && event.action === "worker_deployment_readback" && event.worker_deployment_readback), false);
+  limitsOverride = undefined;
   await readback();
   assert.equal(deployCalls, 1);
   if (recoverDeployment) {
@@ -2694,6 +2717,15 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
       assert.deepEqual(requests.slice(offset), []);
       assert.equal(await readJson(receiptPath, { allowMissing: true }), null);
     }
+    await t.test("finalization rejects a missing preserved subrequest limit", async () => {
+      const original = await readFile(journalPath, "utf8");
+      const changed = JSON.parse(original);
+      const finished = changed.events.findLast(event => event.type === "command_finished" && event.action === "worker_deployment_readback");
+      delete finished.worker_deployment_readback.cost_configuration.worker_limits.subrequests;
+      await writeFile(journalPath, JSON.stringify(changed));
+      try { await assertBlockedBeforeNetwork("WORKER_COST_READBACK_REQUIRED"); }
+      finally { await writeFile(journalPath, original); }
+    });
     for (const [name, change, code] of [
       ["frozen origin is not the current trusted origin", { trusted_api_origin: "https://example.workers.dev" }, "TRUSTED_ORIGIN_BINDING_MISMATCH"],
       ["private Instance ID drift", { instance_id: OTHER_PRINCIPAL_ID }, "STATE_INSTANCE_CONFLICT"],
@@ -2763,6 +2795,7 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
   assert.equal(receipt.service_release.before.service_bundle_version, "0.1.0-alpha.8");
   assert.equal(receipt.service_release.after.service_bundle_version, productVersion ?? "0.1.0-alpha.19");
   assert.equal(receipt.cloudflare.worker.after_version_id, afterVersionId);
+  assert.deepEqual(receipt.cloudflare.worker.worker_limits, targetLimits);
   assert.equal(receipt.owner.credential_id, CREDENTIAL_ID);
   if (recoverDeployment) assert.equal(receipt.verification.worker_deployment_recovered, true);
   assert.equal(JSON.stringify(receipt).includes(secret.token), false);
@@ -3190,6 +3223,15 @@ test("strict-zero plan freezes defaults; any delta requires new authorization", 
   assert.equal(firstSkillInstall.cloudflare_writes, false);
   assert.equal(firstSkillInstall.d1_migrations, false);
   const upgrade = createInstanceUpgradePlan(upgradePlanInput());
+  const missingLimits = upgradePlanInput();
+  delete missingLimits.resources.worker.worker_limits;
+  assert.throws(() => createInstanceUpgradePlan(missingLimits), error => error.code === "WORKER_COST_READBACK_REQUIRED" && error.message.includes("cfkanban deploy worker cost-settings"));
+  const freeLimits = upgradePlanInput();
+  freeLimits.resources.worker.worker_limits = { cpu_ms: 10, subrequests: 50 };
+  assert.deepEqual(createInstanceUpgradePlan(freeLimits).cost_protection.worker_limits, { cpu_ms: 10, subrequests: 50 });
+  assert.equal(createInstanceUpgradePlan(freeLimits).cost_protection.cpu_limit_request, null);
+  assert.throws(() => createInstanceUpgradePlan({ ...freeLimits, workerLimits: { workers_plan: "free", cpu_ms: 100 } }), { code: "INVALID_WORKER_CPU_LIMIT" });
+  assert.throws(() => createInstanceUpgradePlan({ ...freeLimits, workerLimits: null }), { code: "WORKER_CPU_LIMIT_REMOVAL_REJECTED" });
   assert.equal(upgrade.kind, "deployed_instance_upgrade");
   assert.equal(upgrade.operation_id, OPERATION_ID);
   assert.equal(upgrade.target.instance_id, INSTANCE_ID);

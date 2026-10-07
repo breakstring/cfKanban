@@ -73,6 +73,9 @@ test("WP-08 non-default native bindings expose and enforce every scope", async (
     principal: { limit: 4, period_seconds: 60 },
     unauthenticated_sensitive: { limit: 3, period_seconds: 60 },
   });
+  assert.deepEqual(settingsBody.cost_protection.expensive_reads, { enabled: false, policy: null });
+  assert.equal(settingsBody.cost_protection.concurrency.enabled, false);
+  assert.equal(settingsBody.cost_protection.billing_cap, false);
 
   for (let index = 0; index < 3; index += 1) {
     const malformedRotation = await worker.fetch(

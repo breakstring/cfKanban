@@ -333,7 +333,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
   };
   const contextResolver=createContextResolver({home,stateRoot,directory,scopeInspector,read:async(instanceId,apiPath)=>request(await connection(instanceId),{method:'GET',apiPath})});
   const executeResolved=async(command,input)=> {
-    if(command.apiPath||command.workflow==='issue-reopen'||command.workflow==='operation-recover'||command.workflow==='operation-show'||command.effect==='read'||command.effect==='plan'||!input.instanceId||command.workflow==='deploy-apply')return executeBare(command,input);
+    if(command.apiPath||command.workflow==='issue-reopen'||command.workflow==='operation-recover'||command.workflow==='operation-show'||command.effect==='read'||command.effect==='plan'||!input.instanceId||command.workflow==='deploy-apply'||command.workflow==='public-access-apply')return executeBare(command,input);
     const operationId=input.operationId??randomUUID();input={...input,operationId,idempotencyKey:input.idempotencyKey??`cli-${operationId}`};
     if(['connection add','owner device prepare'].includes(command.name)&&await pathType(getInstancePaths({stateRoot,instanceId:input.instanceId}).instanceRoot)==='missing') {await initializeStateRoot({home,stateRoot,persistenceConfirmed:input.persistenceConfirmed});await ensurePrivateDirectory(getInstancePaths({stateRoot,instanceId:input.instanceId}).instanceRoot);}
     return gate(input.instanceId,operationId,()=>withRecord(input.instanceId,operationId,async(file,existing)=> {

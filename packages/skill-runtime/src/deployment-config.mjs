@@ -1,4 +1,6 @@
 import { deploymentCrons, usageVars } from "./usage-config.mjs";
+import { costProtectionBindings, plannedWorkerLimits } from "./cost-protection-config.mjs";
+import { publicAccessVars, normalizePublicAccess } from "./public-access-config.mjs";
 import path from "node:path";
 import { resolveStateRoot } from "./paths.mjs";
 import { getInstancePaths } from "./state.mjs";
@@ -124,6 +126,7 @@ export async function writeFrozenWranglerConfig({
   const d1Name = requireString(plan.resources?.d1?.name, "d1_name", { max: 63 });
   const accountId = requireString(plan.target?.cloudflare_account_id, "cloudflare_account_id", { max: 128 });
   const databaseId = requireUuid(d1DatabaseId, "d1_database_id");
+  const publicAccess = normalizePublicAccess(plan.public_access, { instanceId: instance, accountId, workerName });
   if (plan.bindings?.d1 !== "DB" || plan.bindings?.assets !== "ASSETS") {
     throw toolError("INVALID_DEPLOYMENT_PLAN", "Deployment plan must freeze the DB and ASSETS binding names");
   }
@@ -134,6 +137,7 @@ export async function writeFrozenWranglerConfig({
     main: mainPath,
     compatibility_date: template.compatibility_date,
     workers_dev: plan.resources?.workers_dev === true,
+    ...(publicAccess ? { preview_urls: false, ...(publicAccess.domain_enabled ? { routes: [{ pattern: publicAccess.hostname, custom_domain: true, zone_id: publicAccess.zone_id }] } : {}) } : {}),
     assets: {
       directory: assetsPath,
       binding: "ASSETS",
@@ -150,11 +154,12 @@ export async function writeFrozenWranglerConfig({
       r2_buckets: [{ binding: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }],
     } : {}),
     ...(deploymentCrons(plan).length ? { triggers: { crons: deploymentCrons(plan) } } : {}),
-    vars: { ...buildRateLimitVars(plan), ...usageVars(plan.usage_analytics?.configuration) },
-    ratelimits: buildRateLimitConfig(plan),
+    vars: { ...buildRateLimitVars(plan), ...usageVars(plan.usage_analytics?.configuration), ...publicAccessVars(publicAccess), ...Object.fromEntries(costProtectionBindings(plan.cost_protection).filter(item => item.type === "plain_text").map(item => [item.name, item.text])) },
+    ratelimits: [...buildRateLimitConfig(plan), ...[["anonymous_login", "ANONYMOUS_LOGIN_RATE_LIMITER", "1004"], ["expensive_reads", "EXPENSIVE_READ_RATE_LIMITER", "1005"]].filter(([key]) => plan.cost_protection?.[key]).map(([key, name, namespace_id]) => ({ name, namespace_id, simple: { limit: plan.cost_protection[key].limit, period: plan.cost_protection[key].period_seconds } }))],
+    ...(plannedWorkerLimits(plan) ? { limits: plannedWorkerLimits(plan) } : {}),
   };
-  if (config.workers_dev !== true || plan.resources?.custom_domain !== null || plan.resources?.pages !== false) {
-    throw toolError("STRICT_ZERO_PLAN_REQUIRED", "Frozen Wrangler config generation accepts only workers.dev without Pages or custom domains");
+  if (plan.resources?.pages !== false || (publicAccess?.domain_enabled ? plan.kind !== "deployed_instance_upgrade" || config.workers_dev !== false || plan.resources?.custom_domain !== publicAccess.hostname : config.workers_dev !== true || plan.resources?.custom_domain !== null)) {
+    throw toolError("STRICT_ZERO_PLAN_REQUIRED", "Frozen config permits the original workers.dev deployment or an unchanged receipt-bound managed domain");
   }
   if (plan.kind === "deployed_instance_upgrade"
     && (plan.resources?.worker?.create !== false

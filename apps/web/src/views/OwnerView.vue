@@ -1845,6 +1845,12 @@ onUnmounted(() => {
       <section class="owner-section">
         <div class="section-heading-row"><div><h2>{{ ui("Request limits", "访问频率限制") }}</h2><p>{{ locale === "zh-CN" ? "由部署配置发布；此处只读。" : "Published through Worker configuration; read-only here." }}</p></div><span class="role-badge">{{ rateSettings?.configuration_source }}</span></div>
         <div class="rate-grid"><article v-for="(value, key) in rateSettings?.policies" :key="key"><span>{{ rateScopeLabel(key) }}</span><strong>{{ value.limit }} / {{ value.period_seconds }}{{ ui("s", "秒") }}</strong><small>{{ rateSettings?.recent_429_summary.by_scope[key] ?? 0 }} {{ ui("recent", "次近期记录") }}</small></article></div>
+        <template v-if="rateSettings?.cost_protection">
+          <div class="rate-grid">
+            <article v-for="key in (['anonymous_login', 'expensive_reads'] as const)" :key="key"><span>{{ key === 'anonymous_login' ? ui('Anonymous login', '匿名登录') : ui('Counts & title search', '计数与标题搜索') }}</span><strong>{{ !rateSettings.cost_protection[key].enabled ? ui('Not configured', '未配置') : rateSettings.cost_protection[key].policy ? `${rateSettings.cost_protection[key].policy!.limit} / ${rateSettings.cost_protection[key].policy!.period_seconds}${ui('s', '秒')}` : ui('Configuration unavailable', '配置不可用') }}</strong></article>
+          </div>
+          <p v-if="rateSettings.cost_protection.concurrency.enabled" class="muted-copy">{{ ui('Expensive query concurrency per isolate', '每个 Worker isolate 的昂贵查询并发上限') }}: {{ rateSettings.cost_protection.concurrency.per_principal }} {{ ui('per identity', '每身份') }} / {{ rateSettings.cost_protection.concurrency.per_isolate }} {{ ui('total', '总计') }}. {{ ui('Best-effort platform limits; these do not cap the bill.', '平台限制为最佳努力执行，不是账单上限。') }}</p>
+        </template>
       </section>
       </details>
     </template>

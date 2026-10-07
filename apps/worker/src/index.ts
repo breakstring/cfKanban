@@ -105,7 +105,14 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
       throw notFound();
     }
 
-    const assetResponse = await env.ASSETS.fetch(request);
+    let assetResponse = await env.ASSETS.fetch(request);
+    if (assetResponse.status === 404 && (request.method === "GET" || request.method === "HEAD")) {
+      // Static Assets 对被排除的文档资源直接返回真实 404；应用导航在 Worker 内回退。
+      const shellUrl = new URL(request.url);
+      shellUrl.pathname = "/index.html";
+      shellUrl.search = "";
+      assetResponse = await env.ASSETS.fetch(new Request(shellUrl, { method: request.method }));
+    }
     if (context.url.pathname === "/" || context.url.pathname === "/app" || context.url.pathname.startsWith("/app/")) {
       return withSpaDocumentHeaders(assetResponse, context.requestId);
     }
@@ -127,7 +134,14 @@ export async function fetchWorker(request: Request, env: WorkerEnv): Promise<Res
 
 export default {
   async scheduled(_controller, env): Promise<void> {
-    await collectAttachmentGarbage(env);
+    try {
+      const summary = await collectAttachmentGarbage(env);
+      if (summary.failures.delete || summary.failures.verify || summary.failures.release || summary.backlog.garbage || summary.backlog.expired_pending_may_remain) {
+        console.warn({ operation: "attachment_garbage_collection", ...summary });
+      }
+    } catch {
+      console.warn({ operation: "attachment_garbage_collection", error: "collection_failed" });
+    }
   },
   fetch(request, env): Promise<Response> {
     return fetchWorker(request, env);

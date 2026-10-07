@@ -57,6 +57,13 @@ Use $cfkanban-admin to show this instance's usage and remaining attachment capac
 
 Usage separates attachment capacity from optional Cloudflare metrics. Data may be delayed; unknown does not mean zero, and site usage is not account-wide usage or remaining free allowance.
 
+Optional metrics separate Workers requests/CPU, D1 read/write rows, and billing-cycle R2 Class A/B. Explicitly enabled account totals appear separately. Warnings compare only fresh values with a known basis; instance contributions use shared account allowances, not a remaining balance. Monthly metrics stay unknown without a verified cycle; R2 free comparisons require a verified Standard-only scope. **Data details** shows exact windows and scopes. [Configuration and billing email alerts](../deployment/optional.md) belong to Owner deployment and Cloudflare administration.
+
+```sh
+cfkanban admin usage show --json --no-interactive
+cfkanban admin rate-limits show --json --no-interactive
+```
+
 **In the Web UI:** **Administration → Overview → Usage & limits** → **Refresh usage**. Check **Data details** for collection times. Repeated refreshes within a short period may show the same data.
 
 Attachment capacity includes uploading, uploaded, and deleted files awaiting cleanup. If Cloudflare metrics show **Not configured**, see [Optional deployment configuration](../deployment/optional.md).

@@ -96,7 +96,7 @@ class IndexWorker {
 export class PersistentSearchIndex {
   constructor({ facade, stateRoot, homeDirectory = os.homedir(), syncIntervalMs = 30_000,
     idleTimeoutMs = 300_000, hintDelayMs = 250, requestTimeoutMs = 15_000, leaseDurationMs = 30_000,
-    maxDocuments = 200_000, maxIndexBytes = 100 * 1024 * 1024, syncBudgetMs = 60_000, maxPagesPerCycle = 100, now = Date.now } = {}) {
+    maxDocuments = 200_000, maxIndexBytes = 100 * 1024 * 1024, syncBudgetMs = 60_000, maxPagesPerCycle = 100, now = Date.now, random = Math.random } = {}) {
     if (!facade) throw new Error('Search index requires the safe MCP facade');
     this.facade = facade;
     this.homeDirectory = homeDirectory;
@@ -107,6 +107,7 @@ export class PersistentSearchIndex {
     this.requestTimeoutMs = requestTimeoutMs;
     this.leaseDurationMs = leaseDurationMs;
     this.now = now;
+    this.random = random;
     this.maxDocuments = maxDocuments;
     this.maxIndexBytes = maxIndexBytes;
     this.syncBudgetMs = syncBudgetMs;
@@ -145,12 +146,17 @@ export class PersistentSearchIndex {
     return worker;
   }
 
-  touch(instanceId) {
+  activityFor(instanceId) {
     let activity = this.activity.get(instanceId);
     if (!activity) {
-      activity = { lastActive: this.now(), lastSync: -Infinity, timer: null, failures: 0, hintPending: false };
+      activity = { lastActive: this.now(), lastSync: -Infinity, timer: null, failures: 0, hintPending: false, retryAt: 0 };
       this.activity.set(instanceId, activity);
     }
+    return activity;
+  }
+
+  touch(instanceId) {
+    const activity = this.activityFor(instanceId);
     const resumed = this.now() - activity.lastActive >= this.idleTimeoutMs;
     activity.lastActive = this.now();
     if (resumed || activity.lastSync + this.syncIntervalMs <= this.now()) this.schedule(instanceId, 0);
@@ -161,15 +167,15 @@ export class PersistentSearchIndex {
     if (this.disposed) return;
     const activity = this.activity.get(instanceId);
     if (!activity) return;
-    const due = this.now() + delay;
-    if (activity.timer && activity.due <= due) return;
+    const due = Math.max(this.now() + delay, activity.retryAt);
+    if (activity.timer && activity.due <= due && activity.due >= activity.retryAt) return;
     clearTimeout(activity.timer);
     activity.due = due;
     activity.timer = setTimeout(() => {
       activity.timer = null;
       if (this.now() - activity.lastActive >= this.idleTimeoutMs) return;
       void this.synchronize({ instance_id: instanceId }).catch(() => undefined);
-    }, delay);
+    }, Math.min(2_147_483_647, Math.max(0, due - this.now())));
     activity.timer.unref();
   }
 
@@ -212,8 +218,14 @@ export class PersistentSearchIndex {
     if (this.disposed) return Promise.resolve(false);
     const existing = this.syncs.get(instance_id);
     if (existing) return existing;
-    const activity = this.activity.get(instance_id);
-    if (activity) activity.hintPending = false;
+    const activity = this.activityFor(instance_id);
+    if (this.now() < activity.retryAt) {
+      this.schedule(instance_id, 0);
+      return Promise.resolve(false);
+    }
+    clearTimeout(activity.timer);
+    activity.timer = null;
+    activity.hintPending = false;
     const operation = this.synchronizeInstance(instance_id).finally(() => this.syncs.delete(instance_id));
     this.syncs.set(instance_id, operation);
     return operation;
@@ -225,13 +237,16 @@ export class PersistentSearchIndex {
     const cycleStarted = this.now();
     let pages = 0;
     let paused = false;
+    let retryAfterAt = 0;
     const remember = result => {
       const code = /^[A-Z][A-Z0-9_]{0,63}$/.test(result?.error?.code ?? '') ? result.error.code : 'MCP_SEARCH_INDEX_UNAVAILABLE';
-      this.indexErrors.set(JSON.stringify(identity), { code, blockAll: code === 'MCP_SEARCH_INDEX_CAPACITY_EXCEEDED' });
+      if (identity) this.indexErrors.set(JSON.stringify(identity), { code, blockAll: code === 'MCP_SEARCH_INDEX_CAPACITY_EXCEEDED' });
+      const seconds = result?.error?.retry_after_seconds;
+      if (Number.isSafeInteger(seconds) && seconds >= 0) retryAfterAt = Math.max(retryAfterAt, this.now() + Math.min(seconds, Number.MAX_SAFE_INTEGER / 1000) * 1000);
     };
     try {
       const current = await this.identity(instanceId, this.controller.signal);
-      if (!current.ok) return false;
+      if (!current.ok) { remember(current); return false; }
       identity = current.identity;
       worker = this.worker(identity);
       token = await worker.call('acquire', { owner: randomUUID(), now: this.now(), duration: this.leaseDurationMs });
@@ -295,7 +310,9 @@ export class PersistentSearchIndex {
       if (activity) {
         activity.lastSync = this.now();
         activity.failures = success ? 0 : Math.min(activity.failures + 1, 4);
-        this.schedule(instanceId, activity.hintPending ? this.hintDelayMs : paused ? Math.min(1000, this.syncIntervalMs) : this.syncIntervalMs * (2 ** activity.failures));
+        const backoff = this.syncIntervalMs * (2 ** activity.failures);
+        activity.retryAt = success ? 0 : Math.max(retryAfterAt, this.now() + backoff) + Math.floor(backoff * 0.2 * this.random());
+        this.schedule(instanceId, activity.hintPending ? this.hintDelayMs : paused ? Math.min(1000, this.syncIntervalMs) : this.syncIntervalMs);
       }
     }
   }

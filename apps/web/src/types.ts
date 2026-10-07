@@ -267,6 +267,13 @@ export interface HomepageSettings {
 }
 
 export interface RateLimitSettings {
+  cost_protection?: {
+    anonymous_login: { enabled: boolean; policy: { limit: number; period_seconds: number } | null };
+    expensive_reads: { enabled: boolean; policy: { limit: number; period_seconds: number } | null };
+    concurrency: { enabled: boolean; per_principal: number; per_isolate: number };
+    observation_scope: "worker_isolate_best_effort";
+    billing_cap: false;
+  };
   configuration_source: "worker_configuration";
   editable_via_api: false;
   policies: Record<"instance" | "principal" | "unauthenticated_sensitive", {

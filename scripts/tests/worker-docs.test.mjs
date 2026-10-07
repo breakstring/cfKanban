@@ -1,13 +1,30 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import catalog from "../../apps/docs/catalog.json" with { type: "json" };
 import { fetchWorker } from "../../apps/worker/src/index.ts";
+import { docsAssetHeaders } from "../lib/docs-asset-routing.mjs";
 
 const origin = "https://docs.example.test";
 const appHtml = '<!doctype html><html><body><div id="app">Main application</div></body></html>';
 const docsHtml = (title) => `<!doctype html><html><head><meta name="cfkanban-docs" content="true"></head><body>${title}</body></html>`;
+
+test("documentation headers accept VitePress local search chunks without permitting header patterns", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "cfkanban-docs-headers-"));
+  try {
+    await mkdir(path.join(directory, "chunks"));
+    await writeFile(path.join(directory, "chunks/@localSearchIndexen.CXd3GAVa.js"), "export default {};");
+    const headers = await docsAssetHeaders(directory, "/app/*\n  Cache-Control: no-store");
+    assert.match(headers, /\/docs\/assets\/\*\.js\n  Cache-Control: public, max-age=31536000, immutable/u);
+    await writeFile(path.join(directory, "unsafe#fragment.js"), "");
+    await assert.rejects(docsAssetHeaders(directory, ""), /safe header patterns/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 function fixture({ missing = [], appFallback = [], missingResponse = "spa" } = {}) {
   const files = new Map([
@@ -265,10 +282,10 @@ test("application and public guide paths retain their existing asset behavior", 
   assert.equal(requests.length, 4, "API documents do not enter the static documentation handler");
 });
 
-test("Worker-first routing adds only the dedicated documentation subtree", async () => {
+test("Worker-first routing excludes public documentation assets and preserves a real missing-asset 404", async () => {
   const config = JSON.parse(await readFile(new URL("../../wrangler.jsonc", import.meta.url), "utf8"));
-  assert.equal(config.assets.not_found_handling, "single-page-application");
+  assert.equal(config.assets.not_found_handling, "none");
   assert.deepEqual(config.assets.run_worker_first, [
-    "/api/*", "/healthz", "/openapi.json", "/invite", "/", "/app", "/app/*", "/docs", "/docs/*", "/.well-known/*",
+    "/api/*", "/healthz", "/openapi.json", "/invite", "/", "/app", "/app/*", "/docs", "/docs/*", "/.well-known/*", "!/docs/assets/*",
   ]);
 });

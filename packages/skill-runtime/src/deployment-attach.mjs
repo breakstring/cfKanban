@@ -17,6 +17,8 @@ import { verifyInstalledServiceBundle } from "./service-bundle.mjs";
 import { readServiceReleaseVersion } from "./service-release-version.mjs";
 import { getInstancePaths, initializeStateRoot, loadCurrentCredentialSecret, putInstanceMetadata, validatePrivatePath } from "./state.mjs";
 import { currentBindingReadback } from "./upgrade-plan.mjs";
+import { normalizePublicAccess } from "./public-access-config.mjs";
+import { verifyPublicAccessConfiguration } from "./public-access.mjs";
 import { existingUsageConfig, USAGE_SECRET } from "./usage-config.mjs";
 import { assertNoSymlinkPath, atomicWriteJson, canonicalDigest, ensurePrivateDirectory, pathType, readJson, requireHttpsOrigin, requireString, requireUuid, sha256Bytes } from "./utils.mjs";
 
@@ -78,6 +80,15 @@ async function localContext(input, target, baseline) {
   return { stateRoot, paths, metadata, publisher };
 }
 async function inspectRouting(connection, target) {
+  if (connection.publicAccessReceipt) {
+    const access = normalizePublicAccess(connection.publicAccessReceipt, { instanceId: target.instanceId, accountId: target.accountId, workerName: target.workerName });
+    if (target.apiOrigin !== access.preferred_api_origin) fail("DEPLOYMENT_ATTACH_ORIGIN_UNPROVEN", "The trusted origin differs from the supplied public-access receipt");
+    await verifyPublicAccessConfiguration({ ...connection, publicAccessReceipt: access, publicAccessTarget: {
+      instance_id: target.instanceId, account_id: target.accountId, worker_name: target.workerName, database_id: target.databaseId,
+      zone_id: access.zone_id, hostname: access.hostname, wrangler_executable: target.wranglerExecutable, cloudflare_profile: target.cloudflareProfile, context_directory: target.contextDirectory,
+    } });
+    return { workers_dev: !access.domain_enabled, previews_enabled: false, workers_dev_origin: access.workers_dev_origin, custom_domains: access.domain_enabled ? [{ hostname: access.hostname, environment: "production" }] : [], routes: [], management: "preserve_existing", public_access: access };
+  }
   const client = await createCloudflareControlClient(connection, "/workers", CONTROL_OPTIONS);
   const [account, subdomain, domainResponse, routeResponse] = await Promise.all([
     client("/subdomain"), client(`/scripts/${target.workerName}/subdomain`), client("/domains", { raw: true }),
@@ -124,7 +135,7 @@ export async function inspectDeploymentAttachment(input) {
   const r2Bindings = version.bindings.filter(binding => binding.type === "r2_bucket");
   if (r2Bindings.length > 1 || (r2Bindings[0] && r2Bindings[0].name !== "ATTACHMENTS")) fail("DEPLOYMENT_ATTACH_BINDINGS_UNSUPPORTED", "Only the existing cfKanban attachment binding can be attached");
   const attachments = r2Bindings[0] ? { bucket_name: r2Bindings[0].bucket_name } : null;
-  const usage = existingUsageConfig(version.bindings, { accountId: target.accountId, databaseId: target.databaseId, bucketName: attachments?.bucket_name ?? null });
+  const usage = existingUsageConfig(version.bindings, { accountId: target.accountId, databaseId: target.databaseId, bucketName: attachments?.bucket_name ?? null, workerName: target.workerName });
   const bindings = currentBindingReadback(version.bindings, { d1DatabaseId: target.databaseId, rateLimits, attachments, usageSecret: version.bindings.some(binding => binding.type === "secret_text" && binding.name === USAGE_SECRET) });
   const client = await createCloudflareControlClient(connection, `/d1/database/${target.databaseId}`, CONTROL_OPTIONS);
   const [markers] = await query(client, [MARKER_SQL]);
@@ -170,7 +181,7 @@ export async function inspectDeploymentAttachment(input) {
   return { target, baseline_bundle: baseline, publisher: local.publisher, observed, owner,
     status: owner ? "ready" : "credential_required", next_action: owner ? "create_local_attachment_plan" : "connect_owner_device_or_use_total_loss_recovery",
     service_release: { provenance: "remote_observed", publisher: local.publisher, manifest_version: null, manifest_sha256: null, service_bundle_version: baseline.version, service_bundle_sha256: null, service_bundle_source: null, service_api_version: observed.service_version, schema_version: observed.schema_version },
-    resources: { worker: { name: target.workerName, deployment_id: worker.deployment_id, version_id: worker.version_id, bindings }, d1: { name: target.d1Name, database_id: target.databaseId }, r2: r2 ? { bucket_name: r2.bucket_name, instance_id: r2.instance_id, public_access: false } : null, routing, crons },
+    resources: { worker: { name: target.workerName, deployment_id: worker.deployment_id, version_id: worker.version_id, bindings }, d1: { name: target.d1Name, database_id: target.databaseId }, r2: r2 ? { bucket_name: r2.bucket_name, instance_id: r2.instance_id, public_access: false } : null, routing, ...(routing.public_access ? { public_access: routing.public_access } : {}), crons },
     bindings: { d1: "DB", assets: "ASSETS", rate_limits: rateLimits }, usage_analytics: usage,
     migrations: { manifest_sha256: sha256Bytes(manifestBytes), final_ledger: migration.ledger, schema_digest: canonicalDigest(migration.schema), schema_verified: true },
     provenance: { deployed_artifact_verified: false, historical_artifact_source: "unknown", baseline_bundle_used_for: "migration_contract_only" }, effects: { ...EFFECTS }, secret_values_exposed: false };
@@ -200,13 +211,13 @@ export async function attachDeployment(input) {
   await assertNoSymlinkPath(journalPath, stateRoot);
   await validatePrivatePath(journalPath, "file");
   await assertJournalAuthorization({ ...input, stateRoot });
-  const evidence = await inspectDeploymentAttachment({ ...input, ...plan.evidence.target, baselineBundle: plan.evidence.baseline_bundle, publisher: plan.evidence.publisher });
+  const evidence = await inspectDeploymentAttachment({ ...input, ...plan.evidence.target, publicAccessReceipt: plan.evidence.resources.public_access, baselineBundle: plan.evidence.baseline_bundle, publisher: plan.evidence.publisher });
   if (canonicalDigest(evidence) !== canonicalDigest(plan.evidence)) fail();
   const receipt = { kind: "cfkanban_deployment_attachment_receipt", schema_version: 1,
     instance: { id: input.instanceId, api_origin: evidence.target.apiOrigin, origin_version: evidence.observed.origin_version, service_version: evidence.observed.service_version, schema_version: evidence.observed.schema_version },
     cloudflare: { account_id: evidence.target.accountId, profile: evidence.target.cloudflareProfile, auth_context_directory: evidence.target.contextDirectory,
       worker: { name: evidence.resources.worker.name, deployment_id: evidence.resources.worker.deployment_id, version_id: evidence.resources.worker.version_id }, d1: evidence.resources.d1,
-      ...(evidence.resources.r2 ? { r2: evidence.resources.r2 } : {}), routing: evidence.resources.routing, usage_analytics: evidence.usage_analytics },
+      ...(evidence.resources.r2 ? { r2: evidence.resources.r2 } : {}), ...(evidence.resources.public_access ? { public_access: evidence.resources.public_access } : {}), routing: evidence.resources.routing, usage_analytics: evidence.usage_analytics },
     owner: evidence.owner, service_release: evidence.service_release, migrations: evidence.migrations, provenance: evidence.provenance,
     operation: { task_id: input.taskId, operation_id: input.operationId, plan_digest: canonicalDigest(plan) }, effects: { ...EFFECTS }, secret_values_exposed: false };
   await assertNoSymlinkPath(paths.receiptsRoot, stateRoot);
@@ -217,6 +228,14 @@ export async function attachDeployment(input) {
   if (await pathType(receiptPath) !== "missing") await validatePrivatePath(receiptPath, "file");
   const existing = await readJson(receiptPath, { allowMissing: true });
   if (existing !== null && canonicalDigest(existing) !== canonicalDigest(receipt)) fail("DEPLOYMENT_ATTACH_RECEIPT_CONFLICT", "An existing receipt for this operation contains different evidence");
+  if (evidence.resources.public_access) {
+    const publicPath = path.join(paths.receiptsRoot, "public-access.json");
+    await assertNoSymlinkPath(publicPath, stateRoot);
+    if (await pathType(publicPath) !== "missing") await validatePrivatePath(publicPath, "file");
+    const previous = await readJson(publicPath, { allowMissing: true });
+    if (previous && canonicalDigest(previous) !== canonicalDigest(evidence.resources.public_access)) fail("PUBLIC_ACCESS_RECEIPT_DRIFT", "The existing local public-access receipt cannot be overwritten by attachment");
+    await atomicWriteJson(publicPath, evidence.resources.public_access);
+  }
   await putInstanceMetadata({ ...input, stateRoot, trustedApiOrigin: evidence.target.apiOrigin, originVersion: evidence.observed.origin_version, serviceVersion: evidence.observed.service_version, schemaVersion: evidence.observed.schema_version, publisher: evidence.publisher });
   await atomicWriteJson(receiptPath, receipt);
   await appendJournalEvent({ ...input, stateRoot, event: { type: "deployment_attached", receipt_path: receiptPath, remote_writes: false } });

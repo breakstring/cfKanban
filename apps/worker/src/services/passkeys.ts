@@ -309,7 +309,9 @@ async function insertChallenge(
     );
   }
   try {
-    const cleanup = webAuthnChallengeCleanupStatements(db, now);
+    const claim = await db.prepare(`UPDATE webauthn_cleanup_state SET next_run_at=?1
+      WHERE singleton=1 AND next_run_at<=?2`).bind(now + 60_000, now).run();
+    const cleanup = claim.meta.changes === 1 ? webAuthnChallengeCleanupStatements(db, now) : [];
     const results = await db.batch([...cleanup, insert]);
     if ((results[cleanup.length]?.meta.changes ?? 0) !== 1) {
       if (auth !== null) await authorizeAgentLaunchSession(db, auth, now);

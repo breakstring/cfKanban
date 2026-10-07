@@ -35,19 +35,22 @@ async function authHeaders({ wranglerExecutable, cloudflareProfile = null, conte
   }
 }
 
-export async function createCloudflareControlClient(input, resourcePath = "/r2/buckets", { errorPrefix = "R2", resourceLabel = "R2" } = {}) {
+export async function createCloudflareControlClient(input, resourcePath = "/r2/buckets", { errorPrefix = "R2", resourceLabel = "R2", scope = "account" } = {}) {
   if (!/^[A-Z][A-Z0-9_]*$/u.test(errorPrefix)) throw toolError("INVALID_ERROR_PREFIX", "Control client error prefix is invalid");
-  assertControlPath(resourcePath, false);
-  const account = requireString(input.accountId, "account_id", { max: 128 });
+  assertControlPath(resourcePath, scope === "zone");
+  if (!["account", "zone"].includes(scope)) throw toolError("INVALID_CONTROL_SCOPE", "Choose an exact account or zone scope");
+  const account = requireString(scope === "zone" ? input.zoneId : input.accountId, scope === "zone" ? "zone_id" : "account_id", { max: 128 });
   if (!/^[A-Za-z0-9_-]+$/u.test(account)) throw toolError("INVALID_ACCOUNT_ID", "Account ID is invalid");
   const headers = await authHeaders(input, errorPrefix);
-  const base = `/client/v4/accounts/${account}${resourcePath}`;
+  const base = `/client/v4/${scope === "zone" ? "zones" : "accounts"}/${account}${resourcePath}`;
   const fetchImpl = input.fetchImpl ?? globalThis.fetch;
-  return async (suffix, { method = "GET", body, raw = false, allowMissing = false } = {}) => {
+  return async (suffix, { method = "GET", body, raw = false, allowMissing = false, missingCodes = [10006], query } = {}) => {
     assertControlPath(suffix, true);
+    if (query && (method !== "GET" || Object.entries(query).some(([key, value]) => !/^[a-z_]+$/u.test(key) || typeof value !== "string" || value.length > 253))) throw toolError("INVALID_CONTROL_QUERY", "Control queries must be bounded read-only filters");
+    const search = query ? `?${new URLSearchParams(query)}` : "";
     let response;
     try {
-      response = await fetchImpl(`${API_ORIGIN}${base}${suffix}`, { method, redirect: "error", signal: AbortSignal.timeout(30_000), headers: { ...headers, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      response = await fetchImpl(`${API_ORIGIN}${base}${suffix}${search}`, { method, redirect: "error", signal: AbortSignal.timeout(30_000), headers: { ...headers, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     } catch {
       throw toolError(`${errorPrefix}_CONTROL_UNAVAILABLE`, `Cloudflare ${resourceLabel} response is uncertain; read back before retrying`, { method });
     }
@@ -60,7 +63,7 @@ export async function createCloudflareControlClient(input, resourcePath = "/r2/b
     } catch { throw toolError(`${errorPrefix}_CONTROL_READBACK_INVALID`, `${resourceLabel} readback exceeded its bound or could not be read`); }
     let value;
     try { value = text ? JSON.parse(text) : null; } catch { throw toolError(`${errorPrefix}_CONTROL_READBACK_INVALID`, `${resourceLabel} returned an invalid readback`); }
-    if (allowMissing && response.status === 404 && (raw || value?.errors?.some((error) => error.code === 10006))) return null;
+    if (allowMissing && response.status === 404 && (raw || value?.errors?.some((error) => missingCodes.includes(error.code)))) return null;
     if (!response.ok || (!raw && value?.success !== true)) {
       throw toolError(`${errorPrefix}_CONTROL_FAILED`, `Cloudflare ${resourceLabel} request failed; check subscription and the selected account's permissions`, { status: response.status, codes: Array.isArray(value?.errors) ? value.errors.map((entry) => Number(entry.code)).filter(Number.isSafeInteger) : [] });
     }

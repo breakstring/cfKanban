@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "schema_version": 21,
+  "schema_version": 24,
   "service_compatibility": {
     "minimum": "0.1.0",
     "maximum_exclusive": "0.2.0"
@@ -42,12 +42,9 @@
           "idempotency_records"
         ],
         "indexes": [
-          "idx_credentials_token_digest",
           "idx_credentials_principal_active",
-          "idx_browser_launches_code_digest",
           "idx_browser_launches_expiry",
           "idx_browser_launches_cleanup",
-          "idx_web_sessions_token_digest",
           "idx_web_sessions_principal_active",
           "idx_web_sessions_source_active",
           "idx_web_sessions_cleanup",
@@ -531,6 +528,53 @@
       },
       "expected_data": {
         "instance_meta_schema_version_at_least": 21,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 22,
+      "name": "0022_cost_unique_indexes.sql",
+      "sha256": "567d8c691038562dea5c47b18ff35ebbada3d065e1311fc979fff5e05d0b4712",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {},
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 22,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 23,
+      "name": "0023_notification_scan_cache.sql",
+      "sha256": "5b9126ebaa645d0d6faad947879a6e7a8da1da1ecb60c3ec0895784ee9ed9d18",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "tables": [
+          "notification_pending_windows"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 23,
+        "allow_uninitialized": true
+      }
+    },
+    {
+      "sequence": 24,
+      "name": "0024_webauthn_cleanup_lease.sql",
+      "sha256": "22860ccfcc52e83ef76852beb031638bc0759b094ec25578da9a91b4226be75d",
+      "classification": "backward_compatible",
+      "destructive": false,
+      "reentry": "wrangler_migration_ledger_only",
+      "expected_artifacts": {
+        "tables": [
+          "webauthn_cleanup_state"
+        ]
+      },
+      "expected_data": {
+        "instance_meta_schema_version_at_least": 24,
         "allow_uninitialized": true
       }
     }

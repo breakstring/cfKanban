@@ -6,7 +6,7 @@ import { createTestHarness } from "wrangler";
 import { authenticateBearer } from "../../apps/worker/src/kernel/auth.ts";
 import { createCursorContext, encodeCursor } from "../../apps/worker/src/kernel/cursor.ts";
 import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
-import { collectAttachmentGarbage, listAttachments } from "../../apps/worker/src/services/attachments.ts";
+import { ATTACHMENT_CLEANUP_BATCH, collectAttachmentGarbage, listAttachments } from "../../apps/worker/src/services/attachments.ts";
 import { listMyPasskeys } from "../../apps/worker/src/services/passkeys.ts";
 import { listNotifications } from "../../apps/worker/src/services/notifications.ts";
 
@@ -180,13 +180,15 @@ test("通知同时间戳历史和 pending 深页直接定位 ID，缓存不可�
       const result = await listNotifications(unavailable.database, readerAuth, url, Date.now());
       assert.deepEqual(result.items.map(row => row.id), Array.from({ length: 20 }, (_, index) => idFor(prefixes.notification, 1999 - index)));
       assert.ok(totalReads(unavailable) < 100); assert.equal(totalWrites(unavailable), 0);
-      assert.equal(await db.prepare("SELECT * FROM notification_pending_cache WHERE principal_id=?1").bind(readerId).first(), null, "超过 50 条的首屏及有游标页面不保存完整缓存");
+      const window = await db.prepare("SELECT * FROM notification_pending_windows WHERE principal_id=?1").bind(readerId).first();
+      assert.equal(window.is_complete, 0, "超出窗口时不能标为完整投影");
+      assert.equal(JSON.parse(window.pending_ids_json).length, 100);
     }
     t.diagnostic(`${pending ? "pending" : "history"} 通知首屏/续页/深页/空页 rows_read=${costs.join("/")}`);
   }
 });
 
-test("10000 个已释放墓碑每轮仍公平回访 64 项，仅一次 metadata 更新及三个独立 D1 调用", async t => {
+test("10000 个已释放墓碑按 Free 调用预算公平回访，仅一次 metadata 更新及三个独立 D1 调用", async t => {
   await db.prepare(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<?1)
     INSERT INTO attachment_objects(id,object_key,size_bytes,sha256,state,expires_at,created_at,created_operation_id,garbage_at,budget_released_at)
     SELECT printf('%s-%012x',?2,n),printf('attachments/%s-%012x',?2,n),1,?3,'garbage',?4,?4,printf('garbage-%d',n),?4,?4 FROM seq`)
@@ -195,19 +197,25 @@ test("10000 个已释放墓碑每轮仍公平回访 64 项，仅一次 metadata 
     const observed = instrument({ beforeBatch: async () => assert.fail("已释放墓碑不重复写预算") }), calls = [];
     const bucket = bucketProxy({ delete: async key => calls.push(["delete", key]), head: async key => { calls.push(["head", key]); return null; } });
     const result = await collectAttachmentGarbage({ ...env, DB: observed.database, ATTACHMENTS: bucket }, base + 200000 + round);
-    assert.deepEqual(result, { checked: 64, deleted: 64 }); assert.equal(observed.calls.length, 3);
+    assert.deepEqual(result, { checked: ATTACHMENT_CLEANUP_BATCH, deleted: ATTACHMENT_CLEANUP_BATCH, budget_released: 0,
+      failures: { delete: 0, verify: 0, release: 0 }, backlog: { garbage: true, expired_pending_may_remain: false } });
+    assert.equal(observed.calls.length, 3);
     const selected = observed.queries.find(query => query.sql.startsWith("SELECT id,object_key"));
-    assert.deepEqual(selected.results.map(row => row.id), Array.from({ length: 64 }, (_, index) => idFor(prefixes.garbage, round * 64 + index + 1)));
-    assert.deepEqual(calls, selected.results.flatMap(row => [["delete", row.object_key], ["head", row.object_key]]));
+    const processed = selected.results.slice(0, ATTACHMENT_CLEANUP_BATCH);
+    assert.equal(selected.results.length, ATTACHMENT_CLEANUP_BATCH + 1, "多取一条仅用于有界积压探测");
+    assert.deepEqual(processed.map(row => row.id), Array.from({ length: ATTACHMENT_CLEANUP_BATCH }, (_, index) => idFor(prefixes.garbage, round * ATTACHMENT_CLEANUP_BATCH + index + 1)));
+    assert.deepEqual(calls, processed.flatMap(row => [["delete", row.object_key], ["head", row.object_key]]));
+    assert.ok(observed.queries.length + calls.length <= 45, "D1 语句与 R2 调用合计给 Free 50 上限保留五次余量");
     assert.equal(observed.queries.filter(query => query.sql.includes("SET last_checked_at")).length, 1);
     const metadata = observed.queries.find(query => query.sql.includes("SET last_checked_at"));
     t.diagnostic(`metadata plan=${await plan(metadata)}, rows_read=${metadata.read}`);
-    assert.ok(totalReads(observed) < 200, `${totalReads(observed)}`); assert.equal(totalWrites(observed), 128);
+    assert.ok(totalReads(observed) < 100, `${totalReads(observed)}`); assert.equal(totalWrites(observed), ATTACHMENT_CLEANUP_BATCH * 2);
     if (round === 0) {
       const previous = instrument();
-      for (const row of selected.results) await previous.database.prepare("UPDATE attachment_objects SET last_checked_at=?2 WHERE id=?1 AND state='garbage'")
+      for (const row of processed) await previous.database.prepare("UPDATE attachment_objects SET last_checked_at=?2 WHERE id=?1 AND state='garbage'")
         .bind(row.id, base + 200000).run();
-      assert.equal(previous.calls.length, 64); assert.equal(totalReads(previous), 64); assert.equal(totalWrites(previous), 128);
+      assert.equal(previous.calls.length, ATTACHMENT_CLEANUP_BATCH); assert.equal(totalReads(previous), ATTACHMENT_CLEANUP_BATCH);
+      assert.equal(totalWrites(previous), ATTACHMENT_CLEANUP_BATCH * 2);
       t.diagnostic(`相同候选旧路径 calls=${previous.calls.length + 2}, rows_read=${totalReads(previous) + totalReads(observed) - metadata.read}, rows_written=${totalWrites(previous)}`);
     }
     const detail = await plan(selected); assert.match(detail, /idx_attachment_objects_cleanup/); assert.doesNotMatch(detail, /USE TEMP B-TREE/);
@@ -225,10 +233,39 @@ async function garbage(released = false) {
 }
 const budget = async () => (await db.prepare("SELECT reserved_bytes FROM attachment_storage WHERE singleton=1").first()).reserved_bytes;
 
+test("满批过期预留在 45 次总调用内确认删除并集合释放，重复回访不再释放", async t => {
+  const ids = Array.from({ length: ATTACHMENT_CLEANUP_BATCH + 1 }, () => randomUUID());
+  await db.batch([
+    ...ids.map(id => db.prepare(`INSERT INTO attachment_objects(id,object_key,size_bytes,sha256,state,expires_at,created_at,created_operation_id)
+      VALUES(?1,?2,1,?3,'pending',1,0,?1)`).bind(id, `attachments/${id}`, hash("synthetic"))),
+    db.prepare("UPDATE attachment_storage SET reserved_bytes=reserved_bytes+?1 WHERE singleton=1").bind(ids.length),
+  ]);
+  let calls = 0;
+  const consume = count => { calls += count; assert.ok(calls <= 45, `Free 调用预算超出：${calls}`); };
+  const observed = instrument({ beforeQuery: async () => consume(1), beforeBatch: async statements => consume(statements.length) });
+  const bucket = bucketProxy({ delete: async () => consume(1), head: async () => { consume(1); return null; } });
+  const before = await budget();
+  const result = await collectAttachmentGarbage({ ...env, DB: observed.database, ATTACHMENTS: bucket }, 2);
+  assert.equal(result.checked, ATTACHMENT_CLEANUP_BATCH); assert.equal(result.deleted, ATTACHMENT_CLEANUP_BATCH);
+  assert.equal(result.budget_released, ATTACHMENT_CLEANUP_BATCH); assert.equal(result.backlog.expired_pending_may_remain, true);
+  assert.deepEqual(result.failures, { delete: 0, verify: 0, release: 0 });
+  assert.equal(calls, 45); assert.equal(observed.queries.length, 5);
+  assert.equal(await budget(), before - ATTACHMENT_CLEANUP_BATCH);
+  assert.ok(totalReads(observed) < 400, `集合释放不扫描历史墓碑：${totalReads(observed)}`);
+  t.diagnostic(JSON.stringify({ scenario: "free-full-unreleased-batch", checked: result.checked, total_calls: calls,
+    d1_queries: observed.queries.length, rows_read: totalReads(observed), rows_written: totalWrites(observed) }));
+  let additionalReleases = 0;
+  for (const revisit of [3, 4, 5]) {
+    const again = await collectAttachmentGarbage({ ...env, ATTACHMENTS: bucketProxy({ delete: async () => {}, head: async () => null }) }, revisit);
+    additionalReleases += again.budget_released;
+  }
+  assert.equal(additionalReleases, 1); assert.equal(await budget(), before - ids.length);
+});
+
 test("R2 删除、晚到 PUT 与 D1 预算失败均推进回访，重试只释放一次并永久保留墓碑", async () => {
   const good = await garbage(), failedDelete = await garbage(), latePut = await garbage(), failedBudget = await garbage(), released = await garbage(true);
   const before = await budget(), now = Date.now();
-  const observed = instrument({ beforeBatch: async statements => { if (statements[0].values[0] === failedBudget.id) throw new Error("injected budget batch failure"); } });
+  const observed = instrument({ beforeBatch: async statements => { if (JSON.parse(statements[0].values[0]).includes(failedBudget.id)) throw new Error("injected budget batch failure"); } });
   const bucket = bucketProxy({ delete: async key => {
     if (key === failedDelete.key) throw new Error("injected R2 delete failure");
     await env.ATTACHMENTS.delete(key);
@@ -236,12 +273,13 @@ test("R2 删除、晚到 PUT 与 D1 预算失败均推进回访，重试只释�
     if (key === latePut.key) await env.ATTACHMENTS.put(key, "late");
     return env.ATTACHMENTS.head(key);
   } });
-  await collectAttachmentGarbage({ ...env, DB: observed.database, ATTACHMENTS: bucket }, now);
-  assert.equal(await budget(), before - 4);
+  const result = await collectAttachmentGarbage({ ...env, DB: observed.database, ATTACHMENTS: bucket }, now);
+  assert.deepEqual(result.failures, { delete: 1, verify: 1, release: 2 });
+  assert.equal(await budget(), before);
   for (const object of [good, failedDelete, latePut, failedBudget, released]) {
     const row = await db.prepare("SELECT * FROM attachment_objects WHERE id=?1").bind(object.id).first();
     assert.equal(row.last_checked_at, now);
-    assert.equal(row.budget_released_at !== null, object === good || object === released);
+    assert.equal(row.budget_released_at !== null, object === released);
   }
   // 仅隔离 fixture 调整队列位置，确保下一轮重新检查故障项。
   await db.prepare("UPDATE attachment_objects SET last_checked_at=?1 WHERE state='garbage' AND id NOT IN (?2,?3,?4,?5,?6)")
@@ -273,4 +311,20 @@ test("并发清理保持预算 guard，metadata 写失败时不开始 R2 操作"
   const bucket = bucketProxy({ delete: async () => { r2Calls += 1; }, head: async () => { r2Calls += 1; return null; } });
   await assert.rejects(collectAttachmentGarbage({ ...env, DB: unavailable.database, ATTACHMENTS: bucket }), /injected metadata failure/);
   assert.equal(r2Calls, 0); assert.equal(await budget(), before - 4);
+});
+
+test("集合释放第二条 SQL 失败时 D1 batch 回滚扣减，恢复后仅释放一次", async () => {
+  const object = await garbage(), before = await budget();
+  await db.prepare(`CREATE TRIGGER reject_attachment_budget_release BEFORE UPDATE OF budget_released_at ON attachment_objects
+    WHEN OLD.budget_released_at IS NULL AND NEW.budget_released_at=12345
+    BEGIN SELECT RAISE(ABORT,'synthetic release failure'); END`).run();
+  try {
+    const result = await collectAttachmentGarbage(env, 12345);
+    assert.ok(result.deleted > 0); assert.equal(result.failures.release, 1); assert.equal(result.budget_released, 0);
+    assert.equal(await budget(), before);
+    assert.equal((await db.prepare("SELECT budget_released_at FROM attachment_objects WHERE id=?1").bind(object.id).first()).budget_released_at, null);
+  } finally { await db.prepare("DROP TRIGGER reject_attachment_budget_release").run(); }
+  const retried = await collectAttachmentGarbage(env, 12346);
+  assert.equal(retried.budget_released, 1); assert.equal(await budget(), before - 4);
+  await collectAttachmentGarbage(env, 12347); assert.equal(await budget(), before - 4);
 });

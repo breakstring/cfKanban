@@ -1,4 +1,5 @@
 import { createCloudflareControlClient } from "./cloudflare-control.mjs";
+import { plannedProtectionBindingDelta } from "./cost-protection-config.mjs";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
 import { appendJournalEvent, assertJournalAuthorization } from "./journal.mjs";
@@ -110,7 +111,7 @@ export function assertAttachmentStoragePlan(plan) {
   if (!capacityValid) throw toolError("R2_PLAN_REQUIRED", "Attachment capacity policy must match the target release; deployment cannot choose or modify an Owner application setting");
   if (plan.kind !== "deployed_instance_upgrade" || !Number.isSafeInteger(plan.target?.schema_version) || plan.target.schema_version < 4 || storage.instance_id !== plan.instance_id || typeof storage.create !== "boolean" || storage.storage_class !== "Standard" || storage.public_access !== false
     || plan.bindings?.attachments !== "ATTACHMENTS" || plan.bindings?.cleanup_cron !== ATTACHMENT_CLEANUP_CRON
-    || plan.cost_delta !== storage.create || plan.binding_changes_allowed !== (storage.create || JSON.stringify(plan.usage_analytics?.configuration) !== JSON.stringify(plan.usage_analytics?.previous_configuration))
+    || plan.cost_delta !== storage.create || plan.binding_changes_allowed !== (storage.create || JSON.stringify(plan.usage_analytics?.configuration) !== JSON.stringify(plan.usage_analytics?.previous_configuration) || plannedProtectionBindingDelta(plan))
     || plan.attachment_storage?.subscription_required !== true || plan.attachment_storage?.usage_beyond_free_tier_is_billable !== true || plan.attachment_storage?.automatic_bucket_deletion !== false
     || plan.attachment_storage?.previous_bucket !== (storage.create ? null : storage.bucket_name)
     || JSON.stringify(plan.attachment_storage?.previous_cleanup_crons) !== JSON.stringify(storage.create ? [] : [ATTACHMENT_CLEANUP_CRON])

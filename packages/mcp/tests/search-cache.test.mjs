@@ -314,13 +314,60 @@ test('active search syncs on interval, stops when idle and resumes without waiti
 });
 
 test('capacity overflow fails explicitly and rolls back the whole snapshot page', async t => {
-  const f = await fixture(t, { maxDocuments: 1 });
+  let now = Date.now();
+  const f = await fixture(t, { maxDocuments: 1, now: () => now });
   f.state.documents.push({ ...f.documents[0], id: randomUUID(), number: 601, title: '超过容量' });
   assert.equal(await f.sync(), false);
   assert.equal((await f.search({ kind: 'title', text: '搜索' })).error.code, 'MCP_SEARCH_INDEX_CAPACITY_EXCEEDED');
   f.state.documents.pop();
+  now = f.cache.activity.get(f.identity.instance_id).retryAt;
   assert.equal(await f.sync(), true);
   assert.equal((await f.search({ kind: 'title', text: '搜索' })).data.items.length, 1);
+});
+
+test('searches, hints and direct synchronization all preserve Retry-After and failure backoff', async t => {
+  let now = 100_000;
+  const f = await fixture(t, { now: () => now, random: () => 0.5, syncIntervalMs: 30_000 });
+  let attempts = 0;
+  f.facade.readSearchStatus = async () => {
+    attempts++;
+    return { ok: false, status: 429, error: { code: 'RATE_LIMITED', retry_after_seconds: 600 } };
+  };
+  assert.equal(await f.sync(), false);
+  const activity = f.cache.activity.get(f.identity.instance_id);
+  assert.equal(activity.retryAt, 706_000);
+  now += 31_000;
+  f.cache.touch(f.identity.instance_id);
+  f.cache.hint({ instance_id: f.identity.instance_id });
+  assert.equal(activity.due, 706_000);
+  assert.equal(await f.cache.synchronize({ instance_id: f.identity.instance_id }), false);
+  assert.equal(attempts, 1);
+  now = 706_000;
+  f.cache.touch(f.identity.instance_id);
+  f.facade.readSearchStatus = async () => { attempts++; return { ok: false, status: 503, error: { code: 'UNAVAILABLE' } }; };
+  assert.equal(await f.cache.synchronize({ instance_id: f.identity.instance_id }), false);
+  assert.equal(activity.retryAt, 706_000 + 120_000 + 12_000);
+  f.cache.hint({ instance_id: f.identity.instance_id });
+  assert.equal(activity.due, activity.retryAt);
+  assert.equal(attempts, 2);
+});
+
+test('a failure on a resumed page honors Retry-After before another hint or page cycle', async t => {
+  let now = 100_000;
+  const f = await fixture(t, { now: () => now, random: () => 0, maxPagesPerCycle: 1, syncIntervalMs: 30_000 });
+  assert.equal(await f.sync(), false);
+  const original = f.facade.readSearchChanges;
+  let attempts = 0;
+  f.facade.readSearchChanges = async () => { attempts++; return { ok: false, status: 429, error: { code: 'RATE_LIMITED', retry_after_seconds: 120 } }; };
+  assert.equal(await f.sync(), false);
+  f.cache.hint({ instance_id: f.identity.instance_id });
+  assert.equal(await f.cache.synchronize({ instance_id: f.identity.instance_id }), false);
+  assert.equal(attempts, 1);
+  now += 120_000;
+  f.facade.readSearchChanges = original;
+  assert.equal(await f.sync(), true);
+  assert.equal(f.cache.activity.get(f.identity.instance_id).retryAt, 0);
+  assert.equal((await f.search({ kind: 'title', text: '插件' })).ok, true);
 });
 
 test('corrupt regular private SQLite is safely rebuilt and warmed from the service', async t => {

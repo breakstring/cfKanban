@@ -11,7 +11,9 @@ Explain the domain setup, effects, and verification steps without changing anyth
 
 You need the relevant Cloudflare and domain authority. The default site uses `workers.dev`. Adding or moving a domain requires separate planning and is not part of an ordinary upgrade.
 
-**In the Web UI:** cfKanban has no domain configuration page. After the cloud setup, ask the Agent to [verify the site's address](../administration/settings.md). Changing an application address alone does not migrate a domain.
+**In the Web UI:** **Overview → Usage & limits** shows the last deployment's domain and WAF declaration and an Agent guide; deployment tools inspect live cloud state. The domain plan verifies the same instance, preferred origin, and safe local rebind before disabling business access through `workers.dev` and previews. Passkeys are bound to their domain, so arrange an available Owner recovery method before moving. Changing an application address alone does not migrate a domain. Domain operations do not silently redeploy the Worker; the declaration updates with the next authorized deployment.
+
+WAF is a separate opt-in and can be disabled independently. The Free profile manages only its own custom rule for this instance hostname, preserves other rules, and never upgrades a paid plan. Free rate rules cannot constrain hostname, so no counting rule is installed across a shared Zone. Insufficient rule slots stop the plan with an explanation. Normal Agent APIs, login, invitations, and recovery remain accessible. Turnstile and Bot Fight Mode are not enabled in this scope.
 
 ## Enable attachments
 
@@ -35,6 +37,10 @@ Metrics are optional; leaving them unconfigured does not prevent task collaborat
 
 **In the Web UI:** **Overview → Usage & limits** shows status and lets you refresh data. Observations may be delayed and are neither a real-time bill nor your account's remaining allowance.
 
+A deployment plan can select the exact Worker, Free/Paid basis, verified UTC billing cycle day, warning threshold, and explicitly enabled account totals. Without a verified cycle, monthly values stay unknown rather than assuming a calendar month. Workers requests and cumulative CPU, D1 daily/cycle rows, and R2 Class A/B operations remain distinct; unknown or truncated operations do not appear as complete billable totals. R2 free allowances apply only to Standard storage. Allowance comparisons require the Owner to verify that the entire instance or account measurement scope is Standard-only.
+
+The panel derives threshold warnings from fresh snapshots, without sending messages or adding frequent collection. The Owner can separately configure [Cloudflare Budget Alerts](https://developers.cloudflare.com/billing/manage/budget-alerts/) for billing email. Those alerts report account costs; they do not stop usage or cap the bill. The application attachment budget remains separate.
+
 ## Adjust request-rate limits
 
 ```text
@@ -43,5 +49,7 @@ Given <time and symptoms>, assess whether limits need changing. Do not deploy ye
 ```
 
 The Owner can inspect limits under **Overview → Service information & access limits**. Changing them needs Cloudflare deployment authority. Request-rate limits differ from [public project membership and content quotas](../administration/public-join.md); throttling does not necessarily mean a project is full.
+
+New deployments also protect anonymous login and counts/title search, with concurrency limits for expensive queries. Clients honor Retry-After and backoff; do not evade limits by switching identities, repeatedly retrying, or replaying writes automatically. Platform throttles are best-effort per PoP, not an account billing cap. A Paid CPU limit must be selected and verified in a plan; it never purchases or upgrades the subscription.
 
 Upgrades should preserve existing optional settings. Disabling a feature does not automatically delete cloud resources or stop their charges.

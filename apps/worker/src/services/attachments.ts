@@ -12,7 +12,13 @@ import { actorCredentialId, authorizedVia, requireDeletedMode, requireIdempotenc
 
 export const ATTACHMENT_LIMITS = { max_file_bytes: 10 * 1024 * 1024, max_active_per_issue: 20 };
 const RESERVATION_TTL = 24 * 60 * 60 * 1000;
-const CLEANUP_BATCH = 64;
+const CLEANUP_SUBREQUEST_LIMIT = 50;
+const CLEANUP_RESERVED_SUBREQUESTS = 5;
+const CLEANUP_FIXED_D1_QUERIES = 5;
+const CLEANUP_R2_REQUESTS_PER_OBJECT = 2;
+export const ATTACHMENT_CLEANUP_BATCH = Math.floor(
+  (CLEANUP_SUBREQUEST_LIMIT - CLEANUP_RESERVED_SUBREQUESTS - CLEANUP_FIXED_D1_QUERIES) / CLEANUP_R2_REQUESTS_PER_OBJECT,
+);
 
 type Resource = { [key: string]: JsonValue };
 interface AttachmentRow {
@@ -335,35 +341,65 @@ export async function setAttachmentDeleted(env: WorkerEnv, request: Request, aut
   return { ...result.body, idempotent_replay: result.idempotentReplay };
 }
 
-export async function collectAttachmentGarbage(env: WorkerEnv, now = Date.now()): Promise<{ checked: number; deleted: number }> {
-  if (env.ATTACHMENTS === undefined) return { checked: 0, deleted: 0 };
+export interface AttachmentCleanupResult {
+  checked: number;
+  deleted: number;
+  budget_released: number;
+  failures: { delete: number; verify: number; release: number };
+  backlog: { garbage: boolean; expired_pending_may_remain: boolean };
+}
+
+export async function collectAttachmentGarbage(env: WorkerEnv, now = Date.now()): Promise<AttachmentCleanupResult> {
+  const result: AttachmentCleanupResult = {
+    checked: 0, deleted: 0, budget_released: 0,
+    failures: { delete: 0, verify: 0, release: 0 }, backlog: { garbage: false, expired_pending_may_remain: false },
+  };
+  if (env.ATTACHMENTS === undefined) return result;
   const db = env.DB, bucket = env.ATTACHMENTS;
   // 在途 PUT 可能晚于 DELETE 完成，因此永久保留对象墓碑；即使预算已释放，
   // 后续轮询仍能再次删除同一个 key，避免留下无法追踪的对象。
-  await db.prepare(`UPDATE attachment_objects SET state='garbage',garbage_at=?1
-    WHERE id IN (SELECT id FROM attachment_objects WHERE state='pending' AND expires_at<=?1 ORDER BY expires_at,id LIMIT ?2)`).bind(now, CLEANUP_BATCH).run();
+  const expired = await db.prepare(`UPDATE attachment_objects SET state='garbage',garbage_at=?1
+    WHERE id IN (SELECT id FROM attachment_objects WHERE state='pending' AND expires_at<=?1 ORDER BY expires_at,id LIMIT ?2)`).bind(now, ATTACHMENT_CLEANUP_BATCH).run();
+  result.backlog.expired_pending_may_remain = expired.meta.changes === ATTACHMENT_CLEANUP_BATCH;
   // garbage 状态的 CHECK 保证 garbage_at 非空；新垃圾按进入时间排队，
   // 避免持续的新记录饿死已检查墓碑，使晚到 PUT 永久留在预算之外。
-  const candidates = (await db.prepare(`SELECT id,object_key,budget_released_at FROM attachment_objects WHERE state='garbage'
-    ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1`).bind(CLEANUP_BATCH).all<{ id: string; object_key: string; budget_released_at: number | null }>()).results;
+  const selected = (await db.prepare(`SELECT id,object_key,budget_released_at FROM attachment_objects WHERE state='garbage'
+    ORDER BY COALESCE(last_checked_at,garbage_at),id LIMIT ?1`).bind(ATTACHMENT_CLEANUP_BATCH + 1).all<{ id: string; object_key: string; budget_released_at: number | null }>()).results;
+  result.backlog.garbage = selected.length > ATTACHMENT_CLEANUP_BATCH;
+  const candidates = selected.slice(0, ATTACHMENT_CLEANUP_BATCH);
+  result.checked = candidates.length;
   if (candidates.length > 0) {
     // 检查失败也推进 FIFO 回访时间；同轮候选共享时间戳，可一次写入有界集合。
     // 显式主键索引避免优化器从 state 索引扫描全部墓碑后过滤候选 ID。
     await db.prepare(`UPDATE attachment_objects INDEXED BY sqlite_autoindex_attachment_objects_1 SET last_checked_at=?1 WHERE state='garbage'
       AND id IN (${candidates.map((_, index) => `?${index + 2}`).join(",")})`).bind(now, ...candidates.map(object => object.id)).run();
   }
-  let deleted = 0;
+  const releasable: string[] = [];
   for (const object of candidates) {
     try {
       await bucket.delete(object.object_key);
-      if (await bucket.head(object.object_key) !== null) continue;
-      if (object.budget_released_at === null) await db.batch([
-        db.prepare(`UPDATE attachment_storage SET reserved_bytes=reserved_bytes-(SELECT size_bytes FROM attachment_objects WHERE id=?1)
-          WHERE singleton=1 AND EXISTS (SELECT 1 FROM attachment_objects WHERE id=?1 AND state='garbage' AND budget_released_at IS NULL)`).bind(object.id),
-        db.prepare("UPDATE attachment_objects SET budget_released_at=?2 WHERE id=?1 AND state='garbage' AND budget_released_at IS NULL").bind(object.id, now),
-      ]);
-      deleted += 1;
-    } catch { /* 持久墓碑保留失败项，下一轮有界扫描继续处理。 */ }
+    } catch { result.failures.delete += 1; continue; }
+    try {
+      if (await bucket.head(object.object_key) !== null) { result.failures.verify += 1; continue; }
+    } catch { result.failures.verify += 1; continue; }
+    result.deleted += 1;
+    if (object.budget_released_at === null) releasable.push(object.id);
   }
-  return { checked: candidates.length, deleted };
+  if (releasable.length > 0) {
+    // 集合释放把满批 D1 语句固定为五条；事务内重验未释放状态，重入不会重复扣减。
+    const ids = JSON.stringify(releasable);
+    try {
+      const released = await db.batch([
+        db.prepare(`UPDATE attachment_storage SET reserved_bytes=reserved_bytes-(
+          SELECT COALESCE(SUM(size_bytes),0) FROM attachment_objects INDEXED BY sqlite_autoindex_attachment_objects_1
+          WHERE id IN (SELECT value FROM json_each(?1)) AND state='garbage' AND budget_released_at IS NULL)
+          WHERE singleton=1 AND EXISTS (SELECT 1 FROM attachment_objects INDEXED BY sqlite_autoindex_attachment_objects_1
+            WHERE id IN (SELECT value FROM json_each(?1)) AND state='garbage' AND budget_released_at IS NULL)`).bind(ids),
+        db.prepare(`UPDATE attachment_objects INDEXED BY sqlite_autoindex_attachment_objects_1 SET budget_released_at=?2
+          WHERE id IN (SELECT value FROM json_each(?1)) AND state='garbage' AND budget_released_at IS NULL`).bind(ids, now),
+      ]);
+      result.budget_released = released[1]?.meta.changes ?? 0;
+    } catch { result.failures.release = releasable.length; }
+  }
+  return result;
 }

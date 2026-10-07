@@ -213,7 +213,14 @@ export function createMcpFacade({ home = os.homedir(), stateRoot = resolveStateR
       };
       signal.throwIfAborted();
       const discoveryResponse = await deadline(fetchImpl(new URL("/.well-known/cfkanban-instance.json", origin), { method: "GET", headers: { accept: "application/json" }, redirect: "manual", signal }), signal);
-      if (!discoveryResponse.ok || !(discoveryResponse.headers.get("content-type") ?? "").includes("application/json")) throw toolError("DISCOVERY_REJECTED", "Discovery refused");
+      if (!discoveryResponse.ok) {
+        if (discoveryResponse.status >= 400) {
+          const failedDiscovery = await boundedResponse(discoveryResponse, signal, 16_384);
+          return redact(await deadline(normalizeResponse(failedDiscovery), signal), snapshot.token);
+        }
+        throw toolError("DISCOVERY_REJECTED", "Discovery refused");
+      }
+      if (!(discoveryResponse.headers.get("content-type") ?? "").includes("application/json")) throw toolError("DISCOVERY_REJECTED", "Discovery refused");
       const discoveryBody = boundedRead ? await boundedResponse(discoveryResponse, signal, 16_384) : discoveryResponse;
       const discovery = validateDiscovery(await deadline(discoveryBody.json(), signal), origin);
       if (discovery.instance_id !== instanceId) throw toolError("DISCOVERY_INSTANCE_MISMATCH", "Discovery identity mismatch");

@@ -19,7 +19,7 @@ const pending = (name, { database = db, limit = 20, cursor } = {}) => listNotifi
 const writeRequest = () => new Request(`${origin}/api/v1/me/notifications`, { method: "POST", headers: { "idempotency-key": randomUUID() } });
 const ack = (name, id) => acknowledgeNotification(db, writeRequest(), auth(name), id, Date.now());
 const pref = (name, enabled, version) => updateNotificationPreferences(db, writeRequest(), auth(name), enabled, version, Date.now());
-const cache = name => db.prepare("SELECT * FROM notification_pending_cache WHERE principal_id=?1").bind(actors[name].id).first();
+const cache = name => db.prepare("SELECT * FROM notification_pending_windows WHERE principal_id=?1").bind(actors[name].id).first();
 async function seed({ createdAt = Date.now() - 100, expiresAt = null, withdrawnAt = null } = {}) {
   const id = randomUUID();
   await db.prepare(`INSERT INTO instance_notifications(id,title,body,created_at,created_by_principal_id,expires_at,withdrawn_at,created_operation_id,last_operation_id)
@@ -117,15 +117,17 @@ test("固定提交上限不漏迟提交旧时间通知；丢失响应、乱序�
   const other = await pending("other", { limit: 50 }); assert.ok(other.items.some(item => item.id === delayedId), "ACK 与缓存按 Principal 隔离");
 });
 
-test("超50 fallback和cursor页面不推进；降到50后完整枚举并保留稳定分页", async () => {
+test("超过50条仍保存完整窗口，cursor页面不推进，确认后保留稳定分页", async () => {
   const time = Date.now(); const ids = [];
   for (let index = 0; index < 60; index++) ids.push(await seed({ createdAt: time }));
-  const first = await pending("over", { limit: 3 }); assert.ok(first.next_cursor); assert.equal(await cache("over"), null);
+  const first = await pending("over", { limit: 3 }); assert.ok(first.next_cursor);
+  const initial = await cache("over"); assert.equal(initial.is_complete, 1);
+  assert.ok(JSON.parse(initial.pending_ids_json).length > 50);
   const second = await pending("over", { limit: 3, cursor: first.next_cursor });
-  assert.ok(second.items.every(item => !first.items.some(previous => previous.id === item.id))); assert.equal(await cache("over"), null);
+  assert.ok(second.items.every(item => !first.items.some(previous => previous.id === item.id))); assert.deepEqual(await cache("over"), initial);
   for (const item of (await pending("over", { limit: 50 })).items.slice(0, 20)) await ack("over", item.id);
   const all = await pending("over", { limit: 50 }); assert.ok(all.items.length <= 50); assert.equal(all.next_cursor, null);
-  const saved = await cache("over"); assert.equal(JSON.parse(saved.pending_ids_json).length, all.items.length);
+  const saved = await cache("over"); assert.deepEqual(saved, initial, "完整窗口中的 ACK 实时过滤，不因无新序列重复写缓存");
   const page = await pending("over", { limit: 3 });
   await seed();
   await pending("over", { limit: 3, cursor: page.next_cursor });
@@ -136,11 +138,11 @@ test("超50 fallback和cursor页面不推进；降到50后完整枚举并保留�
 test("缓存读取、保存失败及损坏均退回事实；认证与最终偏好保持实时", async () => {
   const active = await seed();
   const failingRead = new Proxy(db, { get(target, key) {
-    if (key === "prepare") return sql => { if (sql.includes("FROM notification_pending_cache")) throw new Error("synthetic cache unavailable"); return target.prepare(sql); };
+    if (key === "prepare") return sql => { if (sql.includes("FROM notification_pending_windows")) throw new Error("synthetic cache unavailable"); return target.prepare(sql); };
     const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
   } });
   assert.ok((await pending("failure", { database: failingRead, limit: 50 })).items.some(item => item.id === active));
-  await db.prepare("CREATE TRIGGER reject_pending_cache BEFORE INSERT ON notification_pending_cache BEGIN SELECT RAISE(ABORT,'synthetic cache write failure'); END").run();
+  await db.prepare("CREATE TRIGGER reject_pending_cache BEFORE INSERT ON notification_pending_windows BEGIN SELECT RAISE(ABORT,'synthetic cache write failure'); END").run();
   try { assert.ok((await pending("failure", { limit: 50 })).items.some(item => item.id === active)); assert.equal(await cache("failure"), null); }
   finally { await db.prepare("DROP TRIGGER reject_pending_cache").run(); }
   // Reduce this actor's backlog enough to make a complete projection, then damage only its derived IDs.
@@ -148,7 +150,7 @@ test("缓存读取、保存失败及损坏均退回事实；认证与最终偏�
   for (const item of rows) if (item.id !== active) await ack("failure", item.id);
   assert.ok((await pending("failure", { limit: 50 })).items.some(item => item.id === active));
   assert.ok(await cache("failure"));
-  await db.prepare("UPDATE notification_pending_cache SET pending_ids_json='[null]' WHERE principal_id=?1").bind(actors.failure.id).run();
+  await db.prepare("UPDATE notification_pending_windows SET pending_ids_json='[null]' WHERE principal_id=?1").bind(actors.failure.id).run();
   assert.ok((await pending("failure", { limit: 50 })).items.some(item => item.id === active));
   assert.ok(JSON.parse((await cache("failure")).pending_ids_json).includes(active));
   for (const reenable of [false, true]) {
@@ -179,7 +181,7 @@ test("cache 写前认证/偏好变化被 SQL guard 拒绝；并发 CAS 不覆盖
   for (const name of ["writeauth", "writepref"]) {
     let changed = false;
     const raced = instrument(db, async ({ sql, phase }) => {
-      if (!changed && phase === "before" && sql.startsWith("INSERT INTO notification_pending_cache")) {
+      if (!changed && phase === "before" && sql.startsWith("INSERT INTO notification_pending_windows")) {
         changed = true;
         if (name === "writeauth") await db.prepare("UPDATE credentials SET revoked_at=?1 WHERE id=?2").bind(Date.now(), actors[name].credential).run();
         else await pref(name, false, 1);
@@ -193,7 +195,7 @@ test("cache 写前认证/偏好变化被 SQL guard 拒绝；并发 CAS 不覆盖
   const before = await cache("writecas"), newer = await seed({ createdAt: Date.now() });
   let competed = false, winner;
   const raced = instrument(db, async ({ sql, phase }) => {
-    if (!competed && phase === "before" && sql.startsWith("INSERT INTO notification_pending_cache")) {
+    if (!competed && phase === "before" && sql.startsWith("INSERT INTO notification_pending_windows")) {
       competed = true; await pending("writecas"); winner = await cache("writecas");
     }
   });

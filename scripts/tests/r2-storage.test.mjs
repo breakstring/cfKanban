@@ -47,6 +47,7 @@ function upgradePlanInput(overrides = {}) {
         deployment_id: "66666666-6666-4666-8666-666666666666",
         version_id: "77777777-7777-4777-8777-777777777777",
         bindings: upgradeBindingReadback(),
+        worker_limits: null,
       },
       d1: {
         name: "cfkanban-d1",
@@ -295,7 +296,7 @@ test("postdeploy readback journals attachment proof only after binding, bucket, 
     ? { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", versions: [{ version_id: versionId, percentage: 100 }], created_on: "2026-09-19T00:00:00Z" }
     : { id: versionId, resources: { bindings: [...upgradeBindingReadback(), ...(validBinding ? [{ type: "r2_bucket", name: "ATTACHMENTS", bucket_name: bucketName }] : [])] } }) });
   const cloud = mockCloudflare({ present: true, initialMarker: marker });
-  const fetchImpl = (url, options) => new URL(url).pathname.endsWith("/schedules") ? Response.json({ success: true, result: { schedules: [{ cron: "17 * * * *" }] } }) : cloud.fetchImpl(url, options);
+  const fetchImpl = (url, options) => new URL(url).pathname.endsWith("/environments/production") ? Response.json({ success: true, result: { script: { limits: null } } }) : new URL(url).pathname.endsWith("/schedules") ? Response.json({ success: true, result: { schedules: [{ cron: "17 * * * *" }] } }) : cloud.fetchImpl(url, options);
   const action = { ...input, configPath, action: "worker_deployment_readback", wranglerExecutable: "/fixture/wrangler", runner, fetchImpl };
   await assert.rejects(executeWranglerAction(action), { code: "UPGRADE_BINDING_DRIFT" });
   const failed = await assertJournalAuthorization(input);

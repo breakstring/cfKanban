@@ -219,6 +219,45 @@ test("private state failures, symlinks and permission drift redact paths and und
   assert.equal(result.error.code, "STATE_SYMLINK_REJECTED");
 });
 
+test("discovery failure preserves rate-limit cooldown but never authorizes another request", async t => {
+  const f = await createMcpStateFixture(t);
+  for (const response of [
+    () => Response.json(f.discovery, { status: 429, headers: { "retry-after": "120" } }),
+    () => new Response('{malformed', { status: 429, headers: { "content-type": "application/json", "retry-after": "120" } }),
+    () => new Response('<html>rate limit</html>', { status: 429, headers: { "retry-after": "120" } }),
+  ]) {
+    let requests = 0;
+    const facade = createMcpFacade({ ...f, fetchImpl: async (url, options) => {
+      requests++;
+      assert.equal(url.pathname, "/.well-known/cfkanban-instance.json");
+      assert.equal(new Headers(options.headers).get("authorization"), null);
+      return response();
+    } });
+    const result = await facade.readSearchStatus({ instance_id: f.instanceId });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 429);
+    assert.equal(result.error.retry_after_seconds, 120);
+    assert.equal(requests, 1);
+    assert.equal(result.data, undefined);
+  }
+});
+
+test("redirects and malformed successful discovery never become trusted via error normalization", async t => {
+  const f = await createMcpStateFixture(t);
+  for (const response of [
+    () => new Response(null, { status: 302, headers: { location: "https://untrusted.invalid", "retry-after": "1" } }),
+    () => new Response('{malformed', { headers: { "content-type": "application/json" } }),
+    () => Response.json({ ...f.discovery, instance_id: randomUUID() }),
+  ]) {
+    let requests = 0;
+    const facade = createMcpFacade({ ...f, fetchImpl: async (_url, options) => { requests++; assert.equal(options.redirect, "manual"); assert.equal(new Headers(options.headers).get("authorization"), null); return response(); } });
+    const result = await facade.readSearchStatus({ instance_id: f.instanceId });
+    assert.equal(result.ok, false);
+    assert.equal(result.data, undefined);
+    assert.equal(requests, 1);
+  }
+});
+
 test("Host binding checks authenticated snapshot identity and actual Issue Project before writing", async t => {
   const f = await createMcpStateFixture(t);
   let credential = f.credential;

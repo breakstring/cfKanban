@@ -50,7 +50,7 @@ function fixture(query = '?view=list', otherProject = projectId) {
     assert.equal(init.method, 'GET', 'loading fixtures must stay read only');
     const url = new URL(path, 'https://isolated.fixture.invalid');
     calls.push(url);
-    const intercepted = await response.intercept?.(url);
+    const intercepted = await response.intercept?.(url, init);
     if (intercepted) return intercepted;
     if (url.pathname.endsWith('/statuses')) return Response.json({ items: keys.map(key => ({ key, display_name: key })), next_cursor: null });
     if (url.pathname.endsWith('/counts')) return Response.json({ counts: Object.fromEntries(keys.map(key => [key, key === 'done' ? 2 : 0])) });
@@ -130,6 +130,58 @@ test('explicit status and restored expansion win over defaults; search keeps oth
   const next = fixture('?view=list', '44444444-4444-4444-8444-444444444444'); await flush();
   assert.deepEqual([...next.vm.expandedGroups], ['backlog']);
   assert.ok(next.pages().every(url => url.pathname.includes('44444444-4444-4444-8444-444444444444')));
+});
+
+test('concurrent count refreshes share one request and coalesce into one final read', async () => {
+  const f = fixture(); await flush();
+  const countReads = () => f.calls.filter(url => url.pathname.endsWith('/counts')).length;
+  const before = countReads();
+  const pending = [];
+  f.response.intercept = url => url.pathname.endsWith('/counts') ? new Promise(resolve => pending.push(resolve)) : null;
+  const first = f.vm.loadCounts(); await flush();
+  const refreshes = Array.from({ length: 10 }, () => f.vm.loadCounts());
+  assert.equal(countReads(), before + 1);
+  pending.shift()(Response.json({ counts: { done: 3 } })); await flush();
+  assert.equal(countReads(), before + 2);
+  pending.shift()(Response.json({ counts: { done: 13 } }));
+  await Promise.all([first, ...refreshes]);
+  assert.equal(countReads(), before + 2);
+  assert.equal(f.vm.counts.counts.done, 13);
+  assert.equal(f.vm.countsLoading, false);
+});
+
+test('count invalidation cancels old reads, drops queued refreshes and ignores late results', async () => {
+  const f = fixture(); await flush();
+  const pending = [];
+  f.response.intercept = (url, init) => url.pathname.endsWith('/counts') ? new Promise(resolve => pending.push({ url, signal: init.signal, resolve })) : null;
+  const old = f.vm.loadCounts(); await flush();
+  void f.vm.loadCounts();
+  f.vm.search = 'new filter';
+  const reload = f.vm.load(); await flush();
+  assert.equal(pending.length, 2);
+  assert.equal(pending[0].signal.aborted, true);
+  assert.equal(pending[1].url.searchParams.get('q'), 'new filter');
+  pending[1].resolve(Response.json({ counts: { done: 5 } })); await reload; await flush();
+  pending[0].resolve(Response.json({ counts: { done: 99 } })); await old; await flush();
+  assert.equal(pending.length, 2);
+  assert.equal(f.vm.counts.counts.done, 5);
+});
+
+test('failed count reads stop and expose an error until an explicit new refresh', async () => {
+  const f = fixture(); await flush();
+  let reads = 0;
+  f.response.intercept = url => {
+    if (!url.pathname.endsWith('/counts')) return null;
+    reads++;
+    return new Response('', { status: 503 });
+  };
+  await f.vm.loadCounts(); await flush();
+  assert.equal(reads, 1);
+  assert.equal(f.vm.counts, null);
+  assert.ok(f.vm.countsError);
+  assert.equal(f.vm.countsLoading, false);
+  await f.vm.loadCounts();
+  assert.equal(reads, 2);
 });
 
 test('filter changes clear each cursor, preserve chosen expansion, and ignore late old pages', async () => {

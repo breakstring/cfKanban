@@ -8,14 +8,44 @@ import type { WriteResult } from "../types";
 interface UsageMetric {
   key: string;
   value: number | null;
-  unit: "bytes" | "count";
+  unit: "bytes" | "count" | "microseconds";
+  scope?: "instance" | "account";
   period_start: string | null;
   period_end: string | null;
   observed_at: string | null;
 }
+interface UsageBilling {
+  plan: "free" | "paid" | "unknown";
+  cycle_day: number | null;
+  period_start: string | null;
+  period_end: string | null;
+  account_totals_enabled: boolean;
+  r2_standard_only_scope?: "unknown" | "instance" | "account";
+  warning_percent: number;
+  allowances_shared: true;
+  analytics_not_invoice: true;
+}
+interface UsageAlert {
+  metric_key: string;
+  scope: "instance" | "account";
+  level: "warning" | "reached";
+  value: number;
+  allowance: number;
+  percent: number;
+  period_start: string;
+  period_end: string;
+}
 interface Usage {
   generated_at: string;
   attachments: { enabled: boolean; reserved_bytes: number; limit_bytes: number | null; limit_configured: boolean; settings_version: number };
+  public_access?: {
+    status: "not_configured" | "configured" | "invalid";
+    hostname: string | null;
+    mode: "custom_domain" | null;
+    waf_profile: "disabled" | "anonymous-api-filter" | null;
+    verified_at: string | null;
+    live_verified: false;
+  };
   cloudflare: {
     status: "not_configured" | "pending" | "fresh" | "stale" | "error";
     refreshing: boolean;
@@ -23,6 +53,8 @@ interface Usage {
     attempted_at: string | null;
     error: string | null;
     metrics: UsageMetric[];
+    billing?: UsageBilling;
+    alerts?: UsageAlert[];
   };
 }
 interface AttachmentSettings { limit_bytes: number | null; configured: boolean; version: number; reserved_bytes: number }
@@ -84,14 +116,41 @@ let controller: AbortController | null = null;
 let generation = 0;
 let disposed = false;
 function ui(en: string, zh: string): string { return locale.value === "zh-CN" ? zh : en; }
-const metricNames = computed(() => ({
+const baseMetricKeys = ["d1_storage_bytes", "d1_rows_read", "d1_rows_written", "r2_storage_bytes", "r2_objects", "r2_operations"];
+const metricNames = computed<Record<string, string>>(() => ({
   d1_storage_bytes: ui("D1 storage", "D1 存储容量"),
   d1_rows_read: ui("D1 rows read today", "D1 当日读取行数"),
   d1_rows_written: ui("D1 rows written today", "D1 当日写入行数"),
   r2_storage_bytes: ui("R2 storage", "R2 存储容量"),
   r2_objects: ui("R2 objects", "R2 对象数"),
   r2_operations: ui("R2 operations today", "R2 当日操作量"),
+  workers_requests: ui("Workers requests", "Workers 请求量"),
+  workers_cpu_microseconds: ui("Workers cumulative CPU", "Workers 累计 CPU"),
+  r2_class_a_operations: ui("R2 Class A operations", "R2 Class A 操作量"),
+  r2_class_b_operations: ui("R2 Class B operations", "R2 Class B 操作量"),
+  r2_unclassified_operations: ui("R2 unclassified operations", "R2 未分类操作量"),
+  d1_billing_rows_read: ui("D1 rows read in billing period", "D1 账单周期读取行数"),
+  d1_billing_rows_written: ui("D1 rows written in billing period", "D1 账单周期写入行数"),
 }));
+const metricGroups = computed(() => {
+  const values = usage.value?.cloudflare.metrics ?? [];
+  return (["instance", "account"] as const).map(scope => {
+    const scoped = values.filter(metric => (metric.scope ?? "instance") === scope);
+    const keys = [...new Set([...(scope === "instance" ? baseMetricKeys : []), ...scoped.map(metric => metric.key)])];
+    return { scope, label: scope === "instance" ? ui("Instance usage", "本实例用量") : ui("Account totals", "账户总量"),
+      metrics: keys.map(key => ({ key, label: metricNames.value[key] ?? key, metric: scoped.find(metric => metric.key === key) })) };
+  }).filter(group => group.scope === "instance" || group.metrics.length > 0 || usage.value?.cloudflare.billing?.account_totals_enabled);
+});
+const visibleAlerts = computed(() => !failed.value && usage.value?.cloudflare.status === "fresh" && !usage.value.cloudflare.refreshing
+  ? (usage.value.cloudflare.alerts ?? []).slice(0, 16) : []);
+function metricValue(metric: UsageMetric | undefined): string {
+  if (metric?.value == null) return ui("Unknown", "未知");
+  return metric.unit === "bytes" ? bytes(metric.value) : `${number(metric.value)}${metric.unit === "microseconds" ? " µs" : ""}`;
+}
+function alertValue(alert: UsageAlert, value: number): string {
+  const metric = usage.value?.cloudflare.metrics.find(item => item.key === alert.metric_key && (item.scope ?? "instance") === alert.scope);
+  return metricValue({ key: alert.metric_key, value, unit: metric?.unit ?? "count", period_start: null, period_end: null, observed_at: null });
+}
 const statusText = computed(() => usage.value?.cloudflare.refreshing ? ui("Updating…", "更新中…") : ({
   not_configured: ui("Not configured", "未配置"),
   pending: ui("Waiting for first snapshot", "等待首次采集"),
@@ -180,20 +239,41 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
         <div class="usage-setting-actions"><UButton color="neutral" variant="outline" v-if="settingsError === 'conflict'" class="secondary-button" type="button" :disabled="saving" @click="reloadSettings">{{ ui('Refresh settings', '刷新设置') }}</UButton><UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="saving || settingsError === 'conflict'">{{ saving ? ui('Saving…', '正在保存…') : ui('Save', '保存') }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="saving" @click="editing = false">{{ ui('Cancel', '取消') }}</UButton></div>
       </form>
       <p class="muted-copy">{{ ui('Reserved until files are reclaimed, including uploads and deleted files. Not actual R2 storage or a billing cap.', '含上传中和已删除文件，回收后释放；不等于 R2 实际容量或账单上限。') }}</p>
-      <div class="usage-cloud-heading"><h3>{{ ui('Cloudflare instance statistics', 'Cloudflare 实例统计') }}</h3><span role="status">{{ statusText }}</span><span v-if="usage.cloudflare.collected_at && usage.cloudflare.status !== 'not_configured'">{{ ui('Updated', '更新于') }} {{ shortTime(usage.cloudflare.collected_at) }}</span></div>
+      <div class="usage-cloud-heading"><h3>{{ ui('Cloudflare statistics', 'Cloudflare 用量统计') }}</h3><span role="status">{{ statusText }}</span><span v-if="usage.cloudflare.collected_at && usage.cloudflare.status !== 'not_configured'">{{ ui('Updated', '更新于') }} {{ shortTime(usage.cloudflare.collected_at) }}</span></div>
       <p v-if="usage.cloudflare.status === 'not_configured'" class="muted-copy">{{ ui('Analytics credentials or resource settings are missing, or collection is disabled. Ask your deployment Agent to prepare a read-only analytics configuration.', '统计凭据或资源设置尚未配置，或采集已关闭。可请部署 Agent 准备只读统计配置方案。') }}</p>
       <template v-else>
         <p v-if="usage.cloudflare.refreshing" class="muted-copy" role="status">{{ ui('Collection is in progress. Refresh usage later to read the result.', '正在采集中，请稍后手动刷新用量查看结果。') }}</p>
         <p v-if="!usage.cloudflare.refreshing && (usage.cloudflare.status === 'stale' || usage.cloudflare.error)" class="warning-panel">{{ ui('Collection failed or the snapshot is older than fifteen minutes. Available values are retained; unknown values are not zero.', '采集失败或快照已超过十五分钟。保留已有数据；未知值不代表零。') }}</p>
-        <dl class="usage-metrics">
-          <div v-for="(label, key) in metricNames" :key="key">
-            <dt>{{ label }}</dt>
-            <dd v-for="metric in [usage.cloudflare.metrics.find(item => item.key === key)]" :key="key">
-              <strong>{{ metric?.value == null ? ui('Unknown', '未知') : metric.unit === 'bytes' ? bytes(metric.value) : number(metric.value) }}</strong>
-            </dd>
-          </div>
-        </dl>
+        <div v-if="usage.cloudflare.billing" class="usage-billing">
+          <p>{{ ui('Plan', '方案') }}: {{ usage.cloudflare.billing.plan === 'free' ? 'Free' : usage.cloudflare.billing.plan === 'paid' ? 'Paid' : ui('Unknown', '未知') }} · {{ ui('Warning threshold', '提醒阈值') }}: {{ number(usage.cloudflare.billing.warning_percent) }}%</p>
+          <p v-if="usage.cloudflare.billing.plan === 'free'" class="muted-copy">{{ ui('Workers and D1 allowances use the current UTC day. R2 operation allowances use the configured billing period.', 'Workers 与 D1 额度按 UTC 当日比较；R2 操作额度按配置的账单周期比较。') }}</p>
+          <p v-if="usage.cloudflare.billing.cycle_day === null" class="warning-panel">{{ ui('Billing cycle is not configured. Monthly usage and allowance comparisons remain unknown; ask your deployment Agent to prepare the configuration.', '尚未配置账单周期，月累计量与月额度比较保持未知。请部署 Agent 准备配置方案。') }}</p>
+          <p v-else class="muted-copy">{{ ui('Billing period starts on UTC day', '账单周期起始日（UTC）') }} {{ usage.cloudflare.billing.cycle_day }}{{ ui(' of each month, adjusted to the last day of shorter months.', ' 号，短月按月末调整。') }}</p>
+          <p v-if="usage.cloudflare.billing.plan === 'unknown'" class="muted-copy">{{ ui('Confirm the plan with your deployment Agent before comparing Workers or D1 allowances.', '请部署 Agent 核对方案后，再比较 Workers 或 D1 额度。') }}</p>
+          <p v-if="!usage.cloudflare.billing.r2_standard_only_scope || usage.cloudflare.billing.r2_standard_only_scope === 'unknown'" class="muted-copy">{{ ui('R2 free allowances apply only to Standard storage. Its usage scope is unconfirmed, so R2 allowance reminders are unavailable.', 'R2 免费额度仅适用于 Standard 存储；尚未确认其用量范围，因此暂不提供 R2 额度提醒。') }}</p>
+          <p v-else-if="usage.cloudflare.billing.r2_standard_only_scope === 'instance'" class="muted-copy">{{ ui('Standard-only R2 usage is confirmed for this instance. This does not confirm the account totals; R2 free allowances are compared only for this instance.', '仅已确认本实例的 R2 用量全部属于 Standard，不代表账户总量也满足此条件；R2 免费额度仅比较本实例用量。') }}</p>
+        </div>
+        <section v-if="visibleAlerts.length" class="usage-alerts" aria-labelledby="usage-alerts-heading">
+          <h4 id="usage-alerts-heading">{{ ui('Shared allowance reminders', '共享额度提醒') }}</h4>
+          <ul>
+            <li v-for="alert in visibleAlerts" :key="`${alert.scope}:${alert.metric_key}`" class="warning-panel">
+              <strong>{{ alert.scope === 'instance' ? ui('Instance contribution', '本实例贡献') : ui('Account total', '账户总量') }} · {{ metricNames[alert.metric_key] ?? alert.metric_key }}</strong><br />
+              {{ alertValue(alert, alert.value) }} / {{ alertValue(alert, alert.allowance) }} · {{ number(alert.percent) }}% · {{ alert.level === 'reached' ? ui('Shared allowance reached', '已达到共享额度') : ui('Warning threshold reached', '已达到提醒阈值') }}
+            </li>
+          </ul>
+        </section>
+        <section v-for="group in metricGroups" :key="group.scope" class="usage-metric-group" :aria-label="group.label">
+          <h4>{{ group.label }}</h4>
+          <p v-if="group.scope === 'account'" class="muted-copy">{{ ui('Optional account totals include other resources in the account and may be delayed.', '可选账户总量包含账户内其他资源，统计可能延迟。') }}</p>
+          <p v-if="!group.metrics.length" class="muted-copy">{{ ui('No account observation is available yet.', '暂未取得账户总量观测。') }}</p>
+          <dl v-else class="usage-metrics">
+            <div v-for="entry in group.metrics" :key="entry.key"><dt>{{ entry.label }}</dt><dd><strong>{{ metricValue(entry.metric) }}</strong></dd></div>
+          </dl>
+        </section>
+        <p v-if="usage.cloudflare.billing && !usage.cloudflare.billing.account_totals_enabled" class="muted-copy">{{ ui('Account totals are not enabled. Ask your deployment Agent to prepare an opt-in configuration if needed.', '未启用账户总量；如需查看，请部署 Agent 准备可选配置方案。') }}</p>
       </template>
+      <p class="muted-copy usage-note">{{ ui('Allowances are shared across the account. Instance figures show contribution, not remaining allowance. Analytics may be sampled or delayed and are not an invoice.', '额度由账户内资源共享，实例数据只表示贡献，不表示剩余额度。统计可能采样或延迟，不代表账单。') }}</p>
+      <p class="muted-copy usage-note"><a href="https://developers.cloudflare.com/billing/manage/budget-alerts/" target="_blank" rel="noopener noreferrer">{{ ui('Set up Cloudflare Budget Alerts', '配置 Cloudflare Budget Alerts') }}</a>{{ ui(' in Cloudflare for supported Pay-as-you-go accounts. Alerts notify you; they do not stop usage or cap charges.', '（适用于 Cloudflare 支持的按量付费账户）。告警仅作提醒，不会停止用量或封顶费用。') }}</p>
       <p class="muted-copy usage-note">{{ ui('Daily totals use UTC; storage uses the latest available observation and may be delayed.', '今日按 UTC 统计；容量为最近可用观测，可能延迟。') }}</p>
       <p class="muted-copy usage-note">{{ ui('Web and Skill share a 15-minute cache · 60-second cooldown · No background polling', '页面与技能共用 15 分钟缓存 · 冷却 60 秒 · 无后台轮询') }}</p>
       <details class="usage-details">
@@ -201,19 +281,35 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
         <p class="muted-copy">{{ ui('Budget read at', '预算读取于') }}: {{ time(usage.generated_at) }}</p>
         <template v-if="usage.cloudflare.status !== 'not_configured'">
           <p class="muted-copy">{{ ui('Last successful collection', '上次成功采集') }}: {{ time(usage.cloudflare.collected_at) }}<br />{{ ui('Last attempt', '上次尝试') }}: {{ time(usage.cloudflare.attempted_at) }}</p>
-          <dl class="usage-windows">
-            <div v-for="(label, key) in metricNames" :key="key">
-              <dt>{{ label }}</dt>
-              <dd v-for="metric in [usage.cloudflare.metrics.find(item => item.key === key)]" :key="key">
-                <span v-if="metric?.period_start && metric.period_end">{{ ui('Window', '统计窗口') }}: {{ time(metric.period_start) }} — {{ time(metric.period_end) }}<br /></span>
-                {{ ui('Observed', '观测时间') }}: {{ time(metric?.observed_at ?? null) }}
-              </dd>
-            </div>
-          </dl>
+          <p v-if="usage.cloudflare.billing" class="muted-copy">{{ ui('Billing period observation', '账单周期观测范围') }}: {{ time(usage.cloudflare.billing.period_start) }} — {{ time(usage.cloudflare.billing.period_end) }}</p>
+          <template v-for="group in metricGroups" :key="group.scope">
+            <h4>{{ group.label }}</h4>
+            <dl class="usage-windows">
+              <div v-for="entry in group.metrics" :key="entry.key">
+                <dt>{{ entry.label }}</dt>
+                <dd>
+                  {{ ui('Window', '统计窗口') }}: {{ time(entry.metric?.period_start ?? null) }} — {{ time(entry.metric?.period_end ?? null) }}<br />
+                  {{ ui('Observed', '观测时间') }}: {{ time(entry.metric?.observed_at ?? null) }}
+                </dd>
+              </div>
+            </dl>
+          </template>
         </template>
         <p class="muted-copy">{{ ui('Daily totals start at 00:00 UTC. Storage and object counts use the latest available observation within 24 hours, excluding the current hour.', '日累计量从 UTC 当日 00:00 起算。容量与对象数采用最近 24 小时内最近一次可用观测，不包含当前小时。') }}</p>
         <p class="muted-copy">{{ ui('Instance usage does not represent account-wide usage or remaining allowances. Project active quotas remain in each project’s Public Join settings.', '本实例用量不代表账户总用量或剩余额度。项目配额仍在各项目的公开加入设置中查看。') }}</p>
+        <p class="muted-copy">{{ ui('CPU is cumulative microseconds, not a percentile-based estimate. R2 Class A/B follows operation classification; unclassified requests remain separate. Observed storage is not GB-month billing.', 'CPU 为累计微秒值，不按分位数估算。R2 按操作分类展示 Class A/B，未分类请求单独保留。观测容量不等于 GB-month 计费用量。') }}</p>
       </details>
+      <section v-if="usage.public_access" class="usage-public-access" aria-labelledby="usage-public-access-heading">
+        <h3 id="usage-public-access-heading">{{ ui('Public access configuration', '公开访问配置') }}</h3>
+        <p v-if="usage.public_access.status === 'not_configured'" class="muted-copy">{{ ui('No custom-domain or WAF configuration snapshot is available.', '暂无自定义域名或 WAF 配置快照。') }}</p>
+        <p v-else-if="usage.public_access.status === 'invalid'" class="warning-panel">{{ ui('The saved public access configuration is invalid. Ask your deployment Agent to inspect and repair it.', '保存的公开访问配置无效，请部署 Agent 核对并修复。') }}</p>
+        <dl v-else class="usage-windows">
+          <div><dt>{{ ui('Custom domain', '自定义域名') }}</dt><dd>{{ usage.public_access.hostname }}</dd></div>
+          <div><dt>{{ ui('WAF profile', 'WAF 配置') }}</dt><dd>{{ usage.public_access.waf_profile === 'anonymous-api-filter' ? ui('Anonymous API filter', '匿名 API 过滤') : ui('Disabled', '未启用') }}</dd></div>
+          <div><dt>{{ ui('Deployment verification recorded at', '部署核对记录时间') }}</dt><dd>{{ time(usage.public_access.verified_at) }}</dd></div>
+        </dl>
+        <p class="muted-copy">{{ ui('This is the last deployment configuration, not a live protection check. The Owner can ask a deployment Agent to inspect the current state or prepare a change plan.', '此处仅显示最后部署配置，不代表实时防护状态。Owner 可请部署 Agent 核对当前状态或准备变更方案。') }}</p>
+      </section>
     </template>
   </section>
 </template>
@@ -231,6 +327,12 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
 .usage-panel meter.capacity-reached::-moz-meter-bar { background: var(--color-warning); }
 .usage-cloud-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
 .usage-cloud-heading span { color: var(--color-text-muted); font-size: 13px; }
+.usage-metric-group h4, .usage-alerts h4 { margin: 16px 0 8px; }
+.usage-alerts ul { display: grid; gap: 8px; list-style: none; padding: 0; }
+.usage-alerts li { margin: 0; }
+.usage-billing p { margin: 8px 0; }
+.usage-public-access { margin-top: 24px; }
+.usage-public-access dd { overflow-wrap: anywhere; }
 .usage-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 24px; margin: 8px 0 16px; }
 .usage-metrics > div { padding: 16px 0; border-bottom: 1px solid var(--color-border); }
 .usage-metrics dt { color: var(--color-text-muted); font-size: 13px; }

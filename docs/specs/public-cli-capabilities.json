@@ -1571,6 +1571,46 @@
         "kind": "api",
         "operation": "getReleaseUpdates"
       }
+    },
+    {
+      "command": "deploy worker cost-settings",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "runtime worker-cost-settings"
+      }
+    },
+    {
+      "command": "deploy public-access inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "public-access inspect"
+      }
+    },
+    {
+      "command": "deploy public-access plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "plan public-access"
+      }
+    },
+    {
+      "command": "deploy public-access apply",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "public-access-apply"
+      }
+    },
+    {
+      "command": "deploy public-access resume",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "public-access-apply"
+      }
     }
   ],
   "operations": [
@@ -4744,6 +4784,66 @@
           {
             "file": "packages/cli/src/workflows.mjs",
             "contains": "helper('migrations write-ledger-record-sql'"
+          }
+        ]
+      }
+    },
+    {
+      "command": "runtime worker-cost-settings",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy worker cost-settings"
+        ]
+      }
+    },
+    {
+      "command": "public-access inspect",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_authenticated_http",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy public-access inspect"
+        ]
+      }
+    },
+    {
+      "command": "plan public-access",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "read_only_control_plane_and_plan",
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy public-access plan"
+        ]
+      }
+    },
+    {
+      "command": "public-access apply",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "effect": "authorized_cloudflare_and_origin_writes",
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy public-access apply",
+          "deploy public-access resume"
+        ],
+        "note": "Both public lifecycle commands create and authorize the exact task-bound journal, then invoke the same resumable implementation.",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "return helper('public-access apply',input);"
           }
         ]
       }

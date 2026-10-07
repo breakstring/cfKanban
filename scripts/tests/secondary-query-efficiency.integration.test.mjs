@@ -140,7 +140,11 @@ test("已释放附件墓碑回访仍删除晚到对象并更新检查时间，�
     const value = Reflect.get(target, property, target);
     return typeof value === "function" ? value.bind(target) : value;
   } });
-  assert.deepEqual(await collectAttachmentGarbage({ ...env, DB: trackedDb, ATTACHMENTS: bucket }, now + 1), { checked: 1, deleted: 1 });
+  assert.deepEqual(await collectAttachmentGarbage({ ...env, DB: trackedDb, ATTACHMENTS: bucket }, now + 1), {
+    checked: 1, deleted: 1, budget_released: 0,
+    failures: { delete: 0, verify: 0, release: 0 },
+    backlog: { garbage: false, expired_pending_may_remain: false },
+  });
   assert.deepEqual(calls, ["delete", "head"]);
   assert.equal(await env.ATTACHMENTS.head(key), null);
   assert.equal(prepared.filter(sql => sql.includes("UPDATE attachment_storage") || sql.includes("SET budget_released_at")).length, 0);

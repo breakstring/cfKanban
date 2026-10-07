@@ -5,6 +5,7 @@ import path from "node:path";
 import { readReleaseVersion } from "./lib/release-version.mjs";
 import { writeDocsBuild } from "./lib/docs-build.mjs";
 import { validateDocs } from "./validate-docs.mjs";
+import { docsAssetHeaders } from "./lib/docs-asset-routing.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const version = await readReleaseVersion(root);
@@ -31,5 +32,6 @@ for (const locale of ["en", "zh-CN"]) {
   }
 }
 await writeFile(path.join(outputDirectory, "llms.txt"), `${index.join("\n")}\n`);
+await writeFile(path.join(root, "apps/web/dist/_headers"), await docsAssetHeaders(path.join(outputDirectory, "assets"), await readFile(path.join(root, "apps/web/public/_headers"), "utf8")));
 await writeDocsBuild({ outputDirectory, version });
 console.log(`Documentation for ${version} built with HTML, Markdown and a bilingual index.`);

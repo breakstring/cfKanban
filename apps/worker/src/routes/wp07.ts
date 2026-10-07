@@ -17,7 +17,7 @@ import {
   readJsonBody,
   validateJsonObject,
 } from "../kernel/http.ts";
-import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
+import { enforceAnonymousLoginRateLimit, enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { JsonValue, RequestContext, WorkerEnv } from "../kernel/types.ts";
 import {
@@ -231,6 +231,7 @@ export function registerWp07Routes(router: Router): Router {
       ), context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .post("/api/v1/web-authentication/options", async (request, env, context) => {
+      await enforceAnonymousLoginRateLimit(env, request);
       await body(request, [], []);
       return jsonResponse(await createWebAuthenticationOptions(
         env.DB,
@@ -239,6 +240,7 @@ export function registerWp07Routes(router: Router): Router {
       ), context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .post("/api/v1/web-authentication/verify", async (request, env, context) => {
+      await enforceAnonymousLoginRateLimit(env, request);
       const value = await body(request, ["challenge_id", "credential"], ["challenge_id", "credential"]);
       return exchangeResponse(await verifyWebAuthentication(
         env.DB,

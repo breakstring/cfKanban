@@ -1,4 +1,6 @@
 import { requireObservedPrincipalDisplayName } from "./principal-name.mjs";
+import { PUBLIC_ACCESS_NAMES, normalizePublicAccess } from "./public-access-config.mjs";
+import { ANONYMOUS_LOGIN_POLICY, EXPENSIVE_READ_POLICY, expensiveReadBindings, observedExpensiveReads, anonymousLoginBindings, observedAnonymousLogin, normalizeWorkerLimits, normalizeObservedWorkerLimits, plannedProtectionBindingDelta } from "./cost-protection-config.mjs";
 import { existingUsageConfig, normalizeUsageConfig, usageBindings, USAGE_SECRET, USAGE_VARS } from "./usage-config.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -157,12 +159,15 @@ export function currentBindingReadback(value, { d1DatabaseId, rateLimits: limits
       };
     }
     if (type === "plain_text") {
-      return { type, name, text: requireString(binding.text, "worker_binding.text", { max: USAGE_VARS.has(name) ? 128 : 32 }) };
+      return { type, name, text: requireString(binding.text, "worker_binding.text", { max: PUBLIC_ACCESS_NAMES.has(name) ? 256 : USAGE_VARS.has(name) ? 128 : 32 }) };
     }
     throw toolError("UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN", "Current Worker has an unsupported binding that the normal upgrade would remove or replace", { type, name });
   }));
   const expected = expectedBindings({ d1DatabaseId, rateLimits: limits, attachments, usage: null, usageSecret });
+  expected.push(...anonymousLoginBindings(observedAnonymousLogin(observed)));
+  expected.push(...expensiveReadBindings(observedExpensiveReads(observed)));
   expected.push(...observed.filter((item) => item.type === "plain_text" && USAGE_VARS.has(item.name)));
+  expected.push(...observed.filter((item) => item.type === "plain_text" && PUBLIC_ACCESS_NAMES.has(item.name)));
   expected.sort((a, b) => (a.type + ":" + a.name).localeCompare(b.type + ":" + b.name));
   if (JSON.stringify(observed) !== JSON.stringify(expected)) {
     throw toolError("UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN", "Current Worker bindings do not exactly match the frozen normal-upgrade target", {
@@ -281,6 +286,7 @@ export function createInstanceUpgradePlan({
   migrations = [],
   attachments = undefined,
   usageAnalytics = undefined,
+  workerLimits = undefined,
   allow_breaking_change = false,
   allow_unverified_current_source = false,
   restorePoint: restorePointInput,
@@ -304,8 +310,8 @@ export function createInstanceUpgradePlan({
   if (resources === null || typeof resources !== "object" || Array.isArray(resources)) {
     throw toolError("INVALID_UPGRADE_RESOURCES", "resources must identify the existing Worker and D1");
   }
-  if (resources.workers_dev !== true
-    || resources.custom_domain !== null
+  const publicAccess = normalizePublicAccess(resources.public_access, { instanceId: instance, accountId: cloudflare.account_id, workerName: resources.worker?.name });
+  if ((publicAccess?.domain_enabled ? resources.workers_dev !== false || resources.custom_domain !== publicAccess.hostname : resources.workers_dev !== true || resources.custom_domain !== null)
     || !Array.isArray(resources.routes)
     || resources.routes.length !== 0
     || resources.pages !== false) {
@@ -335,7 +341,7 @@ export function createInstanceUpgradePlan({
     throw toolError("R2_RESOURCE_DELTA_REJECTED", "Attachment storage cannot adopt, replace, or silently remove an existing bucket");
   }
   if (usageAnalytics === null) throw toolError("INVALID_USAGE_CONFIG", "Use an explicit enabled boolean to change usage configuration");
-  const usageTarget = { accountId: cloudflare.account_id, databaseId: d1DatabaseId, bucketName: priorStorage?.bucket_name ?? null };
+  const usageTarget = { accountId: cloudflare.account_id, databaseId: d1DatabaseId, workerName, bucketName: priorStorage?.bucket_name ?? null };
   const previousUsage = existingUsageConfig(resources.worker?.bindings, usageTarget);
   const usage = usageAnalytics === undefined ? previousUsage : normalizeUsageConfig(usageAnalytics, { ...usageTarget, bucketName: storage?.bucket_name ?? null });
   const usageSecret = resources.worker?.bindings?.some((item) => item.name === USAGE_SECRET && item.type === "secret_text" && item.value_redacted === true) === true;
@@ -350,7 +356,21 @@ export function createInstanceUpgradePlan({
     || (!observedCurrent && new URL(normalizedCurrent.service_bundle_source).origin !== new URL(normalizedTarget.service_bundle_source).origin)) {
     throw toolError("PUBLISHER_DISCONTINUITY", "Instance upgrade target changes the canonical publisher or artifact origin");
   }
-  if (normalizedCurrent.service_bundle_sha256 === normalizedTarget.service_bundle_sha256 && !storage?.create && JSON.stringify(usage) === JSON.stringify(previousUsage)) {
+  if (!Object.hasOwn(resources.worker ?? {}, "worker_limits") || resources.worker.worker_limits === undefined) throw toolError("WORKER_COST_READBACK_REQUIRED", "Run cfkanban deploy worker cost-settings --input-file worker-readback.json with the exact accountId, workerName, wranglerExecutable and Cloudflare auth context; copy worker_limits (including null) into resources.worker.worker_limits before planning");
+  const previousWorkerLimits = normalizeObservedWorkerLimits(resources.worker.worker_limits);
+  const cpuLimitRequest = workerLimits === undefined ? null : normalizeWorkerLimits(workerLimits);
+  const requestedWorkerLimits = cpuLimitRequest ? normalizeObservedWorkerLimits({ ...previousWorkerLimits, cpu_ms: cpuLimitRequest.cpu_ms }) : previousWorkerLimits;
+  const costProtection = {
+    anonymous_login: observedAnonymousLogin(resources.worker?.bindings) ?? (normalizedTarget.schema_version >= 24 ? ANONYMOUS_LOGIN_POLICY : null),
+    expensive_reads: observedExpensiveReads(resources.worker?.bindings) ?? (normalizedTarget.schema_version >= 24 ? EXPENSIVE_READ_POLICY : null),
+    worker_limits: requestedWorkerLimits,
+    previous_worker_limits: previousWorkerLimits,
+    cpu_limit_request: cpuLimitRequest,
+    purchase_or_upgrade_plan: false,
+  };
+  const protectionBindingDelta = plannedProtectionBindingDelta({ resources: { worker: { current_bindings: resources.worker?.bindings } }, cost_protection: costProtection, public_access: publicAccess });
+  if (workerLimits === null && previousWorkerLimits !== null) throw toolError("WORKER_CPU_LIMIT_REMOVAL_REJECTED", "Replace a CPU ceiling explicitly rather than silently removing it");
+  if (normalizedCurrent.service_bundle_sha256 === normalizedTarget.service_bundle_sha256 && !storage?.create && JSON.stringify(usage) === JSON.stringify(previousUsage) && JSON.stringify(requestedWorkerLimits) === JSON.stringify(previousWorkerLimits) && !protectionBindingDelta) {
     throw toolError("UPGRADE_TARGET_ALREADY_CURRENT", "Target Service bundle matches the current deployment");
   }
   if (!satisfiesSimpleRange(normalizedCurrent.service_api_version, normalizedTarget.compatibility.service_api)
@@ -385,8 +405,10 @@ export function createInstanceUpgradePlan({
     attachments: priorStorage,
     usageSecret,
   });
+  if (publicAccess === null && observedBindings.some(item => PUBLIC_ACCESS_NAMES.has(item.name))) throw toolError("PUBLIC_ACCESS_RECEIPT_REQUIRED", "Existing public-access bindings require the current ownership receipt; normal upgrade cannot silently reopen workers.dev");
   const accountId = requireString(cloudflare.account_id, "cloudflare.account_id", { max: 128 });
   const apiOrigin = requireHttpsOrigin(cloudflare.api_origin, "cloudflare.api_origin");
+  if (publicAccess && apiOrigin !== publicAccess.preferred_api_origin) throw toolError("PUBLIC_ACCESS_ORIGIN_DRIFT", "The upgrade origin must match the verified managed domain");
   const frozenTarget = {
     ...normalizedTarget,
     kind: "service_deployment_bundle",
@@ -401,6 +423,8 @@ export function createInstanceUpgradePlan({
   return {
     schema_version: 1,
     kind: "deployed_instance_upgrade",
+    ...(publicAccess ? { public_access: publicAccess } : {}),
+    cost_protection: costProtection,
     task_id: requireString(taskId, "task_id", { max: 256 }),
     operation_id: operation,
     instance_id: instance,
@@ -422,8 +446,8 @@ export function createInstanceUpgradePlan({
         current_bindings: observedBindings,
       },
       d1: { name: d1Name, database_id: d1DatabaseId, create: false },
-      workers_dev: true,
-      custom_domain: null,
+      workers_dev: publicAccess?.domain_enabled !== true,
+      custom_domain: publicAccess?.domain_enabled ? publicAccess.hostname : null,
       routes: [],
       pages: false,
       kv: false,
@@ -465,7 +489,7 @@ export function createInstanceUpgradePlan({
     requires_cloudflare_authorization: true,
     skill_update_included: false,
     resource_replacement_allowed: false,
-    binding_changes_allowed: storage?.create === true || JSON.stringify(usage) !== JSON.stringify(previousUsage),
+    binding_changes_allowed: storage?.create === true || JSON.stringify(usage) !== JSON.stringify(previousUsage) || protectionBindingDelta,
     cost_delta: storage?.create === true,
     ...(storage === null ? {} : { attachment_storage: {
       max_file_bytes: 10485760, max_active_per_issue: 20,

@@ -70,6 +70,9 @@ const counts = ref<IssueCounts | null>(null);
 const countsLoading = ref(false);
 const countsError = ref<unknown>(null);
 let countsRequestId = 0;
+let countsRefresh: Promise<void> | null = null;
+let countsDirty = false;
+let countsController: AbortController | null = null;
 const initialFilters = boardFilters(window.location.search);
 const ProjectIssueList = lazyPage(() => import("../components/ProjectIssueList.vue"));
 const viewMode = ref<"board" | "list">(initialFilters.view ?? "board");
@@ -298,19 +301,39 @@ function query(status: StatusKey, cursor?: string): string {
 
 function resetCounts(): void {
   countsRequestId += 1;
+  countsController?.abort();
+  countsController = null;
+  countsRefresh = null;
+  countsDirty = false;
   counts.value = null;
   countsLoading.value = false;
   countsError.value = null;
 }
 
-async function loadCounts(): Promise<void> {
+function loadCounts(): Promise<void> {
+  if (!projectIsActive()) return Promise.resolve();
+  countsDirty = true;
+  if (countsRefresh) return countsRefresh;
+  const refresh = Promise.resolve().then(async () => {
+    while (countsRefresh === refresh && countsDirty && projectIsActive()) {
+      countsDirty = false;
+      await fetchCounts();
+    }
+  }).finally(() => { if (countsRefresh === refresh) countsRefresh = null; });
+  countsRefresh = refresh;
+  return refresh;
+}
+
+async function fetchCounts(): Promise<void> {
   if (!projectIsActive()) return;
   const generation = projectionGeneration.capture();
   const requestId = ++countsRequestId;
+  const controller = new AbortController();
+  countsController = controller;
   countsLoading.value = true;
   countsError.value = null;
   try {
-    const result = await apiRequest<IssueCounts>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues/counts?${filterParams()}`);
+    const result = await apiRequest<IssueCounts>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}/issues/counts?${filterParams()}`, { signal: controller.signal });
     if (requestId !== countsRequestId || !projectionIsCurrent(generation)) return;
     counts.value = result;
   } catch (caught) {
@@ -319,13 +342,16 @@ async function loadCounts(): Promise<void> {
     countsError.value = caught;
     if (caught instanceof ApiProblem && [403, 404].includes(caught.status)) {
       try {
-        await apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}`);
+        await apiRequest<ContainerResource>(`/api/v1/workspaces/${encodeURIComponent(props.workspaceId)}/projects/${encodeURIComponent(props.projectId)}`, { signal: controller.signal });
       } catch (projectError) {
         if (requestId === countsRequestId && projectionIsCurrent(generation) && projectError instanceof ApiProblem && [403, 404].includes(projectError.status)) clearProjectProjection();
       }
     }
   } finally {
-    if (requestId === countsRequestId) countsLoading.value = false;
+    if (requestId === countsRequestId) {
+      countsLoading.value = false;
+      countsController = null;
+    }
   }
 }
 

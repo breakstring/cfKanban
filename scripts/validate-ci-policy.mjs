@@ -31,7 +31,8 @@ assert.equal(workerConfig.account_id, undefined, "source Worker config must not 
 assert.equal(workerConfig.routes, undefined, "source Worker config must not create routes");
 assert.equal(workerConfig.assets?.directory, "./apps/web/dist");
 assert.equal(workerConfig.assets?.binding, "ASSETS");
-assert.equal(workerConfig.assets?.not_found_handling, "single-page-application");
+assert.equal(workerConfig.assets?.not_found_handling, "none");
+assert.ok(workerConfig.assets?.run_worker_first?.includes("!/docs/assets/*"), "Public documentation assets must bypass Worker execution");
 for (const route of ["/api/*", "/healthz", "/openapi.json", "/invite", "/", "/app", "/app/*", "/.well-known/*"]) {
   assert.ok(workerConfig.assets?.run_worker_first?.includes(route), `dynamic route must run Worker first: ${route}`);
 }
@@ -41,11 +42,15 @@ assert.deepEqual(
     { name: "PRINCIPAL_RATE_LIMITER", limit: 120, period: 60 },
     { name: "INSTANCE_RATE_LIMITER", limit: 300, period: 60 },
     { name: "UNAUTHENTICATED_RATE_LIMITER", limit: 30, period: 60 },
+    { name: "ANONYMOUS_LOGIN_RATE_LIMITER", limit: 10, period: 60 },
+    { name: "EXPENSIVE_READ_RATE_LIMITER", limit: 10, period: 60 },
   ],
   "source Worker config must preserve the Frozen zero-parameter rate-limit profile",
 );
 
 const rateLimitRuntimeVars = {
+  EXPENSIVE_READ_RATE_LIMITER: ["RATE_LIMIT_EXPENSIVE_READ_LIMIT", "RATE_LIMIT_EXPENSIVE_READ_PERIOD_SECONDS"],
+  ANONYMOUS_LOGIN_RATE_LIMITER: ["RATE_LIMIT_ANONYMOUS_LOGIN_LIMIT", "RATE_LIMIT_ANONYMOUS_LOGIN_PERIOD_SECONDS"],
   INSTANCE_RATE_LIMITER: ["RATE_LIMIT_INSTANCE_LIMIT", "RATE_LIMIT_INSTANCE_PERIOD_SECONDS"],
   PRINCIPAL_RATE_LIMITER: ["RATE_LIMIT_PRINCIPAL_LIMIT", "RATE_LIMIT_PRINCIPAL_PERIOD_SECONDS"],
   UNAUTHENTICATED_RATE_LIMITER: [

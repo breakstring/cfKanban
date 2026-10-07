@@ -255,7 +255,7 @@ Web 根据自身 `GET /api/v1/web-session` 响应中的 `version` 与 `renewal: 
 
 ## Owner 用量与限额
 
-通过 `api request` 调用 `POST /api/v1/admin/usage/refresh`，与 Web 刷新使用同一 Owner-only 投影和服务端缓存。附件 `reserved_bytes` 包含上传中、就绪、软删除和未确认回收对象，是应用预留预算，不是 R2 计费容量。Cloudflare 数据可选且仅限本实例；明确展示 `not_configured`、`pending`、`error`、`stale` 和 null，不把未知改写为零，也不从实例推算账户剩余额度。日操作量采用 UTC 当日窗口；容量采用最近 24 小时最后观测桶，默认只展示一次简短更新时间；需要核对时再区分观测时间、采集时间和准确 UTC 区间。统计 Token/资源配置交由 cfkanban-deploy；附件容量仍由下节应用设置管理，凭据不得进入 API 请求体或 Issue。
+通过 `api request` 调用 `POST /api/v1/admin/usage/refresh`，与 Web 刷新使用同一 Owner-only 投影和服务端缓存。附件 `reserved_bytes` 包含上传中、就绪、软删除和未确认回收对象，是应用预留预算，不是 R2 计费容量。Cloudflare 数据可选，保留每项 instance/account 范围；账户聚合需要部署时明确开启。明确展示 `not_configured`、`pending`、`error`、`stale` 和 null，不把未知改写为零，不从实例推算账户剩余额度。日操作量采用 UTC；月周期指标需要已核对账期，否则保持未知。容量是最近 24 小时最后观测，不是 GB-month。Workers 请求/CPU、D1 行数和 R2 类别分别报告。`billing.allowances_shared` 与 `analytics_not_invoice` 始终为 true；alerts 是新鲜分析值对共享额度的贡献提醒，不是账单封顶。R2 免费比较需要核对 `r2_standard_only_scope`。`public_access` 是最后部署声明，`live_verified=false`；实时状态由部署 inspect 检查。默认只展示一次简短更新时间，需要时再报告准确窗口。统计 Token/资源、域名/WAF 和供应商预算提醒配置交由 cfkanban-deploy；附件容量仍由下节应用设置管理，凭据不得进入 API 请求体或 Issue。
 
 每次技能查询都调用与页面“刷新用量”相同的刷新入口。`{ "mode": "stale" }` 和 `{ "mode": "manual" }` 统一复用不足 15 分钟的成功快照，manual 不绕过缓存。缺少、过期、失败或中断的采集可重试，但共用实例级 60 秒尝试冷却。并发请求返回当前投影并以 `refreshing` 标记；不轮询。每次响应仍实时读取附件预留与设置。该派生缓存刷新不要求 Idempotency-Key，不写领域 Event/Audit。
 

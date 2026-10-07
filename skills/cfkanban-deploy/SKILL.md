@@ -7,6 +7,8 @@ description: Install or update cfKanban Skills, deploy or upgrade Cloudflare ins
 
 Use this Skill for the Cloudflare control plane and local Skill lifecycle. Read only the relevant workflow in [English](references/deployment-workflows.md) or [简体中文](references/deployment-workflows.zh-CN.md); choose one language. A local Skill update does not need the Cloudflare login or first-deployment workflow.
 
+For an explicitly requested optional public domain, WAF profile, or Worker CPU ceiling, read [Public access and cost protection](references/public-access-and-cost-protection.md) or [公网访问与成本保护](references/public-access-and-cost-protection.zh-CN.md). These settings never run as an implicit first-deployment step.
+
 Principal names (schema 8 and later) are unique across the Instance. Creation and rename trim outer whitespace and store NFKC-normalized text; uniqueness uses non-locale `toLowerCase()`. Both display text and comparison key must contain 1–128 Unicode code points. Allow Unicode letters, marks, numbers and `_`, `-`, `·`; reject internal whitespace, default-ignorable characters, other symbols and exact reserved keys `admin`, `administrator`, `owner`, `system`, `管理员`, `所有者`, `系统`. `PRINCIPAL_DISPLAY_NAME_CONFLICT` requires another user-chosen name; do not silently append a suffix. A display name never grants access, and all writes still use stable Principal IDs.
 
 ## Start with the maintenance goal
