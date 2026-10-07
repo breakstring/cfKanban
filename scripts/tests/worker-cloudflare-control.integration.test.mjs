@@ -18,10 +18,10 @@ const digest = value => createHash("sha256").update(value).digest("hex");
 let env, db, provider, router;
 function fakeProvider() {
   const first = randomUUID();
-  const state = { active: first, latest: first, deployment: randomUUID(), mutations: [], gets: [], requests: [], mode: "deploy", denied: false, foreignZone: false, wafMissing: false, oversized: false, code: "code-etag", secrets: {}, versions: new Map() };
+  const state = { active: first, latest: first, deployment: randomUUID(), deploymentPages: 1, mutations: [], gets: [], requests: [], mode: "deploy", denied: false, foreignZone: false, wafMissing: false, oversized: false, code: "code-etag", secrets: {}, versions: new Map() };
   const bindings = [{ name: "DB", type: "d1", id: target.database_id }, { name: "INSTANCE_RATE_LIMITER", type: "ratelimit", namespace_id: "1001", simple: { limit: 300, period: 60 } }, { name: "RATE_LIMIT_INSTANCE_LIMIT", type: "plain_text", text: "300" }, { name: "RATE_LIMIT_INSTANCE_PERIOD_SECONDS", type: "plain_text", text: "60" }, { name: "FOREIGN_SECRET", type: "secret_text" }, { name: "FOREIGN_VAR", type: "plain_text", text: "do not change" }, { name: "CFKANBAN_CONFIGURATION_TOKEN", type: "secret_text" }];
   state.versions.set(first, { bindings, compatibility_date: "2026-08-29", compatibility_flags: ["nodejs_compat"], limits: { cpu_ms: 10 }, observability: { enabled: false }, cache_options: { enabled: false, cross_version_cache: false }, annotations: { "workers/message": "Fixture version", "workers/triggered_by": "upload" }, exports_reconciliation: { created: [], deleted: [] } });
-  const response = (result, status = 200) => new Response(JSON.stringify({ success: status === 200, result }), { status });
+  const response = (result, status = 200, resultInfo) => new Response(JSON.stringify({ success: status === 200, result, ...(resultInfo ? { result_info: resultInfo } : {}) }), { status });
   const publish = settings => { const id = randomUUID(); state.versions.set(id, structuredClone(settings)); state.latest = id; if (state.mode !== "pending") { state.active = id; state.deployment = randomUUID(); } return id; };
   state.publish = publish;
   state.fetch = async (url, init) => {
@@ -43,12 +43,17 @@ function fakeProvider() {
       publish(patch); if (state.mode === "network_after") throw new Error("Synthetic settings response lost after publication"); return response(patch);
     }
     state.gets.push(path);
-    if (path.endsWith("/deployments")) return response({ deployments: [{ id: state.deployment, versions: [{ version_id: state.active, percentage: 100 }] }] });
+    if (path.endsWith("/deployments")) return response({ deployments: [{ id: state.deployment, versions: [{ version_id: state.active, percentage: 100 }] }] }, 200, { page: 1, per_page: 10, total_pages: state.deploymentPages });
     if (path.endsWith("/versions")) return response({ items: [{ id: state.latest }] });
-    if (/\/versions\/[^/]+$/.test(path)) return response({ resources: { bindings: state.versions.get(path.split("/").at(-1)).bindings, script: { etag: state.code } } });
+    if (/\/versions\/[^/]+$/.test(path)) return response({ resources: { bindings: state.versions.get(path.split("/").at(-1)).bindings, script: { etag: state.code }, script_runtime: { compatibility_flags: ["global_fetch_strictly_public"] } } });
     if (path.endsWith("/settings")) return response(state.versions.get(state.latest));
-    if (path === `/zones/${zoneId}`) return response({ id: zoneId, name: "example.test", account: { id: state.foreignZone ? "foreign-account" : target.account_id } });
-    if (path.endsWith("/entrypoint")) return state.wafMissing ? response(null, 404) : response({ rules: [{ id: "foreign-rule", ref: "foreign", enabled: true, action: "skip", expression: "true" }] });
+    if (path === `/zones/${zoneId}`) return response({ id: zoneId, name: "example.test", status: "active", account: { id: state.foreignZone ? "foreign-account" : target.account_id } });
+    if (path.endsWith("/firewall/access_rules/rules")) return response([]);
+    const wafRuleset = { id: "fixture-entrypoint", kind: "zone", phase: "http_request_firewall_custom", rules: [{ id: "foreign-rule", ref: "foreign", enabled: true, action: "skip", expression: "true" }] };
+    if (path === `/zones/${zoneId}/rulesets`) return response(state.wafMissing ? [] : [{ id: wafRuleset.id, kind: wafRuleset.kind, phase: wafRuleset.phase }]);
+    if (path === `/zones/${zoneId}/rulesets/fixture-entrypoint`) return response(wafRuleset);
+    if (path.endsWith("/subdomain")) return response({ enabled: false, previews_enabled: false });
+    if (path.endsWith("/entrypoint")) return state.wafMissing ? response(null, 404) : response(wafRuleset);
     if (path.endsWith("/available_alerts")) return response({ billing: [{ type: "billing_usage_alert", display_name: "Usage alert", description: "Provider documentation" }] });
     if (path.endsWith("/policies")) return response([{ id: "policy1", name: "A policy", alert_type: "billing_usage_alert", enabled: true, mechanisms: { email: [{ id: "fixture@example.test" }] }, filters: { product: ["r2"], limit: ["100"] } }]);
     if (path.endsWith("/billable-usage/info")) return response({ subscriptions: [] });
@@ -103,12 +108,32 @@ test("供应商预检 HTTP403 定位四项读取，取消错误正文且不泄�
     provider.rejectRequest = ({ path, method }) => method === "GET" && rejects(path);
     const denied = await save("connection", nextToken);
     assert.equal(denied.status, 403); assert.equal(denied.data.code, "FORBIDDEN"); assert.equal(denied.data.source, "cloudflare_platform");
-    assert.deepEqual(denied.data.details, { component: "cloudflare-control", failure_class: "permission_denied", provider_operation: operation, provider_method: "GET", provider_status: 403 });
+    assert.deepEqual(denied.data.details, { component: "cloudflare-control", failure_class: "permission_denied", provider_operation: operation, provider_method: "GET", provider_status: 403, write_state: "not_dispatched" });
     assert.equal(cancelled, 1);
     for (const forbidden of [nextToken, target.account_id, target.worker_name, "provider-secret", "provider-header", "provider-stack", "provider.example.test"]) assert.ok(!JSON.stringify(denied.data).includes(forbidden));
     assert.equal((await db.prepare("SELECT count(*) AS n FROM cloudflare_control_operations").first()).n, 0); assert.equal((await current()).version, 1);
   }
   assert.equal(provider.mutations.length, 0);
+});
+test("部署历史有十页时仅取当前页，保留active/latest与固定目标校验后自保存", async () => {
+  provider.deploymentPages = 10;
+  const saved = await save("connection", nextToken, { overrideEnv: { ...env, CFKANBAN_API_TOKEN: nextToken } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.data)); assert.equal(saved.data.resource.status, "verified");
+  assert.equal(provider.mutations.length, 1); assert.equal(provider.mutations[0].name, "CFKANBAN_API_TOKEN");
+  assert.equal(provider.requests.filter(call => call.path.endsWith("/deployments")).length, 3);
+  assert.equal(provider.requests.length, 13);
+});
+for (const fault of ["http_503", "transport", "oversized"]) test(`首次保存预检${fault}明确本次未dispatch，不登记intent或写Secret`, async () => {
+  if (fault === "http_503") { provider.failureStatus = 503; provider.rejectRequest = ({ path }) => path.endsWith("/deployments"); }
+  if (fault === "transport") { router = new Router(); registerCloudflareControlRoutes(router, { fetch: async () => { throw new Error(`provider-secret ${nextToken}`); } }); }
+  if (fault === "oversized") provider.oversized = true;
+  const key = randomUUID(), result = await save("connection", nextToken, { key });
+  assert.equal(result.status, 503, JSON.stringify(result.data)); assert.equal(result.data.source, "cloudflare_platform");
+  assert.equal(result.data.details.component, "cloudflare-control"); assert.equal(result.data.details.write_state, "not_dispatched");
+  if (fault === "http_503") { assert.equal(result.data.details.provider_operation, "deployments"); assert.equal(result.data.details.provider_status, 503); }
+  assert.ok(!JSON.stringify(result.data).includes(nextToken)); assert.ok(!JSON.stringify(result.data).includes("provider-secret"));
+  assert.equal(provider.mutations.length, 0); assert.equal((await db.prepare("SELECT count(*) AS n FROM cloudflare_control_operations").first()).n, 0);
+  assert.equal((await current()).version, 1); assert.equal((await request(`${base}/secret-operations/${key}`)).status, 404);
 });
 for (const [status, expected, failure] of [[400, "failed", "unavailable"], [403, "failed", "permission_denied"], [404, "failed", "unavailable"], [408, "unknown", "unavailable"], [429, "unknown", "unavailable"], [503, "unknown", "unavailable"]]) test(`供应商秘密写 HTTP${status} 保持 ${expected} 及原请求不重放语义`, async () => {
   const body = { kind: "connection", token: nextToken, expected_version: 1 }, key = randomUUID();
@@ -254,6 +279,14 @@ test("统一 binding 准确 presence，旧用途投影兼容；所有能力优�
   assert.deepEqual(verified.data.resource.capabilities, { configuration: "verified", notifications: "permission_denied", waf: "missing", billing: "verified", analytics: "permission_denied" });
   assert.equal(provider.mutations.length, 0);
 });
+test("配置读取故障独立返回，不阻断统计、通知、账务及WAF能力结果", async () => {
+  await request(`${base}/settings`, { method: "PATCH", body: { zone_id: zoneId, expected_version: 1 } });
+  provider.failureStatus = 503; provider.rejectRequest = ({ path }) => path.endsWith("/deployments");
+  const verified = await request(`${base}/verify`, { method: "POST", body: { include_optional: true }, overrideEnv: { ...env, CFKANBAN_API_TOKEN: nextToken } });
+  assert.equal(verified.status, 200, JSON.stringify(verified.data));
+  assert.deepEqual(verified.data.resource.capabilities, { configuration: "unavailable", analytics: "verified", notifications: "verified", waf: "verified", billing: "verified" });
+  assert.equal(provider.mutations.length, 0);
+});
 test("旧 analytics operation 按精确旧 Secret hash 读回，统一值不能冒充旧绑定", async () => {
   const unified = { ...env, CFKANBAN_API_TOKEN: configurationToken };
   const saved = await save("analytics", nextToken, { overrideEnv: unified }); assert.equal(saved.status, 200, JSON.stringify(saved.data));
@@ -262,11 +295,12 @@ test("旧 analytics operation 按精确旧 Secret hash 读回，统一值不能�
   const verified = await request(`${base}/operations/${saved.data.resource.operation_id}/verify`, { method: "POST", body: {}, overrideEnv: { ...unified, USAGE_ANALYTICS_TOKEN: nextToken } });
   assert.equal(verified.data.resource.status, "verified"); assert.equal(provider.mutations.length, 1);
 });
-test("旧 control 候选 WAF 探测显式使用候选值，不被统一 Token 的权限遮蔽", async () => {
+test("旧 control 保存只核对配置写者，候选可选能力失败不阻塞Secret写入", async () => {
   await request(`${base}/settings`, { method: "PATCH", body: { zone_id: zoneId, expected_version: 1 } });
   provider.rejectRequest = ({ path, authorization }) => path.endsWith("/policies") || path.endsWith("/billable-usage/info") || authorization === `Bearer ${nextToken}`;
   const saved = await save("control", nextToken, { overrideEnv: { ...env, CFKANBAN_API_TOKEN: configurationToken } });
-  assert.equal(saved.status, 403, JSON.stringify(saved.data)); assert.equal(provider.mutations.length, 0);
+  assert.equal(saved.status, 200, JSON.stringify(saved.data)); assert.equal(provider.mutations.length, 1); assert.equal(provider.mutations[0].name, "CFKANBAN_CONTROL_TOKEN");
+  assert.ok(provider.requests.every(call => call.path.startsWith(`/accounts/${target.account_id}/workers/scripts/${target.worker_name}/`)));
 });
 test("统一 connection 的并发/unknown 重放保持锁，CAS、候选和基线漂移拒绝", async () => {
   provider.mode = "network_after"; const body = { kind: "connection", token: nextToken, expected_version: 1 }, key = randomUUID();
@@ -358,11 +392,20 @@ test("新Secret值即使可见，代码或外国绑定漂移仍保留unknown锁�
   provider.versions.get(provider.active).bindings.find(binding => binding.name === "FOREIGN_VAR").text = "unexpected change";
   const readback = await request(`${base}/operations/${saved.data.resource.operation_id}/verify`, { method: "POST", body: {}, overrideEnv: { ...env, CFKANBAN_CONTROL_TOKEN: nextToken } }); assert.equal(readback.data.resource.status, "unknown"); assert.equal(readback.data.resource.failure_class, "cloudflare_foreign_configuration_drift"); assert.ok((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id); assert.equal(provider.mutations.length, 1);
 });
-test("已知无效的新功能Token在保存前拒绝，不能覆盖原有有效秘密", async () => {
+for (const kind of ["control", "analytics"]) test(`旧${kind}用途先保存，候选缺权限仅影响后续该项能力检查`, async () => {
   provider.rejectedToken = nextToken;
-  for (const kind of ["control", "analytics"]) { const result = await save(kind, nextToken); assert.equal(result.status, 403, JSON.stringify(result.data)); assert.equal(result.data.details.failure_class, "permission_denied"); }
-  assert.equal(provider.mutations.length, 0); assert.equal((await db.prepare("SELECT count(*) AS n FROM cloudflare_control_operations").first()).n, 0); assert.equal((await current()).version, 1);
-  provider.rejectedToken = null; const saved = await save("analytics", nextToken); assert.equal(saved.status, 200, JSON.stringify(saved.data)); assert.equal(provider.mutations.length, 1); assert.equal(provider.mutations[0].name, "USAGE_ANALYTICS_TOKEN");
+  const saved = await save(kind, nextToken);
+  assert.equal(saved.status, 200, JSON.stringify(saved.data)); assert.equal(saved.data.resource.status, "unknown"); assert.equal(provider.mutations.length, 1);
+  assert.equal(provider.mutations[0].name, kind === "control" ? "CFKANBAN_CONTROL_TOKEN" : "USAGE_ANALYTICS_TOKEN");
+  assert.ok(provider.requests.every(call => call.path.startsWith(`/accounts/${target.account_id}/workers/scripts/${target.worker_name}/`)));
+  const configured = { ...env, [kind === "control" ? "CFKANBAN_CONTROL_TOKEN" : "USAGE_ANALYTICS_TOKEN"]: nextToken };
+  const confirmed = await request(`${base}/operations/${saved.data.resource.operation_id}/verify`, { method: "POST", body: {}, overrideEnv: configured });
+  assert.equal(confirmed.data.resource.status, "verified");
+  const verified = await request(`${base}/verify`, { method: "POST", body: { include_optional: true }, overrideEnv: configured });
+  assert.equal(verified.status, 200, JSON.stringify(verified.data)); assert.equal(verified.data.resource.capabilities.configuration, "verified");
+  if (kind === "control") { assert.equal(verified.data.resource.capabilities.notifications, "permission_denied"); assert.equal(verified.data.resource.capabilities.billing, "permission_denied"); }
+  else { assert.equal(verified.data.resource.capabilities.analytics, "permission_denied"); assert.equal(verified.data.resource.capabilities.notifications, "verified"); }
+  assert.equal(provider.mutations.length, 1);
 });
 test("旧部署未显式设置analytics flag时，局部修改不关闭既有有效采集", async () => {
   provider.versions.get(provider.active).bindings.push({ name: "USAGE_ACCOUNT_ID", type: "plain_text", text: target.account_id }, { name: "USAGE_D1_DATABASE_ID", type: "plain_text", text: target.database_id }, { name: "USAGE_ANALYTICS_TOKEN", type: "secret_text" });

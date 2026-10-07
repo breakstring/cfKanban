@@ -23,20 +23,30 @@
 
 请求失败可能发生在远端已提交之后。保留原计划、journal、幂等键和 ownership reference；`resume` 先读实际映射/rule/origin 再继续，并在进一步写入前重新认证 Owner。不能新建操作绕过不确定结果。每调用独立的私有进程锁阻止并发执行；resume 只回收 PID 已证实停止的唯一锁文件，包含崩溃留下的空文件或部分写入文件，存活或无法确认的进程继续阻断。工具不返回 token 或一次性凭据。
 
+## 登记已有 WAF 目标（schema 27+）
+
+WAF 管理与创建自定义域名独立。先核对准确 Owner，读取 `GET /api/v1/admin/cloudflare/waf`。已存 Token 能读取 Worker Custom Domains 时，通过 `POST /waf/target-binding` 登记当前 preferred hostname；Worker Editor 本身不证明该读取权限可用。否则运行 `cfkanban deploy waf-target inspect` 和 `deploy waf-target plan`（Skill helper 为 `waf-target inspect`、`plan waf-target`），提供 `instanceId`、`receiptPath`、`zoneId`、`hostname`、绝对路径 `wranglerExecutable`，以及已有 `cloudflareProfile` / `contextDirectory` 二选一；计划另需 `taskId`，可提供 `operationId`。
+
+此流程只读核对准确账户、Worker、D1、域名映射、当前 preferred origin、Owner 与控制版本，不创建域名或 WAF 规则。展示冻结登记计划。`deploy waf-target apply` / `resume` 与 public-access 一样使用匹配的 `instanceId`、`operationId`、`taskId`、`plan` 和准确 `authorization` 摘要；Skill 先创建/授权 journal，再调用 `waf-target apply`。Apply 只向准确 D1 写非秘密目标/归属元数据，在同一原子事务核对实时 Owner Credential、origin、目标、控制版本和未锁定状态。Cloudflare 认证留在本机，不将临时凭据提交 Service。
+
+旧本机 public-access WAF 回执只有在准确实时 rule ID、唯一 Zone entrypoint、ref 及完整受支持规则体均一致时才可迁移。手工规则或静态 ref 匹配不授权接管。后续 Service 操作用瞬时签名 challenge 核对固定 preferred origin 是否由当前 Worker 服务；此内部证明不能通过普通 API/CLI 输入调用，也不传递 Token。
+
 ## 可选 Free WAF profile
 
-域名启用完成后，用独立 `mode: "waf-enable"` 计划开启。当前 `anonymous-api-filter` 消耗一个 custom-rule 槽位，只过滤准确 hostname 上已知私有 API 中同时缺少 Authorization header 和 session cookie 名的请求。公开登录、discovery、加入流程保持可用。伪造 header/cookie 存在性能够越过这层负面过滤，Worker 仍须认证全部私有请求。它减少匿名无效流量，不保证防住 DDoS，也不是请求或账单封顶。
+schema 27+ 的 Web、CLI 与 Skill 使用同一 Owner Service API，分别生成启用/关闭计划。公共 CLI 提供 `admin cloudflare waf`、`waf-connect`、`waf-plan`、`waf-apply`、`waf-operation`；Skill 用 `api request` 调用这些非秘密操作。部署 helper 既有 `mode:"waf-enable"|"waf-disable"` 同样生成/应用 Service 计划，在已授权 journal 保留原请求。需要共存选择时，先核对 `conflictChoice:"preserve_exemptions"|"before_conflicts"` 再计划。旧 Service 保留私有回执流程，跨设备共同事实源需显式升级。
 
-Cloudflare Free custom rules 额度为五条。工具清点该 phase，无法证实有免费槽位就停止，即使账户另有付费能力也不自动选用。Free rate-limiting 表达式不支持 Host，因此此流程不会设置可能波及同 zone 其他网站的 zone-wide rate-limit。它不使用 challenge 或 Turnstile。已有 Cloudflare 认证需有 custom rules 读写权限；失败不会触发自动登录或权限扩展。
+`anonymous-api-filter` 占用一个 custom-rule 槽位，只过滤准确 hostname 上已知私有 API 中同时缺少 Authorization header 和 session cookie 名的请求。公开登录、discovery、加入保持可用。header/cookie 存在性可以绕过它，Worker 仍必须认证私有请求。它减少匿名无效流量，不保证 DDoS 防护，也不是请求或账单封顶。
 
-工具只通过单条 Rulesets API 创建/删除自己的 rule。准确 ref、rule ID、ruleset ID、内容和私有归属回执必须匹配；写入前后核对其他规则内容，绝不整体替换共享 zone 的 ruleset。读回发现并发改动时不能宣称完成；Cloudflare 控制面没有此类修改的应用 CAS。
+Service 按 Free 五条上限清点全部 custom rules，包括子 custom rulesets；向唯一既有 Zone entrypoint 追加单条规则，或创建缺失 entrypoint。保留其他规则内容与顺序，不整体替换共享 ruleset。较早 Skip 只有明确批准位置后才可前移；IP Access Allow 和不确定表达式仍是部分覆盖。不自动购买套餐、设置 zone-wide rate-limit、challenge 或 Turnstile。启停需要准确 Zone 的 WAF Edit，Read 不足以写入；失败不触发自动登录或权限扩展。
 
-`mode: "waf-disable"` 只删除准确归属的 rule，保留域名，不删除共享 ruleset 或其他规则。`mode: "domain-rollback"` 先开启已核实的原 workers.dev、保持 previews 关闭，验证后迁回 origin trust，再删除工具自己的 WAF rule（如有），最后解绑自己的域名映射；不删除证书或无关 DNS。
+apply 响应丢失时，只以原 UUID 键查询 `GET /waf/operations/{key}`，再调用准确 operation 的只读 verify。404 不证明供应商写入未发生；保留 intent、plan 和 journal，不重复 apply。只有已核实归属规则与当前覆盖证据共同成立才能称防护有效。关闭只删除准确登记规则，保留域名、共享 ruleset 及其他规则。
+
+`mode:"domain-rollback"` 在当前 preferred 自定义域名仍有效时先关闭归属 Service WAF rule，再执行另行授权的域名回退：开启已核实的原 workers.dev、保持 previews 关闭，验证并迁回 origin trust，解绑准确自有域名映射。不删除证书或无关 DNS。
 
 ## 升级与状态
 
-核实后的非秘密归属快照保存在此 Instance 私有 `receipts/public-access.json`。普通升级把完整回执放进 `resources.public_access`，设置 `resources.workers_dev: false`、`resources.custom_domain` 为准确 hostname，并保持 routes 为空。升级保留既有域名、已关闭的 workers.dev/preview URLs 和准确 WAF profile，不能顺便启用、修复、接管或删除它们。部署前后均核对私有回执与实时 Cloudflare 路由/rule，回执缺失、入口暴露或规则漂移都会阻断。授权回退域名后，仍把该 inactive 回执放进 `resources.public_access`，保持 `resources.workers_dev: true`、`resources.custom_domain: null`；升级确认原托管映射不存在、previews 关闭，并清除旧状态快照 binding。
+schema 27+ 的 `public-access inspect` 读取 Service 目标/归属事实与实时 Cloudflare 资源；升级时将其 `waf_authority` 放入 `resources.waf_authority`。计划及执行前后核对准确 D1 行、控制/origin 版本、唯一 entrypoint 和实时规则。本机旧 WAF 回执不能重新开启另一 Owner 设备已关闭的防护。已有手工配置域名可提供已核实目标投影，但该投影不证明域名归属，也不授权域名回退。
 
-下一次普通升级将 `PUBLIC_ACCESS_MODE`、`PUBLIC_ACCESS_HOSTNAME`、`PUBLIC_ACCESS_WAF_PROFILE`、`PUBLIC_ACCESS_RULE_REF`、`PUBLIC_ACCESS_VERIFIED_AT` 作为非秘密 Worker vars 投影到 Owner 状态。这是最近部署时核实的快照，不是 WAF 实时监控。域名/WAF apply 写私有回执，不为刷新显示偷偷重部署未知 Worker；当前控制面证据通过 `public-access inspect` 读取。
+域名归属仍保存在私有 `receipts/public-access.json`；将已核实域名回执放入 `resources.public_access`，保留准确 `resources.custom_domain` 与实测 `resources.workers_dev`，routes 为空，保持 previews/入口暴露状态。旧 schema 升级仍要求完整回执与实时规则证据。证据缺失或漂移阻断升级，不隐式启用、修复、接管或删除防护。授权回退后的 inactive 回执用于核对映射不存在并清除旧状态 binding。
 
-在另一台电脑接入时，向 `deploy attach inspect` / `deploy attach plan` 显式提供非秘密 `publicAccessReceipt`。接入重新核对同一 Instance、Owner，以及准确实时 domain、zone、workers.dev/preview 状态和归属 rule，只保存本机回执，不写 Cloudflare。workers.dev 已关闭却没有回执时拒绝，不从 hostname 或状态 vars 重建归属。任何 API / Cloudflare secret 都不得作为普通输入搬运。
+`PUBLIC_ACCESS_*` Worker vars 仍是最后部署声明，不能替代实时 WAF 事实。Owner `/waf` 提供当前共享状态，本机 inspect 主动读取控制面。另一电脑接入时分别核对非秘密域名回执与当前 Service WAF 事实，不能通过普通输入搬运凭据。

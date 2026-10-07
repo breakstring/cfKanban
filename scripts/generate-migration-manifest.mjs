@@ -15,7 +15,7 @@ const sha256 = sha256NormalizedText(migration);
 
 const manifest = {
   manifest_version: 1,
-  schema_version: 26,
+  schema_version: 27,
   service_compatibility: {
     minimum: "0.1.0",
     maximum_exclusive: "0.2.0",
@@ -322,6 +322,13 @@ const manifest = {
       classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
       expected_artifacts: { tables: ["cloudflare_control_settings", "cloudflare_control_operations", "cloudflare_control_plans"] },
       expected_data: { instance_meta_schema_version_at_least: 26, allow_uninitialized: true },
+    },
+    {
+      sequence: 27, name: "0027_cloudflare-waf.sql",
+      sha256: sha256NormalizedText(await readFile(new URL("../migrations/0027_cloudflare-waf.sql", import.meta.url), "utf8")),
+      classification: "backward_compatible", destructive: false, reentry: "wrangler_migration_ledger_only",
+      expected_artifacts: { tables: ["cloudflare_control_operations", "cloudflare_control_plans", "cloudflare_waf_target_binding", "cloudflare_waf_ownership"] },
+      expected_data: { instance_meta_schema_version_at_least: 27, allow_uninitialized: true },
     },
   ],
 };

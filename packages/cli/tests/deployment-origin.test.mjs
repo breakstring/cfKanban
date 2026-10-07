@@ -9,6 +9,19 @@ import { appendJournalEvent, authorizeJournal, createJournal } from '../../skill
 import { treeDigest } from '../../skill-runtime/src/skill-update.mjs';
 import { canonicalDigest } from '../../skill-runtime/src/utils.mjs';
 
+test('WAF target registration dispatches only its exactly authorized plan and journal',async()=> {
+  const input={instanceId:randomUUID(),operationId:randomUUID(),taskId:'isolated-waf-target',plan:{kind:'cfkanban_waf_target',target:{hostname:'instance.invalid'}}};
+  input.authorization={instance_id:input.instanceId,operation_id:input.operationId,task_id:input.taskId,plan_digest:canonicalDigest(input.plan)};
+  const calls=[];
+  const context={helper:async(name,value)=>{calls.push({name,value});return name==='waf-target apply'?{ok:true,registered:true}:{ok:true};}};
+  await assert.rejects(runWorkflow('waf-target-apply',{...input,plan:{...input.plan,target:{hostname:'other.invalid'}}},context),{code:'CLI_PLAN_AUTHORIZATION_REQUIRED'});
+  assert.equal(calls.length,0);
+  assert.deepEqual(await runWorkflow('waf-target-apply',input,context),{ok:true,registered:true});
+  assert.deepEqual(calls.map(call=>call.name),['journal create','journal authorize','waf-target apply']);
+  assert.equal(calls[1].value.planDigest,input.authorization.plan_digest);
+  assert.deepEqual(calls[2].value,input);
+});
+
 async function deploymentFixture(t,{origin='https://custom-instance.invalid',first=false}={}) {
   const state=await createMcpStateFixture(t,{origin});
   const operationId=randomUUID(),databaseId=randomUUID();

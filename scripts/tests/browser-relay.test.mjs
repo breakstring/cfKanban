@@ -7,6 +7,7 @@ import { atomicWriteJson, readJson } from '../../packages/skill-runtime/src/util
 import { randomUUID } from 'node:crypto';
 import { createMcpStateFixture } from './mcp-fixture.mjs';
 import { dispatch } from '../../packages/skill-runtime/src/cli.mjs';
+import { retainPendingWaf } from '../../packages/skill-runtime/src/waf-pending.mjs';
 
 test('Cloudflare secret input cannot enter generic API requests, including normalized paths', async () => {
   let sent = 0;
@@ -104,4 +105,25 @@ test('authenticated API paths cannot normalize into a different origin', async t
   } });
   assert.equal(result.ok, true);
   assert.equal(sent, 1);
+});
+
+test('internal WAF origin proofs cannot enter ordinary API input or operation journals', async () => {
+  let writes=0;
+  for(const apiPath of ['/.well-known/cfkanban-waf-proof','/.well-known/cfkanban-waf-proof/','/.well-known/%63fkanban-waf-proof','/.well-known/ignored/../cfkanban-waf-proof'])for(const method of ['GET','POST']) {
+    await assert.rejects(guardedApiRequest({method,apiPath,body:{nonce:'transient-proof-must-not-enter-output'},fetchImpl:async()=>{writes++;}}),error=>{assert.equal(error.code,'INTERNAL_SERVICE_PROOF_REQUIRED');assert.ok(!JSON.stringify(error).includes('transient-proof-must-not-enter-output'));return true;});
+  }
+  assert.equal(writes,0);
+});
+
+test('ordinary Skill mutations cannot bypass the retained deployment WAF intent',async t=> {
+  const f=await createMcpStateFixture(t);
+  await retainPendingWaf(f,{operation_id:randomUUID(),kind:'isolated-original-waf-plan'});
+  let sent=0;
+  for(const apiPath of ['/api/v1/admin/cloudflare/waf/plan','/api/v1/admin/cloudflare/waf/apply','/api/v1/admin/cloudflare/%77af/target-binding','/api/v1/admin/cloudflare/ignored/../settings','/api/v1/admin/instance-origin']) {
+    await assert.rejects(guardedApiRequest({...f,method:'POST',apiPath,fetchImpl:async()=>{sent++;}}),{code:'WAF_PENDING_OPERATION_REQUIRED'});
+  }
+  assert.equal(sent,0);
+  const readPaths=[];
+  const result=await guardedApiRequest({...f,method:'GET',apiPath:'/api/v1/admin/cloudflare/waf',fetchImpl:async(url,options)=>{sent++;assert.equal(options.method,'GET');readPaths.push(new URL(url).pathname);return Response.json({status:'unverified'});}});
+  assert.equal(result.ok,true);assert.equal(readPaths.filter(value=>value==='/api/v1/admin/cloudflare/waf').length,1);
 });

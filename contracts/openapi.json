@@ -12550,6 +12550,422 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
+    "/api/v1/admin/cloudflare/waf/operations/{request_key}": {
+      "get": {
+        "operationId": "getCloudflareWafOperation",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Cloudflare Waf Operation",
+        "description": "Owner-only D1 lookup of this Principal's original WAF apply intent, scoped to the exact apply route and original UUID key. No provider call or external write. A 404 does not establish that an in-flight request cannot commit.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
+    "/api/v1/admin/cloudflare/waf/target-binding": {
+      "post": {
+        "operationId": "registerCloudflareWafTarget",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Register Cloudflare Waf Target",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareWafTargetWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterCloudflareWafTargetRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare/waf/plan": {
+      "post": {
+        "operationId": "planCloudflareWaf",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Plan Cloudflare Waf",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflarePlanWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanCloudflareWafRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cloudflare/waf/apply": {
+      "post": {
+        "operationId": "applyCloudflareWaf",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Apply Cloudflare Waf",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Uuid"
+            },
+            "description": "Original UUID request key; retained for exact WAF intent lookup without repeating the provider write."
+          },
+          {
+            "$ref": "#/components/parameters/ConditionalCsrfToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperationWriteResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "idempotent-cas",
+        "x-cfkanban-permission": "deployment_owner",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyCloudflarePlanRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/cfkanban-waf-proof": {
+      "post": {
+        "operationId": "proveCloudflareWafOrigin",
+        "tags": [
+          "meta"
+        ],
+        "summary": "Prove Cloudflare Waf Origin",
+        "description": "Internal service proof authenticated by a transient, domain-separated HMAC for the fixed current Instance/Worker/origin. No ordinary business API or CLI signing capability. Valid only for a random nonce and expiry within 10 seconds, exact current target and preferred origin. No business write, credentials or ordinary CLI input/output; invalid proofs return 404.",
+        "security": [
+          {
+            "WafOriginProof": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareWafProofResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "control_origin_proof",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudflareWafProofRequest"
+              }
+            }
+          }
+        },
+        "x-cfkanban-sensitive-input": "internal_waf_origin_proof"
+      }
+    },
     "/api/v1/admin/cloudflare/operations/{operation_id}": {
       "get": {
         "operationId": "getCloudflareOperation",
@@ -13566,6 +13982,12 @@
   },
   "components": {
     "securitySchemes": {
+      "WafOriginProof": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-cfkanban-waf-proof",
+        "description": "Short-lived request-labelled HMAC for the fixed WAF target proof protocol. Not a user token or general signing interface."
+      },
       "BearerCredential": {
         "type": "http",
         "scheme": "bearer",
@@ -17543,6 +17965,47 @@
       },
       "CloudflareOperation": {
         "type": "object",
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "waf"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "required": [
+                "result_rule_id"
+              ],
+              "properties": {
+                "result_rule_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "baseline_version_id": {
+                  "type": "null"
+                },
+                "result_version_id": {
+                  "type": "null"
+                },
+                "deployment_id": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        ],
         "required": [
           "operation_id",
           "kind",
@@ -17567,7 +18030,8 @@
               "control_secret",
               "analytics_secret",
               "configuration",
-              "rate_limit"
+              "rate_limit",
+              "waf"
             ]
           },
           "status": {
@@ -17596,6 +18060,17 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result_rule_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
               },
               {
                 "type": "null"
@@ -17885,6 +18360,188 @@
           }
         }
       },
+      "CloudflareWafRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "enabled",
+          "action",
+          "expression"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "action": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "expression": {
+            "type": "string",
+            "maxLength": 16384
+          }
+        }
+      },
+      "CloudflareWafBinding": {
+        "type": "object",
+        "required": [
+          "status",
+          "source",
+          "domain_id",
+          "verified_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/CloudflareCapability"
+          },
+          "source": {
+            "enum": [
+              "worker_domain_read",
+              "deployment_runtime",
+              null
+            ]
+          },
+          "domain_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "live_verified": {
+            "type": "boolean"
+          },
+          "service_proof": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CloudflareWafConflict": {
+        "type": "object",
+        "required": [
+          "rule_id",
+          "ruleset_id",
+          "kind",
+          "repositionable"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ruleset_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "enum": [
+              "skip",
+              "unowned_duplicate",
+              "expression_unverified",
+              "ip_access_allow",
+              "ip_access_unverified"
+            ]
+          },
+          "scope": {
+            "enum": [
+              "zone",
+              "account"
+            ]
+          },
+          "repositionable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CloudflareWafCoverage": {
+        "type": "object",
+        "required": [
+          "status",
+          "workers_dev",
+          "previews_enabled"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "incomplete",
+              "hostname_only"
+            ]
+          },
+          "workers_dev": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "previews_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "exemptions_preserved": {
+            "type": "boolean"
+          }
+        }
+      },
       "CloudflareWaf": {
         "type": "object",
         "required": [
@@ -17919,10 +18576,11 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "maximum": 500
+            "maximum": 5000
           },
           "protected": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Requires verified ownership/target, no detected exemptions and closed alternate origins; not a live edge test."
           },
           "owned_rule": {
             "anyOf": [
@@ -17930,33 +18588,371 @@
                 "type": "null"
               },
               {
-                "type": "object",
-                "required": [
-                  "id",
-                  "enabled",
-                  "action",
-                  "expression"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "maxLength": 256
-                  },
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "action": {
-                    "type": "string",
-                    "maxLength": 256
-                  },
-                  "expression": {
-                    "type": "string",
-                    "maxLength": 16384
-                  }
-                }
+                "$ref": "#/components/schemas/CloudflareWafRule"
               }
             ]
+          },
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "target_binding": {
+            "$ref": "#/components/schemas/CloudflareWafBinding"
+          },
+          "ownership": {
+            "type": "object",
+            "required": [
+              "status",
+              "ruleset_id",
+              "rule_id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "missing",
+                  "verified"
+                ]
+              },
+              "ruleset_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "entrypoint": {
+            "type": "object",
+            "required": [
+              "strategy",
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "strategy": {
+                "enum": [
+                  "unverified",
+                  "append_rule",
+                  "create_entrypoint"
+                ]
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "inventory": {
+            "type": "object",
+            "required": [
+              "complete",
+              "ruleset_count",
+              "total_rule_count",
+              "free_rule_limit",
+              "capacity_available"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "complete": {
+                "type": "boolean"
+              },
+              "ruleset_count": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "total_rule_count": {
+                "type": "integer",
+                "format": "int64",
+                "minimum": 0,
+                "maximum": 5000
+              },
+              "free_rule_limit": {
+                "const": 5
+              },
+              "capacity_available": {
+                "type": "boolean"
+              }
+            }
+          },
+          "conflicts": {
+            "type": "array",
+            "maxItems": 6000,
+            "items": {
+              "$ref": "#/components/schemas/CloudflareWafConflict"
+            }
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/CloudflareWafCoverage"
+          }
+        },
+        "description": "Schema 27 adds target, ownership, inventory and coverage. Older schema projections are read-only compatibility and do not authorize mutation."
+      },
+      "CloudflareWafAfter": {
+        "type": "object",
+        "required": [
+          "action",
+          "profile",
+          "entrypoint_strategy",
+          "entrypoint_id",
+          "position_before",
+          "conflict_choice",
+          "conflicts",
+          "apply_ready",
+          "coverage",
+          "rule",
+          "purchase_or_upgrade_plan",
+          "modifies_foreign_rules"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "enable",
+              "disable"
+            ]
+          },
+          "profile": {
+            "enum": [
+              "anonymous-api-filter",
+              "disabled"
+            ]
+          },
+          "entrypoint_strategy": {
+            "enum": [
+              "none",
+              "append_rule",
+              "create_entrypoint",
+              "delete_owned_rule",
+              "reposition_owned_rule"
+            ]
+          },
+          "entrypoint_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position_before": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "conflict_choice": {
+            "enum": [
+              "preserve_exemptions",
+              "before_conflicts",
+              null
+            ]
+          },
+          "conflicts": {
+            "type": "array",
+            "maxItems": 6000,
+            "items": {
+              "$ref": "#/components/schemas/CloudflareWafConflict"
+            }
+          },
+          "apply_ready": {
+            "type": "boolean"
+          },
+          "coverage": {
+            "$ref": "#/components/schemas/CloudflareWafCoverage"
+          },
+          "rule": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "purchase_or_upgrade_plan": {
+            "const": false
+          },
+          "modifies_foreign_rules": {
+            "const": false
+          }
+        }
+      },
+      "RegisterCloudflareWafTargetRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        }
+      },
+      "PlanCloudflareWafRequest": {
+        "type": "object",
+        "required": [
+          "action",
+          "expected_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "enable",
+              "disable"
+            ]
+          },
+          "expected_version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "conflict_choice": {
+            "enum": [
+              "preserve_exemptions",
+              "before_conflicts"
+            ]
+          }
+        }
+      },
+      "CloudflareWafTargetResult": {
+        "type": "object",
+        "required": [
+          "version",
+          "target_binding"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/Version"
+          },
+          "target_binding": {
+            "$ref": "#/components/schemas/CloudflareWafBinding"
+          }
+        }
+      },
+      "CloudflareWafTargetWriteResult": {
+        "type": "object",
+        "required": [
+          "event_cursor",
+          "idempotent_replay",
+          "resource"
+        ],
+        "properties": {
+          "event_cursor": {
+            "type": "string"
+          },
+          "idempotent_replay": {
+            "type": "boolean"
+          },
+          "resource": {
+            "$ref": "#/components/schemas/CloudflareWafTargetResult"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CloudflareWafProofTarget": {
+        "type": "object",
+        "required": [
+          "account_id",
+          "worker_name",
+          "database_id",
+          "instance_id",
+          "preferred_api_origin",
+          "origin_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "worker_name": {
+            "type": "string",
+            "maxLength": 63
+          },
+          "database_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "instance_id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "preferred_api_origin": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "origin_version": {
+            "$ref": "#/components/schemas/Version"
+          }
+        }
+      },
+      "CloudflareWafProofRequest": {
+        "type": "object",
+        "required": [
+          "nonce",
+          "expires_at",
+          "target"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "nonce": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "writeOnly": true
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "target": {
+            "$ref": "#/components/schemas/CloudflareWafProofTarget"
+          }
+        }
+      },
+      "CloudflareWafProofResponse": {
+        "type": "object",
+        "required": [
+          "proof"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "proof": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Transient response-labelled HMAC; never journal, log or expose through ordinary API tools."
           }
         }
       },
@@ -17974,6 +18970,52 @@
           "created_at"
         ],
         "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "waf"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "after": {
+                  "$ref": "#/components/schemas/CloudflareWafAfter"
+                },
+                "target": {
+                  "required": [
+                    "instance_id",
+                    "hostname",
+                    "zone_id",
+                    "domain_id"
+                  ],
+                  "properties": {
+                    "instance_id": {
+                      "$ref": "#/components/schemas/Uuid"
+                    },
+                    "hostname": {
+                      "type": "string",
+                      "maxLength": 253
+                    },
+                    "zone_id": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "domain_id": {
+                      "type": "string",
+                      "maxLength": 128
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
         "properties": {
           "plan_id": {
             "$ref": "#/components/schemas/Uuid"
@@ -17982,17 +19024,32 @@
             "type": "string",
             "enum": [
               "configuration",
-              "rate_limit"
+              "rate_limit",
+              "waf"
             ]
           },
           "version": {
             "$ref": "#/components/schemas/Version"
           },
           "baseline_version_id": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "baseline_deployment_id": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "target": {
             "type": "object",
@@ -18013,6 +19070,21 @@
               },
               "database_id": {
                 "$ref": "#/components/schemas/Uuid"
+              },
+              "instance_id": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "hostname": {
+                "type": "string",
+                "maxLength": 253
+              },
+              "zone_id": {
+                "type": "string",
+                "maxLength": 128
+              },
+              "domain_id": {
+                "type": "string",
+                "maxLength": 128
               }
             }
           },

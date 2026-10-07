@@ -52,6 +52,7 @@ export default { async fetch(request, env) {
   server = createTestHarness({ root, workers: [{ config: {
     name: "cfkanban-static-assets-cost-test", main,
     compatibility_date: configuration.compatibility_date,
+    compatibility_flags: configuration.compatibility_flags,
     assets: { ...configuration.assets, directory: assets },
   } }] });
   const listening = await server.listen();

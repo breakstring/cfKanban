@@ -57,8 +57,8 @@ async function coverage(row, label, { operation, helper, workflow = false } = {}
   if (new Set(value.commands).size !== value.commands.length) fail(`${label}: duplicate command references`);
   for (const name of value.commands) if (!publicCommands.has(name)) fail(`${label}: unknown public command ${name}`);
   if (value.kind === 'gap') { fail(`${label}: unresolved capability gap (${value.reason ?? 'no route'})`); return; }
-  if (!['api', 'helper', 'composition', 'operation_catalog', 'browser'].includes(value.kind)) { fail(`${label}: unknown coverage kind ${value.kind}`); return; }
-  if (value.kind !== 'browser' && value.commands.length === 0) fail(`${label}: empty command coverage`);
+  if (!['api', 'helper', 'composition', 'operation_catalog', 'browser', 'service_proof'].includes(value.kind)) { fail(`${label}: unknown coverage kind ${value.kind}`); return; }
+  if (!['browser', 'service_proof'].includes(value.kind) && value.commands.length === 0) fail(`${label}: empty command coverage`);
   if (value.kind === 'api') {
     if (!operation || value.commands.some(name => publicCommands.get(name)?.operation !== operation)) fail(`${label}: public API route does not match operation`);
   } else if (value.kind === 'helper') {
@@ -75,6 +75,10 @@ async function coverage(row, label, { operation, helper, workflow = false } = {}
         if (!value.evidence?.some(item => (symbol && item.contains.includes(symbol)) || ['helper', 'dispatchImpl'].some(call => item.contains.includes(`${call}('${helper}'`) || item.contains.includes(`${call}("${helper}"`)))) fail(`${label}: composition evidence does not invoke the Skill helper or its shared implementation`);
       }
     }
+  } else if (value.kind === 'service_proof') {
+    if (operation !== 'proveCloudflareWafOrigin' || helper || workflow || value.commands.length !== 0 || !text(value.reason) || !text(value.alternative)) fail(`${label}: only the fixed internal WAF origin proof may omit a business command`);
+    await evidence(value.evidence, label);
+    if (!value.evidence?.some(item => item.file === 'apps/worker/src/services/cloudflare-waf.ts' && item.contains.includes('answerWafTargetProof')) || !value.evidence?.some(item => item.file === 'packages/skill-runtime/src/capability-delivery.mjs' && item.contains.includes('INTERNAL_SERVICE_PROOF_REQUIRED'))) fail(`${label}: missing internal implementation and generic transport refusal`);
   } else if (value.kind === 'browser') {
     if (!text(value.reason) || !text(value.alternative)) fail(`${label}: browser exception requires a concrete reason and usable alternative`);
     if (operation && !browserOperations[value.transport]?.includes(operation)) fail(`${label}: operation is not an approved ${value.transport} transport exception`);

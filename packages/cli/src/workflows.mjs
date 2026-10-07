@@ -22,10 +22,11 @@ function assertAuthorization(input) {
 }
 export async function runWorkflow(name,input,context) {
   const {helper,api}=context;
-  if(name==='public-access-apply') {
+  if(name==='public-access-apply'||name==='waf-target-apply') {
     assertAuthorization(input);
     await helper('journal create',input);
     await helper('journal authorize',{...input,planDigest:canonicalDigest(input.plan)});
+    if(name==='waf-target-apply')return helper('waf-target apply',input);
     return helper('public-access apply',input);
   }
   if(name.startsWith('cli-')) {

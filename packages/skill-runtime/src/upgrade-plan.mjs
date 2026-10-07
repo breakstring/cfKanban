@@ -1,5 +1,5 @@
 import { requireObservedPrincipalDisplayName } from "./principal-name.mjs";
-import { PUBLIC_ACCESS_NAMES, normalizePublicAccess } from "./public-access-config.mjs";
+import { PUBLIC_ACCESS_NAMES, normalizePublicAccess, normalizeWafAuthority } from "./public-access-config.mjs";
 import { ANONYMOUS_LOGIN_POLICY, EXPENSIVE_READ_POLICY, expensiveReadBindings, observedExpensiveReads, anonymousLoginBindings, observedAnonymousLogin, normalizeWorkerLimits, normalizeObservedWorkerLimits, plannedProtectionBindingDelta } from "./cost-protection-config.mjs";
 import { existingUsageConfig, normalizeUsageConfig, usageBindings, USAGE_SECRET, USAGE_VARS } from "./usage-config.mjs";
 import { OWNER_CONTROL_SECRETS, OWNER_CONTROL_VARS, existingOwnerControl, observedCoreRateLimits, nativeRateLimitSimple } from "./owner-control-config.mjs";
@@ -325,7 +325,14 @@ export function createInstanceUpgradePlan({
   if (resources === null || typeof resources !== "object" || Array.isArray(resources)) {
     throw toolError("INVALID_UPGRADE_RESOURCES", "resources must identify the existing Worker and D1");
   }
-  const publicAccess = normalizePublicAccess(resources.public_access, { instanceId: instance, accountId: cloudflare.account_id, workerName: resources.worker?.name });
+  const domainReceipt = normalizePublicAccess(resources.public_access_domain_receipt ?? (resources.public_access?.kind === "cfkanban_public_access_receipt" ? resources.public_access : null), { instanceId: instance, accountId: cloudflare.account_id, workerName: resources.worker?.name });
+  const wafAuthority = normalizeWafAuthority(resources.waf_authority, { instanceId: instance, accountId: cloudflare.account_id, workerName: resources.worker?.name, databaseId: resources.d1?.database_id });
+  let publicAccess = normalizePublicAccess(resources.public_access, { instanceId: instance, accountId: cloudflare.account_id, workerName: resources.worker?.name });
+  if (wafAuthority) {
+    const binding = wafAuthority.binding, own = wafAuthority.ownership;
+    if (!publicAccess || !publicAccess.domain_enabled || publicAccess.hostname !== binding.hostname || publicAccess.zone_id !== binding.zone_id || publicAccess.domain_id !== binding.domain_id) throw toolError("WAF_TARGET_UPGRADE_PROJECTION_REQUIRED", "Use the runtime's exact registered-domain projection and current WAF ownership for upgrade preservation");
+    publicAccess = normalizePublicAccess({ ...publicAccess, rule_id: own.rule_id, ruleset_id: own.ruleset_id, rule_ref: own.rule_ref ?? publicAccess.rule_ref, waf_profile: own.rule_id ? "anonymous-api-filter" : "disabled", verified_at: new Date(own.verified_at ?? binding.verified_at).toISOString() });
+  }
   if ((publicAccess?.domain_enabled ? resources.workers_dev !== false || resources.custom_domain !== publicAccess.hostname : resources.workers_dev !== true || resources.custom_domain !== null)
     || !Array.isArray(resources.routes)
     || resources.routes.length !== 0
@@ -361,6 +368,7 @@ export function createInstanceUpgradePlan({
   const usage = usageAnalytics === undefined ? previousUsage : normalizeUsageConfig(usageAnalytics, { ...usageTarget, bucketName: storage?.bucket_name ?? null });
   const usageSecret = resources.worker?.bindings?.some((item) => item.name === USAGE_SECRET && item.type === "secret_text" && item.value_redacted === true) === true;
   const normalizedCurrent = serviceRelease(current, "current");
+  if (normalizedCurrent.schema_version >= 27 && publicAccess?.domain_enabled && !wafAuthority) throw toolError("WAF_TARGET_AUTHORITY_REQUIRED", "Schema 27 managed-domain upgrades require the current D1 WAF ownership readback; a historical local snapshot is insufficient");
   const normalizedTarget = serviceRelease(target, "target", { isTarget: true });
   const ownerControl = existingOwnerControl(resources.worker?.bindings, { accountId: cloudflare.account_id, workerName, databaseId: d1DatabaseId });
   if (normalizedTarget.schema_version < 26 && resources.worker?.bindings?.some(item => OWNER_CONTROL_VARS.has(item.name) || OWNER_CONTROL_SECRETS.has(item.name))) throw toolError("OWNER_CONTROL_RELEASE_UNSUPPORTED", "Owner Cloudflare control settings require schema version 26 or later");
@@ -442,6 +450,8 @@ export function createInstanceUpgradePlan({
     kind: "deployed_instance_upgrade",
     ...(normalizedTarget.schema_version >= 26 ? { cloudflare_control: { enabled: true, ...ownerControl } } : {}),
     ...(publicAccess ? { public_access: publicAccess } : {}),
+    ...(domainReceipt ? { public_access_domain_receipt: domainReceipt } : {}),
+    ...(wafAuthority ? { waf_authority: wafAuthority } : {}),
     cost_protection: costProtection,
     task_id: requireString(taskId, "task_id", { max: 256 }),
     operation_id: operation,

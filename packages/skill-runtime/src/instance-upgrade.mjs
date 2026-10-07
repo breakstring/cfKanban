@@ -324,6 +324,8 @@ export async function finalizeInstanceUpgrade({
         after_version_id: afterWorker.version_id,
       },
       ...(plan.public_access ? { public_access: plan.public_access } : {}),
+      ...(plan.public_access_domain_receipt ? { public_access_domain_receipt: plan.public_access_domain_receipt } : {}),
+      ...(plan.waf_authority ? { waf_authority: plan.waf_authority } : {}),
       ...(plan.usage_analytics ? { usage_analytics: plan.usage_analytics.configuration } : {}),
       ...(plan.resources.r2 ? { r2: { bucket_name: plan.resources.r2.bucket_name, instance_id: instance, public_access: false } } : {}),
       d1: {

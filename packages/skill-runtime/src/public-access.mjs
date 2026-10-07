@@ -10,6 +10,8 @@ import { assertNoSymlinkPath, atomicWriteJson, canonicalDigest, pathType, readJs
 import { toolError } from "./errors.mjs";
 import { normalizePublicAccess } from "./public-access-config.mjs";
 import { acquirePublicAccessLock } from "./public-access-lock.mjs";
+import { isWafOperationResource, isWafOperationWrite } from "./waf-contract.mjs";
+import { assertNoPendingWaf, releasePendingWaf, retainPendingWaf } from "./waf-pending.mjs";
 
 const PHASE = "http_request_firewall_custom";
 const PROFILE = "anonymous-api-filter";
@@ -49,7 +51,7 @@ function routeMayMatchHostname(pattern, host) {
   // Cloudflare 的前导 * 匹配任意前缀，*example.test 包含 apex；*.example.test 不包含。
   return routeHost.startsWith("*") ? host.endsWith(suffix) : host === routeHost;
 }
-async function loadLocal(input) {
+export async function loadPublicAccessLocal(input) {
   const stateRoot = path.resolve(input.stateRoot ?? resolveStateRoot());
   const instanceId = requireUuid(input.instanceId, "instance_id");
   const paths = getInstancePaths({ stateRoot, instanceId });
@@ -73,11 +75,22 @@ async function loadLocal(input) {
   if (managed && (managed.instance_id !== instanceId || managed.account_id !== target.account_id || managed.worker_name !== target.worker_name)) fail("PUBLIC_ACCESS_RECEIPT_DRIFT", "The public-access receipt differs from this deployment");
   return { stateRoot, paths, metadata, receipt, receiptPath, managedPath, managed, target };
 }
-async function clients(input, target) {
+export async function publicAccessClients(input, target) {
   const connection = { ...input, accountId: target.account_id, zoneId: target.zone_id, wranglerExecutable: target.wrangler_executable, cloudflareProfile: target.cloudflare_profile, contextDirectory: target.context_directory };
   return { worker: await createCloudflareControlClient(connection, "/workers", OPTIONS), zone: await createCloudflareControlClient(connection, "", { ...OPTIONS, scope: "zone" }) };
 }
-async function readRouting(worker, zone, target, { checkZoneRoutes = true } = {}) {
+export async function verifyPublicAccessActiveWorker(worker, target) {
+  const deployment = await worker(`/scripts/${target.worker_name}/deployments`), latest = deployment?.deployments?.[0];
+  if (!Array.isArray(deployment?.deployments) || !deployment.deployments.length || deployment.deployments.length > 100 || !Array.isArray(latest?.versions) || latest.versions.length !== 1 || latest.versions[0]?.percentage !== 100) fail("PUBLIC_ACCESS_ACTIVE_WORKER_UNPROVEN", "A unique fully deployed active Worker version is required for WAF target verification");
+  const deploymentId = requireUuid(latest.id, "active_deployment_id"), versionId = requireUuid(latest.versions[0].version_id, "active_version_id");
+  const version = await worker(`/scripts/${target.worker_name}/versions/${versionId}`), bindings = version?.resources?.bindings, flags = version?.resources?.script_runtime?.compatibility_flags;
+  if (version?.id !== versionId || !Array.isArray(bindings) || bindings.length > 512 || new Set(bindings.map(binding => binding?.name)).size !== bindings.length || bindings.some(binding => typeof binding?.name !== "string")) fail("PUBLIC_ACCESS_ACTIVE_WORKER_UNPROVEN", "The active Worker version binding inventory is incomplete or does not match the selected deployment");
+  const databases = bindings.filter(binding => binding.type === "d1" && binding.name === "DB"), fixed = { CFKANBAN_CONTROL_ACCOUNT_ID: target.account_id, CFKANBAN_CONTROL_WORKER_NAME: target.worker_name, CFKANBAN_CONTROL_DATABASE_ID: target.database_id };
+  if (databases.length !== 1 || (databases[0].id ?? databases[0].database_id) !== target.database_id || Object.entries(fixed).some(([name, expected]) => !bindings.some(binding => binding.type === "plain_text" && binding.name === name && (binding.text ?? binding.value) === expected))) fail("PUBLIC_ACCESS_ACTIVE_WORKER_UNPROVEN", "The active Worker version does not bind the exact approved D1 and fixed control target");
+  if (!Array.isArray(flags) || !flags.includes("global_fetch_strictly_public") || flags.includes("global_fetch_private_origin")) fail("PUBLIC_ACCESS_PUBLIC_FETCH_REQUIRED", "The active schema 27 Worker runtime must enforce public global fetch before WAF verification");
+  return { deployment_id: deploymentId, version_id: versionId, compatibility_flags: flags };
+}
+export async function readPublicAccessRouting(worker, zone, target, { checkZoneRoutes = true, requirePublicFetch = false } = {}) {
   const [account, subdomain, domains, routes, settings, zoneRoutes] = await Promise.all([worker("/subdomain"), worker(`/scripts/${target.worker_name}/subdomain`), worker("/domains", { raw: true }), worker(`/services/${target.worker_name}/environments/production/routes`, { raw: true }), worker(`/scripts/${target.worker_name}/settings`), checkZoneRoutes ? zone("/workers/routes", { raw: true }) : null]);
   if (!/^[a-z0-9-]+$/u.test(account?.subdomain ?? "") || typeof subdomain?.enabled !== "boolean" || typeof subdomain?.previews_enabled !== "boolean") fail("PUBLIC_ACCESS_ROUTING_UNVERIFIED", "Both workers.dev and preview URL status require explicit readback");
   if (boundedList(routes).length) fail("PUBLIC_ACCESS_ROUTES_UNSUPPORTED", "Resolve Worker routes in a separate plan before changing public access");
@@ -87,44 +100,157 @@ async function readRouting(worker, zone, target, { checkZoneRoutes = true } = {}
     if (routeMayMatchHostname(route.pattern, target.hostname)) fail("PUBLIC_ACCESS_ZONE_ROUTES_UNSUPPORTED", "A zone Worker route may cover the selected HTTPS hostname; resolve it in a separate plan without deleting routes implicitly");
   }
   if (!Array.isArray(settings?.bindings) || !settings.bindings.some(binding => binding.type === "d1" && binding.name === "DB" && binding.id === target.database_id || binding.type === "d1" && binding.name === "DB" && binding.database_id === target.database_id)) fail("PUBLIC_ACCESS_WORKER_UNPROVEN", "The selected Worker does not bind the receipt's D1 database");
+  if (requirePublicFetch) await verifyPublicAccessActiveWorker(worker, target);
   const allDomains = boundedList(domains).map(domain => ({ id: exactId(domain.id, "domain_id"), hostname: hostname(domain.hostname), service: exactId(domain.service, "worker_name"), zone_id: exactId(domain.zone_id, "zone_id") })).sort((a, b) => a.hostname.localeCompare(b.hostname));
   return { workers_dev: subdomain.enabled, previews_enabled: subdomain.previews_enabled, workers_dev_origin: `https://${target.worker_name}.${account.subdomain}.workers.dev`, domains: allDomains.filter(domain => domain.service === target.worker_name || domain.hostname === target.hostname) };
 }
-async function readZone(zone, target) {
+export async function readPublicAccessZone(zone, target) {
   const value = await zone("");
   if (value?.id !== target.zone_id || value.account?.id !== target.account_id || value.status !== "active" || typeof value.name !== "string" || !(target.hostname === value.name || target.hostname.endsWith(`.${value.name}`))) fail("PUBLIC_ACCESS_ZONE_UNPROVEN", "Use an active zone in the receipt's account containing exactly the selected hostname");
   return { id: value.id, name: value.name, status: value.status, account_id: value.account.id };
 }
-async function readWaf(zone) {
+export async function readPublicAccessWaf(zone) {
   const summaries = boundedList(await zone("/rulesets", { raw: true }), 100).filter(set => set.phase === PHASE);
   if (summaries.length > 10) fail("PUBLIC_ACCESS_RULESET_BOUND_EXCEEDED", "The selected zone exceeds the supported bounded ruleset inventory");
   const inventory = await Promise.all(summaries.map(set => zone(`/rulesets/${exactId(set.id, "ruleset_id")}`)));
-  if (inventory.some(set => set.phase !== PHASE || !Array.isArray(set.rules) || set.rules.length > 1000) || inventory.filter(set => set.kind === "zone").length > 1) fail("PUBLIC_ACCESS_RULESET_UNVERIFIED", "Custom ruleset inventory could not be verified");
+  if (new Set(summaries.map(set => set.id)).size !== summaries.length || inventory.some((set, index) => set.id !== summaries[index].id || set.kind !== summaries[index].kind || !["zone", "custom"].includes(set.kind) || set.phase !== PHASE || !Array.isArray(set.rules) || set.rules.length > 1000) || inventory.filter(set => set.kind === "zone").length > 1) fail("PUBLIC_ACCESS_RULESET_UNVERIFIED", "Custom ruleset inventory could not be verified");
   return inventory;
 }
-async function ownerRead(input, local) {
+export async function verifyPublicAccessEntrypoint(zone, inventory, rulesetId, code = "PUBLIC_ACCESS_RULE_DRIFT") {
+  const ownedSet = inventory.find(set => set.id === rulesetId), entrypoint = await zone(`/rulesets/phases/${PHASE}/entrypoint`);
+  const semanticRules = values => values.map(({ version, last_updated, ...rule }) => rule);
+  if (!ownedSet || ownedSet.kind !== "zone" || inventory.filter(set => set.kind === "zone").length !== 1 || entrypoint?.id !== ownedSet.id || entrypoint.kind !== "zone" || entrypoint.phase !== PHASE || !Array.isArray(entrypoint.rules) || entrypoint.rules.length > 1000 || canonicalDigest(semanticRules(entrypoint.rules)) !== canonicalDigest(semanticRules(ownedSet.rules))) fail(code, "The owned rule must belong to the exact unique live zone entrypoint with matching rule order and semantics");
+}
+export async function readPublicAccessOwner(input, local) {
   const response = await apiRequest({ stateRoot: local.stateRoot, instanceId: local.target.instance_id, apiPath: "/api/v1/meta", fetchImpl: input.fetchImpl });
   const meta = response.data;
   if (!response.ok || meta?.instance_id !== local.target.instance_id || meta.principal?.is_owner !== true || meta.principal.id !== local.receipt.owner?.principal_id || meta.observed_origin !== local.metadata.trusted_api_origin) fail("PUBLIC_ACCESS_OWNER_REQUIRED", "The current trusted connection must authenticate the receipt's Deployment Owner");
-  return { principal_id: meta.principal.id, origin_version: meta.origin_version, preferred_api_origin: meta.preferred_api_origin, observed_origin: meta.observed_origin };
+  return { principal_id: meta.principal.id, origin_version: meta.origin_version, preferred_api_origin: meta.preferred_api_origin, observed_origin: meta.observed_origin, ...(Number.isSafeInteger(meta.schema_version) ? { schema_version: meta.schema_version } : {}) };
 }
+const loadLocal = loadPublicAccessLocal, clients = publicAccessClients, readRouting = readPublicAccessRouting, readZone = readPublicAccessZone, readWaf = readPublicAccessWaf, ownerRead = readPublicAccessOwner;
 function ownedDomain(routing, target) { return routing.domains.find(domain => domain.hostname === target.hostname); }
 function assertManaged(local, routing) {
   const domain = ownedDomain(routing, local.target);
-  if (!local.managed || local.managed.hostname !== local.target.hostname || local.managed.zone_id !== local.target.zone_id || local.managed.domain_id !== domain?.id || domain.service !== local.target.worker_name || domain.zone_id !== local.target.zone_id || !local.managed.domain_enabled) fail("PUBLIC_ACCESS_OWNERSHIP_REQUIRED", "An exact active mapping and this tool's private ownership receipt are required");
+  if (!local.managed || local.managed.kind !== "cfkanban_public_access_receipt" || local.managed.domain_ownership_proven === false || local.managed.hostname !== local.target.hostname || local.managed.zone_id !== local.target.zone_id || local.managed.domain_id !== domain?.id || domain.service !== local.target.worker_name || domain.zone_id !== local.target.zone_id || !local.managed.domain_enabled) fail("PUBLIC_ACCESS_OWNERSHIP_REQUIRED", "An exact active mapping and this tool's private ownership receipt are required");
+}
+function apiResource(response) {
+  if (!response.ok) fail("PUBLIC_ACCESS_SERVICE_REQUEST_FAILED", "The current Owner WAF operation was not confirmed; preserve the original operation and inspect its result");
+  return response.data?.resource ?? response.data;
+}
+async function serviceWafPlan(input, action) {
+  const stateRoot = path.resolve(input.stateRoot ?? resolveStateRoot()), paths = getInstancePaths({ stateRoot, instanceId: input.instanceId });
+  const unlock = await acquirePublicAccessLock({ stateRoot, journalsRoot: paths.journalsRoot, operationId: input.operationId });
+  try {
+    await assertNoPendingWaf({ stateRoot, instanceId: input.instanceId });
+    const control = apiResource(await apiRequest({ ...input, apiPath: "/api/v1/admin/cloudflare" }));
+    if (!Number.isSafeInteger(control?.version) || control.version < 1) fail("PUBLIC_ACCESS_SERVICE_RESPONSE_INVALID", "A complete current control version is required before reviewing a WAF plan");
+    const plan = apiResource(await apiRequest({ ...input, apiPath: "/api/v1/admin/cloudflare/waf/plan", method: "POST", body: { action, expected_version: control.version, ...(input.conflictChoice ? { conflict_choice: input.conflictChoice } : {}) }, idempotencyKey: `${input.operationId}-plan` }));
+    requireUuid(plan?.plan_id, "plan_id");
+    if (plan.kind !== "waf" || !Number.isSafeInteger(plan.version) || plan.version < 1 || plan.after?.action !== action) fail("PUBLIC_ACCESS_SERVICE_RESPONSE_INVALID", "The reviewed WAF plan response must contain its exact kind, version and requested action");
+    return plan;
+  } finally { await unlock(); }
+}
+function serviceOperation(response, write) {
+  if (!response.ok || !(write ? isWafOperationWrite(response.data) : isWafOperationResource(response.data))) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The original WAF operation requires a complete verified response; preserve its dispatch journal without another apply");
+  return write ? response.data.resource : response.data;
+}
+async function applyServiceWaf(input, local, plan, journal, event) {
+  const requestKey = plan.operation_id, supplied = { ...input, stateRoot: local.stateRoot, instanceId: plan.instance_id };
+  const failedResult = (operation, status = 409) => ({ ok: false, status, cloudflare_status: "failed", outcome_unknown: false, operation, error: { code: "PUBLIC_ACCESS_SERVICE_FAILED", category: "platform_failure", source: "client_runtime", recovery: "review_failure_before_new_plan", details: { failure_class: operation.failure_class } }, domain_receipt_unchanged: true, secret_values_exposed: false });
+  const previousFailure = journal.events.find(entry => entry.type === "public_access_service_failed");
+  if (previousFailure) { await releasePendingWaf(supplied, plan); return failedResult(previousFailure.operation, previousFailure.http_status); }
+  const previous = journal.events.find(entry => entry.type === "public_access_service_verified");
+  if (!previous) await retainPendingWaf(supplied, plan);
+  let operation;
+  if (journal.events.some(entry => entry.type === "public_access_service_dispatch")) {
+    const existing = await apiRequest({ ...supplied, apiPath: `/api/v1/admin/cloudflare/waf/operations/${requestKey}` });
+    if (!existing.ok) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The original WAF request is unconfirmed; absence of an intent does not authorize redispatch");
+    operation = serviceOperation(existing, false);
+  } else {
+    await event("service_dispatch");
+    const response = await apiRequest({ ...supplied, apiPath: "/api/v1/admin/cloudflare/waf/apply", method: "POST", body: { plan_id: plan.service_waf_plan.plan_id, expected_version: plan.service_waf_plan.version }, idempotencyKey: requestKey });
+    if (!response.ok && ["service", "cloudflare_platform"].includes(response.error?.source) && response.error?.details?.write_state === "not_dispatched" && response.error.details.normalized_by !== "client") {
+      const failed = { operation_id: null, kind: "waf", status: "failed", result_rule_id: null, failure_class: "not_dispatched" };
+      await event("service_failed", { operation: failed, http_status: response.status });
+      await releasePendingWaf(supplied, plan);
+      return failedResult(failed, response.status);
+    }
+    if (!response.ok) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The WAF apply result is unconfirmed; resume the original request key without another Cloudflare write");
+    operation = serviceOperation(response, true);
+  }
+  const operationId = operation.operation_id;
+  if (previous && (operationId !== previous.operation_id || operation.status !== previous.status || operation.result_rule_id !== previous.result_rule_id || operation.failure_class !== previous.failure_class)) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The known WAF terminal result changed during readback");
+  if (["pending", "unknown"].includes(operation.status)) {
+    const rounds = journal.events.filter(entry => entry.type === "public_access_service_verify_intent"), last = rounds.at(-1);
+    const reuse = last && !journal.events.some(entry => entry.type === "public_access_service_verify_response" && entry.round === last.round);
+    const round = reuse ? last.round : (last?.round ?? 0) + 1, key = `${requestKey}-verify-${round}`;
+    if (reuse && last.operation_id !== operationId) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The retained WAF verification belongs to another operation");
+    if (!reuse) await event("service_verify_intent", { operation_id: operationId, round, idempotency_key: key });
+    operation = serviceOperation(await apiRequest({ ...supplied, apiPath: `/api/v1/admin/cloudflare/operations/${operationId}/verify`, method: "POST", body: {}, idempotencyKey: key }), true);
+    if (operation.operation_id !== operationId) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The WAF verification response belongs to another operation");
+    await event("service_verify_response", { operation_id: operationId, round, status: operation.status });
+  }
+  if (operation.status === "failed") {
+    await event("service_failed", { operation, http_status: 409 });
+    await releasePendingWaf(supplied, plan);
+    return failedResult(operation);
+  }
+  const terminal = { operation_id: operation.operation_id, status: operation.status, result_rule_id: operation.result_rule_id, failure_class: operation.failure_class };
+  if (operation.operation_id !== operationId || operation.status !== "verified" || operation.failure_class !== null || (previous && canonicalDigest(terminal) !== canonicalDigest(Object.fromEntries(Object.keys(terminal).map(key => [key, previous[key]]))))) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The original WAF terminal result has not been verified; preserve its original journal and request key");
+  if (previous) await releasePendingWaf(supplied, plan);
+  const { readWafAuthority, inspectWafTarget } = await import("./waf-target.mjs");
+  const authority = await readWafAuthority({ ...supplied, publicAccessTarget: plan.target });
+  const own = authority.ownership, enabled = plan.mode === "waf-enable", expectedBinding = (plan.before.waf_authority ?? plan.waf_authority)?.binding;
+  if (!authority.binding || !own || canonicalDigest(authority.binding) !== canonicalDigest(expectedBinding) || own.binding_id !== authority.binding.binding_id || own.operation_id !== operation.operation_id || own.rule_id !== operation.result_rule_id || (enabled ? !own.rule_id || !own.ruleset_id || !own.rule_digest : own.rule_id !== null || own.ruleset_id !== null || own.rule_digest !== null)) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The WAF operation result differs from current authoritative ownership; preserve its original request without redispatch");
+  if (enabled && (own.rule_ref !== plan.service_waf_plan.after?.rule?.ref || own.rule_digest !== canonicalDigest(plan.service_waf_plan.after.rule))) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The verified WAF rule differs from the approved profile and reference");
+  if (enabled) {
+    const inspected = await inspectWafTarget({ ...supplied, receiptPath: plan.target.receipt_path, zoneId: plan.target.zone_id, hostname: plan.target.hostname, wranglerExecutable: plan.target.wrangler_executable, cloudflareProfile: plan.target.cloudflare_profile, contextDirectory: plan.target.context_directory });
+    if (canonicalDigest(inspected.waf_authority) !== canonicalDigest(authority)) fail("PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN", "The live rule verification raced with authoritative ownership");
+  }
+  if (!previous) await event("service_verified", terminal);
+  await releasePendingWaf(supplied, plan);
+  return { operation, waf_authority: authority, domain_receipt_unchanged: true, secret_values_exposed: false };
 }
 export async function inspectPublicAccess(input) {
   const local = await loadLocal(input), control = await clients(input, local.target);
   const [zone, routing, owner] = await Promise.all([readZone(control.zone, local.target), readRouting(control.worker, control.zone, local.target), ownerRead(input, local)]);
   const waf = input.includeWaf === false ? [] : await readWaf(control.zone);
   const ref = ownedRef(local.target.instance_id), rules = waf.flatMap(set => set.rules.map(rule => ({ ruleset_id: set.id, ...rule })));
-  return { target: local.target, zone, owner, routing, managed: local.managed, waf: { rule_count: rules.length, free_profile_rule_limit: 5, rulesets: waf, foreign_rules_digest: foreignRulesDigest(waf, ref), owned_rules: rules.filter(rule => rule.ref === ref) }, credential_values_exposed: false };
+  let registered = null;
+  if (owner.schema_version >= 27 && owner.preferred_api_origin === `https://${local.target.hostname}`) {
+    const { inspectWafTarget } = await import("./waf-target.mjs");
+    registered = await inspectWafTarget(input);
+    if (canonicalDigest(registered.routing) !== canonicalDigest(routing)) fail("PUBLIC_ACCESS_ROUTING_DRIFT", "Routing changed during authoritative public-access inspection");
+  }
+  const authority = registered?.waf_authority, own = authority?.ownership;
+  const owned = rule => own ? rule.id === own.rule_id && rule.ruleset_id === own.ruleset_id : owner.schema_version >= 27 ? false : rule.ref === ref;
+  const foreignDigest = authority ? canonicalDigest(rules.filter(rule => !owned(rule)).map(({ version, last_updated, ...rule }) => rule)) : foreignRulesDigest(waf, ref);
+  return { target: local.target, zone, owner, routing, managed: local.managed, waf: { rule_count: rules.length, free_profile_rule_limit: 5, rulesets: waf, foreign_rules_digest: foreignDigest, owned_rules: rules.filter(owned) }, ...(authority ? { waf_authority: authority, public_access: registered.public_access, ...(local.managed?.kind === "cfkanban_public_access_receipt" ? { public_access_domain_receipt: local.managed } : {}) } : {}), credential_values_exposed: false };
 }
 export async function createPublicAccessPlan(input) {
   if (!MODES.includes(input.mode)) fail("INVALID_PUBLIC_ACCESS_MODE", "Choose domain-enable, waf-enable, waf-disable or domain-rollback");
   if (input.passkeyRecoveryReady !== undefined && typeof input.passkeyRecoveryReady !== "boolean") fail("INVALID_PASSKEY_RECOVERY_READINESS", "Passkey recovery readiness must be an explicit boolean");
-  const local = await loadLocal(input), observed = await inspectPublicAccess({ ...input, includeWaf: input.mode !== "domain-enable" && (input.mode !== "domain-rollback" || Boolean(local.managed?.rule_id)) });
-  const mode = input.mode, mapping = ownedDomain(observed.routing, local.target), ownRules = observed.waf.owned_rules;
+  const local = await loadLocal(input), currentOwner = await ownerRead(input, local);
+  await assertNoPendingWaf({ stateRoot: local.stateRoot, instanceId: local.target.instance_id });
+  if (currentOwner.schema_version >= 27 && ["waf-enable", "waf-disable"].includes(input.mode)) {
+    const operation = requireUuid(input.operationId ?? randomUUID(), "operation_id"), { readWafAuthority } = await import("./waf-target.mjs");
+    const authority = await readWafAuthority({ ...input, publicAccessTarget: local.target });
+    if (!authority.binding) fail("WAF_TARGET_BINDING_REQUIRED", "Register this exact existing domain with a reviewed target plan before managing WAF");
+    const remotePlan = await serviceWafPlan({ ...input, operationId: operation }, input.mode === "waf-enable" ? "enable" : "disable");
+    const plan = { schema_version: 1, kind: "cfkanban_public_access", task_id: requireString(input.taskId, "task_id"), operation_id: operation, instance_id: local.target.instance_id, mode: input.mode, target: local.target, before: { owner: currentOwner, managed_digest: canonicalDigest(local.managed), waf_authority: authority }, service_waf_plan: remotePlan, profile: input.mode === "waf-enable" ? PROFILE : "disabled", purchase_or_upgrade_plan: false, modifies_foreign_rules: false, automatic_zone_dns_overwrite: false, effects: ["apply_reviewed_service_waf_plan"] };
+    return { plan, plan_digest: canonicalDigest(plan) };
+  }
+  const observed = await inspectPublicAccess({ ...input, includeWaf: input.mode !== "domain-enable" && (input.mode !== "domain-rollback" || Boolean(local.managed?.rule_id)) });
+  const mode = input.mode, mapping = ownedDomain(observed.routing, local.target);
+  let ownRules = observed.waf.owned_rules, rollbackAuthority = null, rollbackWafPlan = null;
+  if (currentOwner.schema_version >= 27 && mode === "domain-rollback") {
+    const { readWafAuthority } = await import("./waf-target.mjs");
+    rollbackAuthority = await readWafAuthority({ ...input, publicAccessTarget: local.target });
+    if (!rollbackAuthority.binding && local.managed?.waf_profile === PROFILE) fail("WAF_TARGET_BINDING_REQUIRED", "Register the exact legacy WAF ownership before rolling back a schema 27 managed domain");
+    if (rollbackAuthority.binding) {
+      ownRules = rollbackAuthority.ownership.rule_id ? [{ id: rollbackAuthority.ownership.rule_id, ruleset_id: rollbackAuthority.ownership.ruleset_id, ...anonymousApiRule(local.target.hostname, local.target.instance_id), ref: rollbackAuthority.ownership.rule_ref }] : [];
+    }
+  }
   if (observed.owner.preferred_api_origin !== observed.owner.observed_origin) fail("PUBLIC_ACCESS_ORIGIN_MIGRATION_PENDING", "Finish the existing trusted-origin migration before planning another one");
   if (mode === "domain-enable") {
     if (local.managed?.domain_enabled || mapping || observed.routing.domains.some(domain => domain.service === local.target.worker_name) || observed.owner.observed_origin !== observed.routing.workers_dev_origin || !observed.routing.workers_dev) fail("PUBLIC_ACCESS_DOMAIN_ALREADY_IN_USE", "A new hostname and an enabled receipt-bound workers.dev origin are required; existing mappings are never adopted");
@@ -134,12 +260,15 @@ export async function createPublicAccessPlan(input) {
     assertManaged(local, observed.routing);
     if (observed.routing.workers_dev || observed.routing.previews_enabled) fail("PUBLIC_ACCESS_ROUTING_DRIFT", "The managed domain must remain the sole active public origin before planning a profile change");
   }
-  if (ownRules.length > 1 || (ownRules.length && (!local.managed || local.managed.rule_id !== ownRules[0].id || canonicalDigest(ruleBody(ownRules[0])) !== canonicalDigest(anonymousApiRule(local.target.hostname, local.target.instance_id))))) fail("PUBLIC_ACCESS_RULE_OWNERSHIP_REQUIRED", "Existing rules cannot be adopted or modified without an exact private ownership receipt");
+  const operation = requireUuid(input.operationId ?? randomUUID(), "operation_id");
+  if (rollbackAuthority?.binding && ownRules.length) rollbackWafPlan = await serviceWafPlan({ ...input, operationId: operation }, "disable");
+  if (!rollbackAuthority?.binding && (ownRules.length > 1 || (ownRules.length && (!local.managed || local.managed.rule_id !== ownRules[0].id || canonicalDigest(ruleBody(ownRules[0])) !== canonicalDigest(anonymousApiRule(local.target.hostname, local.target.instance_id)))))) fail("PUBLIC_ACCESS_RULE_OWNERSHIP_REQUIRED", "Existing rules cannot be adopted or modified without an exact private ownership receipt");
   if (mode === "waf-enable" && !ownRules.length && observed.waf.rule_count >= 5) fail("PUBLIC_ACCESS_FREE_CAPACITY_UNAVAILABLE", "No verified Free custom-rule slot remains; this tool never purchases or upgrades a plan");
   if (mode === "domain-rollback" && input.wafProfile !== undefined) fail("INVALID_PUBLIC_ACCESS_PROFILE", "Domain rollback also removes only the rule owned by this tool");
-  const plan = { schema_version: 1, kind: "cfkanban_public_access", task_id: requireString(input.taskId, "task_id"), operation_id: requireUuid(input.operationId ?? randomUUID(), "operation_id"), instance_id: local.target.instance_id, mode, target: local.target,
+  const plan = { schema_version: 1, kind: "cfkanban_public_access", task_id: requireString(input.taskId, "task_id"), operation_id: operation, instance_id: local.target.instance_id, mode, target: local.target,
     before: { owner: observed.owner, routing: observed.routing, managed_digest: canonicalDigest(local.managed), foreign_rules_digest: observed.waf.foreign_rules_digest, owned_rules: ownRules.map(rule => ({ ruleset_id: rule.ruleset_id, id: rule.id, ...ruleBody(rule) })) },
     profile: mode === "waf-enable" ? PROFILE : "disabled", purchase_or_upgrade_plan: false, automatic_zone_dns_overwrite: false, modifies_foreign_rules: false,
+    ...(rollbackAuthority?.binding ? { waf_authority: rollbackAuthority, ...(rollbackWafPlan ? { service_waf_plan: rollbackWafPlan } : {}), clears_registered_waf_target: true } : {}),
     ...(["domain-enable", "domain-rollback"].includes(mode) ? { passkey_impact: {
       old_rp_id: new URL(observed.owner.observed_origin).hostname,
       new_rp_id: mode === "domain-enable" ? local.target.hostname : new URL(observed.routing.workers_dev_origin).hostname,
@@ -181,6 +310,7 @@ async function moveOrigin(input, local, plan, nextOrigin, event) {
   await event("origin_verified");
 }
 async function applyWaf(input, local, plan, control, journal, event, enabled) {
+  if (journal.events.some(entry => ["public_access_waf_create_intent", "public_access_waf_delete_intent"].includes(entry.type))) await retainPendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, plan);
   let inventory = await readWaf(control.zone);
   const ref = ownedRef(plan.instance_id), expected = anonymousApiRule(plan.target.hostname, plan.instance_id);
   if (foreignRulesDigest(inventory, ref) !== plan.before.foreign_rules_digest) fail("PUBLIC_ACCESS_FOREIGN_RULE_DRIFT", "Unrelated zone rules changed; prepare a fresh plan without overwriting them");
@@ -190,11 +320,14 @@ async function applyWaf(input, local, plan, control, journal, event, enabled) {
   if (rule && (canonicalDigest(ruleBody(rule)) !== canonicalDigest(expected) || (rule.id !== local.managed?.rule_id && !journal.events.some(entry => entry.type === "public_access_waf_create_intent")))) fail("PUBLIC_ACCESS_RULE_OWNERSHIP_REQUIRED", "The matching rule is not proven to belong to this operation");
   if (enabled && !rule) {
     if (inventory.reduce((count, set) => count + set.rules.length, 0) >= 5) fail("PUBLIC_ACCESS_FREE_CAPACITY_UNAVAILABLE", "Free custom-rule capacity changed; no plan is purchased automatically");
+    if (journal.events.some(entry => entry.type === "public_access_waf_create_intent")) fail("PUBLIC_ACCESS_WAF_OUTCOME_UNKNOWN", "An earlier creation was dispatched but remains unconfirmed; do not repeat the Cloudflare write");
+    await retainPendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, plan);
     await event("waf_create_intent");
     const entrypoint = inventory.find(set => set.kind === "zone");
     if (entrypoint) await control.zone(`/rulesets/${entrypoint.id}/rules`, { method: "POST", body: expected });
     else await control.zone("/rulesets", { method: "POST", body: { kind: "zone", name: "cfKanban custom request filters", phase: PHASE, rules: [expected] } });
   } else if (!enabled && rule) {
+    await retainPendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, plan);
     await event("waf_delete_intent");
     await control.zone(`/rulesets/${rule.ruleset_id}/rules/${rule.id}`, { method: "DELETE" });
   }
@@ -215,9 +348,21 @@ export async function applyPublicAccess(input) {
   let journal = await assertJournalAuthorization({ stateRoot: local.stateRoot, instanceId: input.instanceId, operationId: input.operationId, taskId: input.taskId, plan });
   const releaseLock = await acquirePublicAccessLock({ stateRoot: local.stateRoot, journalsRoot: local.paths.journalsRoot, operationId: plan.operation_id });
   try {
+    await assertNoPendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, { operation_id: plan.operation_id, plan_digest: canonicalDigest(plan) });
+    if (local.managed?.operation_id === plan.operation_id && journal.events.some(entry => entry.type === "public_access_complete")) {
+      await ownerRead(input, local);
+      await releasePendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, plan);
+      return { receipt: local.managed, receipt_path: local.managedPath, secret_values_exposed: false };
+    }
+    if (plan.service_waf_plan && ["waf-enable", "waf-disable"].includes(plan.mode)) {
+      const currentOwner = await ownerRead(input, local);
+      if (currentOwner.principal_id !== plan.before.owner.principal_id || currentOwner.observed_origin !== plan.before.owner.observed_origin || currentOwner.schema_version < 27) fail("PUBLIC_ACCESS_OWNER_REQUIRED", "The original WAF plan requires the current Owner and unchanged trusted origin");
+      const event = async (type, details = {}) => { const entry = { type: `public_access_${type}`, ...details }; await appendJournalEvent({ stateRoot: local.stateRoot, instanceId: input.instanceId, operationId: input.operationId, event: entry }); journal.events.push(entry); };
+      return await applyServiceWaf(input, local, plan, journal, event);
+    }
     const control = await clients(input, plan.target);
     if (canonicalDigest(local.managed) !== plan.before.managed_digest && local.managed?.operation_id !== plan.operation_id) fail("PUBLIC_ACCESS_RECEIPT_DRIFT", "A different public-access operation has completed; this older journal cannot overwrite it");
-    const event = async (type) => { await appendJournalEvent({ stateRoot: local.stateRoot, instanceId: input.instanceId, operationId: input.operationId, event: { type: `public_access_${type}` } }); journal.events.push({ type: `public_access_${type}` }); };
+    const event = async (type, details = {}) => { const entry = { type: `public_access_${type}`, ...details }; await appendJournalEvent({ stateRoot: local.stateRoot, instanceId: input.instanceId, operationId: input.operationId, event: entry }); journal.events.push(entry); };
     await readZone(control.zone, plan.target);
     // 恢复日志不延续旧的应用授权；每次继续控制面变更前重新验证现任 Owner。
     const currentOwner = await ownerRead(input, local);
@@ -246,12 +391,21 @@ export async function applyPublicAccess(input) {
     } else if (plan.mode === "domain-rollback") {
       if (domain) assertManaged(local, routing);
       else if (!journal.events.some(entry => entry.type === "public_access_domain_delete_intent")) fail("PUBLIC_ACCESS_DOMAIN_UNVERIFIED", "The owned domain disappeared outside this operation");
+      if (plan.service_waf_plan && currentOwner.preferred_api_origin === `https://${plan.target.hostname}`) {
+        const applied = await applyServiceWaf(input, local, plan, journal, event);
+        if (applied.ok === false) return applied;
+      }
+      if (plan.waf_authority && !plan.service_waf_plan && currentOwner.preferred_api_origin === `https://${plan.target.hostname}`) {
+        const { readWafAuthority } = await import("./waf-target.mjs");
+        if (canonicalDigest(await readWafAuthority({ ...input, publicAccessTarget: plan.target })) !== canonicalDigest(plan.waf_authority)) fail("WAF_TARGET_AUTHORITY_DRIFT", "The registered disabled ownership changed after the rollback plan");
+      }
+      if (plan.waf_authority) wafResult = { rule_id: null, ruleset_id: null, rule_ref: plan.waf_authority.ownership.rule_ref ?? ownedRef(plan.instance_id), waf_profile: "disabled" };
       if (!routing.workers_dev || routing.previews_enabled) {
         await event("workers_dev_enable_intent");
         await control.worker(`/scripts/${plan.target.worker_name}/subdomain`, { method: "POST", body: { enabled: true, previews_enabled: false } });
       }
       await moveOrigin(input, local, plan, routing.workers_dev_origin, event);
-      if (plan.before.owned_rules.length) wafResult = await applyWaf(input, local, plan, control, journal, event, false);
+      if (!plan.waf_authority && plan.before.owned_rules.length) wafResult = await applyWaf(input, local, plan, control, journal, event, false);
       if (domain) { await event("domain_delete_intent"); await control.worker(`/domains/${domain.id}`, { method: "DELETE" }); }
     } else {
       assertManaged(local, routing);
@@ -263,9 +417,14 @@ export async function applyPublicAccess(input) {
     if (routing.workers_dev !== !enabled || routing.previews_enabled !== false || (enabled ? !domain || domain.service !== plan.target.worker_name || domain.zone_id !== plan.target.zone_id : Boolean(domain))) fail("PUBLIC_ACCESS_ROUTING_UNVERIFIED", "Final domain, workers.dev and preview URL readback did not match the plan");
     local.metadata = await readJson(local.paths.instanceMetadata);
     await ownerRead(input, local);
+    if (plan.clears_registered_waf_target) {
+      const { clearRolledBackWafTarget } = await import("./waf-target.mjs");
+      await clearRolledBackWafTarget(input, local, plan);
+    }
     const receipt = { schema_version: 1, kind: "cfkanban_public_access_receipt", instance_id: plan.instance_id, account_id: plan.target.account_id, worker_name: plan.target.worker_name, zone_id: plan.target.zone_id, hostname: plan.target.hostname, domain_enabled: enabled, domain_id: domain?.id ?? null, workers_dev_origin: routing.workers_dev_origin, workers_dev: routing.workers_dev, previews_enabled: routing.previews_enabled, preferred_api_origin: local.metadata.trusted_api_origin, ...wafResult, operation_id: plan.operation_id, plan_digest: canonicalDigest(plan), verified_at: new Date().toISOString(), snapshot_not_realtime: true };
     await atomicWriteJson(local.managedPath, receipt);
     await event("complete");
+    await releasePendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, plan);
     return { receipt, receipt_path: local.managedPath, secret_values_exposed: false };
   } finally { await releaseLock(); }
 }
@@ -275,11 +434,15 @@ export async function verifyPlannedPublicAccess(input) {
   if (!plan.public_access) return null;
   const access = normalizePublicAccess(plan.public_access, { instanceId: plan.instance_id, accountId: plan.target.cloudflare_account_id, workerName: plan.resources.worker.name });
   const stateRoot = path.resolve(input.stateRoot ?? resolveStateRoot());
+  await assertNoPendingWaf({ stateRoot, instanceId: plan.instance_id });
   const receiptPath = path.join(getInstancePaths({ stateRoot, instanceId: plan.instance_id }).receiptsRoot, "public-access.json");
-  await assertNoSymlinkPath(receiptPath, stateRoot); await validatePrivatePath(receiptPath, "file");
-  if (canonicalDigest(await readJson(receiptPath)) !== canonicalDigest(access)) fail("PUBLIC_ACCESS_RECEIPT_DRIFT", "Public-access ownership changed after the upgrade plan was frozen");
+  await assertNoSymlinkPath(receiptPath, stateRoot);
+  if (access.kind === "cfkanban_public_access_receipt") {
+    await validatePrivatePath(receiptPath, "file");
+    if (canonicalDigest(await readJson(receiptPath)) !== canonicalDigest(plan.public_access_domain_receipt ?? access)) fail("PUBLIC_ACCESS_RECEIPT_DRIFT", "Public-access domain ownership changed after the upgrade plan was frozen");
+  } else if (!plan.waf_authority) fail("WAF_TARGET_AUTHORITY_REQUIRED", "Registered-domain preservation requires the frozen authoritative WAF target");
   const target = { instance_id: plan.instance_id, account_id: access.account_id, worker_name: access.worker_name, zone_id: access.zone_id, hostname: access.hostname, database_id: plan.resources.d1.database_id, wrangler_executable: input.wranglerExecutable, cloudflare_profile: plan.target.cloudflare_profile, context_directory: plan.target.cloudflare_auth_context_directory };
-  return verifyPublicAccessConfiguration({ ...input, publicAccessReceipt: access, publicAccessTarget: target });
+  return verifyPublicAccessConfiguration({ ...input, publicAccessReceipt: access, publicAccessTarget: target, wafAuthority: plan.waf_authority });
 }
 
 export async function verifyPublicAccessConfiguration(input) {
@@ -289,12 +452,20 @@ export async function verifyPublicAccessConfiguration(input) {
   const control = await clients(input, target);
   if (access.domain_enabled) await readZone(control.zone, target);
   // 已回退的 hostname 可被其他服务重用；inactive 升级只核对原映射消失和 Worker 入口。
-  const routing = await readRouting(control.worker, control.zone, target, { checkZoneRoutes: access.domain_enabled }), domain = ownedDomain(routing, target);
+  const routing = await readRouting(control.worker, control.zone, target, { checkZoneRoutes: access.domain_enabled, requirePublicFetch: Boolean(input.wafAuthority) }), domain = ownedDomain(routing, target);
   if (routing.workers_dev !== !access.domain_enabled || routing.previews_enabled || routing.workers_dev_origin !== access.workers_dev_origin || (access.domain_enabled ? domain?.id !== access.domain_id || domain?.service !== access.worker_name || domain?.zone_id !== access.zone_id || routing.domains.filter(value => value.service === access.worker_name).length !== 1 : Boolean(domain) || routing.domains.some(value => value.service === access.worker_name))) fail("PUBLIC_ACCESS_ROUTING_DRIFT", "Managed domain or bypass exposure differs from the frozen upgrade target");
   if (access.waf_profile === PROFILE) {
     const inventory = await readWaf(control.zone);
-    const rules = inventory.flatMap(set => set.rules.filter(rule => rule.ref === access.rule_ref).map(rule => ({ ruleset_id: set.id, ...rule })));
-    if (rules.length !== 1 || rules[0].id !== access.rule_id || rules[0].ruleset_id !== access.ruleset_id || canonicalDigest(ruleBody(rules[0])) !== canonicalDigest(anonymousApiRule(access.hostname, access.instance_id))) fail("PUBLIC_ACCESS_RULE_DRIFT", "The exact owned WAF profile changed; normal upgrade cannot repair it implicitly");
+    if (input.wafAuthority) await verifyPublicAccessEntrypoint(control.zone, inventory, access.ruleset_id);
+    const rules = inventory.flatMap(set => set.rules.filter(rule => rule.id === access.rule_id && rule.ref === access.rule_ref).map(rule => ({ ruleset_id: set.id, ...rule })));
+    const expected = { ...anonymousApiRule(access.hostname, access.instance_id), ref: access.rule_ref };
+    const allowed = new Set(["ref", "description", "enabled", "action", "expression", "id", "ruleset_id", "version", "last_updated"]);
+    if (rules.length !== 1 || rules[0].ruleset_id !== access.ruleset_id || Object.keys(rules[0]).some(key => !allowed.has(key)) || canonicalDigest(ruleBody(rules[0])) !== canonicalDigest(expected) || (input.wafAuthority && canonicalDigest(ruleBody(rules[0])) !== input.wafAuthority.ownership.rule_digest)) fail("PUBLIC_ACCESS_RULE_DRIFT", "The exact owned WAF profile changed; normal upgrade cannot repair it implicitly");
+  }
+  if (input.wafAuthority) {
+    const { readWafAuthority } = await import("./waf-target.mjs");
+    const authority = await readWafAuthority({ ...input, publicAccessTarget: target });
+    if (canonicalDigest(authority) !== canonicalDigest(input.wafAuthority)) fail("WAF_TARGET_AUTHORITY_DRIFT", "Service WAF ownership changed after the upgrade plan was frozen");
   }
   return { verified: true, hostname: access.hostname, workers_dev: !access.domain_enabled, previews_enabled: false, waf_profile: access.waf_profile };
 }

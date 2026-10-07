@@ -3433,6 +3433,7 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
   await writeFile(path.join(serviceRoot, "wrangler-config-schema.json"), "{}\n", "utf8");
   await writeFile(path.join(serviceRoot, "wrangler.template.json"), JSON.stringify({
     compatibility_date: "2026-08-29",
+    compatibility_flags: ["nodejs_compat", "global_fetch_strictly_public"],
     assets: {
       binding: "ASSETS",
       not_found_handling: "single-page-application",
@@ -3467,6 +3468,7 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
   const config = await readJson(generated.wrangler_config_path);
   assert.equal(config.name, "cfkanban-worker");
   assert.equal(config.account_id, "account-one");
+  assert.deepEqual(config.compatibility_flags, ["nodejs_compat", "global_fetch_strictly_public"]);
   assert.equal(config.main, path.join(serviceRoot, "dist", "index.js"));
   assert.equal(config.assets.directory, path.join(serviceRoot, "apps", "web", "dist"));
   assert.equal(config.d1_databases[0].database_id, "77777777-7777-4777-8777-777777777777");
@@ -3591,6 +3593,50 @@ test("portable Service bundle produces a private frozen Wrangler config and dry-
     }),
     (error) => error.code === "WRANGLER_CONFIG_DRIFT",
   );
+});
+
+test("schema 27 frozen config requires public fetch flags and preserves legacy template behavior", async (t) => {
+  const { home, stateRoot } = await fixtureState();
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const serviceRoot = path.join(home, "service-bundle-flags");
+  for (const directory of ["dist", "apps/web/dist", "migrations", "contracts"]) await mkdir(path.join(serviceRoot, directory), { recursive: true });
+  await writeFile(path.join(serviceRoot, "dist/index.js"), "export default {};\n");
+  await writeFile(path.join(serviceRoot, "apps/web/dist/index.html"), "<!doctype html>\n");
+  await writeFile(path.join(serviceRoot, "wrangler-config-schema.json"), "{}\n");
+  await writeFile(path.join(serviceRoot, "contracts/openapi.json"), JSON.stringify({ info: { version: "0.1.0" } }));
+  for (const { name, schemaVersion, flags, accepted } of [
+    { name: "schema 27 preserves all valid flags", schemaVersion: 27, flags: ["nodejs_compat", "global_fetch_strictly_public"], accepted: true },
+    { name: "schema 27 rejects missing flags", schemaVersion: 27, flags: undefined, accepted: false },
+    { name: "schema 27 rejects empty flags", schemaVersion: 27, flags: [], accepted: false },
+    { name: "schema 27 rejects private origin", schemaVersion: 27, flags: ["global_fetch_private_origin"], accepted: false },
+    { name: "schema 27 rejects conflicting flags", schemaVersion: 27, flags: ["global_fetch_strictly_public", "global_fetch_private_origin"], accepted: false },
+    { name: "legacy schema keeps missing flags absent", schemaVersion: 26, flags: undefined, accepted: true },
+    { name: "legacy schema preserves its existing origin contract", schemaVersion: 26, flags: ["global_fetch_private_origin"], accepted: true },
+    { name: "all schemas reject non-array flags", schemaVersion: 26, flags: "global_fetch_strictly_public", accepted: false },
+    { name: "all schemas reject malformed flags", schemaVersion: 26, flags: ["global_fetch_strictly_public", null], accepted: false },
+    { name: "all schemas reject duplicate flags", schemaVersion: 26, flags: ["nodejs_compat", "nodejs_compat"], accepted: false },
+  ]) {
+    await t.test(name, async () => {
+      await writeFile(path.join(serviceRoot, "migrations/manifest.json"), JSON.stringify({ schema_version: schemaVersion }));
+      await writeFile(path.join(serviceRoot, "wrangler.template.json"), JSON.stringify({ compatibility_date: "2026-08-29", ...(flags === undefined ? {} : { compatibility_flags: flags }), assets: { binding: "ASSETS", not_found_handling: "none", run_worker_first: ["/api/*", "/.well-known/*"] } }));
+      const operationId = crypto.randomUUID(), taskId = "wp10-compatibility-flags";
+      const plan = createStrictZeroPlan({ taskId, accountId: "account-one", cloudflareProfile: "production", ownerDisplayName: "Example_Owner", release: { manifest_version: "0.1.0", manifest_sha256: "a".repeat(64), service_bundle_version: "0.1.0", service_bundle_sha256: "b".repeat(64), schema_version: schemaVersion }, instanceId: INSTANCE_ID, ownerPrincipalId: PRINCIPAL_ID, ownerCredentialId: CREDENTIAL_ID, operationId }).plan;
+      await createJournal({ stateRoot, instanceId: INSTANCE_ID, operationId, plan });
+      await authorizeJournal({ stateRoot, instanceId: INSTANCE_ID, operationId, taskId, planDigest: canonicalDigest(plan) });
+      const generate = () => writeFrozenWranglerConfig({ stateRoot, instanceId: INSTANCE_ID, operationId, taskId, plan, serviceBundleRoot: serviceRoot, d1DatabaseId: "77777777-7777-4777-8777-777777777777" });
+      const paths = getInstancePaths({ stateRoot, instanceId: INSTANCE_ID });
+      if (accepted) {
+        const generated = await generate(), config = await readJson(generated.wrangler_config_path);
+        assert.deepEqual(config.compatibility_flags, flags);
+        assert.equal(Object.hasOwn(config, "compatibility_flags"), flags !== undefined);
+        assert.equal(generated.config_digest, canonicalDigest(config));
+      } else {
+        await assert.rejects(generate(), error => error.code === "SERVICE_BUNDLE_CONFIG_INVALID");
+        assert.equal(await readJson(path.join(paths.journalsRoot, `${operationId}.wrangler.jsonc`), { allowMissing: true }), null);
+        assert.equal((await readJson(path.join(paths.journalsRoot, `${operationId}.json`))).events.some(event => event.type === "wrangler_config_written"), false);
+      }
+    });
+  }
 });
 
 test("migration reconciliation requires both ledger checksum and schema artifacts", () => {

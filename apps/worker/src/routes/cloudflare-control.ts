@@ -1,15 +1,21 @@
+import { answerWafTargetProof, applyWaf, getWafOperationByKey, planWaf, registerWafTargetBinding } from "../services/cloudflare-waf.ts";
 import { requireVersion } from "../domain/model.ts";
 import { authenticateRequest } from "../kernel/auth.ts";
 import { requireOwnerControl } from "../kernel/authorization.ts";
 import { enforceCookieWriteProtection } from "../kernel/csrf.ts";
 import { validationError } from "../kernel/errors.ts";
 import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.ts";
-import { enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
+import { enforceInstanceRateLimit, enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { WorkerEnv } from "../kernel/types.ts";
 import { applyCloudflarePlan, getCloudflareControl, getCloudflareNotifications, getCloudflareOperation, getCloudflarePlan, getCloudflareSecretOperation, getCloudflareWaf, planCloudflareConfiguration, planCloudflareRateLimits, saveCloudflareSecret, updateCloudflareSettings, verifyCloudflareControl, verifyCloudflareOperation, type CloudflareControlDependencies } from "../services/cloudflare-control.ts";
 
 export function registerCloudflareControlRoutes(router: Router, dependencies: CloudflareControlDependencies = {}): void {
+  router.post("/.well-known/cfkanban-waf-proof", async (request, env, context) => {
+    await enforceInstanceRateLimit(env);
+    const challenge = validateJsonObject(await readJsonBody(request), { allowedKeys: ["nonce", "expires_at", "target"], requiredKeys: ["nonce", "expires_at", "target"] });
+    return jsonResponse(await answerWafTargetProof(env, request, challenge), context.requestId);
+  });
   const base = "/api/v1/admin/cloudflare";
   const authenticate = async (request: Request, env: WorkerEnv, now: number, write = false) => {
     const auth = await authenticateRequest(env.DB, request, now); requireOwnerControl(auth);
@@ -18,6 +24,19 @@ export function registerCloudflareControlRoutes(router: Router, dependencies: Cl
   router.get(base, async (request, env, context) => jsonResponse(await getCloudflareControl(env, await authenticate(request, env, context.startedAt)), context.requestId));
   router.get(`${base}/notifications`, async (request, env, context) => jsonResponse(await getCloudflareNotifications(env, await authenticate(request, env, context.startedAt), dependencies), context.requestId));
   router.get(`${base}/waf`, async (request, env, context) => jsonResponse(await getCloudflareWaf(env, await authenticate(request, env, context.startedAt), dependencies), context.requestId));
+  router.get(`${base}/waf/operations/{request_key}`, async (request, env, context) => jsonResponse(await getWafOperationByKey(env, await authenticate(request, env, context.startedAt), context.params.request_key ?? ""), context.requestId));
+  router.post(`${base}/waf/target-binding`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["expected_version"], requiredKeys: ["expected_version"] });
+    return jsonResponse(await registerWafTargetBinding(env, request, auth, requireVersion(body.expected_version ?? null), context.startedAt, dependencies), context.requestId);
+  });
+  router.post(`${base}/waf/plan`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["action", "conflict_choice", "expected_version"], requiredKeys: ["action", "expected_version"] });
+    return jsonResponse(await planWaf(env, request, auth, body.action ?? null, body.conflict_choice, requireVersion(body.expected_version ?? null), context.startedAt, dependencies), context.requestId);
+  });
+  router.post(`${base}/waf/apply`, async (request, env, context) => {
+    const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["plan_id", "expected_version"], requiredKeys: ["plan_id", "expected_version"] });
+    return jsonResponse(await applyWaf(env, request, auth, body.plan_id ?? null, requireVersion(body.expected_version ?? null), context.startedAt, dependencies), context.requestId);
+  });
   router.get(`${base}/operations/{operation_id}`, async (request, env, context) => jsonResponse(await getCloudflareOperation(env, await authenticate(request, env, context.startedAt), context.params.operation_id ?? ""), context.requestId));
   router.get(`${base}/secret-operations/{request_key}`, async (request, env, context) => jsonResponse(await getCloudflareSecretOperation(env, await authenticate(request, env, context.startedAt), context.params.request_key ?? ""), context.requestId));
   router.get(`${base}/plans/{plan_id}`, async (request, env, context) => jsonResponse(await getCloudflarePlan(env, await authenticate(request, env, context.startedAt), context.params.plan_id ?? ""), context.requestId));

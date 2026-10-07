@@ -31,4 +31,16 @@ cfkanban admin usage collect --help
 
 应用使用计划的准确版本。Cloudflare 结果待核验或不确定时，保留原操作并调用 `admin cloudflare verify-operation`；核实只读取 Cloudflare，不重复设置写入。历史查询从本实例 D1 读取 1–90 个完整 UTC 日并保留缺日；显式采集一次只接受最近七个完整 UTC 日中的一个，不将未知量补成零。
 
+schema 27+ 的 WAF 管理与网页共用目标和归属规则事实。登记当前 preferred hostname，为启用/关闭分别预览计划，再以准确版本应用。流程向唯一 Zone entrypoint 追加单条规则或创建缺失入口，保留其他规则，核对 Free 容量与豁免。`--conflict-choice` 是明确共存选择；IP Allow 或不确定表达式仍可能部分覆盖。写入需要准确 Zone 的 WAF Edit，关闭保留域名及其他规则。
+
+```text
+cfkanban admin cloudflare waf --help
+cfkanban admin cloudflare waf-connect --help
+cfkanban admin cloudflare waf-plan --help
+cfkanban admin cloudflare waf-apply --help
+cfkanban admin cloudflare waf-operation --help
+```
+
+WAF apply 使用 UUID Idempotency-Key。响应丢失时，`waf-operation --request-key <original-uuid>` 只查原请求，不重放 apply；404 仍为未确认，只核验返回的准确 operation。已存 Token 无法读取 Worker 域名时，使用另行授权的 [WAF 目标登记计划](./deployment.md)和本机已有 Cloudflare 认证，不创建域名，也不上传凭据。升级保留共享 WAF 归属事实，包括另一设备已执行的关闭。
+
 Cloudflare Token 是明确的浏览器秘密输入例外。使用既有 `web open` 流程打开 Owner 管理页，再进入 **Cloudflare 设置**。只在受保护的瞬时表单输入凭据，最终保存普通 Worker Secret。没有将 Token 写进 CLI 恢复日志的普通参数、输入文件或 API 命令。参见[连接和权限](../deployment/optional.md)。

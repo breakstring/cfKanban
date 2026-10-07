@@ -1,4 +1,5 @@
-import { buildCurrentAuthGuard, reauthenticateOwner, requireOwnerControl } from "../kernel/authorization.ts";
+import { assessWafOperation, readWafStatus, verifyWafResult } from "./cloudflare-waf.ts";
+import { buildCurrentAuthGuard, reauthenticateOwner, requireOwnerControl, type SqlGuard } from "../kernel/authorization.ts";
 import { isUuid, sha256Hex } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, probeOperationCommit } from "../kernel/d1.ts";
 import { ApiError, conflict, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
@@ -6,20 +7,21 @@ import { canonicalJson, readOperationSnapshot, runIdempotentOperation, validateI
 import type { AuthContext, JsonValue, WorkerEnv } from "../kernel/types.ts";
 import { actorCredentialId, requireIdempotencyKey, writeResult } from "./shared.ts";
 
-type Resource = { [key: string]: JsonValue };
+export type Resource = { [key: string]: JsonValue };
 type Capability = "missing" | "unverified" | "verified" | "permission_denied" | "unavailable" | "target_mismatch" | "unsupported_contract";
-type Status = "pending" | "verified" | "failed" | "unknown";
+export type Status = "pending" | "verified" | "failed" | "unknown";
 type SecretKind = "connection" | "configuration" | "control" | "analytics";
-type PlanKind = "configuration" | "rate_limit";
+type PlanKind = "configuration" | "rate_limit" | "waf";
+type ConfigurationPlanKind = Exclude<PlanKind, "waf">;
 type ProviderOperation = "deployments" | "versions" | "settings" | "version_details" | "secret_write" | "notifications" | "billing" | "waf" | "zone" | "graphql";
 interface ProviderDiagnostics { provider_operation?: ProviderOperation; provider_method?: "GET" | "PUT" | "POST" | "PATCH" | "DELETE"; provider_status?: number }
 export interface CloudflareControlDependencies { fetch?: typeof fetch }
-interface SettingsRow { version: number; zone_id: string | null; capabilities_json: string; verified_at: number | null; latest_operation_id: string | null; locked_operation_id: string | null; last_operation_id: string | null }
-interface OperationRow { id: string; principal_id: string; route: string; request_hash: string; kind: string; status: Status; baseline_json: string; desired_json: string; secret_value_hash: string | null; dispatched_at: number | null; result_version_id: string | null; deployment_id: string | null; failure_class: string | null; created_at: number; updated_at: number }
-interface PlanRow { id: string; kind: PlanKind; control_version: number; baseline_json: string; before_json: string; after_json: string; created_at: number; consumed_operation_id: string | null }
-interface Target { account_id: string; worker_name: string; database_id: string }
-interface Baseline extends Resource { active_version_id: string; latest_version_id: string; deployment_id: string; etag: string; settings_hash: string; target: Resource }
-interface LiveBaseline { baseline: Baseline; settings: Resource; bindings: Resource[] }
+export interface SettingsRow { version: number; zone_id: string | null; capabilities_json: string; verified_at: number | null; latest_operation_id: string | null; locked_operation_id: string | null; last_operation_id: string | null }
+export interface OperationRow { id: string; principal_id: string; route: string; request_hash: string; kind: string; status: Status; baseline_json: string; desired_json: string; secret_value_hash: string | null; dispatched_at: number | null; result_version_id: string | null; deployment_id: string | null; failure_class: string | null; created_at: number; updated_at: number }
+export interface PlanRow { id: string; kind: PlanKind; control_version: number; baseline_json: string; before_json: string; after_json: string; created_at: number; consumed_operation_id: string | null }
+export interface Target { account_id: string; worker_name: string; database_id: string }
+export interface Baseline extends Resource { active_version_id: string; latest_version_id: string; deployment_id: string; etag: string; settings_hash: string; target: Resource }
+export interface LiveBaseline { baseline: Baseline; settings: Resource; bindings: Resource[] }
 function settingsMetadata(settings: Resource): Resource {
   const { bindings: _bindings, annotations: _annotations, exports_reconciliation: _reconciliation, ...metadata } = settings;
   return metadata;
@@ -35,7 +37,7 @@ const RATE_GROUPS = {
 const CONFIG_VARS = { history_enabled: "USAGE_HISTORY_ENABLED", analytics_enabled: "USAGE_ANALYTICS_ENABLED", billing_plan: "USAGE_BILLING_PLAN", billing_cycle_day: "USAGE_BILLING_CYCLE_DAY", account_totals: "USAGE_ACCOUNT_TOTALS_ENABLED", warning_percent: "USAGE_WARNING_PERCENT" } as const;
 const BUDGET = { status: "unsupported_contract", docs_url: "https://developers.cloudflare.com/billing/manage/budget-alerts/", dashboard_url: "https://dash.cloudflare.com/?to=/:account/billing/billable-usage" };
 
-class ProviderFailure extends ApiError {
+export class ProviderFailure extends ApiError {
   readonly capability: Capability;
   readonly rejected: boolean;
   readonly missingResource: boolean;
@@ -44,25 +46,25 @@ class ProviderFailure extends ApiError {
     this.capability = capability; this.rejected = rejected; this.missingResource = missingResource;
   }
 }
-function object(value: JsonValue | undefined): Resource {
+export function object(value: JsonValue | undefined): Resource {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ProviderFailure("unavailable");
   return value;
 }
-function list(value: JsonValue | undefined): JsonValue[] {
+export function list(value: JsonValue | undefined): JsonValue[] {
   if (!Array.isArray(value) || value.length > 500) throw new ProviderFailure("unavailable");
   return value;
 }
-function text(value: JsonValue | undefined, max = 256): string {
+export function text(value: JsonValue | undefined, max = 256): string {
   if (typeof value !== "string" || value.length === 0 || value.length > max) throw new ProviderFailure("unavailable");
   return value;
 }
-function fixedTarget(env: WorkerEnv): Target {
+export function fixedTarget(env: WorkerEnv): Target {
   const account = env.CFKANBAN_CONTROL_ACCOUNT_ID, worker = env.CFKANBAN_CONTROL_WORKER_NAME, database = env.CFKANBAN_CONTROL_DATABASE_ID;
   if (!account || !/^[a-zA-Z0-9_-]{1,128}$/.test(account) || !worker || !/^[a-zA-Z0-9_-]{1,63}$/.test(worker) || !database || !isUuid(database)) throw validationError("cloudflare_target_not_configured");
   return { account_id: account, worker_name: worker, database_id: database };
 }
 function targetResource(target: Target): Resource { return { ...target }; }
-function tokenFor(env: WorkerEnv, kind: SecretKind): string | undefined { return env.CFKANBAN_API_TOKEN ?? env[SECRET_NAMES[kind]]; }
+export function tokenFor(env: WorkerEnv, kind: SecretKind): string | undefined { return env.CFKANBAN_API_TOKEN ?? env[SECRET_NAMES[kind]]; }
 function secretOperationKind(kind: SecretKind): string { return `${kind === "connection" ? "configuration" : kind}_secret`; }
 function operationSecretName(row: OperationRow, desired: Resource): typeof SECRET_NAMES[SecretKind] {
   const kind = desired.secret_kind;
@@ -84,7 +86,7 @@ function providerDiagnostics(path: string, method: string, status: number): Prov
   if (Number.isInteger(status) && status >= 100 && status <= 599) details.provider_status = status;
   return details;
 }
-function api(token: string, dependencies: CloudflareControlDependencies) {
+export function api(token: string, dependencies: CloudflareControlDependencies, completeInventory = false) {
   return async (path: string, init: RequestInit = {}): Promise<JsonValue> => {
     if (!path.startsWith("/accounts/") && !path.startsWith("/zones/") && path !== "/graphql") throw new ProviderFailure("target_mismatch", true);
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10_000);
@@ -101,13 +103,19 @@ function api(token: string, dependencies: CloudflareControlDependencies) {
       const envelope = object(JSON.parse(new TextDecoder().decode(bytes)) as JsonValue);
       if (path === "/graphql") { if (envelope.errors !== undefined && envelope.errors !== null && (!Array.isArray(envelope.errors) || envelope.errors.length > 0)) throw new ProviderFailure("permission_denied"); return envelope.data ?? null; }
       if (envelope.success !== true) throw new ProviderFailure("unavailable");
-      if (envelope.result_info) { const info = object(envelope.result_info); if (typeof info.total_pages === "number" && info.total_pages > 1 && !path.endsWith("/versions")) throw new ProviderFailure("unavailable"); }
+      // 基线只取当前部署与最新版本的首项，不需要读取历史页。
+      if (envelope.result_info) { const info = object(envelope.result_info); if (typeof info.total_pages === "number" && info.total_pages > 1 && !path.endsWith("/versions") && !path.endsWith("/deployments")) throw new ProviderFailure("unavailable"); }
+      if (completeInventory && envelope.result_info) {
+        const info = object(envelope.result_info), cursors = info.cursors === undefined || info.cursors === null ? {} : object(info.cursors), result = envelope.result;
+        const counted = Array.isArray(result) ? result : result !== null && typeof result === "object" && Array.isArray(result.rules) ? result.rules : null;
+        if ((info.total_pages !== undefined && info.total_pages !== null && info.total_pages !== 1) || (info.page !== undefined && info.page !== null && info.page !== 1) || (info.total_count !== undefined && info.total_count !== null && (!Number.isSafeInteger(info.total_count) || Number(info.total_count) < 0 || (counted && info.total_count !== counted.length))) || Object.values(cursors).some(cursor => cursor !== undefined && cursor !== null && cursor !== "") || (info.cursor !== undefined && info.cursor !== null && info.cursor !== "")) throw new ProviderFailure("unavailable");
+      }
       return envelope.result ?? null;
     } catch (error) { if (error instanceof ProviderFailure) throw error; throw new ProviderFailure("unavailable"); }
     finally { clearTimeout(timer); }
   };
 }
-async function baseline(env: WorkerEnv, token: string, dependencies: CloudflareControlDependencies, allowPending = false): Promise<LiveBaseline> {
+export async function baseline(env: WorkerEnv, token: string, dependencies: CloudflareControlDependencies, allowPending = false): Promise<LiveBaseline> {
   const target = fixedTarget(env), call = api(token, dependencies), path = scriptPath(target);
   const [deploymentResult, versionsResult, settingsResult] = await Promise.all([call(`${path}/deployments`), call(`${path}/versions`), call(`${path}/settings`)]);
   const deployment = object(list(object(deploymentResult).deployments)[0]), active = list(deployment.versions);
@@ -125,25 +133,25 @@ async function baseline(env: WorkerEnv, token: string, dependencies: CloudflareC
   // version resources prove active bindings; candidate metadata cannot prove active config.
   return { settings, bindings, baseline: { active_version_id: versionId, latest_version_id: latestId, deployment_id: text(deployment.id), etag: text(script.etag), settings_hash: await sha256Hex(canonicalJson(settings)), metadata_hash: latestId === versionId ? await sha256Hex(canonicalJson(settingsMetadata(settings))) : null, binding_fingerprints: await Promise.all(bindings.map(async binding => ({ name: text(binding.name), type: text(binding.type), hash: await sha256Hex(canonicalJson(binding)) }))), target: targetResource(target) } };
 }
-async function settingsRow(db: D1Database): Promise<SettingsRow> { const row = await db.prepare("SELECT * FROM cloudflare_control_settings WHERE singleton=1").first<SettingsRow>(); if (!row) throw platformUnavailable("d1"); return row; }
-async function operationRow(db: D1Database, id: string): Promise<OperationRow> { if (!isUuid(id)) throw notFound(); const row = await db.prepare("SELECT * FROM cloudflare_control_operations WHERE id=?1").bind(id).first<OperationRow>(); if (!row) throw notFound(); return row; }
-async function instance(db: D1Database) { const row = await db.prepare("SELECT m.instance_id,o.preferred_api_origin FROM instance_meta m JOIN instance_origin_settings o ON o.singleton=m.singleton WHERE m.singleton=1").first<{ instance_id: string; preferred_api_origin: string }>(); if (!row) throw platformUnavailable("d1"); return row; }
-function operationResource(row: OperationRow, version: number): Resource { const base = object(JSON.parse(row.baseline_json) as JsonValue); return { operation_id: row.id, kind: row.kind, status: row.status, version, baseline_version_id: base.active_version_id ?? null, result_version_id: row.result_version_id, deployment_id: row.deployment_id, failure_class: row.failure_class, created_at: new Date(row.created_at).toISOString(), updated_at: new Date(row.updated_at).toISOString() }; }
-function planResource(row: PlanRow): Resource { const base = object(JSON.parse(row.baseline_json) as JsonValue); return { plan_id: row.id, kind: row.kind, version: row.control_version, baseline_version_id: base.active_version_id ?? null, baseline_deployment_id: base.deployment_id ?? null, target: base.target ?? null, before: JSON.parse(row.before_json) as JsonValue, after: JSON.parse(row.after_json) as JsonValue, created_at: new Date(row.created_at).toISOString() }; }
+export async function settingsRow(db: D1Database): Promise<SettingsRow> { const row = await db.prepare("SELECT * FROM cloudflare_control_settings WHERE singleton=1").first<SettingsRow>(); if (!row) throw platformUnavailable("d1"); return row; }
+export async function operationRow(db: D1Database, id: string): Promise<OperationRow> { if (!isUuid(id)) throw notFound(); const row = await db.prepare("SELECT * FROM cloudflare_control_operations WHERE id=?1").bind(id).first<OperationRow>(); if (!row) throw notFound(); return row; }
+export async function instance(db: D1Database) { const row = await db.prepare("SELECT m.instance_id,o.preferred_api_origin FROM instance_meta m JOIN instance_origin_settings o ON o.singleton=m.singleton WHERE m.singleton=1").first<{ instance_id: string; preferred_api_origin: string }>(); if (!row) throw platformUnavailable("d1"); return row; }
+export function operationResource(row: OperationRow, version: number): Resource { const base = object(JSON.parse(row.baseline_json) as JsonValue); return { operation_id: row.id, kind: row.kind, status: row.status, version, baseline_version_id: base.active_version_id ?? null, result_version_id: row.kind === "waf" ? null : row.result_version_id, ...(row.kind === "waf" ? { result_rule_id: row.result_version_id } : {}), deployment_id: row.deployment_id, failure_class: row.failure_class, created_at: new Date(row.created_at).toISOString(), updated_at: new Date(row.updated_at).toISOString() }; }
+export function planResource(row: PlanRow): Resource { const base = object(JSON.parse(row.baseline_json) as JsonValue); return { plan_id: row.id, kind: row.kind, version: row.control_version, baseline_version_id: base.active_version_id ?? null, baseline_deployment_id: base.deployment_id ?? null, target: base.target ?? null, before: JSON.parse(row.before_json) as JsonValue, after: JSON.parse(row.after_json) as JsonValue, created_at: new Date(row.created_at).toISOString() }; }
 function event(db: D1Database, auth: AuthContext, eventId: string, operationId: string, instanceId: string, now: number, type: string) {
   return db.prepare(`INSERT INTO events(id,stream,type,operation_id,event_index,actor_principal_id,actor_credential_id,authorized_via,subject_type,subject_id,payload_json,created_at)
     SELECT ?1,'security',?2,?3,0,?4,?5,'deployment_owner','instance',?6,json_object('version',version,'operation_id',latest_operation_id),?7
     FROM cloudflare_control_settings WHERE singleton=1 AND last_operation_id=?3`).bind(eventId, type, operationId, auth.principalId, actorCredentialId(auth), instanceId, now);
 }
-async function localChange(env: WorkerEnv, request: Request, auth: AuthContext, route: string, body: Resource, expected: number | null, mutation: (operationId: string, version: number) => D1PreparedStatement[], snapshot: (version: number) => Promise<Resource>, now: number, prepare?: () => Promise<void>): Promise<Resource> {
+export async function localChange(env: WorkerEnv, request: Request, auth: AuthContext, route: string, body: Resource, expected: number | null, mutation: (operationId: string, version: number) => D1PreparedStatement[], snapshot: (version: number) => Promise<Resource>, now: number, prepare?: () => Promise<void>, commitGuard?: (startIndex: number) => SqlGuard): Promise<Resource> {
   requireOwnerControl(auth); const db = env.DB, authorize = async () => { await reauthenticateOwner(db, request, Date.now()); };
   const result = await runIdempotentOperation({ db, now, method: request.method, routeTemplate: route, scopeKey: `principal:${auth.principalId}`, normalizedResourceScope: "instance-cloudflare-control", requestBody: body, idempotencyKey: requireIdempotencyKey(request), authorize,
     execute: async operationId => {
       await authorize(); const row = await settingsRow(db); if (expected !== null && row.version !== expected) throw versionConflict(row.version); if (row.locked_operation_id) throw conflict("VERSION_CONFLICT", "refresh_resource", { reason: "cloudflare_operation_pending" });
       await prepare?.(); await authorize();
-      const guard = buildCurrentAuthGuard(auth, Date.now(), 3, true), meta = await instance(db);
+      const guard = buildCurrentAuthGuard(auth, Date.now(), 3, true), meta = await instance(db), extraGuard = commitGuard?.(3 + guard.values.length);
       await executeAtomicBatch(db, { operationId, primarySubjectId: meta.instance_id, primarySubjectType: "instance", committedAt: now, expectedEventCount: 1, requireIdempotencySnapshot: true,
-        businessStatements: [db.prepare(`UPDATE cloudflare_control_settings SET version=version+1,last_operation_id=?1 WHERE singleton=1 AND version=?2 AND locked_operation_id IS NULL AND ${guard.sql}`).bind(operationId, row.version, ...guard.values), ...mutation(operationId, row.version + 1),
+        businessStatements: [db.prepare(`UPDATE cloudflare_control_settings SET version=version+1,last_operation_id=?1 WHERE singleton=1 AND version=?2 AND locked_operation_id IS NULL AND ${guard.sql}${extraGuard ? ` AND (${extraGuard.sql})` : ""}`).bind(operationId, row.version, ...guard.values, ...(extraGuard?.values ?? [])), ...mutation(operationId, row.version + 1),
           db.prepare("UPDATE idempotency_records SET operation_snapshot_json=?2 WHERE operation_id=?1 AND state='pending' AND EXISTS(SELECT 1 FROM cloudflare_control_settings WHERE singleton=1 AND last_operation_id=?1)").bind(operationId, canonicalJson(await snapshot(row.version + 1))),
           event(db, auth, crypto.randomUUID(), operationId, meta.instance_id, now, "instance.cloudflare-control-updated")],
         confirmBusinessRejection: async () => { await authorize(); return (await settingsRow(db)).version !== row.version; } });
@@ -204,7 +212,7 @@ export async function getCloudflareNotifications(env: WorkerEnv, auth: AuthConte
     return { status: "verified", available_alerts: alerts, policies: list(policies).map(value => { const policy = object(value), mechanisms = object(policy.mechanisms ?? {}); return { id: text(policy.id), name: text(policy.name, 500), alert_type: text(policy.alert_type), enabled: policy.enabled === true, emails: Array.isArray(mechanisms.email) ? list(mechanisms.email).map(entry => text(object(entry).id, 320)) : [], filters: object(policy.filters ?? {}) }; }), budget: BUDGET };
   } catch (error) { return { status: error instanceof ProviderFailure ? error.capability : "unavailable", available_alerts: [], policies: [], budget: BUDGET }; }
 }
-function ownedExpression(host: string): string {
+export function ownedExpression(host: string): string {
   const paths = ["admin", "workspaces", "projects", "issues", "attachments", "comments", "labels", "relations", "events", "notifications", "search-index"];
   return `(http.host eq "${host}" and (${paths.map(name => `(http.request.uri.path eq "/api/v1/${name}" or starts_with(http.request.uri.path, "/api/v1/${name}/"))`).join(" or ")}) and not any(http.request.headers.names[*] eq "authorization") and not http.cookie contains "cfkanban_session=")`;
 }
@@ -212,10 +220,7 @@ export async function getCloudflareWaf(env: WorkerEnv, auth: AuthContext, depend
   requireOwnerControl(auth); return readCloudflareWaf(env, dependencies, tokenFor(env, "control"));
 }
 async function readCloudflareWaf(env: WorkerEnv, dependencies: CloudflareControlDependencies, token: string | undefined): Promise<Resource> {
-  const row = await settingsRow(env.DB), meta = await instance(env.DB), hostname = new URL(meta.preferred_api_origin).hostname, resource: Resource = { status: "missing", zone_id: row.zone_id, hostname, owned_rule: null, other_rule_count: 0, protected: false };
-  let zoneVerified = false;
-  try { await verifiedZone(env, row.zone_id, dependencies, token); zoneVerified = true; const ruleset = object(await api(token ?? "", dependencies)(`/zones/${row.zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint`)), rules = list(ruleset.rules ?? []).map(object), ref = `cfkanban_${meta.instance_id.replaceAll("-", "")}_anonymous_api`, owned = rules.filter(rule => rule.ref === ref); if (owned.length > 1) throw new ProviderFailure("target_mismatch"); const rule = owned[0]; return { ...resource, status: "verified", owned_rule: rule ? { id: text(rule.id), enabled: rule.enabled === true, action: text(rule.action), expression: text(rule.expression, 16_384) } : null, other_rule_count: rules.length - owned.length, protected: Boolean(rule && rule.enabled === true && rule.action === "block" && rule.expression === ownedExpression(hostname)) }; }
-  catch (error) { return { ...resource, status: zoneVerified && error instanceof ProviderFailure && error.missingResource ? "verified" : error instanceof ProviderFailure ? error.capability : "unavailable" }; }
+  return readWafStatus(env, dependencies, token);
 }
 function configurationValues(env: WorkerEnv): Resource {
   return { history_enabled: env.USAGE_HISTORY_ENABLED === "true", analytics_enabled: env.USAGE_ANALYTICS_ENABLED === "true" || (env.USAGE_ANALYTICS_ENABLED === undefined && Boolean(env.USAGE_ACCOUNT_ID && env.USAGE_D1_DATABASE_ID && tokenFor(env, "analytics"))), billing_plan: ["free", "paid"].includes(env.USAGE_BILLING_PLAN ?? "") ? env.USAGE_BILLING_PLAN ?? null : null, billing_cycle_day: /^([1-9]|[12][0-9]|3[01])$/.test(env.USAGE_BILLING_CYCLE_DAY ?? "") ? Number(env.USAGE_BILLING_CYCLE_DAY) : null, account_totals: env.USAGE_ACCOUNT_TOTALS_ENABLED === "true", warning_percent: /^([1-9]|[1-9][0-9]|100)$/.test(env.USAGE_WARNING_PERCENT ?? "") ? Number(env.USAGE_WARNING_PERCENT) : 80 };
@@ -235,7 +240,7 @@ export async function planCloudflareRateLimits(env: WorkerEnv, request: Request,
   if (typeof scope !== "string" || !Object.hasOwn(RATE_GROUPS, scope) || typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || (period !== 10 && period !== 60)) throw validationError("invalid_rate_limit_configuration");
   return createPlan(env, request, auth, "rate_limit", { scope, limit, period_seconds: period }, expected, now, dependencies);
 }
-async function createPlan(env: WorkerEnv, request: Request, auth: AuthContext, kind: PlanKind, desired: Resource, expected: number, now: number, dependencies: CloudflareControlDependencies): Promise<Resource> {
+async function createPlan(env: WorkerEnv, request: Request, auth: AuthContext, kind: ConfigurationPlanKind, desired: Resource, expected: number, now: number, dependencies: CloudflareControlDependencies): Promise<Resource> {
   requireOwnerControl(auth); const token = tokenFor(env, "configuration"); if (!token) throw validationError("configuration_token_required");
   let live: LiveBaseline, before: Resource, after: Resource;
   const planId = crypto.randomUUID();
@@ -244,7 +249,7 @@ async function createPlan(env: WorkerEnv, request: Request, auth: AuthContext, k
     async version => planResource({ id: planId, kind, control_version: version, baseline_json: canonicalJson(live.baseline), before_json: canonicalJson(before), after_json: canonicalJson(after), created_at: now, consumed_operation_id: null }), now, async () => { live = await baseline(env, token, dependencies); before = desiredValues(kind, desired, live.bindings); after = kind === "configuration" ? { ...before, ...desired } : desired; patchSettings(live, kind, after, fixedTarget(env)); });
 }
 function bindingText(bindings: Resource[], name: string): string | null { const binding = bindings.find(entry => entry.name === name); if (!binding) return null; if (binding.type !== "plain_text" || typeof binding.text !== "string") throw new ProviderFailure("target_mismatch", true); return binding.text; }
-function desiredValues(kind: PlanKind, desired: Resource, bindings: Resource[]): Resource {
+function desiredValues(kind: ConfigurationPlanKind, desired: Resource, bindings: Resource[]): Resource {
   if (kind === "rate_limit") { const group = RATE_GROUPS[desired.scope as keyof typeof RATE_GROUPS], binding = bindings.find(entry => entry.name === group[0]); if (!binding || binding.type !== "ratelimit") throw validationError("rate_limit_binding_missing"); const simple = object(binding.simple); return { scope: desired.scope ?? null, limit: simple.limit ?? null, period_seconds: simple.period ?? null }; }
   const values: Resource = {};
   for (const [key, name] of Object.entries(CONFIG_VARS)) { const value = bindingText(bindings, name); values[key] = value === null ? (["billing_plan", "billing_cycle_day"].includes(key) ? null : key === "warning_percent" ? 80 : false) : ["history_enabled", "analytics_enabled", "account_totals"].includes(key) ? value === "true" : ["billing_cycle_day", "warning_percent"].includes(key) ? Number(value) : value; }
@@ -253,7 +258,7 @@ function desiredValues(kind: PlanKind, desired: Resource, bindings: Resource[]):
   if (bindingText(bindings, CONFIG_VARS.analytics_enabled) === null) values.analytics_enabled = Boolean(bindingText(bindings, "USAGE_ACCOUNT_ID") && bindingText(bindings, "USAGE_D1_DATABASE_ID") && bindings.some(binding => (binding.name === SECRET_NAMES.connection || binding.name === SECRET_NAMES.analytics) && binding.type === "secret_text"));
   configurationInput(values); return values;
 }
-function patchSettings(live: LiveBaseline, kind: PlanKind, desired: Resource, target: Target): Resource {
+function patchSettings(live: LiveBaseline, kind: ConfigurationPlanKind, desired: Resource, target: Target): Resource {
   // A complete binding inventory is inherited from one explicit active version;
   // secret values never leave Cloudflare, and unknown top-level settings fail closed.
   const preserved = new Set(["bindings", "compatibility_date", "compatibility_flags", "usage_model", "limits", "logpush", "tail_consumers", "placement", "observability", "tags", "annotations", "cache_options", "exports_reconciliation"]);
@@ -277,15 +282,16 @@ function patchSettings(live: LiveBaseline, kind: PlanKind, desired: Resource, ta
   const writableAnnotations = annotations === undefined ? undefined : Object.fromEntries(Object.entries(object(annotations)).filter(([name]) => name === "workers/message" || name === "workers/tag"));
   return { ...settings, ...(writableAnnotations ? { annotations: writableAnnotations } : {}), bindings };
 }
-async function findDuplicate(env: WorkerEnv, request: Request, auth: AuthContext, requestHash: string, forbidden: string[] = []): Promise<OperationRow | null> {
+export async function findDuplicate(env: WorkerEnv, request: Request, auth: AuthContext, requestHash: string, forbidden: string[] = [], noteExisting?: () => void): Promise<OperationRow | null> {
   const key = requireIdempotencyKey(request); validateIdempotencyKey(key, forbidden); const keyHash = await sha256Hex(key), route = new URL(request.url).pathname;
   const row = await env.DB.prepare("SELECT * FROM cloudflare_control_operations WHERE principal_id=?1 AND route=?2 AND key_hash=?3").bind(auth.principalId, route, keyHash).first<OperationRow>();
+  if (row) noteExisting?.();
   if (row && row.request_hash !== requestHash) throw conflict("IDEMPOTENCY_CONFLICT"); return row;
 }
-async function operationWriteResult(env: WorkerEnv, auth: AuthContext, row: OperationRow, replay: boolean): Promise<Resource> {
+export async function operationWriteResult(env: WorkerEnv, auth: AuthContext, row: OperationRow, replay: boolean): Promise<Resource> {
   const control = await settingsRow(env.DB), commit = await probeOperationCommit(env.DB, control.latest_operation_id === row.id && control.last_operation_id ? control.last_operation_id : row.id); if (!commit) throw platformUnavailable("d1"); return writeResult(env.DB, auth, operationResource(row, control.version), commit.lastEventSequence, replay);
 }
-async function intent(env: WorkerEnv, request: Request, auth: AuthContext, kind: string, requestHash: string, live: LiveBaseline, desired: Resource, secretHash: string | null, expected: number, now: number, planId: string | null): Promise<OperationRow> {
+export async function intent(env: WorkerEnv, request: Request, auth: AuthContext, kind: string, requestHash: string, live: { baseline: Resource }, desired: Resource, secretHash: string | null, expected: number, now: number, planId: string | null): Promise<OperationRow> {
   const db = env.DB, id = crypto.randomUUID(), meta = await instance(db), keyHash = await sha256Hex(requireIdempotencyKey(request)); await reauthenticateOwner(db, request, Date.now());
   const row = await settingsRow(db); if (row.version !== expected) throw versionConflict(row.version); if (row.locked_operation_id) throw conflict("VERSION_CONFLICT", "refresh_resource", { reason: "cloudflare_operation_pending" });
   const guard = buildCurrentAuthGuard(auth, Date.now(), 3, true);
@@ -297,29 +303,51 @@ async function intent(env: WorkerEnv, request: Request, auth: AuthContext, kind:
   catch (error) { const duplicate = await findDuplicate(env, request, auth, requestHash); if (duplicate) return duplicate; if (error instanceof AtomicBatchRejectedError) throw versionConflict((await settingsRow(db)).version); throw error; }
   return operationRow(db, id);
 }
-async function transition(env: WorkerEnv, request: Request, auth: AuthContext, row: OperationRow, status: Status, failure: string | null, versionId: string | null, deploymentId: string | null, dispatch = false, commandId?: string): Promise<boolean> {
+export async function transition(env: WorkerEnv, request: Request, auth: AuthContext, row: OperationRow, status: Status, failure: string | null, versionId: string | null, deploymentId: string | null, dispatch = false, commandId?: string, wafOwnership?: Resource): Promise<boolean> {
   const db = env.DB, eventOperation = commandId ?? crypto.randomUUID(), meta = await instance(db), now = Date.now(); await reauthenticateOwner(db, request, now);
   const control = await settingsRow(db), guard = buildCurrentAuthGuard(auth, now, 6, true);
   try { await executeAtomicBatch(db, { operationId: eventOperation, primarySubjectId: meta.instance_id, primarySubjectType: "instance", committedAt: now, expectedEventCount: 1, requireIdempotencySnapshot: commandId !== undefined,
-    businessStatements: [db.prepare(`UPDATE cloudflare_control_settings SET version=version+1,last_operation_id=?1,locked_operation_id=CASE WHEN ?2 IN ('verified','failed') THEN NULL ELSE locked_operation_id END WHERE singleton=1 AND (locked_operation_id=?3 ${commandId ? "OR locked_operation_id IS NULL" : ""}) AND version=?5 AND EXISTS(SELECT 1 FROM cloudflare_control_operations WHERE id=?3 AND status IN ('pending','unknown'${commandId ? ",'verified','failed'" : ""}) AND updated_at=?4 ${dispatch || row.dispatched_at === null ? "AND dispatched_at IS NULL" : "AND dispatched_at IS NOT NULL"}) AND ${guard.sql}`).bind(eventOperation, status, row.id, row.updated_at, control.version, ...guard.values),
+    businessStatements: [db.prepare(`UPDATE cloudflare_control_settings SET version=version+1,last_operation_id=?1,locked_operation_id=CASE WHEN ?2 IN ('verified','failed') THEN NULL ELSE locked_operation_id END WHERE singleton=1 AND (locked_operation_id=?3 ${commandId ? "OR locked_operation_id IS NULL" : ""}) AND version=?5 AND EXISTS(SELECT 1 FROM cloudflare_control_operations WHERE id=?3 AND status IN ('pending','unknown'${commandId ? ",'verified','failed'" : ""}) AND updated_at=?4 ${dispatch || row.dispatched_at === null ? "AND dispatched_at IS NULL" : "AND dispatched_at IS NOT NULL"}) AND ${guard.sql}${row.kind === "waf" && dispatch ? ` AND EXISTS(
+        SELECT 1 FROM cloudflare_waf_target_binding binding
+        JOIN instance_origin_settings origin ON origin.singleton=binding.singleton
+        JOIN instance_meta meta ON meta.singleton=binding.singleton
+        JOIN cloudflare_control_operations operation ON operation.id=?3
+        WHERE binding.binding_id=json_extract(operation.baseline_json,'$.binding_id')
+          AND binding.zone_id=cloudflare_control_settings.zone_id
+          AND binding.account_id=json_extract(operation.baseline_json,'$.target.account_id')
+          AND binding.worker_name=json_extract(operation.baseline_json,'$.target.worker_name')
+          AND binding.database_id=json_extract(operation.baseline_json,'$.target.database_id')
+          AND binding.domain_id=json_extract(operation.baseline_json,'$.target.domain_id')
+          AND binding.provider_metadata_hash=json_extract(operation.baseline_json,'$.provider_metadata_hash')
+          AND meta.instance_id=binding.instance_id
+          AND binding.hostname=json_extract(operation.baseline_json,'$.target.hostname')
+          AND binding.origin_version=origin.version
+          AND origin.version=json_extract(operation.baseline_json,'$.origin_version')
+          AND origin.preferred_api_origin='https://' || binding.hostname
+      )` : ""}`).bind(eventOperation, status, row.id, row.updated_at, control.version, ...guard.values),
       db.prepare(`UPDATE cloudflare_control_operations SET status=?2,failure_class=?3,result_version_id=?4,deployment_id=?5,updated_at=?6${dispatch ? ",dispatched_at=?6" : ""} WHERE id=?1 AND EXISTS(SELECT 1 FROM cloudflare_control_settings WHERE last_operation_id=?7)`).bind(row.id, status, failure, versionId, deploymentId, now, eventOperation),
+      ...(wafOwnership ? [db.prepare(`UPDATE cloudflare_waf_ownership SET rule_id=?2,ruleset_id=?3,rule_ref=?4,rule_digest=?5,operation_id=?6,verified_at=?7,binding_id=?8 WHERE singleton=1 AND EXISTS(SELECT 1 FROM cloudflare_control_settings WHERE last_operation_id=?1)`).bind(eventOperation, wafOwnership.rule_id ?? null, wafOwnership.ruleset_id ?? null, wafOwnership.rule_ref ?? null, wafOwnership.rule_digest ?? null, row.id, now, wafOwnership.binding_id ?? null)] : []),
       ...(commandId ? [db.prepare("UPDATE idempotency_records SET operation_snapshot_json=?2 WHERE operation_id=?1 AND state='pending' AND EXISTS(SELECT 1 FROM cloudflare_control_settings WHERE last_operation_id=?1)").bind(eventOperation, canonicalJson(operationResource({ ...row, status, failure_class: failure, result_version_id: versionId, deployment_id: deploymentId, updated_at: now }, control.version + 1)))] : []),
       event(db, auth, crypto.randomUUID(), eventOperation, meta.instance_id, now, dispatch ? "instance.cloudflare-control-dispatched" : "instance.cloudflare-control-result")],
-    confirmBusinessRejection: async () => { await reauthenticateOwner(db, request, Date.now()); const current = await operationRow(db, row.id); return current.updated_at !== row.updated_at || (dispatch && current.dispatched_at !== null) || (await settingsRow(db)).version !== control.version || (await settingsRow(db)).locked_operation_id !== row.id; } }); return true;
+    confirmBusinessRejection: async () => { await reauthenticateOwner(db, request, Date.now());
+      if (dispatch && row.kind === "waf") { const frozen = object(JSON.parse(row.baseline_json) as JsonValue), target = object(frozen.target), proof = await db.prepare("SELECT binding.binding_id,binding.zone_id,binding.hostname,binding.provider_metadata_hash,origin.version,origin.preferred_api_origin FROM cloudflare_waf_target_binding binding JOIN instance_origin_settings origin ON origin.singleton=binding.singleton WHERE binding.singleton=1").first<{ binding_id: string; zone_id: string; hostname: string; provider_metadata_hash: string; version: number; preferred_api_origin: string }>(); if (!proof || proof.binding_id !== frozen.binding_id || proof.zone_id !== target.zone_id || proof.hostname !== target.hostname || proof.version !== frozen.origin_version || proof.provider_metadata_hash !== frozen.provider_metadata_hash || proof.preferred_api_origin !== `https://${target.hostname}`) return true; }
+      const current = await operationRow(db, row.id); return current.updated_at !== row.updated_at || (dispatch && current.dispatched_at !== null) || (await settingsRow(db)).version !== control.version || (await settingsRow(db)).locked_operation_id !== row.id; } }); return true;
   } catch (error) { if (error instanceof AtomicBatchRejectedError) return false; throw error; }
 }
 export async function saveCloudflareSecret(env: WorkerEnv, request: Request, auth: AuthContext, kindValue: JsonValue, tokenValue: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
   requireOwnerControl(auth); if (typeof kindValue !== "string" || !Object.hasOwn(SECRET_NAMES, kindValue) || typeof tokenValue !== "string" || !/^[\x21-\x7e]{32,4096}$/.test(tokenValue)) throw validationError("invalid_cloudflare_secret");
   const kind = kindValue as SecretKind, tokenHash = await sha256Hex(tokenValue), requestHash = await sha256Hex(canonicalJson({ kind, expected_version: expected, value_digest: tokenHash }));
   await reauthenticateOwner(env.DB, request, Date.now()); const duplicate = await findDuplicate(env, request, auth, requestHash, [tokenValue]); if (duplicate) return operationWriteResult(env, auth, duplicate, true);
-  if (kind === "analytics") await probeAnalytics(env, tokenValue, now, dependencies);
-  if (kind === "control") {
-    const target = fixedTarget(env), call = api(tokenValue, dependencies), zone = (await settingsRow(env.DB)).zone_id;
-    const probes = await Promise.all([capability(() => call(`/accounts/${target.account_id}/alerting/v3/policies`), true), capability(() => call(`/accounts/${target.account_id}/billable-usage/info`), true), capability(async () => { const result = await readCloudflareWaf(env, dependencies, tokenValue); if (result.status !== "verified") throw new ProviderFailure(result.status as Capability); }, Boolean(zone))]);
-    if (!probes.includes("verified")) throw new ProviderFailure(probes.every(status => status === "permission_denied" || status === "missing") ? "permission_denied" : "unavailable", true);
-  }
   const writer = kind === "connection" || kind === "configuration" ? tokenValue : tokenFor(env, "configuration"); if (!writer) throw validationError("configuration_token_required");
-  const live = await baseline(env, writer, dependencies), row = await intent(env, request, auth, secretOperationKind(kind), requestHash, live, { secret_kind: kind, secret_name: SECRET_NAMES[kind] }, tokenHash, expected, now, null);
+  let live: LiveBaseline;
+  try { live = await baseline(env, writer, dependencies); }
+  catch (error) {
+    // 本次请求尚未登记 intent 或进入外部写入；后续错误仍保留未知结果合同。
+    if (!(error instanceof ApiError)) throw error;
+    const failure = error;
+    throw new ApiError({ code: failure.code, category: failure.category, source: failure.source, message: failure.message, recovery: failure.recovery, retryable: failure.retryable, status: failure.status, clearSessionCookies: failure.clearSessionCookies, ...(failure.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: failure.retryAfterSeconds }), details: { ...failure.details, write_state: "not_dispatched" } });
+  }
+  const row = await intent(env, request, auth, secretOperationKind(kind), requestHash, live, { secret_kind: kind, secret_name: SECRET_NAMES[kind] }, tokenHash, expected, now, null);
   if (row.dispatched_at !== null || row.status !== "pending") return operationWriteResult(env, auth, row, true);
   try { if (canonicalJson((await baseline(env, writer, dependencies)).baseline) !== row.baseline_json) throw validationError("cloudflare_baseline_changed"); }
   catch { await transition(env, request, auth, row, "failed", "preflight_changed", null, null); return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false); }
@@ -327,7 +355,7 @@ export async function saveCloudflareSecret(env: WorkerEnv, request: Request, aut
   await completeCloudMutation(env, request, auth, row.id, dependencies, writer, () => api(writer, dependencies)(`${scriptPath(fixedTarget(env))}/secrets`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: SECRET_NAMES[kind], text: tokenValue, type: "secret_text" }) }));
   return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false);
 }
-export async function applyCloudflarePlan(env: WorkerEnv, request: Request, auth: AuthContext, kind: PlanKind, planId: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
+export async function applyCloudflarePlan(env: WorkerEnv, request: Request, auth: AuthContext, kind: ConfigurationPlanKind, planId: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
   requireOwnerControl(auth); if (typeof planId !== "string" || !isUuid(planId)) throw validationError("invalid_cloudflare_plan");
   const requestHash = await sha256Hex(canonicalJson({ plan_id: planId, expected_version: expected })); await reauthenticateOwner(env.DB, request, Date.now()); const duplicate = await findDuplicate(env, request, auth, requestHash); if (duplicate) return operationWriteResult(env, auth, duplicate, true);
   const plan = await env.DB.prepare("SELECT * FROM cloudflare_control_plans WHERE id=?1").bind(planId).first<PlanRow>(); if (!plan || plan.kind !== kind) throw notFound(); if (plan.consumed_operation_id || plan.control_version !== expected) throw versionConflict((await settingsRow(env.DB)).version);
@@ -349,7 +377,7 @@ export async function getCloudflareSecretOperation(env: WorkerEnv, auth: AuthCon
   return operationResource(row, (await settingsRow(env.DB)).version);
 }
 export async function getCloudflarePlan(env: WorkerEnv, auth: AuthContext, id: string): Promise<Resource> { requireOwnerControl(auth); if (!isUuid(id)) throw notFound(); const row = await env.DB.prepare("SELECT * FROM cloudflare_control_plans WHERE id=?1").bind(id).first<PlanRow>(); if (!row) throw notFound(); return planResource(row); }
-type Assessment = [Status, string | null, string | null, string | null];
+export type Assessment = [Status, string | null, string | null, string | null];
 async function completeCloudMutation(env: WorkerEnv, request: Request, auth: AuthContext, id: string, dependencies: CloudflareControlDependencies, token: string, mutate: () => Promise<JsonValue>): Promise<void> {
   try { await mutate(); }
   catch (error) { await transition(env, request, auth, await operationRow(env.DB, id), error instanceof ProviderFailure && error.rejected ? "failed" : "unknown", error instanceof ProviderFailure ? error.capability : "unavailable", null, null); return; }
@@ -359,7 +387,7 @@ async function completeCloudMutation(env: WorkerEnv, request: Request, auth: Aut
   catch (error) { const row = await operationRow(env.DB, id); await transition(env, request, auth, row, "unknown", error instanceof ProviderFailure ? error.capability : "unavailable", row.result_version_id, row.deployment_id); }
 }
 function orderedBindingFingerprints(value: JsonValue | undefined): Resource[] { return list(value).map(object).sort((a, b) => text(a.name).localeCompare(text(b.name))); }
-async function planBindingsMatch(live: LiveBaseline, before: Resource, kind: PlanKind, desired: Resource, target: Target, writer: string, dependencies: CloudflareControlDependencies): Promise<boolean> {
+async function planBindingsMatch(live: LiveBaseline, before: Resource, kind: ConfigurationPlanKind, desired: Resource, target: Target, writer: string, dependencies: CloudflareControlDependencies): Promise<boolean> {
   // Existing intents only retain binding fingerprints. Recover the frozen
   // inventory to prove preserved namespaces and materialize inherited bindings.
   const versionId = text(before.active_version_id), version = object(await api(writer, dependencies)(`${scriptPath(target)}/versions/${encodeURIComponent(versionId)}`));
@@ -374,6 +402,7 @@ async function planBindingsMatch(live: LiveBaseline, before: Resource, kind: Pla
 async function assessOperation(env: WorkerEnv, row: OperationRow, dependencies: CloudflareControlDependencies, token?: string): Promise<Assessment> {
   if (row.status === "verified" || row.status === "failed") return [row.status, row.failure_class, row.result_version_id, row.deployment_id];
   if (row.dispatched_at === null) return ["failed", "not_dispatched", null, null];
+  if (row.kind === "waf") return assessWafOperation(env, row, dependencies);
   const writer = token ?? tokenFor(env, "configuration"); if (!writer) throw new ProviderFailure("missing"); const live = await baseline(env, writer, dependencies, true), before = object(JSON.parse(row.baseline_json) as JsonValue), desired = object(JSON.parse(row.desired_json) as JsonValue);
   if (canonicalJson(live.baseline.target) !== canonicalJson(object(before.target))) return ["unknown", "target_mismatch", row.result_version_id, live.baseline.deployment_id];
   if (live.baseline.etag !== before.etag) return ["unknown", "cloudflare_code_drift", live.baseline.active_version_id, live.baseline.deployment_id];
@@ -386,7 +415,7 @@ async function assessOperation(env: WorkerEnv, row: OperationRow, dependencies: 
   if (before.metadata_hash !== live.baseline.metadata_hash || canonicalJson(unchanged(before.binding_fingerprints)) !== canonicalJson(unchanged(live.baseline.binding_fingerprints))) return ["unknown", "cloudflare_foreign_configuration_drift", live.baseline.active_version_id, live.baseline.deployment_id];
   let matches = false;
   if (secretName) { const current = env[secretName]; matches = Boolean(current && live.bindings.some(binding => binding.name === secretName && binding.type === "secret_text") && row.secret_value_hash === await sha256Hex(current)); }
-  else { const kind = row.kind as PlanKind; matches = await planBindingsMatch(live, before, kind, desired, fixedTarget(env), writer, dependencies); }
+  else { const kind = row.kind as ConfigurationPlanKind; matches = await planBindingsMatch(live, before, kind, desired, fixedTarget(env), writer, dependencies); }
   return [matches ? "verified" : "unknown", matches ? null : row.kind.endsWith("_secret") ? "secret_readback_pending" : "configuration_readback_mismatch", matches || secretName ? live.baseline.active_version_id : row.result_version_id, live.baseline.deployment_id];
 }
 async function verifyOperationInternal(env: WorkerEnv, request: Request, auth: AuthContext, row: OperationRow, dependencies: CloudflareControlDependencies, token?: string): Promise<void> {
@@ -396,7 +425,7 @@ async function verifyOperationInternal(env: WorkerEnv, request: Request, auth: A
 export async function verifyCloudflareOperation(env: WorkerEnv, request: Request, auth: AuthContext, id: string, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
   requireOwnerControl(auth); const db = env.DB, authorize = async () => { await reauthenticateOwner(db, request, Date.now()); };
   const result = await runIdempotentOperation({ db, now, method: "POST", routeTemplate: "/api/v1/admin/cloudflare/operations/{operation_id}/verify", scopeKey: `principal:${auth.principalId}`, normalizedResourceScope: `cloudflare-operation:${id}`, requestBody: {}, idempotencyKey: requireIdempotencyKey(request), authorize,
-    execute: async commandId => { const row = await operationRow(db, id); let assessed: Assessment; try { assessed = await assessOperation(env, row, dependencies); } catch (error) { if (!(error instanceof ProviderFailure)) throw error; assessed = ["unknown", error.capability, row.result_version_id, row.deployment_id]; } if (!(await transition(env, request, auth, row, ...assessed, false, commandId))) throw versionConflict((await settingsRow(db)).version); },
+    execute: async commandId => { const row = await operationRow(db, id); if (row.kind === "waf") { try { if (!(await verifyWafResult(env, request, auth, row, dependencies, commandId))) throw versionConflict((await settingsRow(db)).version); } catch (error) { if (!(error instanceof ProviderFailure)) throw error; if (!(await transition(env, request, auth, row, "unknown", error.capability, row.result_version_id, null, false, commandId))) throw versionConflict((await settingsRow(db)).version); } return; } let assessed: Assessment; try { assessed = await assessOperation(env, row, dependencies); } catch (error) { if (!(error instanceof ProviderFailure)) throw error; assessed = ["unknown", error.capability, row.result_version_id, row.deployment_id]; } if (!(await transition(env, request, auth, row, ...assessed, false, commandId))) throw versionConflict((await settingsRow(db)).version); },
     readback: async (commandId, commit) => ({ body: await writeResult(db, auth, await readOperationSnapshot<Resource>(db, commandId), commit.lastEventSequence, false), status: 200 }) });
   return { ...result.body, idempotent_replay: result.idempotentReplay };
 }

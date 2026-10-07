@@ -59,6 +59,8 @@ const rateLimitRuntimeVars = {
   ],
 };
 for (const config of [workerConfig, workerTestConfig]) {
+  assert.ok(config.compatibility_flags?.includes("global_fetch_strictly_public"), "WAF target proof must use public-front-door fetch");
+  assert.ok(!config.compatibility_flags.includes("global_fetch_private_origin"), "WAF target proof must not bypass the public front door");
   for (const binding of config.ratelimits) {
     const [limitVar, periodVar] = rateLimitRuntimeVars[binding.name];
     const runtimePolicy = parseRateLimitPolicy(

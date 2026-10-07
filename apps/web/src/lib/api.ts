@@ -243,7 +243,10 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions<T> 
         : null;
       const retryAfter = headerRetryAfter ?? bodyRetryAfter;
       const problem = new ApiProblem(response.status, payload, retryAfter);
-      if (uncertaintyKey !== null && response.status >= 400 && response.status < 500) uncertainWrites.delete(uncertaintyKey);
+      const secretNotDispatched = method === "POST" && path === "/api/v1/admin/cloudflare/secrets"
+        && response.status === 503 && payload.source === "cloudflare_platform"
+        && payload.details.component === "cloudflare-control" && payload.details.write_state === "not_dispatched";
+      if (uncertaintyKey !== null && ((response.status >= 400 && response.status < 500) || secretNotDispatched)) uncertainWrites.delete(uncertaintyKey);
       notifyFailure(problem);
       throw problem;
     }

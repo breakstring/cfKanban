@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
 import { anonymousApiRule, applyPublicAccess, createPublicAccessPlan, inspectPublicAccess, verifyPlannedPublicAccess } from "../../packages/skill-runtime/src/public-access.mjs";
-import { normalizePublicAccess, publicAccessBindings } from "../../packages/skill-runtime/src/public-access-config.mjs";
+import { normalizePublicAccess, projectWafAuthority, publicAccessBindings } from "../../packages/skill-runtime/src/public-access-config.mjs";
 import { acquirePublicAccessLock } from "../../packages/skill-runtime/src/public-access-lock.mjs";
 import { createInstanceUpgradePlan } from "../../packages/skill-runtime/src/upgrade-plan.mjs";
 import { targetWorkerBindings } from "../../packages/skill-runtime/src/usage-config.mjs";
@@ -130,6 +130,21 @@ function upgradeInput(f, access, previousBindings = []) {
     current: { ...release, service_bundle_sha256: "c".repeat(64) }, target: { ...release, migration_manifest_sha256: "d".repeat(64), compatibility: { node: ">=22.12.0 <27", wrangler: ">=4.127.1 <5", service_api: ">=0.1.0 <0.2.0", schema_version: 24 } }, migrations: [], restorePoint: { required: false, verified: false, reason: "no_migration_delta" } };
 }
 
+test("schema 27 upgrade freezes current disabled ownership and preserves historical domain proof separately", async t => {
+  const f = await fixture(t); await f.prepare("domain-enable"); await f.apply(); await f.prepare("waf-enable"); const historical = (await f.apply()).receipt;
+  const binding = { binding_id: randomUUID(), account_id: historical.account_id, worker_name: historical.worker_name, database_id: f.databaseId, instance_id: historical.instance_id, hostname: historical.hostname, zone_id: historical.zone_id, domain_id: historical.domain_id, origin_version: 2, provider_metadata_hash: "e".repeat(64), source: "deployment_runtime", verified_at: 2, operation_id: randomUUID() };
+  const authority = { schema_version: 27, control_version: 3, origin_version: 2, binding, ownership: { binding_id: binding.binding_id, rule_id: null, ruleset_id: null, rule_ref: `${historical.rule_ref}_${randomUUID().replaceAll("-", "")}`, rule_digest: null, operation_id: randomUUID(), verified_at: 3 } };
+  const input = upgradeInput(f, historical); input.current.schema_version = 27; input.target.schema_version = 27; input.target.compatibility.schema_version = 27;
+  assert.throws(() => createInstanceUpgradePlan(input), { code: "WAF_TARGET_AUTHORITY_REQUIRED" });
+  input.resources.waf_authority = authority; const plan = createInstanceUpgradePlan(input);
+  assert.equal(plan.public_access.waf_profile, "disabled"); assert.equal(plan.public_access.rule_id, null); assert.deepEqual(plan.public_access_domain_receipt, historical); assert.deepEqual(plan.waf_authority, authority);
+  assert.equal(publicAccessBindings(plan.public_access).find(binding => binding.name === "PUBLIC_ACCESS_WAF_PROFILE").text, "disabled");
+  assert.deepEqual(JSON.parse(await readFile(path.join(getInstancePaths(f.input).receiptsRoot, "public-access.json"), "utf8")), historical);
+  const projection = projectWafAuthority(authority, { workers_dev: false, previews_enabled: false, workers_dev_origin: historical.workers_dev_origin, domains: [{ id: historical.domain_id, hostname: historical.hostname, service: historical.worker_name, zone_id: historical.zone_id }] });
+  input.resources.public_access = projection; const preserved = createInstanceUpgradePlan(input); assert.equal(preserved.public_access.domain_ownership_proven, false); assert.equal(preserved.public_access_domain_receipt, undefined);
+  input.resources.waf_authority = { ...authority, ownership: { ...authority.ownership, action_parameters: {} } }; assert.throws(() => createInstanceUpgradePlan(input), { code: "WAF_TARGET_AUTHORITY_INVALID" });
+});
+
 test("managed-domain upgrade and receipt-bound rollback preserve exposure and remove stale public snapshots", async t => {
   const f = await fixture(t); await f.prepare("domain-enable"); const active = (await f.apply()).receipt;
   f.limits = { cpu_ms: 10, subrequests: 50 };
@@ -143,7 +158,7 @@ test("managed-domain upgrade and receipt-bound rollback preserve exposure and re
   assert.equal(activePlan.resources.workers_dev, false); assert.equal(activePlan.binding_changes_allowed, true);
   assert.equal((await verifyPlannedPublicAccess({ ...f.input, plan: activePlan })).verified, true);
   const root = path.join(f.input.home, "service", "versions", "1.10.0", "bundle");
-  const files = { "dist/index.js": "export default {}", "apps/web/dist/index.html": "<main>app</main>", "contracts/openapi.json": JSON.stringify({ info: { version: "0.1.0" } }), "migrations/manifest.json": JSON.stringify({ schema_version: 24, migrations: [] }), "release/deployment/migration-readback.sql": "SELECT 1", "wrangler-config-schema.json": "{}", "wrangler.template.json": JSON.stringify({ compatibility_date: "2026-08-29", assets: { binding: "ASSETS", not_found_handling: "none", run_worker_first: ["/docs/*", "!/docs/assets/*"] } }) };
+  const files = { "dist/index.js": "export default {}", "apps/web/dist/index.html": "<main>app</main>", "contracts/openapi.json": JSON.stringify({ info: { version: "0.1.0" } }), "migrations/manifest.json": JSON.stringify({ schema_version: 24, migrations: [] }), "release/deployment/migration-readback.sql": "SELECT 1", "wrangler-config-schema.json": "{}", "wrangler.template.json": JSON.stringify({ compatibility_date: "2026-08-29", compatibility_flags: ["global_fetch_strictly_public"], assets: { binding: "ASSETS", not_found_handling: "none", run_worker_first: ["/docs/*", "!/docs/assets/*"] } }) };
   for (const [name, value] of Object.entries(files)) { const file = path.join(root, name); await mkdir(path.dirname(file), { recursive: true, mode: 0o700 }); await writeFile(file, value); }
   await atomicWriteJson(path.join(path.dirname(root), ".cfkanban-release.json"), { schema_version: 1, kind: "service_deployment_bundle", version: "1.10.0", artifact_sha256: activeInput.target.service_bundle_sha256, publisher: activeInput.target.publisher, source: activeInput.target.service_bundle_source, bundle_path: root, bundle_tree_digest: await treeDigest(root) });
   const config = async plan => {
@@ -236,6 +251,10 @@ test("resuming an uncertain WAF operation reauthenticates Owner before another c
   await assert.rejects(f.apply(), { code: "PUBLIC_ACCESS_OWNER_REQUIRED" });
   assert.equal(f.calls.filter(call => call.method !== "GET").length, writes);
   assert.equal(f.rulesets.length, 0);
+  f.owner = true;
+  await assert.rejects(f.apply(), { code: "PUBLIC_ACCESS_WAF_OUTCOME_UNKNOWN" });
+  assert.equal(f.calls.filter(call => call.method !== "GET").length, writes); assert.equal(f.rulesets.length, 0);
+  await assert.rejects(f.prepare("waf-enable"), { code: "WAF_PENDING_OPERATION_REQUIRED" });
 });
 
 test("capacity, external resource drift, incomplete inventories and mismatched discovery fail before dangerous writes", async t => {

@@ -13,6 +13,7 @@ import { getInstancePaths } from "./state.mjs";
 import { apiRequest } from "./transport.mjs";
 import { withNotificationAttention } from "./notifications.mjs";
 import { isPlainObject, readJson, requireString, requireUuid } from "./utils.mjs";
+import { assertNoPendingWaf } from "./waf-pending.mjs";
 
 const INVITE_CODE_PATTERN = /^cfi_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$/u;
 const LAUNCH_CODE_PATTERN = /^cfl_v1_[A-Za-z0-9_-]{8}_[A-Za-z0-9_-]{43}$/u;
@@ -499,6 +500,9 @@ export function assertGenericApiPathIsNonSensitive({ method = "GET", apiPath }) 
   } catch (error) {
     throw toolError("INVALID_API_PATH", "API path must be a same-origin absolute path", {}, error);
   }
+  if (pathname === "/.well-known/cfkanban-waf-proof") {
+    throw toolError("INTERNAL_SERVICE_PROOF_REQUIRED", "WAF origin proof is an internal fixed-target protocol and cannot enter ordinary API input or operation journals");
+  }
   if (normalizedMethod === "POST" && pathname === "/api/v1/admin/cloudflare/secrets") {
     throw toolError("SENSITIVE_DELIVERY_REQUIRED", "Cloudflare tokens must use the protected Owner Web form and cannot enter ordinary API input or operation journals", {
       command: "web open",
@@ -525,8 +529,19 @@ export function assertGenericApiPathIsNonSensitive({ method = "GET", apiPath }) 
 
 export async function guardedApiRequest(input) {
   assertGenericApiPathIsNonSensitive(input);
+  await assertGenericCloudflareMutationIsAvailable(input);
   const result = await apiRequest(input);
   return withNotificationAttention(input, result);
+}
+
+export async function assertGenericCloudflareMutationIsAvailable(input) {
+  if (["GET", "HEAD", "OPTIONS"].includes((input.method ?? "GET").trim().toUpperCase())) return;
+  const pathname = decodeURIComponent(new URL(input.apiPath, "https://local.invalid").pathname).replace(/\/+$/u, "");
+  const cloudflare = pathname === "/api/v1/admin/cloudflare" || pathname.startsWith("/api/v1/admin/cloudflare/");
+  const verification = /^\/api\/v1\/admin\/cloudflare\/(?:verify|operations\/[^/]+\/verify)$/u.test(pathname);
+  if ((cloudflare && !verification) || pathname === "/api/v1/admin/instance-origin") {
+    await assertNoPendingWaf({ ...input, stateRoot: input.stateRoot ?? resolveStateRoot({ home: input.home }) });
+  }
 }
 
 export async function createBrowserLaunchAndDeliver({

@@ -24,3 +24,12 @@ First deployment verifies the exact Cloudflare `workers.dev` address. An existin
 Cloudflare login, GUI/UAC and browser steps may require the user. WebUI does not hold Cloudflare credentials. Updating local Skills/CLI never upgrades an Instance implicitly. Worker rollback never rolls back D1, and Time Travel restore is not automatic. Actual external verification requires a separately approved isolated environment.
 
 Device authentication delivers its verification URL and code only to a real dedicated terminal. A headless process fails before starting login; complete the authorized official Wrangler login manually and inspect the exact profile/account. An interrupted authentication action is never automatically repeated. Resuming after manual login requires evidence bound to the original plan, explicit profile/account and a fresh readback; it records the external resolution while retaining that the original action's commitment is unproven.
+
+Registering an existing preferred custom domain for schema 27+ WAF management is a separate non-secret workflow. `deploy waf-target inspect` verifies the exact Worker/domain/D1 and current Owner; `deploy waf-target plan` freezes the target, current versions and optional exact legacy rule import. Review it before `apply` or `resume` with the same plan authorization. It writes guarded target/ownership metadata to D1, creates no domain or rule, and keeps local Cloudflare credentials local. The Web/API then manage enable/disable through the shared Service plan/apply contract. Existing `deploy public-access` domain cutover/rollback retains its independent origin and Passkey impacts.
+
+```text
+cfkanban deploy waf-target inspect --help
+cfkanban deploy waf-target plan --help
+cfkanban deploy waf-target apply --help
+cfkanban deploy waf-target resume --help
+```

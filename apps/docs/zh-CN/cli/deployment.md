@@ -24,3 +24,12 @@ cfkanban deploy recovery --help
 Cloudflare 登录、GUI/UAC 和浏览器步骤可能需要人完成，WebUI 不持有 Cloudflare 凭据。本地 Skills/CLI 更新不隐式升级实例。Worker rollback 不回退 D1，Time Travel restore 不自动执行。外部实测需要单独获准的隔离环境。
 
 设备认证的验证 URL 和代码只交付到真实专用终端。无终端进程在启动登录前失败；人工完成获准的官方 Wrangler 登录后，核对准确 profile 和账户。中断的认证动作不自动重复执行。人工登录后的接续要求原计划绑定的证据、显式 profile/账户和实时读回；记录外部核验结果，同时保留原动作提交未证实的事实。
+
+将已有 preferred 自定义域名登记为 schema 27+ WAF 管理目标，是独立的非秘密流程。`deploy waf-target inspect` 核对准确 Worker/域名/D1 与当前 Owner；`deploy waf-target plan` 冻结目标、实时版本及可选的准确旧规则迁移。核对后，`apply` 或 `resume` 使用同一计划授权。它仅向 D1 写有原子保护的目标/归属元数据，不创建域名或规则，Cloudflare 凭据留在本机。Web/API 随后按共享 Service plan/apply 合同启停 WAF。既有 `deploy public-access` 域名切换/回退仍单独处理 origin 和 Passkey 影响。
+
+```text
+cfkanban deploy waf-target inspect --help
+cfkanban deploy waf-target plan --help
+cfkanban deploy waf-target apply --help
+cfkanban deploy waf-target resume --help
+```

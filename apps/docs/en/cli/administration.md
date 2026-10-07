@@ -31,4 +31,16 @@ cfkanban admin usage collect --help
 
 Keep the plan's exact version for apply. A pending or unknown Cloudflare result requires the original operation and `admin cloudflare verify-operation`; verification only reads Cloudflare and never repeats a settings write. History reads 1–90 complete UTC days from local D1, preserving gaps; explicit collection accepts one of the last seven complete UTC dates and does not replace unknown values with zero.
 
+WAF management on schema 27+ uses the same shared target and owned-rule record as the Web. Connect the current preferred hostname, review a separate enable/disable plan, then apply with its exact version. It appends to the unique Zone entrypoint or creates a missing one, preserves other rules and checks Free capacity and exemptions. `--conflict-choice` is an explicit coexistence decision; IP Allow or uncertain expressions can retain partial coverage. WAF Edit on the exact Zone is required for writes. Disable preserves the domain and other rules.
+
+```text
+cfkanban admin cloudflare waf --help
+cfkanban admin cloudflare waf-connect --help
+cfkanban admin cloudflare waf-plan --help
+cfkanban admin cloudflare waf-apply --help
+cfkanban admin cloudflare waf-operation --help
+```
+
+WAF apply uses a UUID Idempotency-Key. If its response is lost, `waf-operation --request-key <original-uuid>` locates that request without replaying apply; 404 keeps it unresolved. Verify only the returned exact operation. When the stored Token cannot read the Worker domain, use the separately authorized [WAF target registration plan](./deployment.md) with existing local Cloudflare authentication. It creates no domain and uploads no credential. Shared WAF ownership, including a disable by another device, is preserved by upgrades.
+
 Cloudflare Tokens are a browser-only input exception. Use the existing `web open` flow for the Owner management page, then open **Cloudflare settings**. Enter credentials only in that protected transient form; they are stored as ordinary Worker Secrets. There is no Token argument, input-file or ordinary API command that writes these secrets to a CLI recovery journal. See [connection and permissions](../deployment/optional.md).

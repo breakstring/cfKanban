@@ -77,6 +77,19 @@ function buildRateLimitVars(plan) {
   };
 }
 
+function templateCompatibilityFlags(template, schemaVersion) {
+  const flags = template.compatibility_flags;
+  if (flags !== undefined && (!Array.isArray(flags) || flags.length > 64
+    || flags.some(flag => typeof flag !== "string" || flag.length > 128 || !/^[a-z][a-z0-9_-]*$/.test(flag))
+    || new Set(flags).size !== flags.length)) {
+    throw toolError("SERVICE_BUNDLE_CONFIG_INVALID", "Service bundle Wrangler template contains invalid compatibility flags");
+  }
+  if (schemaVersion >= 27 && (!flags?.includes("global_fetch_strictly_public") || flags.includes("global_fetch_private_origin"))) {
+    throw toolError("SERVICE_BUNDLE_CONFIG_INVALID", "Schema 27 or later requires public-front-door fetch for WAF target proof");
+  }
+  return flags;
+}
+
 export async function writeFrozenWranglerConfig({
   stateRoot = resolveStateRoot(),
   instanceId,
@@ -119,10 +132,10 @@ export async function writeFrozenWranglerConfig({
   const mainPath = await requireBundleEntry(bundleRoot, path.join("dist", "index.js"), "file");
   const assetsPath = await requireBundleEntry(bundleRoot, path.join("apps", "web", "dist"), "directory");
   const migrationsPath = await requireBundleEntry(bundleRoot, "migrations", "directory");
+  const schemaVersion = plan.kind === "strict_zero_deploy" ? plan.release?.schema_version : plan.target?.schema_version;
   if (plan.cloudflare_control?.enabled) {
     const manifestPath = await requireBundleEntry(bundleRoot, "migrations/manifest.json", "file");
     const manifest = await readJson(manifestPath);
-    const schemaVersion = plan.kind === "strict_zero_deploy" ? plan.release?.schema_version : plan.target?.schema_version;
     if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 26 || manifest.schema_version !== schemaVersion) {
       throw toolError("OWNER_CONTROL_RELEASE_UNSUPPORTED", "Owner control settings require the approved schema and installed bundle to match at version 26 or later");
     }
@@ -131,6 +144,7 @@ export async function writeFrozenWranglerConfig({
   if (typeof template.compatibility_date !== "string" || template.assets?.binding !== "ASSETS") {
     throw toolError("SERVICE_BUNDLE_CONFIG_INVALID", "Service bundle Wrangler template is missing its pinned compatibility date or ASSETS binding");
   }
+  const compatibilityFlags = templateCompatibilityFlags(template, schemaVersion);
   const workerName = requireString(plan.resources?.worker?.name, "worker_name", { max: 63 });
   const d1Name = requireString(plan.resources?.d1?.name, "d1_name", { max: 63 });
   const accountId = requireString(plan.target?.cloudflare_account_id, "cloudflare_account_id", { max: 128 });
@@ -145,6 +159,7 @@ export async function writeFrozenWranglerConfig({
     account_id: accountId,
     main: mainPath,
     compatibility_date: template.compatibility_date,
+    ...(compatibilityFlags === undefined ? {} : { compatibility_flags: compatibilityFlags }),
     workers_dev: plan.resources?.workers_dev === true,
     ...(publicAccess ? { preview_urls: false, ...(publicAccess.domain_enabled ? { routes: [{ pattern: publicAccess.hostname, custom_domain: true, zone_id: publicAccess.zone_id }] } : {}) } : {}),
     assets: {

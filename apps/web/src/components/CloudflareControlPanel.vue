@@ -15,6 +15,8 @@ import UButton from "@nuxt/ui/components/Button.vue";
 import UIcon from "@nuxt/ui/components/Icon.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import CloudflareTokenForm from "./CloudflareTokenForm.vue";
+import WafManagementPanel from "./WafManagementPanel.vue";
+import { isWafView, isWafOperation, type WafView, type WafOperation } from "../lib/cloudflare-waf";
 import ErrorNotice from "./ErrorNotice.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText, hasUncertainWrite } from "../lib/api";
 import { locale } from "../lib/i18n";
@@ -35,13 +37,14 @@ interface Connection {
   latest_operation: Operation | null;
   configuration: Partial<Record<ConfigurationField, boolean | string | number | null>>;
 }
-const operationKinds = new Set(["configuration_secret", "control_secret", "analytics_secret", "configuration", "rate_limit"]);
+const operationKinds = new Set(["configuration_secret", "control_secret", "analytics_secret", "configuration", "rate_limit", "waf"]);
 const operationStatuses = new Set(["pending", "verified", "failed", "unknown"]);
 const capabilityStates = new Set(["missing", "unverified", "verified", "permission_denied", "unavailable", "target_mismatch", "unsupported_contract"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function nullableText(value: unknown): boolean { return value === null || typeof value === "string"; }
 function isOperation(value: unknown): value is Operation {
+  if (record(value) && value.kind === "waf") return isWafOperation(value);
   return record(value) && typeof value.operation_id === "string" && uuidPattern.test(value.operation_id)
     && typeof value.kind === "string" && operationKinds.has(value.kind) && typeof value.status === "string" && operationStatuses.has(value.status)
     && Number.isSafeInteger(value.version) && (value.version as number) >= 1
@@ -70,11 +73,6 @@ interface Notifications {
   status: string; available_alerts: { type: string; display_name: string; description: string }[];
   policies: { id: string; name: string; alert_type: string; enabled: boolean; emails: string[]; filters: Record<string, unknown> }[];
 }
-interface Waf {
-  status: string; zone_id: string | null; hostname: string | null;
-  owned_rule: { id: string; enabled: boolean; action: string; expression: string } | null;
-  other_rule_count: number | null; protected: boolean;
-}
 type ConfigurationField = "history_enabled" | "analytics_enabled" | "billing_plan" | "billing_cycle_day" | "account_totals" | "warning_percent";
 const props = withDefaults(defineProps<{ mode?: "overview" | "usage"; initialSetting?: ConfigurationField | null; settingRequest?: number; session?: Pick<WebSessionView, "session_id" | "principal"> }>(), { mode: "overview", initialSetting: null, settingRequest: 0 });
 const emit = defineEmits<{ applied: []; rates: [value: RateLimitSettings] }>();
@@ -87,7 +85,7 @@ const connection = ref<Connection | null>(null);
 const operation = ref<Operation | null>(null);
 const tokenOperation = ref<Operation | null>(null);
 const notifications = ref<Notifications | null>(null);
-const waf = ref<Waf | null>(null);
+const waf = ref<WafView | null>(null);
 const rateSettings = ref<RateLimitSettings | null>(null);
 const plan = ref<Plan | null>(null);
 const loading = ref(false);
@@ -102,7 +100,12 @@ const tokenLookupMissing = ref(false);
 const readbackGeneration = ref(0);
 const showNotifications = ref(false);
 const showWaf = ref(false);
-const featureLoading = ref(false);
+const notificationsLoading = ref(false);
+const wafLoading = ref(false);
+const wafLocked = ref(false);
+const wafContextKey = computed(() => `${recoveryPartition() ?? "unpartitioned"}\n${readbackGeneration.value}\n${connection.value?.target.zone_id ?? ""}`);
+const featureLoading = computed(() => notificationsLoading.value || wafLoading.value);
+const optionalCheckFailed = ref(false);
 const connectionManagementOpen = ref(false);
 const zone = ref("");
 const rateScope = ref("instance");
@@ -115,9 +118,12 @@ const validation = ref(false);
 let readController = new AbortController();
 let disposed = false;
 let featureGeneration = 0;
+let notificationsReadGeneration = 0;
+let wafReadGeneration = 0;
 let planGeneration = 0;
+let controlReadGeneration = 0;
 const ui = (en: string, zh: string) => locale.value === "zh-CN" ? zh : en;
-const unresolved = computed(() => uncertain.value || operation.value?.status === "pending" || operation.value?.status === "unknown");
+const unresolved = computed(() => wafLocked.value || uncertain.value || operation.value?.status === "pending" || operation.value?.status === "unknown");
 const fixedTargetReady = computed(() => Boolean(connection.value?.target.account_id && connection.value?.target.worker_name && connection.value?.target.database_id));
 const writable = computed(() => fixedTargetReady.value && !loading.value && !busy.value && !failed.value && !unresolved.value);
 const hasConfiguration = computed(() => connection.value?.capabilities.configuration === "verified");
@@ -239,6 +245,7 @@ function rejectedTokenMessage(problem: ApiProblem | null): string {
   if (problem.body.source === "cloudflare_platform" && problem.body.details.failure_class === "permission_denied") reason = ui("Cloudflare rejected this Token. Check that it has Editor permission for this Worker.", "Cloudflare 拒绝了当前 Token，请检查是否授予此 Worker 的 Editor 权限。");
   else if (problem.status === 409) reason = ui("The current settings changed before saving. Check the status and decide again.", "保存前状态发生变化，请重新检查后再决定是否保存。");
   else if (problem.status === 400) reason = ui("The Token or settings did not pass the check. Review the Token and its required permissions.", "Token 或设置未通过检查，请核对 Token 内容与所需权限。");
+  else if (problem.body.details.write_state === "not_dispatched") reason = ui("The check stopped before the Secret write. Check the current status, then enter the Token again.", "检查在写入 Secret 前停止。请检查当前状态后重新输入 Token。");
   const providerFacts = providerFailureFacts(problem);
   if (providerFacts) diagnostics.unshift(providerFacts);
   return `${heading} ${reason}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}`;
@@ -255,10 +262,12 @@ const tokenFeedbackMessage = computed(() => {
   if (tokenFeedback.value === "rejected") return rejectedTokenMessage(tokenProblem.value);
   if (tokenFeedback.value === "capabilities_unavailable") return ui("Token saved. Some functions could not be confirmed yet. Check the connection again.", "Token 已保存，部分功能暂未确认，请重新检查连接。");
   if (tokenFeedback.value === "readback_unavailable") return ui("Token saved. The latest status is temporarily unavailable. Check the connection before changing settings.", "Token 已保存，暂时无法读取最新状态。修改设置前请重新检查连接。");
+  if (tokenFeedback.value === "saved") return ui("Token saved and confirmed active. Functions are checked separately below.", "Token 已保存并确认生效；下方分别检查各项功能。");
   return "";
 });
 const rateUnavailableReason = computed(() => {
   if (!fixedTargetReady.value) return ui("This instance’s Cloudflare setup is incomplete. Ask your deployment Agent to check it.", "此实例的 Cloudflare 配置不完整，请让部署 Agent 检查。");
+  if (unresolved.value && (wafLocked.value || connection.value?.latest_operation?.kind === "waf")) return ui("The WAF change is not confirmed yet. Check its original result in Domain & access protection before another change.", "WAF 修改尚未确认，请先在域名与访问防护中检查原修改结果，再进行其他修改。");
   if (unresolved.value) return ui("The last save is not confirmed yet. Check its result in Overview before changing limits.", "上次保存尚未确认，请先在概览检查保存结果，再修改限制。");
   if (!hasConfigurationAuthorization.value || connection.value?.capabilities.configuration === "missing") return ui("To change limits, first save a Token with settings permissions in Overview.", "要修改限制，请先在概览保存具有设置权限的 Token。");
   if (connection.value?.capabilities.configuration === "unverified") return ui("The Token is saved but has not been checked. Check the connection in Overview first.", "Token 已保存但尚未检查，请先在概览检查连接。");
@@ -335,35 +344,54 @@ function safeLink(value: string | undefined, fallback: string): string {
 }
 async function load(): Promise<void> {
   const requestContext = contextGeneration;
+  const request = ++controlReadGeneration;
+  const current = () => isCurrent(requestContext) && request === controlReadGeneration;
   loading.value = true; failed.value = false;
   try {
-    const result = await apiRequest<Connection>(base, { validateResponse: isConnection, authorizationCurrent: () => isCurrent(requestContext), signal: readController.signal });
-    if (!isCurrent(requestContext)) return;
+    const result = await apiRequest<Connection>(base, { validateResponse: isConnection, authorizationCurrent: current, signal: readController.signal });
+    if (!current() || (connection.value && connection.value.version > result.version)) return;
     connection.value = result;
     if (!tokenWrite.value || result.latest_operation?.operation_id === tokenWrite.value.operationId) operation.value = result.latest_operation;
     zone.value = result.target.zone_id ?? ""; configurationDraft();
-  } catch { if (isCurrent(requestContext)) failed.value = true; }
-  finally { if (isCurrent(requestContext)) loading.value = false; }
+  } catch { if (current()) failed.value = true; }
+  finally { if (current()) loading.value = false; }
 }
 function invalidateFeatureReads(): void {
-  featureGeneration++; notifications.value = null; waf.value = null; featureLoading.value = false;
+  featureGeneration++; notifications.value = null; waf.value = null;
+  notificationsLoading.value = false; wafLoading.value = false; optionalCheckFailed.value = false;
 }
-async function inspectFeatures(): Promise<void> {
+async function inspectFeatures(only?: "notifications" | "waf"): Promise<void> {
   const requestContext = contextGeneration;
-  const request = ++featureGeneration;
-  const readNotifications = showNotifications.value;
-  const readWaf = showWaf.value;
-  if (!readNotifications && !readWaf) return;
-  featureLoading.value = true;
-  const results = await Promise.allSettled([
-    readNotifications ? apiRequest<Notifications>(`${base}/notifications`, { authorizationCurrent: () => isCurrent(requestContext), signal: readController.signal }) : Promise.resolve(null),
-    readWaf ? apiRequest<Waf>(`${base}/waf`, { authorizationCurrent: () => isCurrent(requestContext), signal: readController.signal }) : Promise.resolve(null),
+  const generation = featureGeneration;
+  const readNotifications = showNotifications.value && (!only || only === "notifications");
+  const readWaf = showWaf.value && (!only || only === "waf");
+  await Promise.allSettled([
+    readNotifications ? (async () => {
+      const request = ++notificationsReadGeneration;
+      const current = () => isCurrent(requestContext) && generation === featureGeneration && request === notificationsReadGeneration;
+      notificationsLoading.value = true;
+      try {
+        const result = await apiRequest<Notifications>(`${base}/notifications`, { authorizationCurrent: () => isCurrent(requestContext), signal: readController.signal });
+        if (current()) notifications.value = result;
+      } catch (error) {
+        if (current()) notifications.value = { status: error instanceof ApiProblem && error.status === 403 ? "permission_denied" : "unavailable", available_alerts: [], policies: [] };
+      } finally { if (current()) notificationsLoading.value = false; }
+    })() : Promise.resolve(),
+    readWaf ? (async () => {
+      const request = ++wafReadGeneration;
+      const current = () => isCurrent(requestContext) && generation === featureGeneration && request === wafReadGeneration;
+      wafLoading.value = true;
+      try {
+        const result = await apiRequest<WafView>(`${base}/waf`, { validateResponse: isWafView, authorizationCurrent: () => isCurrent(requestContext), signal: readController.signal });
+        if (current()) waf.value = result;
+      } catch (error) {
+        if (current()) waf.value = { status: error instanceof ApiProblem && error.status === 403 ? "permission_denied" : "unavailable", zone_id: null, hostname: "", owned_rule: null, other_rule_count: null, protected: false };
+      } finally { if (current()) wafLoading.value = false; }
+    })() : Promise.resolve(),
   ]);
-  if (!isCurrent(requestContext) || request !== featureGeneration) return;
-  if (readNotifications) notifications.value = results[0].status === "fulfilled" ? results[0].value : { status: results[0].reason instanceof ApiProblem && results[0].reason.status === 403 ? "permission_denied" : "unavailable", available_alerts: [], policies: [] };
-  if (readWaf) waf.value = results[1].status === "fulfilled" ? results[1].value : { status: results[1].reason instanceof ApiProblem && results[1].reason.status === 403 ? "permission_denied" : "unavailable", zone_id: null, hostname: null, owned_rule: null, other_rule_count: null, protected: false };
-  featureLoading.value = false;
 }
+function recordWafOperation(value: WafOperation): void { operation.value = value; }
+async function refreshWaf(): Promise<void> { await load(); await inspectFeatures("waf"); }
 async function loadRates(): Promise<void> {
   const requestContext = contextGeneration;
   try {
@@ -375,15 +403,14 @@ async function loadRates(): Promise<void> {
 function toggleFeature(kind: "notifications" | "waf", event: Event): void {
   const opened = (event.target as HTMLDetailsElement).open;
   if (kind === "notifications") showNotifications.value = opened; else showWaf.value = opened;
-  if (opened) void inspectFeatures();
+  if (opened) void inspectFeatures(kind);
 }
 async function verifyCapabilities(includeOptional = false): Promise<void> {
   const requestContext = contextGeneration;
-  if (includeOptional) invalidateFeatureReads();
   const result = await apiRequest<WriteResult<Connection>>(`${base}/verify`, { validateResponse: value => record(value) && isConnection(value.resource), authorizationCurrent: () => isCurrent(requestContext), method: "POST", body: includeOptional ? { include_optional: true } : {}, idempotencyKey: crypto.randomUUID() });
   if (!isCurrent(requestContext)) return;
   connection.value = result.resource; operation.value = result.resource.latest_operation; zone.value = result.resource.target.zone_id ?? ""; configurationDraft();
-  if (includeOptional) { notifications.value = null; waf.value = null; }
+  if (includeOptional) invalidateFeatureReads();
   if (!tokenWrite.value) uncertain.value = false;
   readbackGeneration.value += 1;
 }
@@ -486,7 +513,6 @@ async function saveToken(kind: string, token: string): Promise<void> {
   clearPendingRequestIntents("POST", `${base}/secrets`);
   setTokenWrite({ key, operationId: null });
   tokenLookupMissing.value = false;
-  invalidateFeatureReads();
   busy.value = true; failed.value = false; tokenProblem.value = null; tokenFeedback.value = null; plan.value = null;
   try {
     // 显式键使通用客户端不以含秘密的 body 生成待恢复签名。
@@ -501,7 +527,9 @@ async function saveToken(kind: string, token: string): Promise<void> {
     recordTokenOperation(result.resource);
   } catch (error) {
     if (!isCurrent(requestContext)) {
-      if (savePartition && recoverableTokenSaves.get(savePartition)?.key === key && error instanceof ApiProblem && error.status >= 400 && error.status < 500 && error.body.details.normalized_by !== "client") recoverableTokenSaves.delete(savePartition);
+      if (savePartition && recoverableTokenSaves.get(savePartition)?.key === key && error instanceof ApiProblem && error.body.details.normalized_by !== "client"
+        && ((error.status >= 400 && error.status < 500) || (error.status === 503 && error.body.source === "cloudflare_platform"
+          && error.body.details.component === "cloudflare-control" && error.body.details.write_state === "not_dispatched"))) recoverableTokenSaves.delete(savePartition);
       return;
     }
     if (hasUncertainWrite(`${base}/secrets`)) {
@@ -520,13 +548,9 @@ async function saveToken(kind: string, token: string): Promise<void> {
 async function checkOptional(): Promise<void> {
   const requestContext = contextGeneration;
   if (busy.value || featureLoading.value || loading.value || unresolved.value) return;
-  busy.value = true;
+  busy.value = true; optionalCheckFailed.value = false;
   try { await verifyCapabilities(true); }
-  catch {
-    if (isCurrent(requestContext) && connection.value) {
-      for (const key of ["billing", "notifications", "waf"] as const) connection.value.capabilities[key] = "unavailable";
-    }
-  }
+  catch { if (isCurrent(requestContext)) optionalCheckFailed.value = true; }
   finally { if (isCurrent(requestContext)) busy.value = false; }
 }
 async function saveZone(): Promise<void> {
@@ -592,10 +616,11 @@ async function apply(): Promise<void> {
 function invalidateSessionContext(): void {
   contextGeneration++; featureGeneration++; planGeneration++;
   readController.abort(); readController = new AbortController();
-  tokenWrite.value = null; uncertain.value = false; tokenFeedback.value = null;
+  tokenWrite.value = null; uncertain.value = false; wafLocked.value = false; tokenFeedback.value = null;
   tokenProblem.value = null; tokenLookupMissing.value = false; connection.value = null; operation.value = null; tokenOperation.value = null;
   notifications.value = null; waf.value = null; rateSettings.value = null; plan.value = null;
-  loading.value = false; busy.value = false; failed.value = false; featureLoading.value = false;
+  loading.value = false; busy.value = false; failed.value = false;
+  notificationsLoading.value = false; wafLoading.value = false; optionalCheckFailed.value = false;
   expandedCapabilities.value = new Set(); previewCapability.value = null; readbackGeneration.value++;
 }
 function sessionBoundaryChanged(): void { invalidateSessionContext(); loading.value = true; }
@@ -615,7 +640,8 @@ watch(rateScope, rateDraft);
 watch([rateScope, rateLimit, ratePeriod, configurationValue], () => { plan.value = null; planGeneration++; });
 watch(() => props.mode, mode => {
   plan.value = null; validation.value = false; planGeneration++; featureGeneration++;
-  showNotifications.value = false; showWaf.value = false; featureLoading.value = false;
+  showNotifications.value = false; showWaf.value = false;
+  notificationsLoading.value = false; wafLoading.value = false;
   if (mode === "usage" && connection.value) void loadRates();
 });
 onMounted(async () => {
@@ -656,6 +682,7 @@ onUnmounted(() => {
           <h3 id="connection-tokens-heading" class="sr-only">{{ ui('Token settings', 'Token 设置') }}</h3>
           <CloudflareTokenForm :key="`connection:${readbackGeneration}`" kind="connection" :label="ui('Cloudflare API Token', 'Cloudflare API Token')" :description="ui('Saved securely in Cloudflare. Saving updates this instance and clears the input; the Token will not be shown again.', 'Token 安全保存在 Cloudflare。保存会更新此实例并清空输入，Token 不会再次显示。')" :disabled="!writable" :save="saveToken" />
           <div class="capability-heading"><h3>{{ ui('Functions and permissions', '功能与权限') }}</h3><div class="capability-check-actions"><UButton v-if="!unresolved" color="neutral" variant="outline" size="sm" type="button" :disabled="loading || busy" @click="verify">{{ ui('Check again', '重新检查') }}</UButton><UButton v-if="!unresolved" color="neutral" variant="outline" size="sm" type="button" :disabled="loading || busy" @click="checkOptional">{{ ui('Check other functions', '检查其他功能') }}</UButton></div></div>
+          <p v-if="optionalCheckFailed" class="muted-copy" role="status">{{ ui('This check could not finish. Existing function results are kept; try again later.', '本次检查暂未完成，保留已有各项结果，请稍后重新检查。') }}</p>
           <div class="capability-list">
             <details v-for="entry in capabilities" :key="entry.key" class="capability-item" :data-state="capabilityTone(entry.key)" :open="expandedCapabilities.has(entry.key) || previewCapability === entry.key" :data-preview="!expandedCapabilities.has(entry.key) && previewCapability === entry.key" @pointerenter="enterCapability(entry.key, $event)" @pointerleave="previewCapability = null" @focusin="previewCapability = entry.key" @focusout="leaveCapabilityFocus">
               <summary class="capability-summary" @click.prevent="toggleCapabilityDetails(entry.key)">
@@ -669,6 +696,7 @@ onUnmounted(() => {
                 <p v-if="!entry.required" class="muted-copy">{{ ui('This function is optional and checked only when requested.', '此功能为可选项，仅在主动检查时读取。') }}</p>
                 <p class="muted-copy">{{ ui('Checked authorization', '检查的授权') }}：{{ capabilitySource(entry.key) }}</p>
                 <p v-if="entry.key === 'waf' && !connection.target.zone_id" class="muted-copy">{{ ui('Select this domain’s Zone in Usage & limits before checking.', '请先在“用量与限额”选择此域名的 Zone，再检查此功能。') }}</p>
+                <p v-if="entry.key === 'waf' && capabilityState('waf') === 'verified'" class="muted-copy">{{ ui('Reading rules does not enable protection. Configure domain protection separately through a deployment plan.', '规则可读取不表示防护已启用；请通过独立部署计划设置域名防护。') }} <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Domain protection setup', '域名防护设置') }}</a></p>
               </div>
             </details>
           </div>
@@ -676,7 +704,7 @@ onUnmounted(() => {
             <summary>{{ ui('Create a Token and check permissions', '创建 Token 与核对权限') }}</summary>
             <p>{{ ui('In Manage Account → Account API Tokens → Create Token, select the target account shown below and create one account-owned Token with these permissions.', '在 Manage Account（管理账户）→ Account API Tokens（账户 API Token）→ Create Token（创建 Token）中，选择下方目标账户，为同一个 account-owned Token 添加以下权限。') }}</p>
             <section class="token-permission-group" aria-labelledby="token-required-permissions-heading">
-              <h4 id="token-required-permissions-heading">{{ ui('Required permissions', '必需权限') }}</h4>
+              <h4 id="token-required-permissions-heading">{{ ui('Permission needed to save', '保存所需权限') }}</h4>
               <ul class="token-permission-list">
                 <li>
                   <strong>{{ ui('Current Worker · Editor', '当前 Worker · Editor') }}</strong>
@@ -687,19 +715,19 @@ onUnmounted(() => {
                   </dl>
                   <p class="muted-copy">{{ ui('Do not select account-wide Workers Editor or Admin.', '不要选择全账户的 Workers Editor 或 Admin。') }}</p>
                 </li>
+              </ul>
+            </section>
+            <section class="token-permission-group" aria-labelledby="token-optional-permissions-heading">
+              <h4 id="token-optional-permissions-heading">{{ ui('Read permissions checked separately', '分别检查的读取权限') }}</h4>
+              <ul class="token-permission-list">
                 <li>
                   <strong>Account Analytics · Read</strong>
                   <dl>
                     <div><dt>{{ ui('Scope', '范围') }}</dt><dd>{{ ui('Target account only:', '仅目标账户：') }} {{ connection.target.account_id ?? ui('Unknown', '未知') }}</dd></div>
                     <div><dt>{{ ui('Cloudflare selection', 'Cloudflare 选择路径') }}</dt><dd>{{ ui('Analytics & Logs → Account Analytics → Read', 'Analytics & Logs（分析和日志）→ Account Analytics（账户分析）→ Read') }}</dd></div>
-                    <div><dt>{{ ui('Use', '用途') }}</dt><dd>{{ ui('Read Workers, D1, and R2 usage. D1 SQL and R2 object editing permissions are not required.', '读取 Workers、D1 与 R2 用量，无需 D1 SQL 或 R2 对象编辑权。') }}</dd></div>
+                    <div><dt>{{ ui('Use', '用途') }}</dt><dd>{{ ui('Read Workers, D1, and R2 usage after the Token is saved. Missing analytics permission does not prevent saving. D1 SQL and R2 object editing permissions are not required.', 'Token 保存后读取 Workers、D1 与 R2 用量，缺少统计权限不影响保存；无需 D1 SQL 或 R2 对象编辑权。') }}</dd></div>
                   </dl>
                 </li>
-              </ul>
-            </section>
-            <section class="token-permission-group" aria-labelledby="token-optional-permissions-heading">
-              <h4 id="token-optional-permissions-heading">{{ ui('Optional read permissions', '可选读取权限') }}</h4>
-              <ul class="token-permission-list">
                 <li>
                   <strong>Billing · Read</strong>
                   <dl>
@@ -733,7 +761,8 @@ onUnmounted(() => {
                   </dl>
                 </li>
               </ul>
-              <p class="muted-copy">{{ ui('No optional Edit permissions are required. Missing permissions or unsupported Token compatibility affect only the corresponding capability; other verified capabilities remain available.', '可选能力无需 Edit 权限。缺少权限或 Token 兼容性未确认，只影响对应能力，其他已核验能力仍可用。') }}</p>
+              <p class="muted-copy">{{ ui('To enable or disable our WAF filter, choose App Security → Zone WAF Rules → Edit for this same Zone instead of Read. This optional write permission is checked when applying a reviewed WAF plan; it is not required to save the Token.', '若要启用或关闭本工具 WAF 过滤，请为同一个 Zone 选择 App Security → Zone WAF Rules → Edit，替代 Read。此可选写权限在应用已核对的 WAF 计划时检查；保存 Token 不需要它。') }}</p>
+              <p class="muted-copy">{{ ui('These read permissions are not required to save the Token; add them for the functions you need. Missing permissions or unsupported Token compatibility affect only the corresponding capability; other verified capabilities remain available.', '保存 Token 不需要这些读取权限，请按所需功能添加。缺少权限或 Token 兼容性未确认，只影响对应能力，其他已核验能力仍可用。') }}</p>
             </section>
             <p class="muted-copy">{{ ui('The creator needs account Super Administrator or API Token Provisioning authority. Do not add API Tokens Write or other Token-management permissions to the connection Token. Verify a replacement before revoking the old Token.', '创建者需要账户 Super Administrator 或 API Token Provisioning 授权；连接 Token 无需 API Tokens Write 或其他 Token 管理权限。轮换时先核验新连接，再撤销旧 Token。') }}</p>
             <p><a href="https://dash.cloudflare.com/?to=/:account/api-tokens" target="_blank" rel="noopener noreferrer">{{ ui('Open Account API Tokens', '打开 Account API Tokens') }}</a> · <a href="https://developers.cloudflare.com/workers/authorization/workers/" target="_blank" rel="noopener noreferrer">{{ ui('Official permissions guide', '官方权限说明') }}</a> · <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Permissions and recovery guide', '权限与恢复指南') }}</a></p>
@@ -754,7 +783,7 @@ onUnmounted(() => {
       </section>
       <section v-if="mode === 'usage'" class="connection-section" aria-labelledby="connection-rate-heading">
         <h3 id="connection-rate-heading">{{ ui('Request frequency limits', '访问频率限制') }}</h3><p class="muted-copy">{{ ui('Choose a scope and enter the new limit. Review the change before confirming. Limits can have brief discrepancies and do not cap charges.', '选择范围并输入新限制，核对修改后再确认保存。限制可能存在短时误差，不能封顶费用。') }}</p><p class="muted-copy">{{ ui('Current limit', '当前限制') }}: {{ currentRate ? `${currentRate.limit} / ${currentRate.period_seconds} ${ui('seconds', '秒')}` : ui('Unknown', '未知') }}</p>
-        <p v-if="rateUnavailableReason" class="warning-panel rate-unavailable" role="status">{{ rateUnavailableReason }} <a href="/app/admin">{{ ui('Open Overview', '前往概览') }}</a></p>
+        <p v-if="rateUnavailableReason" class="warning-panel rate-unavailable" role="status">{{ rateUnavailableReason }} <a v-if="wafLocked || connection.latest_operation?.kind === 'waf'" href="#connection-waf-heading" @click="showWaf = true">{{ ui('View domain protection', '查看域名防护') }}</a><a v-else href="/app/admin">{{ ui('Open Overview', '前往概览') }}</a></p>
         <form v-if="!rateUnavailableReason" class="control-form" @submit.prevent="preview('rate_limit')"><label>{{ ui('Scope', '范围') }}<USelect :disabled="!writable || !hasConfiguration" v-model="rateScope" :items="rateScopes" /></label><label>{{ ui('Maximum requests', '最多请求数') }}<UInput :disabled="!writable || !hasConfiguration" v-model="rateLimit" type="number" min="1" step="1" /></label><label>{{ ui('Duration', '统计时长') }}<USelect :disabled="!writable || !hasConfiguration" v-model="ratePeriod" :placeholder="ui('Choose…','请选择…')" :items="[{value:'10',label:ui('10 seconds','10 秒')},{value:'60',label:ui('60 seconds','60 秒')}]" /></label><UButton color="neutral" variant="outline" type="submit" :disabled="!writable || !hasConfiguration">{{ ui('Change limit', '修改限制') }}</UButton></form>
       </section>
       <p v-if="validation" class="warning-panel" role="alert">{{ ui('Choose a value within the displayed range. Maximum requests must be a positive integer and the duration must be 10 or 60 seconds.', '请选择显示范围内的值；最多请求数必须为正整数，统计时长只能为 10 或 60 秒。') }}</p>
@@ -768,8 +797,12 @@ onUnmounted(() => {
       <template v-if="mode === 'usage'">
         <h3 class="connection-section">{{ ui('Budget & optional reads', '预算与可选读取') }}</h3>
         <details class="connection-section" aria-labelledby="connection-budget-heading"><summary id="connection-budget-heading">{{ ui('Cloudflare USD budget alerts', 'Cloudflare USD 预算警报') }}</summary><p>{{ status(connection.budget.status) }}</p><p class="muted-copy">{{ ui('Cloudflare Budget Alerts notify selected email recipients about cumulative usage-based account charges. They are separate from cfKanban’s percentage-based allowance reminders and do not stop usage or cap charges. Manage USD thresholds and recipients in Cloudflare.', 'Cloudflare Budget Alerts 将账户累计按量费用提醒发送到指定邮件，与 cfKanban 按百分比计算的额度提醒独立，不会停止用量或封顶费用。请在 Cloudflare 管理美元预算与收件人。') }}</p><a :href="safeLink(connection.budget.dashboard_url, 'https://dash.cloudflare.com/')" target="_blank" rel="noopener noreferrer">{{ ui('Manage budgets in Cloudflare', '在 Cloudflare 管理预算') }}</a> · <a :href="safeLink(connection.budget.docs_url, 'https://developers.cloudflare.com/billing/manage/budget-alerts/')" target="_blank" rel="noopener noreferrer">{{ ui('Budget Alerts guide', '预算警报指南') }}</a></details>
-        <details class="connection-section" aria-labelledby="connection-notifications-heading" :open="showNotifications" @toggle="toggleFeature('notifications', $event)"><summary id="connection-notifications-heading">{{ ui('Cloudflare notification policies', 'Cloudflare 通知策略') }}</summary><p role="status">{{ featureLoading ? ui('Reading…', '正在读取…') : status(notifications?.status ?? connection.capabilities.notifications) }}</p><p class="muted-copy">{{ ui('Live read-only policies and email recipients are visible only to the Owner. They do not confirm a USD budget configuration.', '仅 Owner 可查看实时只读策略及收件邮件；这些数据不代表已核实 USD 预算配置。') }}</p><ul v-if="notifications?.policies.length" class="notification-policies"><li v-for="policy in notifications.policies" :key="policy.id"><strong>{{ policy.name }}</strong> · {{ policy.enabled ? ui('Enabled','启用') : ui('Disabled','停用') }}<p>{{ policy.alert_type }}</p><p>{{ policy.emails.join(', ') || ui('No email recipient reported','未返回收件邮件') }}</p></li></ul><p v-else-if="notifications?.status === 'verified'" class="muted-copy">{{ ui('No notification policies returned.', '未返回通知策略。') }}</p></details>
-        <details class="connection-section" aria-labelledby="connection-waf-heading" :open="showWaf" @toggle="toggleFeature('waf', $event)"><summary id="connection-waf-heading">{{ ui('Domain & access protection', '域名与访问防护') }}</summary><form class="control-form" @submit.prevent="saveZone"><label>{{ ui('Zone ID for this domain', '此域名的 Zone ID') }}<UInput :disabled="!writable" v-model="zone" autocomplete="off" /></label><UButton color="neutral" variant="outline" type="submit" :disabled="!writable">{{ ui('Save Zone selection', '保存 Zone 选择') }}</UButton></form><p role="status">{{ featureLoading ? ui('Reading…', '正在读取…') : status(waf?.status ?? connection.capabilities.waf) }}</p><p>{{ waf?.hostname ?? connection.target.hostname ?? ui('Hostname unknown', '域名未知') }}</p><p v-if="waf?.protected">{{ ui('The tool-owned exact-hostname blocking rule is verified active.', '已核验本工具拥有的准确域名阻止规则生效。') }}</p><p v-else class="muted-copy">{{ ui('No active tool-owned blocking rule is confirmed. Other Cloudflare protection may exist. Token permission and a domain ownership receipt are separate requirements.', '尚未确认本工具拥有的阻止规则生效；Cloudflare 可能另有防护。Token 权限与域名归属回执是独立条件。') }}</p><dl v-if="waf?.owned_rule" class="connection-target"><div><dt>{{ ui('Tool-owned custom rule', '本工具自有自定义规则') }}</dt><dd>{{ waf.owned_rule.id }} · {{ waf.owned_rule.enabled ? ui('Enabled', '启用') : ui('Disabled', '停用') }}</dd></div><div><dt>{{ ui('Action', '动作') }}</dt><dd>{{ waf.owned_rule.action }}</dd></div></dl><p class="muted-copy">{{ ui('A legacy domain without a tool ownership receipt needs an explicit connection plan. Keep the domain; do not delete and recreate it. Zone rules do not protect workers.dev.', '旧域名缺少本工具归属回执时，需明确接入计划；保留现有域名，无需删除重建。Zone 规则不保护 workers.dev。') }}</p><a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Domain and protection guide', '域名与防护指南') }}</a></details>
+        <details class="connection-section" aria-labelledby="connection-notifications-heading" :open="showNotifications" @toggle="toggleFeature('notifications', $event)"><summary id="connection-notifications-heading">{{ ui('Cloudflare notification policies', 'Cloudflare 通知策略') }}</summary><p role="status">{{ notificationsLoading ? ui('Reading…', '正在读取…') : status(notifications?.status ?? connection.capabilities.notifications) }}</p><p class="muted-copy">{{ ui('Live read-only policies and email recipients are visible only to the Owner. They do not confirm a USD budget configuration.', '仅 Owner 可查看实时只读策略及收件邮件；这些数据不代表已核实 USD 预算配置。') }}</p><ul v-if="notifications?.policies.length" class="notification-policies"><li v-for="policy in notifications.policies" :key="policy.id"><strong>{{ policy.name }}</strong> · {{ policy.enabled ? ui('Enabled','启用') : ui('Disabled','停用') }}<p>{{ policy.alert_type }}</p><p>{{ policy.emails.join(', ') || ui('No email recipient reported','未返回收件邮件') }}</p></li></ul><p v-else-if="notifications?.status === 'verified'" class="muted-copy">{{ ui('No notification policies returned.', '未返回通知策略。') }}</p></details>
+        <details class="connection-section" aria-labelledby="connection-waf-heading" :open="showWaf" @toggle="toggleFeature('waf', $event)">
+          <summary id="connection-waf-heading">{{ ui('Domain & access protection', '域名与访问防护') }}</summary>
+          <form class="control-form" @submit.prevent="saveZone"><label>{{ ui('Zone ID for this domain', '此域名的 Zone ID') }}<UInput :disabled="!writable" v-model="zone" autocomplete="off" /></label><UButton color="neutral" variant="outline" type="submit" :disabled="!writable">{{ ui('Save Zone selection', '保存 Zone 选择') }}</UButton></form>
+          <WafManagementPanel v-if="showWaf" :value="waf" :loading="wafLoading" :disabled="!writable" :control-version="connection.version" :context-key="wafContextKey" :recovery-partition="recoveryPartition()" @locked="wafLocked = $event" @operation="recordWafOperation" @updated="refreshWaf" />
+        </details>
       </template>
     </template>
   </section>

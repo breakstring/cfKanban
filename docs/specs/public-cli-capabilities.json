@@ -1731,6 +1731,70 @@
         "kind": "api",
         "operation": "getCloudflarePlan"
       }
+    },
+    {
+      "command": "admin cloudflare waf-operation",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflareWafOperation"
+      }
+    },
+    {
+      "command": "admin cloudflare waf-connect",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "registerCloudflareWafTarget"
+      }
+    },
+    {
+      "command": "admin cloudflare waf-plan",
+      "effect": "plan",
+      "route": {
+        "kind": "api",
+        "operation": "planCloudflareWaf"
+      }
+    },
+    {
+      "command": "admin cloudflare waf-apply",
+      "effect": "write",
+      "route": {
+        "kind": "api",
+        "operation": "applyCloudflareWaf"
+      }
+    },
+    {
+      "command": "deploy waf-target inspect",
+      "effect": "read",
+      "route": {
+        "kind": "helper",
+        "command": "waf-target inspect"
+      }
+    },
+    {
+      "command": "deploy waf-target plan",
+      "effect": "plan",
+      "route": {
+        "kind": "helper",
+        "command": "plan waf-target"
+      }
+    },
+    {
+      "command": "deploy waf-target apply",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "waf-target-apply"
+      }
+    },
+    {
+      "command": "deploy waf-target resume",
+      "effect": "write",
+      "route": {
+        "kind": "workflow",
+        "workflow": "waf-target-apply"
+      }
     }
   ],
   "operations": [
@@ -3830,6 +3894,71 @@
           "admin cloudflare plan"
         ]
       }
+    },
+    {
+      "operation": "getCloudflareWafOperation",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare/waf/operations/{request_key}",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare waf-operation"
+        ]
+      }
+    },
+    {
+      "operation": "registerCloudflareWafTarget",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/waf/target-binding",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare waf-connect"
+        ]
+      }
+    },
+    {
+      "operation": "planCloudflareWaf",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/waf/plan",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare waf-plan"
+        ]
+      }
+    },
+    {
+      "operation": "applyCloudflareWaf",
+      "method": "POST",
+      "path": "/api/v1/admin/cloudflare/waf/apply",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare waf-apply"
+        ]
+      }
+    },
+    {
+      "operation": "proveCloudflareWafOrigin",
+      "method": "POST",
+      "path": "/.well-known/cfkanban-waf-proof",
+      "coverage": {
+        "kind": "service_proof",
+        "commands": [],
+        "reason": "固定实例服务间的短期HMAC证明不属于业务操作；nonce和签名不能进入普通Agent/CLI输入输出或日志",
+        "alternative": "WAF plan/apply/verify由Worker自动执行该内部证明；Owner只调用业务管理命令",
+        "evidence": [
+          {
+            "file": "apps/worker/src/services/cloudflare-waf.ts",
+            "contains": "answerWafTargetProof"
+          },
+          {
+            "file": "packages/skill-runtime/src/capability-delivery.mjs",
+            "contains": "INTERNAL_SERVICE_PROOF_REQUIRED"
+          }
+        ]
+      }
     }
   ],
   "skill_commands": [
@@ -4629,16 +4758,20 @@
           "admin cloudflare show",
           "admin cloudflare notifications",
           "admin cloudflare waf",
+          "admin cloudflare waf-operation",
+          "admin cloudflare waf-connect",
+          "admin cloudflare waf-plan",
+          "admin cloudflare waf-apply",
           "admin cloudflare operation",
           "admin cloudflare token-operation",
+          "admin cloudflare plan",
           "admin cloudflare verify",
           "admin cloudflare zone",
           "admin cloudflare verify-operation",
           "admin rate-limits plan",
           "admin rate-limits apply",
           "admin cloudflare configuration-plan",
-          "admin cloudflare configuration-apply",
-          "admin cloudflare plan"
+          "admin cloudflare configuration-apply"
         ],
         "note": "普通业务API按OpenAPI逐operation映射到固定公共noun/action；不公开任意路径透传。专用传输与真实浏览器例外见operations。"
       }
@@ -5159,7 +5292,7 @@
       "skills": [
         "cfkanban-deploy"
       ],
-      "effect": "read_only_control_plane_and_plan",
+      "effect": "read_control_plane_and_register_service_plan",
       "coverage": {
         "kind": "helper",
         "commands": [
@@ -5184,6 +5317,53 @@
           {
             "file": "packages/cli/src/workflows.mjs",
             "contains": "return helper('public-access apply',input);"
+          }
+        ]
+      }
+    },
+    {
+      "command": "waf-target inspect",
+      "effect": "read_only_control_plane_and_authenticated_http",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy waf-target inspect"
+        ]
+      }
+    },
+    {
+      "command": "plan waf-target",
+      "effect": "read_only_control_plane_and_plan",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "coverage": {
+        "kind": "helper",
+        "commands": [
+          "deploy waf-target plan"
+        ]
+      }
+    },
+    {
+      "command": "waf-target apply",
+      "effect": "authorized_non_secret_d1_registration",
+      "skills": [
+        "cfkanban-deploy"
+      ],
+      "coverage": {
+        "kind": "composition",
+        "commands": [
+          "deploy waf-target apply",
+          "deploy waf-target resume"
+        ],
+        "note": "公共CLI验证准确计划授权并创建/授权原journal，再调用安全目标登记helper",
+        "evidence": [
+          {
+            "file": "packages/cli/src/workflows.mjs",
+            "contains": "helper('waf-target apply',input)"
           }
         ]
       }

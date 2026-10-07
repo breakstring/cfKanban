@@ -13,7 +13,7 @@
 
 Skill 与公共 CLI 已支持自动化的 `deploy public-access inspect`、`plan`、`apply` 流程。获准新增 Worker 自定义域名后，Cloudflare 管理其 DNS 与证书准备；单独的可选 WAF 计划创建限定该实例准确 hostname 的自有 custom rule，不是配置 Cloudflare Managed Rules。
 
-**在网页中：**「管理中心 → 用量与限额」的域名与访问防护详情，按需使用已核验授权读取当前 Zone / 自定义规则状态。域名与 WAF 写入仍通过部署计划。域名计划会核验同一实例、首选地址和本机安全重绑，再关闭 `workers.dev` 与 preview 的业务入口，避免绕过新域名。Zone 规则不保护 `workers.dev`，关闭备用入口是该具体计划的明确影响。Passkey 绑定域名，迁移前需安排可用的 Owner 恢复方式。仅修改应用地址不能完成域名迁移。域名操作不偷偷重新部署 Worker；配置声明在下一次获准部署后更新。
+**在网页中：**「管理中心 → 用量与限额」的域名与访问防护详情，按需使用已核验授权读取当前 Zone / 自定义规则状态。域名变更仍使用独立部署计划。schema 27 及以后，Web、CLI 和 Skills 的 WAF 启停使用同一套需核对确认的服务端计划。域名计划会核验同一实例、首选地址和本机安全重绑，再关闭 `workers.dev` 与 preview 的业务入口，避免绕过新域名。Zone 规则不保护 `workers.dev`，关闭备用入口是该具体计划的明确影响。Passkey 绑定域名，迁移前需安排可用的 Owner 恢复方式。仅修改应用地址不能完成域名迁移。域名操作不偷偷重新部署 Worker；配置声明在下一次获准部署后更新。
 
 「未记录部署工具管理的配置」不表示没有自定义域名或 WAF。旧版本或手工配置的域名可以正常工作；普通升级保留它们，不自动接管域名或安装新规则。WAF 不是使用自定义域名的必要条件。要检查现有保护，可在 Cloudflare 选择域名所在 Zone，查看 **Security / 安全 → WAF**；如需由工具管理，先让 Agent 只读核对现有映射与规则，为缺少归属回执的既有域名明确接入方案。保留现有域名，不要求为满足新域名流程而删除重建；直接重跑域名安装不会接管旧资源。
 
@@ -76,35 +76,47 @@ Wrangler OAuth 登录不会创建 API Key，也不会为网页设置自动补齐
 
 为同一个 Token 添加以下权限。页面的「创建 Token 与核对权限」指引在对应选择项旁显示当前 Worker 和目标账户。
 
-#### 必需权限
+#### 保存 Token 所需权限
 
 | 范围 | Cloudflare 选择路径 | 用途 |
 | --- | --- | --- |
 | **Specified Workers（指定的 Workers）** → 选择页面显示的当前已存在 Worker | **Developer Platform（开发者平台）→ Individual Workers → Editor** | 保存连接、调整访问频率及用量设置。Editor 同时包含该 Worker 的代码修改、部署、Secret 与配置修改权。不要选择全账户的 **Workers Editor** 或 **Admin**。 |
-| 仅页面显示的目标账户 | **Analytics & Logs（分析和日志）→ Account Analytics（账户分析）→ Read** | 读取 Workers、D1 与 R2 用量，无需 D1 SQL 或 R2 对象编辑权；实际数据集由统计读取核验。 |
 
-#### 可选读取权限
+#### 按需核验的读取权限
 
 | 范围 | Cloudflare 选择路径 | 用途 |
 | --- | --- | --- |
+| 仅页面显示的目标账户 | **Analytics & Logs（分析和日志）→ Account Analytics（账户分析）→ Read** | 读取 Workers、D1 与 R2 用量，无需 D1 SQL 或 R2 对象编辑权；实际数据集由统计读取核验。 |
 | 仅目标账户 | **Account & Billing（账户与账务）→ Billing → Read** | 读取账务与方案信息。 |
 | 仅目标账户 | **Account & Billing（账户与账务）→ Notifications → Read** | 读取已有通知策略；account-owned Token 兼容性须以实际读取核验。 |
 | 仅指定当前域名所属的 Zone | **DNS & Zones（DNS 和区域）→ Zone → Read** | 核验所选 Zone 属于目标账户与当前域名。 |
 | 当前域名的同一个指定 Zone | **App Security（应用安全）→ Zone WAF Rules → Read** | 读取该 Zone 已有的 WAF 规则；选择 **Zone WAF Rules**，不是 Account WAF。 |
 
-可选能力无需 Edit 权限。Owner 的用量页面按需读取通知与 WAF 数据。缺少可选权限或 Token 兼容性未确认，只影响对应能力，其他已核验能力仍可用。存在 Token 或勾选了某项权限，不等于已证实 endpoint 或预算策略类型可用。
+可选读取无需 Edit 权限。若要启用或关闭本工具 WAF 过滤，请为同一个 Zone 选择 **App Security（应用安全）→ Zone WAF Rules → Edit**，替代 Read；读取通过不证明具备写权限。Owner 的用量页面按需读取通知与 WAF 数据。缺少可选权限或 Token 兼容性未确认，只影响对应能力，其他已核验能力仍可用。存在 Token 或勾选了某项权限，不等于已证实 endpoint 或预算策略类型可用。
 
-[Workers 权限](https://developers.cloudflare.com/workers/authorization/workers/)说明限定单个 Worker 的 Editor，[统计指引](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/)说明 Account Analytics Read。不要为消除状态提示扩大到全账户编辑权。域名和 WAF 写入继续使用独立的部署计划流程，分别核对 Worker 路由、Zone、DNS 和规则修改权限。
+[Workers 权限](https://developers.cloudflare.com/workers/authorization/workers/)说明限定单个 Worker 的 Editor，[统计指引](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/)说明 Account Analytics Read。不要为消除状态提示扩大到全账户编辑权。域名变更继续使用独立部署计划，核对 Worker 路由、Zone 与 DNS 权限。WAF 管理使用下方的固定目标服务端计划，不修改域名或购买方案。
 
-选择「保存 Token」后，Token 一次写入 `CFKANBAN_API_TOKEN` 这一普通加密 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)，Free 支持，无需 Secrets Store。首次连接与更换均用新输入 Token 保存自身，旧 Token 缺少编辑权限或已过期不会阻止有效的新 Token 接入。提交后输入清空，失败时也不恢复草稿；确认生效后可跨设备使用，无需再次输入。
+选择「保存 Token」后，Token 一次写入 `CFKANBAN_API_TOKEN` 这一普通加密 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)，Free 支持，无需 Secrets Store。第一步只保存并确认 Secret 生效，仍核对当前 Worker、D1 绑定和部署基线；统计、通知、账务和 WAF 检查不作为保存条件。第二步分别检查各项能力，单项失败保留其他结果。首次连接与更换均用新输入 Token 保存自身，旧 Token 缺少编辑权限或已过期不会阻止有效的新 Token 接入。提交后输入清空，失败时也不恢复草稿；确认生效后可跨设备使用，无需再次输入。
 
 Token 生效后，连接区域缩为小卡片；展开详情可逐项同时查看能力名称与 Cloudflare 权限选择路径。绿色对勾表示实际检查通过，红色叉号表示权限不足或目标不匹配；未检查、未设置 Zone 或暂时不可用保持中性。悬停、聚焦或点击能力名称可查看授权来源、资源范围及核验边界。默认只检查配置与用量，选择「检查其他功能」才检查通知、账务和域名防护。旧统计授权的检查结果单独标明，不代表新 Token 已生效；读取配置也不证明任意部署操作或所有统计数据集都可用。
 
 统一授权优先使用；尚未统一的实例继续按原用途使用 `CFKANBAN_CONFIGURATION_TOKEN`、`CFKANBAN_CONTROL_TOKEN` 和 `USAGE_ANALYTICS_TOKEN`。保存统一授权不会删除旧 Secret，升级保留统一及旧授权的实时配置。原统计 Token 只有读取权限时不能用于写入 Worker 配置；必须创建或选择符合当前 Worker Editor 范围的替代授权。
 
-页面分别说明保存失败、等待确认生效和能力检查失败。保存时若明确缺少权限，会给出对应原因；预检 HTTP 故障显示失败步骤、供应商状态和请求 ID，不暴露 Token 或供应商原始响应。Token 已生效后的能力检查失败不表示保存失败。保存结果未确认时，先选择「检查保存结果」，不要重复保存；暂未查到记录仍不等于保存未发生。更换时先确认新 Token 生效，再撤销旧 Token；实例不可访问时使用部署恢复流程。API 核验所需能力与目标绑定，但不能证明 Token 没有其他权限。Cloudflare 官方 Worker Secret 输入仍是平台配置入口，保存并部署会应用 Worker 配置变更。
+页面分别说明保存失败、等待确认生效和能力检查失败。保存时若明确缺少权限，会给出对应原因；预检 HTTP 故障显示失败步骤、供应商状态和请求 ID，不暴露 Token 或供应商原始响应。服务明确确认本次请求尚未发送保存时，页面显示保存被拒绝，供用户修正后重新提交，不自动重发已清空的 Token。Token 已生效后的能力检查失败不表示保存失败；一次整体检查未完成也不会把此前通过的各项一起改判为失败。保存结果未确认时，先选择「检查保存结果」，不要重复保存；暂未查到记录仍不等于保存未发生。更换时先确认新 Token 生效，再撤销旧 Token；实例不可访问时使用部署恢复流程。API 核验所需能力与目标绑定，但不能证明 Token 没有其他权限。Cloudflare 官方 Worker Secret 输入仍是平台配置入口，保存并部署会应用 Worker 配置变更。
 
 `USAGE_*` 变量、Secret、限流 binding 和 CPU 上限等 Worker 配置变更，需要部署 Worker 版本才生效。在供应商控制面修改 WAF 规则或 Budget Alerts 策略，本身不需要重新部署 Worker，但保存后须读回供应商状态。保存在 D1 的应用设置保存成功后无需重新部署 Worker；后续请求按相应读取与缓存规则使用新配置，页面仍可能需要刷新，见[实例设置](../administration/settings.md)。
+
+### 管理域名防护
+
+读取权限、规则配置和覆盖状态分别显示。没有规则集或已核验归属的本工具规则，是正常的未启用状态，不表示 Token 保存失败。保存 Token 和检查能力不会创建规则；Cloudflare 也可能另有防护。
+
+schema 27 及以后，打开「管理中心 → 用量与限额 → 域名与访问防护」，保存当前域名的 Zone ID。缺少目标证据时选择「核验并接入当前域名」：核对准确既有 hostname 与固定 Worker，不重建或替换域名。指定 Worker 的 Editor 不一定能读取 Custom Domains；读取被拒绝时，用 `deploy waf-target inspect` / `plan` / `apply` 和既有本地 Cloudflare 授权接入，凭据只由安全部署 runtime 处理。计划登记非秘密证据，旧规则只有在准确私有归属回执和实时规则正文都匹配时才能迁移；不接管相似手工规则，也不授予域名回退归属。
+
+选择「检查启用防护」，计划自动识别唯一 Zone 自定义规则入口：已有入口时追加本工具规则，没有时创建入口及规则。保留其他规则正文与相对顺序，按全部 custom rulesets 核对 Free 的五条额度。已有规则可能豁免或重叠时，明确选择保留豁免，或将本工具规则放到所列 Skip 规则之前；改顺序不能消除 IP Access Allow 或未知表达式影响。核对这些限制后再确认，不自动购买套餐或扩大授权。
+
+「检查关闭本工具规则」只移除准确且已核验归属的本工具规则，保留域名、共享规则集与所有其他规则。WAF 修改使用已保存 Token 的 **Zone WAF Edit**，无需重新部署 Worker。读回只确认计划中的规则配置；workers.dev、preview、已有豁免或未检查的其他入口会使覆盖不完整。这是匿名私有 API 过滤，不替代应用权限，也不是实网边缘安全验收。
+
+结果未确认时选择「检查 WAF 修改结果」。原 UUID 请求键定位准确操作；查询 404 不证明仍在途的请求不会提交。服务只读取或核验原 intent，不重复规则写入。跨设备与升级以 D1 中当前归属为准，旧本地回执不能把网页已关闭的规则恢复回来。旧 schema 保留原部署工具流程；网页管理需要获批升级。
 
 ## 调整访问频率限制
 

@@ -3,6 +3,7 @@
   "name": "cfkanban",
   "main": "apps/worker/src/index.ts",
   "compatibility_date": "2026-08-29",
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "assets": {
     "directory": "./apps/web/dist",
     "binding": "ASSETS",

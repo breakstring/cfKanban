@@ -74,13 +74,13 @@ cfkanban admin upgrade-notification configure --enabled true --expected-version 
 
 在「管理中心 → 概览」的 **Cloudflare 连接**中输入一份 API Token，再选择「保存 Token」。只输入、保存一次；Token 最终保存在普通加密 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)，支持 Free，无需 Secrets Store。提交后输入会清空，API 不返回 Token，也不恢复为浏览器草稿。确认生效后缩为小卡片；展开详情可逐项查看能力、所需权限及资源范围，也可选择「更换 Token」。绿色对勾表示实际检查通过，红色叉号表示明确拒绝或目标不匹配，尚未检查的功能保持中性。旧分用途授权继续兼容，替换前不会删除旧 Secret。
 
-页面按部署固定的账户、Worker 和数据库核验目标；旧实例缺少目标设置时，需先执行获准升级。所输入的 account-owned Token 至少需要**当前 Worker 的 [Editor](https://developers.cloudflare.com/workers/authorization/workers/)**，包含该 Worker 的代码修改、部署与 Secret 管理权；统计另需目标账户的 **Account Analytics Read**。通知、账务、WAF 是按需添加的只读能力。各项分别核验，权限不足只影响相应能力，不能仅凭 Token 已保存判断全部可用。创建步骤、准确权限及恢复方式见[可选部署配置](../deployment/optional.md)。不要把 Token 发到聊天、写入浏览器存储或 Worker 明文变量。
+页面按部署固定的账户、Worker 和数据库核验目标；旧实例缺少目标设置时，需先执行获准升级。所输入的 account-owned Token 至少需要**当前 Worker 的 [Editor](https://developers.cloudflare.com/workers/authorization/workers/)**，包含该 Worker 的代码修改、部署与 Secret 管理权；统计另需目标账户的 **Account Analytics Read**。通知、账务及 WAF 读取是按需添加的只读能力；WAF 启停还需准确 Zone 的 Edit 权限。各项分别核验，权限不足只影响相应能力，不能仅凭 Token 已保存判断全部可用。创建步骤、准确权限及恢复方式见[可选部署配置](../deployment/optional.md)。不要把 Token 发到聊天、写入浏览器存储或 Worker 明文变量。
 
 保存生效后页面检查配置与用量能力；通知、账务和域名防护由「检查其他功能」或主动展开对应区域触发。接入成功后，Owner 可在另一设备登录使用已支持的控制功能，无需重新导入 Token。缺少配置授权时，访问频率和用量设置会说明原因并指向概览的连接入口；已有只读统计仍可查看。美元预算仍由 Cloudflare 控制台管理，不要求先接入才能打开其官方入口。
 
-保存、确认生效和能力检查分别反馈，能力检查失败不表示已生效的 Token 保存失败。保存未确认时请「检查保存结果」；响应丢失后按本人原保存请求查找，暂未查到记录不证明保存未发生。确认前输入保持清空、写操作保持锁定，不要重复保存。五组原生频率限制先「修改限制」，核对前后值，再「确认保存」；用量设置也保留修改前确认。次数必须为正整数，窗口只能为 10 或 60 秒，实际 binding 与显示 policy 一起更新。这些表单不修改 CPU 设置或固定查询并发限制。
+第一步保存并确认 Secret 生效，第二步独立检查各项能力。单项失败不阻塞保存、不覆盖其他结果；整体检查未完成时保留已有结果并提示未完成。保存前明确未发送的失败显示被拒绝；其余保存未确认时请「检查保存结果」。响应丢失后按本人原保存请求查找，暂未查到记录不证明保存未发生。确认前输入保持清空、写操作保持锁定，不自动重发 Token。五组原生频率限制先「修改限制」，核对前后值，再「确认保存」；用量设置也保留修改前确认。次数必须为正整数，窗口只能为 10 或 60 秒，实际 binding 与显示 policy 一起更新。这些表单不修改 CPU 设置或固定查询并发限制。
 
-「用量与限额」的域名与访问防护详情按需读取所选 Zone 与本工具自有自定义规则；只有准确域名的阻止规则匹配且启用时，才显示防护已核验，不能凭 Token 权限推导。这不是 Cloudflare Managed Rules；没有本工具规则也不排除另有 WAF 防护。域名与 WAF 变更仍通过部署 Skill/CLI 计划和应用；旧域名缺少归属回执时需先明确接入方案，不要求删除重建。[域名指引](../deployment/optional.md)说明该边界及备用入口。
+「用量与限额 → 域名与访问防护」分别读取目标、归属、库存与覆盖。受支持的 schema 可核验并接入当前域名，检查启用或关闭计划，选择与已有豁免共存的方式，再明确确认。已有入口时复用，没有时按计划创建。只能删除已核验归属的本工具规则；手工规则、相对顺序和域名保持不变。保存 Token 不会开启 WAF；未知写入继续锁定，须检查原操作，只有配置读回通过才报告完成。单条规则不代表完整覆盖或实网边缘验收。缺少私有域名回执的既有域名可登记准确的非秘密目标证据，无需重建或接管。权限、旧 schema 和安全 runtime 替代路径见[域名指引](../deployment/optional.md)。
 
 ```sh
 cfkanban admin usage show --mode manual --json --no-interactive

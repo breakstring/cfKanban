@@ -5,6 +5,7 @@ const names = {
   getUsageHistory: 'admin usage history', collectUsageHistory: 'admin usage collect',
   getCloudflareControl: 'admin cloudflare show', getCloudflareNotifications: 'admin cloudflare notifications', getCloudflareWaf: 'admin cloudflare waf', getCloudflareOperation: 'admin cloudflare operation', getCloudflarePlan: 'admin cloudflare plan',
   getCloudflareSecretOperation: 'admin cloudflare token-operation',
+  getCloudflareWafOperation: 'admin cloudflare waf-operation', registerCloudflareWafTarget: 'admin cloudflare waf-connect', planCloudflareWaf: 'admin cloudflare waf-plan', applyCloudflareWaf: 'admin cloudflare waf-apply',
   verifyCloudflareControl: 'admin cloudflare verify', updateCloudflareSettings: 'admin cloudflare zone', verifyCloudflareOperation: 'admin cloudflare verify-operation',
   planCloudflareRateLimits: 'admin rate-limits plan', applyCloudflareRateLimits: 'admin rate-limits apply', planCloudflareConfiguration: 'admin cloudflare configuration-plan', applyCloudflareConfiguration: 'admin cloudflare configuration-apply',
   getMeta: 'instance info', getMe: 'profile show', updateMe: 'profile update',
@@ -40,7 +41,9 @@ export const API_COMMANDS = Object.entries(contract.paths).flatMap(([apiPath, me
 const helpers = [
   ['deploy worker cost-settings', 'runtime worker-cost-settings', ['accountId','workerName','wranglerExecutable','cloudflareProfile','contextDirectory']],
   ['deploy public-access inspect', 'public-access inspect', ['instanceId','receiptPath','zoneId','hostname','wranglerExecutable','cloudflareProfile','contextDirectory','includeWaf']],
-  ['deploy public-access plan', 'plan public-access', ['instanceId','taskId','operationId','receiptPath','zoneId','hostname','wranglerExecutable','cloudflareProfile','contextDirectory','mode','passkeyRecoveryReady']],
+  ['deploy public-access plan', 'plan public-access', ['instanceId','taskId','operationId','receiptPath','zoneId','hostname','wranglerExecutable','cloudflareProfile','contextDirectory','mode','passkeyRecoveryReady','conflictChoice']],
+  ['deploy waf-target inspect', 'waf-target inspect', ['instanceId','receiptPath','zoneId','hostname','wranglerExecutable','cloudflareProfile','contextDirectory']],
+  ['deploy waf-target plan', 'plan waf-target', ['instanceId','taskId','operationId','receiptPath','zoneId','hostname','wranglerExecutable','cloudflareProfile','contextDirectory']],
   ['connection list', 'state inspect', []], ['connection add', 'state put-instance', ['instanceId','trustedApiOrigin','originVersion','persistenceConfirmed']],
   ['connection resolve','web resolve',['instanceId','origin','repoRoot']],
   ['scope inspect', 'scope inspect-directory', ['directory']], ['scope show', 'scope read', ['repoRoot']], ['scope associate', 'scope merge', ['repoRoot','targets']], ['scope resolve', 'scope resolve', ['explicitTargets','repoTargets','validTargets','allowUnfiltered']],
@@ -66,6 +69,7 @@ const helpers = [
 export const HELPER_COMMANDS = helpers.map(([name, helper, fields]) => ({ name, helper, fields, effect: /(?:show|list|inspect|resolve|discover|verify|continuity|snapshot|capabilities)$/.test(name) ? 'read' : /plan$/.test(name) ? 'plan' : 'write', description: name }));
 export const WORKFLOW_COMMANDS = [
   ...['apply','resume'].map(action=>({name:`deploy public-access ${action}`,workflow:'public-access-apply',fields:['instanceId','operationId','taskId','plan','authorization'],required:['instanceId','operationId','taskId','plan','authorization'],effect:'write'})),
+  ...['apply','resume'].map(action=>({name:`deploy waf-target ${action}`,workflow:'waf-target-apply',fields:['instanceId','operationId','taskId','plan','authorization'],required:['instanceId','operationId','taskId','plan','authorization'],effect:'write'})),
   ...['show','use','clear'].map(action=>({name:`context ${action}`,workflow:`context-${action}`,fields:['instanceId','workspace_id','project_id','directory','global'],required:[],effect:action==='show'?'read':'write'})),
   {name:'connection discover',workflow:'connection-discover',fields:['origin'],required:['origin'],effect:'read'},
   {name:'connection origin-check',helper:'origin rebind-check',fields:['instanceId'],effect:'read'},
@@ -89,6 +93,8 @@ const required = {
  'deploy worker cost-settings':['accountId','workerName','wranglerExecutable'],
  'deploy public-access inspect':['instanceId','receiptPath','zoneId','hostname','wranglerExecutable'],
  'deploy public-access plan':['instanceId','taskId','receiptPath','zoneId','hostname','wranglerExecutable','mode'],
+ 'deploy waf-target inspect':['instanceId','receiptPath','zoneId','hostname','wranglerExecutable'],
+ 'deploy waf-target plan':['instanceId','taskId','receiptPath','zoneId','hostname','wranglerExecutable'],
  'connection resolve':[], 'deploy plan compare':['before','after'],
  'connection add':['instanceId','trustedApiOrigin'], 'scope inspect':[], 'scope show':[], 'scope associate':['repoRoot','targets'], 'scope resolve':['validTargets'],
  'attachment upload':['instanceId','identifier','filePath'], 'attachment download':['instanceId','attachmentId','outputPath'], 'invite create':['instanceId','body'],
