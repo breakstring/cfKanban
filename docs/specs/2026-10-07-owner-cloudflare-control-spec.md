@@ -3,24 +3,26 @@
 - 状态：Frozen
 - 日期：2026-10-07
 - 执行任务：[CFK-643](https://cfkanban.dev/app/issues/CFK-643)、[CFK-644](https://cfkanban.dev/app/issues/CFK-644)、[CFK-645](https://cfkanban.dev/app/issues/CFK-645)
-- 授权依据：用户要求继续实现三项任务，明确 Token 最终保存于 Worker Secret，并选择将限定当前 Worker 的配置 Editor 授权长期保存在同一 Worker Secret，供跨设备管理。授权本地实现与验证；不包含实际创建 Token、线上迁移、Cloudflare 写入、部署、提交或推送。
+- 授权依据：用户要求继续实现三项任务，明确 Token 最终保存于 Worker Secret，并选择将限定当前 Worker 的配置 Editor 授权长期保存在同一 Worker Secret，供跨设备管理；随后明确要求将三处 Token 输入合为一个配置项、将连接入口前移到概览，并按管理员任务简化设置流程。授权本地实现与验证；不包含实际创建 Token、线上迁移、Cloudflare 写入、部署、提交或推送。
 - 本增量只覆盖 Owner 管理接入、下面列举的控制面操作和可选日度历史。覆盖成本保护及 Bootstrap 合同中该范围的“Web/Worker 不持有管理 Token”旧限制；其余身份、凭据、资源归属、发行与部署合同继续有效。
 
 ## 固定目标与授权
 
 部署及升级从已批准目标注入 `CFKANBAN_CONTROL_ACCOUNT_ID`、`CFKANBAN_CONTROL_WORKER_NAME`、`CFKANBAN_CONTROL_DATABASE_ID`。首次部署将已核验工件 migration manifest 的 `schema_version` 冻结到 release，仅 schema 26 及以后注入管理目标，并在生成配置时核对已安装工件；省略或旧 schema 保持历史部署形态。页面只能读取，不能自由输入或替换目标。缺失目标的旧实例显示未接入，须通过正式升级补齐；不能从浏览器 hostname、用户名称或 Token 猜测账户。
 
-Owner 从当前 HTTPS 实例的管理页面设置三种用途的授权：
+Owner 在当前 HTTPS 实例的「管理中心 → 概览」设置一份 Cloudflare API Token，一次保存到 `CFKANBAN_API_TOKEN`。该授权用于当前 Worker 配置与已获授权的只读能力：
 
-| 用途 | Worker Secret | 预期最小权限 |
-| --- | --- | --- |
-| 保存 Secret、变量及原生限流 | `CFKANBAN_CONFIGURATION_TOKEN` | account-owned API Token 的 Specified Workers / 当前 Worker / Editor |
-| 通知、账务能力与 Zone WAF 读取 | `CFKANBAN_CONTROL_TOKEN` | 当前账户 Notifications Read、Billing Read，指定 Zone 的 Zone Read / WAF Read；未实现的写操作不要求 Edit |
-| 用量采集 | `USAGE_ANALYTICS_TOKEN` | 现有用量合同的只读 Analytics / D1 / R2 权限 |
+| 用途 | 预期最小权限 |
+| --- | --- |
+| 保存 Secret、变量及原生限流 | account-owned API Token 的 Specified Workers / 当前 Worker / Editor |
+| 用量采集 | 当前账户 Account Analytics Read；数据集是否可用由实际读取核验 |
+| 可选通知、账务能力与 Zone WAF 读取 | 当前账户 Notifications Read、Billing Read，指定 Zone 的 Zone Read / WAF Read；未实现的写操作不要求 Edit |
 
-这些是授权用途，不要求三个 Token 的值互不相同。兼容的同一 Token 可用于多个用途，各项分别核验其准确目标及实际能力；配置用途仍须满足 account-owned 单 Worker Editor 边界，不因复用而自动添加权限。一次只保存一个用途的 Secret，不提供批量云写入。
+这些是同一连接的能力，不是三个配置步骤；逐项核验准确目标及实际能力。配置用途仍须满足 account-owned 单 Worker Editor 边界，不因统一输入自动添加权限。可选能力缺权限或供应商兼容性未确认时单独报告，不把连接整体标为全部可用，不要求为基本设置开通所有可选权限。一次只写入一个 Secret，不串行或批量保存三份副本。
 
-首次配置授权使用所输入的 Editor Token 写入自身 Secret，后续 Secret 写入使用已保存的配置授权；旧授权失效时可输入替代配置 Token 恢复。Editor 也能修改当前 Worker 的代码及部署，此权限边界必须在设置指引中明确。服务器验证本功能所需的操作能力及目标 DB 绑定；能力验证不等于证明该 Token 没有其他权限。
+运行时优先使用统一 Secret；缺失时各用途分别回退旧 `CFKANBAN_CONFIGURATION_TOKEN`、`CFKANBAN_CONTROL_TOKEN`、`USAGE_ANALYTICS_TOKEN`。保留旧接口用途和已配置 Secret，不删除或重写旧数据；旧授权仍可继续工作，页面只提供一处统一输入用于接入或替换。统一保存使用 `kind=connection`，操作分类复用既有 `configuration_secret`，非秘密 intent 记录准确 Secret 名称；操作读回按该名称核验实际 binding 及 hash，不能用统一优先解析器替旧操作确认结果。
+
+首次连接和统一 Token 轮换均使用所输入的 Editor Token 写入自身 Secret；旧授权失效不阻塞使用有效替代 Token 恢复。旧用途接口保留其原保存方式。Editor 也能修改当前 Worker 的代码及部署，此权限边界必须在设置指引中明确。服务器验证本功能所需的操作能力及目标 DB 绑定；能力验证不等于证明该 Token 没有其他权限。
 
 Token 只在表单的短暂内存及发送给固定 Cloudflare API 的请求中出现，最终仅保存普通 Worker Secret。不得进入 URL、浏览器存储、可恢复草稿、D1、业务审计正文、日志、命令参数、Agent 上下文或普通 CLI 操作日志。响应只返回已配置标志、能力状态与操作 ID，不返回 Token 或供应商错误正文。Cookie 写请求校验 CSRF，所有管理路由实时核验 Owner。普通参与者、Project / Workspace 管理员无此能力。
 
@@ -36,9 +38,17 @@ Secret 保存是单一明确操作。限流与配置修改先产生冻结的 pla
 
 D1 保存非秘密 plan、持久操作 intent、幂等请求哈希、互斥锁及审计；Token 正文不持久化。外部 Cloudflare 与 D1 不构成原子事务，Cloudflare API 也未提供本功能可依赖的全局 CAS。服务写前登记 intent，外部请求不确定后保持 `unknown`，重试相同键只能读取或验证原操作，不能再次发起外部写。只有读回 active deployment 和预期配置后才标记 `verified`；无法证明时不显示“已生效”。无法验证的 intent 不因简单超时而释放并盲目重放。
 
-页面使用“保存并应用配置”“应用计划”“核实结果”；不提供笼统重启按钮。Worker 无常驻进程重启语义，Secret / binding / vars 的生效通过版本及 deployment 读回证明。D1 中纯应用设置不需要重新部署。
+页面使用“保存连接”“应用此计划”“核验当前状态”；保存前说明会更新当前实例的 Cloudflare 配置，不提供笼统重启按钮。Worker 无常驻进程重启语义，Secret / binding / vars 的生效通过版本及 deployment 读回证明。D1 中纯应用设置不需要重新部署。
 
-正式升级使用当前控制面非秘密读回，保留页面修改后的限流、用量 vars、历史开关及三个已配置 Secret；旧本地回执不能覆盖新状态。未知 bindings 继续拒绝，不借此增量引入任意配置保留。
+正式升级使用当前控制面非秘密读回，保留页面修改后的限流、用量 vars、历史开关及统一与旧用途 Secret；旧本地回执不能覆盖新状态。未知 bindings 继续拒绝，不借此增量引入任意配置保留。
+
+## 管理页面任务顺序
+
+概览首先显示 Cloudflare 连接和下一步：缺少配置授权时给出一处 Token 输入与创建指引，包括只有旧统计授权的实例，明确其统计可用但尚不能修改设置。具备配置授权时以能力状态和「管理连接」为主，权限与目标详情折叠；保存且读回成功后自动核验能力，未知结果仍只允许核验。概览直接提供五组访问频率的单项预览与应用，不再把可用 API 操作描述为只能交给 Agent。缺授权、尚未核验、部署目标不完整和未知操作分别给出准确原因及恢复动作。
+
+「用量与限额」集中展示指标、附件容量和日度历史，并提供单项统计配置、提醒、方案声明与账期设置。历史开关复用该设置入口。预算、通知与 WAF 为低频展开内容，通知/WAF 的供应商读取仅由明确展开或主动检查触发；默认概览不读取它们。隐藏重复的 Cloudflare 顶部标签，旧 `section=cloudflare` 链接兼容进入概览连接区域。
+
+计划确认先显示管理员可理解的设置名称及变更前后值，版本、binding 与原始 JSON 收入详情。应用前明确会更新 Worker 配置，结果未知仍锁定写入并要求核验，不把页面简化变成省略计划或自动写入。
 
 ## 通知、预算与 WAF 真相
 
@@ -60,7 +70,7 @@ Zone WAF 主动读取核验 Zone 所属账户、目标 hostname 及规则。权�
 
 ## HTTP 与业务表面
 
-机器合同由 OpenAPI 生成器维护。管理目标/能力读取、验证、Zone 设置、三个 Secret 保存、操作读回、两类计划/应用、通知/WAF 读取及用量历史均须有 Owner 权限声明、结构化错误和 `no-store`。业务状态写使用当前 CAS、稳定幂等键及非秘密审计。供应商能力为 missing / unverified / verified / permission_denied / unavailable / target_mismatch / unsupported_contract，不能以一个布尔值合并。
+机器合同由 OpenAPI 生成器维护。管理目标/能力读取、验证、Zone 设置、统一及兼容用途 Secret 保存、操作读回、两类计划/应用、通知/WAF 读取及用量历史均须有 Owner 权限声明、结构化错误和 `no-store`。业务状态写使用当前 CAS、稳定幂等键及非秘密审计。供应商能力为 missing / unverified / verified / permission_denied / unavailable / target_mismatch / unsupported_contract，不能以一个布尔值合并。
 
 Web、Skills/API 与公共 CLI 可读取同一投影，并执行相同的非秘密计划、apply、verify 及 history 采集。Cloudflare Secret 输入为明确的浏览器安全运输例外：Agent/CLI 通过既有受控 `web open` 引导 Owner 在当前实例表单输入，普通 generic API 和 CLI JSON/file 参数入口拒绝 Secret endpoint；不得为了形式上的 CLI 覆盖将 Cloudflare Token 写入普通操作日志。
 

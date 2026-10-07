@@ -138,7 +138,7 @@ export function registerWp08Routes(router: Router): Router {
         context.startedAt,
         rateLimitPolicies(env),
       );
-      return jsonResponse({ ...settings, editable_via_api: Boolean(env.CFKANBAN_CONFIGURATION_TOKEN && env.CFKANBAN_CONTROL_ACCOUNT_ID && env.CFKANBAN_CONTROL_WORKER_NAME && env.CFKANBAN_CONTROL_DATABASE_ID), cost_protection: readCostProtection(env) }, context.requestId, { headers: { "cache-control": "no-store" } });
+      return jsonResponse({ ...settings, editable_via_api: Boolean((env.CFKANBAN_API_TOKEN ?? env.CFKANBAN_CONFIGURATION_TOKEN) && env.CFKANBAN_CONTROL_ACCOUNT_ID && env.CFKANBAN_CONTROL_WORKER_NAME && env.CFKANBAN_CONTROL_DATABASE_ID), cost_protection: readCostProtection(env) }, context.requestId, { headers: { "cache-control": "no-store" } });
     })
     .post("/api/v1/public-joins/{public_id}/redeem", async (request, env, context) => {
       const value = await body(

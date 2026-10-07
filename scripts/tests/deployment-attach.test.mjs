@@ -187,6 +187,16 @@ test('已有R2与usage可核验接入，拒绝其他Instance桶marker与非空ro
   f.r2MarkerInstance = f.input.instanceId; f.routes.push({ pattern: 'example.invalid/*' });
   await assert.rejects(inspectDeploymentAttachment(f.input), { code: 'DEPLOYMENT_ATTACH_ROUTING_UNSUPPORTED' });
 });
+test('接入保留统一与旧管理 Secret 的脱敏 binding，未知 Secret 继续拒绝', async t => {
+  const f = await fixture(t);
+  const names = ['CFKANBAN_API_TOKEN', 'CFKANBAN_CONFIGURATION_TOKEN', 'CFKANBAN_CONTROL_TOKEN'];
+  f.bindings.push(...names.map(name => ({ type: 'secret_text', name, text: 'never-export-unified-or-legacy' })));
+  const result = await inspectDeploymentAttachment(f.input);
+  assert.ok(!JSON.stringify(result).includes('never-export-unified-or-legacy'));
+  for (const name of names) assert.deepEqual(result.resources.worker.bindings.find(binding => binding.name === name), { type: 'secret_text', name, value_redacted: true });
+  f.bindings.push({ type: 'secret_text', name: 'UNKNOWN_CLOUD_TOKEN', text: 'must-stay-private' });
+  await assert.rejects(inspectDeploymentAttachment(f.input), { code: 'UPGRADE_BINDING_DELTA_REQUIRES_SEPARATE_PLAN' });
+});
 
 test('状态文件权限不安全时不读取凭据也不继续网络请求', async t => {
   if (process.platform === 'win32') return t.skip('POSIX mode fixture');

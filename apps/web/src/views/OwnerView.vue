@@ -72,6 +72,14 @@ type OwnerSection = "overview" | "usage" | "cloudflare" | "workspaces" | "access
 
 const props = defineProps<{ section: OwnerSection; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
+const activeSection = computed(() => props.section === "cloudflare" ? "overview" : props.section);
+const usageSetting = ref<"history_enabled" | "analytics_enabled" | "billing_plan" | "billing_cycle_day" | "account_totals" | "warning_percent" | null>(null);
+const usageSettingRequest = ref(0);
+const usageReadbackGeneration = ref(0);
+function selectUsageSetting(field: NonNullable<typeof usageSetting.value>): void {
+  usageSetting.value = field;
+  usageSettingRequest.value++;
+}
 
 interface ProjectEntry extends ContainerResource { workspaceId: string; workspaceName: string }
 interface PurgePreview {
@@ -435,10 +443,6 @@ function roleLabel(role: string): string {
   return role;
 }
 
-function rateScopeLabel(scope: string): string {
-  if (locale.value !== "zh-CN") return scope;
-  return ({ instance: "实例", principal: "单一身份", unauthenticated_sensitive: "未认证敏感操作" } as Record<string, string>)[scope] ?? scope;
-}
 
 function handleCursorError(caught: unknown, retire: () => void): void {
   if (cursorRequiresRestart(caught)) {
@@ -571,7 +575,6 @@ function closePolicy(): void {
 const tabs = computed(() => [
   { key: "overview" as const, label: t("admin.overview") },
   { key: "usage" as const, label: ui("Usage & limits", "用量与限额") },
-  { key: "cloudflare" as const, label: ui("Cloudflare connection", "Cloudflare 连接") },
   { key: "workspaces" as const, label: t("admin.workspaces") },
   { key: "access" as const, label: t("admin.access") },
   { key: "audit" as const, label: t("admin.audit") },
@@ -581,7 +584,7 @@ const tabs = computed(() => [
 
 const sectionTitle = computed(() => props.section === "invitations"
   ? ui("Invitation history", "邀请历史")
-  : tabs.value.find((tab) => tab.key === props.section)?.label ?? t("admin.overview"));
+  : tabs.value.find((tab) => tab.key === activeSection.value)?.label ?? t("admin.overview"));
 function openCreateProject(workspaceId = ""): void {
   selectedWorkspace.value = workspaceId;
   showProject.value = true;
@@ -1023,15 +1026,13 @@ async function load(): Promise<void> {
   loading.value = true;
   clearError();
   try {
-    if (props.section === "overview") {
-      const [metaResult, rateResult, workspaceResult] = await Promise.all([
+    if (activeSection.value === "overview") {
+      const [metaResult, workspaceResult] = await Promise.all([
         apiRequest<MetaResource>("/api/v1/meta"),
-        apiRequest<RateLimitSettings>("/api/v1/admin/rate-limit-settings"),
         apiRequest<ListResult<ContainerResource>>("/api/v1/workspaces?limit=100"),
         loadPrincipals(true),
       ]);
       meta.value = metaResult;
-      rateSettings.value = rateResult;
       workspaces.value = workspaceResult.items;
     } else if (props.section === "workspaces" || props.section === "archive") {
       await loadWorkspaceTree(props.section === "archive");
@@ -1799,16 +1800,17 @@ onUnmounted(() => {
   <main class="owner-page page-shell">
     <header class="owner-heading">
       <div><p class="eyebrow">{{ ui("Administration", "管理中心") }}</p><h1>{{ sectionTitle }}</h1></div>
-      <nav class="owner-tabs" :aria-label="ui('Owner sections', '所有者分区')"><UButton color="neutral" variant="ghost" v-for="tab in tabs" :key="tab.key" type="button" :class="{ active: section === tab.key || (section === 'invitations' && tab.key === 'access') }" :aria-current="section === tab.key ? 'page' : undefined" @click="navigate(sectionPath(tab.key))">{{ tab.label }}</UButton></nav>
+      <nav class="owner-tabs" :aria-label="ui('Owner sections', '所有者分区')"><UButton color="neutral" variant="ghost" v-for="tab in tabs" :key="tab.key" type="button" :class="{ active: activeSection === tab.key || (section === 'invitations' && tab.key === 'access') }" :aria-current="activeSection === tab.key ? 'page' : undefined" @click="navigate(sectionPath(tab.key))">{{ tab.label }}</UButton></nav>
     </header>
     <ErrorNotice v-if="error" :error="error" />
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
     <VersionUpdatesPanel v-if="!loading && section === 'updates'" :session="session" />
-    <CloudflareControlPanel v-if="!loading && section === 'cloudflare'" />
+    <UsagePanel v-if="activeSection === 'usage'" :refresh-generation="usageReadbackGeneration" :observed-origin="meta?.observed_origin ?? ''" @settings="selectUsageSetting" />
+    <CloudflareControlPanel v-if="activeSection === 'overview' || activeSection === 'usage'" :mode="activeSection === 'usage' ? 'usage' : 'overview'" :initial-setting="usageSetting" :setting-request="usageSettingRequest" @rates="rateSettings = $event" @applied="usageReadbackGeneration++" />
     <ContainerTreePagination v-if="!loading && ['workspaces', 'archive', 'access', 'audit'].includes(section)" :tree="containerTree" :archived="section === 'archive'" @workspaces="moreWorkspaces" @projects="moreProjects" />
 
-    <template v-if="!loading && section === 'overview'">
+    <template v-if="!loading && activeSection === 'overview'">
       <p class="overview-intro">{{ ui("Open a board, organize your projects, or manage who can join.", "打开看板、整理项目，或管理谁可以参与协作。") }}</p>
       <section class="overview-workbench">
         <div class="overview-workspaces">
@@ -1833,13 +1835,13 @@ onUnmounted(() => {
         </nav>
       </section>
     </template>
-    <UsagePanel v-if="section === 'overview' || section === 'usage'" :summary="section === 'overview'" :observed-origin="meta?.observed_origin ?? ''" @details="navigate(sectionPath('usage'))" />
-    <UsageHistoryPanel v-if="section === 'usage'" />
-    <template v-if="!loading && section === 'overview'">
+    <UsagePanel v-if="activeSection === 'overview'" :refresh-generation="usageReadbackGeneration" summary :observed-origin="meta?.observed_origin ?? ''" @details="navigate(sectionPath('usage'))" />
+    <UsageHistoryPanel v-if="activeSection === 'usage'" :refresh-generation="usageReadbackGeneration" @settings="selectUsageSetting" />
+    <template v-if="!loading && activeSection === 'overview'">
       <HomepageSettingsPanel />
       <details class="owner-section owner-disclosure">
-        <summary>{{ ui("Service information & access limits", "服务信息与访问限制") }}</summary>
-        <p class="muted-copy">{{ ui("Version, addresses, and request limits for troubleshooting. These settings are read-only.", "排查问题时可查看版本、访问地址和请求限制；这里的设置均为只读。") }}</p>
+        <summary>{{ ui("Service information", "服务信息") }}</summary>
+        <p class="muted-copy">{{ ui("Version and addresses for troubleshooting. The preferred address is read-only here.", "排查问题时可查看版本和访问地址；首选地址在此处只读。") }}</p>
       <section class="overview-strip">
         <article><span>{{ ui("Release", "发行版本") }}</span><strong>{{ meta?.release_version ?? "—" }}</strong><small>API {{ meta?.service_version ?? "—" }} · {{ ui("schema", "数据架构") }} {{ meta?.schema_version ?? "—" }}</small></article>
         <article><span>{{ ui("Workspaces", "工作区") }}</span><strong>{{ workspaces.length }}</strong><small>{{ meta?.visible_scope.project_count ?? 0 }} {{ ui("Projects", "个项目") }}</small></article>
@@ -1849,17 +1851,6 @@ onUnmounted(() => {
       <section class="owner-section">
         <div class="section-heading-row"><div><h2>{{ ui("Origin & instance", "访问地址与实例") }}</h2><p>{{ meta?.instance_id }}</p></div><CopyForAgentButton :text="locale === 'zh-CN' ? '请使用 cfkanban-admin 检查首选 API 地址，并按明确计划修改。' : 'Use cfkanban-admin to inspect and update the preferred API origin with an explicit plan.'" /></div>
         <dl class="settings-list"><div><dt>{{ ui("Observed", "本次访问") }}</dt><dd>{{ meta?.observed_origin }}</dd></div><div><dt>{{ ui("Preferred", "首选地址") }}</dt><dd>{{ meta?.preferred_api_origin }}</dd></div><div><dt>{{ ui("Origin version", "地址版本") }}</dt><dd>{{ meta?.origin_version }}</dd></div></dl>
-      </section>
-      <section class="owner-section">
-        <div class="section-heading-row"><div><h2>{{ ui("Request limits", "访问频率限制") }}</h2><p>{{ ui("Published through deployment configuration; read-only here.", "由部署配置发布；此处只读。") }}</p></div><a :href="`/docs/${locale}/deployment/optional/`">{{ ui("How to change limits", "如何修改限制") }}</a></div>
-        <p class="muted-copy">{{ ui('View the non-secret RATE_LIMIT_* variables in Cloudflare → Workers & Pages → this Worker → Settings → Variables and Secrets. Effective rate limits also require matching Rate Limiting bindings in Wrangler; those bindings are not shown in the dashboard. Ask a deployment Agent using cfkanban-deploy to prepare, publish, and verify the complete configuration.', '可在 Cloudflare → Workers 和 Pages → 本实例 Worker → 设置 → 变量和机密，查看非秘密 RATE_LIMIT_* 变量。实际限流还需同步 Wrangler 中对应的 Rate Limiting binding，控制台不显示这些 binding。建议让部署 Agent 使用 cfkanban-deploy 准备、发布并核对完整配置。') }}</p>
-        <div class="rate-grid"><article v-for="(value, key) in rateSettings?.policies" :key="key"><span>{{ rateScopeLabel(key) }}</span><strong>{{ value.limit }} / {{ value.period_seconds }}{{ ui("s", "秒") }}</strong><small>{{ rateSettings?.recent_429_summary.by_scope[key] ?? 0 }} {{ ui("recent", "次近期记录") }}</small></article></div>
-        <template v-if="rateSettings?.cost_protection">
-          <div class="rate-grid">
-            <article v-for="key in (['anonymous_login', 'expensive_reads'] as const)" :key="key"><span>{{ key === 'anonymous_login' ? ui('Anonymous login', '匿名登录') : ui('Counts & title search', '计数与标题搜索') }}</span><strong>{{ !rateSettings.cost_protection[key].enabled ? ui('Not configured', '未配置') : rateSettings.cost_protection[key].policy ? `${rateSettings.cost_protection[key].policy!.limit} / ${rateSettings.cost_protection[key].policy!.period_seconds}${ui('s', '秒')}` : ui('Configuration unavailable', '配置不可用') }}</strong></article>
-          </div>
-          <p v-if="rateSettings.cost_protection.concurrency.enabled" class="muted-copy">{{ ui('Expensive query concurrency per isolate', '每个 Worker isolate 的昂贵查询并发上限') }}: {{ rateSettings.cost_protection.concurrency.per_principal }} {{ ui('per identity', '每身份') }} / {{ rateSettings.cost_protection.concurrency.per_isolate }} {{ ui('total', '总计') }}. {{ ui('Best-effort platform limits; these do not cap the bill.', '平台限制为最佳努力执行，不是账单上限。') }}</p>
-        </template>
       </section>
       </details>
     </template>

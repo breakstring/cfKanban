@@ -36,6 +36,21 @@ function provider(calls = [], empty = false, offset = 0) {
 }
 const metric = (item, key, scope = "instance") => item.metrics.find(value => value.key === key && value.scope === scope);
 
+test("日度历史优先统一 Token，缺失时回退旧 Analytics Secret，Token 不进入存储或响应", async () => {
+  for (const mode of ["both", "unified", "legacy"]) {
+    const f = fixture(), unifiedToken = "unified-local-test-only", seen = [];
+    try {
+      const configured = { ...f.env, ...(mode !== "legacy" ? { CFKANBAN_API_TOKEN: unifiedToken } : {}), ...(mode === "unified" ? { USAGE_ANALYTICS_TOKEN: undefined } : {}) };
+      const synthetic = provider();
+      await collectUsageHistoryDaily(configured, now, async (url, options) => { seen.push(new Headers(options.headers).get("authorization")); return synthetic(url, options); });
+      assert.deepEqual(seen, Array(2).fill(`Bearer ${mode === "legacy" ? configuration.USAGE_ANALYTICS_TOKEN : unifiedToken}`));
+      const result = await readUsageHistory(configured, owner, 1, now); assert.equal(result.error, null); assert.equal(result.items.length, 1);
+      const stored = f.sqlite.prepare("SELECT * FROM usage_history").all();
+      for (const value of [result, stored]) { assert.ok(!JSON.stringify(value).includes(unifiedToken)); assert.ok(!JSON.stringify(value).includes(configuration.USAGE_ANALYTICS_TOKEN)); }
+    } finally { f.close(); }
+  }
+});
+
 test("history is opt-in and Owner control is enforced before storage or collection", async () => {
   const f = fixture();
   try {

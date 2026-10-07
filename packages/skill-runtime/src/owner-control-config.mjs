@@ -1,6 +1,6 @@
 import { toolError } from "./errors.mjs";
 
-export const OWNER_CONTROL_SECRETS = new Set(["CFKANBAN_CONFIGURATION_TOKEN", "CFKANBAN_CONTROL_TOKEN"]);
+export const OWNER_CONTROL_SECRETS = new Set(["CFKANBAN_API_TOKEN", "CFKANBAN_CONFIGURATION_TOKEN", "CFKANBAN_CONTROL_TOKEN"]);
 export const OWNER_CONTROL_VARS = new Set(["CFKANBAN_CONTROL_ACCOUNT_ID", "CFKANBAN_CONTROL_WORKER_NAME", "CFKANBAN_CONTROL_DATABASE_ID", "USAGE_HISTORY_ENABLED"]);
 
 export function existingOwnerControl(bindings = [], { accountId, workerName, databaseId }) {

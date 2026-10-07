@@ -130,6 +130,7 @@ function ownerManagedInput() {
     { type: "plain_text", name: "CFKANBAN_CONTROL_WORKER_NAME", text: input.resources.worker.name },
     { type: "plain_text", name: "CFKANBAN_CONTROL_DATABASE_ID", text: input.resources.d1.database_id },
     { type: "plain_text", name: "USAGE_HISTORY_ENABLED", text: "true" },
+    { type: "secret_text", name: "CFKANBAN_API_TOKEN", value_redacted: true },
     { type: "secret_text", name: "CFKANBAN_CONFIGURATION_TOKEN", value_redacted: true },
     { type: "secret_text", name: "CFKANBAN_CONTROL_TOKEN", value_redacted: true },
   );
@@ -154,13 +155,13 @@ const OWNER_RATE_GROUPS = [
   ["EXPENSIVE_READ_RATE_LIMITER", "EXPENSIVE_READ"],
 ];
 
-test("升级使用当前 Owner 设置并保留两个管理 Secret 和历史开关，不被旧本地默认覆盖", () => {
+test("升级使用当前 Owner 设置并保留统一与旧管理 Secret 和历史开关，不被旧本地默认覆盖", () => {
   const plan = createInstanceUpgradePlan(ownerManagedInput());
   assert.deepEqual(plan.bindings.rate_limits.instance, { limit: 73, period_seconds: 10 });
   assert.deepEqual(plan.cloudflare_control, { enabled: true, history_enabled: true });
   assert.equal(ownerControlVars(plan).CFKANBAN_CONTROL_DATABASE_ID, plan.resources.d1.database_id);
   const target = targetWorkerBindings(plan);
-  for (const name of ["CFKANBAN_CONFIGURATION_TOKEN", "CFKANBAN_CONTROL_TOKEN", "USAGE_ANALYTICS_TOKEN"]) assert.deepEqual(target.find(item => item.name === name), { type: "secret_text", name, value_redacted: true });
+  for (const name of ["CFKANBAN_API_TOKEN", "CFKANBAN_CONFIGURATION_TOKEN", "CFKANBAN_CONTROL_TOKEN", "USAGE_ANALYTICS_TOKEN"]) assert.deepEqual(target.find(item => item.name === name), { type: "secret_text", name, value_redacted: true });
   assert.equal(target.find(item => item.name === "USAGE_HISTORY_ENABLED").text, "true");
   assert.equal(target.find(item => item.name === "RATE_LIMIT_INSTANCE_LIMIT").text, "73");
   for (const [name, prefix] of OWNER_RATE_GROUPS) {
@@ -285,9 +286,12 @@ test("live binding normalization preserves resource configuration but strips eve
     runner: async () => ({ code: 0, stdout: JSON.stringify({ id: versionId, resources: { bindings: [
       ...usageBindings(config, false),
       { type: "secret_text", name: "USAGE_ANALYTICS_TOKEN", text: "PRIVATE-TEST-SECRET", value: "PRIVATE-TEST-SECRET" },
+      { type: "secret_text", name: "CFKANBAN_API_TOKEN", text: "PRIVATE-UNIFIED-SECRET", value: "PRIVATE-UNIFIED-SECRET" },
     ] } }) }),
   });
   assert.ok(!JSON.stringify(result).includes("PRIVATE-TEST-SECRET"));
+  assert.ok(!JSON.stringify(result).includes("PRIVATE-UNIFIED-SECRET"));
+  assert.deepEqual(result.bindings.find((item) => item.name === "CFKANBAN_API_TOKEN"), { type: "secret_text", name: "CFKANBAN_API_TOKEN", value_redacted: true });
   assert.deepEqual(result.bindings.find((item) => item.name === "USAGE_ANALYTICS_TOKEN"), { type: "secret_text", name: "USAGE_ANALYTICS_TOKEN", value_redacted: true });
   assert.equal(result.bindings.find((item) => item.name === "USAGE_D1_DATABASE_ID").text, config.d1_database_id);
 });

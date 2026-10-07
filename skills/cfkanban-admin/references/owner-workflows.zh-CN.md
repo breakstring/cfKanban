@@ -279,7 +279,7 @@ Web 根据自身 `GET /api/v1/web-session` 响应中的 `version` 与 `renewal: 
 
 用 `GET /operations/{operation_id}` 读回返回的操作。只有 `verified` 证明配置已观测生效，`pending`、`unknown` 和 `failed` 不可说成已应用。`POST /operations/{operation_id}/verify` 以 `{}` 和稳定键读取 Cloudflare，可更新非秘密操作状态，不发送第二次 Cloudflare 写入。响应不确定时保留原请求/键，不制造替代计划或重复输入 Secret。
 
-Token 接入/轮换使用 `web open` 打开 Owner 管理页，由用户在受保护的 **Cloudflare 设置** 表单输入。普通 `api request` 拒绝 `/secrets`，不能在聊天、JSON 输入文件或 CLI 参数索取 Token。配置 Token 是单 Worker 的 account-owned Editor，本身也保存 Worker Secret，并能修改该 Worker 的代码/部署；独立功能与统计 Token 同样只保存 Worker Secret。存在不证明权限有效，先核验替代授权，再撤销旧 Token。
+Token 接入/轮换使用 `web open` 打开 Owner「概览」连接入口，由用户在受保护的 **Cloudflare API Token** 表单输入一份授权。普通 `api request` 拒绝 `/secrets`，不能在聊天、JSON 输入文件或 CLI 参数索取 Token。统一 Token 只保存一次到普通 Worker Secret；必需的 account-owned Editor 只限定当前 Worker，同时包含其代码和部署权。统计及可选读取权限按能力分别核验，旧用途 Secret 仍兼容保留。存在不证明权限有效，先核验替代授权，再撤销旧 Token。
 
 `GET /api/v1/admin/usage/history?days=30` 从本实例 D1 读取 1–90 个完整 UTC 日，保留缺日和 null。显式 opt-in 采集使用 `POST /api/v1/admin/usage/history/collect` 与 `{day:"YYYY-MM-DD"}`，一次最近七个完整 UTC 日中的一个，不要求 Idempotency-Key。这是有界派生缓存行为，响应不确定时不自动重复，不因读取而启用历史。90 天缓存是 Analytics 历史，不是 Cloudflare 账单保留保证。
 

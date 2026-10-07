@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import test, { after } from 'node:test';
 import { build } from 'esbuild';
 import { compileScript, parse } from '@vue/compiler-sfc';
-import { createRenderer, nextTick } from 'vue';
+import { createRenderer, h, nextTick, ref } from 'vue';
 
 const originals = { Document: globalThis.Document, ShadowRoot: globalThis.ShadowRoot, document: globalThis.document, window: globalThis.window };
 const storageWrites = [];
@@ -42,10 +42,10 @@ const all = target => [target, ...target.children.flatMap(all)];
 const text = target => target.text + target.children.map(text).join('');
 async function until(check) { for (let step = 0; step < 100; step++) { await new Promise(resolve => setTimeout(resolve, 5)); await nextTick(); if (check()) return; } assert.fail('component did not reach expected state'); }
 const submit = form => form.props.onSubmit({ preventDefault() {} });
-const section = (host, heading) => all(host).find(item => item.tag === 'section' && item.props['aria-labelledby'] === heading);
+const section = (host, heading) => all(host).find(item => ['section', 'details'].includes(item.tag) && item.props['aria-labelledby'] === heading);
 const write = resource => Response.json({ resource, event_cursor: 'fixture', idempotent_replay: false });
 const operation = status => ({ operation_id: 'operation-fixture', kind: 'secret', status, version: 5, baseline_version_id: 'v1', result_version_id: status === 'verified' ? 'v2' : null, deployment_id: null, failure_class: null, created_at: '2026-10-07T00:00:00Z', updated_at: '2026-10-07T00:00:00Z' });
-const connection = () => ({ version: 4, target: { account_id: 'account-fixture', worker_name: 'worker-fixture', database_id: 'db-fixture', zone_id: 'zone-fixture', hostname: 'kanban.example.com' }, configured: { configuration: true, control: false, analytics: false }, capabilities: { configuration: 'verified', notifications: 'unverified', waf: 'permission_denied', billing: 'unsupported_contract', analytics: 'missing' }, verified_at: null, budget: { status: 'unsupported_contract', dashboard_url: 'https://dash.cloudflare.com/', docs_url: 'https://developers.cloudflare.com/billing/manage/budget-alerts/' }, latest_operation: null, configuration: { history_enabled: false, analytics_enabled: true, billing_plan: 'free', billing_cycle_day: 10, account_totals: false, warning_percent: 75 } });
+const connection = () => ({ version: 4, target: { account_id: 'account-fixture', worker_name: 'worker-fixture', database_id: 'db-fixture', zone_id: 'zone-fixture', hostname: 'kanban.example.com' }, configured: { connection: true, configuration: true, control: false, analytics: false }, capabilities: { configuration: 'verified', notifications: 'unverified', waf: 'permission_denied', billing: 'unsupported_contract', analytics: 'missing' }, verified_at: null, budget: { status: 'unsupported_contract', dashboard_url: 'https://dash.cloudflare.com/', docs_url: 'https://developers.cloudflare.com/billing/manage/budget-alerts/' }, latest_operation: null, configuration: { history_enabled: false, analytics_enabled: true, billing_plan: 'free', billing_cycle_day: 10, account_totals: false, warning_percent: 75 } });
 const rateFixture = () => ({ configuration_source: 'worker_configuration', editable_via_api: false, policies: { instance: { limit: 300, period_seconds: 60 }, principal: { limit: 120, period_seconds: 60 }, unauthenticated_sensitive: { limit: 30, period_seconds: 60 } }, cost_protection: { anonymous_login: { enabled: true, policy: { limit: 11, period_seconds: 10 } }, expensive_reads: { enabled: true, policy: { limit: 10, period_seconds: 60 } }, concurrency: { enabled: true, per_principal: 2, per_isolate: 32 } } });
 function providerRead(path, current) {
   if (path.endsWith('/rate-limit-settings')) return Response.json(rateFixture());
@@ -54,38 +54,158 @@ function providerRead(path, current) {
   return Response.json(current);
 }
 
-test('connection reads fixed targets and read-only policies without interpreting a limit as USD or WAF permissions as protection', async () => {
-  const originalFetch = globalThis.fetch; const calls = []; const current = connection(); current.configuration.billing_plan = null;
+test('Overview keeps one connection Token, separate capabilities and five API scopes without optional provider reads', async () => {
+  const originalFetch = globalThis.fetch; const calls = []; const current = connection(); current.configured.connection = false;
   globalThis.fetch = async (path, init) => { calls.push({ path, init }); return providerRead(path, current); };
   const app = renderer.createApp(Control); const host = node('root');
   try {
-    app.mount(host); await until(() => text(host).includes('Policy fixture'));
-    assert.match(text(host), /account-fixture.*worker-fixture.*db-fixture/);
-    assert.equal(all(host).filter(item => item.tag === 'input' && item.props.type === 'password').length, 3);
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
+    assert.match(text(host), /Using existing authorization/);
+    assert.match(text(host), /Change settingsVerified.*View usageNot configured/);
+    assert.equal(all(host).filter(item => item.tag === 'input' && item.props.type === 'password').length, 1);
     const tokens = section(host, 'connection-tokens-heading');
-    assert.match(text(tokens), /account-owned Token.*Specified Workers.*Editor.*code, deployment, and Secret management/);
-    assert.match(text(tokens), /Notifications.*Billing.*displayed Account.*Zone WAF.*verified Zone only/);
-    assert.match(text(tokens), /Account Analytics.*Read.*Saving first verifies the D1 analytics interface.*subsequent usage reads/);
+    assert.match(text(tokens), /account-owned Token.*Specified Workers.*Editor.*Account Analytics.*Read.*code, deployment, and Secret management/);
+    assert.match(text(tokens), /Notifications Read and Billing Read are optional.*Zone Read and Zone WAF Read.*verified Zone only/);
+    assert.match(text(tokens), /account-fixture.*worker-fixture.*db-fixture/);
     assert.ok(all(tokens).some(item => item.tag === 'a' && item.props.href === 'https://dash.cloudflare.com/?to=/:account/api-tokens'));
-    assert.ok(all(tokens).some(item => item.tag === 'a' && item.props.href === 'https://developers.cloudflare.com/fundamentals/api/get-started/create-token/'));
-    const budget = section(host, 'connection-budget-heading');
-    assert.match(text(budget), /Public API contract unconfirmed/);
-    assert.equal(all(budget).some(item => ['button', 'input', 'textarea', 'select'].includes(item.tag)), false);
+    assert.equal(section(host, 'connection-configuration-heading'), undefined);
+    assert.equal(section(host, 'connection-budget-heading'), undefined);
+    assert.equal(calls.length, 2); assert.ok(calls.every(call => call.init.method === 'GET'));
+    assert.equal(all(section(host, 'connection-rate-heading')).find(item => item.tag === 'select').children.length, 5);
+    locale.value = 'zh-CN'; await nextTick();
+    assert.match(text(host), /正在使用现有授权.*修改设置核验通过.*查看用量未配置/);
+    assert.match(text(tokens), /当前已存在的 Worker.*Editor/);
+  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
+});
+
+test('legacy analytics-only authorization opens the connection form and directs missing settings access to Token creation', async () => {
+  const originalFetch = globalThis.fetch; const calls = []; const current = connection();
+  current.configured = { configuration: false, control: false, analytics: true };
+  current.capabilities.configuration = 'missing'; current.capabilities.analytics = 'verified';
+  globalThis.fetch = async (path, init) => { calls.push({ path, init }); return providerRead(path, current); };
+  const app = renderer.createApp(Control); const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
+    const management = all(host).find(item => item.tag === 'details' && item.props.class === 'connection-management');
+    assert.equal(management.props.open, true);
+    assert.match(text(host), /Usage is available; settings cannot be changed yet/);
+    assert.match(text(host), /To change settings, create a Token with settings permissions and enter it below/);
+    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-connection').props.disabled, false);
+    assert.equal(all(section(host, 'connection-rate-heading')).find(item => item.tag === 'button').props.disabled, true);
+    assert.equal(all(host).some(item => item.tag === 'button' && text(item) === 'Verify current state'), false);
+    management.props.onToggle({ target: { open: false } }); await nextTick(); assert.equal(management.props.open, false);
+    await all(host).find(item => item.tag === 'button' && text(item) === 'Connect Cloudflare').props.onClick(); await nextTick();
+    assert.equal(management.props.open, true); assert.ok(calls.every(call => call.init.method === 'GET'));
+    const mainText = item => item.tag === 'details' && item.props.class === 'connection-guide' ? '' : item.text + item.children.map(mainText).join('');
+    assert.doesNotMatch(mainText(host), /Worker Secret|binding/);
+    assert.match(mainText(host), /Maximum requests.*Duration/);
+    locale.value = 'zh-CN'; await nextTick();
+    assert.match(text(host), /统计可用，尚不能修改设置.*修改设置未配置.*查看用量核验通过/);
+    assert.match(text(host), /请先创建具有设置修改权限的 Token，并在下方输入/);
+    assert.match(mainText(host), /访问频率限制.*最多请求数.*统计时长/);
+  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
+});
+
+test('unverified and denied connections offer verification or Token replacement as their distinct next steps', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const capability of ['unverified', 'permission_denied']) {
+      const current = connection(); current.capabilities.configuration = capability; const calls = [];
+      globalThis.fetch = async (path, init) => {
+        calls.push({ path, init });
+        if (path === '/api/v1/admin/cloudflare/verify') { current.capabilities.configuration = 'verified'; return write(current); }
+        return providerRead(path, current);
+      };
+      const app = renderer.createApp(Control); const host = node('root');
+      try {
+        app.mount(host); await until(() => text(host).includes('Current limit: 300'));
+        const management = all(host).find(item => item.tag === 'details' && item.props.class === 'connection-management');
+        assert.equal(management.props.open, capability === 'permission_denied');
+        if (capability === 'unverified') {
+          assert.match(text(host), /Connection awaiting verification.*The connection is saved. Verify it before changing settings/);
+          await all(host).find(item => item.tag === 'button' && text(item) === 'Verify connection').props.onClick(); await nextTick();
+          assert.equal(calls.filter(call => call.path.endsWith('/verify')).length, 1);
+          assert.equal(all(section(host, 'connection-rate-heading')).find(item => item.tag === 'button').props.disabled, false);
+        } else {
+          assert.match(text(host), /Connection permission denied.*Check the permissions in the creation guide or enter a replacement Token below/);
+          const action = all(host).find(item => item.tag === 'button' && text(item) === 'Check or replace Token'); assert.ok(action);
+          management.props.onToggle({ target: { open: false } }); await nextTick(); await action.props.onClick(); await nextTick();
+          assert.equal(management.props.open, true); assert.ok(calls.every(call => call.init.method === 'GET'));
+          assert.equal(all(host).some(item => item.tag === 'button' && text(item) === 'Verify connection'), false);
+        }
+      } finally { app.unmount(); }
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('failed initial connection read keeps verification available instead of offering an unavailable Token form', async () => {
+  const originalFetch = globalThis.fetch; let failRead = true; const current = connection();
+  globalThis.fetch = async path => {
+    if (path === '/api/v1/admin/cloudflare' && failRead) throw new Error('Fixture read unavailable');
+    if (path === '/api/v1/admin/cloudflare/verify') return write(current);
+    return providerRead(path, current);
+  };
+  const app = renderer.createApp(Control); const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('The request could not be confirmed'));
+    const retry = all(host).find(item => item.tag === 'button' && text(item) === 'Verify current state'); assert.ok(retry);
+    assert.equal(all(host).some(item => item.props.id === 'cloudflare-token-connection'), false);
+    failRead = false; await retry.props.onClick(); await until(() => text(host).includes('Current limit: 300'));
+    assert.equal(all(section(host, 'connection-rate-heading')).find(item => item.tag === 'button').props.disabled, false);
+  } finally { app.unmount(); globalThis.fetch = originalFetch; }
+});
+
+test('Usage settings read optional policies and WAF only after expansion and keep unsupported USD budgets read-only', async () => {
+  const originalFetch = globalThis.fetch; const calls = []; const current = connection(); current.configuration.billing_plan = null;
+  globalThis.fetch = async (path, init) => { calls.push({ path, init }); return providerRead(path, current); };
+  const app = renderer.createApp(Control, { mode: 'usage' }); const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('Current value: Disabled'));
+    assert.equal(calls.length, 1);
+    assert.equal(all(host).filter(item => item.tag === 'input' && item.props.type === 'password').length, 0);
+    assert.equal(section(host, 'connection-rate-heading'), undefined);
     const notifications = section(host, 'connection-notifications-heading');
+    notifications.props.onToggle({ target: { open: true } }); await until(() => text(host).includes('Policy fixture'));
     assert.match(text(notifications), /Policy fixture.*Enabled.*billing_usage_alert.*fixture@example.invalid/);
     assert.doesNotMatch(text(notifications), /80|\$80/);
-    assert.match(text(section(host, 'connection-waf-heading')), /permission denied.*No active tool-owned blocking rule is confirmed/);
-    assert.equal(calls.length, 4); assert.ok(calls.every(call => call.init.method === 'GET'));
-    const configurationForm = all(section(host, 'connection-configuration-heading')).find(item => item.tag === 'form');
-    assert.ok(all(host).filter(item => item.tag === 'option').every(item => item.props.value !== ''), 'Reka SelectItem reserves the empty string for the placeholder');
+    const waf = section(host, 'connection-waf-heading'); waf.props.onToggle({ target: { open: true } });
+    await until(() => calls.some(call => call.path.endsWith('/waf')) && !text(waf).includes('Reading…'));
+    assert.match(text(waf), /permission denied.*No active tool-owned blocking rule is confirmed/);
+    const budget = section(host, 'connection-budget-heading');
+    assert.match(text(budget), /Public API contract unconfirmed.*selected email recipients.*separate from cfKanban.*do not stop usage or cap charges/);
+    assert.equal(all(budget).some(item => ['button', 'input', 'textarea', 'select'].includes(item.tag)), false);
+    const configurationForm = all(host).find(item => item.tag === 'section' && item.props['aria-labelledby'] === 'usage-setting-heading');
+    assert.ok(all(host).filter(item => item.tag === 'option').every(item => item.props.value !== ''));
     all(configurationForm).find(item => item.tag === 'select').props['onUpdate:modelValue']('billing_plan'); await nextTick();
-    const billingSelect = all(configurationForm).filter(item => item.tag === 'select')[1];
-    assert.equal(billingSelect.props.value, 'unknown');
-    assert.ok(billingSelect.children.every(item => item.props.value !== ''), 'unknown billing plans use a nonempty option rather than an empty placeholder item');
-    locale.value = 'zh-CN'; await nextTick();
-    assert.match(text(host), /当前 Worker.*Editor|保存到 Worker Secret/);
-    assert.match(text(budget), /公开 API 合同尚未确认/);
+    assert.equal(all(configurationForm).filter(item => item.tag === 'select')[1].props.value, 'unknown');
+    locale.value = 'zh-CN'; await nextTick(); assert.match(text(budget), /公开 API 合同尚未确认 USD 阈值/);
   } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
+});
+
+test('Usage hides verified capability rows and folds completed changes while unresolved changes remain prominent', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const state of ['verified', 'unverified', 'permission_denied', 'pending', 'unknown']) {
+      const current = connection(); current.capabilities.analytics = ['unverified', 'permission_denied'].includes(state) ? state : 'verified';
+      current.latest_operation = operation(['pending', 'unknown'].includes(state) ? state : 'verified');
+      globalThis.fetch = async path => providerRead(path, current);
+      const app = renderer.createApp(Control, { mode: 'usage' }); const host = node('root');
+      try {
+        app.mount(host); await until(() => text(host).includes('Current value: Disabled'));
+        const capabilityRows = all(host).find(item => item.props.class === 'connection-capabilities');
+        if (['unverified', 'permission_denied'].includes(state)) {
+          assert.ok(capabilityRows); assert.doesNotMatch(text(capabilityRows), /Change settings/);
+          assert.match(text(capabilityRows), state === 'unverified' ? /View usageNot verified/ : /View usageCloudflare permission denied/);
+          assert.match(text(host), state === 'unverified' ? /Verify the connection before reading usage/ : /Review or replace the connection Token in Overview/);
+        } else assert.equal(capabilityRows, undefined);
+        const change = section(host, 'connection-operation-heading');
+        if (['pending', 'unknown'].includes(state)) {
+          assert.equal(change.tag, 'section'); assert.match(text(change), /not confirmed active/);
+          assert.equal(all(section(host, 'usage-setting-heading')).find(item => item.tag === 'button').props.disabled, true);
+        } else { assert.equal(change.tag, 'details'); assert.notEqual(change.props.open, true); }
+      } finally { app.unmount(); }
+    }
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test('Token submission clears the password immediately, uses CSRF and explicit idempotency, and never replays after uncertainty', async () => {
@@ -99,14 +219,14 @@ test('Token submission clears the password immediately, uses CSRF and explicit i
   };
   const app = renderer.createApp(Control); const host = node('root');
   try {
-    app.mount(host); await until(() => text(host).includes('Policy fixture'));
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
     const forms = all(host).filter(item => item.tag === 'form' && item.props.class === 'cloudflare-token-form');
-    const form = forms[1]; const input = all(form).find(item => item.tag === 'input');
+    const form = forms[0]; const input = all(form).find(item => item.tag === 'input');
     input.props['onUpdate:modelValue']('fixture-secret-must-not-render'); await nextTick();
     const pending = submit(form); await until(() => finish);
     assert.equal(input.props.value, '');
     const request = calls.find(call => call.path.endsWith('/secrets'));
-    assert.deepEqual(JSON.parse(request.init.body), { kind: 'control', token: 'fixture-secret-must-not-render', expected_version: 4 });
+    assert.deepEqual(JSON.parse(request.init.body), { kind: 'connection', token: 'fixture-secret-must-not-render', expected_version: 4 });
     assert.match(request.init.headers.get('idempotency-key'), /^[0-9a-f-]{36}$/);
     assert.equal(request.init.headers.get('x-csrf-token'), 'fixture-csrf');
     assert.equal(request.init.credentials, 'same-origin');
@@ -115,9 +235,62 @@ test('Token submission clears the password immediately, uses CSRF and explicit i
     assert.ok(storageWrites.every(entry => !entry.value.includes('fixture-secret-must-not-render')));
     assert.equal(input.props.value, ''); assert.equal(input.props.disabled, true);
     await all(form).find(item => item.tag === 'button' && text(item) === 'Verify current state').props.onClick();
-    await until(() => calls.filter(call => call.path.endsWith('/verify')).length === 1 && !all(host).find(item => item.props.id === 'cloudflare-token-control')?.props.disabled);
+    await until(() => calls.filter(call => call.path.endsWith('/verify')).length === 1 && !all(host).find(item => item.props.id === 'cloudflare-token-connection')?.props.disabled);
     assert.equal(calls.filter(call => call.path.endsWith('/secrets')).length, 1);
-    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-control').props.value, '');
+    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-connection').props.value, '');
+  } finally { app.unmount(); globalThis.fetch = originalFetch; }
+});
+
+test('one verified connection save checks capabilities automatically and unlocks settings without optional policy reads', async () => {
+  const originalFetch = globalThis.fetch; const calls = []; const current = connection();
+  current.configured.connection = false; current.configured.configuration = false; current.capabilities.configuration = 'missing';
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    if (path.endsWith('/secrets')) { current.configured.connection = true; current.latest_operation = operation('verified'); current.capabilities.configuration = 'unverified'; return write(current.latest_operation); }
+    if (path === '/api/v1/admin/cloudflare/verify') { current.capabilities.configuration = current.capabilities.analytics = 'verified'; return write(current); }
+    return providerRead(path, current);
+  };
+  const app = renderer.createApp(Control); const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
+    const rate = section(host, 'connection-rate-heading'); assert.equal(all(rate).find(item => item.tag === 'button').props.disabled, true);
+    const form = all(host).find(item => item.tag === 'form' && item.props.class === 'cloudflare-token-form');
+    all(form).find(item => item.tag === 'input').props['onUpdate:modelValue']('fixture-connection-token'); await nextTick(); await submit(form);
+    await until(() => all(rate).find(item => item.tag === 'button').props.disabled === false);
+    assert.equal(calls.filter(call => call.path.endsWith('/secrets')).length, 1);
+    assert.equal(JSON.parse(calls.find(call => call.path.endsWith('/secrets')).init.body).kind, 'connection');
+    assert.equal(calls.filter(call => call.path === '/api/v1/admin/cloudflare/verify').length, 1);
+    assert.equal(calls.some(call => call.path.endsWith('/notifications') || call.path.endsWith('/waf')), false);
+    assert.match(text(host), /Connection saved.*Change settingsVerified.*View usageVerified/);
+    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-connection').props.value, '');
+  } finally { app.unmount(); globalThis.fetch = originalFetch; }
+});
+
+test('a pending connection operation retains its write lock across Overview and Usage modes', async () => {
+  const originalFetch = globalThis.fetch; const calls = []; const current = connection(); const mode = ref('overview');
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init });
+    if (path.endsWith('/secrets')) { current.latest_operation = operation('pending'); return write(current.latest_operation); }
+    if (path.includes('/operations/') && path.endsWith('/verify')) { current.latest_operation = operation('verified'); return write(current.latest_operation); }
+    if (path === '/api/v1/admin/cloudflare/verify') return write(current);
+    return providerRead(path, current);
+  };
+  const app = renderer.createApp({ render: () => h(Control, { mode: mode.value }) }); const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
+    const form = all(host).find(item => item.tag === 'form' && item.props.class === 'cloudflare-token-form');
+    all(form).find(item => item.tag === 'input').props['onUpdate:modelValue']('fixture-pending-token'); await nextTick(); await submit(form);
+    assert.equal(calls.filter(call => call.path.endsWith('/verify')).length, 0);
+    mode.value = 'usage'; await nextTick();
+    const editor = section(host, 'usage-setting-heading');
+    assert.equal(all(editor).find(item => item.tag === 'button').props.disabled, true);
+    assert.match(text(section(host, 'connection-operation-heading')), /Pending; verify the result/);
+    await all(host).find(item => item.tag === 'button' && text(item) === 'Verify current state').props.onClick(); await nextTick();
+    assert.equal(all(editor).find(item => item.tag === 'button').props.disabled, false);
+    mode.value = 'overview'; await nextTick();
+    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-connection').props.value, '');
+    assert.equal(calls.filter(call => call.path.endsWith('/secrets')).length, 1);
+    assert.equal(calls.filter(call => call.path === '/api/v1/admin/cloudflare/verify').length, 1);
   } finally { app.unmount(); globalThis.fetch = originalFetch; }
 });
 
@@ -136,16 +309,16 @@ test('a lost Secret response discovers the new operation and keeps empty Token i
     }
     if (path === '/api/v1/admin/cloudflare/verify') {
       assert.equal(current.latest_operation.status, 'verified', 'generic verify must not bypass the pending operation lock');
-      current.configured.control = true;
+      current.configured.connection = true;
       return write(current);
     }
     return providerRead(path, current);
   };
   const app = renderer.createApp(Control); const host = node('root');
   try {
-    app.mount(host); await until(() => text(host).includes('Policy fixture'));
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
     assert.equal(section(host, 'connection-operation-heading'), undefined);
-    const form = all(host).find(item => item.tag === 'form' && all(item).some(input => input.props.id === 'cloudflare-token-control'));
+    const form = all(host).find(item => item.tag === 'form' && all(item).some(input => input.props.id === 'cloudflare-token-connection'));
     all(form).find(item => item.tag === 'input').props['onUpdate:modelValue']('fake-token-for-lost-response'); await nextTick(); await submit(form);
     await until(() => text(host).includes('Token input has been cleared'));
     const beforeReadback = calls.length;
@@ -154,11 +327,11 @@ test('a lost Secret response discovers the new operation and keeps empty Token i
     assert.equal(calls[beforeReadback].path, '/api/v1/admin/cloudflare'); assert.equal(calls[beforeReadback].init.method, 'GET');
     assert.equal(calls.filter(call => call.path === '/api/v1/admin/cloudflare/verify').length, 0);
     assert.match(text(section(host, 'connection-operation-heading')), /Pending/);
-    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-control').props.disabled, true);
-    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-control').props.value, '');
+    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-connection').props.disabled, true);
+    assert.equal(all(host).find(item => item.props.id === 'cloudflare-token-connection').props.value, '');
     await all(host).find(item => item.tag === 'button' && text(item) === 'Verify current state').props.onClick();
-    await until(() => verifications === 2 && !all(host).find(item => item.props.id === 'cloudflare-token-control').props.disabled);
-    const restored = all(host).find(item => item.props.id === 'cloudflare-token-control');
+    await until(() => verifications === 2 && !all(host).find(item => item.props.id === 'cloudflare-token-connection').props.disabled);
+    const restored = all(host).find(item => item.props.id === 'cloudflare-token-connection');
     assert.equal(restored.props.value, '');
     restored.props['onUpdate:modelValue']('a-new-unsent-fake-token'); await nextTick();
     assert.equal(restored.props.value, 'a-new-unsent-fake-token');
@@ -184,7 +357,7 @@ test('a lost apply response replaces an old terminal operation with the latest s
   };
   const app = renderer.createApp(Control); const host = node('root');
   try {
-    app.mount(host); await until(() => text(host).includes('Policy fixture'));
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
     const form = all(section(host, 'connection-rate-heading')).find(item => item.tag === 'form');
     all(form).find(item => item.tag === 'input').props['onUpdate:modelValue'](73); await nextTick(); await submit(form);
     await all(host).find(item => item.tag === 'button' && text(item) === 'Apply this plan').props.onClick(); await nextTick();
@@ -212,7 +385,7 @@ test('request limits reject invalid values, preview before explicit apply, and p
   };
   const app = renderer.createApp(Control); const host = node('root');
   try {
-    app.mount(host); await until(() => text(host).includes('Policy fixture'));
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
     const rate = section(host, 'connection-rate-heading'); const form = all(rate).find(item => item.tag === 'form');
     const limit = all(form).find(item => item.tag === 'input'); const selects = all(form).filter(item => item.tag === 'select');
     assert.equal(selects[0].children.length, 5);
@@ -221,6 +394,9 @@ test('request limits reject invalid values, preview before explicit apply, and p
     limit.props['onUpdate:modelValue'](123); selects[1].props['onUpdate:modelValue']('10'); await nextTick(); await submit(form);
     assert.deepEqual(JSON.parse(calls.find(call => call.path.endsWith('/rate-limits/plan')).init.body), { scope: 'instance', limit: 123, period_seconds: 10, expected_version: 4 });
     assert.equal(calls.filter(call => call.path.endsWith('/apply')).length, 0);
+    const comparison = all(section(host, 'connection-plan-heading')).find(item => item.tag === 'table');
+    assert.match(text(comparison), /Instance API300 \/ 60 seconds123 \/ 10 seconds/);
+    assert.ok(all(section(host, 'connection-plan-heading')).filter(item => item.tag === 'pre').every(item => item.parent.tag === 'details'));
     await all(host).find(item => item.tag === 'button' && text(item) === 'Apply this plan').props.onClick(); await nextTick();
     assert.deepEqual(JSON.parse(calls.find(call => call.path.endsWith('/rate-limits/apply')).init.body), { plan_id: 'plan-fixture', expected_version: 7 });
     assert.match(text(host), /Pending; verify the result.*not confirmed active/);
@@ -228,6 +404,19 @@ test('request limits reject invalid values, preview before explicit apply, and p
     await all(host).find(item => item.tag === 'button' && text(item) === 'Verify current state').props.onClick(); await nextTick();
     assert.match(text(section(host, 'connection-operation-heading')), /Verified/);
     assert.equal(calls.filter(call => call.path.endsWith('/rate-limits/apply')).length, 1);
+  } finally { app.unmount(); globalThis.fetch = originalFetch; }
+});
+
+test('repeated links to the same Usage setting restore that selection after a local form change', async () => {
+  const originalFetch = globalThis.fetch; const settingRequest = ref(0);
+  globalThis.fetch = async path => providerRead(path, connection());
+  const app = renderer.createApp({ render: () => h(Control, { mode: 'usage', initialSetting: 'billing_plan', settingRequest: settingRequest.value }) }); const host = node('root');
+  try {
+    app.mount(host); await until(() => text(host).includes('Current value: Free'));
+    const editor = section(host, 'usage-setting-heading'); const selection = all(editor).find(item => item.tag === 'select');
+    selection.props['onUpdate:modelValue']('warning_percent'); await nextTick(); assert.equal(selection.props.value, 'warning_percent');
+    settingRequest.value++; await nextTick(); await nextTick(); assert.equal(selection.props.value, 'billing_plan');
+    assert.equal(all(editor).filter(item => item.tag === 'select')[1].props.value, 'free');
   } finally { app.unmount(); globalThis.fetch = originalFetch; }
 });
 
@@ -244,9 +433,11 @@ test('a superseded live provider read cannot replace verified notification or WA
     if (path.endsWith('/verify')) return write(current);
     return Response.json(current);
   };
-  const app = renderer.createApp(Control); const host = node('root');
+  const app = renderer.createApp(Control, { mode: 'usage' }); const host = node('root');
   try {
-    app.mount(host); await until(() => finishOldRead);
+    app.mount(host); await until(() => text(host).includes('Current value: Disabled'));
+    section(host, 'connection-notifications-heading').props.onToggle({ target: { open: true } }); await until(() => finishOldRead);
+    section(host, 'connection-waf-heading').props.onToggle({ target: { open: true } });
     await all(host).find(item => item.tag === 'button' && text(item) === 'Verify current state').props.onClick();
     await until(() => text(host).includes('New policy'));
     finishOldRead(); await nextTick(); await new Promise(resolve => setTimeout(resolve, 10));
@@ -263,7 +454,7 @@ test('a plan returned after its form values change is discarded', async () => {
   };
   const app = renderer.createApp(Control); const host = node('root');
   try {
-    app.mount(host); await until(() => text(host).includes('Policy fixture'));
+    app.mount(host); await until(() => text(host).includes('Current limit: 300'));
     const form = all(section(host, 'connection-rate-heading')).find(item => item.tag === 'form');
     const limit = all(form).find(item => item.tag === 'input');
     limit.props['onUpdate:modelValue']('123'); await nextTick();
@@ -286,10 +477,10 @@ test('current settings fill each form and consecutive previews use the updated c
     }
     return providerRead(path, connection());
   };
-  const app = renderer.createApp(Control); const host = node('root');
+  const mode = ref('usage'); const app = renderer.createApp({ render: () => h(Control, { mode: mode.value }) }); const host = node('root');
   try {
-    app.mount(host); await until(() => text(host).includes('Policy fixture'));
-    const configForm = all(section(host, 'connection-configuration-heading')).find(item => item.tag === 'form');
+    app.mount(host); await until(() => text(host).includes('Current value: Disabled'));
+    const configForm = all(all(host).find(item => item.tag === 'section' && item.props['aria-labelledby'] === 'usage-setting-heading')).find(item => item.tag === 'form');
     const configSelects = all(configForm).filter(item => item.tag === 'select');
     assert.equal(configSelects[1].props.value, 'false');
     configSelects[1].props['onUpdate:modelValue']('true'); await nextTick(); await submit(configForm);
@@ -299,13 +490,15 @@ test('current settings fill each form and consecutive previews use the updated c
     configSelects[0].props['onUpdate:modelValue']('warning_percent'); await nextTick();
     all(configForm).find(item => item.tag === 'input').props['onUpdate:modelValue'](73); await nextTick(); await submit(configForm);
     assert.deepEqual(JSON.parse(calls.filter(call => call.path.endsWith('/configuration/plan')).at(-1).init.body), { settings: { warning_percent: 73 }, expected_version: 6 });
+    mode.value = 'overview'; await until(() => text(host).includes('Current limit: 300'));
+    assert.equal(section(host, 'connection-plan-heading'), undefined);
     const rate = section(host, 'connection-rate-heading'); const rateForm = all(rate).find(item => item.tag === 'form');
     const selects = all(rateForm).filter(item => item.tag === 'select');
     assert.equal(all(rateForm).find(item => item.tag === 'input').props.value, '300');
     selects[0].props['onUpdate:modelValue']('anonymous_login'); await nextTick();
     assert.equal(all(rateForm).find(item => item.tag === 'input').props.value, '11');
     assert.equal(selects[1].props.value, '10');
-    assert.match(text(rate), /Current Worker configuration: 11 \/ 10 seconds/);
+    assert.match(text(rate), /Current limit: 11 \/ 10 seconds/);
   } finally { app.unmount(); globalThis.fetch = originalFetch; }
 });
 
@@ -344,25 +537,18 @@ test('history fills unknown days, keeps actual zero and separate scopes, and col
   } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
 });
 
-test('disabled history does no collection and enabling requires a reviewed Worker configuration plan', async () => {
-  const originalFetch = globalThis.fetch; const calls = []; let enabled = false;
-  globalThis.fetch = async (path, init) => {
-    calls.push({ path, init });
-    if (path === '/api/v1/admin/cloudflare') return Response.json(connection());
-    if (path.endsWith('/configuration/plan')) return write({ plan_id: 'history-plan', version: 4, before: { history_enabled: false }, after: { history_enabled: true }, target: connection().target });
-    if (path.endsWith('/configuration/apply')) { enabled = true; return write(operation('verified')); }
-    return Response.json(historyFixture(enabled));
-  };
-  const app = renderer.createApp(History); const host = node('root');
+test('disabled history does no collection and directs its setting to the shared Usage editor', async () => {
+  const originalFetch = globalThis.fetch; const calls = []; const settings = [];
+  globalThis.fetch = async (path, init) => { calls.push({ path, init }); return Response.json(historyFixture(false)); };
+  const app = renderer.createApp(History, { onSettings: field => settings.push(field) }); const host = node('root');
   try {
     app.mount(host); await until(() => text(host).includes('History collection disabled'));
     await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(calls.length, 1);
-    await all(host).find(item => item.tag === 'button' && text(item) === 'Preview enabling history').props.onClick(); await nextTick();
-    assert.deepEqual(JSON.parse(calls.find(call => call.path.endsWith('/configuration/plan')).init.body), { settings: { history_enabled: true }, expected_version: 4 });
-    assert.equal(calls.filter(call => call.path.endsWith('/configuration/apply')).length, 0);
-    await all(host).find(item => item.tag === 'button' && text(item) === 'Apply this plan').props.onClick(); await until(() => text(host).includes('History collection enabled'));
-    assert.equal(calls.filter(call => call.path.endsWith('/configuration/apply')).length, 1);
-    assert.equal(calls.filter(call => call.path.endsWith('/collect')).length, 0);
+    const link = all(host).find(item => item.tag === 'a' && text(item) === 'Change history setting');
+    assert.equal(link.props.href, '#connection-configuration-heading'); link.props.onClick(); await nextTick();
+    assert.deepEqual(settings, ['history_enabled']);
+    assert.equal(all(host).some(item => item.tag === 'button' && text(item).includes('Preview')), false);
+    assert.equal(calls.filter(call => call.init.method === 'POST').length, 0);
   } finally { app.unmount(); globalThis.fetch = originalFetch; }
 });
 

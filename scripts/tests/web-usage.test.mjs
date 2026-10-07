@@ -298,16 +298,9 @@ test('extended usage separates instance and account values, retains unknown clas
     assert.match(text(host), /Instance figures show contribution, not remaining allowance/);
     assert.match(text(host), /Analytics may be sampled or delayed and are not an invoice/);
     assert.match(text(all(host).find(item => item.tag === 'details' && item.props.class === 'usage-details')), /Billing period observation: 2026-09-15 00:00:00 UTC/);
-    const budgetsLink = all(host).find(item => item.tag === 'a' && item.props.href === 'https://developers.cloudflare.com/billing/manage/budget-alerts/');
-    assert.ok(budgetsLink); assert.match(budgetsLink.props.rel, /noopener/);
-    assert.match(text(host), /they do not stop usage or cap charges/);
-    const budgetSection = all(host).find(item => item.tag === 'section' && item.props['aria-labelledby'] === 'usage-budget-alerts-heading');
-    assert.match(text(budgetSection), /selected email recipients.*cumulative usage-based account charges.*USD budget threshold/);
-    assert.match(text(budgetSection), /separate from cfKanban’s percentage-based allowance reminders.*do not report remaining quota/);
-    assert.match(text(budgetSection), /Read notification policies and recipients in Cloudflare settings.*USD budget fields are shown as unknown/);
-    assert.match(text(budgetSection), /Budget policies are read-only here.*protected Cloudflare settings form.*never send them in chat/);
-    assert.ok(all(budgetSection).some(item => item.tag === 'a' && item.props.href === '/app/admin?section=cloudflare'));
-    assert.equal(all(budgetSection).some(item => ['button', 'input', 'textarea', 'form'].includes(item.tag)), false);
+    const settingsLink = all(host).find(item => item.tag === 'a' && item.props.href === '#connection-configuration-heading');
+    assert.ok(settingsLink); assert.match(text(settingsLink), /Change plan, billing cycle, or reminders in Usage settings/);
+    assert.doesNotMatch(text(host), /Cloudflare budget emails|Domain & access protection/);
     assert.equal(calls.length, 1);
     locale.value = 'zh-CN'; await nextTick();
     assert.match(text(host), /本实例贡献 · Workers 请求量/);
@@ -315,9 +308,6 @@ test('extended usage separates instance and account values, retains unknown clas
     assert.match(text(host), /R2 未分类操作量/);
     assert.match(text(host), /累计微秒值/);
     assert.match(text(host), /不表示剩余额度/);
-    assert.match(text(budgetSection), /账户累计按量使用费用超过 USD 预算阈值.*指定收件邮件/);
-    assert.match(text(budgetSection), /读取通知策略和收件邮箱.*美元预算字段无法确认含义时显示未知/);
-    assert.match(text(budgetSection), /预算策略在这里只读.*受保护的 Cloudflare 设置表单.*不要发送到聊天/);
   } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
 });
 
@@ -337,8 +327,7 @@ test('missing billing cycle remains unknown and account totals require opt-in', 
     assert.match(text(host), /Cloudflare Workers\/D1 plan: Unknown/);
     assert.match(text(host), /Cloudflare billing cycle, not a separate cfKanban cycle/);
     assert.match(text(host), /Free daily figures do not require it/);
-    assert.match(text(host), /USAGE_BILLING_CYCLE_DAY.*Settings → Variables and Secrets/);
-    assert.match(text(host), /USD budget fields are shown as unknown/);
+    assert.match(text(host), /Change plan, billing cycle, or reminders in Usage settings/);
     assert.match(text(host), /Account totals are not enabled/);
     assert.equal(all(host).some(item => item.tag === 'section' && item.props['aria-label'] === 'Account totals'), false);
     assert.match(text(all(host).find(item => item.tag === 'details' && item.props.class === 'usage-details')), /Billing period observation: Unknown — Unknown/);
@@ -401,39 +390,22 @@ test('stale, refreshing and failed usage never present retained alerts as curren
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('public access shows only deployment snapshot state and guides Owner to deployment inspection', async () => {
-  const originalFetch = globalThis.fetch;
+test('usage configuration links select the shared editor without repeating budget or domain control panels', async () => {
+  const originalFetch = globalThis.fetch; const calls = []; const settings = [];
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, init }); const value = extendedSnapshot(); value.cloudflare.billing.account_totals_enabled = false; return Response.json(value);
+  };
+  const app = renderer.createApp(Component, { onSettings: field => settings.push(field) }); const host = node('root');
   try {
-    for (const status of ['configured', 'not_configured', 'invalid']) {
-      globalThis.fetch = async () => {
-        const value = extendedSnapshot(); value.public_access.status = status; return Response.json(value);
-      };
-      const app = renderer.createApp(Component); const host = node('root');
-      try {
-        app.mount(host); await until(() => text(host).includes('Domain & access protection'));
-        const section = all(host).find(item => item.tag === 'section' && item.props['aria-labelledby'] === 'usage-public-access-heading');
-        assert.match(text(section), /last deployment configuration, not a live protection check/);
-        assert.match(text(section), /Owner can ask a deployment Agent to inspect/);
-        assert.match(text(section), /custom rule is not Cloudflare Managed Rules/);
-        assert.match(text(section), /existing domain without a tool ownership receipt needs an explicit connection plan.*rather than deleting and recreating it/);
-        assert.match(text(section), /Zone rules do not protect workers\.dev/);
-        if (status === 'configured') {
-          assert.match(text(section), /Tool-managed custom security rule/);
-          assert.match(text(section), /kanban\.example\.com/);
-          assert.match(text(section), /Anonymous API filter/);
-          assert.match(text(section), /2026-09-18 23:30:00 UTC/);
-        } else {
-          assert.doesNotMatch(text(section), /kanban\.example\.com/);
-          assert.match(text(section), status === 'invalid' ? /saved public access configuration is invalid/ : /No custom-domain or WAF configuration snapshot/);
-          if (status === 'not_configured') assert.match(text(section), /existing custom domain or manually configured WAF can still be active/);
-        }
-        assert.equal(all(section).some(item => ['button', 'input'].includes(item.tag)), false);
-        locale.value = 'zh-CN'; await nextTick();
-        assert.match(text(section), /不代表实时防护状态/);
-        assert.match(text(section), /不要求删除或重建域名/);
-      } finally { app.unmount(); locale.value = 'en'; }
-    }
-  } finally { globalThis.fetch = originalFetch; }
+    app.mount(host); await until(() => text(host).includes('Change plan, billing cycle, or reminders'));
+    const links = all(host).filter(item => item.tag === 'a' && item.props.href === '#connection-configuration-heading');
+    assert.equal(links.length, 2);
+    links[0].props.onClick(); links[1].props.onClick(); await nextTick();
+    assert.deepEqual(settings, ['billing_plan', 'account_totals']);
+    assert.doesNotMatch(text(host), /Cloudflare budget emails|Domain & access protection|deployment Agent/);
+    assert.equal(calls.length, 1); assert.equal(calls[0].init.method, 'GET');
+    locale.value = 'zh-CN'; await nextTick(); assert.match(text(host), /在用量设置中修改方案、账期或提醒.*查看账户汇总设置/);
+  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
 });
 
 test('overview summary and detailed usage share one snapshot without collecting on section changes', async () => {
@@ -458,7 +430,7 @@ test('overview summary and detailed usage share one snapshot without collecting 
     assert.equal(calls.length, 1);
     await all(host).find(item => item.tag === 'button' && text(item) === 'View usage details').props.onClick(); await nextTick();
     assert.match(text(host), /Cloudflare Workers\/D1 plan: Paid/);
-    assert.match(text(host), /Current site address: https:\/\/legacy\.example\.com/);
+    assert.doesNotMatch(text(host), /Current site address|Domain & access protection/);
     assert.equal(calls.length, 1);
     summary.value = true; await nextTick();
     assert.doesNotMatch(text(host), /Data details|Set limit/);

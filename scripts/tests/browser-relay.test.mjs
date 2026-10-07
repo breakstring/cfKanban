@@ -6,6 +6,7 @@ import { getInstancePaths } from '../../packages/skill-runtime/src/state.mjs';
 import { atomicWriteJson, readJson } from '../../packages/skill-runtime/src/utils.mjs';
 import { randomUUID } from 'node:crypto';
 import { createMcpStateFixture } from './mcp-fixture.mjs';
+import { dispatch } from '../../packages/skill-runtime/src/cli.mjs';
 
 test('Cloudflare secret input cannot enter generic API requests, including normalized paths', async () => {
   let sent = 0;
@@ -16,15 +17,21 @@ test('Cloudflare secret input cannot enter generic API requests, including norma
     '/api/v1/admin/cloudflare/%73ecrets',
     '/api/v1/admin/cloudflare/ignored/../secrets',
   ]) {
-    await assert.rejects(guardedApiRequest({ method: 'post', apiPath, fetchImpl: async () => { sent++; } }), error => {
+    await assert.rejects(guardedApiRequest({ method: 'post', apiPath, body: { kind: 'connection', token: 'synthetic-browser-input-only', expected_version: 1 }, fetchImpl: async () => { sent++; } }), error => {
       assert.equal(error.code, 'SENSITIVE_DELIVERY_REQUIRED');
-      assert.equal(error.details.settings_path, '/app/admin?section=cloudflare');
+      assert.equal(error.details.settings_path, '/app/admin');
       return true;
     });
   }
   assert.equal(sent, 0);
   assert.doesNotThrow(() => assertGenericApiPathIsNonSensitive({ method: 'GET', apiPath: '/api/v1/admin/cloudflare' }));
   assert.doesNotThrow(() => assertGenericApiPathIsNonSensitive({ method: 'POST', apiPath: '/api/v1/admin/cloudflare/rate-limits/plan' }));
+});
+test('安全 runtime CLI 的统一 Secret 请求在普通参数入口被拒绝，错误只指向管理概览', async () => {
+  await assert.rejects(dispatch('api request', { method: 'POST', apiPath: '/api/v1/admin/cloudflare/secrets', body: { kind: 'connection', token: 'synthetic-input-must-not-leak', expected_version: 1 } }), error => {
+    assert.equal(error.code, 'SENSITIVE_DELIVERY_REQUIRED'); assert.equal(error.details.settings_path, '/app/admin');
+    assert.ok(!JSON.stringify(error).includes('synthetic-input-must-not-leak')); return true;
+  });
 });
 
 test('relay expires even when the host callback never resolves and closes its listener', async () => {

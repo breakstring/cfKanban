@@ -12,8 +12,9 @@ type Metric = UsageMetric;
 interface Snapshot { attempted_at: number | null; collected_at: number | null; error: string | null; metrics_json: string | null; config_key: string | null }
 class AnalyticsError extends Error { readonly code: string; constructor(code: string) { super(code); this.code = code; } }
 function config(env: WorkerEnv) {
-  if (env.USAGE_ANALYTICS_ENABLED === "false" || !env.USAGE_ACCOUNT_ID?.trim() || !env.USAGE_D1_DATABASE_ID?.trim() || !env.USAGE_ANALYTICS_TOKEN?.trim()) return null;
-  return { account: env.USAGE_ACCOUNT_ID, database: env.USAGE_D1_DATABASE_ID, bucket: env.USAGE_R2_BUCKET_NAME || null, token: env.USAGE_ANALYTICS_TOKEN,
+  const token = env.CFKANBAN_API_TOKEN ?? env.USAGE_ANALYTICS_TOKEN;
+  if (env.USAGE_ANALYTICS_ENABLED === "false" || !env.USAGE_ACCOUNT_ID?.trim() || !env.USAGE_D1_DATABASE_ID?.trim() || !token?.trim()) return null;
+  return { account: env.USAGE_ACCOUNT_ID, database: env.USAGE_D1_DATABASE_ID, bucket: env.USAGE_R2_BUCKET_NAME || null, token,
     worker: env.USAGE_WORKER_NAME || null, cycle: env.USAGE_BILLING_CYCLE_DAY || null, plan: env.USAGE_BILLING_PLAN || null,
     totals: env.USAGE_ACCOUNT_TOTALS_ENABLED === "true", warning: env.USAGE_WARNING_PERCENT || null, standardScope: env.USAGE_R2_STANDARD_ONLY_SCOPE || null };
 }

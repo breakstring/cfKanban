@@ -13,7 +13,7 @@
 
 Skill 与公共 CLI 已支持自动化的 `deploy public-access inspect`、`plan`、`apply` 流程。获准新增 Worker 自定义域名后，Cloudflare 管理其 DNS 与证书准备；单独的可选 WAF 计划创建限定该实例准确 hostname 的自有 custom rule，不是配置 Cloudflare Managed Rules。
 
-**在网页中：**「管理中心 → 用量与限额 → 域名与访问防护」显示最后部署的配置声明，并提供 Agent 引导；「管理中心 → Cloudflare 连接」另行使用已核验授权读取当前 Zone / 自定义规则状态。域名与 WAF 写入仍通过部署计划。域名计划会核验同一实例、首选地址和本机安全重绑，再关闭 `workers.dev` 与 preview 的业务入口，避免绕过新域名。Zone 规则不保护 `workers.dev`，关闭备用入口是该具体计划的明确影响。Passkey 绑定域名，迁移前需安排可用的 Owner 恢复方式。仅修改应用地址不能完成域名迁移。域名操作不偷偷重新部署 Worker；配置声明在下一次获准部署后更新。
+**在网页中：**「管理中心 → 用量与限额」的域名与访问防护详情，按需使用已核验授权读取当前 Zone / 自定义规则状态。域名与 WAF 写入仍通过部署计划。域名计划会核验同一实例、首选地址和本机安全重绑，再关闭 `workers.dev` 与 preview 的业务入口，避免绕过新域名。Zone 规则不保护 `workers.dev`，关闭备用入口是该具体计划的明确影响。Passkey 绑定域名，迁移前需安排可用的 Owner 恢复方式。仅修改应用地址不能完成域名迁移。域名操作不偷偷重新部署 Worker；配置声明在下一次获准部署后更新。
 
 「未记录部署工具管理的配置」不表示没有自定义域名或 WAF。旧版本或手工配置的域名可以正常工作；普通升级保留它们，不自动接管域名或安装新规则。WAF 不是使用自定义域名的必要条件。要检查现有保护，可在 Cloudflare 选择域名所在 Zone，查看 **Security / 安全 → WAF**；如需由工具管理，先让 Agent 只读核对现有映射与规则，为缺少归属回执的既有域名明确接入方案。保留现有域名，不要求为满足新域名流程而删除重建；直接重跑域名安装不会接管旧资源。
 
@@ -37,11 +37,11 @@ WAF 可以单独选择启用或停用，域名不强制搭配 WAF。Free 配置�
 说明需要哪些权限、如何安全配置，先不要修改。
 ```
 
-统计是可选功能，未配置时不影响任务协作。配置需要额外的只读统计授权；部署技能不自动写入统计密钥。核验配置授权后，Owner 可在「管理中心 → Cloudflare 连接」保存统计 Token，API 将其保存为 Worker Secret。不要把 Token 粘贴到聊天，也不要让 Agent 输出它。
+统计是可选功能，未配置时不影响任务协作。统一连接需要包含只读统计权限；部署技能不自动写入密钥。Owner 在「管理中心 → 概览」保存一份 Token，API 将其保存为 Worker Secret，并分别核验配置及统计能力。不要把 Token 粘贴到聊天，也不要让 Agent 输出它。
 
 **在网页中：**「管理中心 → 用量与限额」可查看状态和刷新数据，概览只保留关键摘要。数据可能延迟，不是实时账单，也不是账户剩余额度。
 
-部署计划可选择准确 Worker 名、Free/Paid 口径、实际 UTC 账单周期起始日、提醒阈值，以及明确开启的账户总量。Owner 连接页也提供统计开关、Free/Paid 声明、账期日、账户总量和提醒阈值的预览 / 应用计划；账户、Worker 和数据库从固定部署目标派生，不能通过表单重新定向。未核对周期时月度指标保持未知，不默认自然月。Workers 请求与累计 CPU、D1 日/月读取写入、R2 Class A/B 分开展示；未知操作或截断结果不会显示为完整计费合计。R2 免费额度只适用于 Standard，只有 Owner 核对整个实例或账户的统计范围均为 Standard 后，才能开启对应额度比较。
+部署计划可选择准确 Worker 名、Free/Paid 口径、实际 UTC 账单周期起始日、提醒阈值，以及明确开启的账户总量。Owner 用量页面也提供统计开关、Free/Paid 声明、账期日、账户总量和提醒阈值的预览 / 应用计划；账户、Worker 和数据库从固定部署目标派生，不能通过表单重新定向。未核对周期时月度指标保持未知，不默认自然月。Workers 请求与累计 CPU、D1 日/月读取写入、R2 Class A/B 分开展示；未知操作或截断结果不会显示为完整计费合计。R2 免费额度只适用于 Standard，只有 Owner 核对整个实例或账户的统计范围均为 Standard 后，才能开启对应额度比较。
 
 日度历史是独立的可选开关，默认关闭。「每日用量历史」显示最近 7/30/90 个完整 UTC 日，未知值与缺日保持断点。启用需要配置计划与应用，不自动改变账户总量或方案声明；复用已有维护触发器，不新增默认 Cron。需要时 Owner 可手动采集最近 7 个完整 UTC 日中的一天。容量保留实际观测时间，不表示每日消耗或 GB-month 计费。
 
@@ -78,19 +78,30 @@ Cloudflare **Billing → Billable Usage → Budget alerts / 预算警报** 在�
 | 核对 Zone WAF 规则 | Zone **Zone WAF Read** |
 | 读取统计 | Account **Account Analytics Read**，只授权当前账户 |
 
-Owner 连接页只读取通知与 WAF 策略，不要求 Notifications Edit 或 Zone WAF Edit。域名 / WAF 写计划仍按独立流程核对 Worker 路由、Zone、DNS 和规则修改权限。须用真实供应商响应核验可用性；存在 Token 或勾选了某项权限，不等于已证实 endpoint 或预算策略类型可用。
+Owner 的用量页面按需读取通知与 WAF 策略，不要求 Notifications Edit 或 Zone WAF Edit。域名 / WAF 写计划仍按独立流程核对 Worker 路由、Zone、DNS 和规则修改权限。须用真实供应商响应核验可用性；存在 Token 或勾选了某项权限，不等于已证实 endpoint 或预算策略类型可用。
 
-Wrangler OAuth 登录不会创建 API Key。本项目当前支持的 OAuth 登录 scope 不覆盖 Billing、Notifications 或 Zone WAF，再次登录不能据此补齐。不要使用 Global API Key，不导出部署 OAuth 凭据。已有 `USAGE_ANALYTICS_TOKEN` 授权不会自动复用于控制用途；兼容的同值须通过另一用途的能力核验后，再分别保存。统计采集与部署认证仍是不同用途。
+Wrangler OAuth 登录不会创建 API Key，也不会为网页设置自动补齐 Billing、Notifications 或 Zone WAF 权限。不要使用 Global API Key，不导出部署 OAuth 凭据。网页连接与 Wrangler 部署身份分开。
 
-Token 只在当前 HTTPS 实例中已认证的 Owner 页面输入。此专用表单是受支持的秘密传输入口，普通 CLI / Agent JSON 操作不接受 Cloudflare Token。不要发到聊天、写入浏览器存储、仓库、命令参数、Shell 环境变量或 Worker 明文变量。账户、Worker 与数据库是只读部署目标；页面只允许保存相关 Zone 选择。
+在当前 HTTPS 实例中已认证的「管理中心 → 概览 → Cloudflare 连接」输入一份 API Token。该专用表单是受支持的秘密传输入口，普通 CLI / Agent JSON 操作不接受 Cloudflare Token。不要发到聊天、写入浏览器存储、仓库、命令参数、Shell 环境变量或 Worker 明文变量。账户、Worker 与数据库是只读部署目标；相关 Zone 在「用量与限额 → 域名与访问防护」中设置。
 
-配置、功能和统计是分开的授权用途，并不强制使用三份不同凭据；兼容的同一 Token 可以用于多个用途，每项分别核验，并仍分别保存到各用途的 Secret。Token 长期只存入加密的普通 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)。功能 Token 使用上表最小读取权限；统计 Token 选择 [Account → Account Analytics → Read](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/)，只授权页面目标账户，保存时先核验 D1 统计接口；其他已配置数据集是否可用，以后续实际统计读取结果为准，不能仅凭权限名称推导。配置 Token 必须是 account-owned，且仅授权**当前 Worker 的 Editor**，包含代码修改与部署权，不使用全账户 Workers Editor 或 Admin。普通 Worker Secrets 支持 Free，无需单独的 Secrets Store。这些 Token 与 Wrangler OAuth 部署身份分开；统计 Secret 仍为 `USAGE_ANALYTICS_TOKEN`。
+打开 [Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens)，选择页面显示的准确账户，再进入 **Manage Account → Account API Tokens → Create Token**。创建 [account-owned Token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) 的人需要账户 Super Administrator 或 API Token Provisioning 授权；这是创建者的权限，不应给业务 Token 添加 Token 管理权。
 
-打开 [Account API Tokens](https://dash.cloudflare.com/?to=/:account/api-tokens)，选择页面目标账户，配置 Token 的创建路径为 **Manage Account → Account API Tokens → Create Token → Specified Workers → 当前已存在的 Worker → Editor**。创建 [account-owned Token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) 的人需要账户 Super Administrator 或 API Token Provisioning 授权；不要因此给业务 Token 添加 Token 管理权。Cloudflare 的 [Workers 角色与权限文档](https://developers.cloudflare.com/workers/authorization/workers/)列明，管理既有 Worker 的 Secret 最低需要该 Worker 的 Editor。打开「管理中心 → Cloudflare 连接」，输入该 Token 并「保存并应用配置」；首次使用输入的配置 Token 保存其自身，之后使用已保存的配置 Token 保存其他 Token。提交后输入会清空，失败时也不恢复草稿。接入核验成功后，Owner 可在另一设备登录使用已支持的控制功能，无需重新导入 Token。
+一份 Token 按所需能力组合权限：
 
-读取功能数据时，可从 [My Profile → API Tokens → Create Token → Create Custom Token](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) 创建。Account Resources 只选页面目标账户；先核对当前域名的准确 Zone，再添加 WAF 读取权限，Zone Resources 只选该 Zone，不选全部 Zone。上表权限名称见[官方权限表](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)。统计 Token 的[官方指引](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/)从 Account API Tokens → Create Token → Custom token 开始。先保存并核验 Worker 配置 Token，再逐项保存可选用途。不能保证 account-owned Token 兼容 Notifications；只读用途可能需要兼容的 user Token，配置用途仍保留 account-owned 的单 Worker Editor 范围。
+| 需要的能力 | 权限与资源范围 |
+| --- | --- |
+| 必需：保存连接、调整访问频率及用量设置 | **Specified Workers → 当前已存在的 Worker → Editor**；不选全部 Workers 或 Admin。Editor 也能修改该 Worker 的代码与部署。 |
+| 用量统计 | **Account → Account Analytics → Read**，Account Resources 只选页面目标账户；实际数据集由统计读取核验。 |
+| 可选通知与账务读取 | 目标账户的 **Notifications Read / Billing Read**；不需要 Edit。 |
+| 可选 WAF 读取 | 当前域名已核对 Zone 的 **Zone Read / Zone WAF Read**；不选全部 Zone，不需要 Edit。 |
 
-已配置 Secret 不等于部署或能力核验成功；「核验通过」以服务读回为准，「处理中」和「结果未知」必须先「核验当前状态」，不能盲目重复保存或应用。轮换时先核验替代 Token，再撤销旧 Token。已保存的配置 Token 丢失或过期时，可输入有效的替代配置 Token；实例不可访问时使用部署恢复流程。API 核验所需能力与目标绑定，但不能证明 Token 没有其他权限。兼容升级保留实时设置和三个 Secret。Cloudflare 官方 Worker Secret 输入仍是平台配置入口，保存并部署会应用 Worker 配置变更。
+当前 [Workers 权限](https://developers.cloudflare.com/workers/authorization/workers/)支持限定单个 Worker 的 Editor，[统计指引](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/)说明 Account Analytics Read。通知的 account-owned Token 兼容性仍须实际核验；若某项可选读取被拒绝，页面显示该项的权限状态，其他已核验能力仍可用。不要为消除状态提示扩大到全账户编辑权。域名和 WAF 写入继续使用独立的部署计划流程。
+
+选择「保存连接」后，Token 一次写入 `CFKANBAN_API_TOKEN` 这一普通加密 [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/)，Free 支持，无需 Secrets Store。首次连接与轮换均用输入 Token 保存其自身，旧授权过期不妨碍有效替代 Token 接入。提交后输入清空，失败时也不恢复草稿；读回与能力核验成功后可跨设备使用，无需再次输入。
+
+统一授权优先使用；尚未统一的实例继续按原用途使用 `CFKANBAN_CONFIGURATION_TOKEN`、`CFKANBAN_CONTROL_TOKEN` 和 `USAGE_ANALYTICS_TOKEN`。保存统一授权不会删除旧 Secret，升级保留统一及旧授权的实时配置。原统计 Token 只有读取权限时不能用于写入 Worker 配置；必须创建或选择符合当前 Worker Editor 范围的替代授权。
+
+已配置 Secret 不等于部署或能力核验成功。「处理中」和「结果未知」必须先「核验当前状态」，不要盲目重复保存或应用。轮换时先核验替代 Token，再撤销旧 Token；实例不可访问时使用部署恢复流程。API 核验所需能力与目标绑定，但不能证明 Token 没有其他权限。Cloudflare 官方 Worker Secret 输入仍是平台配置入口，保存并部署会应用 Worker 配置变更。
 
 `USAGE_*` 变量、Secret、限流 binding 和 CPU 上限等 Worker 配置变更，需要部署 Worker 版本才生效。在供应商控制面修改 WAF 规则或 Budget Alerts 策略，本身不需要重新部署 Worker，但保存后须读回供应商状态。保存在 D1 的应用设置保存成功后无需重新部署 Worker；后续请求按相应读取与缓存规则使用新配置，页面仍可能需要刷新，见[实例设置](../administration/settings.md)。
 
@@ -101,7 +112,7 @@ Token 只在当前 HTTPS 实例中已认证的 Owner 页面输入。此专用表
 结合 <发生时间和现象> 评估是否需要调整，先不要部署。
 ```
 
-Owner 可在网页「概览 → 服务信息与访问限制」查看限制，在「Cloudflare 连接 → 原生访问频率限制」准备已支持的变更。访问频率限制与[公开项目人数及内容配额](../administration/public-join.md)不同，出现请求过多不一定是项目已满。
+Owner 可在网页「概览 → 访问频率限制」查看并调整已支持的限制；先在同页的 Cloudflare 连接中核验配置授权。访问频率限制与[公开项目人数及内容配额](../administration/public-join.md)不同，出现请求过多不一定是项目已满。
 
 **在哪里修改：** Worker 的 **Settings → Variables and Secrets** 可查看 `RATE_LIMIT_*_LIMIT` 和 `RATE_LIMIT_*_PERIOD_SECONDS`，但这些变量只用于显示和错误说明。真正限流由 `ratelimits` binding 中的 `simple.limit` / `simple.period` 执行；[Cloudflare Rate Limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) 不在 Dashboard 展示。部署工具应一起更新两者并读回核对，不能只改变量。每身份 / 每 isolate 查询并发上限由服务代码固定。
 

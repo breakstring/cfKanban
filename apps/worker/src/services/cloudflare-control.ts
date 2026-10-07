@@ -9,7 +9,7 @@ import { actorCredentialId, requireIdempotencyKey, writeResult } from "./shared.
 type Resource = { [key: string]: JsonValue };
 type Capability = "missing" | "unverified" | "verified" | "permission_denied" | "unavailable" | "target_mismatch" | "unsupported_contract";
 type Status = "pending" | "verified" | "failed" | "unknown";
-type SecretKind = "configuration" | "control" | "analytics";
+type SecretKind = "connection" | "configuration" | "control" | "analytics";
 type PlanKind = "configuration" | "rate_limit";
 export interface CloudflareControlDependencies { fetch?: typeof fetch }
 interface SettingsRow { version: number; zone_id: string | null; capabilities_json: string; verified_at: number | null; latest_operation_id: string | null; locked_operation_id: string | null; last_operation_id: string | null }
@@ -22,7 +22,7 @@ function settingsMetadata(settings: Resource): Resource {
   const { bindings: _bindings, annotations: _annotations, exports_reconciliation: _reconciliation, ...metadata } = settings;
   return metadata;
 }
-const SECRET_NAMES = { configuration: "CFKANBAN_CONFIGURATION_TOKEN", control: "CFKANBAN_CONTROL_TOKEN", analytics: "USAGE_ANALYTICS_TOKEN" } as const;
+const SECRET_NAMES = { connection: "CFKANBAN_API_TOKEN", configuration: "CFKANBAN_CONFIGURATION_TOKEN", control: "CFKANBAN_CONTROL_TOKEN", analytics: "USAGE_ANALYTICS_TOKEN" } as const;
 const RATE_GROUPS = {
   instance: ["INSTANCE_RATE_LIMITER", "RATE_LIMIT_INSTANCE_LIMIT", "RATE_LIMIT_INSTANCE_PERIOD_SECONDS"],
   principal: ["PRINCIPAL_RATE_LIMITER", "RATE_LIMIT_PRINCIPAL_LIMIT", "RATE_LIMIT_PRINCIPAL_PERIOD_SECONDS"],
@@ -60,7 +60,13 @@ function fixedTarget(env: WorkerEnv): Target {
   return { account_id: account, worker_name: worker, database_id: database };
 }
 function targetResource(target: Target): Resource { return { ...target }; }
-function tokenFor(env: WorkerEnv, kind: SecretKind): string | undefined { return env[SECRET_NAMES[kind]]; }
+function tokenFor(env: WorkerEnv, kind: SecretKind): string | undefined { return env.CFKANBAN_API_TOKEN ?? env[SECRET_NAMES[kind]]; }
+function secretOperationKind(kind: SecretKind): string { return `${kind === "connection" ? "configuration" : kind}_secret`; }
+function operationSecretName(row: OperationRow, desired: Resource): typeof SECRET_NAMES[SecretKind] {
+  const kind = desired.secret_kind;
+  if (typeof kind !== "string" || !Object.hasOwn(SECRET_NAMES, kind) || desired.secret_name !== SECRET_NAMES[kind as SecretKind] || row.kind !== secretOperationKind(kind as SecretKind)) throw new ProviderFailure("target_mismatch", true);
+  return SECRET_NAMES[kind as SecretKind];
+}
 function scriptPath(target: Target): string { return `/accounts/${encodeURIComponent(target.account_id)}/workers/scripts/${encodeURIComponent(target.worker_name)}`; }
 function api(token: string, dependencies: CloudflareControlDependencies) {
   return async (path: string, init: RequestInit = {}): Promise<JsonValue> => {
@@ -131,7 +137,7 @@ async function localChange(env: WorkerEnv, request: Request, auth: AuthContext, 
 export async function getCloudflareControl(env: WorkerEnv, auth: AuthContext): Promise<Resource> {
   requireOwnerControl(auth); const row = await settingsRow(env.DB), meta = await instance(env.DB);
   const capabilities = { configuration: tokenFor(env, "configuration") ? "unverified" : "missing", notifications: tokenFor(env, "control") ? "unverified" : "missing", waf: tokenFor(env, "control") ? "unverified" : "missing", billing: tokenFor(env, "control") ? "unverified" : "missing", analytics: tokenFor(env, "analytics") ? "unverified" : "missing", ...object(JSON.parse(row.capabilities_json) as JsonValue) };
-  return { version: row.version, target: { account_id: env.CFKANBAN_CONTROL_ACCOUNT_ID ?? null, worker_name: env.CFKANBAN_CONTROL_WORKER_NAME ?? null, database_id: env.CFKANBAN_CONTROL_DATABASE_ID ?? null, zone_id: row.zone_id, hostname: new URL(meta.preferred_api_origin).hostname }, configured: { configuration: Boolean(tokenFor(env, "configuration")), control: Boolean(tokenFor(env, "control")), analytics: Boolean(tokenFor(env, "analytics")) }, capabilities, verified_at: row.verified_at === null ? null : new Date(row.verified_at).toISOString(), budget: BUDGET, latest_operation: row.latest_operation_id ? operationResource(await operationRow(env.DB, row.latest_operation_id), row.version) : null, configuration: configurationValues(env) };
+  return { version: row.version, target: { account_id: env.CFKANBAN_CONTROL_ACCOUNT_ID ?? null, worker_name: env.CFKANBAN_CONTROL_WORKER_NAME ?? null, database_id: env.CFKANBAN_CONTROL_DATABASE_ID ?? null, zone_id: row.zone_id, hostname: new URL(meta.preferred_api_origin).hostname }, configured: { connection: Boolean(env.CFKANBAN_API_TOKEN), configuration: Boolean(tokenFor(env, "configuration")), control: Boolean(tokenFor(env, "control")), analytics: Boolean(tokenFor(env, "analytics")) }, capabilities, verified_at: row.verified_at === null ? null : new Date(row.verified_at).toISOString(), budget: BUDGET, latest_operation: row.latest_operation_id ? operationResource(await operationRow(env.DB, row.latest_operation_id), row.version) : null, configuration: configurationValues(env) };
 }
 export async function updateCloudflareSettings(env: WorkerEnv, request: Request, auth: AuthContext, zoneId: JsonValue, expected: number, now: number): Promise<Resource> {
   if (zoneId !== null && (typeof zoneId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(zoneId))) throw validationError("invalid_zone_id");
@@ -155,9 +161,9 @@ export async function verifyCloudflareControl(env: WorkerEnv, request: Request, 
   const statuses = { configuration: configurationStatus, notifications, waf, billing, analytics: analyticsStatus };
   return localChange(env, request, auth, "/api/v1/admin/cloudflare/verify", {}, null, id => [env.DB.prepare("UPDATE cloudflare_control_settings SET capabilities_json=?2,verified_at=?3 WHERE singleton=1 AND last_operation_id=?1").bind(id, canonicalJson(statuses), now)], async version => ({ ...await getCloudflareControl(env, auth), version, capabilities: statuses, verified_at: new Date(now).toISOString() }), now);
 }
-async function verifiedZone(env: WorkerEnv, zoneId: string | null, dependencies: CloudflareControlDependencies): Promise<Resource> {
-  if (!zoneId || !tokenFor(env, "control")) throw new ProviderFailure("missing");
-  const target = fixedTarget(env), zone = object(await api(tokenFor(env, "control") ?? "", dependencies)(`/zones/${encodeURIComponent(zoneId)}`));
+async function verifiedZone(env: WorkerEnv, zoneId: string | null, dependencies: CloudflareControlDependencies, token: string | undefined): Promise<Resource> {
+  if (!zoneId || !token) throw new ProviderFailure("missing");
+  const target = fixedTarget(env), zone = object(await api(token, dependencies)(`/zones/${encodeURIComponent(zoneId)}`));
   const hostname = new URL((await instance(env.DB)).preferred_api_origin).hostname, name = text(zone.name);
   if (object(zone.account).id !== target.account_id || zone.id !== zoneId || !(hostname === name || hostname.endsWith(`.${name}`))) throw new ProviderFailure("target_mismatch", true);
   return zone;
@@ -176,13 +182,16 @@ function ownedExpression(host: string): string {
   return `(http.host eq "${host}" and (${paths.map(name => `(http.request.uri.path eq "/api/v1/${name}" or starts_with(http.request.uri.path, "/api/v1/${name}/"))`).join(" or ")}) and not any(http.request.headers.names[*] eq "authorization") and not http.cookie contains "cfkanban_session=")`;
 }
 export async function getCloudflareWaf(env: WorkerEnv, auth: AuthContext, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
-  requireOwnerControl(auth); const row = await settingsRow(env.DB), meta = await instance(env.DB), hostname = new URL(meta.preferred_api_origin).hostname, resource: Resource = { status: "missing", zone_id: row.zone_id, hostname, owned_rule: null, other_rule_count: 0, protected: false };
+  requireOwnerControl(auth); return readCloudflareWaf(env, dependencies, tokenFor(env, "control"));
+}
+async function readCloudflareWaf(env: WorkerEnv, dependencies: CloudflareControlDependencies, token: string | undefined): Promise<Resource> {
+  const row = await settingsRow(env.DB), meta = await instance(env.DB), hostname = new URL(meta.preferred_api_origin).hostname, resource: Resource = { status: "missing", zone_id: row.zone_id, hostname, owned_rule: null, other_rule_count: 0, protected: false };
   let zoneVerified = false;
-  try { await verifiedZone(env, row.zone_id, dependencies); zoneVerified = true; const ruleset = object(await api(tokenFor(env, "control") ?? "", dependencies)(`/zones/${row.zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint`)), rules = list(ruleset.rules ?? []).map(object), ref = `cfkanban_${meta.instance_id.replaceAll("-", "")}_anonymous_api`, owned = rules.filter(rule => rule.ref === ref); if (owned.length > 1) throw new ProviderFailure("target_mismatch"); const rule = owned[0]; return { ...resource, status: "verified", owned_rule: rule ? { id: text(rule.id), enabled: rule.enabled === true, action: text(rule.action), expression: text(rule.expression, 16_384) } : null, other_rule_count: rules.length - owned.length, protected: Boolean(rule && rule.enabled === true && rule.action === "block" && rule.expression === ownedExpression(hostname)) }; }
+  try { await verifiedZone(env, row.zone_id, dependencies, token); zoneVerified = true; const ruleset = object(await api(token ?? "", dependencies)(`/zones/${row.zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint`)), rules = list(ruleset.rules ?? []).map(object), ref = `cfkanban_${meta.instance_id.replaceAll("-", "")}_anonymous_api`, owned = rules.filter(rule => rule.ref === ref); if (owned.length > 1) throw new ProviderFailure("target_mismatch"); const rule = owned[0]; return { ...resource, status: "verified", owned_rule: rule ? { id: text(rule.id), enabled: rule.enabled === true, action: text(rule.action), expression: text(rule.expression, 16_384) } : null, other_rule_count: rules.length - owned.length, protected: Boolean(rule && rule.enabled === true && rule.action === "block" && rule.expression === ownedExpression(hostname)) }; }
   catch (error) { return { ...resource, status: zoneVerified && error instanceof ProviderFailure && error.missingResource ? "verified" : error instanceof ProviderFailure ? error.capability : "unavailable" }; }
 }
 function configurationValues(env: WorkerEnv): Resource {
-  return { history_enabled: env.USAGE_HISTORY_ENABLED === "true", analytics_enabled: env.USAGE_ANALYTICS_ENABLED === "true" || (env.USAGE_ANALYTICS_ENABLED === undefined && Boolean(env.USAGE_ACCOUNT_ID && env.USAGE_D1_DATABASE_ID && env.USAGE_ANALYTICS_TOKEN)), billing_plan: ["free", "paid"].includes(env.USAGE_BILLING_PLAN ?? "") ? env.USAGE_BILLING_PLAN ?? null : null, billing_cycle_day: /^([1-9]|[12][0-9]|3[01])$/.test(env.USAGE_BILLING_CYCLE_DAY ?? "") ? Number(env.USAGE_BILLING_CYCLE_DAY) : null, account_totals: env.USAGE_ACCOUNT_TOTALS_ENABLED === "true", warning_percent: /^([1-9]|[1-9][0-9]|100)$/.test(env.USAGE_WARNING_PERCENT ?? "") ? Number(env.USAGE_WARNING_PERCENT) : 80 };
+  return { history_enabled: env.USAGE_HISTORY_ENABLED === "true", analytics_enabled: env.USAGE_ANALYTICS_ENABLED === "true" || (env.USAGE_ANALYTICS_ENABLED === undefined && Boolean(env.USAGE_ACCOUNT_ID && env.USAGE_D1_DATABASE_ID && tokenFor(env, "analytics"))), billing_plan: ["free", "paid"].includes(env.USAGE_BILLING_PLAN ?? "") ? env.USAGE_BILLING_PLAN ?? null : null, billing_cycle_day: /^([1-9]|[12][0-9]|3[01])$/.test(env.USAGE_BILLING_CYCLE_DAY ?? "") ? Number(env.USAGE_BILLING_CYCLE_DAY) : null, account_totals: env.USAGE_ACCOUNT_TOTALS_ENABLED === "true", warning_percent: /^([1-9]|[1-9][0-9]|100)$/.test(env.USAGE_WARNING_PERCENT ?? "") ? Number(env.USAGE_WARNING_PERCENT) : 80 };
 }
 function configurationInput(value: JsonValue): Resource {
   if (value === null || Array.isArray(value) || typeof value !== "object") throw validationError("configuration_object_required");
@@ -214,7 +223,7 @@ function desiredValues(kind: PlanKind, desired: Resource, bindings: Resource[]):
   for (const [key, name] of Object.entries(CONFIG_VARS)) { const value = bindingText(bindings, name); values[key] = value === null ? (["billing_plan", "billing_cycle_day"].includes(key) ? null : key === "warning_percent" ? 80 : false) : ["history_enabled", "analytics_enabled", "account_totals"].includes(key) ? value === "true" : ["billing_cycle_day", "warning_percent"].includes(key) ? Number(value) : value; }
   // Older deployments collect snapshots without an explicit enabled variable.
   // A partial settings change must preserve that effective enabled state.
-  if (bindingText(bindings, CONFIG_VARS.analytics_enabled) === null) values.analytics_enabled = Boolean(bindingText(bindings, "USAGE_ACCOUNT_ID") && bindingText(bindings, "USAGE_D1_DATABASE_ID") && bindings.some(binding => binding.name === SECRET_NAMES.analytics && binding.type === "secret_text"));
+  if (bindingText(bindings, CONFIG_VARS.analytics_enabled) === null) values.analytics_enabled = Boolean(bindingText(bindings, "USAGE_ACCOUNT_ID") && bindingText(bindings, "USAGE_D1_DATABASE_ID") && bindings.some(binding => (binding.name === SECRET_NAMES.connection || binding.name === SECRET_NAMES.analytics) && binding.type === "secret_text"));
   configurationInput(values); return values;
 }
 function patchSettings(live: LiveBaseline, kind: PlanKind, desired: Resource, target: Target): Resource {
@@ -279,11 +288,11 @@ export async function saveCloudflareSecret(env: WorkerEnv, request: Request, aut
   if (kind === "analytics") await probeAnalytics(env, tokenValue, now, dependencies);
   if (kind === "control") {
     const target = fixedTarget(env), call = api(tokenValue, dependencies), zone = (await settingsRow(env.DB)).zone_id;
-    const probes = await Promise.all([capability(() => call(`/accounts/${target.account_id}/alerting/v3/policies`), true), capability(() => call(`/accounts/${target.account_id}/billable-usage/info`), true), capability(async () => { const result = await getCloudflareWaf({ ...env, CFKANBAN_CONTROL_TOKEN: tokenValue }, auth, dependencies); if (result.status !== "verified") throw new ProviderFailure(result.status as Capability); }, Boolean(zone))]);
+    const probes = await Promise.all([capability(() => call(`/accounts/${target.account_id}/alerting/v3/policies`), true), capability(() => call(`/accounts/${target.account_id}/billable-usage/info`), true), capability(async () => { const result = await readCloudflareWaf(env, dependencies, tokenValue); if (result.status !== "verified") throw new ProviderFailure(result.status as Capability); }, Boolean(zone))]);
     if (!probes.includes("verified")) throw new ProviderFailure(probes.every(status => status === "permission_denied" || status === "missing") ? "permission_denied" : "unavailable", true);
   }
-  const writer = kind === "configuration" ? tokenValue : tokenFor(env, "configuration"); if (!writer) throw validationError("configuration_token_required");
-  const live = await baseline(env, writer, dependencies), row = await intent(env, request, auth, `${kind}_secret`, requestHash, live, { secret_kind: kind, secret_name: SECRET_NAMES[kind] }, tokenHash, expected, now, null);
+  const writer = kind === "connection" || kind === "configuration" ? tokenValue : tokenFor(env, "configuration"); if (!writer) throw validationError("configuration_token_required");
+  const live = await baseline(env, writer, dependencies), row = await intent(env, request, auth, secretOperationKind(kind), requestHash, live, { secret_kind: kind, secret_name: SECRET_NAMES[kind] }, tokenHash, expected, now, null);
   if (row.dispatched_at !== null || row.status !== "pending") return operationWriteResult(env, auth, row, true);
   try { if (canonicalJson((await baseline(env, writer, dependencies)).baseline) !== row.baseline_json) throw validationError("cloudflare_baseline_changed"); }
   catch { await transition(env, request, auth, row, "failed", "preflight_changed", null, null); return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false); }
@@ -316,21 +325,36 @@ async function completeCloudMutation(env: WorkerEnv, request: Request, auth: Aut
   try { await verifyOperationInternal(env, request, auth, await operationRow(env.DB, id), dependencies, token); }
   catch (error) { const row = await operationRow(env.DB, id); await transition(env, request, auth, row, "unknown", error instanceof ProviderFailure ? error.capability : "unavailable", row.result_version_id, row.deployment_id); }
 }
+function orderedBindingFingerprints(value: JsonValue | undefined): Resource[] { return list(value).map(object).sort((a, b) => text(a.name).localeCompare(text(b.name))); }
+async function planBindingsMatch(live: LiveBaseline, before: Resource, kind: PlanKind, desired: Resource, target: Target, writer: string, dependencies: CloudflareControlDependencies): Promise<boolean> {
+  // Existing intents only retain binding fingerprints. Recover the frozen
+  // inventory to prove preserved namespaces and materialize inherited bindings.
+  const versionId = text(before.active_version_id), version = object(await api(writer, dependencies)(`${scriptPath(target)}/versions/${encodeURIComponent(versionId)}`));
+  const bindings = list(object(version.resources).bindings).map(object);
+  const fingerprints = async (inventory: Resource[]) => orderedBindingFingerprints(await Promise.all(inventory.map(async binding => ({ name: text(binding.name), type: text(binding.type), hash: await sha256Hex(canonicalJson(binding)) }))));
+  if (canonicalJson(await fingerprints(bindings)) !== canonicalJson(orderedBindingFingerprints(before.binding_fingerprints))) throw new ProviderFailure("target_mismatch");
+  const original = new Map(bindings.map(binding => [text(binding.name), binding]));
+  const settings = patchSettings({ ...live, bindings, baseline: { ...live.baseline, active_version_id: versionId } }, kind, desired, target);
+  const expected = list(settings.bindings).map(object).map(binding => binding.type === "inherit" ? original.get(text(binding.name))! : binding);
+  return canonicalJson(await fingerprints(expected)) === canonicalJson(orderedBindingFingerprints(live.baseline.binding_fingerprints));
+}
 async function assessOperation(env: WorkerEnv, row: OperationRow, dependencies: CloudflareControlDependencies, token?: string): Promise<Assessment> {
   if (row.status === "verified" || row.status === "failed") return [row.status, row.failure_class, row.result_version_id, row.deployment_id];
   if (row.dispatched_at === null) return ["failed", "not_dispatched", null, null];
   const writer = token ?? tokenFor(env, "configuration"); if (!writer) throw new ProviderFailure("missing"); const live = await baseline(env, writer, dependencies, true), before = object(JSON.parse(row.baseline_json) as JsonValue), desired = object(JSON.parse(row.desired_json) as JsonValue);
+  if (canonicalJson(live.baseline.target) !== canonicalJson(object(before.target))) return ["unknown", "target_mismatch", row.result_version_id, live.baseline.deployment_id];
   if (live.baseline.etag !== before.etag) return ["unknown", "cloudflare_code_drift", live.baseline.active_version_id, live.baseline.deployment_id];
   if (row.result_version_id && live.baseline.active_version_id !== row.result_version_id && live.baseline.latest_version_id !== row.result_version_id) return ["unknown", "cloudflare_version_drift", row.result_version_id, live.baseline.deployment_id];
   if (live.baseline.active_version_id === before.active_version_id) return ["pending", "deployment_not_active", live.baseline.latest_version_id === before.active_version_id ? null : live.baseline.latest_version_id, live.baseline.deployment_id];
   if (row.result_version_id && live.baseline.active_version_id !== row.result_version_id) return ["unknown", "cloudflare_version_drift", row.result_version_id, live.baseline.deployment_id];
-  const changedNames = row.kind.endsWith("_secret") ? new Set([text(desired.secret_name)]) : row.kind === "rate_limit" ? new Set(RATE_GROUPS[desired.scope as keyof typeof RATE_GROUPS]) : new Set([...Object.values(CONFIG_VARS), "USAGE_ACCOUNT_ID", "USAGE_D1_DATABASE_ID", "USAGE_WORKER_NAME"]);
+  const secretName = row.kind.endsWith("_secret") ? operationSecretName(row, desired) : null;
+  const changedNames = secretName ? new Set([secretName]) : row.kind === "rate_limit" ? new Set(RATE_GROUPS[desired.scope as keyof typeof RATE_GROUPS]) : new Set([...Object.values(CONFIG_VARS), "USAGE_ACCOUNT_ID", "USAGE_D1_DATABASE_ID", "USAGE_WORKER_NAME"]);
   const unchanged = (value: JsonValue | undefined) => list(value).map(object).filter(binding => !changedNames.has(text(binding.name))).sort((a, b) => text(a.name).localeCompare(text(b.name)));
   if (before.metadata_hash !== live.baseline.metadata_hash || canonicalJson(unchanged(before.binding_fingerprints)) !== canonicalJson(unchanged(live.baseline.binding_fingerprints))) return ["unknown", "cloudflare_foreign_configuration_drift", live.baseline.active_version_id, live.baseline.deployment_id];
   let matches = false;
-  if (row.kind.endsWith("_secret")) { const kind = desired.secret_kind as SecretKind, current = tokenFor(env, kind); matches = Boolean(current && row.secret_value_hash === await sha256Hex(current)); }
-  else { const kind = row.kind as PlanKind; matches = canonicalJson(desiredValues(kind, desired, live.bindings)) === canonicalJson(desired); }
-  return [matches ? "verified" : "unknown", matches ? null : row.kind.endsWith("_secret") ? "secret_readback_pending" : "configuration_readback_mismatch", live.baseline.active_version_id, live.baseline.deployment_id];
+  if (secretName) { const current = env[secretName]; matches = Boolean(current && live.bindings.some(binding => binding.name === secretName && binding.type === "secret_text") && row.secret_value_hash === await sha256Hex(current)); }
+  else { const kind = row.kind as PlanKind; matches = await planBindingsMatch(live, before, kind, desired, fixedTarget(env), writer, dependencies); }
+  return [matches ? "verified" : "unknown", matches ? null : row.kind.endsWith("_secret") ? "secret_readback_pending" : "configuration_readback_mismatch", matches || secretName ? live.baseline.active_version_id : row.result_version_id, live.baseline.deployment_id];
 }
 async function verifyOperationInternal(env: WorkerEnv, request: Request, auth: AuthContext, row: OperationRow, dependencies: CloudflareControlDependencies, token?: string): Promise<void> {
   if (row.status === "verified" || row.status === "failed") return;

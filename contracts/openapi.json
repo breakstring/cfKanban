@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.10.1-rc.2",
+    "version": "1.10.1-rc.3",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -17633,12 +17633,17 @@
           "configured": {
             "type": "object",
             "required": [
+              "connection",
               "configuration",
               "control",
               "analytics"
             ],
             "additionalProperties": false,
             "properties": {
+              "connection": {
+                "type": "boolean",
+                "description": "Presence of CFKANBAN_API_TOKEN; legacy usage fields project the effective unified-or-legacy token."
+              },
               "configuration": {
                 "type": "boolean"
               },
@@ -17984,10 +17989,12 @@
           "kind": {
             "type": "string",
             "enum": [
+              "connection",
               "configuration",
               "control",
               "analytics"
-            ]
+            ],
+            "description": "connection saves CFKANBAN_API_TOKEN using the supplied token for preflight and self-save. Legacy kinds remain compatible; connection operations retain configuration_secret kind."
           },
           "token": {
             "type": "string",

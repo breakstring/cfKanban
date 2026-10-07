@@ -503,7 +503,7 @@ export function assertGenericApiPathIsNonSensitive({ method = "GET", apiPath }) 
     throw toolError("SENSITIVE_DELIVERY_REQUIRED", "Cloudflare tokens must use the protected Owner Web form and cannot enter ordinary API input or operation journals", {
       command: "web open",
       target: { kind: "admin", section: "overview" },
-      settings_path: "/app/admin?section=cloudflare",
+      settings_path: "/app/admin",
     });
   }
   if (/^\/api\/v1\/attachments\/[^/]+\/content$/u.test(pathname)) {

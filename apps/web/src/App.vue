@@ -113,7 +113,7 @@ const route = computed<AppRoute>(() => {
   if (path === "/app/notifications") return { kind: "notifications" };
   if (path === "/app/admin") {
     const raw = new URLSearchParams(currentPath.value.split("?", 2)[1] ?? "").get("section");
-    const section: OwnerSection = raw === "usage" || raw === "cloudflare" || raw === "workspaces" || raw === "access" || raw === "invitations" || raw === "audit" || raw === "archive" || raw === "updates"
+    const section: OwnerSection = raw === "usage" || raw === "workspaces" || raw === "access" || raw === "invitations" || raw === "audit" || raw === "archive" || raw === "updates"
       ? raw
       : "overview";
     return { kind: "owner", section };

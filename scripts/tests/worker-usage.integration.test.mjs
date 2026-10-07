@@ -5,7 +5,7 @@ import { bootstrapInstance } from "../../apps/worker/src/services/bootstrap.ts";
 import { fetchWorker } from "../../apps/worker/src/index.ts";
 import { fileURLToPath } from "node:url";
 import { createTestHarness } from "wrangler";
-import { readUsage, collectUsageStatistics, refreshUsage } from "../../apps/worker/src/services/usage.ts";
+import { readUsage, collectUsageStatistics, refreshUsage, usageAnalyticsConfig } from "../../apps/worker/src/services/usage.ts";
 const server = createTestHarness({ root: fileURLToPath(new URL("../../", import.meta.url)), workers: [{ configPath: "wrangler.attachments-test.jsonc" }] });
 const worker = server.getWorker();
 let env;
@@ -24,6 +24,13 @@ test("Owner control and no-config attachment budget", async () => {
   await env.DB.prepare("UPDATE attachment_storage SET reserved_bytes = 123 WHERE singleton = 1").run();
   const result = await readUsage({ ...env, ATTACHMENTS: undefined }, owner, now);
   assert.deepEqual(result.attachments, { enabled: false, reserved_bytes: 123, limit_bytes: null, limit_configured: false, settings_version: 1 });
+});
+test("用量配置优先统一 Token 并兼容旧 Secret，显式关闭仍禁止采集", () => {
+  const unifiedToken = "unified-local-test-only", combined = { ...configuration, CFKANBAN_API_TOKEN: unifiedToken };
+  assert.equal(usageAnalyticsConfig(combined).token, unifiedToken);
+  assert.equal(usageAnalyticsConfig({ ...combined, USAGE_ANALYTICS_TOKEN: undefined }).token, unifiedToken);
+  assert.equal(usageAnalyticsConfig(configuration).token, configuration.USAGE_ANALYTICS_TOKEN);
+  assert.equal(usageAnalyticsConfig({ ...combined, USAGE_ANALYTICS_ENABLED: "false" }), null);
 });
 test("fixed endpoint, scope, UTC windows, latest capacity, zero vs unknown", async () => {
   Object.assign(env, configuration);

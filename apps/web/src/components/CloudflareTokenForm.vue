@@ -37,7 +37,7 @@ onUnmounted(() => { mounted = false; token.value = ""; });
     <p :id="`${inputId}-description`" class="muted-copy">{{ description }}</p>
     <div class="cloudflare-token-controls">
       <UInput :id="inputId" v-model="token" type="password" autocomplete="off" autocapitalize="none" :spellcheck="false" :disabled="disabled || saving || uncertain" :aria-describedby="`${inputId}-description`" class="cloudflare-token-input" />
-      <UButton color="primary" variant="solid" type="submit" :disabled="disabled || saving || uncertain || !token.trim()">{{ saving ? ui('Saving and applying…', '正在保存并应用…') : ui('Save and apply configuration', '保存并应用配置') }}</UButton>
+      <UButton color="primary" variant="solid" type="submit" :disabled="disabled || saving || uncertain || !token.trim()">{{ saving ? ui('Connecting…', '正在连接…') : ui('Save connection', '保存连接') }}</UButton>
     </div>
     <p v-if="uncertain" class="warning-panel" role="alert">{{ ui('The result could not be confirmed. The Token input has been cleared. Verify the current state before entering a Token again.', '操作结果尚未确认，Token 输入已清空。请先核验当前状态，再决定是否重新输入 Token。') }} <UButton color="neutral" variant="outline" type="button" @click="emit('verify')">{{ ui('Verify current state', '核验当前状态') }}</UButton></p>
   </form>

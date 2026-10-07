@@ -243,7 +243,7 @@ Issue/Comment soft delete 与 Grant revoke 释放 slot，restore/regrant 重新�
 
 Public Join 不建立逐 Principal blacklist。Project 仍公开时，被撤销 Grant 的 Principal 可以重新加入并重新占用 Principal slot；要停止新的 self-join，Owner 关闭 Public Join。关闭入口不撤销既有 Grants，同时停止本 Project 三项 quota 的强制，不影响其他 Project。重新开启表单可以预填上次使用的 limits，但 Owner 必须显式提交；服务端不能静默沿用。
 
-Owner Overview 必须只读展示实例当前的单 Principal 120/60 秒、实例动态 API 300/60 秒、未认证敏感操作 30/60 秒门槛、配置来源，以及有界的近期 429 摘要。它们是近似频率门控，不是精确业务 quota；Web 不提供编辑或“保存”按钮。需要调整时，页面给出调用 `cfkanban-deploy` 的简短 Agent 话术；实际动作是显式 Worker 配置部署，不运行 D1 migration。
+Owner Overview 展示当前访问频率限制、配置来源和有界的近期 429 摘要。按 [Owner Cloudflare 管理增量](2026-10-07-owner-cloudflare-control-spec.md)，具备已核验配置授权的 Owner 可在概览预览并应用五个 scope 的单项变更；未接入时说明原因并指向同页连接入口。它们是近似频率门控，不是精确业务 quota 或费用封顶；实际动作是显式 Worker 配置部署，不运行 D1 migration。
 
 ## 5. 简洁性约束
 

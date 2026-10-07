@@ -5,8 +5,8 @@ import { ApiProblem, apiRequest } from "../lib/api";
 import { locale } from "../lib/i18n";
 import type { WriteResult } from "../types";
 
-const props = withDefaults(defineProps<{ summary?: boolean; observedOrigin?: string }>(), { summary: false });
-const emit = defineEmits<{ details: [] }>();
+const props = withDefaults(defineProps<{ summary?: boolean; observedOrigin?: string; refreshGeneration?: number }>(), { summary: false, refreshGeneration: 0 });
+const emit = defineEmits<{ details: []; settings: [field: "analytics_enabled" | "billing_plan" | "billing_cycle_day" | "account_totals"] }>();
 
 interface UsageMetric {
   key: string;
@@ -245,6 +245,7 @@ watch(() => props.summary, (summary, previousSummary) => {
   if (current?.cloudflare.status === "fresh" && (failed.value || snapshotExpired(current))) current.cloudflare.status = "stale";
   if (failed.value || current === null || needsCollection(current)) void refresh("open");
 });
+watch(() => props.refreshGeneration, () => { void refresh("open"); });
 onMounted(() => refresh("open"));
 onUnmounted(() => { disposed = true; generation++; controller?.abort(); settingsController.abort(); });
 </script>
@@ -280,7 +281,7 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
       </form>
       <p class="muted-copy">{{ ui('Reserved until files are reclaimed, including uploads and deleted files. Not actual R2 storage or a billing cap.', '含上传中和已删除文件，回收后释放；不等于 R2 实际容量或账单上限。') }}</p>
       <div class="usage-cloud-heading"><h3>{{ ui('Cloudflare statistics', 'Cloudflare 用量统计') }}</h3><span role="status">{{ statusText }}</span><span v-if="usage.cloudflare.collected_at && usage.cloudflare.status !== 'not_configured'">{{ ui('Updated', '更新于') }} {{ shortTime(usage.cloudflare.collected_at) }}</span></div>
-      <p v-if="usage.cloudflare.status === 'not_configured'" class="muted-copy">{{ ui('Analytics credentials or resource settings are missing, or collection is disabled. Ask your deployment Agent to prepare a read-only analytics configuration.', '统计凭据或资源设置尚未配置，或采集已关闭。可请部署 Agent 准备只读统计配置方案。') }}</p>
+      <p v-if="usage.cloudflare.status === 'not_configured'" class="muted-copy">{{ ui('The connection or resource settings are missing, or collection is disabled.', '连接或资源设置尚未配置，或采集已关闭。') }} <a href="/app/admin">{{ ui('Check connection in Overview', '在概览中检查连接') }}</a> · <a href="#connection-configuration-heading" @click="emit('settings', 'analytics_enabled')">{{ ui('Usage collection setting', '用量采集设置') }}</a></p>
       <template v-else>
         <p v-if="usage.cloudflare.refreshing" class="muted-copy" role="status">{{ ui('Collection is in progress. Refresh usage later to read the result.', '正在采集中，请稍后手动刷新用量查看结果。') }}</p>
         <p v-if="!usage.cloudflare.refreshing && (usage.cloudflare.status === 'stale' || usage.cloudflare.error)" class="warning-panel">{{ ui('Collection failed or the snapshot is older than fifteen minutes. Available values are retained; unknown values are not zero.', '采集失败或快照已超过十五分钟。保留已有数据；未知值不代表零。') }}</p>
@@ -293,11 +294,7 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
           <p v-if="!usage.cloudflare.billing.r2_standard_only_scope || usage.cloudflare.billing.r2_standard_only_scope === 'unknown'" class="muted-copy">{{ ui('R2 free allowances apply only to Standard storage. Its usage scope is unconfirmed, so R2 allowance reminders are unavailable.', 'R2 免费额度仅适用于 Standard 存储；尚未确认其用量范围，因此暂不提供 R2 额度提醒。') }}</p>
           <p v-else-if="usage.cloudflare.billing.r2_standard_only_scope === 'instance'" class="muted-copy">{{ ui('Standard-only R2 usage is confirmed for this instance. This does not confirm the account totals; R2 free allowances are compared only for this instance.', '仅已确认本实例的 R2 用量全部属于 Standard，不代表账户总量也满足此条件；R2 免费额度仅比较本实例用量。') }}</p>
         </div>
-        <details class="usage-configuration">
-          <summary>{{ ui('How to configure plan and billing cycle', '如何配置服务方案与账单周期') }}</summary>
-          <p class="muted-copy">{{ ui('Check your actual Free/Paid plan and billing-period start date in the Cloudflare account dashboard → Billing. Then set USAGE_BILLING_PLAN (free or paid) and USAGE_BILLING_CYCLE_DAY (verified UTC start day, 1–31) in Workers & Pages → this Worker → Settings → Variables and Secrets.', '先在 Cloudflare 账户控制台 → 账单中核对实际 Free/Paid 方案与账单周期开始日期，再到 Workers 和 Pages → 本实例 Worker → 设置 → 变量和机密，设置 USAGE_BILLING_PLAN（free 或 paid）和 USAGE_BILLING_CYCLE_DAY（核实后的 UTC 起始日，1–31）。') }}</p>
-          <p class="muted-copy">{{ ui('A deployment Agent can prepare and preserve these non-secret settings with the cfkanban-deploy skill. You can configure an existing instance without reinstalling it or upgrading your Cloudflare plan.', '也可让部署 Agent 使用 cfkanban-deploy 技能准备并保留这些非秘密配置。可为现有实例补充配置，无需重新安装或升级 Cloudflare 方案。') }} <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Deployment configuration guide', '部署配置指引') }}</a></p>
-        </details>
+        <p class="muted-copy"><a href="#connection-configuration-heading" @click="emit('settings', 'billing_plan')">{{ ui('Change plan, billing cycle, or reminders in Usage settings', '在用量设置中修改方案、账期或提醒') }}</a></p>
         <section v-if="visibleAlerts.length" class="usage-alerts" aria-labelledby="usage-alerts-heading">
           <h4 id="usage-alerts-heading">{{ ui('Shared allowance reminders', '共享额度提醒') }}</h4>
           <p class="muted-copy">{{ ui('Calculated from this fresh usage snapshot. These are separate from Cloudflare billing Budget Alerts.', '根据本次新鲜用量快照计算，与 Cloudflare 账单预算警报是两套提醒。') }}</p>
@@ -317,16 +314,9 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
             <div v-for="entry in group.metrics" :key="entry.key"><dt>{{ entry.label }}</dt><dd><strong>{{ metricValue(entry.metric) }}</strong></dd></div>
           </dl>
         </section>
-        <p v-if="usage.cloudflare.billing && !usage.cloudflare.billing.account_totals_enabled" class="muted-copy">{{ ui('Account totals are not enabled. Ask your deployment Agent to prepare an opt-in configuration if needed.', '未启用账户总量；如需查看，请部署 Agent 准备可选配置方案。') }}</p>
+        <p v-if="usage.cloudflare.billing && !usage.cloudflare.billing.account_totals_enabled" class="muted-copy">{{ ui('Account totals are not enabled.', '未启用账户总量。') }} <a href="#connection-configuration-heading" @click="emit('settings', 'account_totals')">{{ ui('Review account totals setting', '查看账户汇总设置') }}</a></p>
       </template>
       <p class="muted-copy usage-note">{{ ui('Allowances are shared across the account. Instance figures show contribution, not remaining allowance. Analytics may be sampled or delayed and are not an invoice.', '额度由账户内资源共享，实例数据只表示贡献，不表示剩余额度。统计可能采样或延迟，不代表账单。') }}</p>
-      <section class="usage-budget-alerts" aria-labelledby="usage-budget-alerts-heading">
-        <h3 id="usage-budget-alerts-heading">{{ ui('Cloudflare budget emails', 'Cloudflare 预算邮件提醒') }}</h3>
-        <p class="muted-copy">{{ ui('Cloudflare Budget Alerts notify selected email recipients when cumulative usage-based account charges exceed a USD budget threshold. They are separate from cfKanban’s percentage-based allowance reminders and do not report remaining quota.', 'Cloudflare Budget Alerts 在账户累计按量使用费用超过 USD 预算阈值时通知指定收件邮件，与 cfKanban 按百分比计算的额度提醒不同，也不表示剩余配额。') }}</p>
-        <p class="muted-copy"><a href="/app/admin?section=cloudflare">{{ ui('Read notification policies and recipients in Cloudflare settings', '在 Cloudflare 设置中读取通知策略和收件邮箱') }}</a>{{ ui('. USD budget fields are shown as unknown when their API meaning cannot be verified.', '。API 中的美元预算字段无法确认含义时显示未知。') }}</p>
-        <p class="muted-copy"><a href="https://developers.cloudflare.com/billing/manage/budget-alerts/" target="_blank" rel="noopener noreferrer">{{ ui('View or manage budget alerts in Cloudflare', '在 Cloudflare 查看或管理预算警报') }}</a>{{ ui(' for supported Pay-as-you-go accounts. Alerts notify you; they do not stop usage or cap charges.', '（适用于 Cloudflare 支持的按量付费账户）。告警仅作提醒，不会停止用量或封顶费用。') }}</p>
-        <p class="muted-copy">{{ ui('Budget policies are read-only here. Enter Cloudflare credentials only in the protected Cloudflare settings form; never send them in chat.', '预算策略在这里只读。Cloudflare 凭据仅在受保护的 Cloudflare 设置表单输入，不要发送到聊天。') }} <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Permissions and setup guide', '权限与接入指南') }}</a></p>
-      </section>
       <p class="muted-copy usage-note">{{ ui('Daily totals use UTC; storage uses the latest available observation and may be delayed.', '今日按 UTC 统计；容量为最近可用观测，可能延迟。') }}</p>
       <p class="muted-copy usage-note">{{ ui('Web and Skill share a 15-minute cache · 60-second cooldown · No background polling', '页面与技能共用 15 分钟缓存 · 冷却 60 秒 · 无后台轮询') }}</p>
       <details class="usage-details">
@@ -362,20 +352,6 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
         <p class="muted-copy">{{ ui('Instance usage does not represent account-wide usage or remaining allowances. Project active quotas remain in each project’s Public Join settings.', '本实例用量不代表账户总用量或剩余额度。项目配额仍在各项目的公开加入设置中查看。') }}</p>
         <p class="muted-copy">{{ ui('CPU is cumulative microseconds, not a percentile-based estimate. R2 Class A/B follows operation classification; unclassified requests remain separate. Observed storage is not GB-month billing.', 'CPU 为累计微秒值，不按分位数估算。R2 按操作分类展示 Class A/B，未分类请求单独保留。观测容量不等于 GB-month 计费用量。') }}</p>
       </details>
-      <section v-if="usage.public_access" class="usage-public-access" aria-labelledby="usage-public-access-heading">
-        <h3 id="usage-public-access-heading">{{ ui('Domain & access protection', '域名与访问防护') }}</h3>
-        <p v-if="observedOrigin" class="muted-copy">{{ ui('Current site address', '当前网站地址') }}: {{ observedOrigin }}</p>
-        <p v-if="usage.public_access.status === 'not_configured'" class="muted-copy">{{ ui('No custom-domain or WAF configuration snapshot is recorded by the deployment tool. An existing custom domain or manually configured WAF can still be active; older installations may have no managed record.', '部署工具尚未记录自定义域名或 WAF 配置快照。这不表示没有自定义域名或手动配置的 WAF；旧版安装可能未保存托管记录。') }}</p>
-        <p v-else-if="usage.public_access.status === 'invalid'" class="warning-panel">{{ ui('The saved public access configuration is invalid. Ask your deployment Agent to inspect and repair it.', '保存的公开访问配置无效，请部署 Agent 核对并修复。') }}</p>
-        <dl v-else class="usage-windows">
-          <div><dt>{{ ui('Custom domain', '自定义域名') }}</dt><dd>{{ usage.public_access.hostname }}</dd></div>
-          <div><dt>{{ ui('Tool-managed custom security rule', '本工具管理的自定义防护规则') }}</dt><dd>{{ usage.public_access.waf_profile === 'anonymous-api-filter' ? ui('Anonymous API filter', '匿名 API 过滤') : ui('Not enabled by the deployment tool', '部署工具未启用') }}</dd></div>
-          <div><dt>{{ ui('Deployment verification recorded at', '部署核对记录时间') }}</dt><dd>{{ time(usage.public_access.verified_at) }}</dd></div>
-        </dl>
-        <p class="muted-copy">{{ ui('This is the last deployment configuration, not a live protection check. The Owner can ask a deployment Agent to inspect the current state or prepare a change plan.', '此处仅显示最后部署配置，不代表实时防护状态。Owner 可请部署 Agent 核对当前状态或准备变更方案。') }}</p>
-        <p class="muted-copy">{{ ui('cfkanban-deploy and the public CLI support automated inspect, plan, and apply workflows. For a new custom domain, Cloudflare manages DNS and certificates; a separate optional WAF plan creates a rule scoped to the exact hostname. This custom rule is not Cloudflare Managed Rules.', 'cfkanban-deploy 与公共 CLI 已支持自动化 inspect、plan、apply 流程。新自定义域名的 DNS 和证书由 Cloudflare 管理；单独的可选 WAF 计划创建限定准确 hostname 的规则。这是自定义规则，不是 Cloudflare Managed Rules。') }}</p>
-        <p class="muted-copy">{{ ui('An existing domain without a tool ownership receipt needs an explicit connection plan first; keep the domain in place rather than deleting and recreating it. Zone rules do not protect workers.dev; closing alternate entry points belongs to the specific plan. A custom domain does not require this optional rule.', '既有域名缺少本工具的归属回执时，需先明确接入方案，不要求删除或重建域名。Zone 规则不保护 workers.dev；关闭备用入口属于具体计划。使用自定义域名不强制启用此可选规则。') }} <a :href="`/docs/${locale}/deployment/optional/`">{{ ui('Domain and protection guide', '域名与防护指引') }}</a></p>
-      </section>
     </template>
   </section>
 </template>
@@ -398,8 +374,6 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
 .usage-alerts ul { display: grid; gap: 8px; list-style: none; padding: 0; }
 .usage-alerts li { margin: 0; }
 .usage-billing p { margin: 8px 0; }
-.usage-public-access { margin-top: 24px; }
-.usage-public-access dd { overflow-wrap: anywhere; }
 .usage-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 24px; margin: 8px 0 16px; }
 .usage-metrics > div { padding: 16px 0; border-bottom: 1px solid var(--color-border); }
 .usage-metrics dt { color: var(--color-text-muted); font-size: 13px; }
@@ -407,8 +381,6 @@ onUnmounted(() => { disposed = true; generation++; controller?.abort(); settings
 .usage-note { margin: 4px 0; }
 .usage-details { margin-top: 16px; }
 .usage-details summary { cursor: pointer; color: var(--color-text-muted); }
-.usage-configuration { margin: 12px 0; }
-.usage-configuration summary { cursor: pointer; }
 .usage-summary-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .usage-summary-metrics p { margin: 4px 0 0; font-size: 12px; }
 .usage-summary-status { margin-bottom: 0; }
