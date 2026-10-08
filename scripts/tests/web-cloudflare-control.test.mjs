@@ -354,6 +354,99 @@ function successfulSettings(call, current, rates, state) {
   }
 }
 
+test('completed instance history never becomes this page’s settings save feedback', async () => {
+  for (const kind of ['configuration', 'rate_limit']) for (const outcome of ['failed', 'verified']) {
+    const current = connection(); current.latest_operation = { ...operation(outcome), kind, failure_class: outcome === 'failed' ? 'permission_denied' : null };
+    const f = setup(current); const v = await mountControl();
+    try {
+      assert.equal(all(v.host).find(item => item.props.class === 'settings-feedback'), undefined);
+      assert.doesNotMatch(text(v.host), /settings change failed|Settings saved/);
+      assert.equal(settingInput(v.host, 'history_enabled').props.disabled, false);
+      assert.equal(v.events.applied, 1, 'initial data loading is independent of completed history');
+      assert.equal(f.calls.some(call => call.path.includes('/operations/')), false);
+      assert.equal(f.calls.some(call => call.path.endsWith('/configuration/apply')), false);
+    } finally { v.app.unmount(); f.restore(); }
+  }
+});
+
+test('unresolved instance history stays locked and verifies its exact operation before unlocking', async () => {
+  for (const kind of ['configuration', 'rate_limit']) for (const pending of ['pending', 'unknown']) {
+    const current = connection(); current.latest_operation = { ...operation(pending), kind };
+    let finish;
+    const f = setup(current, call => {
+      if (/\/operations\/.*\/verify$/.test(call.path)) return new Promise(resolve => { finish = () => {
+        current.version = 6; current.latest_operation = { ...current.latest_operation, status: 'verified', version: 6 };
+        resolve(write(current.latest_operation));
+      }; });
+    });
+    const host = node('root'); const app = renderer.createApp(Control, { session: sessionFixture() }); app.mount(host);
+    try {
+      await until(() => Boolean(finish));
+      assert.equal(tokenInput(host).props.disabled, true);
+      assert.equal(settingInput(host, 'history_enabled').props.disabled, true);
+      assert.match(text(host), /settings change is awaiting confirmation/);
+      assert.equal(f.calls.filter(call => call.path.endsWith(`/operations/${current.latest_operation.operation_id}/verify`)).length, 1);
+      finish(); await until(() => !tokenInput(host).props.disabled); await flush();
+      assert.match(text(host), /Settings saved/);
+      assert.equal(f.calls.some(call => call.path.endsWith('/configuration/apply') || call.path.endsWith('/secrets')), false);
+    } finally { app.unmount(); f.restore(); }
+  }
+});
+
+test('per-minute editing leaves legacy ten-second limits untouched on open and unrelated saves', async () => {
+  const state = {}; const f = setup(connection(), (call, current, rates) => successfulSettings(call, current, rates, state)); const v = await mountControl();
+  try {
+    const legacy = rateInput(v.host, 'anonymous_login');
+    assert.equal(legacy.props.value, ''); assert.equal(legacy.props.placeholder, 'Enter requests per minute');
+    const rows = all(v.host).filter(item => item.props.class === 'setting-row rate-row');
+    assert.equal(rows.some(item => all(item).some(child => child.tag === 'select')), false, 'frequency has no duration selector');
+    assert.match(text(rows.find(item => text(item).startsWith('Anonymous login'))), /11 \/ 10 seconds/);
+    assert.match(text(v.host), /Set the maximum requests allowed per minute \(60 seconds\)/);
+    assert.equal(diff(v.host), undefined); assert.equal(settingsSave(v.host).props.disabled, true);
+    assert.equal(f.calls.some(call => call.path.endsWith('/configuration/plan') || call.path.endsWith('/configuration/apply')), false);
+    change(settingInput(v.host, 'history_enabled'), 'true'); await nextTick(); await submit(settingsForm(v.host)); await flush();
+    assert.deepEqual(f.calls.find(call => call.path.endsWith('/configuration/plan')).body.settings, { history_enabled: true });
+    assert.deepEqual(f.rates.cost_protection.anonymous_login.policy, { limit: 11, period_seconds: 10 });
+    assert.equal(rateInput(v.host, 'anonymous_login').props.value, '');
+    locale.value = 'zh-CN'; await nextTick();
+    assert.equal(rateInput(v.host, 'anonymous_login').props.placeholder, '请输入每分钟请求数');
+    assert.match(text(v.host), /11 \/ 10 秒.*当前 10 秒限额继续生效/);
+  } finally { locale.value = 'en'; v.app.unmount(); f.restore(); }
+});
+
+test('explicit legacy edits show the ten-to-sixty-second change and save the entered per-minute limit without scaling', async () => {
+  for (const scope of ['instance', 'anonymous_login']) {
+    const state = {}; const f = setup(connection(), (call, current, rates) => successfulSettings(call, current, rates, state));
+    const rate = scope === 'instance' ? f.rates.policies.instance : f.rates.cost_protection.anonymous_login.policy;
+    rate.limit = 11; rate.period_seconds = 10;
+    const v = await mountControl();
+    try {
+      change(rateInput(v.host, scope), '11'); await nextTick();
+      assert.match(text(diff(v.host)), /11 \/ 10 seconds11 \/ 1 minute \(window: 10 → 60 seconds\)/);
+      locale.value = 'zh-CN'; await nextTick(); assert.match(text(diff(v.host)), /11 \/ 10 秒11 \/ 1 分钟（时长：10 → 60 秒）/); locale.value = 'en'; await nextTick();
+      button(v.host, 'Discard changes').props.onClick(); await nextTick();
+      assert.equal(rateInput(v.host, scope).props.value, ''); assert.equal(diff(v.host), undefined);
+      change(rateInput(v.host, scope), '11'); await nextTick(); await submit(settingsForm(v.host)); await flush();
+      assert.deepEqual(f.calls.find(call => call.path.endsWith('/configuration/plan')).body.settings, { rate_limits: { [scope]: { limit: 11, period_seconds: 60 } } });
+      assert.equal(rateInput(v.host, scope).props.value, '11'); assert.equal(diff(v.host), undefined);
+      assert.equal(f.calls.filter(call => call.path.endsWith('/configuration/apply')).length, 1);
+    } finally { locale.value = 'en'; v.app.unmount(); f.restore(); }
+  }
+});
+
+test('attachment settings are inside the settings section but outside its form and remain independent of Cloudflare authorization', async () => {
+  const current = connection(); current.configured = { connection: false, configuration: false, control: false, analytics: false }; current.capabilities.configuration = 'missing';
+  const f = setup(current); const v = await mountControl({}, { 'attachment-settings': () => h('form', { id: 'attachment-settings-fixture' }, [h('input', { id: 'attachment-limit-fixture' })]) });
+  try {
+    const attachment = all(v.host).find(item => item.props.id === 'attachment-settings-fixture');
+    assert.ok(attachment); assert.equal(attachment.parent.props.class, 'owner-section settings-panel');
+    assert.equal(attachment.parent, settingsForm(v.host).parent);
+    assert.equal(all(settingsForm(v.host)).includes(attachment), false);
+    assert.equal(settingInput(v.host, 'history_enabled').props.disabled, true);
+    assert.equal(all(attachment).find(item => item.props.id === 'attachment-limit-fixture').props.disabled, undefined);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
 test('unified settings draft shows only changes, discards locally, and keeps unknown fields unavailable', async () => {
   const f = setup(); const v = await mountControl();
   try {
@@ -361,7 +454,7 @@ test('unified settings draft shows only changes, discards locally, and keeps unk
     assert.equal(settingInput(v.host, 'account_totals').props.value, 'false');
     assert.equal(diff(v.host), undefined); const before = f.calls.length;
     change(settingInput(v.host, 'history_enabled'), 'true'); change(rateInput(v.host), '450'); await nextTick();
-    assert.match(text(diff(v.host)), /Daily usage historyDisabledEnabled.*Instance API300 \/ 60 seconds450 \/ 60 seconds/);
+    assert.match(text(diff(v.host)), /Daily usage historyDisabledEnabled.*Instance API300 \/ 1 minute450 \/ 1 minute/);
     assert.equal(all(diff(v.host)).filter(item => item.tag === 'tbody')[0].children.filter(item => item.tag === 'tr').length, 2);
     assert.equal(settingsSave(v.host).props.disabled, false); assert.equal(text(settingsSave(v.host)), 'Save 2 changes');
     locale.value = 'zh-CN'; await nextTick(); assert.equal(text(settingsSave(v.host)), '保存 2 项修改'); locale.value = 'en'; await nextTick();
@@ -387,7 +480,7 @@ test('one save sends only changed settings to one configuration plan and one app
     await submit(settingsForm(v.host)); await flush();
     const plans = f.calls.filter(call => call.path.endsWith('/configuration/plan')), applies = f.calls.filter(call => call.path.endsWith('/configuration/apply'));
     assert.equal(plans.length, 1); assert.equal(applies.length, 1); assert.ok(applies[0].key);
-    assert.deepEqual(plans[0].body, { settings: { history_enabled: true, billing_plan: 'paid', rate_limits: { instance: { limit: 450, period_seconds: 60 }, anonymous_login: { limit: 20, period_seconds: 10 } } }, expected_version: 4 });
+    assert.deepEqual(plans[0].body, { settings: { history_enabled: true, billing_plan: 'paid', rate_limits: { instance: { limit: 450, period_seconds: 60 }, anonymous_login: { limit: 20, period_seconds: 60 } } }, expected_version: 4 });
     assert.deepEqual(applies[0].body, { plan_id: state.plan.plan_id, expected_version: 5 });
     assert.equal(f.calls.some(call => call.path.includes('/rate-limits/')), false);
     assert.equal(diff(v.host), undefined); assert.equal(rateInput(v.host).props.value, '450'); assert.equal(settingInput(v.host, 'history_enabled').props.value, 'true');
@@ -436,7 +529,7 @@ test('a conflicting or failed preparation refreshes current values and retains t
     try {
       change(rateInput(v.host), '450'); await nextTick(); await submit(settingsForm(v.host)); await flush();
       assert.match(text(v.host), failure === 'conflict' ? /Settings changed elsewhere/ : /Could not prepare/);
-      assert.match(text(diff(v.host)), /600 \/ 60 seconds450 \/ 60 seconds/); assert.equal(rateInput(v.host).props.value, '450');
+      assert.match(text(diff(v.host)), /600 \/ 1 minute450 \/ 1 minute/); assert.equal(rateInput(v.host).props.value, '450');
       assert.equal(f.calls.some(call => call.path.endsWith('/apply')), false);
       await submit(settingsForm(v.host)); await flush();
       assert.equal(f.calls.filter(call => call.path.endsWith('/configuration/plan')).at(-1).body.expected_version, 7);
@@ -465,6 +558,38 @@ test('a rejected or failed apply keeps the complete draft and needs a new explic
       await submit(settingsForm(v.host)); await flush(); assert.equal(applies, 2); assert.equal(diff(v.host), undefined);
     } finally { v.app.unmount(); f.restore(); }
   }
+});
+
+test('a confirmed failed apply rechecks invalidated capabilities while keeping its failed result and draft without resending apply', async () => {
+  const state = {}; let finishCheck;
+  const f = setup(connection(), (call, current, rates) => {
+    if (call.path.endsWith('/configuration/apply')) {
+      current.version++; current.latest_operation = { ...operation('failed'), kind: 'configuration', version: current.version, failure_class: 'permission_denied' };
+      current.capabilities.configuration = 'unverified'; current.capabilities.analytics = 'unverified';
+      return write(current.latest_operation);
+    }
+    if (call.path === '/api/v1/admin/cloudflare/verify' && current.latest_operation?.status === 'failed') return new Promise(resolve => { finishCheck = () => {
+      current.capabilities.configuration = 'verified'; current.capabilities.analytics = 'missing';
+      resolve(write(current));
+    }; });
+    return successfulSettings(call, current, rates, state);
+  }); const v = await mountControl();
+  try {
+    const before = v.events.applied;
+    change(settingInput(v.host, 'history_enabled'), 'true'); change(rateInput(v.host), '450'); await nextTick();
+    await submit(settingsForm(v.host)); await until(() => Boolean(finishCheck));
+    assert.equal(settingsSave(v.host).props.disabled, true);
+    assert.match(text(v.host), /settings change failed.*denied permission/);
+    assert.equal(settingInput(v.host, 'history_enabled').props.value, 'true'); assert.equal(rateInput(v.host).props.value, '450');
+    finishCheck(); await until(() => !settingsSave(v.host).props.disabled); await flush();
+    assert.match(text(v.host), /settings change failed.*denied permission/); assert.doesNotMatch(text(v.host), /Settings saved/);
+    assert.equal(settingInput(v.host, 'history_enabled').props.value, 'true'); assert.equal(rateInput(v.host).props.value, '450');
+    assert.match(text(capabilitySummary(row(v.host, 'Instance settings'))), /Configuration readable/);
+    assert.equal(f.calls.filter(call => call.path.endsWith('/configuration/plan')).length, 1);
+    assert.equal(f.calls.filter(call => call.path.endsWith('/configuration/apply')).length, 1);
+    assert.equal(f.calls.filter(call => call.path === '/api/v1/admin/cloudflare/verify').length, 2);
+    assert.equal(v.events.applied, before, 'failed settings never report an applied change');
+  } finally { v.app.unmount(); f.restore(); }
 });
 
 test('a lost apply recovers only its original key across navigation and never trusts another completed operation', async () => {

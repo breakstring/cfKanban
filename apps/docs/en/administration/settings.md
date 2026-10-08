@@ -90,7 +90,7 @@ Check current usage first, then confirm that the setting has taken effect.
 
 You can explicitly choose unlimited capacity. Unset capacity blocks new uploads. Changing it requires Owner access. Uploading also needs attachment storage enabled; setting capacity does not enable it automatically.
 
-**In the Web UI:** Open **Administration → Usage & quotas → Attachment storage limit → Set limit**. Choose a mode, enter finite capacity in MiB, and verify after saving. `1 GiB = 1024 MiB`. Lowering the limit keeps existing files and pauses new uploads above the limit.
+**In the Web UI:** Open **Administration → Usage & quotas → Usage & access settings → Attachment storage limit**. Choose a mode, enter finite capacity in MiB, and choose **Save storage limit**. This saves independently, requires no Cloudflare Token, and is not submitted with analytics or request-limit changes above. `1 GiB = 1024 MiB`. Lowering the limit keeps existing files and pauses new uploads above the limit.
 
 This limit controls uploads in cfKanban and is labeled **Attachment storage limit** in the Web UI. It is neither actual R2 storage use nor a Cloudflare billing cap. Deleted files release capacity only after cleanup succeeds.
 
@@ -110,6 +110,8 @@ Use $cfkanban-admin to check the address Agents use to connect to this instance 
 ```
 
 **In the Web UI:** **Overview → Service information** displays the release and instance addresses. **Usage & quotas → Usage & access settings** loads current request limits automatically. An Owner can edit several limits with analytics settings, review the combined before/after values, and save once.
+
+Enter the maximum requests per minute without choosing a duration. Existing 10-second policies still display their actual current values and change to a one-minute window only when you edit that policy. The page does not automatically convert or change existing policies.
 
 The **preferred API origin** tells Agents which connection address to prefer. Once the new domain is configured, ask your Agent to check the proposed address change:
 

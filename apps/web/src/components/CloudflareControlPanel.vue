@@ -235,7 +235,9 @@ function configurationText(value: unknown): string {
   return value === undefined ? ui("Not loaded", "尚未读取") : value === null ? ui("Not specified", "未声明") : typeof value === "boolean" ? (value ? ui("Enabled", "启用") : ui("Disabled", "停用")) : value === "free" ? "Free" : value === "paid" ? "Paid" : String(value);
 }
 function rateText(value: Record<string, unknown>): string {
-  return typeof value.limit === "number" && typeof value.period_seconds === "number" ? `${value.limit} / ${value.period_seconds} ${ui("seconds", "秒")}` : ui("Not loaded", "尚未读取");
+  if (typeof value.limit !== "number" || typeof value.period_seconds !== "number") return ui("Not loaded", "尚未读取");
+  const period = value.period_seconds === 60 ? ui("1 minute", "1 分钟") : `${value.period_seconds} ${ui("seconds", "秒")}`;
+  return `${value.limit} / ${period}`;
 }
 function rateFor(scope: RateScope): RateValue | null {
   const settings = rateSettings.value;
@@ -243,7 +245,10 @@ function rateFor(scope: RateScope): RateValue | null {
   return value && Number.isSafeInteger(value.limit) && value.limit > 0 && [10, 60].includes(value.period_seconds) ? value : null;
 }
 function currentInput(key: string): string {
-  if (key.includes(".")) { const [scope, field] = key.split("."); return String(rateFor(scope as RateScope)?.[field as keyof RateValue] ?? ""); }
+  if (key.includes(".")) {
+    const [scope, field] = key.split("."), rate = rateFor(scope as RateScope);
+    return field === "limit" && rate?.period_seconds === 10 ? "" : String(rate?.[field as keyof RateValue] ?? "");
+  }
   const value = connection.value?.configuration[key as ConfigurationField];
   return value === undefined ? "" : value === null ? (key === "billing_plan" ? "unknown" : "") : String(value);
 }
@@ -272,7 +277,7 @@ const changeRows = computed(() => [
     before: configurationText(connection.value?.configuration[field.value]),
     after: configurationText(["analytics_enabled", "history_enabled", "account_totals"].includes(field.value) ? draftInput(field.value) === "true" : draftInput(field.value) === "unknown" || draftInput(field.value) === "" ? null : draftInput(field.value)) })),
   ...rateScopes.value.filter(scope => changedKeys.value.some(key => key.startsWith(`${scope.value}.`))).map(scope => ({ key: scope.value, label: scope.label,
-    before: rateText(rateFor(scope.value) ?? {}), after: `${draftInput(`${scope.value}.limit`) || "—"} / ${draftInput(`${scope.value}.period_seconds`) || "—"} ${ui("seconds", "秒")}` })),
+    before: rateText(rateFor(scope.value) ?? {}), after: `${draftInput(`${scope.value}.limit`) || "—"} / ${ui("1 minute", "1 分钟")}${rateFor(scope.value)?.period_seconds === 10 ? ui(" (window: 10 → 60 seconds)", "（时长：10 → 60 秒）") : ""}` })),
 ]);
 function discardDraft(): void {
   if (busy.value || unresolved.value) return;
@@ -290,9 +295,9 @@ function settingsPatch(): Record<string, unknown> | null {
   const rates: Record<string, RateValue> = {};
   for (const { value: scope } of rateScopes.value) {
     if (!changedKeys.value.some(key => key.startsWith(`${scope}.`))) continue;
-    const limit = Number(draftInput(`${scope}.limit`)), period = Number(draftInput(`${scope}.period_seconds`));
-    if (!rateFor(scope) || !Number.isSafeInteger(limit) || limit < 1 || ![10, 60].includes(period)) return null;
-    rates[scope] = { limit, period_seconds: period };
+    const limit = Number(draftInput(`${scope}.limit`));
+    if (!rateFor(scope) || !Number.isSafeInteger(limit) || limit < 1) return null;
+    rates[scope] = { limit, period_seconds: 60 };
   }
   if (Object.keys(rates).length) patch.rate_limits = rates;
   return patch;
@@ -327,7 +332,8 @@ async function load(): Promise<void> {
     if (!current() || (connection.value && connection.value.version > result.version)) return;
     connection.value = result;
     if (!tokenWrite.value || result.latest_operation?.operation_id === tokenWrite.value.operationId) operation.value = result.latest_operation;
-    if (!settingsOperation.value || settingsOperation.value.operation_id === result.latest_operation?.operation_id) recordSettingsOperation(result.latest_operation);
+    if (settingsOperation.value?.operation_id === result.latest_operation?.operation_id
+      || !settingsOperation.value && result.latest_operation && ["pending", "unknown"].includes(result.latest_operation.status)) recordSettingsOperation(result.latest_operation);
   } catch { if (current()) failed.value = true; }
   finally { if (current()) loading.value = false; }
 }
@@ -558,7 +564,7 @@ async function saveSettings(): Promise<void> {
   } finally {
     if (isCurrent(requestContext)) {
       busy.value = false; settingsSaving.value = false;
-      if (unresolved.value || failed.value || ratesFailed.value) void automaticCheck(true);
+      if (unresolved.value || failed.value || ratesFailed.value || settingsFeedbackFailed.value && !hasConfiguration.value) void automaticCheck(true);
       else editorRecovery.value = false;
     }
   }
@@ -698,21 +704,22 @@ onUnmounted(() => {
         </fieldset>
         <fieldset class="settings-group" :disabled="!settingsEditable">
           <legend>{{ ui('Request frequency', '访问频率') }}</legend>
-          <p class="muted-copy">{{ ui('Maximum requests allowed within each time window.', '设置每个时间窗口内允许的最多请求数。') }}</p>
+          <p class="muted-copy">{{ ui('Set the maximum requests allowed per minute (60 seconds).', '设置每分钟（60 秒）允许的最多请求数。') }}</p>
           <p v-if="ratesFailed" class="muted-copy" role="status">{{ ui('Current request limits are temporarily unavailable. They will be read again automatically.', '暂时无法读取当前访问频率，系统会自动重试。') }}</p>
           <div v-for="scope in rateScopes" :key="scope.value" class="setting-row rate-row">
             <label :for="`usage-rate-${scope.value}`">{{ scope.label }}</label>
             <p class="setting-current"><span>{{ ui('Current', '当前值') }}</span>{{ rateText(rateFor(scope.value) ?? {}) }}</p>
-            <div class="rate-inputs"><UInput :id="`usage-rate-${scope.value}`" :aria-label="`${scope.label} ${ui('maximum requests', '最多请求数')}`" :disabled="!settingsEditable || !rateFor(scope.value)" :model-value="draftInput(`${scope.value}.limit`)" type="number" min="1" step="1" @update:model-value="updateDraft(`${scope.value}.limit`, $event)" /><span aria-hidden="true">/</span><USelect :aria-label="`${scope.label} ${ui('duration', '统计时长')}`" :disabled="!settingsEditable || !rateFor(scope.value)" :model-value="draftInput(`${scope.value}.period_seconds`)" :items="[{value:'10',label:ui('10 seconds','10 秒')},{value:'60',label:ui('60 seconds','60 秒')}]" @update:model-value="updateDraft(`${scope.value}.period_seconds`, $event)" /></div>
+            <div class="setting-input"><div class="rate-inputs"><UInput :id="`usage-rate-${scope.value}`" :aria-label="`${scope.label} ${ui('maximum requests per minute', '每分钟最多请求数')}`" :disabled="!settingsEditable || !rateFor(scope.value)" :model-value="draftInput(`${scope.value}.limit`)" :placeholder="rateFor(scope.value)?.period_seconds === 10 ? ui('Enter requests per minute', '请输入每分钟请求数') : ''" type="number" min="1" step="1" @update:model-value="updateDraft(`${scope.value}.limit`, $event)" /><span>{{ ui('/ 1 minute', '/ 1 分钟') }}</span></div><p v-if="rateFor(scope.value)?.period_seconds === 10" class="muted-copy rate-legacy-help">{{ ui('The current 10-second limit stays in effect until you enter and save a new per-minute limit.', '当前 10 秒限额继续生效，输入并保存新的每分钟限额后才会修改。') }}</p></div>
           </div>
         </fieldset>
         <section v-if="changeRows.length" class="configuration-plan" aria-labelledby="connection-plan-heading">
           <h3 id="connection-plan-heading">{{ ui('Your changes', '变更对比') }}</h3>
           <table class="plan-comparison"><thead><tr><th>{{ ui('Setting', '设置项') }}</th><th>{{ ui('Current value', '当前值') }}</th><th>{{ ui('New value', '修改后') }}</th></tr></thead><tbody><tr v-for="row in changeRows" :key="row.key"><th scope="row">{{ row.label }}</th><td>{{ row.before }}</td><td>{{ row.after }}</td></tr></tbody></table>
         </section>
-        <p v-if="validation" class="warning-panel" role="alert">{{ ui('Use whole numbers: billing day 1–31, request count at least 1, and duration 10 or 60 seconds.', '请输入整数：账期日为 1–31，请求数至少为 1，时长为 10 或 60 秒。') }}</p>
+        <p v-if="validation" class="warning-panel" role="alert">{{ ui('Use whole numbers: billing day 1–31 and requests per minute at least 1.', '请输入整数：账期日为 1–31，每分钟请求数至少为 1。') }}</p>
         <div class="settings-actions"><p class="muted-copy" role="status">{{ settingsSaving ? ui('Saving and confirming…', '正在保存并确认…') : changeRows.length ? ui(`${changeRows.length} unsaved changes`, `${changeRows.length} 项修改尚未保存`) : ui('No unsaved changes', '没有未保存的修改') }}</p><UButton color="neutral" variant="ghost" type="button" :disabled="busy || unresolved || !changeRows.length" @click="discardDraft">{{ ui('Discard changes', '放弃修改') }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="!settingsEditable || !changedRatesReady || !changeRows.length">{{ changeRows.length ? ui(`Save ${changeRows.length} ${changeRows.length === 1 ? 'change' : 'changes'}`, `保存 ${changeRows.length} 项修改`) : ui('Save settings', '保存设置') }}</UButton></div>
       </form>
+      <slot name="attachment-settings" />
     </section>
 
     <slot />
@@ -751,6 +758,8 @@ onUnmounted(() => {
 .setting-input > * { width: 100%; }
 .rate-inputs { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rate-inputs > :first-child { min-width: 0; flex: 1; width: 80px; }
+.rate-inputs > span { flex: none; }
+.rate-legacy-help { margin: 6px 0 0; font-size: 13px; }
 .settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--color-border); padding-top: 16px; }
 .settings-actions p { margin: 0 auto 0 0; font-size: 13px; }
 .plan-comparison { width: 100%; border-collapse: collapse; margin: 16px 0; }

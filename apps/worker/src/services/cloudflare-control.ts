@@ -323,6 +323,8 @@ function patchSettings(live: LiveBaseline, kind: ConfigurationPlanKind, desired:
   const bindings: Resource[] = live.bindings.filter(entry => !removed.has(text(entry.name))).map(entry => changed.get(text(entry.name)) ?? { name: text(entry.name), type: "inherit", version_id: live.baseline.active_version_id });
   for (const [name, binding] of changed) if (!live.bindings.some(entry => entry.name === name)) bindings.push(binding);
   const { exports_reconciliation: _reconciliation, annotations, ...settings } = live.settings;
+  // GET 将未启用的 placement 投影为 {}；PATCH 只接受有配置的对象。
+  if (settings.placement !== null && typeof settings.placement === "object" && !Array.isArray(settings.placement) && !Object.keys(settings.placement).length) delete settings.placement;
   // These annotations describe the newly created version; triggered_by is server-only.
   const writableAnnotations = annotations === undefined ? undefined : Object.fromEntries(Object.entries(object(annotations)).filter(([name]) => name === "workers/message" || name === "workers/tag"));
   return { ...settings, ...(writableAnnotations ? { annotations: writableAnnotations } : {}), bindings };
@@ -411,7 +413,7 @@ export async function applyCloudflarePlan(env: WorkerEnv, request: Request, auth
   try { if (canonicalJson((await baseline(env, token, dependencies)).baseline) !== row.baseline_json) throw validationError("cloudflare_baseline_changed"); }
   catch { await transition(env, request, auth, row, "failed", "preflight_changed", null, null); return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false); }
   if (!(await transition(env, request, auth, row, "pending", null, null, null, true))) return operationWriteResult(env, auth, await operationRow(env.DB, row.id), true);
-  await completeCloudMutation(env, request, auth, row.id, dependencies, token, async () => { const form = new FormData(); form.append("settings", JSON.stringify(settings)); return api(token, dependencies)(`${scriptPath(fixedTarget(env))}/settings`, { method: "PATCH", body: form }); });
+  await completeCloudMutation(env, request, auth, row.id, dependencies, token, async () => { const form = new FormData(); form.append("settings", new File([JSON.stringify(settings)], "settings", { type: "application/json" })); return api(token, dependencies)(`${scriptPath(fixedTarget(env))}/settings`, { method: "PATCH", body: form }); });
   return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false);
 }
 export async function getCloudflareOperation(env: WorkerEnv, auth: AuthContext, id: string): Promise<Resource> { requireOwnerControl(auth); return operationResource(await operationRow(env.DB, id), (await settingsRow(env.DB)).version); }

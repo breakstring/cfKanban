@@ -46,7 +46,12 @@ function fakeProvider() {
       return response({ name: body.name, type: body.type });
     }
     if (method === "PATCH" && path.endsWith("/settings")) {
-      assert.ok(init.body instanceof FormData); const patch = JSON.parse(init.body.get("settings")); state.mutations.push({ method, path, patch: structuredClone(patch) });
+      assert.ok(init.body instanceof FormData);
+      const part = init.body.get("settings");
+      if (!(part instanceof File) || part.name !== "settings" || part.type !== "application/json") return response(null, 400);
+      const patch = JSON.parse(await part.text());
+      if (patch.placement && !Object.keys(patch.placement).length) return response(null, 400);
+      state.mutations.push({ method, path, patch: structuredClone(patch) });
       assert.ok(!("exports_reconciliation" in patch)); assert.ok(!("workers/triggered_by" in patch.annotations));
       patch.bindings = patch.bindings.map(binding => binding.type === "inherit" ? structuredClone(state.versions.get(binding.version_id).bindings.find(existing => existing.name === binding.name)) : binding); patch.annotations["workers/triggered_by"] = "settings";
       publish(patch); if (state.mode === "network_after") throw new Error("Synthetic settings response lost after publication"); return response(patch);
@@ -55,7 +60,7 @@ function fakeProvider() {
     if (path.endsWith("/deployments")) return response({ deployments: [{ id: state.deployment, versions: [{ version_id: state.active, percentage: 100 }] }] }, 200, { page: 1, per_page: 10, total_pages: state.deploymentPages });
     if (path.endsWith("/versions")) return response({ items: [{ id: state.latest }] });
     if (/\/versions\/[^/]+$/.test(path)) return response({ resources: { bindings: state.versions.get(path.split("/").at(-1)).bindings, script: { etag: state.code }, script_runtime: { compatibility_flags: ["global_fetch_strictly_public"] } } });
-    if (path.endsWith("/settings")) return response(state.versions.get(state.latest));
+    if (path.endsWith("/settings")) return response({ placement: {}, ...state.versions.get(state.latest) });
     if (path === `/zones/${zoneId}`) return response({ id: zoneId, name: "example.test", status: "active", account: { id: state.foreignZone ? "foreign-account" : target.account_id } });
     if (path.endsWith("/firewall/access_rules/rules")) return response([]);
     const wafRuleset = { id: "fixture-entrypoint", kind: "zone", phase: "http_request_firewall_custom", rules: [{ id: "foreign-rule", ref: "foreign", enabled: true, action: "skip", expression: "true" }] };
@@ -350,6 +355,36 @@ test("历史与analytics设置仅从固定目标派生，保留旧配置并验�
   const applied = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version } }); assert.equal(applied.status, 200, JSON.stringify(applied.data)); assert.equal(applied.data.resource.status, "verified", JSON.stringify(applied.data));
   const bindings = provider.versions.get(provider.active).bindings;
   for (const [name, value] of [["USAGE_ACCOUNT_ID", target.account_id], ["USAGE_WORKER_NAME", target.worker_name], ["USAGE_D1_DATABASE_ID", target.database_id], ["USAGE_HISTORY_ENABLED", "true"]]) assert.equal(bindings.find(binding => binding.name === name).text, value);
+});
+test("真实 settings 读回的空 placement 不回传，JSON 文件编码仍保留全部绑定与空配置基线", async () => {
+  const initial = provider.versions.get(provider.active);
+  Object.assign(initial, { placement: {}, usage_model: "standard", tags: [], tail_consumers: [], logpush: false, annotations: { "workers/triggered_by": "upload" } });
+  initial.bindings.push({ name: "ASSETS", type: "assets" }, { name: "ATTACHMENTS", type: "r2_bucket", bucket_name: "fixture-private-bucket" });
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { billing_cycle_day: 1 }, expected_version: 1 } });
+  assert.equal(planned.status, 200, JSON.stringify(planned.data));
+  const body = { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, key = randomUUID();
+  const applied = await request(`${base}/configuration/apply`, { method: "POST", body, key });
+  assert.equal(applied.data.resource.status, "verified", JSON.stringify(applied.data));
+  const patch = provider.mutations[0].patch;
+  assert.equal(Object.hasOwn(patch, "placement"), false);
+  for (const name of ["ASSETS", "ATTACHMENTS", "DB", "FOREIGN_SECRET", "CFKANBAN_CONFIGURATION_TOKEN"]) assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: "inherit", version_id: planned.data.resource.baseline_version_id });
+  assert.equal(provider.versions.get(provider.active).bindings.find(binding => binding.name === "USAGE_BILLING_CYCLE_DAY").text, "1");
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, null);
+  const replay = await request(`${base}/configuration/apply`, { method: "POST", body, key });
+  assert.equal(replay.data.idempotent_replay, true); assert.equal(provider.mutations.length, 1);
+});
+test("已启用 placement 在设置修改后原样保留，计划后的 placement 漂移仍拒绝", async () => {
+  const placement = { mode: "smart", hint: "wnam" };
+  provider.versions.get(provider.active).placement = placement;
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { billing_cycle_day: 1 }, expected_version: 1 } });
+  assert.equal(planned.status, 200, JSON.stringify(planned.data));
+  const applied = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version } });
+  assert.equal(applied.data.resource.status, "verified", JSON.stringify(applied.data));
+  assert.deepEqual(provider.mutations[0].patch.placement, placement);
+  const next = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { billing_cycle_day: 2 }, expected_version: (await current()).version } });
+  provider.versions.get(provider.active).placement = { mode: "smart", hint: "enam" };
+  const refused = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: next.data.resource.plan_id, expected_version: next.data.resource.version } });
+  assert.equal(refused.status, 400); assert.equal(provider.mutations.length, 1);
 });
 test("供应商新版本漂移或不支持的设置均不能产生假成功", async () => {
   const plan = await request(`${base}/rate-limits/plan`, { method: "POST", body: { scope: "instance", limit: 500, period_seconds: 60, expected_version: 1 } });

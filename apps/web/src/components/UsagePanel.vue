@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import UButton from "@nuxt/ui/components/Button.vue";
-import UInput from "@nuxt/ui/components/Input.vue";
 import USelect from "@nuxt/ui/components/Select.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ApiProblem, apiRequest } from "../lib/api";
 import { locale } from "../lib/i18n";
-import type { WriteResult } from "../types";
 
 const props = withDefaults(defineProps<{ summary?: boolean; observedOrigin?: string; refreshGeneration?: number }>(), { summary: false, refreshGeneration: 0 });
 const emit = defineEmits<{ details: [] }>();
@@ -42,65 +40,7 @@ interface Usage {
     billing?: UsageBilling;
   };
 }
-interface AttachmentSettings { limit_bytes: number | null; configured: boolean; version: number; reserved_bytes: number }
 const usage = ref<Usage | null>(null);
-const editing = ref(false);
-const saving = ref(false);
-const settingsMode = ref<"" | "limited" | "unlimited">("");
-const limitMiB = ref("");
-const settingsVersion = ref(0);
-const settingsError = ref<"" | "invalid" | "failed" | "conflict">("");
-const settingsController = new AbortController();
-function editSettings(): void {
-  const current = usage.value?.attachments;
-  if (!current) return;
-  settingsMode.value = !current.limit_configured ? "" : current.limit_bytes === null ? "unlimited" : "limited";
-  limitMiB.value = current.limit_bytes === null ? "" : String(current.limit_bytes / 1048576);
-  settingsVersion.value = current.settings_version;
-  settingsError.value = "";
-  editing.value = true;
-}
-function applySettings(value: AttachmentSettings): void {
-  if (!usage.value) return;
-  Object.assign(usage.value.attachments, { limit_bytes: value.limit_bytes, limit_configured: value.configured, settings_version: value.version, reserved_bytes: value.reserved_bytes });
-  settingsVersion.value = value.version;
-}
-async function reloadSettings(): Promise<boolean> {
-  saving.value = true;
-  try {
-    const result = await apiRequest<AttachmentSettings>("/api/v1/admin/attachment-settings", { signal: settingsController.signal });
-    if (disposed) return false;
-    applySettings(result);
-    settingsError.value = "";
-    return true;
-  } catch { if (!disposed) settingsError.value = "failed"; return false; }
-  finally { if (!disposed) saving.value = false; }
-}
-async function saveSettings(): Promise<void> {
-  if (saving.value) return;
-  const value = settingsMode.value === "unlimited" ? null : Number(limitMiB.value) * 1048576;
-  if (!settingsMode.value || (value !== null && (!Number.isSafeInteger(value) || value <= 0))) {
-    settingsError.value = "invalid";
-    return;
-  }
-  saving.value = true;
-  settingsError.value = "";
-  try {
-    const result = await apiRequest<WriteResult<AttachmentSettings>>("/api/v1/admin/attachment-settings", {
-      method: "PATCH", body: { expected_version: settingsVersion.value, limit_bytes: value }, signal: settingsController.signal,
-    });
-    if (disposed) return;
-    applySettings(result.resource);
-    editing.value = false;
-  } catch (error) {
-    if (!disposed) {
-      if (error instanceof ApiProblem && error.status === 409) {
-        const refreshed = await reloadSettings();
-        if (!disposed && refreshed) settingsError.value = "conflict";
-      } else settingsError.value = "failed";
-    }
-  } finally { if (!disposed) saving.value = false; }
-}
 const loading = ref(false);
 const failed = ref(false);
 let controller: AbortController | null = null;
@@ -270,7 +210,7 @@ function onFocus(): void {
 }
 watch(accountAvailable, available => { if (!available) scope.value = "instance"; });
 onMounted(() => { void refresh(); if (typeof window !== "undefined") window.addEventListener("focus", onFocus); });
-onUnmounted(() => { disposed = true; generation++; clearReadback(); controller?.abort(); settingsController.abort(); if (typeof window !== "undefined") window.removeEventListener("focus", onFocus); });
+onUnmounted(() => { disposed = true; generation++; clearReadback(); controller?.abort(); if (typeof window !== "undefined") window.removeEventListener("focus", onFocus); });
 </script>
 
 <template>
@@ -310,18 +250,11 @@ onUnmounted(() => { disposed = true; generation++; clearReadback(); controller?.
           <dl class="usage-windows"><div v-for="metric in currentScopeMetrics" :key="metric.key"><dt>{{ metricNames[metric.key] ?? metric.key }}</dt><dd>{{ time(metric.period_start) }} — {{ time(metric.period_end) }}<template v-if="metric.observed_at"> · {{ ui('Observed', '观测于') }} {{ time(metric.observed_at) }}</template></dd></div></dl>
         </details>
         <div class="usage-attachment">
-      <div class="usage-cloud-heading"><h3>{{ ui('Attachment storage limit', '附件存储上限') }}</h3><UButton color="neutral" variant="ghost" v-if="!editing" class="text-button" type="button" :disabled="loading" @click="editSettings">{{ ui('Set limit', '设置上限') }}</UButton></div>
+      <h3>{{ ui('Attachment storage', '附件占用空间') }}</h3>
       <p>{{ bytes(usage.attachments.reserved_bytes) }} / {{ !usage.attachments.limit_configured ? ui('Not set', '未设置') : usage.attachments.limit_bytes === null ? ui('Unlimited', '不限制') : bytes(usage.attachments.limit_bytes) }}<template v-if="usage.attachments.limit_configured && usage.attachments.limit_bytes !== null"> · {{ number(percent) }}%</template> · {{ usage.attachments.enabled ? ui('Attachments enabled', '附件已启用') : ui('Attachments disabled', '附件未启用') }}</p>
       <meter v-if="usage.attachments.limit_configured && usage.attachments.limit_bytes !== null && usage.attachments.limit_bytes > 0" :class="{ 'capacity-reached': capacityReached }" min="0" :high="usage.attachments.limit_bytes * 0.9" :optimum="0" :max="usage.attachments.limit_bytes" :value="usage.attachments.reserved_bytes" :aria-label="ui('Reserved attachment storage', '附件占用空间')" />
       <p v-if="capacityReached" class="warning-panel" role="status">{{ ui('Storage limit reached. New uploads are paused; existing attachments remain accessible. Raise the limit or wait for reclamation to free space.', '已达到容量上限，新增上传已暂停；已有附件仍可访问。可提高上限或等待回收释放容量。') }}</p>
       <p v-if="!usage.attachments.limit_configured" class="warning-panel">{{ ui('Choose a storage limit or explicitly select unlimited before uploading new files.', '请先设置存储上限或明确选择不限制，再上传新文件。') }}</p>
-      <form v-if="editing" class="usage-settings" @submit.prevent="saveSettings">
-        <label>{{ ui('Storage limit', '存储上限') }}<USelect v-model="settingsMode" :disabled="saving" :placeholder="ui('Choose…','请选择…')" :items="[{value:'limited',label:ui('Set a limit','设置容量上限')},{value:'unlimited',label:ui('Unlimited','不限制')}]" /></label>
-        <label v-if="settingsMode === 'limited'">{{ ui('Capacity (MiB)', '容量（MiB）') }}<UInput v-model="limitMiB" type="number" min="0.00000095367431640625" step="any" :disabled="saving" required /></label>
-        <p class="muted-copy">{{ ui('1 GiB = 1024 MiB. Lowering the limit keeps existing files and blocks new uploads above the limit. Unlimited has no application budget cap and may incur R2 charges.', '1 GiB = 1024 MiB。调低上限不删除已有文件，超出时仅阻止新上传。不限制表示没有应用容量上限，仍可能产生 R2 费用。') }}</p>
-        <p v-if="settingsError" role="alert" class="warning-panel">{{ settingsError === 'invalid' ? ui('Choose a mode and enter a positive capacity precise to whole bytes.', '请选择模式，并输入可精确换算为整数字节的正容量。') : settingsError === 'conflict' ? ui('The current limit changed elsewhere and has been updated below. Review it before saving your draft again.', '当前上限已被其他操作修改，下方已更新。请核对后再次保存，草稿已保留。') : ui('Could not save or read settings. Your draft is retained; try again.', '保存或读取设置失败，草稿已保留，请重试。') }}</p>
-        <div class="usage-setting-actions"><UButton color="neutral" variant="outline" class="secondary-button" type="submit" :disabled="saving">{{ saving ? ui('Saving…', '正在保存…') : ui('Save', '保存') }}</UButton><UButton color="neutral" variant="ghost" class="text-button" type="button" :disabled="saving" @click="editing = false">{{ ui('Cancel', '取消') }}</UButton></div>
-      </form>
       <p class="muted-copy">{{ ui('Reserved until files are reclaimed, including uploads and deleted files. Not actual R2 storage or a billing cap.', '含上传中和已删除文件，回收后释放；不等于 R2 实际容量或账单上限。') }}</p>
         </div>
       </template>
@@ -343,12 +276,9 @@ onUnmounted(() => { disposed = true; generation++; clearReadback(); controller?.
 .usage-details .usage-metrics { margin: 16px 0; }
 .usage-preferences { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .usage-summary-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.usage-scope, .usage-settings label { display: grid; gap: 6px; }
+.usage-scope { display: grid; gap: 6px; }
 .usage-scope { font-size: 13px; color: var(--color-text-muted); }
-.usage-settings { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 12px 0; }
-.usage-settings p { flex-basis: 100%; margin: 0; }
-.usage-setting-actions, .usage-cloud-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.usage-cloud-heading h3 { margin: 0; font-size: 15px; }
+.usage-attachment h3 { margin: 0 0 8px; font-size: 15px; }
 .usage-panel meter { width: min(100%, 480px); height: 12px; accent-color: var(--color-primary); }
 .usage-panel meter.capacity-reached { accent-color: var(--color-warning); }
 .usage-panel meter.capacity-reached::-webkit-meter-optimum-value { background: var(--color-warning); }

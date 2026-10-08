@@ -17,6 +17,7 @@ import OwnerDevices from "../components/OwnerDevices.vue";
 import PageState from "../components/PageState.vue";
 import VersionUpdatesPanel from "../components/VersionUpdatesPanel.vue";
 import UsagePanel from "../components/UsagePanel.vue";
+import AttachmentStorageSettings from "../components/AttachmentStorageSettings.vue";
 import UsageHistoryPanel from "../components/UsageHistoryPanel.vue";
 import CloudflareControlPanel from "../components/CloudflareControlPanel.vue";
 import PublicJoinRestorePreview from "../components/PublicJoinRestorePreview.vue";
@@ -1802,6 +1803,7 @@ onUnmounted(() => {
     <PageState :loading="loading" :error="loading ? '' : ''" />
     <VersionUpdatesPanel v-if="!loading && section === 'updates'" :session="session" />
     <CloudflareControlPanel v-if="activeSection === 'usage'" :session="session" mode="usage" @rates="rateSettings = $event" @applied="usageReadbackGeneration++">
+      <template #attachment-settings><AttachmentStorageSettings :key="`${session.principal.id}:${session.session_id}`" @saved="usageReadbackGeneration++" /></template>
       <UsagePanel :refresh-generation="usageReadbackGeneration" :observed-origin="meta?.observed_origin ?? ''" />
       <UsageHistoryPanel :refresh-generation="usageReadbackGeneration" />
     </CloudflareControlPanel>

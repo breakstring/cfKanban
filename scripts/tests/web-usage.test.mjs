@@ -15,7 +15,7 @@ import { createRenderer, h, nextTick, ref } from 'vue';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const output = await build({
-  stdin: { contents: `export { default as Component } from './apps/web/src/components/UsagePanel.vue'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
+  stdin: { contents: `export { default as Component } from './apps/web/src/components/UsagePanel.vue'; export { default as SettingsComponent } from './apps/web/src/components/AttachmentStorageSettings.vue'; export { locale } from './apps/web/src/lib/i18n.ts';`, resolveDir: root },
   bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
   plugins: [nuxtUiTestPlugin(), { name: 'vue-test', setup(builder) {
     builder.onLoad({ filter: /\.vue$/ }, async ({ path }) => {
@@ -26,7 +26,7 @@ const output = await build({
     builder.onResolve({ filter: /^vue$/ }, () => ({ path: new URL('../../node_modules/vue/index.mjs', import.meta.url).href, external: true }));
   } }],
 });
-const { Component, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
+const { Component, SettingsComponent, locale } = await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].text).toString('base64')}`);
 
 
 
@@ -87,6 +87,10 @@ function mount(props = {}) {
   const host = node('root'); const app = renderer.createApp({ render: () => h(Component, typeof props === 'function' ? props() : props) });
   app.mount(host); return { host, app };
 }
+function mountSettings(props = {}) {
+  const host = node('root'); const app = renderer.createApp({ render: () => h(SettingsComponent, props) });
+  app.mount(host); return { host, app };
+}
 function metric(key, value, { scope = 'instance', unit = 'count', start = '2026-09-19T00:00:00.000Z', end = '2026-09-19T02:00:00.000Z' } = {}) {
   return { key, value, scope, unit, period_start: start, period_end: end, observed_at: null };
 }
@@ -122,7 +126,8 @@ test('today shows real zero and unavailable values separately, with timing detai
     assert.deepEqual(f.calls.map(call => [call.method, call.path]), [['GET', '/api/v1/admin/usage']]);
     locale.value = 'zh-CN'; await nextTick();
     assert.match(text(v.host), /当日用量.*按 UTC 日统计/); assert.match(text(v.host), /暂无数据/);
-    assert.match(text(v.host), /当前存储/); assert.match(text(v.host), /附件存储上限/);
+    assert.match(text(v.host), /当前存储/); assert.match(text(v.host), /附件占用空间/);
+    assert.equal(button(v.host, '设置上限'), undefined); assert.equal(all(v.host).some(item => item.tag === 'form'), false);
   } finally { v.app.unmount(); f.restore(); locale.value = 'en'; }
 });
 
@@ -345,7 +350,7 @@ test('overview stays read-only and switching a fresh summary to details does not
     assert.equal(all(v.host).filter(item => item.tag === 'dt').length, 4);
     assert.equal(button(v.host, 'Set limit'), undefined); assert.equal(byClass(v.host, 'usage-details'), undefined);
     button(v.host, 'View usage').props.onClick(); await nextTick();
-    assert.ok(button(v.host, 'Set limit')); assert.ok(byClass(v.host, 'usage-details')); assert.equal(f.calls.length, 1);
+    assert.equal(button(v.host, 'Set limit'), undefined); assert.ok(byClass(v.host, 'usage-details')); assert.equal(f.calls.length, 1);
     summary.value = true; await nextTick(); assert.equal(button(v.host, 'Set limit'), undefined); assert.equal(f.calls.length, 1);
   } finally { v.app.unmount(); f.restore(); }
 });
@@ -370,45 +375,86 @@ test('entering details after fifteen minutes marks the retained snapshot stale a
   } finally { Date.now = originalNow; v.app.unmount(); f.restore(); }
 });
 
-test('attachment storage requires an explicit unlimited choice or positive byte-exact capacity', async () => {
+test('storage settings load their own current values without Cloudflare and require an explicit byte-exact choice', async () => {
+  let current = { configured: false, version: 1, reserved_bytes: 8192, limit_bytes: null }; let saves = 0;
   const f = fixture(call => {
-    if (call.method === 'PATCH') return Response.json({ resource: { configured: true, version: 2, reserved_bytes: 0, limit_bytes: call.body.limit_bytes } });
-    const value = snapshot(); Object.assign(value.attachments, { limit_bytes: null, limit_configured: false, settings_version: 0 }); return Response.json(value);
+    assert.equal(call.path, '/api/v1/admin/attachment-settings');
+    if (call.method === 'PATCH') { current = { ...current, configured: true, version: current.version + 1, limit_bytes: call.body.limit_bytes }; return Response.json({ resource: current }); }
+    return Response.json(current);
   });
-  const v = mount();
+  const v = mountSettings({ onSaved() { saves++; } });
   try {
-    await until(() => text(v.host).includes('Not set')); assert.equal(all(v.host).some(item => item.tag === 'meter'), false);
-    button(v.host, 'Set limit').props.onClick(); await nextTick();
+    await until(() => text(v.host).includes('Not set'));
+    assert.equal(all(v.host).filter(item => item.tag === 'form').length, 1);
+    assert.match(text(v.host), /Reserved storage8 KiB/); assert.equal(button(v.host, 'Save storage limit').props.disabled, true);
+    assert.equal(all(v.host).some(item => item.tag === 'input'), false);
+    assert.deepEqual(f.calls.map(call => [call.method, call.path]), [['GET', '/api/v1/admin/attachment-settings']]);
     await submit(v.host); await nextTick(); assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 0);
-    change(all(v.host).find(item => item.tag === 'select'), 'unlimited'); await nextTick(); await submit(v.host); await nextTick();
-    assert.match(text(v.host), /0 B \/ Unlimited/); assert.deepEqual(f.calls.at(-1).body, { expected_version: 0, limit_bytes: null });
-    assert.ok(f.calls.at(-1).init.headers.get('idempotency-key')); assert.equal(all(v.host).some(item => item.tag === 'meter'), false);
-    button(v.host, 'Set limit').props.onClick(); await nextTick();
+    change(all(v.host).find(item => item.tag === 'select'), 'unlimited'); await nextTick(); await submit(v.host); await flush();
+    assert.match(text(v.host), /Current limitUnlimited/); assert.deepEqual(f.calls.at(-1).body, { expected_version: 1, limit_bytes: null });
+    assert.ok(f.calls.at(-1).init.headers.get('idempotency-key')); assert.equal(f.calls.at(-1).init.headers.get('x-csrf-token'), 'fixture-csrf');
+    assert.equal(button(v.host, 'Save storage limit').props.disabled, true); assert.equal(saves, 1);
     change(all(v.host).find(item => item.tag === 'select'), 'limited'); await nextTick();
-    change(all(v.host).find(item => item.tag === 'input'), '1.5'); await nextTick(); await submit(v.host); await nextTick();
-    assert.equal(f.calls.at(-1).body.limit_bytes, 1572864); assert.match(text(v.host), /1.5 MiB/); assert.ok(all(v.host).some(item => item.tag === 'meter'));
-  } finally { v.app.unmount(); f.restore(); }
+    change(all(v.host).find(item => item.tag === 'input'), '0.0000001'); await nextTick(); await submit(v.host); await flush();
+    assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 1); assert.match(text(v.host), /positive capacity precise to whole bytes/);
+    change(all(v.host).find(item => item.tag === 'input'), '1.5'); await nextTick(); await submit(v.host); await flush();
+    assert.deepEqual(f.calls.at(-1).body, { expected_version: 2, limit_bytes: 1572864 }); assert.match(text(v.host), /Current limit1.5 MiB/);
+    assert.equal(saves, 2); assert.equal(button(v.host, 'Discard changes').props.disabled, true);
+    locale.value = 'zh-CN'; await nextTick(); assert.ok(button(v.host, '保存存储上限')); assert.match(text(v.host), /当前上限1.5 MiB/);
+  } finally { v.app.unmount(); f.restore(); locale.value = 'en'; }
 });
 
-test('capacity conflicts read back automatically, retain the exact draft and wait for another explicit save', async () => {
-  let writes = 0; let saved;
+test('capacity conflicts update the current value, retain the exact draft and require a separate explicit CAS save', async () => {
+  let writes = 0; let reads = 0; let saved;
   const f = fixture(call => {
     if (call.method === 'PATCH') {
       if (++writes === 1) { const id = '40000000-0000-4000-8000-000000000001'; return Response.json({ code: 'VERSION_CONFLICT', category: 'conflict', source: 'service', message: 'Changed', recovery: 'refresh_resource', request_id: id, retryable: false, details: {} }, { status: 409, headers: { 'x-request-id': id } }); }
-      saved = call.body; return Response.json({ resource: { configured: true, version: 3, reserved_bytes: 0, limit_bytes: saved.limit_bytes } });
+      saved = call.body; return Response.json({ resource: { configured: true, version: 3, reserved_bytes: 4096, limit_bytes: saved.limit_bytes } });
     }
-    if (call.path.endsWith('attachment-settings')) return Response.json({ configured: true, version: 2, reserved_bytes: 0, limit_bytes: 3000000 });
-    return Response.json(snapshot());
+    return Response.json({ configured: true, version: ++reads, reserved_bytes: 4096, limit_bytes: reads === 1 ? 1073741824 : 3000000 });
   });
-  const v = mount();
+  const v = mountSettings();
   try {
-    await until(() => text(v.host).includes('Set limit')); button(v.host, 'Set limit').props.onClick(); await nextTick();
+    await until(() => text(v.host).includes('Current limit1 GiB'));
     change(all(v.host).find(item => item.tag === 'input'), '2'); await nextTick(); await submit(v.host); await flush();
-    assert.match(text(v.host), /changed elsewhere.*Review it before saving your draft again/);
+    assert.match(text(v.host), /changed elsewhere.*Review it before saving your retained draft again/); assert.match(text(v.host), /Current limit2.9 MiB/);
     const input = all(v.host).find(item => item.tag === 'input'); assert.equal(input.props.value ?? input.value, '2');
-    assert.equal(writes, 1); assert.equal(f.calls.filter(call => call.path.endsWith('attachment-settings') && call.method === 'GET').length, 1);
-    assert.equal(button(v.host, 'Refresh settings'), undefined);
+    assert.equal(writes, 1); assert.equal(reads, 2); assert.equal(button(v.host, 'Save storage limit').props.disabled, false);
     await submit(v.host); await flush(); assert.deepEqual(saved, { expected_version: 2, limit_bytes: 2097152 });
+    assert.equal(all(v.host).filter(item => item.tag === 'form').length, 1); assert.match(text(v.host), /Storage limit saved/);
+    change(all(v.host).find(item => item.tag === 'input'), '4'); await nextTick();
+    button(v.host, 'Discard changes').props.onClick(); await nextTick();
+    assert.equal(all(v.host).find(item => item.tag === 'input').props.value, '2'); assert.equal(writes, 2); assert.equal(button(v.host, 'Save storage limit').props.disabled, true);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('an initial storage settings read failure never reports a save failure and stops when unmounted', async () => {
+  const f = fixture(() => { throw new Error('isolated read failure'); }); const v = mountSettings();
+  try {
+    await until(() => text(v.host).includes('Current storage settings could not be read'));
+    assert.doesNotMatch(text(v.host), /Could not save|This save is not confirmed/);
+    assert.equal(button(v.host, 'Save storage limit').props.disabled, true);
+    assert.equal(f.calls.length, 1); assert.equal(f.calls[0].method, 'GET');
+  } finally { v.app.unmount(); assert.equal(f.calls[0].init.signal.aborted, true); f.restore(); }
+});
+
+test('an unconfirmed storage save freezes its draft and retries the same independent request and idempotency key', async () => {
+  let writes = 0;
+  const f = fixture(call => {
+    if (call.method === 'GET') return Response.json({ configured: true, version: 1, reserved_bytes: 4096, limit_bytes: 3000000 });
+    if (++writes === 1) throw new Error('isolated response loss');
+    return Response.json({ resource: { configured: true, version: 2, reserved_bytes: 4096, limit_bytes: call.body.limit_bytes } });
+  });
+  const v = mountSettings();
+  try {
+    await until(() => text(v.host).includes('Current limit2.9 MiB'));
+    change(all(v.host).find(item => item.tag === 'input'), '2'); await nextTick(); await submit(v.host); await flush();
+    assert.match(text(v.host), /This save is not confirmed/); assert.equal(all(v.host).find(item => item.tag === 'input').props.disabled, true);
+    assert.equal(button(v.host, 'Discard changes').props.disabled, true); assert.equal(button(v.host, 'Save storage limit').props.disabled, false);
+    assert.equal(writes, 1); await submit(v.host); await flush();
+    const attempts = f.calls.filter(call => call.method === 'PATCH'); assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[0].body, attempts[1].body); assert.equal(attempts[0].init.headers.get('idempotency-key'), attempts[1].init.headers.get('idempotency-key'));
+    assert.match(text(v.host), /Current limit2 MiB/); assert.match(text(v.host), /Storage limit saved/);
   } finally { v.app.unmount(); f.restore(); }
 });
 
