@@ -340,8 +340,8 @@ function desiredValues(kind: ConfigurationPlanKind, desired: Resource, bindings:
   configurationInput(values); return values;
 }
 function patchSettings(live: LiveBaseline, kind: ConfigurationPlanKind, desired: Resource, target: Target): Resource {
-  // A complete binding inventory is inherited from one explicit active version;
-  // secret values never leave Cloudflare, and unknown top-level settings fail closed.
+  // /settings PATCH 用原 type + name 保留现有绑定；active/latest 及完整基线由两次预检证明。
+  // Secret 值不离开 Cloudflare；未知顶层设置不能静默丢失。
   const preserved = new Set(["bindings", "compatibility_date", "compatibility_flags", "usage_model", "limits", "logpush", "tail_consumers", "placement", "observability", "tags", "annotations", "cache_options", "exports_reconciliation"]);
   if (Object.keys(live.settings).some(key => !preserved.has(key))) throw validationError("cloudflare_settings_preservation_unverified");
   const changed = new Map<string, Resource>();
@@ -357,7 +357,7 @@ function patchSettings(live: LiveBaseline, kind: ConfigurationPlanKind, desired:
     if (desired.analytics_enabled === true || desired.history_enabled === true) for (const [name, value] of [["USAGE_ACCOUNT_ID", target.account_id], ["USAGE_D1_DATABASE_ID", target.database_id], ["USAGE_WORKER_NAME", target.worker_name]]) changed.set(name as string, { name: name as string, type: "plain_text", text: value as string });
   }
   const removed = kind === "configuration" ? new Set(Object.entries(CONFIG_VARS).filter(([key]) => desired[key] === null).map(([, name]) => name)) : new Set<string>();
-  const bindings: Resource[] = live.bindings.filter(entry => !removed.has(text(entry.name))).map(entry => changed.get(text(entry.name)) ?? { name: text(entry.name), type: "inherit", version_id: live.baseline.active_version_id });
+  const bindings: Resource[] = live.bindings.filter(entry => !removed.has(text(entry.name))).map(entry => changed.get(text(entry.name)) ?? { name: text(entry.name), type: text(entry.type) });
   for (const [name, binding] of changed) if (!live.bindings.some(entry => entry.name === name)) bindings.push(binding);
   const { exports_reconciliation: _reconciliation, annotations, ...settings } = live.settings;
   // GET 将未启用的 placement 投影为 {}；PATCH 只接受有配置的对象。
@@ -477,16 +477,23 @@ async function completeCloudMutation(env: WorkerEnv, request: Request, auth: Aut
   catch (error) { const row = await operationRow(env.DB, id); await transition(env, request, auth, row, "unknown", error instanceof ProviderFailure ? error.capability : "unavailable", row.result_version_id, row.deployment_id); }
 }
 function orderedBindingFingerprints(value: JsonValue | undefined): Resource[] { return list(value).map(object).sort((a, b) => text(a.name).localeCompare(text(b.name))); }
+export function materializeBindingReferences(bindings: Resource[], inventory: Resource[]): Resource[] {
+  const original = new Map(inventory.map(binding => [text(binding.name), binding]));
+  return bindings.map(binding => {
+    if (Object.keys(binding).some(key => key !== "name" && key !== "type")) return binding;
+    const existing = typeof binding.name === "string" ? original.get(binding.name) : undefined;
+    if (!existing || existing.type !== binding.type) throw new ProviderFailure("target_mismatch");
+    return existing;
+  });
+}
 async function planBindingsMatch(live: LiveBaseline, before: Resource, kind: ConfigurationPlanKind, desired: Resource, target: Target, writer: string, dependencies: CloudflareControlDependencies): Promise<boolean> {
-  // Existing intents only retain binding fingerprints. Recover the frozen
-  // inventory to prove preserved namespaces and materialize inherited bindings.
+  // intent 只保存指纹；准确读回原版本，证明完整库存后再展开 type + name 引用。
   const versionId = text(before.active_version_id), version = object(await api(writer, dependencies)(`${scriptPath(target)}/versions/${encodeURIComponent(versionId)}`));
   const bindings = list(object(version.resources).bindings).map(object);
   const fingerprints = async (inventory: Resource[]) => orderedBindingFingerprints(await Promise.all(inventory.map(async binding => ({ name: text(binding.name), type: text(binding.type), hash: await sha256Hex(canonicalJson(binding)) }))));
   if (canonicalJson(await fingerprints(bindings)) !== canonicalJson(orderedBindingFingerprints(before.binding_fingerprints))) throw new ProviderFailure("target_mismatch");
-  const original = new Map(bindings.map(binding => [text(binding.name), binding]));
   const settings = patchSettings({ ...live, bindings, baseline: { ...live.baseline, active_version_id: versionId } }, kind, desired, target);
-  const expected = list(settings.bindings).map(object).map(binding => binding.type === "inherit" ? original.get(text(binding.name))! : binding);
+  const expected = materializeBindingReferences(list(settings.bindings).map(object), bindings);
   return canonicalJson(await fingerprints(expected)) === canonicalJson(orderedBindingFingerprints(live.baseline.binding_fingerprints));
 }
 async function assessOperation(env: WorkerEnv, row: OperationRow, dependencies: CloudflareControlDependencies, token?: string): Promise<Assessment> {

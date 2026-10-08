@@ -33,7 +33,7 @@ Secret 保存是一个独立明确操作。统一设置先生成一个冻结 con
 
 `rate_limits` 是 instance、principal、unauthenticated_sensitive、anonymous_login、expensive_reads 的非空子集；每个 scope 只接受正安全整数 `limit` 与 10 或 60 的 `period_seconds`。保持 namespace ID，同步原生 binding 与非秘密 policy vars；不改变权限、结果完整性、套餐、CPU 或固定查询并发设置。旧单 scope plan/apply 继续兼容。统一计划的 `before` / `after` 保留五项统计字段；仅当请求限流时增加 `rate_limits`，只含此次请求的 scope。一次保存使用一个 intent、一个 CAS 和一次 Worker settings PATCH，覆盖同一 Worker 的配置变更；不形成任意资源 batch 接口。
 
-每次 Worker 配置写前核对实际 DB 绑定、单一 100% active deployment、latest 等于 active，以及冻结的版本和配置基线。部署与版本列表只读当前/最新项，不扫描全部历史；完整规则库存不能复用这一分页例外。未部署候选、分流、缺失绑定或漂移均拒绝，不自动发布未知代码。完整保留其他 bindings、Secrets、limits、Cron、域名及配置。
+每次 Worker 配置写前核对实际 DB 绑定、单一 100% active deployment、latest 等于 active，以及冻结的版本和配置基线。部署与版本列表只读当前/最新项，不扫描全部历史；完整规则库存不能复用这一分页例外。未部署候选、分流、缺失绑定或漂移均拒绝，不自动发布未知代码。完整保留其他 bindings、Secrets、limits、Cron、域名及配置。Worker settings PATCH 使用既有 binding 的原 `name` 与 `type` 引用保留未修改项；不能套用上传版本接口的通用 `type: inherit`。读回时由冻结版本的完整库存还原这些引用，逐项核验类型、值及资源标识，Secret 值不读取或重新提交。
 
 D1 保存非秘密 plan、持久 intent、幂等请求哈希、互斥锁及审计；Token 正文不持久化。Cloudflare 与 D1 不构成原子事务，不能假定供应商提供全局 CAS。写前登记 intent，外部结果不确定则保留 `unknown`；同 key 只能读取或核验原操作，不再次外部写入。只有 active deployment 和预期配置读回符合原请求才标记 `verified`。未知 intent 不因超时而清锁或重放。
 

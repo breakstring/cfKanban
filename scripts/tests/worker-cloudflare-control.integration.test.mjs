@@ -9,7 +9,7 @@ import { Router } from "../../apps/worker/src/kernel/router.ts";
 import { createRequestContext } from "../../apps/worker/src/kernel/http.ts";
 import { errorResponse } from "../../apps/worker/src/kernel/errors.ts";
 import { computeRequestHash } from "../../apps/worker/src/kernel/idempotency.ts";
-import { api, ProviderFailure } from "../../apps/worker/src/services/cloudflare-control.ts";
+import { api, materializeBindingReferences, ProviderFailure } from "../../apps/worker/src/services/cloudflare-control.ts";
 
 // Only an isolated local D1 and a synthetic in-memory Cloudflare provider are used.
 const server = createTestHarness({ root: fileURLToPath(new URL("../../", import.meta.url)), workers: [{ configPath: "wrangler.wp02-test.jsonc" }] });
@@ -54,7 +54,16 @@ function fakeProvider() {
       if (patch.placement && !Object.keys(patch.placement).length) return response(null, 400);
       state.mutations.push({ method, path, patch: structuredClone(patch) });
       assert.ok(!("exports_reconciliation" in patch)); assert.ok(!("workers/triggered_by" in patch.annotations));
-      patch.bindings = patch.bindings.map(binding => binding.type === "inherit" ? structuredClone(state.versions.get(binding.version_id).bindings.find(existing => existing.name === binding.name)) : binding); patch.annotations["workers/triggered_by"] = "settings";
+      const inventory = state.versions.get(state.active).bindings, resolved = [];
+      for (const binding of patch.bindings) {
+        if (binding.type === "inherit") return new Response(JSON.stringify({ success: false, errors: [{ code: 10057, message: "Invalid inherit binding type" }] }), { status: 400 });
+        if (Object.keys(binding).every(key => key === "name" || key === "type")) {
+          const existing = inventory.find(entry => entry.name === binding.name && entry.type === binding.type);
+          if (!existing) return new Response(JSON.stringify({ success: false, errors: [{ code: 10057, message: "Missing binding reference or invalid binding type" }] }), { status: 400 });
+          resolved.push(structuredClone(existing));
+        } else resolved.push(binding);
+      }
+      patch.bindings = resolved; patch.annotations["workers/triggered_by"] = "settings";
       publish(patch); if (state.mode === "network_after") throw new Error("Synthetic settings response lost after publication"); return response(patch);
     }
     state.gets.push(path);
@@ -430,14 +439,14 @@ test("权限不足、目标D1不符、候选未部署和CAS冲突均拒绝写入
   provider.latest = randomUUID(); provider.versions.set(provider.latest, structuredClone(activeSettings)); assert.equal((await save("control", nextToken)).status, 400); provider.latest = provider.active;
   const stale = await request(`${base}/secrets`, { method: "POST", body: { kind: "control", token: nextToken, expected_version: 9 } }); assert.equal(stale.status, 409); assert.equal(provider.mutations.length, 0);
 });
-test("限流计划冻结原生namespace，外部所有绑定逐项inherit；候选版本不自动部署", async () => {
+test("限流计划冻结原生namespace，外部所有绑定用原type与name引用保留；候选版本不自动部署", async () => {
   provider.mode = "pending";
   const planned = await request(`${base}/rate-limits/plan`, { method: "POST", body: { scope: "instance", limit: 500, period_seconds: 10, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.before.limit, 300);
   const body = { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, key = randomUUID(), applied = await request(`${base}/rate-limits/apply`, { method: "POST", body, key }); assert.equal(applied.status, 200, JSON.stringify(applied.data)); assert.equal(applied.data.resource.status, "pending");
   const patch = provider.mutations[0].patch; assert.deepEqual(patch.limits, { cpu_ms: 10 }); assert.deepEqual(patch.compatibility_flags, ["nodejs_compat"]);
   assert.deepEqual(patch.cache_options, { enabled: false, cross_version_cache: false });
   assert.equal(patch.bindings.find(binding => binding.name === "INSTANCE_RATE_LIMITER").namespace_id, "1001");
-  for (const name of ["DB", "FOREIGN_SECRET", "FOREIGN_VAR", "CFKANBAN_CONFIGURATION_TOKEN"]) assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: "inherit", version_id: planned.data.resource.baseline_version_id });
+  for (const name of ["DB", "FOREIGN_SECRET", "FOREIGN_VAR", "CFKANBAN_CONFIGURATION_TOKEN"]) assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: provider.versions.get(planned.data.resource.baseline_version_id).bindings.find(binding => binding.name === name).type });
   const replay = await request(`${base}/rate-limits/apply`, { method: "POST", body, key }); assert.equal(replay.data.idempotent_replay, true); assert.equal(provider.mutations.length, 1);
   provider.active = provider.latest; provider.deployment = randomUUID();
   const readback = await request(`${base}/operations/${applied.data.resource.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(readback.data.resource.status, "verified", JSON.stringify(readback.data)); assert.equal(provider.mutations.length, 1);
@@ -448,10 +457,12 @@ test("历史与analytics设置仅从固定目标派生，保留旧配置并验�
   const bindings = provider.versions.get(provider.active).bindings;
   for (const [name, value] of [["USAGE_ACCOUNT_ID", target.account_id], ["USAGE_WORKER_NAME", target.worker_name], ["USAGE_D1_DATABASE_ID", target.database_id], ["USAGE_HISTORY_ENABLED", "true"]]) assert.equal(bindings.find(binding => binding.name === name).text, value);
 });
-test("真实 settings 读回的空 placement 不回传，JSON 文件编码仍保留全部绑定与空配置基线", async () => {
+test("真实 settings 的type与name引用保留Secret、ASSETS、R2、D1和五组namespace完整值", async () => {
   const initial = provider.versions.get(provider.active);
   Object.assign(initial, { placement: {}, usage_model: "standard", tags: [], tail_consumers: [], logpush: false, annotations: { "workers/triggered_by": "upload" } });
   initial.bindings.push({ name: "ASSETS", type: "assets" }, { name: "ATTACHMENTS", type: "r2_bucket", bucket_name: "fixture-private-bucket" });
+  const originalBindings = structuredClone(initial.bindings), privateSecret = "SYNTHETIC-PRIVATE-BINDING-VALUE";
+  provider.secrets.FOREIGN_SECRET = privateSecret;
   const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { billing_cycle_day: 1 }, expected_version: 1 } });
   assert.equal(planned.status, 200, JSON.stringify(planned.data));
   const body = { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, key = randomUUID();
@@ -459,11 +470,36 @@ test("真实 settings 读回的空 placement 不回传，JSON 文件编码仍保
   assert.equal(applied.data.resource.status, "verified", JSON.stringify(applied.data));
   const patch = provider.mutations[0].patch;
   assert.equal(Object.hasOwn(patch, "placement"), false);
-  for (const name of ["ASSETS", "ATTACHMENTS", "DB", "FOREIGN_SECRET", "CFKANBAN_CONFIGURATION_TOKEN"]) assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: "inherit", version_id: planned.data.resource.baseline_version_id });
+  for (const name of ["ASSETS", "ATTACHMENTS", "DB", "FOREIGN_SECRET", "CFKANBAN_CONFIGURATION_TOKEN"]) assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: provider.versions.get(planned.data.resource.baseline_version_id).bindings.find(binding => binding.name === name).type });
+  for (const original of originalBindings) {
+    assert.deepEqual(patch.bindings.find(binding => binding.name === original.name), { name: original.name, type: original.type });
+    assert.deepEqual(provider.versions.get(provider.active).bindings.find(binding => binding.name === original.name), original);
+  }
+  assert.equal(provider.secrets.FOREIGN_SECRET, privateSecret);
+  assert.doesNotMatch(JSON.stringify({ patch, result: applied.data }), /SYNTHETIC-PRIVATE-BINDING-VALUE/);
+  assert.ok(provider.requests.every(entry => entry.method === "PATCH" || !entry.path.endsWith("/secrets")));
   assert.equal(provider.versions.get(provider.active).bindings.find(binding => binding.name === "USAGE_BILLING_CYCLE_DAY").text, "1");
   assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, null);
   const replay = await request(`${base}/configuration/apply`, { method: "POST", body, key });
   assert.equal(replay.data.idempotent_replay, true); assert.equal(provider.mutations.length, 1);
+});
+test("settings引用materialize用冻结库存补全完整值并拒绝缺失或错误type", () => {
+  const inventory = [{ name: "DB", type: "d1", id: target.database_id }, { name: "ASSETS", type: "assets" }, { name: "ATTACHMENTS", type: "r2_bucket", bucket_name: "private-bucket" }, { name: "SECRET", type: "secret_text" }, { name: "RATE", type: "ratelimit", namespace_id: "1005", simple: { limit: 15, period: 60 } }, { name: "VAR", type: "plain_text", text: "original" }];
+  const references = inventory.map(({ name, type }) => ({ name, type }));
+  assert.deepEqual(materializeBindingReferences(references, inventory), inventory);
+  const changed = { name: "VAR", type: "plain_text", text: "changed" };
+  assert.deepEqual(materializeBindingReferences([...references.filter(binding => binding.name !== "VAR"), changed], inventory), [...inventory.filter(binding => binding.name !== "VAR"), changed]);
+  for (const reference of [{ name: "missing", type: "assets" }, { name: "DB", type: "assets" }, { name: "SECRET", type: "inherit" }, { name: "SECRET" }, { type: "secret_text" }]) assert.throws(() => materializeBindingReferences([reference], inventory), error => error instanceof ProviderFailure && error.capability === "target_mismatch");
+});
+test("settings供应商协议拒绝inherit、错误type和缺失引用为400/10057，不发布版本", async context => {
+  const originalVersion = provider.active, warnings = [];
+  context.mock.method(console, "warn", value => warnings.push(value));
+  for (const reference of [{ name: "FOREIGN_SECRET", type: "inherit", version_id: originalVersion }, { name: "FOREIGN_SECRET", type: "plain_text" }, { name: "missing", type: "secret_text" }]) {
+    const form = new FormData(); form.append("settings", new File([JSON.stringify({ bindings: [reference], annotations: {} })], "settings", { type: "application/json" }));
+    await assert.rejects(api(configurationToken, { fetch: provider.fetch })(`/accounts/${target.account_id}/workers/scripts/${target.worker_name}/settings`, { method: "PATCH", body: form }), error => error instanceof ProviderFailure && error.rejected && error.details.provider_status === 400);
+    assert.deepEqual(warnings.at(-1).provider_codes, [10057]);
+    assert.equal(provider.active, originalVersion); assert.equal(provider.latest, originalVersion);
+  }
 });
 test("已启用 placement 在设置修改后原样保留，计划后的 placement 漂移仍拒绝", async () => {
   const placement = { mode: "smart", hint: "wnam" };
@@ -540,7 +576,7 @@ test("旧部署未显式设置analytics flag时，局部修改不关闭既有有
   const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: true }, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.before.analytics_enabled, true); assert.equal(planned.data.resource.after.analytics_enabled, true);
   const applied = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version } }); assert.equal(applied.data.resource.status, "verified"); assert.equal(provider.versions.get(provider.active).bindings.find(binding => binding.name === "USAGE_ANALYTICS_ENABLED").text, "true");
 });
-test("统一 Secret 的隐式 analytics 开关被局部设置计划保留，其他旧 Secret 仍逐项 inherit", async () => {
+test("统一 Secret 的隐式 analytics 开关被局部设置计划保留，其他旧 Secret 仍用原type与name引用保留", async () => {
   provider.versions.get(provider.active).bindings.push({ name: "USAGE_ACCOUNT_ID", type: "plain_text", text: target.account_id }, { name: "USAGE_D1_DATABASE_ID", type: "plain_text", text: target.database_id }, { name: "CFKANBAN_API_TOKEN", type: "secret_text" }, { name: "CFKANBAN_CONTROL_TOKEN", type: "secret_text" });
   const unified = { ...env, CFKANBAN_API_TOKEN: nextToken };
   provider.rejectRequest = ({ authorization }) => authorization !== `Bearer ${nextToken}`;
@@ -548,7 +584,7 @@ test("统一 Secret 的隐式 analytics 开关被局部设置计划保留，其�
   assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.before.analytics_enabled, true); assert.equal(planned.data.resource.after.analytics_enabled, true);
   const applied = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, overrideEnv: unified });
   assert.equal(applied.data.resource.status, "verified", JSON.stringify(applied.data));
-  for (const name of ["CFKANBAN_API_TOKEN", "CFKANBAN_CONFIGURATION_TOKEN", "CFKANBAN_CONTROL_TOKEN"]) assert.deepEqual(provider.mutations[0].patch.bindings.find(binding => binding.name === name), { name, type: "inherit", version_id: planned.data.resource.baseline_version_id });
+  for (const name of ["CFKANBAN_API_TOKEN", "CFKANBAN_CONFIGURATION_TOKEN", "CFKANBAN_CONTROL_TOKEN"]) assert.deepEqual(provider.mutations[0].patch.bindings.find(binding => binding.name === name), { name, type: provider.versions.get(planned.data.resource.baseline_version_id).bindings.find(binding => binding.name === name).type });
 });
 test("秘密 operation 的 intent 名称与用途必须匹配白名单，不读取任意 env binding", async () => {
   const saved = await save("connection", nextToken); const id = saved.data.resource.operation_id;
@@ -585,6 +621,33 @@ async function applyLostPlan(kind, settings = { history_enabled: true, analytics
   assert.equal(applied.data.resource.status, "unknown"); assert.equal(applied.data.resource.result_version_id, null); assert.equal(provider.mutations.length, 1);
   return { operationId: applied.data.resource.operation_id, path: `${base}/${path}/apply`, body, key };
 }
+for (const scenario of [
+  { name: "ASSETS引用类型", change: bindings => { bindings.find(binding => binding.name === "ASSETS").type = "plain_text"; } },
+  { name: "R2桶完整值", change: bindings => { bindings.find(binding => binding.name === "ATTACHMENTS").bucket_name = "foreign-bucket"; } },
+  { name: "Secret引用缺失", change: bindings => { bindings.splice(bindings.findIndex(binding => binding.name === "FOREIGN_SECRET"), 1); } },
+  { name: "五组未修改namespace之一", change: bindings => { bindings.find(binding => binding.name === "EXPENSIVE_READ_RATE_LIMITER").namespace_id = "9005"; } },
+]) test(`type与name引用PATCH丢响应后的${scenario.name}漂移保持unknown且不重发`, async () => {
+  provider.versions.get(provider.active).bindings.push({ name: "ASSETS", type: "assets" }, { name: "ATTACHMENTS", type: "r2_bucket", bucket_name: "fixture-private-bucket" });
+  const operation = await applyLostPlan("configuration", { billing_cycle_day: 1 }), acceptedVersion = provider.active;
+  const drift = structuredClone(provider.versions.get(acceptedVersion)); scenario.change(drift.bindings); provider.publish(drift);
+  const checked = await request(`${base}/operations/${operation.operationId}/verify`, { method: "POST", body: {} });
+  assert.equal(checked.data.resource.status, "unknown", JSON.stringify(checked.data)); assert.equal(checked.data.resource.failure_class, "cloudflare_foreign_configuration_drift");
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, operation.operationId);
+  const replay = await request(operation.path, { method: "POST", body: operation.body, key: operation.key }); assert.equal(replay.data.idempotent_replay, true); assert.equal(provider.mutations.length, 1);
+  provider.active = acceptedVersion; provider.latest = acceptedVersion; provider.deployment = randomUUID();
+  const recovered = await request(`${base}/operations/${operation.operationId}/verify`, { method: "POST", body: {} }); assert.equal(recovered.data.resource.status, "verified", JSON.stringify(recovered.data)); assert.equal(provider.mutations.length, 1);
+});
+for (const missing of [false, true]) test(`type与name引用恢复时原version${missing ? "缺失绑定" : "绑定完整值改变"}不能替代冻结指纹`, async () => {
+  const frozenVersion = provider.active, frozen = structuredClone(provider.versions.get(frozenVersion));
+  const operation = await applyLostPlan("configuration", { billing_cycle_day: 1 });
+  const bindings = provider.versions.get(frozenVersion).bindings;
+  if (missing) bindings.splice(bindings.findIndex(binding => binding.name === "FOREIGN_VAR"), 1); else bindings.find(binding => binding.name === "FOREIGN_VAR").text = "foreign original-version value";
+  const checked = await request(`${base}/operations/${operation.operationId}/verify`, { method: "POST", body: {} });
+  assert.equal(checked.data.resource.status, "unknown", JSON.stringify(checked.data)); assert.equal(checked.data.resource.failure_class, "target_mismatch");
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, operation.operationId);
+  provider.versions.set(frozenVersion, frozen);
+  const recovered = await request(`${base}/operations/${operation.operationId}/verify`, { method: "POST", body: {} }); assert.equal(recovered.data.resource.status, "verified", JSON.stringify(recovered.data)); assert.equal(provider.mutations.length, 1);
+});
 const rateBinding = bindings => bindings.find(binding => binding.name === "INSTANCE_RATE_LIMITER");
 const changeText = (name, value) => bindings => { bindings.find(binding => binding.name === name).text = value; };
 const removeBinding = name => bindings => { bindings.splice(bindings.findIndex(binding => binding.name === name), 1); };
@@ -664,7 +727,7 @@ test("五项统计与五组访问频率冻结为一个configuration计划，一�
     assert.equal(patch.bindings.find(binding => binding.name === `${prefix}_LIMIT`).text, String(unifiedSettings.rate_limits[scope].limit)); assert.equal(patch.bindings.find(binding => binding.name === `${prefix}_PERIOD_SECONDS`).text, "10");
   }
   for (const [name, value] of [["USAGE_HISTORY_ENABLED", "true"], ["USAGE_ANALYTICS_ENABLED", "true"], ["USAGE_ACCOUNT_TOTALS_ENABLED", "true"], ["USAGE_BILLING_PLAN", "paid"], ["USAGE_BILLING_CYCLE_DAY", "12"]]) assert.equal(patch.bindings.find(binding => binding.name === name).text, value);
-  for (const name of ["DB", "FOREIGN_SECRET", "FOREIGN_VAR", "CFKANBAN_CONFIGURATION_TOKEN"]) assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: "inherit", version_id: plan.baseline_version_id });
+  for (const name of ["DB", "FOREIGN_SECRET", "FOREIGN_VAR", "CFKANBAN_CONFIGURATION_TOKEN"]) assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: provider.versions.get(plan.baseline_version_id).bindings.find(binding => binding.name === name).type });
   const replay = await request(`${base}/configuration/apply`, { method: "POST", body: applyBody, key: applyKey }); assert.equal(replay.data.idempotent_replay, true); assert.deepEqual(replay.data.resource, applied.data.resource); assert.equal(provider.mutations.length, 1);
 });
 test("统一设置拒绝空对象、未知scope和嵌套字段及不合法数值，不登记计划或请求供应商", async () => {
@@ -742,7 +805,7 @@ test("旧configuration计划包含提醒变量时仍可apply并恢复unknown，�
   const replay = await request(`${base}/configuration/apply`, { method: "POST", body, key }); assert.equal(replay.data.idempotent_replay, true);
   const recovered = await request(`${base}/operations/${applied.data.resource.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(recovered.data.resource.status, "verified", JSON.stringify(recovered.data)); assert.equal(provider.mutations.length, 1);
   assert.equal(provider.versions.get(provider.active).bindings.find(binding => binding.name === "USAGE_WARNING_PERCENT").text, "90");
-  for (const [name, prefix] of Object.values(rateGroups)) for (const inherited of [name, `${prefix}_LIMIT`, `${prefix}_PERIOD_SECONDS`]) assert.equal(provider.mutations[0].patch.bindings.find(binding => binding.name === inherited).type, "inherit");
+  for (const [name, prefix] of Object.values(rateGroups)) for (const inherited of [name, `${prefix}_LIMIT`, `${prefix}_PERIOD_SECONDS`]) assert.deepEqual(provider.mutations[0].patch.bindings.find(binding => binding.name === inherited), { name: inherited, type: provider.versions.get(planned.data.resource.baseline_version_id).bindings.find(binding => binding.name === inherited).type });
 });
 test("旧空settings计划的原key仍回放持久快照，新的空settings被拒绝", async () => {
   const key = randomUUID(), planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: false }, expected_version: 1 }, key }); assert.equal(planned.status, 200, JSON.stringify(planned.data));
