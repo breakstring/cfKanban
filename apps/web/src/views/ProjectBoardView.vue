@@ -784,8 +784,10 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
   <main class="board-page board-page--nuxt">
     <header class="board-toolbar">
       <div class="board-title">
-        <p class="eyebrow">{{ project?.workspace_display_name }}</p>
-        <h1>{{ project?.display_name ?? "" }}</h1>
+        <div class="board-heading-row">
+          <p class="eyebrow">{{ project?.workspace_display_name }}</p>
+          <h1>{{ project?.display_name ?? "" }}</h1>
+        </div>
         <div v-if="project?.context" class="board-description" tabindex="0" :aria-label="locale === 'zh-CN' ? '项目描述' : 'Project description'"><MarkdownContent :source="project.context" /></div>
       </div>
       <div class="board-toolbar-actions">
@@ -793,14 +795,15 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
         <UBadge v-if="!canWrite" color="neutral" variant="soft">{{ t("board.readOnly") }}</UBadge>
         <UButton v-if="canWrite" color="primary" type="button" @click="showNewIssue = true"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg>{{ t("action.newIssue") }}</UButton>
       </div>
-      <div class="board-view-bar" role="group" :aria-label="locale === 'zh-CN' ? '项目视图' : 'Project view'">
-        <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'board' }" :aria-pressed="viewMode === 'board'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('board')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ locale === 'zh-CN' ? '看板' : 'Board' }}</button>
-        <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'list' }" :aria-pressed="viewMode === 'list'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('list')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ locale === 'zh-CN' ? '列表' : 'List' }}</button>
-
-      </div>
       <div class="board-utility-bar">
+        <div class="board-view-controls">
+          <div class="board-view-bar" role="group" :aria-label="locale === 'zh-CN' ? '项目视图' : 'Project view'">
+            <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'board' }" :aria-pressed="viewMode === 'board'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('board')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="5" height="14" rx="1" /><rect x="12" y="3" width="5" height="8" rx="1" /></svg>{{ locale === 'zh-CN' ? '看板' : 'Board' }}</button>
+            <button type="button" class="board-view-label" :class="{ 'board-view-inactive': viewMode !== 'list' }" :aria-pressed="viewMode === 'list'" :disabled="saving.size > 0 || hasPendingWrites" @click="setView('list')"><svg class="ui-action-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4h10M7 10h10M7 16h10M3 4h.01M3 10h.01M3 16h.01" /></svg>{{ locale === 'zh-CN' ? '列表' : 'List' }}</button>
+          </div>
+          <USelect :model-value="selectedStatus ?? 'all'" :items="statusFilterItems" :aria-label="t('issue.status')" :disabled="loading || saving.size > 0 || hasPendingWrites" @update:model-value="changeStatusFilter" />
+        </div>
         <ProjectSearch v-model="search" :issues="searchIssues" :project-id="projectId" :applied-search="appliedSearch" :disabled="loading || saving.size > 0 || hasPendingWrites" :reset-key="`${workspaceId}:${projectId}:${session.principal.id}:${session.session_id}`" @search="submitProjectSearch" @open="openListIssue" />
-        <USelect :model-value="selectedStatus ?? 'all'" :items="statusFilterItems" :aria-label="t('issue.status')" :disabled="loading || saving.size > 0 || hasPendingWrites" @update:model-value="changeStatusFilter" />
         <IssueQueryFilters compact v-model:priorities="priorities" v-model:labels="labelIds" :projects="filterProjects" :disabled="loading || saving.size > 0 || hasPendingWrites" />
       </div>
     </header>
@@ -943,19 +946,22 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 </template>
 
 <style scoped>
-.board-page--nuxt { padding: 28px 28px 18px; }
-.board-toolbar { gap: 20px 24px; margin-bottom: 20px; }
+.board-page--nuxt { padding: 16px 28px 18px; }
+.board-toolbar { gap: 12px 16px; margin-bottom: 12px; }
 .board-title { min-width: 0; }
+.board-heading-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
 .board-title h1 { font-family: var(--font-ui); font-size: 24px; font-weight: 650; line-height: 1.35; letter-spacing: -.02em; }
-.board-title .eyebrow { margin-bottom: 6px; font-size: 12px; color: var(--color-text-muted); }
-.board-description { margin-top: 8px; max-height: 100px; max-width: 72ch; overflow: auto; overflow-wrap: anywhere; font-size: 14px; color: var(--color-text-muted); }
+.board-title .eyebrow { margin: 0; font-size: 12px; color: var(--color-text-muted); }
+.board-description { margin-top: 4px; max-height: 3lh; max-width: 72ch; overflow: auto; overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; color: var(--color-text-muted); }
+.board-description :deep(.markdown) { font-size: inherit; line-height: inherit; }
 .board-description :deep(.markdown > :first-child) { margin-top: 0; }
 .board-description :deep(.markdown > :last-child) { margin-bottom: 0; }
 .ui-action-icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.board-view-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 24px; border-bottom: 1px solid var(--color-border); padding-top: 6px; }
-.board-view-label { display: inline-flex; align-items: center; gap: 8px; align-self: stretch; padding: 10px 0; border: 0; border-bottom: 2px solid var(--color-primary); background: transparent; color: var(--color-primary); font-size: 14px; font-weight: 600; cursor: pointer; }
+.board-view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.board-view-bar { display: flex; flex: none; align-items: center; gap: 16px; }
+.board-view-label { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 0; border: 0; border-bottom: 2px solid var(--color-primary); background: transparent; color: var(--color-primary); font-size: 14px; font-weight: 600; cursor: pointer; }
 .board-view-inactive { border-bottom-color: transparent; color: var(--color-text-muted); font-weight: 400; }
-.board-utility-bar { justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.board-utility-bar { justify-content: flex-start; flex-wrap: wrap; gap: 8px 16px; padding-top: 12px; border-top: 1px solid var(--color-border); }
 .kanban-board { grid-template-columns: repeat(5, minmax(248px, 1fr)); min-width: 1304px; border-top: 0; gap: 16px; }
 .kanban-column { border-radius: 12px; padding: 8px; background: var(--color-surface-muted); }
 .column-header { min-height: 44px; justify-content: flex-start; gap: 8px; padding: 0 8px 6px; }
@@ -980,15 +986,13 @@ watch(() => JSON.stringify([priorities.value, labelIds.value, selectedStatus.val
 .column-empty { padding: 16px 8px; border-top: 0; color: var(--color-text-muted); font-size: 12px; }
 .form-stack :deep(.relative), .form-grid :deep(.relative) { width: 100%; }
 @media (max-width: 940px) {
-  .board-page--nuxt { padding: 20px 16px 12px; }
-  .board-toolbar-actions :deep(button), .card-status-select, .issue-card-open { min-height: 44px; }
+  .board-page--nuxt { padding: 12px 16px; }
+  .board-toolbar-actions :deep(button), .board-view-label, .board-utility-bar :deep(button), .board-utility-bar :deep(summary), .card-status-select, .issue-card-open { min-height: 44px; }
 }
 @media (max-width: 640px) {
-  .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .board-toolbar { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .board-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }
   .board-title h1 { font-size: 22px; }
-  .board-view-bar { padding-top: 0; }
-  .board-description { max-height: 96px; }
   .kanban-board { grid-template-columns: repeat(5, minmax(260px, 1fr)); min-width: 1364px; }
   .card-status-select { min-height: 44px; }
 }

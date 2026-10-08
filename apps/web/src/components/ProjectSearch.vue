@@ -89,7 +89,7 @@ watch(() => props.disabled, disabled => { if (disabled) { activeId.value = null;
         @compositionstart="composing = true" @compositionend="finishComposition" />
       <UButton color="neutral" variant="outline" type="submit" :disabled="disabled || !valid">{{ chinese ? '搜索项目' : 'Search Project' }}</UButton>
     </form>
-    <p id="project-search-scope" class="search-scope">{{ chinese ? '搜索当前项目，并保留已选筛选条件。' : 'Search this Project with the selected filters.' }}</p>
+    <p id="project-search-scope" class="sr-only">{{ chinese ? '搜索当前项目，并保留已选筛选条件。' : 'Search this Project with the selected filters.' }}</p>
     <div v-if="expanded" ref="popup" class="search-popup">
       <p class="search-scope">{{ chinese ? '当前已加载结果中的快捷匹配' : 'Quick matches in currently loaded results' }}<span v-if="appliedSearch">{{ chinese ? '（来自当前已提交搜索结果）' : ' (from the currently applied search)' }}</span></p>
       <div id="project-search-candidates" role="listbox" :aria-label="chinese ? '已加载事项快捷匹配' : 'Quick matches among loaded issues'">
@@ -99,14 +99,14 @@ watch(() => props.disabled, disabled => { if (disabled) { activeId.value = null;
           <span class="search-candidate-title">{{ issue.title }}</span>
         </button>
       </div>
+      <p v-if="focused && query.kind !== 'empty'" id="project-search-feedback" class="search-scope" role="status" aria-live="polite">{{ feedback }}</p>
     </div>
-    <p v-if="focused && query.kind !== 'empty'" id="project-search-feedback" class="search-scope" role="status" aria-live="polite">{{ feedback }}</p>
   </div>
 </template>
 
 <style scoped>
-.project-search { position: relative; flex: 0 1 560px; min-width: 0; }
-.board-search { display: flex; gap: 8px; }
+.project-search { position: relative; flex: 1 1 360px; max-width: 560px; min-width: 0; }
+.board-search { display: flex; gap: 8px; width: 100%; }
 .board-search-field { flex: 1; min-width: 0; }
 .board-search :deep(input) { min-height: 36px; font-size: 14px; }
 .search-scope { margin: 4px 0 0; color: var(--ui-text-muted); font-size: 12px; }
@@ -116,7 +116,7 @@ watch(() => props.disabled, disabled => { if (disabled) { activeId.value = null;
 .search-candidate-heading { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
 .search-candidate-title { overflow-wrap: anywhere; }
 @media (max-width: 820px) {
-  .project-search { flex-basis: 100%; }
+  .project-search { flex-basis: 100%; max-width: none; }
   .board-search :deep(input), .board-search :deep(button) { min-height: 44px; }
 }
 </style>

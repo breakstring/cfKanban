@@ -1,9 +1,9 @@
 ---
 name: cfKanban
 status: frozen
-revision: 11
+revision: 12
 frozen_on: 2026-08-29
-revised_on: 2026-10-04
+revised_on: 2026-10-08
 selected_direction: nuxt-ui-kanban-workbench
 applies_to:
   - first-party-web-ui
@@ -141,7 +141,7 @@ Use system fonts only so the Worker serves no third-party font dependency. Icons
 - Authenticated page titles use `--font-ui` in both locales. The public homepage may retain its existing restrained display face; under `:lang(zh-CN)`, use `--font-ui` to avoid unpredictable CJK serif fallback.
 - `CFK-<number>`, versions, request IDs, and short machine metadata may use `--font-mono`.
 - Body text: 14–16px; compact metadata: 12–13px; control labels: at least 14px.
-- Project page title: 28–32px desktop, 24–28px narrow viewport.
+- Project workbench title: 24px desktop, 22px narrow viewport. Keep the scope label smaller so Issue content remains the focus.
 - Use no more than two font families in one visible region. Monospace metadata does not count as a decorative third voice.
 - Markdown reading width should not exceed approximately 65 characters per line when the detail layout permits it.
 
@@ -173,7 +173,9 @@ Use system fonts only so the Worker serves no third-party font dependency. Icons
 ### 3.1 Project Board
 
 - Use a full-width application surface with a compact top bar and a quiet project header.
-- Group the Project title and the primary `New issue` action on the first row, with the project description directly under its title. Search and compact priority/label menus share a quieter utility row. One secondary `Project settings` button opens the project-level page; do not repeat separate management, labels, activity, or deleted-Issue buttons on the Board. Filter selections apply immediately after a short debounce; search retains an explicit submit control in addition to Enter. This hierarchy follows the user's 2026-09-29 review of the expanded toolbar and filter rows.
+- Group the Workspace scope label and Project title on a compact heading line, with the primary `New issue` action and secondary `Project settings` action alongside. The project description stays directly below the heading and occupies at most three text lines; longer Markdown remains available in its keyboard-focusable scrolling region. Use 16px desktop top padding and 12px between heading and utilities rather than a separate tall title block.
+- Board/List switches, search, status and compact priority/label menus share one utility row when space permits, wrapping at narrower widths. Do not reserve a separate full-width tab row. Search retains an explicit submit control in addition to Enter; its scope explanation remains available to assistive technology, and quick-match feedback appears in the search popup without moving the Issue area. Filter selections apply immediately after a short debounce. Project settings remains the single project-level entry; do not repeat separate management, labels, activity, or deleted-Issue buttons on the Board. This compact hierarchy follows the user's 2026-10-08 review of wasted header space in the Board and List.
+- The local workbench shares the same density goal while retaining its own shell: project view controls join the compact brand/project/action header at wide widths and wrap naturally at narrow widths. Constrained project headers may use icon triggers for Filters and host expansion, retaining their full accessible names and tooltips; selected filter counts remain visible. Keep filters available on demand, status shortcuts and the localized sideways-scroll hint visible, and touch controls at their existing accessible sizes. Do not reserve full-Web project-description space in this surface.
 - Do not add a persistent left sidebar to the default Board. Workspace/Project scope, search, and the single primary `New issue` action fit in the top region; identity details and account actions stay in the account menu, alongside an independent language switch.
 - At a 1440px desktop viewport, all five fixed columns should be visible without reducing card text below the typography rules.
 - Columns retain enough width for readable titles and metadata. At narrow viewports use horizontal board scrolling rather than compressing five columns into unreadable slivers; the five-column desktop fit and touch targets take priority over an arbitrary fixed minimum.

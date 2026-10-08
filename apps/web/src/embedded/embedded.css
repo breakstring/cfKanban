@@ -69,6 +69,29 @@ body { overflow-x: hidden; }
 .embedded-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 .embedded-view-switch { display: flex; gap: 2px; padding: 2px; background: var(--ui-bg-muted); border-radius: var(--radius-control); }
 .embedded-toolbar button { min-height: 32px; }
+.embedded-header.embedded-project-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px 12px; margin-bottom: 6px; }
+.embedded-project-header .embedded-toolbar { flex-wrap: wrap; gap: 8px; margin-bottom: 0; }
+.embedded-expand-icon { display: none; }
+.embedded-project-header .embedded-brand > strong { flex: none; }
+.embedded-project-header .embedded-brand > .project-switcher { flex: 1; }
+.embedded-board-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; min-width: 0; margin-bottom: 6px; }
+.embedded-project-view .embedded-board-controls > .kanban-status-navigation { flex: 1 1 auto; margin-bottom: 0; }
+.embedded-project-view .embedded-board-controls > .embedded-board-hint { flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0; }
+@media (max-width: 940px) {
+  .embedded-header.embedded-project-header { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; }
+  .embedded-header.embedded-project-header > .embedded-actions { flex-wrap: nowrap; justify-content: flex-end; }
+  .embedded-project-header .embedded-expand-button { width: 44px; height: 44px; min-height: 44px; padding: 6px; justify-content: center; }
+  .embedded-project-header .embedded-expand-icon { display: block; }
+  .embedded-project-header .embedded-expand-label { display: none; }
+  .embedded-project-header .embedded-toolbar { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (max-width: 640px) { .embedded-project-header .embedded-brand > strong { display: none; } }
+@media (max-width: 360px) { .embedded-project-header .embedded-filter-label { display: none; } }
+@media (pointer: coarse) {
+  .embedded-project-header .embedded-toolbar button { min-height: 44px; }
+  .embedded-project-header .embedded-toolbar > button[aria-controls="embedded-filters"] { min-width: 44px; }
+  .embedded-project-header .embedded-icon-button { width: 44px; height: 44px; min-height: 44px !important; }
+}
 .embedded-board { display: grid; flex: 1; min-width: 0; min-height: 0; grid-auto-flow: column; grid-auto-columns: minmax(248px, 1fr); gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; padding-bottom: 12px; }
 .embedded-board .embedded-card-top { flex-wrap: wrap; row-gap: 4px; }
 .embedded-board .embedded-card-priority { flex-wrap: wrap; max-width: 100%; margin-left: auto; }
