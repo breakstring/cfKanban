@@ -1669,6 +1669,14 @@
       }
     },
     {
+      "command": "admin cloudflare configuration-operation",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflareConfigurationOperation"
+      }
+    },
+    {
       "command": "admin cloudflare local-operation",
       "effect": "read",
       "route": {
@@ -3785,6 +3793,19 @@
       }
     },
     {
+      "operation": "getCloudflareConfigurationOperation",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare/configuration/operations/{request_key}",
+      "summary": "Get Cloudflare Configuration Operation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare configuration-operation"
+        ],
+        "note": "按当前调用者、原configuration apply路径及原ASCII请求key精确只读查询；404不证明未提交，不能重发apply。"
+      }
+    },
+    {
       "operation": "getCloudflareLocalOperation",
       "method": "GET",
       "path": "/api/v1/admin/cloudflare/local-operations/{request_key}",
@@ -3870,7 +3891,7 @@
         "commands": [
           "admin cloudflare configuration-plan"
         ],
-        "note": "继续提供统计配置；warning_percent预算通知阈值已退役，只保留旧变量读回，不接受新配置。"
+        "note": "settings将多项统计配置与可选rate_limits多scope映射合为一份configuration计划；复用configuration-plan --settings，至少一项设置且scope映射非空。预览不代替用户授权。warning_percent预算通知阈值已退役，只保留旧变量读回。"
       }
     },
     {
@@ -3882,7 +3903,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare configuration-apply"
-        ]
+        ],
+        "note": "按获准的整份冻结plan执行一次Worker配置写入；旧平铺计划、原key和unknown operation恢复保持兼容，不按字段或scope分别apply。"
       }
     },
     {
@@ -4797,6 +4819,7 @@
           "admin cloudflare waf-apply",
           "admin cloudflare operation",
           "admin cloudflare token-operation",
+          "admin cloudflare configuration-operation",
           "admin cloudflare local-operation",
           "admin cloudflare plan",
           "admin cloudflare verify",

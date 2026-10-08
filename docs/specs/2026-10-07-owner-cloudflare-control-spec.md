@@ -1,9 +1,9 @@
 # Owner Cloudflare 管理与用量历史
 
 - 状态：Frozen
-- 日期：2026-10-07
+- 日期：2026-10-08
 - 执行任务：[CFK-643](https://cfkanban.dev/app/issues/CFK-643)、[CFK-644](https://cfkanban.dev/app/issues/CFK-644)、[CFK-645](https://cfkanban.dev/app/issues/CFK-645)、[CFK-650](https://cfkanban.dev/app/issues/CFK-650)、[CFK-639](https://cfkanban.dev/app/issues/CFK-639)
-- 授权依据：用户确认将 Owner 概览收敛为只读信息，把统一 Token、用量、历史与访问频率集中到用量与配额；输入 Token 后仅需一次保存，核验、能力检查与各区加载由系统自动完成；移除 WAF 和预算通知功能，并保留已安装版本的安全升级与历史操作恢复。授权本地实现与验证，不包含实际创建 Token、线上迁移、Cloudflare 写入、部署、提交或推送。
+- 授权依据：用户确认将 Owner 概览收敛为只读信息，把统一 Token、用量、历史与访问频率集中到用量与配额；输入 Token 后仅需一次保存，核验、能力检查与各区加载由系统自动完成；移除 WAF 和预算通知功能，并保留已安装版本的安全升级与历史操作恢复。进一步确认按「Token → 统一用量与访问设置 → 数据」组织页面，以常驻表单、草稿差异和一次保存替代逐项弹窗，执行任务为 [CFK-669](https://cfkanban.dev/app/issues/CFK-669)。授权本地实现与验证，不包含实际创建 Token、线上迁移、Cloudflare 写入、部署、提交或推送。
 - 本增量覆盖 Owner 管理接入、以下控制面操作和可选日度历史。覆盖成本保护及 Bootstrap 合同中该范围的“Web/Worker 不持有管理 Token”旧限制；其余身份、凭据、资源归属、发行与部署合同继续有效。
 
 ## 固定目标与授权
@@ -29,15 +29,17 @@ Token 仅在表单短暂内存、当前实例专用 HTTPS Secret 接口及固定
 
 ## 保存、计划与未知结果
 
-Secret 保存是一个明确操作。限流与配置变更先生成冻结 plan，再以 plan ID、当前版本和稳定幂等键 apply。新配置白名单为 analytics 开关、history 开关、free/paid 声明、UTC 账单周期日、账户聚合开关；不再接受新的 `warning_percent` 设置。旧值、已登记操作和旧配置读回保留兼容，不在无关修改时新建提醒变量。账户、数据库和 Worker 从固定目标派生，不能重新定向。
+Secret 保存是一个独立明确操作。统一设置先生成一个冻结 configuration plan，再以 plan ID、当前版本和稳定幂等键 apply。`POST /api/v1/admin/cloudflare/configuration/plan` 的 `settings` 接受 analytics 开关、history 开关、free/paid 声明、UTC 账单周期日、账户聚合开关及可选 `rate_limits`；只提交修改字段，至少一项，不接受未知字段或新的 `warning_percent` 设置。旧值、已登记操作和旧配置读回保留兼容，不在无关修改时新建提醒变量。账户、数据库和 Worker 从固定目标派生，不能重新定向。
 
-限流一次修改 instance、principal、unauthenticated_sensitive、anonymous_login 或 expensive_reads 中一个 scope；limit 为正整数，period_seconds 仅 10 或 60。保持 namespace ID，同步原生 binding 与非秘密 policy vars；不改变权限、结果完整性、套餐、CPU 或固定查询并发设置。
+`rate_limits` 是 instance、principal、unauthenticated_sensitive、anonymous_login、expensive_reads 的非空子集；每个 scope 只接受正安全整数 `limit` 与 10 或 60 的 `period_seconds`。保持 namespace ID，同步原生 binding 与非秘密 policy vars；不改变权限、结果完整性、套餐、CPU 或固定查询并发设置。旧单 scope plan/apply 继续兼容。统一计划的 `before` / `after` 保留五项统计字段；仅当请求限流时增加 `rate_limits`，只含此次请求的 scope。一次保存使用一个 intent、一个 CAS 和一次 Worker settings PATCH，覆盖同一 Worker 的配置变更；不形成任意资源 batch 接口。
 
 每次 Worker 配置写前核对实际 DB 绑定、单一 100% active deployment、latest 等于 active，以及冻结的版本和配置基线。部署与版本列表只读当前/最新项，不扫描全部历史；完整规则库存不能复用这一分页例外。未部署候选、分流、缺失绑定或漂移均拒绝，不自动发布未知代码。完整保留其他 bindings、Secrets、limits、Cron、域名及配置。
 
 D1 保存非秘密 plan、持久 intent、幂等请求哈希、互斥锁及审计；Token 正文不持久化。Cloudflare 与 D1 不构成原子事务，不能假定供应商提供全局 CAS。写前登记 intent，外部结果不确定则保留 `unknown`；同 key 只能读取或核验原操作，不再次外部写入。只有 active deployment 和预期配置读回符合原请求才标记 `verified`。未知 intent 不因超时而清锁或重放。
 
 保存响应缺失时，用 `GET /api/v1/admin/cloudflare/secret-operations/{request_key}` 精确查询本人、Secret 保存路径及原 UUID key 的单条 intent；使用已有唯一索引，不扫描历史、不接管其他调用者。404 只表示当次未找到，不能证明在途保存不会提交，也不能用 `latest_operation` 替代原请求。浏览器仅在当前 origin、Principal 与 Session 分区短暂保存非秘密 key / operation ID，Token 和 body 均不恢复。
+
+统一配置 apply 响应缺失时，使用 `GET /api/v1/admin/cloudflare/configuration/operations/{request_key}`，按当前 Owner、configuration apply 路径、kind 和原 key 精确核验同一 intent；key 沿用原幂等合同以支持旧 CLI key。响应复用 operation 投影，404 同样不能证明未提交。Web、Agent 与公共 CLI 均可沿原 key 查询，再核验原 operation，不能创建替代 apply。
 
 完整合法的明确拒绝与未知结果分别处理。已确认 Cloudflare 403/409 保留权限或目标错误，不导致 cfKanban Session 失效；预检错误仅投影白名单请求类型、method、HTTP 状态及 request ID，不返回供应商正文或请求头。登记 intent 前失败可返回 `details.write_state=not_dispatched`，只说明本次 handler 没有登记或发送外部写，不证明全局不存在同 key 并发请求。浏览器只有收到原保存请求的完整合法错误及该证据时，才显示拒绝并解除本次未确认状态；不依据 lookup 404 或普通 503 推断未写入。
 
@@ -52,8 +54,8 @@ D1 保存非秘密 plan、持久 intent、幂等请求哈希、互斥锁及审�
 「用量与配额」依次呈现：
 
 1. **Token 与能力状态。** 顶部始终保留空密码输入框和「保存」按钮。已有统一或配置/统计兼容授权时持续显示「Token 已保存」，输入提示新值可替换、留空保留；不显示原 Token、不用伪造掩码冒充已读取值。提交后清空输入，失败也不恢复草稿。状态使用图标和文字，权限路径、范围、证据边界及手工恢复步骤按需展开。
-2. **当日用量与每日历史。** 同页连续呈现 UTC 当日指标和完整 UTC 日趋势；容量标为观测值。没有数据时给一个清楚空状态和相应设置入口，不堆叠说明或要求跳转概览。附件存储上限、账期指标与统计高级设置按用途收纳；高级项从数据详情就地打开编辑弹窗。
-3. **访问频率。** 五组限制逐项编辑，弹窗先展示名称及变更前后值，再明确确认；版本、binding 和 JSON 放在详情。
+2. **统一用量与访问设置。** 常驻面板集中展示五项统计/口径字段和五组访问频率，各项有用途、当前值和新值。输入只改变当前页面草稿；仅列出有变化的前后值，底部一处「放弃修改」与「保存 N 项修改」。保存自动串接 plan 与 apply，前后值及版本符合草稿基线才继续，不再逐项弹窗或重复确认。远端变化时保留草稿并拒绝自动套用；未知结果保留原 key，不自动重发。账户汇总与历史须显式开启，套餐声明不购买方案。附件存储上限是独立 D1 应用设置，保留原入口。
+3. **当日用量、每日历史与其他数据。** 同页连续呈现 UTC 当日指标和完整 UTC 日趋势；容量标为观测值。已有配置时自动加载，无需重新保存。没有数据时给清楚空状态并指向上方设置；数据详情只展示统计口径、账期及观测时间，不再散布设置按钮。版本、binding 和 JSON 放在详情。
 
 保存后的核验、权限检查和分区加载由系统承担，不再提供「检查连接」「重新检查」「读取历史」「采集所选日期」或「刷新用量」等流程按钮。打开页面、成功保存或返回页面时按新鲜度和冷却自动更新；各区独立展示加载、保留数据与失败原因。短暂故障采用有次数上限的恢复，卸载、身份变化或上下文失效后停止；不循环轮询或无界回填，不为了界面简化跳过 plan、确认、实时授权或未知写锁。
 

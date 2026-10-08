@@ -186,7 +186,8 @@ for(const name of ['admin cloudflare verify'])test(`${name} reads control before
 for(const scenario of [
   {name:'admin rate-limits',path:'rate-limits',kind:'rate_limit',input:{scope:'instance',limit:400,period_seconds:60}},
   {name:'admin cloudflare configuration',path:'configuration',kind:'configuration',input:{settings:{history_enabled:true}}},
-])test(`${scenario.kind} plan exact readback and apply use the frozen version rather than later control`,async t=>{
+  {name:'unified configuration',path:'configuration',kind:'configuration',input:{settings:{analytics_enabled:true,history_enabled:true,billing_plan:'paid',billing_cycle_day:8,account_totals:false,rate_limits:{instance:{limit:400,period_seconds:60},principal:{limit:120,period_seconds:10}}}}},
+])test(`${scenario.name} plan exact readback and apply use the frozen version rather than later control`,async t=>{
   const planId=randomUUID(),operationId=randomUUID(),frozen=plan(planId),calls=[];
   frozen.kind=scenario.kind;
   const f=await isolatedCliFixture(t,async options=>{
@@ -194,14 +195,48 @@ for(const scenario of [
     if(options.method==='GET'&&options.apiPath===base)return ok({version:4});
     if(options.apiPath===`${base}/${scenario.path}/plan`)return write(frozen);
     if(options.method==='GET'&&options.apiPath===`${base}/plans/${planId}`)return ok(frozen);
-    if(options.apiPath===`${base}/${scenario.path}/apply`)return write(operation(operationId));
-    assert.equal(options.apiPath,`${base}/operations/${operationId}`);return ok(operation(operationId));
+    if(options.apiPath===`${base}/${scenario.path}/apply`)return write({...operation(operationId),kind:scenario.kind});
+    assert.equal(options.apiPath,`${base}/operations/${operationId}`);return ok({...operation(operationId),kind:scenario.kind});
   });
   const planned=await f.runtime.execute(command(scenario.kind==='configuration'?'admin cloudflare configuration-plan':'admin rate-limits plan'),{instanceId:f.instanceId,...scenario.input});
   assert.equal(planned.operation.phase,'verified');assert.equal(calls[1].body.expected_version,4);assert.equal(planned.data.resource.version,5);
+  assert.deepEqual(calls[1].body,{...scenario.input,expected_version:4});assert.equal(calls.filter(call=>call.method==='POST').length,1);
   const applied=await f.runtime.execute(command(scenario.kind==='configuration'?'admin cloudflare configuration-apply':'admin rate-limits apply'),{instanceId:f.instanceId,plan_id:planId});
   assert.equal(applied.operation.phase,'verified');assert.equal(applied.cloudflare_status,'verified');assert.equal(calls.find(call=>call.apiPath.endsWith('/apply')).body.expected_version,5);
   assert.deepEqual(calls.slice(3).map(call=>call.apiPath),[`${base}/plans/${planId}`,`${base}/${scenario.path}/apply`,`${base}/operations/${operationId}`]);
+  assert.equal(calls.filter(call=>call.apiPath.endsWith('/apply')).length,1);
+});
+
+test('configuration apply loss recovers by the exact original ASCII key without resending apply, and 404 keeps its lock',async t=>{
+  const planId=randomUUID(),cloudId=randomUUID(),operationId=randomUUID(),key='cli-original-configuration-key',frozen={...plan(planId),kind:'configuration'},calls=[];let found=false;
+  const f=await isolatedCliFixture(t,async options=>{
+    calls.push(options);
+    if(options.apiPath===`${base}/plans/${planId}`)return ok(frozen);
+    if(options.apiPath===`${base}/configuration/apply`)return {ok:false,status:0,error:{code:'PLATFORM_UNAVAILABLE',source:'client_transport',category:'platform_failure'}};
+    if(options.apiPath===`${base}/configuration/operations/${key}`)return found?ok({...operation(cloudId),kind:'configuration'}):{ok:false,status:404,error:{code:'NOT_FOUND',source:'service',category:'not_found'}};
+    assert.equal(options.apiPath,`${base}/operations/${cloudId}`);return ok({...operation(cloudId),kind:'configuration'});
+  });
+  const input={instanceId:f.instanceId,plan_id:planId,operationId,idempotencyKey:key};
+  const first=await f.runtime.execute(command('admin cloudflare configuration-apply'),input);assert.equal(first.outcome_unknown,true);
+  const recover=()=>createCliRuntime(f.options).execute(command('operation recover'),{instanceId:f.instanceId,operationId});
+  const missing=await recover();assert.equal(missing.outcome_unknown,true);assert.equal((await record(f,operationId)).idempotency_key,key);
+  await assert.rejects(f.runtime.execute(command('admin cloudflare configuration-plan'),{instanceId:f.instanceId,settings:{history_enabled:true}}),{code:'CLI_PENDING_WRITE_RECOVERY_REQUIRED'});
+  assert.equal((await f.runtime.execute(command('admin cloudflare configuration-apply'),input)).outcome_unknown,true);
+  found=true;const result=await recover();assert.equal(result.operation.phase,'verified');assert.equal(result.data.resource.operation_id,cloudId);assert.equal(result.recovered_from,'original_configuration_intent_lookup');
+  assert.equal(calls.filter(call=>call.method==='POST').length,1);assert.equal(calls.filter(call=>call.apiPath===`${base}/configuration/operations/${key}`).length,3);
+  assert.equal((await f.runtime.execute(command('admin cloudflare configuration-operation'),{instanceId:f.instanceId,request_key:key})).data.operation_id,cloudId);
+});
+
+test('configuration key lookup rejects a different operation kind and preserves the unknown request',async t=>{
+  const planId=randomUUID(),operationId=randomUUID(),key='original-configuration',calls=[];
+  const f=await isolatedCliFixture(t,async options=>{
+    calls.push(options);if(options.apiPath===`${base}/plans/${planId}`)return ok({...plan(planId),kind:'configuration'});
+    if(options.method==='POST')return {ok:false,status:0,error:{code:'PLATFORM_UNAVAILABLE',source:'client_transport'}};
+    return ok(operation(randomUUID()));
+  });
+  await f.runtime.execute(command('admin cloudflare configuration-apply'),{instanceId:f.instanceId,plan_id:planId,operationId,idempotencyKey:key});
+  const recovered=await f.runtime.execute(command('operation recover'),{instanceId:f.instanceId,operationId});assert.equal(recovered.outcome_unknown,true);assert.equal(calls.filter(call=>call.method==='POST').length,1);
+  const direct=await f.runtime.execute(command('admin cloudflare configuration-operation'),{instanceId:f.instanceId,request_key:key});assert.equal(direct.ok,false);assert.equal(direct.error.code,'CLI_CLOUDFLARE_CONFIGURATION_RESPONSE_INVALID');
 });
 
 test('mismatched frozen plan or impossible plan version stays unverified and retries only GET',async t=>{

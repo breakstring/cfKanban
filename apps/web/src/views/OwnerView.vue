@@ -73,13 +73,7 @@ type OwnerSection = "overview" | "usage" | "settings" | "cloudflare" | "workspac
 const props = defineProps<{ section: OwnerSection; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
 const activeSection = computed(() => props.section === "cloudflare" ? "usage" : props.section);
-const usageSetting = ref<"history_enabled" | "analytics_enabled" | "billing_plan" | "billing_cycle_day" | "account_totals" | "warning_percent" | null>(null);
-const usageSettingRequest = ref(0);
 const usageReadbackGeneration = ref(0);
-function selectUsageSetting(field: NonNullable<typeof usageSetting.value>): void {
-  usageSetting.value = field;
-  usageSettingRequest.value++;
-}
 
 interface ProjectEntry extends ContainerResource { workspaceId: string; workspaceName: string }
 interface PurgePreview {
@@ -1807,9 +1801,9 @@ onUnmounted(() => {
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
     <VersionUpdatesPanel v-if="!loading && section === 'updates'" :session="session" />
-    <CloudflareControlPanel v-if="activeSection === 'usage'" :session="session" mode="usage" :initial-setting="usageSetting" :setting-request="usageSettingRequest" @rates="rateSettings = $event" @applied="usageReadbackGeneration++">
-      <UsagePanel :refresh-generation="usageReadbackGeneration" :observed-origin="meta?.observed_origin ?? ''" @settings="selectUsageSetting" />
-      <UsageHistoryPanel :refresh-generation="usageReadbackGeneration" @settings="selectUsageSetting" />
+    <CloudflareControlPanel v-if="activeSection === 'usage'" :session="session" mode="usage" @rates="rateSettings = $event" @applied="usageReadbackGeneration++">
+      <UsagePanel :refresh-generation="usageReadbackGeneration" :observed-origin="meta?.observed_origin ?? ''" />
+      <UsageHistoryPanel :refresh-generation="usageReadbackGeneration" />
     </CloudflareControlPanel>
     <HomepageSettingsPanel v-if="activeSection === 'settings'" />
     <ContainerTreePagination v-if="!loading && ['workspaces', 'archive', 'access', 'audit'].includes(section)" :tree="containerTree" :archived="section === 'archive'" @workspaces="moreWorkspaces" @projects="moreProjects" />

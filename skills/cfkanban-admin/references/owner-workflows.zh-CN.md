@@ -279,9 +279,27 @@ Token 接入或替换通过 `web open` 打开 Owner「用量与配额」。用�
 
 网页保存缺少 Worker 写权限时，引导用户到 Cloudflare → Workers & Pages → 当前 Worker → Settings → Variables and Secrets，更新 **Secret** 类型的 `CFKANBAN_API_TOKEN` 后 Deploy。返回页面重新检查。不保存为明文变量，不因手工替换而放弃未确认操作。
 
-Agent 按任务检查时，`POST /verify` 使用 `{}` 和稳定键核验配置与统计。旧 `include_optional` 参数仍接受，但不再查询 Notifications、Billing 或 WAF。配置与访问频率修改仍使用 `POST /configuration/plan` 或 `/rate-limits/plan`、当前控制版本和稳定键；通过 `GET /plans/{plan_id}` 核对 before/after，再以 `{plan_id, expected_version:<plan.version>}` 和独立稳定键 apply。预算通知 `warning_percent` 不再允许配置。
+Agent 按任务检查时，`POST /verify` 使用 `{}` 和稳定键核验配置与统计。旧 `include_optional` 参数仍接受，但不再查询 Notifications、Billing 或 WAF。
+
+用量与访问频率设置通过 `POST /configuration/plan` 形成一份变更。`settings` 支持 `analytics_enabled`、`history_enabled`、`billing_plan`、`billing_cycle_day`、`account_totals`，以及可选的 `rate_limits` 映射，至少提供一项设置。限流映射必须非空，仅允许 `instance`、`principal`、`unauthenticated_sensitive`、`anonymous_login`、`expensive_reads`；每个请求的 scope 必须同时提供 1–9,007,199,254,740,991 的正安全整数 `limit` 和 10 或 60 的 `period_seconds`。未请求的 scope 和 namespace ID 保持原值。预算通知 `warning_percent` 不再允许配置。
+
+例如，将以下非秘密 JSON 通过 `api request` 的 stdin 提交，替换为已核验实例、当前控制版本、稳定键及用户要求的值：
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"POST","apiPath":"/api/v1/admin/cloudflare/configuration/plan","idempotencyKey":"usage-frequency-change-plan","body":{"expected_version":4,"settings":{"analytics_enabled":true,"history_enabled":true,"rate_limits":{"instance":{"limit":400,"period_seconds":60},"principal":{"limit":120,"period_seconds":60}}}}}
+```
+
+公共 CLI 复用已有命令，业务含义相同：
+
+```sh
+cfkanban admin cloudflare configuration-plan --instance 11111111-1111-4111-8111-111111111111 --settings '{"analytics_enabled":true,"history_enabled":true,"rate_limits":{"instance":{"limit":400,"period_seconds":60},"principal":{"limit":120,"period_seconds":60}}}'
+```
+
+通过 `GET /plans/{plan_id}` 或 `admin cloudflare plan` 核对整份 before/after。预览不是用户授权；既有请求明确覆盖这些值时按原授权推进，否则展示具体计划后再获准应用。使用 `/configuration/apply` 或 `admin cloudflare configuration-apply`，携带同一 plan ID、冻结版本和独立稳定键。整份计划只产生一次 Worker 配置写入并核验同一个结果，不按字段或 scope 拆写。旧 `/rate-limits/plan` 及 `admin rate-limits plan/apply` 保留单 scope 兼容，旧版平铺统计配置计划及恢复记录同样继续有效。
 
 只有 `verified` 证明配置已观测生效。用 `GET /operations/{operation_id}` 读回；`POST /operations/{operation_id}/verify` 以 `{}` 和稳定键读取 Cloudflare 并更新非秘密状态，不重复外部写入。结果不确定保留原请求/键。apply 更新 Worker 配置，不是重启或费用封顶。
+
+配置 apply 响应丢失、尚未取得 operation ID 时，使用 `GET /configuration/operations/{original_request_key}` 或 `admin cloudflare configuration-operation --request-key`，携带准确原 key。查询只匹配当前 Principal 与 configuration apply 路径；CLI `operation recover` 通过它恢复，不重发 apply。404 仍保留原请求未确认状态，不能换 key 或新建替代写入。查到后仅读取或核验该准确 operation。Key 沿用 1–128 ASCII 合同，兼容旧 CLI 生成值。
 
 WAF 设置、预算通知及通知策略浏览已退出产品功能，不再提供新目标登记或启用。schema 27 数据、既有规则和旧 bindings 保留兼容。WAF 响应丢失只用 `GET /waf/operations/{original_uuid_key}` 查原请求，再读取或核验准确 operation。404 或 `cloudflare_feature_retired` 都不证明此前写入未发生；保留 intent、私有 pending 和 journal。普通升级保留既有规则；独立授权的域名回退可清理准确旧自有规则。应用公告与访问频率设置继续支持。
 

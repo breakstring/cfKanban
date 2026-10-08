@@ -8,6 +8,7 @@ import { registerCloudflareControlRoutes } from "../../apps/worker/src/routes/cl
 import { Router } from "../../apps/worker/src/kernel/router.ts";
 import { createRequestContext } from "../../apps/worker/src/kernel/http.ts";
 import { errorResponse } from "../../apps/worker/src/kernel/errors.ts";
+import { computeRequestHash } from "../../apps/worker/src/kernel/idempotency.ts";
 
 // Only an isolated local D1 and a synthetic in-memory Cloudflare provider are used.
 const server = createTestHarness({ root: fileURLToPath(new URL("../../", import.meta.url)), workers: [{ configPath: "wrangler.wp02-test.jsonc" }] });
@@ -15,11 +16,19 @@ const worker = server.getWorker(), ownerId = randomUUID(), credentialId = random
 const ownerToken = `cfk_v1_owner_${"A".repeat(43)}`, configurationToken = "K".repeat(40), nextToken = "N".repeat(40), controlToken = "C".repeat(40);
 const target = { account_id: "a".repeat(32), worker_name: "fixture-worker", database_id: randomUUID() }, zoneId = "b".repeat(32), base = "/api/v1/admin/cloudflare";
 const digest = value => createHash("sha256").update(value).digest("hex");
+const rateGroups = {
+  instance: ["INSTANCE_RATE_LIMITER", "RATE_LIMIT_INSTANCE", "1001", 300],
+  principal: ["PRINCIPAL_RATE_LIMITER", "RATE_LIMIT_PRINCIPAL", "1002", 120],
+  unauthenticated_sensitive: ["UNAUTHENTICATED_RATE_LIMITER", "RATE_LIMIT_UNAUTHENTICATED_SENSITIVE", "1003", 30],
+  anonymous_login: ["ANONYMOUS_LOGIN_RATE_LIMITER", "RATE_LIMIT_ANONYMOUS_LOGIN", "1004", 20],
+  expensive_reads: ["EXPENSIVE_READ_RATE_LIMITER", "RATE_LIMIT_EXPENSIVE_READ", "1005", 15],
+};
 let env, db, provider, router;
 function fakeProvider() {
   const first = randomUUID();
   const state = { active: first, latest: first, deployment: randomUUID(), deploymentPages: 1, mutations: [], gets: [], requests: [], mode: "deploy", denied: false, foreignZone: false, wafMissing: false, oversized: false, code: "code-etag", secrets: {}, versions: new Map() };
   const bindings = [{ name: "DB", type: "d1", id: target.database_id }, { name: "INSTANCE_RATE_LIMITER", type: "ratelimit", namespace_id: "1001", simple: { limit: 300, period: 60 } }, { name: "RATE_LIMIT_INSTANCE_LIMIT", type: "plain_text", text: "300" }, { name: "RATE_LIMIT_INSTANCE_PERIOD_SECONDS", type: "plain_text", text: "60" }, { name: "FOREIGN_SECRET", type: "secret_text" }, { name: "FOREIGN_VAR", type: "plain_text", text: "do not change" }, { name: "CFKANBAN_CONFIGURATION_TOKEN", type: "secret_text" }];
+  for (const [name, prefix, namespace, limit] of Object.values(rateGroups).slice(1)) bindings.push({ name, type: "ratelimit", namespace_id: namespace, simple: { limit, period: 60 } }, { name: `${prefix}_LIMIT`, type: "plain_text", text: String(limit) }, { name: `${prefix}_PERIOD_SECONDS`, type: "plain_text", text: "60" });
   state.versions.set(first, { bindings, compatibility_date: "2026-08-29", compatibility_flags: ["nodejs_compat"], limits: { cpu_ms: 10 }, observability: { enabled: false }, cache_options: { enabled: false, cross_version_cache: false }, annotations: { "workers/message": "Fixture version", "workers/triggered_by": "upload" }, exports_reconciliation: { created: [], deleted: [] } });
   const response = (result, status = 200, resultInfo) => new Response(JSON.stringify({ success: status === 200, result, ...(resultInfo ? { result_info: resultInfo } : {}) }), { status });
   const publish = settings => { const id = randomUUID(); state.versions.set(id, structuredClone(settings)); state.latest = id; if (state.mode !== "pending") { state.active = id; state.deployment = randomUUID(); } return id; };
@@ -439,12 +448,12 @@ test("settings PATCH已成功但后续GET无权，也保持unknown写锁", async
   const duplicate = await request(`${base}/rate-limits/apply`, { method: "POST", body, key }); assert.equal(duplicate.data.idempotent_replay, true); assert.equal(provider.mutations.length, 1);
   provider.readFailureAfterMutation = null; const recovered = await request(`${base}/operations/${applied.data.resource.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(recovered.data.resource.status, "verified"); assert.equal(provider.mutations.length, 1);
 });
-async function applyLostPlan(kind, settings = { history_enabled: true, analytics_enabled: true }) {
+async function applyLostPlan(kind, settings = { history_enabled: true, analytics_enabled: true }, key = randomUUID()) {
   const path = kind === "rate_limit" ? "rate-limits" : "configuration";
   const input = kind === "rate_limit" ? { scope: "instance", limit: 500, period_seconds: 10 } : { settings };
   const planned = await request(`${base}/${path}/plan`, { method: "POST", body: { ...input, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data));
   provider.mode = "network_after";
-  const body = { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, key = randomUUID();
+  const body = { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version };
   const applied = await request(`${base}/${path}/apply`, { method: "POST", body, key }); assert.equal(applied.status, 200, JSON.stringify(applied.data));
   assert.equal(applied.data.resource.status, "unknown"); assert.equal(applied.data.resource.result_version_id, null); assert.equal(provider.mutations.length, 1);
   return { operationId: applied.data.resource.operation_id, path: `${base}/${path}/apply`, body, key };
@@ -502,4 +511,135 @@ test("已知候选结果版本不能被同配置的外部版本替代，原候�
   provider.active = candidate; provider.latest = candidate; provider.deployment = randomUUID();
   const recovered = await request(`${base}/operations/${applied.data.resource.operation_id}/verify`, { method: "POST", body: {} });
   assert.equal(recovered.data.resource.status, "verified", JSON.stringify(recovered.data)); assert.equal(recovered.data.resource.result_version_id, candidate); assert.equal(provider.mutations.length, 1);
+});
+
+const unifiedSettings = {
+  history_enabled: true, analytics_enabled: true, account_totals: true, billing_plan: "paid", billing_cycle_day: 12,
+  rate_limits: Object.fromEntries(Object.entries(rateGroups).map(([scope, [, , , limit]]) => [scope, { limit: limit + 10, period_seconds: 10 }])),
+};
+test("五项统计与五组访问频率冻结为一个configuration计划，一次PATCH并统一读回", async () => {
+  const body = { settings: unifiedSettings, expected_version: 1 }, key = randomUUID();
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body, key }); assert.equal(planned.status, 200, JSON.stringify(planned.data));
+  const plan = planned.data.resource;
+  assert.equal(plan.kind, "configuration"); assert.deepEqual(plan.after, unifiedSettings);
+  assert.deepEqual(plan.before, { history_enabled: false, analytics_enabled: false, account_totals: false, billing_plan: null, billing_cycle_day: null, rate_limits: Object.fromEntries(Object.entries(rateGroups).map(([scope, [, , , limit]]) => [scope, { limit, period_seconds: 60 }])) });
+  assert.equal(provider.mutations.length, 0); assert.equal((await db.prepare("SELECT count(*) AS n FROM cloudflare_control_plans").first()).n, 1);
+  provider.denied = true;
+  const replayPlan = await request(`${base}/configuration/plan`, { method: "POST", body, key }); assert.equal(replayPlan.data.idempotent_replay, true); assert.deepEqual(replayPlan.data.resource, plan);
+  provider.denied = false;
+  const applyBody = { plan_id: plan.plan_id, expected_version: plan.version }, applyKey = randomUUID();
+  const applied = await request(`${base}/configuration/apply`, { method: "POST", body: applyBody, key: applyKey }); assert.equal(applied.status, 200, JSON.stringify(applied.data)); assert.equal(applied.data.resource.status, "verified"); assert.equal(applied.data.resource.kind, "configuration");
+  assert.equal(provider.mutations.length, 1); assert.equal((await db.prepare("SELECT count(*) AS n FROM cloudflare_control_operations WHERE kind='configuration'").first()).n, 1);
+  const patch = provider.mutations[0].patch;
+  assert.equal(provider.mutations[0].method, "PATCH"); assert.deepEqual(patch.limits, { cpu_ms: 10 }); assert.deepEqual(patch.compatibility_flags, ["nodejs_compat"]); assert.deepEqual(patch.observability, { enabled: false });
+  for (const [scope, [name, prefix, namespace]] of Object.entries(rateGroups)) {
+    assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: "ratelimit", namespace_id: namespace, simple: { limit: unifiedSettings.rate_limits[scope].limit, period: 10 } });
+    assert.equal(patch.bindings.find(binding => binding.name === `${prefix}_LIMIT`).text, String(unifiedSettings.rate_limits[scope].limit)); assert.equal(patch.bindings.find(binding => binding.name === `${prefix}_PERIOD_SECONDS`).text, "10");
+  }
+  for (const [name, value] of [["USAGE_HISTORY_ENABLED", "true"], ["USAGE_ANALYTICS_ENABLED", "true"], ["USAGE_ACCOUNT_TOTALS_ENABLED", "true"], ["USAGE_BILLING_PLAN", "paid"], ["USAGE_BILLING_CYCLE_DAY", "12"]]) assert.equal(patch.bindings.find(binding => binding.name === name).text, value);
+  for (const name of ["DB", "FOREIGN_SECRET", "FOREIGN_VAR", "CFKANBAN_CONFIGURATION_TOKEN"]) assert.deepEqual(patch.bindings.find(binding => binding.name === name), { name, type: "inherit", version_id: plan.baseline_version_id });
+  const replay = await request(`${base}/configuration/apply`, { method: "POST", body: applyBody, key: applyKey }); assert.equal(replay.data.idempotent_replay, true); assert.deepEqual(replay.data.resource, applied.data.resource); assert.equal(provider.mutations.length, 1);
+});
+test("统一设置拒绝空对象、未知scope和嵌套字段及不合法数值，不登记计划或请求供应商", async () => {
+  for (const settings of [
+    {}, { rate_limits: {} }, { rate_limits: null }, { rate_limits: [] }, { rate_limits: "instance" },
+    { rate_limits: { foreign: { limit: 1, period_seconds: 60 } } }, { rate_limits: { instance: null } }, { rate_limits: { instance: [] } },
+    { rate_limits: { instance: { limit: 1, period_seconds: 60, namespace_id: "2000" } } }, { rate_limits: { instance: { limit: 1 } } },
+    ...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "300", null].map(limit => ({ rate_limits: { instance: { limit, period_seconds: 60 } } })),
+    ...[0, 30, "60", null].map(period_seconds => ({ rate_limits: { instance: { limit: 300, period_seconds } } })),
+    { ...unifiedSettings, token: "forbidden" }, { ...unifiedSettings, worker_name: "foreign" }, { ...unifiedSettings, warning_percent: 90 },
+  ]) {
+    const rejected = await request(`${base}/configuration/plan`, { method: "POST", body: { settings, expected_version: 1 } }); assert.equal(rejected.status, 400, JSON.stringify({ settings, result: rejected.data }));
+  }
+  assert.equal(provider.requests.length, 0); assert.equal(provider.mutations.length, 0); assert.equal((await current()).version, 1); assert.equal((await db.prepare("SELECT count(*) AS n FROM cloudflare_control_plans").first()).n, 0);
+});
+test("统一计划只携带请求scope，缺失或无法保留的namespace拒绝整个计划", async () => {
+  for (const invalid of [null, { namespace_id: "unknown" }, { type: "plain_text" }, { unsupported: true }]) {
+    const bindings = provider.versions.get(provider.active).bindings, index = bindings.findIndex(binding => binding.name === "PRINCIPAL_RATE_LIMITER"), original = structuredClone(bindings[index]);
+    if (invalid === null) bindings.splice(index, 1); else Object.assign(bindings[index], invalid);
+    const rejected = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { rate_limits: { instance: { limit: 500, period_seconds: 60 }, principal: { limit: 200, period_seconds: 10 } } }, expected_version: 1 } }); assert.equal(rejected.status, 400, JSON.stringify(rejected.data)); assert.equal((await current()).version, 1);
+    if (invalid === null) bindings.splice(index, 0, original); else bindings[index] = original;
+  }
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { rate_limits: { principal: { limit: 200, period_seconds: 10 } } }, expected_version: 1 } });
+  assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.deepEqual(planned.data.resource.before.rate_limits, { principal: { limit: 120, period_seconds: 60 } }); assert.deepEqual(planned.data.resource.after.rate_limits, { principal: { limit: 200, period_seconds: 10 } }); assert.equal(provider.mutations.length, 0);
+});
+test("统一设置保留CAS和冻结基线检查，第二次核对漂移关闭intent且不PATCH", async () => {
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: unifiedSettings, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data));
+  const body = { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version };
+  assert.equal((await request(`${base}/configuration/apply`, { method: "POST", body: { ...body, expected_version: 1 } })).status, 409);
+  const originalFetch = provider.fetch; let versionReads = 0;
+  router = new Router(); registerCloudflareControlRoutes(router, { fetch: async (url, init) => {
+    if (/\/versions\/[^/]+$/.test(new URL(url).pathname) && ++versionReads === 2) provider.versions.get(provider.active).bindings.find(binding => binding.name === "PRINCIPAL_RATE_LIMITER").namespace_id = "9001";
+    return originalFetch(url, init);
+  } });
+  const applied = await request(`${base}/configuration/apply`, { method: "POST", body }); assert.equal(applied.status, 200, JSON.stringify(applied.data)); assert.equal(applied.data.resource.status, "failed"); assert.equal(applied.data.resource.failure_class, "preflight_changed"); assert.equal(provider.mutations.length, 0);
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, null);
+});
+test("统一设置并发及unknown重放只PATCH一次，保留锁直至原操作完整核验", async () => {
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: unifiedSettings, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data));
+  provider.mode = "network_after";
+  const body = { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, key = randomUUID();
+  const concurrent = await Promise.all([request(`${base}/configuration/apply`, { method: "POST", body, key }), request(`${base}/configuration/apply`, { method: "POST", body, key })]); assert.ok(concurrent.some(result => result.status === 200));
+  const replay = await request(`${base}/configuration/apply`, { method: "POST", body, key }); assert.equal(replay.data.idempotent_replay, true); assert.equal(replay.data.resource.status, "unknown"); assert.equal(provider.mutations.length, 1);
+  const id = replay.data.resource.operation_id; assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, id);
+  assert.equal((await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: false }, expected_version: (await current()).version } })).status, 409);
+  assert.equal((await request(`${base}/configuration/apply`, { method: "POST", body: { ...body, expected_version: body.expected_version + 1 }, key })).status, 409);
+  const recovered = await request(`${base}/operations/${id}/verify`, { method: "POST", body: {} }); assert.equal(recovered.data.resource.status, "verified", JSON.stringify(recovered.data)); assert.equal(provider.mutations.length, 1); assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, null);
+});
+for (const scenario of [
+  { name: "第二scope namespace", change: bindings => { bindings.find(binding => binding.name === "PRINCIPAL_RATE_LIMITER").namespace_id = "2002"; } },
+  { name: "第二scope原生limit", change: bindings => { bindings.find(binding => binding.name === "PRINCIPAL_RATE_LIMITER").simple.limit = 120; } },
+  { name: "第二scope原生period", change: bindings => { bindings.find(binding => binding.name === "PRINCIPAL_RATE_LIMITER").simple.period = 60; } },
+  { name: "第二scope policy", change: changeText("RATE_LIMIT_PRINCIPAL_LIMIT", "120") },
+  { name: "第二scope丢失policy", change: removeBinding("RATE_LIMIT_PRINCIPAL_PERIOD_SECONDS") },
+  { name: "混合统计字段", change: changeText("USAGE_HISTORY_ENABLED", "false") },
+  { name: "未修改scope", foreign: true, change: changeText("RATE_LIMIT_EXPENSIVE_READ_LIMIT", "99") },
+]) test(`统一配置丢响应后${scenario.name}不匹配保持unknown，不重发PATCH`, async () => {
+  const settings = { history_enabled: true, rate_limits: { instance: { limit: 500, period_seconds: 10 }, principal: { limit: 200, period_seconds: 10 } } };
+  const operation = await applyLostPlan("configuration", settings), acceptedVersion = provider.active, drift = structuredClone(provider.versions.get(acceptedVersion)); scenario.change(drift.bindings); provider.publish(drift);
+  const checked = await request(`${base}/operations/${operation.operationId}/verify`, { method: "POST", body: {} }); assert.equal(checked.status, 200, JSON.stringify(checked.data)); assert.equal(checked.data.resource.status, "unknown"); assert.equal(checked.data.resource.failure_class, scenario.foreign ? "cloudflare_foreign_configuration_drift" : "configuration_readback_mismatch");
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, operation.operationId);
+  const replay = await request(operation.path, { method: "POST", body: operation.body, key: operation.key }); assert.equal(replay.data.idempotent_replay, true); assert.equal(provider.mutations.length, 1);
+  provider.active = acceptedVersion; provider.latest = acceptedVersion; provider.deployment = randomUUID();
+  const recovered = await request(`${base}/operations/${operation.operationId}/verify`, { method: "POST", body: {} }); assert.equal(recovered.data.resource.status, "verified", JSON.stringify(recovered.data)); assert.equal(provider.mutations.length, 1);
+});
+test("旧configuration计划包含提醒变量时仍可apply并恢复unknown，不新增限流字段", async () => {
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: true }, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data));
+  assert.ok(!Object.hasOwn(planned.data.resource.before, "rate_limits")); assert.ok(!Object.hasOwn(planned.data.resource.after, "rate_limits"));
+  const legacyAfter = { ...planned.data.resource.after, warning_percent: 90 };
+  await db.prepare("UPDATE cloudflare_control_plans SET after_json=?2 WHERE id=?1").bind(planned.data.resource.plan_id, JSON.stringify(legacyAfter)).run();
+  const readback = await request(`${base}/plans/${planned.data.resource.plan_id}`); assert.deepEqual(readback.data.after, legacyAfter);
+  provider.mode = "network_after";
+  const body = { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, key = randomUUID();
+  const applied = await request(`${base}/configuration/apply`, { method: "POST", body, key }); assert.equal(applied.status, 200, JSON.stringify(applied.data)); assert.equal(applied.data.resource.status, "unknown");
+  const replay = await request(`${base}/configuration/apply`, { method: "POST", body, key }); assert.equal(replay.data.idempotent_replay, true);
+  const recovered = await request(`${base}/operations/${applied.data.resource.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(recovered.data.resource.status, "verified", JSON.stringify(recovered.data)); assert.equal(provider.mutations.length, 1);
+  assert.equal(provider.versions.get(provider.active).bindings.find(binding => binding.name === "USAGE_WARNING_PERCENT").text, "90");
+  for (const [name, prefix] of Object.values(rateGroups)) for (const inherited of [name, `${prefix}_LIMIT`, `${prefix}_PERIOD_SECONDS`]) assert.equal(provider.mutations[0].patch.bindings.find(binding => binding.name === inherited).type, "inherit");
+});
+test("旧空settings计划的原key仍回放持久快照，新的空settings被拒绝", async () => {
+  const key = randomUUID(), planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: false }, expected_version: 1 }, key }); assert.equal(planned.status, 200, JSON.stringify(planned.data));
+  const legacyBody = { settings: {}, expected_version: 1 }, { requestHash } = await computeRequestHash({ method: "POST", routeTemplate: `${base}/configuration/plan`, normalizedResourceScope: "instance-cloudflare-control", requestBody: legacyBody });
+  await db.prepare("UPDATE idempotency_records SET request_hash=?2 WHERE idempotency_key=?1").bind(digest(key), requestHash).run();
+  provider.denied = true;
+  const replay = await request(`${base}/configuration/plan`, { method: "POST", body: legacyBody, key }); assert.equal(replay.status, 200, JSON.stringify(replay.data)); assert.equal(replay.data.idempotent_replay, true); assert.deepEqual(replay.data.resource, planned.data.resource);
+  const rejected = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: {}, expected_version: (await current()).version } }); assert.equal(rejected.status, 400); assert.equal(rejected.data.details.reason, "empty_configuration_settings"); assert.equal(provider.mutations.length, 0);
+});
+test("统一配置原apply key查询只返回本人的精确configuration intent，404不释放锁或请求供应商", async () => {
+  const operation = await applyLostPlan("configuration", unifiedSettings, `cli-${randomUUID()}`), before = { settings: await db.prepare("SELECT * FROM cloudflare_control_settings").first(), events: (await db.prepare("SELECT count(*) AS n FROM events").first()).n, requests: provider.requests.length };
+  const path = `${base}/configuration/operations/${operation.key}`, found = await request(path);
+  assert.equal(found.status, 200, JSON.stringify(found.data)); assert.equal(found.response.headers.get("cache-control"), "no-store"); assert.equal(found.data.operation_id, operation.operationId); assert.equal(found.data.kind, "configuration"); assert.equal(found.data.status, "unknown");
+  for (const forbidden of [operation.key, digest(operation.key), "desired_json", "baseline_json"]) assert.ok(!JSON.stringify(found.data).includes(forbidden));
+  assert.equal((await request(`${base}/configuration/operations/${randomUUID()}`)).status, 404); assert.equal((await request(path, { headers: {} })).status, 401); assert.equal((await request(`${base}/configuration/operations/${"x".repeat(129)}`)).status, 400);
+  await db.prepare("UPDATE cloudflare_control_operations SET kind='rate_limit' WHERE id=?1").bind(operation.operationId).run(); assert.equal((await request(path)).status, 404);
+  await db.prepare("UPDATE cloudflare_control_operations SET kind='configuration',route=?2 WHERE id=?1").bind(operation.operationId, `${base}/rate-limits/apply`).run(); assert.equal((await request(path)).status, 404);
+  const foreign = randomUUID(), now = Date.now(); await db.prepare("INSERT INTO principals(id,display_name,display_name_key,created_at,updated_at) VALUES(?1,'Configuration_Reader','configuration_reader',?2,?2)").bind(foreign, now).run();
+  await db.prepare("UPDATE cloudflare_control_operations SET route=?2,principal_id=?3 WHERE id=?1").bind(operation.operationId, `${base}/configuration/apply`, foreign).run(); assert.equal((await request(path)).status, 404);
+  assert.deepEqual(await db.prepare("SELECT * FROM cloudflare_control_settings").first(), before.settings); assert.equal((await db.prepare("SELECT count(*) AS n FROM events").first()).n, before.events); assert.equal(provider.requests.length, before.requests); assert.equal(provider.mutations.length, 1);
+});
+test("统一配置查询原key不受后续latest operation变化影响", async () => {
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: unifiedSettings, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data));
+  const key = randomUUID(), applied = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, key }); assert.equal(applied.data.resource.status, "verified");
+  const later = await save("control", nextToken); assert.notEqual(later.data.resource.operation_id, applied.data.resource.operation_id); assert.equal((await current()).latest_operation.operation_id, later.data.resource.operation_id);
+  const requests = provider.requests.length, found = await request(`${base}/configuration/operations/${key}`); assert.equal(found.data.operation_id, applied.data.resource.operation_id); assert.equal(found.data.status, "verified"); assert.equal(provider.requests.length, requests); assert.equal(provider.mutations.length, 2);
 });

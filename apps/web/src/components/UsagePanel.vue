@@ -8,7 +8,7 @@ import { locale } from "../lib/i18n";
 import type { WriteResult } from "../types";
 
 const props = withDefaults(defineProps<{ summary?: boolean; observedOrigin?: string; refreshGeneration?: number }>(), { summary: false, refreshGeneration: 0 });
-const emit = defineEmits<{ details: []; settings: [field: "analytics_enabled" | "billing_plan" | "billing_cycle_day" | "account_totals"] }>();
+const emit = defineEmits<{ details: [] }>();
 
 interface UsageMetric {
   key: string;
@@ -289,7 +289,7 @@ onUnmounted(() => { disposed = true; generation++; clearReadback(); controller?.
         <div v-for="entry in summaryMetrics" :key="entry.key"><dt>{{ entry.label }}</dt><dd><strong>{{ metricValue(entry.metric) }}</strong></dd></div>
       </dl>
       <template v-else>
-        <p v-if="usage.cloudflare.status === 'not_configured'" class="usage-empty">{{ ui('Connect Cloudflare above to see usage. If collection is turned off, enable it in statistics settings.', '在上方连接 Cloudflare 后即可查看用量；如果已关闭采集，可在统计设置中启用。') }}</p>
+        <p v-if="usage.cloudflare.status === 'not_configured'" class="usage-empty">{{ ui('Connect Cloudflare above to see usage. If collection is turned off, enable it in Usage & access settings above.', '在上方连接 Cloudflare 后即可查看用量；如果已关闭采集，可在上方「用量与访问设置」中启用。') }}</p>
         <template v-else>
           <div class="usage-resources">
             <section v-for="group in resourceGroups" :key="group.key" class="usage-resource" :aria-label="group.label">
@@ -300,13 +300,7 @@ onUnmounted(() => { disposed = true; generation++; clearReadback(); controller?.
           <div class="usage-storage"><h3>{{ ui('Current storage', '当前存储') }}</h3><dl class="usage-metrics"><div v-for="entry in storageMetrics" :key="entry.key"><dt>{{ entry.label }}</dt><dd><strong>{{ metricValue(entry.metric) }}</strong></dd></div></dl></div>
         </template>
         <details class="usage-details">
-          <summary>{{ ui('Statistics settings & data details', '统计设置与数据详情') }}</summary>
-          <div class="usage-preferences">
-            <UButton color="neutral" variant="outline" type="button" @click="emit('settings', 'analytics_enabled')">{{ ui('Usage collection', '用量采集') }}</UButton>
-            <UButton color="neutral" variant="outline" type="button" @click="emit('settings', 'account_totals')">{{ ui('Account totals', '账户汇总') }}</UButton>
-            <UButton color="neutral" variant="outline" type="button" @click="emit('settings', 'billing_plan')">{{ ui('Cloudflare plan', 'Cloudflare 方案') }}</UButton>
-            <UButton color="neutral" variant="outline" type="button" @click="emit('settings', 'billing_cycle_day')">{{ ui('Billing cycle', '账单周期') }}</UButton>
-          </div>
+          <summary>{{ ui('Data details', '数据详情') }}</summary>
           <p v-if="usage.cloudflare.billing">{{ ui('Plan', '方案') }}: {{ usage.cloudflare.billing.plan === 'unknown' ? ui('Not specified', '未声明') : usage.cloudflare.billing.plan === 'free' ? 'Free' : 'Paid' }} · {{ ui('Cycle start day', '账期起始日') }}: {{ usage.cloudflare.billing.cycle_day ?? ui('Not specified', '未声明') }}</p>
           <p class="muted-copy">{{ ui('Daily usage does not require a billing cycle. Set your actual Cloudflare plan and cycle to view period totals. This does not change your subscription.', '查看当日用量不需要填写账期。声明实际 Cloudflare 方案和账期后可查看周期累计，不会改变订阅。') }}</p>
           <template v-if="billingMetrics.length"><h3>{{ ui('Billing-period usage', '账期累计用量') }}</h3><dl class="usage-metrics"><div v-for="metric in billingMetrics" :key="metric.key"><dt>{{ metricNames[metric.key] ?? metric.key }}</dt><dd><strong>{{ metricValue(metric) }}</strong></dd></div></dl></template>

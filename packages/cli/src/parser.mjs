@@ -51,7 +51,7 @@ export function matches(schema, value) {
   if (schema.type === 'integer' || schema.type === 'number') return typeof value === 'number' && Number.isFinite(value) && (schema.type !== 'integer' || Number.isSafeInteger(value)) && value >= (schema.minimum ?? -Infinity) && value <= (schema.maximum ?? Infinity);
   if (schema.type === 'boolean') return typeof value === 'boolean';
   if (schema.type === 'array') return Array.isArray(value) && value.length >= (schema.minItems ?? 0) && value.length <= (schema.maxItems ?? Infinity) && (!schema.uniqueItems || new Set(value.map(entry => JSON.stringify(entry))).size === value.length) && value.every(entry => matches(schema.items,entry));
-  if (schema.type === 'object' || schema.properties) return value && typeof value === 'object' && !Array.isArray(value) && (schema.required ?? []).every(name => Object.hasOwn(value,name)) && Object.keys(value).length >= (schema.minProperties ?? 0) && Object.entries(value).every(([name,entry]) => schema.properties?.[name] ? matches(schema.properties[name],entry) : schema.additionalProperties !== false);
+  if (schema.type === 'object' || schema.properties) return value && typeof value === 'object' && !Array.isArray(value) && (schema.required ?? []).every(name => Object.hasOwn(value,name)) && Object.keys(value).length >= (schema.minProperties ?? 0) && Object.entries(value).every(([name,entry]) => Object.hasOwn(schema.properties??{},name) ? matches(schema.properties[name],entry) : schema.additionalProperties !== false);
   return true;
 }
 export function assertNoSecrets(value) {

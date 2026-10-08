@@ -60,7 +60,7 @@ The upgrade and announcement results are reported separately. A failed announcem
 Use $cfkanban-admin to show this instance's usage and remaining attachment capacity, including when the data was last collected.
 ```
 
-**In the Web UI:** Open **Administration → Usage & quotas**. Overview keeps a read-only summary. The usage page has the Token form at the top, today's usage and daily history together, attachment capacity, and request frequency at the bottom.
+**In the Web UI:** Open **Administration → Usage & quotas**. Overview keeps a read-only summary. The page shows the Token form, **Usage & access settings**, then today's usage, daily history, and attachment capacity.
 
 Enter one Cloudflare API Token and choose **Save**. A persistent **Token saved** status means the empty input is ready for a replacement; leaving it blank keeps the saved value. The Token is never returned by the API or restored as a browser draft. The page automatically confirms the save, checks configuration and analytics, and loads the sections. There are no separate check, read, or refresh buttons. A failed capability does not undo a successful save, and an unconfirmed write keeps its original record and blocks another change while the system checks it.
 
@@ -68,9 +68,11 @@ The account, Worker, and database are fixed deployment targets. Saving through t
 
 Today's metrics use the UTC day, including on Paid plans. Billing-cycle totals and precise observation times are in **Data details**. Storage is an observed capacity, rather than daily consumption. Unknown does not mean zero, and instance usage does not represent account-wide usage or remaining allowance. Explicitly enabled account totals appear separately.
 
-**Daily usage history** offers 7-, 30-, and 90-day views of complete UTC days, excluding today. It starts disabled; choose its setting, review the change, and confirm to enable it. Enabled collection reuses the existing maintenance trigger. Entering or returning to the page can automatically collect at most one missing day from the last seven complete UTC days, with a 60-second cooldown; it does not loop through all gaps. If a collection response is lost, the page reads the result without submitting it again. Missing days and unknown values remain gaps.
+**Daily usage history** offers 7-, 30-, and 90-day views of complete UTC days, excluding today. It starts disabled; explicitly enable it in **Usage & access settings** and save. Enabled collection reuses the existing maintenance trigger. Entering or returning to the page can automatically collect at most one missing day from the last seven complete UTC days, with a 60-second cooldown; it does not loop through all gaps. If a collection response is lost, the page reads the result without submitting it again. Missing days and unknown values remain gaps.
 
-In **Data details**, open an analytics setting to edit it in place. The declared Cloudflare plan and UTC billing cycle describe your verified Cloudflare configuration, not a cfKanban subscription. Missing cycle information leaves monthly totals unknown but does not prevent daily usage. Account totals remain an opt-in. Budget notifications and WAF management have been removed from this flow; existing provider rules and old operation records are preserved for safe upgrades and recovery.
+In **Usage & access settings**, edit analytics, history, account totals, the declared plan, UTC billing cycle, and request limits together. Each row shows its purpose, current value, and draft value. Only changes appear in the before/after summary. Choose **Discard changes** or **Save N changes** once; there are no per-setting confirmation dialogs. Existing configuration loads automatically without saving again. A conflict preserves your draft; an uncertain save checks the original operation without resubmitting it. **Data details** only explains the metrics.
+
+The declared Cloudflare plan and UTC billing cycle describe your verified Cloudflare configuration, not a cfKanban subscription or purchase. Missing cycle information leaves monthly totals unknown but does not prevent daily usage. Account totals remain an opt-in. Budget notifications and WAF management have been removed from this flow; existing provider rules and old operation records are preserved for safe upgrades and recovery.
 
 ```sh
 cfkanban admin usage show --mode manual --json --no-interactive
@@ -107,7 +109,7 @@ Limit the results to this project and explain who changed whose permissions.
 Use $cfkanban-admin to check the address Agents use to connect to this instance and its current request-rate limits without changing them.
 ```
 
-**In the Web UI:** **Overview → Service information** displays the release and instance addresses. **Usage & quotas → Request frequency** shows current limits and loads the current settings automatically. An Owner can choose a limit, review the before/after values, and confirm the save.
+**In the Web UI:** **Overview → Service information** displays the release and instance addresses. **Usage & quotas → Usage & access settings** loads current request limits automatically. An Owner can edit several limits with analytics settings, review the combined before/after values, and save once.
 
 The **preferred API origin** tells Agents which connection address to prefer. Once the new domain is configured, ask your Agent to check the proposed address change:
 

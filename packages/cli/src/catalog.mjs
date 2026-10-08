@@ -5,6 +5,7 @@ const names = {
   getUsageHistory: 'admin usage history', collectUsageHistory: 'admin usage collect',
   getCloudflareControl: 'admin cloudflare show', getCloudflareNotifications: 'admin cloudflare notifications', getCloudflareWaf: 'admin cloudflare waf', getCloudflareOperation: 'admin cloudflare operation', getCloudflarePlan: 'admin cloudflare plan',
   getCloudflareSecretOperation: 'admin cloudflare token-operation',
+  getCloudflareConfigurationOperation: 'admin cloudflare configuration-operation',
   getCloudflareLocalOperation: 'admin cloudflare local-operation',
   getCloudflareWafOperation: 'admin cloudflare waf-operation', registerCloudflareWafTarget: 'admin cloudflare waf-connect', planCloudflareWaf: 'admin cloudflare waf-plan', applyCloudflareWaf: 'admin cloudflare waf-apply',
   verifyCloudflareControl: 'admin cloudflare verify', updateCloudflareSettings: 'admin cloudflare zone', verifyCloudflareOperation: 'admin cloudflare verify-operation',

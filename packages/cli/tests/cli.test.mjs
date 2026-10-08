@@ -33,6 +33,25 @@ test('strict flags, required fields and bounded input fail before any execution'
   const rawCapability=`cfi_v1_abcdefgh_${'A'.repeat(43)}`;await assert.rejects(parseArguments(['comment','create','--instance',id,'--identifier','CFK-1','--body',rawCapability]),{code:'CLI_SECRET_INPUT_REJECTED'});assert.equal(redactOutput({body:rawCapability}).body,'[REDACTED]');
   await assert.rejects(parseArguments(['issue','update','--instance',id,'--identifier','CFK-1','--title','Changed','--idempotency-key','unsupported']),{code:'CLI_UNKNOWN_OPTION'});
 });
+test('configuration settings accept one strict usage and multi-scope plan before any execution',async()=> {
+  const settings={analytics_enabled:true,history_enabled:true,billing_plan:'paid',billing_cycle_day:8,account_totals:false,rate_limits:{instance:{limit:400,period_seconds:60},principal:{limit:120,period_seconds:10}}};
+  const args=['admin','cloudflare','configuration-plan','--instance',randomUUID()];
+  for(const input of [settings,{history_enabled:false},{rate_limits:{expensive_reads:{limit:Number.MAX_SAFE_INTEGER,period_seconds:60}}}]) {
+    const parsed=await parseArguments([...args,'--settings',JSON.stringify(input)]);assert.equal(parsed.command.operation,'planCloudflareConfiguration');assert.equal(parsed.command.effect,'plan');assert.deepEqual(parsed.input.settings,input);
+  }
+  for(const input of [{},{rate_limits:{}},{rate_limits:null},{rate_limits:[]},{rate_limits:{unknown:{limit:10,period_seconds:60}}},{rate_limits:{instance:{limit:0,period_seconds:60}}},{rate_limits:{instance:{limit:1.5,period_seconds:60}}},{rate_limits:{instance:{limit:Number.MAX_SAFE_INTEGER+1,period_seconds:60}}},{rate_limits:{instance:{limit:1,period_seconds:30}}},{rate_limits:{instance:{limit:1}}},{rate_limits:{instance:{limit:1,period_seconds:60,namespace_id:'foreign'}}},{history_enabled:true,warning_percent:90},{history_enabled:'true'}]) {
+    await assert.rejects(parseArguments([...args,'--settings',JSON.stringify(input)]),{code:'CLI_INVALID_ARGUMENT'});
+  }
+  for(const inherited of ['constructor','__proto__','toString']) {
+    const input={rate_limits:{[inherited]:{limit:10,period_seconds:60}}};
+    await assert.rejects(parseArguments([...args,'--settings',JSON.stringify(input)]),{code:'CLI_INVALID_ARGUMENT'});
+    await assert.rejects(parseArguments([...args,'--settings',JSON.stringify({history_enabled:true,[inherited]:{}})]),{code:'CLI_INVALID_ARGUMENT'});
+  }
+  for(const locale of ['en','zh-CN']) {
+    let output='';await main(['admin','cloudflare','configuration-plan','--help','--json','--locale',locale],{stdout:{write:value=>output+=value},stderr:{write:()=>assert.fail('Unexpected help error')},runtime:{execute:()=>assert.fail('Help executed a configuration write')}});
+    const help=JSON.parse(output).result.commands[0];assert.match(help.examples[0],/rate_limits/);assert.match(help.examples[0],/history_enabled/);assert.match(help.description,locale==='en'?/does not authorize apply/:/不代表获准应用/);
+  }
+});
 test('search index commands route bounded read-only metadata with explicit project cursors',async t=> {
   const f=await createMcpStateFixture(t);const calls=[];
   const runtime=createCliRuntime({...f,scopeInspector:()=>assert.fail('Explicit search targets inspected repository'),fetchImpl:fakeFetch(f),requestImpl:async options=>{calls.push(options);return {ok:true,status:200,data:{items:[],next_cursor:'next'}};}});

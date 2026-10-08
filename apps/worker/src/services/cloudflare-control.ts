@@ -35,6 +35,7 @@ const RATE_GROUPS = {
   anonymous_login: ["ANONYMOUS_LOGIN_RATE_LIMITER", "RATE_LIMIT_ANONYMOUS_LOGIN_LIMIT", "RATE_LIMIT_ANONYMOUS_LOGIN_PERIOD_SECONDS"],
   expensive_reads: ["EXPENSIVE_READ_RATE_LIMITER", "RATE_LIMIT_EXPENSIVE_READ_LIMIT", "RATE_LIMIT_EXPENSIVE_READ_PERIOD_SECONDS"],
 } as const;
+type RateScope = keyof typeof RATE_GROUPS;
 const CONFIG_VARS = { history_enabled: "USAGE_HISTORY_ENABLED", analytics_enabled: "USAGE_ANALYTICS_ENABLED", billing_plan: "USAGE_BILLING_PLAN", billing_cycle_day: "USAGE_BILLING_CYCLE_DAY", account_totals: "USAGE_ACCOUNT_TOTALS_ENABLED", warning_percent: "USAGE_WARNING_PERCENT" } as const;
 const BUDGET = { status: "unsupported_contract", docs_url: "https://developers.cloudflare.com/billing/manage/budget-alerts/", dashboard_url: "https://dash.cloudflare.com/?to=/:account/billing/billable-usage" };
 
@@ -245,19 +246,33 @@ function configurationValues(env: WorkerEnv): Resource {
 }
 function configurationInput(value: JsonValue): Resource {
   if (value === null || Array.isArray(value) || typeof value !== "object") throw validationError("configuration_object_required");
-  const input = object(value); for (const key of Object.keys(input)) if (!Object.hasOwn(CONFIG_VARS, key)) throw validationError("unknown_configuration_field");
+  const input = object(value); for (const key of Object.keys(input)) if (!Object.hasOwn(CONFIG_VARS, key) && key !== "rate_limits") throw validationError("unknown_configuration_field");
   for (const key of ["history_enabled", "analytics_enabled", "account_totals"]) if (key in input && typeof input[key] !== "boolean") throw validationError("invalid_configuration_boolean");
   if ("billing_plan" in input && input.billing_plan !== null && input.billing_plan !== "free" && input.billing_plan !== "paid") throw validationError("invalid_billing_plan");
   for (const [key, max] of [["billing_cycle_day", 31], ["warning_percent", 100]] as const) if (key in input && !(key === "billing_cycle_day" && input[key] === null) && (typeof input[key] !== "number" || !Number.isSafeInteger(input[key]) || input[key] < 1 || input[key] > max)) throw validationError("invalid_configuration_number");
+  if ("rate_limits" in input) {
+    const rates = input.rate_limits;
+    if (rates === null || Array.isArray(rates) || typeof rates !== "object" || Object.keys(rates).length === 0) throw validationError("invalid_rate_limit_configuration");
+    for (const [scope, rate] of Object.entries(rates)) {
+      if (rate === null || Array.isArray(rate) || typeof rate !== "object" || Object.keys(rate).some(key => key !== "limit" && key !== "period_seconds")) throw validationError("invalid_rate_limit_configuration");
+      validateRateLimit(scope, rate.limit ?? null, rate.period_seconds ?? null);
+    }
+  }
   return input;
 }
 export async function planCloudflareConfiguration(env: WorkerEnv, request: Request, auth: AuthContext, input: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
   if (input !== null && typeof input === "object" && !Array.isArray(input) && Object.hasOwn(input, "warning_percent")) { requireOwnerControl(auth); throw validationError("cloudflare_feature_retired"); }
   return createPlan(env, request, auth, "configuration", configurationInput(input), expected, now, dependencies);
 }
-export async function planCloudflareRateLimits(env: WorkerEnv, request: Request, auth: AuthContext, scope: JsonValue, limit: JsonValue, period: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
+function validateRateLimit(scope: JsonValue, limit: JsonValue, period: JsonValue): void {
   if (typeof scope !== "string" || !Object.hasOwn(RATE_GROUPS, scope) || typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || (period !== 10 && period !== 60)) throw validationError("invalid_rate_limit_configuration");
+}
+export async function planCloudflareRateLimits(env: WorkerEnv, request: Request, auth: AuthContext, scope: JsonValue, limit: JsonValue, period: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
+  validateRateLimit(scope, limit, period);
   return createPlan(env, request, auth, "rate_limit", { scope, limit, period_seconds: period }, expected, now, dependencies);
+}
+function changedRateLimits(kind: ConfigurationPlanKind, desired: Resource): [RateScope, Resource][] {
+  return kind === "rate_limit" ? [[desired.scope as RateScope, desired]] : Object.entries(desired.rate_limits === undefined ? {} : object(desired.rate_limits)).map(([scope, rate]) => [scope as RateScope, object(rate)]);
 }
 async function createPlan(env: WorkerEnv, request: Request, auth: AuthContext, kind: ConfigurationPlanKind, desired: Resource, expected: number, now: number, dependencies: CloudflareControlDependencies): Promise<Resource> {
   requireOwnerControl(auth); const token = tokenFor(env, "configuration"); if (!token) throw validationError("configuration_token_required");
@@ -265,7 +280,13 @@ async function createPlan(env: WorkerEnv, request: Request, auth: AuthContext, k
   const planId = crypto.randomUUID();
   return localChange(env, request, auth, `/api/v1/admin/cloudflare/${kind === "rate_limit" ? "rate-limits" : "configuration"}/plan`, { ...(kind === "configuration" ? { settings: desired } : desired), expected_version: expected }, expected,
     (id, version) => [env.DB.prepare(`INSERT INTO cloudflare_control_plans(id,kind,control_version,baseline_json,before_json,after_json,created_at) SELECT ?1,?2,?3,?4,?5,?6,?7 FROM cloudflare_control_settings WHERE singleton=1 AND last_operation_id=?8`).bind(planId, kind, version, canonicalJson(live.baseline), canonicalJson(before), canonicalJson(after), now, id)],
-    async version => planResource({ id: planId, kind, control_version: version, baseline_json: canonicalJson(live.baseline), before_json: canonicalJson(before), after_json: canonicalJson(after), created_at: now, consumed_operation_id: null }), now, async () => { live = await baseline(env, token, dependencies); before = desiredValues(kind, desired, live.bindings); after = kind === "configuration" ? { ...before, ...desired } : desired; patchSettings(live, kind, after, fixedTarget(env)); });
+    async version => planResource({ id: planId, kind, control_version: version, baseline_json: canonicalJson(live.baseline), before_json: canonicalJson(before), after_json: canonicalJson(after), created_at: now, consumed_operation_id: null }), now, async () => {
+      // 仅拒绝新的空配置，原 key 仍能回放旧版本保存的计划快照。
+      if (kind === "configuration" && Object.keys(desired).length === 0) throw validationError("empty_configuration_settings");
+      live = await baseline(env, token, dependencies); before = desiredValues(kind, desired, live.bindings);
+      after = kind === "configuration" ? { ...before, ...desired } : desired;
+      patchSettings(live, kind, after, fixedTarget(env));
+    });
 }
 function bindingText(bindings: Resource[], name: string): string | null { const binding = bindings.find(entry => entry.name === name); if (!binding) return null; if (binding.type !== "plain_text" || typeof binding.text !== "string") throw new ProviderFailure("target_mismatch", true); return binding.text; }
 function desiredValues(kind: ConfigurationPlanKind, desired: Resource, bindings: Resource[]): Resource {
@@ -275,6 +296,10 @@ function desiredValues(kind: ConfigurationPlanKind, desired: Resource, bindings:
   // Older deployments collect snapshots without an explicit enabled variable.
   // A partial settings change must preserve that effective enabled state.
   if (bindingText(bindings, CONFIG_VARS.analytics_enabled) === null) values.analytics_enabled = Boolean((bindingText(bindings, "USAGE_ACCOUNT_ID") || bindingText(bindings, "CFKANBAN_CONTROL_ACCOUNT_ID")) && (bindingText(bindings, "USAGE_D1_DATABASE_ID") || bindingText(bindings, "CFKANBAN_CONTROL_DATABASE_ID")) && bindings.some(binding => (binding.name === SECRET_NAMES.connection || binding.name === SECRET_NAMES.analytics) && binding.type === "secret_text"));
+  if (desired.rate_limits !== undefined) values.rate_limits = Object.fromEntries(changedRateLimits(kind, desired).map(([scope]) => {
+    const current = desiredValues("rate_limit", { scope }, bindings);
+    return [scope, { limit: current.limit ?? null, period_seconds: current.period_seconds ?? null }];
+  }));
   configurationInput(values); return values;
 }
 function patchSettings(live: LiveBaseline, kind: ConfigurationPlanKind, desired: Resource, target: Target): Resource {
@@ -283,13 +308,14 @@ function patchSettings(live: LiveBaseline, kind: ConfigurationPlanKind, desired:
   const preserved = new Set(["bindings", "compatibility_date", "compatibility_flags", "usage_model", "limits", "logpush", "tail_consumers", "placement", "observability", "tags", "annotations", "cache_options", "exports_reconciliation"]);
   if (Object.keys(live.settings).some(key => !preserved.has(key))) throw validationError("cloudflare_settings_preservation_unverified");
   const changed = new Map<string, Resource>();
-  if (kind === "rate_limit") {
-    const group = RATE_GROUPS[desired.scope as keyof typeof RATE_GROUPS], existing = live.bindings.find(entry => entry.name === group[0]);
+  for (const [scope, rate] of changedRateLimits(kind, desired)) {
+    const group = RATE_GROUPS[scope], existing = live.bindings.find(entry => entry.name === group[0]);
     if (!existing || existing.type !== "ratelimit" || typeof existing.namespace_id !== "string" || !/^[1-9][0-9]*$/.test(existing.namespace_id)) throw validationError("rate_limit_namespace_unverified");
     const extra = Object.keys(existing).filter(key => !["name", "type", "namespace_id", "simple"].includes(key)); if (extra.length) throw validationError("rate_limit_binding_unverified");
-    changed.set(group[0], { name: group[0], type: "ratelimit", namespace_id: existing.namespace_id, simple: { limit: desired.limit ?? null, period: desired.period_seconds ?? null } });
-    changed.set(group[1], { name: group[1], type: "plain_text", text: String(desired.limit) }); changed.set(group[2], { name: group[2], type: "plain_text", text: String(desired.period_seconds) });
-  } else {
+    changed.set(group[0], { name: group[0], type: "ratelimit", namespace_id: existing.namespace_id, simple: { limit: rate.limit ?? null, period: rate.period_seconds ?? null } });
+    changed.set(group[1], { name: group[1], type: "plain_text", text: String(rate.limit) }); changed.set(group[2], { name: group[2], type: "plain_text", text: String(rate.period_seconds) });
+  }
+  if (kind === "configuration") {
     for (const [key, name] of Object.entries(CONFIG_VARS)) if (desired[key] !== null && desired[key] !== undefined) changed.set(name, { name, type: "plain_text", text: String(desired[key]) });
     if (desired.analytics_enabled === true || desired.history_enabled === true) for (const [name, value] of [["USAGE_ACCOUNT_ID", target.account_id], ["USAGE_D1_DATABASE_ID", target.database_id], ["USAGE_WORKER_NAME", target.worker_name]]) changed.set(name as string, { name: name as string, type: "plain_text", text: value as string });
   }
@@ -395,6 +421,12 @@ export async function getCloudflareSecretOperation(env: WorkerEnv, auth: AuthCon
   if (!row) throw notFound();
   return operationResource(row, (await settingsRow(env.DB)).version);
 }
+export async function getCloudflareConfigurationOperation(env: WorkerEnv, auth: AuthContext, requestKey: string): Promise<Resource> {
+  requireOwnerControl(auth); validateIdempotencyKey(requestKey);
+  const row = await env.DB.prepare("SELECT * FROM cloudflare_control_operations WHERE principal_id=?1 AND route=?2 AND key_hash=?3 AND kind='configuration'").bind(auth.principalId, "/api/v1/admin/cloudflare/configuration/apply", await sha256Hex(requestKey)).first<OperationRow>();
+  if (!row) throw notFound();
+  return operationResource(row, (await settingsRow(env.DB)).version);
+}
 export async function getCloudflarePlan(env: WorkerEnv, auth: AuthContext, id: string): Promise<Resource> { requireOwnerControl(auth); if (!isUuid(id)) throw notFound(); const row = await env.DB.prepare("SELECT * FROM cloudflare_control_plans WHERE id=?1").bind(id).first<PlanRow>(); if (!row) throw notFound(); return planResource(row); }
 export type Assessment = [Status, string | null, string | null, string | null];
 async function completeCloudMutation(env: WorkerEnv, request: Request, auth: AuthContext, id: string, dependencies: CloudflareControlDependencies, token: string, mutate: () => Promise<JsonValue>): Promise<void> {
@@ -429,9 +461,12 @@ async function assessOperation(env: WorkerEnv, row: OperationRow, dependencies: 
   if (live.baseline.active_version_id === before.active_version_id) return ["pending", "deployment_not_active", live.baseline.latest_version_id === before.active_version_id ? null : live.baseline.latest_version_id, live.baseline.deployment_id];
   if (row.result_version_id && live.baseline.active_version_id !== row.result_version_id) return ["unknown", "cloudflare_version_drift", row.result_version_id, live.baseline.deployment_id];
   const secretName = row.kind.endsWith("_secret") ? operationSecretName(row, desired) : null;
-  const changedNames = secretName ? new Set([secretName]) : row.kind === "rate_limit" ? new Set(RATE_GROUPS[desired.scope as keyof typeof RATE_GROUPS]) : new Set([...Object.values(CONFIG_VARS), "USAGE_ACCOUNT_ID", "USAGE_D1_DATABASE_ID", "USAGE_WORKER_NAME"]);
+  const changedNames = secretName ? new Set([secretName]) : new Set([
+    ...(row.kind === "configuration" ? [...Object.values(CONFIG_VARS), "USAGE_ACCOUNT_ID", "USAGE_D1_DATABASE_ID", "USAGE_WORKER_NAME"] : []),
+    ...changedRateLimits(row.kind as ConfigurationPlanKind, desired).flatMap(([scope]) => RATE_GROUPS[scope]),
+  ]);
   const unchanged = (value: JsonValue | undefined) => list(value).map(object).filter(binding => !changedNames.has(text(binding.name))).sort((a, b) => text(a.name).localeCompare(text(b.name)));
-  if (before.metadata_hash !== live.baseline.metadata_hash || canonicalJson(unchanged(before.binding_fingerprints)) !== canonicalJson(unchanged(live.baseline.binding_fingerprints))) return ["unknown", "cloudflare_foreign_configuration_drift", live.baseline.active_version_id, live.baseline.deployment_id];
+  if (before.metadata_hash !== live.baseline.metadata_hash || canonicalJson(unchanged(before.binding_fingerprints)) !== canonicalJson(unchanged(live.baseline.binding_fingerprints))) return ["unknown", "cloudflare_foreign_configuration_drift", row.result_version_id, live.baseline.deployment_id];
   let matches = false;
   if (secretName) { const current = env[secretName]; matches = Boolean(current && live.bindings.some(binding => binding.name === secretName && binding.type === "secret_text") && row.secret_value_hash === await sha256Hex(current)); }
   else { const kind = row.kind as ConfigurationPlanKind; matches = await planBindingsMatch(live, before, kind, desired, fixedTarget(env), writer, dependencies); }

@@ -86,14 +86,14 @@ const row = (host, day) => all(host).find(item => item.tag === 'tr' && item.chil
 const valueAt = (host, day) => text(row(host, day).children.find(item => item.tag === 'td'));
 const chart = host => all(host).find(item => item.tag === 'figure');
 
-test('disabled history does not collect and its one enable action delegates to settings', async () => {
-  const settings = []; const f = fixture(() => Response.json(snapshot({ enabled: false, items: [], missing_days: ['2026-10-07'] })));
-  const v = mount({ onSettings: field => settings.push(field) });
+test('disabled history stays read-only and points to the unified settings above', async () => {
+  const f = fixture(() => Response.json(snapshot({ enabled: false, items: [], missing_days: ['2026-10-07'] })));
+  const v = mount();
   try {
-    await until(() => Boolean(button(v.host, 'Enable daily history'))); button(v.host, 'Enable daily history').props.onClick(); await nextTick();
-    assert.deepEqual(settings, ['history_enabled']); assert.equal(f.calls.length, 1); assert.equal(f.calls[0].method, 'GET');
-    assert.equal(chart(v.host), undefined); assert.doesNotMatch(text(v.host), /Read history|Collect day|Refresh history/);
-    locale.value = 'zh-CN'; await nextTick(); assert.ok(button(v.host, '开启每日记录'));
+    await until(() => text(v.host).includes('Daily records are off'));
+    assert.match(text(v.host), /Usage & access settings above/); assert.equal(f.calls.length, 1); assert.equal(f.calls[0].method, 'GET');
+    assert.equal(chart(v.host), undefined); assert.equal(button(v.host, 'Enable daily history'), undefined); assert.doesNotMatch(text(v.host), /Read history|Collect day|Refresh history/);
+    locale.value = 'zh-CN'; await nextTick(); assert.match(text(v.host), /每日记录已关闭.*用量与访问设置/); assert.equal(button(v.host, '开启每日记录'), undefined);
   } finally { locale.value = 'en'; v.app.unmount(); f.restore(); }
 });
 

@@ -243,7 +243,7 @@ Issue/Comment soft delete 与 Grant revoke 释放 slot，restore/regrant 重新�
 
 Public Join 不建立逐 Principal blacklist。Project 仍公开时，被撤销 Grant 的 Principal 可以重新加入并重新占用 Principal slot；要停止新的 self-join，Owner 关闭 Public Join。关闭入口不撤销既有 Grants，同时停止本 Project 三项 quota 的强制，不影响其他 Project。重新开启表单可以预填上次使用的 limits，但 Owner 必须显式提交；服务端不能静默沿用。
 
-Owner「用量与限额」展示当前访问频率限制、配置来源和有界的近期 429 摘要。按 [Owner Cloudflare 管理增量](2026-10-07-owner-cloudflare-control-spec.md)，具备已检查配置授权的 Owner 可修改五个 scope 的单项限制，核对前后数值后确认保存；未接入或尚未确认时说明原因并指向概览的连接入口。它们是近似频率门控，不是精确业务 quota 或费用封顶；实际动作是显式 Worker 配置部署，不运行 D1 migration。
+Owner「用量与配额」按「Token → 统一用量与访问设置 → 数据」排列。按 [Owner Cloudflare 管理增量](2026-10-07-owner-cloudflare-control-spec.md)，具备已检查配置授权的 Owner 在常驻面板编辑统计、账期及五个 scope 的访问频率，查看草稿前后差异并一次保存；系统使用同一 configuration plan/apply，冲突保留草稿，响应未知按原请求核验。未接入或尚未确认时说明原因并指向本页 Token。当前限制、配置来源和有界近期 429 摘要仍可读；数据详情不再承担编辑入口。限制是近似频率门控，不是精确业务 quota 或费用封顶；实际动作是显式 Worker 配置部署，不运行 D1 migration。
 
 ## 5. 简洁性约束
 

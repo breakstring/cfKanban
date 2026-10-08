@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "cfKanban API",
-    "version": "1.10.1-rc.7",
+    "version": "1.10.1-rc.8",
     "description": "HTTP API contract for this cfKanban release. The API compatibility version is published separately in x-cfkanban-service-version.",
     "license": {
       "name": "UNLICENSED"
@@ -13131,6 +13131,84 @@
         "x-cfkanban-permission": "deployment_owner"
       }
     },
+    "/api/v1/admin/cloudflare/configuration/operations/{request_key}": {
+      "get": {
+        "operationId": "getCloudflareConfigurationOperation",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Cloudflare Configuration Operation",
+        "description": "Owner-only read of this Principal's original configuration apply intent by its non-secret Idempotency-Key and exact configuration apply route. Returns operation metadata without provider calls or writes. A 404 does not prove that an in-flight apply cannot later commit; retain the original request and key rather than issuing a replacement write.",
+        "security": [
+          {
+            "BearerCredential": []
+          },
+          {
+            "WebSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[\\x20-\\x7E]+$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "Cache-Control": {
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudflareOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/PlatformUnavailable"
+          }
+        },
+        "x-cfkanban-write-contract": "read",
+        "x-cfkanban-permission": "deployment_owner"
+      }
+    },
     "/api/v1/admin/cloudflare/local-operations/{request_key}": {
       "get": {
         "operationId": "getCloudflareLocalOperation",
@@ -13829,7 +13907,7 @@
           "admin"
         ],
         "summary": "Plan Cloudflare Configuration",
-        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction. Usage settings and one or more rate_limits scopes form one frozen configuration plan. before/after retain the usage fields and include only the requested rate_limits scopes when present. A plan is a preview, not authorization to apply.",
         "security": [
           {
             "BearerCredential": []
@@ -13915,7 +13993,7 @@
           "admin"
         ],
         "summary": "Apply Cloudflare Configuration",
-        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction.",
+        "description": "The single Deployment Owner. Project Grants and scoped administrators never satisfy this permission. Cookie writes require CSRF. Cloudflare calls use fixed targets, bounded responses and timeouts. External control writes retain a durable non-secret intent; uncertain results are verified without repeating the external write. Cloudflare and D1 do not form an atomic transaction. Apply the authorized frozen configuration plan with one Worker settings PATCH, preserving unrequested scopes and unrelated bindings. Existing flat configuration plans and their original-key recovery remain supported. Uncertain writes retain the original operation and are verified without another provider write.",
         "security": [
           {
             "BearerCredential": []
@@ -19399,6 +19477,53 @@
           }
         }
       },
+      "CloudflareRateLimitInput": {
+        "type": "object",
+        "required": [
+          "limit",
+          "period_seconds"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "period_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "enum": [
+              10,
+              60
+            ]
+          }
+        }
+      },
+      "CloudflareRateLimitsInput": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "instance": {
+            "$ref": "#/components/schemas/CloudflareRateLimitInput"
+          },
+          "principal": {
+            "$ref": "#/components/schemas/CloudflareRateLimitInput"
+          },
+          "unauthenticated_sensitive": {
+            "$ref": "#/components/schemas/CloudflareRateLimitInput"
+          },
+          "anonymous_login": {
+            "$ref": "#/components/schemas/CloudflareRateLimitInput"
+          },
+          "expensive_reads": {
+            "$ref": "#/components/schemas/CloudflareRateLimitInput"
+          }
+        },
+        "description": "The requested access-frequency scopes in this single configuration change. Unspecified scopes retain their current values and namespace IDs."
+      },
       "PlanCloudflareConfigurationRequest": {
         "type": "object",
         "required": [
@@ -19409,6 +19534,7 @@
         "properties": {
           "settings": {
             "type": "object",
+            "minProperties": 1,
             "additionalProperties": false,
             "properties": {
               "history_enabled": {
@@ -19434,9 +19560,12 @@
               },
               "account_totals": {
                 "type": "boolean"
+              },
+              "rate_limits": {
+                "$ref": "#/components/schemas/CloudflareRateLimitsInput"
               }
             },
-            "description": "Budget notifications are retired; warning_percent is read-compatible only and cannot be configured."
+            "description": "At least one usage setting or access-frequency scope is required. All supplied fields form one configuration plan. Budget notifications are retired; warning_percent is read-compatible only and cannot be configured."
           },
           "expected_version": {
             "$ref": "#/components/schemas/Version"

@@ -323,16 +323,15 @@ test('account scope is explicit and disabling account totals resets daily values
   } finally { v.app.unmount(); f.restore(); }
 });
 
-test('missing billing configuration leaves daily data available and settings actions select one shared editor', async () => {
-  const settings = [];
+test('missing billing configuration leaves daily data available without scattered settings actions', async () => {
   const f = fixture(() => { const value = extendedSnapshot(); Object.assign(value.cloudflare.billing, { plan: 'unknown', cycle_day: null, account_totals_enabled: false }); return Response.json(value); });
-  const v = mount({ onSettings: field => settings.push(field) });
+  const v = mount();
   try {
     await until(() => text(v.host).includes('Up to date'));
     assert.match(text(group(v.host, 'Workers')), /Requests420/);
     assert.match(text(byClass(v.host, 'usage-details')), /Plan: Not specified.*Cycle start day: Not specified/);
-    for (const label of ['Usage collection', 'Account totals', 'Cloudflare plan', 'Billing cycle']) button(v.host, label).props.onClick();
-    assert.deepEqual(settings, ['analytics_enabled', 'account_totals', 'billing_plan', 'billing_cycle_day']);
+    for (const label of ['Usage collection', 'Account totals', 'Cloudflare plan', 'Billing cycle']) assert.equal(button(v.host, label), undefined);
+    assert.match(text(byClass(v.host, 'usage-details')), /Data details/);
     assert.equal(f.calls.length, 1); assert.doesNotMatch(text(v.host), /WAF|Domain & access|Budget|Shared allowance reminders/);
     locale.value = 'zh-CN'; await nextTick(); assert.match(text(v.host), /查看当日用量不需要填写账期/);
   } finally { v.app.unmount(); f.restore(); locale.value = 'en'; }

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import USelect from "@nuxt/ui/components/Select.vue";
-import UButton from "@nuxt/ui/components/Button.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import UsageHistoryChart, { type HistoryPointView } from "./UsageHistoryChart.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents, hasUncertainWrite } from "../lib/api";
@@ -13,7 +12,6 @@ interface History {
   missing_days: string[]; source: "cloudflare_analytics"; history_kind: "utc_daily"; error: string | null;
 }
 const props = withDefaults(defineProps<{ refreshGeneration?: number }>(), { refreshGeneration: 0 });
-const emit = defineEmits<{ settings: [field: "history_enabled"] }>();
 const base = "/api/v1/admin/usage/history";
 const history = ref<History | null>(null);
 const days = ref("30");
@@ -127,11 +125,11 @@ onUnmounted(() => { disposed = true; generation++; clearReadback(); controller?.
 
 <template>
   <section class="owner-section usage-history" aria-labelledby="usage-history-heading" :aria-busy="loading || busy">
-    <div class="section-heading-row"><div><h2 id="usage-history-heading">{{ ui('Daily history', '每日用量历史') }}</h2><p class="muted-copy">{{ ui('Completed UTC days · Up to 90 days', '完整 UTC 日 · 最多保留 90 天') }}</p></div><UButton v-if="history?.enabled" color="neutral" variant="ghost" type="button" @click="emit('settings', 'history_enabled')">{{ ui('History settings', '历史设置') }}</UButton></div>
+    <div class="section-heading-row"><div><h2 id="usage-history-heading">{{ ui('Daily history', '每日用量历史') }}</h2><p class="muted-copy">{{ ui('Completed UTC days · Up to 90 days', '完整 UTC 日 · 最多保留 90 天') }}</p></div></div>
     <p v-if="failed" class="warning-panel" role="status">{{ ui('History is temporarily unavailable. Existing data is kept and will be checked again automatically.', '暂时无法更新历史，已保留现有数据，系统会自动重试。') }}</p>
     <p v-if="loading && !history" class="muted-copy" role="status">{{ ui('Loading history…', '正在加载历史…') }}</p>
     <template v-if="history">
-      <div v-if="!history.enabled" class="history-empty"><p>{{ ui('Keep daily records to see how usage changes over time.', '开启每日记录，查看用量变化趋势。') }}</p><UButton color="neutral" variant="outline" type="button" @click="emit('settings', 'history_enabled')">{{ ui('Enable daily history', '开启每日记录') }}</UButton></div>
+      <div v-if="!history.enabled" class="history-empty"><p>{{ ui('Daily records are off. Enable them in Usage & access settings above to see usage trends.', '每日记录已关闭，可在上方「用量与访问设置」中开启，查看用量变化趋势。') }}</p></div>
       <template v-else>
         <p v-if="history.error === 'not_configured'" class="muted-copy">{{ ui('Daily history will become available after Cloudflare is connected above.', '在上方连接 Cloudflare 后即可记录每日用量。') }}</p>
         <p v-else-if="busy || collectionUncertain" class="muted-copy" role="status">{{ ui('Updating recent history…', '正在更新最近的历史…') }}</p>

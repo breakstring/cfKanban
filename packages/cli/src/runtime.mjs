@@ -28,6 +28,7 @@ const cloudflarePlans=new Set(['planCloudflareRateLimits','planCloudflareConfigu
 const cloudflareApplies=new Set(['applyCloudflareRateLimits','applyCloudflareConfiguration','applyCloudflareWaf']);
 const cloudflareOperations=new Set([...cloudflareApplies,'verifyCloudflareOperation']);
 const cloudflareControl='/api/v1/admin/cloudflare';
+const isConfigurationOperationResource=value=>value?.kind==='configuration'&&matches({type:'string',format:'uuid'},value.operation_id)&&Number.isSafeInteger(value.version)&&value.version>0&&['pending','unknown','failed','verified'].includes(value.status);
 const retiredCloudflareLocalOperations={
   updateCloudflareSettings:{operation:'zone_settings',method:'PATCH',path:`${cloudflareControl}/settings`},
   registerCloudflareWafTarget:{operation:'waf_target_binding',method:'POST',path:`${cloudflareControl}/waf/target-binding`},
@@ -76,6 +77,7 @@ function requestFor(command,input) {
 function versionOf(result) { return result?.data?.resource?.version??result?.data?.version??result?.data?.project?.version??result?.data?.issue?.version; }
 function targetMatches(command,input,result,readback) {
   const committed=result?.data?.resource, actual=readback.data?.resource??readback.data;
+  if(command.operation==='applyCloudflareConfiguration'&&(!isConfigurationOperationResource(committed)||!isConfigurationOperationResource(actual)))return false;
   if(cloudflarePlans.has(command.operation))return typeof committed?.plan_id==='string'&&committed.version===input.expected_version+1&&canonicalDigest(actual)===canonicalDigest(committed);
   if(cloudflareOperations.has(command.operation))return (command.operation!=='applyCloudflareWaf'&&committed?.kind!=='waf'||isWafOperationResource(actual)&&(!['verified','failed'].includes(committed?.status)||(actual.status===committed.status&&actual.result_rule_id===committed.result_rule_id&&actual.failure_class===committed.failure_class)))&&typeof committed?.operation_id==='string'&&(command.operation!=='verifyCloudflareOperation'||committed.operation_id===input.operation_id)&&actual?.operation_id===committed.operation_id&&Number.isSafeInteger(actual.version)&&actual.version>=committed.version&&['pending','unknown','failed','verified'].includes(actual.status);
   if(command.operation==='registerCloudflareWafTarget')return Number.isSafeInteger(committed?.version)&&Number.isSafeInteger(actual?.version)&&actual.version>=committed.version&&committed?.target_binding?.status==='verified'&&actual?.target_binding?.status==='verified'&&actual.target_binding.domain_id===committed.target_binding.domain_id&&actual.target_binding.source===committed.target_binding.source;
@@ -249,6 +251,14 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     }
     return finish(file,record,{ok:true,status:200,data:{resource:observed},recovered_from:'original_waf_intent_lookup'},{recovering:true});
   };
+  const recoverConfiguration=async(file,record,identity)=> {
+    const lookup=await request(identity,{method:'GET',apiPath:`${cloudflareControl}/configuration/operations/${encodeURIComponent(record.idempotency_key)}`}),observed=lookup.data;
+    if(!lookup.ok||!isConfigurationOperationResource(observed)||observed.version<=record.input.expected_version||(record.cloud_operation_id&&observed.operation_id!==record.cloud_operation_id)) {
+      record.phase='unknown';await atomicWriteJson(file,record);
+      return {ok:false,status:lookup.status,outcome_unknown:true,readback:lookup,error:{code:'CLI_CLOUDFLARE_CONFIGURATION_UNCONFIRMED',category:'platform_failure',source:'client_runtime',recovery:'inspect_original_configuration_intent'},operation:{operation_id:record.operation_id,phase:'unknown'},recovery:{command:'operation recover',instance_id:identity.instance_id,operation_id:record.operation_id}};
+    }
+    return finish(file,record,{ok:true,status:200,data:{resource:observed},recovered_from:'original_configuration_intent_lookup'},{recovering:true});
+  };
   const recoverRetiredCloudflareLocal=async(file,record,identity)=> {
     const contract=retiredCloudflareLocalOperations[record.command.operation],hash=retiredCloudflareRequestHash(record,contract),committed=record.phase==='committed'&&record.result?.ok===true;
     const lookup=hash?await request(identity,{method:'GET',apiPath:`${cloudflareControl}/local-operations/${encodeURIComponent(record.idempotency_key)}?operation=${contract.operation}`}):{ok:false,status:0};
@@ -285,6 +295,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     if(retiredCloudflareLocalOperations[record.command.operation])return recoverRetiredCloudflareLocal(file,record,identity);
     if(record.phase==='committed') return finish(file,record,record.result);
     if(record.command.operation==='applyCloudflareWaf')return recoverWaf(file,record,identity);
+    if(record.command.operation==='applyCloudflareConfiguration'&&!record.cloudflare_verification)return recoverConfiguration(file,record,identity);
     const target=readbackPath(record.command,record.input,record.result);
     const readback=target?await request(identity,{method:'GET',apiPath:target}):null;
     if(record.command.write_contract==='cache-refresh'){record.phase='unknown';await atomicWriteJson(file,record);return {ok:false,status:0,outcome_unknown:true,readback,error:{code:'CLI_CACHE_REFRESH_OUTCOME_UNKNOWN',category:'platform_failure',source:'client_runtime',recovery:'inspect_usage_readback_without_repeating_refresh'},recovery:{command:'operation recover',instance_id:record.identity.instance_id,operation_id:record.operation_id,write_contract:record.command.write_contract}};}
@@ -307,6 +318,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
         }
       }
       const result=await request(identity,requestFor(command,input));
+      if(result.ok&&command.operation==='getCloudflareConfigurationOperation'&&!isConfigurationOperationResource(result.data))return {ok:false,status:0,error:{code:'CLI_CLOUDFLARE_CONFIGURATION_RESPONSE_INVALID',category:'platform_failure',source:'client_runtime',recovery:'inspect_original_configuration_intent'}};
       if(result.ok&&(command.operation==='getCloudflareWafOperation'||command.operation==='getCloudflareOperation'&&result.data?.kind==='waf')&&!isWafOperationResource(result.data))return {ok:false,status:0,error:{code:'CLI_WAF_RESPONSE_INVALID',category:'platform_failure',source:'client_runtime',recovery:'inspect_original_waf_intent'}};
       return result;
     }
@@ -332,6 +344,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
         if(canonicalDigest(existing.original_input)!==canonicalDigest(input)||canonicalDigest(existing.identity)!==canonicalDigest(identity))throw toolError('CLI_OPERATION_EXISTS','Use operation recover with the retained operation; do not submit a fresh write');
         if(existing.phase==='failed')return terminalResult(existing);
         if(existing.phase==='verified'||existing.phase==='rejected')return {...existing.result,readback:existing.readback,...(existing.cloudflare_status?{cloudflare_status:existing.cloudflare_status}:{}),operation:{operation_id:operationId,phase:existing.phase}};
+        if(existing.command.operation==='applyCloudflareConfiguration'&&!existing.cloudflare_verification)return existing.phase==='committed'?finish(file,existing,existing.result):recoverConfiguration(file,existing,identity);
         if(now()-existing.created_at_ms>=23*60*60*1000)throw toolError('CLI_RECOVERY_WINDOW_EXPIRED','Inspect the retained operation and remote evidence');
         if(existing.phase==='committed')return finish(file,existing,existing.result);
         if(existing.command.operation==='applyCloudflareWaf')return recoverWaf(file,existing,identity);

@@ -279,9 +279,27 @@ For Token setup or replacement, use `web open` for Owner **Usage and quotas**. T
 
 When browser saving lacks Worker write permission, direct the user to Cloudflare → Workers & Pages → this Worker → Settings → Variables and Secrets, update **Secret** `CFKANBAN_API_TOKEN`, then Deploy. The page checks again on return. Do not store it as a plain variable or abandon unresolved operations after a manual replacement.
 
-For an Agent-requested check, `POST /verify` with `{}` and a stable key checks configuration and analytics. Legacy `include_optional` remains accepted without querying Notifications, Billing or WAF. Configuration/rate-limit changes use `POST /configuration/plan` or `/rate-limits/plan`, current control version and a stable key. Review before/after at `GET /plans/{plan_id}`, then apply with `{plan_id, expected_version:<plan.version>}` and a separate stable key. Budget notification `warning_percent` can no longer be configured.
+For an Agent-requested check, `POST /verify` with `{}` and a stable key checks configuration and analytics. Legacy `include_optional` remains accepted without querying Notifications, Billing or WAF.
+
+Use `POST /configuration/plan` for one combined usage and access-frequency change. Its `settings` object accepts `analytics_enabled`, `history_enabled`, `billing_plan`, `billing_cycle_day`, `account_totals`, and an optional `rate_limits` map. At least one setting is required. The map must be nonempty and use only `instance`, `principal`, `unauthenticated_sensitive`, `anonymous_login`, or `expensive_reads`; every requested scope supplies a positive safe integer `limit` up to 9,007,199,254,740,991 and `period_seconds` of 10 or 60. Unrequested scopes and their namespace IDs are preserved. Budget notification `warning_percent` can no longer be configured.
+
+For example, pass this non-secret JSON through `api request` stdin, using the verified instance, current control version, a stable key, and the user's requested values:
+
+```json
+{"instanceId":"11111111-1111-4111-8111-111111111111","method":"POST","apiPath":"/api/v1/admin/cloudflare/configuration/plan","idempotencyKey":"usage-frequency-change-plan","body":{"expected_version":4,"settings":{"analytics_enabled":true,"history_enabled":true,"rate_limits":{"instance":{"limit":400,"period_seconds":60},"principal":{"limit":120,"period_seconds":60}}}}}
+```
+
+The equivalent public CLI keeps its existing command:
+
+```sh
+cfkanban admin cloudflare configuration-plan --instance 11111111-1111-4111-8111-111111111111 --settings '{"analytics_enabled":true,"history_enabled":true,"rate_limits":{"instance":{"limit":400,"period_seconds":60},"principal":{"limit":120,"period_seconds":60}}}'
+```
+
+Review the complete before/after at `GET /plans/{plan_id}` or `admin cloudflare plan`. A preview is not user authorization: apply only when the existing request authorizes these exact values, or after obtaining approval for the concrete plan. Use `/configuration/apply` or `admin cloudflare configuration-apply` with the same plan ID, its frozen version, and a separate stable key. The whole plan is one Worker settings write, with one result to verify; do not split it into writes per field or scope. Existing `/rate-limits/plan` and `admin rate-limits plan/apply` remain compatible for one scope, as do old flat configuration plans and their recovery records.
 
 Only `verified` confirms observed configuration. Read `GET /operations/{operation_id}`; `POST /operations/{operation_id}/verify` with `{}` and a stable key reads Cloudflare and updates non-secret state without repeating its write. Retain the original request/key after uncertainty. Applying updates Worker configuration, not a restart or billing cap.
+
+If a configuration apply response is lost before its operation ID is known, use `GET /configuration/operations/{original_request_key}` or `admin cloudflare configuration-operation --request-key` with the exact original key. The read is scoped to the current Principal and configuration-apply path; CLI `operation recover` uses it without resending apply. A 404 keeps the original request unresolved and does not permit a new key or replacement write. Once found, read or verify that exact operation. Keys retain the existing 1–128 ASCII contract, including older CLI-generated keys.
 
 WAF setup, budget notifications and notification-policy browsing are retired. Do not offer new targets or enablement. Existing schema 27 records, rules and bindings remain for compatibility. A lost WAF response uses `GET /waf/operations/{original_uuid_key}` and exact operation read/verify. A 404 or `cloudflare_feature_retired` never proves that an earlier write did not happen; retain intent, private pending record and journal. Normal upgrades preserve existing rules. A separately authorized domain rollback may clean up only its proven old rule. App announcements and access-frequency settings remain supported.
 

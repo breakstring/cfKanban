@@ -1,7 +1,7 @@
 <script lang="ts">
 interface RecoverableTokenSave { key: string; operationId: string | null }
 const recoverableTokenSaves = new Map<string, RecoverableTokenSave>();
-interface RecoverableSettingsChange { version: number; operationId: string | null; path: string }
+interface RecoverableSettingsChange { key: string; operationId: string | null; verifyKey: string | null; path: string; draft: Record<string, string> }
 const recoverableSettingsChanges = new Map<string, RecoverableSettingsChange>();
 if (typeof window !== "undefined") {
   const clearRecovery = () => { recoverableTokenSaves.clear(); recoverableSettingsChanges.clear(); };
@@ -18,7 +18,6 @@ import UIcon from "@nuxt/ui/components/Icon.vue";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import CloudflareTokenForm from "./CloudflareTokenForm.vue";
 import { isWafOperation } from "../lib/cloudflare-waf";
-import UModal from "@nuxt/ui/components/Modal.vue";
 import ErrorNotice from "./ErrorNotice.vue";
 import { ApiProblem, apiRequest, clearPendingRequestIntents, errorText, hasUncertainWrite } from "../lib/api";
 import { locale } from "../lib/i18n";
@@ -71,8 +70,11 @@ interface Plan {
   baseline_deployment_id: string | null; target: Pick<Target, "account_id" | "worker_name" | "database_id">;
   before: Record<string, unknown>; after: Record<string, unknown>; created_at: string;
 }
-type ConfigurationField = "history_enabled" | "analytics_enabled" | "billing_plan" | "billing_cycle_day" | "account_totals" | "warning_percent";
-const props = withDefaults(defineProps<{ mode?: "overview" | "usage"; initialSetting?: ConfigurationField | null; settingRequest?: number; session?: Pick<WebSessionView, "session_id" | "principal"> }>(), { mode: "usage", initialSetting: null, settingRequest: 0 });
+type ConfigurationField = "history_enabled" | "analytics_enabled" | "billing_plan" | "billing_cycle_day" | "account_totals";
+type RateScope = "instance" | "principal" | "unauthenticated_sensitive" | "anonymous_login" | "expensive_reads";
+type RateValue = { limit: number; period_seconds: number };
+const configurationKeys: ConfigurationField[] = ["analytics_enabled", "history_enabled", "account_totals", "billing_plan", "billing_cycle_day"];
+const props = withDefaults(defineProps<{ mode?: "overview" | "usage"; session?: Pick<WebSessionView, "session_id" | "principal"> }>(), { mode: "usage" });
 const emit = defineEmits<{ applied: []; rates: [value: RateLimitSettings] }>();
 const base = "/api/v1/admin/cloudflare";
 const recoveryPartition = () => props.session ? `${window.location.origin}\n${props.session.principal.id}\n${props.session.session_id}` : null;
@@ -84,12 +86,13 @@ const connection = ref<Connection | null>(null);
 const operation = ref<Operation | null>(null);
 const tokenOperation = ref<Operation | null>(null);
 const rateSettings = ref<RateLimitSettings | null>(null);
-const plan = ref<Plan | null>(null);
+const ratesFailed = ref(false);
 const settingsOperation = ref<Operation | null>(null);
 const editorProblem = ref<"preview_failed" | "changed" | "apply_rejected" | null>(null);
 const editorRecovery = ref(false);
 const loading = ref(false);
 const busy = ref(false);
+const settingsSaving = ref(false);
 const capabilitiesChecking = ref(false);
 const failed = ref(false);
 const uncertain = ref(Boolean(restoredTokenSave || restoredSettingsChange));
@@ -101,12 +104,7 @@ const tokenWrite = ref<RecoverableTokenSave | null>(restoredTokenSave);
 const confirmingTokenSave = computed(() => busy.value && Boolean(tokenWrite.value) && tokenOperation.value?.status === "unknown" && tokenOperation.value.failure_class === "secret_readback_pending");
 const tokenLookupMissing = ref(false);
 const optionalCheckFailed = ref(false);
-const rateScope = ref("instance");
-const rateLimit = ref<string | number>("");
-const ratePeriod = ref("");
-const configurationField = ref<ConfigurationField>(props.initialSetting ?? "history_enabled");
-const configurationValue = ref<string | number>("");
-const configurationSelection = computed({ get: () => String(configurationValue.value), set: (value: string) => { configurationValue.value = value; } });
+const drafts = ref<Record<string, string>>({ ...restoredSettingsChange?.draft });
 const validation = ref(false);
 let readController = new AbortController();
 let disposed = false;
@@ -119,11 +117,6 @@ const writable = computed(() => fixedTargetReady.value && !loading.value && !bus
 const hasConfiguration = computed(() => connection.value?.capabilities.configuration === "verified");
 const hasConfigurationAuthorization = computed(() => Boolean(connection.value?.configured.connection || connection.value?.configured.configuration));
 const tokenSaved = computed(() => Boolean(connection.value?.configured.connection || connection.value?.configured.configuration || connection.value?.configured.analytics));
-const settingsOpen = ref(false);
-const editingRate = ref(false);
-const settingsTitle = computed(() => editingRate.value
-  ? rateScopes.value.find(item => item.value === rateScope.value)?.label ?? ui("Request frequency", "访问频率")
-  : configurationFields.value.find(item => item.value === configurationField.value)?.label ?? ui("Usage setting", "用量设置"));
 const needsTokenHelp = computed(() => !tokenSaved.value || connection.value?.capabilities.configuration === "missing" || tokenFeedback.value === "rejected" || tokenFeedback.value === "failed"
   || connection.value?.capabilities.configuration === "permission_denied" || connection.value?.capabilities.configuration === "target_mismatch");
 type CapabilityKey = keyof Connection["capabilities"];
@@ -163,7 +156,7 @@ const settingsFeedbackMessage = computed(() => {
   if (editorProblem.value === "apply_rejected") return ui("The settings change was not saved. Your draft is kept; review the current values before trying again.", "本次设置未保存，草稿已保留，请核对当前值后重新修改。");
   if (settingsOperation.value?.status === "failed") return `${ui("The settings change failed.", "设置保存失败。")} ${settingsFailureExplanation(settingsOperation.value.failure_class)}`;
   if (settingsOperation.value?.status === "verified") return ui("Settings saved.", "设置已保存。");
-  if (settingsOperation.value && ["pending", "unknown"].includes(settingsOperation.value.status)) return ui("The settings change is awaiting confirmation. It will be checked automatically.", "设置修改的结果暂未确认，系统会自动继续确认。");
+  if (uncertainChangeBaseline.value || settingsOperation.value && ["pending", "unknown"].includes(settingsOperation.value.status)) return ui("The settings change is awaiting confirmation. It will be checked automatically.", "设置修改的结果暂未确认，系统会自动继续确认。");
   return "";
 });
 const settingsFeedbackFailed = computed(() => Boolean(editorProblem.value) || settingsOperation.value?.status === "failed");
@@ -226,47 +219,92 @@ const rateUnavailableReason = computed(() => {
   return "";
 });
 const rateScopes = computed(() => [
-  { value: "instance", label: ui("Instance API", "实例 API") }, { value: "principal", label: ui("Single identity", "单一身份") },
-  { value: "unauthenticated_sensitive", label: ui("Unauthenticated sensitive actions", "未认证敏感操作") },
-  { value: "anonymous_login", label: ui("Anonymous login", "匿名登录") }, { value: "expensive_reads", label: ui("Counts & title search", "计数与标题搜索") },
+  { value: "instance" as const, label: ui("Instance API", "实例 API") }, { value: "principal" as const, label: ui("Single identity", "单一身份") },
+  { value: "unauthenticated_sensitive" as const, label: ui("Unauthenticated sensitive actions", "未认证敏感操作") },
+  { value: "anonymous_login" as const, label: ui("Anonymous login", "匿名登录") }, { value: "expensive_reads" as const, label: ui("Counts & title search", "计数与标题搜索") },
 ]);
 const configurationFields = computed(() => [
-  { value: "history_enabled", label: ui("Daily usage history", "每日用量历史") }, { value: "analytics_enabled", label: ui("Analytics collection", "统计采集") },
-  { value: "billing_plan", label: ui("Verified Workers/D1 plan", "已核实的 Workers/D1 方案") }, { value: "billing_cycle_day", label: ui("Billing start day (UTC)", "账期起始日（UTC）") },
-  { value: "account_totals", label: ui("Account totals", "账户总量") }, { value: "warning_percent", label: ui("Usage reminder threshold (%)", "用量提醒阈值（%）") },
+  { value: "analytics_enabled" as const, label: ui("Usage collection", "用量采集"), help: ui("Collect usage for this instance.", "采集当前实例的用量数据。") },
+  { value: "history_enabled" as const, label: ui("Daily usage history", "每日用量记录"), help: ui("Keep completed daily records for up to 90 days.", "保留完整日记录，最多 90 天。") },
+  { value: "account_totals" as const, label: ui("Account totals", "账户汇总"), help: ui("Also collect totals across the Cloudflare account.", "同时采集 Cloudflare 账户内的用量汇总。") },
+  { value: "billing_plan" as const, label: ui("Declared Cloudflare plan", "当前套餐声明"), help: ui("Declare your existing plan. This does not buy or change a subscription.", "填写现有套餐，不会购买或切换 Cloudflare 订阅。") },
+  { value: "billing_cycle_day" as const, label: ui("Billing start day (UTC)", "账期起始日（UTC）"), help: ui("Use day 1–31 for billing-period totals, or leave blank if unknown.", "填写 1–31 日用于账期汇总；不确定时留空。") },
 ]);
-const booleanOptions = computed(() => [{ value: "true", label: ui("Enable", "启用") }, { value: "false", label: ui("Disable", "停用") }]);
-const currentConfiguration = computed(() => connection.value?.configuration?.[configurationField.value]);
-const currentRate = computed(() => {
-  const settings = rateSettings.value;
-  if (!settings) return null;
-  const value = rateScope.value === "anonymous_login" || rateScope.value === "expensive_reads"
-    ? settings.cost_protection?.[rateScope.value]?.policy : settings.policies?.[rateScope.value as keyof RateLimitSettings["policies"]];
-  return value && Number.isSafeInteger(value.limit) && value.limit > 0 && [10, 60].includes(value.period_seconds) ? value : null;
-});
-function configurationDraft(): void {
-  const value = currentConfiguration.value;
-  configurationValue.value = value === undefined ? "" : value === null ? (configurationField.value === "billing_plan" ? "unknown" : "") : String(value);
+const booleanOptions = computed(() => [{ value: "true", label: ui("Enabled", "启用") }, { value: "false", label: ui("Disabled", "停用") }]);
+function configurationText(value: unknown): string {
+  return value === undefined ? ui("Not loaded", "尚未读取") : value === null ? ui("Not specified", "未声明") : typeof value === "boolean" ? (value ? ui("Enabled", "启用") : ui("Disabled", "停用")) : value === "free" ? "Free" : value === "paid" ? "Paid" : String(value);
 }
-function rateDraft(): void {
-  rateLimit.value = currentRate.value ? String(currentRate.value.limit) : "";
-  ratePeriod.value = currentRate.value ? String(currentRate.value.period_seconds) : "";
-}
-function configurationText(value: boolean | string | number | null | undefined): string {
-  return value === undefined || value === null ? ui("Unknown", "未知") : typeof value === "boolean" ? (value ? ui("Enabled", "启用") : ui("Disabled", "停用")) : value === "free" ? "Free" : value === "paid" ? "Paid" : String(value);
-}
-const planRows = computed(() => {
-  const current = plan.value;
-  if (!current) return [];
-  if (current.kind === "rate_limit") {
-    return [{ label: rateScopes.value.find(item => item.value === current.after.scope)?.label ?? rateScopes.value.find(item => item.value === rateScope.value)?.label ?? ui("Request frequency limit", "访问频率限制"),
-      before: rateText(current.before), after: rateText(current.after) }];
-  }
-  return configurationFields.value.filter(field => Object.hasOwn(current.after, field.value))
-    .map(field => ({ label: field.label, before: configurationText(current.before[field.value] as boolean | string | number | null), after: configurationText(current.after[field.value] as boolean | string | number | null) }));
-});
 function rateText(value: Record<string, unknown>): string {
-  return typeof value.limit === "number" && typeof value.period_seconds === "number" ? `${value.limit} / ${value.period_seconds} ${ui("seconds", "秒")}` : ui("Unknown", "未知");
+  return typeof value.limit === "number" && typeof value.period_seconds === "number" ? `${value.limit} / ${value.period_seconds} ${ui("seconds", "秒")}` : ui("Not loaded", "尚未读取");
+}
+function rateFor(scope: RateScope): RateValue | null {
+  const settings = rateSettings.value;
+  const value = scope === "anonymous_login" || scope === "expensive_reads" ? settings?.cost_protection?.[scope]?.policy : settings?.policies?.[scope];
+  return value && Number.isSafeInteger(value.limit) && value.limit > 0 && [10, 60].includes(value.period_seconds) ? value : null;
+}
+function currentInput(key: string): string {
+  if (key.includes(".")) { const [scope, field] = key.split("."); return String(rateFor(scope as RateScope)?.[field as keyof RateValue] ?? ""); }
+  const value = connection.value?.configuration[key as ConfigurationField];
+  return value === undefined ? "" : value === null ? (key === "billing_plan" ? "unknown" : "") : String(value);
+}
+function draftInput(key: string): string { return drafts.value[key] ?? currentInput(key); }
+function updateDraft(key: string, value: string | number): void {
+  if (busy.value || unresolved.value) return;
+  if (String(value) === currentInput(key)) delete drafts.value[key]; else drafts.value[key] = String(value);
+  validation.value = false; editorProblem.value = null; settingsOperation.value = null; planGeneration++;
+}
+function draftChanged(key: string): boolean {
+  const draft = drafts.value[key], current = currentInput(key);
+  if ((key.includes(".") || key === "billing_cycle_day") && draft?.trim() && current.trim()
+    && Number.isFinite(Number(draft)) && Number(draft) === Number(current)) return false;
+  return draft !== current;
+}
+const changedKeys = computed(() => Object.keys(drafts.value).filter(draftChanged));
+const settingsReady = computed(() => configurationKeys.every(key => {
+  const value = connection.value?.configuration[key];
+  return key === "billing_plan" ? value === null || value === "free" || value === "paid"
+    : key === "billing_cycle_day" ? value === null || typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 31 : typeof value === "boolean";
+}));
+const settingsEditable = computed(() => writable.value && hasConfiguration.value && settingsReady.value);
+const changedRatesReady = computed(() => rateScopes.value.every(({ value: scope }) => !changedKeys.value.some(key => key.startsWith(`${scope}.`)) || Boolean(rateFor(scope))));
+const changeRows = computed(() => [
+  ...configurationFields.value.filter(field => changedKeys.value.includes(field.value)).map(field => ({ key: field.value, label: field.label,
+    before: configurationText(connection.value?.configuration[field.value]),
+    after: configurationText(["analytics_enabled", "history_enabled", "account_totals"].includes(field.value) ? draftInput(field.value) === "true" : draftInput(field.value) === "unknown" || draftInput(field.value) === "" ? null : draftInput(field.value)) })),
+  ...rateScopes.value.filter(scope => changedKeys.value.some(key => key.startsWith(`${scope.value}.`))).map(scope => ({ key: scope.value, label: scope.label,
+    before: rateText(rateFor(scope.value) ?? {}), after: `${draftInput(`${scope.value}.limit`) || "—"} / ${draftInput(`${scope.value}.period_seconds`) || "—"} ${ui("seconds", "秒")}` })),
+]);
+function discardDraft(): void {
+  if (busy.value || unresolved.value) return;
+  drafts.value = {}; validation.value = false; editorProblem.value = null; settingsOperation.value = null; planGeneration++;
+}
+function settingsPatch(): Record<string, unknown> | null {
+  const patch: Record<string, unknown> = {};
+  for (const key of configurationKeys) {
+    if (!changedKeys.value.includes(key)) continue;
+    const input = draftInput(key);
+    if (["history_enabled", "analytics_enabled", "account_totals"].includes(key)) { if (!["true", "false"].includes(input)) return null; patch[key] = input === "true"; }
+    else if (key === "billing_plan") { if (!["unknown", "free", "paid"].includes(input)) return null; patch[key] = input === "unknown" ? null : input; }
+    else { const day = input.trim() === "" ? null : Number(input); if (day !== null && (!Number.isSafeInteger(day) || day < 1 || day > 31)) return null; patch[key] = day; }
+  }
+  const rates: Record<string, RateValue> = {};
+  for (const { value: scope } of rateScopes.value) {
+    if (!changedKeys.value.some(key => key.startsWith(`${scope}.`))) continue;
+    const limit = Number(draftInput(`${scope}.limit`)), period = Number(draftInput(`${scope}.period_seconds`));
+    if (!rateFor(scope) || !Number.isSafeInteger(limit) || limit < 1 || ![10, 60].includes(period)) return null;
+    rates[scope] = { limit, period_seconds: period };
+  }
+  if (Object.keys(rates).length) patch.rate_limits = rates;
+  return patch;
+}
+function equalValues(left: unknown, right: unknown): boolean {
+  if (record(left) && record(right)) { const keys = Object.keys(left); return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && equalValues(left[key], right[key])); }
+  return left === right;
+}
+function isPlanWrite(value: unknown): boolean {
+  return record(value) && record(value.resource) && value.resource.kind === "configuration" && typeof value.resource.plan_id === "string" && uuidPattern.test(value.resource.plan_id)
+    && Number.isSafeInteger(value.resource.version) && record(value.resource.before) && record(value.resource.after) && record(value.resource.target)
+    && typeof value.event_cursor === "string" && typeof value.idempotent_replay === "boolean";
 }
 function status(value: string | undefined): string {
   const labels: Record<string, [string, string]> = {
@@ -290,7 +328,6 @@ async function load(): Promise<void> {
     connection.value = result;
     if (!tokenWrite.value || result.latest_operation?.operation_id === tokenWrite.value.operationId) operation.value = result.latest_operation;
     if (!settingsOperation.value || settingsOperation.value.operation_id === result.latest_operation?.operation_id) recordSettingsOperation(result.latest_operation);
-    if (!settingsOpen.value) configurationDraft();
   } catch { if (current()) failed.value = true; }
   finally { if (current()) loading.value = false; }
 }
@@ -299,8 +336,8 @@ async function loadRates(): Promise<void> {
   try {
     const result = await apiRequest<RateLimitSettings>("/api/v1/admin/rate-limit-settings", { authorizationCurrent: () => isCurrent(requestContext), signal: readController.signal });
     if (!isCurrent(requestContext)) return;
-    rateSettings.value = result; if (!settingsOpen.value) rateDraft(); emit("rates", result);
-  } catch { if (isCurrent(requestContext)) rateSettings.value = null; }
+    rateSettings.value = result; ratesFailed.value = false; emit("rates", result);
+  } catch { if (isCurrent(requestContext)) { rateSettings.value = null; ratesFailed.value = true; } }
 }
 async function verifyCapabilities(): Promise<void> {
   const requestContext = contextGeneration;
@@ -308,7 +345,7 @@ async function verifyCapabilities(): Promise<void> {
   try {
     const result = await apiRequest<WriteResult<Connection>>(`${base}/verify`, { validateResponse: value => record(value) && isConnection(value.resource), authorizationCurrent: () => isCurrent(requestContext), method: "POST", body: {}, idempotencyKey: crypto.randomUUID() });
     if (!isCurrent(requestContext)) return;
-    connection.value = result.resource; operation.value = result.resource.latest_operation; if (!settingsOpen.value) configurationDraft();
+    connection.value = result.resource; operation.value = result.resource.latest_operation;
     if (!tokenWrite.value) uncertain.value = false;
   } finally { if (isCurrent(requestContext)) capabilitiesChecking.value = false; }
 }
@@ -384,14 +421,28 @@ async function verify(): Promise<void> {
       if (!unresolved.value) await refreshAfterTokenSave();
       return;
     }
+    const pendingSettings = uncertainChangeBaseline.value;
+    if (pendingSettings) {
+      let recovered: Operation;
+      if (pendingSettings.operationId) {
+        const verifyKey = pendingSettings.verifyKey ?? crypto.randomUUID();
+        setUncertainChange({ ...pendingSettings, verifyKey });
+        const result = await apiRequest<WriteResult<Operation>>(`${base}/operations/${encodeURIComponent(pendingSettings.operationId)}/verify`, { validateResponse: value => isOperationWrite(value, pendingSettings.operationId!) && record(value) && record(value.resource) && value.resource.kind === "configuration", authorizationCurrent: () => isCurrent(requestContext), method: "POST", body: {}, idempotencyKey: verifyKey });
+        if (!isCurrent(requestContext)) return;
+        setUncertainChange({ ...pendingSettings, verifyKey: null });
+        recovered = result.resource;
+      } else {
+        recovered = await apiRequest<Operation>(`${base}/configuration/operations/${encodeURIComponent(pendingSettings.key)}`, { validateResponse: value => isOperation(value) && value.kind === "configuration", authorizationCurrent: () => isCurrent(requestContext), signal: readController.signal });
+      }
+      if (!isCurrent(requestContext)) return;
+      recordSettingsResult(recovered);
+      if (unresolved.value) return;
+    }
     await Promise.all([load(), loadRates()]);
     if (!isCurrent(requestContext) || failed.value || !connection.value) return;
-    const uncertainBaseline = uncertainChangeBaseline.value;
-    // 响应丢失时，旧已完成记录不能证明本次写入已结案；必须观察到越过原 CAS 的新操作。
-    if (uncertainBaseline && (connection.value.version <= uncertainBaseline.version || !operation.value
-      || operation.value.operation_id === uncertainBaseline.operationId)) return;
     if (operation.value && ["pending", "unknown"].includes(operation.value.status)) {
-      const result = await apiRequest<WriteResult<Operation>>(`${base}/operations/${encodeURIComponent(operation.value.operation_id)}/verify`, { validateResponse: value => isOperationWrite(value, operation.value?.operation_id), authorizationCurrent: () => isCurrent(requestContext), method: "POST", body: {}, idempotencyKey: crypto.randomUUID() });
+      const operationId = operation.value.operation_id;
+      const result = await apiRequest<WriteResult<Operation>>(`${base}/operations/${encodeURIComponent(operationId)}/verify`, { validateResponse: value => isOperationWrite(value, operationId), authorizationCurrent: () => isCurrent(requestContext), method: "POST", body: {}, idempotencyKey: crypto.randomUUID() });
       if (!isCurrent(requestContext)) return; operation.value = result.resource; recordSettingsOperation(result.resource);
       if (["pending", "unknown"].includes(result.resource.status)) return;
     }
@@ -421,7 +472,7 @@ async function saveToken(kind: string, token: string): Promise<void> {
   setTokenWrite({ key, operationId: null });
   editorProblem.value = null; settingsOperation.value = null; editorRecovery.value = false;
   tokenLookupMissing.value = false;
-  busy.value = true; failed.value = false; tokenProblem.value = null; tokenFeedback.value = null; plan.value = null;
+  busy.value = true; failed.value = false; tokenProblem.value = null; tokenFeedback.value = null;
   try {
     // 显式键使通用客户端不以含秘密的 body 生成待恢复签名。
     const result = await apiRequest<WriteResult<Operation>>(`${base}/secrets`, { validateResponse: value => isOperationWrite(value, undefined, true), authorizationCurrent: () => isCurrent(requestContext), method: "POST", body: { kind, token, expected_version: connection.value.version }, idempotencyKey: key });
@@ -454,92 +505,73 @@ async function saveToken(kind: string, token: string): Promise<void> {
   try { await refreshAfterTokenSave(); }
   finally { if (isCurrent(requestContext)) { busy.value = false; if (needsAutomaticRetry()) void automaticCheck(true); } }
 }
-async function preview(kind: "rate_limit" | "configuration"): Promise<void> {
-  const requestContext = contextGeneration;
-  if (!writable.value || !hasConfiguration.value || !connection.value) return;
+async function saveSettings(): Promise<void> {
+  if (!settingsEditable.value || !changedRatesReady.value || !connection.value || !changeRows.value.length) return;
+  const patch = settingsPatch();
+  if (!patch) { validation.value = true; return; }
+  const requestContext = contextGeneration, request = ++planGeneration, partition = recoveryPartition();
+  const current = () => isCurrent(requestContext) && request === planGeneration && props.mode === "usage";
+  const version = connection.value.version;
+  const target = Object.fromEntries(["account_id", "worker_name", "database_id"].map(key => [key, connection.value!.target[key as keyof Target]]));
+  const before: Record<string, unknown> = Object.fromEntries(configurationKeys.map(key => [key, connection.value!.configuration[key]]));
+  if (record(patch.rate_limits)) before.rate_limits = Object.fromEntries(Object.keys(patch.rate_limits).map(scope => [scope, { ...rateFor(scope as RateScope)! }]));
+  const after = { ...before, ...patch }, submittedDraft = { ...drafts.value };
+  const path = `${base}/configuration/apply`;
+  let dispatched = false;
+  let submittedKey: string | null = null;
+  busy.value = true; settingsSaving.value = true; failed.value = false; validation.value = false; editorProblem.value = null; settingsOperation.value = null;
   tokenFeedback.value = null; tokenProblem.value = null;
-  validation.value = false; plan.value = null; editorProblem.value = null; settingsOperation.value = null;
-  let body: Record<string, unknown>;
-  if (kind === "rate_limit") {
-    const limit = Number(rateLimit.value); const period = Number(ratePeriod.value);
-    if (!String(rateLimit.value).trim() || !Number.isSafeInteger(limit) || limit < 1 || ![10, 60].includes(period)) { validation.value = true; return; }
-    body = { scope: rateScope.value, limit, period_seconds: period, expected_version: connection.value.version };
-  } else {
-    const input = String(configurationValue.value);
-    let value: boolean | string | number | null;
-    if (["history_enabled", "analytics_enabled", "account_totals"].includes(configurationField.value)) {
-      if (!["true", "false"].includes(input)) { validation.value = true; return; }
-      value = input === "true";
-    } else if (configurationField.value === "billing_plan") {
-      if (!["unknown", "free", "paid"].includes(input)) { validation.value = true; return; }
-      value = input === "unknown" ? null : input;
-    } else {
-      value = input.trim() === "" && configurationField.value === "billing_cycle_day" ? null : Number(input);
-      if (value !== null && (!input.trim() || !Number.isSafeInteger(value) || value < 1 || value > (configurationField.value === "billing_cycle_day" ? 31 : 100))) { validation.value = true; return; }
-    }
-    body = { settings: { [configurationField.value]: value }, expected_version: connection.value.version };
-  }
-  const request = ++planGeneration;
-  busy.value = true; failed.value = false;
   try {
-    const result = await apiRequest<WriteResult<Plan>>(`${base}/${kind === "rate_limit" ? "rate-limits" : "configuration"}/plan`, { authorizationCurrent: () => isCurrent(requestContext), method: "POST", body });
-    if (isCurrent(requestContext)) {
-      if (connection.value) connection.value.version = result.resource.version;
-      if (request === planGeneration) plan.value = result.resource;
+    const planned = await apiRequest<WriteResult<Plan>>(`${base}/configuration/plan`, { validateResponse: isPlanWrite, authorizationCurrent: current, method: "POST", body: { settings: patch, expected_version: version } });
+    if (!current()) return;
+    const approved = planned.resource;
+    if (connection.value) connection.value.version = approved.version;
+    // 同页差异就是本次保存授权；服务端冻结计划必须与用户已看到的基线和新值完全一致。
+    if (approved.version !== version + 1 || !equalValues(approved.target, target) || !equalValues(approved.before, before) || !equalValues(approved.after, after)) {
+      editorProblem.value = "changed"; await Promise.all([load(), loadRates()]); return;
     }
+    const pending: RecoverableSettingsChange = { key: crypto.randomUUID(), operationId: null, verifyKey: null, path, draft: submittedDraft };
+    setUncertainChange(pending); submittedKey = pending.key; dispatched = true;
+    const result = await apiRequest<WriteResult<Operation>>(path, { validateResponse: value => isOperationWrite(value) && record(value) && record(value.resource) && value.resource.kind === "configuration", authorizationCurrent: current, method: "POST", body: { plan_id: approved.plan_id, expected_version: approved.version }, idempotencyKey: pending.key });
+    if (!current()) {
+      if (partition && recoverableSettingsChanges.get(partition)?.key === pending.key) {
+        if (["verified", "failed"].includes(result.resource.status)) recoverableSettingsChanges.delete(partition);
+        else recoverableSettingsChanges.set(partition, { ...pending, operationId: result.resource.operation_id });
+      }
+      return;
+    }
+    recordSettingsResult(result.resource);
+    await Promise.all([load(), loadRates()]);
+    if (current() && result.resource.status === "verified") emit("applied");
   } catch (error) {
-    if (isCurrent(requestContext) && request === planGeneration) {
-      editorProblem.value = error instanceof ApiProblem && error.status === 409 ? "changed" : "preview_failed";
-      editorRecovery.value = true;
-      await Promise.all([load(), loadRates()]);
+    if (!current()) {
+      if (partition && submittedKey && recoverableSettingsChanges.get(partition)?.key === submittedKey && error instanceof ApiProblem
+        && error.body.details.normalized_by !== "client" && error.status >= 400 && error.status < 500) recoverableSettingsChanges.delete(partition);
+      return;
+    }
+    if (dispatched && hasUncertainWrite(path)) { uncertain.value = true; operation.value = null; }
+    else {
+      if (dispatched) setUncertainChange(null);
+      editorProblem.value = error instanceof ApiProblem && error.status === 409 ? "changed" : dispatched ? "apply_rejected" : "preview_failed";
+      editorRecovery.value = true; await Promise.all([load(), loadRates()]);
     }
   } finally {
     if (isCurrent(requestContext)) {
-      busy.value = false;
-      if (editorRecovery.value) {
-        if (failed.value || !hasConfiguration.value) void automaticCheck(true);
-        else editorRecovery.value = false;
-      }
+      busy.value = false; settingsSaving.value = false;
+      if (unresolved.value || failed.value || ratesFailed.value) void automaticCheck(true);
+      else editorRecovery.value = false;
     }
   }
 }
-async function apply(): Promise<void> {
-  const requestContext = contextGeneration;
-  const current = plan.value;
-  if (!current || !writable.value || !hasConfiguration.value) return;
-  tokenFeedback.value = null; tokenProblem.value = null; editorProblem.value = null; settingsOperation.value = null;
-  const path = `${base}/${current.kind === "rate_limit" ? "rate-limits" : "configuration"}/apply`;
-  const baseline = { version: current.version, operationId: operation.value?.operation_id ?? null, path };
-  busy.value = true; failed.value = false; plan.value = null;
-  try {
-    const result = await apiRequest<WriteResult<Operation>>(path, { validateResponse: value => isOperationWrite(value), authorizationCurrent: () => isCurrent(requestContext), method: "POST", body: { plan_id: current.plan_id, expected_version: current.version } });
-    if (!isCurrent(requestContext)) return; operation.value = result.resource; recordSettingsOperation(result.resource);
-    if (connection.value && result.resource.version > connection.value.version) connection.value.version = result.resource.version;
-    await load();
-    if (!isCurrent(requestContext)) return;
-    await loadRates();
-    if (!isCurrent(requestContext)) return;
-    if (result.resource.status === "verified") { settingsOpen.value = false; emit("applied"); }
-    else if (result.resource.status === "failed") editorRecovery.value = failed.value || !hasConfiguration.value;
-  } catch (error) {
-    if (isCurrent(requestContext)) {
-      uncertain.value = hasUncertainWrite(path);
-      if (uncertain.value) { failed.value = true; setUncertainChange(baseline); }
-      else {
-        editorProblem.value = error instanceof ApiProblem && error.status === 409 ? "changed" : "apply_rejected";
-        editorRecovery.value = true;
-        await Promise.all([load(), loadRates()]);
-      }
-    }
-  } finally {
-    if (isCurrent(requestContext)) {
-      busy.value = false;
-      if (unresolved.value) { settingsOpen.value = false; void automaticCheck(true); }
-      else if (editorRecovery.value || failed.value) {
-        if (failed.value || !hasConfiguration.value) void automaticCheck(true);
-        else editorRecovery.value = false;
-      }
-    }
+function recordSettingsResult(value: Operation): void {
+  operation.value = value; recordSettingsOperation(value);
+  if (connection.value && value.version > connection.value.version) connection.value.version = value.version;
+  if (["pending", "unknown"].includes(value.status)) {
+    if (uncertainChangeBaseline.value) setUncertainChange({ ...uncertainChangeBaseline.value, operationId: value.operation_id });
+    uncertain.value = true;
+  } else {
+    clearPendingRequestIntents("POST", `${base}/configuration/apply`); setUncertainChange(null); uncertain.value = false;
+    if (value.status === "verified") drafts.value = {};
   }
 }
 function setUncertainChange(value: RecoverableSettingsChange | null): void {
@@ -553,9 +585,9 @@ function invalidateSessionContext(): void {
   readController.abort(); readController = new AbortController();
   tokenWrite.value = null; uncertain.value = false; uncertainChangeBaseline.value = null; tokenFeedback.value = null;
   tokenProblem.value = null; tokenLookupMissing.value = false; connection.value = null; operation.value = null; tokenOperation.value = null;
-  rateSettings.value = null; plan.value = null; settingsOpen.value = false;
+  rateSettings.value = null; ratesFailed.value = false; drafts.value = {};
   settingsOperation.value = null; editorProblem.value = null; editorRecovery.value = false;
-  loading.value = false; busy.value = false; capabilitiesChecking.value = false; failed.value = false;
+  loading.value = false; busy.value = false; settingsSaving.value = false; capabilitiesChecking.value = false; failed.value = false;
   optionalCheckFailed.value = false;
 }
 function sessionBoundaryChanged(): void { invalidateSessionContext(); loading.value = true; }
@@ -565,12 +597,12 @@ let automaticInFlight = false;
 const AUTOMATIC_COOLDOWN = 60_000;
 function clearAutomaticRetry(): void { if (retryTimer !== null) clearTimeout(retryTimer); retryTimer = null; }
 function needsAutomaticRetry(): boolean {
-  return unresolved.value || failed.value || optionalCheckFailed.value
+  return unresolved.value || failed.value || ratesFailed.value || optionalCheckFailed.value
     || ["capabilities_unavailable", "readback_unavailable"].includes(tokenFeedback.value ?? "")
     || capabilities.value.some(entry => ["unavailable", "unverified"].includes(capabilityState(entry.key)));
 }
 async function automaticCheck(force = false, attempt = 0): Promise<void> {
-  if (disposed || automaticInFlight || busy.value || loading.value || (settingsOpen.value && !editorRecovery.value)
+  if (disposed || automaticInFlight || busy.value || loading.value
     || (!force && Date.now() - lastAutomaticCheck < AUTOMATIC_COOLDOWN)) return;
   clearAutomaticRetry(); automaticInFlight = true; lastAutomaticCheck = Date.now();
   const generation = contextGeneration;
@@ -589,34 +621,15 @@ function onFocus(): void {
     if (retryTimer === null) retryTimer = setTimeout(() => { retryTimer = null; void automaticCheck(); }, remaining);
   } else void automaticCheck();
 }
-function openSetting(): void {
-  if (!props.initialSetting) return;
-  configurationField.value = props.initialSetting; editingRate.value = false;
-  configurationDraft(); plan.value = null; validation.value = false; editorProblem.value = null; settingsOperation.value = null; settingsOpen.value = true;
-}
-function editRate(scope: string): void {
-  rateScope.value = scope; editingRate.value = true; rateDraft(); plan.value = null; validation.value = false; editorProblem.value = null; settingsOperation.value = null; settingsOpen.value = true;
-}
-function rateFor(scope: string): Record<string, unknown> {
-  const settings = rateSettings.value;
-  if (!settings) return {};
-  return (scope === "anonymous_login" || scope === "expensive_reads"
-    ? settings.cost_protection?.[scope]?.policy : settings.policies?.[scope as keyof RateLimitSettings["policies"]]) ?? {};
-}
 watch([() => props.session?.session_id, () => props.session?.principal.id], () => {
   invalidateSessionContext(); automaticInFlight = false;
   tokenWrite.value = recoveryPartition() ? recoverableTokenSaves.get(recoveryPartition()!) ?? null : null;
   uncertainChangeBaseline.value = recoveryPartition() ? recoverableSettingsChanges.get(recoveryPartition()!) ?? null : null;
+  drafts.value = { ...uncertainChangeBaseline.value?.draft };
   uncertain.value = Boolean(tokenWrite.value || uncertainChangeBaseline.value); tokenFeedback.value = tokenWrite.value ? "unknown" : null;
   void automaticCheck(true);
 });
-watch(configurationField, () => { configurationDraft(); validation.value = false; plan.value = null; planGeneration++; });
-watch(() => props.initialSetting, openSetting);
-watch(() => props.settingRequest, openSetting);
-watch(rateScope, rateDraft);
-watch([rateScope, rateLimit, ratePeriod, configurationValue], () => { plan.value = null; planGeneration++; });
-watch(settingsOpen, open => { if (!open) { plan.value = null; validation.value = false; planGeneration++; if (editorRecovery.value || failed.value) void automaticCheck(true); } });
-watch(() => props.mode, () => { settingsOpen.value = false; if (props.mode === "usage") void automaticCheck(); });
+watch(() => props.mode, () => { planGeneration++; if (props.mode === "usage") void automaticCheck(); });
 onMounted(() => {
   window.addEventListener("cfkanban:session-exchanged", sessionBoundaryChanged);
   window.addEventListener("cfkanban:session-invalid", sessionBoundaryChanged);
@@ -664,35 +677,51 @@ onUnmounted(() => {
       </details>
     </section>
 
-    <slot />
-
-    <section class="owner-section connection-rates" aria-labelledby="connection-rate-heading">
-      <div class="section-heading-row"><div><h2 id="connection-rate-heading">{{ ui('Request frequency', '访问频率设置') }}</h2><p>{{ ui('Limit how often each type of request can be made.', '设置不同请求在一段时间内的访问次数。') }}</p></div></div>
+    <section class="owner-section settings-panel" aria-labelledby="usage-settings-heading" :aria-busy="busy">
+      <h2 id="usage-settings-heading">{{ ui('Usage & access settings', '用量与访问设置') }}</h2>
+      <p class="muted-copy">{{ ui('Edit settings together, review the changes below, then save once.', '集中修改设置，在下方查看变更对比后一次保存。') }}</p>
       <p v-if="rateUnavailableReason" class="muted-copy rate-unavailable" role="status">{{ rateUnavailableReason }}</p>
-      <div v-if="settingsFeedbackMessage && !settingsOpen" class="settings-feedback" :data-state="settingsOperation?.status ?? editorProblem"><ErrorNotice v-if="settingsFeedbackFailed" :error="settingsFeedbackMessage" /><p v-else class="muted-copy" role="status">{{ settingsFeedbackMessage }}</p></div>
-      <div class="rate-list"><div v-for="scope in rateScopes" :key="scope.value" class="rate-row"><span>{{ scope.label }}</span><strong>{{ rateText(rateFor(scope.value)) }}</strong><UButton color="neutral" variant="ghost" type="button" :disabled="!writable || !hasConfiguration" :aria-label="`${ui('Edit', '修改')} ${scope.label}`" @click="editRate(scope.value)">{{ ui('Edit', '修改') }}</UButton></div></div>
+      <p v-else-if="!settingsReady" class="muted-copy" role="status">{{ ui('Reading current settings…', '正在读取当前设置…') }}</p>
+      <div v-if="settingsFeedbackMessage" class="settings-feedback" :data-state="settingsOperation?.status ?? editorProblem"><ErrorNotice v-if="settingsFeedbackFailed" :error="settingsFeedbackMessage" /><p v-else class="muted-copy" role="status">{{ settingsFeedbackMessage }}</p></div>
+      <form class="unified-settings-form" @submit.prevent="saveSettings">
+        <fieldset class="settings-group" :disabled="!settingsEditable">
+          <legend>{{ ui('Statistics & history', '统计与历史') }}</legend>
+          <div v-for="field in configurationFields" :key="field.value" class="setting-row">
+            <div class="setting-description"><label :for="`usage-setting-${field.value}`">{{ field.label }}</label><p :id="`usage-help-${field.value}`">{{ field.help }}</p></div>
+            <p class="setting-current"><span>{{ ui('Current', '当前值') }}</span>{{ configurationText(connection?.configuration[field.value]) }}</p>
+            <div class="setting-input">
+              <USelect v-if="['history_enabled', 'analytics_enabled', 'account_totals'].includes(field.value)" :id="`usage-setting-${field.value}`" :aria-describedby="`usage-help-${field.value}`" :disabled="!settingsEditable" :model-value="draftInput(field.value)" :items="booleanOptions" :placeholder="ui('Not loaded', '尚未读取')" @update:model-value="updateDraft(field.value, $event)" />
+              <USelect v-else-if="field.value === 'billing_plan'" :id="`usage-setting-${field.value}`" :aria-describedby="`usage-help-${field.value}`" :disabled="!settingsEditable" :model-value="draftInput(field.value)" :items="[{value:'unknown',label:ui('Not specified','未声明')},{value:'free',label:'Free'},{value:'paid',label:'Paid'}]" @update:model-value="updateDraft(field.value, $event)" />
+              <UInput v-else :id="`usage-setting-${field.value}`" :aria-describedby="`usage-help-${field.value}`" :disabled="!settingsEditable" :model-value="draftInput(field.value)" type="number" min="1" max="31" step="1" :placeholder="ui('Not specified', '未声明')" @update:model-value="updateDraft(field.value, $event)" />
+            </div>
+          </div>
+        </fieldset>
+        <fieldset class="settings-group" :disabled="!settingsEditable">
+          <legend>{{ ui('Request frequency', '访问频率') }}</legend>
+          <p class="muted-copy">{{ ui('Maximum requests allowed within each time window.', '设置每个时间窗口内允许的最多请求数。') }}</p>
+          <p v-if="ratesFailed" class="muted-copy" role="status">{{ ui('Current request limits are temporarily unavailable. They will be read again automatically.', '暂时无法读取当前访问频率，系统会自动重试。') }}</p>
+          <div v-for="scope in rateScopes" :key="scope.value" class="setting-row rate-row">
+            <label :for="`usage-rate-${scope.value}`">{{ scope.label }}</label>
+            <p class="setting-current"><span>{{ ui('Current', '当前值') }}</span>{{ rateText(rateFor(scope.value) ?? {}) }}</p>
+            <div class="rate-inputs"><UInput :id="`usage-rate-${scope.value}`" :aria-label="`${scope.label} ${ui('maximum requests', '最多请求数')}`" :disabled="!settingsEditable || !rateFor(scope.value)" :model-value="draftInput(`${scope.value}.limit`)" type="number" min="1" step="1" @update:model-value="updateDraft(`${scope.value}.limit`, $event)" /><span aria-hidden="true">/</span><USelect :aria-label="`${scope.label} ${ui('duration', '统计时长')}`" :disabled="!settingsEditable || !rateFor(scope.value)" :model-value="draftInput(`${scope.value}.period_seconds`)" :items="[{value:'10',label:ui('10 seconds','10 秒')},{value:'60',label:ui('60 seconds','60 秒')}]" @update:model-value="updateDraft(`${scope.value}.period_seconds`, $event)" /></div>
+          </div>
+        </fieldset>
+        <section v-if="changeRows.length" class="configuration-plan" aria-labelledby="connection-plan-heading">
+          <h3 id="connection-plan-heading">{{ ui('Your changes', '变更对比') }}</h3>
+          <table class="plan-comparison"><thead><tr><th>{{ ui('Setting', '设置项') }}</th><th>{{ ui('Current value', '当前值') }}</th><th>{{ ui('New value', '修改后') }}</th></tr></thead><tbody><tr v-for="row in changeRows" :key="row.key"><th scope="row">{{ row.label }}</th><td>{{ row.before }}</td><td>{{ row.after }}</td></tr></tbody></table>
+        </section>
+        <p v-if="validation" class="warning-panel" role="alert">{{ ui('Use whole numbers: billing day 1–31, request count at least 1, and duration 10 or 60 seconds.', '请输入整数：账期日为 1–31，请求数至少为 1，时长为 10 或 60 秒。') }}</p>
+        <div class="settings-actions"><p class="muted-copy" role="status">{{ settingsSaving ? ui('Saving and confirming…', '正在保存并确认…') : changeRows.length ? ui(`${changeRows.length} unsaved changes`, `${changeRows.length} 项修改尚未保存`) : ui('No unsaved changes', '没有未保存的修改') }}</p><UButton color="neutral" variant="ghost" type="button" :disabled="busy || unresolved || !changeRows.length" @click="discardDraft">{{ ui('Discard changes', '放弃修改') }}</UButton><UButton color="primary" variant="solid" type="submit" :disabled="!settingsEditable || !changedRatesReady || !changeRows.length">{{ changeRows.length ? ui(`Save ${changeRows.length} ${changeRows.length === 1 ? 'change' : 'changes'}`, `保存 ${changeRows.length} 项修改`) : ui('Save settings', '保存设置') }}</UButton></div>
+      </form>
     </section>
 
-    <UModal v-model:open="settingsOpen" :title="settingsTitle" :dismissible="!busy" :close="{ disabled: busy, 'aria-label': ui('Close', '关闭') }">
-      <template #body>
-        <div v-if="settingsFeedbackMessage" class="settings-feedback" :data-state="settingsOperation?.status ?? editorProblem"><ErrorNotice v-if="settingsFeedbackFailed" :error="settingsFeedbackMessage" /><p v-else class="muted-copy" role="status">{{ settingsFeedbackMessage }}</p></div>
-        <p v-if="rateUnavailableReason" class="warning-panel">{{ rateUnavailableReason }}</p>
-        <form v-if="!plan" class="control-form" @submit.prevent="preview(editingRate ? 'rate_limit' : 'configuration')">
-          <p class="current-value">{{ ui('Current value', '当前值') }}: {{ editingRate ? rateText(rateFor(rateScope)) : configurationText(currentConfiguration) }}</p>
-          <template v-if="editingRate"><label>{{ ui('Maximum requests', '最多请求数') }}<UInput :disabled="!writable || !hasConfiguration" v-model="rateLimit" type="number" min="1" step="1" /></label><label>{{ ui('Duration', '统计时长') }}<USelect :disabled="!writable || !hasConfiguration" v-model="ratePeriod" :items="[{value:'10',label:ui('10 seconds','10 秒')},{value:'60',label:ui('60 seconds','60 秒')}]" /></label></template>
-          <label v-else>{{ ui('New value', '新值') }}<USelect v-if="['history_enabled', 'analytics_enabled', 'account_totals'].includes(configurationField)" :disabled="!writable || !hasConfiguration" v-model="configurationSelection" :items="booleanOptions" :placeholder="ui('Choose…', '请选择…')" /><USelect v-else-if="configurationField === 'billing_plan'" :disabled="!writable || !hasConfiguration" v-model="configurationSelection" :items="[{value:'unknown',label:ui('Unknown','未知')},{value:'free',label:'Free'},{value:'paid',label:'Paid'}]" /><UInput v-else :disabled="!writable || !hasConfiguration" v-model="configurationValue" type="number" min="1" :max="configurationField === 'billing_cycle_day' ? 31 : 100" step="1" /></label>
-          <p v-if="validation" class="warning-panel" role="alert">{{ ui('Enter a whole number within the displayed range.', '请输入显示范围内的整数。') }}</p>
-          <UButton color="primary" variant="solid" type="submit" :disabled="!writable || !hasConfiguration">{{ ui('Review change', '核对修改') }}</UButton>
-        </form>
-        <section v-else class="configuration-plan" aria-labelledby="connection-plan-heading"><h3 id="connection-plan-heading">{{ ui('Review your change', '核对修改') }}</h3><table class="plan-comparison"><thead><tr><th>{{ ui('Setting', '设置项') }}</th><th>{{ ui('Before', '变更前') }}</th><th>{{ ui('After', '变更后') }}</th></tr></thead><tbody><tr v-for="row in planRows" :key="row.label"><th scope="row">{{ row.label }}</th><td>{{ row.before }}</td><td>{{ row.after }}</td></tr></tbody></table><UButton color="primary" variant="solid" type="button" :disabled="!writable || !hasConfiguration" @click="apply">{{ ui('Confirm save', '确认保存') }}</UButton></section>
-      </template>
-    </UModal>
+    <slot />
   </div>
 </template>
 
 <style scoped>
 .cloudflare-control { display: grid; gap: 24px; }
-.connection-panel, .connection-rates { margin: 0; }
+.connection-panel, .settings-panel { margin: 0; }
 .connection-panel h2 { margin: 0; font-size: 18px; }
 .token-saved { display: inline-flex; gap: 6px; align-items: center; color: var(--color-success); font-size: 13px; }
 .token-feedback { margin: 12px 0; }
@@ -710,15 +739,22 @@ onUnmounted(() => {
 .connection-guide { margin: 12px 0 0; font-size: 13px; color: var(--color-text-muted); }
 .connection-guide summary { cursor: pointer; width: fit-content; }
 .connection-guide p, .connection-guide li { max-width: 76em; overflow-wrap: anywhere; }
-.rate-list { margin-top: 12px; }
-.rate-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 200px) auto; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--color-border); }
-.rate-row:last-child { border-bottom: 0; }
-.rate-row strong { font-weight: 500; font-variant-numeric: tabular-nums; }
-.control-form { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; }
-.control-form label { display: grid; gap: 8px; min-width: 160px; }
-.control-form .current-value { width: 100%; margin: 0; color: var(--color-text-muted); }
+.settings-panel h2 { margin: 0; font-size: 18px; }
+.settings-group { border: 0; padding: 0; margin: 24px 0; min-width: 0; }
+.settings-group legend, .configuration-plan h3 { font-size: 15px; font-weight: 600; }
+.setting-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(100px, .7fr) minmax(180px, 1fr); align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--color-border); }
+.setting-row:last-child { border-bottom: 0; }
+.setting-description label, .rate-row > label { font-weight: 500; }
+.setting-description p { font-size: 13px; color: var(--color-text-muted); margin: 5px 0 0; }
+.setting-current { display: grid; gap: 4px; margin: 0; font-variant-numeric: tabular-nums; font-size: 14px; }
+.setting-current span { color: var(--color-text-muted); font-size: 12px; }
+.setting-input > * { width: 100%; }
+.rate-inputs { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rate-inputs > :first-child { min-width: 0; flex: 1; width: 80px; }
+.settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--color-border); padding-top: 16px; }
+.settings-actions p { margin: 0 auto 0 0; font-size: 13px; }
 .plan-comparison { width: 100%; border-collapse: collapse; margin: 16px 0; }
 .plan-comparison th, .plan-comparison td { padding: 12px 8px; border-bottom: 1px solid var(--color-border); text-align: left; overflow-wrap: anywhere; }
 .plan-comparison thead th { color: var(--color-text-muted); font-size: 13px; }
-@media (max-width: 600px) { .capability-list { display: grid; gap: 12px; } .rate-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; } .rate-row strong { grid-column: 1; font-size: 13px; color: var(--color-text-muted); } .rate-row button { grid-column: 2; grid-row: 1 / 3; } .control-form label { width: 100%; } }
+@media (max-width: 700px) { .capability-list { display: grid; gap: 12px; } .setting-row { grid-template-columns: minmax(0, 1fr); gap: 10px; } .setting-current { display: flex; gap: 8px; } .setting-input, .rate-inputs { width: 100%; } .settings-actions p { flex-basis: 100%; } .plan-comparison th, .plan-comparison td { padding: 10px 4px; font-size: 13px; } }
 </style>
