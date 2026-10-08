@@ -43,7 +43,7 @@ import {
 } from "./tool-runtime.mjs";
 import { canonicalDigest } from "./utils.mjs";
 import { inspectPublicAccess, createPublicAccessPlan, applyPublicAccess } from "./public-access.mjs";
-import { inspectWafTarget, createWafTargetPlan, applyWafTarget } from "./waf-target.mjs";
+import { inspectWafTarget, createLegacyWafTargetPlan, applyWafTarget } from "./waf-target.mjs";
 import { readWorkerCostSettings } from "./worker-cost-settings.mjs";
 
 const ALL_SURFACES = Object.freeze(["daily", "admin", "deploy"]);
@@ -55,10 +55,10 @@ function command({ description, effect, inputFields = [], output = "ordinary", s
 const COMMANDS = new Map([
   ["runtime worker-cost-settings", command({ description: "Read the selected Worker's CPU ceiling without changing a subscription or settings.", effect: "read_only_control_plane", inputFields: ["accountId", "workerName", "wranglerExecutable", "cloudflareProfile", "contextDirectory"], surfaces: ["deploy"], run: readWorkerCostSettings })],
   ["public-access inspect", command({ description: "Read one receipt-bound hostname, Workers exposure and optional WAF inventory without writes.", effect: "read_only_control_plane_and_authenticated_http", inputFields: ["instanceId", "receiptPath", "zoneId", "hostname", "wranglerExecutable", "cloudflareProfile", "contextDirectory", "includeWaf"], surfaces: ["deploy"], run: inspectPublicAccess })],
-  ["plan public-access", command({ description: "Plan optional custom-domain enable/rollback or an exact owned Free WAF rule; never purchase a plan.", effect: "read_control_plane_and_register_service_plan", inputFields: ["instanceId", "taskId", "operationId", "receiptPath", "zoneId", "hostname", "wranglerExecutable", "cloudflareProfile", "contextDirectory", "mode", "passkeyRecoveryReady", "conflictChoice"], surfaces: ["deploy"], run: createPublicAccessPlan })],
+  ["plan public-access", command({ description: "Plan a custom-domain enable or explicit rollback; legacy owned-rule cleanup is retained only for rollback.", effect: "read_control_plane_and_register_service_plan", inputFields: ["instanceId", "taskId", "operationId", "receiptPath", "zoneId", "hostname", "wranglerExecutable", "cloudflareProfile", "contextDirectory", "mode", "passkeyRecoveryReady", "conflictChoice"], surfaces: ["deploy"], run: createPublicAccessPlan })],
   ["public-access apply", command({ description: "Apply or resume only the exact authorized public-access journal, verifying origin trust and owned resources.", effect: "authorized_cloudflare_and_origin_writes", inputFields: ["instanceId", "operationId", "taskId", "plan"], surfaces: ["deploy"], run: applyPublicAccess })],
   ["waf-target inspect", command({ description: "Verify one existing preferred hostname and exact deployment target without changing its mapping.", effect: "read_only_control_plane_and_authenticated_http", inputFields: ["instanceId", "receiptPath", "zoneId", "hostname", "wranglerExecutable", "cloudflareProfile", "contextDirectory"], surfaces: ["deploy"], run: inspectWafTarget })],
-  ["plan waf-target", command({ description: "Freeze exact schema 27 WAF target registration and optional receipt-owned legacy rule migration.", effect: "read_only_control_plane_and_plan", inputFields: ["instanceId", "taskId", "operationId", "receiptPath", "zoneId", "hostname", "wranglerExecutable", "cloudflareProfile", "contextDirectory"], surfaces: ["deploy"], run: createWafTargetPlan })],
+  ["plan waf-target", command({ description: "Legacy upgrade recovery only: import an exact existing private domain ownership receipt; no new WAF setup.", effect: "read_only_control_plane_and_plan", inputFields: ["instanceId", "taskId", "operationId", "receiptPath", "zoneId", "hostname", "wranglerExecutable", "cloudflareProfile", "contextDirectory"], surfaces: ["deploy"], run: createLegacyWafTargetPlan })],
   ["waf-target apply", command({ description: "Register or recover the original approved non-secret WAF target using guarded atomic D1 statements.", effect: "authorized_non_secret_d1_registration", inputFields: ["instanceId", "taskId", "operationId", "plan"], surfaces: ["deploy"], run: applyWafTarget })],
   ["web open", command({ description: "Open the shared local project/Issue workbench by default, or explicitly choose online Browser Launch. Supply the user's actual working directory for local mode. Preflight the requested browser; keep the local process alive until closed. Management targets require online mode.", effect: "local_web_service_or_authenticated_browser_delivery", inputFields: ["mode", "directory", "instanceId", "target", "delivery", "idempotencyKey", "sensitiveOutputAcknowledgement"], output: "conditional_one_time_capability", surfaces: ["daily", "admin"], run: openWeb })],
   ["capabilities", command({ description: "Inspect the current host, paths, and PATH-level tools without installing anything; Wrangler usability still requires runtime resolve-wrangler.", effect: "read_only", run: buildCapabilityReport })],
@@ -187,6 +187,9 @@ export async function dispatch(commandName, input, { surface = "all" } = {}) {
   if (definition === undefined) throw toolError("UNKNOWN_COMMAND", "Unknown cfKanban tool command", { command: commandName });
   if (!isAvailable(definition, selectedSurface)) {
     throw toolError("COMMAND_OUTSIDE_SKILL_SURFACE", "Command is not available through this cfKanban Skill", { command: commandName, surface: selectedSurface });
+  }
+  if (commandName === "plan public-access" && ["waf-enable", "waf-disable"].includes(input.mode)) {
+    throw toolError("CLOUDFLARE_FEATURE_RETIRED", "WAF setup is retired. Preserve existing rules and recover an uncertain operation using its original journal.", { reason: "cloudflare_feature_retired" });
   }
   return definition.run(input);
 }

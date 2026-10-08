@@ -4,7 +4,7 @@ import { ApiError, notFound, validationError, versionConflict } from "../kernel/
 import { canonicalJson, validateIdempotencyKey } from "../kernel/idempotency.ts";
 import type { AuthContext, JsonValue, WorkerEnv } from "../kernel/types.ts";
 import { requireIdempotencyKey } from "./shared.ts";
-import { api, findDuplicate, fixedTarget, instance, intent, list, localChange, object, operationResource, operationRow, operationWriteResult, ownedExpression, planResource, ProviderFailure, settingsRow, text, tokenFor, transition, type Assessment, type CloudflareControlDependencies, type OperationRow, type PlanRow, type Resource } from "./cloudflare-control.ts";
+import { api, findDuplicate, fixedTarget, instance, intent, list, localChange, object, operationResource, operationRow, operationWriteResult, ownedExpression, planResource, ProviderFailure, replayCloudflareLocalOperation, settingsRow, text, tokenFor, transition, type Assessment, type CloudflareControlDependencies, type OperationRow, type PlanRow, type Resource } from "./cloudflare-control.ts";
 
 const PHASE = "http_request_firewall_custom", PROFILE = "anonymous-api-filter", FREE_RULE_LIMIT = 5;
 interface BindingRow { binding_id: string; account_id: string; worker_name: string; database_id: string; instance_id: string; hostname: string; zone_id: string; domain_id: string; origin_version: number; provider_metadata_hash: string; source: string; verified_at: number; operation_id: string }
@@ -62,24 +62,8 @@ async function exactDomain(env: WorkerEnv, hostname: string, zoneId: string, tok
   return { id: exactId(domains[0]!.id), hostname, service: target.worker_name, zone_id: zoneId };
 }
 export async function registerWafTargetBinding(env: WorkerEnv, request: Request, auth: AuthContext, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
-  requireOwnerControl(auth); const token = tokenFor(env, "control"); if (!token) throw validationError("cloudflare_token_required");
-  let binding: BindingRow, bindingId = crypto.randomUUID(), preserveOwnership = false;
-  return localChange(env, request, auth, "/api/v1/admin/cloudflare/waf/target-binding", { expected_version: expected }, expected,
-    id => [env.DB.prepare(`INSERT INTO cloudflare_waf_target_binding(singleton,binding_id,account_id,worker_name,database_id,instance_id,hostname,zone_id,domain_id,origin_version,provider_metadata_hash,source,verified_at,operation_id)
-      SELECT 1,?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'worker_domain_read',?11,?12 FROM cloudflare_control_settings WHERE singleton=1 AND last_operation_id=?12
-      ON CONFLICT(singleton) DO UPDATE SET binding_id=excluded.binding_id,account_id=excluded.account_id,worker_name=excluded.worker_name,database_id=excluded.database_id,instance_id=excluded.instance_id,hostname=excluded.hostname,zone_id=excluded.zone_id,domain_id=excluded.domain_id,origin_version=excluded.origin_version,provider_metadata_hash=excluded.provider_metadata_hash,source=excluded.source,verified_at=excluded.verified_at,operation_id=excluded.operation_id`).bind(bindingId, binding.account_id, binding.worker_name, binding.database_id, binding.instance_id, binding.hostname, binding.zone_id, binding.domain_id, binding.origin_version, binding.provider_metadata_hash, now, id),
-      env.DB.prepare(`UPDATE cloudflare_waf_ownership SET binding_id=?2,rule_ref=CASE WHEN ?3 THEN rule_ref ELSE ?4 END,operation_id=CASE WHEN ?3 THEN operation_id ELSE ?1 END,verified_at=CASE WHEN ?3 THEN verified_at ELSE ?5 END WHERE singleton=1 AND rule_id IS NULL AND EXISTS(SELECT 1 FROM cloudflare_control_settings WHERE singleton=1 AND last_operation_id=?1)`).bind(id, bindingId, preserveOwnership ? 1 : 0, ruleRef(binding.instance_id), now)],
-    async version => ({ version, target_binding: { status: "verified", source: "worker_domain_read", domain_id: binding.domain_id, verified_at: new Date(now).toISOString() } }), now,
-    async () => { const control = await settingsRow(env.DB), meta = await instance(env.DB), currentOrigin = await origin(env.DB), hostname = new URL(meta.preferred_api_origin).hostname, target = fixedTarget(env); await verifyWafWorkerDatabase(env, token, dependencies); await verifiedZone(env, control.zone_id, hostname, token, dependencies); const domain = await exactDomain(env, hostname, control.zone_id!, token, dependencies), previous = await bindingRow(env.DB), owned = await ownershipRow(env.DB);
-      const sameTarget = previous && previous.account_id === target.account_id && previous.worker_name === target.worker_name && previous.database_id === target.database_id && previous.instance_id === meta.instance_id && previous.hostname === hostname && previous.zone_id === control.zone_id && previous.domain_id === domain.id && previous.origin_version === currentOrigin.version;
-      if (owned.rule_id && owned.binding_id !== previous?.binding_id) throw validationError("cloudflare_waf_ownership_binding_changed");
-      if (sameTarget) bindingId = previous.binding_id;
-      else if (owned.rule_id) throw validationError("cloudflare_waf_ownership_binding_changed");
-      preserveOwnership = Boolean(sameTarget && owned.binding_id === bindingId);
-      binding = { binding_id: bindingId, ...target, instance_id: meta.instance_id, hostname, zone_id: control.zone_id!, domain_id: exactId(domain.id), origin_version: currentOrigin.version, provider_metadata_hash: await sha256Hex(canonicalJson(domain)), source: "worker_domain_read", verified_at: now, operation_id: "" }; }, startIndex => ({
-      sql: `EXISTS(SELECT 1 FROM instance_origin_settings origin JOIN instance_meta meta ON meta.singleton=origin.singleton WHERE origin.singleton=1 AND origin.version=?${startIndex} AND origin.preferred_api_origin=?${startIndex + 1} AND meta.instance_id=?${startIndex + 2})`,
-      values: [binding.origin_version, `https://${binding.hostname}`, binding.instance_id],
-    }));
+  const previous = await replayCloudflareLocalOperation(env, request, auth, "waf_target_binding", { expected_version: expected }, now);
+  if (previous) return previous; throw validationError("cloudflare_feature_retired");
 }
 async function inventory(env: WorkerEnv, token: string, dependencies: CloudflareControlDependencies, ownership: OwnershipRow): Promise<Inventory> {
   const control = await settingsRow(env.DB), path = `/zones/${encodeURIComponent(control.zone_id!)}/rulesets`, call = api(token, dependencies, true), summaries = list(await call(path)).map(object);
@@ -138,6 +122,12 @@ async function liveWaf(env: WorkerEnv, dependencies: CloudflareControlDependenci
   const frozen: Resource = { target: { ...fixedTarget(env), instance_id: instanceId, hostname, zone_id: binding.zone_id, domain_id: binding.domain_id }, binding_id: binding.binding_id, origin_version: binding.origin_version, provider_metadata_hash: binding.provider_metadata_hash, target_proof_source: proofSource, token_hash: await sha256Hex(token), inventory_digest: observed.digest, ip_access_digest: access.digest, rule_refs: observed.rules.map(rule => rule.ref ?? null), foreign_rules_digest: observed.foreignDigest, entrypoint_id: observed.entrypoint?.id ?? null, entrypoint_rule_ids: observed.entrypoint ? list(observed.entrypoint.rules).map(rule => exactId(object(rule).id)) : [], owned_rule_id: ownership.rule_id, owned_ruleset_id: ownership.ruleset_id, owned_rule_digest: ownership.rule_digest, coverage: exposed };
   return { baseline: frozen, binding, ownership, inventory: observed, coverage: exposed, hostname, instanceId, conflicts };
 }
+export async function readLocalWafStatus(env: WorkerEnv): Promise<Resource> {
+  const control = await settingsRow(env.DB), meta = await instance(env.DB), currentOrigin = await origin(env.DB), binding = await bindingRow(env.DB), hostname = new URL(meta.preferred_api_origin).hostname;
+  const matches = binding && binding.account_id === env.CFKANBAN_CONTROL_ACCOUNT_ID && binding.worker_name === env.CFKANBAN_CONTROL_WORKER_NAME && binding.database_id === env.CFKANBAN_CONTROL_DATABASE_ID && binding.instance_id === meta.instance_id && binding.hostname === hostname && binding.zone_id === control.zone_id && binding.origin_version === currentOrigin.version;
+  // verified 仅保留旧客户端所需的本地登记事实；两个在线证明标志明确为 false。
+  return { version: control.version, status: "unsupported_contract", zone_id: control.zone_id, hostname, target_binding: { status: binding ? matches ? "verified" : "target_mismatch" : "missing", source: binding?.source ?? null, domain_id: binding?.domain_id ?? null, verified_at: binding ? new Date(binding.verified_at).toISOString() : null, live_verified: false, service_proof: false }, protected: false };
+}
 export async function readWafStatus(env: WorkerEnv, dependencies: CloudflareControlDependencies = {}, suppliedToken?: string): Promise<Resource> {
   const control = await settingsRow(env.DB), meta = await instance(env.DB), binding = await bindingRow(env.DB), token = suppliedToken ?? tokenFor(env, "control"), hostname = new URL(meta.preferred_api_origin).hostname;
   const empty: Resource = { version: control.version, status: token ? "unverified" : "missing", zone_id: control.zone_id, hostname, target_binding: { status: binding ? "unverified" : "missing", source: binding?.source ?? null, domain_id: binding?.domain_id ?? null, verified_at: binding ? new Date(binding.verified_at).toISOString() : null }, ownership: { status: "missing", ruleset_id: null, rule_id: null }, entrypoint: { strategy: "unverified", id: null }, inventory: { complete: false, ruleset_count: 0, total_rule_count: 0, free_rule_limit: FREE_RULE_LIMIT, capacity_available: false }, owned_rule: null, other_rule_count: 0, conflicts: [], coverage: { status: "incomplete", workers_dev: null, previews_enabled: null }, protected: false };
@@ -154,18 +144,27 @@ export async function readWafStatus(env: WorkerEnv, dependencies: CloudflareCont
   } catch (error) { const reason = error instanceof ProviderFailure ? error.capability : error instanceof Error && "details" in error ? object((error as { details: Resource }).details).reason ?? "unavailable" : "unavailable"; return { ...empty, status: error instanceof ProviderFailure ? error.capability : "target_mismatch", reason }; }
 }
 export async function planWaf(env: WorkerEnv, request: Request, auth: AuthContext, action: JsonValue, choice: JsonValue | undefined, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
-  requireOwnerControl(auth); if ((action !== "enable" && action !== "disable") || (choice !== undefined && choice !== "preserve_exemptions" && choice !== "before_conflicts")) throw validationError("invalid_cloudflare_waf_plan");
-  const token = tokenFor(env, "control"); if (!token) throw validationError("cloudflare_token_required"); let live: LiveWaf, after: Resource, before: Resource; const planId = crypto.randomUUID();
-  return localChange(env, request, auth, "/api/v1/admin/cloudflare/waf/plan", { action, conflict_choice: choice ?? null, expected_version: expected }, expected,
+  requireOwnerControl(auth);
+  const previous = await replayCloudflareLocalOperation(env, request, auth, "waf_plan", { action, conflict_choice: choice ?? null, expected_version: expected }, now);
+  if (previous) return previous;
+  // 仅为旧域名回退保留已有归属规则的清理，不接入或开启新防护。
+  if (action !== "disable") throw validationError("cloudflare_feature_retired");
+  if (choice !== undefined) throw validationError("invalid_cloudflare_waf_plan");
+  const token = tokenFor(env, "control"); if (!token) throw validationError("cloudflare_token_required");
+  let live: LiveWaf, before: Resource, after: Resource; const planId = crypto.randomUUID();
+  return localChange(env, request, auth, "/api/v1/admin/cloudflare/waf/plan", { action, conflict_choice: null, expected_version: expected }, expected,
     (id, version) => [env.DB.prepare(`INSERT INTO cloudflare_control_plans(id,kind,control_version,baseline_json,before_json,after_json,created_at) SELECT ?1,'waf',?2,?3,?4,?5,?6 FROM cloudflare_control_settings WHERE singleton=1 AND last_operation_id=?7`).bind(planId, version, canonicalJson(live.baseline), canonicalJson(before), canonicalJson(after), now, id)],
     async version => planResource({ id: planId, kind: "waf", control_version: version, baseline_json: canonicalJson(live.baseline), before_json: canonicalJson(before), after_json: canonicalJson(after), created_at: now, consumed_operation_id: null }), now,
-    async () => { live = await liveWaf(env, dependencies, token); const owned = live.inventory.owned; if (action === "enable" && !owned && live.inventory.rules.length >= FREE_RULE_LIMIT) throw validationError("cloudflare_waf_free_capacity_unavailable"); if (owned && !matchesOwnedProfile(owned, live.hostname, live.instanceId)) throw validationError("cloudflare_waf_owned_rule_drift");
-      const conflicts = action === "enable" ? live.conflicts : [], unpositionable = conflicts.some(entry => entry.repositionable !== true), entryRules = live.inventory.entrypoint ? list(live.inventory.entrypoint.rules).map(object) : [], first = entryRules.find(rule => conflicts.some(entry => entry.rule_id === rule.id));
-      if (choice === "before_conflicts" && unpositionable) throw validationError("cloudflare_waf_conflict_not_repositionable");
-      before = { owned_rule: owned ? { id: owned.id ?? null, ruleset_id: owned.ruleset_id ?? null, ...ruleBody(owned) } : null, total_rule_count: live.inventory.rules.length, coverage: live.coverage };
-      after = { action, profile: action === "enable" ? PROFILE : "disabled", entrypoint_strategy: owned ? action === "disable" ? "delete_owned_rule" : choice === "before_conflicts" && first ? "reposition_owned_rule" : "none" : action === "disable" ? "none" : live.inventory.entrypoint ? "append_rule" : "create_entrypoint", entrypoint_id: live.inventory.entrypoint?.id ?? null, position_before: choice === "before_conflicts" ? first?.id ?? null : null, conflict_choice: choice ?? null, conflicts, apply_ready: !conflicts.length || choice !== undefined, coverage: { ...live.coverage, exemptions_preserved: conflicts.length > 0 && choice === "preserve_exemptions" }, rule: owned ? ruleBody(owned) : desiredRule(live.hostname, live.instanceId, planId), purchase_or_upgrade_plan: false, modifies_foreign_rules: false };
+    async () => {
+      if (!(await ownershipRow(env.DB)).rule_id) throw validationError("cloudflare_feature_retired");
+      live = await liveWaf(env, dependencies, token); const owned = live.inventory.owned;
+      if (!owned) throw validationError("cloudflare_feature_retired");
+      if (!matchesOwnedProfile(owned, live.hostname, live.instanceId)) throw validationError("cloudflare_waf_owned_rule_drift");
+      before = { owned_rule: { id: owned.id ?? null, ruleset_id: owned.ruleset_id ?? null, ...ruleBody(owned) }, total_rule_count: live.inventory.rules.length, coverage: live.coverage };
+      after = { action: "disable", profile: "disabled", entrypoint_strategy: "delete_owned_rule", entrypoint_id: live.inventory.entrypoint?.id ?? null, position_before: null, conflict_choice: null, conflicts: [], apply_ready: true, coverage: { ...live.coverage, exemptions_preserved: false }, rule: ruleBody(owned), purchase_or_upgrade_plan: false, modifies_foreign_rules: false };
     });
 }
+
 async function assessWafDetailed(env: WorkerEnv, row: OperationRow, dependencies: CloudflareControlDependencies): Promise<{ assessment: Assessment; ownership?: Resource }> {
   if (row.status === "verified" || row.status === "failed") return { assessment: [row.status, row.failure_class, row.result_version_id, null] };
   if (row.dispatched_at === null) return { assessment: ["failed", "not_dispatched", null, null] };
@@ -216,31 +215,22 @@ export async function applyWaf(env: WorkerEnv, request: Request, auth: AuthConte
 async function applyWafInternal(env: WorkerEnv, request: Request, auth: AuthContext, planId: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies, noteIntent: () => void): Promise<Resource> {
   requireOwnerControl(auth); if (!isUuid(requireIdempotencyKey(request))) throw validationError("invalid_idempotency_key");
   const requestHash = await sha256Hex(canonicalJson({ plan_id: planId, expected_version: expected })), duplicate = await findDuplicate(env, request, auth, requestHash, [], noteIntent); await reauthenticateOwner(env.DB, request, Date.now()); if (duplicate) return operationWriteResult(env, auth, duplicate, true);
+  if (!(await ownershipRow(env.DB)).rule_id) throw validationError("cloudflare_feature_retired");
   if (typeof planId !== "string" || !isUuid(planId)) throw validationError("invalid_cloudflare_plan");
-  const plan = await env.DB.prepare("SELECT * FROM cloudflare_control_plans WHERE id=?1").bind(planId).first<PlanRow>(); if (!plan || plan.kind !== "waf") throw notFound(); if (plan.consumed_operation_id || plan.control_version !== expected) throw versionConflict((await settingsRow(env.DB)).version);
-  const desired = object(JSON.parse(plan.after_json) as JsonValue); if (desired.apply_ready !== true) throw validationError("cloudflare_waf_conflict_choice_required"); const token = tokenFor(env, "control"); if (!token) throw validationError("cloudflare_token_required");
-  const live = await liveWaf(env, dependencies, token), planned = object(JSON.parse(plan.baseline_json) as JsonValue); if (canonicalJson(live.baseline) !== canonicalJson(planned)) throw validationError("cloudflare_waf_baseline_changed");
+  const plan = await env.DB.prepare("SELECT * FROM cloudflare_control_plans WHERE id=?1").bind(planId).first<PlanRow>(); if (!plan || plan.kind !== "waf") throw notFound();
+  const desired = object(JSON.parse(plan.after_json) as JsonValue);
+  if (desired.action !== "disable" || desired.entrypoint_strategy !== "delete_owned_rule") throw validationError("cloudflare_feature_retired");
+  if (plan.consumed_operation_id || plan.control_version !== expected) throw versionConflict((await settingsRow(env.DB)).version);
+  const token = tokenFor(env, "control"); if (!token) throw validationError("cloudflare_token_required");
+  const live = await liveWaf(env, dependencies, token), planned = object(JSON.parse(plan.baseline_json) as JsonValue);
+  if (!live.inventory.owned || !matchesOwnedProfile(live.inventory.owned, live.hostname, live.instanceId) || canonicalJson(live.baseline) !== canonicalJson(planned)) throw validationError("cloudflare_waf_baseline_changed");
   noteIntent();
   const row = await intent(env, request, auth, "waf", requestHash, { baseline: live.baseline }, desired, null, expected, now, planId); if (row.dispatched_at !== null || row.status !== "pending") return operationWriteResult(env, auth, row, true);
   try { const current = await liveWaf(env, dependencies, token); if (canonicalJson(current.baseline) !== plan.baseline_json) throw validationError("cloudflare_waf_baseline_changed"); }
   catch { await transition(env, request, auth, row, "failed", "preflight_changed", null, null); return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false); }
   if (!(await transition(env, request, auth, row, "pending", null, null, null, true))) return operationWriteResult(env, auth, await operationRow(env.DB, row.id), true);
-  const path = `/zones/${encodeURIComponent(live.binding.zone_id)}/rulesets`, rule = object(desired.rule), position = desired.position_before ? { position: { before: desired.position_before } } : {};
-  let mutationResult: JsonValue = null;
-  try {
-    if (desired.entrypoint_strategy === "append_rule") mutationResult = await api(token, dependencies)(`${path}/${encodeURIComponent(text(desired.entrypoint_id))}/rules`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...rule, ...position }) });
-    else if (desired.entrypoint_strategy === "create_entrypoint") mutationResult = await api(token, dependencies)(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "zone", name: "cfKanban custom request filters", phase: PHASE, rules: [rule] }) });
-    else if (desired.entrypoint_strategy === "delete_owned_rule") mutationResult = await api(token, dependencies)(`${path}/${encodeURIComponent(live.ownership.ruleset_id!)}/rules/${encodeURIComponent(live.ownership.rule_id!)}`, { method: "DELETE" });
-    else if (desired.entrypoint_strategy === "reposition_owned_rule") mutationResult = await api(token, dependencies)(`${path}/${encodeURIComponent(live.ownership.ruleset_id!)}/rules/${encodeURIComponent(live.ownership.rule_id!)}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...rule, ...position }) });
-  } catch (error) { await transition(env, request, auth, await operationRow(env.DB, row.id), error instanceof ProviderFailure && error.rejected ? "failed" : "unknown", error instanceof ProviderFailure ? error.capability : "unavailable", null, null); return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false); }
-  if (desired.entrypoint_strategy === "append_rule" || desired.entrypoint_strategy === "create_entrypoint") {
-    try {
-      const result = object(mutationResult), resultRules = list(result.rules).map(object), originalIds = new Set(live.inventory.rules.map(entry => exactId(entry.id)));
-      const created = resultRules.filter(entry => fixedRuleShape(entry) && !originalIds.has(exactId(entry.id)) && canonicalJson(ruleBody(entry)) === canonicalJson(rule));
-      if (created.length !== 1 || (desired.entrypoint_id && result.id !== desired.entrypoint_id)) throw new ProviderFailure("target_mismatch");
-      await transition(env, request, auth, await operationRow(env.DB, row.id), "pending", null, exactId(created[0]!.id), null);
-    } catch { await transition(env, request, auth, await operationRow(env.DB, row.id), "unknown", "cloudflare_waf_creation_id_unverified", null, null); return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false); }
-  }
+  try { await api(token, dependencies)(`/zones/${encodeURIComponent(live.binding.zone_id)}/rulesets/${encodeURIComponent(live.ownership.ruleset_id!)}/rules/${encodeURIComponent(live.ownership.rule_id!)}`, { method: "DELETE" }); }
+  catch (error) { await transition(env, request, auth, await operationRow(env.DB, row.id), error instanceof ProviderFailure && error.rejected ? "failed" : "unknown", error instanceof ProviderFailure ? error.capability : "unavailable", null, null); return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false); }
   try { await verifyWafResult(env, request, auth, await operationRow(env.DB, row.id), dependencies); }
   catch (error) { await transition(env, request, auth, await operationRow(env.DB, row.id), "unknown", error instanceof ProviderFailure ? error.capability : "unavailable", null, null); }
   return operationWriteResult(env, auth, await operationRow(env.DB, row.id), false);

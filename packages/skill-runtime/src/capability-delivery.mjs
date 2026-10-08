@@ -530,6 +530,10 @@ export function assertGenericApiPathIsNonSensitive({ method = "GET", apiPath }) 
 export async function guardedApiRequest(input) {
   assertGenericApiPathIsNonSensitive(input);
   await assertGenericCloudflareMutationIsAvailable(input);
+  const method = (input.method ?? "GET").trim().toUpperCase(), pathname = decodeURIComponent(new URL(input.apiPath, "https://local.invalid").pathname).replace(/\/+$/u, "");
+  if (method === "POST" && /^\/api\/v1\/admin\/cloudflare\/waf\/(?:plan|target-binding|apply)$/u.test(pathname)
+    || method === "PATCH" && pathname === "/api/v1/admin/cloudflare/settings"
+    || method === "GET" && pathname === "/api/v1/admin/cloudflare/notifications") throw toolError("CLOUDFLARE_FEATURE_RETIRED", "WAF setup and budget notifications are retired. Read the original WAF operation by its exact request key; owned-rule cleanup uses the authorized domain rollback workflow.", { reason: "cloudflare_feature_retired" });
   const result = await apiRequest(input);
   return withNotificationAttention(input, result);
 }

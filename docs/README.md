@@ -39,7 +39,7 @@
 | Issue 优先级、标签、负责人筛选与查询索引 | [Issue 结构化筛选](specs/2026-09-29-issue-query-filters-spec.md) |
 | 活动与审计倒序历史、正序增量兼容与时间索引 | [活动历史倒序](specs/2026-10-01-event-history-order-spec.md) |
 | 用量、限额与可选采集 | [用量统计](specs/2026-09-19-usage-statistics-spec.md) |
-| Cloudflare 成本保护与可选边缘防护 | [成本保护](specs/2026-10-07-cloudflare-cost-protection-spec.md) |
+| Cloudflare 成本保护与用量口径 | [成本保护](specs/2026-10-07-cloudflare-cost-protection-spec.md) |
 | Owner Cloudflare Secret 接入、限流管理与日度历史 | [Owner Cloudflare 管理](specs/2026-10-07-owner-cloudflare-control-spec.md) |
 | Owner 实例公告、个人接收偏好、逐条确认与 Web/Agent 提醒 | [Owner 实例通知](specs/2026-10-01-instance-notifications-spec.md) |
 

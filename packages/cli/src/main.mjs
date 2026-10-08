@@ -7,11 +7,14 @@ export const VERSION=typeof __CFKANBAN_CLI_VERSION__==='undefined'?'source':__CF
 export const EXIT_CODES=Object.freeze({success:0,validation:2,authentication:3,authorization:4,conflict:5,outcome_unknown:6,platform_failure:7,not_found:8});
 const zh={'waf-target':'WAF目标接入',waf:'域名防护','waf-plan':'防护计划','waf-apply':'防护应用','waf-connect':'防护目标接入','waf-operation':'防护原操作查询','public-access':'公网访问','cost-settings':'成本设置','upgrade-notification':'升级通知',release:'发行','search-index':'搜索索引',changes:'增量',instance:'实例',profile:'个人资料',notification:'通知',admin:'管理',event:'事件',workspace:'工作区',project:'项目',issue:'Issue',attachment:'附件',comment:'评论',label:'标签',relation:'关系',invite:'邀请',owner:'Owner',grant:'授权',passkey:'通行密钥',join:'加入',connection:'连接',scope:'目录关联',identity:'身份',board:'看板',deploy:'部署',operation:'操作恢复',cli:'CLI安装',list:'列表',show:'查看',create:'创建',update:'修改',delete:'删除',restore:'恢复',archive:'归档',purge:'永久清除',complete:'完成',reopen:'重开',block:'标记阻塞',unblock:'解除阻塞',candidates:'候选项',counts:'统计',context:'上下文',preferences:'偏好',configure:'设置',acknowledge:'确认收到',publish:'发布',withdraw:'撤回',administrator:'管理员',member:'成员',add:'添加',remove:'移除',rename:'改名',revoke:'撤销',upload:'上传',download:'下载',device:'设备',prepare:'准备',verify:'核验',request:'请求',rotate:'轮换',origin:'来源',limits:'限额',homepage:'首页',usage:'用量',snapshot:'快照',plan:'计划',apply:'执行',resume:'继续',recover:'恢复',pending:'待验证',inspect:'检查',associate:'关联',resolve:'解析',install:'安装',status:'状态',rollback:'回退',uninstall:'卸载'};
 function description(command,locale) {
+  if(command.name==='admin cloudflare waf-apply')return locale==='zh-CN'?'仅兼容准确旧规则的关闭计划；指定原请求键时仅查询原操作，不发送新启用':'Compatibility only: apply an exact owned-rule disable plan; an explicit original request key performs lookup only, never new enablement';
+  if(command.deprecated||command.name.startsWith('deploy waf-target '))return locale==='zh-CN'?'旧版兼容入口：WAF 和预算通知已退出产品功能；仅保留已有状态与原操作恢复':'Legacy compatibility: WAF and budget notifications are retired; existing state and original-operation recovery remain supported';
   if(command.name==='web open')return locale==='zh-CN'?'打开当前项目看板':'Open the current Project board';
   if(command.name==='admin cloudflare token-operation')return locale==='zh-CN'?'按原保存请求键只读查看本人 Token 保存操作；404 不能证明原保存未提交':'Read your Token-save operation by its original request key; 404 does not prove the original save was not committed';
+  if(command.name==='admin cloudflare local-operation')return locale==='zh-CN'?'按原请求键只读查看本人旧配置的已提交快照；404 不能证明原请求未提交':'Read the committed snapshot of your retired configuration request by its original key; 404 does not prove it was never committed';
   if(command.name==='admin cloudflare waf-operation')return locale==='zh-CN'?'按原 UUID 请求键只读查看本人 WAF 应用操作；404 不能证明原写入未发生':'Read your WAF apply intent by its original UUID key; 404 does not prove the write never occurred';
   if(command.name==='admin cloudflare waf-connect')return locale==='zh-CN'?'核验并登记当前固定 Worker 的现有首选域名；不创建或替换域名':'Verify and register the current fixed Worker’s existing preferred domain; no domain is created or replaced';
-  if(command.name==='admin cloudflare verify')return locale==='zh-CN'?'默认核验配置和用量能力；--include-optional true 才同时核验通知、账务及已配置 Zone 的 WAF':'Verify configuration and analytics by default; --include-optional true also checks Notifications, Billing and configured Zone WAF';
+  if(command.name==='admin cloudflare verify')return locale==='zh-CN'?'核验配置与用量能力；旧 --include-optional 参数仅为兼容保留，不再查询通知、账务或 WAF':'Verify configuration and analytics; legacy --include-optional is accepted for compatibility without querying Notifications, Billing or WAF';
   return locale==='zh-CN'?command.name.split(' ').map(word=>({use:'使用',clear:'清除',web:'看板',open:'打开'}[word]??zh[word]??word)).join(' / '):command.description??command.name;
 }
 function commandExample(command) {
@@ -41,6 +44,7 @@ export function helpDocument(prefix='',locale='en',version=VERSION) {
 }
 const usualGroups=new Set(['context','issue','project','workspace','join','connection','comment','profile','notification','attachment','label','relation','grant','invite','web','admin']);
 function commonHelpCommand(command,prefix) {
+  if(COMMANDS.find(entry=>entry.name===command.name)?.deprecated||command.name.startsWith('deploy waf-target '))return false;
   if(!prefix)return usualGroups.has(command.name.split(' ')[0]);
   if(command.name.includes('purge'))return false;
   if(command.name.startsWith('connection '))return ['connection list','connection add','connection discover'].includes(command.name);

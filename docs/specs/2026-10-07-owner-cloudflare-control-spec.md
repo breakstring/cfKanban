@@ -3,112 +3,104 @@
 - 状态：Frozen
 - 日期：2026-10-07
 - 执行任务：[CFK-643](https://cfkanban.dev/app/issues/CFK-643)、[CFK-644](https://cfkanban.dev/app/issues/CFK-644)、[CFK-645](https://cfkanban.dev/app/issues/CFK-645)、[CFK-650](https://cfkanban.dev/app/issues/CFK-650)、[CFK-639](https://cfkanban.dev/app/issues/CFK-639)
-- 授权依据：用户要求继续实现三项任务，明确 Token 最终保存于 Worker Secret，并选择将限定当前 Worker 的配置 Editor 授权长期保存在同一 Worker Secret，供跨设备管理；随后要求统一 Token 输入、将连接前移至概览、保存生效后缩为小卡片并逐项展示能力，简化用户文案、解释保存结果和禁用原因，以及将访问频率限制移至用量与限额。用户进一步确认包含目标接入、规则集创建或复用、手工规则共存、启停、核验与恢复的完整 WAF 管理方案并要求实现。授权本地实现与验证；不包含实际创建 Token、线上迁移、Cloudflare 写入、部署、提交或推送。
-- 本增量只覆盖 Owner 管理接入、下面列举的控制面操作和可选日度历史。覆盖成本保护及 Bootstrap 合同中该范围的“Web/Worker 不持有管理 Token”旧限制；其余身份、凭据、资源归属、发行与部署合同继续有效。
+- 授权依据：用户确认将 Owner 概览收敛为只读信息，把统一 Token、用量、历史与访问频率集中到用量与配额；输入 Token 后仅需一次保存，核验、能力检查与各区加载由系统自动完成；移除 WAF 和预算通知功能，并保留已安装版本的安全升级与历史操作恢复。授权本地实现与验证，不包含实际创建 Token、线上迁移、Cloudflare 写入、部署、提交或推送。
+- 本增量覆盖 Owner 管理接入、以下控制面操作和可选日度历史。覆盖成本保护及 Bootstrap 合同中该范围的“Web/Worker 不持有管理 Token”旧限制；其余身份、凭据、资源归属、发行与部署合同继续有效。
 
 ## 固定目标与授权
 
-部署及升级从已批准目标注入 `CFKANBAN_CONTROL_ACCOUNT_ID`、`CFKANBAN_CONTROL_WORKER_NAME`、`CFKANBAN_CONTROL_DATABASE_ID`。首次部署将已核验工件 migration manifest 的 `schema_version` 冻结到 release，仅 schema 26 及以后注入管理目标，并在生成配置时核对已安装工件；省略或旧 schema 保持历史部署形态。页面只能读取，不能自由输入或替换目标。缺失目标的旧实例显示未接入，须通过正式升级补齐；不能从浏览器 hostname、用户名称或 Token 猜测账户。
+部署及升级从已批准目标注入 `CFKANBAN_CONTROL_ACCOUNT_ID`、`CFKANBAN_CONTROL_WORKER_NAME`、`CFKANBAN_CONTROL_DATABASE_ID`。首次部署将已核验工件 migration manifest 的 `schema_version` 冻结到 release，仅 schema 26 及以后注入管理目标，并在生成配置时核对已安装工件；省略或旧 schema 保持历史部署形态。页面只能读取，不能自由输入或替换目标。缺失目标的旧实例须通过获准升级补齐；不能从 hostname、用户名称或 Token 猜测账户。
 
-Owner 在当前 HTTPS 实例的「管理中心 → 概览」设置一份 Cloudflare API Token，一次保存到 `CFKANBAN_API_TOKEN`。该授权用于当前 Worker 配置与已获授权的只读能力：
+Owner 在当前 HTTPS 实例的「管理中心 → 用量与配额」顶部输入一份 Cloudflare API Token，点击「保存」，一次写入 `CFKANBAN_API_TOKEN`。正常功能只要求以下两组能力：
 
 | 用途 | 预期最小权限 |
 | --- | --- |
 | 保存 Secret、变量及原生限流 | account-owned API Token 的 Specified Workers / 当前 Worker / Editor |
 | 用量采集 | 当前账户 Account Analytics Read；数据集是否可用由实际读取核验 |
-| 可选通知、账务能力与 Zone WAF 读取 | 当前账户 Notifications Read、Billing Read，指定 Zone 的 Zone Read / WAF Read |
-| 明确启用或关闭本工具 WAF 规则 | 指定 Zone 的 Zone WAF Edit（Rulesets API 名称为 Write）；读取通过不能证明写权限 |
 
-这些是同一连接的能力，不是三个配置步骤；逐项核验准确目标及实际能力。配置用途仍须满足 account-owned 单 Worker Editor 边界，不因统一输入自动添加权限。可选能力缺权限或供应商兼容性未确认时单独报告，不把连接整体标为全部可用，不要求为基本设置开通所有可选权限。一次只写入一个 Secret，不串行或批量保存三份副本。
+配置用途仍须满足 account-owned 单 Worker Editor 边界，不因统一输入自动扩权。Editor 同时包含当前 Worker 代码与部署修改权，设置指引必须明确。配置读取通过只证明已核验读取与目标 DB 绑定，不能声称已证明所有写权限；实际保存另核验所需写权限。单数据集检查不能证明所有统计或最终账单可用。常规连接不请求 Notifications、Billing、Zone 或 WAF 权限。
 
-运行时优先使用统一 Secret；缺失时各用途分别回退旧 `CFKANBAN_CONFIGURATION_TOKEN`、`CFKANBAN_CONTROL_TOKEN`、`USAGE_ANALYTICS_TOKEN`。保留旧接口用途和已配置 Secret，不删除或重写旧数据；旧授权仍可继续工作，页面只提供一处统一输入用于接入或替换。统一保存使用 `kind=connection`，操作分类复用既有 `configuration_secret`，非秘密 intent 记录准确 Secret 名称；操作读回按该名称核验实际 binding 及 hash，不能用统一优先解析器替旧操作确认结果。
+运行时优先使用统一 Secret；缺失时按原用途回退 `CFKANBAN_CONFIGURATION_TOKEN`、`CFKANBAN_CONTROL_TOKEN`、`USAGE_ANALYTICS_TOKEN`。保存统一授权不删除或重写旧 Secret，旧用途接口及历史操作仍兼容。统一保存使用 `kind=connection`，操作分类复用 `configuration_secret`；非秘密 intent 记录准确 Secret 名称，读回按该名称核验 binding 及 hash，不能用统一优先解析器替旧操作确认结果。
 
-首次连接和统一 Token 轮换均使用所输入的 Editor Token 写入自身 Secret；旧授权失效不阻塞使用有效替代 Token 恢复。旧用途接口保留其原保存方式。Editor 也能修改当前 Worker 的代码及部署，此权限边界必须在设置指引中明确。服务器验证本功能所需的操作能力及目标 DB 绑定；能力验证不等于证明该 Token 没有其他权限。
+首次连接和 Token 轮换均使用本次输入的 Editor Token 写入自身 Secret；旧 Token 缺少写权限或失效不阻塞有效替代 Token。旧用途接口保持原保存方式。网页无法完成保存时，就地给出恢复路径：Cloudflare → Workers & Pages → 当前 Worker → Settings → Variables and Secrets，将 `CFKANBAN_API_TOKEN` 添加或替换为 **Secret 类型**，然后 Deploy。返回页面后自动重新核对，不把空输入框或旧能力缓存视为尚未保存的证据。
 
-Token 只在表单的短暂内存及发送给固定 Cloudflare API 的请求中出现，最终仅保存普通 Worker Secret。不得进入 URL、浏览器存储、可恢复草稿、D1、业务审计正文、日志、命令参数、Agent 上下文或普通 CLI 操作日志。响应只返回已配置标志、能力状态与操作 ID，不返回 Token 或供应商错误正文。Cookie 写请求校验 CSRF，所有管理路由实时核验 Owner。普通参与者、Project / Workspace 管理员无此能力。
+Token 仅在表单短暂内存、当前实例专用 HTTPS Secret 接口及固定 Cloudflare API 请求中运输，最终保存于普通 Worker Secret。正文不得进入 URL、浏览器存储、可恢复草稿、D1、业务审计、日志、命令参数、环境变量或 Agent 普通上下文。响应只返回已配置标志、能力状态与操作 ID。Cookie 写请求校验 CSRF，管理路由实时核验 Owner；普通参与者及 Project / Workspace 管理员无此能力。
 
-Worker 仅访问固定 `https://api.cloudflare.com/client/v4/`，限制 endpoint、HTTP method、Secret 名称、请求字段、目标及响应体大小，设置超时且不自动重试写入。不提供任意 URL 代理、上传 Worker 代码、创建 Token 或修改其他 Worker 的入口。同 Worker 的两个 Secret 不构成运行时隔离；不声称部署代码无法使用它们。
+控制面请求仅发送到固定 `https://api.cloudflare.com/client/v4/`，限制 endpoint、method、Secret 名称、字段、目标和响应体，设置超时且不自动重试外部写入。不提供任意 URL 代理、上传代码、创建 Token 或修改其他 Worker 的入口。同 Worker 的多个 Secret 不构成运行时隔离。
 
-## 计划、应用与未知结果
+## 保存、计划与未知结果
 
-Secret 保存是单一明确操作。限流与配置修改先产生冻结的 plan，再以 plan ID、当前版本和稳定幂等键 apply。配置白名单为 analytics 开关、history 开关、free/paid 声明、UTC 账单周期日、账户聚合开关和 cfKanban 额度贡献提醒百分比。Analytics 的账户、数据库、Worker 从固定目标派生，不能通过该接口重新定向。
+Secret 保存是一个明确操作。限流与配置变更先生成冻结 plan，再以 plan ID、当前版本和稳定幂等键 apply。新配置白名单为 analytics 开关、history 开关、free/paid 声明、UTC 账单周期日、账户聚合开关；不再接受新的 `warning_percent` 设置。旧值、已登记操作和旧配置读回保留兼容，不在无关修改时新建提醒变量。账户、数据库和 Worker 从固定目标派生，不能重新定向。
 
-限流允许分别修改 instance、principal、unauthenticated_sensitive、anonymous_login、expensive_reads，一次一个 scope；limit 是正整数，period_seconds 仅 10 或 60。保持已有 namespace ID，同步 binding 与对应非秘密 policy vars；不改变权限、结果完整性、套餐或 CPU 设置。
+限流一次修改 instance、principal、unauthenticated_sensitive、anonymous_login 或 expensive_reads 中一个 scope；limit 为正整数，period_seconds 仅 10 或 60。保持 namespace ID，同步原生 binding 与非秘密 policy vars；不改变权限、结果完整性、套餐、CPU 或固定查询并发设置。
 
-每次控制面写前核对实际 DB 绑定、当前单一 100% active deployment、最新版本等于 active version，以及冻结的版本/配置基线。部署与版本列表只读取当前/最新项；历史总页数大于一不表示目标不完整，不扫描全部部署历史。响应体和库存仍有界；通知等需要完整列表的用途不能复用这个分页例外。存在未部署候选、分流、缺失绑定或漂移则拒绝，不能自动发布未知候选代码。更新完整保留其他 bindings、Secrets、limits、Cron、域名及配置，不把网页改动变成全量默认配置覆盖。
+每次 Worker 配置写前核对实际 DB 绑定、单一 100% active deployment、latest 等于 active，以及冻结的版本和配置基线。部署与版本列表只读当前/最新项，不扫描全部历史；完整规则库存不能复用这一分页例外。未部署候选、分流、缺失绑定或漂移均拒绝，不自动发布未知代码。完整保留其他 bindings、Secrets、limits、Cron、域名及配置。
 
-D1 保存非秘密 plan、持久操作 intent、幂等请求哈希、互斥锁及审计；Token 正文不持久化。外部 Cloudflare 与 D1 不构成原子事务，Cloudflare API 也未提供本功能可依赖的全局 CAS。服务写前登记 intent，外部请求不确定后保持 `unknown`，重试相同键只能读取或验证原操作，不能再次发起外部写。只有读回 active deployment 和预期配置后才标记 `verified`；无法证明时不显示“已生效”。无法验证的 intent 不因简单超时而释放并盲目重放。
+D1 保存非秘密 plan、持久 intent、幂等请求哈希、互斥锁及审计；Token 正文不持久化。Cloudflare 与 D1 不构成原子事务，不能假定供应商提供全局 CAS。写前登记 intent，外部结果不确定则保留 `unknown`；同 key 只能读取或核验原操作，不再次外部写入。只有 active deployment 和预期配置读回符合原请求才标记 `verified`。未知 intent 不因超时而清锁或重放。
 
-保存响应缺失时，Owner 可通过 `GET /api/v1/admin/cloudflare/secret-operations/{request_key}` 查询本人、固定 Secret 保存路径和原 UUID 幂等键对应的单条 intent；仅返回原操作的非秘密投影。查询使用既有唯一索引，不扫描操作历史，不接管其他调用者或路径的操作。404 仅表示查询时未找到已登记记录，不证明仍在途的保存不会登记或提交；页面保持未确认与写入锁，不能采用 `latest_operation` 代替原请求。浏览器仅在当前 origin、Principal 与 Session 分区内短暂保留非秘密 key / operation ID，Token 和 body 均不恢复。
+保存响应缺失时，用 `GET /api/v1/admin/cloudflare/secret-operations/{request_key}` 精确查询本人、Secret 保存路径及原 UUID key 的单条 intent；使用已有唯一索引，不扫描历史、不接管其他调用者。404 只表示当次未找到，不能证明在途保存不会提交，也不能用 `latest_operation` 替代原请求。浏览器仅在当前 origin、Principal 与 Session 分区短暂保存非秘密 key / operation ID，Token 和 body 均不恢复。
 
-所有用途的 Token 均先写入并确认 Secret，不以统计、通知、账务或 WAF 探测成功为保存条件；旧用途仍使用既有配置 Editor 写者核验目标并保存。确认生效后，各项能力独立探测，单项权限或供应商读取故障只更新对应状态并保留其他结果，不撤销保存或导致整页失败。能力检查命令整体未完成时保留已核验结果，提示本次检查尚未完成，不能将多项能力一并改判为失败；展开区域的加载和结果独立呈现。身份、CAS、未知写锁和原子提交错误仍保留各自的拒绝与恢复合同。保存、确认生效与检查能力分别反馈。完整核验的 Cloudflare 403/409 保留权限或目标错误，不能归为未知结果，也不能触发 cfKanban Session 失效；预检 HTTP 故障仅投影固定请求类型、白名单方法与 HTTP 状态，供 Owner 定位失败步骤，不返回目标路径、供应商原始正文或请求头。首次基线检查在登记 intent 前明确失败时，错误可携带 `details.write_state=not_dispatched`，表示本次 handler 未登记或发送外部写；它不是全局同 key 永无并发写的证明。浏览器在单次发送的原保存请求收到完整合法错误包及该明确证据时显示保存被拒绝并解除本次未确认状态；不自动重发 Token，不以查询 404 或任意 503 推断未写入。未核验的响应、传输中断及写后无法确认仍保留原请求待查。Token 已生效后的能力检查失败不撤销保存成功状态。
+完整合法的明确拒绝与未知结果分别处理。已确认 Cloudflare 403/409 保留权限或目标错误，不导致 cfKanban Session 失效；预检错误仅投影白名单请求类型、method、HTTP 状态及 request ID，不返回供应商正文或请求头。登记 intent 前失败可返回 `details.write_state=not_dispatched`，只说明本次 handler 没有登记或发送外部写，不证明全局不存在同 key 并发请求。浏览器只有收到原保存请求的完整合法错误及该证据时，才显示拒绝并解除本次未确认状态；不依据 lookup 404 或普通 503 推断未写入。
 
-页面使用“保存 Token”“修改限制”“确认保存”“检查保存结果”等任务文案；保存前说明会更新当前实例的 Cloudflare 配置，不提供笼统重启按钮。Worker 无常驻进程重启语义，Secret / binding / vars 的生效通过版本及 deployment 读回证明。D1 中纯应用设置不需要重新部署。
+保存成功、等待确认和能力不可用分别反馈。完整原响应为 `configuration_secret` / `unknown` / `secret_readback_pending` 且包含结果版本与 deployment 时，系统自动另发请求核验原操作；旧 handler 仍持有旧 Secret，独立读回才可确认新值。有限重试只用于状态查询、原操作核验和读取能力，不重发 Token 或 apply。恢复始终沿用原操作和幂等语义；无法证明时保留锁及准确状态。Worker 没有常驻进程重启语义，Secret / binding / vars 通过版本与 deployment 读回证明生效；纯 D1 应用设置无需部署。
 
-正式升级使用当前控制面非秘密读回，保留页面修改后的限流、用量 vars、历史开关及统一与旧用途 Secret；旧本地回执不能覆盖新状态。未知 bindings 继续拒绝，不借此增量引入任意配置保留。
+确认保存后自动独立检查配置与 analytics，并加载各区数据；某项失败不撤销保存、不覆盖其他已核验结果、不阻塞整页。能力快照在 `capabilities_json` 内绑定凭据和固定目标的非秘密身份摘要，摘要不进入公开投影或审计；Dashboard 替换 Secret、固定目标变化及无摘要旧快照均失效。相同 Token 在供应商侧增减权限仍需重新检查，页面进入或返回焦点时按有限冷却更新，不依赖用户手动检查。
 
 ## 管理页面任务顺序
 
-概览首先显示 Cloudflare 连接和能力列表，不重复展示整体能力总结或同义提示。缺少配置授权时给出一处 Token 输入、一个「保存 Token」按钮与创建指引，包括只有旧统计授权的实例，明确原统计授权的结果不能证明新输入 Token 的能力。保存并确认生效后缩为小卡片，提供「更换 Token」和折叠详情。逐项展示配置修改、用量读取、通知、账务、域名防护；绿色对勾仅表示该项实际核验通过，红色叉号表示明确拒绝或目标不匹配，未检查、缺少 Zone、暂不可用和未支持保持中性。每项常态同时展示用户能力名称和 Cloudflare 权限选择路径；绿色、红色及中性图标配合简短状态文字。悬停、键盘聚焦或点击显示授权来源、资源范围及证据边界，不将这些附加信息重复放在常态主行；配置读取不能声称已证明任意代码部署写权限，单数据集统计探测不能声称所有统计或最终账单已验证。
+「概览」只显示实例、工作区、项目、成员、用量摘要及管理入口，不承担 Token 或其他编辑表单。「首页实例说明」移至「实例设置」；版本和自动升级公告设置在「版本与更新」。旧 `section=cloudflare` 兼容进入用量与配额。
 
-「用量与限额」集中展示指标、附件容量、日度历史和五组访问频率的单项修改，并提供单项统计配置、提醒、方案声明与账期设置。历史开关复用该设置入口。缺授权、尚未核验、部署目标不完整和未知操作分别说明原因，并提供连接或检查入口，不只禁用输入。预算、通知与 WAF 为低频展开内容；默认能力检查只读取核心配置与统计，`include_optional=true` 或明确展开对应区域才读取通知、WAF 和账务。默认检查可保留同一 Token 的既有可选检查结果，替换 Token 或相关 Zone 后清除不再适用的结果。隐藏重复的 Cloudflare 顶部标签，旧 `section=cloudflare` 链接兼容进入概览连接区域。
+「用量与配额」依次呈现：
 
-计划确认先显示管理员可理解的设置名称及变更前后值，版本、binding 与原始 JSON 收入详情。应用前明确会更新 Worker 配置，结果未知仍锁定写入并要求核验，不把页面简化变成省略计划或自动写入。
+1. **Token 与能力状态。** 顶部始终保留空密码输入框和「保存」按钮。已有统一或配置/统计兼容授权时持续显示「Token 已保存」，输入提示新值可替换、留空保留；不显示原 Token、不用伪造掩码冒充已读取值。提交后清空输入，失败也不恢复草稿。状态使用图标和文字，权限路径、范围、证据边界及手工恢复步骤按需展开。
+2. **当日用量与每日历史。** 同页连续呈现 UTC 当日指标和完整 UTC 日趋势；容量标为观测值。没有数据时给一个清楚空状态和相应设置入口，不堆叠说明或要求跳转概览。附件存储上限、账期指标与统计高级设置按用途收纳；高级项从数据详情就地打开编辑弹窗。
+3. **访问频率。** 五组限制逐项编辑，弹窗先展示名称及变更前后值，再明确确认；版本、binding 和 JSON 放在详情。
 
-## 通知、预算与 WAF 真相
+保存后的核验、权限检查和分区加载由系统承担，不再提供「检查连接」「重新检查」「读取历史」「采集所选日期」或「刷新用量」等流程按钮。打开页面、成功保存或返回页面时按新鲜度和冷却自动更新；各区独立展示加载、保留数据与失败原因。短暂故障采用有次数上限的恢复，卸载、身份变化或上下文失效后停止；不循环轮询或无界回填，不为了界面简化跳过 plan、确认、实时授权或未知写锁。
 
-Owner 可主动读取 Notifications available alerts 和 policies；仅投影有界的 ID、名称、enabled、alert_type 及 email recipient。不能把 `limit` 等通用筛选字段推断为美元阈值，不根据静态 SDK enum 缺项断言平台没有 Budget Alerts。
+## WAF 与预算通知退役兼容
 
-截至本增量冻结，公开 Cloudflare API / OpenAPI 尚不能确认美元 Budget Alerts 的 alert_type、美元字段及更新合同。因此预算金额和邮件编辑能力为 `unsupported_contract`，展示官方 Dashboard 入口及原因，不实现猜测性的美元预算写入，也不把 cfKanban 共享额度贡献百分比称为美元预算。通知 API 403 表示当前授权不能读取，不表示没有配置预算邮件。后续只有确认准确平台合同及读回后才可增补金额/收件人编辑。
+常规 Web、Skills 和公共 CLI 移除 WAF 接入、启用、管理及预算通知入口，不再读取 Notifications policies / available alerts、Billing 信息或 Zone/WAF 库存作为连接检查。`include_optional` 仅兼容解析；配置及 analytics 以外的旧能力投影固定为 `unsupported_contract`。旧预算投影保留不支持状态，`cloudflare.alerts` 恒为空；不据此判断 Cloudflare 账户是否存在规则或预算邮件。
 
-Zone WAF 主动读取核验 Zone 所属账户、目标 hostname 及规则。权限错误、未配置 Token、读取失败和确实没有规则分别显示；有效 Token 本身不证明规则启用。Zone 校验通过后，自定义规则集入口 404 表示尚无该规则集，读取能力仍可核验通过，同时显示本工具防护未启用；没有本工具规则不排除其他 Cloudflare 防护。保存 Token 和检查能力不创建规则集或开启防护。
+通知读取、新 Zone 设置、新服务端 WAF target-binding、新启用计划和全新 enable apply 返回结构化 `VALIDATION_ERROR`，`details.reason=cloudflare_feature_retired`。旧 plan、operation、原 request key 的查询和核验继续可用。已提交但未读回的旧 Zone 设置与 target-binding 须按原请求和 key 返回原结果，不重新执行接入；为旧客户端结案保留最小非秘密状态读回，不恢复常规 WAF 探测。已有 apply 先按原调用者、路径、key 和请求哈希查重；同 key 只返回原结果，不再次 POST / DELETE。
 
-### WAF 目标接入与跨设备事实
+退役本地写入使用 `GET /api/v1/admin/cloudflare/local-operations/{request_key}?operation=zone_settings|waf_target_binding|waf_plan` 精确查原回执。服务端固定映射原 method / path，以当前 Owner principal、资源作用域及 key 摘要命中既有唯一索引，只返回未过期且有原子 commit 的原 write envelope，附 `operation`、`request_hash` 与 `idempotent_replay=true`。原子 commit 后响应缓存丢失可从原快照恢复；仅 pending、过期或不存在返回 404，不登记新请求、不补发旧写。客户端先核对原请求哈希；404 保留未确认记录，不将旧 RC6 的 POST / PATCH 重放当作查询。
 
-WAF 管理仍限定当前 Instance、固定 account / Worker / DB 和 D1 已批准 preferred origin 的准确 hostname；不能选择任意 Zone hostname，也不修改 DNS、Custom Domain、preferred origin 或 Passkey RP。域名切换继续使用独立受限部署计划。网页管理复用已保存的统一 Secret；缺少 WAF Edit 不阻断 Token 保存或其他能力。
+`GET /cloudflare/waf` 只读本地版本、Zone、hostname 与历史 `target_binding`，顶层为 `unsupported_contract`、`protected=false`。仅本地固定目标、Instance、origin version 和 Zone 均仍一致时，`target_binding.status=verified` 表达旧登记事实，`live_verified=false`、`service_proof=false` 明确未执行在线验证；不据此声称当前 WAF 生效。
 
-启用前必须证明该 hostname 绑定准确 Worker、Zone 和 Instance。统一 Token 能读取 Workers Domains 时，服务端读取精确 hostname 的有界库存并核验 service、zone_id、domain_id 及 DB 绑定。官方当前不保证指定 Worker Editor 可读取 Custom Domains，不能把这种权限失败归为 Token 整体无效。不能读取时，由安全部署 runtime 使用既有 Cloudflare 授权在本地核验准确目标、当前 Owner 与可信 origin，再按批准计划通过 Cloudflare D1 参数化原子 batch 登记非秘密绑定证据；Cloudflare Credential 只发往 Cloudflare，不临时传给 Worker，也不自动扩权。
+### 历史目标、归属与恢复
 
-服务端保存绑定 ID、准确 account / Worker / DB / Instance / hostname / Zone / domain ID、origin version、供应商元数据 hash、来源、核验时间和操作 ID。登记不创建、删除或接管域名映射。Zone、origin version 或固定目标改变使旧证据失效。旧部署无需重新创建已有域名；旧工具自有规则的迁移还必须有准确私有归属回执及 live rule ID / ruleset ID / 固定 profile 读回，名称、ref 或表达式相同不能代替归属。
+保留准确 Instance、account / Worker / DB、preferred origin 的 hostname、Zone、domain ID、origin version、供应商元数据摘要、binding ID 与历史操作事实。名称、ref 或相似表达式不构成归属；手工资源保持外部管理。普通升级不自动删除规则、重建域名或接管已有资源。
 
-部署工具登记的证据是上次 Cloudflare 映射核验，不能称为当前云映射读回。每次计划、应用和验证仍核验当前服务目标；Token 无 Domains 读取能力时，使用固定 trusted preferred HTTPS origin 的专用短期服务证明，核验响应服务持有当前 Worker Secret 并绑定准确 Instance / account / Worker / DB / origin version。证明使用域分离 HMAC、随机 nonce 与短 expiry，只允许固定证明路径、不跟随 redirect，限制时间和响应体；MAC 只用于这个协议，不是任意签名服务，Token、签名和 nonce 不进入业务审计、日志、持久状态或普通 CLI 输出。schema 27+ 的发行模板和生成部署配置必须启用 `global_fetch_strictly_public`，保留完整受核验 compatibility flags，并拒绝冲突的 `global_fetch_private_origin`；证明请求须经过公网 front door，不能绕过 Cloudflare 安全规则直接请求 origin。缺证据、证明失败或目标变化时拒绝外部写入。服务证明不声称 Cloudflare 映射实时 CAS，也不能发现由拥有 Cloudflare 管理权的人恶意复制全部 Worker 配置和 Secret 的情形。
+受限部署 runtime 只可凭准确私有域名归属回执及实时读回迁移旧事实，包括已经回退的 inactive 回执；不开放新目标接入或用 Worker vars / hostname 猜测归属。旧规则迁移还要求准确 rule / ruleset ID 与固定 profile 读回。Cloudflare Credential 保持在安全部署环境，仅发往 Cloudflare，不为恢复临时传入 Worker 或自动扩权。服务端 D1 归属是跨设备权威，旧回执不能覆盖服务端的新状态。
 
-### 规则库存、共存与计划
+旧操作核验及明确域名回退中的规则清理继续证明准确目标。能读取 Workers Domains 时核对精确 hostname、service、zone_id、domain_id 和 DB 绑定。仅有部署 runtime 证据且 Token 无 Domains 读取能力时，保留固定 trusted preferred HTTPS origin 的短期服务证明：域分离 HMAC、随机 nonce、短 expiry、固定路径、不跟随 redirect、有界超时与响应体。Token、MAC 和 nonce 不进入业务日志、审计或持久状态，不形成任意签名入口。schema 27+ 保持 `global_fetch_strictly_public` 并拒绝 `global_fetch_private_origin`，证明经过公网 front door。该证明不是映射实时 CAS，也不声称抵御拥有全部配置和 Secret 的 Cloudflare 管理者恶意复制服务。
 
-有界完整读取 `http_request_firewall_custom` 的唯一 Zone 入口及相关 custom 子规则集，核对准确 phase / kind、规则 ID、顺序、enabled、action、expression、action_parameters 和完整分页。读取被拒绝不是不存在；只有已核验 Zone 后的准确入口 404 才可计划创建。Free profile 总容量按 Zone 的全部 custom rules 计算，保守使用五条额度，不假定子规则集、disabled 或 execute 包装免费，不自动购买或升级方案。
+### 仅清理已归属旧规则
 
-页面显示自动识别的入口、服务端自有规则、其他规则数量、容量、前置豁免或终止规则、可能重复及无法判断的冲突；复杂表达式交集不能保证可判定。不存在自有规则不表示不存在其他 Cloudflare 防护。本功能是精确 hostname 下缺少认证材料的私有 API 过滤，不替代应用认证、原生限流或全部 Cloudflare WAF 能力。
+明确执行旧域名回退时，兼容 plan 只允许 `action=disable` 且 D1 已有 `ownership.rule_id`。完整核对当前目标、绑定、入口、旧自有 rule、foreign 内容与顺序、Token 身份和冻结基线；缺少归属、手工同名、目标或规则漂移均拒绝。只允许 `delete_owned_rule`，发出准确 rule 的 DELETE，保留共享入口及全部其他规则；不创建、追加、重排或重新启用 WAF，不购买方案。
 
-正常启用在已有入口末尾追加一条自有规则；没有入口时创建 `kind=zone` 的该 phase 入口并携带这条规则。不让用户任意选择无关规则集，不采用会丢失未提交规则的全规则集覆盖式 PUT。前置 Skip 可使末尾规则不执行；用户必须明确选择保留已有豁免，或批准将自有规则置于具体冲突规则之前。只改变自有规则位置，不修改其他规则的正文或相对顺序；IP Access Allow、未知表达式和无法解决的绕过不能靠改顺序声称消除。保留豁免或覆盖不完整时准确显示限制，不显示完整防护。
+清理沿用实时 Owner / Cookie CSRF、CAS、稳定幂等 key、持久 intent、dispatch fence、控制面互斥锁和原子审计。已消费或旧 enable plan 不能转为新创建；完成清理后原 plan/apply key 仍可读回原结果。DELETE 响应未知时保留 intent 与锁，恢复只核验原结果，不二次删除。
 
-单个冻结 plan 包含绑定及当前目标、Token 身份摘要、准确入口 ID / 创建或追加策略、完整库存摘要、原自有规则、foreign 规则及顺序 hash、准确规则正文、插入位置、冲突选择、容量与覆盖证据。应用时重新核对；入口、规则、顺序、目标、权限或配置变化后不静默换策略，而是拒绝并要求新计划。页面首先解释保护请求及变更前后，ID / 原始 JSON 收入详情。
+历史 assessor 保留对旧创建、追加、位置、随机标记和 foreign 摘要的准确核验，避免升级后永久锁住 Token 或限流。未 dispatch 的旧 intent 可确认失败后释放锁；已经 dispatch 但目标、规则或顺序不符时保持 `unknown`，不能直接清锁、补偿删除或覆盖。核验归属与结果审计同批提交。只读 verify 的响应不确定时保留本轮请求与 key；完整未确认结果之后才可开始下一核验轮，永不重发 apply。规则配置读回不等于实网边缘安全验收。
 
-### 启停、未知结果与升级
+## 可选日度历史与升级
 
-D1 是跨设备 WAF 归属及操作事实源，持久记录 binding ID、准确 rule / ruleset ID、固定 ref、规则 hash、操作 ID 与核验时间。已有手工同名规则保持外部管理；不能仅凭 ref 将其显示为可修改的自有规则。明确关闭只删除已证明归属且未漂移的自有 rule，保留共享入口和所有外部规则；重新启用重新核对库存及容量。
+`USAGE_HISTORY_ENABLED` 缺省 false，必须显式开启；不自动开启账户聚合或更改套餐声明。启用后复用已有维护触发，不新增默认 Cron。Web 读取历史时，最多自动采集最近七个完整 UTC 日中的一个缺日，并服从 60 秒冷却；切换图表范围只读，不循环回填其余日期。采集响应丢失时有限 GET 读回，不重新提交采集。Agent/API 保留一次一个日期的显式采集能力。
 
-WAF 复用 Owner、Cookie CSRF、当前 CAS、稳定幂等键、持久 intent、原子审计及控制面互斥锁。发出外部请求前持久登记 dispatch；响应未知后同 key 只读回原操作，不再次 POST / DELETE。WAF 独立 assessor 核对准确目标、预期自有 rule、位置和外部规则摘要，不依赖 Worker deployment 变化。只在读回符合原计划后记录归属和 verified；原操作的外部写已发生而目标或外部规则变化时保持待核验，不自动补偿、删除或覆盖。缺失当前规则不证明仍在途的创建不会提交。部署 runtime 在每 Instance 的有界私有文件保留原未确认 WAF dispatch，原操作之外的目标、域名和防护修改及升级均须先解除该未确认状态；不扫描全历史 journal，也不因 lookup 404 清除。只读 verify 的本轮响应丢失复用本轮键，完整未确认结果后下次恢复可生成新核验轮，但永不重发 apply。
+日度表按准确 account、DB、bucket、Worker 与 account totals 范围组成的资源 key 和 day 唯一保存，保留 90 天；Token、旧提醒百分比及套餐声明不制造无关历史分组。定时采集复用完整成功日，显式采集、失败及全未知重试受 60 秒冷却；失败保留上次成功值。有界跨 isolate claim，每轮最多两个 10 秒 GraphQL 请求，不自动重试。历史 GET 仅读取最多 90 个点并返回日期缺口。
 
-读取状态、规则配置已核验和覆盖状态分别表达；`workers.dev`、preview、其他入口或外部豁免仍可绕过时标记覆盖不完整，不自动关闭入口或修改手工策略。正常 Web、CLI/MCP、Passkey 登录、Invite、Public Join 和同身份恢复不被本工具 profile 阻断。真实边缘行为未实测时不能把规则配置读回称为实网安全验收。
+今日 Workers 与 R2 分类指标使用独立 `*_daily_*` key 和 UTC 当日窗口；原账期指标继续保留，Paid 未声明账期时仍可显示真实日值，不能把月累计冒充今天。完整日历史按 metric key、unit、scope 和 window 分组，未知保持 null、缺日断线、不补零。容量保留实际观测时间，不倒填过去，不表示每日消耗或 GB-month。Analytics 不是 invoice，也不是费用封顶。
 
-schema 27 及以后的普通升级和安全部署工具读取服务端 WAF 归属与实时规则，保留网页修改后的配置；旧私有回执只作迁移证据，不能反向覆盖服务端新状态。旧 schema 保留原受限工具路径及回执合同，不尝试不存在的新端点。Web、公共 CLI 和 Skills 使用相同 WAF plan / apply / verify 语义，部署 runtime 仅负责应用不能完成的目标证明和受控迁移，不成为另一份 WAF 规则权威。
+清理使用 day 索引，每次最多处理七条过期记录；所有配置总计最多 630 行，满额优先淘汰其他旧配置，不扩张为无界历史扫描。关闭历史不产生历史采集请求。没有单独 USAGE account / DB / Worker 时，复用已批准固定 CONTROL 目标；保留旧 USAGE 配置并拒绝与固定目标不一致的采集，显式 `USAGE_ANALYTICS_ENABLED=false` 继续生效。
 
-## 可选日度历史
+保持已发行 `0025–0027` migration、schema 27 及校验记录不变，不删表或改写旧迁移。正式升级读取当前非秘密控制面状态，保留限流、用量 vars、历史开关、统一与旧 Secret、旧 WAF 归属及未确认操作；旧本地回执不能覆盖现状。未知 bindings 继续拒绝，不借此放开任意配置保留。升级已存在 pending WAF 操作时先按原恢复合同处理，不以功能退役清锁。
 
-`USAGE_HISTORY_ENABLED` 缺省 false。只有显式开启时才按完整 UTC 日采集；复用已有附件清理的定时触发，不新增默认 Cron。没有触发器的实例可由 Owner 手动采集最近七个完整 UTC 日，一次一个日期。开启 history 不自动开启账户汇总或改变套餐声明。
+## HTTP、等价表面与验证
 
-新派生表按资源配置 key 和 day 唯一存储，保留 90 天。资源 key 由准确 account、DB、bucket、Worker 及 account totals 范围组成；Token、提醒百分比和套餐声明不制造无关历史分组。定时采集复用完整成功日期；显式手动刷新及失败或全未知数据重试均经过 60 秒冷却，刷新失败保留上次成功值。采集使用有界跨 isolate claim，最多两个 10 秒 GraphQL 请求，不自动重试。容量标识实际观测时间，不能把当下容量倒填为过去某天的容量。
+OpenAPI 生成器维护目标/能力、Secret、配置/限流 plan/apply、历史及退役兼容接口；全部管理请求有实时 Owner、结构化错误与 `no-store`。能力状态保留 missing / unverified / verified / permission_denied / unavailable / target_mismatch / unsupported_contract，不能压成布尔值。业务写使用当前 CAS、稳定幂等 key 与非秘密审计。
 
-历史请求仅读取本实例 D1 的最多 90 个日度点，返回完整日期缺口。趋势按 metric 的 key、unit、scope 及 window 分组；未知保持 null，缺日断线，不补零或拼接不同统计窗口。日度 Paid 指标查询完整 UTC 日，不复用账单月累计值冒充日值。跨账户 Billing Usage V1 数据没有 script / DB / bucket 归属，不能代替实例历史，也不能表示最终账单。
+Web、Skills/API 与公共 CLI 复用同一投影、计划、应用、恢复和历史采集语义，Web 将安全组合自动完成。Cloudflare Secret 输入是专用浏览器运输例外：Agent/CLI 用受控 `web open` 引导 Owner 在实例表单输入；普通 generic API 或 CLI JSON/file 参数拒绝 Secret endpoint，不能为形式覆盖把 Token 写入日志。
 
-清理使用 day 索引，每次最多删除七个过期条目，涵盖旧配置；所有配置总计最多 630 行，容量检查读取该有界表，满额时优先淘汰其他旧配置，不扩张成无界历史扫描。没有开启采集时不产生供应商请求。保留期是可恢复的派生缓存选择，不能当作 Cloudflare 原生保留保证。历史是 Analytics 观测，不是 invoice，也不是费用封顶。
+隔离 D1/Worker 与 fake provider 验证权限/CSRF、候选部署、漂移、幂等并发、未知结果、凭据不泄露、限流 binding、首次安装统计、UTC 日与账期、历史空值/窗口/读量和双语交互。升级兼容覆盖旧 WAF 原 key 读回、未 dispatch 结案、随机标记/位置/foreign 核验、精确旧归属清理、审计原子性、共享锁保留与目标证明失败。未获线上 apply 授权时，本地通过不表示线上配置已生效。
 
-## HTTP 与业务表面
-
-机器合同由 OpenAPI 生成器维护。管理目标/能力读取、验证、Zone 设置、统一及兼容用途 Secret 保存、操作读回、配置/限流/WAF 计划应用、WAF 目标登记、通知/WAF 读取及用量历史均须有 Owner 权限声明、结构化错误和 `no-store`。WAF 目标登记只接受当前版本，不接受 Token、任意目标或手工 receipt 字典。专用服务证明是机器内部、无业务写入的固定入口，普通 Web/API/CLI 不提供提交签名的通用命令。业务状态写使用当前 CAS、稳定幂等键及非秘密审计。供应商能力为 missing / unverified / verified / permission_denied / unavailable / target_mismatch / unsupported_contract，不能以一个布尔值合并。
-
-Web、Skills/API 与公共 CLI 可读取同一投影，并执行相同的非秘密计划、apply、verify 及 history 采集。Cloudflare Secret 输入为明确的浏览器安全运输例外：Agent/CLI 通过既有受控 `web open` 引导 Owner 在当前实例表单输入，普通 generic API 和 CLI JSON/file 参数入口拒绝 Secret endpoint；不得为了形式上的 CLI 覆盖将 Cloudflare Token 写入普通操作日志。
-
-验证使用隔离 SQLite / Worker 和 fake Cloudflare provider，覆盖权限/CSRF、漂移、未部署候选、幂等并发、未知结果、Secret 不入日志、限流 binding 保存、历史空值/窗口/读量及双语交互。WAF 增量覆盖空入口创建、共享入口追加、手工同名不接管、前置 Skip / 未知表达式 / IP Access 豁免、总容量、准确自有规则启停、跨设备和旧部署接入、计划后外部变更、dispatch 后未知结果不重放、归属与审计原子提交、目标证明失败以及升级保留。没有实际线上 apply 授权时，本地通过不代表线上配置、邮件或 WAF 已生效。
-
-参考：[Workers 单 Worker 授权](https://developers.cloudflare.com/workers/authorization/)、[公网 fetch 兼容开关](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public)、[普通 Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)、[Worker settings API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/script_and_version_settings/methods/edit/)、[Budget Alerts](https://developers.cloudflare.com/billing/manage/budget-alerts/)、[Notifications API](https://developers.cloudflare.com/api/resources/alerting/subresources/policies/methods/list/)。
+参考：[Workers 单 Worker 授权](https://developers.cloudflare.com/workers/authorization/)、[公网 fetch 兼容开关](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public)、[普通 Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)、[Worker settings API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/subresources/script_and_version_settings/methods/edit/)。

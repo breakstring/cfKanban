@@ -14,10 +14,11 @@ import { targetWorkerBindings } from "../../packages/skill-runtime/src/usage-con
 import { writeFrozenWranglerConfig } from "../../packages/skill-runtime/src/deployment-config.mjs";
 import { readWorkerCostSettings, verifyPlannedWorkerCostSettings } from "../../packages/skill-runtime/src/worker-cost-settings.mjs";
 import { treeDigest } from "../../packages/skill-runtime/src/skill-update.mjs";
-import { createJournal, authorizeJournal } from "../../packages/skill-runtime/src/journal.mjs";
+import { appendJournalEvent, createJournal, authorizeJournal } from "../../packages/skill-runtime/src/journal.mjs";
 import { createPendingCredential, loadPendingCredentialSecret, promotePendingCredential, putInstanceMetadata, getInstancePaths } from "../../packages/skill-runtime/src/state.mjs";
 import { atomicWriteJson, canonicalDigest } from "../../packages/skill-runtime/src/utils.mjs";
 import { COMMANDS } from "../../packages/cli/src/catalog.mjs";
+import { dispatch } from "../../packages/skill-runtime/src/cli.mjs";
 
 // 所有 Cloudflare/应用请求均进入此封闭 fixture；测试凭据只存在临时私有状态。
 async function fixture(t) {
@@ -101,6 +102,10 @@ async function fixture(t) {
     await createJournal(f.execution); await authorizeJournal({ ...f.execution, planDigest: result.plan_digest });
     return result;
   };
+  f.seedLegacyDispatch = async (committed = true) => {
+    await appendJournalEvent({ ...f.execution, event: { type: "public_access_waf_create_intent" } });
+    if (committed) f.rulesets.push({ id: "ruleset-test", kind: "zone", phase: "http_request_firewall_custom", rules: [{ id: "rule-test", ...anonymousApiRule(input.hostname, input.instanceId) }] });
+  };
   f.apply = () => applyPublicAccess(f.execution);
   return f;
 }
@@ -131,7 +136,7 @@ function upgradeInput(f, access, previousBindings = []) {
 }
 
 test("schema 27 upgrade freezes current disabled ownership and preserves historical domain proof separately", async t => {
-  const f = await fixture(t); await f.prepare("domain-enable"); await f.apply(); await f.prepare("waf-enable"); const historical = (await f.apply()).receipt;
+  const f = await fixture(t); await f.prepare("domain-enable"); await f.apply(); await f.prepare("waf-enable"); await f.seedLegacyDispatch(); const historical = (await f.apply()).receipt;
   const binding = { binding_id: randomUUID(), account_id: historical.account_id, worker_name: historical.worker_name, database_id: f.databaseId, instance_id: historical.instance_id, hostname: historical.hostname, zone_id: historical.zone_id, domain_id: historical.domain_id, origin_version: 2, provider_metadata_hash: "e".repeat(64), source: "deployment_runtime", verified_at: 2, operation_id: randomUUID() };
   const authority = { schema_version: 27, control_version: 3, origin_version: 2, binding, ownership: { binding_id: binding.binding_id, rule_id: null, ruleset_id: null, rule_ref: `${historical.rule_ref}_${randomUUID().replaceAll("-", "")}`, rule_digest: null, operation_id: randomUUID(), verified_at: 3 } };
   const input = upgradeInput(f, historical); input.current.schema_version = 27; input.target.schema_version = 27; input.target.compatibility.schema_version = 27;
@@ -228,8 +233,7 @@ test("uncertain domain creation resumes the same intent without another attach o
 
 test("Free WAF profile preserves unrelated rules, resumes uncertain creation and disables only its rule", async t => {
   const f = await fixture(t); await f.prepare("domain-enable"); await f.apply();
-  await f.prepare("waf-enable"); f.failAfterWaf = true;
-  await assert.rejects(f.apply(), { code: "PUBLIC_ACCESS_CONTROL_UNAVAILABLE" });
+  await f.prepare("waf-enable"); await f.seedLegacyDispatch();
   let result = await f.apply(); assert.equal(result.receipt.waf_profile, "anonymous-api-filter");
   f.rulesets[0].rules.push({ id: "foreign", ref: "other-product", action: "block", expression: "http.host eq \"other.example.test\"", enabled: true });
   const foreign = canonicalDigest(f.rulesets[0].rules[1]);
@@ -238,15 +242,25 @@ test("Free WAF profile preserves unrelated rules, resumes uncertain creation and
   assert.ok(!f.calls.some(call => call.method === "PUT" && call.path.includes("rulesets")));
 });
 
+test("an old private enable plan without dispatch is retired before any new rule creation", async t => {
+  const f = await fixture(t); await f.prepare("domain-enable"); await f.apply(); await f.prepare("waf-enable");
+  const before = f.calls.length;
+  await assert.rejects(f.apply(), { code: "CLOUDFLARE_FEATURE_RETIRED" });
+  assert.equal(f.rulesets.length, 0);
+  assert.equal(f.calls.slice(before).filter(call => call.method !== "GET").length, 0);
+});
+
+test("generic Skill requests cannot configure retired WAF on an older Service", async t => {
+  const f = await fixture(t);
+  for (const [method, suffix] of [["POST", "waf/plan"], ["POST", "waf/apply"], ["POST", "waf/target-binding"], ["PATCH", "settings"], ["GET", "notifications"]]) {
+    await assert.rejects(dispatch("api request", { ...f.input, method, apiPath: `/api/v1/admin/cloudflare/${suffix}` }), { code: "CLOUDFLARE_FEATURE_RETIRED" });
+  }
+  assert.equal(f.calls.length, 0);
+});
+
 test("resuming an uncertain WAF operation reauthenticates Owner before another control-plane write", async t => {
   const f = await fixture(t); await f.prepare("domain-enable"); await f.apply(); await f.prepare("waf-enable");
-  const fetchImpl = f.execution.fetchImpl;
-  f.execution.fetchImpl = async (url, options) => {
-    if (new URL(url).pathname.endsWith("/rulesets") && options.method === "POST") throw new Error("not committed");
-    return fetchImpl(url, options);
-  };
-  await assert.rejects(f.apply(), { code: "PUBLIC_ACCESS_CONTROL_UNAVAILABLE" });
-  f.execution.fetchImpl = fetchImpl; f.owner = false;
+  await f.seedLegacyDispatch(false); f.owner = false;
   const writes = f.calls.filter(call => call.method !== "GET").length;
   await assert.rejects(f.apply(), { code: "PUBLIC_ACCESS_OWNER_REQUIRED" });
   assert.equal(f.calls.filter(call => call.method !== "GET").length, writes);
@@ -364,6 +378,26 @@ test("WAF changes and active upgrades check zone routes while inactive upgrades 
   assert.ok(!f.calls.slice(calls).some(call => call.path.startsWith("/client/v4/zones/")));
 });
 
+test("inactive upgrades allow a foreign Custom Domain but reject any mapping to the original Worker", async t => {
+  const f = await fixture(t);
+  await f.prepare("domain-enable"); await f.apply();
+  await f.prepare("domain-rollback"); const inactive = (await f.apply()).receipt;
+  const plan = createInstanceUpgradePlan(upgradeInput(f, inactive));
+  const verify = () => verifyPlannedPublicAccess({ ...f.input, plan });
+  const calls = f.calls.length;
+  const replacement = { id: "replacement-domain", hostname: inactive.hostname, service: "replacement-worker", zone_id: inactive.zone_id };
+
+  f.domains = [replacement];
+  assert.equal((await verify()).verified, true);
+
+  f.domains = [{ ...replacement, service: inactive.worker_name }];
+  await assert.rejects(verify(), { code: "PUBLIC_ACCESS_ROUTING_DRIFT" });
+
+  f.domains = [replacement, { ...replacement, id: "unexpected-domain", hostname: "other.example.test", service: inactive.worker_name }];
+  await assert.rejects(verify(), { code: "PUBLIC_ACCESS_ROUTING_DRIFT" });
+  assert.ok(f.calls.slice(calls).every(call => call.method === "GET"));
+});
+
 test("owned Free profile is narrowly hostname scoped and public CLI discovers all lifecycle operations", () => {
   const rule = anonymousApiRule("board.example.test", randomUUID());
   assert.match(rule.expression, /http\.host eq "board\.example\.test"/u);
@@ -371,4 +405,10 @@ test("owned Free profile is narrowly hostname scoped and public CLI discovers al
   assert.doesNotMatch(rule.expression, /web-authentication|public-join|challenges|turnstile|rate_limit/iu);
   for (const suffix of ["inspect", "plan", "apply", "resume"]) assert.ok(COMMANDS.some(command => command.name === `deploy public-access ${suffix}`));
   assert.ok(COMMANDS.find(command => command.name === "deploy upgrade plan").fields.includes("workerLimits"));
+});
+
+test("new WAF setup is retired at every deployment command entry without reading credentials or calling Cloudflare", async () => {
+  for (const [name, input] of [["plan public-access", { mode: "waf-enable" }], ["plan public-access", { mode: "waf-disable" }]]) {
+    await assert.rejects(dispatch(name, input, { surface: "deploy" }), error => error.code === "CLOUDFLARE_FEATURE_RETIRED" && error.details.reason === "cloudflare_feature_retired");
+  }
 });

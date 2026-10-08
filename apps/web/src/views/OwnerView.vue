@@ -68,11 +68,11 @@ import type {
   WriteResult,
 } from "../types";
 
-type OwnerSection = "overview" | "usage" | "cloudflare" | "workspaces" | "access" | "invitations" | "audit" | "archive" | "updates";
+type OwnerSection = "overview" | "usage" | "settings" | "cloudflare" | "workspaces" | "access" | "invitations" | "audit" | "archive" | "updates";
 
 const props = defineProps<{ section: OwnerSection; session: WebSessionView }>();
 const emit = defineEmits<{ context: [value: { label: string; role: string }] }>();
-const activeSection = computed(() => props.section === "cloudflare" ? "overview" : props.section);
+const activeSection = computed(() => props.section === "cloudflare" ? "usage" : props.section);
 const usageSetting = ref<"history_enabled" | "analytics_enabled" | "billing_plan" | "billing_cycle_day" | "account_totals" | "warning_percent" | null>(null);
 const usageSettingRequest = ref(0);
 const usageReadbackGeneration = ref(0);
@@ -574,11 +574,12 @@ function closePolicy(): void {
 
 const tabs = computed(() => [
   { key: "overview" as const, label: t("admin.overview") },
-  { key: "usage" as const, label: ui("Usage & limits", "用量与限额") },
+  { key: "usage" as const, label: ui("Usage & quotas", "用量与配额") },
   { key: "workspaces" as const, label: t("admin.workspaces") },
   { key: "access" as const, label: t("admin.access") },
   { key: "audit" as const, label: t("admin.audit") },
   { key: "archive" as const, label: t("admin.archive") },
+  { key: "settings" as const, label: ui("Instance settings", "实例设置") },
   { key: "updates" as const, label: ui("Versions & updates", "版本与更新") },
 ]);
 
@@ -1806,8 +1807,11 @@ onUnmounted(() => {
     <CasConflictNotice v-if="casConflict" :busy="busy || casReadbackInFlight" :conflict="casConflict" @dismiss="dismissCasConflict" @refresh="refreshCasFacts" />
     <PageState :loading="loading" :error="loading ? '' : ''" />
     <VersionUpdatesPanel v-if="!loading && section === 'updates'" :session="session" />
-    <UsagePanel v-if="activeSection === 'usage'" :refresh-generation="usageReadbackGeneration" :observed-origin="meta?.observed_origin ?? ''" @settings="selectUsageSetting" />
-    <CloudflareControlPanel :session="session" v-if="activeSection === 'overview' || activeSection === 'usage'" :mode="activeSection === 'usage' ? 'usage' : 'overview'" :initial-setting="usageSetting" :setting-request="usageSettingRequest" @rates="rateSettings = $event" @applied="usageReadbackGeneration++" />
+    <CloudflareControlPanel v-if="activeSection === 'usage'" :session="session" mode="usage" :initial-setting="usageSetting" :setting-request="usageSettingRequest" @rates="rateSettings = $event" @applied="usageReadbackGeneration++">
+      <UsagePanel :refresh-generation="usageReadbackGeneration" :observed-origin="meta?.observed_origin ?? ''" @settings="selectUsageSetting" />
+      <UsageHistoryPanel :refresh-generation="usageReadbackGeneration" @settings="selectUsageSetting" />
+    </CloudflareControlPanel>
+    <HomepageSettingsPanel v-if="activeSection === 'settings'" />
     <ContainerTreePagination v-if="!loading && ['workspaces', 'archive', 'access', 'audit'].includes(section)" :tree="containerTree" :archived="section === 'archive'" @workspaces="moreWorkspaces" @projects="moreProjects" />
 
     <template v-if="!loading && activeSection === 'overview'">
@@ -1836,9 +1840,7 @@ onUnmounted(() => {
       </section>
     </template>
     <UsagePanel v-if="activeSection === 'overview'" :refresh-generation="usageReadbackGeneration" summary :observed-origin="meta?.observed_origin ?? ''" @details="navigate(sectionPath('usage'))" />
-    <UsageHistoryPanel v-if="activeSection === 'usage'" :refresh-generation="usageReadbackGeneration" @settings="selectUsageSetting" />
     <template v-if="!loading && activeSection === 'overview'">
-      <HomepageSettingsPanel />
       <details class="owner-section owner-disclosure">
         <summary>{{ ui("Service information", "服务信息") }}</summary>
         <p class="muted-copy">{{ ui("Version and addresses for troubleshooting. The preferred address is read-only here.", "排查问题时可查看版本和访问地址；首选地址在此处只读。") }}</p>

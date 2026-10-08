@@ -10,7 +10,7 @@ import { assertNoSymlinkPath, atomicWriteJson, canonicalDigest, pathType, readJs
 import { toolError } from "./errors.mjs";
 import { normalizePublicAccess } from "./public-access-config.mjs";
 import { acquirePublicAccessLock } from "./public-access-lock.mjs";
-import { isWafOperationResource, isWafOperationWrite } from "./waf-contract.mjs";
+import { isLegacyWafDisablePlan, isWafOperationResource, isWafOperationWrite } from "./waf-contract.mjs";
 import { assertNoPendingWaf, releasePendingWaf, retainPendingWaf } from "./waf-pending.mjs";
 
 const PHASE = "http_request_firewall_custom";
@@ -160,6 +160,7 @@ async function applyServiceWaf(input, local, plan, journal, event) {
   const previousFailure = journal.events.find(entry => entry.type === "public_access_service_failed");
   if (previousFailure) { await releasePendingWaf(supplied, plan); return failedResult(previousFailure.operation, previousFailure.http_status); }
   const previous = journal.events.find(entry => entry.type === "public_access_service_verified");
+  if (!journal.events.some(entry => entry.type === "public_access_service_dispatch") && (plan.mode === "waf-enable" || !isLegacyWafDisablePlan(plan.service_waf_plan))) throw toolError("CLOUDFLARE_FEATURE_RETIRED", "A retired WAF enable plan cannot be dispatched. Only original dispatched operations or exact owned-rule cleanup remain available.", { reason: "cloudflare_feature_retired" });
   if (!previous) await retainPendingWaf(supplied, plan);
   let operation;
   if (journal.events.some(entry => entry.type === "public_access_service_dispatch")) {
@@ -310,6 +311,7 @@ async function moveOrigin(input, local, plan, nextOrigin, event) {
   await event("origin_verified");
 }
 async function applyWaf(input, local, plan, control, journal, event, enabled) {
+  if (enabled && !journal.events.some(entry => entry.type === "public_access_waf_create_intent")) throw toolError("CLOUDFLARE_FEATURE_RETIRED", "A legacy WAF enable plan without its original dispatch cannot create a rule", { reason: "cloudflare_feature_retired" });
   if (journal.events.some(entry => ["public_access_waf_create_intent", "public_access_waf_delete_intent"].includes(entry.type))) await retainPendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, plan);
   let inventory = await readWaf(control.zone);
   const ref = ownedRef(plan.instance_id), expected = anonymousApiRule(plan.target.hostname, plan.instance_id);
@@ -319,13 +321,7 @@ async function applyWaf(input, local, plan, control, journal, event, enabled) {
   const rule = matches[0];
   if (rule && (canonicalDigest(ruleBody(rule)) !== canonicalDigest(expected) || (rule.id !== local.managed?.rule_id && !journal.events.some(entry => entry.type === "public_access_waf_create_intent")))) fail("PUBLIC_ACCESS_RULE_OWNERSHIP_REQUIRED", "The matching rule is not proven to belong to this operation");
   if (enabled && !rule) {
-    if (inventory.reduce((count, set) => count + set.rules.length, 0) >= 5) fail("PUBLIC_ACCESS_FREE_CAPACITY_UNAVAILABLE", "Free custom-rule capacity changed; no plan is purchased automatically");
-    if (journal.events.some(entry => entry.type === "public_access_waf_create_intent")) fail("PUBLIC_ACCESS_WAF_OUTCOME_UNKNOWN", "An earlier creation was dispatched but remains unconfirmed; do not repeat the Cloudflare write");
-    await retainPendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, plan);
-    await event("waf_create_intent");
-    const entrypoint = inventory.find(set => set.kind === "zone");
-    if (entrypoint) await control.zone(`/rulesets/${entrypoint.id}/rules`, { method: "POST", body: expected });
-    else await control.zone("/rulesets", { method: "POST", body: { kind: "zone", name: "cfKanban custom request filters", phase: PHASE, rules: [expected] } });
+    fail("PUBLIC_ACCESS_WAF_OUTCOME_UNKNOWN", "An earlier creation was dispatched but remains unconfirmed; do not repeat the Cloudflare write");
   } else if (!enabled && rule) {
     await retainPendingWaf({ stateRoot: local.stateRoot, instanceId: plan.instance_id }, plan);
     await event("waf_delete_intent");
@@ -453,7 +449,7 @@ export async function verifyPublicAccessConfiguration(input) {
   if (access.domain_enabled) await readZone(control.zone, target);
   // 已回退的 hostname 可被其他服务重用；inactive 升级只核对原映射消失和 Worker 入口。
   const routing = await readRouting(control.worker, control.zone, target, { checkZoneRoutes: access.domain_enabled, requirePublicFetch: Boolean(input.wafAuthority) }), domain = ownedDomain(routing, target);
-  if (routing.workers_dev !== !access.domain_enabled || routing.previews_enabled || routing.workers_dev_origin !== access.workers_dev_origin || (access.domain_enabled ? domain?.id !== access.domain_id || domain?.service !== access.worker_name || domain?.zone_id !== access.zone_id || routing.domains.filter(value => value.service === access.worker_name).length !== 1 : Boolean(domain) || routing.domains.some(value => value.service === access.worker_name))) fail("PUBLIC_ACCESS_ROUTING_DRIFT", "Managed domain or bypass exposure differs from the frozen upgrade target");
+  if (routing.workers_dev !== !access.domain_enabled || routing.previews_enabled || routing.workers_dev_origin !== access.workers_dev_origin || (access.domain_enabled ? domain?.id !== access.domain_id || domain?.service !== access.worker_name || domain?.zone_id !== access.zone_id || routing.domains.filter(value => value.service === access.worker_name).length !== 1 : routing.domains.some(value => value.service === access.worker_name))) fail("PUBLIC_ACCESS_ROUTING_DRIFT", "Managed domain or bypass exposure differs from the frozen upgrade target");
   if (access.waf_profile === PROFILE) {
     const inventory = await readWaf(control.zone);
     if (input.wafAuthority) await verifyPublicAccessEntrypoint(control.zone, inventory, access.ruleset_id);

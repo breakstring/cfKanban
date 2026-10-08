@@ -8,7 +8,9 @@ import { registerCloudflareControlRoutes } from "../../apps/worker/src/routes/cl
 import { Router } from "../../apps/worker/src/kernel/router.ts";
 import { createRequestContext } from "../../apps/worker/src/kernel/http.ts";
 import { errorResponse } from "../../apps/worker/src/kernel/errors.ts";
-import { ownedExpression } from "../../apps/worker/src/services/cloudflare-control.ts";
+import { authenticateRequest } from "../../apps/worker/src/kernel/auth.ts";
+import { canonicalJson, claimIdempotency, computeRequestHash } from "../../apps/worker/src/kernel/idempotency.ts";
+import { ownedExpression, intent, localChange, transition } from "../../apps/worker/src/services/cloudflare-control.ts";
 
 // This harness never contacts Cloudflare: its isolated D1 and provider are synthetic.
 const server = createTestHarness({ root: fileURLToPath(new URL("../../", import.meta.url)), workers: [{ configPath: "wrangler.wp02-test.jsonc" }] }), worker = server.getWorker();
@@ -75,129 +77,172 @@ before(async () => { await server.listen(); await worker.applyD1Migrations("DB")
 beforeEach(async () => { provider = fakeProvider(); router = new Router(); registerCloudflareControlRoutes(router, { fetch: provider.fetch }); await db.batch([db.prepare("DELETE FROM cloudflare_control_plans"), db.prepare("DELETE FROM cloudflare_control_operations"), db.prepare("DELETE FROM cloudflare_waf_target_binding"), db.prepare("UPDATE cloudflare_waf_ownership SET binding_id=NULL,rule_id=NULL,ruleset_id=NULL,rule_ref=NULL,rule_digest=NULL,operation_id=NULL,verified_at=NULL"), db.prepare("UPDATE cloudflare_control_settings SET version=1,zone_id=?1,capabilities_json='{}',verified_at=NULL,latest_operation_id=NULL,locked_operation_id=NULL,last_operation_id=NULL").bind(zoneId), db.prepare("UPDATE credentials SET revoked_at=NULL WHERE id=?1").bind(credentialId)]); });
 after(() => server.close());
 
-test("目标接入是纯读取登记，不改DNS且拒绝任意receipt/token，缺证据不发WAF写", async () => {
-  const status = await request(`${base}/waf`); assert.equal(status.data.status, "verified"); assert.equal(status.data.target_binding.status, "missing"); assert.equal(status.data.protected, false);
-  assert.equal((await plan()).status, 400); assert.equal((await request(`${base}/waf/target-binding`, { method: "POST", body: { expected_version: 1, receipt: {} } })).status, 400);
-  assert.equal((await bind()).status, 200); const registered = await db.prepare("SELECT b.binding_id,o.binding_id AS ownership_binding_id,o.rule_id,o.operation_id FROM cloudflare_waf_target_binding b JOIN cloudflare_waf_ownership o ON o.singleton=b.singleton").first(); assert.equal(registered.binding_id, registered.ownership_binding_id); assert.equal(registered.rule_id, null); assert.ok(registered.operation_id); assert.equal(provider.writes.length, 0); provider.wrongDomain = true; assert.equal((await plan()).status, 409); assert.equal(provider.writes.length, 0);
-});
-test("独立WAF核验仍拒绝当前Worker实际DB不符，未登记intent不发送云写", async () => {
-  provider.wrongActiveDatabase = true; assert.equal((await bind()).status, 409); provider.wrongActiveDatabase = false; await bind(); const planned = await plan(), key = randomUUID(); provider.wrongActiveDatabase = true;
-  const rejected = await apply(planned, { key }); assert.equal(rejected.status, 409); assert.equal(rejected.data.details.write_state, "not_dispatched"); assert.equal((await request(`${base}/waf/operations/${key}`)).status, 404); assert.equal(provider.writes.length, 0);
-});
-test("已部署runtime缺公网fetch或冲突flag拒绝目标证明和写入，unknown只读恢复不重发", async () => {
-  provider.runtimeFlags = []; const unbound = await bind(); assert.equal(unbound.status, 503); assert.equal(unbound.data.details.failure_class, "unsupported_contract");
-  provider.runtimeFlags = ["global_fetch_strictly_public"]; await bind(); const planned = await plan(), key = randomUUID(); await db.prepare("UPDATE cloudflare_waf_target_binding SET source='deployment_runtime'").run(); provider.domainDenied = true;
-  for (const flags of [undefined, [], ["global_fetch_private_origin"], ["global_fetch_strictly_public", "global_fetch_private_origin"], ["global_fetch_strictly_public", null]]) {
-    provider.runtimeFlags = flags; const status = await request(`${base}/waf`); assert.equal(status.data.target_binding.status, "unsupported_contract"); assert.equal(status.data.protected, false);
-    const rejected = await apply(planned, { key }); assert.equal(rejected.status, 503); assert.equal(rejected.data.details.write_state, "not_dispatched"); assert.equal((await request(`${base}/waf/operations/${key}`)).status, 404); assert.equal(provider.writes.length, 0);
+async function legacyIntent({ dispatched = true, rules = [], create = false } = {}) {
+  const bindingId = randomUUID(), marker = randomUUID(), key = randomUUID(), planId = randomUUID(), domain = { id: "domain1", hostname, service: "fixture-worker", zone_id: zoneId };
+  const origin = await db.prepare("SELECT version FROM instance_origin_settings WHERE singleton=1").first();
+  await db.prepare("INSERT INTO cloudflare_waf_target_binding(singleton,binding_id,account_id,worker_name,database_id,instance_id,hostname,zone_id,domain_id,origin_version,provider_metadata_hash,source,verified_at,operation_id) VALUES(1,?1,?2,'fixture-worker',?3,?4,?5,?6,'domain1',?7,?8,'worker_domain_read',?9,?10)").bind(bindingId, accountId, databaseId, instanceId, hostname, zoneId, origin.version, digest(canonicalJson(domain)), Date.now(), randomUUID()).run();
+  provider.sets = create ? [] : [entrypoint(structuredClone(rules))];
+  const target = { account_id: accountId, worker_name: "fixture-worker", database_id: databaseId, instance_id: instanceId, hostname, zone_id: zoneId, domain_id: "domain1" };
+  const rule = { ref: `cfkanban_${instanceId.replaceAll("-", "")}_anonymous_api_${marker.replaceAll("-", "")}`, description: `cfKanban ${instanceId} anonymous private API filter`, enabled: true, action: "block", expression: ownedExpression(hostname) };
+  const baseline = { target, binding_id: bindingId, origin_version: origin.version, provider_metadata_hash: digest(canonicalJson(domain)), token_hash: digest(cfToken), ip_access_digest: digest(canonicalJson([])), foreign_rules_digest: digest(canonicalJson(provider.sets)), entrypoint_id: create ? null : "entrypoint", entrypoint_rule_ids: rules.map(rule => rule.id), owned_rule_id: null, owned_ruleset_id: null, owned_rule_digest: null, rule_refs: rules.map(rule => rule.ref) };
+  const desired = { action: "enable", entrypoint_strategy: create ? "create_entrypoint" : "append_rule", entrypoint_id: baseline.entrypoint_id, position_before: null, rule };
+  const body = { plan_id: planId, expected_version: 1 }, req = new Request(`https://${hostname}${base}/waf/apply`, { method: "POST", headers: { authorization: `Bearer ${ownerToken}`, "idempotency-key": key, "content-type": "application/json" }, body: JSON.stringify(body) }), auth = await authenticateRequest(db, req, Date.now());
+  const row = await intent(env, req, auth, "waf", digest(canonicalJson(body)), { baseline }, desired, null, 1, Date.now(), null);
+  if (dispatched) await transition(env, req, auth, row, "unknown", "unavailable", null, null, true);
+  const created = { ...rule, id: "legacy-created-rule" };
+  if (dispatched) { if (create) provider.sets = [entrypoint([created])]; else provider.sets[0].rules.push(created); }
+  return { id: row.id, key, body, rule: created, verify: (extra = {}) => request(`${base}/operations/${row.id}/verify`, { method: "POST", body: {}, ...extra }), replay: (extra = {}) => request(`${base}/waf/apply`, { method: "POST", key, body, ...extra }) };
+}
+
+test("WAF新目标、启用计划与全新apply退役，拒绝前实时校验Owner且不访问供应商", async () => {
+  for (const [path, body] of [["waf/target-binding", { expected_version: 1 }], ["waf/plan", { action: "enable", expected_version: 1 }], ["waf/apply", { plan_id: randomUUID(), expected_version: 1 }]]) {
+    const result = await request(`${base}/${path}`, { method: "POST", body });
+    assert.equal(result.status, 400); assert.equal(result.data.details.reason, "cloudflare_feature_retired");
+    assert.equal((await request(`${base}/${path}`, { method: "POST", body, headers: {} })).status, 401);
   }
-  provider.runtimeFlags = ["global_fetch_strictly_public"]; const fallbackPlan = await plan(); provider.lostResponse = true; const uncertain = await apply(fallbackPlan); assert.equal(uncertain.data.resource.status, "unknown"); provider.lostResponse = false; provider.runtimeFlags = [];
-  const verify = () => request(`${base}/operations/${uncertain.data.resource.operation_id}/verify`, { method: "POST", body: {} });
-  const refused = await verify(); assert.equal(refused.data.resource.status, "unknown"); assert.equal(refused.data.resource.failure_class, "unsupported_contract"); provider.runtimeFlags = ["global_fetch_strictly_public"]; assert.equal((await verify()).data.resource.status, "verified"); assert.equal(provider.writes.length, 1);
-  assert.ok(provider.gets.every(read => !read.path.endsWith("/settings")));
+  assert.equal(provider.gets.length, 0); assert.equal(provider.writes.length, 0);
 });
-test("不存在入口创建携带一条规则，精确ID登记，禁用只删rule保留共享入口", async () => {
-  assert.equal((await bind()).status, 200); const planned = await plan(); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.after.entrypoint_strategy, "create_entrypoint");
-  const result = await apply(planned); assert.equal(result.status, 200, JSON.stringify(result.data)); assert.equal(result.data.resource.status, "verified", JSON.stringify(result.data)); assert.equal(provider.writes.length, 1); assert.equal(provider.sets[0].rules.length, 1);
-  const owned = await db.prepare("SELECT * FROM cloudflare_waf_ownership").first(); assert.equal(owned.rule_id, provider.sets[0].rules[0].id); assert.equal((await request(`${base}/waf`)).data.protected, true);
-  const disabled = await apply(await plan("disable")); assert.equal(disabled.data.resource.status, "verified", JSON.stringify(disabled.data)); assert.equal(provider.sets.length, 1); assert.equal(provider.sets[0].rules.length, 0); assert.equal(provider.writes[1].method, "DELETE");
+test("RC6已登记但未dispatch的操作仍可同key读回并核验失败后释放共享锁", async () => {
+  const old = await legacyIntent({ dispatched: false });
+  const replay = await old.replay(); assert.equal(replay.status, 200); assert.equal(replay.data.idempotent_replay, true); assert.equal(replay.data.resource.status, "pending");
+  const resolved = await old.verify(); assert.equal(resolved.data.resource.status, "failed"); assert.equal(resolved.data.resource.failure_class, "not_dispatched");
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, null);
+  assert.equal(provider.gets.length, 0); assert.equal(provider.writes.length, 0);
 });
-test("唯一共享入口追加，foreign内容和相对顺序完整保留", async () => {
-  provider.sets = [entrypoint([foreign("first"), foreign("second")])]; const original = structuredClone(provider.sets[0].rules); await bind(); const planned = await plan(); const result = await apply(planned);
-  assert.equal(result.data.resource.status, "verified", JSON.stringify(result.data)); assert.deepEqual(provider.sets[0].rules.slice(0, 2), original); assert.equal(provider.writes[0].path, `/zones/${zoneId}/rulesets/entrypoint/rules`); assert.equal(provider.writes[0].method, "POST");
+test("RC6未知创建升级后同key仅读回，原标记独立核验并原子登记归属", async () => {
+  const old = await legacyIntent({ create: true });
+  const replay = await old.replay(); assert.equal(replay.data.resource.status, "unknown"); assert.equal(replay.data.idempotent_replay, true); assert.equal(provider.gets.length, 0);
+  const verified = await old.verify(); assert.equal(verified.data.resource.status, "verified", JSON.stringify(verified.data));
+  assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, old.rule.id);
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, null);
+  const key = randomUUID(), first = await old.verify({ key }), count = (await db.prepare("SELECT count(*) AS n FROM events").first()).n;
+  const again = await old.verify({ key }); assert.equal(again.data.idempotent_replay, true); assert.deepEqual(again.data.resource, first.data.resource); assert.equal((await db.prepare("SELECT count(*) AS n FROM events").first()).n, count);
+  assert.equal(provider.writes.length, 0);
 });
-test("前置Skip必须明确选择，before只移动自有规则且不改foreign顺序", async () => {
-  provider.sets = [entrypoint([foreign("skip", { action: "skip", expression: "true", action_parameters: { ruleset: "current" } }), foreign("other")])]; await bind();
-  const unchosen = await plan(); assert.equal(unchosen.data.resource.after.apply_ready, false); assert.equal((await apply(unchosen)).status, 400); assert.equal(provider.writes.length, 0);
-  const chosen = await plan("enable", "before_conflicts"), result = await apply(chosen); assert.equal(result.data.resource.status, "verified", JSON.stringify(result.data)); assert.equal(provider.sets[0].rules[0].id, result.data.resource.result_rule_id); assert.deepEqual(provider.sets[0].rules.slice(1).map(rule => rule.id), ["skip", "other"]); assert.equal((await request(`${base}/waf`)).data.protected, true);
+test("RC6旧操作key按原调用者与path查询，内容变化冲突而不重发", async () => {
+  const old = await legacyIntent();
+  const found = await request(`${base}/waf/operations/${old.key}`); assert.equal(found.status, 200); assert.equal(found.data.operation_id, old.id);
+  assert.equal((await request(`${base}/waf/operations/${randomUUID()}`)).status, 404);
+  assert.equal((await request(`${base}/secret-operations/${old.key}`)).status, 404);
+  assert.equal((await old.replay({ body: { ...old.body, expected_version: 9 } })).status, 409);
+  assert.equal(provider.writes.length, 0); assert.equal(provider.gets.length, 0);
 });
-test("手工同ref/body不会接管；保留重复后覆盖受限，关闭仅删新自有ID", async () => {
-  const manual = foreign("manual", { ref: `cfkanban_${instanceId.replaceAll("-", "")}_anonymous_api`, description: `cfKanban ${instanceId} anonymous private API filter`, expression: ownedExpression(hostname) }); provider.sets = [entrypoint([manual])]; await bind();
-  const status = await request(`${base}/waf`); assert.equal(status.data.owned_rule, null); assert.equal(status.data.conflicts[0].kind, "unowned_duplicate"); assert.equal((await plan("enable", "before_conflicts")).status, 400);
-  const result = await apply(await plan("enable", "preserve_exemptions")); assert.equal(result.data.resource.status, "verified", JSON.stringify(result.data)); assert.equal((await request(`${base}/waf`)).data.protected, false);
-  await apply(await plan("disable")); assert.deepEqual(provider.sets[0].rules, [manual]);
+test("旧规则进入错误位置或foreign漂移保持unknown与写锁，恢复准确库存后才完成", async () => {
+  const old = await legacyIntent({ rules: [foreign("first"), foreign("second")] });
+  provider.sets[0].rules.unshift(provider.sets[0].rules.pop());
+  const misplaced = await old.verify(); assert.equal(misplaced.data.resource.status, "unknown"); assert.equal(misplaced.data.resource.failure_class, "cloudflare_waf_position_mismatch");
+  provider.sets[0].rules.push(provider.sets[0].rules.shift()); provider.sets[0].rules[0].enabled = false;
+  const drift = await old.verify(); assert.equal(drift.data.resource.status, "unknown"); assert.equal(drift.data.resource.failure_class, "cloudflare_waf_foreign_rule_drift");
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, old.id);
+  provider.sets[0].rules[0].enabled = true; assert.equal((await old.verify()).data.resource.status, "verified"); assert.equal(provider.writes.length, 0);
 });
-test("Free总容量包含disabled和子规则集，拒绝第六条及不完整分页", async () => {
-  provider.sets = [entrypoint([foreign("1"), foreign("2")]), { id: "child", kind: "custom", phase: "http_request_firewall_custom", rules: [foreign("3"), foreign("4", { enabled: false }), foreign("5")] }]; await bind(); assert.equal((await request(`${base}/waf`)).data.inventory.total_rule_count, 5); assert.equal((await plan()).status, 400); assert.equal(provider.writes.length, 0);
-  provider.pages = 2; assert.equal((await plan()).status, 503); provider.pages = 1; provider.rulePages = 2; assert.equal((await plan()).status, 503); provider.rulePages = 1; provider.ruleCount = 9; assert.equal((await plan()).status, 503); assert.equal(provider.writes.length, 0);
+test("手工同名规则不能代替旧创建随机标记，换Token或DB漂移也不能直接清锁", async () => {
+  const old = await legacyIntent(); provider.sets[0].rules[0].ref = `cfkanban_${instanceId.replaceAll("-", "")}_anonymous_api`;
+  assert.equal((await old.verify()).data.resource.status, "unknown"); provider.sets[0].rules[0].ref = old.rule.ref;
+  assert.equal((await old.verify({ overrideEnv: { ...env, CFKANBAN_API_TOKEN: "different-synthetic-token" } })).data.resource.status, "unknown");
+  provider.wrongActiveDatabase = true; assert.equal((await old.verify()).data.resource.status, "unknown");
+  assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, null);
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, old.id); assert.equal(provider.writes.length, 0);
 });
-test("计划后foreign规则/顺序、target、Token漂移拒绝并不更换策略", async () => {
-  provider.sets = [entrypoint([foreign("1"), foreign("2")])]; await bind(); const planned = await plan(); provider.sets[0].rules.reverse(); assert.equal((await apply(planned)).status, 400); assert.equal(provider.writes.length, 0);
-  provider.sets[0].rules.reverse(); const rotated = await apply(planned, { overrideEnv: { ...env, CFKANBAN_API_TOKEN: "NEW".repeat(14) } }); assert.equal(rotated.status, 400); assert.equal(provider.writes.length, 0);
+test("已有部署runtime目标证明继续支持旧operation恢复且不发送Token到实例", async () => {
+  const old = await legacyIntent(); await db.prepare("UPDATE cloudflare_waf_target_binding SET source='deployment_runtime'").run(); provider.domainDenied = true;
+  provider.proofWrong = true; assert.equal((await old.verify()).data.resource.status, "unknown"); provider.proofWrong = false;
+  const verified = await old.verify(); assert.equal(verified.data.resource.status, "verified", JSON.stringify(verified.data)); assert.equal(provider.writes.length, 0);
 });
-test("网络未知同key不重发，原持久随机标记可只读验证恢复，Worker版本不参与WAF结果", async () => {
-  await bind(); const planned = await plan(), key = randomUUID(); provider.lostResponse = true; const result = await apply(planned, { key }); assert.equal(result.data.resource.status, "unknown"); assert.equal((await apply(planned, { key })).data.idempotent_replay, true); assert.equal(provider.writes.length, 1);
-  provider.lostResponse = false; provider.active = randomUUID(); provider.candidate = randomUUID(); const verified = await request(`${base}/operations/${result.data.resource.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(verified.data.resource.status, "verified", JSON.stringify(verified.data)); assert.equal(provider.writes.length, 1); assert.equal((await request(`${base}/waf`)).data.ownership.rule_id, provider.sets[0].rules[0].id);
-  assert.ok(provider.gets.every(read => !read.path.endsWith("/versions") && !read.path.endsWith("/settings"))); assert.equal((await plan("disable")).status, 200);
-});
-test("未知创建只在冻住的入口和准确位置恢复，子ruleset或错误排序保持unknown", async () => {
-  provider.sets = [entrypoint([foreign("first"), foreign("second")]), { id: "child", kind: "custom", phase: "http_request_firewall_custom", rules: [] }]; await bind(); const planned = await plan(); provider.lostResponse = true; const result = await apply(planned); assert.equal(result.data.resource.status, "unknown"); provider.lostResponse = false;
-  const zone = provider.sets[0], child = provider.sets[1], created = zone.rules.pop(); child.rules.push(created);
-  const verify = () => request(`${base}/operations/${result.data.resource.operation_id}/verify`, { method: "POST", body: {} });
-  const wrongSet = await verify(); assert.equal(wrongSet.data.resource.status, "unknown", JSON.stringify(wrongSet.data)); assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, null);
-  child.rules = []; zone.rules.unshift(created); const wrongOrder = await verify(); assert.equal(wrongOrder.data.resource.status, "unknown", JSON.stringify(wrongOrder.data)); assert.equal(wrongOrder.data.resource.failure_class, "cloudflare_waf_position_mismatch");
-  zone.rules.shift(); zone.rules.push(created); const recovered = await verify(); assert.equal(recovered.data.resource.status, "verified", JSON.stringify(recovered.data)); assert.equal(provider.writes.length, 1); assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, created.id);
-});
-test("unknown期间手工同固定ref不能代替创建标记；外部规则变化保持锁定", async () => {
-  await bind(); const planned = await plan(); provider.lostResponse = true; const result = await apply(planned); provider.sets[0].rules[0].ref = `cfkanban_${instanceId.replaceAll("-", "")}_anonymous_api`; provider.lostResponse = false;
-  const verified = await request(`${base}/operations/${result.data.resource.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(verified.data.resource.status, "unknown"); assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, null); assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, result.data.resource.operation_id); assert.equal(provider.writes.length, 1);
-});
-test("deployment runtime证明走固定HMAC服务，不传Token，错误Secret/拦截拒绝写", async () => {
-  await bind(); await db.prepare("UPDATE cloudflare_waf_target_binding SET source='deployment_runtime'").run(); provider.domainDenied = true;
-  const planned = await plan(); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal((await apply(planned)).data.resource.status, "verified");
-  provider.proofWrong = true; assert.equal((await plan("disable")).status, 503); provider.proofWrong = false; provider.skipProof = true; assert.equal((await plan("disable")).status, 503); assert.equal(provider.writes.length, 1);
-  assert.equal((await request("/.well-known/cfkanban-waf-proof", { method: "POST", body: { nonce: "a".repeat(64), expires_at: Date.now() + 9000, target: {} }, headers: {} })).status, 404);
-});
-test("workers.dev和preview开启仍准许明确计划但绝不声称完整覆盖或关闭入口", async () => {
-  await bind(); provider.workersDev = true; provider.previews = true; const result = await apply(await plan()); assert.equal(result.data.resource.status, "verified"); const status = (await request(`${base}/waf`)).data; assert.equal(status.coverage.status, "incomplete"); assert.equal(status.protected, false); assert.ok(provider.writes.every(write => write.path.includes("/rulesets")));
-});
-test("CSRF和Owner实时撤销发生于外部dispatch之前，无Token进入D1/审计", async () => {
-  assert.equal((await plan()).status, 400); await bind(); const planned = await plan();
-  const session = "S".repeat(43), csrf = "X".repeat(32), now = Date.now(); await db.prepare("INSERT INTO web_sessions(id,token_digest,principal_id,source_kind,source_id,target_kind,target_json,expires_at,created_at) VALUES(?1,?2,?3,'credential',?4,'admin',?5,?6,?7)").bind(randomUUID(), digest(session), ownerId, credentialId, JSON.stringify({ kind: "admin", entry_path: "/app/admin", section: "overview" }), now + 3600000, now).run();
-  assert.equal((await apply(planned, { headers: { cookie: `cfkanban_session=${session}; cfkanban_csrf=${csrf}` } })).status, 403); assert.equal(provider.writes.length, 0);
-  await db.prepare("UPDATE credentials SET revoked_at=?1 WHERE id=?2").bind(Date.now(), credentialId).run(); assert.equal((await apply(planned)).status, 401); assert.equal(provider.writes.length, 0);
-  const tables = await db.prepare("SELECT baseline_json,desired_json FROM cloudflare_control_operations").all(), events = await db.prepare("SELECT payload_json FROM events WHERE type LIKE 'instance.cloudflare-control-%'").all(); assert.ok(!JSON.stringify({ tables, events }).includes(cfToken));
+test("结果审计失败不会提交历史归属，原operation保持可核验", async () => {
+  const old = await legacyIntent();
+  await db.prepare("CREATE TRIGGER retired_waf_audit BEFORE INSERT ON events WHEN NEW.type='instance.cloudflare-control-result' BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END").run();
+  const result = await old.verify(); await db.prepare("DROP TRIGGER retired_waf_audit").run();
+  assert.ok(result.status >= 400, JSON.stringify(result.data)); assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, null);
+  assert.equal((await old.verify()).data.resource.status, "verified"); assert.equal(provider.writes.length, 0);
 });
 
-test("IP Access Allow和未核验豁免不能靠before解决，明确保留时覆盖受限", async () => {
-  provider.ipRules = [{ id: "allowed-ip", mode: "whitelist", configuration: { target: "ip", value: "192.0.2.1" } }]; await bind();
-  const pending = await plan(); assert.equal(pending.data.resource.after.apply_ready, false); assert.equal(pending.data.resource.after.conflicts[0].kind, "ip_access_allow"); assert.equal((await plan("enable", "before_conflicts")).status, 400);
-  assert.equal((await apply(await plan("enable", "preserve_exemptions"))).data.resource.status, "verified"); assert.equal((await request(`${base}/waf`)).data.protected, false);
-  const rows = await db.prepare("SELECT baseline_json,desired_json FROM cloudflare_control_operations").all(); assert.ok(!JSON.stringify(rows).includes("192.0.2.1")); provider.ipDenied = true; assert.equal((await request(`${base}/waf`)).data.conflicts.at(-1).kind, "ip_access_unverified");
+test("兼容清理拒绝没有D1归属的disable和手工同名规则", async () => {
+  provider.sets = [entrypoint([foreign("manual", { ref: `cfkanban_${instanceId.replaceAll("-", "")}_anonymous_api`, expression: ownedExpression(hostname) })])];
+  const result = await plan("disable"); assert.equal(result.status, 400); assert.equal(result.data.details.reason, "cloudflare_feature_retired");
+  assert.equal(provider.gets.length, 0); assert.equal(provider.writes.length, 0); assert.equal(provider.sets[0].rules[0].id, "manual");
 });
-test("原apply请求key精确查询scope/path且404不能当未dispatch证明", async () => {
-  const key = randomUUID(); assert.equal((await request(`${base}/waf/operations/${key}`)).status, 404); await bind(); const planned = await plan(); provider.lostResponse = true; assert.equal((await apply(planned, { key: `cli-${randomUUID()}` })).status, 400); const saved = await apply(planned, { key });
-  const found = await request(`${base}/waf/operations/${key}`); assert.equal(found.status, 200); assert.equal(found.data.operation_id, saved.data.resource.operation_id); assert.equal(found.data.status, "unknown"); assert.equal((await request(`${base}/secret-operations/${key}`)).status, 404); assert.equal(provider.writes.length, 1); assert.equal((await request(`${base}/waf/operations/not-a-uuid`)).status, 400);
+test("已有RC6归属只允许明确disable，精确删除旧rule并保留共享入口和foreign规则", async () => {
+  const original = foreign(), old = await legacyIntent({ rules: [original] }); assert.equal((await old.verify()).data.resource.status, "verified");
+  provider.gets.length = 0;
+  const status = await current(); assert.equal(status.capabilities.waf, "unsupported_contract"); assert.equal(provider.gets.length, 0); assert.equal(provider.sets[0].rules.length, 2);
+  const enable = await plan("enable"); assert.equal(enable.status, 400); assert.equal(enable.data.details.reason, "cloudflare_feature_retired"); assert.equal(provider.gets.length, 0);
+  const planKey = randomUUID(), planBody = { action: "disable", expected_version: (await current()).version };
+  const planned = await request(`${base}/waf/plan`, { method: "POST", key: planKey, body: planBody }); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.after.entrypoint_strategy, "delete_owned_rule");
+  const key = randomUUID(), result = await apply(planned, { key }); assert.equal(result.status, 200); assert.equal(result.data.resource.status, "verified", JSON.stringify(result.data));
+  assert.deepEqual(provider.writes, [{ method: "DELETE", path: `/zones/${zoneId}/rulesets/entrypoint/rules/${old.rule.id}` }]); assert.deepEqual(provider.sets, [entrypoint([original])]);
+  assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, null);
+  const replay = await apply(planned, { key }); assert.equal(replay.data.idempotent_replay, true); assert.equal(replay.data.resource.status, "verified"); assert.equal(provider.writes.length, 1);
+  const planReplay = await request(`${base}/waf/plan`, { method: "POST", key: planKey, body: planBody }); assert.equal(planReplay.status, 200); assert.equal(planReplay.data.idempotent_replay, true); assert.deepEqual(planReplay.data.resource, planned.data.resource);
+  assert.equal((await plan("disable")).data.details.reason, "cloudflare_feature_retired");
+});
+test("旧规则disable删除响应未知时保持原意图与锁，重放只读而恢复不二次DELETE", async () => {
+  const old = await legacyIntent({ rules: [foreign()] }); await old.verify();
+  const planned = await plan("disable"), key = randomUUID(); provider.lostResponse = true;
+  const applied = await apply(planned, { key }); assert.equal(applied.data.resource.status, "unknown");
+  const operationId = applied.data.resource.operation_id; assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, operationId);
+  const replay = await apply(planned, { key }); assert.equal(replay.data.idempotent_replay, true); assert.equal(replay.data.resource.status, "unknown"); assert.equal(provider.writes.length, 1);
+  provider.lostResponse = false; const verified = await request(`${base}/operations/${operationId}/verify`, { method: "POST", body: {} }); assert.equal(verified.data.resource.status, "verified", JSON.stringify(verified.data));
+  assert.equal(provider.writes.length, 1); assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, null);
+  assert.equal((await db.prepare("SELECT locked_operation_id FROM cloudflare_control_settings").first()).locked_operation_id, null);
+});
+test("兼容disable仍拒绝冻结后规则漂移、Token更换和陈旧CAS", async () => {
+  const old = await legacyIntent({ rules: [foreign()] }); await old.verify();
+  const planned = await plan("disable");
+  assert.equal((await apply(planned, { body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version - 1 } })).status, 409);
+  assert.equal((await apply(planned, { overrideEnv: { ...env, CFKANBAN_API_TOKEN: "rotated-synthetic" } })).status, 400);
+  provider.sets[0].rules[0].enabled = false; assert.equal((await apply(planned)).status, 400); provider.sets[0].rules[0].enabled = true;
+  provider.sets[0].rules[1].logging = { enabled: true }; assert.equal((await apply(planned)).status, 400);
+  assert.equal(provider.writes.length, 0); assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, old.rule.id);
+});
+test("旧未消费enable plan不能借兼容清理恢复创建权限", async () => {
+  const old = await legacyIntent(); await old.verify();
+  const planned = await plan("disable"); const planId = planned.data.resource.plan_id;
+  await db.prepare("UPDATE cloudflare_control_plans SET after_json=json_set(after_json,'$.action','enable','$.entrypoint_strategy','append_rule') WHERE id=?1").bind(planId).run();
+  provider.gets.length = 0; const result = await apply(planned); assert.equal(result.status, 400); assert.equal(result.data.details.reason, "cloudflare_feature_retired"); assert.equal(result.data.details.write_state, "not_dispatched");
+  assert.equal(provider.gets.length, 0); assert.equal(provider.writes.length, 0);
 });
 
-test("apply登记intent前明确preflight失败可返回not_dispatched，登记后未知不伪造未写", async () => {
-  await bind(); const planned = await plan(), key = randomUUID(); provider.wrongDomain = true;
-  const rejected = await apply(planned, { key }); assert.equal(rejected.status, 409); assert.equal(rejected.data.details.write_state, "not_dispatched"); assert.equal((await request(`${base}/waf/operations/${key}`)).status, 404); assert.equal(provider.writes.length, 0);
-  provider.wrongDomain = false; provider.lostResponse = true; const uncertainKey = randomUUID(), uncertain = await apply(planned, { key: uncertainKey }); assert.equal(uncertain.data.resource.status, "unknown"); assert.ok(!JSON.stringify(uncertain.data).includes("not_dispatched")); assert.equal(provider.writes.length, 1);
-  const mismatch = await request(`${base}/waf/apply`, { method: "POST", key: uncertainKey, body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version + 1 } }); assert.equal(mismatch.status, 409); assert.notEqual(mismatch.data.details.write_state, "not_dispatched"); assert.equal((await request(`${base}/waf/operations/${uncertainKey}`)).data.status, "unknown"); assert.equal(provider.writes.length, 1);
-  const invalidPlan = await request(`${base}/waf/apply`, { method: "POST", key: uncertainKey, body: { plan_id: "invalid-plan", expected_version: planned.data.resource.version } }); assert.equal(invalidPlan.status, 409); assert.notEqual(invalidPlan.data.details.write_state, "not_dispatched");
+async function legacyLocalReceipt(operation, { pending = false } = {}) {
+  const method = operation === "zone_settings" ? "PATCH" : "POST", path = operation === "zone_settings" ? `${base}/settings` : operation === "waf_target_binding" ? `${base}/waf/target-binding` : `${base}/waf/plan`;
+  const expected = (await current()).version, body = { ...(operation === "zone_settings" ? { zone_id: zoneId } : operation === "waf_plan" ? { action: "enable", conflict_choice: null } : {}), expected_version: expected }, key = randomUUID();
+  const req = new Request(`https://${hostname}${path}`, { method, headers: { authorization: `Bearer ${ownerToken}`, "idempotency-key": key } }), auth = await authenticateRequest(db, req, Date.now());
+  const identity = { method, routeTemplate: path, normalizedResourceScope: "instance-cloudflare-control", scopeKey: `principal:${ownerId}`, idempotencyKey: key, requestBody: body };
+  let result;
+  if (pending) await claimIdempotency(db, identity);
+  else result = await localChange(env, req, auth, path, body, expected, () => [], async version => operation === "waf_plan" ? { version, plan_id: randomUUID(), kind: "waf", after: { action: "enable" } } : operation === "waf_target_binding" ? { version, target_binding: { status: "verified", source: "worker_domain_read", domain_id: "domain1" } } : { version, target: { zone_id: zoneId } }, Date.now());
+  const ledger = await db.prepare("SELECT operation_id FROM idempotency_records WHERE idempotency_key=?1").bind(digest(key)).first();
+  return { key, body, result, operationId: ledger.operation_id, requestHash: (await computeRequestHash(identity)).requestHash, lookup: () => request(`${base}/local-operations/${key}?operation=${operation}`), replay: (extra = {}) => request(path, { method, key, body, ...extra }) };
+}
+for (const operation of ["zone_settings", "waf_target_binding", "waf_plan"]) test(`RC6 ${operation} 原key已commit快照只读重放，新key退役且不增加审计`, async () => {
+  const old = await legacyLocalReceipt(operation), version = (await current()).version, events = (await db.prepare("SELECT count(*) AS n FROM events").first()).n, records = (await db.prepare("SELECT count(*) AS n FROM idempotency_records").first()).n;
+  const lookup = await old.lookup(); assert.equal(lookup.status, 200); assert.equal(lookup.data.operation, operation); assert.equal(lookup.data.request_hash, old.requestHash); assert.deepEqual(lookup.data.resource, old.result.resource); assert.equal(lookup.data.idempotent_replay, true);
+  const replay = await old.replay(); assert.equal(replay.status, 200); assert.deepEqual(replay.data.resource, old.result.resource); assert.equal(replay.data.idempotent_replay, true);
+  assert.equal((await old.replay({ body: { ...old.body, expected_version: 99 } })).status, 409);
+  assert.equal((await old.replay({ key: randomUUID() })).data.details.reason, "cloudflare_feature_retired");
+  assert.equal((await current()).version, version); assert.equal((await db.prepare("SELECT count(*) AS n FROM events").first()).n, events); assert.equal((await db.prepare("SELECT count(*) AS n FROM idempotency_records").first()).n, records); assert.equal(provider.gets.length, 0); assert.equal(provider.writes.length, 0);
 });
-test("最终dispatch前凭据撤销阻止云写，未dispatch原intent只读恢复failed", async () => {
-  await bind(); const planned = await plan(), key = randomUUID(); let accountRead = 0;
-  provider.beforeRequest = async (path, method) => { if (method === "GET" && path === `/accounts/${accountId}/firewall/access_rules/rules` && ++accountRead === 2) await db.prepare("UPDATE credentials SET revoked_at=?1 WHERE id=?2").bind(Date.now(), credentialId).run(); };
-  const rejected = await apply(planned, { key }); assert.equal(rejected.status, 401); assert.equal(provider.writes.length, 0); await db.prepare("UPDATE credentials SET revoked_at=NULL WHERE id=?1").bind(credentialId).run(); provider.beforeRequest = null;
-  const original = await request(`${base}/waf/operations/${key}`); assert.equal(original.data.status, "pending"); const verified = await request(`${base}/operations/${original.data.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(verified.data.resource.status, "failed"); assert.equal(verified.data.resource.failure_class, "not_dispatched"); assert.equal(provider.writes.length, 0);
+test("本地历史回执只允许原principal、path、未过期key与真实commit，pending不能触发重发", async () => {
+  const old = await legacyLocalReceipt("zone_settings");
+  assert.equal((await request(`${base}/local-operations/${old.key}?operation=waf_target_binding`)).status, 404);
+  assert.equal((await request(`${base}/local-operations/${old.key}?operation=invalid`)).status, 400);
+  await db.prepare("UPDATE idempotency_records SET scope_key=?2 WHERE operation_id=?1").bind(old.operationId, `principal:${randomUUID()}`).run(); assert.equal((await old.lookup()).status, 404);
+  await db.prepare("UPDATE idempotency_records SET scope_key=?2,created_at=1,expires_at=2 WHERE operation_id=?1").bind(old.operationId, `principal:${ownerId}`).run(); assert.equal((await old.lookup()).status, 404);
+  const pending = await legacyLocalReceipt("waf_target_binding", { pending: true }); assert.equal((await pending.lookup()).status, 404); assert.equal((await pending.replay()).data.details.reason, "cloudflare_feature_retired");
+  await db.prepare("UPDATE credentials SET revoked_at=?2 WHERE id=?1").bind(credentialId, Date.now()).run(); assert.equal((await pending.lookup()).status, 401); assert.equal((await pending.replay()).status, 401);
+  assert.equal(provider.gets.length, 0); assert.equal(provider.writes.length, 0);
 });
-test("目标origin在最终preflight后改变时D1 dispatch fence拒绝，不发送WAF写", async () => {
-  await bind(); const planned = await plan(), key = randomUUID(), originalVersion = (await db.prepare("SELECT version FROM instance_origin_settings").first()).version; let accountRead = 0;
-  provider.beforeRequest = async (path, method) => { if (method === "GET" && path === `/accounts/${accountId}/firewall/access_rules/rules` && ++accountRead === 2) await db.prepare("UPDATE instance_origin_settings SET version=version+1 WHERE singleton=1").run(); };
-  const rejected = await apply(planned, { key }); assert.equal(rejected.status, 200, JSON.stringify(rejected.data)); assert.equal(rejected.data.resource.status, "pending"); assert.equal(provider.writes.length, 0);
-  provider.beforeRequest = null; await db.prepare("UPDATE instance_origin_settings SET version=?1 WHERE singleton=1").bind(originalVersion).run(); const verified = await request(`${base}/operations/${rejected.data.resource.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(verified.data.resource.status, "failed"); assert.equal(provider.writes.length, 0);
+test("RC6原子commit后响应缓存丢失仍能从快照只读恢复，无commit快照不能证明成功", async () => {
+  const old = await legacyLocalReceipt("waf_target_binding");
+  await db.prepare("UPDATE idempotency_records SET state='pending',response_json=NULL,response_status=NULL,operation_snapshot_json=?2 WHERE operation_id=?1").bind(old.operationId, canonicalJson(old.result.resource)).run();
+  const lookup = await old.lookup(); assert.equal(lookup.status, 200); assert.deepEqual(lookup.data.resource, old.result.resource); assert.equal((await old.replay()).status, 200);
+  await db.prepare("DELETE FROM operation_commits WHERE operation_id=?1").bind(old.operationId).run(); assert.equal((await old.lookup()).status, 404); assert.equal((await old.replay()).data.details.reason, "cloudflare_feature_retired");
+  assert.equal(provider.gets.length, 0); assert.equal(provider.writes.length, 0);
 });
-test("归属与verified审计同批，结果审计失败不记录归属且原intent可只读恢复", async () => {
-  await bind(); const planned = await plan(), key = randomUUID(); await db.exec("CREATE TRIGGER waf_result_failure BEFORE INSERT ON events WHEN NEW.type='instance.cloudflare-control-result' BEGIN SELECT RAISE(ABORT,'synthetic result failure'); END");
-  try { assert.ok((await apply(planned, { key })).status >= 500); assert.equal(provider.writes.length, 1); assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, null); assert.notEqual((await request(`${base}/waf/operations/${key}`)).data.status, "verified"); }
-  finally { await db.exec("DROP TRIGGER waf_result_failure"); }
-  const original = await request(`${base}/waf/operations/${key}`), result = await request(`${base}/operations/${original.data.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(result.data.resource.status, "verified", JSON.stringify(result.data)); assert.equal(provider.writes.length, 1); assert.equal((await db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").first()).rule_id, provider.sets[0].rules[0].id);
-});
-
-test("同目标重复核验保留bindingID与已有归属，未知own语义字段按漂移拒绝删除", async () => {
-  await bind(); const applied = await apply(await plan()); assert.equal(applied.data.resource.status, "verified"); const previous = await db.prepare("SELECT binding_id,rule_id FROM cloudflare_waf_ownership").first();
-  assert.equal((await bind()).status, 200); assert.equal((await db.prepare("SELECT binding_id FROM cloudflare_waf_target_binding").first()).binding_id, previous.binding_id); assert.equal((await request(`${base}/waf`)).data.ownership.rule_id, previous.rule_id);
-  provider.sets[0].rules[0].action_parameters = { response: { status_code: 403 } }; assert.equal((await plan("disable")).status, 400); assert.equal((await request(`${base}/waf`)).data.protected, false); assert.equal(provider.writes.length, 1);
+test("退役WAF状态只读本地target登记，不把未探测状态当在线保护", async () => {
+  let result = await request(`${base}/waf`); assert.equal(result.status, 200); assert.equal(result.data.status, "unsupported_contract"); assert.equal(result.data.target_binding.status, "missing"); assert.equal(result.data.protected, false);
+  await legacyIntent(); provider.gets.length = 0;
+  result = await request(`${base}/waf`); assert.equal(result.data.target_binding.status, "verified"); assert.equal(result.data.target_binding.domain_id, "domain1"); assert.equal(result.data.target_binding.live_verified, false); assert.equal(result.data.target_binding.service_proof, false);
+  assert.equal((await request(`${base}/waf`, { overrideEnv: { ...env, CFKANBAN_CONTROL_WORKER_NAME: "another-worker" } })).data.target_binding.status, "target_mismatch");
+  assert.equal(provider.gets.length, 0); assert.equal(provider.writes.length, 0);
 });

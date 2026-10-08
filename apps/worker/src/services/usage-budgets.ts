@@ -36,32 +36,8 @@ export function usageBilling(env: WorkerEnv, now: number) {
   };
 }
 
-export function usageAlerts(values: UsageMetric[], billing: ReturnType<typeof usageBilling>, fresh: boolean) {
-  if (!fresh) return [];
-  const allowance = (key: string): number | null => {
-    if (key === "r2_class_a_operations") return billing.cycle_day === null ? null : 1_000_000;
-    if (key === "r2_class_b_operations") return billing.cycle_day === null ? null : 10_000_000;
-    if (billing.plan === "unknown") return null;
-    if (billing.plan === "paid" && billing.cycle_day === null) return null;
-    if (key === "workers_requests") return billing.plan === "free" ? 100_000 : 10_000_000;
-    if (key === "workers_cpu_microseconds") return billing.plan === "paid" ? 30_000_000_000 : null;
-    if (key === "d1_rows_read" && billing.plan === "free") return 5_000_000;
-    if (key === "d1_rows_written" && billing.plan === "free") return 100_000;
-    if (key === "d1_billing_rows_read" && billing.plan === "paid") return 25_000_000_000;
-    if (key === "d1_billing_rows_written" && billing.plan === "paid") return 50_000_000;
-    return null;
-  };
-  return values.flatMap(metric => {
-    if (metric.key.startsWith("r2_") && (billing.r2_standard_only_scope === "unknown" || (metric.scope === "account" && billing.r2_standard_only_scope !== "account"))) return [];
-    const limit = allowance(metric.key);
-    if (limit === null || metric.value === null || !metric.period_start || !metric.period_end) return [];
-    const percent = metric.value / limit * 100;
-    return percent < billing.warning_percent ? [] : [{
-      metric_key: metric.key, scope: metric.scope, level: percent >= 100 ? "reached" : "warning", value: metric.value,
-      allowance: limit, percent, period_start: metric.period_start, period_end: metric.period_end,
-    }];
-  }).slice(0, 16);
-}
+// 兼容旧调用方的投影；预算通知已退役，保留旧变量不会产生提醒。
+export function usageAlerts(_values: UsageMetric[], _billing: ReturnType<typeof usageBilling>, _fresh: boolean): [] { return []; }
 
 export function publicAccessSnapshot(env: WorkerEnv) {
   const raw = env.PUBLIC_ACCESS_HOSTNAME;

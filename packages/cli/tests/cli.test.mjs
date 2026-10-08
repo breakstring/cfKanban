@@ -129,22 +129,22 @@ test('verified Cloudflare refusals remain terminal CLI decisions through the rea
   });
 });
 test('an unverified Cloudflare refusal retains the original CLI request CAS and key for recovery',async t=> {
-  const f=await createMcpStateFixture(t);const writes=[];const zoneId='fixture-zone';let committed=false;let first=true;
+  const f=await createMcpStateFixture(t);const writes=[];const planId=randomUUID(),settings={history_enabled:true},plan={plan_id:planId,kind:'configuration',version:8,after:settings};let committed=false;let first=true;
   const fetchImpl=async(url,options)=> {
     url=new URL(url);assert.equal(url.origin,f.origin);
     if(url.pathname==='/.well-known/cfkanban-instance.json'||url.pathname==='/api/v1/me')return fakeFetch(f)(url,options);
-    if(options.method==='GET'){assert.equal(url.pathname,'/api/v1/admin/cloudflare');return Response.json({version:committed?8:7,target:{zone_id:committed?zoneId:null}});}
-    assert.equal(options.method,'PATCH');assert.equal(url.pathname,'/api/v1/admin/cloudflare/settings');
+    if(options.method==='GET'){if(url.pathname===`/api/v1/admin/cloudflare/plans/${planId}`)return Response.json(plan);assert.equal(url.pathname,'/api/v1/admin/cloudflare');return Response.json({version:committed?8:7});}
+    assert.equal(options.method,'POST');assert.equal(url.pathname,'/api/v1/admin/cloudflare/configuration/plan');
     writes.push({path:url.pathname,body:JSON.parse(options.body),key:new Headers(options.headers).get('idempotency-key')});committed=true;
     if(first){first=false;return Response.json({code:'FORBIDDEN',category:'authorization',source:'cloudflare_platform',message:'Unverified outer response',request_id:randomUUID(),retryable:false,recovery:'request_owner',details:{}},{status:403});}
-    return Response.json({resource:{version:8,target:{zone_id:zoneId}},idempotent_replay:true});
+    return Response.json({resource:plan,idempotent_replay:true});
   };
-  const options={...f,fetchImpl};const input={instanceId:f.instanceId,zone_id:zoneId,idempotencyKey:'original-cloudflare-key'};
-  const firstResult=await createCliRuntime(options).execute(api('admin cloudflare zone'),input);
+  const options={...f,fetchImpl};const input={instanceId:f.instanceId,settings,idempotencyKey:'original-cloudflare-key'};
+  const firstResult=await createCliRuntime(options).execute(api('admin cloudflare configuration-plan'),input);
   assert.equal(firstResult.status,503);assert.equal(firstResult.error.details.normalized_by,'client');assert.equal(firstResult.outcome_unknown,true);
-  await assert.rejects(createCliRuntime(options).execute(api('admin cloudflare zone'),{instanceId:f.instanceId,zone_id:null}),{code:'CLI_PENDING_WRITE_RECOVERY_REQUIRED'});assert.equal(writes.length,1);
+  await assert.rejects(createCliRuntime(options).execute(api('admin cloudflare configuration-plan'),{instanceId:f.instanceId,settings:{history_enabled:false}}),{code:'CLI_PENDING_WRITE_RECOVERY_REQUIRED'});assert.equal(writes.length,1);
   const recovered=await createCliRuntime(options).execute(command('operation recover'),{instanceId:f.instanceId,operationId:firstResult.recovery.operation_id});
-  assert.equal(recovered.operation.phase,'verified');assert.equal(recovered.operation.idempotency_key,input.idempotencyKey);assert.equal(writes.length,2);assert.deepEqual(writes[1],writes[0]);assert.deepEqual(writes[0].body,{zone_id:zoneId,expected_version:7});assert.equal(writes[0].key,input.idempotencyKey);
+  assert.equal(recovered.operation.phase,'verified');assert.equal(recovered.operation.idempotency_key,input.idempotencyKey);assert.equal(writes.length,2);assert.deepEqual(writes[1],writes[0]);assert.deepEqual(writes[0].body,{settings,expected_version:7});assert.equal(writes[0].key,input.idempotencyKey);
 });
 test('prepared crash evidence is retained and tombstone pre-read/after-read differs for restore and delete',async t=> {
   const f=await createMcpStateFixture(t);const calls=[];

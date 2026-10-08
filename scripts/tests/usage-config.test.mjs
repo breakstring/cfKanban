@@ -331,9 +331,13 @@ test("extended usage settings retain exact target and explicit billing/scope on 
   assert.deepEqual(usageVars(plan.usage_analytics.configuration), usageVars(extended));
   assert.equal(plan.binding_changes_allowed, false);
   const target = { accountId: config.account_id, databaseId: config.d1_database_id, workerName: "cfkanban-worker" };
-  for (const changes of [{ worker_name: "foreign-worker" }, { billing_cycle_day: 0 }, { warning_percent: 101 }, { account_totals: "true" }, { r2_standard_only_scope: "assumed" }]) {
-    assert.throws(() => normalizeUsageConfig({ ...extended, ...changes }, target), error => ["USAGE_RESOURCE_MISMATCH", "INVALID_USAGE_CONFIG"].includes(error.code));
+  const { warning_percent, ...activeSettings } = extended;
+  for (const changes of [{ worker_name: "foreign-worker" }, { billing_cycle_day: 0 }, { account_totals: "true" }, { r2_standard_only_scope: "assumed" }]) {
+    assert.throws(() => normalizeUsageConfig({ ...activeSettings, ...changes }, target), error => ["USAGE_RESOURCE_MISMATCH", "INVALID_USAGE_CONFIG"].includes(error.code));
   }
+  assert.throws(() => normalizeUsageConfig(extended, target), error => error.code === "CLOUDFLARE_FEATURE_RETIRED" && error.details.reason === "cloudflare_feature_retired");
+  input.usageAnalytics = { ...activeSettings, billing_cycle_day: 12 };
+  assert.equal(createInstanceUpgradePlan(input).usage_analytics.configuration.warning_percent, warning_percent);
   for (const [name, text] of [["USAGE_BILLING_CYCLE_DAY", "031"], ["USAGE_WARNING_PERCENT", "080"], ["USAGE_ACCOUNT_TOTALS_ENABLED", "1"], ["USAGE_R2_STANDARD_ONLY_SCOPE", "assumed"]]) {
     assert.throws(() => existingUsageConfig([{ type: "plain_text", name, text }], target), { code: "INVALID_USAGE_CONFIG" });
   }

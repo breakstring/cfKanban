@@ -1669,6 +1669,14 @@
       }
     },
     {
+      "command": "admin cloudflare local-operation",
+      "effect": "read",
+      "route": {
+        "kind": "api",
+        "operation": "getCloudflareLocalOperation"
+      }
+    },
+    {
       "command": "admin cloudflare verify",
       "effect": "write",
       "route": {
@@ -3735,7 +3743,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare notifications"
-        ]
+        ],
+        "note": "已退役兼容入口，从常规帮助隐藏；CLI本地拒绝，新服务返回cloudflare_feature_retired，不探测Cloudflare通知。"
       }
     },
     {
@@ -3747,7 +3756,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare waf"
-        ]
+        ],
+        "note": "从常规帮助隐藏；仅返回本地schema 27目标登记历史，顶层unsupported_contract，不主动读取供应商WAF状态、不声称当前防护。旧写恢复优先精确原key快照查询。"
       }
     },
     {
@@ -3775,6 +3785,19 @@
       }
     },
     {
+      "operation": "getCloudflareLocalOperation",
+      "method": "GET",
+      "path": "/api/v1/admin/cloudflare/local-operations/{request_key}",
+      "summary": "Get Cloudflare Local Operation",
+      "coverage": {
+        "kind": "api",
+        "commands": [
+          "admin cloudflare local-operation"
+        ],
+        "note": "仅以原Principal、固定退役操作和原key读取已提交D1快照与request_hash；不创建intent或调用供应商，404/未完成/过期都不能触发重发。"
+      }
+    },
+    {
       "operation": "verifyCloudflareControl",
       "method": "POST",
       "path": "/api/v1/admin/cloudflare/verify",
@@ -3783,7 +3806,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare verify"
-        ]
+        ],
+        "note": "只核验configuration与analytics；include_optional保留输入兼容，但不查询WAF、Billing或Notifications。"
       }
     },
     {
@@ -3795,7 +3819,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare zone"
-        ]
+        ],
+        "note": "已退役兼容入口；CLI本地拒绝新的Zone设置，新服务返回cloudflare_feature_retired，保留既有归属和历史记录。 旧prepared/unknown CLI journal仅查local-operation原快照；已有成功响应的committed记录在可信404时可补做只读状态核对，绝不重发退役写入。"
       }
     },
     {
@@ -3807,7 +3832,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare verify-operation"
-        ]
+        ],
+        "note": "历史WAF pending/unknown继续按原operation核实，核实不重复创建或删除规则。"
       }
     },
     {
@@ -3843,7 +3869,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare configuration-plan"
-        ]
+        ],
+        "note": "继续提供统计配置；warning_percent预算通知阈值已退役，只保留旧变量读回，不接受新配置。"
       }
     },
     {
@@ -3880,7 +3907,8 @@
             "file": "apps/web/src/components/CloudflareControlPanel.vue",
             "contains": "/api/v1/admin/cloudflare"
           }
-        ]
+        ],
+        "note": "Owner用量与费用页顶部提供保存并验证入口；普通CLI不接收Token，手工Secret入口仅指导CFKANBAN_API_TOKEN。"
       }
     },
     {
@@ -3903,7 +3931,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare waf-operation"
-        ]
+        ],
+        "note": "按原UUID请求key只读查询原WAF意图；404不是未提交证据，保留原请求及key，不生成替代写入。"
       }
     },
     {
@@ -3914,7 +3943,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare waf-connect"
-        ]
+        ],
+        "note": "已退役兼容入口；CLI与新服务拒绝新目标注册，精确旧private域名回执导入仅走部署恢复helper。 旧prepared/unknown CLI journal仅查local-operation原快照；已有成功响应的committed记录在可信404时可补做只读状态核对，绝不重发退役写入。"
       }
     },
     {
@@ -3925,7 +3955,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare waf-plan"
-        ]
+        ],
+        "note": "已退役常规配置入口；CLI本地拒绝新计划，新服务仅为已证明归属旧规则提供disable兼容计划，供明确授权的旧规则清理或域名回退。 旧prepared/unknown CLI journal仅查local-operation原快照；已有成功响应的committed记录在可信404时可补做只读状态核对，绝不重发退役写入。"
       }
     },
     {
@@ -3936,7 +3967,8 @@
         "kind": "api",
         "commands": [
           "admin cloudflare waf-apply"
-        ]
+        ],
+        "note": "仅兼容恢复与精确owned-rule disable；CLI显式原key只查询原意图，已有本地记录仅恢复原操作，无原key的新apply必须是同一归属旧规则的disable计划，旧enable计划也不得新发。404或退役不能证明原请求未提交。"
       }
     },
     {
@@ -3957,7 +3989,8 @@
             "file": "packages/skill-runtime/src/capability-delivery.mjs",
             "contains": "INTERNAL_SERVICE_PROOF_REQUIRED"
           }
-        ]
+        ],
+        "note": "保留供旧操作核实及受限owned-rule disable使用；不代表仍支持新WAF启用。"
       }
     }
   ],
@@ -4764,6 +4797,7 @@
           "admin cloudflare waf-apply",
           "admin cloudflare operation",
           "admin cloudflare token-operation",
+          "admin cloudflare local-operation",
           "admin cloudflare plan",
           "admin cloudflare verify",
           "admin cloudflare zone",
@@ -4773,7 +4807,7 @@
           "admin cloudflare configuration-plan",
           "admin cloudflare configuration-apply"
         ],
-        "note": "普通业务API按OpenAPI逐operation映射到固定公共noun/action；不公开任意路径透传。专用传输与真实浏览器例外见operations。"
+        "note": "普通业务API按OpenAPI逐operation映射到固定公共noun/action；不公开任意路径透传。目录保留退役兼容名称不代表开放新配置；通用Skill请求拒绝新WAF计划、目标、apply及预算通知设置，原WAF操作查询与核实保留。专用传输与真实浏览器例外见operations。"
       }
     },
     {
@@ -5297,7 +5331,8 @@
         "kind": "helper",
         "commands": [
           "deploy public-access plan"
-        ]
+        ],
+        "note": "保留custom-domain启用与明确授权回退；新的waf-enable/waf-disable计划入口已退役，域名回退仅可清理已证明归属旧规则。"
       }
     },
     {
@@ -5312,7 +5347,7 @@
           "deploy public-access apply",
           "deploy public-access resume"
         ],
-        "note": "Both public lifecycle commands create and authorize the exact task-bound journal, then invoke the same resumable implementation.",
+        "note": "公共CLI验证准确计划授权并沿用原journal。未dispatch的旧enable计划也拒绝创建；已dispatch的旧WAF只核实原结果，受限owned-rule disable可服务于明确授权的域名回退。",
         "evidence": [
           {
             "file": "packages/cli/src/workflows.mjs",
@@ -5331,7 +5366,8 @@
         "kind": "helper",
         "commands": [
           "deploy waf-target inspect"
-        ]
+        ],
+        "note": "保留schema 27归属与精确现有域名的只读核对，不开放新WAF配置。"
       }
     },
     {
@@ -5344,7 +5380,8 @@
         "kind": "helper",
         "commands": [
           "deploy waf-target plan"
-        ]
+        ],
+        "note": "仅精确既有private域名归属回执可生成升级恢复计划；不得登记无历史归属的新WAF目标。"
       }
     },
     {
@@ -5359,7 +5396,7 @@
           "deploy waf-target apply",
           "deploy waf-target resume"
         ],
-        "note": "公共CLI验证准确计划授权并创建/授权原journal，再调用安全目标登记helper",
+        "note": "公共CLI验证准确计划授权并创建或授权原journal，再调用安全目标登记helper；仅保留精确旧private回执导入及原操作恢复，不创建或删除Cloudflare规则。",
         "evidence": [
           {
             "file": "packages/cli/src/workflows.mjs",

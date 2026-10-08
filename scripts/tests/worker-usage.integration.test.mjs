@@ -12,7 +12,7 @@ let env;
 const owner = { kind: "bearer", isOwner: true };
 const now = Date.parse("2026-09-19T12:30:00Z");
 const configuration = { USAGE_ANALYTICS_ENABLED: "true", USAGE_ACCOUNT_ID: "account", USAGE_D1_DATABASE_ID: "database", USAGE_R2_BUCKET_NAME: "bucket", USAGE_ANALYTICS_TOKEN: "never-expose-this" };
-const data = (kind = "d1") => ({ data: { viewer: { accounts: [{ activity: [{ sum: kind === "d1" ? { rowsRead: 0, rowsWritten: 12 } : { requests: 3 } }], storage: [{ max: kind === "d1" ? { databaseSizeBytes: 100 } : { payloadSize: 20, metadataSize: 2, objectCount: 1 }, dimensions: { datetime: "2026-09-19T11:00:00Z" } }] }] } } });
+const data = (kind = "d1") => ({ data: { viewer: { accounts: [{ daily: [], activity: [{ sum: kind === "d1" ? { rowsRead: 0, rowsWritten: 12 } : { requests: 3 } }], storage: [{ max: kind === "d1" ? { databaseSizeBytes: 100 } : { payloadSize: 20, metadataSize: 2, objectCount: 1 }, dimensions: { datetime: "2026-09-19T11:00:00Z" } }] }] } } });
 const success = async (_url, options) => new Response(JSON.stringify(data(JSON.parse(options.body).query.includes("UsageD1") ? "d1" : "r2")));
 const read = (time = now) => readUsage(env, owner, time);
 before(async () => { await server.listen(); await worker.applyD1Migrations("DB"); env = await worker.getEnv(); });
@@ -32,16 +32,22 @@ test("用量配置优先统一 Token 并兼容旧 Secret，显式关闭仍禁止
   assert.equal(usageAnalyticsConfig(configuration).token, configuration.USAGE_ANALYTICS_TOKEN);
   assert.equal(usageAnalyticsConfig({ ...combined, USAGE_ANALYTICS_ENABLED: "false" }), null);
 });
+test("首次安装直接复用固定目标，显式关闭和目标漂移均不采集", async () => {
+  const configured = { ...env, CFKANBAN_API_TOKEN: "fixed-target-synthetic", CFKANBAN_CONTROL_ACCOUNT_ID: "fixed-account", CFKANBAN_CONTROL_DATABASE_ID: "fixed-database", CFKANBAN_CONTROL_WORKER_NAME: "fixed-worker" };
+  const config = usageAnalyticsConfig(configured); assert.equal(config.account, "fixed-account"); assert.equal(config.database, "fixed-database"); assert.equal(config.worker, "fixed-worker");
+  assert.equal(usageAnalyticsConfig({ ...configured, USAGE_ANALYTICS_ENABLED: "false" }), null);
+  for (const override of [{ USAGE_ACCOUNT_ID: "foreign" }, { USAGE_D1_DATABASE_ID: "foreign" }, { USAGE_WORKER_NAME: "foreign" }]) assert.equal(usageAnalyticsConfig({ ...configured, ...override }), null);
+});
 test("fixed endpoint, scope, UTC windows, latest capacity, zero vs unknown", async () => {
   Object.assign(env, configuration);
   assert.equal((await read()).cloudflare.status, "pending");
   const calls = [];
   await collectUsageStatistics(env, now, async (url, options) => { calls.push(JSON.parse(options.body)); assert.equal(url, "https://api.cloudflare.com/client/v4/graphql"); assert.equal(options.redirect, "manual"); return success(url, options); });
   assert.equal(calls.length, 2); assert.equal(calls[0].variables.database, "database"); assert.equal(calls[0].variables.date, "2026-09-19"); assert.equal(calls[1].variables.bucket, "bucket"); assert.equal(calls[1].variables.start, "2026-09-19T00:00:00.000Z"); assert.equal(calls[1].variables.storageEnd, "2026-09-19T12:00:00.000Z");
-  const result = await read(); assert.equal(result.cloudflare.status, "fresh"); assert.deepEqual(result.cloudflare.metrics.map((item) => item.value), [100, 0, 12, 22, 1, 3]); assert.equal(result.cloudflare.metrics[0].observed_at, "2026-09-19T11:00:00.000Z"); assert.equal(result.cloudflare.metrics[1].observed_at, null);
+  const result = await read(); assert.equal(result.cloudflare.status, "fresh"); assert.deepEqual(result.cloudflare.metrics.map((item) => item.value), [100, 0, 12, 22, 1, 3, null, null, null]); assert.equal(result.cloudflare.metrics[0].observed_at, "2026-09-19T11:00:00.000Z"); assert.equal(result.cloudflare.metrics[1].observed_at, null);
   assert.equal((await read(now + 7200001)).cloudflare.status, "stale");
   assert.ok(!JSON.stringify(result).includes(configuration.USAGE_ANALYTICS_TOKEN));
-  await collectUsageStatistics(env, now + 15 * 60_000, async () => new Response(JSON.stringify({ data: { viewer: { accounts: [{ activity: [], storage: [] }] } } })));
+  await collectUsageStatistics(env, now + 15 * 60_000, async () => new Response(JSON.stringify({ data: { viewer: { accounts: [{ activity: [], storage: [], daily: [] }] } } })));
   assert.ok((await read()).cloudflare.metrics.every((item) => item.value === null));
 });
 test("failures retain successful snapshot and expose only safe categories", async () => {
@@ -132,7 +138,7 @@ test("HTTP owner bearer/admin cookie access, no-store, CSRF and validation", asy
   await env.DB.prepare("UPDATE usage_statistics SET attempted_at=?1,collected_at=NULL,error=NULL").bind(now-60000).run();
   const interrupted=await readUsage(env,owner,now); assert.equal(interrupted.cloudflare.status,"error"); assert.equal(interrupted.cloudflare.error,"collection_interrupted"); assert.equal(interrupted.cloudflare.refreshing,false);
   await env.DB.prepare("UPDATE usage_statistics SET collected_at=?1").bind(now-120000).run();
-  await collectUsageStatistics(env,now,async () => new Response(JSON.stringify({data:{viewer:{accounts:[{activity:[],storage:[]}]}}})),"stale");
+  await collectUsageStatistics(env,now,async () => new Response(JSON.stringify({data:{viewer:{accounts:[{activity:[],storage:[],daily:[]}]}}})),"stale");
   assert.equal((await readUsage(env,owner,now)).cloudflare.collected_at,new Date(now).toISOString());
 });
 

@@ -190,57 +190,48 @@ test("原 key 精确查找较早保存，不将 latest operation、其他调用�
   assert.equal((await request(`${base}/secret-operations/${key}`)).status, 404);
   assert.equal(provider.requests.length, calls); assert.equal(provider.mutations.length, writes);
 });
-test("默认及显式 false 验证仅检查连接和统计，其他能力须主动请求", async () => {
-  await request(`${base}/settings`, { method: "PATCH", body: { zone_id: zoneId, expected_version: 1 } });
+test("所有验证选项只访问配置和统计，退役能力不再请求供应商", async () => {
   const unified = { ...env, CFKANBAN_API_TOKEN: configurationToken };
-  for (const body of [{}, { include_optional: false }]) {
+  for (const body of [{}, { include_optional: false }, { include_optional: true }]) {
     provider.requests.length = 0;
     const verified = await request(`${base}/verify`, { method: "POST", body, overrideEnv: unified });
     assert.equal(verified.status, 200, JSON.stringify(verified.data));
-    assert.deepEqual(verified.data.resource.capabilities, { configuration: "verified", analytics: "verified", notifications: "unverified", waf: "unverified", billing: "unverified" });
+    assert.deepEqual(verified.data.resource.capabilities, { configuration: "verified", analytics: "verified", notifications: "unsupported_contract", waf: "unsupported_contract", billing: "unsupported_contract" });
     assert.ok(provider.requests.some(call => call.path === "/graphql")); assert.ok(provider.requests.some(call => call.path.endsWith("/deployments")));
     assert.ok(provider.requests.every(call => call.path === "/graphql" || call.path.startsWith(`/accounts/${target.account_id}/workers/scripts/${target.worker_name}/`)));
   }
-  const optional = await request(`${base}/verify`, { method: "POST", body: { include_optional: true }, overrideEnv: unified });
-  assert.equal(optional.status, 200, JSON.stringify(optional.data));
-  assert.deepEqual(optional.data.resource.capabilities, { configuration: "verified", analytics: "verified", notifications: "verified", waf: "verified", billing: "verified" });
-  for (const suffix of ["/alerting/v3/policies", "/billable-usage/info", `/zones/${zoneId}`, "/entrypoint"]) assert.ok(provider.requests.some(call => call.path.endsWith(suffix)));
-  provider.requests.length = 0;
   assert.equal((await request(`${base}/verify`, { method: "POST", body: { include_optional: "true" } })).status, 400);
-  assert.equal((await request(`${base}/verify`, { method: "POST", body: { include_optional: true, token: nextToken } })).status, 400);
-  assert.equal(provider.requests.length, 0); assert.equal(provider.mutations.length, 0);
+  assert.equal(provider.mutations.length, 0);
 });
-test("主动检查保留可选权限缺失，核心刷新沿用结果；新连接 intent 清除旧结果", async () => {
-  await request(`${base}/settings`, { method: "PATCH", body: { zone_id: zoneId, expected_version: 1 } });
-  const unified = { ...env, CFKANBAN_API_TOKEN: configurationToken }, optional = path => path.includes("/alerting/") || path.includes("/billable-usage/") || path.startsWith("/zones/");
-  provider.rejectRequest = ({ path }) => optional(path);
-  const verified = await request(`${base}/verify`, { method: "POST", body: { include_optional: true }, overrideEnv: unified });
-  assert.equal(verified.status, 200, JSON.stringify(verified.data));
-  assert.deepEqual(verified.data.resource.capabilities, { configuration: "verified", analytics: "verified", notifications: "permission_denied", waf: "permission_denied", billing: "permission_denied" });
-  for (const suffix of ["/alerting/v3/policies", "/billable-usage/info", `/zones/${zoneId}`]) assert.ok(provider.requests.some(call => call.path.endsWith(suffix)));
-  provider.requests.length = 0;
-  const core = await request(`${base}/verify`, { method: "POST", body: {}, overrideEnv: unified });
-  assert.deepEqual(core.data.resource.capabilities, verified.data.resource.capabilities); assert.ok(provider.requests.every(call => !optional(call.path)));
-  const saved = await save("connection", nextToken, { overrideEnv: unified }); assert.equal(saved.data.resource.status, "unknown");
-  assert.equal((await db.prepare("SELECT capabilities_json FROM cloudflare_control_settings").first()).capabilities_json, "{}");
-  const next = { ...env, CFKANBAN_API_TOKEN: nextToken };
-  const recovered = await request(`${base}/operations/${saved.data.resource.operation_id}/verify`, { method: "POST", body: {}, overrideEnv: next }); assert.equal(recovered.data.resource.status, "verified");
-  provider.requests.length = 0;
-  const fresh = await request(`${base}/verify`, { method: "POST", body: {}, overrideEnv: next });
-  assert.deepEqual(fresh.data.resource.capabilities, { configuration: "verified", analytics: "verified", notifications: "unverified", waf: "unverified", billing: "unverified" });
-  assert.ok(provider.requests.every(call => !optional(call.path))); assert.equal(provider.mutations.length, 1);
+
+test("Dashboard替换Token或固定目标后旧能力快照失效，身份摘要不对外返回", async () => {
+  const unified = { ...env, CFKANBAN_API_TOKEN: configurationToken };
+  await request(`${base}/verify`, { method: "POST", body: {}, overrideEnv: unified });
+  const before = (await request(base, { overrideEnv: unified })).data;
+  assert.equal(before.capabilities.configuration, "verified"); assert.ok(before.verified_at);
+  const stored = await db.prepare("SELECT capabilities_json FROM cloudflare_control_settings").first();
+  assert.match(JSON.parse(stored.capabilities_json).credential_identity, /^[a-f0-9]{64}$/);
+  assert.ok(!JSON.stringify(before).includes("credential_identity")); assert.ok(!stored.capabilities_json.includes(configurationToken));
+  for (const changed of [{ ...unified, CFKANBAN_API_TOKEN: nextToken }, { ...unified, CFKANBAN_CONTROL_DATABASE_ID: randomUUID() }]) {
+    const result = (await request(base, { overrideEnv: changed })).data;
+    assert.equal(result.capabilities.configuration, "unverified"); assert.equal(result.capabilities.analytics, "unverified"); assert.equal(result.verified_at, null);
+  }
+  await db.prepare("UPDATE cloudflare_control_settings SET capabilities_json=?1").bind(JSON.stringify({ configuration: "verified", analytics: "verified" })).run();
+  assert.equal((await request(base, { overrideEnv: unified })).data.capabilities.configuration, "unverified");
 });
-test("验证期间 Zone 更新拒绝提交过期能力快照", async () => {
+
+test("验证期间另一个设置操作拒绝提交过期能力快照", async () => {
   let release, started; const pending = new Promise(resolve => { release = resolve; }), reading = new Promise(resolve => { started = resolve; });
   router = new Router(); registerCloudflareControlRoutes(router, { fetch: async (url, init) => { if (new URL(url).pathname.endsWith("/graphql")) { started(); await pending; } return provider.fetch(url, init); } });
   const verification = request(`${base}/verify`, { method: "POST", body: {}, overrideEnv: { ...env, CFKANBAN_API_TOKEN: configurationToken } });
   await reading;
-  try { const updated = await request(`${base}/settings`, { method: "PATCH", body: { zone_id: zoneId, expected_version: 1 } }); assert.equal(updated.status, 200); }
+  try { const updated = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: true }, expected_version: 1 } }); assert.equal(updated.status, 200); }
   finally { release(); }
   const stale = await verification; assert.equal(stale.status, 409, JSON.stringify(stale.data));
-  const stored = await db.prepare("SELECT version,zone_id,capabilities_json,verified_at FROM cloudflare_control_settings").first();
-  assert.deepEqual(stored, { version: 2, zone_id: zoneId, capabilities_json: "{}", verified_at: null }); assert.equal(provider.mutations.length, 0);
+  const stored = await db.prepare("SELECT version,capabilities_json,verified_at FROM cloudflare_control_settings").first();
+  assert.deepEqual(stored, { version: 2, capabilities_json: "{}", verified_at: null }); assert.equal(provider.mutations.length, 0);
 });
+
 test("统一 connection 一次自保存并保留旧绑定，非秘密 intent 兼容 schema 26", async () => {
   const oldNames = ["CFKANBAN_CONFIGURATION_TOKEN", "CFKANBAN_CONTROL_TOKEN", "USAGE_ANALYTICS_TOKEN"];
   provider.versions.get(provider.active).bindings.push(...oldNames.slice(1).map(name => ({ name, type: "secret_text" })));
@@ -276,7 +267,7 @@ test("统一 binding 准确 presence，旧用途投影兼容；所有能力优�
   provider.rejectRequest = ({ path, authorization }) => authorization !== `Bearer ${nextToken}` || path.endsWith("/policies") || path === "/graphql";
   const verified = await request(`${base}/verify`, { method: "POST", body: { include_optional: true }, overrideEnv: unified });
   assert.equal(verified.status, 200, JSON.stringify(verified.data));
-  assert.deepEqual(verified.data.resource.capabilities, { configuration: "verified", notifications: "permission_denied", waf: "missing", billing: "verified", analytics: "permission_denied" });
+  assert.deepEqual(verified.data.resource.capabilities, { configuration: "verified", notifications: "unsupported_contract", waf: "unsupported_contract", billing: "unsupported_contract", analytics: "permission_denied" });
   assert.equal(provider.mutations.length, 0);
 });
 test("配置读取故障独立返回，不阻断统计、通知、账务及WAF能力结果", async () => {
@@ -284,7 +275,7 @@ test("配置读取故障独立返回，不阻断统计、通知、账务及WAF�
   provider.failureStatus = 503; provider.rejectRequest = ({ path }) => path.endsWith("/deployments");
   const verified = await request(`${base}/verify`, { method: "POST", body: { include_optional: true }, overrideEnv: { ...env, CFKANBAN_API_TOKEN: nextToken } });
   assert.equal(verified.status, 200, JSON.stringify(verified.data));
-  assert.deepEqual(verified.data.resource.capabilities, { configuration: "unavailable", analytics: "verified", notifications: "verified", waf: "verified", billing: "verified" });
+  assert.deepEqual(verified.data.resource.capabilities, { configuration: "unavailable", analytics: "verified", notifications: "unsupported_contract", waf: "unsupported_contract", billing: "unsupported_contract" });
   assert.equal(provider.mutations.length, 0);
 });
 test("旧 analytics operation 按精确旧 Secret hash 读回，统一值不能冒充旧绑定", async () => {
@@ -346,7 +337,7 @@ test("限流计划冻结原生namespace，外部所有绑定逐项inherit；候�
   const readback = await request(`${base}/operations/${applied.data.resource.operation_id}/verify`, { method: "POST", body: {} }); assert.equal(readback.data.resource.status, "verified", JSON.stringify(readback.data)); assert.equal(provider.mutations.length, 1);
 });
 test("历史与analytics设置仅从固定目标派生，保留旧配置并验证当前部署", async () => {
-  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: true, analytics_enabled: true, billing_plan: "free", warning_percent: 75 }, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.after.history_enabled, true);
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: true, analytics_enabled: true, billing_plan: "free" }, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.after.history_enabled, true);
   const applied = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version } }); assert.equal(applied.status, 200, JSON.stringify(applied.data)); assert.equal(applied.data.resource.status, "verified", JSON.stringify(applied.data));
   const bindings = provider.versions.get(provider.active).bindings;
   for (const [name, value] of [["USAGE_ACCOUNT_ID", target.account_id], ["USAGE_WORKER_NAME", target.worker_name], ["USAGE_D1_DATABASE_ID", target.database_id], ["USAGE_HISTORY_ENABLED", "true"]]) assert.equal(bindings.find(binding => binding.name === name).text, value);
@@ -358,12 +349,13 @@ test("供应商新版本漂移或不支持的设置均不能产生假成功", as
   provider.versions.get(provider.active).unsupported_future_setting = true;
   assert.equal((await request(`${base}/rate-limits/plan`, { method: "POST", body: { scope: "instance", limit: 501, period_seconds: 60, expected_version: (await current()).version } })).status, 400);
 });
-test("Notifications仅展示实际公开元数据；WAF规则缺失与Zone归属不符分别报告", async () => {
-  const notifications = await request(`${base}/notifications`); assert.equal(notifications.status, 200); assert.deepEqual(notifications.data.policies[0].emails, ["fixture@example.test"]); assert.equal(notifications.data.budget.status, "unsupported_contract"); assert.ok(!("amount_usd" in notifications.data.policies[0]));
-  await request(`${base}/settings`, { method: "PATCH", body: { zone_id: zoneId, expected_version: 1 } }); provider.wafMissing = true;
-  const absent = await request(`${base}/waf`); assert.equal(absent.data.status, "verified"); assert.equal(absent.data.protected, false); assert.equal(absent.data.owned_rule, null);
-  provider.foreignZone = true; const foreign = await request(`${base}/waf`); assert.equal(foreign.data.status, "target_mismatch"); assert.equal(foreign.data.protected, false); assert.equal(provider.mutations.length, 0);
+test("通知、Zone变更和新提醒设置退役，拒绝时不访问供应商", async () => {
+  for (const [path, options] of [["notifications", {}], ["settings", { method: "PATCH", body: { zone_id: zoneId, expected_version: 1 } }], ["configuration/plan", { method: "POST", body: { settings: { warning_percent: 90 }, expected_version: 1 } }]]) {
+    const response = await request(`${base}/${path}`, options); assert.equal(response.status, 400); assert.equal(response.data.details.reason, "cloudflare_feature_retired");
+  }
+  assert.equal(provider.requests.length, 0); assert.equal(provider.mutations.length, 0);
 });
+
 test("大响应和安全事件失败均不会触发云写；数据库意图保持原子", async () => {
   provider.oversized = true; assert.ok((await save("control", nextToken)).status >= 400); provider.oversized = false;
   await db.prepare("CREATE TRIGGER cloudflare_test_reject BEFORE INSERT ON events WHEN NEW.type='instance.cloudflare-control-intent' BEGIN SELECT RAISE(ABORT,'fixture audit failure'); END").run();
@@ -403,20 +395,20 @@ for (const kind of ["control", "analytics"]) test(`旧${kind}用途先保存，�
   assert.equal(confirmed.data.resource.status, "verified");
   const verified = await request(`${base}/verify`, { method: "POST", body: { include_optional: true }, overrideEnv: configured });
   assert.equal(verified.status, 200, JSON.stringify(verified.data)); assert.equal(verified.data.resource.capabilities.configuration, "verified");
-  if (kind === "control") { assert.equal(verified.data.resource.capabilities.notifications, "permission_denied"); assert.equal(verified.data.resource.capabilities.billing, "permission_denied"); }
-  else { assert.equal(verified.data.resource.capabilities.analytics, "permission_denied"); assert.equal(verified.data.resource.capabilities.notifications, "verified"); }
+  if (kind === "control") { assert.equal(verified.data.resource.capabilities.notifications, "unsupported_contract"); assert.equal(verified.data.resource.capabilities.billing, "unsupported_contract"); }
+  else { assert.equal(verified.data.resource.capabilities.analytics, "permission_denied"); assert.equal(verified.data.resource.capabilities.notifications, "unsupported_contract"); }
   assert.equal(provider.mutations.length, 1);
 });
 test("旧部署未显式设置analytics flag时，局部修改不关闭既有有效采集", async () => {
   provider.versions.get(provider.active).bindings.push({ name: "USAGE_ACCOUNT_ID", type: "plain_text", text: target.account_id }, { name: "USAGE_D1_DATABASE_ID", type: "plain_text", text: target.database_id }, { name: "USAGE_ANALYTICS_TOKEN", type: "secret_text" });
-  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { warning_percent: 90 }, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.before.analytics_enabled, true); assert.equal(planned.data.resource.after.analytics_enabled, true);
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: true }, expected_version: 1 } }); assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.before.analytics_enabled, true); assert.equal(planned.data.resource.after.analytics_enabled, true);
   const applied = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version } }); assert.equal(applied.data.resource.status, "verified"); assert.equal(provider.versions.get(provider.active).bindings.find(binding => binding.name === "USAGE_ANALYTICS_ENABLED").text, "true");
 });
 test("统一 Secret 的隐式 analytics 开关被局部设置计划保留，其他旧 Secret 仍逐项 inherit", async () => {
   provider.versions.get(provider.active).bindings.push({ name: "USAGE_ACCOUNT_ID", type: "plain_text", text: target.account_id }, { name: "USAGE_D1_DATABASE_ID", type: "plain_text", text: target.database_id }, { name: "CFKANBAN_API_TOKEN", type: "secret_text" }, { name: "CFKANBAN_CONTROL_TOKEN", type: "secret_text" });
   const unified = { ...env, CFKANBAN_API_TOKEN: nextToken };
   provider.rejectRequest = ({ authorization }) => authorization !== `Bearer ${nextToken}`;
-  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { warning_percent: 90 }, expected_version: 1 }, overrideEnv: unified });
+  const planned = await request(`${base}/configuration/plan`, { method: "POST", body: { settings: { history_enabled: true }, expected_version: 1 }, overrideEnv: unified });
   assert.equal(planned.status, 200, JSON.stringify(planned.data)); assert.equal(planned.data.resource.before.analytics_enabled, true); assert.equal(planned.data.resource.after.analytics_enabled, true);
   const applied = await request(`${base}/configuration/apply`, { method: "POST", body: { plan_id: planned.data.resource.plan_id, expected_version: planned.data.resource.version }, overrideEnv: unified });
   assert.equal(applied.data.resource.status, "verified", JSON.stringify(applied.data));

@@ -6,7 +6,6 @@ These capabilities require Owner instance administration. Workspace and Project 
 
 - D1-backed application settings, including the homepage notice, attachment capacity, Public Join configuration, and permissions, need no Worker redeployment after a successful save. Subsequent requests use the new configuration according to the relevant read and cache rules; the page may need refreshing.
 - Worker configuration changes, including `USAGE_*` variables, Secrets, rate-limit bindings, and CPU limits, require a Worker version deployment.
-- WAF rules and Budget Alerts policies changed in the provider control plane do not themselves require redeploying the Worker. Read back the provider state after saving.
 
 ## Homepage instance notice
 
@@ -19,7 +18,7 @@ Verify both languages after saving.
 
 The notice is public to signed-out visitors. Each language accepts up to 500 Unicode characters and displays plain text. An empty value uses fallback text. Missing Chinese falls back to configured English, then the built-in notice. When editing one language, the Agent preserves the current value of the other.
 
-**In the Web UI:** **Administration → Overview → Homepage instance notice** automatically shows the active content when opened. Edit it and choose **Save**. Retry or review actions appear only if loading fails or a save conflicts; your edits are retained. Restoring defaults clears the draft; save it to apply the change.
+**In the Web UI:** **Administration → Instance settings → Homepage instance notice** automatically shows the active content when opened. Edit it and choose **Save**. Retry or review actions appear only if loading fails or a save conflicts; your edits are retained. Restoring defaults clears the draft; save it to apply the change.
 
 After saving, the Agent verifies both language versions and the homepage shows the corresponding text. Keep private project details, credentials, and recovery links out of the notice.
 
@@ -39,7 +38,7 @@ Title accepts up to 200 Unicode characters and body up to 4000. Published text c
 
 ## Announce successful upgrades automatically
 
-**In the Web UI:** **Administration → Overview → Version updates** includes **Automatically announce verified upgrades**. It starts off. Save the setting to enable or disable it; Owner instance administration is required.
+**In the Web UI:** **Administration → Versions & updates** includes **Automatically announce verified upgrades**. It starts off. Save the setting to enable or disable it; Owner instance administration is required.
 
 ```text
 Use $cfkanban-admin to turn on automatic announcements after verified site upgrades.
@@ -61,36 +60,24 @@ The upgrade and announcement results are reported separately. A failed announcem
 Use $cfkanban-admin to show this instance's usage and remaining attachment capacity, including when the data was last collected.
 ```
 
-Usage separates attachment capacity from optional Cloudflare metrics. Data may be delayed; unknown does not mean zero, and site usage is not account-wide usage or remaining free allowance.
+**In the Web UI:** Open **Administration → Usage & quotas**. Overview keeps a read-only summary. The usage page has the Token form at the top, today's usage and daily history together, attachment capacity, and request frequency at the bottom.
 
-Overview starts with the Cloudflare connection and a single Token setting, followed by usage summaries and routine administration. **Usage & limits** contains full metrics, daily history, attachment capacity, and settings for request rates, analytics, reminders, the declared plan, and billing cycle.
+Enter one Cloudflare API Token and choose **Save**. A persistent **Token saved** status means the empty input is ready for a replacement; leaving it blank keeps the saved value. The Token is never returned by the API or restored as a browser draft. The page automatically confirms the save, checks configuration and analytics, and loads the sections. There are no separate check, read, or refresh buttons. A failed capability does not undo a successful save, and an unconfirmed write keeps its original record and blocks another change while the system checks it.
 
-Optional metrics separate Workers requests/CPU, D1 read/write rows, and billing-cycle R2 Class A/B. Explicitly enabled account totals appear separately. Snapshot bars compare metrics with matching units and observation windows; returned allowance reminders show contribution progress. An absent reminder does not mean zero usage or sufficient remaining allowance. Expand **Data details** to inspect exact windows and observation times.
+The account, Worker, and database are fixed deployment targets. Saving through the page needs the current Worker's Editor permission; analytics needs Account Analytics Read for the displayed account. A configuration read alone does not prove every write permission. See [Token setup and recovery](../deployment/optional.md) for exact permissions and the Cloudflare Secret recovery route. Never send Tokens to chat or store them in browser storage or plaintext Worker variables. Legacy Secrets are preserved during upgrades.
 
-**Daily usage history** separately offers 7-, 30-, and 90-day views of complete UTC days, excluding today. History collection starts disabled. In this page's usage settings, select **Daily usage history**, change it, review the before/after values, then **Confirm save**; the connection's configuration capability must be checked first. Enabled collection reuses the existing maintenance trigger, while instances without one can collect a selected day manually. **Collect selected day** accepts only one of the last seven complete UTC days. Reading charts does not collect or poll in the background. Missing days and unknown values remain gaps; a real zero remains zero. Instance and account scopes remain separate. Storage and object counts retain their actual observation times, rather than representing daily consumption or GB-month billing.
+Today's metrics use the UTC day, including on Paid plans. Billing-cycle totals and precise observation times are in **Data details**. Storage is an observed capacity, rather than daily consumption. Unknown does not mean zero, and instance usage does not represent account-wide usage or remaining allowance. Explicitly enabled account totals appear separately.
 
-**Cloudflare plan** and **billing cycle** are analytics configuration verified by the Owner, not a cfKanban subscription or billing cycle. A missing monthly cycle does not prevent existing daily metrics; unknown does not mean Cloudflare has no subscription. R2 free comparisons also require a verified Standard-only scope.
+**Daily usage history** offers 7-, 30-, and 90-day views of complete UTC days, excluding today. It starts disabled; choose its setting, review the change, and confirm to enable it. Enabled collection reuses the existing maintenance trigger. Entering or returning to the page can automatically collect at most one missing day from the last seven complete UTC days, with a 60-second cooldown; it does not loop through all gaps. If a collection response is lost, the page reads the result without submitting it again. Missing days and unknown values remain gaps.
 
-The **cfKanban usage reminder threshold** is a percentage of shared allowances, not a USD budget or remaining quota. Cloudflare Budget Alerts separately notify selected email recipients when cumulative usage-based account charges exceed a USD budget threshold. The public API contract has not confirmed the USD budget fields or editing operation, so the Owner page links to Cloudflare's budget dashboard. It can read notification policy names, enabled states, alert types, and recipient emails with the appropriate authorization; these fields do not prove a USD budget amount. A permission error or absent policy projection does not mean no budget alert is configured.
-
-Enter one API Token in **Administration → Overview → Cloudflare connection**, then choose **Save Token**. It is entered and saved once, in an ordinary encrypted [Worker Secret](https://developers.cloudflare.com/workers/configuration/secrets/), supported on Free without Secrets Store. The input clears after submission; the API never returns the Token or restores it as a browser draft. Once activation is confirmed, a small card offers capability details, permissions, resource scopes, and **Replace Token**. Green checks mean an actual check passed, red crosses mean a definite denial or target mismatch, and unchecked functions remain neutral. Legacy purpose-specific authorization remains compatible, and its Secrets are preserved.
-
-The account, Worker, and database are fixed deployment targets. Older instances without these settings need an approved upgrade first. The account-owned Token requires at least [Editor for this Worker only](https://developers.cloudflare.com/workers/authorization/workers/), including code, deployment, and Secret management authority. Analytics additionally requires **Account Analytics Read** for the displayed Account. Notifications, billing, and WAF reads use optional read permissions; WAF enable/disable additionally requires Edit for the exact Zone. Each capability is verified separately; a missing permission affects its own capability, and saving a Token does not establish every capability. See [Optional deployment configuration](../deployment/optional.md) for creation steps, exact permissions, and recovery. Never send Tokens to chat or save them in browser storage or plaintext Worker variables.
-
-After activation, the page checks configuration and analytics. Notifications, billing, and domain protection are checked through **Check other functions** or by opening the relevant section. An Owner can sign in from another device and use supported controls without importing the Token again. Request-rate and usage settings explain missing configuration authorization and link back to the Overview connection; existing read-only analytics remain visible. USD budgets remain managed in Cloudflare, whose official dashboard link does not require a connection first.
-
-Step one saves and confirms the Secret; step two checks capabilities independently. A failed item does not block saving or replace other results. An incomplete overall check preserves existing results and reports that it did not finish. A definite failure before any save was dispatched is reported as rejection; otherwise, choose **Check save result** for an unconfirmed save. A lost response is traced using your original request, and a record not yet found does not prove the save never happened. Inputs stay empty and writes stay locked until confirmed; the Token is never resent automatically. Each of the five native request-limit scopes uses **Change limit**, before/after review, then **Confirm save**. Usage settings also require confirmation before the change. Limits require positive integers and a 10- or 60-second window, and update the binding and displayed policy together. CPU settings and fixed query-concurrency limits are not edited by these forms.
-
-The **Usage & limits → Domain & access protection** section reads target, ownership, inventory and coverage independently. On supported schemas, verify/connect the current domain, review the enable or disable plan, choose how to coexist with existing exemptions, then confirm. An existing entrypoint is reused; an absent entrypoint is created under the plan. Only the verified tool-owned rule can be removed; manual rules, their order and the domain are retained. Saving a Token never enables WAF. Unknown writes remain blocked until the original operation is checked; only verified configuration is reported as complete. A rule alone does not establish full coverage or a live edge test. Existing domains without private domain receipts can register exact non-secret target evidence without being recreated or taken over. See the [domain guide](../deployment/optional.md) for permissions, older schemas and safe runtime fallback.
+In **Data details**, open an analytics setting to edit it in place. The declared Cloudflare plan and UTC billing cycle describe your verified Cloudflare configuration, not a cfKanban subscription. Missing cycle information leaves monthly totals unknown but does not prevent daily usage. Account totals remain an opt-in. Budget notifications and WAF management have been removed from this flow; existing provider rules and old operation records are preserved for safe upgrades and recovery.
 
 ```sh
 cfkanban admin usage show --mode manual --json --no-interactive
 cfkanban admin rate-limits show --json --no-interactive
 ```
 
-**In the Web UI:** **Administration → Usage & limits** → **Refresh usage**. The overview summary also links to this tab. Check **Data details** for collection times. Repeated refreshes within a short period may show the same data.
-
-Attachment capacity includes uploading, uploaded, and deleted files awaiting cleanup. If Cloudflare metrics show **Not configured**, see [Optional deployment configuration](../deployment/optional.md).
+Agent queries and automatic page loads share the same cache; a recent successful snapshot can be reused. Attachment capacity includes uploading, uploaded, and deleted files awaiting cleanup. If metrics remain unavailable, the page shows the affected capability and the next step beside the Token or data area.
 
 ## Choose attachment capacity
 
@@ -101,9 +88,9 @@ Check current usage first, then confirm that the setting has taken effect.
 
 You can explicitly choose unlimited capacity. Unset capacity blocks new uploads. Changing it requires Owner access. Uploading also needs attachment storage enabled; setting capacity does not enable it automatically.
 
-**In the Web UI:** Open **Administration → Usage & limits → Attachment application budget → Set limit**. Choose a mode, enter finite capacity in MiB, and verify after saving. `1 GiB = 1024 MiB`. Lowering the limit keeps existing files and pauses new uploads above the limit.
+**In the Web UI:** Open **Administration → Usage & quotas → Attachment storage limit → Set limit**. Choose a mode, enter finite capacity in MiB, and verify after saving. `1 GiB = 1024 MiB`. Lowering the limit keeps existing files and pauses new uploads above the limit.
 
-This limit controls uploads in cfKanban and is labeled **Attachment application budget** in the Web UI. It is neither actual R2 storage use nor a Cloudflare billing cap. Deleted files release capacity only after cleanup succeeds.
+This limit controls uploads in cfKanban and is labeled **Attachment storage limit** in the Web UI. It is neither actual R2 storage use nor a Cloudflare billing cap. Deleted files release capacity only after cleanup succeeds.
 
 ## Read activity records
 
@@ -120,7 +107,7 @@ Limit the results to this project and explain who changed whose permissions.
 Use $cfkanban-admin to check the address Agents use to connect to this instance and its current request-rate limits without changing them.
 ```
 
-**In the Web UI:** **Overview → Service information** displays the release and instance addresses. **Usage & limits → Request-rate limits** shows current limits and lets an Owner with checked configuration authorization change them and confirm the save.
+**In the Web UI:** **Overview → Service information** displays the release and instance addresses. **Usage & quotas → Request frequency** shows current limits and loads the current settings automatically. An Owner can choose a limit, review the before/after values, and confirm the save.
 
 The **preferred API origin** tells Agents which connection address to prefer. Once the new domain is configured, ask your Agent to check the proposed address change:
 
@@ -129,7 +116,7 @@ Use $cfkanban-admin to verify that https://<new-domain> reaches this same instan
 If verification succeeds, propose the connection address change and check both the old and new addresses.
 ```
 
-The Agent checks the new address before sending it any credentials. Domain bindings, DNS, and request-rate changes are [deployment operations](../deployment/optional.md); changing the application address alone does not configure them.
+The Agent checks the new address before sending it any credentials. Domain bindings and DNS require a separate [deployment plan](../deployment/optional.md); changing the application address alone does not configure them. Supported request limits can be changed on the usage page.
 
 ## If saving fails
 

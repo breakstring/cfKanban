@@ -1,7 +1,7 @@
 import { requireOwnerControl } from "../kernel/authorization.ts";
 import type { AuthContext, JsonValue, WorkerEnv } from "../kernel/types.ts";
 import { readAttachmentStorage } from "./attachment-settings.ts";
-import { publicAccessSnapshot, r2OperationClass, usageAlerts, usageBilling, type UsageMetric } from "./usage-budgets.ts";
+import { publicAccessSnapshot, r2OperationClass, usageBilling, type UsageMetric } from "./usage-budgets.ts";
 
 const HOUR = 3_600_000;
 const FRESHNESS_MS = 15 * 60_000;
@@ -13,12 +13,15 @@ interface Snapshot { attempted_at: number | null; collected_at: number | null; e
 class AnalyticsError extends Error { readonly code: string; constructor(code: string) { super(code); this.code = code; } }
 function config(env: WorkerEnv) {
   const token = env.CFKANBAN_API_TOKEN ?? env.USAGE_ANALYTICS_TOKEN;
-  if (env.USAGE_ANALYTICS_ENABLED === "false" || !env.USAGE_ACCOUNT_ID?.trim() || !env.USAGE_D1_DATABASE_ID?.trim() || !token?.trim()) return null;
-  return { account: env.USAGE_ACCOUNT_ID, database: env.USAGE_D1_DATABASE_ID, bucket: env.USAGE_R2_BUCKET_NAME || null, token,
-    worker: env.USAGE_WORKER_NAME || null, cycle: env.USAGE_BILLING_CYCLE_DAY || null, plan: env.USAGE_BILLING_PLAN || null,
+  const account = env.USAGE_ACCOUNT_ID ?? env.CFKANBAN_CONTROL_ACCOUNT_ID, database = env.USAGE_D1_DATABASE_ID ?? env.CFKANBAN_CONTROL_DATABASE_ID, worker = env.USAGE_WORKER_NAME ?? env.CFKANBAN_CONTROL_WORKER_NAME;
+  if (env.USAGE_ANALYTICS_ENABLED === "false" || !account?.trim() || !database?.trim() || !token?.trim()) return null;
+  // 旧部署可继续使用明确的 USAGE 目标；有固定管理目标时不允许采集其他实例。
+  if ((env.CFKANBAN_CONTROL_ACCOUNT_ID && account !== env.CFKANBAN_CONTROL_ACCOUNT_ID) || (env.CFKANBAN_CONTROL_DATABASE_ID && database !== env.CFKANBAN_CONTROL_DATABASE_ID) || (env.CFKANBAN_CONTROL_WORKER_NAME && worker !== env.CFKANBAN_CONTROL_WORKER_NAME)) return null;
+  return { account, database, bucket: env.USAGE_R2_BUCKET_NAME || null, token,
+    worker: worker || null, cycle: env.USAGE_BILLING_CYCLE_DAY || null, plan: env.USAGE_BILLING_PLAN || null,
     totals: env.USAGE_ACCOUNT_TOTALS_ENABLED === "true", warning: env.USAGE_WARNING_PERCENT || null, standardScope: env.USAGE_R2_STANDARD_ONLY_SCOPE || null };
 }
-function configKey(value: NonNullable<ReturnType<typeof config>>): string { return JSON.stringify([value.account, value.database, value.bucket, value.worker, value.cycle, value.plan, value.totals, value.warning, value.standardScope]); }
+function configKey(value: NonNullable<ReturnType<typeof config>>): string { return JSON.stringify(["utc-daily-v2", value.account, value.database, value.bucket, value.worker, value.cycle, value.plan, value.totals, value.warning, value.standardScope]); }
 const iso = (value: number | null) => value === null ? null : new Date(value).toISOString();
 export async function readUsage(env: WorkerEnv, auth: AuthContext, now = Date.now()): Promise<{ [key: string]: JsonValue }> {
   requireOwnerControl(auth);
@@ -40,7 +43,7 @@ export async function readUsage(env: WorkerEnv, auth: AuthContext, now = Date.no
       refreshing: snapshot !== null && error === null && snapshot.attempted_at !== null && snapshot.attempted_at > (collected ?? -1) && now - snapshot.attempted_at < REFRESH_COOLDOWN_MS,
       collected_at: iso(collected), attempted_at: iso(snapshot?.attempted_at ?? null), error,
       metrics: values as unknown as JsonValue,
-      billing, alerts: usageAlerts(values, billing, status === "fresh"),
+      billing, alerts: [],
     },
   };
 }
@@ -142,15 +145,29 @@ function extendedQueries(configuration: NonNullable<ReturnType<typeof config>>, 
     if (configuration.worker) { declarations.push("$worker: string!"); fields.push("worker: workersInvocationsAdaptive(limit: 1, filter: {scriptName: $worker, datetime_geq: $workerStart, datetime_leq: $end}) { sum { requests cpuTimeUs } }"); }
     if (configuration.totals) fields.push("accountWorker: workersInvocationsAdaptive(limit: 1, filter: {datetime_geq: $workerStart, datetime_leq: $end}) { sum { requests cpuTimeUs } }");
   }
+  if ((configuration.worker || configuration.totals) && workerStart !== start) {
+    declarations.push("$dailyStart: Time!");
+    if (!workerStart) declarations.push("$end: Time!");
+    if (configuration.worker) {
+      if (!workerStart) declarations.push("$worker: string!");
+      fields.push("workerDaily: workersInvocationsAdaptive(limit: 1, filter: {scriptName: $worker, datetime_geq: $dailyStart, datetime_leq: $end}) { sum { requests cpuTimeUs } }");
+    }
+    if (configuration.totals) fields.push("accountWorkerDaily: workersInvocationsAdaptive(limit: 1, filter: {datetime_geq: $dailyStart, datetime_leq: $end}) { sum { requests cpuTimeUs } }");
+  }
   const r2Declarations = ["$account: string!"];
   const r2Fields: string[] = [];
   if (configuration.bucket) {
     r2Declarations.push("$bucket: string!", "$start: Time!", "$end: Time!", "$storageStart: Time!", "$storageEnd: Time!");
     r2Fields.push("activity: r2OperationsAdaptiveGroups(limit: 1, filter: {bucketName: $bucket, datetime_geq: $start, datetime_leq: $end}) { sum { requests } }", "storage: r2StorageAdaptiveGroups(limit: 1, filter: {bucketName: $bucket, datetime_geq: $storageStart, datetime_lt: $storageEnd}, orderBy: [datetime_DESC]) { max { payloadSize metadataSize objectCount } dimensions { datetime } }");
   }
+  if (configuration.bucket || configuration.totals) {
+    if (!configuration.bucket) r2Declarations.push("$start: Time!", "$end: Time!");
+    const dailyOperation = (alias: string, scoped: boolean) => `${alias}: r2OperationsAdaptiveGroups(limit: 101, filter: {${scoped ? "bucketName: $bucket," : ""} datetime_geq: $start, datetime_leq: $end}) { sum { requests } dimensions { actionType responseStatusCode } }`;
+    if (configuration.bucket) r2Fields.push(dailyOperation("daily", true));
+    if (configuration.totals) r2Fields.push(dailyOperation("accountDaily", false));
+  }
   if (monthly && (configuration.bucket || configuration.totals)) {
     r2Declarations.push("$billingStart: Time!");
-    if (!configuration.bucket) r2Declarations.push("$end: Time!");
     const operation = (alias: string, scoped: boolean) => `${alias}: r2OperationsAdaptiveGroups(limit: 101, filter: {${scoped ? "bucketName: $bucket," : ""} datetime_geq: $billingStart, datetime_leq: $end}) { sum { requests } dimensions { actionType responseStatusCode } }`;
     if (configuration.bucket) r2Fields.push(operation("billing", true));
     if (configuration.totals) r2Fields.push(operation("accountBilling", false));
@@ -158,7 +175,7 @@ function extendedQueries(configuration: NonNullable<ReturnType<typeof config>>, 
   return {
     d1: `query UsageD1(${declarations.join(", ")}) { viewer { accounts(filter: {accountTag: $account}) { ${fields.join("\n")} } } }`,
     r2: r2Fields.length ? `query UsageR2(${r2Declarations.join(", ")}) { viewer { accounts(filter: {accountTag: $account}) { ${r2Fields.join("\n")} } } }` : null,
-    workerStart,
+    workerStart, separateDailyWorkers: workerStart !== start,
   };
 }
 
@@ -175,6 +192,8 @@ function extendedMetrics(account: ObjectValue, configuration: NonNullable<Return
     if (configuration.cycle) add("accountBilling", ["d1_billing_rows_read", "d1_billing_rows_written"], ["rowsRead", "rowsWritten"], "account", billing.period_start);
   }
   const workerStart = billing.plan === "paid" ? billing.period_start : start;
+  if (configuration.worker) add(workerStart === start ? "worker" : "workerDaily", ["workers_daily_requests", "workers_daily_cpu_microseconds"], ["requests", "cpuTimeUs"], "instance", start, true);
+  if (configuration.totals) add(workerStart === start ? "accountWorker" : "accountWorkerDaily", ["workers_daily_requests", "workers_daily_cpu_microseconds"], ["requests", "cpuTimeUs"], "account", start, true);
   if (configuration.worker) add("worker", ["workers_requests", "workers_cpu_microseconds"], ["requests", "cpuTimeUs"], "instance", workerStart, true);
   if (configuration.totals) add("accountWorker", ["workers_requests", "workers_cpu_microseconds"], ["requests", "cpuTimeUs"], "account", workerStart, true);
   return values;
@@ -217,18 +236,21 @@ export async function collectUsageStatistics(env: WorkerEnv, now = Date.now(), f
   const storageStart = new Date(now - 24 * HOUR).toISOString(), storageEnd = new Date(Math.floor(now / HOUR) * HOUR).toISOString();
   try {
     const billing = usageBilling(env, now);
-    const extended = Boolean(configuration.worker || configuration.cycle || configuration.totals);
+    const extended = Boolean(configuration.worker || configuration.cycle || configuration.totals || configuration.bucket);
     const queries = extendedQueries(configuration, billing, start);
     const shared = { account: configuration.account, start, end, storageStart, storageEnd };
     const d1 = await query("d1", extended ? queries.d1 : d1Query, { account: configuration.account, date: end.slice(0, 10), storageStart, storageEnd, database: configuration.database,
       ...(billing.period_start ? { billingDate: billing.period_start.slice(0, 10) } : {}),
-      ...(queries.workerStart && (configuration.worker || configuration.totals) ? { workerStart: queries.workerStart, end, ...(configuration.worker ? { worker: configuration.worker } : {}) } : {}),
+      ...(configuration.worker || configuration.totals ? { ...(queries.separateDailyWorkers ? { dailyStart: start } : {}), end, ...(queries.workerStart ? { workerStart: queries.workerStart } : {}), ...(configuration.worker ? { worker: configuration.worker } : {}) } : {}),
     }, configuration.token, fetcher);
     const values = metrics(d1, "d1", start, end, storageStart, storageEnd);
     if (extended) values.push(...extendedMetrics(d1, configuration, billing, start, end));
-    if (configuration.bucket || (configuration.totals && billing.period_start)) {
+    if (configuration.bucket || configuration.totals) {
       const r2 = await query("r2", extended ? queries.r2! : r2Query, { ...shared, ...(configuration.bucket ? { bucket: configuration.bucket } : {}), ...(billing.period_start ? { billingStart: billing.period_start } : {}) }, configuration.token, fetcher);
       if (configuration.bucket) values.push(...metrics(r2, "r2", start, end, storageStart, storageEnd));
+      const daily = (alias: string, scope: Metric["scope"]) => operationMetrics(r2, alias, scope, start, end).map(metric => ({ ...metric, key: metric.key.replace("r2_", "r2_daily_") }));
+      if (configuration.bucket) values.push(...daily("daily", "instance"));
+      if (configuration.totals) values.push(...daily("accountDaily", "account"));
       if (configuration.cycle && configuration.bucket) values.push(...operationMetrics(r2, "billing", "instance", billing.period_start, end));
       if (configuration.totals && configuration.cycle) values.push(...operationMetrics(r2, "accountBilling", "account", billing.period_start, end));
     }

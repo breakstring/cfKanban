@@ -40,6 +40,7 @@ function extraUsageConfig(value, { workerName }) {
 export function normalizeUsageConfig(value, { accountId, databaseId, bucketName = null, workerName }) {
   if (value === null || value === undefined) return null;
   if (typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !["enabled", "account_id", "d1_database_id", "r2_bucket_name", "worker_name", "billing_cycle_day", "billing_plan", "account_totals", "warning_percent", "r2_standard_only_scope"].includes(key))) throw toolError("INVALID_USAGE_CONFIG", "Usage configuration accepts only non-secret resource identifiers and billing settings");
+  if (Object.hasOwn(value, "warning_percent")) throw toolError("CLOUDFLARE_FEATURE_RETIRED", "Budget notifications are retired; existing deployment values are preserved without configuring new thresholds", { reason: "cloudflare_feature_retired" });
   if (value.enabled !== undefined && typeof value.enabled !== "boolean") throw toolError("INVALID_USAGE_CONFIG", "Usage enabled must be boolean");
   value = { account_id: accountId, d1_database_id: databaseId, ...value };
   if (value.account_id !== accountId || !/^[a-zA-Z0-9_-]{1,128}$/u.test(value.account_id) || requireUuid(value.d1_database_id, "usage_database_id") !== databaseId) throw toolError("USAGE_RESOURCE_MISMATCH", "Usage analytics must target this deployment account and database");

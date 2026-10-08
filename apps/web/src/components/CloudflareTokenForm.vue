@@ -9,6 +9,7 @@ const props = defineProps<{
   label: string;
   description: string;
   disabled: boolean;
+  saved?: boolean;
   save: (kind: string, token: string) => Promise<void>;
 }>();
 const token = ref("");
@@ -30,20 +31,20 @@ onUnmounted(() => { mounted = false; token.value = ""; });
 
 <template>
   <form class="cloudflare-token-form" :aria-busy="saving" @submit.prevent="save">
-    <label :for="inputId">{{ label }}</label>
+    <label class="sr-only" :for="inputId">{{ label }}</label>
     <p :id="`${inputId}-description`" class="muted-copy">{{ description }}</p>
     <div class="cloudflare-token-controls">
-      <UInput :id="inputId" v-model="token" type="password" autocomplete="off" autocapitalize="none" :spellcheck="false" :disabled="disabled || saving" :aria-describedby="`${inputId}-description`" class="cloudflare-token-input" />
-      <UButton color="primary" variant="solid" type="submit" :disabled="disabled || saving || !token.trim()">{{ saving ? ui('Saving…', '正在保存…') : ui('Save Token', '保存 Token') }}</UButton>
+      <UInput :id="inputId" v-model="token" type="password" autocomplete="off" autocapitalize="none" :spellcheck="false" :placeholder="saved ? ui('Enter a replacement Token', '输入新 Token 可替换') : ui('Enter your Cloudflare API Token', '输入 Cloudflare API Token')" :disabled="disabled || saving" :aria-describedby="`${inputId}-description`" class="cloudflare-token-input" />
+      <UButton color="primary" variant="solid" type="submit" :disabled="disabled || saving || !token.trim()">{{ saving ? ui('Saving…', '正在保存…') : ui('Save', '保存') }}</UButton>
     </div>
   </form>
 </template>
 
 <style scoped>
-.cloudflare-token-form { padding: 16px 0; }
+.cloudflare-token-form { padding: 0; }
 .cloudflare-token-form label { font-weight: 600; }
 .cloudflare-token-form p { margin: 8px 0; }
 .cloudflare-token-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.cloudflare-token-input { width: min(100%, 440px); }
+.cloudflare-token-input { width: min(100%, 560px); }
 @media (max-width: 600px) { .cloudflare-token-input { width: 100%; } }
 </style>

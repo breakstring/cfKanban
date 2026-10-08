@@ -15,3 +15,11 @@ export function isWafOperationResource(value) {
 export function isWafOperationWrite(value) {
   return record(value) && isWafOperationResource(value.resource) && typeof value.event_cursor === "string" && typeof value.idempotent_replay === "boolean";
 }
+
+export function isLegacyWafDisablePlan(value) {
+  const owned = value?.before?.owned_rule, after = value?.after;
+  return value?.kind === "waf" && record(owned) && typeof owned.id === "string" && owned.id.length > 0
+    && typeof owned.ruleset_id === "string" && owned.ruleset_id.length > 0
+    && after?.action === "disable" && after.entrypoint_strategy === "delete_owned_rule" && after.apply_ready === true
+    && after.purchase_or_upgrade_plan === false && after.modifies_foreign_rules === false;
+}

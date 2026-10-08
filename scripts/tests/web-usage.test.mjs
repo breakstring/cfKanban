@@ -55,501 +55,397 @@ async function until(check) {
 }
 const snapshot = (status = 'fresh') => ({ generated_at: '2026-09-19T02:00:00.858Z', attachments: { enabled: false, reserved_bytes: 0, limit_bytes: 1073741824, limit_configured: true, settings_version: 1 }, cloudflare: { status, refreshing: false, collected_at: '2026-09-19T02:00:00.000Z', attempted_at: '2026-09-19T02:00:00.000Z', error: null, metrics: [{ key: 'd1_rows_read', unit: 'count', value: 0, period_start: '2026-09-19T00:00:00.000Z', period_end: '2026-09-19T02:00:00.000Z', observed_at: null }] } });
 
-test('shows real zero separately from unknown, disabled budget, UTC window, and localized labels', async () => {
-  const originalFetch = globalThis.fetch;
-  const calls = [];
-  globalThis.fetch = async (path, init) => { calls.push({path, init}); return Response.json(snapshot()); };
-  locale.value = 'en';
-  const app = renderer.createApp(Component); const host = node('root');
-  try {
-    app.mount(host);
-    await until(() => text(host).includes('Snapshot available'));
-    assert.match(text(host), /0 B \/ 1 GiB · 0% · Attachments disabled/);
-    assert.match(text(host), /Application snapshot read at: 2026-09-19 02:00:00 UTC/);
-    assert.doesNotMatch(text(host), /\.858Z/);
-    const details = all(host).find(item => item.tag === 'details' && item.props.class === 'usage-details');
-    assert.ok(details); assert.equal(details.props.open, undefined);
-    assert.match(text(details), /Window:.*00:00:00 UTC/);
-    function visibleText(item) { return item.tag === 'details' ? '' : item.text + item.children.map(visibleText).join(''); }
-    assert.doesNotMatch(visibleText(host), /Application snapshot read at|Last attempt|Window:|Observed:/);
-    assert.match(visibleText(host), /Updated/);
-    assert.doesNotMatch(visibleText(host), /\d{2}:\d{2}:\d{2}/);
-    const metricRows = all(host).filter(item => item.tag === 'div' && item.children.some(child => child.tag === 'dt'));
-    assert.match(text(metricRows.find(item => text(item).startsWith('D1 rows read today'))), /today0$/);
-    assert.match(text(metricRows.find(item => text(item).startsWith('D1 storage'))), /Unknown/);
-    assert.equal(calls.length, 1); assert.equal(calls[0].path, '/api/v1/admin/usage'); assert.equal(calls[0].init.method, 'GET');
-    locale.value = 'zh-CN'; await nextTick();
-    assert.match(text(host), /用量与限额/); assert.match(text(host), /未知/); assert.match(text(host), /不代表账户总用量/); assert.match(text(host), /项目配额仍在/); assert.match(text(host), /不包含当前小时/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
-});
+const windowListeners = new Map();
+const originalWindow = globalThis.window;
+const originalDocument = globalThis.document;
+globalThis.document = { cookie: 'cfkanban_csrf=fixture-csrf', documentElement: { lang: 'en' } };
+globalThis.window = {
+  location: { origin: 'https://kanban.example.test' },
+  addEventListener(type, listener) { if (!windowListeners.has(type)) windowListeners.set(type, new Set()); windowListeners.get(type).add(listener); },
+  removeEventListener(type, listener) { windowListeners.get(type)?.delete(listener); },
+  dispatchEvent(event) { for (const listener of windowListeners.get(event.type) ?? []) listener(event); },
+};
+after(() => { globalThis.window = originalWindow; globalThis.document = originalDocument; });
 
-test('refresh failure retains visibly outdated data and successful retry replaces it', async () => {
-  const originalFetch = globalThis.fetch;
-  let fail = false;
-  globalThis.fetch = async () => { if (fail) throw Error('offline'); return Response.json(snapshot('stale')); };
-  const app = renderer.createApp(Component); const host = node('root');
-  try {
-    app.mount(host); await until(() => text(host).includes('Stale snapshot'));
-    fail = true;
-    await all(host).find(item => item.tag === 'button').props.onClick(); await nextTick();
-    assert.match(text(host), /Refresh failed.*previous snapshot/); assert.match(text(host), /0 B \/ 1 GiB/);
-    fail = false;
-    await all(host).find(item => item.tag === 'button').props.onClick(); await nextTick();
-    assert.doesNotMatch(text(host), /Refresh failed/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; }
-});
-
-test('not configured suppresses obsolete cloud metrics and unmount aborts the request', async () => {
-  const originalFetch = globalThis.fetch;
-  let signal;
-  globalThis.fetch = async (_path, init) => { signal = init.signal; return Response.json(snapshot('not_configured')); };
-  const app = renderer.createApp(Component); const host = node('root');
-  try {
-    app.mount(host); await until(() => text(host).includes('Not configured'));
-    assert.doesNotMatch(text(host), /D1 rows read today/);
-    app.unmount(); assert.equal(signal.aborted, true);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; }
-});
-
-test('a superseded response cannot overwrite the latest snapshot', async () => {
-  const originalFetch = globalThis.fetch;
-  let completeFirst;
-  let count = 0;
-  globalThis.fetch = async () => ++count === 1 ? new Promise(resolve => { completeFirst = resolve; }) : Response.json(snapshot('pending'));
-  const app = renderer.createApp(Component); const host = node('root');
-  try {
-    app.mount(host); await until(() => completeFirst);
-    await all(host).find(item => item.tag === 'button').props.onClick(); await nextTick();
-    assert.match(text(host), /Waiting for first snapshot/);
-    completeFirst(Response.json(snapshot()));
-    await new Promise(resolve => setTimeout(resolve, 20)); await nextTick();
-    assert.match(text(host), /Waiting for first snapshot/); assert.doesNotMatch(text(host), /Snapshot available/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; }
-});
-
-test('opening shows the saved budget before a single stale collection, manual refresh uses its own mode', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalDocument = globalThis.document;
-  const calls = [];
-  let finish;
-  globalThis.document = { cookie: 'cfkanban_csrf=test-csrf' };
+const button = (host, label) => all(host).find(item => item.tag === 'button' && text(item) === label);
+const byClass = (host, className) => all(host).find(item => typeof item.props.class === 'string' && item.props.class.split(' ').includes(className));
+const group = (host, name) => all(host).find(item => item.tag === 'section' && item.props['aria-label'] === name);
+const change = (input, value) => input.props['onUpdate:modelValue'](value);
+const submit = host => all(host).find(item => item.tag === 'form').props.onSubmit({ preventDefault() {} });
+const metricRow = (host, label) => all(host).find(item => item.tag === 'div' && item.children.some(child => child.tag === 'dt' && text(child) === label));
+async function flush() { for (let i = 0; i < 12; i++) { await new Promise(resolve => setImmediate(resolve)); await nextTick(); } }
+function visibleText(target) { return target.tag === 'details' ? '' : target.text + target.children.map(visibleText).join(''); }
+function fixture(handler = () => Response.json(snapshot())) {
+  const originalFetch = globalThis.fetch; const calls = [];
   globalThis.fetch = async (path, init) => {
-    calls.push({ path, init });
-    if (init.method === 'GET') {
-      const old = snapshot(); old.generated_at = '2026-09-19T02:16:00.000Z';
-      return Response.json(old);
-    }
-    if (JSON.parse(init.body).mode === 'stale') return new Promise(resolve => { finish = resolve; });
-    return Response.json(snapshot());
+    const call = { path, init, method: init.method, body: init.body ? JSON.parse(init.body) : null };
+    calls.push(call); return handler(call, calls);
   };
-  const app = renderer.createApp(Component); const host = node('root');
-  try {
-    app.mount(host); await until(() => finish);
-    assert.match(text(host), /0 B \/ 1 GiB/);
-    assert.equal(calls[1].path, '/api/v1/admin/usage/refresh');
-    assert.equal(calls[1].init.headers.get('x-csrf-token'), 'test-csrf');
-    assert.ok(calls[1].init.headers.get('idempotency-key'));
-    finish(Response.json(snapshot())); await until(() => !all(host).find(item => item.tag === 'button').props.disabled);
-    await all(host).find(item => item.tag === 'button').props.onClick(); await nextTick();
-    assert.equal(calls.length, 3); assert.equal(JSON.parse(calls[2].init.body).mode, 'manual');
-  } finally { app.unmount(); globalThis.fetch = originalFetch; globalThis.document = originalDocument; }
-});
-
-test('initial or failed snapshots collect once, while unconfigured and in-progress snapshots never poll', async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    for (const state of ['pending', 'error', 'not_configured', 'refreshing']) {
-      const calls = [];
-      globalThis.fetch = async (_path, init) => {
-        calls.push(init);
-        const value = snapshot(state === 'refreshing' ? 'pending' : state);
-        value.cloudflare.collected_at = null;
-        value.cloudflare.refreshing = state === 'refreshing';
-        return Response.json(value);
-      };
-      const app = renderer.createApp(Component); const host = node('root');
-      try {
-        app.mount(host); await until(() => text(host).includes('0 B / 1 GiB'));
-        await new Promise(resolve => setTimeout(resolve, 20)); await nextTick();
-        assert.equal(calls.length, ['pending', 'error'].includes(state) ? 2 : 1, state);
-        if (calls.length === 2) assert.equal(JSON.parse(calls[1].body).mode, 'stale');
-        if (state === 'refreshing') assert.match(text(host), /Collection is in progress/);
-      } finally { app.unmount(); }
-    }
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test('Owner explicitly chooses unlimited or a byte-exact capacity without a preset budget', async () => {
-  const originalFetch = globalThis.fetch;
-  const calls = [];
-  globalThis.fetch = async (path, init) => {
-    calls.push({ path, init });
-    if (init.method === 'PATCH') return Response.json({ resource: { configured: true, version: calls.length, reserved_bytes: 0, limit_bytes: JSON.parse(init.body).limit_bytes } });
-    const value = snapshot(); Object.assign(value.attachments, { limit_bytes: null, limit_configured: false, settings_version: 0 }); return Response.json(value);
-  };
-  const app = renderer.createApp(Component); const host = node('root');
-  const click = async label => { await all(host).find(item => item.tag === 'button' && text(item) === label).props.onClick(); await nextTick(); };
-  const submit = async () => { await all(host).find(item => item.tag === 'form').props.onSubmit({ preventDefault() {} }); await nextTick(); };
-  try {
-    app.mount(host); await until(() => text(host).includes('Not set'));
-    assert.equal(all(host).some(item => item.tag === 'meter'), false);
-    await click('Set limit');
-    assert.equal(all(host).find(item => item.tag === 'select').props['onUpdate:modelValue'] !== undefined, true);
-    await submit(); assert.equal(calls.filter(call => call.init.method === 'PATCH').length, 0);
-    all(host).find(item => item.tag === 'select').props['onUpdate:modelValue']('unlimited'); await nextTick();
-    await submit(); assert.match(text(host), /0 B \/ Unlimited/);
-    assert.deepEqual(JSON.parse(calls.at(-1).init.body), { expected_version: 0, limit_bytes: null });
-    assert.ok(calls.at(-1).init.headers.get('idempotency-key'));
-    assert.equal(all(host).some(item => item.tag === 'meter'), false);
-    await click('Set limit');
-    all(host).find(item => item.tag === 'select').props['onUpdate:modelValue']('limited'); await nextTick();
-    all(host).find(item => item.tag === 'input').props['onUpdate:modelValue']('1.5');
-    await submit(); assert.equal(JSON.parse(calls.at(-1).init.body).limit_bytes, 1572864);
-    assert.match(text(host), /1.5 MiB/); assert.ok(all(host).some(item => item.tag === 'meter'));
-  } finally { app.unmount(); globalThis.fetch = originalFetch; }
-});
-
-test('capacity conflict retains draft and requires explicit settings readback before retry', async () => {
-  const originalFetch = globalThis.fetch;
-  let writes = 0;
-  let saved;
-  globalThis.fetch = async (path, init) => {
-    if (init.method === 'PATCH') {
-      writes++;
-      if (writes === 1) {
-        const id = '40000000-0000-4000-8000-000000000001';
-        return Response.json({ code: 'VERSION_CONFLICT', category: 'conflict', source: 'service', message: 'Changed', recovery: 'refresh_resource', request_id: id, retryable: false, details: {} }, {status: 409, headers: {'x-request-id': id}});
-      }
-      saved = JSON.parse(init.body); return Response.json({resource: { configured: true, version: 3, reserved_bytes: 0, limit_bytes: saved.limit_bytes }});
-    }
-    if (path.endsWith('attachment-settings')) return Response.json({ configured: true, version: 2, reserved_bytes: 0, limit_bytes: 3000000 });
-    return Response.json(snapshot());
-  };
-  const app = renderer.createApp(Component); const host = node('root');
-  const click = async label => { await all(host).find(item => item.tag === 'button' && text(item) === label).props.onClick(); await nextTick(); };
-  const submit = async () => { await all(host).find(item => item.tag === 'form').props.onSubmit({ preventDefault() {} }); await nextTick(); };
-  try {
-    app.mount(host); await until(() => text(host).includes('Set limit'));
-    await click('Set limit');
-    all(host).find(item => item.tag === 'input').props['onUpdate:modelValue']('2'); await nextTick();
-    await submit(); assert.match(text(host), /Settings changed elsewhere/);
-    await submit(); assert.equal(writes, 1);
-    await click('Refresh settings'); await submit();
-    assert.deepEqual(saved, { expected_version: 2, limit_bytes: 2097152 });
-  } finally { app.unmount(); globalThis.fetch = originalFetch; }
-});
-
-test('over-limit budget explicitly explains upload pause and preserves existing access', async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
-    const value = snapshot(); value.attachments.reserved_bytes = value.attachments.limit_bytes * 2;
-    return Response.json(value);
-  };
-  const app = renderer.createApp(Component); const host = node('root');
-  try {
-    app.mount(host); await until(() => text(host).includes('Storage limit reached'));
-    assert.match(text(host), /200%/);
-    assert.match(text(host), /New uploads are paused; existing attachments remain accessible/);
-    assert.match(all(host).find(item => item.tag === 'meter').props.class, /capacity-reached/);
-    locale.value = 'zh-CN'; await nextTick();
-    assert.match(text(host), /已达到容量上限，新增上传已暂停；已有附件仍可访问/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
-});
-
+  return { calls, restore() { globalThis.fetch = originalFetch; } };
+}
+function mount(props = {}) {
+  const host = node('root'); const app = renderer.createApp({ render: () => h(Component, typeof props === 'function' ? props() : props) });
+  app.mount(host); return { host, app };
+}
+function metric(key, value, { scope = 'instance', unit = 'count', start = '2026-09-19T00:00:00.000Z', end = '2026-09-19T02:00:00.000Z' } = {}) {
+  return { key, value, scope, unit, period_start: start, period_end: end, observed_at: null };
+}
 function extendedSnapshot(status = 'fresh') {
   const value = snapshot(status);
-  value.cloudflare.billing = { plan: 'paid', cycle_day: 15, period_start: '2026-09-15T00:00:00.000Z', period_end: value.cloudflare.collected_at,
-    account_totals_enabled: true, warning_percent: 80, allowances_shared: true, analytics_not_invoice: true };
-  const metric = (key, amount, scope = 'instance', unit = 'count') => ({ key, value: amount, scope, unit,
-    period_start: value.cloudflare.billing.period_start, period_end: value.cloudflare.billing.period_end, observed_at: null });
-  value.cloudflare.metrics.push(metric('workers_requests', 9_000_000, 'account'), metric('workers_requests', 8_000_000),
-    metric('workers_cpu_microseconds', 3_000_000, 'instance', 'microseconds'), metric('r2_class_a_operations', null),
-    metric('r2_class_b_operations', 0), metric('r2_unclassified_operations', 2), metric('d1_billing_rows_read', 123));
-  value.cloudflare.alerts = [
-    { metric_key: 'workers_requests', scope: 'instance', level: 'warning', value: 8_000_000, allowance: 10_000_000, percent: 80,
-      period_start: value.cloudflare.billing.period_start, period_end: value.cloudflare.billing.period_end },
-    { metric_key: 'workers_requests', scope: 'account', level: 'reached', value: 10_000_000, allowance: 10_000_000, percent: 100,
-      period_start: value.cloudflare.billing.period_start, period_end: value.cloudflare.billing.period_end },
-  ];
-  value.public_access = { status: 'configured', hostname: 'kanban.example.com', mode: 'custom_domain', waf_profile: 'anonymous-api-filter',
-    verified_at: '2026-09-18T23:30:00.000Z', live_verified: false };
+  value.cloudflare.billing = { plan: 'paid', cycle_day: 15, period_start: '2026-09-15T00:00:00.000Z', period_end: value.cloudflare.collected_at, account_totals_enabled: true, allowances_shared: true, analytics_not_invoice: true };
+  value.cloudflare.metrics.push(
+    metric('workers_daily_requests', 420), metric('workers_daily_requests', 850, { scope: 'account' }),
+    metric('workers_daily_cpu_microseconds', 3200, { unit: 'microseconds' }),
+    metric('workers_requests', 8_000_000, { start: value.cloudflare.billing.period_start }),
+    metric('workers_requests', 9_000_000, { scope: 'account', start: value.cloudflare.billing.period_start }),
+    metric('r2_daily_class_a_operations', null), metric('r2_daily_class_b_operations', 0),
+    metric('r2_class_a_operations', 40, { start: value.cloudflare.billing.period_start }),
+    metric('d1_storage_bytes', 1024, { unit: 'bytes', start: null, end: null }),
+  );
+  // Retired projections can still arrive from an older service and must not revive retired UI.
+  value.cloudflare.alerts = [{ metric_key: 'workers_requests', scope: 'instance', level: 'warning', value: 8_000_000, allowance: 10_000_000, percent: 80 }];
+  value.public_access = { status: 'configured', hostname: 'kanban.example.test', mode: 'custom_domain', waf_profile: 'anonymous-api-filter' };
   return value;
 }
 
-test('extended usage separates instance and account values, retains unknown classes and renders shared-allowance reminders', async () => {
-  const originalFetch = globalThis.fetch;
-  const calls = [];
-  globalThis.fetch = async (path, init) => { calls.push({ path, init }); return Response.json(extendedSnapshot()); };
-  const app = renderer.createApp(Component); const host = node('root');
+test('today shows real zero and unavailable values separately, with timing details folded and no manual refresh controls', async () => {
+  const f = fixture(); const v = mount();
   try {
-    app.mount(host); await until(() => text(host).includes('Shared allowance reminders'));
-    const instance = all(host).find(item => item.tag === 'section' && item.props['aria-label'] === 'Instance usage');
-    const account = all(host).find(item => item.tag === 'section' && item.props['aria-label'] === 'Account totals');
-    assert.match(text(instance), /Workers requests8,000,000/);
-    assert.doesNotMatch(text(instance), /9,000,000/);
-    assert.match(text(account), /Workers requests9,000,000/);
-    assert.match(text(instance), /Workers cumulative CPU3,000,000 µs/);
-    assert.match(text(instance), /R2 Class A operationsUnknown/);
-    assert.match(text(instance), /R2 Class B operations0/);
-    assert.match(text(instance), /R2 unclassified operations2/);
-    assert.match(text(instance), /D1 rows read in billing period123/);
-    assert.match(text(host), /Instance contribution · Workers requests.*80% · Warning threshold reached/);
-    assert.match(text(host), /Account total · Workers requests.*100% · Shared allowance reached/);
-    assert.match(text(host), /Instance figures show contribution, not remaining allowance/);
-    assert.match(text(host), /Analytics may be sampled or delayed and are not an invoice/);
-    assert.match(text(all(host).find(item => item.tag === 'details' && item.props.class === 'usage-details')), /Billing period observation: 2026-09-15 00:00:00 UTC/);
-    const settingsLink = all(host).find(item => item.tag === 'a' && item.props.href === '#connection-configuration-heading');
-    assert.ok(settingsLink); assert.match(text(settingsLink), /Change plan, billing cycle, or reminders in Usage settings/);
-    assert.doesNotMatch(text(host), /Cloudflare budget emails|Domain & access protection/);
-    assert.equal(calls.length, 1);
+    await until(() => text(v.host).includes('Up to date'));
+    assert.match(text(v.host), /0 B \/ 1 GiB · 0% · Attachments disabled/);
+    assert.equal(text(metricRow(group(v.host, 'D1'), 'D1 rows read today')), 'D1 rows read today0');
+    assert.match(text(metricRow(byClass(v.host, 'usage-storage'), 'D1 storage')), /Unavailable$/);
+    const details = byClass(v.host, 'usage-details'); assert.ok(details); assert.equal(details.props.open, undefined);
+    assert.match(text(details), /Last collected: 2026-09-19 02:00:00 UTC/);
+    assert.doesNotMatch(visibleText(v.host), /Last collected:|2026-09-19 00:00:00 UTC|Observed:/);
+    assert.equal(button(v.host, 'Refresh usage'), undefined); assert.equal(button(v.host, 'Read usage'), undefined);
+    assert.deepEqual(f.calls.map(call => [call.method, call.path]), [['GET', '/api/v1/admin/usage']]);
     locale.value = 'zh-CN'; await nextTick();
-    assert.match(text(host), /本实例贡献 · Workers 请求量/);
-    assert.match(text(host), /账户总量 · Workers 请求量/);
-    assert.match(text(host), /R2 未分类操作量/);
-    assert.match(text(host), /累计微秒值/);
-    assert.match(text(host), /不表示剩余额度/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
+    assert.match(text(v.host), /当日用量.*按 UTC 日统计/); assert.match(text(v.host), /暂无数据/);
+    assert.match(text(v.host), /当前存储/); assert.match(text(v.host), /附件存储上限/);
+  } finally { v.app.unmount(); f.restore(); locale.value = 'en'; }
 });
 
-test('missing billing cycle remains unknown and account totals require opt-in', async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
-    const value = extendedSnapshot();
-    Object.assign(value.cloudflare.billing, { plan: 'unknown', cycle_day: null, period_start: null, period_end: null, account_totals_enabled: false });
-    value.cloudflare.metrics = value.cloudflare.metrics.filter(metric => metric.scope !== 'account').map(metric => ({ ...metric, period_start: null, period_end: null }));
-    value.cloudflare.alerts = [];
+test('a failed refresh keeps earlier data and a later generation replaces it without requiring user checks', async () => {
+  let fail = false; const version = ref(0);
+  const f = fixture(() => { if (fail) throw new Error('offline'); return Response.json(snapshot()); });
+  const v = mount(() => ({ refreshGeneration: version.value }));
+  try {
+    await until(() => text(v.host).includes('Up to date'));
+    fail = true; version.value++; await flush();
+    assert.match(text(v.host), /latest data is temporarily unavailable.*Earlier values are kept/);
+    assert.match(text(v.host), /Showing earlier data/); assert.match(text(v.host), /0 B \/ 1 GiB/);
+    fail = false; version.value++; await flush();
+    assert.match(text(v.host), /Up to date/); assert.doesNotMatch(text(v.host), /Earlier values are kept/);
+    assert.equal(f.calls.some(call => call.method === 'POST'), false);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('not configured suppresses the daily metric grid and aborts its read when unmounted', async () => {
+  const f = fixture(() => Response.json(snapshot('not_configured'))); const v = mount();
+  try {
+    await until(() => text(v.host).includes('Not configured'));
+    assert.equal(byClass(v.host, 'usage-resources'), undefined);
+    assert.match(text(v.host), /Connect Cloudflare above/); assert.equal(f.calls.length, 1);
+    v.app.unmount(); assert.equal(f.calls[0].init.signal.aborted, true);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('a superseded response cannot replace the latest generation or start collection', async () => {
+  let finishFirst; const version = ref(0);
+  const f = fixture((_call, calls) => {
+    if (calls.length === 1) return new Promise(resolve => { finishFirst = resolve; });
+    const value = snapshot(); value.cloudflare.metrics[0].value = 42; return Response.json(value);
+  });
+  const v = mount(() => ({ refreshGeneration: version.value }));
+  try {
+    await until(() => Boolean(finishFirst)); version.value++; await flush();
+    assert.match(text(metricRow(group(v.host, 'D1'), 'D1 rows read today')), /42$/);
+    finishFirst(Response.json(snapshot('stale'))); await flush();
+    assert.match(text(metricRow(group(v.host, 'D1'), 'D1 rows read today')), /42$/);
+    assert.equal(f.calls.filter(call => call.method === 'POST').length, 0);
+    assert.equal(f.calls[0].init.signal.aborted, true);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('opening stale usage shows saved data while one automatic collection carries CSRF and one idempotency key', async () => {
+  let finish; const f = fixture(call => call.method === 'GET' ? Response.json(snapshot('stale')) : new Promise(resolve => { finish = resolve; }));
+  const v = mount();
+  try {
+    await until(() => Boolean(finish));
+    assert.match(text(v.host), /0 B \/ 1 GiB/); assert.match(text(v.host), /Showing earlier data/);
+    assert.equal(f.calls.length, 2); assert.equal(f.calls[1].path, '/api/v1/admin/usage/refresh');
+    assert.deepEqual(f.calls[1].body, { mode: 'stale' });
+    assert.equal(f.calls[1].init.headers.get('x-csrf-token'), 'fixture-csrf'); assert.ok(f.calls[1].init.headers.get('idempotency-key'));
+    window.dispatchEvent(new Event('focus')); await flush(); assert.equal(f.calls.length, 2);
+    finish(Response.json(snapshot())); await until(() => text(v.host).includes('Up to date'));
+    assert.equal(f.calls.length, 2); assert.equal(button(v.host, 'Refresh usage'), undefined);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('pending and error snapshots collect once; disabled or already-running collection never dispatch another collection', async () => {
+  for (const status of ['pending', 'error', 'not_configured', 'refreshing']) {
+    const f = fixture(() => { const value = snapshot(status === 'refreshing' ? 'pending' : status); value.cloudflare.collected_at = null; value.cloudflare.refreshing = status === 'refreshing'; return Response.json(value); });
+    const v = mount();
+    try {
+      await until(() => text(v.host).includes('0 B / 1 GiB')); await flush();
+      assert.equal(f.calls.filter(call => call.method === 'POST').length, ['pending', 'error'].includes(status) ? 1 : 0, status);
+      if (status === 'refreshing') assert.match(text(v.host), /Updating…/);
+    } finally { v.app.unmount(); f.restore(); }
+  }
+});
+
+test('automatic readback performs at most three GETs after collection and never loops POST requests', async context => {
+  const f = fixture(call => { const value = snapshot('pending'); value.cloudflare.refreshing = call.method === 'POST' || f.calls.length > 2; return Response.json(value); });
+  context.mock.timers.enable({ apis: ['setTimeout'] }); const v = mount();
+  try {
+    await flush(); assert.equal(f.calls.length, 2);
+    for (const delay of [1000, 3000, 5000, 60000]) { context.mock.timers.tick(delay); await flush(); }
+    assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
+    assert.equal(f.calls.filter(call => call.method === 'GET').length, 4);
+    assert.match(text(v.host), /Updating…/);
+  } finally { v.app.unmount(); context.mock.timers.reset(); f.restore(); }
+});
+
+test('an uncertain collection response is followed only by bounded snapshot reads', async context => {
+  const f = fixture(call => { if (call.method === 'POST') throw new Error('response lost'); return Response.json(snapshot('pending')); });
+  context.mock.timers.enable({ apis: ['setTimeout'] }); const v = mount();
+  try {
+    await flush(); assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
+    context.mock.timers.tick(1000); await flush(); context.mock.timers.tick(60000); await flush();
+    assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
+    assert.equal(f.calls.filter(call => call.method === 'GET').length, 2);
+  } finally { v.app.unmount(); context.mock.timers.reset(); f.restore(); }
+});
+
+test('focus refresh respects a 60-second cooldown and does not collect a fresh snapshot', async () => {
+  const originalNow = Date.now; let now = originalNow(); Date.now = () => now;
+  const f = fixture(); const v = mount();
+  try {
+    await until(() => text(v.host).includes('Up to date'));
+    window.dispatchEvent(new Event('focus')); await flush(); assert.equal(f.calls.length, 1);
+    now += 59_999; window.dispatchEvent(new Event('focus')); await flush(); assert.equal(f.calls.length, 1);
+    now += 1; window.dispatchEvent(new Event('focus')); await flush(); assert.equal(f.calls.length, 2);
+    assert.equal(f.calls.every(call => call.method === 'GET'), true);
+  } finally { Date.now = originalNow; v.app.unmount(); f.restore(); }
+});
+
+test('daily resource cards prefer explicit UTC-day metrics while billing totals remain inside details', async () => {
+  const f = fixture(() => Response.json(extendedSnapshot())); const v = mount();
+  try {
+    await until(() => text(v.host).includes('Up to date'));
+    assert.match(text(group(v.host, 'Workers')), /Requests420.*CPU time3,200 µs/);
+    assert.doesNotMatch(text(group(v.host, 'Workers')), /8,000,000|9,000,000/);
+    assert.match(text(group(v.host, 'R2')), /Class A operationsUnavailable.*Class B operations0/);
+    assert.match(text(byClass(v.host, 'usage-details')), /Workers requests8,000,000/);
+    assert.doesNotMatch(visibleText(v.host), /8,000,000|Shared allowance|anonymous-api-filter|WAF|Budget/);
+    assert.match(text(byClass(v.host, 'usage-storage')), /D1 storage1 KiB/);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('old-service daily fallback accepts only a complete current UTC-day window and never substitutes billing totals', async () => {
+  for (const window of ['today', 'billing', 'yesterday', 'zero', 'beyond_day', 'unknown']) {
+    const start = window === 'billing' ? '2026-09-15T00:00:00.000Z' : window === 'yesterday' ? '2026-09-18T00:00:00.000Z' : window === 'unknown' ? null : '2026-09-19T00:00:00.000Z';
+    const end = window === 'zero' ? start : window === 'beyond_day' ? '2026-09-20T00:00:01.000Z' : window === 'unknown' ? null : '2026-09-19T02:00:00.000Z';
+    const f = fixture(() => { const value = snapshot(); value.cloudflare.metrics.push(metric('workers_requests', 123, { start, end })); return Response.json(value); }); const v = mount();
+    try {
+      await until(() => text(v.host).includes('Up to date'));
+      assert.equal(text(metricRow(group(v.host, 'Workers'), 'Requests')), `Requests${window === 'today' ? '123' : 'Unavailable'}`, window);
+    } finally { v.app.unmount(); f.restore(); }
+  }
+});
+
+test('daily, storage and summary values reject incompatible units without converting them into valid usage', async () => {
+  const f = fixture(() => {
+    const value = snapshot(); value.attachments.enabled = true;
+    value.cloudflare.metrics = [
+      metric('workers_daily_requests', 900, { unit: 'microseconds' }), metric('workers_daily_cpu_microseconds', 901, { unit: 'count' }),
+      metric('d1_rows_read', 902, { unit: 'bytes' }), metric('d1_rows_written', 903, { unit: 'microseconds' }),
+      metric('r2_daily_class_a_operations', 904, { unit: 'bytes' }), metric('r2_daily_class_b_operations', 905, { unit: 'microseconds' }),
+      metric('d1_storage_bytes', 906, { unit: 'count', start: null, end: null }), metric('r2_storage_bytes', 907, { unit: 'microseconds', start: null, end: null }),
+      metric('workers_requests', 908, { unit: 'bytes', start: '2026-09-15T00:00:00.000Z' }),
+    ];
     return Response.json(value);
-  };
-  const app = renderer.createApp(Component); const host = node('root');
+  });
+  const summary = ref(false); const v = mount(() => ({ summary: summary.value }));
   try {
-    app.mount(host); await until(() => text(host).includes('Billing cycle is not configured'));
-    assert.match(text(host), /Monthly usage and allowance comparisons remain unknown/);
-    assert.match(text(host), /Cloudflare Workers\/D1 plan: Unknown/);
-    assert.match(text(host), /Cloudflare billing cycle, not a separate cfKanban cycle/);
-    assert.match(text(host), /Free daily figures do not require it/);
-    assert.match(text(host), /Change plan, billing cycle, or reminders in Usage settings/);
-    assert.match(text(host), /Account totals are not enabled/);
-    assert.equal(all(host).some(item => item.tag === 'section' && item.props['aria-label'] === 'Account totals'), false);
-    assert.match(text(all(host).find(item => item.tag === 'details' && item.props.class === 'usage-details')), /Billing period observation: Unknown — Unknown/);
-    assert.doesNotMatch(text(host), /Shared allowance reminders|Billing period starts on UTC day/);
-    locale.value = 'zh-CN'; await nextTick();
-    assert.match(text(host), /尚未配置账单周期/);
-    assert.match(text(host), /未启用账户总量/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
-});
-
-test('R2 Standard allowance comparison explains unknown, instance-only and account confirmation scopes', async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    for (const scope of [undefined, 'unknown', 'instance', 'account']) {
-      globalThis.fetch = async () => {
-        const value = extendedSnapshot();
-        if (scope !== undefined) value.cloudflare.billing.r2_standard_only_scope = scope;
-        return Response.json(value);
-      };
-      const app = renderer.createApp(Component); const host = node('root');
-      try {
-        app.mount(host); await until(() => text(host).includes('Workers requests'));
-        if (scope === 'instance') assert.match(text(host), /Standard-only R2 usage is confirmed for this instance.*does not confirm the account totals/);
-        else if (scope !== 'account') assert.match(text(host), /R2 free allowances apply only to Standard storage.*usage scope is unconfirmed/);
-        else assert.doesNotMatch(text(host), /usage scope is unconfirmed|does not confirm the account totals/);
-        locale.value = 'zh-CN'; await nextTick();
-        if (scope === 'instance') assert.match(text(host), /仅已确认本实例的 R2 用量全部属于 Standard，不代表账户总量/);
-        else if (scope !== 'account') assert.match(text(host), /R2 免费额度仅适用于 Standard 存储；尚未确认其用量范围/);
-      } finally { app.unmount(); locale.value = 'en'; }
+    await until(() => text(v.host).includes('Up to date'));
+    for (const [resource, label] of [['Workers', 'Requests'], ['Workers', 'CPU time'], ['D1', 'D1 rows read today'], ['D1', 'D1 rows written today'], ['R2', 'Class A operations'], ['R2', 'Class B operations']]) {
+      assert.equal(text(metricRow(group(v.host, resource), label)), `${label}Unavailable`);
     }
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test('stale, refreshing and failed usage never present retained alerts as current', async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    for (const status of ['stale', 'refreshing', 'failed']) {
-      let failing = false;
-      globalThis.fetch = async () => {
-        if (failing) throw new Error('offline');
-        const value = extendedSnapshot(status === 'stale' ? 'stale' : 'fresh');
-        value.cloudflare.refreshing = status === 'refreshing';
-        return Response.json(value);
-      };
-      const app = renderer.createApp(Component); const host = node('root');
-      try {
-        app.mount(host); await until(() => text(host).includes('Workers requests'));
-        if (status === 'failed') {
-          assert.match(text(host), /Shared allowance reminders/);
-          failing = true;
-          await all(host).find(item => item.tag === 'button').props.onClick(); await nextTick();
-          assert.match(text(host), /Refresh failed/);
-          assert.match(text(host), /Stale snapshot/);
-          assert.doesNotMatch(text(host), /Snapshot available/);
-        }
-        assert.doesNotMatch(text(host), /Shared allowance reminders/);
-        assert.match(text(host), /Workers requests8,000,000/);
-      } finally { app.unmount(); }
-    }
-  } finally { globalThis.fetch = originalFetch; }
-});
-
-test('usage configuration links select the shared editor without repeating budget or domain control panels', async () => {
-  const originalFetch = globalThis.fetch; const calls = []; const settings = [];
-  globalThis.fetch = async (path, init) => {
-    calls.push({ path, init }); const value = extendedSnapshot(); value.cloudflare.billing.account_totals_enabled = false; return Response.json(value);
-  };
-  const app = renderer.createApp(Component, { onSettings: field => settings.push(field) }); const host = node('root');
-  try {
-    app.mount(host); await until(() => text(host).includes('Change plan, billing cycle, or reminders'));
-    const links = all(host).filter(item => item.tag === 'a' && item.props.href === '#connection-configuration-heading');
-    assert.equal(links.length, 2);
-    links[0].props.onClick(); links[1].props.onClick(); await nextTick();
-    assert.deepEqual(settings, ['billing_plan', 'account_totals']);
-    assert.doesNotMatch(text(host), /Cloudflare budget emails|Domain & access protection|deployment Agent/);
-    assert.equal(calls.length, 1); assert.equal(calls[0].init.method, 'GET');
-    locale.value = 'zh-CN'; await nextTick(); assert.match(text(host), /在用量设置中修改方案、账期或提醒.*查看账户汇总设置/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
-});
-
-test('overview summary and detailed usage share one snapshot without collecting on section changes', async () => {
-  const originalFetch = globalThis.fetch;
-  const calls = [];
-  globalThis.fetch = async (path, init) => {
-    calls.push({ path, init });
-    const value = extendedSnapshot();
-    value.generated_at = value.cloudflare.collected_at = new Date().toISOString();
-    return Response.json(value);
-  };
-  const summary = ref(true);
-  const app = renderer.createApp({ setup: () => () => h(Component, {
-    summary: summary.value, observedOrigin: 'https://legacy.example.com', onDetails: () => { summary.value = false; },
-  }) });
-  const host = node('root');
-  try {
-    app.mount(host); await until(() => text(host).includes('Snapshot available'));
-    assert.match(text(host), /Attachment budget reserved/);
-    assert.equal(all(host).filter(item => item.tag === 'dt').length, 4);
-    assert.doesNotMatch(text(host), /Billing cycle|Data details|Domain & access protection|Cloudflare budget emails|Set limit|Refresh usage/);
-    assert.equal(calls.length, 1);
-    await all(host).find(item => item.tag === 'button' && text(item) === 'View usage details').props.onClick(); await nextTick();
-    assert.match(text(host), /Cloudflare Workers\/D1 plan: Paid/);
-    assert.doesNotMatch(text(host), /Current site address|Domain & access protection/);
-    assert.equal(calls.length, 1);
+    assert.match(text(metricRow(byClass(v.host, 'usage-storage'), 'D1 storage')), /Unavailable$/);
+    assert.doesNotMatch(visibleText(v.host), /900|901|902|903|904|905|906|907|908/);
+    assert.doesNotMatch(text(byClass(v.host, 'usage-details')), /Billing-period usage/);
     summary.value = true; await nextTick();
-    assert.doesNotMatch(text(host), /Data details|Set limit/);
-    assert.equal(calls.length, 1);
-    locale.value = 'zh-CN'; await nextTick();
-    assert.match(text(host), /查看用量详情|附件预留预算/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; locale.value = 'en'; }
+    assert.equal(all(v.host).filter(item => item.tag === 'strong' && text(item) === 'Unavailable').length, 3);
+    assert.doesNotMatch(text(v.host), /906|907/);
+  } finally { v.app.unmount(); f.restore(); }
 });
 
-test('entering details rechecks the clock at fifteen minutes, hides old reminders, and collects through the existing cache path', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalNow = Date.now;
-  let now = Date.parse('2026-09-19T02:00:00.000Z');
-  Date.now = () => now;
-  const calls = [];
-  let finishRead;
-  let finishCollection;
-  globalThis.fetch = async (path, init) => {
-    calls.push({ path, init });
-    if (calls.length === 1) return Response.json(extendedSnapshot());
-    if (init.method === 'GET') return new Promise(resolve => { finishRead = resolve; });
+test('an explicit daily metric wins over an older metric even when both have the same current-day window', async () => {
+  const f = fixture(() => { const value = snapshot(); value.cloudflare.metrics.push(metric('workers_requests', 777), metric('workers_daily_requests', 123)); return Response.json(value); });
+  const v = mount();
+  try { await until(() => text(v.host).includes('Up to date')); assert.equal(text(metricRow(group(v.host, 'Workers'), 'Requests')), 'Requests123'); }
+  finally { v.app.unmount(); f.restore(); }
+});
+
+test('scheduled usage readback clears protected data and stops polling after authorization loss', async context => {
+  for (const status of [401, 403]) {
+    const version = ref(0); let fail = false;
+    const f = fixture((_call, calls) => {
+      if (!fail) return Response.json(snapshot());
+      if (calls.length === 2) throw new Error('initial read unavailable');
+      const id = crypto.randomUUID();
+      return Response.json({ code: status === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN', category: status === 401 ? 'authentication' : 'authorization', source: 'service', message: 'not for display', recovery: 'request_owner', request_id: id, retryable: false, details: {} }, { status, headers: { 'x-request-id': id } });
+    });
+    context.mock.timers.enable({ apis: ['setTimeout'] }); const v = mount(() => ({ refreshGeneration: version.value }));
+    try {
+      await flush(); assert.ok(group(v.host, 'D1')); fail = true; version.value++; await flush(); assert.ok(group(v.host, 'D1'));
+      context.mock.timers.tick(1000); await flush(); assert.equal(group(v.host, 'D1'), undefined);
+      const reads = f.calls.length; context.mock.timers.tick(60000); await flush(); assert.equal(f.calls.length, reads);
+      assert.equal(button(v.host, 'Set limit'), undefined);
+    } finally { v.app.unmount(); context.mock.timers.reset(); f.restore(); }
+  }
+});
+
+test('account scope is explicit and disabling account totals resets daily values to the instance', async () => {
+  const version = ref(0); let enabled = true;
+  const f = fixture(() => { const value = extendedSnapshot(); value.cloudflare.billing.account_totals_enabled = enabled; return Response.json(value); });
+  const v = mount(() => ({ refreshGeneration: version.value }));
+  try {
+    await until(() => text(v.host).includes('Up to date'));
+    const scope = all(byClass(v.host, 'usage-scope')).find(item => item.tag === 'select');
+    change(scope, 'account'); await nextTick();
+    assert.match(text(group(v.host, 'Workers')), /Requests850/); assert.doesNotMatch(text(group(v.host, 'Workers')), /420/);
+    assert.match(text(byClass(v.host, 'usage-details')), /Workers requests9,000,000/);
+    enabled = false; version.value++; await flush();
+    assert.equal(byClass(v.host, 'usage-scope'), undefined); assert.match(text(group(v.host, 'Workers')), /Requests420/);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('missing billing configuration leaves daily data available and settings actions select one shared editor', async () => {
+  const settings = [];
+  const f = fixture(() => { const value = extendedSnapshot(); Object.assign(value.cloudflare.billing, { plan: 'unknown', cycle_day: null, account_totals_enabled: false }); return Response.json(value); });
+  const v = mount({ onSettings: field => settings.push(field) });
+  try {
+    await until(() => text(v.host).includes('Up to date'));
+    assert.match(text(group(v.host, 'Workers')), /Requests420/);
+    assert.match(text(byClass(v.host, 'usage-details')), /Plan: Not specified.*Cycle start day: Not specified/);
+    for (const label of ['Usage collection', 'Account totals', 'Cloudflare plan', 'Billing cycle']) button(v.host, label).props.onClick();
+    assert.deepEqual(settings, ['analytics_enabled', 'account_totals', 'billing_plan', 'billing_cycle_day']);
+    assert.equal(f.calls.length, 1); assert.doesNotMatch(text(v.host), /WAF|Domain & access|Budget|Shared allowance reminders/);
+    locale.value = 'zh-CN'; await nextTick(); assert.match(text(v.host), /查看当日用量不需要填写账期/);
+  } finally { v.app.unmount(); f.restore(); locale.value = 'en'; }
+});
+
+test('overview stays read-only and switching a fresh summary to details does not recollect', async () => {
+  const f = fixture(() => { const value = extendedSnapshot(); value.generated_at = value.cloudflare.collected_at = new Date().toISOString(); return Response.json(value); });
+  const summary = ref(true); const v = mount(() => ({ summary: summary.value, onDetails() { summary.value = false; } }));
+  try {
+    await until(() => text(v.host).includes('Up to date'));
+    assert.equal(all(v.host).filter(item => item.tag === 'dt').length, 4);
+    assert.equal(button(v.host, 'Set limit'), undefined); assert.equal(byClass(v.host, 'usage-details'), undefined);
+    button(v.host, 'View usage').props.onClick(); await nextTick();
+    assert.ok(button(v.host, 'Set limit')); assert.ok(byClass(v.host, 'usage-details')); assert.equal(f.calls.length, 1);
+    summary.value = true; await nextTick(); assert.equal(button(v.host, 'Set limit'), undefined); assert.equal(f.calls.length, 1);
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('entering details after fifteen minutes marks the retained snapshot stale and performs one automatic collection', async () => {
+  const originalNow = Date.now; let now = Date.parse('2026-09-19T02:00:00.000Z'); Date.now = () => now;
+  let finishRead; let finishCollection;
+  const f = fixture((call, calls) => {
+    if (calls.length === 1) return Response.json(snapshot());
+    if (call.method === 'GET') return new Promise(resolve => { finishRead = resolve; });
     return new Promise(resolve => { finishCollection = resolve; });
-  };
-  const summary = ref(true);
-  const app = renderer.createApp({ setup: () => () => h(Component, { summary: summary.value }) });
-  const host = node('root');
+  });
+  const summary = ref(true); const v = mount(() => ({ summary: summary.value }));
   try {
-    app.mount(host); await until(() => text(host).includes('Snapshot available'));
-    now += 15 * 60 * 1000 - 1;
-    summary.value = false; await nextTick();
-    assert.equal(calls.length, 1);
-    assert.match(text(host), /Shared allowance reminders/);
-    summary.value = true; await nextTick();
-    now += 1;
-    await nextTick();
-    assert.equal(calls.length, 1, 'time passage alone must not trigger background polling');
-    summary.value = false; await until(() => finishRead);
-    assert.equal(calls.length, 2);
-    assert.equal(calls[1].path, '/api/v1/admin/usage');
-    assert.match(text(host), /Stale snapshot/);
-    assert.doesNotMatch(text(host), /Shared allowance reminders|Snapshot available/);
-    const stale = extendedSnapshot('stale'); stale.generated_at = new Date(now).toISOString();
-    finishRead(Response.json(stale)); await until(() => finishCollection);
-    assert.equal(calls.length, 3);
-    assert.equal(calls[2].path, '/api/v1/admin/usage/refresh');
-    assert.equal(JSON.parse(calls[2].init.body).mode, 'stale');
-    assert.doesNotMatch(text(host), /Shared allowance reminders/);
-    const current = extendedSnapshot();
-    current.generated_at = current.cloudflare.collected_at = new Date(now).toISOString();
-    finishCollection(Response.json(current)); await until(() => text(host).includes('Snapshot available'));
-    assert.match(text(host), /Shared allowance reminders/);
-    assert.equal(calls.length, 3);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; Date.now = originalNow; }
+    await until(() => text(v.host).includes('Up to date'));
+    now += 15 * 60 * 1000 - 1; summary.value = false; await nextTick(); assert.equal(f.calls.length, 1);
+    summary.value = true; await nextTick(); now++; await nextTick(); assert.equal(f.calls.length, 1);
+    summary.value = false; await until(() => Boolean(finishRead)); assert.match(text(v.host), /Showing earlier data/);
+    finishRead(Response.json(snapshot('stale'))); await until(() => Boolean(finishCollection));
+    assert.deepEqual(f.calls.at(-1).body, { mode: 'stale' }); finishCollection(Response.json(snapshot()));
+    await until(() => text(v.host).includes('Up to date')); assert.equal(f.calls.length, 3);
+  } finally { Date.now = originalNow; v.app.unmount(); f.restore(); }
 });
 
-test('a failed foreground read retains a stale snapshot and entering details retries without reviving stale reminders', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalNow = Date.now;
-  let now = Date.parse('2026-09-19T02:00:00.000Z');
-  Date.now = () => now;
-  const calls = [];
-  globalThis.fetch = async (path, init) => {
-    calls.push({ path, init });
-    if (calls.length === 1) return Response.json(extendedSnapshot());
-    throw new Error('offline');
-  };
-  const summary = ref(true);
-  const app = renderer.createApp({ setup: () => () => h(Component, { summary: summary.value }) });
-  const host = node('root');
+test('attachment storage requires an explicit unlimited choice or positive byte-exact capacity', async () => {
+  const f = fixture(call => {
+    if (call.method === 'PATCH') return Response.json({ resource: { configured: true, version: 2, reserved_bytes: 0, limit_bytes: call.body.limit_bytes } });
+    const value = snapshot(); Object.assign(value.attachments, { limit_bytes: null, limit_configured: false, settings_version: 0 }); return Response.json(value);
+  });
+  const v = mount();
   try {
-    app.mount(host); await until(() => text(host).includes('Snapshot available'));
-    now += 15 * 60 * 1000;
-    summary.value = false; await until(() => text(host).includes('Refresh failed'));
-    assert.equal(calls.length, 2);
-    assert.match(text(host), /Stale snapshot/);
-    assert.doesNotMatch(text(host), /Shared allowance reminders|Snapshot available/);
-    assert.match(text(host), /Workers requests8,000,000/);
-    summary.value = true; await nextTick();
-    summary.value = false; await until(() => calls.length === 3 && text(host).includes('Refresh failed'));
-    assert.equal(calls[2].path, '/api/v1/admin/usage');
-    assert.doesNotMatch(text(host), /Shared allowance reminders|Snapshot available/);
-  } finally { app.unmount(); globalThis.fetch = originalFetch; Date.now = originalNow; }
+    await until(() => text(v.host).includes('Not set')); assert.equal(all(v.host).some(item => item.tag === 'meter'), false);
+    button(v.host, 'Set limit').props.onClick(); await nextTick();
+    await submit(v.host); await nextTick(); assert.equal(f.calls.filter(call => call.method === 'PATCH').length, 0);
+    change(all(v.host).find(item => item.tag === 'select'), 'unlimited'); await nextTick(); await submit(v.host); await nextTick();
+    assert.match(text(v.host), /0 B \/ Unlimited/); assert.deepEqual(f.calls.at(-1).body, { expected_version: 0, limit_bytes: null });
+    assert.ok(f.calls.at(-1).init.headers.get('idempotency-key')); assert.equal(all(v.host).some(item => item.tag === 'meter'), false);
+    button(v.host, 'Set limit').props.onClick(); await nextTick();
+    change(all(v.host).find(item => item.tag === 'select'), 'limited'); await nextTick();
+    change(all(v.host).find(item => item.tag === 'input'), '1.5'); await nextTick(); await submit(v.host); await nextTick();
+    assert.equal(f.calls.at(-1).body.limit_bytes, 1572864); assert.match(text(v.host), /1.5 MiB/); assert.ok(all(v.host).some(item => item.tag === 'meter'));
+  } finally { v.app.unmount(); f.restore(); }
 });
 
-test('snapshot bars compare only count metrics with the same known window and preserve unknowns', async () => {
-  const originalFetch = globalThis.fetch;
-  try {
-    for (const mode of ['matching', 'different_window', 'different_unit', 'r2_different_unit']) {
-      globalThis.fetch = async () => {
-        const value = extendedSnapshot();
-        const read = value.cloudflare.metrics.find(metric => metric.key === 'd1_rows_read');
-        read.value = 40_541;
-        value.cloudflare.metrics.push({ ...read, key: 'd1_rows_written', value: 994,
-          unit: mode === 'different_unit' ? 'microseconds' : 'count',
-          period_start: mode === 'different_window' ? '2026-09-18T00:00:00.000Z' : read.period_start });
-        if (mode === 'r2_different_unit') value.cloudflare.metrics.find(metric => metric.key === 'r2_unclassified_operations').unit = 'bytes';
-        return Response.json(value);
-      };
-      const app = renderer.createApp(Component); const host = node('root');
-      try {
-        app.mount(host); await until(() => text(host).includes('Data details & snapshot charts'));
-        const charts = all(host).filter(item => item.tag === 'figure');
-        const d1 = charts.find(item => text(item).startsWith('D1 read and write counts'));
-        assert.equal(Boolean(d1), mode === 'matching' || mode === 'r2_different_unit');
-        if (d1) {
-          assert.match(text(d1), /D1 rows read today40,541.*D1 rows written today994/);
-          const bars = all(d1).filter(item => item.tag === 'div' && item.props.class === 'usage-chart-track');
-          assert.equal(bars.length, 2);
-          assert.equal(bars[0].children[0].props.style.width, '100%');
-          assert.ok(Number.parseFloat(bars[1].children[0].props.style.width) < 3);
-        }
-        const r2 = charts.find(item => text(item).startsWith('R2 operation counts'));
-        assert.equal(Boolean(r2), mode !== 'r2_different_unit');
-        if (r2) {
-          assert.match(text(r2), /R2 Class A operationsUnknown.*R2 Class B operations0.*R2 unclassified operations2/);
-          assert.equal(all(r2).filter(item => item.tag === 'div' && item.props.class === 'usage-chart-track').length, 2);
-        }
-        assert.match(text(host), /separate usage history panel.*preserves missing dates/);
-      } finally { app.unmount(); }
+test('capacity conflicts read back automatically, retain the exact draft and wait for another explicit save', async () => {
+  let writes = 0; let saved;
+  const f = fixture(call => {
+    if (call.method === 'PATCH') {
+      if (++writes === 1) { const id = '40000000-0000-4000-8000-000000000001'; return Response.json({ code: 'VERSION_CONFLICT', category: 'conflict', source: 'service', message: 'Changed', recovery: 'refresh_resource', request_id: id, retryable: false, details: {} }, { status: 409, headers: { 'x-request-id': id } }); }
+      saved = call.body; return Response.json({ resource: { configured: true, version: 3, reserved_bytes: 0, limit_bytes: saved.limit_bytes } });
     }
-  } finally { globalThis.fetch = originalFetch; }
+    if (call.path.endsWith('attachment-settings')) return Response.json({ configured: true, version: 2, reserved_bytes: 0, limit_bytes: 3000000 });
+    return Response.json(snapshot());
+  });
+  const v = mount();
+  try {
+    await until(() => text(v.host).includes('Set limit')); button(v.host, 'Set limit').props.onClick(); await nextTick();
+    change(all(v.host).find(item => item.tag === 'input'), '2'); await nextTick(); await submit(v.host); await flush();
+    assert.match(text(v.host), /changed elsewhere.*Review it before saving your draft again/);
+    const input = all(v.host).find(item => item.tag === 'input'); assert.equal(input.props.value ?? input.value, '2');
+    assert.equal(writes, 1); assert.equal(f.calls.filter(call => call.path.endsWith('attachment-settings') && call.method === 'GET').length, 1);
+    assert.equal(button(v.host, 'Refresh settings'), undefined);
+    await submit(v.host); await flush(); assert.deepEqual(saved, { expected_version: 2, limit_bytes: 2097152 });
+  } finally { v.app.unmount(); f.restore(); }
+});
+
+test('an over-limit attachment capacity explains paused uploads and continued access in both languages', async () => {
+  const f = fixture(() => { const value = snapshot(); value.attachments.reserved_bytes = value.attachments.limit_bytes * 2; return Response.json(value); }); const v = mount();
+  try {
+    await until(() => text(v.host).includes('Storage limit reached'));
+    assert.match(text(v.host), /200%/); assert.match(text(v.host), /New uploads are paused; existing attachments remain accessible/);
+    assert.match(all(v.host).find(item => item.tag === 'meter').props.class, /capacity-reached/);
+    locale.value = 'zh-CN'; await nextTick(); assert.match(text(v.host), /已达到容量上限，新增上传已暂停；已有附件仍可访问/);
+  } finally { v.app.unmount(); f.restore(); locale.value = 'en'; }
+});
+
+test('billing details exclude daily Workers values and require the declared billing window', async () => {
+  for (const plan of ['free', 'unknown', 'paid']) {
+    const f = fixture(() => {
+      const value = extendedSnapshot(); value.cloudflare.billing.plan = plan;
+      value.cloudflare.metrics = [
+        metric('workers_requests', 123),
+        metric('d1_billing_rows_read', 345, { start: '2026-09-15T00:00:00.000Z' }),
+        metric('r2_class_a_operations', 456, { start: '2026-09-01T00:00:00.000Z' }),
+        metric('r2_class_b_operations', 567, { start: '2026-09-15T00:00:00.000Z', end: '2026-09-20T02:00:00.000Z' }),
+      ];
+      return Response.json(value);
+    }); const v = mount();
+    try {
+      await until(() => text(v.host).includes('Up to date'));
+      const details = byClass(v.host, 'usage-details'); const totals = byClass(details, 'usage-metrics');
+      assert.match(text(totals), /D1 rows read in billing period345/);
+      for (const label of ['Workers requests', 'R2 Class A operations', 'R2 Class B operations']) assert.equal(Boolean(metricRow(totals, label)), false, `${plan}: ${label}`);
+    } finally { v.app.unmount(); f.restore(); }
+  }
+  const f = fixture(() => {
+    const value = extendedSnapshot(); value.cloudflare.billing.cycle_day = null;
+    value.cloudflare.billing.period_start = null; value.cloudflare.billing.period_end = null; return Response.json(value);
+  }); const v = mount();
+  try { await until(() => text(v.host).includes('Up to date')); assert.doesNotMatch(text(byClass(v.host, 'usage-details')), /Billing-period usage/); }
+  finally { v.app.unmount(); f.restore(); }
 });

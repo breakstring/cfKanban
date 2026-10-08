@@ -1,11 +1,12 @@
-import { assessWafOperation, readWafStatus, verifyWafResult } from "./cloudflare-waf.ts";
+import { assessWafOperation, readLocalWafStatus, verifyWafResult } from "./cloudflare-waf.ts";
 import { buildCurrentAuthGuard, reauthenticateOwner, requireOwnerControl, type SqlGuard } from "../kernel/authorization.ts";
 import { isUuid, sha256Hex } from "../kernel/crypto.ts";
 import { AtomicBatchRejectedError, executeAtomicBatch, probeOperationCommit } from "../kernel/d1.ts";
 import { ApiError, conflict, notFound, platformUnavailable, validationError, versionConflict } from "../kernel/errors.ts";
-import { canonicalJson, readOperationSnapshot, runIdempotentOperation, validateIdempotencyKey } from "../kernel/idempotency.ts";
+import { canonicalJson, computeRequestHash, readOperationSnapshot, runIdempotentOperation, validateIdempotencyKey } from "../kernel/idempotency.ts";
 import type { AuthContext, JsonValue, WorkerEnv } from "../kernel/types.ts";
 import { actorCredentialId, requireIdempotencyKey, writeResult } from "./shared.ts";
+import { usageAnalyticsConfig } from "./usage.ts";
 
 export type Resource = { [key: string]: JsonValue };
 type Capability = "missing" | "unverified" | "verified" | "permission_denied" | "unavailable" | "target_mismatch" | "unsupported_contract";
@@ -159,14 +160,59 @@ export async function localChange(env: WorkerEnv, request: Request, auth: AuthCo
     readback: async (id, commit) => ({ body: await writeResult(db, auth, await readOperationSnapshot<Resource>(db, id), commit.lastEventSequence, false), status: 200 }) });
   return { ...result.body, idempotent_replay: result.idempotentReplay };
 }
+const LOCAL_OPERATIONS = {
+  zone_settings: { method: "PATCH", route: "/api/v1/admin/cloudflare/settings" },
+  waf_target_binding: { method: "POST", route: "/api/v1/admin/cloudflare/waf/target-binding" },
+  waf_plan: { method: "POST", route: "/api/v1/admin/cloudflare/waf/plan" },
+} as const;
+type LocalOperation = keyof typeof LOCAL_OPERATIONS;
+async function localOperationReceipt(env: WorkerEnv, auth: AuthContext, operation: LocalOperation, key: string, now: number, body?: Resource): Promise<Resource | null> {
+  requireOwnerControl(auth); validateIdempotencyKey(key);
+  const { method, route } = LOCAL_OPERATIONS[operation], scope = "instance-cloudflare-control";
+  const [keyHash, scopeHash] = await Promise.all([sha256Hex(key), sha256Hex(scope)]);
+  const row = await env.DB.prepare(`SELECT record.operation_id,record.request_hash,record.state,record.response_json,record.operation_snapshot_json,commit_row.last_event_sequence
+    FROM idempotency_records record LEFT JOIN operation_commits commit_row ON commit_row.operation_id=record.operation_id
+    WHERE record.scope_key=?1 AND record.method=?2 AND record.route_template=?3 AND record.resource_scope_hash=?4 AND record.idempotency_key=?5 AND record.expires_at>?6 LIMIT 1`)
+    .bind(`principal:${auth.principalId}`, method, route, scopeHash, keyHash, now)
+    .first<{ operation_id: string; request_hash: string; state: string; response_json: string | null; operation_snapshot_json: string | null; last_event_sequence: number | null }>();
+  if (!row) return null;
+  if (body !== undefined) {
+    const { requestHash } = await computeRequestHash({ method, routeTemplate: route, normalizedResourceScope: scope, scopeKey: `principal:${auth.principalId}`, idempotencyKey: key, requestBody: body });
+    if (row.request_hash !== requestHash) throw new ApiError({ code: "IDEMPOTENCY_CONFLICT", category: "conflict", message: "The Idempotency-Key was already used for a different request.", recovery: "none", retryable: false, status: 409 });
+  }
+  // 历史 pending 可能已原子提交但尚未写回缓存；只有 commit 与快照共同证明成功。
+  if (row.last_event_sequence === null) return null;
+  const result = row.state === "committed" && row.response_json !== null
+    ? object(JSON.parse(row.response_json) as JsonValue)
+    : await writeResult(env.DB, auth, await readOperationSnapshot<Resource>(env.DB, row.operation_id), row.last_event_sequence, true);
+  return { ...result, idempotent_replay: true, operation, request_hash: row.request_hash };
+}
+export async function getCloudflareLocalOperation(env: WorkerEnv, auth: AuthContext, operation: string | null, key: string, now: number): Promise<Resource> {
+  requireOwnerControl(auth);
+  if (!operation || !Object.hasOwn(LOCAL_OPERATIONS, operation)) throw validationError("invalid_cloudflare_local_operation");
+  const receipt = await localOperationReceipt(env, auth, operation as LocalOperation, key, now);
+  if (!receipt) throw notFound(); return receipt;
+}
+export async function replayCloudflareLocalOperation(env: WorkerEnv, request: Request, auth: AuthContext, operation: LocalOperation, body: Resource, now: number): Promise<Resource | null> {
+  requireOwnerControl(auth); await reauthenticateOwner(env.DB, request, Date.now());
+  const receipt = await localOperationReceipt(env, auth, operation, requireIdempotencyKey(request), now, body);
+  if (!receipt) return null;
+  const { operation: _operation, request_hash: _hash, ...result } = receipt; return result;
+}
+const RETIRED_CAPABILITIES = { notifications: "unsupported_contract", billing: "unsupported_contract", waf: "unsupported_contract" };
+async function capabilityIdentity(env: WorkerEnv): Promise<string> {
+  // 仅用于持久快照失效，不进入响应或审计；Dashboard 更换 Secret 也会触发失效。
+  return sha256Hex(canonicalJson({ domain: "cfkanban-control-capabilities-v1", configuration: tokenFor(env, "configuration") ?? null, analytics: tokenFor(env, "analytics") ?? null, account: env.CFKANBAN_CONTROL_ACCOUNT_ID ?? null, worker: env.CFKANBAN_CONTROL_WORKER_NAME ?? null, database: env.CFKANBAN_CONTROL_DATABASE_ID ?? null }));
+}
 export async function getCloudflareControl(env: WorkerEnv, auth: AuthContext): Promise<Resource> {
   requireOwnerControl(auth); const row = await settingsRow(env.DB), meta = await instance(env.DB);
-  const capabilities = { configuration: tokenFor(env, "configuration") ? "unverified" : "missing", notifications: tokenFor(env, "control") ? "unverified" : "missing", waf: tokenFor(env, "control") ? "unverified" : "missing", billing: tokenFor(env, "control") ? "unverified" : "missing", analytics: tokenFor(env, "analytics") ? "unverified" : "missing", ...object(JSON.parse(row.capabilities_json) as JsonValue) };
-  return { version: row.version, target: { account_id: env.CFKANBAN_CONTROL_ACCOUNT_ID ?? null, worker_name: env.CFKANBAN_CONTROL_WORKER_NAME ?? null, database_id: env.CFKANBAN_CONTROL_DATABASE_ID ?? null, zone_id: row.zone_id, hostname: new URL(meta.preferred_api_origin).hostname }, configured: { connection: Boolean(env.CFKANBAN_API_TOKEN), configuration: Boolean(tokenFor(env, "configuration")), control: Boolean(tokenFor(env, "control")), analytics: Boolean(tokenFor(env, "analytics")) }, capabilities, verified_at: row.verified_at === null ? null : new Date(row.verified_at).toISOString(), budget: BUDGET, latest_operation: row.latest_operation_id ? operationResource(await operationRow(env.DB, row.latest_operation_id), row.version) : null, configuration: configurationValues(env) };
+  const stored = object(JSON.parse(row.capabilities_json) as JsonValue), current = stored.credential_identity === await capabilityIdentity(env);
+  const capabilities = { configuration: current && typeof stored.configuration === "string" ? stored.configuration : tokenFor(env, "configuration") ? "unverified" : "missing", analytics: current && typeof stored.analytics === "string" ? stored.analytics : tokenFor(env, "analytics") ? "unverified" : "missing", ...RETIRED_CAPABILITIES };
+  return { version: row.version, target: { account_id: env.CFKANBAN_CONTROL_ACCOUNT_ID ?? null, worker_name: env.CFKANBAN_CONTROL_WORKER_NAME ?? null, database_id: env.CFKANBAN_CONTROL_DATABASE_ID ?? null, zone_id: row.zone_id, hostname: new URL(meta.preferred_api_origin).hostname }, configured: { connection: Boolean(env.CFKANBAN_API_TOKEN), configuration: Boolean(tokenFor(env, "configuration")), control: Boolean(tokenFor(env, "control")), analytics: Boolean(tokenFor(env, "analytics")) }, capabilities, verified_at: !current || row.verified_at === null ? null : new Date(row.verified_at).toISOString(), budget: BUDGET, latest_operation: row.latest_operation_id ? operationResource(await operationRow(env.DB, row.latest_operation_id), row.version) : null, configuration: configurationValues(env) };
 }
 export async function updateCloudflareSettings(env: WorkerEnv, request: Request, auth: AuthContext, zoneId: JsonValue, expected: number, now: number): Promise<Resource> {
-  if (zoneId !== null && (typeof zoneId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(zoneId))) throw validationError("invalid_zone_id");
-  return localChange(env, request, auth, "/api/v1/admin/cloudflare/settings", { zone_id: zoneId, expected_version: expected }, expected, id => [env.DB.prepare("UPDATE cloudflare_control_settings SET zone_id=?2,capabilities_json='{}',verified_at=NULL WHERE singleton=1 AND last_operation_id=?1").bind(id, zoneId)], async version => { const resource = await getCloudflareControl(env, auth); return { ...resource, version, target: { ...object(resource.target), zone_id: zoneId }, verified_at: null, capabilities: { configuration: tokenFor(env, "configuration") ? "unverified" : "missing", notifications: tokenFor(env, "control") ? "unverified" : "missing", waf: tokenFor(env, "control") ? "unverified" : "missing", billing: tokenFor(env, "control") ? "unverified" : "missing", analytics: tokenFor(env, "analytics") ? "unverified" : "missing" } }; }, now);
+  const previous = await replayCloudflareLocalOperation(env, request, auth, "zone_settings", { zone_id: zoneId, expected_version: expected }, now);
+  if (previous) return previous; throw validationError("cloudflare_feature_retired");
 }
 async function capability(probe: () => Promise<unknown>, present: boolean): Promise<Capability> { if (!present) return "missing"; try { await probe(); return "verified"; } catch (error) { return error instanceof ProviderFailure ? error.capability : "unavailable"; } }
 async function probeAnalytics(env: WorkerEnv, token: string, now: number, dependencies: CloudflareControlDependencies): Promise<void> {
@@ -174,56 +220,28 @@ async function probeAnalytics(env: WorkerEnv, token: string, now: number, depend
   const accounts = list(object(result.viewer).accounts); if (accounts.length !== 1) throw new ProviderFailure("target_mismatch"); list(object(accounts[0]).d1AnalyticsAdaptiveGroups);
 }
 export async function verifyCloudflareControl(env: WorkerEnv, request: Request, auth: AuthContext, now: number, dependencies: CloudflareControlDependencies = {}, includeOptional = false): Promise<Resource> {
-  requireOwnerControl(auth); const target = fixedTarget(env), control = tokenFor(env, "control"), configuration = tokenFor(env, "configuration"), analytics = tokenFor(env, "analytics"), row = await settingsRow(env.DB);
+  requireOwnerControl(auth); fixedTarget(env); const configuration = tokenFor(env, "configuration"), analytics = tokenFor(env, "analytics"), row = await settingsRow(env.DB);
   const [configurationStatus, analyticsStatus] = await Promise.all([
     capability(() => baseline(env, configuration ?? "", dependencies), Boolean(configuration)),
     capability(() => probeAnalytics(env, analytics ?? "", now, dependencies), Boolean(analytics)),
   ]);
-  const stored = object(JSON.parse(row.capabilities_json) as JsonValue), statuses: Resource = {
-    configuration: configurationStatus, analytics: analyticsStatus,
-    notifications: stored.notifications ?? (control ? "unverified" : "missing"),
-    waf: stored.waf ?? (control && row.zone_id ? "unverified" : "missing"),
-    billing: stored.billing ?? (control ? "unverified" : "missing"),
-  };
-  if (includeOptional) {
-    const call = api(control ?? "", dependencies), [notifications, waf, billing] = await Promise.all([
-      capability(() => call(`/accounts/${target.account_id}/alerting/v3/policies`), Boolean(control)),
-      capability(async () => { const result = await getCloudflareWaf(env, auth, dependencies); if (result.status !== "verified") throw new ProviderFailure(result.status as Capability); }, Boolean(control) && Boolean(row.zone_id)),
-      capability(() => call(`/accounts/${target.account_id}/billable-usage/info`), Boolean(control)),
-    ]);
-    Object.assign(statuses, { notifications, waf, billing });
-  }
+  const statuses: Resource = { configuration: configurationStatus, analytics: analyticsStatus, ...RETIRED_CAPABILITIES };
+  const stored = { ...statuses, credential_identity: await capabilityIdentity(env) };
   // 并发设置或 Secret 变更会使这次能力快照失效。
-  return localChange(env, request, auth, "/api/v1/admin/cloudflare/verify", includeOptional ? { include_optional: true } : {}, row.version, id => [env.DB.prepare("UPDATE cloudflare_control_settings SET capabilities_json=?2,verified_at=?3 WHERE singleton=1 AND last_operation_id=?1").bind(id, canonicalJson(statuses), now)], async version => ({ ...await getCloudflareControl(env, auth), version, capabilities: statuses, verified_at: new Date(now).toISOString() }), now);
+  return localChange(env, request, auth, "/api/v1/admin/cloudflare/verify", includeOptional ? { include_optional: true } : {}, row.version, id => [env.DB.prepare("UPDATE cloudflare_control_settings SET capabilities_json=?2,verified_at=?3 WHERE singleton=1 AND last_operation_id=?1").bind(id, canonicalJson(stored), now)], async version => ({ ...await getCloudflareControl(env, auth), version, capabilities: statuses, verified_at: new Date(now).toISOString() }), now);
 }
-async function verifiedZone(env: WorkerEnv, zoneId: string | null, dependencies: CloudflareControlDependencies, token: string | undefined): Promise<Resource> {
-  if (!zoneId || !token) throw new ProviderFailure("missing");
-  const target = fixedTarget(env), zone = object(await api(token, dependencies)(`/zones/${encodeURIComponent(zoneId)}`));
-  const hostname = new URL((await instance(env.DB)).preferred_api_origin).hostname, name = text(zone.name);
-  if (object(zone.account).id !== target.account_id || zone.id !== zoneId || !(hostname === name || hostname.endsWith(`.${name}`))) throw new ProviderFailure("target_mismatch", true);
-  return zone;
-}
-export async function getCloudflareNotifications(env: WorkerEnv, auth: AuthContext, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
-  requireOwnerControl(auth); const target = fixedTarget(env), token = tokenFor(env, "control"); if (!token) return { status: "missing", available_alerts: [], policies: [], budget: BUDGET };
-  try {
-    const call = api(token, dependencies), path = `/accounts/${target.account_id}/alerting/v3`, [available, policies] = await Promise.all([call(`${path}/available_alerts`), call(`${path}/policies`)]);
-    const flattened = Object.values(object(available)).flatMap(list); if (flattened.length > 500) throw new ProviderFailure("unavailable");
-    const alerts = flattened.map(value => { const alert = object(value); return { type: text(alert.type), display_name: text(alert.display_name, 500), description: typeof alert.description === "string" ? alert.description.slice(0, 2000) : "", filter_options: alert.filter_options === undefined ? [] : list(alert.filter_options) }; });
-    return { status: "verified", available_alerts: alerts, policies: list(policies).map(value => { const policy = object(value), mechanisms = object(policy.mechanisms ?? {}); return { id: text(policy.id), name: text(policy.name, 500), alert_type: text(policy.alert_type), enabled: policy.enabled === true, emails: Array.isArray(mechanisms.email) ? list(mechanisms.email).map(entry => text(object(entry).id, 320)) : [], filters: object(policy.filters ?? {}) }; }), budget: BUDGET };
-  } catch (error) { return { status: error instanceof ProviderFailure ? error.capability : "unavailable", available_alerts: [], policies: [], budget: BUDGET }; }
+export async function getCloudflareNotifications(_env: WorkerEnv, auth: AuthContext, _dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
+  requireOwnerControl(auth); throw validationError("cloudflare_feature_retired");
 }
 export function ownedExpression(host: string): string {
   const paths = ["admin", "workspaces", "projects", "issues", "attachments", "comments", "labels", "relations", "events", "notifications", "search-index"];
   return `(http.host eq "${host}" and (${paths.map(name => `(http.request.uri.path eq "/api/v1/${name}" or starts_with(http.request.uri.path, "/api/v1/${name}/"))`).join(" or ")}) and not any(http.request.headers.names[*] eq "authorization") and not http.cookie contains "cfkanban_session=")`;
 }
-export async function getCloudflareWaf(env: WorkerEnv, auth: AuthContext, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
-  requireOwnerControl(auth); return readCloudflareWaf(env, dependencies, tokenFor(env, "control"));
-}
-async function readCloudflareWaf(env: WorkerEnv, dependencies: CloudflareControlDependencies, token: string | undefined): Promise<Resource> {
-  return readWafStatus(env, dependencies, token);
+export async function getCloudflareWaf(env: WorkerEnv, auth: AuthContext, _dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
+  requireOwnerControl(auth); return readLocalWafStatus(env);
 }
 function configurationValues(env: WorkerEnv): Resource {
-  return { history_enabled: env.USAGE_HISTORY_ENABLED === "true", analytics_enabled: env.USAGE_ANALYTICS_ENABLED === "true" || (env.USAGE_ANALYTICS_ENABLED === undefined && Boolean(env.USAGE_ACCOUNT_ID && env.USAGE_D1_DATABASE_ID && tokenFor(env, "analytics"))), billing_plan: ["free", "paid"].includes(env.USAGE_BILLING_PLAN ?? "") ? env.USAGE_BILLING_PLAN ?? null : null, billing_cycle_day: /^([1-9]|[12][0-9]|3[01])$/.test(env.USAGE_BILLING_CYCLE_DAY ?? "") ? Number(env.USAGE_BILLING_CYCLE_DAY) : null, account_totals: env.USAGE_ACCOUNT_TOTALS_ENABLED === "true", warning_percent: /^([1-9]|[1-9][0-9]|100)$/.test(env.USAGE_WARNING_PERCENT ?? "") ? Number(env.USAGE_WARNING_PERCENT) : 80 };
+  return { history_enabled: env.USAGE_HISTORY_ENABLED === "true", analytics_enabled: env.USAGE_ANALYTICS_ENABLED === "true" || Boolean(usageAnalyticsConfig(env)), billing_plan: ["free", "paid"].includes(env.USAGE_BILLING_PLAN ?? "") ? env.USAGE_BILLING_PLAN ?? null : null, billing_cycle_day: /^([1-9]|[12][0-9]|3[01])$/.test(env.USAGE_BILLING_CYCLE_DAY ?? "") ? Number(env.USAGE_BILLING_CYCLE_DAY) : null, account_totals: env.USAGE_ACCOUNT_TOTALS_ENABLED === "true", warning_percent: /^([1-9]|[1-9][0-9]|100)$/.test(env.USAGE_WARNING_PERCENT ?? "") ? Number(env.USAGE_WARNING_PERCENT) : 80 };
 }
 function configurationInput(value: JsonValue): Resource {
   if (value === null || Array.isArray(value) || typeof value !== "object") throw validationError("configuration_object_required");
@@ -234,6 +252,7 @@ function configurationInput(value: JsonValue): Resource {
   return input;
 }
 export async function planCloudflareConfiguration(env: WorkerEnv, request: Request, auth: AuthContext, input: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
+  if (input !== null && typeof input === "object" && !Array.isArray(input) && Object.hasOwn(input, "warning_percent")) { requireOwnerControl(auth); throw validationError("cloudflare_feature_retired"); }
   return createPlan(env, request, auth, "configuration", configurationInput(input), expected, now, dependencies);
 }
 export async function planCloudflareRateLimits(env: WorkerEnv, request: Request, auth: AuthContext, scope: JsonValue, limit: JsonValue, period: JsonValue, expected: number, now: number, dependencies: CloudflareControlDependencies = {}): Promise<Resource> {
@@ -252,10 +271,10 @@ function bindingText(bindings: Resource[], name: string): string | null { const 
 function desiredValues(kind: ConfigurationPlanKind, desired: Resource, bindings: Resource[]): Resource {
   if (kind === "rate_limit") { const group = RATE_GROUPS[desired.scope as keyof typeof RATE_GROUPS], binding = bindings.find(entry => entry.name === group[0]); if (!binding || binding.type !== "ratelimit") throw validationError("rate_limit_binding_missing"); const simple = object(binding.simple); return { scope: desired.scope ?? null, limit: simple.limit ?? null, period_seconds: simple.period ?? null }; }
   const values: Resource = {};
-  for (const [key, name] of Object.entries(CONFIG_VARS)) { const value = bindingText(bindings, name); values[key] = value === null ? (["billing_plan", "billing_cycle_day"].includes(key) ? null : key === "warning_percent" ? 80 : false) : ["history_enabled", "analytics_enabled", "account_totals"].includes(key) ? value === "true" : ["billing_cycle_day", "warning_percent"].includes(key) ? Number(value) : value; }
+  for (const [key, name] of Object.entries(CONFIG_VARS)) { if (key === "warning_percent") continue; const value = bindingText(bindings, name); values[key] = value === null ? (["billing_plan", "billing_cycle_day"].includes(key) ? null : key === "warning_percent" ? 80 : false) : ["history_enabled", "analytics_enabled", "account_totals"].includes(key) ? value === "true" : ["billing_cycle_day", "warning_percent"].includes(key) ? Number(value) : value; }
   // Older deployments collect snapshots without an explicit enabled variable.
   // A partial settings change must preserve that effective enabled state.
-  if (bindingText(bindings, CONFIG_VARS.analytics_enabled) === null) values.analytics_enabled = Boolean(bindingText(bindings, "USAGE_ACCOUNT_ID") && bindingText(bindings, "USAGE_D1_DATABASE_ID") && bindings.some(binding => (binding.name === SECRET_NAMES.connection || binding.name === SECRET_NAMES.analytics) && binding.type === "secret_text"));
+  if (bindingText(bindings, CONFIG_VARS.analytics_enabled) === null) values.analytics_enabled = Boolean((bindingText(bindings, "USAGE_ACCOUNT_ID") || bindingText(bindings, "CFKANBAN_CONTROL_ACCOUNT_ID")) && (bindingText(bindings, "USAGE_D1_DATABASE_ID") || bindingText(bindings, "CFKANBAN_CONTROL_DATABASE_ID")) && bindings.some(binding => (binding.name === SECRET_NAMES.connection || binding.name === SECRET_NAMES.analytics) && binding.type === "secret_text"));
   configurationInput(values); return values;
 }
 function patchSettings(live: LiveBaseline, kind: ConfigurationPlanKind, desired: Resource, target: Target): Resource {

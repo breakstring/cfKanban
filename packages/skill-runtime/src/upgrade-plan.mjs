@@ -365,7 +365,8 @@ export function createInstanceUpgradePlan({
   if (usageAnalytics === null) throw toolError("INVALID_USAGE_CONFIG", "Use an explicit enabled boolean to change usage configuration");
   const usageTarget = { accountId: cloudflare.account_id, databaseId: d1DatabaseId, workerName, bucketName: priorStorage?.bucket_name ?? null };
   const previousUsage = existingUsageConfig(resources.worker?.bindings, usageTarget);
-  const usage = usageAnalytics === undefined ? previousUsage : normalizeUsageConfig(usageAnalytics, { ...usageTarget, bucketName: storage?.bucket_name ?? null });
+  // 退役阈值不再接受新输入，但修改其他统计配置也不能丢失旧部署值。
+  const usage = usageAnalytics === undefined ? previousUsage : { ...normalizeUsageConfig(usageAnalytics, { ...usageTarget, bucketName: storage?.bucket_name ?? null }), ...(previousUsage?.warning_percent === undefined ? {} : { warning_percent: previousUsage.warning_percent }) };
   const usageSecret = resources.worker?.bindings?.some((item) => item.name === USAGE_SECRET && item.type === "secret_text" && item.value_redacted === true) === true;
   const normalizedCurrent = serviceRelease(current, "current");
   if (normalizedCurrent.schema_version >= 27 && publicAccess?.domain_enabled && !wafAuthority) throw toolError("WAF_TARGET_AUTHORITY_REQUIRED", "Schema 27 managed-domain upgrades require the current D1 WAF ownership readback; a historical local snapshot is insufficient");

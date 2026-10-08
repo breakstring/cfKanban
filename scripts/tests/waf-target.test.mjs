@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { dispatch } from "../../packages/skill-runtime/src/cli.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
@@ -8,7 +9,7 @@ import os from "node:os";
 import { applyWafTarget, createWafTargetPlan, inspectWafTarget, readWafAuthority } from "../../packages/skill-runtime/src/waf-target.mjs";
 import { anonymousApiRule, applyPublicAccess, createPublicAccessPlan, inspectPublicAccess, verifyPublicAccessConfiguration } from "../../packages/skill-runtime/src/public-access.mjs";
 import { projectWafAuthority } from "../../packages/skill-runtime/src/public-access-config.mjs";
-import { authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
+import { appendJournalEvent, authorizeJournal, createJournal } from "../../packages/skill-runtime/src/journal.mjs";
 import { createPendingCredential, getInstancePaths, loadPendingCredentialSecret, promotePendingCredential, putInstanceMetadata } from "../../packages/skill-runtime/src/state.mjs";
 import { atomicWriteJson, canonicalDigest } from "../../packages/skill-runtime/src/utils.mjs";
 import { readPendingWaf } from "../../packages/skill-runtime/src/waf-pending.mjs";
@@ -81,14 +82,14 @@ async function fixture(t) {
     if (u.pathname === "/api/v1/admin/instance-origin") { if (method === "PUT") { assert.equal(body.expected_version, originState.version); db.prepare("UPDATE instance_origin_settings SET preferred_api_origin=?1,version=version+1").run(body.preferred_api_origin); } const current = db.prepare("SELECT preferred_api_origin,version FROM instance_origin_settings").get(); return json(current); }
     if (u.pathname === "/api/v1/me") return json({ id: principalId, is_owner: true, credential: { id: credentialId, fingerprint: credential.metadata.fingerprint } });
     if (u.pathname === "/api/v1/admin/cloudflare") return json({ version: db.prepare("SELECT version FROM cloudflare_control_settings").get().version });
-    if (u.pathname === "/api/v1/admin/cloudflare/waf/plan") { f.serviceAction = body.action; f.serviceOperationId = randomUUID(); f.servicePlanId = randomUUID(); f.serviceCommitted = false; f.serviceRule = { ...anonymousApiRule(hostname, instanceId), ref: `${anonymousApiRule(hostname, instanceId).ref}_${f.servicePlanId.replaceAll("-", "")}` }; return json({ resource: { kind: "waf", plan_id: f.servicePlanId, version: body.expected_version, before: {}, after: { action: body.action, rule: f.serviceRule } } }); }
+    if (u.pathname === "/api/v1/admin/cloudflare/waf/plan") { f.serviceAction = body.action; f.serviceOperationId = randomUUID(); f.servicePlanId = randomUUID(); f.serviceCommitted = false; f.serviceRule = { ...anonymousApiRule(hostname, instanceId), ref: `${anonymousApiRule(hostname, instanceId).ref}_${f.servicePlanId.replaceAll("-", "")}` }; return json({ resource: { kind: "waf", plan_id: f.servicePlanId, version: body.expected_version, before: { owned_rule: body.action === "disable" ? { id: db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").get().rule_id, ruleset_id: "ruleset-test" } : null }, after: { action: body.action, rule: f.serviceRule, entrypoint_strategy: body.action === "disable" ? "delete_owned_rule" : "append_rule", apply_ready: true, purchase_or_upgrade_plan: false, modifies_foreign_rules: false } } }); }
     if (u.pathname === "/api/v1/admin/cloudflare/waf/apply") {
       f.serviceDispatches++;
       if (f.serviceNotDispatched) { const requestId = randomUUID(); return json({ code: "VERSION_CONFLICT", category: "conflict", source: "service", message: "fixture pre-dispatch rejection", recovery: "refresh_and_retry", request_id: requestId, retryable: false, details: { write_state: "not_dispatched" } }, 409, { "x-request-id": requestId }); }
       commitService(); if (f.serviceUnknown) throw new Error("unknown dispatched response");
       return json(f.truncatedApply ? { resource: { kind: "waf", operation_id: f.serviceOperationId, status: f.serviceStatus, version: 1 } } : operationWrite());
     }
-    if (/\/waf\/operations\//.test(u.pathname)) return f.noIntent ? json({ code: "NOT_FOUND" }, 404) : json(f.truncatedLookup ? { kind: "waf", operation_id: f.serviceOperationId, status: f.serviceStatus, version: 1 } : operationResource());
+    if (/\/waf\/operations\//.test(u.pathname)) { if (f.serviceUnknown) throw new Error("unavailable legacy lookup"); commitService(); return f.noIntent ? json({ code: "NOT_FOUND" }, 404) : json(f.truncatedLookup ? { kind: "waf", operation_id: f.serviceOperationId, status: f.serviceStatus, version: 1 } : operationResource()); }
     if (/\/operations\/[^/]+\/verify$/.test(u.pathname)) {
       const key = new Headers(options.headers).get("idempotency-key"); f.serviceVerifyKeys.push(key);
       if (f.verifyResponses.has(key)) return json(f.verifyResponses.get(key));
@@ -98,16 +99,17 @@ async function fixture(t) {
     }
     assert.fail(`Unexpected trusted API ${method} ${u.pathname}`);
   };
-  f.prepare = async () => { const result = await createWafTargetPlan(input); f.execution = { ...input, plan: result.plan, operationId: result.plan.operation_id }; await createJournal(f.execution); await authorizeJournal({ ...f.execution, planDigest: result.plan_digest }); return result; };
+  f.prepare = async ({ dispatched = true } = {}) => { const result = await createWafTargetPlan(input); f.execution = { ...input, plan: result.plan, operationId: result.plan.operation_id }; await createJournal(f.execution); await authorizeJournal({ ...f.execution, planDigest: result.plan_digest }); if (dispatched) await appendJournalEvent({ ...f.execution, event: { type: "waf_target_registration_intent" } }); return result; };
   f.apply = () => applyWafTarget(f.execution);
-  f.prepareService = async (mode = "waf-enable") => { const result = await createPublicAccessPlan({ ...input, mode }); const execution = { ...input, plan: result.plan, operationId: result.plan.operation_id }; await createJournal(execution); await authorizeJournal({ ...execution, planDigest: result.plan_digest }); return execution; };
+  f.seedServiceDispatch = async execution => { await appendJournalEvent({ ...execution, event: { type: "public_access_service_dispatch" } }); f.serviceDispatches++; };
+  f.prepareService = async (mode = "waf-enable") => { const result = await createPublicAccessPlan({ ...input, mode }); const execution = { ...input, plan: result.plan, operationId: result.plan.operation_id }; await createJournal(execution); await authorizeJournal({ ...execution, planDigest: result.plan_digest }); if (mode === "waf-enable") await f.seedServiceDispatch(execution); return execution; };
   f.legacy = async () => {
     const receipt = { schema_version: 1, kind: "cfkanban_public_access_receipt", instance_id: instanceId, account_id: "account-test", worker_name: "board", zone_id: "zone-test", hostname, domain_enabled: true, domain_id: "domain-test", workers_dev_origin: "https://board.isolated.workers.dev", workers_dev: false, previews_enabled: false, preferred_api_origin: preferred, rule_id: "rule-test", ruleset_id: "ruleset-test", rule_ref: anonymousApiRule(hostname, instanceId).ref, waf_profile: "anonymous-api-filter", operation_id: randomUUID(), plan_digest: "a".repeat(64), verified_at: new Date(1).toISOString(), snapshot_not_realtime: true };
     f.rules = [{ id: "rule-test", ...anonymousApiRule(hostname, instanceId) }]; await atomicWriteJson(path.join(paths.receiptsRoot, "public-access.json"), receipt); return receipt;
   };
   return f;
 }
-test("target registration binds exact old domain without changing mapping, reuses ID and recovers lost commit", async t => {
+test("legacy dispatched target registration binds exact old domain, reuses ID and recovers lost commit", async t => {
   const f = await fixture(t); await f.prepare(); f.loseResponse = true;
   const result = await f.apply(); assert.equal(result.receipt.binding.source, "deployment_runtime"); assert.equal(result.public_access.domain_ownership_proven, false); assert.equal(result.public_access.kind, "cfkanban_waf_target_projection");
   assert.equal(f.writes, 1); assert.deepEqual(await f.apply(), result); assert.equal(f.writes, 1);
@@ -146,10 +148,19 @@ test("schema 27 runtime WAF uses reviewed Worker plan and dispatch fence, withou
   const f = await fixture(t); await f.prepare(); await f.apply();
   const planned = await createPublicAccessPlan({ ...f.input, mode: "waf-enable", conflictChoice: "preserve_exemptions" });
   const execution = { ...f.input, plan: planned.plan, operationId: planned.plan.operation_id }; await createJournal(execution); await authorizeJournal({ ...execution, planDigest: planned.plan_digest });
-  f.serviceUnknown = true; await assert.rejects(applyPublicAccess(execution), { code: "PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN" }); f.serviceUnknown = false;
+  await f.seedServiceDispatch(execution); f.serviceUnknown = true; await assert.rejects(applyPublicAccess(execution), { code: "PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN" }); f.serviceUnknown = false;
   const result = await applyPublicAccess(execution); assert.equal(result.operation.status, "verified"); assert.equal(f.serviceDispatches, 1); assert.equal(result.domain_receipt_unchanged, true);
   const none = await createPublicAccessPlan({ ...f.input, mode: "waf-disable" }); const missing = { ...f.input, plan: none.plan, operationId: none.plan.operation_id }; await createJournal(missing); await authorizeJournal({ ...missing, planDigest: none.plan_digest });
   f.serviceUnknown = true; await assert.rejects(applyPublicAccess(missing)); f.noIntent = true; await assert.rejects(applyPublicAccess(missing), { code: "PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN" }); assert.equal(f.serviceDispatches, 2);
+});
+
+test("a previously frozen Service enable plan without dispatch cannot create a new rule", async t => {
+  const f = await fixture(t); await f.prepare(); await f.apply();
+  const prepared = await createPublicAccessPlan({ ...f.input, mode: "waf-enable" });
+  const execution = { ...f.input, plan: prepared.plan, operationId: prepared.plan.operation_id };
+  await createJournal(execution); await authorizeJournal({ ...execution, planDigest: prepared.plan_digest });
+  await assert.rejects(applyPublicAccess(execution), { code: "CLOUDFLARE_FEATURE_RETIRED" });
+  assert.equal(f.serviceDispatches, 0); assert.equal(f.rules.length, 0); assert.equal(await readPendingWaf(f.input), null);
 });
 test("lost dispatch plus absent intent blocks new WAF and target mutations until the exact original resume verifies", async t => {
   const f = await fixture(t); await f.prepare(); await f.apply(); await f.prepare(); const targetExecution = f.execution;
@@ -161,14 +172,13 @@ test("lost dispatch plus absent intent blocks new WAF and target mutations until
   await assert.rejects(applyPublicAccess(concurrent), { code: "WAF_PENDING_OPERATION_REQUIRED" });
   await assert.rejects(createWafTargetPlan(f.input), { code: "WAF_PENDING_OPERATION_REQUIRED" });
   await assert.rejects(applyWafTarget(targetExecution), { code: "WAF_PENDING_OPERATION_REQUIRED" });
-  assert.equal(f.serviceDispatches, 1); f.noIntent = false; f.serviceUnknown = false;
+  assert.equal(f.serviceDispatches, 2); f.noIntent = false; f.serviceUnknown = false;
   await applyPublicAccess(original); assert.equal(await readPendingWaf(f.input), null); await f.prepareService();
 });
 test("truncated apply, lookup and verify cannot release the service dispatch fence", async t => {
-  for (const kind of ["apply", "lookup", "verify"]) {
+  for (const kind of ["lookup", "verify"]) {
     const f = await fixture(t); await f.prepare(); await f.apply(); const execution = await f.prepareService();
-    if (kind === "apply") f.truncatedApply = true;
-    else if (kind === "lookup") { f.serviceUnknown = true; await assert.rejects(applyPublicAccess(execution)); f.serviceUnknown = false; f.truncatedLookup = true; }
+    if (kind === "lookup") { f.serviceUnknown = true; await assert.rejects(applyPublicAccess(execution)); f.serviceUnknown = false; f.truncatedLookup = true; }
     else { f.serviceStatus = "pending"; f.verifyStatus = "verified"; f.truncatedVerify = true; }
     await assert.rejects(applyPublicAccess(execution), { code: "PUBLIC_ACCESS_SERVICE_OUTCOME_UNKNOWN" }); assert.equal(f.serviceDispatches, 1);
     const journal = JSON.parse(await readFile(path.join(f.paths.journalsRoot, `${execution.operationId}.json`), "utf8")); assert.ok(!journal.events.some(event => event.type === "public_access_service_verified"));
@@ -195,7 +205,7 @@ test("complete unknown verification advances rounds while lost HTTP reuses its o
 });
 test("trusted not-dispatched and complete failed operations are retained confirmed failures without redispatch", async t => {
   for (const notDispatched of [true, false]) {
-    const f = await fixture(t); await f.prepare(); await f.apply(); const execution = await f.prepareService(); f.serviceNotDispatched = notDispatched; f.serviceStatus = "failed"; f.serviceFailure = "provider_rejected";
+    const f = await fixture(t); await f.legacy(); await f.prepare(); await f.apply(); const execution = await f.prepareService("waf-disable"); f.serviceNotDispatched = notDispatched; f.serviceStatus = "failed"; f.serviceFailure = "provider_rejected";
     const result = await applyPublicAccess(execution); assert.equal(result.ok, false); assert.equal(result.cloudflare_status, "failed"); assert.equal(result.outcome_unknown, false); assert.equal(result.operation.failure_class, notDispatched ? "not_dispatched" : "provider_rejected");
     assert.deepEqual(await applyPublicAccess(execution), result); assert.equal(f.serviceDispatches, 1); assert.equal(f.serviceVerifyKeys.length, 0);
     assert.equal(await readPendingWaf(f.input), null); await f.prepareService();
@@ -224,6 +234,24 @@ test("schema 27 owned domain rollback disables service WAF first and clears targ
   assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM cloudflare_waf_target_binding").get().n, 0); assert.equal(f.db.prepare("SELECT rule_id FROM cloudflare_waf_ownership").get().rule_id, null);
   assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM events WHERE type='instance.waf-target-cleared'").get().n, 1); assert.equal(f.serviceDispatches, 1);
   assert.deepEqual((await applyPublicAccess(execution)).receipt, reverted.receipt);
+});
+
+test("retired target planning accepts only proven private legacy domain ownership for upgrade recovery", async t => {
+  const fresh = await fixture(t);
+  await assert.rejects(dispatch("plan waf-target", fresh.input, { surface: "deploy" }), error => error.code === "CLOUDFLARE_FEATURE_RETIRED" && error.details.reason === "cloudflare_feature_retired");
+  assert.equal(fresh.calls.length, 0);
+  const existing = await fixture(t); await existing.legacy();
+  const result = await dispatch("plan waf-target", existing.input, { surface: "deploy" });
+  assert.equal(result.plan.effects.import_exact_legacy_owned_rule, true);
+  assert.equal(result.plan.effects.cloudflare_resource_writes, false);
+  await existing.prepare({ dispatched: false });
+  assert.equal((await existing.apply()).receipt.ownership.rule_id, "rule-test");
+});
+test("a frozen undispatched target registration cannot bypass retired setup without exact legacy ownership", async t => {
+  const f = await fixture(t); await f.prepare({ dispatched: false });
+  await assert.rejects(f.apply(), { code: "CLOUDFLARE_FEATURE_RETIRED" });
+  assert.equal(f.writes, 0);
+  assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM cloudflare_waf_target_binding").get().n, 0);
 });
 test("registered-domain projection never authorizes domain rollback", async t => {
   const f = await fixture(t); await f.prepare(); const registered = await f.apply(); await atomicWriteJson(path.join(f.paths.receiptsRoot, "public-access.json"), registered.public_access);

@@ -255,7 +255,7 @@ Web 根据自身 `GET /api/v1/web-session` 响应中的 `version` 与 `renewal: 
 
 ## Owner 用量与限额
 
-通过 `api request` 调用 `POST /api/v1/admin/usage/refresh`，与 Web 刷新使用同一 Owner-only 投影和服务端缓存。附件 `reserved_bytes` 包含上传中、就绪、软删除和未确认回收对象，是应用预留预算，不是 R2 计费容量。Cloudflare 数据可选，保留每项 instance/account 范围；账户聚合需要明确开启。明确展示 `not_configured`、`pending`、`error`、`stale` 和 null，不把未知改写为零，不从实例推算账户剩余额度。日操作量采用 UTC；月周期指标需要已核对账期，否则保持未知。容量是最近 24 小时最后观测，不是 GB-month。Workers 请求/CPU、D1 行数和 R2 类别分别报告。`billing.allowances_shared` 与 `analytics_not_invoice` 始终为 true；alerts 是新鲜分析值对共享额度的贡献提醒，不是账单封顶。R2 免费比较需要核对 `r2_standard_only_scope`。`public_access` 是最后部署声明，`live_verified=false`；受支持的实时状态由独立 Owner Cloudflare API 检查，域名变更使用部署计划，防护变更使用 Owner WAF plan/apply API。默认只展示一次简短更新时间，需要时再报告准确窗口。Token 使用下节受保护 Owner 表单，不能进入普通 API 请求体或 Issue。
+通过 `api request` 调用 `POST /api/v1/admin/usage/refresh`，与 Web 刷新使用同一 Owner-only 投影和服务端缓存。附件 `reserved_bytes` 包含上传中、就绪、软删除和未确认回收对象，是应用预留预算，不是 R2 计费容量。Cloudflare 数据可选，保留每项 instance/account 范围；账户聚合需要明确开启。明确展示 `not_configured`、`pending`、`error`、`stale` 和 null，不把未知改写为零，不从实例推算账户剩余额度。日操作量采用 UTC；月周期指标需要已核对账期，否则保持未知。容量是最近 24 小时最后观测，不是 GB-month。Workers 请求/CPU、D1 行数和 R2 类别分别报告。`billing.allowances_shared` 与 `analytics_not_invoice` 始终为 true；预算通知退役后旧 alerts 数组保持为空。R2 免费比较需要核对 `r2_standard_only_scope`。`public_access` 是最后部署声明，`live_verified=false`；已有域名/规则状态通过部署读回核验，域名变更使用独立授权的部署计划，不提供新 WAF 设置。默认只展示一次简短更新时间，需要时再报告准确窗口。Token 使用下节受保护 Owner 表单，不能进入普通 API 请求体或 Issue。
 
 每次技能查询都调用与页面“刷新用量”相同的刷新入口。`{ "mode": "stale" }` 和 `{ "mode": "manual" }` 统一复用不足 15 分钟的成功快照，manual 不绕过缓存。缺少、过期、失败或中断的采集可重试，但共用实例级 60 秒尝试冷却。并发请求返回当前投影并以 `refreshing` 标记；不轮询。每次响应仍实时读取附件预留与设置。该派生缓存刷新不要求 Idempotency-Key，不写领域 Event/Audit。
 
@@ -273,21 +273,21 @@ Web 根据自身 `GET /api/v1/web-session` 响应中的 `version` 与 `renewal: 
 
 ## Owner Cloudflare 设置
 
-核对可信实例与 Owner。`GET /api/v1/admin/cloudflare` 返回固定账户/Worker/DB、已选 Zone、Secret 已配置标志、上次能力核验和控制 `version`，不会返回 Token。旧部署缺少固定目标设置时，需另行授权升级，不能猜目标或创建 Token。该路径下 `GET /notifications` 与 `GET /waf` 是主动、有界的实时读取；权限失败不等于没有警报或防护。实际策略名、启用状态和收件邮箱仅向 Owner 展示；未确认的美元字段保持未知，策略只读。
+核对可信实例与 Owner。`GET /api/v1/admin/cloudflare` 返回固定目标、Secret 已配置标志、能力结果和控制 `version`，不返回 Token。旧部署缺少固定目标时需另行授权升级，不猜目标。
 
-`POST /verify` 以 `{}` 和稳定键核验已配置能力。`PATCH /settings` 只接受 `{zone_id, expected_version}` 并使用稳定键。配置或限流计划使用 `POST /configuration/plan` 或 `/rate-limits/plan`、当前控制版本和稳定键。用 `GET /plans/{plan_id}` 读回准确计划并核对 before/after。对应 `/apply` 使用 `{plan_id, expected_version: <plan.version>}` 和新的稳定键。说明此次更新并部署 Worker 配置，不是重启或费用封顶。
+Token 接入或替换通过 `web open` 打开 Owner「用量与配额」。用户在受保护的 **Cloudflare API Token** 输入框填写后点击「保存」；输入框保持空白，旁边持续显示已保存状态。页面自动完成生效核验、权限检查和各分区加载，不要求用户逐项检查。普通 `api request` 拒绝 `/secrets`；不在聊天、JSON 文件或 CLI 参数索取 Token。统一 Token 只保存一次到 Worker Secret `CFKANBAN_API_TOKEN`，兼容保留旧用途 Secret。配置写入需要限定当前 Worker 的 account-owned Editor，包含代码和部署权；统计需要对应读取权限。
 
-用 `GET /operations/{operation_id}` 读回返回的操作。只有 `verified` 证明配置已观测生效，`pending`、`unknown` 和 `failed` 不可说成已应用。`POST /operations/{operation_id}/verify` 以 `{}` 和稳定键读取 Cloudflare，可更新非秘密操作状态，不发送第二次 Cloudflare 写入。响应不确定时保留原请求/键，不制造替代计划或重复输入 Secret。
+网页保存缺少 Worker 写权限时，引导用户到 Cloudflare → Workers & Pages → 当前 Worker → Settings → Variables and Secrets，更新 **Secret** 类型的 `CFKANBAN_API_TOKEN` 后 Deploy。返回页面重新检查。不保存为明文变量，不因手工替换而放弃未确认操作。
 
-Token 接入/轮换使用 `web open` 打开 Owner「概览」连接入口，由用户在受保护的 **Cloudflare API Token** 表单输入一份授权。普通 `api request` 拒绝 `/secrets`，不能在聊天、JSON 输入文件或 CLI 参数索取 Token。统一 Token 只保存一次到普通 Worker Secret；必需的 account-owned Editor 只限定当前 Worker，同时包含其代码和部署权。统计及可选读取权限按能力分别核验，旧用途 Secret 仍兼容保留。存在不证明权限有效，先核验替代授权，再撤销旧 Token。
+Agent 按任务检查时，`POST /verify` 使用 `{}` 和稳定键核验配置与统计。旧 `include_optional` 参数仍接受，但不再查询 Notifications、Billing 或 WAF。配置与访问频率修改仍使用 `POST /configuration/plan` 或 `/rate-limits/plan`、当前控制版本和稳定键；通过 `GET /plans/{plan_id}` 核对 before/after，再以 `{plan_id, expected_version:<plan.version>}` 和独立稳定键 apply。预算通知 `warning_percent` 不再允许配置。
 
-schema 27+ 的 WAF 管理先读取 `/waf`，核对已登记的当前 preferred hostname、完整清单、归属规则及覆盖范围。`POST /waf/target-binding` 只接受 `{expected_version}`，使用已存 Token 核对准确 Worker Custom Domain，不创建域名或规则。缺少该读取权限时，仅将目标登记转给部署 Skill 的 `waf-target` plan/apply，使用本机已有 Cloudflare 认证；认证及临时 Token 不发送给 Service。hostname 或手工规则描述一致不证明归属。
+只有 `verified` 证明配置已观测生效。用 `GET /operations/{operation_id}` 读回；`POST /operations/{operation_id}/verify` 以 `{}` 和稳定键读取 Cloudflare 并更新非秘密状态，不重复外部写入。结果不确定保留原请求/键。apply 更新 Worker 配置，不是重启或费用封顶。
 
-以 `{action:"enable"|"disable",expected_version}` 和稳定键创建 `POST /waf/plan`。核对准确计划及 `apply_ready`；共存需要决策时，根据用户意图用 `conflict_choice:"preserve_exemptions"|"before_conflicts"` 重新计划。只有明确可重新排序的 Skip 才能前移；IP Access Allow 和不确定表达式保留部分覆盖，移动 custom rule 不能消除它们。`/waf/apply` 使用 `{plan_id,expected_version:<plan.version>}` 与新的 UUID Idempotency-Key。Service 向唯一 Zone entrypoint 追加单条规则，或创建缺失 entrypoint，保留其他规则及其顺序，并按 Free 五条上限清点全部 custom rules。关闭只删除准确登记的归属规则，保留域名及共享 ruleset。
+WAF 设置、预算通知及通知策略浏览已退出产品功能，不再提供新目标登记或启用。schema 27 数据、既有规则和旧 bindings 保留兼容。WAF 响应丢失只用 `GET /waf/operations/{original_uuid_key}` 查原请求，再读取或核验准确 operation。404 或 `cloudflare_feature_retired` 都不证明此前写入未发生；保留 intent、私有 pending 和 journal。普通升级保留既有规则；独立授权的域名回退可清理准确旧自有规则。应用公告与访问频率设置继续支持。
 
-apply 响应丢失时，以 `GET /waf/operations/{original_uuid_key}` 只查原请求，再读取或核验准确 operation。404 表示证据不可用，不证明写入未发生；保留原 intent，不重复 apply。`protected=true` 要求当前归属、目标及覆盖证据，不能仅由 operation 的 `verified` 推断。普通升级读取 Service WAF 归属记录，旧本机回执不会覆盖另一设备已执行的关闭。启停需要准确 Zone 的 WAF Edit，只有 Read 无法写入。此 profile 减少匿名私有 API 无效流量，header/cookie 存在性可以绕过它，也不是账单封顶。
+旧 Zone 设置、目标登记或 WAF 计划请求通过 `operation recover` 在 `GET /local-operations/{original_key}?operation=zone_settings|waf_target_binding|waf_plan` 读取准确原提交快照；公共只读命令为 `admin cloudflare local-operation`。请求摘要绑定原 payload，结果证明历史提交，不代表供应商当前状态。prepared、unknown 或本地已知 committed journal 均不重发这些退役写入，对旧 Service 也一样。只有本地已保留成功响应时，才可在可信 404 后补做只读资源核对。证据缺失、资源改变或快照不匹配时继续保留原恢复记录。
 
-`GET /api/v1/admin/usage/history?days=30` 从本实例 D1 读取 1–90 个完整 UTC 日，保留缺日和 null。显式 opt-in 采集使用 `POST /api/v1/admin/usage/history/collect` 与 `{day:"YYYY-MM-DD"}`，一次最近七个完整 UTC 日中的一个，不要求 Idempotency-Key。这是有界派生缓存行为，响应不确定时不自动重复，不因读取而启用历史。90 天缓存是 Analytics 历史，不是 Cloudflare 账单保留保证。
+`GET /api/v1/admin/usage/history?days=30` 读取 1–90 个完整 UTC 日，保留缺日与 null。历史已启用时页面自动采集近期缺失日。Agent 可用 `POST /api/v1/admin/usage/history/collect` 和 `{day:"YYYY-MM-DD"}` 采集最近七个完整 UTC 日中的一天，不要求 Idempotency-Key。这是有界派生缓存行为，不确定时不自动重复，不因读取而启用历史。今日 Workers/R2 指标与账期累计分开；Analytics 历史不代表账单。
 
 ## 首页实例说明设置
 

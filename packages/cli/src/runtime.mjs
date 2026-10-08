@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { apiRequest, trustedApiRequest } from '../../skill-runtime/src/transport.mjs';
 import { createMcpFacade } from '../../skill-runtime/src/mcp-facade.mjs';
 import { getInstancePaths, initializeStateRoot, loadCurrentCredentialSecret, loadPendingCredentialSecret, validatePrivatePath } from '../../skill-runtime/src/state.mjs';
-import { assertNoSymlinkPath, atomicWriteJson, canonicalDigest, ensurePrivateDirectory, pathType, readJson, requireHttpsOrigin, requireUuid } from '../../skill-runtime/src/utils.mjs';
+import { assertNoSymlinkPath, atomicWriteJson, canonicalDigest, canonicalJson, ensurePrivateDirectory, pathType, readJson, requireHttpsOrigin, requireUuid, sha256Text } from '../../skill-runtime/src/utils.mjs';
 import { resolveStateRoot } from '../../skill-runtime/src/paths.mjs';
 import { toolError, serializeError } from '../../skill-runtime/src/errors.mjs';
 import { dispatch } from '../../skill-runtime/src/cli.mjs';
@@ -20,7 +20,7 @@ import { loadCanonicalLauncher, openWeb } from '../../skill-runtime/src/web-open
 import { assertGenericCloudflareMutationIsAvailable, createBrowserLaunchAndDeliver } from '../../skill-runtime/src/capability-delivery.mjs';
 import { fetchDiscovery, validateDiscovery } from '../../skill-runtime/src/rebind.mjs';
 import { capturedRunner } from './process.mjs';
-import { isWafOperationResource, isWafOperationWrite } from '../../skill-runtime/src/waf-contract.mjs';
+import { isLegacyWafDisablePlan, isWafOperationResource, isWafOperationWrite } from '../../skill-runtime/src/waf-contract.mjs';
 
 const pick=(input,keys)=>Object.fromEntries(keys.filter(key=>input[key]!==undefined).map(key=>[key,input[key]]));
 const encodePath=(template,input)=>template.replace(/\{([^}]+)\}/g,(_,field)=>encodeURIComponent(input[field]));
@@ -28,6 +28,17 @@ const cloudflarePlans=new Set(['planCloudflareRateLimits','planCloudflareConfigu
 const cloudflareApplies=new Set(['applyCloudflareRateLimits','applyCloudflareConfiguration','applyCloudflareWaf']);
 const cloudflareOperations=new Set([...cloudflareApplies,'verifyCloudflareOperation']);
 const cloudflareControl='/api/v1/admin/cloudflare';
+const retiredCloudflareLocalOperations={
+  updateCloudflareSettings:{operation:'zone_settings',method:'PATCH',path:`${cloudflareControl}/settings`},
+  registerCloudflareWafTarget:{operation:'waf_target_binding',method:'POST',path:`${cloudflareControl}/waf/target-binding`},
+  planCloudflareWaf:{operation:'waf_plan',method:'POST',path:`${cloudflareControl}/waf/plan`},
+};
+function retiredCloudflareRequestHash(record,contract) {
+  if(record.request?.method!==contract.method||record.request.apiPath!==contract.path||!Number.isSafeInteger(record.request.body?.expected_version)||record.request.body.expected_version<1||typeof record.idempotency_key!=='string'||!record.idempotency_key)return null;
+  const source=record.request.body;
+  const body=contract.operation==='zone_settings'?{zone_id:source.zone_id,expected_version:source.expected_version}:contract.operation==='waf_plan'?{action:source.action,conflict_choice:source.conflict_choice??null,expected_version:source.expected_version}:{expected_version:source.expected_version};
+  return sha256Text(`${contract.method}\n${contract.path}\ninstance-cloudflare-control\n${canonicalJson(body)}`);
+}
 function readbackPath(command,input,result) {
   if(cloudflarePlans.has(command.operation))return result?.data?.resource?.plan_id?`${cloudflareControl}/plans/${encodeURIComponent(result.data.resource.plan_id)}`:result?null:cloudflareControl;
   if(cloudflareOperations.has(command.operation)) {
@@ -238,6 +249,27 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
     }
     return finish(file,record,{ok:true,status:200,data:{resource:observed},recovered_from:'original_waf_intent_lookup'},{recovering:true});
   };
+  const recoverRetiredCloudflareLocal=async(file,record,identity)=> {
+    const contract=retiredCloudflareLocalOperations[record.command.operation],hash=retiredCloudflareRequestHash(record,contract),committed=record.phase==='committed'&&record.result?.ok===true;
+    const lookup=hash?await request(identity,{method:'GET',apiPath:`${cloudflareControl}/local-operations/${encodeURIComponent(record.idempotency_key)}?operation=${contract.operation}`}):{ok:false,status:0};
+    const data=lookup.data,resource=data?.resource;
+    const exact=lookup.ok&&data?.operation===contract.operation&&data.request_hash===hash&&data.idempotent_replay===true&&typeof data.event_cursor==='string'
+      &&Number.isSafeInteger(resource?.version)&&resource.version===record.request.body.expected_version+1
+      &&(contract.operation!=='zone_settings'||resource.target?.zone_id===record.request.body.zone_id)
+      &&(contract.operation!=='waf_target_binding'||resource.target_binding?.status==='verified'&&typeof resource.target_binding.domain_id==='string'&&['worker_domain_read','deployment_runtime'].includes(resource.target_binding.source))
+      &&(contract.operation!=='waf_plan'||resource.kind==='waf'&&typeof resource.plan_id==='string'&&resource.after?.action===record.request.body.action)
+      &&(!committed||record.result.data?.resource&&canonicalDigest(record.result.data.resource)===canonicalDigest(resource));
+    if(!exact) {
+      // 已知成功响应仍可用旧状态读回结案；未知结果不能从当前状态推断原提交。
+      const missingReceipt=lookup.ok===false&&lookup.status===404&&lookup.error?.code==='NOT_FOUND'&&lookup.error.category==='not_found'&&lookup.error.source==='service'&&lookup.error.details?.normalized_by!=='client';
+      if(committed&&hash&&missingReceipt)return finish(file,record,record.result,{recovering:true});
+      if(!committed)record.phase='unknown';await atomicWriteJson(file,record);
+      return {...(committed?record.result:{ok:false,status:lookup.status}),...(committed?{committed_unverified:true}:{outcome_unknown:true}),readback:lookup,error:{code:'CLI_CLOUDFLARE_LOCAL_OPERATION_UNCONFIRMED',category:'platform_failure',source:'client_runtime',recovery:'inspect_original_cloudflare_local_operation'},recovery:{command:'operation recover',instance_id:identity.instance_id,operation_id:record.operation_id}};
+    }
+    record.result={ok:true,status:200,data,recovered_from:'original_cloudflare_local_operation'};
+    record.readback={...lookup,verification_kind:'original_idempotent_snapshot'};record.phase='verified';await atomicWriteJson(file,record);
+    return {...record.result,readback:record.readback,operation:{operation_id:record.operation_id,idempotency_key:record.idempotency_key,write_contract:record.command.write_contract,phase:record.phase}};
+  };
   const recover=async input=>gate(input.instanceId,input.operationId,()=>withRecord(input.instanceId,input.operationId,async(file,record)=> {
     if(!record) throw toolError('CLI_OPERATION_NOT_FOUND','No retained operation exists');
     if(record.kind==='helper'&&record.command.workflow==='owner-rotate')return recoverOwnerRotation(file,record,input);
@@ -250,6 +282,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
       const retained={...record.input,...(record.capability_digest?{capabilityInput:input.capabilityInput}:{})};
       return helperFinish(file,record,()=>executeBare(record.command,{...retained,onRelayReady:input.onRelayReady}),{recovering:true});
     }
+    if(retiredCloudflareLocalOperations[record.command.operation])return recoverRetiredCloudflareLocal(file,record,identity);
     if(record.phase==='committed') return finish(file,record,record.result);
     if(record.command.operation==='applyCloudflareWaf')return recoverWaf(file,record,identity);
     const target=readbackPath(record.command,record.input,record.result);
@@ -263,6 +296,7 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
   const api=async(command,input)=> {
     const identity=await connection(input.instanceId);
     await assertGenericCloudflareMutationIsAvailable({home,stateRoot,instanceId:input.instanceId,method:command.method,apiPath:encodePath(command.apiPath,input)});
+    if(['planCloudflareWaf','registerCloudflareWafTarget','updateCloudflareSettings','getCloudflareNotifications'].includes(command.operation))throw toolError('CLOUDFLARE_FEATURE_RETIRED','This Cloudflare setup feature is retired; preserve existing rules and recover original operations by their request key',{reason:'cloudflare_feature_retired'});
     if(command.method==='GET') {
       if(['listIssues','listIssueCandidates','getSearchIndexStatus'].includes(command.operation)) {
         if(!input.project) {
@@ -306,10 +340,16 @@ export function createCliRuntime({home=os.homedir(),stateRoot=resolveStateRoot({
         if(existing.cloudflare_verification)return finish(file,existing,await request(identity,{...existing.cloudflare_verification.request,idempotencyKey:existing.cloudflare_verification.idempotency_key}),{recovering:true});
         return finish(file,existing,await request(identity,{...existing.request,idempotencyKey:existing.idempotency_key}),{recovering:true});
       }
+      if(command.operation==='applyCloudflareWaf'&&(input.idempotencyKey!==undefined||input.operationId!==undefined)) {
+        const retained={schema_version:1,operation_id:operationId,identity,command,input:{...input},original_input:input,request:requestFor(command,input),idempotency_key:key,created_at_ms:now(),phase:'unknown'};
+        await atomicWriteJson(file,retained);await markPending(input.instanceId,operationId);
+        return recoverWaf(file,retained,identity);
+      }
       const frozen={...input,...(command.operation==='renameOwnerDeviceCredential'?{principal_id:identity.principal_id}:{})};
       const base=readbackPath(command,frozen,null);
       let current=null;
       if(base) { const restore=command.operation.startsWith('restore');const purge=command.operation.startsWith('purge');current=await request(identity,{method:'GET',apiPath:`${base}${restore?'?deleted=only':purge?'/purge-preview':''}`}); if(!current.ok) return current; }
+      if(command.operation==='applyCloudflareWaf'&&!isLegacyWafDisablePlan(current?.data))throw toolError('CLOUDFLARE_FEATURE_RETIRED','New WAF enablement is retired. Supply the original request key only to inspect an existing operation.',{reason:'cloudflare_feature_retired'});
       const items=current?.data?.items??current?.data?.statuses??[];
       const currentItem=items.find(item=>item.id===(frozen.credential_id??frozen.administrator_id??frozen.notification_id??frozen.passkey_id)||item.key===frozen.status_key);
       if(currentItem)current={...current,data:currentItem};

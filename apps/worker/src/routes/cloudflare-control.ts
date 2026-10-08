@@ -8,7 +8,7 @@ import { jsonResponse, readJsonBody, validateJsonObject } from "../kernel/http.t
 import { enforceInstanceRateLimit, enforcePrincipalRateLimit } from "../kernel/rate-limit.ts";
 import type { Router } from "../kernel/router.ts";
 import type { WorkerEnv } from "../kernel/types.ts";
-import { applyCloudflarePlan, getCloudflareControl, getCloudflareNotifications, getCloudflareOperation, getCloudflarePlan, getCloudflareSecretOperation, getCloudflareWaf, planCloudflareConfiguration, planCloudflareRateLimits, saveCloudflareSecret, updateCloudflareSettings, verifyCloudflareControl, verifyCloudflareOperation, type CloudflareControlDependencies } from "../services/cloudflare-control.ts";
+import { applyCloudflarePlan, getCloudflareControl, getCloudflareLocalOperation, getCloudflareNotifications, getCloudflareOperation, getCloudflarePlan, getCloudflareSecretOperation, getCloudflareWaf, planCloudflareConfiguration, planCloudflareRateLimits, saveCloudflareSecret, updateCloudflareSettings, verifyCloudflareControl, verifyCloudflareOperation, type CloudflareControlDependencies } from "../services/cloudflare-control.ts";
 
 export function registerCloudflareControlRoutes(router: Router, dependencies: CloudflareControlDependencies = {}): void {
   router.post("/.well-known/cfkanban-waf-proof", async (request, env, context) => {
@@ -25,6 +25,7 @@ export function registerCloudflareControlRoutes(router: Router, dependencies: Cl
   router.get(`${base}/notifications`, async (request, env, context) => jsonResponse(await getCloudflareNotifications(env, await authenticate(request, env, context.startedAt), dependencies), context.requestId));
   router.get(`${base}/waf`, async (request, env, context) => jsonResponse(await getCloudflareWaf(env, await authenticate(request, env, context.startedAt), dependencies), context.requestId));
   router.get(`${base}/waf/operations/{request_key}`, async (request, env, context) => jsonResponse(await getWafOperationByKey(env, await authenticate(request, env, context.startedAt), context.params.request_key ?? ""), context.requestId));
+  router.get(`${base}/local-operations/{request_key}`, async (request, env, context) => jsonResponse(await getCloudflareLocalOperation(env, await authenticate(request, env, context.startedAt), new URL(request.url).searchParams.get("operation"), context.params.request_key ?? "", context.startedAt), context.requestId));
   router.post(`${base}/waf/target-binding`, async (request, env, context) => {
     const auth = await authenticate(request, env, context.startedAt, true), body = validateJsonObject(await readJsonBody(request), { allowedKeys: ["expected_version"], requiredKeys: ["expected_version"] });
     return jsonResponse(await registerWafTargetBinding(env, request, auth, requireVersion(body.expected_version ?? null), context.startedAt, dependencies), context.requestId);

@@ -85,6 +85,18 @@ export async function createWafTargetPlan(input) {
   const plan = { kind: "cfkanban_waf_target_registration", schema_version: 1, task_id: requireString(input.taskId, "task_id"), operation_id: operation, instance_id: evidence.target.instance_id, binding_id: binding?.binding_id ?? randomUUID(), event_id: randomUUID(), verified_at: Date.now(), evidence, effects: { register_exact_existing_domain: true, import_exact_legacy_owned_rule: Boolean(evidence.imported_ownership && !evidence.before.ownership.rule_id), cloudflare_resource_writes: false, origin_change: false, credential_creation: false } };
   return { plan, plan_digest: canonicalDigest(plan) };
 }
+// 旧域名仍需 schema 27 归属事实完成升级或回退；只迁移历史回执，不开放新 WAF 目标。
+function assertLegacyTargetReceipt(receipt, evidence = null) {
+  if (receipt?.kind !== "cfkanban_public_access_receipt" || receipt.domain_ownership_proven === false || !receipt.domain_enabled) throw toolError("CLOUDFLARE_FEATURE_RETIRED", "WAF setup is retired. Only an existing private domain ownership receipt can enter legacy upgrade recovery.", { reason: "cloudflare_feature_retired" });
+  if (evidence && (receipt.account_id !== evidence.target.account_id || receipt.worker_name !== evidence.target.worker_name || receipt.hostname !== evidence.domain.hostname || receipt.zone_id !== evidence.domain.zone_id || receipt.domain_id !== evidence.domain.id || receipt.preferred_api_origin !== evidence.owner.preferred_api_origin)) fail("WAF_TARGET_LEGACY_OWNERSHIP_UNPROVEN", "Legacy upgrade recovery requires the exact existing owned domain, not a new target registration");
+}
+export async function createLegacyWafTargetPlan(input) {
+  const local = await loadPublicAccessLocal(input);
+  assertLegacyTargetReceipt(local.managed);
+  const result = await createWafTargetPlan(input);
+  assertLegacyTargetReceipt(local.managed, result.plan.evidence);
+  return result;
+}
 export function buildWafTargetRegistrationBatch(plan, credential, now) {
   const { evidence: e } = plan, t = e.target, before = e.before, operation = plan.operation_id;
   const binding = { binding_id: plan.binding_id, account_id: t.account_id, worker_name: t.worker_name, database_id: t.database_id, instance_id: t.instance_id, hostname: t.hostname, zone_id: t.zone_id, domain_id: e.domain.id, origin_version: e.owner.origin_version, provider_metadata_hash: canonicalDigest(e.domain), source: "deployment_runtime", verified_at: plan.verified_at, operation_id: operation };
@@ -120,7 +132,7 @@ export async function applyWafTarget(input) {
   const supplied = { ...input, ...{ receiptPath: plan.evidence.target.receipt_path, hostname: plan.evidence.target.hostname, zoneId: plan.evidence.target.zone_id, wranglerExecutable: plan.evidence.target.wrangler_executable, cloudflareProfile: plan.evidence.target.cloudflare_profile, contextDirectory: plan.evidence.target.context_directory } };
   const local = await loadPublicAccessLocal(supplied);
   if (canonicalDigest(local.target) !== canonicalDigest(plan.evidence.target)) fail("WAF_TARGET_DEPLOYMENT_DRIFT", "The deployment receipt changed after planning target registration");
-  await assertJournalAuthorization({ ...input, stateRoot: local.stateRoot });
+  const journal = await assertJournalAuthorization({ ...input, stateRoot: local.stateRoot });
   const unlock = await acquirePublicAccessLock({ stateRoot: local.stateRoot, journalsRoot: local.paths.journalsRoot, operationId: plan.operation_id });
   try {
     await assertNoPendingWaf({ stateRoot: local.stateRoot, instanceId: input.instanceId });
@@ -130,6 +142,7 @@ export async function applyWafTarget(input) {
     const client = await dbClient(supplied, local.target);
     let receipt = await outcome(client, plan);
     if (!receipt) {
+      if (!journal.events.some(entry => entry.type === "waf_target_registration_intent")) assertLegacyTargetReceipt(local.managed, plan.evidence);
       const evidence = await inspectWafTarget(supplied);
       if (canonicalDigest(evidence) !== canonicalDigest(plan.evidence)) fail("WAF_TARGET_BASELINE_CHANGED", "WAF target, ownership or authorization changed after planning");
       const credential = await loadCurrentCredentialSecret({ stateRoot: local.stateRoot, instanceId: input.instanceId });
