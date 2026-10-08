@@ -48,6 +48,17 @@ export async function validateDocs() {
       count++;
     }
   }
+  const agentGuide = await readFile(new URL("../apps/web/public/llms.txt", import.meta.url), "utf8");
+  for (const match of agentGuide.matchAll(/\]\(([^\s)]+)\)/gu)) {
+    const href = match[1];
+    if (/^https?:/u.test(href)) continue;
+    if (href === "/docs/llms.txt") continue; // 文档索引由构建脚本生成。
+    assert.ok(href.startsWith("/"), `Root Agent guide must use same-instance paths: ${href}`);
+    const target = href.startsWith("/docs/")
+      ? path.join(root, href.slice("/docs/".length))
+      : fileURLToPath(new URL(`../apps/web/public${href}`, import.meta.url));
+    assert.ok((await stat(target)).isFile(), `Root Agent guide: broken link ${href}`);
+  }
   console.log(`Documentation checks passed for ${count} bilingual pages and their navigation/links.`);
 }
 

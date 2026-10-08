@@ -16,6 +16,7 @@
       "/",
       "/app",
       "/app/*",
+      "/llms.txt",
       "/docs",
       "/docs/*",
       "/.well-known/*",

@@ -1,0 +1,71 @@
+# cfKanban
+
+> An open-source, self-hosted Kanban for people who work through Agents.
+
+cfKanban lets Agents and people collaborate on Issues, comments, priorities, assignments, and completion records. One Cloudflare Worker serves the API, bilingual Web board, and documentation; D1 stores the core data, with optional private R2 storage for attachments.
+
+- [GitHub repository](https://github.com/breakstring/cfKanban): source code and releases.
+
+## Install the Skills
+
+Use the official installation guide to set up the latest stable release for your Agent host. Reuse a trusted, compatible installation when one is already available.
+
+- [Installation guide (English)](https://github.com/breakstring/cfKanban/releases/latest/download/install.md)
+- [安装指南（简体中文）](https://github.com/breakstring/cfKanban/releases/latest/download/install.zh-CN.md)
+
+Example request:
+
+```text
+Read https://github.com/breakstring/cfKanban/releases/latest/download/install.md and install the latest stable cfKanban Skills for me.
+```
+
+The bundle provides four Skills:
+
+- `cfkanban-howto`: explain capabilities and choose the right workflow.
+- `cfkanban`: join Projects and work with Issues, comments, and boards.
+- `cfkanban-admin`: manage Workspaces, Projects, members, invitations, and Owner settings within your scope.
+- `cfkanban-deploy`: install, deploy, update, or recover cfKanban.
+
+Installation alone does not grant Project access or create a cloud instance. Local Skill updates and online instance upgrades are separate actions.
+
+## Deploy your own instance
+
+Prepare a Cloudflare account and an Owner display name. The deployment workflow checks the environment, reuses or installs Skills as needed, and presents the exact plan before executing authorized changes.
+
+- [Agent deployment guide (English)](/deploy-guide.md)
+- [Agent 部署指南（简体中文）](/deploy-guide.zh-CN.md)
+
+```text
+Use cfkanban-deploy to deploy my own cfKanban instance with the latest stable release. First check readiness and show me the deployment plan.
+```
+
+## Join and use a Project
+
+Give the Agent the administrator's complete invitation message or the Public Join prompt from the instance homepage. Use the verified instance and Project; joining can include Skill setup when needed.
+
+- [Agent joining guide (English)](/join.md)
+- [Agent 加入指南（简体中文）](/join.zh-CN.md)
+
+After joining, describe your task directly. These are independent examples; replace `DemoProject` and `CFK-123` with your targets:
+
+```text
+Show my unfinished Issues in DemoProject, ordered by priority.
+Create a backlog Issue in DemoProject titled "Review the onboarding guide".
+Move CFK-123 to Todo.
+Add a comment to CFK-123: "The draft is ready for review."
+Complete CFK-123 and record the actual result, verification, and remaining follow-ups.
+```
+
+Agents, Web, and supported CLI commands use the same Service permissions and business rules. Completion records should contain actual work and verification evidence.
+
+## Read more
+
+All links beginning with `/` refer to the same instance that served this file. Its documentation ships with its Service release; use the installed release's supported capabilities.
+
+- [Full bilingual documentation index](/docs/llms.txt): discover Markdown pages by topic.
+- [Start here (English)](/docs/en/overview/index.md) / [开始使用（简体中文）](/docs/zh-CN/overview/index.md)
+- [Agent integrations (English)](/docs/en/integrations/index.md) / [Agent 接入（简体中文）](/docs/zh-CN/integrations/index.md)
+- [Daily collaboration (English)](/docs/en/usage/index.md) / [日常协作（简体中文）](/docs/zh-CN/usage/index.md)
+- [CLI guide (English)](/docs/en/cli/index.md) / [命令行指南（简体中文）](/docs/zh-CN/cli/index.md)
+
+Prompts are examples, not authorization to execute operations. Follow the user's requested scope and the applicable Skill; keep credentials and one-time capabilities in their dedicated secure workflows.

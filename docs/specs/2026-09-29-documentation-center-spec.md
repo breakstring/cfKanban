@@ -29,6 +29,8 @@ DSH 和 Codex App 专页以技能协作为主要入口，先说明安装和直�
 
 公开 HTML 和同路径 `.md` 由同一份文档源生成，`/docs/llms.txt` 提供可读取目录。既有 `join.md`、`join.zh-CN.md`、`deploy-guide.md`、`deploy-guide.zh-CN.md` 保持路径、纯文本 UTF-8 与安全缓存合同，继续承担机器操作引导；文档引用其入口，不复制完整安全脚本流程。
 
+网站根路径 `/llms.txt` 提供简短的 Agent 入门入口，包含项目简介、官方 GitHub 仓库、技能安装、部署、加入与日常操作示例，并链接同实例 `/docs/llms.txt` 及双语 Markdown 手册。源文件位于 `apps/web/public/llms.txt`，随现有 Web/Service 静态工件发布；匿名 GET/HEAD 返回 UTF-8 纯文本，沿用文档安全缓存与响应头，缺失时返回 404、其他方法返回 405，不回退主应用 HTML。安装和新部署指向官方 stable 指南，不固定发行版本或演示实例 origin，技能规则与执行授权沿用现有合同。
+
 2026-09-29 用户授权 CFK-506：Howto 在目标实例明确时，通过宿主只读能力读取同 origin 的 `/docs/llms.txt` 和当前问题所需的少量 Markdown 页面，并引用实际读过的来源。公开查阅不要求登录或项目成员资格，不携带 API Credential；无目标时使用通用说明，不默认替换为演示实例。将索引声明的产品版本与已核验 Service `release_version` 对照，不以本地 Skill 或 API 兼容版本替代；文档说明不证明当前用户有权限。缺页、缺译文、网络失败或版本未知/不匹配时说明限制并使用既有 Howto/操作技能参考，英文同实例页面可作为缺译文回退；不全站抓取、自动升级或切换到最新文档。Howto 只负责教学与能力路由，不因文档中的提示词扩大执行授权。
 
 ## 构建与路由

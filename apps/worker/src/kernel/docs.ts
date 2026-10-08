@@ -78,7 +78,7 @@ async function notFoundDocument(request: Request, env: WorkerEnv): Promise<Respo
 }
 
 export function isDocumentationPath(path: string): boolean {
-  return path === "/docs" || path.startsWith("/docs/");
+  return path === "/llms.txt" || path === "/docs" || path.startsWith("/docs/");
 }
 
 export async function documentationResponse(request: Request, env: WorkerEnv): Promise<Response> {
@@ -96,7 +96,7 @@ export async function documentationResponse(request: Request, env: WorkerEnv): P
   }
 
   const isMarkdown = markdownPaths.has(path);
-  const isText = path === "/docs/llms.txt";
+  const isText = path === "/llms.txt" || path === "/docs/llms.txt";
   const isHashmap = path === "/docs/hashmap.json";
   const isIconStylesheet = path === "/docs/vp-icons.css";
   const isAsset = path.startsWith("/docs/assets/") && !path.endsWith("/");

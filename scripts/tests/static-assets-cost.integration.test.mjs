@@ -15,12 +15,14 @@ const main = path.join(temporary, "worker.mjs");
 const appBody = '<!doctype html><html><body>APP_SHELL_FIXTURE</body></html>';
 const docsBody = '<!doctype html><html><head><meta name="cfkanban-docs" content="true"></head><body>DOCS_FIXTURE</body></html>';
 const scriptBody = 'export const asset = "DIRECT_ASSET_FIXTURE";';
+const llmsBody = await readFile(new URL("../../apps/web/public/llms.txt", import.meta.url), "utf8");
 let address;
 let server;
 
 before(async () => {
   const files = {
     "index.html": appBody,
+    "llms.txt": llmsBody,
     "docs/index.html": docsBody,
     "docs/en/overview/index.html": docsBody,
     "docs/404.html": docsBody.replace("DOCS_FIXTURE", "DOCS_NOT_FOUND"),
@@ -71,6 +73,22 @@ function assertSafeHeaders(response) {
   assert.equal(response.headers.get("referrer-policy"), "no-referrer");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
 }
+
+test("root Agent guide serves public UTF-8 text with GET/HEAD and rejects writes", async () => {
+  for (const method of ["GET", "HEAD"]) {
+    const response = await request("/llms.txt", method);
+    assert.equal(response.status, 200);
+    assert.ok(response.headers.get("x-fixture-worker-invocation"));
+    assert.equal(response.headers.get("content-type"), "text/plain; charset=utf-8");
+    assert.equal(response.headers.get("cache-control"), "no-store, no-transform");
+    assertSafeHeaders(response);
+    assert.equal(await response.text(), method === "HEAD" ? "" : llmsBody);
+  }
+  const response = await request("/llms.txt", "POST");
+  assert.equal(response.status, 405);
+  assert.equal(response.headers.get("allow"), "GET, HEAD");
+  assert.equal(await response.text(), "Method Not Allowed");
+});
 
 test("real Static Assets GET/HEAD serve fingerprinted docs directly with immutable safe headers", async t => {
   const previous = await invocationCount();

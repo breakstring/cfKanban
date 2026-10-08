@@ -28,6 +28,7 @@ test("documentation headers accept VitePress local search chunks without permitt
 
 function fixture({ missing = [], appFallback = [], missingResponse = "spa" } = {}) {
   const files = new Map([
+    ["/llms.txt", { body: "# cfKanban\nAgent getting started / Agent 入门", type: "text/plain" }],
     ["/docs/", { body: docsHtml("Choose your language"), type: "text/html; charset=utf-8" }],
     ["/docs/404", { body: docsHtml("Documentation not found"), type: "text/html; charset=utf-8" }],
     ["/docs/llms.txt", { body: "# cfKanban docs", type: "text/plain" }],
@@ -178,7 +179,7 @@ test("missing built documents fail closed even when the SPA binding returns HTML
 
 test("Markdown and discovery text are readable UTF-8 and never cached", async () => {
   const { request } = fixture();
-  for (const path of ["/docs/en/usage/index.md", "/docs/zh-CN/usage/issues.md", "/docs/llms.txt"]) {
+  for (const path of ["/llms.txt", "/docs/en/usage/index.md", "/docs/zh-CN/usage/issues.md", "/docs/llms.txt"]) {
     const response = await request(path);
     assert.equal(response.status, 200, path);
     assert.equal(response.headers.get("content-type"), "text/plain; charset=utf-8");
@@ -224,8 +225,8 @@ test("the generated icon stylesheet has a fixed public route and remains fresh",
 
 test("missing assets and text return plain 404 rather than an HTML SPA response", async () => {
   for (const missingResponse of ["spa", "404"]) {
-    const { request } = fixture({ missingResponse, missing: ["/docs/en/usage/issues.md", "/docs/llms.txt", "/docs/hashmap.json", "/docs/vp-icons.css"] });
-    for (const path of ["/docs/assets/missing.A1b2C3d4.js", "/docs/assets/", "/docs/en/usage/missing.md", "/docs/en/usage/issues.md", "/docs/llms.txt", "/docs/hashmap.json", "/docs/vp-icons.css"]) {
+    const { request } = fixture({ missingResponse, missing: ["/llms.txt", "/docs/en/usage/issues.md", "/docs/llms.txt", "/docs/hashmap.json", "/docs/vp-icons.css"] });
+    for (const path of ["/llms.txt", "/docs/assets/missing.A1b2C3d4.js", "/docs/assets/", "/docs/en/usage/missing.md", "/docs/en/usage/issues.md", "/docs/llms.txt", "/docs/hashmap.json", "/docs/vp-icons.css"]) {
       const response = await request(path);
       assert.equal(response.status, 404, path);
       assert.equal(response.headers.get("content-type"), "text/plain; charset=utf-8");
@@ -237,23 +238,30 @@ test("missing assets and text return plain 404 rather than an HTML SPA response"
 
 test("HEAD preserves status and document headers without exposing a response body", async () => {
   const { request } = fixture();
-  for (const [path, status] of [["/docs", 308], ["/docs/", 200], ["/docs/zh-CN/usage/issues", 200], ["/docs/en/usage/index.md", 200], ["/docs/assets/app.A1b2C3d4.js", 200], ["/docs/missing", 404], ["/docs/assets/missing.js", 404]]) {
+  for (const [path, status] of [["/llms.txt", 200], ["/docs", 308], ["/docs/", 200], ["/docs/zh-CN/usage/issues", 200], ["/docs/en/usage/index.md", 200], ["/docs/assets/app.A1b2C3d4.js", 200], ["/docs/missing", 404], ["/docs/assets/missing.js", 404]]) {
     const response = await request(path, { method: "HEAD" });
     assert.equal(response.status, status, path);
     assert.equal(await response.text(), "", path);
   }
   const { request: missingRequest } = fixture({ appFallback: ["/docs/", "/docs/404"] });
   assert.equal((await missingRequest("/docs/", { method: "HEAD" })).status, 404);
+  const { request: missingText } = fixture({ missing: ["/llms.txt"] });
+  const missing = await missingText("/llms.txt", { method: "HEAD" });
+  assert.equal(missing.status, 404);
+  assert.equal(await missing.text(), "");
+  assertDocumentHeaders(missing);
 });
 
 test("documentation rejects writes before reading assets or touching the application", async () => {
   const { request, requests } = fixture();
   for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
-    const response = await request("/docs/en/usage/issues", { method });
-    assert.equal(response.status, 405);
-    assert.equal(response.headers.get("allow"), "GET, HEAD");
-    assert.equal(await response.text(), "Method Not Allowed");
-    assertDocumentHeaders(response);
+    for (const path of ["/llms.txt", "/docs/en/usage/issues"]) {
+      const response = await request(path, { method });
+      assert.equal(response.status, 405);
+      assert.equal(response.headers.get("allow"), "GET, HEAD");
+      assert.equal(await response.text(), "Method Not Allowed");
+      assertDocumentHeaders(response);
+    }
   }
   assert.equal(requests.length, 0);
 });
@@ -286,6 +294,6 @@ test("Worker-first routing excludes public documentation assets and preserves a 
   const config = JSON.parse(await readFile(new URL("../../wrangler.jsonc", import.meta.url), "utf8"));
   assert.equal(config.assets.not_found_handling, "none");
   assert.deepEqual(config.assets.run_worker_first, [
-    "/api/*", "/healthz", "/openapi.json", "/invite", "/", "/app", "/app/*", "/docs", "/docs/*", "/.well-known/*", "!/docs/assets/*",
+    "/api/*", "/healthz", "/openapi.json", "/invite", "/", "/app", "/app/*", "/llms.txt", "/docs", "/docs/*", "/.well-known/*", "!/docs/assets/*",
   ]);
 });

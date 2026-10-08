@@ -69,6 +69,15 @@ for (const guide of ["deploy-guide.md", "deploy-guide.zh-CN.md", "join.md", "joi
     `${guide} must use the public-guide security headers and explicit UTF-8 decoding`,
   );
 }
+assert.equal(
+  await readFile(new URL("llms.txt", webRoot), "utf8"),
+  await readFile(new URL("../apps/web/public/llms.txt", import.meta.url), "utf8"),
+  "Root Agent guide must be included unchanged in the Web build",
+);
+assert.ok(
+  staticHeaders.includes("/llms.txt\n  Cache-Control: no-store, no-transform\n  Referrer-Policy: no-referrer\n  X-Content-Type-Options: nosniff\n  Content-Type: text/plain; charset=utf-8"),
+  "Root Agent guide must use documentation security headers and explicit UTF-8 decoding",
+);
 const webFiles = await filesUnder(webRoot);
 assert.ok(webFiles.some((name) => name.endsWith(".js")), "Web build must emit a JavaScript asset");
 assert.ok(webFiles.some((name) => name.endsWith(".png")), "Web build must emit the local brand mark");
