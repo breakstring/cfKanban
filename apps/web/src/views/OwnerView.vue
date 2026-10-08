@@ -1847,7 +1847,7 @@ onUnmounted(() => {
         <article><span>{{ ui("Recent 429", "近期限流") }}</span><strong>{{ rateSettings?.recent_429_summary.total ?? 0 }}</strong><small>{{ rateSettings?.recent_429_summary.window_seconds ?? 300 }} {{ ui("second window", "秒窗口") }}</small></article>
       </section>
       <section class="owner-section">
-        <div class="section-heading-row"><div><h2>{{ ui("Origin & instance", "访问地址与实例") }}</h2><p>{{ meta?.instance_id }}</p></div><CopyForAgentButton :text="locale === 'zh-CN' ? '请使用 cfkanban-admin 检查首选 API 地址，并按明确计划修改。' : 'Use cfkanban-admin to inspect and update the preferred API origin with an explicit plan.'" /></div>
+        <div class="section-heading-row"><div><h2>{{ ui("Origin & instance", "访问地址与实例") }}</h2><p>{{ meta?.instance_id }}</p></div></div>
         <dl class="settings-list"><div><dt>{{ ui("Observed", "本次访问") }}</dt><dd>{{ meta?.observed_origin }}</dd></div><div><dt>{{ ui("Preferred", "首选地址") }}</dt><dd>{{ meta?.preferred_api_origin }}</dd></div><div><dt>{{ ui("Origin version", "地址版本") }}</dt><dd>{{ meta?.origin_version }}</dd></div></dl>
       </section>
       </details>
