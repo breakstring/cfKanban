@@ -3,6 +3,7 @@ import { PUBLIC_ACCESS_NAMES, normalizePublicAccess, normalizeWafAuthority } fro
 import { ANONYMOUS_LOGIN_POLICY, EXPENSIVE_READ_POLICY, expensiveReadBindings, observedExpensiveReads, anonymousLoginBindings, observedAnonymousLogin, normalizeWorkerLimits, normalizeObservedWorkerLimits, plannedProtectionBindingDelta } from "./cost-protection-config.mjs";
 import { existingUsageConfig, normalizeUsageConfig, usageBindings, USAGE_SECRET, USAGE_VARS } from "./usage-config.mjs";
 import { OWNER_CONTROL_SECRETS, OWNER_CONTROL_VARS, existingOwnerControl, observedCoreRateLimits, nativeRateLimitSimple } from "./owner-control-config.mjs";
+import { normalizeObservedWorkerObservability } from "./worker-observability.mjs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { toolError } from "./errors.mjs";
@@ -384,6 +385,8 @@ export function createInstanceUpgradePlan({
   }
   if (!Object.hasOwn(resources.worker ?? {}, "worker_limits") || resources.worker.worker_limits === undefined) throw toolError("WORKER_COST_READBACK_REQUIRED", "Run cfkanban deploy worker cost-settings --input-file worker-readback.json with the exact accountId, workerName, wranglerExecutable and Cloudflare auth context; copy worker_limits (including null) into resources.worker.worker_limits before planning");
   const previousWorkerLimits = normalizeObservedWorkerLimits(resources.worker.worker_limits);
+  if (!Object.hasOwn(resources.worker, "observability") || resources.worker.observability === undefined) throw toolError("WORKER_OBSERVABILITY_READBACK_REQUIRED", "Run cfkanban deploy worker cost-settings with the exact upgrade target and copy observability (including null) into resources.worker.observability before planning");
+  const observability = normalizeObservedWorkerObservability(resources.worker.observability);
   const cpuLimitRequest = workerLimits === undefined ? null : normalizeWorkerLimits(workerLimits);
   const requestedWorkerLimits = cpuLimitRequest ? normalizeObservedWorkerLimits({ ...previousWorkerLimits, cpu_ms: cpuLimitRequest.cpu_ms }) : previousWorkerLimits;
   const costProtection = {
@@ -473,6 +476,7 @@ export function createInstanceUpgradePlan({
         current_deployment_id: workerDeploymentId,
         current_version_id: workerVersionId,
         current_bindings: observedBindings,
+        observability,
       },
       d1: { name: d1Name, database_id: d1DatabaseId, create: false },
       workers_dev: publicAccess?.domain_enabled !== true,

@@ -48,6 +48,7 @@ function upgradePlanInput(overrides = {}) {
         version_id: "77777777-7777-4777-8777-777777777777",
         bindings: upgradeBindingReadback(),
         worker_limits: null,
+        observability: null,
       },
       d1: {
         name: "cfkanban-d1",

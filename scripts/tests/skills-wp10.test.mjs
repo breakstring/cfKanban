@@ -243,6 +243,7 @@ function upgradePlanInput(overrides = {}) {
         version_id: "77777777-7777-4777-8777-777777777777",
         bindings: upgradeBindingReadback(),
         worker_limits: null,
+        observability: null,
       },
       d1: {
         name: "cfkanban-d1",
@@ -2726,6 +2727,20 @@ for (const deploymentOutcome of ["success", "observed_success", "response_lost",
       try { await assertBlockedBeforeNetwork("WORKER_COST_READBACK_REQUIRED"); }
       finally { await writeFile(journalPath, original); }
     });
+    for (const [name, change] of [
+      ["missing Observability readback", cost => { delete cost.observability; }],
+      ["changed Observability readback", cost => { cost.observability = { enabled: true }; }],
+    ]) {
+      await t.test(`finalization rejects ${name}`, async () => {
+        const original = await readFile(journalPath, "utf8");
+        const changed = JSON.parse(original);
+        const finished = changed.events.findLast(event => event.type === "command_finished" && event.action === "worker_deployment_readback");
+        change(finished.worker_deployment_readback.cost_configuration);
+        await writeFile(journalPath, JSON.stringify(changed));
+        try { await assertBlockedBeforeNetwork("WORKER_OBSERVABILITY_READBACK_REQUIRED"); }
+        finally { await writeFile(journalPath, original); }
+      });
+    }
     for (const [name, change, code] of [
       ["frozen origin is not the current trusted origin", { trusted_api_origin: "https://example.workers.dev" }, "TRUSTED_ORIGIN_BINDING_MISMATCH"],
       ["private Instance ID drift", { instance_id: OTHER_PRINCIPAL_ID }, "STATE_INSTANCE_CONFLICT"],

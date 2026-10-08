@@ -22,7 +22,7 @@ Use $cfkanban-deploy to prepare an upgrade of <instance address> to the latest s
 Explain the version, database changes, expected effects, and recovery options for my approval before execution.
 ```
 
-You need current Owner access, Cloudflare account authority, and local maintenance records. On a new computer, first [connect the existing deployment](./attach.md). The Agent explains resource, data, and cost effects, then verifies the site's version, access, and original identity after upgrading.
+You need current Owner access, Cloudflare account authority, and local maintenance records. On a new computer, first [connect the existing deployment](./attach.md). The Agent explains resource, data, and cost effects, preserves existing Cloudflare Observability settings, then verifies the site's version, access, logging configuration, and original identity after upgrading.
 
 Use an Agent to upgrade; there is no Web upgrade button. If older Skills cannot handle the new release, update the local Skills first using the installation guide.
 

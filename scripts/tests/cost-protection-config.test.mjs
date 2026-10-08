@@ -65,3 +65,25 @@ test("provider limits are preserved without inferring a subscription and explici
   assert.equal(await verifyPlannedWorkerCostSettings({ plan: { kind: "strict_zero_deploy", cost_protection: { worker_limits: null } }, fetchImpl: () => assert.fail("A new Worker has no prior limits to preserve") }), null);
   assert.ok(requests.every(request => request.method === "GET"));
 });
+
+test("upgrade preserves Observability and rejects drift before and after deployment", async () => {
+  const preserved = { enabled: false, head_sampling_rate: 1, logs: { enabled: true, invocation_logs: true, head_sampling_rate: 1, persist: true }, traces: { enabled: false, head_sampling_rate: 1, persist: true } };
+  let observability = structuredClone(preserved);
+  const input = { accountId: "isolated-account", workerName: "board", wranglerExecutable: "/mock/wrangler", cloudflareProfile: "isolated", environment: {}, tokenRunner: async () => ({ stdout: JSON.stringify({ type: "oauth", token: "mock-private-control" }) }), fetchImpl: async (_url, options) => {
+    assert.equal(options.method, "GET");
+    return Response.json({ success: true, result: { script: { limits: null, observability } } });
+  } };
+  const plan = { kind: "deployed_instance_upgrade", target: { cloudflare_account_id: input.accountId, cloudflare_profile: input.cloudflareProfile }, resources: { worker: { name: input.workerName, observability: preserved } }, cost_protection: { previous_worker_limits: null, worker_limits: null } };
+  assert.deepEqual((await readWorkerCostSettings(input)).observability, preserved);
+  for (const phase of ["before", "after"]) {
+    assert.deepEqual((await verifyPlannedWorkerCostSettings({ ...input, plan, phase })).observability, preserved);
+    observability.logs.enabled = false;
+    await assert.rejects(verifyPlannedWorkerCostSettings({ ...input, plan, phase }), { code: "WORKER_OBSERVABILITY_DRIFT" });
+    observability = structuredClone(preserved);
+    observability.logs.head_sampling_rate = 0.5;
+    await assert.rejects(verifyPlannedWorkerCostSettings({ ...input, plan, phase }), { code: "WORKER_OBSERVABILITY_DRIFT" });
+    observability = structuredClone(preserved);
+  }
+  observability = { ...preserved, future_field: "mock-sensitive-marker" };
+  await assert.rejects(readWorkerCostSettings(input), error => error.code === "WORKER_OBSERVABILITY_UNSUPPORTED_FIELD" && !JSON.stringify(error).includes("mock-sensitive-marker"));
+});

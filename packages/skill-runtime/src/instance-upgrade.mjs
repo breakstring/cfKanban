@@ -3,6 +3,7 @@ import { readServiceApiVersion } from "./service-api-version.mjs";
 import { deploymentCrons, usageVars } from "./usage-config.mjs";
 import { publicAccessVars } from "./public-access-config.mjs";
 import { costProtectionBindings, normalizeObservedWorkerLimits, plannedWorkerLimits } from "./cost-protection-config.mjs";
+import { normalizeObservedWorkerObservability, normalizePlannedWorkerObservability } from "./worker-observability.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -102,6 +103,7 @@ export function assertPriorReceipt(receipt, plan) {
 
 function assertUpgradeConfig(config, event, plan, configPath) {
   assertAttachmentStoragePlan(plan);
+  const observability = normalizePlannedWorkerObservability(plan);
   if (event === null
     || event.config_path !== configPath
     || event.config_digest !== canonicalDigest(config)
@@ -116,6 +118,7 @@ function assertUpgradeConfig(config, event, plan, configPath) {
     || Object.entries(publicAccessVars(plan.public_access)).some(([name, value]) => config.vars?.[name] !== value)
     || costProtectionBindings(plan.cost_protection).filter(item => item.type === "plain_text").some(item => config.vars?.[item.name] !== item.text)
     || JSON.stringify(normalizeObservedWorkerLimits(config.limits)) !== JSON.stringify(plannedWorkerLimits(plan))
+    || (observability !== undefined && (!Object.hasOwn(config, "observability") || canonicalDigest(normalizeObservedWorkerObservability(config.observability)) !== canonicalDigest(observability)))
     || config.workers_dev !== (plan.public_access?.domain_enabled !== true)
     || (plan.public_access && (config.preview_urls !== false || JSON.stringify(config.routes ?? []) !== JSON.stringify(plan.public_access.domain_enabled ? [{ pattern: plan.public_access.hostname, custom_domain: true, zone_id: plan.public_access.zone_id }] : [])))
     || JSON.stringify(config.r2_buckets ?? []) !== JSON.stringify(plan.resources.r2 ? [{ binding: "ATTACHMENTS", bucket_name: plan.resources.r2.bucket_name }] : [])
@@ -219,6 +222,8 @@ export async function finalizeInstanceUpgrade({
   }
   if (plan.usage_analytics && JSON.stringify(afterWorker.usage_configuration) !== JSON.stringify({ binding_verified: true })) throw toolError("USAGE_READBACK_REQUIRED", "Upgrade finalization requires usage binding readback");
   if (plan.cost_protection && (afterWorker.cost_configuration?.account_id !== plan.target.cloudflare_account_id || afterWorker.cost_configuration?.worker_name !== plan.resources.worker.name || JSON.stringify(afterWorker.cost_configuration?.worker_limits) !== JSON.stringify(plannedWorkerLimits(plan)))) throw toolError("WORKER_COST_READBACK_REQUIRED", "Upgrade finalization requires the exact planned Worker limits readback");
+  const observability = normalizePlannedWorkerObservability(plan);
+  if (observability !== undefined && (!Object.hasOwn(afterWorker.cost_configuration ?? {}, "observability") || canonicalDigest(normalizeObservedWorkerObservability(afterWorker.cost_configuration.observability)) !== canonicalDigest(observability))) throw toolError("WORKER_OBSERVABILITY_READBACK_REQUIRED", "Upgrade finalization requires the exact planned Observability readback");
   if (plan.public_access && (afterWorker.public_access_configuration?.verified !== true || afterWorker.public_access_configuration?.hostname !== plan.public_access.hostname || afterWorker.public_access_configuration?.workers_dev !== !plan.public_access.domain_enabled || afterWorker.public_access_configuration?.previews_enabled !== false || afterWorker.public_access_configuration?.waf_profile !== plan.public_access.waf_profile)) throw toolError("PUBLIC_ACCESS_READBACK_REQUIRED", "Upgrade finalization requires managed routing and WAF preservation readback");
   if (plan.resources.r2 && JSON.stringify(afterWorker.attachment_configuration) !== JSON.stringify({ bucket_name: plan.resources.r2.bucket_name, crons: [ATTACHMENT_CLEANUP_CRON], binding_verified: true })) throw toolError("R2_READBACK_REQUIRED", "Upgrade finalization requires post-deploy attachment binding and Cron readback");
   if (afterWorker.deployment_id === plan.resources.worker.current_deployment_id
@@ -318,6 +323,7 @@ export async function finalizeInstanceUpgrade({
       worker: {
         name: plan.resources.worker.name,
         ...(plan.cost_protection ? { worker_limits: plan.cost_protection.worker_limits } : {}),
+        ...(observability === undefined ? {} : { observability }),
         before_deployment_id: plan.resources.worker.current_deployment_id,
         before_version_id: plan.resources.worker.current_version_id,
         after_deployment_id: afterWorker.deployment_id,

@@ -208,7 +208,7 @@ test('状态文件权限不安全时不读取凭据也不继续网络请求', as
 function upgradeInput(evidence) {
   return { taskId: 'upgrade-attached', instanceId: evidence.target.instanceId,
     cloudflare: { account_id: evidence.target.accountId, profile: evidence.target.cloudflareProfile, api_origin: evidence.target.apiOrigin },
-    resources: { ...evidence.resources, worker: { ...evidence.resources.worker, worker_limits: null }, workers_dev: true, custom_domain: null, routes: [], pages: false }, bindings: evidence.bindings, owner: evidence.owner,
+    resources: { ...evidence.resources, worker: { ...evidence.resources.worker, worker_limits: null, observability: null }, workers_dev: true, custom_domain: null, routes: [], pages: false }, bindings: evidence.bindings, owner: evidence.owner,
     current: evidence.service_release,
     target: { publisher: evidence.publisher, manifest_version: '1.1.0', manifest_sha256: 'c'.repeat(64), service_bundle_version: '1.1.0', service_bundle_sha256: 'd'.repeat(64), service_bundle_source: `${evidence.publisher}/releases/1.1.0/service.zip`, service_api_version: '0.1.0', schema_version: 1, migration_manifest_sha256: evidence.migrations.manifest_sha256, compatibility: { node: '>=22', wrangler: '>=4', service_api: '>=0.1.0 <0.2.0', schema_version: 1 } },
     restorePoint: { required: false, verified: false, reason: 'No schema change' } };

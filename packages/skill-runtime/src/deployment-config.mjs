@@ -2,6 +2,7 @@ import { deploymentCrons, usageVars } from "./usage-config.mjs";
 import { ownerControlVars } from "./owner-control-config.mjs";
 import { costProtectionBindings, plannedWorkerLimits } from "./cost-protection-config.mjs";
 import { publicAccessVars, normalizePublicAccess } from "./public-access-config.mjs";
+import { normalizePlannedWorkerObservability } from "./worker-observability.mjs";
 import path from "node:path";
 import { resolveStateRoot } from "./paths.mjs";
 import { getInstancePaths } from "./state.mjs";
@@ -150,6 +151,7 @@ export async function writeFrozenWranglerConfig({
   const accountId = requireString(plan.target?.cloudflare_account_id, "cloudflare_account_id", { max: 128 });
   const databaseId = requireUuid(d1DatabaseId, "d1_database_id");
   const publicAccess = normalizePublicAccess(plan.public_access, { instanceId: instance, accountId, workerName });
+  const observability = normalizePlannedWorkerObservability(plan);
   if (plan.bindings?.d1 !== "DB" || plan.bindings?.assets !== "ASSETS") {
     throw toolError("INVALID_DEPLOYMENT_PLAN", "Deployment plan must freeze the DB and ASSETS binding names");
   }
@@ -161,6 +163,7 @@ export async function writeFrozenWranglerConfig({
     compatibility_date: template.compatibility_date,
     ...(compatibilityFlags === undefined ? {} : { compatibility_flags: compatibilityFlags }),
     workers_dev: plan.resources?.workers_dev === true,
+    ...(observability === undefined ? {} : { observability }),
     ...(publicAccess ? { preview_urls: false, ...(publicAccess.domain_enabled ? { routes: [{ pattern: publicAccess.hostname, custom_domain: true, zone_id: publicAccess.zone_id }] } : {}) } : {}),
     assets: {
       directory: assetsPath,

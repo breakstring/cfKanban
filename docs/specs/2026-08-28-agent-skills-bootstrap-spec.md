@@ -473,6 +473,7 @@ upgrade plan 至少包含：
 - canonical immutable target release/version/digest，禁止直接执行浮动 `latest`；
 - 当前与目标 Skill/service/schema 兼容矩阵，必要的 Skill update 作为独立第一阶段；
 - Worker code/config/bindings delta，以及每条 D1 migration 的顺序、摘要和 `backward_compatible | destructive` 分类；
+- 当前 Worker Observability 的完整已知非秘密配置（包括日志、追踪、采样和查询字符串脱敏），纳入计划并准确投影到部署配置，部署前后及 finalization 核对；新版计划缺读回或含未知字段时拒绝，不能依赖部署工具的缺省值保留 Dashboard 设置；
 - 公开升级 migration 的执行约束 `mode: single_query`、`max_sql_bytes: 24576`，纳入 plan digest 并在执行前核对，不允许旧计划隐式切换入口；
 - migration 前取得并验证的 D1 Time Travel bookmark 或等价 restore point、当前平台保留边界，以及 restore 会覆盖哪些时间之后的写入；
 - 预计中断、费用/domain/resource delta、验证步骤、Worker rollback 条件、数据库不可自动回退的风险；

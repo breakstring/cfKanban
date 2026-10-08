@@ -9,6 +9,7 @@ import { Router } from "../../apps/worker/src/kernel/router.ts";
 import { createRequestContext } from "../../apps/worker/src/kernel/http.ts";
 import { errorResponse } from "../../apps/worker/src/kernel/errors.ts";
 import { computeRequestHash } from "../../apps/worker/src/kernel/idempotency.ts";
+import { api, ProviderFailure } from "../../apps/worker/src/services/cloudflare-control.ts";
 
 // Only an isolated local D1 and a synthetic in-memory Cloudflare provider are used.
 const server = createTestHarness({ root: fileURLToPath(new URL("../../", import.meta.url)), workers: [{ configPath: "wrangler.wp02-test.jsonc" }] });
@@ -108,26 +109,117 @@ test("Owner 独占控制范围，Cookie 写保护和目标白名单拒绝发生�
   assert.equal((await request(`${base}/secrets`, { method: "POST", body: { kind: "control", token: nextToken, expected_version: 1, worker_name: "foreign" } })).status, 400);
   assert.equal(provider.gets.length, 0); assert.equal(provider.mutations.length, 0);
 });
-test("供应商预检 HTTP403 定位四项读取，取消错误正文且不泄露 Token、目标或响应头", async () => {
+test("供应商预检 HTTP403 安全诊断定位四项读取且不泄露 Token、目标或响应头", async context => {
   const malicious = JSON.stringify({ errors: [{ code: 10000, message: `provider-secret ${nextToken} Bearer ${nextToken}`, url: `https://provider.example.test/?token=${nextToken}` }], stack: "provider-stack", target: target.account_id });
+  const warnings = []; context.mock.method(console, "warn", value => warnings.push(value));
   for (const [operation, rejects] of [
     ["deployments", path => path.endsWith("/deployments")],
     ["versions", path => path.endsWith("/versions")],
     ["settings", path => path.endsWith("/settings")],
     ["version_details", path => /\/versions\/[^/]+$/.test(path)],
   ]) {
-    let cancelled = 0;
-    provider.failureBody = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(malicious)); }, cancel() { cancelled += 1; } });
+    provider.failureBody = malicious;
     provider.failureHeaders = { "x-provider-note": `provider-header ${nextToken}` };
     provider.rejectRequest = ({ path, method }) => method === "GET" && rejects(path);
     const denied = await save("connection", nextToken);
     assert.equal(denied.status, 403); assert.equal(denied.data.code, "FORBIDDEN"); assert.equal(denied.data.source, "cloudflare_platform");
     assert.deepEqual(denied.data.details, { component: "cloudflare-control", failure_class: "permission_denied", provider_operation: operation, provider_method: "GET", provider_status: 403, write_state: "not_dispatched" });
-    assert.equal(cancelled, 1);
+    assert.deepEqual(warnings.at(-1), { operation: "cloudflare_control", provider_operation: operation, provider_method: "GET", provider_status: 403, provider_codes: [10000], provider_error_tags: ["secret"] });
     for (const forbidden of [nextToken, target.account_id, target.worker_name, "provider-secret", "provider-header", "provider-stack", "provider.example.test"]) assert.ok(!JSON.stringify(denied.data).includes(forbidden));
     assert.equal((await db.prepare("SELECT count(*) AS n FROM cloudflare_control_operations").first()).n, 0); assert.equal((await current()).version, 1);
   }
   assert.equal(provider.mutations.length, 0);
+  assert.equal(warnings.length, 4);
+});
+test("Cloudflare 安全诊断仅记录最多16个非负安全整数和11个去重固定术语，不扩张公开错误或D1", async context => {
+  const marker = `sensitive-marker-${nextToken}`, logs = [];
+  for (const level of ["warn", "log", "error", "info", "debug"]) context.mock.method(console, level, (...values) => logs.push({ level, values }));
+  const body = JSON.stringify({ errors: [
+    { code: 0, message: `INHERITED asset binding versions multipart metadata setting placement rate_limit secrets unsupported INHERIT BINDINGS ${marker}`, url: `https://provider.example.test/?token=${marker}`, headers: { authorization: `Bearer ${marker}` } },
+    { code: Number.MAX_SAFE_INTEGER, message: marker },
+    ...[-1, 1.5, Number.MAX_SAFE_INTEGER + 1, "10021", true, null, { token: marker }].map(code => ({ code, message: marker })),
+    null, [], marker, ...Array.from({ length: 30 }, (_, code) => ({ code: code + 100, message: marker })),
+  ], message: marker, request: { body: marker }, stack: marker });
+  let failure;
+  try { await api(nextToken, { fetch: async () => new Response(body, { status: 400, headers: { "x-provider-note": marker } }) })(`/accounts/${marker}/workers/scripts/${marker}/settings`, { method: "PATCH", body: JSON.stringify({ secret: marker }), headers: { "x-request-note": marker } }); }
+  catch (error) { failure = error; }
+  assert.ok(failure instanceof ProviderFailure); assert.equal(failure.rejected, true); assert.equal(failure.missingResource, false);
+  const diagnostics = { provider_operation: "settings", provider_method: "PATCH", provider_status: 400 };
+  assert.deepEqual(logs, [{ level: "warn", values: [{ operation: "cloudflare_control", ...diagnostics, provider_codes: [0, Number.MAX_SAFE_INTEGER, ...Array.from({ length: 14 }, (_, code) => code + 100)], provider_error_tags: ["inherit", "assets", "bindings", "version", "multipart", "metadata", "settings", "placement", "ratelimit", "secret", "unsupported"] }] }]);
+  assert.deepEqual(failure.details, { component: "cloudflare-control", failure_class: "unavailable", ...diagnostics });
+  const response = await errorResponse(failure, randomUUID()).json();
+  assert.deepEqual(response.details, failure.details);
+  for (const value of [logs, response]) for (const forbidden of [marker, nextToken, "provider.example.test", "x-provider-note", "x-request-note", "Bearer", "sensitive-marker", '"request":', '"stack":']) assert.ok(!JSON.stringify(value).includes(forbidden));
+  assert.equal((await db.prepare("SELECT count(*) AS n FROM cloudflare_control_operations").first()).n, 0);
+});
+test("Cloudflare 安全诊断忽略错误体外的术语、未知文本和非数字错误码", async context => {
+  const warnings = []; context.mock.method(console, "warn", value => warnings.push(value));
+  const result = api(nextToken, { fetch: async () => Response.json({ errors: [{ code: "10021", message: "unrecognized diagnostic text" }, { code: { number: 10021 }, message: { secret: nextToken } }], message: "inherit assets bindings version multipart metadata settings placement ratelimit secret unsupported" }, { status: 403 }) });
+  await assert.rejects(result(`/accounts/${target.account_id}/workers/scripts/${target.worker_name}/settings`), error => error instanceof ProviderFailure && error.capability === "permission_denied" && error.rejected);
+  assert.deepEqual(warnings, [{ operation: "cloudflare_control", provider_operation: "settings", provider_method: "GET", provider_status: 403, provider_codes: [], provider_error_tags: [] }]);
+});
+test("Cloudflare 安全诊断读取严格限制65536字节，超限立即取消且不读取尾部", async context => {
+  const warnings = []; context.mock.method(console, "warn", value => warnings.push(value));
+  const prefix = JSON.stringify({ errors: [{ code: 10021, message: "metadata" }], padding: "" });
+  const exact = new TextEncoder().encode(JSON.stringify({ errors: [{ code: 10021, message: "metadata" }], padding: "x".repeat(65_536 - prefix.length) }));
+  assert.equal(exact.byteLength, 65_536);
+  const path = `/accounts/${target.account_id}/workers/scripts/${target.worker_name}/settings`;
+  await assert.rejects(api(nextToken, { fetch: async () => new Response(exact, { status: 403 }) })(path), error => error instanceof ProviderFailure && error.capability === "permission_denied");
+  assert.deepEqual(warnings.at(-1).provider_codes, [10021]); assert.deepEqual(warnings.at(-1).provider_error_tags, ["metadata"]);
+  let pulls = 0, cancelled = 0;
+  const body = new ReadableStream({ pull(controller) {
+    pulls++;
+    if (pulls <= 2) controller.enqueue(exact.slice((pulls - 1) * 32_768, pulls * 32_768));
+    else if (pulls === 3) controller.enqueue(new Uint8Array([32]));
+    else assert.fail("diagnostic reader consumed the body beyond its byte limit");
+  }, cancel() { cancelled++; } }, { highWaterMark: 0 });
+  await assert.rejects(api(nextToken, { fetch: async () => new Response(body, { status: 403 }) })(path), error => error instanceof ProviderFailure && error.capability === "permission_denied" && error.rejected);
+  assert.equal(pulls, 3); assert.equal(cancelled, 1);
+  assert.deepEqual(warnings.at(-1).provider_codes, []); assert.deepEqual(warnings.at(-1).provider_error_tags, []);
+});
+test("Cloudflare 安全诊断在错误体读取被10秒超时中止后仍保留已知403分类", async context => {
+  const warnings = []; context.mock.method(console, "warn", value => warnings.push(value));
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  let signal;
+  const call = api(nextToken, { fetch: async (_url, init) => {
+    signal = init.signal;
+    return new Response(new ReadableStream({ start(controller) { signal.addEventListener("abort", () => controller.error(new DOMException(`sensitive-timeout-${nextToken}`, "AbortError")), { once: true }); } }), { status: 403 });
+  } });
+  try {
+    const checked = assert.rejects(call(`/accounts/${target.account_id}/workers/scripts/${target.worker_name}/settings`), error => {
+      assert.ok(error instanceof ProviderFailure); assert.equal(error.capability, "permission_denied"); assert.equal(error.rejected, true);
+      assert.deepEqual(error.details, { component: "cloudflare-control", failure_class: "permission_denied", provider_operation: "settings", provider_method: "GET", provider_status: 403 });
+      return true;
+    });
+    await Promise.resolve(); assert.equal(signal.aborted, false);
+    context.mock.timers.tick(10_000); await checked;
+    assert.equal(signal.aborted, true);
+    assert.deepEqual(warnings, [{ operation: "cloudflare_control", provider_operation: "settings", provider_method: "GET", provider_status: 403, provider_codes: [], provider_error_tags: [] }]);
+    assert.ok(!JSON.stringify(warnings).includes(nextToken));
+  } finally { context.mock.timers.reset(); }
+});
+test("Cloudflare 安全诊断的解析、超限、读取和取消失败均不改变已知HTTP分类", async context => {
+  const warnings = []; context.mock.method(console, "warn", value => warnings.push(value));
+  const marker = `sensitive-read-${nextToken}`, path = `/accounts/${target.account_id}/workers/scripts/${target.worker_name}/secrets`;
+  const bodies = [
+    () => marker,
+    () => JSON.stringify({ errors: [{ code: 10021, message: "secret" }], padding: "汉".repeat(23_000) }),
+    () => new ReadableStream({ start(controller) { controller.error(new Error(marker)); } }),
+    () => new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(65_537)); }, cancel() { throw new Error(marker); } }),
+    () => null,
+  ];
+  for (const status of [401, 403, 404, 400, 408, 429, 503]) for (const body of bodies) {
+    const permission = status === 401 || status === 403, rejected = status < 500 && status !== 408 && status !== 429;
+    await assert.rejects(api(nextToken, { fetch: async () => new Response(body(), { status }) })(path, { method: "PUT" }), error => {
+      assert.ok(error instanceof ProviderFailure);
+      assert.equal(error.capability, permission ? "permission_denied" : "unavailable"); assert.equal(error.rejected, rejected); assert.equal(error.missingResource, status === 404);
+      assert.deepEqual(error.details, { component: "cloudflare-control", failure_class: permission ? "permission_denied" : "unavailable", provider_operation: "secret_write", provider_method: "PUT", provider_status: status });
+      return true;
+    });
+    assert.deepEqual(warnings.at(-1), { operation: "cloudflare_control", provider_operation: "secret_write", provider_method: "PUT", provider_status: status, provider_codes: [], provider_error_tags: [] });
+    assert.ok(!JSON.stringify(warnings.at(-1)).includes(marker));
+  }
+  assert.equal(warnings.length, 35);
 });
 test("部署历史有十页时仅取当前页，保留active/latest与固定目标校验后自保存", async () => {
   provider.deploymentPages = 10;

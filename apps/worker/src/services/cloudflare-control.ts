@@ -88,6 +88,40 @@ function providerDiagnostics(path: string, method: string, status: number): Prov
   if (Number.isInteger(status) && status >= 100 && status <= 599) details.provider_status = status;
   return details;
 }
+const providerErrorTerms = [
+  ["inherit", /\binherit(?:ed|ance)?\b/i], ["assets", /\bassets?\b/i], ["bindings", /\bbindings?\b/i],
+  ["version", /\bversions?\b/i], ["multipart", /\bmultipart\b/i], ["metadata", /\bmetadata\b/i],
+  ["settings", /\bsettings?\b/i], ["placement", /\bplacement\b/i], ["ratelimit", /\b(?:ratelimit|rate[_ -]limits?)\b/i],
+  ["secret", /\bsecrets?\b/i], ["unsupported", /\bunsupported\b/i],
+] as const;
+interface ProviderLogDiagnostics { provider_codes: number[]; provider_error_tags: string[] }
+async function providerErrorDiagnostics(response: Response): Promise<ProviderLogDiagnostics> {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const empty = { provider_codes: [], provider_error_tags: [] };
+  try {
+    reader = response.body?.getReader();
+    if (!reader) return empty;
+    let length = 0, body = "";
+    const decoder = new TextDecoder();
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      length += chunk.value.byteLength;
+      if (length > 65_536) { await reader.cancel().catch(() => {}); return empty; }
+      body += decoder.decode(chunk.value, { stream: true });
+    }
+    const payload = object(JSON.parse(body + decoder.decode()) as JsonValue);
+    if (!Array.isArray(payload.errors)) return empty;
+    const codes: number[] = [], tags = new Set<string>();
+    for (const entry of payload.errors) {
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+      if (codes.length < 16 && typeof entry.code === "number" && Number.isSafeInteger(entry.code) && entry.code >= 0) codes.push(entry.code);
+      if (typeof entry.message === "string") for (const [tag, expression] of providerErrorTerms) { if (expression.test(entry.message)) tags.add(tag); }
+    }
+    return { provider_codes: codes, provider_error_tags: [...tags] };
+  } catch { return empty; }
+  finally { try { reader?.releaseLock(); } catch { /* 诊断读取不能覆盖已知 HTTP 分类。 */ } }
+}
 export function api(token: string, dependencies: CloudflareControlDependencies, completeInventory = false) {
   return async (path: string, init: RequestInit = {}): Promise<JsonValue> => {
     if (!path.startsWith("/accounts/") && !path.startsWith("/zones/") && path !== "/graphql") throw new ProviderFailure("target_mismatch", true);
@@ -95,9 +129,12 @@ export function api(token: string, dependencies: CloudflareControlDependencies, 
     try {
       const response = await (dependencies.fetch ?? fetch)(`https://api.cloudflare.com/client/v4${path}`, { ...init, headers: { authorization: `Bearer ${token}`, ...(init.headers as Record<string, string> | undefined) }, redirect: "manual", signal: controller.signal });
       const diagnostics = providerDiagnostics(path, init.method ?? "GET", response.status);
-      if (response.status === 401 || response.status === 403) { await response.body?.cancel(); throw new ProviderFailure("permission_denied", true, false, diagnostics); }
-      if (response.status === 404) { await response.body?.cancel(); throw new ProviderFailure("unavailable", true, true, diagnostics); }
-      if (!response.ok) { await response.body?.cancel(); throw new ProviderFailure("unavailable", response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429, false, diagnostics); }
+      if (!response.ok) {
+        console.warn({ operation: "cloudflare_control", ...diagnostics, ...await providerErrorDiagnostics(response) });
+        if (response.status === 401 || response.status === 403) throw new ProviderFailure("permission_denied", true, false, diagnostics);
+        if (response.status === 404) throw new ProviderFailure("unavailable", true, true, diagnostics);
+        throw new ProviderFailure("unavailable", response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429, false, diagnostics);
+      }
       const reader = response.body?.getReader(); if (!reader) throw new ProviderFailure("unavailable");
       const chunks: Uint8Array[] = []; let length = 0;
       while (true) { const chunk = await reader.read(); if (chunk.done) break; length += chunk.value.byteLength; if (length > 65_536) { await reader.cancel(); throw new ProviderFailure("unavailable"); } chunks.push(chunk.value); }
